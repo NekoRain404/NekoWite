@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { version } from './index'
+
+import { basicPlugins, createEditor } from './index'
+import type { NekoEditor } from './index'
 
 describe('editor-core smoke', () => {
-  it('exports version', () => {
-    expect(version).toBe('0.1.0')
+  it('exports public API', () => {
+    expect(typeof createEditor).toBe('function')
+    expect(Array.isArray(basicPlugins)).toBe(true)
+    const editor: NekoEditor = {} as NekoEditor
+    expect(editor).toBeDefined()
   })
 })
