@@ -2,6 +2,7 @@ import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
 import remarkFrontmatter from 'remark-frontmatter'
+import remarkMath from 'remark-math'
 import remarkStringify from 'remark-stringify'
 import type { Root } from 'mdast'
 
@@ -9,6 +10,7 @@ const processor = unified()
   .use(remarkParse)
   .use(remarkGfm)
   .use(remarkFrontmatter, ['yaml'])
+  .use(remarkMath)
   .use(remarkStringify, { bullet: '-', emphasis: '*', strong: '*', fences: true })
 
 export function parseMarkdown(md: string): Root {

@@ -1,5 +1,6 @@
 export * from './editor'
 export * from './plugins/basic'
+export * from './math'
 export * from './mdx'
 export * from './registry'
 export * from './table'
