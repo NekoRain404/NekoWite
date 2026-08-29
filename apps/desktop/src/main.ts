@@ -5,6 +5,7 @@ import type { PluginMeta } from '@nekowite/plugin-host'
 import App from './App.vue'
 import { calloutPlugin } from './plugins/callout'
 import { statusPlugin } from './plugins/status'
+import 'mathlive/static.css'
 import './style.css'
 
 async function activateBuiltins(): Promise<void> {

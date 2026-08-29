@@ -4,7 +4,14 @@ import { history } from '@milkdown/plugin-history'
 import { listener } from '@milkdown/plugin-listener'
 import type { MilkdownPlugin } from '@milkdown/ctx'
 
-import { mathDisplay, mathDisplayNodeView, mathInline, mathInlineNodeView, mathRemark } from '../math'
+import {
+  mathDisplay,
+  mathDisplayNodeView,
+  mathFeaturePlugin,
+  mathInline,
+  mathInlineNodeView,
+  mathRemark,
+} from '../math'
 import { mdxComponent, mdxComponentNodeView, mdxJsxRemark } from '../mdx'
 import { tableFeaturePlugin } from '../table/plugin'
 
@@ -18,6 +25,7 @@ export const basicPlugins: MilkdownPlugin[] = [
   mathDisplay,
   mathInlineNodeView,
   mathDisplayNodeView,
+  mathFeaturePlugin,
   ...history.flat(),
   listener,
   mdxComponent,

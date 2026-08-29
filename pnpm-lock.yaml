@@ -35,6 +35,9 @@ importers:
       '@tauri-apps/api':
         specifier: ^2
         version: 2.11.1
+      mathlive:
+        specifier: ^0.103.0
+        version: 0.103.0
       pinia:
         specifier: ^3
         version: 3.0.4(typescript@5.9.3)(vue@3.5.42(typescript@5.9.3))
