@@ -5,6 +5,7 @@ import { listener } from '@milkdown/plugin-listener'
 import type { MilkdownPlugin } from '@milkdown/ctx'
 
 import { mdxComponent } from '../mdx'
+import { tableFeaturePlugin } from '../table/plugin'
 
 export const basicPlugins: MilkdownPlugin[] = [
   ...commonmark,
@@ -12,4 +13,5 @@ export const basicPlugins: MilkdownPlugin[] = [
   ...history.flat(),
   listener,
   mdxComponent,
+  tableFeaturePlugin,
 ]
