@@ -1,0 +1,20 @@
+{
+  "name": "nekowite",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "pnpm --filter @nekowite/desktop dev",
+    "build": "pnpm --filter @nekowite/desktop build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "tauri": "pnpm --filter @nekowite/desktop tauri"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8",
+    "@typescript-eslint/parser": "^8",
+    "eslint": "^9",
+    "eslint-plugin-vue": "^9",
+    "vue-eslint-parser": "^9"
+  }
+}
