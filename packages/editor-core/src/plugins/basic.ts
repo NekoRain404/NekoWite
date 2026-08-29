@@ -4,9 +4,12 @@ import { history } from '@milkdown/plugin-history'
 import { listener } from '@milkdown/plugin-listener'
 import type { MilkdownPlugin } from '@milkdown/ctx'
 
+import { mdxComponent } from '../mdx'
+
 export const basicPlugins: MilkdownPlugin[] = [
   ...commonmark,
   ...gfm.flat(),
   ...history.flat(),
   listener,
+  mdxComponent,
 ]
