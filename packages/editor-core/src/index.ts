@@ -1,3 +1,4 @@
 export * from './editor'
 export * from './plugins/basic'
 export * from './mdx'
+export * from './registry'
