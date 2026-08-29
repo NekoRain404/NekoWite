@@ -5,9 +5,12 @@ import TabBar from './ui/TabBar.vue'
 import StatusBar from './ui/StatusBar.vue'
 import SettingsPanel from './ui/SettingsPanel.vue'
 import EditorPane from './ui/EditorPane.vue'
+import Toast from './components/AppToast.vue'
+import ConflictDialog from './components/ConflictDialog.vue'
 
 const vaultPath = ref<string | null>(null)
 const showSettings = ref(false)
+const conflict = ref<{ tabId: string; path: string } | null>(null)
 
 onMounted(() => {
   const saved = localStorage.getItem('nekowite.vault')
@@ -17,6 +20,10 @@ onMounted(() => {
 function onOpenFolder(path: string): void {
   vaultPath.value = path
   localStorage.setItem('nekowite.vault', path)
+}
+
+function onConflict(req: { tabId: string; path: string }): void {
+  conflict.value = req
 }
 </script>
 
@@ -37,6 +44,7 @@ function onOpenFolder(path: string): void {
         v-if="vaultPath"
         :vault="vaultPath"
         @open-folder="onOpenFolder"
+        @conflict="onConflict"
       />
       <section class="main">
         <TabBar />
@@ -48,6 +56,13 @@ function onOpenFolder(path: string): void {
       v-if="showSettings"
       @close="showSettings = false"
       @saved="onOpenFolder"
+    />
+    <Toast />
+    <ConflictDialog
+      v-if="conflict"
+      :tab-id="conflict.tabId"
+      :path="conflict.path"
+      @close="conflict = null"
     />
   </div>
 </template>

@@ -5,6 +5,7 @@ import type { NekoEditor } from '@nekowite/editor-core'
 import { setCalloutView } from '../plugins/callout'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
+import { notifyError } from '../services/errors'
 
 const tabs = useTabsStore()
 const view = useViewStore()
@@ -21,6 +22,9 @@ async function applyContent(content: string): Promise<void> {
   applyingExternal = true
   try {
     await editor.open(content)
+  } catch {
+    notifyError('文档解析失败，已切换到源码视图，请检查文档格式')
+    view.setMode('source')
   } finally {
     applyingExternal = false
   }
@@ -80,6 +84,7 @@ watch(
   (content) => {
     if (applyingExternal) return
     if (content === undefined) return
+    if (view.mode === 'source') return
     gen++
     void applyContent(content)
   },

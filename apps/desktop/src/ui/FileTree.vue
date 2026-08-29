@@ -2,7 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { fsService } from '../services/fs'
-import type { FileEntry } from '../services/fs'
+import type { FileEntry, FsChangeEvent } from '../services/fs'
+import { decideConflict, notifyError } from '../services/errors'
 import { useTabsStore } from '../stores/tabs'
 
 interface TreeNode {
@@ -16,8 +17,12 @@ interface TreeNode {
 }
 
 const props = defineProps<{ vault: string }>()
-const emit = defineEmits<{ (e: 'open-folder', path: string): void }>()
+const emit = defineEmits<{
+  (e: 'open-folder', path: string): void
+  (e: 'conflict', req: { tabId: string; path: string }): void
+}>()
 
+const tabs = useTabsStore()
 const root = ref<TreeNode | null>(null)
 const unlisten = ref<UnlistenFn | null>(null)
 
@@ -39,6 +44,8 @@ async function listChildren(node: TreeNode): Promise<void> {
   try {
     const entries = await fsService.list(node.path)
     node.children = entries.filter((e) => !(e.is_dir && e.name === 'node_modules')).map(makeNode)
+  } catch {
+    notifyError(`无法读取目录：${node.path}`)
   } finally {
     node.loading = false
   }
@@ -65,12 +72,36 @@ async function toggle(node: TreeNode): Promise<void> {
 
 async function openFile(node: TreeNode): Promise<void> {
   if (node.is_dir) return
-  const tabs = useTabsStore()
   await tabs.openTab(node.path)
 }
 
-async function refresh(): Promise<void> {
-  if (root.value) await listChildren(root.value)
+function dirOf(path: string): string {
+  const i = path.lastIndexOf('/')
+  return i <= 0 ? path : path.slice(0, i)
+}
+
+async function refreshAncestors(path: string): Promise<void> {
+  const dir = dirOf(path)
+  const targets = new Set<TreeNode>()
+  if (root.value) targets.add(root.value)
+  for (const { node } of flat.value) {
+    if (!node.is_dir || !node.expanded) continue
+    if (dir === node.path || dir.startsWith(node.path + '/')) targets.add(node)
+  }
+  for (const t of targets) await listChildren(t)
+}
+
+async function handleFsChange(e: FsChangeEvent): Promise<void> {
+  const active = tabs.activeTab
+  if (active && active.path === e.path) {
+    const decision = decideConflict({ dirty: active.dirty, hasDiskChange: true })
+    if (decision === 'reload') {
+      await tabs.reloadFromDisk(active.id)
+    } else if (decision === 'ask') {
+      emit('conflict', { tabId: active.id, path: e.path })
+    }
+  }
+  await refreshAncestors(e.path)
 }
 
 async function pickFolder(): Promise<void> {
@@ -94,7 +125,7 @@ onMounted(async () => {
   resetRoot()
   await listChildren(root.value!)
   await fsService.watch(props.vault)
-  unlisten.value = await fsService.onFsChange(refresh)
+  unlisten.value = await fsService.onFsChange(handleFsChange)
 })
 
 onBeforeUnmount(() => {
@@ -106,6 +137,7 @@ watch(
   async () => {
     resetRoot()
     await listChildren(root.value!)
+    await fsService.watch(props.vault)
   },
 )
 </script>

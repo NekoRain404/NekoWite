@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { fsService } from '../services/fs'
+import { notifyError } from '../services/errors'
 
 export interface OpenTab {
   id: string
@@ -22,7 +23,14 @@ export const useTabsStore = defineStore('tabs', () => {
 
   async function openTab(path: string | null, initial = ''): Promise<void> {
     let content = initial
-    if (path) content = await fsService.read(path)
+    if (path) {
+      try {
+        content = await fsService.read(path)
+      } catch {
+        notifyError(`无法读取文件：${path}`)
+        return
+      }
+    }
     const tab: OpenTab = { id: nextId(), path, content, savedContent: content, dirty: false }
     tabs.value.push(tab)
     activeId.value = tab.id
@@ -49,17 +57,25 @@ export const useTabsStore = defineStore('tabs', () => {
   async function saveActive(): Promise<void> {
     const t = activeTab.value
     if (!t || !t.path) return
-    await fsService.write(t.path, t.content)
-    t.savedContent = t.content
-    t.dirty = false
+    try {
+      await fsService.write(t.path, t.content)
+      t.savedContent = t.content
+      t.dirty = false
+    } catch {
+      notifyError('保存失败，内容已保留在编辑器中，请重试')
+    }
   }
 
   async function reloadFromDisk(id: string): Promise<void> {
     const t = tabs.value.find((x) => x.id === id)
     if (!t || !t.path) return
-    t.content = await fsService.read(t.path)
-    t.savedContent = t.content
-    t.dirty = false
+    try {
+      t.content = await fsService.read(t.path)
+      t.savedContent = t.content
+      t.dirty = false
+    } catch {
+      notifyError(`无法重新加载文件：${t.path}，已保留当前内容`)
+    }
   }
 
   return { tabs, activeId, activeTab, openTab, closeTab, setActive, markDirty, saveActive, reloadFromDisk }
