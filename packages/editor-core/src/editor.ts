@@ -14,6 +14,7 @@ export interface NekoEditor {
   save(): Promise<string>
   getView(): EditorView
   onContentChange(cb: () => void): () => void
+  destroy(): void
 }
 
 export function createEditor(
@@ -65,6 +66,14 @@ export function createEditor(
     onContentChange(cb: () => void): () => void {
       changeHandlers.add(cb)
       return () => changeHandlers.delete(cb)
+    },
+    destroy() {
+      changeHandlers.clear()
+      void editor
+        .then((created) => {
+          if (created.status !== 'Destroyed') return created.destroy()
+        })
+        .catch(() => undefined)
     },
   }
 }

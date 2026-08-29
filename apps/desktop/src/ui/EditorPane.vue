@@ -46,6 +46,23 @@ watch(
   },
 )
 
+watch(
+  () => view.mode,
+  (mode, prev) => {
+    if (mode !== 'split' || prev === 'split' || syncing) return
+    // The pane that was visible before entering split is the reference:
+    // align the other pane to its scroll position once layout is done.
+    void nextTick(() => {
+      if (view.mode !== 'split' || syncing) return
+      if (prev === 'rendered') {
+        drive(sourcePane.value, renderedPane.value)
+      } else {
+        drive(renderedPane.value, sourcePane.value)
+      }
+    })
+  },
+)
+
 function handleCommand(id: string): void {
   const cmd = getCommand(id)
   if (cmd) {
@@ -110,6 +127,10 @@ onBeforeUnmount(() => {
 .pane {
   min-width: 0;
   overflow: auto;
+}
+.panes.source .pane,
+.panes.rendered .pane {
+  width: 100%;
 }
 .panes.split .pane {
   width: 50%;

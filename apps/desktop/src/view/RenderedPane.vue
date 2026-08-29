@@ -68,6 +68,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   unlistenChange?.()
+  editor?.destroy()
   editor = null
 })
 
