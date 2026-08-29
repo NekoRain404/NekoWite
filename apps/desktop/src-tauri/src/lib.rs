@@ -70,12 +70,21 @@ fn watch_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
     let mut watcher = RecommendedWatcher::new(
         move |res: Result<notify::Event, notify::Error>| {
             if let Ok(event) = res {
+                let kind = if event.kind.is_create() {
+                    "created"
+                } else if event.kind.is_modify() {
+                    "modified"
+                } else if event.kind.is_remove() {
+                    "removed"
+                } else {
+                    &format!("{:?}", event.kind).to_lowercase()
+                };
                 for path in event.paths {
                     let _ = app.emit(
                         "fs-change",
                         serde_json::json!({
                             "path": path.to_string_lossy(),
-                            "kind": format!("{:?}", event.kind),
+                            "kind": kind,
                         }),
                     );
                 }
