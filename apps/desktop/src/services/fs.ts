@@ -19,6 +19,7 @@ export const fsService = {
   write: (path: string, content: string) => invoke<void>('write_file', { path, content }),
   list: (dir: string) => invoke<FileEntry[]>('list_dir', { path: dir }),
   watch: (dir: string) => invoke<void>('watch_folder', { path: dir }),
+  openFolderDialog: () => invoke<string | null>('open_folder_dialog'),
   onFsChange: (cb: (e: FsChangeEvent) => void): Promise<UnlistenFn> =>
     listen<FsChangeEvent>('fs-change', (e) => cb(e.payload)),
 }
