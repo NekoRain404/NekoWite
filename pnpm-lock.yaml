@@ -132,7 +132,17 @@ importers:
         version: 3.2.7(@types/debug@4.1.13)(@types/node@26.4.0)(happy-dom@20.11.12)
 
   packages/plugin-host:
+    dependencies:
+      '@nekowite/editor-core':
+        specifier: workspace:*
+        version: link:../editor-core
+      vue:
+        specifier: ^3.5
+        version: 3.5.42(typescript@5.9.3)
     devDependencies:
+      '@types/node':
+        specifier: ^26
+        version: 26.4.0
       typescript:
         specifier: ~5.9
         version: 5.9.3
