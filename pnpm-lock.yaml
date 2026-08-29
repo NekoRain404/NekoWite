@@ -51,6 +51,9 @@ importers:
       eslint:
         specifier: ^9
         version: 9.39.5
+      happy-dom:
+        specifier: ^20.11.12
+        version: 20.11.12
       typescript:
         specifier: ~5.9
         version: 5.9.3

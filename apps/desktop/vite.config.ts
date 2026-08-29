@@ -5,4 +5,8 @@ export default defineConfig({
   plugins: [vue()],
   clearScreen: false,
   server: { port: 1420, strictPort: true },
+  test: {
+    environment: 'happy-dom',
+    include: ['src/**/*.test.ts'],
+  },
 })
