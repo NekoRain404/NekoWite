@@ -102,6 +102,12 @@ importers:
       remark-gfm:
         specifier: ^4
         version: 4.0.1
+      remark-parse:
+        specifier: ^11.0.0
+        version: 11.0.0
+      remark-stringify:
+        specifier: ^11.0.0
+        version: 11.0.0
       unified:
         specifier: ^11
         version: 11.0.5
@@ -109,6 +115,9 @@ importers:
         specifier: ^3.5
         version: 3.5.42(typescript@5.9.3)
     devDependencies:
+      '@types/mdast':
+        specifier: ^4.0.4
+        version: 4.0.4
       happy-dom:
         specifier: ^20.11.12
         version: 20.11.12

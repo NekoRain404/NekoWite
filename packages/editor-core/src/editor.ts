@@ -5,6 +5,7 @@ import type { EditorView } from '@milkdown/prose/view'
 import { getMarkdown } from '@milkdown/utils'
 
 import { basicPlugins } from './plugins/basic'
+import { roundTrip } from './serialize'
 
 export { basicPlugins }
 
@@ -53,7 +54,7 @@ export function createEditor(
     },
     async save() {
       const created = await editor
-      return created.action((ctx) => getMarkdown()(ctx))
+      return created.action((ctx) => roundTrip(getMarkdown()(ctx)))
     },
     getView() {
       if (!view) {
