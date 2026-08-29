@@ -10,14 +10,14 @@ describe('fsService', () => {
 
   it('reads a file', async () => {
     invokeMock.mockResolvedValue('# hi')
-    await expect(fsService.read('a.md')).resolves.toBe('# hi')
-    expect(invokeMock).toHaveBeenCalledWith('read_file', { path: 'a.md' })
+    await expect(fsService.read('/vault', 'a.md')).resolves.toBe('# hi')
+    expect(invokeMock).toHaveBeenCalledWith('read_file', { vault_root: '/vault', path: 'a.md' })
   })
 
   it('lists a directory', async () => {
-    invokeMock.mockResolvedValue([{ name: 'b.md', path: 'b.md', is_dir: false, is_mdx: true }])
-    const out = await fsService.list('.')
+    invokeMock.mockResolvedValue([{ name: 'b.md', path: '/vault/b.md', is_dir: false, is_mdx: true }])
+    const out = await fsService.list('/vault', '.')
     expect(out[0].name).toBe('b.md')
-    expect(invokeMock).toHaveBeenCalledWith('list_dir', { path: '.' })
+    expect(invokeMock).toHaveBeenCalledWith('list_dir', { vault_root: '/vault', path: '.' })
   })
 })

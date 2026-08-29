@@ -42,7 +42,7 @@ async function listChildren(node: TreeNode): Promise<void> {
   if (node.loading) return
   node.loading = true
   try {
-    const entries = await fsService.list(node.path)
+    const entries = await fsService.list(props.vault, node.path)
     node.children = entries.filter((e) => !(e.is_dir && e.name === 'node_modules')).map(makeNode)
   } catch {
     notifyError(`无法读取目录：${node.path}`)
@@ -135,9 +135,14 @@ onBeforeUnmount(() => {
 watch(
   () => props.vault,
   async () => {
+    // Drop the previous fs-change subscription before re-subscribing on a
+    // vault switch so handlers don't stack across vaults.
+    unlisten.value?.()
+    unlisten.value = null
     resetRoot()
     await listChildren(root.value!)
     await fsService.watch(props.vault)
+    unlisten.value = await fsService.onFsChange(handleFsChange)
   },
 )
 </script>

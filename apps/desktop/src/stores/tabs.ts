@@ -17,15 +17,24 @@ const nextId = () => `tab-${++seq}`
 export const useTabsStore = defineStore('tabs', () => {
   const tabs = ref<OpenTab[]>([])
   const activeId = ref<string | null>(null)
+  const vault = ref<string | null>(null)
   const activeTab = computed(
     () => tabs.value.find((t) => t.id === activeId.value) ?? null,
   )
 
+  function setVault(v: string): void {
+    vault.value = v
+  }
+
   async function openTab(path: string | null, initial = ''): Promise<void> {
     let content = initial
     if (path) {
+      if (!vault.value) {
+        notifyError('尚未打开 vault，无法读取文件')
+        return
+      }
       try {
-        content = await fsService.read(path)
+        content = await fsService.read(vault.value, path)
       } catch {
         notifyError(`无法读取文件：${path}`)
         return
@@ -56,9 +65,9 @@ export const useTabsStore = defineStore('tabs', () => {
 
   async function saveActive(): Promise<void> {
     const t = activeTab.value
-    if (!t || !t.path) return
+    if (!t || !t.path || !vault.value) return
     try {
-      await fsService.write(t.path, t.content)
+      await fsService.write(vault.value, t.path, t.content)
       t.savedContent = t.content
       t.dirty = false
     } catch {
@@ -68,9 +77,9 @@ export const useTabsStore = defineStore('tabs', () => {
 
   async function reloadFromDisk(id: string): Promise<void> {
     const t = tabs.value.find((x) => x.id === id)
-    if (!t || !t.path) return
+    if (!t || !t.path || !vault.value) return
     try {
-      t.content = await fsService.read(t.path)
+      t.content = await fsService.read(vault.value, t.path)
       t.savedContent = t.content
       t.dirty = false
     } catch {
@@ -78,5 +87,5 @@ export const useTabsStore = defineStore('tabs', () => {
     }
   }
 
-  return { tabs, activeId, activeTab, openTab, closeTab, setActive, markDirty, saveActive, reloadFromDisk }
+  return { tabs, activeId, activeTab, vault, setVault, openTab, closeTab, setActive, markDirty, saveActive, reloadFromDisk }
 })

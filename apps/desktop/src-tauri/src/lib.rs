@@ -1,7 +1,16 @@
 pub mod fs;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use std::sync::Mutex;
 use tauri::Emitter;
+
+struct WatcherState(Mutex<Option<RecommendedWatcher>>);
+
+impl Default for WatcherState {
+    fn default() -> Self {
+        Self(Mutex::new(None))
+    }
+}
 
 #[tauri::command]
 fn ping() -> String {
@@ -9,47 +18,18 @@ fn ping() -> String {
 }
 
 #[tauri::command]
-fn read_file(path: String) -> Result<String, String> {
-    let p = fs::sanitize_path(&path).map_err(|e| e.to_string())?;
-    std::fs::read_to_string(&p).map_err(|e| e.to_string())
+fn read_file(vault_root: String, path: String) -> Result<String, String> {
+    fs::read_file(&vault_root, &path)
 }
 
 #[tauri::command]
-fn write_file(path: String, content: String) -> Result<(), String> {
-    let p = fs::sanitize_path(&path).map_err(|e| e.to_string())?;
-    std::fs::write(&p, content).map_err(|e| e.to_string())
+fn write_file(vault_root: String, path: String, content: String) -> Result<(), String> {
+    fs::write_file(&vault_root, &path, &content)
 }
 
 #[tauri::command]
-fn list_dir(path: String) -> Result<Vec<fs::FileEntry>, String> {
-    let p = fs::sanitize_path(&path).map_err(|e| e.to_string())?;
-    let mut out = vec![];
-    let entries = std::fs::read_dir(&p).map_err(|e| e.to_string())?;
-    for entry in entries.flatten() {
-        let p2 = entry.path();
-        let name = p2
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-        let is_dir = p2.is_dir();
-        let path_str = p2.to_string_lossy().to_string();
-        let is_mdx = fs::is_mdx_path(&path_str);
-        if is_dir || is_mdx {
-            out.push(fs::FileEntry {
-                name,
-                path: path_str,
-                is_dir,
-                is_mdx: !is_dir && is_mdx,
-            });
-        }
-    }
-    out.sort_by(|a, b| {
-        (b.is_dir as u8)
-            .cmp(&(a.is_dir as u8))
-            .then(a.name.cmp(&b.name))
-    });
-    Ok(out)
+fn list_dir(vault_root: String, path: Option<String>) -> Result<Vec<fs::FileEntry>, String> {
+    fs::list_dir(&vault_root, path.as_deref())
 }
 
 #[tauri::command]
@@ -65,9 +45,17 @@ fn open_folder_dialog(app: tauri::AppHandle) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-fn watch_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    let p = fs::sanitize_path(&path).map_err(|e| e.to_string())?;
-    let mut watcher = RecommendedWatcher::new(
+fn watch_folder(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, WatcherState>,
+    vault_root: String,
+    path: Option<String>,
+) -> Result<(), String> {
+    let resolved = match path {
+        Some(p) => fs::resolve_within(&vault_root, &p)?,
+        None => fs::resolve_within(&vault_root, ".")?,
+    };
+    let mut new_watcher = RecommendedWatcher::new(
         move |res: Result<notify::Event, notify::Error>| {
             if let Ok(event) = res {
                 let kind = if event.kind.is_create() {
@@ -93,10 +81,12 @@ fn watch_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
         notify::Config::default(),
     )
     .map_err(|e| e.to_string())?;
-    watcher
-        .watch(&p, RecursiveMode::Recursive)
+    new_watcher
+        .watch(&resolved, RecursiveMode::Recursive)
         .map_err(|e| e.to_string())?;
-    std::mem::forget(watcher);
+    // Replacing the managed watcher drops the previous one, so a vault
+    // switch stops the abandoned watcher instead of stacking a new thread.
+    *state.0.lock().unwrap() = Some(new_watcher);
     Ok(())
 }
 
@@ -105,6 +95,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(WatcherState::default())
         .invoke_handler(tauri::generate_handler![
             ping,
             read_file,

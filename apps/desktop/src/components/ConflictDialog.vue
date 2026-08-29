@@ -36,7 +36,7 @@ function later(): void {
         class="conflict-btn primary"
         @click="reloadFromDisk"
       >
-        覆盖磁盘
+        以磁盘为准（放弃本地）
       </button>
       <button
         class="conflict-btn"
@@ -52,7 +52,7 @@ function later(): void {
       </button>
     </div>
     <div class="conflict-note">
-      覆盖磁盘将以磁盘内容为准并丢弃本地修改；保留本地则维持当前内容并保持未保存状态。
+      以磁盘为准将加载磁盘内容并放弃本地修改；保留本地则维持当前内容并保持未保存状态。
     </div>
   </div>
 </template>

@@ -11,11 +11,20 @@ describe('useTabsStore', () => {
   it('opens a tab and marks dirty on edit', async () => {
     readMock.mockResolvedValue('# hello')
     const s = useTabsStore()
-    await s.openTab('a.md')
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
     expect(s.tabs.length).toBe(1)
     expect(s.activeId).toBe(s.tabs[0].id)
+    expect(readMock).toHaveBeenCalledWith('/vault', '/vault/a.md')
     s.tabs[0].content = '# changed'
     s.markDirty(s.tabs[0].id)
     expect(s.tabs[0].dirty).toBe(true)
+  })
+
+  it('does not read without a vault set', async () => {
+    const s = useTabsStore()
+    await s.openTab('/vault/a.md')
+    expect(readMock).not.toHaveBeenCalled()
+    expect(s.tabs.length).toBe(0)
   })
 })

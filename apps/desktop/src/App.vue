@@ -7,19 +7,28 @@ import SettingsPanel from './ui/SettingsPanel.vue'
 import EditorPane from './ui/EditorPane.vue'
 import Toast from './components/AppToast.vue'
 import ConflictDialog from './components/ConflictDialog.vue'
+import { useTabsStore } from './stores/tabs'
+import { loadVaultPlugins } from './services/plugins'
 
+const tabs = useTabsStore()
 const vaultPath = ref<string | null>(null)
 const showSettings = ref(false)
 const conflict = ref<{ tabId: string; path: string } | null>(null)
 
+function applyVault(path: string): void {
+  vaultPath.value = path
+  tabs.setVault(path)
+  void loadVaultPlugins(path)
+}
+
 onMounted(() => {
   const saved = localStorage.getItem('nekowite.vault')
-  if (saved) vaultPath.value = saved
+  if (saved) applyVault(saved)
 })
 
 function onOpenFolder(path: string): void {
-  vaultPath.value = path
   localStorage.setItem('nekowite.vault', path)
+  applyVault(path)
 }
 
 function onConflict(req: { tabId: string; path: string }): void {
