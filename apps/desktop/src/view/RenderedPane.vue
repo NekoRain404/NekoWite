@@ -15,6 +15,7 @@ const editorEl = ref<HTMLElement | null>(null)
 let editor: NekoEditor | null = null
 let unlistenChange: (() => void) | null = null
 let applyingExternal = false
+let parseFailed = false
 let gen = 0
 
 async function applyContent(content: string): Promise<void> {
@@ -23,6 +24,7 @@ async function applyContent(content: string): Promise<void> {
   try {
     await editor.open(content)
   } catch {
+    parseFailed = true
     notifyError('文档解析失败，已切换到源码视图，请检查文档格式')
     view.setMode('source')
   } finally {
@@ -84,7 +86,20 @@ watch(
   (content) => {
     if (applyingExternal) return
     if (content === undefined) return
-    if (view.mode === 'source') return
+    if (parseFailed) return
+    gen++
+    void applyContent(content)
+  },
+)
+
+watch(
+  () => view.mode,
+  (mode) => {
+    if (!parseFailed) return
+    if (mode === 'source') return
+    parseFailed = false
+    const content = tabs.activeTab?.content
+    if (content === undefined) return
     gen++
     void applyContent(content)
   },
