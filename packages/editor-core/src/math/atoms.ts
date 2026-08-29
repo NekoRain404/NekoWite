@@ -2,7 +2,7 @@ import * as MathLiveNS from 'mathlive'
 
 type MathLiveGlobal = {
   convertLatexToMarkup?(latex: string): string
-  makeMathField?(el: HTMLElement, opts: Record<string, unknown>): MathEditorHandle
+  MathfieldElement?: typeof MathLiveNS.MathfieldElement
 }
 
 function getMathLive(): MathLiveGlobal {
@@ -36,27 +36,36 @@ export function createMathEditor(
   el: HTMLElement,
   options: { value?: string; onChange?: (latex: string) => void } = {},
 ): MathEditorHandle {
-  const { makeMathField } = getMathLive()
-  if (typeof makeMathField === 'function') {
-    const mf = makeMathField(el, {
-      value: options.value ?? '',
-      virtualKeyboardMode: 'onfocus',
-      onInput: () => options.onChange?.(mf.getValue()),
-    })
+  const { MathfieldElement: MFE } = getMathLive()
+  if (typeof MFE === 'function') {
+    const mfe = new MFE()
+    mfe.value = options.value ?? ''
+    const onInput = (): void => options.onChange?.(mfe.value)
+    mfe.addEventListener('input', onInput)
+    el.appendChild(mfe)
     return {
-      getValue: () => mf.getValue(),
-      setValue: (l) => mf.setValue(l),
+      getValue: () => mfe.value,
+      setValue: (l) => {
+        mfe.value = l
+      },
       dispose: () => {
-        const remover = (mf as unknown as { remove?: () => void }).remove
-        if (typeof remover === 'function') remover()
+        mfe.removeEventListener('input', onInput)
+        mfe.remove()
       },
     }
   }
   el.setAttribute('contenteditable', 'true')
-  ;(el as HTMLElement).textContent = options.value ?? ''
+  el.textContent = options.value ?? ''
+  const onInput = (): void => options.onChange?.(el.textContent ?? '')
+  el.addEventListener('input', onInput)
   return {
-    getValue: () => (el.textContent ?? ''),
-    setValue: (l) => { el.textContent = l },
-    dispose: () => { /* nothing */ },
+    getValue: () => el.textContent ?? '',
+    setValue: (l) => {
+      el.textContent = l
+    },
+    dispose: () => {
+      el.removeEventListener('input', onInput)
+      el.removeAttribute('contenteditable')
+    },
   }
 }
