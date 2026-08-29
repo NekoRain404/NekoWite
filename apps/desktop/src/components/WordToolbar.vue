@@ -46,8 +46,8 @@ function run(id: string): void {
 <template>
   <div class="word-toolbar">
     <button
-      v-for="b in buttons"
-      :key="`builtin-${b.id}-${b.title}`"
+      v-for="(b, i) in buttons"
+      :key="'builtin-' + i"
       class="tb-btn"
       :class="{ sep: b.id === 'separator' }"
       :title="b.title"
