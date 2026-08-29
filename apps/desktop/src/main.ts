@@ -7,6 +7,7 @@ import { calloutPlugin } from './plugins/callout'
 import { statusPlugin } from './plugins/status'
 import 'mathlive/static.css'
 import './style.css'
+import './math-dialog.css'
 
 async function activateBuiltins(): Promise<void> {
   const builtins: { meta: PluginMeta; definition: typeof calloutPlugin }[] = [

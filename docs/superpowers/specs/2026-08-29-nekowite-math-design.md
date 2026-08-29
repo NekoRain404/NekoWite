@@ -37,6 +37,7 @@
 - 解析：remark 管道 `use remarkMath`，`$…$`→`inlineMath`、`$$…$$`→`displayMath`。
 - 序列化：将 ast 节点文本写回 markdown；字符串 processor 配置 `singleDollarTextMath` 等以保持 `$…$` 形式。
 - 目标：`$E=mc^2$` → 保存 → 重开 → 仍为 `$E=mc^2$`（字节保真测试）。
+- 注解（已确认）：正文中孤立的裸 `$`（如价格 `$5`、货币说明）会被 remark-stringify 规范化转义为 markdown 字面形式 `\$`（`roundTrip('Cost is $5.')` → `Cost is \$5.`），幂等且语义无损；这属于 v1.1 认可的标准规范化，代码与测试均已固定该行为。
 
 ### 3.4 公式键盘
 

@@ -1,0 +1,72 @@
+.math-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.math-dialog {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+  padding: 16px 20px;
+  min-width: 420px;
+  max-width: 90vw;
+}
+
+.math-dialog-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.math-field-host {
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  padding: 8px;
+  margin: 12px 0;
+  display: block;
+  width: 100%;
+}
+
+.math-field-host math-field {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+}
+
+.math-mode-toggle {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.math-mode-toggle label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+}
+
+.math-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.math-actions button {
+  padding: 6px 14px;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  background: #f5f5f5;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.math-actions button.primary {
+  background: #4a6cf7;
+  border-color: #4a6cf7;
+  color: #fff;
+}
