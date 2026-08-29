@@ -1,5 +1,5 @@
 import type { MilkdownPlugin } from '@milkdown/ctx'
-import { editorViewCtx } from '@milkdown/core'
+import { editorViewCtx, EditorViewReady } from '@milkdown/core'
 import type { Node, Schema } from '@milkdown/prose/model'
 import type { EditorView } from '@milkdown/prose/view'
 
@@ -51,7 +51,8 @@ export function tableFeature(): void {
 }
 
 export const tableFeaturePlugin: MilkdownPlugin = (ctx) => {
-  return () => {
+  return async () => {
+    await ctx.wait(EditorViewReady)
     activeView = ctx.get(editorViewCtx)
   }
 }

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { createEditor } from '../editor'
 import { basicPlugins } from '../plugins/basic'
-import { insertTable, tableMarkdown } from './plugin'
+import { getCommand } from '../registry'
+import { insertTable, TABLE_COMMAND_ID, tableMarkdown } from './plugin'
 
 describe('tableMarkdown', () => {
   it('builds a gfm table markdown', () => {
@@ -22,6 +23,21 @@ describe('insertTable', () => {
     const md = await editor.save()
     expect(md).toContain('|')
     expect(md).toMatch(/^|/m)
+    expect(md).toContain('---')
+  })
+
+  it('table.insert command inserts through the captured editor view', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open('')
+
+    const cmd = getCommand(TABLE_COMMAND_ID)
+    expect(cmd).toBeDefined()
+    cmd?.run()
+
+    const md = await editor.save()
+    expect(md).toContain('|')
     expect(md).toContain('---')
   })
 })

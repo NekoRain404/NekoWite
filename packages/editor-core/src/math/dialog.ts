@@ -20,31 +20,47 @@ export function openMathDialog(view: EditorView, opts: OpenMathOptions): void {
   let mf: MathEditorHandle | null = null
   let resolved: 'inline' | 'display' = opts.mode
   let app: App | null = null
+  const isEditingExisting = opts.existingPos != null && opts.schema != null
 
-  const onConfirm = (): void => {
-    const latex = mf?.getValue() ?? ''
-    if (opts.existingPos != null && opts.schema) {
-      const tr = view.state.tr
-      const nodeType =
-        resolved === 'inline' ? opts.schema.nodes.math_inline : opts.schema.nodes.math_display
-      const node = nodeType.create({ latex })
-      view.dispatch(tr.replaceWith(opts.existingPos, opts.existingPos + 1, node))
-    } else {
-      insertMath(view, latex, resolved)
-    }
+  const cleanup = (): void => {
+    mf?.dispose()
+    mf = null
     app?.unmount()
+    app = null
     overlay.remove()
   }
 
+  const onConfirm = (): void => {
+    try {
+      const latex = mf?.getValue() ?? ''
+      if (!latex.trim()) {
+        cleanup()
+        return
+      }
+      const nodeMode = isEditingExisting ? opts.mode : resolved
+      if (opts.existingPos != null && opts.schema) {
+        const tr = view.state.tr
+        const nodeType =
+          nodeMode === 'inline' ? opts.schema.nodes.math_inline : opts.schema.nodes.math_display
+        const node = nodeType.create({ latex })
+        view.dispatch(tr.replaceWith(opts.existingPos, opts.existingPos + 1, node))
+      } else {
+        insertMath(view, latex, nodeMode)
+      }
+    } finally {
+      cleanup()
+    }
+  }
+
   const onCancel = (): void => {
-    app?.unmount()
-    overlay.remove()
+    cleanup()
   }
 
   app = createApp({
     setup() {
       const mode = ref<'inline' | 'display'>(opts.mode)
       const setMode = (m: 'inline' | 'display'): void => {
+        if (isEditingExisting) return
         resolved = m
         mode.value = m
       }

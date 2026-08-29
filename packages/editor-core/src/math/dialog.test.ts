@@ -89,4 +89,82 @@ describe('openMathDialog', () => {
     expect(md).toContain('$a+b$')
     editor.destroy()
   })
+
+  it('confirm with empty latex cancels without inserting', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open('')
+    const view = editor.getView()
+
+    openMathDialog(view, { mode: 'inline' })
+    const overlay = document.querySelector('.math-overlay')
+    const ok = Array.from(overlay?.querySelectorAll('button') ?? []).find(
+      (b) => b.textContent === '确定',
+    )
+    ok?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+    expect(document.querySelector('.math-overlay')).toBeNull()
+    const md = await editor.save()
+    expect(md).not.toContain('$')
+    editor.destroy()
+  })
+
+  it('confirm with existingPos replaces the node and preserves its mode', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open('Before $a+b$ after')
+    const view = editor.getView()
+
+    let existingPos: number | null = null
+    view.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'math_inline') {
+        existingPos = pos
+        return false
+      }
+      return true
+    })
+    expect(existingPos).not.toBeNull()
+
+    openMathDialog(view, { mode: 'inline', latex: 'a+b', existingPos, schema: view.state.schema })
+    const overlay = document.querySelector('.math-overlay')
+    const host = overlay?.querySelector('.math-field-host')
+    if (host) host.textContent = 'c+d'
+
+    const radios = Array.from(overlay?.querySelectorAll('input[type=radio]') ?? [])
+    radios[1]?.dispatchEvent(new MouseEvent('change', { bubbles: true }))
+
+    const ok = Array.from(overlay?.querySelectorAll('button') ?? []).find(
+      (b) => b.textContent === '确定',
+    )
+    ok?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+    expect(document.querySelector('.math-overlay')).toBeNull()
+    const md = await editor.save()
+    expect(md).toContain('$c+d$')
+    expect(md).not.toContain('$a+b$')
+    editor.destroy()
+  })
+
+  it('cancel disposes the math editor handle', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open('')
+    const view = editor.getView()
+
+    openMathDialog(view, { mode: 'inline' })
+    const overlay = document.querySelector('.math-overlay')
+    const host = overlay?.querySelector('.math-field-host')
+    if (host) host.setAttribute('contenteditable', 'true')
+
+    const cancel = Array.from(overlay?.querySelectorAll('button') ?? []).find(
+      (b) => b.textContent === '取消',
+    )
+    cancel?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+    expect(host?.getAttribute('contenteditable')).toBeNull()
+    editor.destroy()
+  })
 })
