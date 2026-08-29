@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { registerCommand, getCommand, registerComponent, getComponent, registerToolbar, getToolbar, registerAll } from './registry'
+import {
+  registerCommand,
+  getCommand,
+  registerComponent,
+  getComponent,
+  registerToolbar,
+  getToolbar,
+  registerAll,
+  unregisterCommand,
+  unregisterComponent,
+  unregisterToolbar,
+} from './registry'
 import { defineComponent, h } from 'vue'
 
 const Dummy = defineComponent({ setup: () => () => h('div', 'x') })
@@ -27,5 +38,29 @@ describe('registry', () => {
   it('throws on duplicate command id', () => {
     registerCommand({ id: 'dup', run: () => {} })
     expect(() => registerCommand({ id: 'dup', run: () => {} })).toThrow()
+  })
+  it('unregisters a command', () => {
+    const run = () => {}
+    registerCommand({ id: 'c-unreg', run })
+    expect(getCommand('c-unreg')?.run).toBe(run)
+    unregisterCommand('c-unreg')
+    expect(getCommand('c-unreg')).toBeUndefined()
+  })
+  it('unregisters a component', () => {
+    registerComponent('UnregComp', Dummy)
+    expect(getComponent('UnregComp')).toBe(Dummy)
+    unregisterComponent('UnregComp')
+    expect(getComponent('UnregComp')).toBeUndefined()
+  })
+  it('unregisters a toolbar item by id', () => {
+    registerToolbar({ id: 't-unreg', label: 'T', run: () => {} })
+    expect(getToolbar().some((t) => t.id === 't-unreg')).toBe(true)
+    unregisterToolbar('t-unreg')
+    expect(getToolbar().some((t) => t.id === 't-unreg')).toBe(false)
+  })
+  it('unregister of unknown id is a no-op', () => {
+    expect(() => unregisterCommand('no-such')).not.toThrow()
+    expect(() => unregisterComponent('no-such')).not.toThrow()
+    expect(() => unregisterToolbar('no-such')).not.toThrow()
   })
 })

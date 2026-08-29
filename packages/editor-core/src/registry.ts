@@ -34,6 +34,16 @@ export function registerToolbar(item: ToolbarItem): void {
 export function getToolbar(): ToolbarItem[] {
   return [...toolbar]
 }
+export function unregisterCommand(id: string): void {
+  commands.delete(id)
+}
+export function unregisterComponent(name: string): void {
+  components.delete(name)
+}
+export function unregisterToolbar(id: string): void {
+  const index = toolbar.findIndex((item) => item.id === id)
+  if (index >= 0) toolbar.splice(index, 1)
+}
 export function registerAll(batch: RegistrationBatch): void {
   for (const [name, comp] of Object.entries(batch.components ?? {})) registerComponent(name, comp)
   for (const item of batch.toolbar ?? []) registerToolbar(item)
