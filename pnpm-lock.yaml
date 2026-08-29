@@ -99,6 +99,9 @@ importers:
       '@milkdown/vue':
         specifier: ^7
         version: 7.22.1(@codemirror/language@6.12.4)(@codemirror/state@6.7.1)(@codemirror/view@6.43.9)(prosemirror-model@1.25.11)(prosemirror-state@1.4.4)(prosemirror-view@1.42.3)(typescript@5.9.3)(vue@3.5.42(typescript@5.9.3))
+      mathlive:
+        specifier: ^0.103
+        version: 0.103.0
       remark:
         specifier: ^15
         version: 15.0.1
@@ -267,6 +270,10 @@ packages:
 
   '@codemirror/view@6.43.9':
     resolution: {integrity: sha512-sTuUzTpPMFebRhg6dawChoKKgndIwfjmJgKVxBefPElcU2NwQ6AFroupk0SFqEerQyZOGRfDNnSN8Dw/lMAsXw==}
+
+  '@cortex-js/compute-engine@0.24.1':
+    resolution: {integrity: sha512-B9pLaZFC1vBrL64yR2LQWy2sj1E/+wtwIVokPuPqX8YWXwj9W2AMVyS9pSMN8gEdjpAC50nSmtL6110Rgi7dKA==}
+    engines: {node: '>=16.14.2', npm: '>=8.5.0'}
 
   '@esbuild/aix-ppc64@0.28.2':
     resolution: {integrity: sha512-XExcO+dvLKvVtNTibSTBej1NCAbaGhWn9Ww1ZPx80qsahhPFe/8jgWP0IchNe0F3HwkU7n8ejhH8bjonqht8mQ==}
@@ -1150,6 +1157,9 @@ packages:
     resolution: {integrity: sha512-OkTL9umf+He2DZkUq8f8J9of7yL6RJKI24dVITBmNfZBmri9zYZQrKkuXiKhyfPSu8tUhnVBB1iKXevvnlR4Ww==}
     engines: {node: '>= 12'}
 
+  complex.js@2.4.3:
+    resolution: {integrity: sha512-UrQVSUur14tNX6tiP4y8T4w4FeJAX3bi2cIv0pu/DTLFNxoq7z2Yh83Vfzztj6Px3X/lubqQ9IrPp7Bpn6p4MQ==}
+
   concat-map@0.0.1:
     resolution: {integrity: sha512-/Srv4dswyQNBfohGpz9o6Yb3Gz3SrUDqBH5rTuhGR7ahtlbYKnVxw2bCFMRljaA7EXHaXZ8wsHdodFvbkhKmqg==}
 
@@ -1180,6 +1190,9 @@ packages:
     peerDependenciesMeta:
       supports-color:
         optional: true
+
+  decimal.js@10.6.0:
+    resolution: {integrity: sha512-YpgQiITW3JXGntzdUmyUR1V812Hn8T1YVXhCu+wO3OpS4eU9l4YdD3qjyiKdV6mvV29zapkMeD390UVEf2lkUg==}
 
   decode-named-character-reference@1.3.0:
     resolution: {integrity: sha512-GtpQYB283KrPp6nRw50q3U9/VfOutZOe103qlN7BPP6Ad27xYnOIWv4lPzo8HCAL+mMZofJ9KEy30fq6MfaK6Q==}
@@ -1454,6 +1467,10 @@ packages:
 
   markdown-table@3.0.4:
     resolution: {integrity: sha512-wiYz4+JrLyb/DqW2hkFJxP7Vd7JuTDm77fvbM8VfEQdmSMqcImWeeRbHwZjBjIFki/VaMK2BhFi7oUUZeM5bqw==}
+
+  mathlive@0.103.0:
+    resolution: {integrity: sha512-gNJDMUOz0WePyDpLO/w1sGkrz0JrMwrT1QoFdGloVjjerWlUeKWn1JGM6XlO5SQ1AqXWemRKvlyVXft+QsxX8w==}
+    engines: {node: '>=16.14.2', npm: '>=8.5.0'}
 
   mdast-util-definitions@6.0.0:
     resolution: {integrity: sha512-scTllyX6pnYNZH/AIp/0ePz6s4cZtARxImwoPJ7kS42n+MnVsI4XbnG6d4ibehRIldYMWM2LD7ImQblVhUejVQ==}
@@ -2333,6 +2350,11 @@ snapshots:
       crelt: 1.0.7
       style-mod: 4.1.3
       w3c-keyname: 2.2.8
+
+  '@cortex-js/compute-engine@0.24.1':
+    dependencies:
+      complex.js: 2.4.3
+      decimal.js: 10.6.0
 
   '@esbuild/aix-ppc64@0.28.2':
     optional: true
@@ -3385,6 +3407,8 @@ snapshots:
 
   commander@8.3.0: {}
 
+  complex.js@2.4.3: {}
+
   concat-map@0.0.1: {}
 
   copy-anything@4.1.0: {}
@@ -3404,6 +3428,8 @@ snapshots:
   debug@4.4.3:
     dependencies:
       ms: 2.1.3
+
+  decimal.js@10.6.0: {}
 
   decode-named-character-reference@1.3.0:
     dependencies:
@@ -3697,6 +3723,10 @@ snapshots:
       '@jridgewell/sourcemap-codec': 1.6.0
 
   markdown-table@3.0.4: {}
+
+  mathlive@0.103.0:
+    dependencies:
+      '@cortex-js/compute-engine': 0.24.1
 
   mdast-util-definitions@6.0.0:
     dependencies:

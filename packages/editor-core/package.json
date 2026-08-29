@@ -20,6 +20,7 @@
     "@milkdown/prose": "7.22.1",
     "@milkdown/utils": "^7",
     "@milkdown/vue": "^7",
+    "mathlive": "^0.103",
     "remark": "^15",
     "remark-frontmatter": "^5",
     "remark-gfm": "^4",
