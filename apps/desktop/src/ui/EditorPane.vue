@@ -1,29 +1,52 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { createEditor, basicPlugins, getCommand } from '@nekowite/editor-core'
-import type { NekoEditor } from '@nekowite/editor-core'
+import { onBeforeUnmount, onMounted, nextTick, ref, watch } from 'vue'
+import { getCommand } from '@nekowite/editor-core'
+import { useViewStore } from '../stores/view'
 import { useTabsStore } from '../stores/tabs'
+import SourcePane from '../view/SourcePane.vue'
+import RenderedPane from '../view/RenderedPane.vue'
+import ViewSwitch from '../view/ViewSwitch.vue'
 import WordToolbar from '../components/WordToolbar.vue'
 
+const view = useViewStore()
 const tabs = useTabsStore()
 
-const editorEl = ref<HTMLElement | null>(null)
-let editor: NekoEditor | null = null
-let unlistenChange: (() => void) | null = null
-let applyingExternal = false
-let gen = 0
+const sourcePane = ref<InstanceType<typeof SourcePane> | null>(null)
+const renderedPane = ref<InstanceType<typeof RenderedPane> | null>(null)
+let syncing = false
 
-async function applyContent(content: string): Promise<void> {
-  if (!editor) return
-  applyingExternal = true
-  try {
-    await editor.open(content)
-  } finally {
-    applyingExternal = false
-  }
+interface ScrollPane {
+  getRatio(): number
+  setRatio(r: number): void
 }
 
-async function handleCommand(id: string): Promise<void> {
+function drive(dst: ScrollPane | null, src: ScrollPane | null): void {
+  if (!dst || !src) return
+  const ratio = src.getRatio()
+  syncing = true
+  dst.setRatio(ratio)
+  void nextTick(() => {
+    syncing = false
+  })
+}
+
+watch(
+  () => view.sourceScroll,
+  () => {
+    if (view.mode !== 'split' || syncing) return
+    drive(renderedPane.value, sourcePane.value)
+  },
+)
+
+watch(
+  () => view.renderedScroll,
+  () => {
+    if (view.mode !== 'split' || syncing) return
+    drive(sourcePane.value, renderedPane.value)
+  },
+)
+
+function handleCommand(id: string): void {
   const cmd = getCommand(id)
   if (cmd) {
     cmd.run()
@@ -40,54 +63,34 @@ function onKeydown(e: KeyboardEvent): void {
   }
 }
 
-onMounted(async () => {
-  if (!editorEl.value) return
-  editor = createEditor(editorEl.value, { plugins: basicPlugins })
-  const current = tabs.activeTab
-  if (current) await applyContent(current.content)
-
-  unlistenChange = editor.onContentChange(() => {
-    if (applyingExternal || !editor) return
-    void (async () => {
-      const active = tabs.activeTab
-      if (!active) return
-      const markdown = await editor!.save()
-      const myGen = gen
-      // only apply when the active tab hasn't switched underneath
-      if (tabs.activeTab?.id !== active.id) return
-      if (myGen !== gen) return
-      active.content = markdown
-      tabs.markDirty(active.id)
-    })()
-  })
-
+onMounted(() => {
   window.addEventListener('keydown', onKeydown)
 })
 
 onBeforeUnmount(() => {
-  unlistenChange?.()
   window.removeEventListener('keydown', onKeydown)
-  editor = null
 })
-
-watch(
-  () => tabs.activeTab?.content,
-  (content) => {
-    if (applyingExternal) return
-    if (content === undefined) return
-    gen++
-    void applyContent(content)
-  },
-)
 </script>
 
 <template>
   <div class="editor-pane">
     <WordToolbar @command="handleCommand" />
+    <ViewSwitch />
     <div
-      ref="editorEl"
-      class="editor-container"
-    />
+      class="panes"
+      :class="view.mode"
+    >
+      <SourcePane
+        v-show="view.mode !== 'rendered'"
+        ref="sourcePane"
+        class="pane source"
+      />
+      <RenderedPane
+        v-show="view.mode !== 'source'"
+        ref="renderedPane"
+        class="pane rendered"
+      />
+    </div>
   </div>
 </template>
 
@@ -99,9 +102,20 @@ watch(
   min-height: 0;
   overflow: hidden;
 }
-.editor-container {
+.panes {
   flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.pane {
+  min-width: 0;
   overflow: auto;
-  padding: 0 16px;
+}
+.panes.split .pane {
+  width: 50%;
+  border-right: 1px solid #e0e0e0;
+}
+.panes.split .pane:last-child {
+  border-right: none;
 }
 </style>
