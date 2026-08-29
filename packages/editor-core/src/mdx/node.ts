@@ -1,7 +1,9 @@
-import { $node } from '@milkdown/utils'
-import type { EditorView } from '@milkdown/prose/view'
+import { $node, $view } from '@milkdown/utils'
+import type { EditorView, NodeViewConstructor } from '@milkdown/prose/view'
+import { createApp, h, type App } from 'vue'
 
 import { escapeMdxText } from '../serialize'
+import { getComponent } from '../registry'
 
 export interface MdxComponentAttrs {
   name: string
@@ -27,9 +29,8 @@ export const mdxComponent = $node('mdxComponent', () => ({
   },
   parseMarkdown: {
     match: (node) =>
-      node.type === 'html' &&
-      typeof node.value === 'string' &&
-      /^<[A-Z][A-Za-z0-9]*/.test(node.value),
+      node.type === 'mdxJsxFlowElement' &&
+      typeof node.value === 'string',
     runner: (state, node, type) => {
       const attrs = parseMdxTag(node.value as string)
       state.addNode(type, attrs)
@@ -81,3 +82,49 @@ export function parseMdxTag(html: string): MdxComponentAttrs {
   const children = bodyMatch ? bodyMatch[1].trim() : ''
   return { name, props, children }
 }
+
+const mdxNodeView: NodeViewConstructor = (node) => {
+  const dom = document.createElement('div')
+  let app: App | null = null
+
+  const render = (): void => {
+    const { name, props, children } = node.attrs as MdxComponentAttrs
+    const component = getComponent(name)
+    if (app) {
+      app.unmount()
+      app = null
+    }
+    dom.replaceChildren()
+    if (component) {
+      dom.className = 'mdx-component'
+      app = createApp(h(component, { ...props, children }))
+      app.mount(dom)
+    } else {
+      dom.className = 'mdx-component mdx-component-placeholder'
+      const source = document.createElement('div')
+      source.className = 'mdx-component-source'
+      source.textContent = `<${name}>${children}</${name}>`
+      dom.appendChild(source)
+    }
+  }
+
+  render()
+
+  return {
+    dom,
+    update: (newNode) => {
+      if (newNode.type !== node.type) return false
+      node = newNode
+      render()
+      return true
+    },
+    destroy: () => {
+      if (app) {
+        app.unmount()
+        app = null
+      }
+    },
+  }
+}
+
+export const mdxComponentNodeView = $view(mdxComponent, () => mdxNodeView)

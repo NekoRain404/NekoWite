@@ -4,10 +4,12 @@ import { history } from '@milkdown/plugin-history'
 import { listener } from '@milkdown/plugin-listener'
 import type { MilkdownPlugin } from '@milkdown/ctx'
 
-import { mdxComponent } from '../mdx'
+import { mdxComponent, mdxComponentNodeView, mdxJsxRemark } from '../mdx'
 import { tableFeaturePlugin } from '../table/plugin'
 
 export const basicPlugins: MilkdownPlugin[] = [
+  ...mdxJsxRemark,
+  mdxComponentNodeView,
   ...commonmark,
   ...gfm.flat(),
   ...history.flat(),

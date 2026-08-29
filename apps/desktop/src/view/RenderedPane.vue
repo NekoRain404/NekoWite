@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createEditor, basicPlugins } from '@nekowite/editor-core'
 import type { NekoEditor } from '@nekowite/editor-core'
+import { setCalloutView } from '../plugins/callout'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 
@@ -48,6 +49,7 @@ defineExpose({ getRatio, setRatio })
 onMounted(async () => {
   if (!editorEl.value) return
   editor = createEditor(editorEl.value, { plugins: basicPlugins })
+  setCalloutView(editor.getView())
   const current = tabs.activeTab
   if (current) await applyContent(current.content)
 
@@ -67,6 +69,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  setCalloutView(null)
   unlistenChange?.()
   editor?.destroy()
   editor = null
