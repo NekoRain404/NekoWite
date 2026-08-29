@@ -26,22 +26,36 @@ function isCloseTag(value: string, name: string): boolean {
   return m !== null && m[1] === name
 }
 
+interface MergeResult {
+  node: MdNode
+  startIndex: number
+  endIndex: number
+}
+
 function tryMergeComponent(
   nodes: MdNode[],
   source: string,
-): { node: MdNode; endIndex: number } | null {
+): MergeResult | null {
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i]
     if (node.type !== 'html' || typeof node.value !== 'string') continue
 
     const selfClose = SELF_CLOSE_RE.exec(node.value)
     if (selfClose) {
-      return { node: { type: 'mdxJsxFlowElement', name: selfClose[1], value: node.value }, endIndex: i }
+      return {
+        node: { type: 'mdxJsxFlowElement', name: selfClose[1], value: node.value },
+        startIndex: i,
+        endIndex: i,
+      }
     }
 
     const inlineBlock = INLINE_BLOCK_RE.exec(node.value)
     if (inlineBlock) {
-      return { node: { type: 'mdxJsxFlowElement', name: inlineBlock[1], value: node.value }, endIndex: i }
+      return {
+        node: { type: 'mdxJsxFlowElement', name: inlineBlock[1], value: node.value },
+        startIndex: i,
+        endIndex: i,
+      }
     }
 
     const openName = isOpenTag(node.value)
@@ -62,37 +76,58 @@ function tryMergeComponent(
             .join('\n\n')
           value = `${node.value}\n\n${body}\n\n${cand.value}`
         }
-        return { node: { type: 'mdxJsxFlowElement', name: openName, value }, endIndex: j }
+        return { node: { type: 'mdxJsxFlowElement', name: openName, value }, startIndex: i, endIndex: j }
       }
     }
   }
   return null
 }
 
-function transform(nodes: MdNode[], file: { value?: unknown }): MdNode[] {
+const TEXT_BLOCK = new Set(['paragraph', 'listItem'])
+
+function transform(
+  nodes: MdNode[],
+  file: { value?: unknown },
+  inTextBlock = false,
+): MdNode[] {
   const out: MdNode[] = []
   const source = typeof file.value === 'string' ? file.value : ''
   let i = 0
   while (i < nodes.length) {
     const node = nodes[i]
 
-    if (node.type === 'paragraph' && node.children && node.children.length > 0) {
+    if (
+      !inTextBlock &&
+      node.type === 'paragraph' &&
+      node.children &&
+      node.children.length > 0
+    ) {
       const merged = tryMergeComponent(node.children, source)
-      if (merged && merged.endIndex === node.children.length - 1) {
+      if (
+        merged &&
+        merged.startIndex === 0 &&
+        merged.endIndex === node.children.length - 1
+      ) {
         out.push(merged.node)
         i += 1
         continue
       }
     }
 
-    const single = tryMergeComponent([node], source)
-    if (single) {
-      out.push(single.node)
-      i += 1
-      continue
+    if (!inTextBlock) {
+      const single = tryMergeComponent([node], source)
+      if (single) {
+        out.push(single.node)
+        i += 1
+        continue
+      }
     }
 
-    if (node.type === 'html' && typeof node.value === 'string') {
+    if (
+      !inTextBlock &&
+      node.type === 'html' &&
+      typeof node.value === 'string'
+    ) {
       const openName = isOpenTag(node.value)
       if (openName) {
         let found = false
@@ -123,7 +158,8 @@ function transform(nodes: MdNode[], file: { value?: unknown }): MdNode[] {
     }
 
     if (node.children && node.children.length > 0) {
-      out.push({ ...node, children: transform(node.children, file) })
+      const childIsTextBlock = TEXT_BLOCK.has(node.type)
+      out.push({ ...node, children: transform(node.children, file, childIsTextBlock) })
     } else {
       out.push(node)
     }

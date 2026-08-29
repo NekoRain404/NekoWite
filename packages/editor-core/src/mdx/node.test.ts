@@ -78,12 +78,52 @@ describe('insertMdxComponent', () => {
   })
 })
 
+describe('inline component data-loss regression', () => {
+  it('preserves leading text before an inline component', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el)
+    const input = 'intro text <Callout>note</Callout>'
+    await editor.open(input)
+    const md = await editor.save()
+    expect(md).toContain('intro text')
+    expect(md).toContain('<Callout')
+    expect(md).toContain('note')
+    expect(md).toContain('</Callout>')
+
+    await editor.open(md)
+    const md2 = await editor.save()
+    expect(md2).toContain('intro text')
+    expect(md2).toContain('<Callout')
+    expect(md2).toContain('note')
+  })
+
+  it('preserves trailing text after an inline component', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el)
+    const input = '<Callout>note</Callout> tail text'
+    await editor.open(input)
+    const md = await editor.save()
+    expect(md).toContain('<Callout')
+    expect(md).toContain('note')
+    expect(md).toContain('</Callout>')
+    expect(md).toContain('tail text')
+
+    await editor.open(md)
+    const md2 = await editor.save()
+    expect(md2).toContain('<Callout')
+    expect(md2).toContain('note')
+    expect(md2).toContain('tail text')
+  })
+})
+
 describe('mdxComponent node view rendering', () => {
   it('renders a placeholder for an unregistered component without throwing', async () => {
     const el = document.createElement('div')
     document.body.appendChild(el)
     const editor = createEditor(el)
-    await editor.open('<Note>hello</Note>')
+    await editor.open('<Note type="tip">hello</Note>')
 
     const host = el.querySelector('.mdx-component')
     expect(host).not.toBeNull()
@@ -91,6 +131,7 @@ describe('mdxComponent node view rendering', () => {
     const source = el.querySelector('.mdx-component-source')
     expect(source).not.toBeNull()
     expect(source!.textContent).toContain('hello')
+    expect(source!.textContent).toContain('type="tip"')
   })
 
   it('renders the registered Vue component when its name matches', async () => {

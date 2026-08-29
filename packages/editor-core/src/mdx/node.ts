@@ -103,7 +103,7 @@ const mdxNodeView: NodeViewConstructor = (node) => {
       dom.className = 'mdx-component mdx-component-placeholder'
       const source = document.createElement('div')
       source.className = 'mdx-component-source'
-      source.textContent = `<${name}>${children}</${name}>`
+      source.textContent = mdxComponentToMarkdown({ name, props, children })
       dom.appendChild(source)
     }
   }
