@@ -1,5 +1,3 @@
-import { readdir, readFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import type { PluginDefinition, PluginMeta } from './types'
 
 export type { PluginDefinition, PluginMeta } from './types'
@@ -26,6 +24,8 @@ export async function loadPlugin(meta: PluginMeta, dynamicImport: DynamicImport)
 }
 
 export async function loadPluginsFromDir(vaultPath: string): Promise<LoadedPlugin[]> {
+  const { readdir, readFile } = await import('node:fs/promises')
+  const { join } = await import('node:path')
   const entries = await readdir(vaultPath, { withFileTypes: true })
   const plugins: LoadedPlugin[] = []
   for (const entry of entries) {

@@ -8,6 +8,7 @@
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
+    "test:e2e": "pnpm --filter @nekowite/desktop exec playwright test",
     "tauri": "pnpm --filter @nekowite/desktop tauri"
   },
   "devDependencies": {

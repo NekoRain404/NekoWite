@@ -17,12 +17,24 @@ let unlistenChange: (() => void) | null = null
 let applyingExternal = false
 let parseFailed = false
 let gen = 0
+let calloutViewSet = false
 
 async function applyContent(content: string): Promise<void> {
   if (!editor) return
   applyingExternal = true
   try {
     await editor.open(content)
+    if (!calloutViewSet) {
+      try {
+        setCalloutView(editor.getView())
+        calloutViewSet = true
+      } catch {
+        // The editor view is expected to be ready once open() resolves.
+        parseFailed = true
+        notifyError('文档解析失败，已切换到源码视图，请检查文档格式')
+        view.setMode('source')
+      }
+    }
   } catch {
     parseFailed = true
     notifyError('文档解析失败，已切换到源码视图，请检查文档格式')
@@ -55,7 +67,6 @@ defineExpose({ getRatio, setRatio })
 onMounted(async () => {
   if (!editorEl.value) return
   editor = createEditor(editorEl.value, { plugins: basicPlugins })
-  setCalloutView(editor.getView())
   const current = tabs.activeTab
   if (current) await applyContent(current.content)
 
