@@ -42,10 +42,49 @@ function firstFamily(a: unknown): string {
   return ''
 }
 
-function stableKey(entry: Record<string, unknown>): string {
+// Keep Unicode letters/numbers (CJK included) so non-ASCII content survives slugging.
+function slugify(s: string): string {
+  return s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+}
+
+function contentDigest(entry: Record<string, unknown>): string {
+  const author = Array.isArray(entry.author)
+    ? entry.author.map(authorName).join('|')
+    : String(entry.author ?? '')
+  return `${author}||${String(entry.title ?? '')}||${String(entry.year ?? '')}`
+}
+
+function hash36(s: string): string {
+  let h = 5381
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) + h + s.charCodeAt(i)) >>> 0
+  }
+  return h.toString(36)
+}
+
+// Returns a key unique within `used`, appending a deterministic content-derived
+// disambiguator when the base slug is empty or already taken, so two distinct
+// entries never collapse to the same key.
+function uniqueKey(base: string, entry: Record<string, unknown>, used: Set<string>): string {
+  if (!used.has(base)) {
+    used.add(base)
+    return base
+  }
+  const digest = hash36(contentDigest(entry))
+  let key = `${base}-${digest}`
+  let n = 2
+  while (used.has(key)) {
+    key = `${base}-${digest}-${n}`
+    n++
+  }
+  used.add(key)
+  return key
+}
+
+function stableKey(entry: Record<string, unknown>, used: Set<string>): string {
   const id = entry.id ?? entry.key
   if (typeof id === 'string' && id && !id.startsWith('temp_id_')) {
-    return id
+    return uniqueKey(id, entry, used)
   }
   const author = Array.isArray(entry.author) ? entry.author[0] : entry.author
   const family = firstFamily(author)
@@ -55,16 +94,17 @@ function stableKey(entry: Record<string, unknown>): string {
   )
   const titleWords = String(entry.title ?? '')
     .toLowerCase()
-    .split(/[^a-z0-9]+/)
+    .split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean)
   const titleWord = titleWords.find((w) => !STOPWORDS.has(w)) ?? titleWords[0] ?? ''
-  const slug = `${family}${year}${titleWord}`.toLowerCase().replace(/[^a-z0-9]+/g, '')
-  return slug.slice(0, 30) || 'ref'
+  const base = slugify(`${family}${year}${titleWord}`).slice(0, 30) || 'ref'
+  return uniqueKey(base, entry, used)
 }
 
 export function parseRefs(text: string, format: RefFormat): Reference[] {
   try {
     const cite = new Cite(text, { forceType: FORCE_TYPE[format] })
+    const used = new Set<string>()
     return cite.data.map((entry: Record<string, unknown>) => {
       const authors = Array.isArray(entry.author)
         ? entry.author.map(authorName)
@@ -75,7 +115,7 @@ export function parseRefs(text: string, format: RefFormat): Reference[] {
         (entry.issued as { 'date-parts'?: number[][] } | undefined)?.['date-parts']?.[0]?.[0] ??
         String(entry.year ?? '')
       return {
-        key: stableKey(entry),
+        key: stableKey(entry, used),
         title: String(entry.title ?? ''),
         authors,
         year: String(year),

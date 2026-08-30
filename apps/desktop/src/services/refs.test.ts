@@ -92,4 +92,46 @@ ER  -`
     expect(a[0].key).not.toBe('')
     expect(a[0].key).toBe(b[0].key)
   })
+
+  it('keeps CJK characters in the slug so Chinese RIS refs get distinct keys per year', () => {
+    const RIS = `TY  - JOUR
+AU  - 张伟
+TI  - 关于神经网络的研究
+PY  - 2021
+ER  -
+TY  - JOUR
+AU  - 王芳
+TI  - 深度学习综述
+PY  - 2021
+ER  -`
+    const a = parseRefs(RIS, 'ris')
+    const b = parseRefs(RIS, 'ris')
+    expect(a.length).toBe(2)
+    expect(a[0].key).not.toBe(a[1].key)
+    expect(b[0].key).toBe(a[0].key)
+    expect(b[1].key).toBe(a[1].key)
+    expect(a[0].key).not.toBe('2021')
+    expect(a[1].key).not.toBe('2021')
+    expect(a[0].key).toContain('2021')
+    expect(a[1].key).toContain('2021')
+  })
+
+  it('disambiguates colliding base slugs deterministically so distinct entries never share a key', () => {
+    const RIS = `TY  - JOUR
+AU  - Smith, John
+TI  - The Study of Neural Networks
+PY  - 2021
+ER  -
+TY  - JOUR
+AU  - Smith, John
+TI  - The Study of Deep Learning
+PY  - 2021
+ER  -`
+    const a = parseRefs(RIS, 'ris')
+    const b = parseRefs(RIS, 'ris')
+    expect(a.length).toBe(2)
+    expect(a[0].key).not.toBe(a[1].key)
+    expect(b[0].key).toBe(a[0].key)
+    expect(b[1].key).toBe(a[1].key)
+  })
 })
