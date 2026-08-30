@@ -7,7 +7,7 @@ import { useRefsStore } from '../stores/refs'
 import { exportHtml, exportToPdf } from '../services/export'
 import { exportBaseName } from '../services/exportName'
 import { fsService } from '../services/fs'
-import { notifyError } from '../services/errors'
+import { describeExportError, notifyError } from '../services/errors'
 import type { ExportRef } from '@nekowite/editor-core'
 
 const emit = defineEmits<{ (e: 'close'): void; (e: 'saved', path: string): void }>()
@@ -39,12 +39,12 @@ function refsMap(): Map<string, ExportRef> {
 async function onExportHtml(): Promise<void> {
   const tab = tabs.activeTab
   if (!tab) return
-  const savePath = await fsService.saveFileDialog(exportBaseName(tab.path) + '.html')
+  const savePath = await fsService.saveFileDialog(exportBaseName(tab.path) + '.html', tabs.vault ?? undefined)
   if (!savePath) return
   try {
     await exportHtml(tab.content, tabs.vault ?? '', savePath, { title: exportBaseName(tab.path), refs: refsMap() })
   } catch (e) {
-    notifyError(`导出失败：${e instanceof Error ? e.message : String(e)}`)
+    notifyError(describeExportError(e))
   }
 }
 

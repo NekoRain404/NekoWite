@@ -45,14 +45,21 @@ fn open_folder_dialog(app: tauri::AppHandle) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-fn save_file_dialog(app: tauri::AppHandle, default_name: String) -> Result<Option<String>, String> {
+fn save_file_dialog(
+    app: tauri::AppHandle,
+    default_name: String,
+    start_dir: Option<String>,
+) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     use tauri_plugin_dialog::FilePath;
-    let path = app
+    let mut builder = app
         .dialog()
         .file()
-        .set_file_name(&default_name)
-        .blocking_save_file();
+        .set_file_name(&default_name);
+    if let Some(dir) = start_dir {
+        builder = builder.set_directory(dir);
+    }
+    let path = builder.blocking_save_file();
     Ok(path.and_then(|p| match p {
         FilePath::Path(p) => Some(p.to_string_lossy().to_string()),
         _ => None,

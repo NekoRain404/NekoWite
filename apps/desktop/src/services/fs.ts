@@ -24,8 +24,8 @@ export const fsService = {
   watch: (vault: string) =>
     invoke<void>('watch_folder', { vault_root: vault, path: null }),
   openFolderDialog: () => invoke<string | null>('open_folder_dialog'),
-  saveFileDialog: (defaultName: string) =>
-    invoke<string | null>('save_file_dialog', { default_name: defaultName }),
+  saveFileDialog: (defaultName: string, startDir?: string) =>
+    invoke<string | null>('save_file_dialog', { default_name: defaultName, start_dir: startDir ?? null }),
   onFsChange: (cb: (e: FsChangeEvent) => void): Promise<UnlistenFn> =>
     listen<FsChangeEvent>('fs-change', (e) => cb(e.payload)),
 }

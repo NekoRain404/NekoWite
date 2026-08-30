@@ -16,3 +16,12 @@ export function onNotify(cb: (msg: string) => void): () => void {
   listeners.add(cb)
   return () => listeners.delete(cb)
 }
+
+// Normalize export failures for display. The Tauri write command rejects
+// with the raw Rust error string, e.g. "path escapes vault" when the save
+// dialog returned a path outside the vault; map that to a user-facing hint.
+export function describeExportError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e)
+  if (msg.includes('path escapes vault')) return '请选择 vault 内的路径导出'
+  return `导出失败：${msg}`
+}
