@@ -11,6 +11,14 @@ describe('buildComponentRenderers', () => {
     expect(out).toContain('callout-info')
     expect(out).toContain('<b>hi</b>')
   })
+
+  it('escapes callout type before interpolating into the class attribute', () => {
+    const r = buildComponentRenderers()
+    const out = r.Callout?.({ type: 'warn" onclick="x()' }, '') ?? ''
+    // The quote is escaped so it cannot break out of the class attribute.
+    expect(out).toContain('callout-warn&quot; onclick=&quot;x()')
+    expect(out).not.toContain('class="callout callout-warn"') // no raw quote in the class value
+  })
 })
 
 describe('exportHtml', () => {
