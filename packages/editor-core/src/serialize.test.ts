@@ -39,4 +39,11 @@ describe('roundTrip', () => {
     // Known trade-off: intentional \[bracket\] also loses the backslash (raw-md fidelity).
     expect(roundTrip('literal \\[bracket\\] here.\n')).toBe('literal [bracket] here.\n')
   })
+
+  it('documents the residual round-trip of an escaped cite', () => {
+    // The editor keeps `\[@foo]` literal (see cite/remark.ts); on this serialize
+    // round trip handlers.text may still drop the now-literal backslash, so the
+    // escaped form degrades to a plain `[@foo]` (which reopens as a real cite).
+    expect(roundTrip('literal \\[@foo] here.\n')).toBe('literal [@foo] here.\n')
+  })
 })

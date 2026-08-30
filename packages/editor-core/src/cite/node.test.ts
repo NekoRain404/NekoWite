@@ -50,4 +50,62 @@ describe('cite editor integration', () => {
 
     expect(await editor.save()).toContain('[@smith2020]')
   })
+
+  it('parses a lone citation on its own line into a cite node', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open('[@a]\n')
+
+    const node = findCite(editor.getView().state.doc, 'a')
+    expect(node).not.toBeNull()
+    expect(await editor.save()).toContain('[@a]')
+  })
+
+  it('parses a citation wrapped in emphasis into a cite node', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open('*[@a]*')
+
+    const node = findCite(editor.getView().state.doc, 'a')
+    expect(node).not.toBeNull()
+  })
+
+  it('round-trips a lone citation byte-faithfully', () => {
+    expect(roundTrip('[@a]\n')).toBe('[@a]\n')
+    expect(roundTrip('*[@a]*\n')).toBe('*[@a]*\n')
+  })
+
+  it('keeps an escaped \\[@foo] as literal text without creating a cite node', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open('literal \\[@foo] here.')
+    const doc = editor.getView().state.doc
+    let cites = 0
+    doc.descendants((n) => {
+      if (n.type.name === 'cite') cites++
+      return true
+    })
+    expect(cites).toBe(0)
+    expect(doc.textContent).toContain('[@foo]')
+    editor.destroy()
+  })
+
+  it('keeps an escaped \\[@foo] literal while still parsing unescaped cites around it', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open('See [@a] and \\[@b] and [@c].')
+    const doc = editor.getView().state.doc
+    const keys: string[] = []
+    doc.descendants((n) => {
+      if (n.type.name === 'cite') keys.push(String(n.attrs.key))
+      return true
+    })
+    expect(keys).toEqual(['a', 'c'])
+    expect(doc.textContent).toContain('[@b]')
+    editor.destroy()
+  })
 })
