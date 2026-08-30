@@ -1,5 +1,6 @@
 export * from './cite'
 export * from './editor'
+export * from './export'
 export * from './plugins/basic'
 export * from './math'
 export * from './mdx'
