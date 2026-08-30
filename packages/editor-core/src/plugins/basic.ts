@@ -4,7 +4,7 @@ import { history } from '@milkdown/plugin-history'
 import { listener } from '@milkdown/plugin-listener'
 import type { MilkdownPlugin } from '@milkdown/ctx'
 
-import { cite, citeRemark } from '../cite'
+import { cite, citeNodeView, citeRemark } from '../cite'
 import {
   mathDisplay,
   mathDisplayNodeView,
@@ -23,6 +23,7 @@ export const basicPlugins: MilkdownPlugin[] = [
   ...gfm.flat(),
   ...citeRemark,
   cite,
+  citeNodeView,
   ...mathRemark,
   mathInline,
   mathDisplay,
