@@ -8,6 +8,7 @@ import { exportHtml, exportToPdf } from '../services/export'
 import { exportBaseName } from '../services/exportName'
 import { fsService } from '../services/fs'
 import { describeExportError, notifyError } from '../services/errors'
+import { useSettingsStore } from '../stores/settings'
 import type { ExportRef } from '@nekowite/editor-core'
 
 const emit = defineEmits<{ (e: 'close'): void; (e: 'saved', path: string): void }>()
@@ -15,9 +16,21 @@ const emit = defineEmits<{ (e: 'close'): void; (e: 'saved', path: string): void 
 const view = useViewStore()
 const tabs = useTabsStore()
 const refs = useRefsStore()
+const settings = useSettingsStore()
 
 const vaultInput = ref(localStorage.getItem('nekowite.vault') ?? '')
 const hasActiveTab = computed(() => !!tabs.activeTab?.content)
+const showBaseUrl = computed(() => settings.provider === 'local' || settings.provider === 'custom')
+
+const AI_PROVIDERS = ['openai', 'anthropic', 'gemini', 'grok', 'local', 'custom']
+
+async function saveAiKey(): Promise<void> {
+  try {
+    await settings.saveKey()
+  } catch (e) {
+    notifyError(`保存 AI Key 失败：${e instanceof Error ? e.message : String(e)}`)
+  }
+}
 
 function saveVault(): void {
   const path = vaultInput.value.trim()
@@ -125,6 +138,58 @@ function onExportPdf(): void {
           </button>
         </div>
       </div>
+
+      <div class="settings-section ai-settings">
+        <span class="settings-label">AI 设置</span>
+        <label class="settings-field">
+          <span>Provider</span>
+          <select
+            v-model="settings.provider"
+          >
+            <option
+              v-for="p in AI_PROVIDERS"
+              :key="p"
+              :value="p"
+            >
+              {{ p }}
+            </option>
+          </select>
+        </label>
+        <label class="settings-field">
+          <span>Model</span>
+          <input
+            v-model="settings.model"
+            type="text"
+            placeholder="qwen2.5-coder:3b"
+          >
+        </label>
+        <label
+          v-if="showBaseUrl"
+          class="settings-field"
+        >
+          <span>Base URL</span>
+          <input
+            v-model="settings.baseUrl"
+            type="text"
+            placeholder="http://localhost:1234/v1"
+          >
+        </label>
+        <label class="settings-field">
+          <span>API Key</span>
+          <input
+            v-model="settings.apiKey"
+            type="password"
+            placeholder="sk-..."
+          >
+        </label>
+        <button
+          class="settings-save"
+          @click="saveAiKey"
+        >
+          保存 Key
+        </button>
+        <span class="settings-note">Key 经过加密存储，默认为主密码保护（本机文件级）。</span>
+      </div>
     </div>
   </div>
 </template>
@@ -161,12 +226,15 @@ function onExportPdf(): void {
 .settings-close:hover { color: #333; }
 .settings-body { padding: 12px; display: flex; flex-direction: column; gap: 14px; }
 .settings-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
-.settings-field input {
+.settings-field input,
+.settings-field select {
   padding: 6px 8px;
   border: 1px solid #ccc;
   border-radius: 4px;
   font-size: 13px;
+  background: #fff;
 }
+.settings-note { font-size: 12px; color: #888; }
 .settings-save {
   padding: 6px 12px;
   border: 1px solid #ccc;

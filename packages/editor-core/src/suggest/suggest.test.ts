@@ -50,6 +50,16 @@ describe('suggestion ghost text', () => {
     editor.destroy()
   })
 
+  it('hasSuggestion is false for an empty suggestion', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open('Hi')
+    editor.setSuggestion('')
+    expect(editor.hasSuggestion()).toBe(false)
+    editor.destroy()
+  })
+
   it('clears suggestion when the user types', async () => {
     const el = document.createElement('div')
     document.body.appendChild(el)
@@ -87,6 +97,19 @@ describe('suggestion ghost text', () => {
     const view = editor.getView()
     view.dispatch(view.state.tr.insertText('X'))
     expect(events).toEqual(['cleared'])
+    editor.destroy()
+  })
+
+  it('onSuggestionChange fires rejected once on reject', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open('Hello ')
+    const events: string[] = []
+    editor.onSuggestionChange((s) => events.push(s))
+    editor.setSuggestion('world')
+    editor.rejectSuggestion()
+    expect(events).toEqual(['rejected'])
     editor.destroy()
   })
 })

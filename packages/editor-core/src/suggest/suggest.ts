@@ -67,5 +67,5 @@ export function rejectSuggestion(view: EditorView): void {
 }
 
 export function hasSuggestion(view: EditorView): boolean {
-  return (SUGGESTION_KEY.getState(view.state)?.text ?? null) !== null
+  return !!SUGGESTION_KEY.getState(view.state)?.text
 }

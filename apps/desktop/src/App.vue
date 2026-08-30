@@ -9,12 +9,15 @@ import SettingsPanel from './ui/SettingsPanel.vue'
 import EditorPane from './ui/EditorPane.vue'
 import Toast from './components/AppToast.vue'
 import ConflictDialog from './components/ConflictDialog.vue'
+import GhostWriter from './components/GhostWriter.vue'
 import { useTabsStore } from './stores/tabs'
 import { useRefsStore } from './stores/refs'
+import { useSettingsStore } from './stores/settings'
 import { loadVaultPlugins } from './services/plugins'
 
 const tabs = useTabsStore()
 const refs = useRefsStore()
+const settings = useSettingsStore()
 const vaultPath = ref<string | null>(null)
 const showSettings = ref(false)
 const conflict = ref<{ tabId: string; path: string } | null>(null)
@@ -27,6 +30,7 @@ function applyVault(path: string): void {
 }
 
 onMounted(() => {
+  void settings.loadKey()
   const saved = localStorage.getItem('nekowite.vault')
   if (saved) applyVault(saved)
 })
@@ -68,6 +72,7 @@ function onConflict(req: { tabId: string; path: string }): void {
       </section>
     </div>
     <StatusBar />
+    <GhostWriter />
     <SettingsPanel
       v-if="showSettings"
       @close="showSettings = false"

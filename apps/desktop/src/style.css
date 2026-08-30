@@ -20,3 +20,8 @@ body {
   padding: 2rem;
   text-align: center;
 }
+
+.ghost-text {
+  pointer-events: none;
+  color: #999;
+}
