@@ -13,6 +13,8 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
+      - run: pnpm --filter @nekowite/desktop build
+      - run: pnpm --filter @nekowite/desktop check:export-css
       - run: pnpm --filter @nekowite/desktop exec playwright install --with-deps chromium
       - run: pnpm test:e2e
   rust:
