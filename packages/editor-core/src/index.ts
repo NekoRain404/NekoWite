@@ -1,3 +1,4 @@
+export * from './cite'
 export * from './editor'
 export * from './plugins/basic'
 export * from './math'

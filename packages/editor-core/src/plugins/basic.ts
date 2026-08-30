@@ -4,6 +4,7 @@ import { history } from '@milkdown/plugin-history'
 import { listener } from '@milkdown/plugin-listener'
 import type { MilkdownPlugin } from '@milkdown/ctx'
 
+import { cite, citeRemark } from '../cite'
 import {
   mathDisplay,
   mathDisplayNodeView,
@@ -20,6 +21,8 @@ export const basicPlugins: MilkdownPlugin[] = [
   mdxComponentNodeView,
   ...commonmark,
   ...gfm.flat(),
+  ...citeRemark,
+  cite,
   ...mathRemark,
   mathInline,
   mathDisplay,

@@ -11,7 +11,18 @@ const processor = unified()
   .use(remarkGfm)
   .use(remarkFrontmatter, ['yaml'])
   .use(remarkMath)
-  .use(remarkStringify, { bullet: '-', emphasis: '*', strong: '*', fences: true })
+  .use(remarkStringify, {
+    bullet: '-',
+    emphasis: '*',
+    strong: '*',
+    fences: true,
+    handlers: {
+      text: (node, _parent, state, info) =>
+        state.safe(node.value, info)
+          .replace(/\\\[/g, '[')
+          .replace(/\\\]/g, ']'),
+    },
+  })
 
 export function parseMarkdown(md: string): Root {
   return processor.parse(md)
