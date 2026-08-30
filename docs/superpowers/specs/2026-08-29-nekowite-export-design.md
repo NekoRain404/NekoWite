@@ -53,6 +53,7 @@ interface RenderDocumentOptions<TId = string> {
 
 **html renderer 要点**（按节点类型）：
 - 常规节点：heading/paragraph/list/blockquote/strong/em/code/inlineCode/link/image/thematicBreak/frontmatter/yaml 等 → 语义化 HTML。
+- 原始 `html` 节点：导出侧将其转义为可见文本（XSS 安全默认），与编辑器「渲染为真实 HTML」有意的行为差异，见 §3.2 html.ts 注释。
 - `inlineMath`/`displayMath`：KaTeX `renderToString(value, { displayMode })`；若 KaTeX 不可用 → 输出 `<span class="math-latex">$…$</span>` 降级。
 - `nekoCite`：`[n]`（n 由首现顺序编号，opts.refs 查找不到仍编号但标注「(未找到)」）。
 - `mdxJsxFlowElement`：若 `componentRenderers[name]` 存在 → 调它（存名/attrs/childrenHtml）；否则输出中性占位（如 `<div class="mdx-fallback">…源码…</div>`）。

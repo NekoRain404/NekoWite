@@ -37,6 +37,24 @@ describe('renderDocument', () => {
     expect(html).toContain('Heads up')
   })
 
+  it('keeps citations inside mdx component children literal (aligned with editor)', () => {
+    const refs = new Map<string, ExportRef>()
+    refs.set('a', { key: 'a', title: 'Alpha', authors: ['Smith'], year: '2020' })
+    const renderers = {
+      Callout: (props: Record<string, string>, childrenHtml: string) =>
+        `<aside class="callout callout-${props.type ?? 'info'}"><div class="callout-body">${childrenHtml}</div></aside>`,
+    }
+    const html = renderDocument('<Callout type="warn">See [@a]</Callout>\n\nSee [@a].\n', { refs, componentRenderers: renderers })
+    // Component children render the literal [@a], NOT a numbered span.
+    expect(html).toContain('callout-body"><p>See [@a]</p>')
+    expect(html.match(/<span class="cite">/g)).toHaveLength(1) // only the main-body cite
+    // The [@a] inside the component is NOT registered in the reference list.
+    expect(html.match(/参考文献/)).toBeTruthy()
+    expect(html.match(/<li>\[\d+\]/g)).toHaveLength(1) // only the main-body cite in refs
+    expect(html).toContain('>1<') // main-body [@a] still numbered 1
+    expect(html).not.toContain('>2<')
+  })
+
   it('degrades math to latex when math=text', () => {
     const html = renderDocument('$E=mc^2$\n', { math: 'text' })
     expect(html).not.toContain('katex')

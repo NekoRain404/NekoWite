@@ -58,6 +58,11 @@ interface RenderContext {
   refs?: Map<string, ExportRef>
   componentRenderers?: Record<string, ComponentRenderer>
   citeNumbers: Map<string, number>
+  // When true, nekoCite nodes render their literal `[@key]` source text
+  // instead of a number. Mirrors the editor, which treats an mdx component
+  // as an atom whose children are opaque — cites inside a component body are
+  // never numbered nor registered in the reference list.
+  literalCites?: boolean
 }
 
 const processor = unified()
@@ -89,13 +94,12 @@ function collectCiteOrder(nodes: RenderNode[], numbers: Map<string, number>): vo
     if (node.type === 'nekoCite' && typeof node.value === 'string') {
       const key = citeKey(node.value)
       if (!numbers.has(key)) numbers.set(key, numbers.size + 1)
-    } else if (
-      node.type === 'mdxJsxFlowElement' &&
-      typeof node.value === 'string'
-    ) {
-      const { children } = parseMdxTag(node.value)
-      if (children) collectCiteOrder(parseFragment(children), numbers)
+      continue
     }
+    // The editor treats an mdx component as an atom whose children are
+    // opaque, so citations inside a component body are never numbered nor
+    // added to the reference list. Do NOT descend into mdxJsxFlowElement.
+    if (node.type === 'mdxJsxFlowElement') continue
     if (node.children) collectCiteOrder(node.children as RenderNode[], numbers)
   }
 }
@@ -139,7 +143,9 @@ function renderMdx(node: RenderNode, ctx: RenderContext): string {
   const { name, props, children } = parseMdxTag(raw)
   const renderer = ctx.componentRenderers?.[name]
   if (renderer) {
-    const childrenHtml = renderChildren(parseFragment(children), ctx)
+    // Aligned with the editor: a component body is opaque, so its cites stay
+    // literal (literalCites) instead of being numbered.
+    const childrenHtml = renderChildren(parseFragment(children), { ...ctx, literalCites: true })
     return renderer(props, childrenHtml)
   }
   return `<div class="mdx-fallback">${escapeHtml(raw)}</div>`
@@ -220,6 +226,9 @@ function renderNode(node: RenderNode, ctx: RenderContext): string {
     case 'displayMath':
       return renderMath(node, ctx, true)
     case 'nekoCite': {
+      // Inside an mdx component body the cite is opaque source text (aligned
+      // with the editor): render the literal `[@key]` instead of a number.
+      if (ctx.literalCites) return escapeHtml(node.value ?? '')
       const key = citeKey(node.value ?? '')
       const number = ctx.citeNumbers.get(key) ?? ctx.citeNumbers.size + 1
       return `<span class="cite">${number}</span>`
@@ -227,6 +236,11 @@ function renderNode(node: RenderNode, ctx: RenderContext): string {
     case 'mdxJsxFlowElement':
       return renderMdx(node, ctx)
     case 'html':
+      // Intentional divergence from the editor: the editor renders inline
+      // raw HTML (e.g. `<span style=...>`) as live markup, but the export
+      // escapes it to visible text. Escaping is the XSS-safe default for
+      // untrusted markdown; if raw HTML support is ever needed it must be
+      // opt-in with sanitization. See spec §3.2.
       return escapeHtml(node.value ?? '')
     default:
       return renderChildren((node.children ?? []) as RenderNode[], ctx)
