@@ -3,6 +3,7 @@ import { gfm } from '@milkdown/preset-gfm'
 import { history } from '@milkdown/plugin-history'
 import { listener } from '@milkdown/plugin-listener'
 import type { MilkdownPlugin } from '@milkdown/ctx'
+import { $prose } from '@milkdown/utils'
 
 import { cite, citeNodeView, citeOrderSyncPlugin, citeRemark } from '../cite'
 import {
@@ -15,6 +16,7 @@ import {
 } from '../math'
 import { mdxComponent, mdxComponentNodeView, mdxJsxRemark } from '../mdx'
 import { tableFeaturePlugin } from '../table/plugin'
+import { suggestionPlugin } from '../suggest'
 
 export const basicPlugins: MilkdownPlugin[] = [
   ...mdxJsxRemark,
@@ -35,4 +37,5 @@ export const basicPlugins: MilkdownPlugin[] = [
   listener,
   mdxComponent,
   tableFeaturePlugin,
+  $prose(() => suggestionPlugin),
 ]
