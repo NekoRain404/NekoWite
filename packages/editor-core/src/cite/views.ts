@@ -1,4 +1,5 @@
-import { $view } from '@milkdown/utils'
+import { $view, $prose } from '@milkdown/utils'
+import { Plugin } from '@milkdown/prose/state'
 import type { EditorView } from '@milkdown/prose/view'
 import type { NodeViewConstructor } from '@milkdown/prose/view'
 import { cite } from './node'
@@ -17,6 +18,31 @@ export function computeCiteOrder(view: EditorView): Map<string, number> {
   return order
 }
 
+const chipRenderers = new Set<() => void>()
+
+function registerChipRenderer(render: () => void): () => void {
+  chipRenderers.add(render)
+  return () => {
+    chipRenderers.delete(render)
+  }
+}
+
+// ProseMirror does not call `update` on node views whose position merely shifts,
+// so chips go stale when a cite is inserted before existing ones. This prose
+// plugin re-renders every live chip on any doc-changing transaction.
+export const citeOrderSyncPlugin = $prose(
+  () =>
+    new Plugin({
+      view: () => ({
+        update: (view, prevState) => {
+          if (view.state.doc !== prevState.doc) {
+            chipRenderers.forEach((render) => render())
+          }
+        },
+      }),
+    }),
+)
+
 const makeCiteNodeView: NodeViewConstructor = (node, view, getPos) => {
   const dom = document.createElement('span')
   dom.className = 'cite-chip'
@@ -33,6 +59,7 @@ const makeCiteNodeView: NodeViewConstructor = (node, view, getPos) => {
     dom.title = citeToMarkdown(String(node.attrs.key ?? ''))
   }
   render()
+  const unregister = registerChipRenderer(render)
 
   return {
     dom,
@@ -43,7 +70,9 @@ const makeCiteNodeView: NodeViewConstructor = (node, view, getPos) => {
       render()
       return true
     },
-    destroy: () => undefined,
+    destroy: () => {
+      unregister()
+    },
   }
 }
 
