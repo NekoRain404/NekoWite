@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import FileTree from './ui/FileTree.vue'
+import RefSidebar from './ui/RefSidebar.vue'
+import ReferencesPanel from './ui/ReferencesPanel.vue'
 import TabBar from './ui/TabBar.vue'
 import StatusBar from './ui/StatusBar.vue'
 import SettingsPanel from './ui/SettingsPanel.vue'
@@ -8,9 +10,11 @@ import EditorPane from './ui/EditorPane.vue'
 import Toast from './components/AppToast.vue'
 import ConflictDialog from './components/ConflictDialog.vue'
 import { useTabsStore } from './stores/tabs'
+import { useRefsStore } from './stores/refs'
 import { loadVaultPlugins } from './services/plugins'
 
 const tabs = useTabsStore()
+const refs = useRefsStore()
 const vaultPath = ref<string | null>(null)
 const showSettings = ref(false)
 const conflict = ref<{ tabId: string; path: string } | null>(null)
@@ -19,6 +23,7 @@ function applyVault(path: string): void {
   vaultPath.value = path
   tabs.setVault(path)
   void loadVaultPlugins(path)
+  void refs.loadVault(path)
 }
 
 onMounted(() => {
@@ -55,9 +60,11 @@ function onConflict(req: { tabId: string; path: string }): void {
         @open-folder="onOpenFolder"
         @conflict="onConflict"
       />
+      <RefSidebar />
       <section class="main">
         <TabBar />
         <EditorPane />
+        <ReferencesPanel />
       </section>
     </div>
     <StatusBar />

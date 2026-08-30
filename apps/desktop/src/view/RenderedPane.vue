@@ -6,6 +6,7 @@ import { setCalloutView } from '../plugins/callout'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 import { notifyError } from '../services/errors'
+import { editorBridge } from '../services/editorBridge'
 
 const tabs = useTabsStore()
 const view = useViewStore()
@@ -67,6 +68,7 @@ defineExpose({ getRatio, setRatio })
 onMounted(async () => {
   if (!editorEl.value) return
   editor = createEditor(editorEl.value, { plugins: basicPlugins })
+  editorBridge.setEditor(editor)
   const current = tabs.activeTab
   if (current) await applyContent(current.content)
 
@@ -87,6 +89,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   setCalloutView(null)
+  editorBridge.setEditor(null)
   unlistenChange?.()
   editor?.destroy()
   editor = null
