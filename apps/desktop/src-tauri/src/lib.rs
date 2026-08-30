@@ -1,5 +1,6 @@
 pub mod ai;
 pub mod fs;
+pub mod keys;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::sync::Mutex;
@@ -118,8 +119,18 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_stronghold::Builder::new(|password: &str| {
+                use sha2::{Digest, Sha256};
+                let mut hasher = Sha256::new();
+                hasher.update(password.as_bytes());
+                hasher.finalize().to_vec()
+            })
+            .build(),
+        )
         .manage(WatcherState::default())
         .manage(ai::AiState::default())
+        .manage(keys::KeyVault::default())
         .invoke_handler(tauri::generate_handler![
             ping,
             read_file,
@@ -129,7 +140,10 @@ pub fn run() {
             save_file_dialog,
             watch_folder,
             ai::ai_complete,
-            ai::ai_cancel
+            ai::ai_cancel,
+            keys::store_ai_key,
+            keys::load_ai_key,
+            keys::set_master_password
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
