@@ -3,7 +3,18 @@ import { onBeforeUnmount, onMounted } from 'vue'
 import { aiService } from '../services/ai'
 import { editorBridge } from '../services/editorBridge'
 
+// Only handle Tab/Esc while the focus is actually inside the editor. A
+// window-wide handler would otherwise swallow Tab/Esc in dialogs or the
+// settings panel while a suggestion is active.
+function focusInsideEditor(): boolean {
+  const view = editorBridge.getView()
+  if (!view) return false
+  const active = document.activeElement
+  return !!active && view.dom.contains(active)
+}
+
 function onKeydown(e: KeyboardEvent): void {
+  if (!focusInsideEditor()) return
   const editor = editorBridge.getEditor()
   if (!editor) return
   let has = false
@@ -12,12 +23,18 @@ function onKeydown(e: KeyboardEvent): void {
   } catch {
     has = false
   }
-  if (!has) return
+  if (e.key !== 'Tab' && e.key !== 'Escape') return
+  if (e.key === 'Escape' && !has) return
+  e.preventDefault()
   if (e.key === 'Tab') {
-    e.preventDefault()
-    aiService.accept()
-  } else if (e.key === 'Escape') {
-    e.preventDefault()
+    if (has) {
+      // Second Tab accepts the live ghost text.
+      aiService.accept()
+    } else {
+      // First Tab with no pending suggestion triggers a new completion.
+      void aiService.triggerSuggestion()
+    }
+  } else {
     aiService.reject()
   }
 }

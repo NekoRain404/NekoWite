@@ -16,7 +16,7 @@ interface PrefixView {
 }
 
 export function buildAIPrompt(prefix: string): string {
-  return `Continue writing the following text. Only output the continuation, no preamble.\n\n${prefix}`
+  return `Continue writing the following text. Only output the continuation, no preamble.\n\n${prefix.trimEnd()}\n`
 }
 
 export function getCursorPrefix(view: PrefixView | null, maxChars = 200): string {
@@ -46,6 +46,11 @@ function cleanupListeners(): void {
 function cancelStream(): void {
   const id = activeId
   if (id) {
+    // Only the most-recently-cancelled stream can still be emitting stray
+    // events (its done/error hasn't necessarily been received yet); older
+    // cancelled ids were superseded by subsequent streams and filtered by the
+    // activeId check, so drop them here to keep cancelledIds bounded.
+    cancelledIds.clear()
     cancelledIds.add(id)
     void Promise.resolve(invoke('ai_cancel', { id })).catch(() => undefined)
   }
@@ -77,29 +82,46 @@ async function triggerSuggestion(
   let acc = ''
   let errorNotified = false
 
-  const offChunk = await listen<{ id: string; text: string }>('ai-chunk', (e) => {
-    if (cancelledIds.has(e.payload.id)) return
-    if (activeId !== null && activeId !== e.payload.id) return
-    if (activeId === null) activeId = e.payload.id
-    acc += e.payload.text
-    editor.setSuggestion(acc)
-  })
-  // Cleanup only for the stream we actually own. done/error for a stale id
-  // (or an id we never adopted, e.g. a cancelled stream's lingering event)
-  // must NOT wipe the current request's listeners.
-  const offDone = await listen<{ id: string; full: string }>('ai-done', (e) => {
-    if (activeId === null || e.payload.id !== activeId) return
+  try {
+    const offChunk = await listen<{ id: string; text: string }>('ai-chunk', (e) => {
+      if (cancelledIds.has(e.payload.id)) return
+      if (activeId !== null && activeId !== e.payload.id) return
+      if (activeId === null) activeId = e.payload.id
+      acc += e.payload.text
+      editor.setSuggestion(acc)
+    })
+    // Track each listener as it registers so a mid-registration rejection
+    // (e.g. the event system failing on `ai-done`) still cleans up the ones
+    // that already went in — no partially-registered listener leaks.
+    cleanups.push(offChunk)
+    // Cleanup only for the stream we actually own. done/error for a stale id
+    // (or an id we never adopted, e.g. a cancelled stream's lingering event)
+    // must NOT wipe the current request's listeners.
+    const offDone = await listen<{ id: string; full: string }>('ai-done', (e) => {
+      // A done/error for ANY id proves that stream has completed, so its
+      // cancelled-set entry (if it was cancelled) is no longer needed — prune it
+      // to keep cancelledIds bounded.
+      cancelledIds.delete(e.payload.id)
+      if (activeId === null || e.payload.id !== activeId) return
+      cleanupListeners()
+      activeId = null
+    })
+    cleanups.push(offDone)
+    const offError = await listen<{ id: string; message: string }>('ai-error', (e) => {
+      cancelledIds.delete(e.payload.id)
+      if (activeId === null || e.payload.id !== activeId) return
+      errorNotified = true
+      cleanupListeners()
+      activeId = null
+      notifyError(`AI 生成失败：${e.payload.message}`)
+    })
+    cleanups.push(offError)
+  } catch (e) {
     cleanupListeners()
     activeId = null
-  })
-  const offError = await listen<{ id: string; message: string }>('ai-error', (e) => {
-    if (activeId === null || e.payload.id !== activeId) return
-    errorNotified = true
-    cleanupListeners()
-    activeId = null
-    notifyError(`AI 生成失败：${e.payload.message}`)
-  })
-  cleanups = [offChunk, offDone, offError]
+    notifyError(e instanceof Error ? e.message : String(e))
+    return
+  }
 
   try {
     await invoke('ai_complete', { config, prompt })

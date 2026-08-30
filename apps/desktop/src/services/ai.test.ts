@@ -41,8 +41,11 @@ describe('aiService', () => {
     notifyErrorMock.mockReset()
   })
 
-  it('builds prompt from cursor prefix', () => {
-    expect(buildAIPrompt('The quick').endsWith('The quick')).toBe(true)
+  it('builds prompt from cursor prefix, ending with a continuation newline', () => {
+    const prompt = buildAIPrompt('The quick ')
+    expect(prompt).toContain('The quick')
+    expect(prompt).not.toContain('The quick ')
+    expect(prompt.endsWith('The quick\n')).toBe(true)
   })
 
   it('reads cursor prefix from the view', () => {
