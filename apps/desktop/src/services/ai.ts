@@ -75,27 +75,26 @@ async function triggerSuggestion(
   const prompt = buildAIPrompt(prefix)
 
   let acc = ''
-  const adopt = (id: string): void => {
-    if (cancelledIds.has(id)) return
-    if (activeId === null) activeId = id
-  }
-  const isStale = (id: string): boolean => cancelledIds.has(id) || (activeId !== null && activeId !== id)
+  let errorNotified = false
 
   const offChunk = await listen<{ id: string; text: string }>('ai-chunk', (e) => {
-    if (isStale(e.payload.id)) return
-    adopt(e.payload.id)
+    if (cancelledIds.has(e.payload.id)) return
+    if (activeId !== null && activeId !== e.payload.id) return
+    if (activeId === null) activeId = e.payload.id
     acc += e.payload.text
     editor.setSuggestion(acc)
   })
+  // Cleanup only for the stream we actually own. done/error for a stale id
+  // (or an id we never adopted, e.g. a cancelled stream's lingering event)
+  // must NOT wipe the current request's listeners.
   const offDone = await listen<{ id: string; full: string }>('ai-done', (e) => {
-    if (isStale(e.payload.id)) return
-    adopt(e.payload.id)
+    if (activeId === null || e.payload.id !== activeId) return
     cleanupListeners()
     activeId = null
   })
   const offError = await listen<{ id: string; message: string }>('ai-error', (e) => {
-    if (isStale(e.payload.id)) return
-    adopt(e.payload.id)
+    if (activeId === null || e.payload.id !== activeId) return
+    errorNotified = true
     cleanupListeners()
     activeId = null
     notifyError(`AI 生成失败：${e.payload.message}`)
@@ -107,7 +106,11 @@ async function triggerSuggestion(
   } catch (e) {
     cleanupListeners()
     activeId = null
-    notifyError(e instanceof Error ? e.message : String(e))
+    // Rust emits ai-error AND rejects the invoke; the event handler owns the
+    // toast, so swallow the raw rejection when an ai-error event was seen.
+    if (!errorNotified) {
+      notifyError(e instanceof Error ? e.message : String(e))
+    }
   }
 }
 

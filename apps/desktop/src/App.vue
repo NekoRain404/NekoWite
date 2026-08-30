@@ -30,7 +30,10 @@ function applyVault(path: string): void {
 }
 
 onMounted(() => {
-  void settings.loadKey()
+  void settings.loadKey().catch(() => {
+    // stronghold init/key-file errors are surfaced by the settings panel; a
+    // failed background load on startup should not reject the mount
+  })
   const saved = localStorage.getItem('nekowite.vault')
   if (saved) applyVault(saved)
 })
