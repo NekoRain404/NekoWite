@@ -34,4 +34,9 @@ describe('roundTrip', () => {
     const md = '---\ntitle: hello\n---\n\n# Body\n'
     expect(roundTrip(md)).toBe(md)
   })
+  it('documents the intentional-bracket un-escape trade-off', () => {
+    // remark-stringify escapes '['; handlers.text restores it so [@key] round-trips.
+    // Known trade-off: intentional \[bracket\] also loses the backslash (raw-md fidelity).
+    expect(roundTrip('literal \\[bracket\\] here.\n')).toBe('literal [bracket] here.\n')
+  })
 })

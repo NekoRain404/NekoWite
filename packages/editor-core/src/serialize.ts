@@ -17,6 +17,9 @@ const processor = unified()
     strong: '*',
     fences: true,
     handlers: {
+      // Un-escape brackets so [@key] citations round-trip byte-faithfully:
+      // remark-stringify escapes the opening '[' as '\['. Trade-off: a user's
+      // intentional \[bracket\] escape also loses the backslash on save.
       text: (node, _parent, state, info) =>
         state.safe(node.value, info)
           .replace(/\\\[/g, '[')
