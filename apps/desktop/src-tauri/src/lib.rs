@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod fs;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -118,6 +119,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(WatcherState::default())
+        .manage(ai::AiState::default())
         .invoke_handler(tauri::generate_handler![
             ping,
             read_file,
@@ -125,7 +127,9 @@ pub fn run() {
             list_dir,
             open_folder_dialog,
             save_file_dialog,
-            watch_folder
+            watch_folder,
+            ai::ai_complete,
+            ai::ai_cancel
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
