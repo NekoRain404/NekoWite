@@ -13,6 +13,10 @@
     "lint": "ESLINT_USE_FLAT_CONFIG=false eslint src --ext .ts,.vue"
   },
   "dependencies": {
+    "@citation-js/core": "^0.7",
+    "@citation-js/plugin-bibtex": "^0.7",
+    "@citation-js/plugin-csl": "^0.7",
+    "@citation-js/plugin-ris": "^0.7",
     "@nekowite/editor-core": "workspace:*",
     "@nekowite/plugin-host": "workspace:*",
     "@tauri-apps/api": "^2",
