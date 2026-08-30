@@ -168,15 +168,19 @@ function transform(
   return out
 }
 
+export function mdxJsxMdast(
+  tree: MdNode & { children: MdNode[] },
+  file: { value?: unknown },
+): void {
+  tree.children = transform(tree.children, file)
+}
+
 const mdxJsxRemark = $remark<'mdxJsxRemark', Record<string, unknown>>(
   'mdxJsxRemark',
-() =>
-      function mdxJsxRemark() {
-        return (tree, file) => {
-          const root = tree as MdNode & { children: MdNode[] }
-          root.children = transform(root.children, file)
-        }
-      },
+  () =>
+    function mdxJsxRemark() {
+      return mdxJsxMdast
+    },
 )
 
 export { mdxJsxRemark }

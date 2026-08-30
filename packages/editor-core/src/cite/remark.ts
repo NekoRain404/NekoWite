@@ -3,7 +3,7 @@ import { $remark } from '@milkdown/utils'
 interface MdNode {
   type: string
   value?: string
-  position?: { start: { offset: number }; end: { offset: number } }
+  position?: { start: { offset?: number }; end: { offset?: number } }
   children?: MdNode[]
 }
 
@@ -83,14 +83,18 @@ function transform(nodes: MdNode[], source: string): MdNode[] {
   return out
 }
 
+export function citeMdast(
+  tree: MdNode & { children: MdNode[] },
+  file: { value?: unknown },
+): void {
+  const source = typeof file?.value === 'string' ? file.value : ''
+  tree.children = transform(tree.children, source)
+}
+
 export const citeRemark = $remark<'citeRemark', Record<string, unknown>>(
   'citeRemark',
   () =>
     function citeRemark() {
-      return (tree: unknown, file: { value?: unknown } | undefined) => {
-        const root = tree as MdNode & { children: MdNode[] }
-        const source = typeof file?.value === 'string' ? file.value : ''
-        root.children = transform(root.children, source)
-      }
+      return citeMdast
     },
 )
