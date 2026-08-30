@@ -23,6 +23,8 @@ describe('renderDocument', () => {
     const html = renderDocument('See [@a] and [@b] and [@a].\n', { refs })
     expect(html).toContain('>1<')   // first [@a]
     expect(html).toContain('>2<')   // [@b]
+    expect(html.match(/>1</g)).toHaveLength(2)  // repeat [@a] reuses 1, never 3
+    expect(html).not.toContain('>3<')
     expect(html).toMatch(/参考文献/)
     expect(html).toContain('Alpha')
     expect(html).toContain('Beta')
