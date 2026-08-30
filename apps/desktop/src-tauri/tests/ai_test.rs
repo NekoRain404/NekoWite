@@ -1,4 +1,6 @@
-use nekowite_lib::ai::{build_prompt, parse_sse_line, resolve_endpoint, AIConfig};
+use nekowite_lib::ai::{
+    ai_id_for, build_prompt, next_ai_id, parse_sse_line, resolve_endpoint, AIConfig, SseBuffer,
+};
 
 #[test]
 fn prompt_continues_cursor() {
@@ -55,6 +57,25 @@ fn sse_parses_openai_delta() {
         &mut acc,
     );
     assert_eq!(delta.as_deref(), Some("Hello"));
+    assert_eq!(acc, "Hello", "delta must be aggregated into acc");
+}
+
+#[test]
+fn sse_aggregates_across_deltas() {
+    let mut acc = String::new();
+    let a = parse_sse_line(
+        r#"data: {"choices":[{"delta":{"content":"Hel"}}]}"#,
+        "openai",
+        &mut acc,
+    );
+    let b = parse_sse_line(
+        r#"data: {"choices":[{"delta":{"content":"lo"}}]}"#,
+        "openai",
+        &mut acc,
+    );
+    assert_eq!(a.as_deref(), Some("Hel"));
+    assert_eq!(b.as_deref(), Some("lo"));
+    assert_eq!(acc, "Hello");
 }
 
 #[test]
@@ -85,4 +106,60 @@ fn sse_ignores_other_lines() {
     assert_eq!(parse_sse_line(": keep-alive", "openai", &mut acc), None);
     assert_eq!(parse_sse_line("", "openai", &mut acc), None);
     assert_eq!(parse_sse_line(r#"data: [DONE]"#, "openai", &mut acc), None);
+}
+
+#[test]
+fn sse_reassembles_fragmented_chunk() {
+    let mut buf = SseBuffer::new();
+    let mut acc = String::new();
+
+    // network chunk 1 splits the data: line mid-JSON
+    let lines = buf.feed(r#"data: {"choices":[{"delta":{"content":"Hel"#);
+    assert!(lines.is_empty(), "partial line must stay buffered");
+
+    // chunk 2 completes the JSON but not the newline
+    let lines = buf.feed(r#"lo"}}]}"#);
+    assert!(lines.is_empty(), "line incomplete until newline arrives");
+
+    // chunk 3 terminates the line
+    let lines = buf.feed("\n");
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0], r#"data: {"choices":[{"delta":{"content":"Hello"}}]}"#);
+
+    let delta = parse_sse_line(&lines[0], "openai", &mut acc);
+    assert_eq!(delta.as_deref(), Some("Hello"));
+    assert_eq!(acc, "Hello");
+}
+
+#[test]
+fn sse_buffer_returns_multiple_complete_lines() {
+    let mut buf = SseBuffer::new();
+    let mut acc = String::new();
+    let lines = buf.feed(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\
+         data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n",
+    );
+    assert_eq!(lines.len(), 2);
+    let mut out = String::new();
+    for line in &lines {
+        if let Some(d) = parse_sse_line(line, "openai", &mut acc) {
+            out.push_str(&d);
+        }
+    }
+    assert_eq!(out, "Hello");
+    assert_eq!(acc, "Hello");
+}
+
+#[test]
+fn ai_ids_distinct_in_same_instant() {
+    // same micros, different sequence -> distinct ids (no collision)
+    assert_ne!(
+        ai_id_for(1_700_000_000_000_000, 1),
+        ai_id_for(1_700_000_000_000_000, 2)
+    );
+}
+
+#[test]
+fn ai_ids_unique_across_calls() {
+    assert_ne!(next_ai_id(), next_ai_id());
 }

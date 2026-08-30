@@ -1,6 +1,7 @@
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
@@ -24,12 +25,52 @@ pub struct AIChunk {
 #[derive(Default)]
 pub struct AiState(pub Mutex<HashSet<String>>);
 
-pub fn u32_ts() -> u64 {
+static AI_ID_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Format a completion id as `ai-{unix_micros}-{seq}`. The monotonic `seq`
+/// disambiguates calls that land in the same microsecond, so concurrent
+/// `ai_complete` invocations never share an id (which would let one finish
+/// cancel the other in the shared in-flight set).
+pub fn ai_id_for(micros: u64, seq: u64) -> String {
+    format!("ai-{micros}-{seq}")
+}
+
+/// Generate a unique id for a completion: unix-micros timestamp plus a
+/// process-local monotonic sequence counter.
+pub fn next_ai_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
+    let micros = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis() as u64
+        .as_micros() as u64;
+    let seq = AI_ID_SEQ.fetch_add(1, Ordering::Relaxed);
+    ai_id_for(micros, seq)
+}
+
+/// Rolling line buffer that reassembles SSE lines split across arbitrary-size
+/// network chunks. `feed` appends a raw chunk and returns the complete lines
+/// (without their trailing newline), keeping any trailing partial line buffered
+/// until its newline arrives. Without this, a `data:{...}` event split across
+/// two chunks would fail JSON parse in both halves and be silently dropped.
+#[derive(Default)]
+pub struct SseBuffer {
+    pending: String,
+}
+
+impl SseBuffer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn feed(&mut self, chunk: &str) -> Vec<String> {
+        self.pending.push_str(chunk);
+        let mut lines = Vec::new();
+        while let Some(nl) = self.pending.find('\n') {
+            let line = self.pending.drain(..=nl).collect::<String>();
+            lines.push(line.trim_end_matches(['\r', '\n']).to_string());
+        }
+        lines
+    }
 }
 
 pub fn build_prompt(cursor_prefix: &str) -> String {
@@ -143,7 +184,7 @@ pub async fn ai_complete(
     config: AIConfig,
     prompt: String,
 ) -> Result<(), String> {
-    let id = format!("ai-{}", u32_ts());
+    let id = next_ai_id();
     {
         let state = app.state::<AiState>();
         let mut inflight = state.0.lock().map_err(|e| e.to_string())?;
@@ -202,6 +243,7 @@ async fn stream_complete(
 
     let mut stream = response.bytes_stream();
     let mut full = String::new();
+    let mut buffer = SseBuffer::new();
     loop {
         if !is_active(app, id) {
             break;
@@ -209,8 +251,8 @@ async fn stream_complete(
         match stream.next().await {
             Some(Ok(chunk)) => {
                 let text = String::from_utf8_lossy(&chunk);
-                for line in text.lines() {
-                    if let Some(delta) = parse_sse_line(line, &config.provider, &mut full) {
+                for line in buffer.feed(&text) {
+                    if let Some(delta) = parse_sse_line(&line, &config.provider, &mut full) {
                         let _ = app.emit(
                             "ai-chunk",
                             AIChunk {
