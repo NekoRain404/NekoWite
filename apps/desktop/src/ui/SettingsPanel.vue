@@ -1,13 +1,23 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useViewStore } from '../stores/view'
 import type { ViewMode } from '../stores/view'
+import { useTabsStore } from '../stores/tabs'
+import { useRefsStore } from '../stores/refs'
+import { exportHtml, exportToPdf } from '../services/export'
+import { exportBaseName } from '../services/exportName'
+import { fsService } from '../services/fs'
+import { notifyError } from '../services/errors'
+import type { ExportRef } from '@nekowite/editor-core'
 
 const emit = defineEmits<{ (e: 'close'): void; (e: 'saved', path: string): void }>()
 
 const view = useViewStore()
+const tabs = useTabsStore()
+const refs = useRefsStore()
 
 const vaultInput = ref(localStorage.getItem('nekowite.vault') ?? '')
+const hasActiveTab = computed(() => !!tabs.activeTab?.content)
 
 function saveVault(): void {
   const path = vaultInput.value.trim()
@@ -18,6 +28,30 @@ function saveVault(): void {
 
 function setMode(m: ViewMode): void {
   view.setMode(m)
+}
+
+function refsMap(): Map<string, ExportRef> {
+  const m = new Map<string, ExportRef>()
+  for (const r of refs.refs.values()) m.set(r.key, { key: r.key, title: r.title, authors: r.authors, year: r.year })
+  return m
+}
+
+async function onExportHtml(): Promise<void> {
+  const tab = tabs.activeTab
+  if (!tab) return
+  const savePath = await fsService.saveFileDialog(exportBaseName(tab.path) + '.html')
+  if (!savePath) return
+  try {
+    await exportHtml(tab.content, tabs.vault ?? '', savePath, { title: exportBaseName(tab.path), refs: refsMap() })
+  } catch (e) {
+    notifyError(`导出失败：${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+
+function onExportPdf(): void {
+  const tab = tabs.activeTab
+  if (!tab) return
+  exportToPdf(tab.content, { title: exportBaseName(tab.path), refs: refsMap() })
 }
 </script>
 
@@ -70,6 +104,24 @@ function setMode(m: ViewMode): void {
             @click="setMode('split')"
           >
             Split
+          </button>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <span class="settings-label">导出 (当前文档)</span>
+        <div class="view-modes">
+          <button
+            :disabled="!hasActiveTab"
+            @click="onExportHtml"
+          >
+            导出 HTML
+          </button>
+          <button
+            :disabled="!hasActiveTab"
+            @click="onExportPdf"
+          >
+            导出 PDF
           </button>
         </div>
       </div>
@@ -136,4 +188,5 @@ function setMode(m: ViewMode): void {
   font-size: 12px;
 }
 .view-modes button.active { background: #4a90d9; color: #fff; border-color: #4a90d9; }
+.view-modes button:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>
