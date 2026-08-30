@@ -55,4 +55,41 @@ describe('parseRefs', () => {
     expect(parseRefs('this is not a reference format', 'bib')).toEqual([])
     expect(parseRefs('', 'ris')).toEqual([])
   })
+
+  it('derives a stable slug key for RIS entries (not a temp id)', () => {
+    const RIS = `TY  - JOUR
+AU  - Smith, John
+AU  - Doe, Jane
+TI  - The Great Paper on Neural Nets
+PY  - 2021
+ER  -`
+    const a = parseRefs(RIS, 'ris')
+    const b = parseRefs(RIS, 'ris')
+    expect(a.length).toBe(1)
+    const key = a[0].key
+    expect(key).not.toMatch(/^temp_id_/)
+    expect(b[0].key).toBe(key)
+    expect(key).toMatch(/^smith/)
+    expect(key).toMatch(/2021/)
+  })
+
+  it('prefers a stable citation-js id over the derived slug', () => {
+    const BIB = `@article{smith2020,
+  title = {A Great Paper},
+  author = {Smith, John},
+  year = {2020},
+}`
+    const refs = parseRefs(BIB, 'bib')
+    expect(refs[0].key).toBe('smith2020')
+  })
+
+  it('falls back to a generic slug when the entry has no stable fields', () => {
+    const EMPTY = `TY  - JOUR
+ER  -`
+    const a = parseRefs(EMPTY, 'ris')
+    const b = parseRefs(EMPTY, 'ris')
+    expect(a.length).toBe(1)
+    expect(a[0].key).not.toBe('')
+    expect(a[0].key).toBe(b[0].key)
+  })
 })
