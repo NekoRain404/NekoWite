@@ -90,6 +90,44 @@ fn sse_parses_anthropic_delta() {
 }
 
 #[test]
+fn sse_parses_anthropic_content_block_start() {
+    // Anthropic sends the FIRST text block inside content_block_start, not as a
+    // delta — it must not be dropped.
+    let mut acc = String::new();
+    let delta = parse_sse_line(
+        r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Hello"}}"#,
+        "anthropic",
+        &mut acc,
+    );
+    assert_eq!(delta.as_deref(), Some("Hello"));
+    assert_eq!(acc, "Hello", "content_block text must be aggregated into acc");
+
+    // A subsequent delta continues the same block.
+    let delta = parse_sse_line(
+        r#"data: {"type":"content_block_delta","delta":{"type":"text_delta","text":" world"}}"#,
+        "anthropic",
+        &mut acc,
+    );
+    assert_eq!(delta.as_deref(), Some(" world"));
+    assert_eq!(acc, "Hello world");
+}
+
+#[test]
+fn endpoint_embeds_gemini_key_in_query() {
+    let cfg = AIConfig {
+        provider: "gemini".into(),
+        model: "gemini-2.5-pro".into(),
+        base_url: None,
+        api_key: Some("sk-gem-key".into()),
+    };
+    let (url, _body) = resolve_endpoint(&cfg);
+    assert!(
+        url.contains("key=sk-gem-key"),
+        "gemini key must ride in the URL query, got: {url}"
+    );
+}
+
+#[test]
 fn sse_parses_gemini_delta() {
     let mut acc = String::new();
     let delta = parse_sse_line(

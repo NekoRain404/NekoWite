@@ -200,6 +200,19 @@ fn save_vault(stronghold: &Stronghold) -> Result<(), String> {
     stronghold.save().map_err(|e| e.to_string())
 }
 
+/// Tighten the snapshot file to mode `0600`, matching `master.key`. Stronghold
+/// writes the snapshot with the process default umask (typically `0644`), so
+/// after every write we re-set the perms to keep the key material private.
+fn tighten_snapshot_perms(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())
+}
+
+/// Tighten snapshot perms after a save at `{app_data_dir}/.nekowite/stronghold.bin`.
+fn tighten_saved_snapshot(app: &tauri::AppHandle) -> Result<(), String> {
+    tighten_snapshot_perms(&stronghold_path(app)?)
+}
+
 /// Store an API key for a provider in the stronghold vault. If the provider
 /// already has a key, it is overwritten. The snapshot is committed after each
 /// write so the key survives restarts.
@@ -214,7 +227,9 @@ pub fn store_ai_key(app: tauri::AppHandle, provider: String, key: String) -> Res
             .insert(provider_bytes.clone(), key_bytes.clone(), None)
             .map_err(|e| e.to_string())?;
         save_vault(stronghold)
-    })
+    })?;
+    tighten_saved_snapshot(&app)?;
+    Ok(())
 }
 
 /// Load the stored API key for a provider, or `None` if none has been saved.
@@ -282,6 +297,8 @@ pub fn reencrypt_vault(
         let _ = write_keyfile(key_path, &old_key);
         return Err(e.to_string());
     }
+    // The rename preserved the tmp file's umask-derived perms; tighten them.
+    tighten_snapshot_perms(snapshot_path)?;
     Ok(())
 }
 

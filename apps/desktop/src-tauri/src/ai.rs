@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 use tauri::{Emitter, Manager};
 
 #[derive(Deserialize, Clone)]
@@ -101,12 +102,19 @@ pub fn resolve_endpoint(cfg: &AIConfig) -> (String, serde_json::Value) {
                 .base_url
                 .clone()
                 .unwrap_or_else(|| "https://generativelanguage.googleapis.com".into());
+            let mut url = format!(
+                "{}/v1beta/models/{}:streamGenerateContent?alt=sse",
+                base.trim_end_matches('/'),
+                model
+            );
+            // Gemini authenticates via the `key` query parameter (or the
+            // `x-goog-api-key` header), NOT `Authorization: Bearer`. Embed the
+            // key in the query so the request is actually authorized.
+            if let Some(key) = &cfg.api_key {
+                url.push_str(&format!("&key={key}"));
+            }
             (
-                format!(
-                    "{}/v1beta/models/{}:streamGenerateContent?alt=sse",
-                    base.trim_end_matches('/'),
-                    model
-                ),
+                url,
                 serde_json::json!({
                     "contents": [ { "role": "user", "parts": [ { "text": "" } ] } ]
                 }),
@@ -146,7 +154,14 @@ pub fn parse_sse_line(line: &str, provider: &str, acc: &mut String) -> Option<St
         Err(_) => return None,
     };
     let text = match provider {
-        "anthropic" => v["delta"]["text"].as_str().map(str::to_string),
+        // Anthropic streams the FIRST text block inside `content_block_start`
+        // (`content_block.text`) and only subsequent deltas via
+        // `content_block_delta` (`delta.text`). Read both so the initial text
+        // is not dropped.
+        "anthropic" => v["delta"]["text"]
+            .as_str()
+            .map(str::to_string)
+            .or_else(|| v["content_block"]["text"].as_str().map(str::to_string)),
         "gemini" => v["candidates"][0]["content"]["parts"][0]["text"]
             .as_str()
             .map(str::to_string),
@@ -218,13 +233,32 @@ async fn stream_complete(
         }
     }
 
-    let mut request = reqwest::Client::new().post(&url).json(&body);
+    // Enforce a hard 60s read timeout so a stalled provider cannot hang the
+    // stream forever (cooperative cancel only interrupts between chunks). The
+    // timeout error surfaces through `request.send()` / `bytes_stream()` and
+    // produces the same `ai-error` + `Err` path as a transport failure.
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|e| {
+            let _ = app.emit(
+                "ai-error",
+                serde_json::json!({ "id": id, "message": e.to_string() }),
+            );
+            e.to_string()
+        })?;
+
+    let mut request = client.post(&url).json(&body);
     match config.provider.as_str() {
         "anthropic" => {
             if let Some(key) = &config.api_key {
                 request = request.header("x-api-key", key);
             }
             request = request.header("anthropic-version", "2023-06-01");
+        }
+        "gemini" => {
+            // Gemini keys ride in the URL `?key=` (set in resolve_endpoint);
+            // no Authorization header — Gemini rejects Bearer auth.
         }
         _ => {
             if let Some(key) = &config.api_key {

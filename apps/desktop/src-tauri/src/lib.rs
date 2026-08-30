@@ -119,15 +119,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(
-            tauri_plugin_stronghold::Builder::new(|password: &str| {
-                use sha2::{Digest, Sha256};
-                let mut hasher = Sha256::new();
-                hasher.update(password.as_bytes());
-                hasher.finalize().to_vec()
-            })
-            .build(),
-        )
         .manage(WatcherState::default())
         .manage(ai::AiState::default())
         .manage(keys::KeyVault::default())
