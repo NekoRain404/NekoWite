@@ -72,10 +72,10 @@ export const useTabsStore = defineStore('tabs', () => {
     if (!t || !t.path || !vault.value) return
     const next = emitLifecycle('onSave', undefined, t.content)
     const content = typeof next === 'string' ? next : t.content
-    if (content !== t.content) t.content = content
     try {
       await fsService.write(vault.value, t.path, content)
       t.savedContent = content
+      t.content = content
       t.dirty = false
       emitLifecycle('onSaved', undefined, content)
     } catch {

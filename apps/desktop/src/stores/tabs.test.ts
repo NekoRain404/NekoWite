@@ -102,4 +102,20 @@ describe('lifecycle broadcast from tabs store', () => {
     await s.saveActive()
     expect(savedSpy).not.toHaveBeenCalled()
   })
+
+  it('keeps content and dirty intact when a rewritten save fails', async () => {
+    unregister.push(registerLifecycleHook('test', 'onSave', () => 'abc!', ctx))
+    writeMock.mockRejectedValueOnce(new Error('disk full'))
+    const s = useTabsStore()
+    s.setVault('/vault')
+    readMock.mockResolvedValue('abc')
+    await s.openTab('/vault/a.md')
+    const tab = s.tabs[0]
+    tab.dirty = true
+    await s.saveActive()
+    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'abc!')
+    expect(tab.content).toBe('abc')
+    expect(tab.savedContent).toBe('abc')
+    expect(tab.dirty).toBe(true)
+  })
 })
