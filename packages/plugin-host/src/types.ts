@@ -12,7 +12,10 @@ export interface PluginContext {
   id: string
   name: string
   insertComponent: (name: string) => void
-  editor?: unknown // populated by the app after onEditorReady
+  // Convenience: the app's active editor at emit time. Set by the host inside
+  // emitLifecycle from getActiveEditor(); hooks that need the editor should
+  // prefer the editor ARG (threaded into onEditorReady/onSave/onSaved).
+  editor?: unknown
 }
 
 export interface PluginDefinition extends RegistrationBatch {
@@ -20,7 +23,7 @@ export interface PluginDefinition extends RegistrationBatch {
   components?: Record<string, Component>
   toolbar?: ToolbarItem[]
   commands?: EditorCommand[]
-  onLoad?(ctx: PluginContext): void
+  onLoad?(ctx: PluginContext): void | (() => void)
   onUnload?(ctx: PluginContext): void
   onEditorReady?(ctx: PluginContext, editor: unknown): void | (() => void)
   onDocChange?(ctx: PluginContext, e: { doc: string }): void | (() => void)

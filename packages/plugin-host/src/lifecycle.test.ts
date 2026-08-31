@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { emitLifecycle, hasLifecycleListeners, registerLifecycleHook } from './lifecycle'
+import { emitLifecycle, getActiveEditor, hasLifecycleListeners, registerLifecycleHook, setActiveEditor } from './lifecycle'
+import type { PluginContext } from './types'
 
-const ctx = { id: 'p1', name: 'P1', insertComponent: () => {} } as never
+const ctx = { id: 'p1', name: 'P1', insertComponent: () => {} } as PluginContext
 
 describe('lifecycle hooks', () => {
   it('emitLifecycle calls registered hooks in order with ctx', () => {
@@ -44,5 +45,34 @@ describe('lifecycle hooks', () => {
     expect(hasLifecycleListeners('onViewModeChange')).toBe(true)
     un()
     expect(hasLifecycleListeners('onViewModeChange')).toBe(false)
+  })
+
+  it('onSave receives the active editor after setActiveEditor', () => {
+    const editor = { kind: 'test-editor' }
+    const spy = vi.fn()
+    setActiveEditor(editor)
+    const un = registerLifecycleHook('p1', 'onSave', spy, ctx)
+    emitLifecycle('onSave', editor, 'content')
+    expect(spy).toHaveBeenCalledWith(ctx, editor, 'content')
+    setActiveEditor(null)
+    un()
+  })
+
+  it('ctx.editor reflects the active editor at emit time', () => {
+    const editor = { kind: 'test-editor' }
+    const freshCtx = { id: 'p2', name: 'P2', insertComponent: () => {} } as PluginContext
+    const hookCtx = vi.fn()
+    setActiveEditor(editor)
+    const un = registerLifecycleHook('p2', 'onDocChange', hookCtx, freshCtx)
+    emitLifecycle('onDocChange', { doc: 'x' })
+    expect(hookCtx).toHaveBeenCalled()
+    expect(freshCtx.editor).toBe(editor)
+    setActiveEditor(null)
+    un()
+  })
+
+  it('getActiveEditor returns null when no editor is set', () => {
+    setActiveEditor(null)
+    expect(getActiveEditor()).toBeNull()
   })
 })
