@@ -1,5 +1,6 @@
-import { describe, expect, it, beforeEach } from 'vitest'
+import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { activatePlugin, deactivatePlugin } from './runtime'
+import { emitLifecycle } from './lifecycle'
 import { getCommand, getComponent, getToolbar, registerCommand, unregisterCommand, unregisterComponent, unregisterToolbar } from '@nekowite/editor-core'
 import type { PluginDefinition, PluginMeta } from './types'
 
@@ -121,5 +122,24 @@ describe('deactivatePlugin', () => {
     )
     deactivatePlugin('deact')
     expect(unload.called).toBe(true)
+  })
+
+  it('registers lifecycle hooks on activate and removes them (and their unlisten) on deactivate', async () => {
+    const hook = vi.fn()
+    const unlisten = vi.fn()
+    await activatePlugin(
+      ok('p1', {
+        onDocChange: (ctx, e) => {
+          hook(ctx, e)
+          return unlisten
+        },
+      }),
+    )
+    expect(emitLifecycle('onDocChange', { doc: 'x' })).toBeUndefined()
+    expect(hook).toHaveBeenCalledTimes(1)
+    deactivatePlugin('p1')
+    expect(unlisten).toHaveBeenCalledTimes(1)
+    emitLifecycle('onDocChange', { doc: 'y' })
+    expect(hook).toHaveBeenCalledTimes(1)
   })
 })
