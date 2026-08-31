@@ -43,15 +43,11 @@ export function unsubscribeSelection(): void {
   selectionSubCount = 0
   selectionUnsub?.()
   selectionUnsub = null
+  currentSelectedId.value = null
 }
 
 export function getCurrentSelectedId(): string | null {
   return currentSelectedId.value
-}
-
-export function canAdjust(view: EditorView | null | undefined): boolean {
-  const v = view ?? editorBridge.getView()
-  return v !== null && useFloatStore().selectedId !== null
 }
 
 type FloatBoxProps = {
@@ -178,6 +174,8 @@ export const FloatBox = defineComponent({
 
     const startDrag = (e: PointerEvent): void => {
       selectSelf()
+      if ((e.target as Element).closest('.fb-content')) return
+      e.preventDefault()
       const n = normalizeProps({
         x: p.x,
         y: p.y,

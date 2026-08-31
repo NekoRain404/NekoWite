@@ -5,6 +5,10 @@ import { editorBridge } from '../services/editorBridge'
 
 type EditorView = NonNullable<ReturnType<NekoEditor['getView']>>
 
+function isFloatBoxNode(node: { type: { name: string }; attrs: { name?: unknown } }): boolean {
+  return node.type.name === 'mdxComponent' && node.attrs.name === 'FloatBox'
+}
+
 export const useFloatStore = defineStore('float', () => {
   const selectedId = ref<string | null>(null)
   const activePos = ref<number | null>(null)
@@ -30,9 +34,13 @@ export const useFloatStore = defineStore('float', () => {
     if (!view) return
     const node = view.state.doc.nodeAt(pos)
     if (!node) return
+    if (!isFloatBoxNode(node)) {
+      select(null)
+      return
+    }
     const props = (node.attrs.props ?? {}) as Record<string, string>
-    const z = Number(props.z ?? 1)
-    updateNode(view, pos, { ...props, z: String(z + step) })
+    const z = Math.max(1, Number(props.z ?? 1) + step)
+    updateNode(view, pos, { ...props, z: String(z) })
   }
 
   function updateNode(view: EditorView, pos: number, props: Record<string, string>): void {
@@ -61,6 +69,10 @@ export const useFloatStore = defineStore('float', () => {
     if (!view) return
     const node = view.state.doc.nodeAt(pos)
     if (!node) return
+    if (!isFloatBoxNode(node)) {
+      select(null)
+      return
+    }
     view.dispatch(view.state.tr.delete(pos, pos + node.nodeSize))
     select(null)
   }

@@ -19,14 +19,19 @@ export type RotateBase = { angle: number }
 
 const MIN_SIZE = 20
 
+function toFiniteNumber(raw: string | undefined, fallback: number): number {
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : fallback
+}
+
 export function normalizeProps(p: Record<string, string>): FloatBoxProps {
   return {
-    x: Number(p.x ?? 0),
-    y: Number(p.y ?? 0),
-    w: Number(p.w ?? 240),
-    h: Number(p.h ?? 160),
-    angle: Number(p.angle ?? 0),
-    z: Number(p.z ?? 1),
+    x: toFiniteNumber(p.x, 0),
+    y: toFiniteNumber(p.y, 0),
+    w: toFiniteNumber(p.w, 240),
+    h: toFiniteNumber(p.h, 160),
+    angle: toFiniteNumber(p.angle, 0),
+    z: toFiniteNumber(p.z, 1),
   }
 }
 

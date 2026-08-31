@@ -1,9 +1,8 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import {
   FloatBox,
-  canAdjust,
   getCurrentSelectedId,
   subscribeSelection,
   unsubscribeSelection,
@@ -43,26 +42,40 @@ describe('floatbox selection', () => {
     expect(getCurrentSelectedId()).toBe('5')
   })
 
-  it('canAdjust requires both a view and a selection', () => {
-    const store = useFloatStore()
-    const view = {} as never
-    expect(canAdjust(view)).toBe(false)
-    store.select('5', 5)
-    expect(canAdjust(view)).toBe(true)
-    store.select(null)
-    expect(canAdjust(view)).toBe(false)
-  })
-
-  it('canAdjust returns false when the view is missing', () => {
+  it('unsubscribeSelection resets the cached selected id', () => {
+    const unsub = subscribeSelection()
     const store = useFloatStore()
     store.select('5', 5)
-    expect(canAdjust(null)).toBe(false)
+    expect(getCurrentSelectedId()).toBe('5')
+    unsubscribeSelection()
+    expect(getCurrentSelectedId()).toBeNull()
+    unsub()
   })
 })
 
 describe('floatbox geometry', () => {
   it('normalizes missing props', () => {
     expect(normalizeProps({})).toEqual({ x: 0, y: 0, w: 240, h: 160, angle: 0, z: 1 })
+  })
+  it('falls back to defaults for junk numeric props', () => {
+    expect(normalizeProps({ x: 'abc', y: '1e', w: 'oops', z: '0x' })).toEqual({
+      x: 0,
+      y: 0,
+      w: 240,
+      h: 160,
+      angle: 0,
+      z: 1,
+    })
+  })
+  it('keeps finite numeric props', () => {
+    expect(normalizeProps({ x: '10.5', y: '-3', angle: '90' })).toEqual({
+      x: 10.5,
+      y: -3,
+      w: 240,
+      h: 160,
+      angle: 90,
+      z: 1,
+    })
   })
   it('drag adds delta', () => {
     expect(applyDrag({ x: 10, y: 20 }, 5, -3)).toEqual({ x: 15, y: 17 })
@@ -85,6 +98,8 @@ describe('FloatBox content editing', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     document.body.innerHTML = ''
+    // Reset any lingering module-level drag session between tests.
+    window.dispatchEvent(new PointerEvent('pointerup'))
   })
 
   it('seeds the contenteditable with children and reflects geometry in style', () => {
@@ -108,6 +123,87 @@ describe('FloatBox content editing', () => {
     const root = host.querySelector<HTMLElement>('.float-box')
     expect(root!.style.left).toBe('10px')
     expect(root!.style.transform).toContain('rotate(15deg)')
+    app.unmount()
+  })
+
+  it('pointerdown on the box root starts a drag and updates x/y', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const node = {
+      type: { name: 'mdxComponent' },
+      nodeSize: 2,
+      attrs: { name: 'FloatBox', props: { x: '10', y: '20' }, children: '' },
+    }
+    const tr: { setNodeMarkup: ReturnType<typeof vi.fn> } = {
+      setNodeMarkup: vi.fn((...args: unknown[]) => args),
+    }
+    const view = {
+      state: { doc: { nodeAt: vi.fn(() => node) }, tr },
+      dispatch: vi.fn(),
+    }
+    const app = createApp(
+      h(FloatBox, {
+        x: '10',
+        y: '20',
+        w: '100',
+        h: '50',
+        angle: '0',
+        z: '1',
+        children: 'text',
+        _view: view as never,
+        _getPos: () => 0,
+      }),
+    )
+    app.mount(host)
+    const root = host.querySelector<HTMLElement>('.float-box')
+    root!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 5, clientY: 5 }))
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 15, clientY: 25 }))
+    expect(view.dispatch).toHaveBeenCalledTimes(1)
+    const markupArgs = (tr.setNodeMarkup as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(markupArgs[0]).toBe(0)
+    expect(markupArgs[2]).toEqual({
+      name: 'FloatBox',
+      props: { x: '20', y: '40' },
+      children: '',
+    })
+    window.dispatchEvent(new PointerEvent('pointerup'))
+    app.unmount()
+  })
+
+  it('pointerdown on the content area selects but does not start a drag', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const node = {
+      type: { name: 'mdxComponent' },
+      nodeSize: 2,
+      attrs: { name: 'FloatBox', props: { x: '10', y: '20' }, children: '' },
+    }
+    const tr: { setNodeMarkup: ReturnType<typeof vi.fn> } = {
+      setNodeMarkup: vi.fn((...args: unknown[]) => args),
+    }
+    const view = {
+      state: { doc: { nodeAt: vi.fn(() => node) }, tr },
+      dispatch: vi.fn(),
+    }
+    const app = createApp(
+      h(FloatBox, {
+        x: '10',
+        y: '20',
+        w: '100',
+        h: '50',
+        angle: '0',
+        z: '1',
+        children: 'text',
+        _view: view as never,
+        _getPos: () => 0,
+      }),
+    )
+    app.mount(host)
+    const content = host.querySelector<HTMLElement>('.fb-content')
+    content!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 5, clientY: 5 }))
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 50, clientY: 50 }))
+    expect(view.dispatch).not.toHaveBeenCalled()
+    window.dispatchEvent(new PointerEvent('pointerup'))
     app.unmount()
   })
 })

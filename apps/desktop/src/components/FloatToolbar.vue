@@ -38,7 +38,7 @@ const floatStore = useFloatStore()
   position: absolute;
   top: 8px;
   right: 8px;
-  z-index: 50;
+  z-index: 9999;
   display: flex;
   gap: 4px;
   padding: 4px;

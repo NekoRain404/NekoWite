@@ -5,11 +5,13 @@ import type { NekoEditor } from '@nekowite/editor-core'
 import { setCalloutView } from '../plugins/callout'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
+import { useFloatStore } from '../stores/float'
 import { notifyError } from '../services/errors'
 import { editorBridge } from '../services/editorBridge'
 
 const tabs = useTabsStore()
 const view = useViewStore()
+const floatStore = useFloatStore()
 
 const scrollEl = ref<HTMLElement | null>(null)
 const editorEl = ref<HTMLElement | null>(null)
@@ -25,6 +27,7 @@ async function applyContent(content: string): Promise<void> {
   applyingExternal = true
   try {
     await editor.open(content)
+    floatStore.select(null)
     if (!calloutViewSet) {
       try {
         setCalloutView(editor.getView())
@@ -56,6 +59,18 @@ function getRatio(): number {
   return range > 0 ? el.scrollTop / range : 0
 }
 
+function onContainerPointerDownCapture(e: PointerEvent): void {
+  const target = e.target as Element | null
+  if (target && target.closest('.float-box')) return
+  floatStore.select(null)
+}
+
+function onKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape' && floatStore.selectedId) {
+    floatStore.select(null)
+  }
+}
+
 function setRatio(r: number): void {
   const el = scrollEl.value
   if (!el) return
@@ -71,6 +86,9 @@ onMounted(async () => {
   editorBridge.setEditor(editor)
   const current = tabs.activeTab
   if (current) await applyContent(current.content)
+
+  editorEl.value.addEventListener('pointerdown', onContainerPointerDownCapture, true)
+  window.addEventListener('keydown', onKeydown)
 
   unlistenChange = editor.onContentChange(() => {
     if (applyingExternal || !editor) return
@@ -90,6 +108,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   setCalloutView(null)
   editorBridge.setEditor(null)
+  editorEl.value?.removeEventListener('pointerdown', onContainerPointerDownCapture, true)
+  window.removeEventListener('keydown', onKeydown)
   unlistenChange?.()
   editor?.destroy()
   editor = null

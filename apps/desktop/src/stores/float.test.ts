@@ -95,6 +95,19 @@ describe('useFloatStore', () => {
     expect(dispatchMock).toHaveBeenCalledWith(trMock)
   })
 
+  it('sendBackward clamps z at a minimum of 1', () => {
+    const s = useFloatStore()
+    s.select('0', 0)
+    nodeAtMock.mockReturnValue({
+      type: { name: 'mdxComponent' },
+      nodeSize: 2,
+      attrs: { name: 'FloatBox', props: { z: '1' }, children: '' },
+    })
+    s.sendBackward()
+    const call = lastSetNodeMarkup.args
+    expect(call[2]).toEqual({ name: 'FloatBox', props: { z: '1' }, children: '' })
+  })
+
   it('removeSelected deletes the node at activePos', () => {
     const s = useFloatStore()
     s.select('0', 0)
@@ -108,6 +121,51 @@ describe('useFloatStore', () => {
     expect(call[0]).toBe(0)
     expect(call[1]).toBe(3)
     expect(dispatchMock).toHaveBeenCalledWith(trMock)
+    expect(s.selectedId).toBeNull()
+    expect(s.activePos).toBeNull()
+  })
+
+  it('removeSelected is a no-op and deselects when the node is not a FloatBox', () => {
+    const s = useFloatStore()
+    s.select('0', 0)
+    nodeAtMock.mockReturnValue({
+      type: { name: 'paragraph' },
+      nodeSize: 3,
+      attrs: { name: 'Paragraph' },
+    })
+    s.removeSelected()
+    expect(trMock.delete).not.toHaveBeenCalled()
+    expect(dispatchMock).not.toHaveBeenCalled()
+    expect(s.selectedId).toBeNull()
+    expect(s.activePos).toBeNull()
+  })
+
+  it('removeSelected is a no-op and deselects when the node is a non-FloatBox mdxComponent', () => {
+    const s = useFloatStore()
+    s.select('0', 0)
+    nodeAtMock.mockReturnValue({
+      type: { name: 'mdxComponent' },
+      nodeSize: 3,
+      attrs: { name: 'Callout', props: {}, children: '' },
+    })
+    s.removeSelected()
+    expect(trMock.delete).not.toHaveBeenCalled()
+    expect(dispatchMock).not.toHaveBeenCalled()
+    expect(s.selectedId).toBeNull()
+    expect(s.activePos).toBeNull()
+  })
+
+  it('bumpZ is a no-op and deselects when the node is not a FloatBox', () => {
+    const s = useFloatStore()
+    s.select('0', 0)
+    nodeAtMock.mockReturnValue({
+      type: { name: 'mdxComponent' },
+      nodeSize: 3,
+      attrs: { name: 'Callout', props: {}, children: '' },
+    })
+    s.bringForward()
+    expect(trMock.setNodeMarkup).not.toHaveBeenCalled()
+    expect(dispatchMock).not.toHaveBeenCalled()
     expect(s.selectedId).toBeNull()
     expect(s.activePos).toBeNull()
   })
