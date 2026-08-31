@@ -1,5 +1,4 @@
 import { definePlugin } from '@nekowite/plugin-host'
-import type { PluginContext } from '@nekowite/plugin-host'
 import { useTabsStore } from '../stores/tabs'
 
 function countWords(text: string): number {
@@ -11,7 +10,7 @@ function dispatchWordCount(count: number): void {
   window.dispatchEvent(new CustomEvent('nekowite:word-count', { detail: count }))
 }
 
-function emitWordCount(): void {
+function runWordCount(): void {
   const tabs = useTabsStore()
   const tab = tabs.activeTab
   if (!tab) {
@@ -21,12 +20,28 @@ function emitWordCount(): void {
   dispatchWordCount(countWords(tab.content))
 }
 
-function onDocChange(_ctx: PluginContext, e: { doc: string }): void {
-  dispatchWordCount(countWords(e.doc))
-}
-
 export const statusPlugin = definePlugin({
   name: 'Status',
-  commands: [{ id: 'status.wordCount', run: emitWordCount }],
-  onDocChange,
+  commands: [{ id: 'status.wordCount', run: runWordCount }],
+  onEditorReady(ctx, editor) {
+    console.log(`[status.onEditorReady] ${ctx.id} ready=${editor ? 'yes' : 'no'}`)
+  },
+  onDocChange(_ctx, e) {
+    dispatchWordCount(countWords(e.doc))
+  },
+  onSave(ctx, editor, content) {
+    console.log(`[status.onSave] ${ctx.id} editor=${editor ? 'yes' : 'no'} bytes=${content.length}`)
+  },
+  onSaved(ctx, editor, content) {
+    console.log(`[status.onSaved] ${ctx.id} editor=${editor ? 'yes' : 'no'} bytes=${content.length}`)
+  },
+  onOpenDocument(ctx, tab) {
+    console.log(`[status.onOpenDocument] ${ctx.id}`, tab)
+  },
+  onCloseTab(ctx, tab) {
+    console.log(`[status.onCloseTab] ${ctx.id}`, tab)
+  },
+  onViewModeChange(ctx, mode) {
+    console.log(`[status.onViewModeChange] ${ctx.id} mode=${String(mode)}`)
+  },
 })
