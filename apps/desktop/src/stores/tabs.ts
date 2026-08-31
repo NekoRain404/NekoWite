@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { emitLifecycle } from '@nekowite/plugin-host'
+import { emitLifecycle, getActiveEditor } from '@nekowite/plugin-host'
+import { armSuppressReapply } from '../services/suppressReapply'
 import { fsService } from '../services/fs'
 import { notifyError } from '../services/errors'
 
@@ -70,14 +71,21 @@ export const useTabsStore = defineStore('tabs', () => {
   async function saveActive(): Promise<void> {
     const t = activeTab.value
     if (!t || !t.path || !vault.value) return
-    const next = emitLifecycle('onSave', undefined, t.content)
+    const editor = getActiveEditor()
+    const next = emitLifecycle('onSave', editor, t.content)
     const content = typeof next === 'string' ? next : t.content
     try {
       await fsService.write(vault.value, t.path, content)
+      // I2: a save-time rewrite must not re-open the editor — the model syncs,
+      // but RenderedPane consumes this flag and skips applyContent so the
+      // user's live text and caret/scroll are preserved. Only arm when the
+      // written content actually differs (an onSave rewrite); otherwise the
+      // flag would linger and wrongly suppress the next legit content change.
+      if (content !== t.content) armSuppressReapply()
       t.savedContent = content
       t.content = content
       t.dirty = false
-      emitLifecycle('onSaved', undefined, content)
+      emitLifecycle('onSaved', editor, content)
     } catch {
       notifyError('保存失败，内容已保留在编辑器中，请重试')
     }

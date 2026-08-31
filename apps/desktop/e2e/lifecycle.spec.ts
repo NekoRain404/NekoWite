@@ -46,7 +46,7 @@ test.beforeEach(async ({ page }) => {
   )
 })
 
-test('lifecycle hooks fire live: open, doc change, save, view mode', async ({ page }) => {
+test('lifecycle hooks fire live: open, doc change, save, view mode, close tab', async ({ page }) => {
   const logs: string[] = []
   page.on('console', (msg) => logs.push(msg.text()))
 
@@ -75,4 +75,7 @@ test('lifecycle hooks fire live: open, doc change, save, view mode', async ({ pa
 
   await page.locator('.vs-btn', { hasText: '源码' }).click()
   await expect.poll(() => logs.some((l) => l.includes('[status.onViewModeChange]'))).toBe(true)
+
+  await page.locator('.tab-close').click()
+  await expect.poll(() => logs.some((l) => l.includes('[status.onCloseTab]'))).toBe(true)
 })

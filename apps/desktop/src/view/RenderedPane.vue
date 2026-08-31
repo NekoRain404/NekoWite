@@ -2,7 +2,8 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createEditor, basicPlugins } from '@nekowite/editor-core'
 import type { NekoEditor } from '@nekowite/editor-core'
-import { emitLifecycle } from '@nekowite/plugin-host'
+import { emitLifecycle, setActiveEditor } from '@nekowite/plugin-host'
+import { consumeSuppressReapply } from '../services/suppressReapply'
 import { setCalloutView } from '../plugins/callout'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
@@ -87,6 +88,7 @@ onMounted(async () => {
   if (!editorEl.value) return
   editor = createEditor(editorEl.value, { plugins: basicPlugins })
   editorBridge.setEditor(editor)
+  setActiveEditor(editor)
   const current = tabs.activeTab
   if (current) await applyContent(current.content)
 
@@ -123,6 +125,7 @@ onBeforeUnmount(() => {
   }
   setCalloutView(null)
   editorBridge.setEditor(null)
+  setActiveEditor(null)
   editorEl.value?.removeEventListener('pointerdown', onContainerPointerDownCapture, true)
   window.removeEventListener('keydown', onKeydown)
   unlistenChange?.()
@@ -133,6 +136,10 @@ onBeforeUnmount(() => {
 watch(
   () => tabs.activeTab?.content,
   (content) => {
+    // I2: a save-time rewrite syncs the model but must not re-open the editor
+    // (that would replace the user's live text and reset caret/scroll). The
+    // flag is armed by tabs.saveActive and consumed once here.
+    if (consumeSuppressReapply()) return
     if (applyingExternal) return
     if (content === undefined) return
     if (parseFailed) return

@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { registerLifecycleHook } from '@nekowite/plugin-host'
+import { registerLifecycleHook, setActiveEditor } from '@nekowite/plugin-host'
 import type { PluginContext } from '@nekowite/plugin-host'
+import { consumeSuppressReapply, shouldSuppressReapply } from '../services/suppressReapply'
 import { useTabsStore } from './tabs'
 
 const readMock = vi.hoisted(() => vi.fn())
@@ -49,6 +50,8 @@ describe('lifecycle broadcast from tabs store', () => {
 
   afterEach(() => {
     for (const un of unregister.splice(0)) un()
+    setActiveEditor(null)
+    consumeSuppressReapply()
   })
 
   it('onSave rewrite changes what is written to disk', async () => {
@@ -88,7 +91,35 @@ describe('lifecycle broadcast from tabs store', () => {
     await s.openTab('/vault/a.md')
     await s.saveActive()
     expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'abc')
-    expect(savedSpy).toHaveBeenCalledWith(ctx, undefined, 'abc')
+    expect(savedSpy).toHaveBeenCalledWith(ctx, null, 'abc')
+  })
+
+  it('onSave and onSaved receive the active editor from setActiveEditor', async () => {
+    const editor = { kind: 'test-editor' }
+    setActiveEditor(editor)
+    const saveSpy = vi.fn()
+    const savedSpy = vi.fn()
+    unregister.push(registerLifecycleHook('test', 'onSave', saveSpy, ctx))
+    unregister.push(registerLifecycleHook('test', 'onSaved', savedSpy, ctx))
+    const s = useTabsStore()
+    s.setVault('/vault')
+    readMock.mockResolvedValue('abc')
+    await s.openTab('/vault/a.md')
+    await s.saveActive()
+    expect(saveSpy).toHaveBeenCalledWith(ctx, editor, 'abc')
+    expect(savedSpy).toHaveBeenCalledWith(ctx, editor, 'abc')
+  })
+
+  it('rewritten save arms the suppress-reapply guard, consume-once clears it', async () => {
+    unregister.push(registerLifecycleHook('test', 'onSave', () => 'abc!', ctx))
+    const s = useTabsStore()
+    s.setVault('/vault')
+    readMock.mockResolvedValue('abc')
+    await s.openTab('/vault/a.md')
+    await s.saveActive()
+    expect(shouldSuppressReapply()).toBe(true)
+    expect(consumeSuppressReapply()).toBe(true)
+    expect(shouldSuppressReapply()).toBe(false)
   })
 
   it('does not emit onSaved when the write fails', async () => {
