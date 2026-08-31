@@ -60,4 +60,10 @@ describe('renderDocument', () => {
     expect(html).not.toContain('katex')
     expect(html).toContain('E=mc^2')
   })
+
+  it('export body is positioned relative for floats', () => {
+    const html = renderDocument('text')
+    // printCss body includes position: relative so floats anchor to the body
+    expect(html).toMatch(/body\s*{[^}]*position\s*:\s*relative/)
+  })
 })

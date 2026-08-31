@@ -1,4 +1,5 @@
 import type { ComponentRenderer } from '@nekowite/editor-core'
+import { normalizeProps } from './floatProps'
 
 // Local attr escaper for interpolating dynamic values into class/attr
 // positions. Kept local rather than importing editor-core's private
@@ -16,5 +17,9 @@ export function buildComponentRenderers(): Record<string, ComponentRenderer> {
   return {
     Callout: (props, childrenHtml) =>
       `<aside class="callout callout-${attrEscape(props.type ?? 'info')}"><div class="callout-body">${childrenHtml}</div></aside>`,
+    FloatBox: (props, childrenHtml) => {
+      const g = normalizeProps(props)
+      return `<div class="float-box" style="position:absolute; left:${g.x}px; top:${g.y}px; width:${g.w}px; height:${g.h}px; transform:rotate(${g.angle}deg); z-index:${g.z}">${childrenHtml}</div>`
+    },
   }
 }

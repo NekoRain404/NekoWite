@@ -280,7 +280,7 @@ function renderReferences(order: string[], ctx: RenderContext): string {
 }
 
 const printCss = `
-body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; max-width: 50rem; margin: 0 auto; padding: 2rem; color: #222; }
+body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; max-width: 50rem; margin: 0 auto; padding: 2rem; color: #222; position: relative; }
 h1, h2, h3, h4, h5, h6 { line-height: 1.25; }
 code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 pre { background: #f6f8fa; padding: 0.75rem 1rem; border-radius: 6px; overflow-x: auto; }
