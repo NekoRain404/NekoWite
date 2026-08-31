@@ -83,7 +83,7 @@ export function parseMdxTag(html: string): MdxComponentAttrs {
   return { name, props, children }
 }
 
-const mdxNodeView: NodeViewConstructor = (node) => {
+const mdxNodeView: NodeViewConstructor = (node, view, getPos) => {
   const dom = document.createElement('div')
   let app: App | null = null
 
@@ -97,7 +97,9 @@ const mdxNodeView: NodeViewConstructor = (node) => {
     dom.replaceChildren()
     if (component) {
       dom.className = 'mdx-component'
-      app = createApp(h(component, { ...props, children }))
+      app = createApp(
+        h(component, { ...props, children, _getPos: getPos, _view: view }),
+      )
       app.mount(dom)
     } else {
       dom.className = 'mdx-component mdx-component-placeholder'

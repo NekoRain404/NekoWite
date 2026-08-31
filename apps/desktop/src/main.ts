@@ -4,6 +4,7 @@ import { activatePlugin, loadPlugin } from '@nekowite/plugin-host'
 import type { PluginMeta } from '@nekowite/plugin-host'
 import App from './App.vue'
 import { calloutPlugin } from './plugins/callout'
+import { floatboxPlugin } from './plugins/floatbox'
 import { statusPlugin } from './plugins/status'
 import 'mathlive/static.css'
 import './style.css'
@@ -18,6 +19,10 @@ async function activateBuiltins(): Promise<void> {
     {
       meta: { id: 'nekowite.builtin.status', name: 'Status', version: '1', main: '@nekowite/builtin-status' },
       definition: statusPlugin,
+    },
+    {
+      meta: { id: 'nekowite.builtin.floatbox', name: 'FloatBox', version: '1', main: '@nekowite/builtin-floatbox' },
+      definition: floatboxPlugin,
     },
   ]
   const results = await Promise.all(
