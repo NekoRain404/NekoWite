@@ -8,10 +8,19 @@ type EditorView = NonNullable<ReturnType<NekoEditor['getView']>>
 export const useFloatStore = defineStore('float', () => {
   const selectedId = ref<string | null>(null)
   const activePos = ref<number | null>(null)
+  const selectListeners = new Set<(id: string | null) => void>()
 
   function select(id: string | null, pos?: number | null): void {
     selectedId.value = id
     activePos.value = id == null ? null : (pos ?? null)
+    selectListeners.forEach((cb) => cb(id))
+  }
+
+  function onSelectChange(cb: (id: string | null) => void): () => void {
+    selectListeners.add(cb)
+    return () => {
+      selectListeners.delete(cb)
+    }
   }
 
   function bumpZ(step: number): void {
@@ -56,5 +65,5 @@ export const useFloatStore = defineStore('float', () => {
     select(null)
   }
 
-  return { selectedId, activePos, select, bringForward, sendBackward, removeSelected }
+  return { selectedId, activePos, select, onSelectChange, bringForward, sendBackward, removeSelected }
 })

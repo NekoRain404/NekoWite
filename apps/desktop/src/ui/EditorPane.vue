@@ -7,6 +7,7 @@ import SourcePane from '../view/SourcePane.vue'
 import RenderedPane from '../view/RenderedPane.vue'
 import ViewSwitch from '../view/ViewSwitch.vue'
 import WordToolbar from '../components/WordToolbar.vue'
+import FloatToolbar from '../components/FloatToolbar.vue'
 
 const view = useViewStore()
 const tabs = useTabsStore()
@@ -107,6 +108,7 @@ onBeforeUnmount(() => {
         ref="renderedPane"
         class="pane rendered"
       />
+      <FloatToolbar />
     </div>
   </div>
 </template>
@@ -120,6 +122,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 .panes {
+  position: relative;
   flex: 1;
   display: flex;
   min-height: 0;

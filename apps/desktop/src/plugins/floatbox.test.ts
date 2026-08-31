@@ -1,13 +1,64 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createApp, h } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
-import { FloatBox } from './floatbox'
+import {
+  FloatBox,
+  canAdjust,
+  getCurrentSelectedId,
+  subscribeSelection,
+  unsubscribeSelection,
+} from './floatbox'
+import { useFloatStore } from '../stores/float'
 import {
   applyDrag,
   applyResize,
   applyRotate,
   normalizeProps,
 } from '../services/floatProps'
+
+describe('floatbox selection', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    unsubscribeSelection()
+  })
+
+  it('subscribeSelection mirrors the store selected id', () => {
+    const unsub = subscribeSelection()
+    const store = useFloatStore()
+    store.select('5', 5)
+    expect(getCurrentSelectedId()).toBe('5')
+    store.select('7', 7)
+    expect(getCurrentSelectedId()).toBe('7')
+    store.select(null)
+    expect(getCurrentSelectedId()).toBeNull()
+    unsub()
+  })
+
+  it('unsubscribed callbacks stop updating the module id', () => {
+    const unsub = subscribeSelection()
+    const store = useFloatStore()
+    store.select('5', 5)
+    unsub()
+    store.select('7', 7)
+    expect(getCurrentSelectedId()).toBe('5')
+  })
+
+  it('canAdjust requires both a view and a selection', () => {
+    const store = useFloatStore()
+    const view = {} as never
+    expect(canAdjust(view)).toBe(false)
+    store.select('5', 5)
+    expect(canAdjust(view)).toBe(true)
+    store.select(null)
+    expect(canAdjust(view)).toBe(false)
+  })
+
+  it('canAdjust returns false when the view is missing', () => {
+    const store = useFloatStore()
+    store.select('5', 5)
+    expect(canAdjust(null)).toBe(false)
+  })
+})
 
 describe('floatbox geometry', () => {
   it('normalizes missing props', () => {

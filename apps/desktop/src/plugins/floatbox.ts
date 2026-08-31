@@ -1,4 +1,4 @@
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, onBeforeUnmount, onMounted, ref } from 'vue'
 import { definePlugin } from '@nekowite/plugin-host'
 import type { NekoEditor } from '@nekowite/editor-core'
 import { insertMdxComponent } from '@nekowite/editor-core'
@@ -14,6 +14,45 @@ import {
 } from '../services/floatProps'
 
 type EditorView = NonNullable<ReturnType<NekoEditor['getView']>>
+
+const currentSelectedId = ref<string | null>(null)
+let selectionUnsub: (() => void) | null = null
+let selectionSubCount = 0
+
+function onStoreSelect(id: string | null): void {
+  currentSelectedId.value = id
+}
+
+export function subscribeSelection(): () => void {
+  selectionSubCount++
+  if (!selectionUnsub) {
+    const store = useFloatStore()
+    currentSelectedId.value = store.selectedId
+    selectionUnsub = store.onSelectChange(onStoreSelect)
+  }
+  return () => {
+    selectionSubCount = Math.max(0, selectionSubCount - 1)
+    if (selectionSubCount === 0) {
+      selectionUnsub?.()
+      selectionUnsub = null
+    }
+  }
+}
+
+export function unsubscribeSelection(): void {
+  selectionSubCount = 0
+  selectionUnsub?.()
+  selectionUnsub = null
+}
+
+export function getCurrentSelectedId(): string | null {
+  return currentSelectedId.value
+}
+
+export function canAdjust(view: EditorView | null | undefined): boolean {
+  const v = view ?? editorBridge.getView()
+  return v !== null && useFloatStore().selectedId !== null
+}
 
 type FloatBoxProps = {
   x: string
@@ -118,13 +157,22 @@ export const FloatBox = defineComponent({
     _view: { type: Object as unknown as () => EditorView | null, default: null },
   },
   setup(props) {
-    const store = useFloatStore()
     const p = props as unknown as FloatBoxProps
     const getPos = () => posOf(p._getPos)
     const view = () => resolveView(p._view)
 
+    let unsubSelection: (() => void) | null = null
+    onMounted(() => {
+      unsubSelection = subscribeSelection()
+    })
+    onBeforeUnmount(() => {
+      unsubSelection?.()
+      unsubSelection = null
+    })
+
     const selectSelf = (): void => {
       const pos = getPos()
+      const store = useFloatStore()
       store.select(pos != null ? String(pos) : null, pos)
     }
 
@@ -193,7 +241,7 @@ export const FloatBox = defineComponent({
 
     return () => {
       const pos = getPos()
-      const selected = pos != null && store.selectedId === String(pos)
+      const selected = pos != null && getCurrentSelectedId() === String(pos)
       const style: Record<string, string> = {
         position: 'absolute',
         left: `${p.x}px`,
@@ -206,7 +254,7 @@ export const FloatBox = defineComponent({
       return h(
         'div',
         {
-          class: ['float-box', { 'float-box-selected': selected }],
+          class: ['float-box', { selected }],
           style,
           onPointerdown: startDrag,
         },

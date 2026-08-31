@@ -47,6 +47,18 @@ describe('useFloatStore', () => {
     expect(s.activePos).toBeNull()
   })
 
+  it('onSelectChange fires on select and clear, and unsubscribes', () => {
+    const s = useFloatStore()
+    const seen: (string | null)[] = []
+    const off = s.onSelectChange((id) => seen.push(id))
+    s.select('5', 5)
+    s.select('7', 7)
+    s.select(null)
+    off()
+    s.select('9', 9)
+    expect(seen).toEqual(['5', '7', null])
+  })
+
   it('bringForward bumps z via setNodeMarkup', () => {
     const s = useFloatStore()
     s.select('0', 0)

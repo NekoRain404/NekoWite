@@ -141,6 +141,7 @@ watch(
   background: #fff;
 }
 .editor-container {
+  position: relative;
   padding: 0 16px;
   min-height: 100%;
 }
