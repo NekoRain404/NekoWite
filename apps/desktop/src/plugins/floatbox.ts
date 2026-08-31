@@ -100,6 +100,7 @@ function onWindowPointerUp(): void {
 if (typeof window !== 'undefined') {
   window.addEventListener('pointermove', onWindowPointerMove)
   window.addEventListener('pointerup', onWindowPointerUp)
+  window.addEventListener('pointercancel', onWindowPointerUp)
 }
 
 export const FloatBox = defineComponent({
@@ -213,6 +214,7 @@ export const FloatBox = defineComponent({
           h('div', {
             class: 'fb-content',
             contenteditable: 'plaintext-only',
+            textContent: p.children,
             onBlur: onContentBlur,
           }),
           ...corners.map((c) =>

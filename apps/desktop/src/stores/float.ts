@@ -53,6 +53,7 @@ export const useFloatStore = defineStore('float', () => {
     const node = view.state.doc.nodeAt(pos)
     if (!node) return
     view.dispatch(view.state.tr.delete(pos, pos + node.nodeSize))
+    select(null)
   }
 
   return { selectedId, activePos, select, bringForward, sendBackward, removeSelected }

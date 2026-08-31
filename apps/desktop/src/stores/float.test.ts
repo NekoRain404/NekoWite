@@ -96,5 +96,7 @@ describe('useFloatStore', () => {
     expect(call[0]).toBe(0)
     expect(call[1]).toBe(3)
     expect(dispatchMock).toHaveBeenCalledWith(trMock)
+    expect(s.selectedId).toBeNull()
+    expect(s.activePos).toBeNull()
   })
 })

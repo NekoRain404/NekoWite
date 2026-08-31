@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { createApp, h } from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
+import { FloatBox } from './floatbox'
 import {
   applyDrag,
   applyResize,
@@ -24,5 +27,36 @@ describe('floatbox geometry', () => {
   })
   it('rotate adds angle delta', () => {
     expect(applyRotate({ angle: 15 }, 5)).toEqual({ angle: 20 })
+  })
+})
+
+describe('FloatBox content editing', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    document.body.innerHTML = ''
+  })
+
+  it('seeds the contenteditable with children and reflects geometry in style', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const app = createApp(
+      h(FloatBox, {
+        x: '10',
+        y: '20',
+        w: '100',
+        h: '50',
+        angle: '15',
+        z: '3',
+        children: '浮动内容 hello',
+      }),
+    )
+    app.mount(host)
+    const content = host.querySelector<HTMLElement>('.fb-content')
+    expect(content).not.toBeNull()
+    expect(content!.textContent).toBe('浮动内容 hello')
+    const root = host.querySelector<HTMLElement>('.float-box')
+    expect(root!.style.left).toBe('10px')
+    expect(root!.style.transform).toContain('rotate(15deg)')
+    app.unmount()
   })
 })
