@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { emitLifecycle } from '@nekowite/plugin-host'
 
 export type ViewMode = 'source' | 'rendered' | 'split'
 
@@ -10,6 +11,7 @@ export const useViewStore = defineStore('view', () => {
 
   function setMode(m: ViewMode): void {
     mode.value = m
+    emitLifecycle('onViewModeChange', m)
   }
 
   function syncScroll(from: 'source' | 'rendered', pos: number): void {

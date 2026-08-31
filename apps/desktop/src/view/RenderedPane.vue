@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createEditor, basicPlugins } from '@nekowite/editor-core'
 import type { NekoEditor } from '@nekowite/editor-core'
+import { emitLifecycle } from '@nekowite/plugin-host'
 import { setCalloutView } from '../plugins/callout'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
@@ -21,6 +22,8 @@ let applyingExternal = false
 let parseFailed = false
 let gen = 0
 let calloutViewSet = false
+let docChangeTimer: ReturnType<typeof setTimeout> | null = null
+let lastDoc = ''
 
 async function applyContent(content: string): Promise<void> {
   if (!editor) return
@@ -87,6 +90,8 @@ onMounted(async () => {
   const current = tabs.activeTab
   if (current) await applyContent(current.content)
 
+  emitLifecycle('onEditorReady', editor)
+
   editorEl.value.addEventListener('pointerdown', onContainerPointerDownCapture, true)
   window.addEventListener('keydown', onKeydown)
 
@@ -101,11 +106,21 @@ onMounted(async () => {
       if (myGen !== gen) return
       active.content = markdown
       tabs.markDirty(active.id)
+      lastDoc = markdown
+      if (docChangeTimer) return
+      docChangeTimer = setTimeout(() => {
+        emitLifecycle('onDocChange', { doc: lastDoc })
+        docChangeTimer = null
+      }, 300)
     })()
   })
 })
 
 onBeforeUnmount(() => {
+  if (docChangeTimer) {
+    clearTimeout(docChangeTimer)
+    docChangeTimer = null
+  }
   setCalloutView(null)
   editorBridge.setEditor(null)
   editorEl.value?.removeEventListener('pointerdown', onContainerPointerDownCapture, true)

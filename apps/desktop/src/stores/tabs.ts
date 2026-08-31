@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import { emitLifecycle } from '@nekowite/plugin-host'
 import { fsService } from '../services/fs'
 import { notifyError } from '../services/errors'
 
@@ -43,11 +44,14 @@ export const useTabsStore = defineStore('tabs', () => {
     const tab: OpenTab = { id: nextId(), path, content, savedContent: content, dirty: false }
     tabs.value.push(tab)
     activeId.value = tab.id
+    emitLifecycle('onOpenDocument', { id: tab.id, path: tab.path })
   }
 
   function closeTab(id: string): void {
     const i = tabs.value.findIndex((t) => t.id === id)
     if (i < 0) return
+    const removing = tabs.value[i]
+    emitLifecycle('onCloseTab', { id, path: removing.path })
     tabs.value.splice(i, 1)
     if (activeId.value === id) {
       activeId.value = tabs.value[i]?.id ?? tabs.value[i - 1]?.id ?? null
@@ -66,10 +70,14 @@ export const useTabsStore = defineStore('tabs', () => {
   async function saveActive(): Promise<void> {
     const t = activeTab.value
     if (!t || !t.path || !vault.value) return
+    const next = emitLifecycle('onSave', undefined, t.content)
+    const content = typeof next === 'string' ? next : t.content
+    if (content !== t.content) t.content = content
     try {
-      await fsService.write(vault.value, t.path, t.content)
-      t.savedContent = t.content
+      await fsService.write(vault.value, t.path, content)
+      t.savedContent = content
       t.dirty = false
+      emitLifecycle('onSaved', undefined, content)
     } catch {
       notifyError('保存失败，内容已保留在编辑器中，请重试')
     }
