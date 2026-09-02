@@ -80,7 +80,7 @@ asserting results update on query change (2 results → filtered → empty → b
 
 ## Commit
 
-Full hash: `26af711`
+Full hash: `fb03905`
 
 ## Concerns
 
