@@ -1,8 +1,8 @@
-import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { NekoEditor } from '@nekowite/editor-core'
 import { editorBridge } from './editorBridge'
 import { notifyError } from './errors'
+import { getGateways } from './gateways/index'
 import { useSettingsStore } from '../stores/settings'
 import type { AIConfig } from '../stores/settings'
 
@@ -52,7 +52,7 @@ function cancelStream(): void {
     // activeId check, so drop them here to keep cancelledIds bounded.
     cancelledIds.clear()
     cancelledIds.add(id)
-    void Promise.resolve(invoke('ai_cancel', { id })).catch(() => undefined)
+    void Promise.resolve(getGateways().ai.cancel(id)).catch(() => undefined)
   }
   cleanupListeners()
   activeId = null
@@ -124,7 +124,7 @@ async function triggerSuggestion(
   }
 
   try {
-    await invoke('ai_complete', { config, prompt })
+    await getGateways().ai.complete(config, prompt)
   } catch (e) {
     cleanupListeners()
     activeId = null

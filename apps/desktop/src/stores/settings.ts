@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { getGateways } from '../services/gateways/index'
 
 export interface AIConfig {
   provider: string
@@ -39,11 +39,11 @@ export const useSettingsStore = defineStore('settings', () => {
   watch(baseUrl, (b) => localStorage.setItem(LS_BASE_URL, b))
 
   async function saveKey(): Promise<void> {
-    await invoke('store_ai_key', { provider: provider.value, key: apiKey.value })
+    await getGateways().keys.storeAiKey(provider.value, apiKey.value)
   }
 
   async function loadKey(): Promise<void> {
-    const stored = await invoke<string | null>('load_ai_key', { provider: provider.value })
+    const stored = await getGateways().keys.loadAiKey(provider.value)
     apiKey.value = stored ?? ''
   }
 

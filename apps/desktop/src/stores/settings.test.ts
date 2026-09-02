@@ -2,6 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
 
+vi.hoisted(() => {
+  const g = globalThis as { window?: { __TAURI_INTERNALS__?: unknown } }
+  if (!g.window) g.window = {}
+  g.window.__TAURI_INTERNALS__ = {}
+})
+
 const invokeMock = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 
