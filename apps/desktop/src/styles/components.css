@@ -228,11 +228,20 @@
 }
 
 /* ============ Dialog ============ */
+/* Z-index scale (low → high):
+     50    (unused, legacy)
+    100    .settings-panel  (fixed right drawer)
+   1000   (unused, legacy — math overlay previously)
+   2000   .toast-stack      (transient)
+   9999   .float-toolbar    (transient)
+  10000   modal overlays (.dialog-overlay, .math-overlay)
+          — always cover toast / float toolbar / settings drawer.
+   Modals are the top-most layer: nothing renders above an open modal. */
 .dialog-overlay {
   position: fixed;
   inset: 0;
   background: color-mix(in srgb, var(--app-canvas) 55%, transparent);
-  z-index: 50;
+  z-index: 10000;
 }
 .dialog {
   background: var(--app-elevated);

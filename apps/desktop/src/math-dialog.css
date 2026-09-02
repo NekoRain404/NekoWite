@@ -1,10 +1,12 @@
+/* z-index 10000: modal layer — always above toast (2000) / float toolbar (9999) /
+   settings drawer (100). See the scale comment in styles/components.css. */
 .math-overlay {
   position: fixed;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 10000;
 }
 
 .math-dialog {
