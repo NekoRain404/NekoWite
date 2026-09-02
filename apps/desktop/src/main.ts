@@ -8,6 +8,7 @@ import { floatboxPlugin } from './plugins/floatbox'
 import { statusPlugin } from './plugins/status'
 import 'mathlive/static.css'
 import './styles/tokens.css'
+import './styles/components.css'
 import './style.css'
 import './math-dialog.css'
 
