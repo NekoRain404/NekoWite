@@ -183,7 +183,7 @@ function onExportPdf(): void {
             type="number"
             min="12"
             max="20"
-            @change="appearance.setBodyFontSize(Number(($event.target as HTMLInputElement).value))"
+            @change="appearance.setBodyFontSize(Math.min(20, Math.max(12, Number(($event.target as HTMLInputElement).value) || 15)))"
           >
         </label>
         <label class="settings-field">
@@ -195,7 +195,7 @@ function onExportPdf(): void {
             min="1.2"
             max="2.4"
             step="0.1"
-            @change="appearance.setLineHeight(Number(($event.target as HTMLInputElement).value))"
+            @change="appearance.setLineHeight(Math.min(2.4, Math.max(1.2, Number(($event.target as HTMLInputElement).value) || 1.8)))"
           >
         </label>
       </div>

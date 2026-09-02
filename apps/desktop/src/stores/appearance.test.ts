@@ -54,4 +54,24 @@ describe('useAppearanceStore', () => {
     s.touchSystem()
     expect(effective.value).toBe('dark')
   })
+
+  it('clamps bodyFontSize into [12, 20]', () => {
+    const s = useAppearanceStore()
+    s.setBodyFontSize(0)
+    expect(s.bodyFontSize).toBe(12)
+    s.setBodyFontSize(99)
+    expect(s.bodyFontSize).toBe(20)
+    s.setBodyFontSize(14.5)
+    expect(s.bodyFontSize).toBe(14.5)
+  })
+
+  it('clamps lineHeight into [1.2, 2.4]', () => {
+    const s = useAppearanceStore()
+    s.setLineHeight(0)
+    expect(s.lineHeight).toBe(1.2)
+    s.setLineHeight(9)
+    expect(s.lineHeight).toBe(2.4)
+    s.setLineHeight(1.6)
+    expect(s.lineHeight).toBe(1.6)
+  })
 })

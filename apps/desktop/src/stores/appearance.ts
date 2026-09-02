@@ -76,12 +76,12 @@ export const useAppearanceStore = defineStore('appearance', () => {
   }
 
   function setBodyFontSize(n: number): void {
-    bodyFontSize.value = n
+    bodyFontSize.value = Math.min(20, Math.max(12, Number.isFinite(n) ? n : DEFAULTS.bodyFontSize))
     persist()
   }
 
   function setLineHeight(n: number): void {
-    lineHeight.value = n
+    lineHeight.value = Math.min(2.4, Math.max(1.2, Number.isFinite(n) ? n : DEFAULTS.lineHeight))
     persist()
   }
 
