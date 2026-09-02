@@ -100,24 +100,18 @@
 
 .btn-danger {
   background: var(--app-danger);
-  color: var(--app-accent-contrast);
+  color: var(--app-danger-contrast);
   box-shadow: 0 1px 2px rgb(0 0 0 / 18%), inset 0 1px rgb(255 255 255 / 42%);
 }
 .btn-danger:hover {
   background: color-mix(in srgb, var(--app-danger) 88%, var(--app-elevated));
 }
 .btn-danger:active {
-  background: color-mix(in srgb, var(--app-danger) 82%, var(--app-accent-contrast));
+  background: color-mix(in srgb, var(--app-danger) 82%, var(--app-danger-contrast));
   box-shadow: inset 0 1px 2px rgb(0 0 0 / 14%);
 }
 [data-theme="dark"] .btn-danger {
   box-shadow: 0 1px 3px rgb(0 0 0 / 40%), inset 0 1px rgb(255 255 255 / 8%);
-}
-
-.btn.is-active {
-  background: color-mix(in srgb, var(--app-accent) 82%, var(--app-accent-contrast));
-  color: var(--app-accent-contrast);
-  box-shadow: inset 0 1px 2px rgb(0 0 0 / 12%);
 }
 
 /* ============ Input ============ */
@@ -196,11 +190,6 @@
 }
 .toolbar-btn:active {
   background: var(--app-panel);
-}
-.toolbar-btn.is-active {
-  background: var(--app-accent-soft);
-  color: var(--app-accent);
-  border-color: transparent;
 }
 .toolbar-sep {
   width: 1px;
@@ -329,8 +318,7 @@
   background: var(--app-muted);
   opacity: 0;
 }
-.save-dot[data-state="saved"].is-shown,
-.save-dot[data-state="saved"][data-visible="true"] {
+.save-dot[data-state="saved"].is-shown {
   opacity: 1;
 }
 .save-dot[data-state="dirty"] {

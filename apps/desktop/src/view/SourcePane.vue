@@ -61,7 +61,7 @@ defineExpose({ getRatio, setRatio })
   font-family: var(--neko-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 14px;
   line-height: 1.6;
-  background: #fff;
-  color: #1f2328;
+  background: var(--app-canvas);
+  color: var(--app-text);
 }
 </style>

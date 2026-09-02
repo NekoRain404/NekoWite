@@ -1,7 +1,6 @@
 * { box-sizing: border-box; }
 html, body, #app { margin: 0; padding: 0; height: 100%; width: 100%; }
 body { font-family: var(--app-font); font-size: var(--app-body-size); line-height: var(--app-line-height); }
-html[data-theme="dark"] { color-scheme: dark; }
 /* 滚动条 */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--app-border) 120%, transparent); border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }
