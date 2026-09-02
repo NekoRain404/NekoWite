@@ -1,6 +1,8 @@
 use serde::Serialize;
 use std::io;
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Serialize, Clone)]
 pub struct FileEntry {
@@ -8,6 +10,20 @@ pub struct FileEntry {
     pub path: String,
     pub is_dir: bool,
     pub is_mdx: bool,
+}
+
+#[derive(Serialize, Clone)]
+pub struct TrashEntry {
+    pub name: String,
+    pub trash_path: String,
+    pub original_path: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct HistoryEntry {
+    pub id: String,
+    pub size: u64,
+    pub mtime: u64,
 }
 
 pub fn is_mdx_path(p: &str) -> bool {
@@ -154,9 +170,340 @@ pub fn read_file(vault_root: &str, path: &str) -> Result<String, String> {
     std::fs::read_to_string(&resolved).map_err(|e| e.to_string())
 }
 
-pub fn write_file(vault_root: &str, path: &str, content: &str) -> Result<(), String> {
+/// Write `content` to `resolved` atomically: write a temp sibling
+/// (`.<name>.<nonce>.tmp`) in the same directory, fsync it, then rename over
+/// the target. On any failure the temp file is removed so no partial file is
+/// left behind. Mirrors Memoir's `atomic.rs`.
+pub fn atomic_write(resolved: &Path, content: &str) -> Result<(), String> {
+    let parent = resolved
+        .parent()
+        .ok_or_else(|| "target path has no parent directory".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let name = resolved
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file");
+    let tmp = parent.join(format!(".{name}.{nonce}.tmp"));
+    let result = (|| {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .map_err(|e| format!("cannot create temp file {}: {e}", tmp.display()))?;
+        f.write_all(content.as_bytes())
+            .map_err(|e| format!("cannot write temp file {}: {e}", tmp.display()))?;
+        f.sync_all()
+            .map_err(|e| format!("cannot sync temp file {}: {e}", tmp.display()))?;
+        std::fs::rename(&tmp, resolved).map_err(|e| e.to_string())?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
+/// Encode a vault-relative path into a single safe file name for use under
+/// `.nekowite/history/` and `.nekowite-trash/`: `/` becomes `__`, leading dots
+/// are dropped (so hidden names and `..` parents cannot leak into the encoded
+/// name), and any interior `..` run is collapsed to `_`. The result is pure
+/// and testable: it can never contain `/`, `..`, or start with `.`.
+pub fn encode_rel_path(p: &str) -> String {
+    let mut out = String::new();
+    for c in p.chars() {
+        match c {
+            '/' => out.push_str("__"),
+            '.' => {
+                if out.is_empty() {
+                    // Drop leading dots: hidden-name / parent-dir protection.
+                } else if out.ends_with('.') {
+                    // Collapse a `..` run so no traversal marker survives.
+                    out.pop();
+                    out.push('_');
+                } else {
+                    out.push('.');
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    // Trim a trailing dot-run that could look like a special `.`/`..` name.
+    while out.ends_with('.') {
+        out.pop();
+    }
+    if out.is_empty() {
+        out.push('_');
+    }
+    out
+}
+
+/// Best-effort inverse of [`encode_rel_path`]: `__` back to `/`. Used by
+/// trash listing/restore to recover the original path; collisions between a
+/// literal `__` in a real file name and the encoding are accepted (the decode
+/// is documented as best-effort).
+fn decode_rel_path(encoded: &str) -> String {
+    encoded.replace("__", "/")
+}
+
+/// A decoded relative path is usable only if it is non-empty, not absolute,
+/// and has no `.`/`..` components (which the encoding must never produce).
+fn is_safe_rel(p: &str) -> bool {
+    !p.is_empty()
+        && !p.starts_with('/')
+        && !p.split('/').any(|c| c == "." || c == "..")
+}
+
+/// Snapshot `old_content` into `.nekowite/history/<encoded>/<unix_ms>.<ext>`
+/// under `vault_root`, then prune the directory to the `max` newest snapshots.
+/// Empty `old_content` is skipped (nothing to preserve). If two snapshots land
+/// in the same millisecond a `-<n>` suffix keeps them distinct so no snapshot
+/// is silently overwritten.
+pub fn snapshot_history(vault_root: &str, path: &str, old_content: &str, max: usize) -> Result<(), String> {
+    if old_content.is_empty() {
+        return Ok(());
+    }
     let resolved = resolve_within(vault_root, path)?;
-    std::fs::write(&resolved, content).map_err(|e| e.to_string())
+    let encoded = encode_rel_path(path);
+    let history_dir = Path::new(vault_root)
+        .join(".nekowite")
+        .join("history")
+        .join(&encoded);
+    std::fs::create_dir_all(&history_dir).map_err(|e| e.to_string())?;
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default();
+    let ext = resolved
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("md");
+    let mut snapshot = history_dir.join(format!("{ms}.{ext}"));
+    let mut n = 1u64;
+    while snapshot.exists() {
+        snapshot = history_dir.join(format!("{ms}-{n}.{ext}"));
+        n += 1;
+    }
+    std::fs::write(&snapshot, old_content).map_err(|e| e.to_string())?;
+    prune_history(&history_dir, max)
+}
+
+/// Keep only the `max` newest snapshot files (by modified time) in `dir`.
+fn prune_history(dir: &Path, max: usize) -> Result<(), String> {
+    let mut entries: Vec<(PathBuf, u128)> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if let Ok(meta) = p.metadata() {
+                if meta.is_file() {
+                    let mtime = meta
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0);
+                    entries.push((p, mtime));
+                }
+            }
+        }
+    }
+    if entries.len() > max {
+        entries.sort_by_key(|(_, mtime)| std::cmp::Reverse(*mtime));
+        for (p, _) in entries.into_iter().skip(max) {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+    Ok(())
+}
+
+/// Write `content` to `path` under the vault, snapshotting the previous
+/// content first (when it exists, differs, and is non-empty).
+///
+/// `max_history` caps how many snapshots are kept (default 10 when `None`).
+/// `Option<u32>` keeps the command compatible with the current frontend, which
+/// invokes `write_file` with only `{ vault_root, path, content }`; Tauri maps a
+/// missing optional argument to `None`.
+pub fn write_file(
+    vault_root: &str,
+    path: &str,
+    content: &str,
+    max_history: Option<u32>,
+) -> Result<(), String> {
+    let resolved = resolve_within(vault_root, path)?;
+    let old = if resolved.exists() {
+        std::fs::read_to_string(&resolved).ok()
+    } else {
+        None
+    };
+    if let Some(old_content) = old {
+        if !old_content.is_empty() && old_content != content {
+            let max = max_history.unwrap_or(10) as usize;
+            snapshot_history(vault_root, path, &old_content, max)?;
+        }
+    }
+    atomic_write(&resolved, content)
+}
+
+/// Move `path` into `.nekowite-trash/<encode(path)>`, appending `-<ts>` if a
+/// same-named entry already sits in the trash. Returns the trash path.
+pub fn delete_file(vault_root: &str, path: &str) -> Result<String, String> {
+    let resolved = resolve_within(vault_root, path)?;
+    let trash_root = Path::new(vault_root).join(".nekowite-trash");
+    std::fs::create_dir_all(&trash_root).map_err(|e| e.to_string())?;
+    let encoded = encode_rel_path(path);
+    let mut target = trash_root.join(&encoded);
+    if target.exists() {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or_default();
+        target = trash_root.join(format!("{encoded}-{ts}"));
+    }
+    std::fs::rename(&resolved, &target).map_err(|e| e.to_string())?;
+    Ok(target.to_string_lossy().to_string())
+}
+
+/// List `.nekowite-trash/`, decoding each entry back to its original vault
+/// path where the encoding permits.
+pub fn list_trash(vault_root: &str) -> Result<Vec<TrashEntry>, String> {
+    let trash_root = Path::new(vault_root).join(".nekowite-trash");
+    let mut out = Vec::new();
+    let rd = match std::fs::read_dir(&trash_root) {
+        Ok(rd) => rd,
+        Err(_) => return Ok(out),
+    };
+    for entry in rd.flatten() {
+        let p = entry.path();
+        let Ok(meta) = p.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        let name = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        let decoded = decode_rel_path(&name);
+        let original_path = if is_safe_rel(&decoded) { decoded } else { String::new() };
+        out.push(TrashEntry {
+            name,
+            trash_path: p.to_string_lossy().to_string(),
+            original_path,
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+/// Move a trash entry back to its original vault path. If that path is now
+/// occupied, append `-restored-<ts>` and return the new path.
+pub fn restore_from_trash(vault_root: &str, trash_path: &str) -> Result<String, String> {
+    let resolved_trash = resolve_within(vault_root, trash_path)?;
+    let trash_root = Path::new(vault_root).join(".nekowite-trash");
+    let canonical_trash = trash_root
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve trash directory: {e}"))?;
+    if !resolved_trash.starts_with(&canonical_trash) {
+        return Err("trash path outside .nekowite-trash".into());
+    }
+    let name = resolved_trash
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+    let original_rel = decode_rel_path(&name);
+    if !is_safe_rel(&original_rel) {
+        return Err("cannot restore: invalid trash entry name".into());
+    }
+    let original_abs = resolve_within(vault_root, &original_rel)?;
+    let mut target = original_abs;
+    if target.exists() {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or_default();
+        let parent = target
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default();
+        let fname = target
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("file")
+            .to_string();
+        target = parent.join(format!("{fname}-restored-{ts}"));
+    }
+    std::fs::rename(&resolved_trash, &target).map_err(|e| e.to_string())?;
+    Ok(target.to_string_lossy().to_string())
+}
+
+/// List the history snapshots for `path`, newest first.
+pub fn list_history(vault_root: &str, path: &str) -> Result<Vec<HistoryEntry>, String> {
+    // Validate the path resolves inside the vault (C-round sandbox) before we
+    // trust it as a history key.
+    resolve_within(vault_root, path)?;
+    let encoded = encode_rel_path(path);
+    let history_dir = Path::new(vault_root)
+        .join(".nekowite")
+        .join("history")
+        .join(&encoded);
+    let mut out = Vec::new();
+    let rd = match std::fs::read_dir(&history_dir) {
+        Ok(rd) => rd,
+        Err(_) => return Ok(out),
+    };
+    for entry in rd.flatten() {
+        let p = entry.path();
+        let Ok(meta) = p.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        let id = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        let mtime = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        out.push(HistoryEntry {
+            id,
+            size: meta.len(),
+            mtime,
+        });
+    }
+    out.sort_by(|a, b| b.mtime.cmp(&a.mtime).then(b.id.cmp(&a.id)));
+    Ok(out)
+}
+
+/// Read a single history snapshot by id.
+pub fn read_history(vault_root: &str, path: &str, id: &str) -> Result<String, String> {
+    resolve_within(vault_root, path)?;
+    if id.is_empty() || id.contains('/') || id.contains("..") {
+        return Err("invalid history id".into());
+    }
+    let encoded = encode_rel_path(path);
+    let snapshot = Path::new(vault_root)
+        .join(".nekowite")
+        .join("history")
+        .join(&encoded)
+        .join(id);
+    std::fs::read_to_string(&snapshot).map_err(|e| e.to_string())
+}
+
+/// Restore a history snapshot onto the main file atomically; returns the
+/// restored content.
+pub fn restore_history(vault_root: &str, path: &str, id: &str) -> Result<String, String> {
+    let content = read_history(vault_root, path, id)?;
+    let resolved = resolve_within(vault_root, path)?;
+    atomic_write(&resolved, &content)?;
+    Ok(content)
 }
 
 pub fn list_dir(vault_root: &str, path: Option<&str>) -> Result<Vec<FileEntry>, String> {

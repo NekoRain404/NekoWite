@@ -25,8 +25,43 @@ fn read_file(vault_root: String, path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn write_file(vault_root: String, path: String, content: String) -> Result<(), String> {
-    fs::write_file(&vault_root, &path, &content)
+fn write_file(
+    vault_root: String,
+    path: String,
+    content: String,
+    max_history: Option<u32>,
+) -> Result<(), String> {
+    fs::write_file(&vault_root, &path, &content, max_history)
+}
+
+#[tauri::command]
+fn delete_file(vault_root: String, path: String) -> Result<String, String> {
+    fs::delete_file(&vault_root, &path)
+}
+
+#[tauri::command]
+fn list_trash(vault_root: String) -> Result<Vec<fs::TrashEntry>, String> {
+    fs::list_trash(&vault_root)
+}
+
+#[tauri::command]
+fn restore_from_trash(vault_root: String, trash_path: String) -> Result<String, String> {
+    fs::restore_from_trash(&vault_root, &trash_path)
+}
+
+#[tauri::command]
+fn list_history(vault_root: String, path: String) -> Result<Vec<fs::HistoryEntry>, String> {
+    fs::list_history(&vault_root, &path)
+}
+
+#[tauri::command]
+fn read_history(vault_root: String, path: String, id: String) -> Result<String, String> {
+    fs::read_history(&vault_root, &path, &id)
+}
+
+#[tauri::command]
+fn restore_history(vault_root: String, path: String, id: String) -> Result<String, String> {
+    fs::restore_history(&vault_root, &path, &id)
 }
 
 #[tauri::command]
@@ -126,6 +161,12 @@ pub fn run() {
             ping,
             read_file,
             write_file,
+            delete_file,
+            list_trash,
+            restore_from_trash,
+            list_history,
+            read_history,
+            restore_history,
             list_dir,
             open_folder_dialog,
             save_file_dialog,
