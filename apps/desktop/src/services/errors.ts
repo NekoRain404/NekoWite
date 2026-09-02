@@ -17,6 +17,23 @@ export function onNotify(cb: (msg: string) => void): () => void {
   return () => listeners.delete(cb)
 }
 
+export interface RecoveryPrompt {
+  message: string
+  onRestore: () => void
+  onDismiss: () => void
+}
+
+const recoveryListeners = new Set<(p: RecoveryPrompt) => void>()
+
+export function notifyRecovery(p: RecoveryPrompt): void {
+  recoveryListeners.forEach((l) => l(p))
+}
+
+export function onRecovery(cb: (p: RecoveryPrompt) => void): () => void {
+  recoveryListeners.add(cb)
+  return () => recoveryListeners.delete(cb)
+}
+
 // Normalize export failures for display. The Tauri write command rejects
 // with the raw Rust error string, e.g. "path escapes vault" when the save
 // dialog returned a path outside the vault; map that to a user-facing hint.

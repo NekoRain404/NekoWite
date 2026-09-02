@@ -108,6 +108,7 @@ onMounted(async () => {
       if (myGen !== gen) return
       active.content = markdown
       tabs.markDirty(active.id)
+      tabs.scheduleAutosave(active.id)
       lastDoc = markdown
       if (docChangeTimer) return
       docChangeTimer = setTimeout(() => {
@@ -123,6 +124,7 @@ onBeforeUnmount(() => {
     clearTimeout(docChangeTimer)
     docChangeTimer = null
   }
+  if (tabs.activeId) tabs.cancelAutosave(tabs.activeId)
   setCalloutView(null)
   editorBridge.setEditor(null)
   setActiveEditor(null)

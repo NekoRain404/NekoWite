@@ -22,8 +22,14 @@ export interface HistoryEntry {
   mtime: number
 }
 
+export interface FileStat {
+  size: number
+  mtime: number
+}
+
 export interface FsGateway {
   read(vault: string, path: string): Promise<string>
+  stat(vault: string, path: string): Promise<FileStat>
   write(vault: string, path: string, content: string, maxHistory?: number): Promise<void>
   list(vault: string, dir: string): Promise<FileEntry[]>
   watch(vault: string): Promise<void>

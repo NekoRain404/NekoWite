@@ -25,6 +25,11 @@ fn read_file(vault_root: String, path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn stat_file(vault_root: String, path: String) -> Result<fs::FileStat, String> {
+    fs::stat_file(&vault_root, &path)
+}
+
+#[tauri::command]
 fn write_file(
     vault_root: String,
     path: String,
@@ -160,6 +165,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ping,
             read_file,
+            stat_file,
             write_file,
             delete_file,
             list_trash,

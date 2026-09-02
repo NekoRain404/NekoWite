@@ -50,6 +50,7 @@ export function createMemoryFsGateway(
   const files = new Map(Object.entries(seed))
   const history = new Map<string, Snapshot[]>()
   const trash = new Map<string, TrashItem>()
+  const modified = new Map<string, number>()
   let idSeq = 0
 
   function snapshot(path: string, oldContent: string, maxHistory?: number): void {
@@ -90,6 +91,14 @@ export function createMemoryFsGateway(
         snapshot(path, old, maxHistory)
       }
       files.set(path, content)
+      modified.set(path, Date.now())
+    },
+    stat: async (_vault, path) => {
+      const content = files.get(path)
+      if (content === undefined) {
+        throw new Error(`No such file in demo vault: ${path}`)
+      }
+      return { size: content.length, mtime: modified.get(path) ?? 0 }
     },
     deleteFile: async (_vault, path) => {
       const content = files.get(path)

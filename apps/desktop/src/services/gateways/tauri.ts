@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import type {
   AiGateway,
   FileEntry,
+  FileStat,
   FsChangeEvent,
   FsGateway,
   HistoryEntry,
@@ -12,6 +13,7 @@ import type {
 
 export const tauriFsGateway: FsGateway = {
   read: (vault, path) => invoke<string>('read_file', { vault_root: vault, path }),
+  stat: (vault, path) => invoke<FileStat>('stat_file', { vault_root: vault, path }),
   write: (vault, path, content, maxHistory) =>
     invoke<void>('write_file', {
       vault_root: vault,

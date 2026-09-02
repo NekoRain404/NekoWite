@@ -26,6 +26,12 @@ pub struct HistoryEntry {
     pub mtime: u64,
 }
 
+#[derive(Serialize, Clone)]
+pub struct FileStat {
+    pub size: u64,
+    pub mtime: u64,
+}
+
 pub fn is_mdx_path(p: &str) -> bool {
     let path = Path::new(p);
     let has_node_modules = path
@@ -168,6 +174,25 @@ fn canonicalize_loose(path: &Path) -> io::Result<PathBuf> {
 pub fn read_file(vault_root: &str, path: &str) -> Result<String, String> {
     let resolved = resolve_within(vault_root, path)?;
     std::fs::read_to_string(&resolved).map_err(|e| e.to_string())
+}
+
+/// Stat a vault-relative path: byte size plus modified time in unix
+/// milliseconds. The path is resolved within the vault first, and a missing
+/// file is an error (`resolve_within` permits a not-yet-existing tail, but
+/// the metadata lookup then fails).
+pub fn stat_file(vault_root: &str, path: &str) -> Result<FileStat, String> {
+    let resolved = resolve_within(vault_root, path)?;
+    let meta = std::fs::metadata(&resolved).map_err(|e| format!("cannot stat file: {e}"))?;
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    Ok(FileStat {
+        size: meta.len(),
+        mtime,
+    })
 }
 
 /// Write `content` to `resolved` atomically: write a temp sibling

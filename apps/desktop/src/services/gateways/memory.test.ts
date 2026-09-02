@@ -80,6 +80,21 @@ describe('memoryFsGateway', () => {
     expect(await fs.readHistory('memoir://demo', 'a.md', h[1].id)).toBe('v1')
   })
 
+  it('stat returns size and mtime recorded by the latest write', async () => {
+    const fs = createMemoryFsGateway({ 'a.md': 'hello' })
+    await fs.write('memoir://demo', 'a.md', 'hello world')
+    const st = await fs.stat('memoir://demo', 'a.md')
+    expect(st.size).toBe(11)
+    expect(st.mtime).toBeGreaterThan(0)
+  })
+
+  it('stat throws for a missing file', async () => {
+    const fs = createMemoryFsGateway()
+    await expect(fs.stat('memoir://demo', 'nope.md')).rejects.toThrow(
+      'No such file in demo vault: nope.md',
+    )
+  })
+
   it('does not snapshot history when writing a new file', async () => {
     const fs = createMemoryFsGateway()
     await fs.write('memoir://demo', 'new.md', 'first')

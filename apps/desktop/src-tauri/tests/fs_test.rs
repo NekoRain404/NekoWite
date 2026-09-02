@@ -1,7 +1,7 @@
 use nekowite_lib::fs::{
     atomic_write, delete_file, encode_rel_path, is_mdx_path, list_dir, list_dir_entries,
     list_history, list_trash, read_file, read_history, resolve_within, restore_from_trash,
-    restore_history, sanitize_path, should_skip_entry, write_file,
+    restore_history, sanitize_path, should_skip_entry, stat_file, write_file,
 };
 use std::path::PathBuf;
 
@@ -203,6 +203,25 @@ fn encode_rel_path_is_safe() {
     assert!(!encode_rel_path(".hidden.md").starts_with('.'));
     assert!(!encode_rel_path(".").is_empty());
     assert!(!encode_rel_path("a/../b").contains(".."));
+}
+
+#[test]
+fn stat_file_returns_size_and_mtime() {
+    let vault = temp_vault("stat");
+    let root = vault.to_str().unwrap().to_string();
+    write_file(&root, "docs/note.md", "hello world", Some(10)).unwrap();
+    let stat = stat_file(&root, "docs/note.md").expect("stat a created file");
+    assert_eq!(stat.size, 11, "size matches the known byte count");
+    assert!(stat.mtime > 0, "mtime is a positive unix-millisecond timestamp");
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+#[test]
+fn stat_file_missing_file_errors() {
+    let vault = temp_vault("stat-missing");
+    let root = vault.to_str().unwrap().to_string();
+    assert!(stat_file(&root, "nope.md").is_err());
+    std::fs::remove_dir_all(&vault).unwrap();
 }
 
 #[test]

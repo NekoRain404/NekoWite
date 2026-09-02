@@ -25,6 +25,24 @@ const emit = defineEmits<{
 const tabs = useTabsStore()
 const root = ref<TreeNode | null>(null)
 const unlisten = ref<UnlistenFn | null>(null)
+const confirmPath = ref<string | null>(null)
+
+function cancelDelete(): void {
+  confirmPath.value = null
+}
+
+async function confirmDelete(path: string): Promise<void> {
+  const tab = tabs.tabs.find((t) => t.path === path)
+  try {
+    if (tab) await tabs.deleteTabFile(tab.id)
+    else await fsService.deleteFile(props.vault, path)
+  } catch {
+    notifyError('删除失败，请重试')
+  } finally {
+    confirmPath.value = null
+    await refreshAncestors(path)
+  }
+}
 
 function makeNode(e: FileEntry): TreeNode {
   return {
@@ -180,6 +198,32 @@ watch(
           >
             {{ row.node.name }}
           </span>
+          <span
+            v-if="!row.node.is_dir && confirmPath !== row.node.path"
+            class="tree-del"
+            title="删除"
+            @click.stop="confirmPath = row.node.path"
+          >
+            🗑
+          </span>
+          <span
+            v-else-if="!row.node.is_dir && confirmPath === row.node.path"
+            class="tree-del-confirm"
+            @click.stop
+          >
+            <button
+              class="btn btn-secondary btn-sm"
+              @click.stop="confirmDelete(row.node.path)"
+            >
+              确认
+            </button>
+            <button
+              class="btn btn-secondary btn-sm"
+              @click.stop="cancelDelete"
+            >
+              取消
+            </button>
+          </span>
         </div>
       </template>
     </div>
@@ -227,7 +271,23 @@ watch(
   border-radius: var(--app-radius);
 }
 .tree-row:hover { background: color-mix(in srgb, var(--app-elevated) 54%, transparent); }
-.tree-name { cursor: pointer; overflow: hidden; text-overflow: ellipsis; }
+.tree-name { cursor: pointer; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+.tree-del {
+  margin-left: auto;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--app-muted);
+  opacity: 0;
+  transition: opacity 0.1s var(--app-ease);
+}
+.tree-row:hover .tree-del { opacity: 1; }
+.tree-del:hover { color: var(--app-danger); }
+.tree-del-confirm {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
 .tree-name.dir { font-weight: 500; }
 .tree-name.mdx::after { content: ''; }
 .caret {

@@ -1,14 +1,20 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref } from 'vue'
-import { onNotify } from '../services/errors'
+import { onNotify, onRecovery } from '../services/errors'
+import type { RecoveryPrompt } from '../services/errors'
 
 interface ToastMsg {
   id: number
   message: string
 }
 
+interface RecoveryPromptState extends RecoveryPrompt {
+  id: number
+}
+
 let seq = 0
 const toasts = ref<ToastMsg[]>([])
+const recovery = ref<RecoveryPromptState | null>(null)
 
 function dismiss(id: number): void {
   toasts.value = toasts.value.filter((t) => t.id !== id)
@@ -20,9 +26,31 @@ function show(message: string): void {
   window.setTimeout(() => dismiss(id), 3000)
 }
 
-const off = onNotify(show)
+function showRecovery(p: RecoveryPrompt): void {
+  recovery.value = { id: ++seq, ...p }
+}
 
-onBeforeUnmount(() => off())
+function dismissRecovery(): void {
+  if (!recovery.value) return
+  const p = recovery.value
+  recovery.value = null
+  p.onDismiss()
+}
+
+function confirmRecovery(): void {
+  if (!recovery.value) return
+  const p = recovery.value
+  recovery.value = null
+  p.onRestore()
+}
+
+const off = onNotify(show)
+const offRecovery = onRecovery(showRecovery)
+
+onBeforeUnmount(() => {
+  off()
+  offRecovery()
+})
 </script>
 
 <template>
@@ -38,6 +66,28 @@ onBeforeUnmount(() => off())
         {{ t.message }}
       </div>
     </TransitionGroup>
+    <div
+      v-if="recovery"
+      class="toast recovery"
+      role="alertdialog"
+      aria-live="assertive"
+    >
+      <span class="recovery-msg">{{ recovery.message }}</span>
+      <div class="recovery-actions">
+        <button
+          class="btn btn-primary btn-sm"
+          @click="confirmRecovery"
+        >
+          恢复
+        </button>
+        <button
+          class="btn btn-secondary btn-sm"
+          @click="dismissRecovery"
+        >
+          忽略
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -63,6 +113,18 @@ onBeforeUnmount(() => off())
   box-shadow: 0 2px 8px rgb(0 0 0 / 16%);
   cursor: pointer;
   word-break: break-word;
+}
+.toast.recovery {
+  color: var(--app-text);
+  border-left: 3px solid var(--app-accent);
+  cursor: default;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.recovery-actions {
+  display: flex;
+  gap: 6px;
 }
 .toast-enter-active,
 .toast-leave-active {

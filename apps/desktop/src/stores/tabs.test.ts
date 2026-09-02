@@ -3,19 +3,45 @@ import { createPinia, setActivePinia } from 'pinia'
 import { registerLifecycleHook, setActiveEditor } from '@nekowite/plugin-host'
 import type { PluginContext } from '@nekowite/plugin-host'
 import { consumeSuppressReapply, shouldSuppressReapply } from '../services/suppressReapply'
+import { onRecovery } from '../services/errors'
+import type { RecoveryPrompt } from '../services/errors'
 import { useTabsStore } from './tabs'
+import { useSettingsStore } from './settings'
 
 const readMock = vi.hoisted(() => vi.fn())
 const writeMock = vi.hoisted(() => vi.fn())
-vi.mock('../services/fs', () => ({ fsService: { read: readMock, write: writeMock, list: vi.fn(), watch: vi.fn() } }))
+const deleteFileMock = vi.hoisted(() => vi.fn())
+const statMock = vi.hoisted(() => vi.fn())
+const listHistoryMock = vi.hoisted(() => vi.fn())
+const restoreHistoryMock = vi.hoisted(() => vi.fn())
+vi.mock('../services/fs', () => ({
+  fsService: {
+    read: readMock,
+    write: writeMock,
+    list: vi.fn(),
+    watch: vi.fn(),
+    deleteFile: deleteFileMock,
+    stat: statMock,
+    listHistory: listHistoryMock,
+    restoreHistory: restoreHistoryMock,
+  },
+}))
+
+function resetFsMocks(): void {
+  readMock.mockReset()
+  writeMock.mockReset()
+  deleteFileMock.mockReset()
+  statMock.mockReset()
+  listHistoryMock.mockReset()
+  restoreHistoryMock.mockReset()
+}
 
 const ctx = { id: 'test', name: 'Test', insertComponent: () => {} } as PluginContext
 
 describe('useTabsStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    readMock.mockReset()
-    writeMock.mockReset()
+    resetFsMocks()
   })
 
   it('opens a tab and marks dirty on edit', async () => {
@@ -42,8 +68,7 @@ describe('useTabsStore', () => {
 describe('save state indicator', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    readMock.mockReset()
-    writeMock.mockReset()
+    resetFsMocks()
   })
 
   it('reports saving while write is pending, then saved', async () => {
@@ -89,8 +114,7 @@ describe('lifecycle broadcast from tabs store', () => {
 
   beforeEach(() => {
     setActivePinia(createPinia())
-    readMock.mockReset()
-    writeMock.mockReset()
+    resetFsMocks()
   })
 
   afterEach(() => {
@@ -107,7 +131,7 @@ describe('lifecycle broadcast from tabs store', () => {
     await s.openTab('/vault/a.md')
     const tab = s.tabs[0]
     await s.saveActive()
-    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'abc!')
+    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'abc!', 10)
     expect(tab.content).toBe('abc!')
     expect(tab.savedContent).toBe('abc!')
   })
@@ -135,7 +159,7 @@ describe('lifecycle broadcast from tabs store', () => {
     readMock.mockResolvedValue('abc')
     await s.openTab('/vault/a.md')
     await s.saveActive()
-    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'abc')
+    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'abc', 10)
     expect(savedSpy).toHaveBeenCalledWith(ctx, null, 'abc')
   })
 
@@ -189,9 +213,197 @@ describe('lifecycle broadcast from tabs store', () => {
     const tab = s.tabs[0]
     tab.dirty = true
     await s.saveActive()
-    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'abc!')
+    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'abc!', 10)
     expect(tab.content).toBe('abc')
     expect(tab.savedContent).toBe('abc')
     expect(tab.dirty).toBe(true)
+  })
+})
+
+describe('autosave debounce', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    resetFsMocks()
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('writes once after the interval, not before it', async () => {
+    readMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    const tab = s.tabs[0]
+    tab.content = 'changed'
+    s.markDirty(tab.id)
+    s.scheduleAutosave(tab.id)
+    await vi.advanceTimersByTimeAsync(14000)
+    expect(writeMock).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(writeMock).toHaveBeenCalledTimes(1)
+    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'changed', 10)
+  })
+
+  it('collapses repeated schedules within the interval to one write', async () => {
+    readMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    const tab = s.tabs[0]
+    tab.content = 'changed'
+    s.markDirty(tab.id)
+    s.scheduleAutosave(tab.id)
+    await vi.advanceTimersByTimeAsync(5000)
+    s.scheduleAutosave(tab.id)
+    await vi.advanceTimersByTimeAsync(5000)
+    s.scheduleAutosave(tab.id)
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(writeMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('skips scheduling when autosaveInterval is off', async () => {
+    const settings = useSettingsStore()
+    settings.autosaveInterval = 'off'
+    readMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    const tab = s.tabs[0]
+    tab.content = 'changed'
+    s.markDirty(tab.id)
+    s.scheduleAutosave(tab.id)
+    await vi.advanceTimersByTimeAsync(70000)
+    expect(writeMock).not.toHaveBeenCalled()
+  })
+
+  it('cancelAutosave prevents a pending write', async () => {
+    readMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    const tab = s.tabs[0]
+    tab.content = 'changed'
+    s.markDirty(tab.id)
+    s.scheduleAutosave(tab.id)
+    s.cancelAutosave(tab.id)
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(writeMock).not.toHaveBeenCalled()
+  })
+
+  it('never autosaves a clean tab (dirty guard lives in the timer path)', async () => {
+    readMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    const tab = s.tabs[0]
+    s.scheduleAutosave(tab.id)
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(writeMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('deleteTabFile', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    resetFsMocks()
+  })
+
+  it('deletes the file through the gateway and closes its tab', async () => {
+    deleteFileMock.mockResolvedValue('trash/name')
+    readMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    const tab = s.tabs[0]
+    await s.deleteTabFile(tab.id)
+    expect(deleteFileMock).toHaveBeenCalledWith('/vault', '/vault/a.md')
+    expect(s.tabs).toHaveLength(0)
+    expect(s.activeId).toBeNull()
+  })
+})
+
+describe('restoreHistoryToActive', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    resetFsMocks()
+  })
+
+  it('restores a version into the tab and clears dirty', async () => {
+    readMock.mockResolvedValue('abc')
+    restoreHistoryMock.mockResolvedValue('restored')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    const tab = s.tabs[0]
+    tab.content = 'dirty'
+    s.markDirty(tab.id)
+    const result = await s.restoreHistoryToActive(tab.id, 'v1')
+    expect(result).toBe('restored')
+    expect(restoreHistoryMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'v1')
+    expect(tab.content).toBe('restored')
+    expect(tab.savedContent).toBe('restored')
+    expect(tab.dirty).toBe(false)
+  })
+})
+
+describe('checkCrashRecovery', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    resetFsMocks()
+  })
+
+  it('returns the newest history entry when it is newer than the file', async () => {
+    readMock.mockResolvedValue('abc')
+    listHistoryMock.mockResolvedValue([{ id: 'snap-1', size: 3, mtime: 200 }])
+    statMock.mockResolvedValue({ size: 3, mtime: 100 })
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    const tab = s.tabs[0]
+    const entry = await s.checkCrashRecovery(tab.id)
+    expect(entry).toEqual({ id: 'snap-1', size: 3, mtime: 200 })
+  })
+
+  it('returns null when the file is at least as new as the newest history', async () => {
+    readMock.mockResolvedValue('abc')
+    listHistoryMock.mockResolvedValue([{ id: 'snap-1', size: 3, mtime: 100 }])
+    statMock.mockResolvedValue({ size: 3, mtime: 200 })
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    const tab = s.tabs[0]
+    expect(await s.checkCrashRecovery(tab.id)).toBeNull()
+  })
+})
+
+describe('openTab crash-recovery prompt', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    resetFsMocks()
+  })
+
+  it('surfaces a recovery prompt and restoring rewrites the tab from history', async () => {
+    readMock.mockResolvedValue('abc')
+    listHistoryMock.mockResolvedValue([{ id: 'snap-1', size: 3, mtime: 500 }])
+    statMock.mockResolvedValue({ size: 3, mtime: 200 })
+    restoreHistoryMock.mockResolvedValue('recovered')
+
+    const prompts: RecoveryPrompt[] = []
+    const offRecovery = onRecovery((p) => prompts.push(p))
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    await vi.waitFor(() => expect(prompts).toHaveLength(1))
+    const prompt = prompts[0]
+    expect(prompt.message).toContain('未保存的更改')
+    expect(prompt.message).toContain('恢复最近版本')
+    prompt.onRestore()
+    await vi.waitFor(() => expect(s.tabs[0].content).toBe('recovered'))
+    expect(restoreHistoryMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'snap-1')
+    expect(s.tabs[0].dirty).toBe(false)
+    offRecovery()
   })
 })
