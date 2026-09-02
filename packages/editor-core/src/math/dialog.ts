@@ -2,7 +2,7 @@ import { createApp, h, ref, type App, type ComponentPublicInstance } from 'vue'
 import type { EditorView } from '@milkdown/prose/view'
 import type { Schema } from '@milkdown/prose/model'
 
-import { createMathEditor, type MathEditorHandle } from './atoms'
+import { createMathEditor, warmMathLive, type MathEditorHandle } from './atoms'
 import { insertMath } from './feature'
 
 export interface OpenMathOptions {
@@ -13,6 +13,7 @@ export interface OpenMathOptions {
 }
 
 export function openMathDialog(view: EditorView, opts: OpenMathOptions): void {
+  warmMathLive()
   const overlay = document.createElement('div')
   overlay.className = 'math-overlay'
   document.body.appendChild(overlay)

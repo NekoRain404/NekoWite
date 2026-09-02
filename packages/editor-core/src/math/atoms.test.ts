@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { createMathEditor, renderLatexMarkup } from './atoms'
+import { createMathEditor, renderLatexMarkup, warmMathLive } from './atoms'
 
 const { MFE, instances } = vi.hoisted(() => {
   type MockMathfield = HTMLElement & { value: string }
@@ -42,7 +42,8 @@ describe('createMathEditor', () => {
     vi.unstubAllGlobals()
   })
 
-  it('uses MathfieldElement and fires onChange on input', () => {
+  it('uses MathfieldElement and fires onChange on input', async () => {
+    await warmMathLive()
     const el = document.createElement('div')
     const onChange = vi.fn()
     const editor = createMathEditor(el, { value: 'x^2', onChange })

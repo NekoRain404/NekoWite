@@ -1,12 +1,13 @@
 import { $view } from '@milkdown/utils'
 import type { NodeViewConstructor } from '@milkdown/prose/view'
 import { mathDisplay, mathInline } from './nodes'
-import { renderLatexMarkup } from './atoms'
+import { renderLatexMarkup, warmMathLive } from './atoms'
 import { openMathDialog } from './dialog'
 
 const makeMathNodeView =
   (mode: 'inline' | 'display'): NodeViewConstructor =>
   (node, view, getPos) => {
+    warmMathLive()
     const dom = document.createElement(mode === 'inline' ? 'span' : 'div')
     dom.className = `math-node math-${mode}`
 
