@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import FileTree from './ui/FileTree.vue'
 import RefSidebar from './ui/RefSidebar.vue'
 import ReferencesPanel from './ui/ReferencesPanel.vue'
+import HistoryPanel from './ui/HistoryPanel.vue'
 import TabBar from './ui/TabBar.vue'
 import StatusBar from './ui/StatusBar.vue'
 import SettingsPanel from './ui/SettingsPanel.vue'
@@ -99,6 +100,7 @@ function onConflict(req: { tabId: string; path: string }): void {
         <TabBar />
         <EditorPane />
         <ReferencesPanel />
+        <HistoryPanel />
       </section>
     </div>
     <StatusBar />
