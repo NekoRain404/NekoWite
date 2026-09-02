@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRefsStore } from '../stores/refs'
 import { insertCiteAtCursor } from '../services/editorBridge'
 
 const store = useRefsStore()
 const query = ref('')
+const results = computed(() => store.search(query.value))
 
 function insert(key: string): void {
   insertCiteAtCursor(key)
@@ -22,7 +23,7 @@ function insert(key: string): void {
     >
     <ul class="ref-list">
       <li
-        v-for="r in store.search(query)"
+        v-for="r in results"
         :key="r.key"
         class="ref-item"
         @click="insert(r.key)"
@@ -32,7 +33,7 @@ function insert(key: string): void {
         <span class="ref-meta">{{ r.authors.join(', ') }} · {{ r.year }}</span>
       </li>
       <li
-        v-if="store.search(query).length === 0"
+        v-if="results.length === 0"
         class="ref-empty"
       >
         无匹配引用。请将 .bib / .ris / .json(CSL) 文件放入 vault。
