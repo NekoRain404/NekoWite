@@ -67,6 +67,40 @@ fn rejects_symlink_escape_in_read_path() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// C1 regression: a *dangling* symlink (target currently absent) is not
+/// resolved by `canonicalize_loose`, so it gets re-appended literally to the
+/// canonicalized ancestor and passes the lexical `starts_with` check. If the
+/// attacker materializes the target later, the OS resolves the symlink at use
+/// time and the write/read lands outside the vault. Must be rejected.
+#[cfg(unix)]
+#[test]
+fn rejects_dangling_symlink_escape_in_write_path() {
+    let dir = std::env::temp_dir().join(format!("nkw_dangle_{}", std::process::id()));
+    let outside = std::env::temp_dir().join(format!("nkw_outside_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&outside);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("note.md"), "x").unwrap();
+    // 目标此刻不存在 → dangling symlink
+    symlink(&outside, dir.join("dangle")).unwrap();
+    let root = dir.to_str().unwrap();
+
+    // 目标尚未 materialize 时就必须拒绝（此即漏洞触发点）
+    assert!(resolve_within(root, "dangle/new.md").is_err());
+    assert!(read_file(root, "dangle/new.md").is_err());
+
+    // attacker 事后 materialize 目标目录 → 仍必须拒绝
+    std::fs::create_dir_all(&outside).unwrap();
+    assert!(resolve_within(root, "dangle/new.md").is_err());
+    assert!(write_file(root, "dangle/new.md", "x").is_err());
+    assert!(read_file(root, "dangle/new.md").is_err());
+    // 未逃逸到 vault 外
+    assert!(!outside.join("new.md").exists());
+
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&outside).unwrap();
+}
+
 #[test]
 fn list_dir_entries_filters_hidden_and_build_dirs() {
     let dir = std::env::temp_dir().join(format!("nkw_sandbox_list_{}", std::process::id()));

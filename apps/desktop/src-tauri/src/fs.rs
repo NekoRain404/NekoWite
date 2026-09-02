@@ -54,7 +54,12 @@ pub fn sanitize_path(p: &str) -> Result<PathBuf, String> {
 /// Both the absolute vault root (as returned by the folder dialog) and
 /// vault-relative paths (e.g. `"."` or `"docs/hello.mdx"`) are accepted;
 /// anything that canonicalizes outside `base`, or traverses with `..`, is
-/// rejected.
+/// rejected. Live symlinks that resolve back inside `base` are allowed
+/// (their canonical target still lies within the vault); any symlink that
+/// still appears as a component between `base` and the result — including a
+/// dangling symlink whose target is currently absent — is rejected, because
+/// its target could be materialized later and redirect the read/write
+/// outside the vault at use time.
 pub fn resolve_within(base: &str, requested: &str) -> Result<PathBuf, String> {
     let base_path = Path::new(base);
     if !base_path.is_absolute() {
@@ -85,7 +90,31 @@ pub fn resolve_within(base: &str, requested: &str) -> Result<PathBuf, String> {
     if !canonical.starts_with(&canonical_base) {
         return Err("path escapes vault".into());
     }
+    reject_symlink_components(&canonical_base, &canonical)?;
     Ok(canonical)
+}
+
+/// Reject the resolved path if any component between `base` and `path` is a
+/// symlink (lstat — non-following). `canonicalize_loose` resolves *live*
+/// symlinks away, so only *dangling* symlinks survive as literal components
+/// in its missing-tail re-append; those cannot be proven to stay inside the
+/// vault, so they are rejected outright.
+fn reject_symlink_components(base: &Path, path: &Path) -> Result<(), String> {
+    let Some(relative) = path.strip_prefix(base).ok() else {
+        return Err("path escapes vault".into());
+    };
+    let mut probe = base.to_path_buf();
+    for component in relative.components() {
+        probe.push(component);
+        let is_symlink = probe
+            .symlink_metadata()
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(false);
+        if is_symlink {
+            return Err("path escapes vault".into());
+        }
+    }
+    Ok(())
 }
 
 /// Canonicalize `path` even when its final segment does not exist yet (e.g.
