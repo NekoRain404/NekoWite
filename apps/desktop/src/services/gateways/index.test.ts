@@ -20,7 +20,8 @@ describe('getGateways', () => {
     const { getGateways } = await import('./index')
     const gw = getGateways()
     expect(gw.fs.read).toBeTypeOf('function')
-    // The memory placeholder lists an empty virtual root with no invoke.
-    await expect(gw.fs.list('memoir://demo', '.')).resolves.toEqual([])
+    // The default-seeded memory gateway lists the demo welcome.md at the root.
+    const root = await gw.fs.list('memoir://demo', '.')
+    expect(root.map((e) => e.name)).toContain('welcome.md')
   })
 })
