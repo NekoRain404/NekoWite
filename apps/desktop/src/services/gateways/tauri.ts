@@ -6,7 +6,7 @@ import type {
   FsChangeEvent,
   FsGateway,
   KeyGateway,
-} from '../gateways'
+} from './contracts'
 
 export const tauriFsGateway: FsGateway = {
   read: (vault, path) => invoke<string>('read_file', { vault_root: vault, path }),

@@ -1,4 +1,4 @@
-import type { AppGateways } from '../gateways'
+import type { AppGateways } from './contracts'
 import { tauriAiGateway, tauriFsGateway, tauriKeyGateway } from './tauri'
 import { memoryAiGateway, memoryFsGateway, memoryKeyGateway } from './memory'
 

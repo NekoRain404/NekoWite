@@ -1,4 +1,4 @@
-import type { AiGateway, FsGateway, KeyGateway } from '../gateways'
+import type { AiGateway, FsGateway, KeyGateway } from './contracts'
 
 // Placeholder browser in-memory implementation for this task. Only enough to
 // make the getGateways() selector deterministic without Tauri: list() resolves
