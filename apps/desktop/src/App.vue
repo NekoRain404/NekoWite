@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import FileTree from './ui/FileTree.vue'
 import RefSidebar from './ui/RefSidebar.vue'
 import ReferencesPanel from './ui/ReferencesPanel.vue'
@@ -13,14 +13,23 @@ import GhostWriter from './components/GhostWriter.vue'
 import { useTabsStore } from './stores/tabs'
 import { useRefsStore } from './stores/refs'
 import { useSettingsStore } from './stores/settings'
+import { useAppearanceStore } from './stores/appearance'
 import { loadVaultPlugins } from './services/plugins'
 
 const tabs = useTabsStore()
 const refs = useRefsStore()
 const settings = useSettingsStore()
+const appearance = useAppearanceStore()
 const vaultPath = ref<string | null>(null)
 const showSettings = ref(false)
 const conflict = ref<{ tabId: string; path: string } | null>(null)
+
+const theme = computed<string>(() => {
+  void appearance.systemRevision
+  return appearance.effectiveTheme()
+})
+
+let unlistenMedia: (() => void) | null = null
 
 function applyVault(path: string): void {
   vaultPath.value = path
@@ -30,12 +39,26 @@ function applyVault(path: string): void {
 }
 
 onMounted(() => {
+  if (typeof window.matchMedia === 'function') {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const onChange = (): void => {
+      appearance.touchSystem()
+    }
+    if (typeof mq.addEventListener === 'function') {
+      mq.addEventListener('change', onChange)
+      unlistenMedia = (): void => mq.removeEventListener('change', onChange)
+    }
+  }
   void settings.loadKey().catch(() => {
     // stronghold init/key-file errors are surfaced by the settings panel; a
     // failed background load on startup should not reject the mount
   })
   const saved = localStorage.getItem('nekowite.vault')
   if (saved) applyVault(saved)
+})
+
+onBeforeUnmount(() => {
+  unlistenMedia?.()
 })
 
 function onOpenFolder(path: string): void {
@@ -49,11 +72,15 @@ function onConflict(req: { tabId: string; path: string }): void {
 </script>
 
 <template>
-  <div class="shell">
+  <div
+    class="shell"
+    :data-theme="theme"
+    :data-accent="appearance.accent"
+  >
     <header class="shell-header">
       <span class="app-title">NekoWite</span>
       <button
-        class="header-btn"
+        class="btn btn-secondary btn-sm"
         title="Settings"
         @click="showSettings = !showSettings"
       >
@@ -101,25 +128,22 @@ html, body, #app { margin: 0; padding: 0; height: 100%; width: 100%; }
   height: 100vh;
   min-height: 0;
   overflow: hidden;
+  background: var(--app-canvas);
 }
 .shell-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 6px 12px;
-  border-bottom: 1px solid #e0e0e0;
-  background: #fafafa;
+  border-bottom: 1px solid var(--app-border);
+  background: color-mix(in srgb, var(--app-elevated) 68%, var(--app-canvas));
+  backdrop-filter: blur(14px);
 }
-.app-title { font-weight: 700; font-size: 14px; }
-.header-btn {
-  border: 1px solid #ccc;
-  background: #fff;
-  padding: 4px 10px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 12px;
+.app-title {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--app-text);
 }
-.header-btn:hover { background: #f0f0f0; }
 .shell-body {
   flex: 1;
   display: flex;
@@ -133,5 +157,6 @@ html, body, #app { margin: 0; padding: 0; height: 100%; width: 100%; }
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+  background: var(--app-canvas);
 }
 </style>
