@@ -57,6 +57,9 @@ export const useAppearanceStore = defineStore('appearance', () => {
   }
 
   function effectiveTheme(): 'light' | 'dark' {
+    // Read systemRevision so any consumer wrapping this in a computed
+    // re-evaluates when the OS theme flips (matchMedia itself is not reactive).
+    void systemRevision.value
     if (theme.value !== 'system') return theme.value
     if (typeof window.matchMedia !== 'function') return 'light'
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'

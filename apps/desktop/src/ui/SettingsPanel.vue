@@ -9,6 +9,8 @@ import { exportBaseName } from '../services/exportName'
 import { fsService } from '../services/fs'
 import { describeExportError, notifyError } from '../services/errors'
 import { useSettingsStore } from '../stores/settings'
+import { useAppearanceStore } from '../stores/appearance'
+import type { Accent } from '../stores/appearance'
 import type { ExportRef } from '@nekowite/editor-core'
 
 const emit = defineEmits<{ (e: 'close'): void; (e: 'saved', path: string): void }>()
@@ -17,12 +19,24 @@ const view = useViewStore()
 const tabs = useTabsStore()
 const refs = useRefsStore()
 const settings = useSettingsStore()
+const appearance = useAppearanceStore()
 
 const vaultInput = ref(localStorage.getItem('nekowite.vault') ?? '')
 const hasActiveTab = computed(() => !!tabs.activeTab?.content)
 const showBaseUrl = computed(() => settings.provider === 'local' || settings.provider === 'custom')
 
 const AI_PROVIDERS = ['openai', 'anthropic', 'gemini', 'grok', 'local', 'custom']
+
+const ACCENTS: Accent[] = ['ink', 'coral', 'blue', 'green', 'gold', 'violet', 'slate']
+const ACCENT_COLORS: Record<Accent, string> = {
+  ink: '#343532',
+  coral: '#d65f4d',
+  blue: '#3f7edb',
+  green: '#3e9b73',
+  gold: '#b98b09',
+  violet: '#8a65d1',
+  slate: '#607287',
+}
 
 async function saveAiKey(): Promise<void> {
   try {
@@ -70,8 +84,8 @@ function onExportPdf(): void {
 
 <template>
   <div class="settings-panel">
-    <div class="settings-header">
-      <span class="settings-title">Settings</span>
+    <div class="panel-header">
+      <span class="panel-title">Settings</span>
       <button
         class="settings-close"
         title="Close"
@@ -85,13 +99,14 @@ function onExportPdf(): void {
         <span>Vault path</span>
         <input
           v-model="vaultInput"
+          class="input"
           type="text"
           placeholder="/path/to/vault"
           @keyup.enter="saveVault"
         >
       </label>
       <button
-        class="settings-save"
+        class="btn btn-secondary settings-save"
         @click="saveVault"
       >
         Save
@@ -101,19 +116,22 @@ function onExportPdf(): void {
         <span class="settings-label">View mode</span>
         <div class="view-modes">
           <button
-            :class="{ active: view.mode === 'source' }"
+            class="switch-option"
+            :class="{ 'is-active': view.mode === 'source' }"
             @click="setMode('source')"
           >
             Source
           </button>
           <button
-            :class="{ active: view.mode === 'rendered' }"
+            class="switch-option"
+            :class="{ 'is-active': view.mode === 'rendered' }"
             @click="setMode('rendered')"
           >
             Rendered
           </button>
           <button
-            :class="{ active: view.mode === 'split' }"
+            class="switch-option"
+            :class="{ 'is-active': view.mode === 'split' }"
             @click="setMode('split')"
           >
             Split
@@ -122,15 +140,78 @@ function onExportPdf(): void {
       </div>
 
       <div class="settings-section">
+        <span class="settings-label">外观</span>
+        <div class="view-modes">
+          <button
+            class="switch-option"
+            :class="{ 'is-active': appearance.theme === 'light' }"
+            @click="appearance.setTheme('light')"
+          >
+            浅色
+          </button>
+          <button
+            class="switch-option"
+            :class="{ 'is-active': appearance.theme === 'dark' }"
+            @click="appearance.setTheme('dark')"
+          >
+            深色
+          </button>
+          <button
+            class="switch-option"
+            :class="{ 'is-active': appearance.theme === 'system' }"
+            @click="appearance.setTheme('system')"
+          >
+            跟随系统
+          </button>
+        </div>
+        <div class="accent-row">
+          <button
+            v-for="a in ACCENTS"
+            :key="a"
+            class="accent-swatch"
+            :class="{ 'is-selected': appearance.accent === a }"
+            :style="{ background: ACCENT_COLORS[a] }"
+            :title="a as string"
+            @click="appearance.setAccent(a)"
+          />
+        </div>
+        <label class="settings-field">
+          <span>字号 {{ appearance.bodyFontSize }}px</span>
+          <input
+            class="input"
+            :value="appearance.bodyFontSize"
+            type="number"
+            min="12"
+            max="20"
+            @change="appearance.setBodyFontSize(Number(($event.target as HTMLInputElement).value))"
+          >
+        </label>
+        <label class="settings-field">
+          <span>行高 {{ appearance.lineHeight }}</span>
+          <input
+            class="input"
+            :value="appearance.lineHeight"
+            type="number"
+            min="1.2"
+            max="2.4"
+            step="0.1"
+            @change="appearance.setLineHeight(Number(($event.target as HTMLInputElement).value))"
+          >
+        </label>
+      </div>
+
+      <div class="settings-section">
         <span class="settings-label">导出 (当前文档)</span>
         <div class="view-modes">
           <button
+            class="btn btn-secondary btn-sm"
             :disabled="!hasActiveTab"
             @click="onExportHtml"
           >
             导出 HTML
           </button>
           <button
+            class="btn btn-secondary btn-sm"
             :disabled="!hasActiveTab"
             @click="onExportPdf"
           >
@@ -145,6 +226,7 @@ function onExportPdf(): void {
           <span>Provider</span>
           <select
             v-model="settings.provider"
+            class="input"
           >
             <option
               v-for="p in AI_PROVIDERS"
@@ -159,6 +241,7 @@ function onExportPdf(): void {
           <span>Model</span>
           <input
             v-model="settings.model"
+            class="input"
             type="text"
             placeholder="qwen2.5-coder:3b"
           >
@@ -170,6 +253,7 @@ function onExportPdf(): void {
           <span>Base URL</span>
           <input
             v-model="settings.baseUrl"
+            class="input"
             type="text"
             placeholder="http://localhost:1234/v1"
           >
@@ -178,12 +262,13 @@ function onExportPdf(): void {
           <span>API Key</span>
           <input
             v-model="settings.apiKey"
+            class="input"
             type="password"
             placeholder="sk-..."
           >
         </label>
         <button
-          class="settings-save"
+          class="btn btn-secondary settings-save"
           @click="saveAiKey"
         >
           保存 Key
@@ -201,60 +286,34 @@ function onExportPdf(): void {
   right: 0;
   bottom: 0;
   width: 300px;
-  background: #fafafa;
-  border-left: 1px solid #e0e0e0;
-  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.08);
+  background: var(--app-elevated);
+  border-left: 1px solid var(--app-border);
+  box-shadow: -4px 0 12px rgb(0 0 0 / 14%);
+  color: var(--app-text);
   z-index: 100;
   display: flex;
   flex-direction: column;
 }
-.settings-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 12px;
-  border-bottom: 1px solid #e0e0e0;
+[data-theme="dark"] .settings-panel {
+  box-shadow: -4px 0 16px rgb(0 0 0 / 45%);
 }
-.settings-title { font-weight: 600; }
 .settings-close {
   border: none;
   background: transparent;
   font-size: 18px;
+  line-height: 1;
   cursor: pointer;
-  color: #999;
+  padding: 0 2px;
+  color: var(--app-muted);
 }
-.settings-close:hover { color: #333; }
+.settings-close:hover { color: var(--app-text); }
 .settings-body { padding: 12px; display: flex; flex-direction: column; gap: 14px; }
-.settings-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
-.settings-field input,
-.settings-field select {
-  padding: 6px 8px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  font-size: 13px;
-  background: #fff;
-}
-.settings-note { font-size: 12px; color: #888; }
-.settings-save {
-  padding: 6px 12px;
-  border: 1px solid #ccc;
-  background: #fff;
-  border-radius: 4px;
-  cursor: pointer;
-  align-self: flex-start;
-}
-.settings-save:hover { background: #f0f0f0; }
+.settings-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--app-text); }
+.settings-note { font-size: 12px; color: var(--app-muted); }
+.settings-save { align-self: flex-start; }
 .settings-section { display: flex; flex-direction: column; gap: 6px; }
 .settings-label { font-size: 13px; font-weight: 500; }
 .view-modes { display: flex; gap: 6px; }
-.view-modes button {
-  padding: 5px 10px;
-  border: 1px solid #ccc;
-  background: #fff;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 12px;
-}
-.view-modes button.active { background: #4a90d9; color: #fff; border-color: #4a90d9; }
 .view-modes button:disabled { opacity: 0.5; cursor: not-allowed; }
+.accent-row { display: flex; gap: 6px; }
 </style>

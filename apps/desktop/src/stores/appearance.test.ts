@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { computed } from 'vue'
 import { useAppearanceStore } from './appearance'
 
 // happy-dom 无 matchMedia，stub
@@ -12,6 +13,7 @@ describe('useAppearanceStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     localStorage.clear()
+    matchMediaMock.mockReturnValue({ ...matchMediaMock(), matches: false })
     globalThis.matchMedia = matchMediaMock as never
   })
 
@@ -42,5 +44,14 @@ describe('useAppearanceStore', () => {
     matchMediaMock.mockReturnValue({ ...matchMediaMock(), matches: true })
     const s = useAppearanceStore()
     expect(s.effectiveTheme()).toBe('dark')
+  })
+
+  it('effectiveTheme is reactive to touchSystem (OS theme flip)', () => {
+    const s = useAppearanceStore()
+    const effective = computed(() => s.effectiveTheme())
+    expect(effective.value).toBe('light')
+    matchMediaMock.mockReturnValue({ ...matchMediaMock(), matches: true })
+    s.touchSystem()
+    expect(effective.value).toBe('dark')
   })
 })
