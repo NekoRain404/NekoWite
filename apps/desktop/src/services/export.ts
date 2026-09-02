@@ -33,13 +33,31 @@ export function exportToPdf(source: string, opts: ExportUiOptions): void {
   iframe.style.display = 'none'
   iframe.srcdoc = html
   document.body.appendChild(iframe)
+
+  let cleanupTimer: ReturnType<typeof setTimeout> | undefined
+  const cleanup = (): void => {
+    if (cleanupTimer !== undefined) {
+      clearTimeout(cleanupTimer)
+      cleanupTimer = undefined
+    }
+    iframe.remove()
+  }
+
+  // Safety net: never leave a hidden export iframe attached longer than this,
+  // even if onload never fires (e.g. srcdoc failed to load).
+  cleanupTimer = setTimeout(cleanup, 60000)
+
   iframe.onload = () => {
     iframe.contentWindow?.focus()
     try {
       iframe.contentWindow?.print()
     } catch {
-      iframe.remove()
+      // print failures are not actionable; cleanup below still runs.
+    } finally {
+      // window.print() blocks while the print dialog is open in the target
+      // desktop webviews, so this point is only reached once the print flow
+      // has finished; remove the iframe promptly and cancel the fallback.
+      cleanup()
     }
   }
-  setTimeout(() => iframe.remove(), 60000)
 }

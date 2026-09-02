@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { computed, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useRefsStore } from './refs'
 
@@ -100,5 +101,28 @@ describe('useRefsStore', () => {
     s.clear()
     expect(s.refs.size).toBe(0)
     expect(s.refFiles).toEqual([])
+  })
+
+  it('computed search results re-evaluate as the query changes (RefSidebar pattern)', async () => {
+    listMock.mockResolvedValue([
+      { name: 'refs.bib', path: '/vault/refs.bib', is_dir: false, is_mdx: false },
+      { name: 'refs.ris', path: '/vault/refs.ris', is_dir: false, is_mdx: false },
+    ])
+    readMock.mockImplementation((_vault, path) =>
+      Promise.resolve(path.endsWith('.ris') ? RIS : BIB),
+    )
+    const s = useRefsStore()
+    await s.loadVault('/vault')
+
+    const query = ref('')
+    const results = computed(() => s.search(query.value))
+    expect(results.value.length).toBe(2)
+
+    query.value = 'great paper'
+    expect(results.value.map((r) => r.key)).toEqual(['smith2020'])
+    query.value = 'nomatch'
+    expect(results.value.length).toBe(0)
+    query.value = ''
+    expect(results.value.length).toBe(2)
   })
 })
