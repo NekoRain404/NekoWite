@@ -24,6 +24,20 @@ pub fn is_mdx_path(p: &str) -> bool {
     )
 }
 
+/// Decide whether an entry should be hidden from listings: hidden files and
+/// dirs (name starts with `.`), build output directories (exact dir name),
+/// and symlinks. Files whose name merely carries a build-dir prefix (e.g.
+/// `dist.md`) are kept — only the exact directory name matches.
+pub fn should_skip_entry(name: &str, is_symlink: bool) -> bool {
+    if is_symlink {
+        return true;
+    }
+    if name.starts_with('.') {
+        return true;
+    }
+    matches!(name, "node_modules" | "dist" | "build" | "target" | "out")
+}
+
 /// Legacy relative-only guard, kept for callers that work purely on
 /// vault-relative names. Absolute paths are handled by [`resolve_within`].
 pub fn sanitize_path(p: &str) -> Result<PathBuf, String> {
@@ -119,8 +133,15 @@ pub fn write_file(vault_root: &str, path: &str, content: &str) -> Result<(), Str
 pub fn list_dir(vault_root: &str, path: Option<&str>) -> Result<Vec<FileEntry>, String> {
     let requested = path.unwrap_or(".");
     let resolved = resolve_within(vault_root, requested)?;
+    list_dir_entries(&resolved)
+}
+
+/// Pure single-level listing of `dir` with [`should_skip_entry`] filtering
+/// applied. Shared by the `list_dir` command (after path resolution) and by
+/// tests that exercise filtering directly against a real temp directory.
+pub fn list_dir_entries(dir: &Path) -> Result<Vec<FileEntry>, String> {
     let mut out = vec![];
-    let entries = std::fs::read_dir(&resolved).map_err(|e| e.to_string())?;
+    let entries = std::fs::read_dir(dir).map_err(|e| e.to_string())?;
     for entry in entries.flatten() {
         let entry_path = entry.path();
         let name = entry_path
@@ -128,6 +149,10 @@ pub fn list_dir(vault_root: &str, path: Option<&str>) -> Result<Vec<FileEntry>, 
             .and_then(|n| n.to_str())
             .unwrap_or("")
             .to_string();
+        let is_symlink = entry.file_type().map_err(|e| e.to_string())?.is_symlink();
+        if should_skip_entry(&name, is_symlink) {
+            continue;
+        }
         let is_dir = entry_path.is_dir();
         let path_str = entry_path.to_string_lossy().to_string();
         let is_mdx = is_mdx_path(&path_str);

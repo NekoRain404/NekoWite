@@ -1,5 +1,11 @@
-use nekowite_lib::fs::{is_mdx_path, list_dir, read_file, sanitize_path, write_file};
+use nekowite_lib::fs::{
+    is_mdx_path, list_dir, list_dir_entries, read_file, resolve_within, sanitize_path,
+    should_skip_entry, write_file,
+};
 use std::path::PathBuf;
+
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 
 fn temp_vault(label: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("nekowite-test-{label}-{}", std::process::id()));
@@ -20,6 +26,69 @@ fn detects_mdx_extensions() {
 fn sanitize_rejects_relative_escape() {
     assert!(sanitize_path("../etc/passwd").is_err());
     assert!(sanitize_path("vault/a.md").is_ok());
+}
+
+#[test]
+fn skips_hidden_and_build_dirs() {
+    assert!(should_skip_entry(".git", false));
+    assert!(should_skip_entry(".nekowite", false));
+    assert!(should_skip_entry("node_modules", false));
+    assert!(should_skip_entry("dist", false));
+    assert!(should_skip_entry("target", false));
+    assert!(should_skip_entry("build", false));
+    assert!(should_skip_entry("out", false));
+    assert!(should_skip_entry(".DS_Store", false));
+    assert!(!should_skip_entry("dist.md", false)); // 文件保留
+    assert!(!should_skip_entry("hello.md", false));
+    assert!(!should_skip_entry("build.rs", false));
+    assert!(should_skip_entry("link", true));
+}
+
+#[cfg(unix)]
+#[test]
+fn rejects_symlink_escape_in_read_path() {
+    let dir = std::env::temp_dir().join(format!("nkw_sandbox_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("note.md"), "x").unwrap();
+    symlink("/etc", dir.join("escape")).unwrap(); // symlink 指向 vault 外
+    symlink(dir.join("note.md"), dir.join("alias.md")).unwrap(); // vault 内 symlink
+    // 读取逃逸 symlink 下的文件 → 拒绝
+    assert!(resolve_within(dir.to_str().unwrap(), "escape/passwd").is_err());
+    // 读取 vault 内 symlink 指向的文件 → 允许
+    assert!(resolve_within(dir.to_str().unwrap(), "alias.md").is_ok());
+    // 列出目录时不出现 escape（symlink）与隐藏/构建
+    let entries = list_dir_entries(&dir).unwrap();
+    let names: Vec<String> = entries.iter().map(|e| e.name.clone()).collect();
+    assert!(!names.contains(&"escape".into()));
+    assert!(!names.contains(&"alias.md".into()));
+    assert!(!names.contains(&".git".into()));
+    assert!(names.contains(&"note.md".into()));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn list_dir_entries_filters_hidden_and_build_dirs() {
+    let dir = std::env::temp_dir().join(format!("nkw_sandbox_list_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("note.md"), "x").unwrap();
+    std::fs::write(dir.join(".hidden.md"), "x").unwrap();
+    std::fs::create_dir_all(dir.join("node_modules")).unwrap();
+    std::fs::create_dir_all(dir.join("dist")).unwrap();
+    std::fs::create_dir_all(dir.join("dist.md")).unwrap();
+    std::fs::create_dir_all(dir.join("hello")).unwrap();
+
+    let entries = list_dir_entries(&dir).unwrap();
+    let names: Vec<String> = entries.iter().map(|e| e.name.clone()).collect();
+    assert!(!names.contains(&".hidden.md".into()));
+    assert!(!names.contains(&"node_modules".into()));
+    assert!(!names.contains(&"dist".into()));
+    assert!(names.contains(&"dist.md".into()), "dist.md 目录保留");
+    assert!(names.contains(&"note.md".into()));
+    assert!(names.contains(&"hello".into()));
+
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// End-to-end over a REAL temp dir, mirroring the dialog flow:
