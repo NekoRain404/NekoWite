@@ -12,10 +12,12 @@
     "tauri": "pnpm --filter @nekowite/desktop tauri"
   },
   "devDependencies": {
+    "@eslint/js": "^9",
     "@typescript-eslint/eslint-plugin": "^8",
     "@typescript-eslint/parser": "^8",
     "eslint": "^9",
     "eslint-plugin-vue": "^9",
+    "globals": "^14",
     "vue-eslint-parser": "^9"
   }
 }

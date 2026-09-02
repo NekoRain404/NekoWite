@@ -6,7 +6,7 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "ESLINT_USE_FLAT_CONFIG=false eslint src --ext .ts"
+    "lint": "eslint src"
   },
   "dependencies": {
     "@nekowite/editor-core": "workspace:*",
