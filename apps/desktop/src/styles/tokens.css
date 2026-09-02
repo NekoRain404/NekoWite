@@ -1,0 +1,64 @@
+:root {
+  color-scheme: light;
+  --app-canvas: #fbfaf6;
+  --app-panel: #f5f3ee;
+  --app-elevated: #fffefb;
+  --app-border: #e7e3db;
+  --app-text: #292a27;
+  --app-muted: #8c8982;
+  --app-accent: #343532;
+  --app-accent-soft: #e7e5df;
+  --app-accent-contrast: #ffffff;
+  --app-danger: #c94c41;
+  --app-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --app-motion-fast: 140ms;
+  --app-radius: 8px;
+  --app-font: Inter, "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --app-mono-font: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  --app-body-size: 15px;
+  --app-line-height: 1.8;
+  --app-code-keyword: #8a4e30;
+  --app-code-string: #2d7a56;
+  --app-code-number: #b56a16;
+  --app-code-fn: #3d5f8f;
+  --app-code-type: #6a548f;
+  --app-code-prop: #5c6848;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  font-family: var(--app-font);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --app-canvas: #171714;
+  --app-panel: #1d1d1a;
+  --app-elevated: #24241f;
+  --app-border: #37362f;
+  --app-text: #f0eee8;
+  --app-muted: #a5a198;
+  --app-accent: #efede7;
+  --app-accent-soft: #393832;
+  --app-accent-contrast: #171715;
+  --app-danger: #ef766b;
+  --app-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --app-radius: 8px;
+  --app-code-keyword: #e0a57a;
+  --app-code-string: #86c4a4;
+  --app-code-number: #e0b36a;
+  --app-code-fn: #8fb0dd;
+  --app-code-type: #b7a3dd;
+  --app-code-prop: #b3c49a;
+}
+
+[data-accent="ink"] { --app-accent: #343532; --app-accent-soft: #e7e5df; }
+[data-theme="dark"][data-accent="ink"] { --app-accent: #efede7; --app-accent-soft: #393832; }
+[data-accent="coral"] { --app-accent: #d65f4d; --app-accent-soft: #f6e3de; }
+[data-accent="blue"] { --app-accent: #3f7edb; --app-accent-soft: #e7effb; }
+[data-accent="green"] { --app-accent: #3e9b73; --app-accent-soft: #e5f3ed; }
+[data-accent="gold"] { --app-accent: #b98b09; --app-accent-soft: #f8f0d6; }
+[data-accent="violet"] { --app-accent: #8a65d1; --app-accent-soft: #eee8f9; }
+[data-accent="slate"] { --app-accent: #607287; --app-accent-soft: #e9edf1; }
+[data-theme="dark"][data-accent]:not([data-accent="ink"]) {
+  --app-accent-soft: color-mix(in srgb, var(--app-accent) 25%, var(--app-panel));
+}
