@@ -342,3 +342,19 @@
   outline: 2px solid var(--app-accent);
   outline-offset: 2px;
 }
+
+/* ============ Math dialog passthrough ============ */
+/* editor-core renders .math-overlay/.math-dialog (class names kept for its tests);
+   align their surface to the shared dialog variants. */
+.math-overlay {
+  background: color-mix(in srgb, var(--app-canvas) 55%, transparent);
+}
+.math-dialog {
+  background: var(--app-elevated);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 16%);
+}
+[data-theme="dark"] .math-dialog {
+  box-shadow: 0 16px 40px rgb(0 0 0 / 45%);
+}

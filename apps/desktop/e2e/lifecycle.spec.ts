@@ -73,7 +73,7 @@ test('lifecycle hooks fire live: open, doc change, save, view mode, close tab', 
   await expect.poll(() => logs.some((l) => l.includes('[status.onSave]'))).toBe(true)
   await expect.poll(() => logs.some((l) => l.includes('[status.onSaved]'))).toBe(true)
 
-  await page.locator('.vs-btn', { hasText: '源码' }).click()
+  await page.locator('.switch-option', { hasText: '源码' }).click()
   await expect.poll(() => logs.some((l) => l.includes('[status.onViewModeChange]'))).toBe(true)
 
   await page.locator('.tab-close').click()

@@ -42,10 +42,10 @@ const modeLabel = computed(() => {
   align-items: center;
   gap: 16px;
   padding: 3px 12px;
-  border-top: 1px solid #e0e0e0;
-  background: #f5f5f5;
+  border-top: 1px solid var(--app-border);
+  background: var(--app-panel);
   font-size: 12px;
-  color: #666;
+  color: var(--app-muted);
   min-height: 22px;
 }
 .status-item { white-space: nowrap; }

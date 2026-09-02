@@ -53,13 +53,14 @@ onBeforeUnmount(() => off())
   max-width: 320px;
 }
 .toast {
-  background: #fff3f0;
-  color: #b3261e;
-  border: 1px solid #f0c4bf;
-  border-radius: 6px;
+  background: var(--app-elevated);
+  color: var(--app-danger);
+  border: 1px solid var(--app-border);
+  border-left: 3px solid var(--app-danger);
+  border-radius: var(--app-radius);
   padding: 8px 12px;
   font-size: 13px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 16%);
   cursor: pointer;
   word-break: break-word;
 }

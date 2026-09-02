@@ -57,18 +57,18 @@ test('opens vault, opens welcome.md, edits, and toggles views', async ({ page })
 
   const toolbar = page.locator('.word-toolbar')
   await expect(toolbar).toBeVisible()
-  await expect(toolbar.locator('.tb-btn').first()).toBeVisible()
+  await expect(toolbar.locator('.toolbar-btn').first()).toBeVisible()
 
-  await page.locator('.vs-btn', { hasText: '源码' }).click()
+  await page.locator('.switch-option', { hasText: '源码' }).click()
   const source = page.locator('.source-textarea')
   await expect(source).toBeVisible()
   await expect(source).toHaveValue(/# Welcome/)
   await expect(renderedHeading).not.toBeVisible()
 
-  await page.locator('.vs-btn', { hasText: '渲染' }).click()
+  await page.locator('.switch-option', { hasText: '渲染' }).click()
   await expect(renderedHeading).toBeVisible()
 
-  await page.locator('.vs-btn', { hasText: '对照' }).click()
+  await page.locator('.switch-option', { hasText: '对照' }).click()
   const split = page.locator('.panes.split')
   await expect(split).toBeVisible()
   await expect(split.locator('.source-textarea')).toBeVisible()

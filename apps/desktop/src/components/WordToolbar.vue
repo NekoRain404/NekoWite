@@ -45,22 +45,29 @@ function run(id: string): void {
 
 <template>
   <div class="word-toolbar">
-    <button
+    <template
       v-for="(b, i) in buttons"
       :key="'builtin-' + i"
-      class="tb-btn"
-      :class="{ sep: b.id === 'separator' }"
-      :title="b.title"
-      @click="run(b.id)"
     >
-      {{ b.label }}
-    </button>
+      <span
+        v-if="b.id === 'separator'"
+        class="toolbar-sep"
+      />
+      <button
+        v-else
+        class="toolbar-btn"
+        :title="b.title"
+        @click="run(b.id)"
+      >
+        {{ b.label }}
+      </button>
+    </template>
     <template v-if="registryItems.length">
-      <span class="tb-sep">|</span>
+      <span class="toolbar-sep" />
       <button
         v-for="item in registryItems"
         :key="`reg-${item.id}`"
-        class="tb-btn"
+        class="toolbar-btn"
         :title="item.id"
         @click="item.run()"
       >
@@ -77,21 +84,7 @@ function run(id: string): void {
   flex-wrap: wrap;
   gap: 2px;
   padding: 4px 8px;
-  border-bottom: 1px solid #e0e0e0;
-  background: #fbfbfb;
+  border-bottom: 1px solid var(--app-border);
+  background: var(--app-canvas);
 }
-.tb-btn {
-  min-width: 28px;
-  padding: 3px 6px;
-  border: 1px solid transparent;
-  background: transparent;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 13px;
-  line-height: 1.3;
-}
-.tb-btn:hover { background: #ececec; border-color: #d0d0d0; }
-.tb-btn.sep { cursor: default; color: #bbb; }
-.tb-btn.sep:hover { background: transparent; border-color: transparent; }
-.tb-sep { color: #bbb; margin: 0 4px; }
 </style>
