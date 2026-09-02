@@ -9,13 +9,33 @@ export interface AIConfig {
   api_key?: string
 }
 
+export type AutosaveInterval = 'off' | 5000 | 15000 | 30000 | 60000
+
 const LS_PROVIDER = 'nekowite.ai.provider'
 const LS_MODEL = 'nekowite.ai.model'
 const LS_BASE_URL = 'nekowite.ai.baseUrl'
+const LS_AUTOSAVE = 'nekowite.settings.autosaveInterval'
+const LS_MAXHISTORY = 'nekowite.settings.maxHistory'
 
 function readLs(key: string, fallback: string): string {
   const v = localStorage.getItem(key)
   return v && v.length > 0 ? v : fallback
+}
+
+function readNumber(key: string, fallback: number): number {
+  const v = localStorage.getItem(key)
+  if (!v || v.length === 0) return fallback
+  const n = Number(v)
+  return Number.isFinite(n) ? n : fallback
+}
+
+function readAutosaveInterval(fallback: AutosaveInterval): AutosaveInterval {
+  const v = localStorage.getItem(LS_AUTOSAVE)
+  if (v === 'off') return 'off'
+  const n = Number(v)
+  return n === 5000 || n === 15000 || n === 30000 || n === 60000
+    ? (n as AutosaveInterval)
+    : fallback
 }
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -25,6 +45,8 @@ export const useSettingsStore = defineStore('settings', () => {
   const model = ref(readLs(LS_MODEL, 'qwen2.5-coder:3b'))
   const baseUrl = ref(readLs(LS_BASE_URL, 'http://localhost:1234/v1'))
   const apiKey = ref('')
+  const autosaveInterval = ref<AutosaveInterval>(readAutosaveInterval(15000))
+  const maxHistory = ref<number>(readNumber(LS_MAXHISTORY, 10))
 
   watch(provider, (p) => {
     localStorage.setItem(LS_PROVIDER, p)
@@ -37,6 +59,8 @@ export const useSettingsStore = defineStore('settings', () => {
   })
   watch(model, (m) => localStorage.setItem(LS_MODEL, m))
   watch(baseUrl, (b) => localStorage.setItem(LS_BASE_URL, b))
+  watch(autosaveInterval, (v) => localStorage.setItem(LS_AUTOSAVE, String(v)))
+  watch(maxHistory, (v) => localStorage.setItem(LS_MAXHISTORY, String(v)))
 
   async function saveKey(): Promise<void> {
     await getGateways().keys.storeAiKey(provider.value, apiKey.value)
@@ -56,5 +80,5 @@ export const useSettingsStore = defineStore('settings', () => {
     return cfg
   }
 
-  return { provider, model, baseUrl, apiKey, saveKey, loadKey, config }
+  return { provider, model, baseUrl, apiKey, autosaveInterval, maxHistory, saveKey, loadKey, config }
 })

@@ -5,13 +5,20 @@ import type {
   FileEntry,
   FsChangeEvent,
   FsGateway,
+  HistoryEntry,
   KeyGateway,
+  TrashEntry,
 } from './contracts'
 
 export const tauriFsGateway: FsGateway = {
   read: (vault, path) => invoke<string>('read_file', { vault_root: vault, path }),
-  write: (vault, path, content) =>
-    invoke<void>('write_file', { vault_root: vault, path, content }),
+  write: (vault, path, content, maxHistory) =>
+    invoke<void>('write_file', {
+      vault_root: vault,
+      path,
+      content,
+      max_history: maxHistory ?? null,
+    }),
   list: (vault, dir) => invoke<FileEntry[]>('list_dir', { vault_root: vault, path: dir }),
   watch: (vault) => invoke<void>('watch_folder', { vault_root: vault, path: null }),
   openFolderDialog: () => invoke<string | null>('open_folder_dialog'),
@@ -21,6 +28,17 @@ export const tauriFsGateway: FsGateway = {
       start_dir: startDir ?? null,
     }),
   onFsChange: (cb) => listen<FsChangeEvent>('fs-change', (e) => cb(e.payload)),
+  deleteFile: (vault, path) =>
+    invoke<string>('delete_file', { vault_root: vault, path }),
+  listTrash: (vault) => invoke<TrashEntry[]>('list_trash', { vault_root: vault }),
+  restoreFromTrash: (vault, trashPath) =>
+    invoke<string>('restore_from_trash', { vault_root: vault, trash_path: trashPath }),
+  listHistory: (vault, path) =>
+    invoke<HistoryEntry[]>('list_history', { vault_root: vault, path }),
+  readHistory: (vault, path, id) =>
+    invoke<string>('read_history', { vault_root: vault, path, id }),
+  restoreHistory: (vault, path, id) =>
+    invoke<string>('restore_history', { vault_root: vault, path, id }),
 }
 
 export const tauriAiGateway: AiGateway = {

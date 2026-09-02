@@ -17,6 +17,8 @@ function clearLs(): void {
   localStorage.removeItem('nekowite.ai.provider')
   localStorage.removeItem('nekowite.ai.model')
   localStorage.removeItem('nekowite.ai.baseUrl')
+  localStorage.removeItem('nekowite.settings.autosaveInterval')
+  localStorage.removeItem('nekowite.settings.maxHistory')
 }
 
 describe('useSettingsStore', () => {
@@ -81,5 +83,20 @@ describe('useSettingsStore', () => {
     expect(cfg.base_url).toBeUndefined()
     s.provider = 'local'
     expect(s.config().base_url).toBe('http://localhost:1234/v1')
+  })
+
+  it('defaults autosaveInterval to 15000 and maxHistory to 10', () => {
+    const s = useSettingsStore()
+    expect(s.autosaveInterval).toBe(15000)
+    expect(s.maxHistory).toBe(10)
+  })
+
+  it('persists autosaveInterval and maxHistory changes to localStorage', async () => {
+    const s = useSettingsStore()
+    s.autosaveInterval = 'off'
+    s.maxHistory = 20
+    await nextTick()
+    expect(localStorage.getItem('nekowite.settings.autosaveInterval')).toBe('off')
+    expect(localStorage.getItem('nekowite.settings.maxHistory')).toBe('20')
   })
 })

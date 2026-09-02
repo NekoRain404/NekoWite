@@ -47,4 +47,54 @@ describe('memoryFsGateway', () => {
       '# Welcome to NekoWite (demo)',
     )
   })
+
+  it('deleteFile moves content to trash and read rejects afterwards', async () => {
+    const fs = createMemoryFsGateway({ 'a.md': 'content' })
+    const trashPath = await fs.deleteFile('memoir://demo', 'a.md')
+    expect(typeof trashPath).toBe('string')
+    const trash = await fs.listTrash('memoir://demo')
+    expect(trash).toHaveLength(1)
+    expect(trash[0].name).toBe(trashPath)
+    expect(trash[0].original_path).toBe('a.md')
+    await expect(fs.read('memoir://demo', 'a.md')).rejects.toThrow()
+  })
+
+  it('restoreFromTrash restores original content to original path', async () => {
+    const fs = createMemoryFsGateway({ 'a.md': 'hello' })
+    const trashPath = await fs.deleteFile('memoir://demo', 'a.md')
+    const restored = await fs.restoreFromTrash('memoir://demo', trashPath)
+    expect(restored).toBe('a.md')
+    expect(await fs.read('memoir://demo', 'a.md')).toBe('hello')
+    expect(await fs.listTrash('memoir://demo')).toHaveLength(0)
+  })
+
+  it('prunes history to maxHistory keeping the newest snapshots first', async () => {
+    const fs = createMemoryFsGateway({ 'a.md': 'v0' })
+    await fs.write('memoir://demo', 'a.md', 'v1', 2)
+    await fs.write('memoir://demo', 'a.md', 'v2', 2)
+    await fs.write('memoir://demo', 'a.md', 'v3', 2)
+    const h = await fs.listHistory('memoir://demo', 'a.md')
+    expect(h).toHaveLength(2)
+    expect(h[0].id).not.toBe(h[1].id)
+    expect(await fs.readHistory('memoir://demo', 'a.md', h[0].id)).toBe('v2')
+    expect(await fs.readHistory('memoir://demo', 'a.md', h[1].id)).toBe('v1')
+  })
+
+  it('does not snapshot history when writing a new file', async () => {
+    const fs = createMemoryFsGateway()
+    await fs.write('memoir://demo', 'new.md', 'first')
+    const h = await fs.listHistory('memoir://demo', 'new.md')
+    expect(h).toEqual([])
+  })
+
+  it('readHistory returns snapshot content and restoreHistory rewrites the file', async () => {
+    const fs = createMemoryFsGateway({ 'a.md': 'v0' })
+    await fs.write('memoir://demo', 'a.md', 'v1')
+    const h = await fs.listHistory('memoir://demo', 'a.md')
+    expect(h).toHaveLength(1)
+    expect(await fs.readHistory('memoir://demo', 'a.md', h[0].id)).toBe('v0')
+    const restored = await fs.restoreHistory('memoir://demo', 'a.md', h[0].id)
+    expect(restored).toBe('v0')
+    expect(await fs.read('memoir://demo', 'a.md')).toBe('v0')
+  })
 })

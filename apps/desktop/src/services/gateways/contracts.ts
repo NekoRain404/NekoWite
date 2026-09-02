@@ -10,14 +10,32 @@ export interface FsChangeEvent {
   kind: string
 }
 
+export interface TrashEntry {
+  name: string
+  trash_path: string
+  original_path: string
+}
+
+export interface HistoryEntry {
+  id: string
+  size: number
+  mtime: number
+}
+
 export interface FsGateway {
   read(vault: string, path: string): Promise<string>
-  write(vault: string, path: string, content: string): Promise<void>
+  write(vault: string, path: string, content: string, maxHistory?: number): Promise<void>
   list(vault: string, dir: string): Promise<FileEntry[]>
   watch(vault: string): Promise<void>
   openFolderDialog(): Promise<string | null>
   saveFileDialog(defaultName: string, startDir?: string): Promise<string | null>
   onFsChange(cb: (e: FsChangeEvent) => void): Promise<() => void>
+  deleteFile(vault: string, path: string): Promise<string>
+  listTrash(vault: string): Promise<TrashEntry[]>
+  restoreFromTrash(vault: string, trashPath: string): Promise<string>
+  listHistory(vault: string, path: string): Promise<HistoryEntry[]>
+  readHistory(vault: string, path: string, id: string): Promise<string>
+  restoreHistory(vault: string, path: string, id: string): Promise<string>
 }
 
 export interface AiGateway {

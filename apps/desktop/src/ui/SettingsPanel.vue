@@ -220,6 +220,44 @@ function onExportPdf(): void {
         </div>
       </div>
 
+      <div class="settings-section">
+        <span class="settings-label">保存</span>
+        <label class="settings-field">
+          <span>自动保存间隔</span>
+          <select
+            v-model="settings.autosaveInterval"
+            class="input"
+          >
+            <option :value="'off'">
+              关闭
+            </option>
+            <option :value="5000">
+              5秒
+            </option>
+            <option :value="15000">
+              15秒
+            </option>
+            <option :value="30000">
+              30秒
+            </option>
+            <option :value="60000">
+              60秒
+            </option>
+          </select>
+        </label>
+        <label class="settings-field">
+          <span>历史版本上限</span>
+          <input
+            class="input"
+            :value="settings.maxHistory"
+            type="number"
+            min="1"
+            max="100"
+            @change="settings.maxHistory = Math.min(100, Math.max(1, Math.round(Number(($event.target as HTMLInputElement).value) || 10)))"
+          >
+        </label>
+      </div>
+
       <div class="settings-section ai-settings">
         <span class="settings-label">AI 设置</span>
         <label class="settings-field">
