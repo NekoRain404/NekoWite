@@ -28,15 +28,17 @@ pnpm test:e2e       # 桌面壳 E2E（Playwright，浏览器模式，针对 Vite
 
 E2E 在浏览器模式下运行（不依赖 Tauri 进程），通过 `page.addInitScript` 注入 Tauri `invoke` 的 mock 来提供文件系统夹具数据，因此无需真实文件系统即可验证「打开 vault → 文件树 → 打开标签 → 编辑 → 三态视图切换」的关键路径。Tauri 命令层的正确性由 Rust 侧的 cargo 测试覆盖。
 
-## 路线图
+## 功能总览
 
-- **v1.0 核心体验（当前）**: 应用壳（文件树/多标签/状态栏/设置）、工具栏 WYSIWYG 编辑、表格网格编辑、YAML frontmatter 保留、三态视图（对照分屏/单独源码/单独渲染）、MDX/JSX 组件节点、Markdown/MDX 往返保真、外部编辑热重载、用户插件骨架
-- **v1.1 数学**: MathLive 可视化公式编辑 + 公式键盘 + `$…$` / `$$…$$` 往返
-- **v1.2 引用**: `.bib/.ris/CSL` 导入、`@citekey` 侧栏引用、自动编号
-- **v1.3 导出**: PDF + HTML 导出（含渲染后的数学与组件）
-- **v1.4 AI**: AI ghost-writer，BYOK（OpenAI/Claude/Gemini/Grok/本地 LM Studio/Ollama），Tab 接收
-- **v1.5 浮动元素**: 浮动图片/文本框/贴纸，可任意摆放（自由画布辅助能力）
-- **v1.6 深度插件**: 生命周期钩子、样式主题、更全注册面、插件沙箱（webview/worker）
+项目功能完整（v1.0–v1.6 全部已实现，单测 196 个全绿），适合自用与学习参考。
+
+- ✅ **v1.0 核心体验**: 应用壳（文件树/多标签/状态栏/设置）、工具栏 WYSIWYG 编辑、表格网格编辑、YAML frontmatter 保留、三态视图（对照分屏/单独源码/单独渲染）、MDX/JSX 组件节点、Markdown/MDX 往返保真、外部编辑热重载、用户插件骨架
+- ✅ **v1.1 数学**: MathLive 可视化公式编辑 + 公式键盘 + `$…$` / `$$…$$` 往返
+- ✅ **v1.2 引用**: `.bib/.ris/CSL` 导入、`@citekey` 侧栏引用、自动编号
+- ✅ **v1.3 导出**: PDF + HTML 导出（含渲染后的数学与组件）
+- ✅ **v1.4 AI**: AI ghost-writer，BYOK（OpenAI/Claude/Gemini/Grok/本地 LM Studio/Ollama），Tab 接收
+- ✅ **v1.5 浮动元素**: 浮动图片/文本框/贴纸，可任意摆放（自由画布辅助能力）
+- ✅ **v1.6 深度插件**: 生命周期钩子、样式主题、更全注册面、插件沙箱（webview/worker）
 
 ## 插件开发
 
