@@ -63,7 +63,7 @@ apps/desktop lint: Done
 - `vue-tsc` untouched (this migration only affects ESLint).
 
 ## Commit
-`37d8cb0` — see git log on branch `opt/eslint-flat`.
+`4a19b0f` — see git log on branch `opt/eslint-flat`.
 
 ## Concerns
 - Added `@eslint/js` and `globals` as new root devDependencies (flat-config equivalents of `eslint:recommended` and `env` globals). This is the standard migration path per the ESLint docs.
