@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.hoisted(() => {
+  ;(globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} }
+})
+
 const invokeMock = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 

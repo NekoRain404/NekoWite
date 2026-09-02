@@ -1,5 +1,11 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
+vi.hoisted(() => {
+  const g = globalThis as { window?: { __TAURI_INTERNALS__?: unknown } }
+  if (!g.window) g.window = {}
+  g.window.__TAURI_INTERNALS__ = {}
+})
+
 const invokeMock = vi.hoisted(() => vi.fn())
 const listenMock = vi.hoisted(() => vi.fn(() => Promise.resolve(() => {})))
 const notifyErrorMock = vi.hoisted(() => vi.fn())
