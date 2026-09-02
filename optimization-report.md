@@ -35,7 +35,7 @@
 
 ## Commit
 
-（见 git log）
+- `2e38241` `chore: release v1.0.0 - update README, add CHANGELOG, bump versions`（分支 `opt/release`，含本报告，共 7 个文件）
 
 ## Concerns
 
