@@ -76,6 +76,8 @@ type DragSession = {
 }
 
 let session: DragSession | null = null
+let pendingFrame: number | null = null
+let pendingDelta: { dx: number; dy: number } | null = null
 
 function posOf(getPos: (() => number | undefined) | undefined): number | undefined {
   return typeof getPos === 'function' ? getPos() : undefined
@@ -91,6 +93,51 @@ function applyDelta(view: EditorView | null, getPos: (() => number | undefined) 
   updateFloatProps(view, pos, delta)
 }
 
+function computeDelta(
+  s: DragSession,
+  dx: number,
+  dy: number,
+  clientX: number,
+  clientY: number,
+): Record<string, string> {
+  const { base, mode } = s
+  if (mode === 'drag') {
+    const p = applyDrag({ x: base.x, y: base.y }, dx, dy)
+    return { x: String(p.x), y: String(p.y) }
+  }
+  if (mode === 'resize' && s.corner) {
+    const r = applyResize(
+      { x: base.x, y: base.y, w: base.w, h: base.h },
+      s.corner,
+      dx,
+      dy,
+    )
+    return {
+      x: String(r.x),
+      y: String(r.y),
+      w: String(r.w),
+      h: String(r.h),
+    }
+  }
+  if (mode === 'rotate') {
+    const cx = base.x + base.w / 2
+    const cy = base.y + base.h / 2
+    const cur = Math.atan2(clientY - cy, clientX - cx)
+    const start = Math.atan2(s.startY - cy, s.startX - cx)
+    const a = applyRotate({ angle: base.angle }, ((cur - start) * 180) / Math.PI)
+    return { angle: String(a.angle) }
+  }
+  return {}
+}
+
+function flushPendingDelta(): void {
+  pendingFrame = null
+  if (!session || !pendingDelta) return
+  const { dx, dy } = pendingDelta
+  pendingDelta = null
+  applyDelta(session.view, session.getPos, computeDelta(session, dx, dy, session.startX + dx, session.startY + dy))
+}
+
 function onWindowPointerMove(e: PointerEvent): void {
   if (!session) return
   const dx = e.clientX - session.startX
@@ -99,37 +146,20 @@ function onWindowPointerMove(e: PointerEvent): void {
     if (Math.abs(dx) + Math.abs(dy) < 3) return
     session.started = true
   }
-  const { base, mode } = session
-  let delta: Record<string, string> = {}
-  if (mode === 'drag') {
-    const p = applyDrag({ x: base.x, y: base.y }, dx, dy)
-    delta = { x: String(p.x), y: String(p.y) }
-  } else if (mode === 'resize' && session.corner) {
-    const r = applyResize(
-      { x: base.x, y: base.y, w: base.w, h: base.h },
-      session.corner,
-      dx,
-      dy,
-    )
-    delta = {
-      x: String(r.x),
-      y: String(r.y),
-      w: String(r.w),
-      h: String(r.h),
-    }
-  } else if (mode === 'rotate') {
-    const cx = base.x + base.w / 2
-    const cy = base.y + base.h / 2
-    const cur = Math.atan2(e.clientY - cy, e.clientX - cx)
-    const start = Math.atan2(session.startY - cy, session.startX - cx)
-    const a = applyRotate({ angle: base.angle }, ((cur - start) * 180) / Math.PI)
-    delta = { angle: String(a.angle) }
+  pendingDelta = { dx, dy }
+  if (pendingFrame == null) {
+    pendingFrame = requestAnimationFrame(flushPendingDelta)
   }
-  applyDelta(session.view, session.getPos, delta)
 }
 
 function onWindowPointerUp(): void {
+  if (pendingFrame != null) {
+    cancelAnimationFrame(pendingFrame)
+    pendingFrame = null
+  }
+  flushPendingDelta()
   session = null
+  pendingDelta = null
 }
 
 if (typeof window !== 'undefined') {
