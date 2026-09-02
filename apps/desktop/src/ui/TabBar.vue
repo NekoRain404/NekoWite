@@ -15,9 +15,11 @@ const tabs = useTabsStore()
     >
       <span class="tab-name">{{ tab.path ? tab.path.split('/').pop() : 'untitled' }}</span>
       <span
-        v-if="tab.dirty"
-        class="tab-dirty"
-      >●</span>
+        class="save-dot"
+        :data-state="tabs.saveStateOf(tab.id)"
+        :class="{ 'is-shown': tabs.saveStateOf(tab.id) !== 'saved' }"
+        :title="tabs.saveStateOf(tab.id) === 'saving' ? 'Saving…' : ''"
+      />
       <button
         class="tab-close"
         title="Close tab"
@@ -42,8 +44,8 @@ const tabs = useTabsStore()
   align-items: center;
   gap: 2px;
   padding: 4px 6px;
-  border-bottom: 1px solid #e0e0e0;
-  background: #f5f5f5;
+  border-bottom: 1px solid var(--app-border);
+  background: var(--app-panel);
   overflow-x: auto;
 }
 .tab {
@@ -52,34 +54,38 @@ const tabs = useTabsStore()
   gap: 6px;
   padding: 4px 8px;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--app-radius);
   cursor: pointer;
   font-size: 13px;
   background: transparent;
-  color: #333;
+  color: var(--app-text);
 }
-.tab:hover { background: #ececec; }
-.tab.active { background: #fff; border-color: #d0d0d0; font-weight: 600; }
+.tab:hover { background: color-mix(in srgb, var(--app-elevated) 54%, transparent); }
+.tab.active {
+  background: var(--app-elevated);
+  border-color: var(--app-border);
+  font-weight: 600;
+}
 .tab-name { white-space: nowrap; }
-.tab-dirty { color: #e67e22; font-size: 10px; }
 .tab-close {
   border: none;
   background: transparent;
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
-  color: #999;
+  color: var(--app-muted);
   padding: 0 2px;
 }
-.tab-close:hover { color: #333; }
+.tab-close:hover { color: var(--app-text); }
 .new-tab {
   margin-left: 4px;
-  border: 1px solid #ccc;
-  background: #fff;
-  border-radius: 4px;
+  border: 1px solid var(--app-border);
+  background: var(--app-elevated);
+  border-radius: var(--app-radius);
   cursor: pointer;
   font-size: 14px;
   padding: 2px 8px;
+  color: var(--app-text);
 }
-.new-tab:hover { background: #ececec; }
+.new-tab:hover { background: color-mix(in srgb, var(--app-elevated) 78%, var(--app-canvas)); }
 </style>

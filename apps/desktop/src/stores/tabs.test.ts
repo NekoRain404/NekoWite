@@ -39,6 +39,51 @@ describe('useTabsStore', () => {
   })
 })
 
+describe('save state indicator', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    readMock.mockReset()
+    writeMock.mockReset()
+  })
+
+  it('reports saving while write is pending, then saved', async () => {
+    let resolveWrite: () => void = () => {}
+    writeMock.mockImplementation(() => new Promise<void>((r) => { resolveWrite = r }))
+    readMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    const tab = s.tabs[0]
+    const pending = s.saveActive()
+    expect(s.saveStateOf(tab.id)).toBe('saving')
+    resolveWrite()
+    await pending
+    expect(s.saveStateOf(tab.id)).toBe('saved')
+  })
+
+  it('returns dirty after markDirty', async () => {
+    readMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    const tab = s.tabs[0]
+    s.markDirty(tab.id)
+    expect(s.saveStateOf(tab.id)).toBe('dirty')
+  })
+
+  it('falls back to dirty (not stuck saving) when the write fails', async () => {
+    writeMock.mockRejectedValueOnce(new Error('disk full'))
+    readMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    const tab = s.tabs[0]
+    s.markDirty(tab.id)
+    await s.saveActive()
+    expect(s.saveStateOf(tab.id)).toBe('dirty')
+  })
+})
+
 describe('lifecycle broadcast from tabs store', () => {
   const unregister: Array<() => void> = []
 

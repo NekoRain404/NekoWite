@@ -190,10 +190,10 @@ watch(
 .file-tree {
   width: 260px;
   min-width: 260px;
-  border-right: 1px solid #e0e0e0;
+  border-right: 1px solid var(--app-border);
   display: flex;
   flex-direction: column;
-  background: #fafafa;
+  background: var(--app-panel);
   height: 100%;
   overflow: hidden;
 }
@@ -202,17 +202,19 @@ watch(
   align-items: center;
   justify-content: space-between;
   padding: 8px;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--app-border);
 }
-.tree-title { font-weight: 600; font-size: 13px; }
+.tree-title { font-weight: 600; font-size: 13px; color: var(--app-text); }
 .tree-btn {
   font-size: 12px;
   padding: 3px 8px;
-  border: 1px solid #ccc;
-  background: #fff;
-  border-radius: 4px;
+  border: 1px solid var(--app-border);
+  background: var(--app-elevated);
+  border-radius: var(--app-radius);
   cursor: pointer;
+  color: var(--app-text);
 }
+.tree-btn:hover { background: color-mix(in srgb, var(--app-elevated) 78%, var(--app-canvas)); }
 .tree-body { flex: 1; overflow: auto; padding: 4px 0; }
 .tree-row {
   display: flex;
@@ -221,8 +223,10 @@ watch(
   padding: 2px 8px;
   font-size: 13px;
   white-space: nowrap;
+  color: var(--app-text);
+  border-radius: var(--app-radius);
 }
-.tree-row:hover { background: #f0f0f0; }
+.tree-row:hover { background: color-mix(in srgb, var(--app-elevated) 54%, transparent); }
 .tree-name { cursor: pointer; overflow: hidden; text-overflow: ellipsis; }
 .tree-name.dir { font-weight: 500; }
 .tree-name.mdx::after { content: ''; }
@@ -230,8 +234,8 @@ watch(
   width: 12px;
   display: inline-block;
   font-size: 10px;
-  color: #888;
-  transition: transform 0.1s;
+  color: var(--app-muted);
+  transition: transform 0.1s var(--app-ease);
 }
 .caret.open { transform: rotate(90deg); }
 .caret.hidden { visibility: hidden; }

@@ -76,12 +76,13 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .references-panel {
-  border-top: 1px solid #e0e0e0;
+  border-top: 1px solid var(--app-border);
   padding: 10px;
   max-height: 220px;
   overflow: auto;
-  background: #fff;
+  background: var(--app-elevated);
 }
-.refs-list { margin: 0; padding-left: 20px; font-size: 12px; }
-.refs-empty { color: #999; font-size: 12px; }
+.references-panel h3 { color: var(--app-text); font-size: 13px; margin: 0 0 6px; }
+.refs-list { margin: 0; padding-left: 20px; font-size: 12px; color: var(--app-text); }
+.refs-empty { color: var(--app-muted); font-size: 12px; }
 </style>

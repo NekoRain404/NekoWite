@@ -20,9 +20,29 @@ export const useTabsStore = defineStore('tabs', () => {
   const tabs = ref<OpenTab[]>([])
   const activeId = ref<string | null>(null)
   const vault = ref<string | null>(null)
+  const savingIds = ref<Set<string>>(new Set())
   const activeTab = computed(
     () => tabs.value.find((t) => t.id === activeId.value) ?? null,
   )
+
+  function markSaving(id: string): void {
+    const next = new Set(savingIds.value)
+    next.add(id)
+    savingIds.value = next
+  }
+
+  function markSaved(id: string): void {
+    const next = new Set(savingIds.value)
+    next.delete(id)
+    savingIds.value = next
+  }
+
+  function saveStateOf(id: string): 'saved' | 'dirty' | 'saving' {
+    if (savingIds.value.has(id)) return 'saving'
+    const t = tabs.value.find((x) => x.id === id)
+    if (t?.dirty) return 'dirty'
+    return 'saved'
+  }
 
   function setVault(v: string): void {
     vault.value = v
@@ -74,6 +94,7 @@ export const useTabsStore = defineStore('tabs', () => {
     const editor = getActiveEditor()
     const next = emitLifecycle('onSave', editor, t.content)
     const content = typeof next === 'string' ? next : t.content
+    markSaving(t.id)
     try {
       await fsService.write(vault.value, t.path, content)
       // I2: a save-time rewrite must not re-open the editor — the model syncs,
@@ -88,6 +109,8 @@ export const useTabsStore = defineStore('tabs', () => {
       emitLifecycle('onSaved', editor, content)
     } catch {
       notifyError('保存失败，内容已保留在编辑器中，请重试')
+    } finally {
+      markSaved(t.id)
     }
   }
 
@@ -103,5 +126,5 @@ export const useTabsStore = defineStore('tabs', () => {
     }
   }
 
-  return { tabs, activeId, activeTab, vault, setVault, openTab, closeTab, setActive, markDirty, saveActive, reloadFromDisk }
+  return { tabs, activeId, activeTab, vault, setVault, openTab, closeTab, setActive, markDirty, markSaving, markSaved, saveStateOf, saveActive, reloadFromDisk }
 })

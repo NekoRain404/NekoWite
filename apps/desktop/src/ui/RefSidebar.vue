@@ -46,28 +46,35 @@ function insert(key: string): void {
 .ref-sidebar {
   width: 260px;
   min-width: 260px;
-  border-right: 1px solid #e0e0e0;
+  border-right: 1px solid var(--app-border);
   padding: 10px;
   overflow: auto;
-  background: #fafafa;
+  background: var(--app-panel);
   height: 100%;
 }
+.ref-sidebar h3 { color: var(--app-text); font-size: 13px; margin: 0 0 8px; }
 .ref-search {
   width: 100%;
   box-sizing: border-box;
-  padding: 6px;
+  padding: 6px 8px;
   margin-bottom: 8px;
+  border: 1px solid var(--app-border);
+  background: var(--app-elevated);
+  border-radius: var(--app-radius);
+  color: var(--app-text);
 }
+.ref-search:focus { outline: 2px solid var(--app-accent); outline-offset: 0; }
 .ref-list { list-style: none; margin: 0; padding: 0; }
 .ref-item {
-  padding: 6px;
-  border-bottom: 1px solid #f0f0f0;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--app-border);
   cursor: pointer;
   font-size: 12px;
+  border-radius: var(--app-radius);
 }
-.ref-item:hover { background: #f0f7ff; }
-.ref-key { font-weight: 700; display: block; }
-.ref-title { display: block; color: #333; }
-.ref-meta { display: block; color: #888; }
-.ref-empty { color: #999; font-size: 12px; padding: 8px; }
+.ref-item:hover { background: var(--app-accent-soft); }
+.ref-key { font-weight: 700; display: block; color: var(--app-text); }
+.ref-title { display: block; color: var(--app-text); }
+.ref-meta { display: block; color: var(--app-muted); }
+.ref-empty { color: var(--app-muted); font-size: 12px; padding: 8px; }
 </style>
