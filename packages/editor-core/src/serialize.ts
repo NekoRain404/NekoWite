@@ -23,7 +23,10 @@ const processor = unified()
       // Un-escaping every '\[' (the previous behavior) corrupted intentional
       // escapes: `see \[foo\](http://x)` came back as a live link.
       text: (node, _parent, state, info) =>
-        state.safe(node.value, info).replace(/\\\[@/g, '[@'),
+        state.safe(node.value, info)
+          .replace(/\\\[@/g, '[@')
+          .replace(/\\\[\\\[/g, '[[')
+          .replace(/\\==/g, '=='),
     },
   })
 

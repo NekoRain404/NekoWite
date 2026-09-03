@@ -20,14 +20,18 @@ import {
   Star,
   Sun,
   Tag as TagIcon,
+  X,
 } from 'lucide-vue-next'
 import { fsService } from '../services/fs'
 import type { TrashEntry } from '../services/gateways/contracts'
 import { notifyError } from '../services/errors'
+import { useTabsStore } from '../stores/tabs'
 import { useLibraryStore } from '../stores/library'
 import { useAppearanceStore } from '../stores/appearance'
 import { insertCiteAtCursor } from '../services/editorBridge'
 import { useRefsStore } from '../stores/refs'
+import { parseFrontmatterForPanel, splitFrontmatterRaw } from '../services/noteMeta'
+import { removeTagFromContent } from '../services/tags'
 import { t } from '../i18n'
 
 const props = defineProps<{ vault: string }>()
@@ -40,6 +44,7 @@ const emit = defineEmits<{
 const library = useLibraryStore()
 const refs = useRefsStore()
 const appearance = useAppearanceStore()
+const tabs = useTabsStore()
 
 const refsOpen = ref(false)
 const refQuery = ref('')
@@ -47,6 +52,7 @@ const refResults = computed(() => refs.search(refQuery.value).slice(0, 30))
 
 const trashOpen = ref(false)
 const trashEntries = ref<TrashEntry[]>([])
+const clearingTrash = ref(false)
 
 const vaultName = computed(() => {
   const p = props.vault.replace(/\/+$/, '')
@@ -132,6 +138,22 @@ async function restore(entry: TrashEntry): Promise<void> {
   }
 }
 
+/** Two-step clear: the first click arms "confirm", the second empties the
+ * trash. No confirm is required when the trash is already empty. */
+async function clearTrash(): Promise<void> {
+  if (!clearingTrash.value) {
+    clearingTrash.value = true
+    return
+  }
+  clearingTrash.value = false
+  try {
+    await fsService.clearTrash(props.vault)
+    await refreshTrash()
+  } catch {
+    notifyError(t('trash.clearFailed'))
+  }
+}
+
 watch(trashOpen, (open) => {
   if (open) void refreshTrash()
 })
@@ -146,11 +168,34 @@ function insertRef(key: string): void {
   refQuery.value = ''
 }
 
+const activeDocTags = computed(() => {
+  const tab = tabs.activeTab
+  if (!tab) return new Set<string>()
+  const { front } = splitFrontmatterRaw(tab.content)
+  return new Set(parseFrontmatterForPanel(front).tags)
+})
+
+/** Remove `tag` from the CURRENTLY OPEN document's frontmatter. The library
+ * wide rename/remove is intentionally out of scope: it would need to rewrite
+ * every note's file (riskier, deferred). The index refreshes after the save. */
+function removeCurrentTag(tag: string, e: MouseEvent): void {
+  e.stopPropagation()
+  const tab = tabs.activeTab
+  if (!tab) return
+  const next = removeTagFromContent(tab.content, tag)
+  if (next === tab.content) return
+  tab.content = next
+  tabs.markDirty(tab.id)
+  tabs.scheduleAutosave(tab.id)
+}
+
+
 watch(
   () => props.vault,
   () => {
     refsOpen.value = false
     trashOpen.value = false
+    clearingTrash.value = false
   },
 )
 </script>
@@ -210,22 +255,37 @@ watch(
           <span>{{ t('nav.tags') }}</span>
         </div>
         <div class="tag-list">
-          <button
+          <div
             v-for="tc in library.tagCounts"
             :key="tc.tag"
-            class="nav-item tag-item"
-            :class="{ active: library.filter === `tag:${tc.tag}` }"
-            :title="t('nav.noteCount', { n: tc.count })"
-            @click="library.setFilter(`tag:${tc.tag}`)"
+            class="tag-row"
           >
-            <Hash
-              class="nav-icon"
-              :size="16"
-              :stroke-width="1.8"
-            />
-            <span class="nav-label">{{ tc.tag }}</span>
-            <span class="nav-count">{{ tc.count }}</span>
-          </button>
+            <button
+              class="nav-item tag-item"
+              :class="{ active: library.filter === `tag:${tc.tag}` }"
+              :title="t('nav.noteCount', { n: tc.count })"
+              @click="library.setFilter(`tag:${tc.tag}`)"
+            >
+              <Hash
+                class="nav-icon"
+                :size="16"
+                :stroke-width="1.8"
+              />
+              <span class="nav-label">{{ tc.tag }}</span>
+              <span class="nav-count">{{ tc.count }}</span>
+            </button>
+            <button
+              v-if="activeDocTags.has(tc.tag)"
+              class="tag-remove"
+              :title="t('tag.removeFromDoc')"
+              @click="removeCurrentTag(tc.tag, $event)"
+            >
+              <X
+                :size="11"
+                :stroke-width="2"
+              />
+            </button>
+          </div>
         </div>
       </section>
 
@@ -309,6 +369,18 @@ watch(
           v-if="trashOpen"
           class="group-body"
         >
+          <button
+            v-if="trashEntries.length"
+            class="trash-clear"
+            :class="{ armed: clearingTrash }"
+            @click="clearTrash"
+          >
+            <Trash2
+              :size="12"
+              :stroke-width="1.8"
+            />
+            <span>{{ clearingTrash ? t('trash.clearConfirm') : t('trash.clear') }}</span>
+          </button>
           <div
             v-for="entry in trashEntries"
             :key="entry.trash_path"
@@ -495,6 +567,48 @@ watch(
   gap: 1px;
   padding: 2px 0 4px;
 }
+.tag-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+}
+.tag-row .tag-item {
+  flex: 1;
+  min-width: 0;
+}
+.tag-remove {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--app-radius-xs);
+  background: color-mix(in srgb, var(--app-elevated) 82%, var(--app-panel));
+  color: var(--app-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--app-motion-fast) var(--app-ease),
+              background var(--app-motion-fast) var(--app-ease),
+              color var(--app-motion-fast) var(--app-ease);
+}
+.tag-row:hover .tag-remove {
+  opacity: 1;
+}
+.tag-remove:hover {
+  color: var(--app-danger);
+  background: color-mix(in srgb, var(--app-danger) 14%, transparent);
+}
+.tag-remove:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
 .tag-item .nav-label::before {
   content: '#';
   margin-right: 1px;
@@ -628,6 +742,32 @@ watch(
 .trash-restore:hover {
   color: var(--app-text);
   background: color-mix(in srgb, var(--app-panel) 72%, transparent);
+}
+.trash-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px;
+  margin: 0 2px 3px;
+  border: none;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-muted);
+  font-family: var(--app-font);
+  font-size: 10.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--app-motion-fast) var(--app-ease),
+              color var(--app-motion-fast) var(--app-ease);
+}
+.trash-clear:hover {
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
+}
+.trash-clear.armed {
+  color: var(--app-danger);
+  background: color-mix(in srgb, var(--app-danger) 10%, transparent);
 }
 .group-empty {
   margin: 0;

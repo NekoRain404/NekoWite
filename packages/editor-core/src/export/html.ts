@@ -10,6 +10,7 @@ import katex from 'katex'
 import katexCss from 'katex/dist/katex.min.css?inline'
 import type { Root } from 'mdast'
 import { citeMdast } from '../cite'
+import { imageDimMdast } from '../image'
 import { mdxJsxMdast, parseMdxTag } from '../mdx'
 
 export interface ExportRef {
@@ -54,6 +55,9 @@ interface RenderNode extends TransformNode {
   start?: number
   align?: (string | null)[]
   name?: string
+  title?: string
+  width?: number
+  imageAlign?: string
 }
 
 interface RenderContext {
@@ -77,6 +81,7 @@ const processor = unified()
     const t = tree as unknown as TransformNode & { children: TransformNode[] }
     mdxJsxMdast(t, file)
     citeMdast(t, file)
+    imageDimMdast(t)
   })
 
 function escapeHtml(text: string): string {
@@ -208,8 +213,19 @@ function renderNode(node: RenderNode, ctx: RenderContext): string {
       return `<blockquote>${renderChildren((node.children ?? []) as RenderNode[], ctx)}</blockquote>`
     case 'link':
       return `<a href="${escapeHtml(node.url ?? '')}">${renderChildren((node.children ?? []) as RenderNode[], ctx)}</a>`
-    case 'image':
-      return `<img src="${escapeHtml(node.url ?? '')}" alt="${escapeHtml(node.alt ?? '')}">`
+    case 'image': {
+      const styles: string[] = []
+      if (node.width != null && Number.isFinite(node.width)) styles.push(`width:${node.width}px`)
+      if (node.imageAlign === 'center') {
+        styles.push('display:block', 'margin-left:auto', 'margin-right:auto')
+      } else if (node.imageAlign === 'left') {
+        styles.push('float:left')
+      } else if (node.imageAlign === 'right') {
+        styles.push('float:right')
+      }
+      const style = styles.length ? ` style="${styles.join(';')}"` : ''
+      return `<img src="${escapeHtml(node.url ?? '')}" alt="${escapeHtml(node.alt ?? '')}"${style}>`
+    }
     case 'list':
       return renderList(node, ctx)
     case 'listItem':

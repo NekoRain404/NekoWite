@@ -3,16 +3,22 @@ import {
   aggregateTagCounts,
   computeLibraryCounts,
   dirRelativeToVault,
+  emptyFrontmatterFields,
   extractH1,
   extractOutlinks,
   extractSummary,
   fileNameTitle,
   filterAndSortNotes,
   formatRelativeTime,
+  frontmatterBlock,
+  hasFrontmatter,
   parseFrontmatterBlock,
+  parseFrontmatterForPanel,
   parseNoteMeta,
   relPathOf,
+  replaceFrontmatter,
   resolveLinkTarget,
+  serializeFrontmatter,
   splitFrontmatterRaw,
 } from './noteMeta'
 import type { NoteSummary } from './noteMeta'
@@ -39,6 +45,95 @@ describe('parseFrontmatterBlock', () => {
   it('parses inline bracket and comma-separated tags plus quoted title', () => {
     expect(parseFrontmatterBlock("title: \"My Note\"\ntags: [a, b]")).toEqual({ title: 'My Note', tags: ['a', 'b'] })
     expect(parseFrontmatterBlock('title: X\ntags: 数学, 物理')).toEqual({ title: 'X', tags: ['数学', '物理'] })
+  })
+})
+
+describe('frontmatter serialization (panel + rewrite)', () => {
+  it('parses block/inline/comma tags plus title, dates and other keys', () => {
+    const fields = parseFrontmatterForPanel(
+      'title: 笔记\n# a comment\ntags:\n  - 数学\n  - "随笔"\ndate: 2026-09-03\nauthor: nekora',
+    )
+    expect(fields.title).toBe('笔记')
+    expect(fields.tags).toEqual(['数学', '随笔'])
+    expect(fields.date).toBe('2026-09-03')
+    expect(fields.other).toEqual({ author: 'nekora' })
+    expect(parseFrontmatterForPanel('tags: [a, b]\ncreated: 2026-01-01')).toEqual({
+      title: '',
+      tags: ['a', 'b'],
+      date: '',
+      created: '2026-01-01',
+      updated: '',
+      other: {},
+    })
+    expect(parseFrontmatterForPanel('title: X\ntags: 数学, 物理')).toMatchObject({
+      title: 'X',
+      tags: ['数学', '物理'],
+    })
+  })
+
+  it('quotes values containing ": ", "#", newlines, empties and leading specials', () => {
+    expect(serializeFrontmatter({ ...emptyFrontmatterFields(), title: 'a: b' })).toBe('title: "a: b"')
+    expect(serializeFrontmatter({ ...emptyFrontmatterFields(), title: 'a#b' })).toBe('title: "a#b"')
+    expect(serializeFrontmatter({ ...emptyFrontmatterFields(), title: 'a"b' })).toBe('title: "a\\"b"')
+    expect(serializeFrontmatter({ ...emptyFrontmatterFields(), title: '  leading' })).toBe('title: "  leading"')
+    expect(serializeFrontmatter({ ...emptyFrontmatterFields(), title: '' })).toBe('')
+    expect(serializeFrontmatter({ ...emptyFrontmatterFields(), title: 'plain' })).toBe('title: plain')
+  })
+
+  it('serializes a tags block array and round-trips through the parser', () => {
+    const inner = serializeFrontmatter({
+      title: '图论',
+      tags: ['数学', '随笔'],
+      date: '',
+      created: '2026-01-01',
+      updated: '',
+      other: { author: 'nekora' },
+    })
+    expect(inner).toContain('tags:')
+    expect(inner).toContain('  - 数学')
+    expect(inner).toContain('  - 随笔')
+    const reparsed = parseFrontmatterForPanel(inner)
+    expect(reparsed.title).toBe('图论')
+    expect(reparsed.tags).toEqual(['数学', '随笔'])
+    expect(reparsed.created).toBe('2026-01-01')
+    expect(reparsed.other).toEqual({ author: 'nekora' })
+  })
+
+  it('round-trips quote-requiring tag values including commas', () => {
+    const fields: ReturnType<typeof parseFrontmatterForPanel> = {
+      title: '笔记',
+      tags: ['a: b', 'c#d'],
+      date: '',
+      created: '',
+      updated: '',
+      other: { note: 'x: y' },
+    }
+    const reparsed = parseFrontmatterForPanel(serializeFrontmatter(fields))
+    expect(reparsed.tags).toEqual(['a: b', 'c#d'])
+    expect(reparsed.other).toEqual({ note: 'x: y' })
+  })
+
+  it('frontmatterBlock wraps inner text with fences and a trailing blank line', () => {
+    expect(frontmatterBlock('title: x')).toBe('---\ntitle: x\n---\n\n')
+    expect(hasFrontmatter('---\ntitle: x\n---\n\n# body')).toBe(true)
+    expect(hasFrontmatter('no frontmatter')).toBe(false)
+  })
+
+  it('replaceFrontmatter rewrites only the block, preserving the body byte-for-byte', () => {
+    const md = '---\ntitle: old\ntags: [x]\n---\n\n# Hello\n\nBody'
+    const fields = { title: 'new', tags: ['a', 'b'], date: '2026-01-01', created: '', updated: '', other: { author: 'nekora' } }
+    const { content, hadFront, changed } = replaceFrontmatter(md, fields)
+    expect(hadFront).toBe(true)
+    expect(changed).toBe(true)
+    expect(content).toBe('---\ntitle: new\ntags:\n  - a\n  - b\ndate: 2026-01-01\nauthor: nekora\n---\n\n# Hello\n\nBody')
+    expect(content.endsWith('\n\n# Hello\n\nBody')).toBe(true)
+  })
+
+  it('prepends a fresh frontmatter block when the document has none', () => {
+    const body = '# Welcome\n\nContent'
+    const { content, hadFront } = replaceFrontmatter(body, { title: 'Welcome', tags: [], date: '', created: '', updated: '', other: {} })
+    expect(hadFront).toBe(false)
+    expect(content).toBe('---\ntitle: Welcome\n---\n\n# Welcome\n\nContent')
   })
 })
 

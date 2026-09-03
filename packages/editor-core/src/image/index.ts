@@ -1,2 +1,5 @@
 export * from './resolver'
+export * from './schema'
+export * from './remark'
+export * from './resize'
 export * from './nodeView'

@@ -1,5 +1,5 @@
 use nekowite_lib::fs::{
-    atomic_write, create_dir, delete_file, encode_rel_path, is_mdx_path, list_dir,
+    atomic_write, clear_trash, create_dir, delete_file, encode_rel_path, is_mdx_path, list_dir,
     list_dir_entries, list_history, list_trash, read_file, read_history, rename_entry,
     resolve_media_path, resolve_within, restore_from_trash, restore_history,
     sanitize_attachment_name, sanitize_path, save_attachment, should_skip_entry,
@@ -331,6 +331,50 @@ fn trash_delete_and_restore_roundtrip() {
     let restored2 = restore_from_trash(&root, &trash2).unwrap();
     assert!(restored2.contains("-restored-"));
     assert_eq!(read_file(&root, &restored2).unwrap(), "second");
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// `clear_trash` removes every trash entry, reports how many it removed, and
+/// is a no-op (returning 0) when the trash directory does not exist.
+#[test]
+fn clear_trash_empties_the_trash() {
+    let vault = temp_vault("clear-trash");
+    let root = vault.to_str().unwrap().to_string();
+
+    // A missing trash dir is not an error.
+    assert_eq!(clear_trash(&root).unwrap(), 0);
+
+    write_file(&root, "docs/a.md", "hello", Some(10)).unwrap();
+    write_file(&root, "notes/b.md", "world", Some(10)).unwrap();
+    delete_file(&root, "docs/a.md").unwrap();
+    delete_file(&root, "notes/b.md").unwrap();
+    assert_eq!(list_trash(&root).unwrap().len(), 2);
+
+    assert_eq!(clear_trash(&root).unwrap(), 2);
+    assert!(list_trash(&root).unwrap().is_empty());
+    assert!(!vault.join(".nekowite-trash/docs%2Fa.md").exists());
+    assert!(!vault.join(".nekowite-trash/notes%2Fb.md").exists());
+    // Clearing again is a no-op (the directory persists but is empty).
+    assert_eq!(clear_trash(&root).unwrap(), 0);
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// Trash may hold a *directory* (when a whole folder is deleted): `clear_trash`
+/// must remove it recursively and count it as a single entry.
+#[test]
+fn clear_trash_removes_directory_entries() {
+    let vault = temp_vault("clear-trash-dir");
+    let root = vault.to_str().unwrap().to_string();
+    std::fs::create_dir_all(vault.join("fld/sub")).unwrap();
+    std::fs::write(vault.join("fld/sub/n.md"), "x").unwrap();
+    delete_file(&root, "fld").unwrap();
+
+    assert!(list_trash(&root).unwrap().is_empty(), "dirs are not listed");
+    assert_eq!(clear_trash(&root).unwrap(), 1);
+    let rd = std::fs::read_dir(vault.join(".nekowite-trash")).unwrap();
+    assert_eq!(rd.flatten().count(), 0, "no leftover trash entries");
 
     std::fs::remove_dir_all(&vault).unwrap();
 }

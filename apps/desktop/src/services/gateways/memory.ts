@@ -132,6 +132,11 @@ export function createMemoryFsGateway(
       trash.delete(trashPath)
       return entry.original_path
     },
+    clearTrash: async () => {
+      const count = trash.size
+      trash.clear()
+      return count
+    },
     listHistory: async (_vault, path) =>
       [...(history.get(path) ?? [])]
         .reverse()

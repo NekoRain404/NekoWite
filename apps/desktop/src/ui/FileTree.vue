@@ -4,6 +4,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event'
 import { ChevronRight, FilePlus2, FileText, Folder, FolderOpen, FolderPlus, PencilLine, Trash2 } from 'lucide-vue-next'
 import { fsService } from '../services/fs'
 import type { FileEntry, FsChangeEvent } from '../services/fs'
+import { resolveDropTarget, type DropRow } from '../services/treeDrop'
 import { decideConflict, notifyError } from '../services/errors'
 import { useTabsStore } from '../stores/tabs'
 import ContextMenu from './ContextMenu.vue'
@@ -42,6 +43,8 @@ const pendingEdit = ref<TreeEdit | null>(null)
 const editName = ref('')
 const editError = ref('')
 const editInput = ref<HTMLInputElement | null>(null)
+const dragState = ref<{ path: string; isDir: boolean } | null>(null)
+const dropTargetPath = ref<string | null>(null)
 let confirming = false
 
 const MENU_ICONS = {
@@ -126,6 +129,11 @@ const flat = computed(() => {
   return out
 })
 
+/** Flattened rows as the pure drop-resolver expects them. */
+const rowsForDrop = computed<DropRow[]>(() =>
+  flat.value.map((r) => ({ path: r.node.path, isDir: r.node.is_dir })),
+)
+
 const currentDirPath = computed(() => {
   const sel = selectedDirPath.value
   if (root.value && sel === root.value.path) return root.value.path
@@ -182,6 +190,84 @@ async function refreshAncestors(path: string): Promise<void> {
     if (dir === node.path || dir.startsWith(node.path + '/')) targets.add(node)
   }
   for (const t of targets) await listChildren(t)
+}
+
+function onDragStart(node: TreeNode, e: DragEvent): void {
+  dragState.value = { path: node.path, isDir: node.is_dir }
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/nekowite-path', node.path)
+    e.dataTransfer.setData('text/plain', node.path)
+  }
+}
+
+/** Keep the drop target highlighted only where the pure resolver approves;
+ * still prevent the (empty, no-op) default drag so the drop event lands here. */
+function onDragOver(row: { node: TreeNode }, e: DragEvent): void {
+  if (!dragState.value) return
+  if (!row.node.is_dir) {
+    dropTargetPath.value = null
+    return
+  }
+  e.preventDefault()
+  const result = resolveDropTarget(
+    rowsForDrop.value,
+    dragState.value.path,
+    row.node.path,
+    root.value?.path,
+  )
+  if (result.ok && e.dataTransfer) {
+    e.dataTransfer.dropEffect = 'move'
+    dropTargetPath.value = row.node.path
+  } else {
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'none'
+    dropTargetPath.value = null
+  }
+}
+
+function onDragLeave(): void {
+  dropTargetPath.value = null
+}
+
+function onDragEnd(): void {
+  dragState.value = null
+  dropTargetPath.value = null
+}
+
+function onDrop(row: { node: TreeNode }, e: DragEvent): void {
+  e.preventDefault()
+  const drag = dragState.value
+  if (!drag) {
+    dropTargetPath.value = null
+    return
+  }
+  const result = resolveDropTarget(
+    rowsForDrop.value,
+    drag.path,
+    row.node.path,
+    root.value?.path,
+  )
+  dropTargetPath.value = null
+  if (!result.ok || !result.to) {
+    notifyError(result.reason === 'conflict' ? t('tree.conflict') : t('tree.dropInvalid'))
+    dragState.value = null
+    return
+  }
+  void performMove(result.from, result.to)
+}
+
+async function performMove(from: string, to: string): Promise<void> {
+  try {
+    await fsService.renameEntry(props.vault, from, to)
+    tabs.renamePathInTabs(from, to)
+    await refreshAncestors(from)
+    await refreshAncestors(to)
+  } catch {
+    notifyError(t('tree.moveFailed'))
+  } finally {
+    dragState.value = null
+    dropTargetPath.value = null
+  }
 }
 
 function openMenu(node: TreeNode | null, e: MouseEvent): void {
@@ -407,9 +493,15 @@ watch(
       >
         <div
           class="tree-row"
-          :class="{ active: row.node.path === activePath }"
+          :class="{ active: row.node.path === activePath, 'is-drop-target': dropTargetPath === row.node.path }"
+          :draggable="row.node !== root && !(pendingEdit?.kind === 'rename' && pendingEdit.nodePath === row.node.path)"
           :style="{ paddingLeft: `${6 + row.depth * 14}px` }"
           @contextmenu.stop.prevent="openMenu(row.node, $event)"
+          @dragstart="onDragStart(row.node, $event)"
+          @dragover="onDragOver(row, $event)"
+          @dragleave="onDragLeave"
+          @drop="onDrop(row, $event)"
+          @dragend="onDragEnd"
         >
           <button
             class="caret"
@@ -634,6 +726,17 @@ watch(
   color: var(--app-text);
   font-weight: 550;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-accent) 9%, transparent);
+}
+.tree-row[draggable="true"] {
+  cursor: grab;
+}
+.tree-row[draggable="true"]:active {
+  cursor: grabbing;
+}
+.tree-row.is-drop-target {
+  background: color-mix(in srgb, var(--app-accent-soft) 84%, var(--app-panel));
+  box-shadow: inset 0 0 0 1px var(--app-accent);
+  color: var(--app-text);
 }
 .caret {
   display: inline-flex;

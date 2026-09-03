@@ -85,6 +85,149 @@ export function parseFrontmatterBlock(front: string): { title: string; tags: str
   return { title, tags }
 }
 
+/** Editable fields surfaced by the frontmatter property panel. `other` holds
+ * every unrecognized YAML key verbatim (read-only display, not edited). */
+export interface FrontmatterFields {
+  title: string
+  tags: string[]
+  date: string
+  created: string
+  updated: string
+  other: Record<string, string>
+}
+
+const FRONTMATTER_KEY_RE = /^([A-Za-z0-9_-]+)\s*:\s*(.*)$/
+const KNOWN_FRONTMATTER_KEYS = new Set(['title', 'tags', 'date', 'created', 'updated'])
+
+/** Parse the inner frontmatter text (between the `---` fences) into editable
+ * fields plus every other key as a raw scalar. */
+export function parseFrontmatterForPanel(front: string): FrontmatterFields {
+  const fields: FrontmatterFields = {
+    title: '',
+    tags: [],
+    date: '',
+    created: '',
+    updated: '',
+    other: {},
+  }
+  let collectingTags = false
+  for (const line of front.split(/\r?\n/)) {
+    if (collectingTags) {
+      const item = /^\s+-\s*(.+?)\s*$/.exec(line)
+      if (item) {
+        const tag = stripQuotes(item[1])
+        if (tag) fields.tags.push(tag)
+        continue
+      }
+      if (line.trim() === '') continue
+      collectingTags = false
+    }
+    const pair = FRONTMATTER_KEY_RE.exec(line)
+    if (!pair) continue
+    const key = pair[1]
+    const value = pair[2].trim()
+    const lower = key.toLowerCase()
+    if (lower === 'title') {
+      fields.title = stripQuotes(value)
+      collectingTags = false
+    } else if (lower === 'tags') {
+      fields.tags = []
+      if (value === '') {
+        collectingTags = true
+      } else {
+        const cleaned = value.replace(/^\[/, '').replace(/\]$/, '')
+        fields.tags = cleaned.split(',').map((p) => stripQuotes(p)).filter(Boolean)
+      }
+    } else if (lower === 'date') {
+      fields.date = stripQuotes(value)
+      collectingTags = false
+    } else if (lower === 'created') {
+      fields.created = stripQuotes(value)
+      collectingTags = false
+    } else if (lower === 'updated') {
+      fields.updated = stripQuotes(value)
+      collectingTags = false
+    } else if (!KNOWN_FRONTMATTER_KEYS.has(lower)) {
+      // Preserve the original key casing for unknown keys.
+      fields.other[key] = stripQuotes(value)
+      collectingTags = false
+    }
+  }
+  return fields
+}
+
+const LEADING_YAML_SPECIALS = ['`', '-', '?', '&', '*', '!', '|', '>', '%', '@', '[', ']', '{', '}']
+
+/** True when a YAML scalar must be double-quoted to round-trip safely. */
+function needsQuote(value: string): boolean {
+  if (value === '') return true
+  if (/^\s|\s$/.test(value)) return true
+  if (value.includes('\n')) return true
+  if (value.includes(': ') || value.includes('#') || value.endsWith(':')) return true
+  if (value.includes('"') || value.includes("'")) return true
+  if (LEADING_YAML_SPECIALS.some((c) => value.startsWith(c))) return true
+  return false
+}
+
+function quoteScalar(value: string): string {
+  const escaped = value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\r?\n/g, '\\n')
+  return `"${escaped}"`
+}
+
+function yamlScalar(value: string): string {
+  return needsQuote(value) ? quoteScalar(value) : value
+}
+
+/** Serialize editable fields back to inner frontmatter text (no `---` fences).
+ * Known keys are emitted first (title, tags, date, created, updated), then any
+ * preserved `other` keys in their original insertion order. */
+export function serializeFrontmatter(fields: FrontmatterFields): string {
+  const lines: string[] = []
+  if (fields.title !== '') lines.push(`title: ${yamlScalar(fields.title)}`)
+  const tags = [...new Set(fields.tags)]
+  if (tags.length > 0) {
+    lines.push('tags:')
+    for (const tag of tags) lines.push(`  - ${yamlScalar(tag)}`)
+  }
+  if (fields.date !== '') lines.push(`date: ${yamlScalar(fields.date)}`)
+  if (fields.created !== '') lines.push(`created: ${yamlScalar(fields.created)}`)
+  if (fields.updated !== '') lines.push(`updated: ${yamlScalar(fields.updated)}`)
+  for (const [key, value] of Object.entries(fields.other)) {
+    lines.push(`${key}: ${yamlScalar(value)}`)
+  }
+  return lines.join('\n')
+}
+
+/** Wrap inner frontmatter text into a full `---…---` block with a trailing
+ * blank line, matching editor-core's splitFrontmatter block shape. */
+export function frontmatterBlock(inner: string): string {
+  const normalized = inner.endsWith('\n') ? inner : `${inner}\n`
+  return `---\n${normalized}---\n\n`
+}
+
+export function hasFrontmatter(md: string): boolean {
+  return splitFrontmatterRaw(md).front !== ''
+}
+
+export function emptyFrontmatterFields(): FrontmatterFields {
+  return { title: '', tags: [], date: '', created: '', updated: '', other: {} }
+}
+
+/** Rebuild a document's frontmatter block from `fields`, preserving the body
+ * byte-for-byte. Adds a fresh frontmatter block when the document has none. */
+export function replaceFrontmatter(
+  content: string,
+  fields: FrontmatterFields,
+): { content: string; hadFront: boolean; changed: boolean } {
+  const { front, body } = splitFrontmatterRaw(content)
+  const hadFront = front !== ''
+  const next = frontmatterBlock(serializeFrontmatter(fields)) + body
+  return { content: next, hadFront, changed: next !== content }
+}
+
 export function fileNameTitle(name: string): string {
   return name.replace(/\.(md|mdx)$/i, '').trim()
 }

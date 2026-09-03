@@ -40,6 +40,8 @@ export interface FsGateway {
   deleteFile(vault: string, path: string): Promise<string>
   listTrash(vault: string): Promise<TrashEntry[]>
   restoreFromTrash(vault: string, trashPath: string): Promise<string>
+  /** Permanently delete every entry in the trash; returns how many were removed. */
+  clearTrash(vault: string): Promise<number>
   listHistory(vault: string, path: string): Promise<HistoryEntry[]>
   readHistory(vault: string, path: string, id: string): Promise<string>
   restoreHistory(vault: string, path: string, id: string): Promise<string>

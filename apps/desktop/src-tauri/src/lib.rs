@@ -62,6 +62,11 @@ async fn restore_from_trash(vault_root: String, trash_path: String) -> Result<St
 }
 
 #[tauri::command(rename_all = "snake_case")]
+async fn clear_trash(vault: String) -> Result<usize, String> {
+    fs::clear_trash(&vault)
+}
+
+#[tauri::command(rename_all = "snake_case")]
 async fn list_history(vault_root: String, path: String) -> Result<Vec<fs::HistoryEntry>, String> {
     fs::list_history(&vault_root, &path)
 }
@@ -238,6 +243,7 @@ pub fn run() {
             delete_file,
             list_trash,
             restore_from_trash,
+            clear_trash,
             list_history,
             read_history,
             restore_history,

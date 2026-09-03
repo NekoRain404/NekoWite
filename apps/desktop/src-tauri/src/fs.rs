@@ -607,6 +607,36 @@ pub fn list_trash(vault_root: &str) -> Result<Vec<TrashEntry>, String> {
     Ok(out)
 }
 
+/// Permanently delete every entry under `.nekowite-trash/`, returning how many
+/// were removed. A missing trash directory is not an error — it returns 0.
+///
+/// Only direct children of the trash directory are touched (each is the single
+/// encoded, safe component [`delete_file`] wrote), so traversal is impossible;
+/// the defensive `.`/`..`/empty-name guard is belt and braces rather than a
+/// requirement.
+pub fn clear_trash(vault_root: &str) -> Result<usize, String> {
+    let trash_root = Path::new(vault_root).join(".nekowite-trash");
+    if !trash_root.exists() {
+        return Ok(0);
+    }
+    let rd = std::fs::read_dir(&trash_root).map_err(|e| e.to_string())?;
+    let mut removed = 0usize;
+    for entry in rd.flatten() {
+        let p = entry.path();
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if name.is_empty() || name == "." || name == ".." {
+            continue;
+        }
+        if p.is_dir() {
+            std::fs::remove_dir_all(&p).map_err(|e| e.to_string())?;
+        } else {
+            std::fs::remove_file(&p).map_err(|e| e.to_string())?;
+        }
+        removed += 1;
+    }
+    Ok(removed)
+}
+
 /// Move a trash entry back to its original vault path. If that path is now
 /// occupied, append `-restored-<ts>` and return the new path.
 pub fn restore_from_trash(vault_root: &str, trash_path: &str) -> Result<String, String> {
