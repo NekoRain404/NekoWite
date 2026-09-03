@@ -138,6 +138,23 @@ const sourceTheme = EditorView.theme({
   },
 })
 
+// Module-level gate shared between the split-drag coordinator (EditorPane →
+// SourcePane.setMeasureSuppressed) and the decoration plugin below. While the
+// split handle is being dragged the source pane's width changes every frame;
+// suppressing the per-frame decoration rebuild and measure keeps the drag fluid
+// instead of re-traversing visibleRanges + syntaxTree on each resize.
+const measureGate = { suppressed: false }
+
+function setMeasureSuppressed(suppressed: boolean): void {
+  measureGate.suppressed = suppressed
+}
+
+function isMeasureSuppressed(): boolean {
+  return measureGate.suppressed
+}
+
+export { setMeasureSuppressed, isMeasureSuppressed }
+
 const codeBlockLine = Decoration.line({ class: 'cm-md-codeblock' })
 
 function decorateCodeBlocks(view: EditorView): DecorationSet {
@@ -167,6 +184,11 @@ const fencedCodeHighlighter = ViewPlugin.fromClass(
       this.decorations = decorateCodeBlocks(view)
     }
     update(update: ViewUpdate) {
+      // During a split drag, widths change every frame and would otherwise
+      // rebuild the whole decoration set (traversing visibleRanges + the
+      // syntax tree) on each resize. Hold the stale set until the drag ends,
+      // then let the trailing measure refresh it.
+      if (isMeasureSuppressed()) return
       if (
         update.docChanged ||
         update.viewportChanged ||

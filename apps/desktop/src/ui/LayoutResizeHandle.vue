@@ -25,6 +25,7 @@ const dragging = ref(false)
 interface DragState {
   onMove: (event: PointerEvent) => void
   onUp: () => void
+  flush: () => void
 }
 
 let drag: DragState | null = null
@@ -54,13 +55,37 @@ function onPointerDown(event: PointerEvent): void {
   event.preventDefault()
   const startX = event.clientX
   const startValue = props.value
+  // rAF throttle: pointermove fires far faster than the display can paint.
+  // Batching to one change per frame keeps the split widths (and the
+  // CodeMirror / Milkdown resize chains behind them) from churning per event.
+  let pendingClientX: number | null = null
+  let raf = 0
   const onMove = (pointerEvent: PointerEvent): void => {
-    applyPointerDelta(pointerEvent.clientX, startX, startValue)
+    pendingClientX = pointerEvent.clientX
+    if (raf !== 0) return
+    raf = requestAnimationFrame(() => {
+      raf = 0
+      if (pendingClientX === null) return
+      const x = pendingClientX
+      pendingClientX = null
+      applyPointerDelta(x, startX, startValue)
+    })
+  }
+  const flush = (): void => {
+    if (raf !== 0) {
+      cancelAnimationFrame(raf)
+      raf = 0
+    }
+    if (pendingClientX === null) return
+    const x = pendingClientX
+    pendingClientX = null
+    applyPointerDelta(x, startX, startValue)
   }
   const onUp = (): void => {
+    flush()
     stopDrag()
   }
-  drag = { onMove, onUp }
+  drag = { onMove, onUp, flush }
   dragging.value = true
   document.body.classList.add('is-layout-resizing')
   try {

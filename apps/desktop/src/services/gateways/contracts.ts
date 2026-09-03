@@ -43,9 +43,11 @@ export interface FsGateway {
   listHistory(vault: string, path: string): Promise<HistoryEntry[]>
   readHistory(vault: string, path: string, id: string): Promise<string>
   restoreHistory(vault: string, path: string, id: string): Promise<string>
-  /** Persist attachment bytes (base64) under the vault's attachments dir and
-   * return the vault-relative path it was stored at. */
-  saveAttachment(vault: string, fileName: string, base64: string): Promise<string>
+  /** Persist attachment bytes (base64) and return the vault-relative path it
+   * was stored at. `dir` is an optional vault-relative target directory (e.g.
+   * `notes/foo_assets` or `.tmp`); when omitted the legacy
+   * `attachments/{YYYY-MM}` layout is used. */
+  saveAttachment(vault: string, fileName: string, base64: string, dir?: string): Promise<string>
   /** Turn a vault-relative attachment path into a URL usable as <img src>. */
   resolveMediaPath(vault: string, relPath: string): Promise<string>
   /** Create a directory (with parents) inside the vault; returns its

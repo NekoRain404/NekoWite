@@ -915,19 +915,39 @@ fn unique_attachment_name(preferred: &str, dir: &Path) -> String {
     format!("{stem}-overflow.{ext}")
 }
 
-/// Decode and save a base64 image attachment under
-/// `{vault}/attachments/{YYYY-MM}/`, deduplicating name collisions with
-/// `-<n>` suffixes, and return the vault-relative path (forward slashes) for
-/// embedding in markdown.
-pub fn save_attachment(vault_root: &str, file_name: &str, base64: &str) -> Result<String, String> {
+/// Decode and save a base64 image attachment, deduplicating name collisions
+/// with `-<n>` suffixes, and return the vault-relative path (forward slashes)
+/// for embedding in markdown.
+///
+/// When `dir` is non-empty it is treated as a vault-relative target directory
+/// (e.g. `notes/foo_assets` or `.tmp`) and the file is written there; when it
+/// is empty the legacy `attachments/{YYYY-MM}` layout is used. Traversal and
+/// symlink escapes in `dir` are rejected by [`resolve_within_rel`].
+pub fn save_attachment(
+    vault_root: &str,
+    file_name: &str,
+    base64: &str,
+    dir: &str,
+) -> Result<String, String> {
     let bytes = decode_base64(base64)?;
     let name = sanitize_attachment_name(file_name)?;
     let root = resolve_within(vault_root, ".")?;
-    let month = attachment_month_dir();
-    let month_dir = root.join("attachments").join(&month);
-    std::fs::create_dir_all(&month_dir).map_err(|e| e.to_string())?;
-    let unique = unique_attachment_name(&name, &month_dir);
-    let relative = format!("attachments/{month}/{unique}");
+    let dir = dir.trim();
+    if Path::new(dir).is_absolute() {
+        return Err("attachment dir must be vault-relative".into());
+    }
+    let dir = if dir.is_empty() || dir == "." { "" } else { dir.trim_matches('/') };
+    let (dir_abs, dir_rel) = if dir.is_empty() {
+        let month = attachment_month_dir();
+        let rel = format!("attachments/{month}");
+        let abs = resolve_within(vault_root, &rel)?;
+        (abs, rel)
+    } else {
+        resolve_within_rel(vault_root, dir)?
+    };
+    std::fs::create_dir_all(&dir_abs).map_err(|e| e.to_string())?;
+    let unique = unique_attachment_name(&name, &dir_abs);
+    let relative = format!("{dir_rel}/{unique}");
     let target = resolve_within(vault_root, &relative)?;
     atomic_write_bytes(&target, &bytes)?;
     Ok(relative)

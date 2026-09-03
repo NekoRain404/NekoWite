@@ -1,6 +1,28 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick, type App as VueApp } from 'vue'
 import LayoutResizeHandle from './LayoutResizeHandle.vue'
+
+// Controllable rAF stub so drag tests are deterministic (no real frame timing).
+let rafQueue: Array<(time: number) => void> = []
+
+function stubRaf(): void {
+  rafQueue = []
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+    rafQueue.push(cb)
+    return rafQueue.length
+  })
+  vi.stubGlobal('cancelAnimationFrame', () => {})
+}
+
+function flushRaf(): void {
+  const q = rafQueue
+  rafQueue = []
+  for (const cb of q) cb(0)
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 interface Harness {
   app: VueApp
@@ -92,5 +114,39 @@ describe('LayoutResizeHandle', () => {
     h.app.unmount()
     await nextTick()
     expect(document.body.classList.contains('is-layout-resizing')).toBe(false)
+  })
+
+  it('coalesces a pointermove burst into one change per frame', () => {
+    stubRaf()
+    const h = mountHandle({ value: 200, min: 180, max: 400, defaultValue: 200 })
+    h.el.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 100, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 110, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 120, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 130, bubbles: true }))
+    // Nothing emits until the frame fires — only one change, using the last x.
+    expect(h.changes).toEqual([])
+    flushRaf()
+    expect(h.changes).toEqual([230])
+    h.app.unmount()
+  })
+
+  it('flushes the pending move on pointer up (no frame elapsed)', () => {
+    stubRaf()
+    const h = mountHandle({ value: 200, min: 180, max: 400, defaultValue: 200 })
+    h.el.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 100, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 110, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    expect(h.changes).toEqual([210])
+    h.app.unmount()
+  })
+
+  it('clamps the dragged value into the handle bounds', () => {
+    stubRaf()
+    const h = mountHandle({ value: 200, min: 180, max: 400, defaultValue: 200 })
+    h.el.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 0, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 500, bubbles: true }))
+    flushRaf()
+    expect(h.changes).toEqual([400])
+    h.app.unmount()
   })
 })

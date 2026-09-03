@@ -602,7 +602,9 @@ watch(
 }
 .tree-body {
   flex: 1;
-  overflow: visible;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 0;
   display: flex;
   flex-direction: column;

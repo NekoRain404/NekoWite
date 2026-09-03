@@ -5,6 +5,7 @@ import { armSuppressReapply } from '../services/suppressReapply'
 import { fsService } from '../services/fs'
 import type { HistoryEntry } from '../services/gateways/contracts'
 import { notifyError, notifyRecovery } from '../services/errors'
+import { assetsDirForNote, moveAttachments, rewireTempRefsInContent } from '../services/renameAsset'
 import { useSettingsStore } from './settings'
 
 export interface OpenTab {
@@ -13,6 +14,9 @@ export interface OpenTab {
   content: string
   savedContent: string
   dirty: boolean
+  /** Vault-relative asset paths still staged in `.tmp` that must move into the
+   * note's assets dir once the note gets a real path on first save. */
+  pendingAssetPaths: string[]
 }
 
 let seq = 0
@@ -130,7 +134,14 @@ export const useTabsStore = defineStore('tabs', () => {
         return
       }
     }
-    const tab: OpenTab = { id: nextId(), path, content, savedContent: content, dirty: false }
+    const tab: OpenTab = {
+      id: nextId(),
+      path,
+      content,
+      savedContent: content,
+      dirty: false,
+      pendingAssetPaths: [],
+    }
     tabs.value.push(tab)
     activeId.value = tab.id
     emitLifecycle('onOpenDocument', { id: tab.id, path: tab.path })
@@ -212,6 +223,33 @@ export const useTabsStore = defineStore('tabs', () => {
     if (t) t.dirty = true
   }
 
+  /** Move `.tmp`-staged assets into the note's assets dir on first save and
+   * rewrite the note body to reference them relatively. Returns true when the
+   * content was rewritten. Best-effort: a failure leaves the staged paths for
+   * a later retry rather than blocking the save. */
+  async function relocatePendingAssets(t: OpenTab, vault: string, notePath: string): Promise<boolean> {
+    if (t.pendingAssetPaths.length === 0) return false
+    const assetsDir = assetsDirForNote(notePath, vault)
+    if (!assetsDir || assetsDir === '.tmp') return false
+    const moves = moveAttachments('.tmp', assetsDir, t.pendingAssetPaths)
+    try {
+      await fsService.createDir(vault, assetsDir).catch(() => undefined)
+      for (const m of moves) {
+        await fsService.renameEntry(vault, m.from, m.to)
+      }
+      const next = rewireTempRefsInContent(t.content, moves, notePath, vault)
+      t.pendingAssetPaths = []
+      if (next !== t.content) {
+        t.content = next
+        return true
+      }
+      return false
+    } catch {
+      notifyError('保存附件失败，图片仍保留在临时目录')
+      return false
+    }
+  }
+
   /** Returns true when the file is on disk with the intended content. */
   async function saveTab(id: string): Promise<boolean> {
     const t = tabs.value.find((x) => x.id === id)
@@ -224,11 +262,14 @@ export const useTabsStore = defineStore('tabs', () => {
       t.path = picked
       path = picked
     }
+    markSaving(t.id)
+    if (t.pendingAssetPaths.length > 0) {
+      await relocatePendingAssets(t, vault.value, path)
+    }
     const editor = getActiveEditor()
     const contentAtStart = t.content
     const next = emitLifecycle('onSave', editor, t.content)
     const content = typeof next === 'string' ? next : t.content
-    markSaving(t.id)
     try {
       await fsService.write(vault.value, path, content, settings.maxHistory)
       noteSelfWrite(path)

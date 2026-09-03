@@ -616,7 +616,7 @@ fn save_attachment_writes_decoded_bytes() {
     let root = vault.to_str().unwrap().to_string();
     let payload = [0x89u8, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
 
-    let rel = save_attachment(&root, "paste.png", &b64(&payload)).unwrap();
+    let rel = save_attachment(&root, "paste.png", &b64(&payload), "").unwrap();
     assert!(rel.starts_with("attachments/"), "got {rel:?}");
     assert!(!rel.contains('\\'), "forward slashes only: {rel:?}");
     let month = rel
@@ -643,9 +643,9 @@ fn save_attachment_dedupes_collisions() {
     let vault = temp_vault("attach-dedupe");
     let root = vault.to_str().unwrap().to_string();
 
-    let first = save_attachment(&root, "shot.png", &b64(b"v1")).unwrap();
-    let second = save_attachment(&root, "shot.png", &b64(b"v2")).unwrap();
-    let third = save_attachment(&root, "shot.png", &b64(b"v3")).unwrap();
+    let first = save_attachment(&root, "shot.png", &b64(b"v1"), "").unwrap();
+    let second = save_attachment(&root, "shot.png", &b64(b"v2"), "").unwrap();
+    let third = save_attachment(&root, "shot.png", &b64(b"v3"), "").unwrap();
     assert_ne!(first, second);
     assert_ne!(second, third);
     assert!(second.starts_with("attachments/"), "still vault-relative");
@@ -677,7 +677,7 @@ fn save_attachment_rejects_unsafe_names() {
         "",
     ] {
         assert!(
-            save_attachment(&root, bad, &b64(b"x")).is_err(),
+            save_attachment(&root, bad, &b64(b"x"), "").is_err(),
             "name {bad:?} must be rejected"
         );
     }
@@ -692,7 +692,7 @@ fn save_attachment_rejects_unsafe_names() {
 fn save_attachment_rejects_bad_base64() {
     let vault = temp_vault("attach-b64");
     let root = vault.to_str().unwrap().to_string();
-    assert!(save_attachment(&root, "ok.png", "not!base64!!").is_err());
+    assert!(save_attachment(&root, "ok.png", "not!base64!!", "").is_err());
     assert!(list_dir(&root, Some(".")).unwrap().iter().all(|e| e.name != "attachments"));
     std::fs::remove_dir_all(&vault).unwrap();
 }
@@ -796,6 +796,76 @@ fn rename_entry_moves_and_guards() {
     assert!(rename_entry(&root, "archive/b.md", "archive/b.md").is_err());
     assert!(rename_entry(&root, "../outside", "inside.md").is_err());
     assert!(rename_entry(&root, "archive/b.md", "../outside.md").is_err());
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// `save_attachment` accepts a custom vault-relative target directory and
+/// writes the file there, returning the matching vault-relative path.
+#[test]
+fn save_attachment_into_custom_dir() {
+    let vault = temp_vault("attach-dir");
+    let root = vault.to_str().unwrap().to_string();
+
+    let rel = save_attachment(&root, "shot.png", &b64(b"v1"), "notes/foo_assets").unwrap();
+    assert_eq!(rel, "notes/foo_assets/shot.png");
+    assert!(vault.join("notes/foo_assets/shot.png").is_file());
+    assert_eq!(std::fs::read(vault.join(&rel)).unwrap(), b"v1");
+
+    // A leading-dot dir (the unsaved-tab `.tmp` staging directory) works too.
+    let tmp = save_attachment(&root, "drop.png", &b64(b"v2"), ".tmp").unwrap();
+    assert_eq!(tmp, ".tmp/drop.png");
+    assert_eq!(std::fs::read(vault.join(&tmp)).unwrap(), b"v2");
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// A `dir` that would escape the vault (or point outside it) is rejected.
+#[test]
+fn save_attachment_rejects_escaping_dir() {
+    let vault = temp_vault("attach-dir-guard");
+    let root = vault.to_str().unwrap().to_string();
+
+    assert!(save_attachment(&root, "shot.png", &b64(b"v1"), "../evil").is_err());
+    assert!(save_attachment(&root, "shot.png", &b64(b"v1"), "sub/../../evil").is_err());
+    assert!(save_attachment(&root, "shot.png", &b64(b"v1"), "/etc/passwd").is_err());
+    assert!(!vault.join("evil.png").exists());
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// Name collisions are deduped inside a *custom* dir with the same `-<n>`
+/// suffix scheme as the legacy attachments layout.
+#[test]
+fn save_attachment_dedupes_in_custom_dir() {
+    let vault = temp_vault("attach-dir-dedupe");
+    let root = vault.to_str().unwrap().to_string();
+
+    let a = save_attachment(&root, "shot.png", &b64(b"v1"), "notes/a_assets").unwrap();
+    let b = save_attachment(&root, "shot.png", &b64(b"v2"), "notes/a_assets").unwrap();
+    let c = save_attachment(&root, "shot.png", &b64(b"v3"), "notes/a_assets").unwrap();
+    assert_eq!(a, "notes/a_assets/shot.png");
+    assert_eq!(b, "notes/a_assets/shot-1.png");
+    assert_eq!(c, "notes/a_assets/shot-2.png");
+    assert_eq!(std::fs::read(vault.join(&a)).unwrap(), b"v1", "original untouched");
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// An empty (or normalized-empty) `dir` falls back to the legacy
+/// `attachments/{YYYY-MM}` layout.
+#[test]
+fn save_attachment_empty_dir_falls_back_to_attachments() {
+    let vault = temp_vault("attach-dir-empty");
+    let root = vault.to_str().unwrap().to_string();
+
+    for dir in ["", " ", "."] {
+        let rel = save_attachment(&root, "shot.png", &b64(b"v1"), dir).unwrap();
+        assert!(
+            rel.starts_with("attachments/"),
+            "dir {dir:?} fell back to attachments, got {rel:?}"
+        );
+    }
 
     std::fs::remove_dir_all(&vault).unwrap();
 }

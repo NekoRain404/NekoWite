@@ -91,8 +91,9 @@ async fn save_attachment(
     vault: String,
     file_name: String,
     base64: String,
+    dir: String,
 ) -> Result<String, String> {
-    fs::save_attachment(&vault, &file_name, &base64)
+    fs::save_attachment(&vault, &file_name, &base64, &dir)
 }
 
 #[tauri::command(rename_all = "snake_case")]

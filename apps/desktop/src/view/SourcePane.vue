@@ -4,7 +4,11 @@ import { EditorView } from '@codemirror/view'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 import { createCodeMirrorHost, type CodeMirrorHostHandle } from '../services/codeMirrorHost'
-import { sourceExtensions } from '../services/cmSourceView'
+import {
+  sourceExtensions,
+  setMeasureSuppressed as gateSetMeasureSuppressed,
+  isMeasureSuppressed as gateIsMeasureSuppressed,
+} from '../services/cmSourceView'
 
 const tabs = useTabsStore()
 const view = useViewStore()
@@ -18,6 +22,9 @@ let mirroredTabId: string | null = null
 // Set by setRatio() so the next scroll event (the async echo of a programmatic
 // scroll) is swallowed, breaking the split-mode sync feedback loop.
 let suppressScroll = false
+// rAF throttle for scroll → store writes: coalesce burst scroll events into one
+// syncScroll per frame instead of driving the editor chain on every event.
+let scrollRaf = 0
 
 function emitChange(text: string): void {
   const tab = mirroredTabId ? tabs.tabs.find((t) => t.id === mirroredTabId) : null
@@ -83,7 +90,11 @@ function onScroll(): void {
     suppressScroll = false
     return
   }
-  view.syncScroll('source', scrollRatio())
+  if (scrollRaf !== 0) return
+  scrollRaf = requestAnimationFrame(() => {
+    scrollRaf = 0
+    view.syncScroll('source', scrollRatio())
+  })
 }
 
 function getRatio(): number {
@@ -133,9 +144,22 @@ function getVisibleUnit(): number | null {
   return cm.state.doc.lineAt(block.from).number
 }
 
-defineExpose({ getRatio, setRatio, focus, getText, getSourceView, getVisibleUnit })
+/**
+ * Toggle the split-drag measure suppression. While dragging, CodeMirror's
+ * decoration plugin holds its stale set (see cmSourceView's measure gate) so
+ * per-frame resize does not re-traverse visibleRanges + the syntax tree. When
+ * the drag ends, one trailing measure restores a correct viewport.
+ */
+function setMeasureSuppressed(suppressed: boolean): void {
+  if (suppressed === gateIsMeasureSuppressed()) return
+  gateSetMeasureSuppressed(suppressed)
+  if (!suppressed) host?.getView()?.requestMeasure()
+}
+
+defineExpose({ getRatio, setRatio, focus, getText, getSourceView, getVisibleUnit, setMeasureSuppressed })
 
 onBeforeUnmount(() => {
+  if (scrollRaf !== 0) cancelAnimationFrame(scrollRaf)
   host?.getView()?.scrollDOM.removeEventListener('scroll', onScroll)
   host?.destroy()
   host = null

@@ -213,16 +213,17 @@ export function createMemoryFsGateway(
     openFolderDialog: async () => 'memoir://demo',
     saveFileDialog: async () => null,
     onFsChange: () => Promise.resolve(() => undefined),
-    saveAttachment: async (_vault, fileName, base64) => {
-      const dir = `attachments/${attachmentMonthDir()}`
+    saveAttachment: async (_vault, fileName, base64, dir) => {
+      const cleanDir = dir && dir.trim() ? dir.trim().replace(/^\/+|\/+$/g, '') : ''
+      const targetDir = cleanDir || `attachments/${attachmentMonthDir()}`
       const dot = fileName.lastIndexOf('.')
       const stem = dot > 0 ? fileName.slice(0, dot) : fileName
       const ext = dot > 0 ? fileName.slice(dot) : ''
-      let relPath = `${dir}/${fileName}`
+      let relPath = `${targetDir}/${fileName}`
       let n = 0
       while (files.has(relPath) || attachments.has(relPath)) {
         n += 1
-        relPath = `${dir}/${stem}-${n}${ext}`
+        relPath = `${targetDir}/${stem}-${n}${ext}`
       }
       // Stored in the same key space as notes so list()'s virtual-directory
       // derivation surfaces the attachments tree for free.

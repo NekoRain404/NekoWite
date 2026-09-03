@@ -43,8 +43,8 @@ export const tauriFsGateway: FsGateway = {
     invoke<string>('read_history', { vault_root: vault, path, id }),
   restoreHistory: (vault, path, id) =>
     invoke<string>('restore_history', { vault_root: vault, path, id }),
-  saveAttachment: (vault, fileName, base64) =>
-    invoke<string>('save_attachment', { vault, fileName, base64 }),
+  saveAttachment: (vault, fileName, base64, dir) =>
+    invoke<string>('save_attachment', { vault, fileName, base64, dir: dir ?? '' }),
   resolveMediaPath: async (vault, relPath) => {
     const absolute = await invoke<string>('resolve_media_path', { vault, relPath })
     return convertFileSrc(absolute)

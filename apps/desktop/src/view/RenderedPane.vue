@@ -11,6 +11,8 @@ import { useFloatStore } from '../stores/float'
 import { notifyError } from '../services/errors'
 import { editorBridge } from '../services/editorBridge'
 import { fsService } from '../services/fs'
+import RenameDialog from '../components/RenameDialog.vue'
+import { assetsDirForNote, suggestRename } from '../services/renameAsset'
 import { parseOutline } from '../services/outline'
 import { anchorHeadingIndex, countDocumentLines, lineRatio } from '../services/scrollSyncAnchors'
 import {
@@ -20,7 +22,6 @@ import {
   fileToBase64,
   markdownImageBlock,
   relativePathFromNoteVault,
-  suggestedPasteFileName,
 } from '../services/attachments'
 
 const tabs = useTabsStore()
@@ -121,7 +122,31 @@ function onKeydown(e: KeyboardEvent): void {
   }
 }
 
-/** Persist an image file into the vault attachments dir and insert a
+interface RenamePrompt {
+  initial: string
+  resolve: (choice: { ok: boolean; name: string }) => void
+}
+
+const renamePrompt = ref<RenamePrompt | null>(null)
+
+function promptRename(file: File): Promise<{ ok: boolean; name: string }> {
+  return new Promise((resolve) => {
+    renamePrompt.value = { initial: suggestRename(file), resolve }
+  })
+}
+
+function onRenameConfirm(name: string): void {
+  renamePrompt.value?.resolve({ ok: true, name })
+  renamePrompt.value = null
+}
+
+function onRenameCancel(): void {
+  renamePrompt.value?.resolve({ ok: false, name: '' })
+  renamePrompt.value = null
+}
+
+/** Ask the user to rename each pasted/dropped image, persist it into the
+ * note's assets dir (or `.tmp` while the note is unsaved), and insert a
  * markdown image block (referencing it relatively) at the caret. */
 async function insertImageFiles(files: File[]): Promise<void> {
   if (!editor) return
@@ -131,11 +156,15 @@ async function insertImageFiles(files: File[]): Promise<void> {
   }
   for (const file of files) {
     try {
+      const choice = await promptRename(file)
+      if (!choice.ok) continue
       const base64 = await fileToBase64(file)
-      const fileName = suggestedPasteFileName(file)
-      const savedPath = await fsService.saveAttachment(tabs.vault, fileName, base64)
-      const ref = relativePathFromNoteVault(tabs.activeTab?.path ?? '', tabs.vault ?? '', savedPath)
-      await editor.insertMarkdownAtCursor(markdownImageBlock(escapeMarkdownAlt(fileName), ref))
+      const tab = tabs.activeTab
+      const dir = assetsDirForNote(tab?.path ?? null, tabs.vault ?? '') || undefined
+      const savedPath = await fsService.saveAttachment(tabs.vault, choice.name, base64, dir)
+      if (tab && dir === '.tmp') tab.pendingAssetPaths.push(savedPath)
+      const ref = relativePathFromNoteVault(tab?.path ?? '', tabs.vault ?? '', savedPath)
+      await editor.insertMarkdownAtCursor(markdownImageBlock(escapeMarkdownAlt(choice.name), ref))
     } catch {
       notifyError('图片插入失败，请重试')
     }
@@ -337,6 +366,12 @@ watch(
       class="editor-container"
     />
   </div>
+  <RenameDialog
+    v-if="renamePrompt"
+    :initial="renamePrompt.initial"
+    @confirm="onRenameConfirm"
+    @cancel="onRenameCancel"
+  />
 </template>
 
 <style scoped>

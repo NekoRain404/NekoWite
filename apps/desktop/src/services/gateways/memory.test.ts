@@ -156,6 +156,32 @@ describe('memoryFsGateway', () => {
     vi.useRealTimers()
   })
 
+  it('saveAttachment stores into a custom vault-relative dir when one is given', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 8, 3))
+    const fs = createMemoryFsGateway()
+    const path = await fs.saveAttachment('memoir://demo', 'pic.png', 'QUJD', 'notes/a_assets')
+    expect(path).toBe('notes/a_assets/pic.png')
+    await expect(fs.resolveMediaPath('memoir://demo', path)).resolves.toBe(
+      'data:image/png;base64,QUJD',
+    )
+    vi.useRealTimers()
+  })
+
+  it('saveAttachment stages into .tmp and dedupes within it', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 8, 3))
+    const fs = createMemoryFsGateway()
+    const first = await fs.saveAttachment('memoir://demo', 'pic.png', 'AAA', '.tmp')
+    const second = await fs.saveAttachment('memoir://demo', 'pic.png', 'BBB', '.tmp')
+    expect(first).toBe('.tmp/pic.png')
+    expect(second).toBe('.tmp/pic-1.png')
+    await expect(fs.resolveMediaPath('memoir://demo', second)).resolves.toBe(
+      'data:image/png;base64,BBB',
+    )
+    vi.useRealTimers()
+  })
+
   it('saved attachments surface through the virtual directory listing', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date(2026, 8, 3))

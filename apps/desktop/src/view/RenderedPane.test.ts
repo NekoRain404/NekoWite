@@ -72,23 +72,42 @@ describe('RenderedPane image paste pipeline', () => {
     return { host, pane: pane as HTMLElement }
   }
 
-  it('saves a pasted image and inserts a note-relative markdown block', async () => {
+  it('prompts for a rename, saves the image into the note assets dir and inserts a markdown block', async () => {
     const { pane } = await mountPane()
     const png = new File([new Uint8Array([137, 80])], 'image.png', { type: 'image/png' })
     pane.dispatchEvent(pasteEvent({ files: [png], items: [] }))
     await flush()
 
+    // The rename modal is open, pre-filled with a timestamped default.
+    const input = document.body.querySelector<HTMLInputElement>('.rename-dialog .input')
+    expect(input).toBeTruthy()
+    expect(input?.value).toMatch(/^paste-\d{8}-\d{6}\.png$/)
+    input!.value = 'hello.png'
+    input!.dispatchEvent(new Event('input'))
+    ;(document.body.querySelector('.rename-dialog .btn-primary') as HTMLElement).click()
+    await flush()
+
     expect(saveAttachmentMock).toHaveBeenCalledWith(
       '/vault',
-      expect.stringMatching(/^paste-\d{8}-\d{6}\.png$/),
+      'hello.png',
       expect.any(String),
+      'notes/a_assets',
     )
     const md = await editorBridge.getEditor()?.save()
-    // Note lives at notes/a.md, the attachment at the vault root's
-    // attachments dir — the reference must climb one level.
-    expect(md).toMatch(
-      /!\[paste-\d{8}-\d{6}\.png\]\(\.\.\/attachments\/2026-09\/paste-x\.png\)/,
-    )
+    expect(md).toMatch(/!\[hello\.png\]\(\.\.\/attachments\/2026-09\/paste-x\.png\)/)
+  })
+
+  it('skips a file when the rename is cancelled', async () => {
+    const { pane } = await mountPane()
+    const png = new File([new Uint8Array([137, 80])], 'image.png', { type: 'image/png' })
+    pane.dispatchEvent(pasteEvent({ files: [png], items: [] }))
+    await flush()
+
+    ;(document.body.querySelector('.rename-dialog .btn-ghost') as HTMLElement).click()
+    await flush()
+    expect(saveAttachmentMock).not.toHaveBeenCalled()
+    // No image block was inserted — the document keeps its original content.
+    expect(await editorBridge.getEditor()?.save()).not.toContain('![')
   })
 
   it('does not intercept plain-text pastes', async () => {

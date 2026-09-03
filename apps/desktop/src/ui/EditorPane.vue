@@ -79,6 +79,7 @@ let resizing = false
 
 function onSplitResizeStart(): void {
   resizing = true
+  sourcePane.value?.setMeasureSuppressed(true)
 }
 
 function onSplitResize(value: number): void {
@@ -88,6 +89,7 @@ function onSplitResize(value: number): void {
 function onSplitResizeEnd(): void {
   if (!resizing) return
   resizing = false
+  sourcePane.value?.setMeasureSuppressed(false)
   if (view.mode !== 'split') return
   // Widths changed under both panes, so their scroll ratios are stale:
   // re-align once from the source pane (document flow reference), then let

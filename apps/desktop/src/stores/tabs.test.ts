@@ -15,6 +15,9 @@ const statMock = vi.hoisted(() => vi.fn())
 const listHistoryMock = vi.hoisted(() => vi.fn())
 const restoreHistoryMock = vi.hoisted(() => vi.fn())
 const readHistoryMock = vi.hoisted(() => vi.fn())
+const createDirMock = vi.hoisted(() => vi.fn())
+const renameEntryMock = vi.hoisted(() => vi.fn())
+const saveFileDialogMock = vi.hoisted(() => vi.fn())
 vi.mock('../services/fs', () => ({
   fsService: {
     read: readMock,
@@ -26,6 +29,9 @@ vi.mock('../services/fs', () => ({
     listHistory: listHistoryMock,
     readHistory: readHistoryMock,
     restoreHistory: restoreHistoryMock,
+    createDir: createDirMock,
+    renameEntry: renameEntryMock,
+    saveFileDialog: saveFileDialogMock,
   },
 }))
 
@@ -37,6 +43,9 @@ function resetFsMocks(): void {
   listHistoryMock.mockReset()
   readHistoryMock.mockReset()
   restoreHistoryMock.mockReset()
+  createDirMock.mockReset()
+  renameEntryMock.mockReset()
+  saveFileDialogMock.mockReset()
 }
 
 const ctx = { id: 'test', name: 'Test', insertComponent: () => {} } as PluginContext
@@ -472,6 +481,33 @@ describe('openTab crash-recovery prompt', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     resetFsMocks()
+  })
+
+  it('relocates .tmp assets into the note assets dir and rewrites refs on first save', async () => {
+    readMock.mockResolvedValue('')
+    saveFileDialogMock.mockResolvedValue('/vault/notes/foo.md')
+    createDirMock.mockResolvedValue('notes/foo_assets')
+    renameEntryMock.mockResolvedValue('notes/foo_assets/pic.png')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab(null, '![pic](.tmp/pic.png)\n\ntext\n')
+    const tab = s.tabs[0]
+    tab.pendingAssetPaths = ['.tmp/pic.png']
+
+    await s.saveActive()
+
+    expect(tab.path).toBe('/vault/notes/foo.md')
+    expect(createDirMock).toHaveBeenCalledWith('/vault', 'notes/foo_assets')
+    expect(renameEntryMock).toHaveBeenCalledWith('/vault', '.tmp/pic.png', 'notes/foo_assets/pic.png')
+    expect(tab.content).toContain('![pic](foo_assets/pic.png)')
+    expect(tab.content).not.toContain('.tmp/pic.png')
+    expect(tab.pendingAssetPaths).toEqual([])
+    expect(writeMock).toHaveBeenCalledWith(
+      '/vault',
+      '/vault/notes/foo.md',
+      expect.stringContaining('foo_assets/pic.png'),
+      10,
+    )
   })
 
   it('surfaces a recovery prompt and restoring rewrites the tab from history', async () => {
