@@ -4,8 +4,8 @@ import { emitLifecycle } from '@nekowite/plugin-host'
 
 export type ViewMode = 'source' | 'rendered' | 'split'
 
-export const SPLIT_RATIO_MIN = 0.25
-export const SPLIT_RATIO_MAX = 0.75
+export const SPLIT_RATIO_MIN = 0.15
+export const SPLIT_RATIO_MAX = 0.85
 export const SPLIT_RATIO_DEFAULT = 0.5
 
 export interface OutlineTarget {

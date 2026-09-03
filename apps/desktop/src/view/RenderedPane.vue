@@ -11,13 +11,15 @@ import { useFloatStore } from '../stores/float'
 import { notifyError } from '../services/errors'
 import { editorBridge } from '../services/editorBridge'
 import { fsService } from '../services/fs'
+import { parseOutline } from '../services/outline'
+import { anchorHeadingIndex, countDocumentLines, lineRatio } from '../services/scrollSyncAnchors'
 import {
   collectClipboardImages,
   createImageSrcResolver,
   escapeMarkdownAlt,
   fileToBase64,
   markdownImageBlock,
-  relativePathFromNote,
+  relativePathFromNoteVault,
   suggestedPasteFileName,
 } from '../services/attachments'
 
@@ -41,6 +43,9 @@ let lastDoc = ''
 let lastLocalMarkdown: string | null = null
 // Content that arrived while an applyContent was in flight.
 let pendingExternal: string | null = null
+// Set by setRatio() so the next scroll event (the async echo of a programmatic
+// scroll) is swallowed, breaking the split-mode sync feedback loop.
+let suppressScroll = false
 
 async function applyContent(content: string): Promise<void> {
   if (!editor) return
@@ -87,6 +92,13 @@ async function applyContent(content: string): Promise<void> {
 }
 
 function onScroll(): void {
+  // A programmatic scroll (setRatio) fires its scroll event asynchronously;
+  // swallow exactly that one event so it cannot write back to the store and
+  // re-enter the split-mode sync loop (which fights the mouse wheel).
+  if (suppressScroll) {
+    suppressScroll = false
+    return
+  }
   if (scrollEl.value) view.syncScroll('rendered', scrollEl.value.scrollTop)
 }
 
@@ -122,7 +134,7 @@ async function insertImageFiles(files: File[]): Promise<void> {
       const base64 = await fileToBase64(file)
       const fileName = suggestedPasteFileName(file)
       const savedPath = await fsService.saveAttachment(tabs.vault, fileName, base64)
-      const ref = relativePathFromNote(tabs.activeTab?.path ?? '', savedPath)
+      const ref = relativePathFromNoteVault(tabs.activeTab?.path ?? '', tabs.vault ?? '', savedPath)
       await editor.insertMarkdownAtCursor(markdownImageBlock(escapeMarkdownAlt(fileName), ref))
     } catch {
       notifyError('图片插入失败，请重试')
@@ -157,7 +169,13 @@ function setRatio(r: number): void {
   const el = scrollEl.value
   if (!el) return
   const range = el.scrollHeight - el.clientHeight
-  if (range > 0) el.scrollTop = r * range
+  if (range <= 0) return
+  const target = r * range
+  // Only arm the suppression when the position actually changes — a no-op
+  // assignment fires no scroll event, so the flag must not leak.
+  if (Math.abs(el.scrollTop - target) < 0.5) return
+  suppressScroll = true
+  el.scrollTop = target
 }
 
 function getHeadingEls(): HTMLElement[] {
@@ -166,7 +184,36 @@ function getHeadingEls(): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'))
 }
 
-defineExpose({ getRatio, setRatio, getHeadingEls })
+/** Scroll so the block containing the given 1-based source line is top-most,
+ * anchored on the nearest heading; falls back to a line-proportional ratio. */
+function setScrollToLine(line: number): void {
+  const el = scrollEl.value
+  if (!el) return
+  const content = tabs.activeTab?.content ?? ''
+  const items = parseOutline(content)
+  const index = anchorHeadingIndex(items, line)
+  if (index === null) {
+    setRatio(lineRatio(line, countDocumentLines(content)))
+    return
+  }
+  const target = getHeadingEls()[index]
+  if (!target) {
+    setRatio(lineRatio(line, countDocumentLines(content)))
+    return
+  }
+  const range = el.scrollHeight - el.clientHeight
+  if (range <= 0) return
+  // Content-space top of the heading, minus the same 16px scroll-margin-top
+  // the editor styles use, so the heading sits just inside the viewport.
+  const pos =
+    target.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop - 16
+  const clamped = Math.max(0, Math.min(pos, range))
+  if (Math.abs(el.scrollTop - clamped) < 0.5) return
+  suppressScroll = true
+  el.scrollTop = clamped
+}
+
+defineExpose({ getRatio, setRatio, getHeadingEls, setScrollToLine })
 
 onMounted(async () => {
   if (!editorEl.value) return

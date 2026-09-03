@@ -4,12 +4,15 @@ import { ref } from 'vue'
 export type Theme = 'light' | 'dark' | 'system'
 export type Accent = 'ink' | 'coral' | 'blue' | 'green' | 'gold' | 'violet' | 'slate'
 
-export const SIDEBAR_WIDTH_MIN = 180
-export const SIDEBAR_WIDTH_MAX = 400
+export const SIDEBAR_WIDTH_MIN = 160
+export const SIDEBAR_WIDTH_MAX = 520
 export const SIDEBAR_WIDTH_DEFAULT = 232
-export const RAIL_WIDTH_MIN = 240
-export const RAIL_WIDTH_MAX = 480
+export const RAIL_WIDTH_MIN = 220
+export const RAIL_WIDTH_MAX = 640
 export const RAIL_WIDTH_DEFAULT = 300
+export const NOTELIST_WIDTH_MIN = 200
+export const NOTELIST_WIDTH_MAX = 520
+export const NOTELIST_WIDTH_DEFAULT = 280
 
 interface AppearanceSettings {
   theme: Theme
@@ -18,6 +21,7 @@ interface AppearanceSettings {
   lineHeight: number
   sidebarWidth: number
   railWidth: number
+  notelistWidth: number
 }
 
 const LS_KEY = 'nekowite.appearance'
@@ -29,6 +33,7 @@ const DEFAULTS: AppearanceSettings = {
   lineHeight: 1.8,
   sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
   railWidth: RAIL_WIDTH_DEFAULT,
+  notelistWidth: NOTELIST_WIDTH_DEFAULT,
 }
 
 function clampInt(value: unknown, min: number, max: number, fallback: number): number {
@@ -49,6 +54,7 @@ function readStored(): AppearanceSettings {
       lineHeight: parsed.lineHeight ?? DEFAULTS.lineHeight,
       sidebarWidth: clampInt(parsed.sidebarWidth ?? DEFAULTS.sidebarWidth, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX, DEFAULTS.sidebarWidth),
       railWidth: clampInt(parsed.railWidth ?? DEFAULTS.railWidth, RAIL_WIDTH_MIN, RAIL_WIDTH_MAX, DEFAULTS.railWidth),
+      notelistWidth: clampInt(parsed.notelistWidth ?? DEFAULTS.notelistWidth, NOTELIST_WIDTH_MIN, NOTELIST_WIDTH_MAX, DEFAULTS.notelistWidth),
     }
   } catch {
     return DEFAULTS
@@ -63,6 +69,7 @@ export const useAppearanceStore = defineStore('appearance', () => {
   const lineHeight = ref<number>(stored.lineHeight)
   const sidebarWidth = ref<number>(stored.sidebarWidth)
   const railWidth = ref<number>(stored.railWidth)
+  const notelistWidth = ref<number>(stored.notelistWidth)
   const systemRevision = ref(0)
 
   function persist(): void {
@@ -75,6 +82,7 @@ export const useAppearanceStore = defineStore('appearance', () => {
         lineHeight: lineHeight.value,
         sidebarWidth: sidebarWidth.value,
         railWidth: railWidth.value,
+        notelistWidth: notelistWidth.value,
       }),
     )
   }
@@ -118,6 +126,11 @@ export const useAppearanceStore = defineStore('appearance', () => {
     persist()
   }
 
+  function setNotelistWidth(n: number): void {
+    notelistWidth.value = clampInt(n, NOTELIST_WIDTH_MIN, NOTELIST_WIDTH_MAX, DEFAULTS.notelistWidth)
+    persist()
+  }
+
   function touchSystem(): void {
     systemRevision.value++
   }
@@ -129,6 +142,7 @@ export const useAppearanceStore = defineStore('appearance', () => {
     lineHeight,
     sidebarWidth,
     railWidth,
+    notelistWidth,
     systemRevision,
     effectiveTheme,
     setTheme,
@@ -137,6 +151,7 @@ export const useAppearanceStore = defineStore('appearance', () => {
     setLineHeight,
     setSidebarWidth,
     setRailWidth,
+    setNotelistWidth,
     touchSystem,
   }
 })

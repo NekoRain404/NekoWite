@@ -9,7 +9,7 @@ import {
   loadAttachmentLibrary,
   type AttachmentItem,
 } from '../services/attachmentLibrary'
-import { markdownImageBlock, relativePathFromNote } from '../services/attachments'
+import { markdownImageBlock, relativePathFromNoteVault } from '../services/attachments'
 import { editorBridge } from '../services/editorBridge'
 import { notifyError } from '../services/errors'
 import { useTabsStore } from '../stores/tabs'
@@ -74,10 +74,10 @@ function markBroken(path: string): void {
   broken.value = { ...broken.value, [path]: true }
 }
 
-/** Markdown 侧的引用路径：子目录中的笔记需要 `../attachments/…` 形式。 */
+/** Markdown 侧的引用路径：以笔记自身所在目录为基准，`../attachments/…`。 */
 function referencePathFor(item: AttachmentItem): string {
   const tab = tabs.activeTab
-  return relativePathFromNote(tab?.path ?? '', item.path)
+  return relativePathFromNoteVault(tab?.path ?? '', tabs.vault ?? '', item.path)
 }
 
 async function insertItem(item: AttachmentItem): Promise<void> {

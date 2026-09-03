@@ -207,6 +207,43 @@ export function relativePathFromNote(notePath: string, targetPath: string): stri
   return [...Array.from({ length: up }, () => '..'), ...down].join('/') || '.'
 }
 
+/** Like {@link relativePathFromNote} but tolerant of an ABSOLUTE note path:
+ * the note is first rebased onto the vault (via `dirRelativeToVault`), so the
+ * computed reference is relative to the note's own directory rather than to
+ * the absolute parent folders. Falls back to the plain relative form when
+ * `notePath`/`vault` don't line up. */
+export function relativePathFromNoteVault(
+  notePath: string,
+  vault: string,
+  targetPath: string,
+): string {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(targetPath) || targetPath.startsWith('/')) return targetPath
+  const v = (vault || '').replace(/\/+$/, '')
+  let p = notePath || ''
+  if (v !== '' && (p === v || p.startsWith(`${v}/`))) {
+    p = p.slice(v.length).replace(/^\/+/, '')
+  } else if (p.startsWith('/')) {
+    // An absolute path that isn't under the vault: keep only the trailing
+    // directories, which is the best approximation of the note's location.
+    p = p.replace(/^\/+/, '')
+  }
+  const fromDirectory = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : ''
+  const fromParts = fromDirectory ? fromDirectory.split('/').filter(Boolean) : []
+  const targetParts = targetPath.split('/').filter(Boolean)
+  if (fromParts.length === 0) return targetPath
+  let shared = 0
+  while (
+    shared < fromParts.length &&
+    shared < targetParts.length - 1 &&
+    fromParts[shared] === targetParts[shared]
+  ) {
+    shared += 1
+  }
+  const up = fromParts.length - shared
+  const down = targetParts.slice(shared)
+  return [...Array.from({ length: up }, () => '..'), ...down].join('/') || '.'
+}
+
 /** Inverse of {@link relativePathFromNote} for the display resolver: turn a
  * document src back into a vault-relative path. Srcs that already point at
  * the vault-level attachments dir are taken as-is; `../…` forms are resolved
@@ -215,6 +252,22 @@ export function vaultRelativeFromNote(notePath: string, src: string): string {
   if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('/')) return src
   const fromDir = noteDirectory(notePath)
   if (!src.startsWith('..') && src.startsWith(`${ATTACHMENTS_DIR}/`)) return src
+  return resolveRelativePath(fromDir, src)
+}
+
+/** Vault-aware variant: rebase an absolute `notePath` onto the vault first,
+ * so `../` bookkeeping is measured from the note's actual directory. */
+export function vaultRelativeFromNoteVault(notePath: string, vault: string, src: string): string {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('/')) return src
+  if (!src.startsWith('..') && src.startsWith(`${ATTACHMENTS_DIR}/`)) return src
+  const v = (vault || '').replace(/\/+$/, '')
+  let p = notePath || ''
+  if (v !== '' && (p === v || p.startsWith(`${v}/`))) {
+    p = p.slice(v.length).replace(/^\/+/, '')
+  } else if (p.startsWith('/')) {
+    p = p.replace(/^\/+/, '')
+  }
+  const fromDir = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : ''
   return resolveRelativePath(fromDir, src)
 }
 
@@ -234,7 +287,8 @@ export function createImageSrcResolver(
     const vault = ctx.getVault()
     if (!vault) return src
     try {
-      return await fs.resolveMediaPath(vault, vaultRelativeFromNote(ctx.getNotePath() ?? '', src))
+      const rel = vaultRelativeFromNoteVault(ctx.getNotePath() ?? '', vault, src)
+      return await fs.resolveMediaPath(vault, rel)
     } catch {
       return src
     }

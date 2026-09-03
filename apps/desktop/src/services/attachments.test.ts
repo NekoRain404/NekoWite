@@ -14,9 +14,11 @@ import {
   mimeFromExtension,
   noteDirectory,
   relativePathFromNote,
+  relativePathFromNoteVault,
   resolveRelativePath,
   suggestedPasteFileName,
   vaultRelativeFromNote,
+  vaultRelativeFromNoteVault,
 } from './attachments'
 
 function fileFrom(name: string, type: string): File {
@@ -222,5 +224,37 @@ describe('createImageSrcResolver', () => {
       { getVault: () => 'vault', getNotePath: () => 'a.md' },
     )
     await expect(failing('attachments/a.png')).resolves.toBe('attachments/a.png')
+  })
+})
+
+describe('vault-aware relative paths', () => {
+  it('rebases an absolute note path onto the vault before computing', () => {
+    expect(relativePathFromNoteVault('/home/u/vault/docs/note.md', '/home/u/vault', 'attachments/2026-09/a.png')).toBe(
+      '../attachments/2026-09/a.png',
+    )
+    expect(relativePathFromNoteVault('/home/u/vault/note.md', '/home/u/vault', 'attachments/2026-09/a.png')).toBe(
+      'attachments/2026-09/a.png',
+    )
+    expect(relativePathFromNoteVault('/home/u/vault/docs/sub/note.md', '/home/u/vault', 'attachments/2026-09/a.png')).toBe(
+      '../../attachments/2026-09/a.png',
+    )
+  })
+
+  it('keeps vault-relative note paths working (back-compat)', () => {
+    expect(relativePathFromNoteVault('docs/note.md', '/home/u/vault', 'attachments/2026-09/a.png')).toBe(
+      '../attachments/2026-09/a.png',
+    )
+  })
+
+  it('returns scheme/non-jailed targets unchanged', () => {
+    expect(relativePathFromNoteVault('a.md', '/v', 'https://x.dev/a.png')).toBe('https://x.dev/a.png')
+    expect(relativePathFromNoteVault('a.md', '/v', '/abs/a.png')).toBe('/abs/a.png')
+  })
+
+  it('vaultRelativeFromNoteVault resolves ../ back against the note dir', () => {
+    expect(vaultRelativeFromNoteVault('/home/u/vault/docs/note.md', '/home/u/vault', '../attachments/2026-09/a.png')).toBe(
+      'attachments/2026-09/a.png',
+    )
+    expect(vaultRelativeFromNoteVault('/home/u/vault/docs/note.md', '/home/u/vault', '../../x/a.png')).toBe('x/a.png')
   })
 })

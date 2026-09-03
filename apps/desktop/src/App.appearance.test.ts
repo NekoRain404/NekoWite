@@ -135,7 +135,7 @@ describe('App root layout variable binding', () => {
     appearance.setBodyFontSize(1)
     await nextTick()
 
-    expect(shell.style.getPropertyValue('--app-sidebar-width')).toBe('400px')
+    expect(shell.style.getPropertyValue('--app-sidebar-width')).toBe('520px')
     expect(shell.style.getPropertyValue('--app-body-size')).toBe('12px')
   })
 })

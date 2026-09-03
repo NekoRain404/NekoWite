@@ -25,13 +25,13 @@ describe('useViewStore', () => {
     expect(s.sourceScroll).toBe(42)
     expect(s.renderedScroll).toBe(0)
   })
-  it('clamps split ratio into [0.25, 0.75]', () => {
+  it('clamps split ratio into [0.15, 0.85]', () => {
     const s = useViewStore()
     expect(s.splitRatio).toBe(0.5)
     s.setSplitRatio(0.1)
-    expect(s.splitRatio).toBe(0.25)
+    expect(s.splitRatio).toBe(0.15)
     s.setSplitRatio(0.9)
-    expect(s.splitRatio).toBe(0.75)
+    expect(s.splitRatio).toBe(0.85)
     s.setSplitRatio(0.6249)
     expect(s.splitRatio).toBe(0.625)
     s.setSplitRatio(Number.NaN)

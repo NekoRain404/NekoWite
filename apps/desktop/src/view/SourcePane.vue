@@ -15,6 +15,9 @@ let host: CodeMirrorHostHandle | null = null
 // attributed to it, so a burst that fires right after a tab switch can never
 // land on the wrong tab.
 let mirroredTabId: string | null = null
+// Set by setRatio() so the next scroll event (the async echo of a programmatic
+// scroll) is swallowed, breaking the split-mode sync feedback loop.
+let suppressScroll = false
 
 function emitChange(text: string): void {
   const tab = mirroredTabId ? tabs.tabs.find((t) => t.id === mirroredTabId) : null
@@ -73,6 +76,13 @@ watch(
 )
 
 function onScroll(): void {
+  // A programmatic scroll (setRatio) fires its scroll event asynchronously;
+  // swallow exactly that one event so it cannot write back to the store and
+  // re-enter the split-mode sync loop (which fights the mouse wheel).
+  if (suppressScroll) {
+    suppressScroll = false
+    return
+  }
   view.syncScroll('source', scrollRatio())
 }
 
@@ -85,7 +95,13 @@ function setRatio(r: number): void {
   if (!cm) return
   const el = cm.scrollDOM
   const range = el.scrollHeight - el.clientHeight
-  if (range > 0) el.scrollTop = r * range
+  if (range <= 0) return
+  const target = r * range
+  // Only arm the suppression when the position actually changes — a no-op
+  // assignment fires no scroll event, so the flag must not leak.
+  if (Math.abs(el.scrollTop - target) < 0.5) return
+  suppressScroll = true
+  el.scrollTop = target
 }
 
 function scrollRatio(): number {
@@ -108,7 +124,16 @@ function getSourceView(): EditorView | null {
   return host?.getView() ?? null
 }
 
-defineExpose({ getRatio, setRatio, focus, getText, getSourceView })
+/** The 1-based line number of the first content line currently visible. */
+function getVisibleUnit(): number | null {
+  const cm = host?.getView()
+  if (!cm) return null
+  const block = cm.lineBlockAtHeight(Math.max(0, cm.scrollDOM.scrollTop))
+  if (!block) return null
+  return cm.state.doc.lineAt(block.from).number
+}
+
+defineExpose({ getRatio, setRatio, focus, getText, getSourceView, getVisibleUnit })
 
 onBeforeUnmount(() => {
   host?.getView()?.scrollDOM.removeEventListener('scroll', onScroll)

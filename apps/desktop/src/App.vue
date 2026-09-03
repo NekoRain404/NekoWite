@@ -21,6 +21,9 @@ import { useSettingsStore } from './stores/settings'
 import { useAppearanceStore } from './stores/appearance'
 import { useLibraryStore } from './stores/library'
 import {
+  NOTELIST_WIDTH_DEFAULT,
+  NOTELIST_WIDTH_MAX,
+  NOTELIST_WIDTH_MIN,
   RAIL_WIDTH_DEFAULT,
   RAIL_WIDTH_MAX,
   RAIL_WIDTH_MIN,
@@ -49,7 +52,7 @@ const theme = computed<string>(() => {
 const shellStyle = computed<Record<string, string>>(() => ({
   '--app-sidebar-width': `${appearance.sidebarWidth}px`,
   '--app-rail-width': `${appearance.railWidth}px`,
-  '--app-notelist-width': '280px',
+  '--app-notelist-width': `${appearance.notelistWidth}px`,
   '--app-body-size': `${appearance.bodyFontSize}px`,
   '--app-line-height': String(appearance.lineHeight),
 }))
@@ -166,6 +169,15 @@ async function pickFolder(): Promise<void> {
       <NoteListPanel
         v-if="vaultPath && sidebarVisible"
         class="note-list-col"
+      />
+      <LayoutResizeHandle
+        v-if="vaultPath && sidebarVisible"
+        label="调整笔记列表宽度"
+        :min="NOTELIST_WIDTH_MIN"
+        :max="NOTELIST_WIDTH_MAX"
+        :value="appearance.notelistWidth"
+        :default-value="NOTELIST_WIDTH_DEFAULT"
+        @change="appearance.setNotelistWidth"
       />
       <div
         v-else-if="!vaultPath"

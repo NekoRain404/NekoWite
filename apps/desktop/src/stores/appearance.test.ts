@@ -75,24 +75,33 @@ describe('useAppearanceStore', () => {
     expect(s.lineHeight).toBe(1.6)
   })
 
-  it('defaults sidebarWidth to 232 and clamps into [180, 400]', () => {
+  it('defaults sidebarWidth to 232 and clamps into [160, 520]', () => {
     const s = useAppearanceStore()
     expect(s.sidebarWidth).toBe(232)
     s.setSidebarWidth(100)
-    expect(s.sidebarWidth).toBe(180)
+    expect(s.sidebarWidth).toBe(160)
     s.setSidebarWidth(999)
-    expect(s.sidebarWidth).toBe(400)
+    expect(s.sidebarWidth).toBe(520)
     s.setSidebarWidth(280.7)
     expect(s.sidebarWidth).toBe(281)
   })
 
-  it('defaults railWidth to 300 and clamps into [240, 480]', () => {
+  it('defaults railWidth to 300 and clamps into [220, 640]', () => {
     const s = useAppearanceStore()
     expect(s.railWidth).toBe(300)
     s.setRailWidth(100)
-    expect(s.railWidth).toBe(240)
+    expect(s.railWidth).toBe(220)
     s.setRailWidth(999)
-    expect(s.railWidth).toBe(480)
+    expect(s.railWidth).toBe(640)
+  })
+
+  it('defaults notelistWidth to 280 and clamps into [200, 520]', () => {
+    const s = useAppearanceStore()
+    expect(s.notelistWidth).toBe(280)
+    s.setNotelistWidth(50)
+    expect(s.notelistWidth).toBe(200)
+    s.setNotelistWidth(999)
+    expect(s.notelistWidth).toBe(520)
   })
 
   it('persists and restores layout widths', () => {

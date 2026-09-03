@@ -22,13 +22,21 @@ let syncing = false
 interface ScrollPane {
   getRatio(): number
   setRatio(r: number): void
+  getVisibleUnit?(): number | null
+  setScrollToLine?(line: number): void
 }
 
 function drive(dst: ScrollPane | null, src: ScrollPane | null): void {
   if (!dst || !src) return
-  const ratio = src.getRatio()
+  const fromSourceToRendered = dst === renderedPane.value && src === sourcePane.value
   syncing = true
-  dst.setRatio(ratio)
+  if (fromSourceToRendered && src.getVisibleUnit && dst.setScrollToLine) {
+    const unit = src.getVisibleUnit()
+    if (unit !== null) dst.setScrollToLine(unit)
+    else dst.setRatio(src.getRatio())
+  } else {
+    dst.setRatio(src.getRatio())
+  }
   void nextTick(() => {
     syncing = false
   })
