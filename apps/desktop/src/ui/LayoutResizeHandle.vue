@@ -30,6 +30,8 @@ interface DragState {
 
 let drag: DragState | null = null
 
+const previewX = ref<number | null>(null)
+
 function clamp(value: number, low: number, high: number): number {
   return Math.min(high, Math.max(low, value))
 }
@@ -43,6 +45,7 @@ function stopDrag(): void {
   if (!current) return
   drag = null
   dragging.value = false
+  previewX.value = null
   document.body.classList.remove('is-layout-resizing')
   window.removeEventListener('pointermove', current.onMove)
   window.removeEventListener('pointerup', current.onUp)
@@ -55,31 +58,38 @@ function onPointerDown(event: PointerEvent): void {
   event.preventDefault()
   const startX = event.clientX
   const startValue = props.value
-  // rAF throttle: pointermove fires far faster than the display can paint.
-  // Batching to one change per frame keeps the split widths (and the
-  // CodeMirror / Milkdown resize chains behind them) from churning per event.
+  // VS Code style: while dragging we only show a guide line (previewX) and
+  // never touch the layout width — the target sizes are committed on release.
+  // pointermove fires far faster than the display can paint, so we rAF-throttle
+  // the guide position; this keeps CodeMirror / Milkdown from relaying out on
+  // every frame (the previous "change per frame" path is what felt stuck).
   let pendingClientX: number | null = null
+  let lastClientX: number | null = null
   let raf = 0
   const onMove = (pointerEvent: PointerEvent): void => {
+    lastClientX = pointerEvent.clientX
     pendingClientX = pointerEvent.clientX
     if (raf !== 0) return
     raf = requestAnimationFrame(() => {
       raf = 0
       if (pendingClientX === null) return
-      const x = pendingClientX
+      previewX.value = pendingClientX
       pendingClientX = null
-      applyPointerDelta(x, startX, startValue)
     })
   }
+  // On release, commit the single final width change (the layout relayouts
+  // once), then stop. `lastClientX` survives the rAF callback clearing
+  // `pendingClientX`, so a release right after an already-flushed frame still
+  // lands at the pointer's final position.
   const flush = (): void => {
     if (raf !== 0) {
       cancelAnimationFrame(raf)
       raf = 0
+      previewX.value = lastClientX
     }
-    if (pendingClientX === null) return
-    const x = pendingClientX
     pendingClientX = null
-    applyPointerDelta(x, startX, startValue)
+    if (lastClientX === null) return
+    applyPointerDelta(lastClientX, startX, startValue)
   }
   const onUp = (): void => {
     flush()
@@ -144,6 +154,13 @@ onBeforeUnmount(() => {
     @dblclick="onDoubleClick"
     @keydown="onKeydown"
   />
+  <Teleport to="body">
+    <div
+      v-if="previewX !== null"
+      class="resize-guide-line"
+      :style="{ left: `${previewX}px` }"
+    />
+  </Teleport>
 </template>
 
 <style scoped>
@@ -184,5 +201,17 @@ body.is-layout-resizing,
 body.is-layout-resizing * {
   cursor: col-resize !important;
   user-select: none !important;
+}
+/* VS Code-style drag guide: a full-height accent line following the pointer.
+   Rendered via Teleport to <body>, so it must live outside the scoped style. */
+.resize-guide-line {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  transform: translateX(-1px);
+  background: color-mix(in srgb, var(--app-accent) 62%, transparent);
+  pointer-events: none;
+  z-index: 9999;
 }
 </style>

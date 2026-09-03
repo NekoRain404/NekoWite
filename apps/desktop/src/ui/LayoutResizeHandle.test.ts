@@ -116,17 +116,24 @@ describe('LayoutResizeHandle', () => {
     expect(document.body.classList.contains('is-layout-resizing')).toBe(false)
   })
 
-  it('coalesces a pointermove burst into one change per frame', () => {
+  it('shows a guide line during drag and commits a single change on release', async () => {
     stubRaf()
     const h = mountHandle({ value: 200, min: 180, max: 400, defaultValue: 200 })
     h.el.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 100, bubbles: true }))
     window.dispatchEvent(new PointerEvent('pointermove', { clientX: 110, bubbles: true }))
     window.dispatchEvent(new PointerEvent('pointermove', { clientX: 120, bubbles: true }))
     window.dispatchEvent(new PointerEvent('pointermove', { clientX: 130, bubbles: true }))
-    // Nothing emits until the frame fires — only one change, using the last x.
+    // VS Code style: while dragging no width is committed — only the guide line.
     expect(h.changes).toEqual([])
     flushRaf()
+    expect(h.changes).toEqual([])
+    await nextTick()
+    expect(document.body.querySelector('.resize-guide-line')).not.toBeNull()
+    // Release commits the single final width change using the last clientX.
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
     expect(h.changes).toEqual([230])
+    await nextTick()
+    expect(document.body.querySelector('.resize-guide-line')).toBeNull()
     h.app.unmount()
   })
 
@@ -140,12 +147,13 @@ describe('LayoutResizeHandle', () => {
     h.app.unmount()
   })
 
-  it('clamps the dragged value into the handle bounds', () => {
+  it('clamps the committed dragged value into the handle bounds', () => {
     stubRaf()
     const h = mountHandle({ value: 200, min: 180, max: 400, defaultValue: 200 })
     h.el.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 0, bubbles: true }))
     window.dispatchEvent(new PointerEvent('pointermove', { clientX: 500, bubbles: true }))
     flushRaf()
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
     expect(h.changes).toEqual([400])
     h.app.unmount()
   })
