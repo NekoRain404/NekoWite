@@ -20,7 +20,6 @@ import {
   Sun,
   Tag as TagIcon,
 } from 'lucide-vue-next'
-import FileTree from './FileTree.vue'
 import { fsService } from '../services/fs'
 import type { TrashEntry } from '../services/gateways/contracts'
 import { notifyError } from '../services/errors'
@@ -221,23 +220,6 @@ watch(
             <span class="nav-label">{{ tc.tag }}</span>
             <span class="nav-count">{{ tc.count }}</span>
           </button>
-        </div>
-      </section>
-
-      <section class="sidebar-section folders-section">
-        <div class="section-title">
-          <Library
-            :size="12"
-            :stroke-width="1.8"
-          />
-          <span>文件夹</span>
-        </div>
-        <div class="folders-body">
-          <FileTree
-            :vault="props.vault"
-            class="sidebar-tree"
-            @conflict="emit('conflict', $event)"
-          />
         </div>
       </section>
 
@@ -511,26 +493,6 @@ watch(
   content: '#';
   margin-right: 1px;
   color: color-mix(in srgb, var(--app-accent) 70%, var(--app-muted));
-}
-
-.folders-section {
-  display: flex;
-  flex-direction: column;
-  min-height: 160px;
-  flex: 1;
-}
-.folders-body {
-  flex: 1;
-  min-height: 120px;
-  display: flex;
-  flex-direction: column;
-}
-.sidebar-tree {
-  flex: 1;
-  min-height: 120px;
-  width: auto;
-  border-right: none;
-  background: transparent;
 }
 
 .group-header {
