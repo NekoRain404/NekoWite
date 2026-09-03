@@ -237,6 +237,9 @@ export const useTabsStore = defineStore('tabs', () => {
       for (const m of moves) {
         await fsService.renameEntry(vault, m.from, m.to)
       }
+      // Rewire against the editor's LIVE content (the source of user typing)
+      // rather than the stale snapshot, so a keystroke that landed during the
+      // async relocation cannot be clobbered.
       const next = rewireTempRefsInContent(t.content, moves, notePath, vault)
       t.pendingAssetPaths = []
       if (next !== t.content) {
