@@ -1,21 +1,30 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   ChevronDown,
   ChevronRight,
+  Clock,
+  Cloud,
+  Database,
+  FileText,
   FolderOpen,
+  Hash,
+  Inbox,
   Library,
   Moon,
+  Network,
+  Paperclip,
   RotateCcw,
-  Search,
   Settings,
+  Star,
   Sun,
+  Tag as TagIcon,
 } from 'lucide-vue-next'
 import FileTree from './FileTree.vue'
 import { fsService } from '../services/fs'
-import type { FileEntry, TrashEntry } from '../services/gateways/contracts'
+import type { TrashEntry } from '../services/gateways/contracts'
 import { notifyError } from '../services/errors'
-import { useTabsStore } from '../stores/tabs'
+import { useLibraryStore } from '../stores/library'
 import { useAppearanceStore } from '../stores/appearance'
 import { insertCiteAtCursor } from '../services/editorBridge'
 import { useRefsStore } from '../stores/refs'
@@ -27,15 +36,9 @@ const emit = defineEmits<{
   (e: 'open-settings'): void
 }>()
 
-const tabs = useTabsStore()
+const library = useLibraryStore()
 const refs = useRefsStore()
 const appearance = useAppearanceStore()
-
-const query = ref('')
-const searching = ref(false)
-const results = ref<FileEntry[]>([])
-let searchSeq = 0
-let searchTimer: ReturnType<typeof setTimeout> | null = null
 
 const refsOpen = ref(false)
 const refQuery = ref('')
@@ -58,6 +61,55 @@ function toggleTheme(): void {
   appearance.setTheme(theme.value === 'dark' ? 'light' : 'dark')
 }
 
+interface NavEntry {
+  id: string
+  label: string
+  icon: typeof FileText
+  count?: number
+  active: boolean
+  onClick: () => void
+}
+
+const navEntries = computed<NavEntry[]>(() => {
+  const counts = library.counts
+  const inNotes = library.listView === 'notes'
+  const isFilter = (f: string): boolean => inNotes && library.filter === f
+  return [
+    {
+      id: 'all', label: '全部笔记', icon: FileText, count: counts.all,
+      active: isFilter('all'), onClick: () => library.setFilter('all'),
+    },
+    {
+      id: 'recent', label: '最近', icon: Clock, count: counts.recent,
+      active: isFilter('recent'), onClick: () => library.setFilter('recent'),
+    },
+    {
+      id: 'favorites', label: '收藏', icon: Star, count: counts.favorites,
+      active: isFilter('favorites'), onClick: () => library.setFilter('favorites'),
+    },
+    {
+      id: 'uncategorized', label: '未分类', icon: Inbox, count: counts.uncategorized,
+      active: isFilter('uncategorized'), onClick: () => library.setFilter('uncategorized'),
+    },
+    {
+      id: 'graph', label: '图谱', icon: Network,
+      active: library.listView === 'graph', onClick: () => library.setListView('graph'),
+    },
+    {
+      id: 'attachments', label: '附件', icon: Paperclip, count: library.attachmentCount,
+      active: library.listView === 'attachments', onClick: () => library.setListView('attachments'),
+    },
+    {
+      id: 'index', label: '索引', icon: Database,
+      active: library.listView === 'index', onClick: () => library.setListView('index'),
+    },
+    {
+      id: 'cloud', label: '云同步', icon: Cloud,
+      active: library.listView === 'cloud', onClick: () => library.setListView('cloud'),
+    },
+  ]
+})
+
 async function refreshTrash(): Promise<void> {
   try {
     trashEntries.value = await fsService.listTrash(props.vault)
@@ -75,43 +127,9 @@ async function restore(entry: TrashEntry): Promise<void> {
   }
 }
 
-async function runSearch(): Promise<void> {
-  const q = query.value.trim()
-  const mySeq = ++searchSeq
-  if (!q) {
-    results.value = []
-    searching.value = false
-    return
-  }
-  searching.value = true
-  try {
-    const found = await fsService.searchNotes(props.vault, q)
-    if (mySeq === searchSeq) results.value = found
-  } catch {
-    if (mySeq === searchSeq) results.value = []
-  } finally {
-    if (mySeq === searchSeq) searching.value = false
-  }
-}
-
-watch(query, (q) => {
-  if (searchTimer) clearTimeout(searchTimer)
-  if (!q.trim()) {
-    searchSeq++
-    results.value = []
-    searching.value = false
-    return
-  }
-  searchTimer = setTimeout(() => void runSearch(), 180)
-})
-
 watch(trashOpen, (open) => {
   if (open) void refreshTrash()
 })
-
-function openResult(entry: FileEntry): void {
-  void tabs.openTab(entry.path)
-}
 
 async function pickFolder(): Promise<void> {
   const picked = await fsService.openFolderDialog()
@@ -123,17 +141,13 @@ function insertRef(key: string): void {
   refQuery.value = ''
 }
 
-onMounted(() => {
-  void refs.loadVault(props.vault).catch(() => {
-    // Vault listing failures surface through the tree; refs stay empty.
-  })
-})
-
-function relativeDir(path: string): string {
-  const parts = path.split('/')
-  parts.pop()
-  return parts.join('/')
-}
+watch(
+  () => props.vault,
+  () => {
+    refsOpen.value = false
+    trashOpen.value = false
+  },
+)
 </script>
 
 <template>
@@ -157,53 +171,77 @@ function relativeDir(path: string): string {
         />
       </button>
 
-      <label class="search-box">
-        <Search
-          class="search-icon"
-          :size="14"
-          :stroke-width="1.8"
-        />
-        <input
-          v-model="query"
-          class="search-input"
-          type="text"
-          placeholder="搜索文件…"
-        >
-      </label>
-
-      <template v-if="query.trim() === ''">
-        <FileTree
-          :vault="props.vault"
-          class="sidebar-tree"
-          @conflict="emit('conflict', $event)"
-        />
-      </template>
-      <div
-        v-else
-        class="search-results"
-      >
+      <nav class="nav-group">
         <button
-          v-for="entry in results"
-          :key="entry.path"
-          class="search-result"
-          :title="entry.path"
-          @click="openResult(entry)"
+          v-for="entry in navEntries"
+          :key="entry.id"
+          class="nav-item"
+          :class="{ active: entry.active }"
+          @click="entry.onClick"
         >
-          <span class="result-name">{{ entry.name }}</span>
+          <component
+            :is="entry.icon"
+            class="nav-icon"
+            :size="16"
+            :stroke-width="1.8"
+          />
+          <span class="nav-label">{{ entry.label }}</span>
           <span
-            v-if="relativeDir(entry.path)"
-            class="result-dir"
-          >{{ relativeDir(entry.path) }}</span>
+            v-if="typeof entry.count === 'number'"
+            class="nav-count"
+          >{{ entry.count }}</span>
         </button>
-        <p
-          v-if="!searching && results.length === 0"
-          class="search-empty"
-        >
-          没有匹配的文件
-        </p>
-      </div>
+      </nav>
 
-      <section class="sidebar-group">
+      <section
+        v-if="library.tagCounts.length"
+        class="sidebar-section"
+      >
+        <div class="section-title">
+          <TagIcon
+            :size="12"
+            :stroke-width="1.8"
+          />
+          <span>标签</span>
+        </div>
+        <div class="tag-list">
+          <button
+            v-for="tc in library.tagCounts"
+            :key="tc.tag"
+            class="nav-item tag-item"
+            :class="{ active: library.filter === `tag:${tc.tag}` }"
+            :title="`${tc.count} 篇笔记`"
+            @click="library.setFilter(`tag:${tc.tag}`)"
+          >
+            <Hash
+              class="nav-icon"
+              :size="16"
+              :stroke-width="1.8"
+            />
+            <span class="nav-label">{{ tc.tag }}</span>
+            <span class="nav-count">{{ tc.count }}</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="sidebar-section folders-section">
+        <div class="section-title">
+          <Library
+            :size="12"
+            :stroke-width="1.8"
+          />
+          <span>文件夹</span>
+        </div>
+        <div class="folders-body">
+          <FileTree
+            :vault="props.vault"
+            class="sidebar-tree"
+            @conflict="emit('conflict', $event)"
+          />
+        </div>
+      </section>
+
+      <section class="sidebar-section">
         <button
           class="group-header"
           @click="refsOpen = !refsOpen"
@@ -256,7 +294,7 @@ function relativeDir(path: string): string {
         </div>
       </section>
 
-      <section class="sidebar-group">
+      <section class="sidebar-section">
         <button
           class="group-header"
           @click="trashOpen = !trashOpen"
@@ -376,6 +414,13 @@ function relativeDir(path: string): string {
   flex-direction: column;
 }
 
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-top: 6px;
+}
+
 .nav-item {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) auto;
@@ -390,15 +435,29 @@ function relativeDir(path: string): string {
   color: color-mix(in srgb, var(--app-text) 72%, var(--app-muted));
   font-family: var(--app-font);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: -0.01em;
   cursor: pointer;
   transition: background var(--app-motion-fast) var(--app-ease),
-              color var(--app-motion-fast) var(--app-ease);
+              color var(--app-motion-fast) var(--app-ease),
+              box-shadow var(--app-motion-fast) var(--app-ease);
 }
 .nav-item:hover {
   color: var(--app-text);
   background: color-mix(in srgb, var(--app-elevated) 62%, transparent);
+}
+.nav-item:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
+.nav-item.active {
+  background: color-mix(in srgb, var(--app-accent-soft) 76%, var(--app-panel));
+  color: var(--app-text);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-accent) 9%, transparent);
+}
+.nav-item.active .nav-icon {
+  color: var(--app-accent);
 }
 .nav-icon {
   color: color-mix(in srgb, var(--app-accent) 82%, var(--app-text));
@@ -415,47 +474,57 @@ function relativeDir(path: string): string {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
-.search-box {
-  position: relative;
-  display: block;
-  margin: 8px 2px 6px;
+.nav-count {
+  font-size: 10px;
+  font-weight: 400;
+  color: color-mix(in srgb, var(--app-muted) 78%, transparent);
+  font-variant-numeric: tabular-nums;
 }
-.search-icon {
-  position: absolute;
-  left: 9px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--app-muted);
-  pointer-events: none;
-}
-.search-input {
-  width: 100%;
-  height: 30px;
-  padding: 0 10px 0 28px;
-  font-family: var(--app-font);
-  font-size: 12px;
-  font-weight: 450;
-  letter-spacing: -0.01em;
-  color: var(--app-text);
-  background: color-mix(in srgb, var(--app-elevated) 42%, var(--app-panel));
-  border: 1px solid color-mix(in srgb, var(--app-border) 54%, transparent);
-  border-radius: var(--app-radius-lg);
-  outline: none;
-  transition: border-color var(--app-motion-fast) var(--app-ease),
-              background var(--app-motion-fast) var(--app-ease),
-              box-shadow var(--app-motion-fast) var(--app-ease);
-}
-.search-input::placeholder { color: color-mix(in srgb, var(--app-muted) 82%, transparent); }
-.search-input:hover {
-  border-color: color-mix(in srgb, var(--app-border) 88%, transparent);
-}
-.search-input:focus {
-  border-color: color-mix(in srgb, var(--app-accent) 55%, var(--app-border));
-  background: color-mix(in srgb, var(--app-elevated) 72%, var(--app-panel));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-accent) 14%, transparent);
+.nav-item.active .nav-count {
+  color: color-mix(in srgb, var(--app-text) 54%, var(--app-muted));
 }
 
+.sidebar-section {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--app-border) 44%, transparent);
+}
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+}
+
+.tag-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px 0 4px;
+}
+.tag-item .nav-label::before {
+  content: '#';
+  margin-right: 1px;
+  color: color-mix(in srgb, var(--app-accent) 70%, var(--app-muted));
+}
+
+.folders-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 160px;
+  flex: 1;
+}
+.folders-body {
+  flex: 1;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+}
 .sidebar-tree {
   flex: 1;
   min-height: 120px;
@@ -464,61 +533,6 @@ function relativeDir(path: string): string {
   background: transparent;
 }
 
-.search-results {
-  flex: 1;
-  min-height: 120px;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding: 2px;
-}
-.search-result {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
-  padding: 6px 8px;
-  border: none;
-  border-radius: var(--app-radius-sm);
-  background: transparent;
-  color: var(--app-text);
-  text-align: left;
-  cursor: pointer;
-  transition: background var(--app-motion-fast) var(--app-ease);
-}
-.search-result:hover {
-  background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
-}
-.result-name {
-  font-size: 12px;
-  font-weight: 550;
-  letter-spacing: -0.01em;
-  max-width: 100%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.result-dir {
-  font-size: 10px;
-  color: var(--app-muted);
-  max-width: 100%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.search-empty {
-  margin: 0;
-  padding: 10px 8px;
-  font-size: 11px;
-  color: var(--app-muted);
-  text-align: center;
-}
-
-.sidebar-group {
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid color-mix(in srgb, var(--app-border) 44%, transparent);
-}
 .group-header {
   display: flex;
   align-items: center;
@@ -556,7 +570,22 @@ function relativeDir(path: string): string {
   gap: 1px;
   padding: 2px 2px 4px;
 }
-.ref-search { margin-bottom: 4px; }
+.ref-search {
+  height: 30px;
+  padding: 0 10px;
+  margin: 2px 4px 4px;
+  font-family: var(--app-font);
+  font-size: 12px;
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--app-elevated) 42%, var(--app-panel));
+  border: 1px solid color-mix(in srgb, var(--app-border) 54%, transparent);
+  border-radius: var(--app-radius-lg);
+  outline: none;
+}
+.ref-search::placeholder { color: color-mix(in srgb, var(--app-muted) 82%, transparent); }
+.ref-search:focus {
+  border-color: color-mix(in srgb, var(--app-accent) 55%, var(--app-border));
+}
 .ref-item {
   display: flex;
   flex-direction: column;

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { FolderOpen, PanelRightClose, PanelRightOpen, Settings } from 'lucide-vue-next'
 import TitleBar from './ui/TitleBar.vue'
 import Sidebar from './ui/AppSidebar.vue'
+import NoteListPanel from './ui/NoteListPanel.vue'
 import InfoRail from './ui/InfoRail.vue'
 import TabBar from './ui/TabBar.vue'
 import StatusBar from './ui/StatusBar.vue'
@@ -18,6 +19,7 @@ import { useTabsStore } from './stores/tabs'
 import { useRefsStore } from './stores/refs'
 import { useSettingsStore } from './stores/settings'
 import { useAppearanceStore } from './stores/appearance'
+import { useLibraryStore } from './stores/library'
 import {
   RAIL_WIDTH_DEFAULT,
   RAIL_WIDTH_MAX,
@@ -32,6 +34,7 @@ const tabs = useTabsStore()
 const refs = useRefsStore()
 const settings = useSettingsStore()
 const appearance = useAppearanceStore()
+const library = useLibraryStore()
 const vaultPath = ref<string | null>(null)
 const showSettings = ref(false)
 const sidebarVisible = ref(true)
@@ -46,6 +49,7 @@ const theme = computed<string>(() => {
 const shellStyle = computed<Record<string, string>>(() => ({
   '--app-sidebar-width': `${appearance.sidebarWidth}px`,
   '--app-rail-width': `${appearance.railWidth}px`,
+  '--app-notelist-width': '280px',
   '--app-body-size': `${appearance.bodyFontSize}px`,
   '--app-line-height': String(appearance.lineHeight),
 }))
@@ -65,6 +69,14 @@ const activeSubtitle = computed(() => {
   return dir.startsWith(vault) ? dir.slice(vault.length + 1) : dir
 })
 
+watch(
+  () => tabs.activeId,
+  () => {
+    const path = tabs.activeTab?.path
+    if (path) library.touchRecent(path)
+  },
+)
+
 let unlistenMedia: (() => void) | null = null
 
 function applyVault(path: string): void {
@@ -73,6 +85,7 @@ function applyVault(path: string): void {
   // would route every save to "path escapes vault" errors. Start fresh.
   tabs.closeAll()
   tabs.setVault(path)
+  void library.indexVault(path)
   void loadVaultPlugins(path)
   void refs.loadVault(path).catch(() => {
     // A stale vault path (deleted/renamed folder) must not crash startup;
@@ -181,6 +194,10 @@ async function pickFolder(): Promise<void> {
         :default-value="SIDEBAR_WIDTH_DEFAULT"
         @change="appearance.setSidebarWidth"
       />
+      <NoteListPanel
+        v-if="vaultPath && sidebarVisible"
+        class="note-list-col"
+      />
       <div
         v-else-if="!vaultPath"
         class="onboard"
@@ -192,8 +209,12 @@ async function pickFolder(): Promise<void> {
               :stroke-width="1.5"
             />
           </div>
-          <p class="onboard-title">欢迎使用 NekoWite</p>
-          <p class="onboard-hint">选择一个文件夹作为你的知识库，支持 Markdown、数学公式与文献引用。</p>
+          <p class="onboard-title">
+            欢迎使用 NekoWite
+          </p>
+          <p class="onboard-hint">
+            选择一个文件夹作为你的知识库，支持 Markdown、数学公式与文献引用。
+          </p>
           <button
             class="btn btn-primary"
             @click="pickFolder"
