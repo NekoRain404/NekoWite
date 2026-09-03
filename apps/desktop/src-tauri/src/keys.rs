@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -48,6 +49,30 @@ pub fn master_key_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(data_dir(app)?.join(".nekowite").join("master.key"))
 }
 
+/// `{parent}/.{name}.tmp` sibling of `path`, used for atomic writes.
+fn sibling_tmp(path: &Path) -> PathBuf {
+    let mut p = path.to_path_buf();
+    let name = p
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    p.set_file_name(format!(".{name}.tmp"));
+    p
+}
+
+/// `{parent}/{name}.{suffix}` sibling of `path`: the `master.key.new` staging
+/// file and `master.key.old` recovery backup used by the crash-safe swap in
+/// `reencrypt_vault` (and consulted by `open_snapshot` on load).
+fn sibling_suffixed(path: &Path, suffix: &str) -> PathBuf {
+    let mut p = path.to_path_buf();
+    let name = p
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    p.set_file_name(format!("{name}.{suffix}"));
+    p
+}
+
 /// Read a master key file, validating it is exactly 32 bytes.
 fn read_keyfile(path: &Path) -> Result<Vec<u8>, String> {
     let bytes = fs::read(path).map_err(|e| e.to_string())?;
@@ -56,6 +81,43 @@ fn read_keyfile(path: &Path) -> Result<Vec<u8>, String> {
     } else {
         Err(format!("master key file has invalid length {}", bytes.len()))
     }
+}
+
+/// Write `bytes` directly to `path` (creating parent dirs), forcing mode
+/// `0600` on unix, and fsync the contents. Does not rename — callers that need
+/// atomicity wrap this with a temp sibling (see `write_keyfile`) or a
+/// rename sequence (see `reencrypt_vault`).
+fn write_key_file_at(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut f = options.open(path).map_err(|e| e.to_string())?;
+    f.write_all(bytes).map_err(|e| e.to_string())?;
+    f.sync_all().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Overwrite `path` with `bytes`, forcing mode `0600` (unix). Written atomically
+/// via a temp sibling + fsync + rename so a partial write can never leave a
+/// corrupt key file. Used by `ensure_keyfile` on first creation;
+/// `reencrypt_vault` stages the new key at `master.key.new` instead.
+fn write_keyfile(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let tmp = sibling_tmp(path);
+    write_key_file_at(&tmp, bytes)?;
+    fs::rename(&tmp, path).map_err(|e| e.to_string())
+}
+
+/// Flush an existing file's data to stable storage. Stronghold's `save()` does
+/// not fsync, so `reencrypt_vault` does it explicitly before any rename makes
+/// the temp snapshot the live one.
+fn fsync_file(path: &Path) -> Result<(), String> {
+    fs::File::open(path)
+        .and_then(|f| f.sync_all())
+        .map_err(|e| e.to_string())
 }
 
 /// Create a 32-byte master key file at `path` if it does not exist (mode
@@ -89,39 +151,6 @@ pub fn ensure_keyfile(path: &Path) -> Result<Vec<u8>, String> {
     Ok(bytes.to_vec())
 }
 
-/// Overwrite `path` with `bytes`, forcing mode `0600`. Written atomically via a
-/// temp sibling + fsync + rename so a partial write can never leave a corrupt
-/// key file. Used by `set_master_password` to persist the new key, and by
-/// `ensure_keyfile` on first creation.
-fn write_keyfile(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let tmp = sibling_tmp(path);
-    let mut f = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&tmp)
-        .map_err(|e| e.to_string())?;
-    f.write_all(bytes).map_err(|e| e.to_string())?;
-    f.sync_all().map_err(|e| e.to_string())?;
-    fs::rename(&tmp, path).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-/// `{parent}/.{name}.tmp` sibling of `path`, used for atomic writes.
-fn sibling_tmp(path: &Path) -> PathBuf {
-    let mut p = path.to_path_buf();
-    let name = p
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    p.set_file_name(format!(".{name}.tmp"));
-    p
-}
-
 /// Ensure the master key file exists under the app data dir and return its
 /// 32 bytes. Auto-generated on first run (mode `0600`), stable across runs.
 pub fn ensure_master_key(app: &tauri::AppHandle) -> Result<Vec<u8>, String> {
@@ -144,35 +173,70 @@ pub fn validate_password(password: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Open the snapshot at `snapshot_path` with `master_key`. If that fails and a
+/// `master.key.old` backup exists, retry with it before giving up.
+///
+/// The backup is the recovery path for a crash mid-`set_master_password`: the
+/// two-phase swap in `reencrypt_vault` can be interrupted after the key files
+/// were renamed but before the snapshot was swapped, leaving the OLD key in
+/// `master.key.old` (with `master.key` holding the new, not-yet-applicable key,
+/// or missing entirely) beside a snapshot that still decrypts with the old key.
+/// A failed open never writes to disk, so the retry cannot make things worse.
+///
+/// Pure and `AppHandle`-free so the recovery path is testable in
+/// `tests/keys_test.rs`.
+pub fn open_snapshot(
+    snapshot_path: &Path,
+    key_path: &Path,
+    master_key: Vec<u8>,
+) -> Result<Stronghold, String> {
+    match Stronghold::new(snapshot_path, master_key) {
+        Ok(stronghold) => Ok(stronghold),
+        Err(primary_err) => {
+            let backup = read_keyfile(&sibling_suffixed(key_path, "old"))
+                .and_then(|backup_key| {
+                    Stronghold::new(snapshot_path, backup_key).map_err(|e| e.to_string())
+                });
+            match backup {
+                Ok(stronghold) => Ok(stronghold),
+                // Surface the primary error: the backup is missing or also
+                // wrong, and its own error would only repeat the same
+                // decryption failure.
+                Err(_) => Err(primary_err.to_string()),
+            }
+        }
+    }
+}
+
 /// Open the managed stronghold, initializing it lazily with the current
-/// master key if it has not been opened yet. `init` supplies the snapshot path
-/// and master key (resolved *before* locking so the caller does not borrow the
-/// app while holding the vault guard).
+/// master key if it has not been opened yet. `init` supplies the snapshot
+/// path, master key path, and master key (resolved *before* locking so the
+/// caller does not borrow the app while holding the vault guard).
 fn open_vault<R>(
     app: &tauri::AppHandle,
-    init: &mut dyn FnMut() -> Result<(PathBuf, Vec<u8>), String>,
+    init: &mut dyn FnMut() -> Result<(PathBuf, PathBuf, Vec<u8>), String>,
     f: impl FnOnce(&Stronghold) -> Result<R, String>,
 ) -> Result<R, String> {
     let state = app.state::<KeyVault>();
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
     if guard.is_none() {
-        let (snapshot_path, master_key) = init()?;
-        let stronghold = Stronghold::new(snapshot_path, master_key).map_err(|e| e.to_string())?;
-        *guard = Some(stronghold);
+        let (snapshot_path, key_path, master_key) = init()?;
+        *guard = Some(open_snapshot(&snapshot_path, &key_path, master_key)?);
     }
     let stronghold = guard.as_ref().expect("open_vault guarantees a stronghold");
     f(stronghold)
 }
 
 /// Init source that auto-generates/reads the master key file.
-fn default_init(app: &tauri::AppHandle) -> Result<(PathBuf, Vec<u8>), String> {
-    Ok((stronghold_path(app)?, ensure_master_key(app)?))
+fn default_init(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf, Vec<u8>), String> {
+    let key_path = master_key_path(app)?;
+    Ok((stronghold_path(app)?, key_path, ensure_master_key(app)?))
 }
 
 /// Borrow-safe wrapper of [`default_init`] for `open_vault`.
 fn init_with_default(
     app: &tauri::AppHandle,
-) -> impl FnMut() -> Result<(PathBuf, Vec<u8>), String> + '_ {
+) -> impl FnMut() -> Result<(PathBuf, PathBuf, Vec<u8>), String> + '_ {
     || default_init(app)
 }
 
@@ -203,9 +267,17 @@ fn save_vault(stronghold: &Stronghold) -> Result<(), String> {
 /// Tighten the snapshot file to mode `0600`, matching `master.key`. Stronghold
 /// writes the snapshot with the process default umask (typically `0644`), so
 /// after every write we re-set the perms to keep the key material private.
+#[cfg(unix)]
 fn tighten_snapshot_perms(path: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())
+}
+
+/// Platforms without POSIX file modes: nothing to tighten, the platform
+/// default permissions apply.
+#[cfg(not(unix))]
+fn tighten_snapshot_perms(_path: &Path) -> Result<(), String> {
+    Ok(())
 }
 
 /// Tighten snapshot perms after a save at `{app_data_dir}/.nekowite/stronghold.bin`.
@@ -248,30 +320,50 @@ pub fn load_ai_key(app: tauri::AppHandle, provider: String) -> Result<Option<Str
 }
 
 /// Re-encrypt the snapshot at `snapshot_path` with `new_key`, migrating
-/// `records` over, and persist the new master key at `key_path`. Pure
+/// `records` over, and swap the new master key in at `key_path`. Pure
 /// path-level function, testable without an `AppHandle`.
 ///
-/// Crash/error-safe ordering:
-/// 1. Build the new-key snapshot at a temp sibling (clearing any stale temp
-///    from a previously interrupted run first), then `save()` it.
-/// 2. Write + fsync the new `master.key` FIRST. If this fails, the old snapshot
-///    and the old key are still on disk, so an `Err` leaves the vault readable
-///    by the old key.
-/// 3. Swap the snapshot with a single atomic `fs::rename` — it replaces the
-///    destination in place on the same filesystem, so there is no
-///    `remove_file` step that could delete the only vault copy.
-/// 4. If the swap itself fails, restore the old master key so the disk remains
-///    consistent with the old key, then return `Err`.
+/// Crash-safe two-phase swap. Every step leaves the on-disk key files and the
+/// snapshot mutually recoverable, so a crash at ANY point loses no stored key
+/// (load-time recovery is `open_snapshot`'s `master.key.old` retry):
+///
+/// 1. Write + fsync the new key to the `master.key.new` staging file. The old
+///    `master.key` and old snapshot are untouched, so the vault stays readable
+///    with the old key.
+/// 2. Build the new-key snapshot at the temp sibling (clearing any stale temp
+///    from a previously interrupted run first), `save()` it, and fsync it.
+///    Still nothing swapped, so the old pair remains consistent.
+/// 3. Rename `master.key` -> `master.key.old`. A crash here leaves
+///    `master.key` missing, but the old key survives in the backup and still
+///    decrypts the snapshot.
+/// 4. Rename `master.key.new` -> `master.key`. A crash here leaves the new key
+///    in place beside the OLD snapshot, which still decrypts with
+///    `master.key.old` — exactly the state the load-time fallback recovers
+///    from.
+/// 5. Atomically swap the temp snapshot over the real one — a single
+///    `fs::rename` replaces the destination in place on the same filesystem,
+///    so there is no `remove_file` step that could delete the only vault copy.
+///    From here the new key decrypts the live snapshot.
+/// 6. Delete `master.key.old`, which is stale by definition now.
+///
+/// If a rename fails mid-sequence, the old key backup is moved back first so
+/// the disk is left consistent with the old snapshot.
 pub fn reencrypt_vault(
     snapshot_path: &Path,
     key_path: &Path,
     new_key: &[u8],
     records: &[(Vec<u8>, Vec<u8>)],
 ) -> Result<(), String> {
-    let old_key = read_keyfile(key_path)?;
+    let new_key_staging = sibling_suffixed(key_path, "new");
+    let old_key_backup = sibling_suffixed(key_path, "old");
     let tmp_snapshot = stronghold_tmp_path(snapshot_path);
 
-    // 1. Rebuild under the new key at a temp path. Clear any stale temp file
+    // 1. Durable new key material at the staging path. Clear any stale staging
+    //    file from a previously interrupted run first.
+    let _ = fs::remove_file(&new_key_staging);
+    write_key_file_at(&new_key_staging, new_key)?;
+
+    // 2. Rebuild under the new key at a temp path. Clear any stale temp file
     //    first, or `Stronghold::new` would try to load it with the new key and
     //    fail.
     let _ = fs::remove_file(&tmp_snapshot);
@@ -288,23 +380,41 @@ pub fn reencrypt_vault(
             .map_err(|e| e.to_string())?;
     }
     new_stronghold.save().map_err(|e| e.to_string())?;
+    fsync_file(&tmp_snapshot)?;
 
-    // 2. Durable new master key first.
-    write_keyfile(key_path, new_key)?;
+    // 3. Move the old key aside BEFORE the new key takes its name, so step 4
+    //    does not have to rename over an existing file.
+    let _ = fs::remove_file(&old_key_backup);
+    fs::rename(key_path, &old_key_backup).map_err(|e| e.to_string())?;
 
-    // 3+4. Atomic swap; restore the old key if it fails.
-    if let Err(e) = fs::rename(&tmp_snapshot, snapshot_path) {
-        let _ = write_keyfile(key_path, &old_key);
+    // 4. Promote the staged key. If this fails, put the old key back so the
+    //    disk stays consistent with the (still old) snapshot.
+    if let Err(e) = fs::rename(&new_key_staging, key_path) {
+        let _ = fs::rename(&old_key_backup, key_path);
         return Err(e.to_string());
     }
-    // The rename preserved the tmp file's umask-derived perms; tighten them.
+
+    // 5. Atomic snapshot swap; restore the old key if it fails.
+    if let Err(e) = fs::rename(&tmp_snapshot, snapshot_path) {
+        let _ = fs::rename(&old_key_backup, key_path);
+        return Err(e.to_string());
+    }
+    // The rename preserved the temp file's umask-derived perms; tighten them.
     tighten_snapshot_perms(snapshot_path)?;
+
+    // 6. The backup is stale once the snapshot decrypts with `master.key`.
+    let _ = fs::remove_file(&old_key_backup);
     Ok(())
 }
 
 /// Set (or replace) the master password. Derives a new 32-byte master key from
 /// the password, re-encrypts the stronghold snapshot with it, and updates the
 /// `master.key` file so future launches unlock with the new password.
+///
+/// The vault mutex is held across the ENTIRE operation — record collection,
+/// the crash-safe two-phase swap, and the reload — so a concurrent
+/// `store_ai_key` can neither read stale (old-key) records mid-swap nor save
+/// old-key ciphertext into the swapped snapshot afterwards.
 #[tauri::command]
 pub fn set_master_password(app: tauri::AppHandle, password: String) -> Result<(), String> {
     validate_password(&password)?;
@@ -312,33 +422,51 @@ pub fn set_master_password(app: tauri::AppHandle, password: String) -> Result<()
     let key_path = master_key_path(&app)?;
     let new_key = derive_key_from_password(&password);
 
-    // Collect existing records from the currently open (old-key) vault, then
-    // rebuild the snapshot encrypted with the new key and migrate them over.
+    let state = app.state::<KeyVault>();
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+
+    // Open the vault under the held lock if it is not open yet (same lazy
+    // init as `open_vault`).
+    if guard.is_none() {
+        let (snapshot, key_file, master_key) = default_init(&app)?;
+        *guard = Some(open_snapshot(&snapshot, &key_file, master_key)?);
+    }
+
+    // Collect existing records from the currently open (old-key) vault.
     // Errors reading the old vault are PROPAGATED (never swallowed into an
     // empty record set), so a failed read cannot silently wipe stored keys.
-    let records = open_vault(&app, &mut init_with_default(&app), |old| {
-        let client = get_or_create_client(old)?;
-        let mut records: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
-        for k in client.store().keys().map_err(|e| e.to_string())? {
-            let value = client
-                .store()
-                .get(&k)
-                .map_err(|e| e.to_string())?
-                .ok_or_else(|| "stored key record has no value".to_string())?;
-            records.push((k, value));
-        }
-        Ok(records)
-    })?;
+    let old = guard.as_ref().expect("vault was opened above");
+    let client = get_or_create_client(old)?;
+    let mut records: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+    for k in client.store().keys().map_err(|e| e.to_string())? {
+        let value = client
+            .store()
+            .get(&k)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "stored key record has no value".to_string())?;
+        records.push((k, value));
+    }
 
-    reencrypt_vault(&snapshot_path, &key_path, &new_key, &records)?;
+    // Two-phase swap of the key + snapshot on disk.
+    if let Err(e) = reencrypt_vault(&snapshot_path, &key_path, &new_key, &records) {
+        // The disk may or may not have been swapped by the time the error
+        // surfaced, so drop the in-memory handle: the next command re-opens
+        // from disk (recovering via `master.key.old` if needed) instead of
+        // saving stale old-key ciphertext over whatever is there now.
+        *guard = None;
+        return Err(e);
+    }
 
     // Reload the managed vault from the swapped snapshot so the rest of this
-    // process keeps working under the new key.
-    {
-        let state = app.state::<KeyVault>();
-        let mut guard = state.0.lock().map_err(|e| e.to_string())?;
-        let reloaded = Stronghold::new(&snapshot_path, new_key.to_vec()).map_err(|e| e.to_string())?;
-        *guard = Some(reloaded);
+    // process keeps working under the new key. On failure, drop the handle the
+    // same way: keeping the old-key stronghold would let its next `save()`
+    // corrupt the new snapshot.
+    match Stronghold::new(snapshot_path.clone(), new_key.to_vec()) {
+        Ok(stronghold) => *guard = Some(stronghold),
+        Err(e) => {
+            *guard = None;
+            return Err(format!("vault re-encrypted but reload failed: {e}"));
+        }
     }
     Ok(())
 }

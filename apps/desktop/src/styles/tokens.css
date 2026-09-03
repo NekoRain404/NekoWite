@@ -11,11 +11,32 @@
   --app-accent-contrast: #ffffff;
   --app-danger: #c94c41;
   --app-danger-contrast: #ffffff;
+  --app-success: #5ca878;
   --app-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --app-motion-fast: 140ms;
+  --app-motion: 160ms;
+  /* Radius ladder: window 16 > dialog 14 > menu/card 10 > button/input 8 >
+     segmented 6 > inline-code 5. */
+  --app-radius-xl: 14px;
+  --app-radius-lg: 10px;
   --app-radius: 8px;
+  --app-radius-sm: 6px;
+  --app-radius-xs: 5px;
+  /* Elevation: hairline rings + top-edge highlight instead of hard borders. */
+  --app-shadow-menu: 0 16px 40px rgb(37 33 27 / 18%), 0 4px 12px rgb(37 33 27 / 8%),
+    inset 0 1px rgb(255 255 255 / 52%);
+  --app-shadow-dialog: 0 28px 72px rgb(37 33 27 / 24%), 0 8px 24px rgb(37 33 27 / 10%),
+    inset 0 1px rgb(255 255 255 / 52%);
+  --app-shadow-card: 0 1px 2px rgb(48 42 34 / 5%), 0 3px 8px -2px rgb(48 42 34 / 6%);
+  /* Layout metrics (Memoir-derived). */
+  --app-sidebar-width: 232px;
+  --app-rail-width: 300px;
+  --app-titlebar-height: 44px;
+  --app-toolbar-height: 42px;
+  --app-statusbar-height: 28px;
+  --app-content-width: 760px;
   --app-font: Inter, "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --app-mono-font: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  --app-mono-font: "SFMono-Regular", "Cascadia Code", "Roboto Mono", Menlo, Monaco, Consolas, "PingFang SC", "Microsoft YaHei", ui-monospace, monospace;
   --app-body-size: 15px;
   --app-line-height: 1.8;
   --app-code-keyword: #8a4e30;
@@ -43,8 +64,18 @@
   --app-accent-contrast: #171715;
   --app-danger: #ef766b;
   --app-danger-contrast: #171715;
+  --app-success: #5ca878;
   --app-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --app-radius-xl: 14px;
+  --app-radius-lg: 10px;
   --app-radius: 8px;
+  --app-radius-sm: 6px;
+  --app-radius-xs: 5px;
+  --app-shadow-menu: 0 16px 40px rgb(0 0 0 / 42%), 0 4px 12px rgb(0 0 0 / 24%),
+    inset 0 1px rgb(255 255 255 / 5%);
+  --app-shadow-dialog: 0 28px 72px rgb(0 0 0 / 46%), 0 8px 24px rgb(0 0 0 / 26%),
+    inset 0 1px rgb(255 255 255 / 5%);
+  --app-shadow-card: 0 1px 2px rgb(0 0 0 / 16%), 0 4px 10px -2px rgb(0 0 0 / 14%);
   --app-code-keyword: #e0a57a;
   --app-code-string: #86c4a4;
   --app-code-number: #e0b36a;

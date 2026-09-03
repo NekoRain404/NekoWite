@@ -17,19 +17,13 @@ const processor = unified()
     strong: '*',
     fences: true,
     handlers: {
-      // Un-escape brackets so [@key] citations round-trip byte-faithfully:
-      // remark-stringify escapes the opening '[' as '\['. Trade-off: a user's
-      // intentional \[bracket\] escape also loses the backslash on save.
-      //
-      // Cite escape hatch: in the editor, an escaped `\[@foo]` is kept literal
-      // (cite/remark.ts consults the raw source so remark's escape consumption
-      // cannot turn it into a real cite). Residual consequence on this round
-      // trip: the now-literal backslash may be dropped here, so a saved+reopened
-      // `\[@foo]` degrades to a real `[@foo]` citation.
+      // Un-escape the opening bracket ONLY when it introduces a citation:
+      // remark-stringify escapes '[' as '\[' on output, and the cite remark
+      // matcher needs the literal `[@key]` form to round-trip byte-faithfully.
+      // Un-escaping every '\[' (the previous behavior) corrupted intentional
+      // escapes: `see \[foo\](http://x)` came back as a live link.
       text: (node, _parent, state, info) =>
-        state.safe(node.value, info)
-          .replace(/\\\[/g, '[')
-          .replace(/\\\]/g, ']'),
+        state.safe(node.value, info).replace(/\\\[@/g, '[@'),
     },
   })
 
@@ -46,5 +40,12 @@ export function roundTrip(md: string): string {
 }
 
 export function escapeMdxText(text: string): string {
-  return text.replace(/</g, '&lt;').replace(/\{/g, '&#123;')
+  // `&` first so the entities produced below are not double-encoded, then the
+  // characters that would break the `<Tag prop="...">` scanner on re-parse.
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\{/g, '&#123;')
+    .replace(/"/g, '&quot;')
 }

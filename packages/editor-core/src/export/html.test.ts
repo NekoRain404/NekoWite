@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { renderDocument } from './html'
+import { describe, expect, it, vi } from 'vitest'
+import { renderDocument, renderDocumentAsync } from './html'
 import type { ExportRef } from './html'
 
 describe('renderDocument', () => {
@@ -65,5 +65,47 @@ describe('renderDocument', () => {
     const html = renderDocument('text')
     // printCss body includes position: relative so floats anchor to the body
     expect(html).toMatch(/body\s*{[^}]*position\s*:\s*relative/)
+  })
+})
+
+describe('renderDocumentAsync', () => {
+  it('resolves relative image srcs via resolveImage before rendering', async () => {
+    const html = await renderDocumentAsync('![pic](attachments/a.png)\n', {
+      resolveImage: async (src) => `data:image/png;base64,${src}`,
+    })
+    expect(html).toContain('src="data:image/png;base64,attachments/a.png"')
+  })
+
+  it('leaves absolute http(s)/data srcs untouched and keeps alt text', async () => {
+    const resolve = vi.fn(async (src: string) => `resolved:${src}`)
+    const html = await renderDocumentAsync(
+      '![one](https://x.dev/a.png) ![two](attachments/a.png)\n',
+      { resolveImage: resolve },
+    )
+    expect(html).toContain('src="https://x.dev/a.png"')
+    expect(html).toContain('src="resolved:attachments/a.png"')
+    expect(html).toContain('alt="one"')
+    expect(resolve).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the raw src when the resolver rejects', async () => {
+    const html = await renderDocumentAsync('![pic](attachments/a.png)\n', {
+      resolveImage: async () => {
+        throw new Error('boom')
+      },
+    })
+    expect(html).toContain('src="attachments/a.png"')
+  })
+
+  it('resolves images nested inside lists', async () => {
+    const html = await renderDocumentAsync('- ![pic](attachments/a.png)\n', {
+      resolveImage: async () => 'asset://localhost/a.png',
+    })
+    expect(html).toContain('src="asset://localhost/a.png"')
+  })
+
+  it('matches the sync renderer output when no resolver is given', async () => {
+    const md = '# Title\n\n- a\n\n![pic](attachments/a.png)\n'
+    expect(await renderDocumentAsync(md)).toBe(renderDocument(md))
   })
 })

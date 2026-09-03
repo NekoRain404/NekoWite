@@ -34,10 +34,17 @@ describe('roundTrip', () => {
     const md = '---\ntitle: hello\n---\n\n# Body\n'
     expect(roundTrip(md)).toBe(md)
   })
-  it('documents the intentional-bracket un-escape trade-off', () => {
-    // remark-stringify escapes '['; handlers.text restores it so [@key] round-trips.
-    // Known trade-off: intentional \[bracket\] also loses the backslash (raw-md fidelity).
-    expect(roundTrip('literal \\[bracket\\] here.\n')).toBe('literal [bracket] here.\n')
+  it('preserves intentional bracket escapes', () => {
+    // handlers.text only un-escapes `\[@` (the citation case). A user's
+    // intentional `\[bracket` keeps its backslash, so escaped text can no
+    // longer be corrupted into a live link on save. remark-stringify escapes
+    // a plain `[` on output; that form is stable on re-save.
+    expect(roundTrip('literal \\[bracket\\] here.\n')).toBe('literal \\[bracket] here.\n')
+    expect(roundTrip(roundTrip('literal \\[bracket\\] here.\n'))).toBe('literal \\[bracket] here.\n')
+  })
+
+  it('still un-escapes the citation form', () => {
+    expect(roundTrip('literal \\[@foo] here.\n')).toBe('literal [@foo] here.\n')
   })
 
   it('documents the residual round-trip of an escaped cite', () => {

@@ -1,6 +1,6 @@
 # NekoWite
 
-NekoWite 是一个开源类 Word 的 MDX 所见即所得（WYSIWYG）编辑器，基于 Tauri v2 桌面壳构建。它把 Markdown 的轻量与 MDX 的可扩展性结合：左侧文件树管理 vault，中间所见即所得编辑，支持对照分屏（源码/渲染/对照三态视图）、表格网格编辑、YAML frontmatter 保留、外部编辑热重载，以及用户插件系统（自定义 MDX 组件 + 工具栏按钮 + 命令）。
+NekoWite 是一个开源类 Word 的 MDX 所见即所得（WYSIWYG）编辑器，基于 Tauri v2 桌面壳构建。它把 Markdown 的轻量与 MDX 的可扩展性结合：自定义无边框标题栏与侧栏（搜索/文件树/引用/回收站/主题），中间所见即所得编辑，支持对照分屏（源码/渲染/对照三态视图）、表格网格编辑、YAML frontmatter 保留、外部编辑热重载、右栏文档信息（引用与历史版本）、AI ghost-writer，以及用户插件系统（自定义 MDX 组件 + 工具栏按钮 + 命令）。
 
 ## 技术栈
 

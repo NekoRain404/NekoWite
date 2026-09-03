@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createMemoryFsGateway } from './memory'
 
 describe('memoryFsGateway', () => {
@@ -111,5 +111,63 @@ describe('memoryFsGateway', () => {
     const restored = await fs.restoreHistory('memoir://demo', 'a.md', h[0].id)
     expect(restored).toBe('v0')
     expect(await fs.read('memoir://demo', 'a.md')).toBe('v0')
+  })
+
+  it('saveAttachment stores bytes under attachments/YYYY-MM and returns the path', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 8, 3))
+    const fs = createMemoryFsGateway()
+    const path = await fs.saveAttachment('memoir://demo', 'paste-x.png', 'QUJD')
+    expect(path).toBe('attachments/2026-09/paste-x.png')
+    // Resolves to a data: URL usable as <img src>.
+    await expect(fs.resolveMediaPath('memoir://demo', path)).resolves.toBe(
+      'data:image/png;base64,QUJD',
+    )
+    vi.useRealTimers()
+  })
+
+  it('saveAttachment dedupes with a -1 suffix on name clashes', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 8, 3))
+    const fs = createMemoryFsGateway()
+    const first = await fs.saveAttachment('memoir://demo', 'paste-x.png', 'AAA')
+    const second = await fs.saveAttachment('memoir://demo', 'paste-x.png', 'BBB')
+    expect(second).toBe('attachments/2026-09/paste-x-1.png')
+    await expect(fs.resolveMediaPath('memoir://demo', first)).resolves.toBe(
+      'data:image/png;base64,AAA',
+    )
+    await expect(fs.resolveMediaPath('memoir://demo', second)).resolves.toBe(
+      'data:image/png;base64,BBB',
+    )
+    vi.useRealTimers()
+  })
+
+  it('resolveMediaPath picks the mime from the extension and rejects unknown paths', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 8, 3))
+    const fs = createMemoryFsGateway()
+    const jpeg = await fs.saveAttachment('memoir://demo', 'a.jpg', 'AAA')
+    await expect(fs.resolveMediaPath('memoir://demo', jpeg)).resolves.toBe(
+      'data:image/jpeg;base64,AAA',
+    )
+    await expect(fs.resolveMediaPath('memoir://demo', 'attachments/2026-09/nope.png')).rejects.toThrow(
+      'No such attachment in demo vault',
+    )
+    vi.useRealTimers()
+  })
+
+  it('saved attachments surface through the virtual directory listing', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 8, 3))
+    const fs = createMemoryFsGateway()
+    await fs.saveAttachment('memoir://demo', 'a.png', 'AAA')
+    const root = await fs.list('memoir://demo', '.')
+    const attachments = root.find((e) => e.name === 'attachments')
+    expect(attachments?.is_dir).toBe(true)
+    const month = await fs.list('memoir://demo', 'attachments')
+    expect(month.map((e) => e.name)).toContain('2026-09')
+    const dir = await fs.list('memoir://demo', 'attachments/2026-09')
+    expect(dir.map((e) => e.name)).toContain('a.png')
+    vi.useRealTimers()
   })
 })

@@ -6,6 +6,7 @@ import type { MilkdownPlugin } from '@milkdown/ctx'
 import { $prose } from '@milkdown/utils'
 
 import { cite, citeNodeView, citeOrderSyncPlugin, citeRemark } from '../cite'
+import { imageNodeView } from '../image'
 import {
   mathDisplay,
   mathDisplayNodeView,
@@ -22,6 +23,7 @@ export const basicPlugins: MilkdownPlugin[] = [
   ...mdxJsxRemark,
   mdxComponentNodeView,
   ...commonmark,
+  imageNodeView,
   ...gfm.flat(),
   ...citeRemark,
   cite,

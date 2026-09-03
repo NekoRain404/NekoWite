@@ -21,6 +21,9 @@ export function registerCommand(cmd: EditorCommand): void {
 export function getCommand(id: string): EditorCommand | undefined {
   return commands.get(id)
 }
+export function listCommands(): EditorCommand[] {
+  return [...commands.values()]
+}
 export function registerComponent(name: string, component: Component): void {
   if (components.has(name)) throw new DuplicateRegistrationError(`component ${name} already registered`)
   components.set(name, component)

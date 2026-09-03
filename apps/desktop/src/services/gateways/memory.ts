@@ -6,6 +6,7 @@ import type {
   KeyGateway,
   TrashEntry,
 } from './contracts'
+import { attachmentMonthDir, mimeFromExtension } from '../attachments'
 
 const DEFAULT_SEED: Record<string, string> = {
   'welcome.md':
@@ -48,6 +49,8 @@ export function createMemoryFsGateway(
   seed: Record<string, string> = DEFAULT_SEED,
 ): FsGateway {
   const files = new Map(Object.entries(seed))
+  const attachments = new Map<string, string>()
+  const virtualDirs = new Set<string>()
   const history = new Map<string, Snapshot[]>()
   const trash = new Map<string, TrashItem>()
   const modified = new Map<string, number>()
@@ -151,18 +154,23 @@ export function createMemoryFsGateway(
     list: async (_vault, dir) => {
       const base = normalizeDir(dir)
       const prefix = base === '' ? '' : `${base}/`
-      const dirs = new Set<string>()
+      const derivedDirs = new Set<string>()
       const fileKeys = new Map<string, string>()
       for (const key of files.keys()) {
         if (!key.startsWith(prefix) || isHiddenKey(key)) continue
         const rest = key.slice(prefix.length)
         if (rest === '') continue
         const [seg] = rest.split('/')
-        if (rest.includes('/')) dirs.add(seg)
+        if (rest.includes('/')) derivedDirs.add(seg)
         else fileKeys.set(seg, key)
       }
+      for (const explicit of virtualDirs) {
+        if (explicit === base || !explicit.startsWith(prefix)) continue
+        const rest = explicit.slice(prefix.length)
+        if (rest !== '') derivedDirs.add(rest.split('/')[0])
+      }
       const entries: FileEntry[] = []
-      for (const name of dirs) {
+      for (const name of derivedDirs) {
         entries.push({
           name,
           path: base === '' ? name : `${base}/${name}`,
@@ -183,10 +191,113 @@ export function createMemoryFsGateway(
         return a.name.localeCompare(b.name)
       })
     },
+    searchNotes: async (_vault, query) => {
+      const q = query.trim().toLowerCase()
+      if (q === '') return []
+      const out: FileEntry[] = []
+      for (const key of files.keys()) {
+        if (out.length >= 100) break
+        if (isHiddenKey(key) || !/\.(md|mdx|markdown)$/i.test(key)) continue
+        if (key.toLowerCase().includes(q)) {
+          out.push({
+            name: key.split('/').pop() ?? key,
+            path: key,
+            is_dir: false,
+            is_mdx: true,
+          })
+        }
+      }
+      return out
+    },
     watch: async () => undefined,
     openFolderDialog: async () => 'memoir://demo',
     saveFileDialog: async () => null,
     onFsChange: () => Promise.resolve(() => undefined),
+    saveAttachment: async (_vault, fileName, base64) => {
+      const dir = `attachments/${attachmentMonthDir()}`
+      const dot = fileName.lastIndexOf('.')
+      const stem = dot > 0 ? fileName.slice(0, dot) : fileName
+      const ext = dot > 0 ? fileName.slice(dot) : ''
+      let relPath = `${dir}/${fileName}`
+      let n = 0
+      while (files.has(relPath) || attachments.has(relPath)) {
+        n += 1
+        relPath = `${dir}/${stem}-${n}${ext}`
+      }
+      // Stored in the same key space as notes so list()'s virtual-directory
+      // derivation surfaces the attachments tree for free.
+      files.set(relPath, base64)
+      attachments.set(relPath, base64)
+      modified.set(relPath, Date.now())
+      return relPath
+    },
+    resolveMediaPath: async (_vault, relPath) => {
+      const base64 = attachments.get(relPath) ?? files.get(relPath)
+      if (base64 === undefined) {
+        throw new Error(`No such attachment in demo vault: ${relPath}`)
+      }
+      const ext = relPath.split('.').pop() ?? ''
+      return `data:${mimeFromExtension(ext)};base64,${base64}`
+    },
+    createDir: async (_vault, path) => {
+      const clean = path.replace(/^\/+|\/+$/g, '')
+      if (clean === '' || clean.split('/').some((seg) => seg === '.' || seg === '..')) {
+        throw new Error(`Invalid directory name: ${path}`)
+      }
+      if ([...files.keys()].some((key) => key === clean || key.startsWith(`${clean}/`))) {
+        throw new Error(`Already exists: ${clean}`)
+      }
+      virtualDirs.add(clean)
+      return clean    },
+    renameEntry: async (_vault, from, to) => {
+      const fromClean = from.replace(/^\/+|\/+$/g, '')
+      const toClean = to.replace(/^\/+|\/+$/g, '')
+      if (toClean === '' || toClean.split('/').some((seg) => seg === '.' || seg === '..')) {
+        throw new Error(`Invalid target path: ${to}`)
+      }
+      const isDirMove = (key: string): boolean =>
+        key === fromClean || key.startsWith(`${fromClean}/`)
+      const moved: Array<[string, string]> = []
+      for (const key of files.keys()) {
+        if (isDirMove(key)) {
+          const next = toClean + key.slice(fromClean.length)
+          if (files.has(next)) {
+            throw new Error(`Target already exists: ${next}`)
+          }
+          moved.push([key, next])
+        }
+      }
+      if (moved.length === 0) {
+        throw new Error(`Not found in demo vault: ${from}`)
+      }
+      for (const dir of [...virtualDirs]) {
+        if (isDirMove(dir)) {
+          virtualDirs.delete(dir)
+          virtualDirs.add(toClean + dir.slice(fromClean.length))
+        }
+      }
+      for (const [key, next] of moved) {
+        files.set(next, files.get(key) ?? '')
+        if (attachments.has(key)) {
+          attachments.set(next, attachments.get(key) ?? '')
+          attachments.delete(key)
+        }
+        files.delete(key)
+      }
+      for (const [key, next] of moved) {
+        const snaps = history.get(key)
+        if (snaps) {
+          history.set(next, snaps)
+          history.delete(key)
+        }
+        const mtime = modified.get(key)
+        if (mtime !== undefined) {
+          modified.set(next, mtime)
+          modified.delete(key)
+        }
+      }
+      return toClean
+    },
   }
 }
 

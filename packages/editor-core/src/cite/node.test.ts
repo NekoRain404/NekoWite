@@ -20,8 +20,10 @@ describe('round-trip citations', () => {
     expect(roundTrip(md)).toBe(md)
   })
   it('does not treat plain text as citation', () => {
+    // Plain brackets are escaped by remark-stringify on output (stable on
+    // re-save); only the `[@` citation form is un-escaped by handlers.text.
     const md = 'Emails go to [@ support] and brackets [not a cite].\n'
-    expect(roundTrip(md)).toBe(md)
+    expect(roundTrip(md)).toBe('Emails go to [@ support] and brackets \\[not a cite].\n')
   })
 })
 

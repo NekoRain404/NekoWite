@@ -23,6 +23,7 @@ const modes: ModeItem[] = [
       :key="m.key"
       class="switch-option"
       :class="{ 'is-active': view.mode === m.key }"
+      :title="m.label"
       @click="view.setMode(m.key)"
     >
       {{ m.label }}
@@ -33,9 +34,47 @@ const modes: ModeItem[] = [
 <style scoped>
 .view-switch {
   display: flex;
-  gap: 4px;
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--app-border);
-  background: var(--app-canvas);
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid color-mix(in srgb, var(--app-border) 88%, transparent);
+  border-radius: var(--app-radius);
+  background: color-mix(in srgb, var(--app-panel) 74%, transparent);
+}
+.switch-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0 10px;
+  font-family: var(--app-font);
+  font-size: 11px;
+  font-weight: 550;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--app-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--app-radius-sm);
+  cursor: pointer;
+  transition: background var(--app-motion-fast) var(--app-ease),
+              color var(--app-motion-fast) var(--app-ease),
+              border-color var(--app-motion-fast) var(--app-ease),
+              box-shadow var(--app-motion-fast) var(--app-ease);
+}
+.switch-option:hover {
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
+}
+.switch-option.is-active {
+  background: var(--app-elevated);
+  color: var(--app-text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgb(35 33 29 / 10%),
+              inset 0 0 0 1px rgb(255 255 255 / 40%);
+}
+[data-theme="dark"] .switch-option.is-active {
+  box-shadow: 0 1px 2px rgb(0 0 0 / 30%),
+              inset 0 0 0 1px rgb(255 255 255 / 5%);
 }
 </style>

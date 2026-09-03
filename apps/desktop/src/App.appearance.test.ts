@@ -96,3 +96,46 @@ describe('App root theme/accent binding', () => {
     expect(shell.getAttribute('data-theme')).toBe('dark')
   })
 })
+
+describe('App root layout variable binding', () => {
+  beforeEach(() => {
+    invokeMock.mockReset()
+    invokeMock.mockResolvedValue(undefined)
+    document.body.innerHTML = ''
+    mounted = []
+    mediaListeners.clear()
+    mediaMatches.clear()
+    globalThis.matchMedia = matchMediaStub as never
+  })
+
+  afterEach(() => {
+    mounted.forEach((app) => app.unmount())
+    mounted = []
+    document.body.innerHTML = ''
+  })
+
+  it('binds sidebar/rail widths and body typography as CSS variables', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const appearance = useAppearanceStore()
+    appearance.setSidebarWidth(300)
+    appearance.setRailWidth(360)
+    appearance.setBodyFontSize(17)
+    appearance.setLineHeight(2)
+
+    const shell = mountApp(pinia)
+    await nextTick()
+
+    expect(shell.style.getPropertyValue('--app-sidebar-width')).toBe('300px')
+    expect(shell.style.getPropertyValue('--app-rail-width')).toBe('360px')
+    expect(shell.style.getPropertyValue('--app-body-size')).toBe('17px')
+    expect(shell.style.getPropertyValue('--app-line-height')).toBe('2')
+
+    appearance.setSidebarWidth(999)
+    appearance.setBodyFontSize(1)
+    await nextTick()
+
+    expect(shell.style.getPropertyValue('--app-sidebar-width')).toBe('400px')
+    expect(shell.style.getPropertyValue('--app-body-size')).toBe('12px')
+  })
+})

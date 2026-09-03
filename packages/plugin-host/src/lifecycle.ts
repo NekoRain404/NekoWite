@@ -59,15 +59,24 @@ export function hasLifecycleListeners(event: LifecycleEvent): boolean {
 }
 
 export function emitLifecycle(event: LifecycleEvent, ...args: unknown[]): string | void {
+  const isSave = event === 'onSave'
+  // onSave transforms chain: once a hook returns a string, that string becomes
+  // the content argument for the following hooks; a non-string return passes
+  // the running value through unchanged. Other events fan out with the
+  // original args.
   let next: string | undefined
-  for (const entry of hooks.get(event) ?? []) {
+  // Iterate a snapshot of the hook list: a hook that unregisters another hook
+  // mid-emit must not shift indices and skip the hook after it. Hooks
+  // registered during this emit are picked up on the next emit.
+  for (const entry of [...(hooks.get(event) ?? [])]) {
     try {
       // Keep ctx.editor truthful: it always reflects the active editor at emit
       // time, so hooks that opt into ctx (rather than the editor ARG) see the
       // right instance.
       entry.ctx.editor = activeEditor
-      const r = entry.fn(entry.ctx, ...args)
-      if (event === 'onSave' && typeof r === 'string') next = r
+      const hookArgs = isSave && next !== undefined ? [args[0], next] : args
+      const r = entry.fn(entry.ctx, ...hookArgs)
+      if (isSave && typeof r === 'string') next = r
     } catch {
       /* isolation: one plugin's failure never blocks others */
     }

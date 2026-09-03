@@ -60,9 +60,9 @@ test('opens vault, opens welcome.md, edits, and toggles views', async ({ page })
   await expect(toolbar.locator('.toolbar-btn').first()).toBeVisible()
 
   await page.locator('.switch-option', { hasText: '源码' }).click()
-  const source = page.locator('.source-textarea')
+  const source = page.locator('[data-testid="source-pane"] .cm-content')
   await expect(source).toBeVisible()
-  await expect(source).toHaveValue(/# Welcome/)
+  await expect(source).toContainText('# Welcome')
   await expect(renderedHeading).not.toBeVisible()
 
   await page.locator('.switch-option', { hasText: '渲染' }).click()
@@ -71,6 +71,27 @@ test('opens vault, opens welcome.md, edits, and toggles views', async ({ page })
   await page.locator('.switch-option', { hasText: '对照' }).click()
   const split = page.locator('.panes.split')
   await expect(split).toBeVisible()
-  await expect(split.locator('.source-textarea')).toBeVisible()
+  await expect(split.locator('[data-testid="source-pane"] .cm-content')).toBeVisible()
   await expect(split.locator('.pane.rendered .ProseMirror h1')).toHaveText('Welcome')
+})
+
+test('toolbar commands format the document (bold + heading dropdown)', async ({ page }) => {
+  await page.goto('/')
+
+  await page.locator('.tree-name', { hasText: 'welcome.md' }).click()
+  const renderedHeading = page.locator('.pane.rendered .ProseMirror h1')
+  await expect(renderedHeading).toHaveText('Welcome')
+
+  // Select the heading text and apply bold from the toolbar.
+  await renderedHeading.click()
+  await page.keyboard.press('Control+a')
+  await page.locator('.toolbar-btn[title="加粗"]').click()
+
+  // Re-level the heading via the heading dropdown (h1 → h3).
+  await page.locator('.toolbar-btn[title="标题"]').click()
+  await page.locator('.heading-option', { hasText: '标题 3' }).click()
+
+  await page.locator('.switch-option', { hasText: '源码' }).click()
+  const source = page.locator('[data-testid="source-pane"] .cm-content')
+  await expect(source).toContainText('### **Welcome**')
 })

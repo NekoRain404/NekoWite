@@ -67,10 +67,12 @@ describe('exportToPdf', () => {
     vi.spyOn(document.body, 'appendChild').mockReturnValue(iframe as unknown as HTMLElement)
   }
 
-  it('removes the iframe once and cancels the fallback timer on successful print', () => {
+  it('removes the iframe once and cancels the fallback timer on successful print', async () => {
     const iframe = makeIframe(() => undefined)
     stubDom(iframe)
-    exportToPdf('# T\n', { title: 'Doc' })
+    // Rendering (and with it the iframe setup) is async since the export
+    // pipeline resolves image srcs before printing.
+    await exportToPdf('# T\n', { title: 'Doc' })
     expect(iframe.onload).not.toBeNull()
     iframe.fireLoad()
     expect(iframe.remove).toHaveBeenCalledTimes(1)
@@ -78,22 +80,22 @@ describe('exportToPdf', () => {
     expect(iframe.remove).toHaveBeenCalledTimes(1)
   })
 
-  it('removes the iframe once when print throws', () => {
+  it('removes the iframe once when print throws', async () => {
     const iframe = makeIframe(() => {
       throw new Error('print unavailable')
     })
     stubDom(iframe)
-    exportToPdf('# T\n', {})
+    await exportToPdf('# T\n', {})
     iframe.fireLoad()
     expect(iframe.remove).toHaveBeenCalledTimes(1)
     vi.advanceTimersByTime(60001)
     expect(iframe.remove).toHaveBeenCalledTimes(1)
   })
 
-  it('falls back to the timer to clean up the iframe when onload never fires', () => {
+  it('falls back to the timer to clean up the iframe when onload never fires', async () => {
     const iframe = makeIframe(() => undefined)
     stubDom(iframe)
-    exportToPdf('# T\n', {})
+    await exportToPdf('# T\n', {})
     expect(iframe.remove).not.toHaveBeenCalled()
     vi.advanceTimersByTime(59999)
     expect(iframe.remove).not.toHaveBeenCalled()

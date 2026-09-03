@@ -65,8 +65,10 @@ function later(): void {
   bottom: 32px;
   left: 50%;
   transform: translateX(-50%);
-  width: min(420px, 90vw);
-  padding: 12px 14px;
+  width: min(440px, 90vw);
+  padding: 14px 16px;
+  border-radius: var(--app-radius-xl);
+  box-shadow: var(--app-shadow-dialog);
   font-size: 13px;
   color: var(--app-text);
 }

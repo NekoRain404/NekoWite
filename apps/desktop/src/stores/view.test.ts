@@ -25,6 +25,29 @@ describe('useViewStore', () => {
     expect(s.sourceScroll).toBe(42)
     expect(s.renderedScroll).toBe(0)
   })
+  it('clamps split ratio into [0.25, 0.75]', () => {
+    const s = useViewStore()
+    expect(s.splitRatio).toBe(0.5)
+    s.setSplitRatio(0.1)
+    expect(s.splitRatio).toBe(0.25)
+    s.setSplitRatio(0.9)
+    expect(s.splitRatio).toBe(0.75)
+    s.setSplitRatio(0.6249)
+    expect(s.splitRatio).toBe(0.625)
+    s.setSplitRatio(Number.NaN)
+    expect(s.splitRatio).toBe(0.5)
+  })
+  it('stores and consumes the pending outline target', () => {
+    const s = useViewStore()
+    expect(s.pendingOutlineTarget).toBeNull()
+    s.requestOutlineTarget({ line: 7, index: 3 })
+    expect(s.pendingOutlineTarget).toEqual({ line: 7, index: 3 })
+    // Re-requesting the same heading replaces the object so watchers fire.
+    s.requestOutlineTarget({ line: 7, index: 3 })
+    expect(s.pendingOutlineTarget).toEqual({ line: 7, index: 3 })
+    s.consumeOutlineTarget()
+    expect(s.pendingOutlineTarget).toBeNull()
+  })
 })
 
 describe('lifecycle broadcast from view store', () => {

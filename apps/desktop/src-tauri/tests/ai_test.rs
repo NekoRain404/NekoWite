@@ -152,15 +152,15 @@ fn sse_reassembles_fragmented_chunk() {
     let mut acc = String::new();
 
     // network chunk 1 splits the data: line mid-JSON
-    let lines = buf.feed(r#"data: {"choices":[{"delta":{"content":"Hel"#);
+    let lines = buf.feed(r#"data: {"choices":[{"delta":{"content":"Hel"#.as_bytes());
     assert!(lines.is_empty(), "partial line must stay buffered");
 
     // chunk 2 completes the JSON but not the newline
-    let lines = buf.feed(r#"lo"}}]}"#);
+    let lines = buf.feed(r#"lo"}}]}"#.as_bytes());
     assert!(lines.is_empty(), "line incomplete until newline arrives");
 
     // chunk 3 terminates the line
-    let lines = buf.feed("\n");
+    let lines = buf.feed(b"\n");
     assert_eq!(lines.len(), 1);
     assert_eq!(lines[0], r#"data: {"choices":[{"delta":{"content":"Hello"}}]}"#);
 
@@ -175,7 +175,8 @@ fn sse_buffer_returns_multiple_complete_lines() {
     let mut acc = String::new();
     let lines = buf.feed(
         "data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\
-         data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n",
+         data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n"
+            .as_bytes(),
     );
     assert_eq!(lines.len(), 2);
     let mut out = String::new();
@@ -186,6 +187,59 @@ fn sse_buffer_returns_multiple_complete_lines() {
     }
     assert_eq!(out, "Hello");
     assert_eq!(acc, "Hello");
+}
+
+#[test]
+fn sse_buffer_preserves_cjk_split_across_chunks() {
+    // "こんにちは" is 3 UTF-8 bytes per character. Cut the SSE line inside the
+    // FIRST character's byte sequence: with per-chunk `String::from_utf8_lossy`
+    // decoding, those orphaned bytes came back as U+FFFD and the JSON parse
+    // failed, dropping the text entirely. Byte-level buffering must carry the
+    // partial sequence across feed() calls instead.
+    let line = r#"data: {"choices":[{"delta":{"content":"こんにちは"}}]}"#;
+    // The newline rides in the second chunk, completing the line there.
+    let bytes = format!("{line}\n").into_bytes();
+    // `data: ` is 6 bytes and the JSON prefix
+    // `{"choices":[{"delta":{"content":"` is 33, so the content starts at byte
+    // 39; byte 41 falls in the middle of こ (E3 81 93).
+    let (head, tail) = bytes.split_at(41);
+    assert!(
+        std::str::from_utf8(head).is_err(),
+        "split point must fall inside a multi-byte UTF-8 sequence"
+    );
+
+    let mut buf = SseBuffer::new();
+    let mut acc = String::new();
+
+    let lines = buf.feed(head);
+    assert!(lines.is_empty(), "partial bytes must stay buffered");
+
+    let lines = buf.feed(tail);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0], line, "reassembled line must be byte-identical");
+
+    let delta = parse_sse_line(&lines[0], "openai", &mut acc);
+    assert_eq!(delta.as_deref(), Some("こんにちは"));
+    assert_eq!(acc, "こんにちは");
+}
+
+#[test]
+fn sse_buffer_flush_drains_trailing_line_without_newline() {
+    let mut buf = SseBuffer::new();
+    let mut acc = String::new();
+
+    // A final event the server never terminates with a newline.
+    let lines = buf.feed(r#"data: {"choices":[{"delta":{"content":"end"}}]}"#.as_bytes());
+    assert!(lines.is_empty(), "no newline yet, nothing complete");
+
+    let lines = buf.flush();
+    assert_eq!(lines.len(), 1);
+    let delta = parse_sse_line(&lines[0], "openai", &mut acc);
+    assert_eq!(delta.as_deref(), Some("end"));
+    assert_eq!(acc, "end");
+
+    // Flushing an empty buffer is a no-op.
+    assert!(buf.flush().is_empty());
 }
 
 #[test]

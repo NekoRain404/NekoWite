@@ -10,8 +10,22 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "NekoWite", "width": 1200, "height": 800 }],
-    "security": { "csp": null }
+    "windows": [{
+      "title": "NekoWite",
+      "width": 1280,
+      "height": 820,
+      "minWidth": 860,
+      "minHeight": 560,
+      "decorations": false,
+      "center": true
+    }],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["attachments/**"]
+      }
+    }
   },
   "bundle": { "active": true, "targets": "all" }
 }

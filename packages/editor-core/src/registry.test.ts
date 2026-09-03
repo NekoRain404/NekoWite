@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   registerCommand,
   getCommand,
+  listCommands,
   registerComponent,
   getComponent,
   registerToolbar,
@@ -20,6 +21,12 @@ describe('registry', () => {
     const run = () => {}
     registerCommand({ id: 'c1', run })
     expect(getCommand('c1')?.run).toBe(run)
+  })
+  it('lists registered commands and drops unregistered ones', () => {
+    registerCommand({ id: 'c-list', run: () => {} })
+    expect(listCommands().some((c) => c.id === 'c-list')).toBe(true)
+    unregisterCommand('c-list')
+    expect(listCommands().some((c) => c.id === 'c-list')).toBe(false)
   })
   it('registers component', () => {
     registerComponent('Callout', Dummy)

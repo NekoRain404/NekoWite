@@ -3,10 +3,12 @@ import type { NekoEditor } from '@nekowite/editor-core'
 type EditorView = NonNullable<ReturnType<NekoEditor['getView']>>
 
 let editor: NekoEditor | null = null
+const editorListeners = new Set<(e: NekoEditor | null) => void>()
 
 export const editorBridge = {
   setEditor(e: NekoEditor | null): void {
     editor = e
+    editorListeners.forEach((cb) => cb(e))
   },
   getEditor(): NekoEditor | null {
     return editor
@@ -17,6 +19,17 @@ export const editorBridge = {
       return editor.getView()
     } catch {
       return null
+    }
+  },
+  /**
+   * Subscribe to editor (re)creation. The editor is created lazily after the
+   * first tab opens, so panels that need it must subscribe rather than probe
+   * once at mount.
+   */
+  onEditorChange(cb: (e: NekoEditor | null) => void): () => void {
+    editorListeners.add(cb)
+    return () => {
+      editorListeners.delete(cb)
     }
   },
 }

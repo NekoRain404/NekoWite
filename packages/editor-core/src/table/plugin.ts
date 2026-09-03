@@ -9,6 +9,14 @@ export const TABLE_COMMAND_ID = 'table.insert'
 
 let activeView: EditorView | null = null
 
+/**
+ * Keep the insert command's view reference in sync with the live editor.
+ * createEditor sets it when the view is ready and clears it on destroy.
+ */
+export function setTableFeatureView(view: EditorView | null): void {
+  activeView = view
+}
+
 export function tableMarkdown(rows: number, cols: number): string {
   const header = `| ${Array.from({ length: cols }, (_, c) => String.fromCharCode(97 + c)).join(' | ')} |`
   const sep = `| ${Array.from({ length: cols }, () => '-').join(' | ')} |`

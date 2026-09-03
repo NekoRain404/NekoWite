@@ -30,6 +30,9 @@ export interface RenderDocumentOptions {
   componentRenderers?: Record<string, ComponentRenderer>
   math?: 'katex' | 'text'
   includeCss?: boolean
+  /** Async display-URL resolver for image srcs (e.g. vault-relative
+   * attachment paths). Only used by the async render entry point. */
+  resolveImage?: (src: string) => Promise<string>
 }
 
 interface TransformNode {
@@ -300,11 +303,42 @@ th { background: #f6f8fa; }
 .frontmatter { background: #f6f8fa; padding: 0.75rem 1rem; border-radius: 6px; color: #57606a; }
 `
 
-export function renderDocument(markdown: string, opts?: RenderDocumentOptions): string {
-  const math = opts?.math ?? 'katex'
+function parseChildren(markdown: string): RenderNode[] {
   const tree = processor.parse(markdown)
   const result = processor.runSync(tree, markdown) as unknown as RenderNode
-  const children = (result.children ?? []) as RenderNode[]
+  return (result.children ?? []) as RenderNode[]
+}
+
+/** Rewrite every resolvable image src in the parsed tree to a display URL.
+ * Concurrent repeats of the same src share one resolver call. */
+async function resolveImageNodes(
+  nodes: RenderNode[],
+  resolve: (src: string) => Promise<string>,
+  cache: Map<string, Promise<void>>,
+): Promise<void> {
+  for (const node of nodes) {
+    if (node.type === 'image' && typeof node.url === 'string' && node.url && !/^(https?:|data:|asset:|blob:|mailto:)/i.test(node.url) && !node.url.startsWith('/')) {
+      let pending = cache.get(node.url)
+      if (!pending) {
+        pending = resolve(node.url)
+          .then((display) => {
+            node.url = display
+          })
+          .catch(() => undefined)
+        cache.set(node.url, pending)
+      }
+      await pending
+      continue
+    }
+    // Component bodies are opaque source text re-parsed at render time; their
+    // nested images are not rewritten here (same atom rule as the editor).
+    if (node.type === 'mdxJsxFlowElement') continue
+    if (node.children) await resolveImageNodes(node.children as RenderNode[], resolve, cache)
+  }
+}
+
+function renderFromChildren(children: RenderNode[], opts?: RenderDocumentOptions): string {
+  const math = opts?.math ?? 'katex'
 
   const citeNumbers = new Map<string, number>()
   collectCiteOrder(children, citeNumbers)
@@ -330,4 +364,18 @@ export function renderDocument(markdown: string, opts?: RenderDocumentOptions): 
     `<title>${escapeHtml(title)}</title>${style}</head><body>` +
     `${body}${references}</body></html>`
   )
+}
+
+export function renderDocument(markdown: string, opts?: RenderDocumentOptions): string {
+  return renderFromChildren(parseChildren(markdown), opts)
+}
+
+/** Async variant of {@link renderDocument} that resolves image srcs to
+ * display URLs before rendering, so exported HTML/PDF keep working images. */
+export async function renderDocumentAsync(markdown: string, opts?: RenderDocumentOptions): Promise<string> {
+  const children = parseChildren(markdown)
+  if (opts?.resolveImage) {
+    await resolveImageNodes(children, opts.resolveImage, new Map())
+  }
+  return renderFromChildren(children, opts)
 }

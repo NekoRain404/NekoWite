@@ -9,6 +9,15 @@ export const MATH_COMMAND_ID = 'math.insert'
 
 let activeView: EditorView | null = null
 
+/**
+ * Keep the dialog command's view reference in sync with the live editor.
+ * createEditor sets it when the view is ready and clears it on destroy, so
+ * the command can never dispatch into a dead view.
+ */
+export function setMathFeatureView(view: EditorView | null): void {
+  activeView = view
+}
+
 export function insertMath(view: EditorView, latex: string, mode: 'inline' | 'display'): void {
   const { state } = view
   const type = mode === 'inline' ? state.schema.nodes.math_inline : state.schema.nodes.math_display

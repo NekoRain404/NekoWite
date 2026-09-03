@@ -14,6 +14,7 @@ const deleteFileMock = vi.hoisted(() => vi.fn())
 const statMock = vi.hoisted(() => vi.fn())
 const listHistoryMock = vi.hoisted(() => vi.fn())
 const restoreHistoryMock = vi.hoisted(() => vi.fn())
+const readHistoryMock = vi.hoisted(() => vi.fn())
 vi.mock('../services/fs', () => ({
   fsService: {
     read: readMock,
@@ -23,6 +24,7 @@ vi.mock('../services/fs', () => ({
     deleteFile: deleteFileMock,
     stat: statMock,
     listHistory: listHistoryMock,
+    readHistory: readHistoryMock,
     restoreHistory: restoreHistoryMock,
   },
 }))
@@ -33,6 +35,7 @@ function resetFsMocks(): void {
   deleteFileMock.mockReset()
   statMock.mockReset()
   listHistoryMock.mockReset()
+  readHistoryMock.mockReset()
   restoreHistoryMock.mockReset()
 }
 
@@ -305,6 +308,75 @@ describe('autosave debounce', () => {
   })
 })
 
+describe('renamePathInTabs', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    resetFsMocks()
+  })
+
+  it('rewrites the exact path of a tab and keeps its content', async () => {
+    readMock.mockResolvedValue('# hello')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    const tab = s.tabs[0]
+    tab.content = '# edited'
+    s.markDirty(tab.id)
+    s.renamePathInTabs('/vault/a.md', '/vault/b.md')
+    expect(tab.path).toBe('/vault/b.md')
+    expect(tab.content).toBe('# edited')
+    expect(tab.dirty).toBe(true)
+  })
+
+  it('rewrites nested paths under a renamed directory prefix', async () => {
+    readMock.mockResolvedValue('x')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/dir/note.md')
+    await s.openTab('/vault/dir/sub/deep.md')
+    await s.openTab('/vault/other.md')
+    const [note, deep, other] = s.tabs
+    s.renamePathInTabs('/vault/dir', '/vault/dir2')
+    expect(note.path).toBe('/vault/dir2/note.md')
+    expect(deep.path).toBe('/vault/dir2/sub/deep.md')
+    expect(other.path).toBe('/vault/other.md')
+  })
+
+  it('leaves untitled tabs untouched', async () => {
+    readMock.mockResolvedValue('x')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab(null)
+    const tab = s.tabs[0]
+    s.renamePathInTabs('/vault/a.md', '/vault/b.md')
+    expect(tab.path).toBeNull()
+  })
+})
+
+describe('closeOthers', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    resetFsMocks()
+  })
+
+  it('closes every tab except the given one, flushing dirty content first', async () => {
+    writeMock.mockResolvedValue(undefined)
+    readMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    await s.openTab('/vault/b.md')
+    await s.openTab('/vault/c.md')
+    const keep = s.tabs[1]
+    s.tabs[0].dirty = true
+    await s.closeOthers(keep.id)
+    expect(s.tabs).toHaveLength(1)
+    expect(s.tabs[0].id).toBe(keep.id)
+    expect(s.activeId).toBe(keep.id)
+    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'abc', 10)
+  })
+})
+
 describe('deleteTabFile', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -359,12 +431,29 @@ describe('checkCrashRecovery', () => {
     readMock.mockResolvedValue('abc')
     listHistoryMock.mockResolvedValue([{ id: 'snap-1', size: 3, mtime: 200 }])
     statMock.mockResolvedValue({ size: 3, mtime: 100 })
+    // A crash snapshot that genuinely differs from the disk content.
+    readHistoryMock.mockResolvedValue('abcd')
     const s = useTabsStore()
     s.setVault('/vault')
     await s.openTab('/vault/a.md')
     const tab = s.tabs[0]
     const entry = await s.checkCrashRecovery(tab.id)
     expect(entry).toEqual({ id: 'snap-1', size: 3, mtime: 200 })
+  })
+
+  it('returns null when the newest snapshot matches the disk content', async () => {
+    // An interrupted atomic write leaves a newest snapshot that is
+    // byte-identical to the file — "recovering" it is a no-op and must not
+    // surface a prompt.
+    readMock.mockResolvedValue('abc')
+    listHistoryMock.mockResolvedValue([{ id: 'snap-1', size: 3, mtime: 200 }])
+    statMock.mockResolvedValue({ size: 3, mtime: 100 })
+    readHistoryMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    const tab = s.tabs[0]
+    expect(await s.checkCrashRecovery(tab.id)).toBeNull()
   })
 
   it('returns null when the file is at least as new as the newest history', async () => {
@@ -389,6 +478,7 @@ describe('openTab crash-recovery prompt', () => {
     readMock.mockResolvedValue('abc')
     listHistoryMock.mockResolvedValue([{ id: 'snap-1', size: 3, mtime: 500 }])
     statMock.mockResolvedValue({ size: 3, mtime: 200 })
+    readHistoryMock.mockResolvedValue('unsaved snapshot content')
     restoreHistoryMock.mockResolvedValue('recovered')
 
     const prompts: RecoveryPrompt[] = []

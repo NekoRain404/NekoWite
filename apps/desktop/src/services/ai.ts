@@ -31,6 +31,10 @@ type ListenerCleanup = () => void
 let activeId: string | null = null
 let cleanups: ListenerCleanup[] = []
 const cancelledIds = new Set<string>()
+// Incremented by every trigger/accept/reject; events and listener
+// registrations from a superseded trigger are ignored, so a stale stream can
+// never be adopted (its first chunk previously won the activeId race).
+let streamSeq = 0
 
 function cleanupListeners(): void {
   cleanups.forEach((fn) => {
@@ -70,6 +74,8 @@ async function triggerSuggestion(
   editorArg?: NekoEditor | null,
   configArg?: AIConfig,
 ): Promise<void> {
+  streamSeq++
+  const mySeq = streamSeq
   cancelStream()
 
   const editor = editorArg ?? editorBridge.getEditor()
@@ -82,14 +88,21 @@ async function triggerSuggestion(
   let acc = ''
   let errorNotified = false
 
+  const superseded = (): boolean => mySeq !== streamSeq
+
   try {
     const offChunk = await listen<{ id: string; text: string }>('ai-chunk', (e) => {
+      if (superseded()) return
       if (cancelledIds.has(e.payload.id)) return
       if (activeId !== null && activeId !== e.payload.id) return
       if (activeId === null) activeId = e.payload.id
       acc += e.payload.text
       editor.setSuggestion(acc)
     })
+    if (superseded()) {
+      offChunk()
+      return
+    }
     // Track each listener as it registers so a mid-registration rejection
     // (e.g. the event system failing on `ai-done`) still cleans up the ones
     // that already went in — no partially-registered listener leaks.
@@ -102,19 +115,32 @@ async function triggerSuggestion(
       // cancelled-set entry (if it was cancelled) is no longer needed — prune it
       // to keep cancelledIds bounded.
       cancelledIds.delete(e.payload.id)
+      if (superseded()) return
       if (activeId === null || e.payload.id !== activeId) return
       cleanupListeners()
       activeId = null
     })
+    if (superseded()) {
+      offChunk()
+      offDone()
+      return
+    }
     cleanups.push(offDone)
     const offError = await listen<{ id: string; message: string }>('ai-error', (e) => {
       cancelledIds.delete(e.payload.id)
+      if (superseded()) return
       if (activeId === null || e.payload.id !== activeId) return
       errorNotified = true
       cleanupListeners()
       activeId = null
       notifyError(`AI 生成失败：${e.payload.message}`)
     })
+    if (superseded()) {
+      offChunk()
+      offDone()
+      offError()
+      return
+    }
     cleanups.push(offError)
   } catch (e) {
     cleanupListeners()
@@ -122,6 +148,8 @@ async function triggerSuggestion(
     notifyError(e instanceof Error ? e.message : String(e))
     return
   }
+
+  if (superseded()) return
 
   try {
     await getGateways().ai.complete(config, prompt)
@@ -137,11 +165,15 @@ async function triggerSuggestion(
 }
 
 function accept(): void {
+  // Bump the generation so a trigger that is still awaiting listener
+  // registration cannot attach after the suggestion was accepted/rejected.
+  streamSeq++
   editorBridge.getEditor()?.acceptSuggestion()
   cancelStream()
 }
 
 function reject(): void {
+  streamSeq++
   editorBridge.getEditor()?.rejectSuggestion()
   cancelStream()
 }

@@ -20,6 +20,7 @@ beforeEach(() => {
   unregisterToolbar('deact.toolbar')
   unregisterToolbar('dup.toolbar')
   deactivatePlugin('p1')
+  deactivatePlugin('p2')
   deactivatePlugin('bad')
   deactivatePlugin('deact')
   deactivatePlugin('dupbad')
@@ -86,6 +87,33 @@ describe('activatePlugin', () => {
     )
     expect(res.ok).toBe(false)
   })
+
+  it('re-activating an active id is an ok no-op (no duplicate hooks or toolbar)', async () => {
+    const run = () => {}
+    const firstHook = vi.fn()
+    const secondHook = vi.fn()
+    await activatePlugin(ok('p1', { toolbar: [{ id: 'p1.toolbar', label: 'T', run }], onDocChange: firstHook }))
+    const second = await activatePlugin(ok('p1', { toolbar: [{ id: 'p1.toolbar', label: 'T', run }], onDocChange: secondHook }))
+    expect(second).toEqual({ ok: true, id: 'p1' })
+    expect(getToolbar().filter((t) => t.id === 'p1.toolbar')).toHaveLength(1)
+    emitLifecycle('onDocChange', { doc: 'x' })
+    expect(firstHook).toHaveBeenCalledTimes(1)
+    expect(secondHook).not.toHaveBeenCalled()
+    deactivatePlugin('p1')
+    expect(getToolbar().some((t) => t.id === 'p1.toolbar')).toBe(false)
+    emitLifecycle('onDocChange', { doc: 'y' })
+    expect(firstHook).toHaveBeenCalledTimes(1)
+    expect(secondHook).not.toHaveBeenCalled()
+  })
+
+  it('onSave transforms from multiple plugins compose in activation order', async () => {
+    await activatePlugin(ok('p1', { onSave: (_ctx, _editor, content) => content.toUpperCase() }))
+    await activatePlugin(ok('p2', { onSave: (_ctx, _editor, content) => `${content}!` }))
+    expect(emitLifecycle('onSave', null, 'hello')).toBe('HELLO!')
+    deactivatePlugin('p1')
+    deactivatePlugin('p2')
+    expect(emitLifecycle('onSave', null, 'hello')).toBeUndefined()
+  })
 })
 
 describe('deactivatePlugin', () => {
@@ -141,5 +169,22 @@ describe('deactivatePlugin', () => {
     expect(unlisten).toHaveBeenCalledTimes(1)
     emitLifecycle('onDocChange', { doc: 'y' })
     expect(hook).toHaveBeenCalledTimes(1)
+  })
+
+  it('runs a hook cleanup exactly once even after multiple emits', async () => {
+    const cleanups = [vi.fn(), vi.fn(), vi.fn()]
+    let emit = 0
+    await activatePlugin(ok('p1', { onDocChange: () => cleanups[emit++] }))
+    emitLifecycle('onDocChange', { doc: '1' })
+    emitLifecycle('onDocChange', { doc: '2' })
+    emitLifecycle('onDocChange', { doc: '3' })
+    // a superseded cleanup is released as the next one arrives, never queued up
+    expect(cleanups[0]).toHaveBeenCalledTimes(1)
+    expect(cleanups[1]).toHaveBeenCalledTimes(1)
+    expect(cleanups[2]).not.toHaveBeenCalled()
+    deactivatePlugin('p1')
+    expect(cleanups[2]).toHaveBeenCalledTimes(1)
+    emitLifecycle('onDocChange', { doc: '4' })
+    expect(cleanups[2]).toHaveBeenCalledTimes(1)
   })
 })

@@ -1,6 +1,8 @@
-import { renderDocument, type ExportRef, type RenderDocumentOptions } from '@nekowite/editor-core'
+import { renderDocumentAsync, type ExportRef, type RenderDocumentOptions } from '@nekowite/editor-core'
 import { fsService } from './fs'
 import { buildComponentRenderers } from './exportRenderers'
+import { createImageSrcResolver } from './attachments'
+import { useTabsStore } from '../stores/tabs'
 
 export { buildComponentRenderers }
 
@@ -9,26 +11,47 @@ export interface ExportUiOptions {
   refs?: Map<string, ExportRef>
   math?: 'katex' | 'text'
   savePath?: string
+  /** Vault-relative path of the exported note; defaults to the active tab. */
+  notePath?: string | null
+}
+
+function storeContext(): { getVault(): string | null; getNotePath(): string | null } {
+  // The tabs store is read lazily per resolution so exports always see the
+  // live vault/note, and contexts without an active pinia (tests) degrade.
+  try {
+    const tabs = useTabsStore()
+    return {
+      getVault: () => tabs.vault,
+      getNotePath: () => tabs.activeTab?.path ?? null,
+    }
+  } catch {
+    return { getVault: () => null, getNotePath: () => null }
+  }
 }
 
 function toRenderOptions(opts: ExportUiOptions): RenderDocumentOptions {
+  const ctx = storeContext()
   return {
     title: opts.title,
     refs: opts.refs,
     componentRenderers: buildComponentRenderers(),
     math: opts.math,
     includeCss: true,
+    resolveImage: createImageSrcResolver(fsService, {
+      getVault: ctx.getVault,
+      getNotePath: () => opts.notePath ?? ctx.getNotePath(),
+    }),
   }
 }
 
 export async function exportHtml(source: string, vault: string, savePath: string, opts: ExportUiOptions): Promise<void> {
-  const html = renderDocument(source, toRenderOptions(opts))
+  const html = await renderDocumentAsync(source, toRenderOptions(opts))
   await fsService.write(vault, savePath, html)
 }
 
-export function exportToPdf(source: string, opts: ExportUiOptions): void {
+export async function exportToPdf(source: string, opts: ExportUiOptions): Promise<void> {
   if (typeof document === 'undefined') return
-  const html = renderDocument(source, toRenderOptions(opts))
+  const html = await renderDocumentAsync(source, toRenderOptions(opts))
   const iframe = document.createElement('iframe')
   iframe.style.display = 'none'
   iframe.srcdoc = html

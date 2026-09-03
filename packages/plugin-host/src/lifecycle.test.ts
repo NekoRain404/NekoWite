@@ -34,10 +34,54 @@ describe('lifecycle hooks', () => {
     expect(fn).not.toHaveBeenCalled()
   })
 
-  it('onSave last non-void string wins', () => {
-    registerLifecycleHook('p1', 'onSave', () => 'first', ctx)
-    registerLifecycleHook('p2', 'onSave', () => 'second', ctx)
-    expect(emitLifecycle('onSave', null, 'orig')).toBe('second')
+  it('onSave hooks chain: each hook receives the previous hook output', () => {
+    const unA = registerLifecycleHook('p1', 'onSave', (_ctx, _editor, content) => `${content}-a`, ctx)
+    const unB = registerLifecycleHook('p2', 'onSave', (_ctx, _editor, content) => `${content}-b`, ctx)
+    expect(emitLifecycle('onSave', null, 'orig')).toBe('orig-a-b')
+    unA()
+    unB()
+  })
+
+  it('onSave non-string returns pass the running value through unchanged', () => {
+    const seen: unknown[] = []
+    const unA = registerLifecycleHook(
+      'p1',
+      'onSave',
+      (_ctx, _editor, content) => {
+        seen.push(content)
+      },
+      ctx,
+    )
+    const unB = registerLifecycleHook(
+      'p2',
+      'onSave',
+      (_ctx, _editor, content) => {
+        seen.push(content)
+        return `${content}!`
+      },
+      ctx,
+    )
+    expect(emitLifecycle('onSave', null, 'x')).toBe('x!')
+    expect(seen).toEqual(['x', 'x'])
+    unA()
+    unB()
+  })
+
+  it('a hook that unregisters another hook mid-emit does not skip the following hook', () => {
+    const first = vi.fn()
+    const third = vi.fn()
+    const unFirst = registerLifecycleHook('p1', 'onCloseTab', first, ctx)
+    const unSecond = registerLifecycleHook('p2', 'onCloseTab', () => unFirst(), ctx)
+    const unThird = registerLifecycleHook('p3', 'onCloseTab', third, ctx)
+    emitLifecycle('onCloseTab', { id: 't1' })
+    expect(first).toHaveBeenCalledTimes(1)
+    expect(third).toHaveBeenCalledTimes(1)
+    // p1 stays unregistered for later emits, and p3 keeps firing
+    emitLifecycle('onCloseTab', { id: 't2' })
+    expect(first).toHaveBeenCalledTimes(1)
+    expect(third).toHaveBeenCalledTimes(2)
+    unSecond()
+    unThird()
   })
 
   it('hasLifecycleListeners reflects registration', () => {

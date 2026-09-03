@@ -49,13 +49,21 @@ pub fn next_ai_id() -> String {
 }
 
 /// Rolling line buffer that reassembles SSE lines split across arbitrary-size
-/// network chunks. `feed` appends a raw chunk and returns the complete lines
-/// (without their trailing newline), keeping any trailing partial line buffered
-/// until its newline arrives. Without this, a `data:{...}` event split across
-/// two chunks would fail JSON parse in both halves and be silently dropped.
+/// network chunks. `feed` appends a raw BYTES chunk and returns the complete
+/// lines (without their trailing newline), keeping any trailing partial bytes
+/// buffered until their newline arrives.
+///
+/// Buffering raw bytes instead of decoded text matters for CJK (and any
+/// multi-byte UTF-8): a network chunk boundary can split a character, and
+/// decoding each chunk on its own would turn the orphaned bytes into U+FFFD.
+/// Here the bytes are only decoded once the line is complete — a `\n` byte can
+/// never occur inside a multi-byte UTF-8 sequence, so splitting on `b'\n'`
+/// cannot itself corrupt one. Without the byte buffering, a `data:{...}` event
+/// split across two chunks would also fail JSON parse in both halves and be
+/// silently dropped.
 #[derive(Default)]
 pub struct SseBuffer {
-    pending: String,
+    pending: Vec<u8>,
 }
 
 impl SseBuffer {
@@ -63,14 +71,35 @@ impl SseBuffer {
         Self::default()
     }
 
-    pub fn feed(&mut self, chunk: &str) -> Vec<String> {
-        self.pending.push_str(chunk);
+    pub fn feed(&mut self, chunk: &[u8]) -> Vec<String> {
+        self.pending.extend_from_slice(chunk);
         let mut lines = Vec::new();
-        while let Some(nl) = self.pending.find('\n') {
-            let line = self.pending.drain(..=nl).collect::<String>();
+        while let Some(nl) = self.pending.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = self.pending.drain(..=nl).collect();
+            let line = String::from_utf8_lossy(&line);
             lines.push(line.trim_end_matches(['\r', '\n']).to_string());
         }
         lines
+    }
+
+    /// Drain any bytes still buffered once the stream has ended, as one final
+    /// line. Providers terminate the last event with a newline, so this is a
+    /// no-op in practice; it only matters when a server ends the response
+    /// mid-line, where dropping the tail could lose a final (otherwise
+    /// complete) event.
+    pub fn flush(&mut self) -> Vec<String> {
+        if self.pending.is_empty() {
+            return Vec::new();
+        }
+        let rest = std::mem::take(&mut self.pending);
+        let line = String::from_utf8_lossy(&rest)
+            .trim_end_matches(['\r', '\n'])
+            .to_string();
+        if line.is_empty() {
+            Vec::new()
+        } else {
+            vec![line]
+        }
     }
 }
 
@@ -233,12 +262,18 @@ async fn stream_complete(
         }
     }
 
-    // Enforce a hard 60s read timeout so a stalled provider cannot hang the
-    // stream forever (cooperative cancel only interrupts between chunks). The
-    // timeout error surfaces through `request.send()` / `bytes_stream()` and
-    // produces the same `ai-error` + `Err` path as a transport failure.
+    // Per-phase timeouts instead of a total-request deadline: `Client::timeout`
+    // caps the WHOLE request including the streaming body, so any completion
+    // longer than the cap aborts mid-stream. `connect_timeout` bounds the
+    // connection phase and `read_timeout` bounds each single read, so a stalled
+    // provider still cannot hang the stream forever (cooperative cancel only
+    // interrupts between chunks) while a long, actively-streaming completion
+    // runs to its natural end. The timeout error surfaces through
+    // `request.send()` / `bytes_stream()` and produces the same `ai-error` +
+    // `Err` path as a transport failure.
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
+        .connect_timeout(Duration::from_secs(15))
+        .read_timeout(Duration::from_secs(120))
         .build()
         .map_err(|e| {
             let _ = app.emit(
@@ -278,14 +313,17 @@ async fn stream_complete(
     let mut stream = response.bytes_stream();
     let mut full = String::new();
     let mut buffer = SseBuffer::new();
+    let mut stream_ended = false;
     loop {
         if !is_active(app, id) {
             break;
         }
         match stream.next().await {
             Some(Ok(chunk)) => {
-                let text = String::from_utf8_lossy(&chunk);
-                for line in buffer.feed(&text) {
+                // Feed the raw bytes; the buffer decodes only complete lines,
+                // so a multi-byte UTF-8 character split at a chunk boundary
+                // stays intact (decoding per chunk would corrupt it to U+FFFD).
+                for line in buffer.feed(&chunk) {
                     if let Some(delta) = parse_sse_line(&line, &config.provider, &mut full) {
                         let _ = app.emit(
                             "ai-chunk",
@@ -304,7 +342,25 @@ async fn stream_complete(
                 );
                 return Err(e.to_string());
             }
-            None => break,
+            None => {
+                stream_ended = true;
+                break;
+            }
+        }
+    }
+    // The stream ran to its end (as opposed to being cancelled): emit a final
+    // partial line if the server stopped mid-line, so its text is not dropped.
+    if stream_ended {
+        for line in buffer.flush() {
+            if let Some(delta) = parse_sse_line(&line, &config.provider, &mut full) {
+                let _ = app.emit(
+                    "ai-chunk",
+                    AIChunk {
+                        id: id.to_string(),
+                        text: delta,
+                    },
+                );
+            }
         }
     }
     let _ = app.emit("ai-done", serde_json::json!({ "id": id, "full": full }));

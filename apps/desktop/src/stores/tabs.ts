@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { emitLifecycle, getActiveEditor } from '@nekowite/plugin-host'
 import { armSuppressReapply } from '../services/suppressReapply'
 import { fsService } from '../services/fs'
@@ -18,6 +18,9 @@ export interface OpenTab {
 let seq = 0
 const nextId = () => `tab-${++seq}`
 
+/** Window during which an fs-change for a path is attributed to our own save. */
+const SELF_WRITE_MS = 2000
+
 export const useTabsStore = defineStore('tabs', () => {
   const tabs = ref<OpenTab[]>([])
   const activeId = ref<string | null>(null)
@@ -28,10 +31,13 @@ export const useTabsStore = defineStore('tabs', () => {
   )
   const settings = useSettingsStore()
   const autoTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const selfWrites = new Map<string, number>()
 
   function scheduleAutosave(id: string): void {
-    if (settings.autosaveInterval === 'off') return
+    // Cancel first so re-arming with a new interval (or turning autosave off)
+    // always replaces a pending timer instead of leaving a stale one behind.
     cancelAutosave(id)
+    if (settings.autosaveInterval === 'off') return
     autoTimers.set(
       id,
       setTimeout(() => {
@@ -52,6 +58,18 @@ export const useTabsStore = defineStore('tabs', () => {
     }
   }
 
+  // Interval changed (or autosave toggled): drop every pending timer, then
+  // re-arm only the tabs that actually have unsaved work.
+  watch(
+    () => settings.autosaveInterval,
+    () => {
+      for (const t of tabs.value) {
+        if (t.dirty) scheduleAutosave(t.id)
+        else cancelAutosave(t.id)
+      }
+    },
+  )
+
   function markSaving(id: string): void {
     const next = new Set(savingIds.value)
     next.add(id)
@@ -71,19 +89,42 @@ export const useTabsStore = defineStore('tabs', () => {
     return 'saved'
   }
 
+  function noteSelfWrite(path: string): void {
+    selfWrites.set(path, Date.now())
+  }
+
+  function isSelfWrite(path: string): boolean {
+    const ts = selfWrites.get(path)
+    if (ts === undefined) return false
+    if (Date.now() - ts > SELF_WRITE_MS) {
+      selfWrites.delete(path)
+      return false
+    }
+    return true
+  }
+
   function setVault(v: string): void {
     vault.value = v
   }
 
   async function openTab(path: string | null, initial = ''): Promise<void> {
-    let content = initial
     if (path) {
+      // Focus the existing tab instead of opening a duplicate: two tabs on
+      // one file would autosave competing content to the same path.
+      const existing = tabs.value.find((t) => t.path === path)
+      if (existing) {
+        activeId.value = existing.id
+        return
+      }
       if (!vault.value) {
         notifyError('尚未打开 vault，无法读取文件')
         return
       }
+    }
+    let content = initial
+    if (path) {
       try {
-        content = await fsService.read(vault.value, path)
+        content = await fsService.read(vault.value!, path)
       } catch {
         notifyError(`无法读取文件：${path}`)
         return
@@ -111,7 +152,8 @@ export const useTabsStore = defineStore('tabs', () => {
     }
   }
 
-  function closeTab(id: string): void {
+  /** Remove a tab without flushing anything (used after the file is gone). */
+  function removeTab(id: string): void {
     cancelAutosave(id)
     const i = tabs.value.findIndex((t) => t.id === id)
     if (i < 0) return
@@ -120,6 +162,44 @@ export const useTabsStore = defineStore('tabs', () => {
     tabs.value.splice(i, 1)
     if (activeId.value === id) {
       activeId.value = tabs.value[i]?.id ?? tabs.value[i - 1]?.id ?? null
+    }
+  }
+
+  async function closeTab(id: string): Promise<void> {
+    const t = tabs.value.find((x) => x.id === id)
+    // Unsaved work is flushed, not discarded: the pending autosave timer is
+    // cancelled on removal, so without this the edits would be unrecoverable.
+    if (t?.dirty) {
+      const ok = await saveTab(id)
+      if (!ok) return // save failed — keep the tab so nothing is lost
+    }
+    removeTab(id)
+  }
+
+  function closeAll(): void {
+    for (const t of [...tabs.value]) removeTab(t.id)
+    activeId.value = null
+  }
+
+  async function closeOthers(id: string): Promise<void> {
+    for (const t of [...tabs.value]) {
+      if (t.id !== id) await closeTab(t.id)
+    }
+    if (tabs.value.some((t) => t.id === id)) activeId.value = id
+  }
+
+  /** Rewrites tab paths after a file/directory rename on disk. Content is
+   * untouched; tabs keep their dirty state and autosave timers. */
+  function renamePathInTabs(from: string, to: string): void {
+    for (const t of tabs.value) {
+      if (!t.path) continue
+      if (t.path === from) {
+        t.path = to
+        noteSelfWrite(to)
+      } else if (t.path.startsWith(from + '/')) {
+        t.path = to + t.path.slice(from.length)
+        noteSelfWrite(t.path)
+      }
     }
   }
 
@@ -132,27 +212,49 @@ export const useTabsStore = defineStore('tabs', () => {
     if (t) t.dirty = true
   }
 
-  async function saveTab(id: string): Promise<void> {
+  /** Returns true when the file is on disk with the intended content. */
+  async function saveTab(id: string): Promise<boolean> {
     const t = tabs.value.find((x) => x.id === id)
-    if (!t || !t.path || !vault.value) return
+    if (!t || !vault.value) return false
+    let path = t.path
+    if (!path) {
+      // Untitled tab: an explicit save means "save as", not a silent no-op.
+      const picked = await fsService.saveFileDialog('untitled.md', vault.value)
+      if (!picked) return false
+      t.path = picked
+      path = picked
+    }
     const editor = getActiveEditor()
+    const contentAtStart = t.content
     const next = emitLifecycle('onSave', editor, t.content)
     const content = typeof next === 'string' ? next : t.content
     markSaving(t.id)
     try {
-      await fsService.write(vault.value, t.path, content, settings.maxHistory)
-      // I2: a save-time rewrite must not re-open the editor — the model syncs,
-      // but RenderedPane consumes this flag and skips applyContent so the
-      // user's live text and caret/scroll are preserved. Only arm when the
-      // written content actually differs (an onSave rewrite); otherwise the
-      // flag would linger and wrongly suppress the next legit content change.
-      if (content !== t.content) armSuppressReapply()
-      t.savedContent = content
-      t.content = content
-      t.dirty = false
+      await fsService.write(vault.value, path, content, settings.maxHistory)
+      noteSelfWrite(path)
+      // The write round-trip is a window in which the user can keep typing.
+      // Never clobber newer editor content with the captured text.
+      const userTyped = t.content !== contentAtStart
+      const pluginRewrote = content !== contentAtStart
+      if (!userTyped && pluginRewrote) {
+        // Adopt the onSave rewrite; suppress the re-open its content change
+        // would trigger (the model syncs, the live text/caret stay put).
+        armSuppressReapply()
+        t.content = content
+        t.savedContent = content
+        t.dirty = false
+      } else if (userTyped) {
+        t.savedContent = content
+        // dirty stays true; the newer text still needs a save.
+      } else {
+        t.savedContent = content
+        t.dirty = false
+      }
       emitLifecycle('onSaved', editor, content)
+      return true
     } catch {
       notifyError('保存失败，内容已保留在编辑器中，请重试')
+      return false
     } finally {
       markSaved(t.id)
     }
@@ -166,24 +268,32 @@ export const useTabsStore = defineStore('tabs', () => {
   async function deleteTabFile(id: string): Promise<void> {
     const t = tabs.value.find((x) => x.id === id)
     if (!t || !t.path || !vault.value) return
+    const path = t.path
     try {
-      await fsService.deleteFile(vault.value, t.path)
+      await fsService.deleteFile(vault.value, path)
     } catch {
       notifyError('删除失败')
       return
     }
-    closeTab(id)
+    // Close every tab on that path: autosave from a leftover tab would
+    // resurrect the deleted file from stale content.
+    for (const tab of [...tabs.value]) {
+      if (tab.path === path) removeTab(tab.id)
+    }
   }
 
   async function restoreHistoryToActive(id: string, versionId: string): Promise<string | null> {
     const t = tabs.value.find((x) => x.id === id)
     if (!t || !t.path || !vault.value) return null
+    // Cancel a pending autosave BEFORE the await: a timer firing mid-restore
+    // could rename stale editor content over the freshly restored version.
+    cancelAutosave(id)
     try {
       const content = await fsService.restoreHistory(vault.value, t.path, versionId)
+      noteSelfWrite(t.path)
       t.content = content
       t.savedContent = content
       t.dirty = false
-      cancelAutosave(id)
       return content
     } catch {
       notifyError('恢复历史版本失败')
@@ -200,7 +310,16 @@ export const useTabsStore = defineStore('tabs', () => {
         fsService.stat(vault.value, t.path),
       ])
       const newest = entries[0] ?? null
-      return newest && newest.mtime > s.mtime ? newest : null
+      if (!newest || newest.mtime <= s.mtime) return null
+      // An interrupted atomic write leaves a newest snapshot that is
+      // byte-identical to the file on disk — recovering it is a no-op, and
+      // offering the prompt would only confuse. Only a genuinely different
+      // snapshot is worth restoring.
+      const [snapshot, disk] = await Promise.all([
+        fsService.readHistory(vault.value, t.path, newest.id),
+        fsService.read(vault.value, t.path),
+      ])
+      return snapshot === disk ? null : newest
     } catch {
       return null
     }
@@ -219,5 +338,5 @@ export const useTabsStore = defineStore('tabs', () => {
     }
   }
 
-  return { tabs, activeId, activeTab, vault, setVault, openTab, closeTab, setActive, markDirty, markSaving, markSaved, saveStateOf, saveActive, reloadFromDisk, scheduleAutosave, cancelAutosave, saveTab, deleteTabFile, restoreHistoryToActive, checkCrashRecovery }
+  return { tabs, activeId, activeTab, vault, setVault, openTab, closeTab, closeAll, closeOthers, renamePathInTabs, removeTab, setActive, markDirty, markSaving, markSaved, saveStateOf, noteSelfWrite, isSelfWrite, saveActive, reloadFromDisk, scheduleAutosave, cancelAutosave, saveTab, deleteTabFile, restoreHistoryToActive, checkCrashRecovery }
 })

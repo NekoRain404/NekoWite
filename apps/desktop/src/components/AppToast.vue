@@ -94,29 +94,29 @@ onBeforeUnmount(() => {
 <style scoped>
 .toast-stack {
   position: fixed;
-  top: 40px;
+  top: calc(var(--app-titlebar-height) + 10px);
   right: 12px;
   z-index: 2000;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-width: 320px;
+  max-width: 340px;
 }
 .toast {
   background: var(--app-elevated);
   color: var(--app-danger);
-  border: 1px solid var(--app-border);
-  border-left: 3px solid var(--app-danger);
-  border-radius: var(--app-radius);
-  padding: 8px 12px;
-  font-size: 13px;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 16%);
+  border: 1px solid color-mix(in srgb, var(--app-danger) 40%, var(--app-border));
+  border-radius: var(--app-radius-lg);
+  padding: 9px 12px;
+  font-size: 12px;
+  letter-spacing: -0.006em;
+  box-shadow: var(--app-shadow-menu);
   cursor: pointer;
   word-break: break-word;
 }
 .toast.recovery {
   color: var(--app-text);
-  border-left: 3px solid var(--app-accent);
+  border-color: var(--app-border);
   cursor: default;
   display: flex;
   flex-direction: column;

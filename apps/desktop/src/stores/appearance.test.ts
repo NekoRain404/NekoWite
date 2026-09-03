@@ -74,4 +74,46 @@ describe('useAppearanceStore', () => {
     s.setLineHeight(1.6)
     expect(s.lineHeight).toBe(1.6)
   })
+
+  it('defaults sidebarWidth to 232 and clamps into [180, 400]', () => {
+    const s = useAppearanceStore()
+    expect(s.sidebarWidth).toBe(232)
+    s.setSidebarWidth(100)
+    expect(s.sidebarWidth).toBe(180)
+    s.setSidebarWidth(999)
+    expect(s.sidebarWidth).toBe(400)
+    s.setSidebarWidth(280.7)
+    expect(s.sidebarWidth).toBe(281)
+  })
+
+  it('defaults railWidth to 300 and clamps into [240, 480]', () => {
+    const s = useAppearanceStore()
+    expect(s.railWidth).toBe(300)
+    s.setRailWidth(100)
+    expect(s.railWidth).toBe(240)
+    s.setRailWidth(999)
+    expect(s.railWidth).toBe(480)
+  })
+
+  it('persists and restores layout widths', () => {
+    const s = useAppearanceStore()
+    s.setSidebarWidth(320)
+    s.setRailWidth(420)
+    const saved = JSON.parse(localStorage.getItem('nekowite.appearance') ?? '{}')
+    expect(saved.sidebarWidth).toBe(320)
+    expect(saved.railWidth).toBe(420)
+
+    localStorage.setItem('nekowite.appearance', JSON.stringify({ sidebarWidth: 360, railWidth: 260 }))
+    setActivePinia(createPinia())
+    const restored = useAppearanceStore()
+    expect(restored.sidebarWidth).toBe(360)
+    expect(restored.railWidth).toBe(260)
+  })
+
+  it('falls back to defaults for corrupt layout widths', () => {
+    localStorage.setItem('nekowite.appearance', JSON.stringify({ sidebarWidth: 'wide', railWidth: null }))
+    const s = useAppearanceStore()
+    expect(s.sidebarWidth).toBe(232)
+    expect(s.railWidth).toBe(300)
+  })
 })

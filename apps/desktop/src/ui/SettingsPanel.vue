@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { X } from 'lucide-vue-next'
 import { useViewStore } from '../stores/view'
 import type { ViewMode } from '../stores/view'
 import { useTabsStore } from '../stores/tabs'
@@ -46,11 +47,22 @@ async function saveAiKey(): Promise<void> {
   }
 }
 
-function saveVault(): void {
+async function saveVault(): Promise<void> {
   const path = vaultInput.value.trim()
   if (!path) return
   localStorage.setItem('nekowite.vault', path)
   emit('saved', path)
+}
+
+async function browseVault(): Promise<void> {
+  try {
+    const picked = await fsService.openFolderDialog()
+    if (!picked) return
+    vaultInput.value = picked
+    await saveVault()
+  } catch (e) {
+    notifyError(`选择文件夹失败：${e instanceof Error ? e.message : String(e)}`)
+  }
 }
 
 function setMode(m: ViewMode): void {
@@ -85,56 +97,68 @@ function onExportPdf(): void {
 <template>
   <div class="settings-panel">
     <div class="panel-header">
-      <span class="panel-title">Settings</span>
+      <span class="panel-title">设置</span>
       <button
         class="settings-close"
-        title="Close"
+        title="关闭"
         @click="emit('close')"
       >
-        ×
+        <X
+          :size="15"
+          :stroke-width="1.8"
+        />
       </button>
     </div>
     <div class="settings-body">
-      <label class="settings-field">
-        <span>Vault path</span>
-        <input
-          v-model="vaultInput"
-          class="input"
-          type="text"
-          placeholder="/path/to/vault"
-          @keyup.enter="saveVault"
+      <div class="settings-section">
+        <span class="settings-label">知识库</span>
+        <div class="vault-row">
+          <input
+            v-model="vaultInput"
+            class="input"
+            type="text"
+            placeholder="/path/to/vault"
+            @keyup.enter="saveVault"
+          >
+          <button
+            class="btn btn-secondary btn-sm vault-browse"
+            title="浏览…"
+            @click="browseVault"
+          >
+            浏览…
+          </button>
+        </div>
+        <button
+          class="btn btn-secondary settings-save"
+          @click="saveVault"
         >
-      </label>
-      <button
-        class="btn btn-secondary settings-save"
-        @click="saveVault"
-      >
-        Save
-      </button>
+          保存并切换
+        </button>
+      </div>
 
       <div class="settings-section">
-        <span class="settings-label">View mode</span>
+        <span class="settings-label">视图</span>
         <div class="view-modes">
           <button
             class="switch-option"
             :class="{ 'is-active': view.mode === 'source' }"
             @click="setMode('source')"
           >
-            Source
+            源码
           </button>
           <button
             class="switch-option"
             :class="{ 'is-active': view.mode === 'rendered' }"
             @click="setMode('rendered')"
           >
-            Rendered
+            渲染
           </button>
           <button
             class="switch-option"
             :class="{ 'is-active': view.mode === 'split' }"
             @click="setMode('split')"
           >
-            Split
+            对照
           </button>
         </div>
       </div>
@@ -201,7 +225,7 @@ function onExportPdf(): void {
       </div>
 
       <div class="settings-section">
-        <span class="settings-label">导出 (当前文档)</span>
+        <span class="settings-label">导出（当前文档）</span>
         <div class="view-modes">
           <button
             class="btn btn-secondary btn-sm"
@@ -311,7 +335,7 @@ function onExportPdf(): void {
         >
           保存 Key
         </button>
-        <span class="settings-note">Key 经过加密存储，默认为主密码保护（本机文件级）。</span>
+        <span class="settings-note">Key 经加密存储，由主密码保护（本机文件级）。</span>
       </div>
     </div>
   </div>
@@ -323,35 +347,58 @@ function onExportPdf(): void {
   top: 0;
   right: 0;
   bottom: 0;
-  width: 300px;
+  width: 320px;
   background: var(--app-elevated);
   border-left: 1px solid var(--app-border);
-  box-shadow: -4px 0 12px rgb(0 0 0 / 14%);
+  border-radius: 0;
+  box-shadow: var(--app-shadow-dialog);
   color: var(--app-text);
   z-index: 100;
   display: flex;
   flex-direction: column;
 }
-[data-theme="dark"] .settings-panel {
-  box-shadow: -4px 0 16px rgb(0 0 0 / 45%);
-}
 .settings-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
   border: none;
   background: transparent;
-  font-size: 18px;
-  line-height: 1;
   cursor: pointer;
-  padding: 0 2px;
+  padding: 0;
   color: var(--app-muted);
+  border-radius: var(--app-radius-sm);
+  transition: background var(--app-motion-fast) var(--app-ease),
+              color var(--app-motion-fast) var(--app-ease);
 }
-.settings-close:hover { color: var(--app-text); }
-.settings-body { padding: 12px; display: flex; flex-direction: column; gap: 14px; }
-.settings-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--app-text); }
-.settings-note { font-size: 12px; color: var(--app-muted); }
+.settings-close:hover {
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--app-panel) 70%, transparent);
+}
+.settings-body {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  overflow-y: auto;
+}
+.settings-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--app-text); }
+.settings-field > span { color: var(--app-muted); font-size: 11px; }
+.settings-note { font-size: 11px; line-height: 1.5; color: var(--app-muted); }
 .settings-save { align-self: flex-start; }
-.settings-section { display: flex; flex-direction: column; gap: 6px; }
-.settings-label { font-size: 13px; font-weight: 500; }
-.view-modes { display: flex; gap: 6px; }
+.vault-row { display: flex; gap: 6px; }
+.vault-row .input { flex: 1; min-width: 0; }
+.vault-browse { flex: none; }
+.settings-section { display: flex; flex-direction: column; gap: 8px; padding-bottom: 14px; border-bottom: 1px solid color-mix(in srgb, var(--app-border) 50%, transparent); }
+.settings-section:last-child { border-bottom: none; padding-bottom: 0; }
+.settings-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+}
+.view-modes { display: flex; gap: 6px; flex-wrap: wrap; }
 .view-modes button:disabled { opacity: 0.5; cursor: not-allowed; }
 .accent-row { display: flex; gap: 6px; }
 </style>

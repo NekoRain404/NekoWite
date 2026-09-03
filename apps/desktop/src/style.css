@@ -8,26 +8,26 @@ body { font-family: var(--app-font); font-size: var(--app-body-size); line-heigh
 
 .ghost-text {
   pointer-events: none;
-  color: #999;
+  color: var(--app-muted);
 }
 
 .float-box {
   position: absolute;
-  border: 1px dashed #ccc;
-  background: #fff;
+  border: 1px dashed var(--app-border);
+  background: var(--app-elevated);
   box-sizing: border-box;
   cursor: move;
 }
 .float-box.selected {
-  border-color: #4a90d9;
-  box-shadow: 0 0 0 1px #4a90d9;
+  border-color: var(--app-accent);
+  box-shadow: 0 0 0 1px var(--app-accent);
 }
 .fb-handle {
   position: absolute;
   width: 10px;
   height: 10px;
-  background: #4a90d9;
-  border: 1px solid #fff;
+  background: var(--app-accent);
+  border: 1px solid var(--app-elevated);
   box-sizing: border-box;
   z-index: 2;
 }
@@ -46,8 +46,8 @@ body { font-family: var(--app-font); font-size: var(--app-body-size); line-heigh
   transform: translateX(-50%);
   width: 12px;
   height: 12px;
-  background: #fff;
-  border: 1px solid #4a90d9;
+  background: var(--app-elevated);
+  border: 1px solid var(--app-accent);
   border-radius: 50%;
   cursor: grab;
 }

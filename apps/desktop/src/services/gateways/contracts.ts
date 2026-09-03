@@ -32,6 +32,7 @@ export interface FsGateway {
   stat(vault: string, path: string): Promise<FileStat>
   write(vault: string, path: string, content: string, maxHistory?: number): Promise<void>
   list(vault: string, dir: string): Promise<FileEntry[]>
+  searchNotes(vault: string, query: string): Promise<FileEntry[]>
   watch(vault: string): Promise<void>
   openFolderDialog(): Promise<string | null>
   saveFileDialog(defaultName: string, startDir?: string): Promise<string | null>
@@ -42,6 +43,17 @@ export interface FsGateway {
   listHistory(vault: string, path: string): Promise<HistoryEntry[]>
   readHistory(vault: string, path: string, id: string): Promise<string>
   restoreHistory(vault: string, path: string, id: string): Promise<string>
+  /** Persist attachment bytes (base64) under the vault's attachments dir and
+   * return the vault-relative path it was stored at. */
+  saveAttachment(vault: string, fileName: string, base64: string): Promise<string>
+  /** Turn a vault-relative attachment path into a URL usable as <img src>. */
+  resolveMediaPath(vault: string, relPath: string): Promise<string>
+  /** Create a directory (with parents) inside the vault; returns its
+   * vault-relative path. */
+  createDir(vault: string, path: string): Promise<string>
+  /** Rename (move) a file or directory within the vault; returns the new
+   * vault-relative path. */
+  renameEntry(vault: string, from: string, to: string): Promise<string>
 }
 
 export interface AiGateway {

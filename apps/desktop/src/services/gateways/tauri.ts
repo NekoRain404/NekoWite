@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core'
+import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type {
   AiGateway,
@@ -22,6 +22,8 @@ export const tauriFsGateway: FsGateway = {
       max_history: maxHistory ?? null,
     }),
   list: (vault, dir) => invoke<FileEntry[]>('list_dir', { vault_root: vault, path: dir }),
+  searchNotes: (vault, query) =>
+    invoke<FileEntry[]>('search_notes', { vault_root: vault, query }),
   watch: (vault) => invoke<void>('watch_folder', { vault_root: vault, path: null }),
   openFolderDialog: () => invoke<string | null>('open_folder_dialog'),
   saveFileDialog: (defaultName, startDir) =>
@@ -41,6 +43,14 @@ export const tauriFsGateway: FsGateway = {
     invoke<string>('read_history', { vault_root: vault, path, id }),
   restoreHistory: (vault, path, id) =>
     invoke<string>('restore_history', { vault_root: vault, path, id }),
+  saveAttachment: (vault, fileName, base64) =>
+    invoke<string>('save_attachment', { vault, fileName, base64 }),
+  resolveMediaPath: async (vault, relPath) => {
+    const absolute = await invoke<string>('resolve_media_path', { vault, relPath })
+    return convertFileSrc(absolute)
+  },
+  createDir: (vault, path) => invoke<string>('create_dir', { vault, path }),
+  renameEntry: (vault, from, to) => invoke<string>('rename_entry', { vault, from, to }),
 }
 
 export const tauriAiGateway: AiGateway = {

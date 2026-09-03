@@ -36,11 +36,9 @@ watch(
 async function restore(entry: HistoryEntry): Promise<void> {
   const tab = tabs.activeTab
   if (!tab?.path) return
-  const content = await tabs.restoreHistoryToActive(tab.id, entry.id)
-  if (content === null) {
-    notifyError('恢复历史版本失败')
-    return
-  }
+  // restoreHistoryToActive reports its own failures; null just means
+  // "nothing restored" (error toast already shown, or the tab is gone).
+  await tabs.restoreHistoryToActive(tab.id, entry.id)
   // The content watcher also refreshes the list on restore; the explicit
   // reload below keeps the panel in sync even if the restored content equals
   // the current content (no reactive change).
@@ -61,10 +59,16 @@ onMounted(() => {
 <template>
   <section class="history-panel">
     <div class="history-header">
-      <h3>历史版本</h3>
+      <h3 class="rail-section-title">
+        历史版本
+        <span
+          v-if="entries.length"
+          class="rail-section-count"
+        >{{ entries.length }}</span>
+      </h3>
       <button
-        class="btn btn-secondary btn-sm btn-refresh"
-        title="Refresh history"
+        class="btn btn-ghost btn-sm btn-refresh"
+        title="刷新历史版本"
         @click="load"
       >
         刷新
@@ -79,6 +83,7 @@ onMounted(() => {
           v-for="e in entries"
           :key="e.id"
           class="history-item"
+          :title="e.id"
         >
           <span class="history-meta">
             <span class="history-time">{{ new Date(e.mtime).toLocaleString() }}</span>
@@ -95,14 +100,14 @@ onMounted(() => {
       </ul>
       <p
         v-else
-        class="history-empty"
+        class="rail-empty"
       >
         暂无历史版本
       </p>
     </template>
     <p
       v-else
-      class="history-empty"
+      class="rail-empty"
     >
       打开文档以查看历史版本
     </p>
@@ -111,64 +116,75 @@ onMounted(() => {
 
 <style scoped>
 .history-panel {
-  border-top: 1px solid var(--app-border);
-  padding: 10px;
-  max-height: 220px;
-  overflow: auto;
-  background: var(--app-elevated);
+  padding: 12px 14px;
 }
 .history-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
-.history-panel h3 {
-  color: var(--app-text);
-  font-size: 13px;
+.rail-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+}
+.rail-section-count {
+  font-weight: 400;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
 }
 .history-list {
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 12px;
-  color: var(--app-text);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 .history-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 0;
-  border-bottom: 1px solid var(--app-border);
+  padding: 6px 8px;
+  border-radius: var(--app-radius-sm);
+  transition: background var(--app-motion-fast) var(--app-ease);
 }
-.history-item:last-child {
-  border-bottom: none;
+.history-item:hover {
+  background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
 }
 .history-meta {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  flex: 1;
 }
 .history-time {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--app-text);
+  letter-spacing: -0.01em;
 }
 .history-size {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--app-muted);
-}
-.history-id {
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--app-muted);
-  font-family: ui-monospace, monospace;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
-.history-empty {
+.history-id {
+  display: none;
+  font-size: 10px;
   color: var(--app-muted);
-  font-size: 12px;
+  font-family: var(--app-mono-font);
+}
+.rail-empty {
+  margin: 0;
+  font-size: 11px;
+  color: var(--app-muted);
 }
 </style>

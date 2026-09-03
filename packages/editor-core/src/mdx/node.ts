@@ -67,20 +67,54 @@ export function insertMdxComponent(
   view.dispatch(state.tr.replaceSelectionWith(node))
 }
 
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#123;/g, '{')
+    .replace(/&amp;/g, '&')
+}
+
 export function parseMdxTag(html: string): MdxComponentAttrs {
-  const tagMatch = /^<([A-Za-z0-9]+)([^>]*?)\/?>/.exec(html)
-  const name = tagMatch ? tagMatch[1] : 'Component'
+  const nameMatch = /^<([A-Za-z0-9]+)/.exec(html)
+  const name = nameMatch ? nameMatch[1] : 'Component'
   const props: Record<string, string> = {}
-  if (tagMatch) {
-    const attrRe = /([A-Za-z0-9_-]+)="([^"]*)"/g
-    let match: RegExpExecArray | null
-    while ((match = attrRe.exec(tagMatch[2])) !== null) {
-      props[match[1]] = match[2]
+  let attrSource = ''
+  let body = ''
+  if (nameMatch) {
+    // Scan to the tag's closing '>' while respecting quoted attribute values
+    // so a '>' inside a value does not truncate parsing (the previous
+    // [^>]*? scan dropped every prop after it).
+    let end = html.length
+    for (let j = nameMatch[0].length; j < html.length; j++) {
+      const ch = html[j]
+      if (ch === '"' || ch === "'") {
+        const close = html.indexOf(ch, j + 1)
+        if (close === -1) break
+        j = close
+      } else if (ch === '>') {
+        end = j
+        break
+      }
+    }
+    attrSource = html.slice(nameMatch[0].length, end)
+    // Children are everything after the open tag, minus the closing tag.
+    const rest = end + 1 <= html.length ? html.slice(end + 1) : ''
+    const closeTag = `</${name}>`
+    if (rest.toLowerCase().endsWith(closeTag.toLowerCase())) {
+      body = rest.slice(0, rest.length - closeTag.length)
     }
   }
-  const bodyMatch = new RegExp(`<${name}[^>]*>([\\s\\S]*)<\\/${name}>`).exec(html)
-  const children = bodyMatch ? bodyMatch[1].trim() : ''
-  return { name, props, children }
+  const attrRe = /([A-Za-z0-9_-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>/`]+))|([A-Za-z0-9_-]+)/g
+  let match: RegExpExecArray | null
+  while ((match = attrRe.exec(attrSource)) !== null) {
+    const key = match[1] ?? match[5]
+    // Boolean attrs (`<Tag disabled>`) decode to an empty string; unquoted
+    // values are supported alongside single/double-quoted ones.
+    props[key] = decodeEntities(match[2] ?? match[3] ?? match[4] ?? '')
+  }
+  return { name, props, children: body.trim() }
 }
 
 const mdxNodeView: NodeViewConstructor = (node, view, getPos) => {
