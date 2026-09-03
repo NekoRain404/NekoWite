@@ -304,7 +304,11 @@ export function createMemoryFsGateway(
 export const memoryFsGateway = createMemoryFsGateway()
 
 export const memoryAiGateway: AiGateway = {
-  complete: async () => undefined,
+  complete: async (_config, _prompt, _images) => {
+    void _config
+    void _prompt
+    void _images
+  },
   cancel: async () => undefined,
 }
 

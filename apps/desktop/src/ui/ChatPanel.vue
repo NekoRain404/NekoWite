@@ -1,0 +1,752 @@
+<script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
+import {
+  Copy,
+  FilePlus2,
+  Paperclip,
+  Send,
+  Sparkles,
+  Square,
+  Trash2,
+  X,
+} from 'lucide-vue-next'
+import { startChatCompletion, aiService } from '../services/ai'
+import { notifyError } from '../services/errors'
+import { editorBridge } from '../services/editorBridge'
+import { collectClipboardImages, isImageFile } from '../services/attachments'
+import { useSettingsStore } from '../stores/settings'
+import { useTabsStore } from '../stores/tabs'
+import {
+  buildChatPrompt,
+  fileToDataURL,
+  nextImageId,
+  type ChatImage,
+  type ChatMessage,
+} from './chatLogic'
+
+interface ChatAttachment {
+  id: string
+  name: string
+  file: File
+  url: string
+}
+
+const settings = useSettingsStore()
+const tabs = useTabsStore()
+
+const messages = ref<ChatMessage[]>([])
+const attachments = ref<ChatAttachment[]>([])
+const prompt = ref('')
+const streaming = ref(false)
+const scrollEl = ref<HTMLElement | null>(null)
+const fileInput = ref<HTMLInputElement | null>(null)
+let cancelFn: (() => void) | null = null
+
+const modelName = computed(() => settings.model)
+const canSend = computed(() => !streaming.value && (prompt.value.trim().length > 0 || attachments.value.length > 0))
+const hasMessages = computed(() => messages.value.length > 0)
+
+function scrollToBottom(): void {
+  void nextTick(() => {
+    const el = scrollEl.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
+}
+
+function addFiles(files: File[]): void {
+  const seen = new Set(attachments.value.map((a) => `${a.name}:${a.file.size}:${a.file.type}`))
+  for (const file of files) {
+    if (!isImageFile(file)) continue
+    const key = `${file.name}:${file.size}:${file.type}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    attachments.value.push({
+      id: nextImageId(),
+      name: file.name,
+      file,
+      url: URL.createObjectURL(file),
+    })
+  }
+}
+
+function removeAttachment(id: string): void {
+  const index = attachments.value.findIndex((a) => a.id === id)
+  if (index < 0) return
+  const [removed] = attachments.value.splice(index, 1)
+  if (removed) URL.revokeObjectURL(removed.url)
+}
+
+function clearAttachments(): void {
+  for (const a of attachments.value) URL.revokeObjectURL(a.url)
+  attachments.value = []
+}
+
+function onPickClick(): void {
+  fileInput.value?.click()
+}
+
+function onFileChange(e: Event): void {
+  const input = e.target as HTMLInputElement
+  addFiles(Array.from(input.files ?? []))
+  input.value = ''
+}
+
+function onPaste(e: ClipboardEvent): void {
+  const files = collectClipboardImages(e.clipboardData ?? null)
+  if (files.length) addFiles(files)
+}
+
+function onDrop(e: DragEvent): void {
+  const files = Array.from(e.dataTransfer?.files ?? [])
+  if (files.length) {
+    addFiles(files)
+    e.preventDefault()
+  }
+}
+
+function onDragOver(e: DragEvent): void {
+  if (Array.from(e.dataTransfer?.items ?? []).some((i) => i.type.startsWith('image/'))) {
+    e.preventDefault()
+  }
+}
+
+function onComposerKeydown(e: KeyboardEvent): void {
+  if (e.isComposing || e.key === 'Process') return
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    void send()
+  }
+}
+
+async function itemDataUrls(list: ChatAttachment[]): Promise<ChatImage[]> {
+  const images: ChatImage[] = []
+  for (const a of list) {
+    images.push({ id: a.id, name: a.name, dataUrl: await fileToDataURL(a.file) })
+  }
+  return images
+}
+
+async function send(): Promise<void> {
+  if (streaming.value) return
+  const text = prompt.value.trim()
+  if (!text && attachments.value.length === 0) return
+
+  const imageDataUrls = await itemDataUrls(attachments.value)
+  const userMessage: ChatMessage = { role: 'user', content: text, images: imageDataUrls }
+  const history = [...messages.value, userMessage]
+  messages.value = [...messages.value, userMessage]
+  prompt.value = ''
+  clearAttachments()
+
+  const chatPrompt = buildChatPrompt(history.map((m) => ({ role: m.role, content: m.content })))
+  const assistant: ChatMessage = { role: 'assistant', content: '', streaming: true }
+  messages.value = [...messages.value, assistant]
+  const index = messages.value.length - 1
+  streaming.value = true
+  cancelFn = null
+  scrollToBottom()
+
+  const config = settings.config()
+  const imageUrls = imageDataUrls.map((img) => img.dataUrl)
+  void startChatCompletion(config, chatPrompt, imageUrls, {
+    onChunk: (chunk) => {
+      const m = messages.value[index]
+      if (m) m.content = chunk
+      scrollToBottom()
+    },
+    onDone: (full) => {
+      const m = messages.value[index]
+      if (m) m.content = full || m.content
+      finalize(index, true)
+      scrollToBottom()
+    },
+    onError: (msg) => {
+      finalize(index, false)
+      notifyError(`AI 生成失败：${msg}`)
+    },
+  })
+    .then((stream) => {
+      if (streaming.value) cancelFn = stream.cancel
+    })
+    .catch(() => undefined)
+}
+
+function finalize(index: number, retainEmpty: boolean): void {
+  const m = messages.value[index]
+  if (m) {
+    if (retainEmpty || m.content) {
+      m.streaming = false
+    } else {
+      messages.value = messages.value.filter((_, i) => i !== index)
+    }
+  }
+  streaming.value = false
+  cancelFn = null
+}
+
+function stop(): void {
+  const fn = cancelFn
+  cancelFn = null
+  fn?.()
+  aiService.cancelStream()
+  finalize(messages.value.length - 1, false)
+}
+
+function clearAll(): void {
+  cancelFn = null
+  aiService.cancelStream()
+  streaming.value = false
+  messages.value = []
+  clearAttachments()
+  prompt.value = ''
+}
+
+async function insertIntoDocument(msg: ChatMessage): Promise<void> {
+  if (!tabs.activeTab) return
+  const editor = editorBridge.getEditor()
+  if (!editor) {
+    notifyError('编辑器尚未就绪，请稍后再试')
+    return
+  }
+  try {
+    await editor.insertMarkdownAtCursor(`\n\n${msg.content}\n\n`)
+  } catch {
+    notifyError('插入失败，请重试')
+  }
+}
+
+async function copyMessage(msg: ChatMessage): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(msg.content)
+  } catch {
+    notifyError('复制失败，请手动复制')
+  }
+}
+
+onBeforeUnmount(() => {
+  clearAttachments()
+})
+</script>
+
+<template>
+  <section class="chat-panel">
+    <header class="chat-header">
+      <span class="chat-title">
+        AI 助手
+      </span>
+      <button
+        class="chat-clear"
+        title="清空对话"
+        :disabled="!hasMessages"
+        @click="clearAll"
+      >
+        <Trash2
+          :size="13"
+          :stroke-width="1.8"
+        />
+      </button>
+    </header>
+
+    <div
+      ref="scrollEl"
+      class="chat-scroll"
+    >
+      <div
+        v-if="!hasMessages"
+        class="chat-empty"
+      >
+        <Sparkles
+          class="chat-empty-icon"
+          :size="20"
+          :stroke-width="1.6"
+        />
+        <p class="chat-empty-title">
+          从一个问题开始
+        </p>
+        <p class="chat-empty-hint">
+          在编辑器光标处继续写作，或选中文字让 AI 讨论。
+        </p>
+        <p class="chat-empty-hint">
+          粘贴或拖入图片，让模型看图作答。
+        </p>
+      </div>
+
+      <div
+        v-for="(m, index) in messages"
+        :key="index"
+        class="chat-row"
+        :class="m.role"
+      >
+        <div class="chat-bubble">
+          <div
+            v-if="m.images && m.images.length"
+            class="chat-msg-images"
+          >
+            <img
+              v-for="img in m.images"
+              :key="img.id"
+              :src="img.dataUrl"
+              :alt="img.name"
+              draggable="false"
+            >
+          </div>
+          <div class="chat-content">
+            {{ m.content }}
+            <span
+              v-if="m.streaming"
+              class="chat-caret"
+              aria-hidden="true"
+            />
+          </div>
+        </div>
+        <div
+          v-if="m.role === 'assistant'"
+          class="chat-actions"
+        >
+          <button
+            v-if="m.streaming"
+            class="chat-action chat-stop"
+            title="中止"
+            @click="stop"
+          >
+            <Square
+              :size="12"
+              :stroke-width="1.8"
+            />
+            <span>中止</span>
+          </button>
+          <template v-else>
+            <button
+              class="chat-action"
+              title="插入到文档光标处"
+              :disabled="!tabs.activeTab"
+              @click="insertIntoDocument(m)"
+            >
+              <FilePlus2
+                :size="12"
+                :stroke-width="1.8"
+              />
+              <span>插入文档</span>
+            </button>
+            <button
+              class="chat-action"
+              title="复制内容"
+              @click="copyMessage(m)"
+            >
+              <Copy
+                :size="12"
+                :stroke-width="1.8"
+              />
+              <span>复制</span>
+            </button>
+          </template>
+        </div>
+      </div>
+    </div>
+
+    <div class="chat-composer">
+      <div
+        v-if="attachments.length"
+        class="chat-attachments"
+      >
+        <div
+          v-for="a in attachments"
+          :key="a.id"
+          class="chat-attach"
+        >
+          <img
+            :src="a.url"
+            :alt="a.name"
+            draggable="false"
+          >
+          <button
+            class="chat-attach-remove"
+            :title="`移除 ${a.name}`"
+            @click="removeAttachment(a.id)"
+          >
+            <X
+              :size="10"
+              :stroke-width="2"
+            />
+          </button>
+        </div>
+      </div>
+      <div
+        class="chat-input-row"
+        @drop="onDrop"
+        @dragover="onDragOver"
+      >
+        <input
+          ref="fileInput"
+          class="chat-file-input"
+          type="file"
+          accept="image/*"
+          multiple
+          tabindex="-1"
+          @change="onFileChange"
+        >
+        <button
+          class="chat-tool"
+          title="添加图片"
+          @click="onPickClick"
+        >
+          <Paperclip
+            :size="15"
+            :stroke-width="1.8"
+          />
+        </button>
+        <textarea
+          v-model="prompt"
+          class="chat-textarea"
+          rows="1"
+          placeholder="追问、提问或继续写作…"
+          @keydown="onComposerKeydown"
+          @paste="onPaste"
+        />
+        <button
+          class="chat-send"
+          title="发送"
+          :disabled="!canSend"
+          @click="send"
+        >
+          <Send
+            :size="15"
+            :stroke-width="1.8"
+          />
+        </button>
+      </div>
+      <div class="chat-model">
+        <span>{{ modelName }}</span>
+        <span class="chat-hint">Enter 发送 / Shift+Enter 换行</span>
+      </div>
+    </div>
+  </section>
+</template>
+
+<style scoped>
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex: none;
+  padding: 12px 14px 6px;
+}
+.chat-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+}
+.chat-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+  transition: background var(--app-motion-fast) var(--app-ease),
+              color var(--app-motion-fast) var(--app-ease);
+}
+.chat-clear:hover:not(:disabled) {
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
+}
+.chat-clear:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.chat-clear:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
+.chat-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chat-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex: 1;
+  min-height: 160px;
+  padding: 16px;
+  text-align: center;
+  color: var(--app-muted);
+}
+.chat-empty-icon {
+  margin-bottom: 4px;
+  color: color-mix(in srgb, var(--app-accent) 60%, var(--app-muted));
+}
+.chat-empty-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--app-text);
+}
+.chat-empty-hint {
+  margin: 0;
+  max-width: 220px;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--app-muted);
+}
+.chat-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.chat-row.user {
+  align-items: flex-end;
+}
+.chat-bubble {
+  max-width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--app-radius-lg);
+  background: var(--app-elevated);
+  color: var(--app-text);
+  font-size: 12px;
+  line-height: 1.7;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.chat-row.user .chat-bubble {
+  background: color-mix(in srgb, var(--app-accent-soft) 82%, var(--app-elevated));
+}
+.chat-content {
+  margin: 0;
+}
+.chat-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--app-accent);
+  animation: chat-caret-blink 1s steps(2, start) infinite;
+}
+@keyframes chat-caret-blink {
+  0%, 50% { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
+}
+.chat-msg-images {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.chat-msg-images img {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: var(--app-radius-sm);
+  border: 1px solid color-mix(in srgb, var(--app-border) 70%, transparent);
+}
+.chat-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.chat-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-muted);
+  font-family: var(--app-font);
+  font-size: 10.5px;
+  font-weight: 550;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: background var(--app-motion-fast) var(--app-ease),
+              color var(--app-motion-fast) var(--app-ease);
+}
+.chat-action:hover:not(:disabled) {
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
+}
+.chat-action:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.chat-action:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
+.chat-stop {
+  color: var(--app-danger);
+}
+.chat-stop:hover {
+  color: var(--app-danger);
+  background: color-mix(in srgb, var(--app-danger) 10%, transparent);
+}
+.chat-composer {
+  flex: none;
+  padding: 6px 10px 8px;
+  border-top: 1px solid color-mix(in srgb, var(--app-border) 60%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.chat-attachments {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px 2px;
+}
+.chat-attach {
+  position: relative;
+  flex: none;
+  width: 48px;
+  height: 48px;
+}
+.chat-attach img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: var(--app-radius-sm);
+  border: 1px solid color-mix(in srgb, var(--app-border) 70%, transparent);
+}
+.chat-attach-remove {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 999px;
+  background: var(--app-elevated);
+  color: var(--app-muted);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 18%);
+  cursor: pointer;
+  transition: background var(--app-motion-fast) var(--app-ease),
+              color var(--app-motion-fast) var(--app-ease);
+}
+.chat-attach-remove:hover {
+  color: var(--app-danger);
+  background: color-mix(in srgb, var(--app-danger) 12%, var(--app-elevated));
+}
+.chat-attach-remove:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
+.chat-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+.chat-file-input {
+  display: none;
+}
+.chat-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border: none;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+  transition: background var(--app-motion-fast) var(--app-ease),
+              color var(--app-motion-fast) var(--app-ease);
+}
+.chat-tool:hover {
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
+}
+.chat-tool:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
+.chat-textarea {
+  flex: 1;
+  min-width: 0;
+  max-height: 132px;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--app-border) 54%, transparent);
+  border-radius: var(--app-radius-lg);
+  background: color-mix(in srgb, var(--app-elevated) 42%, var(--app-panel));
+  color: var(--app-text);
+  font-family: var(--app-font);
+  font-size: 12px;
+  line-height: 1.6;
+  resize: none;
+  outline: none;
+  transition: border-color var(--app-motion-fast) var(--app-ease),
+              background var(--app-motion-fast) var(--app-ease),
+              box-shadow var(--app-motion-fast) var(--app-ease);
+}
+.chat-textarea::placeholder {
+  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+}
+.chat-textarea:focus {
+  border-color: color-mix(in srgb, var(--app-accent) 55%, var(--app-border));
+  background: color-mix(in srgb, var(--app-elevated) 72%, var(--app-panel));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-accent) 14%, transparent);
+}
+.chat-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border: none;
+  border-radius: var(--app-radius);
+  background: var(--app-accent);
+  color: var(--app-accent-contrast);
+  cursor: pointer;
+  transition: background var(--app-motion-fast) var(--app-ease),
+              opacity var(--app-motion-fast) var(--app-ease);
+}
+.chat-send:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--app-accent) 88%, var(--app-elevated));
+}
+.chat-send:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.chat-send:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+}
+.chat-model {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+}
+.chat-hint {
+  font-variant-numeric: tabular-nums;
+}
+</style>

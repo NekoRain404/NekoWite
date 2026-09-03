@@ -110,19 +110,56 @@ pub fn build_prompt(cursor_prefix: &str) -> String {
     )
 }
 
-pub fn resolve_endpoint(cfg: &AIConfig) -> (String, serde_json::Value) {
+/// Split a data URL (`data:<mime>[;base64],<data>`) into its media type and
+/// payload. Anthropic/Gemini require the mime and base64 separately, while the
+/// OpenAI-compatible path sends the whole data URL verbatim as `image_url.url`.
+/// A malformed value falls back to `image/png` so the request body stays valid.
+fn split_data_url(data_url: &str) -> (String, String) {
+    let s = data_url.strip_prefix("data:").unwrap_or(data_url);
+    let (meta, data) = match s.split_once(',') {
+        Some((m, d)) => (m, d),
+        None => ("", s),
+    };
+    let mime = meta.split(';').next().unwrap_or("").trim();
+    let mime = if mime.is_empty() {
+        "image/png".to_string()
+    } else {
+        mime.to_string()
+    };
+    (mime, data.to_string())
+}
+
+pub fn resolve_endpoint(
+    cfg: &AIConfig,
+    prompt: &str,
+    images: &[serde_json::Value],
+) -> (String, serde_json::Value) {
     let model = cfg.model.clone();
+    let has_images = !images.is_empty();
     match cfg.provider.as_str() {
         "anthropic" => {
             let base = cfg
                 .base_url
                 .clone()
                 .unwrap_or_else(|| "https://api.anthropic.com".into());
+            let content = if has_images {
+                let mut blocks = vec![serde_json::json!({ "type": "text", "text": prompt })];
+                for img in images {
+                    let (mime, data) = split_data_url(img.as_str().unwrap_or(""));
+                    blocks.push(serde_json::json!({
+                        "type": "image",
+                        "source": { "type": "base64", "media_type": mime, "data": data }
+                    }));
+                }
+                serde_json::Value::Array(blocks)
+            } else {
+                serde_json::json!(prompt)
+            };
             (
                 format!("{}/v1/messages", base.trim_end_matches('/')),
                 serde_json::json!({
                     "model": model, "max_tokens": 256, "stream": true,
-                    "messages": [ { "role": "user", "content": "" } ]
+                    "messages": [ { "role": "user", "content": content } ]
                 }),
             )
         }
@@ -142,10 +179,22 @@ pub fn resolve_endpoint(cfg: &AIConfig) -> (String, serde_json::Value) {
             if let Some(key) = &cfg.api_key {
                 url.push_str(&format!("&key={key}"));
             }
+            let parts = if has_images {
+                let mut parts = vec![serde_json::json!({ "text": prompt })];
+                for img in images {
+                    let (mime, data) = split_data_url(img.as_str().unwrap_or(""));
+                    parts.push(serde_json::json!({
+                        "inline_data": { "mime_type": mime, "data": data }
+                    }));
+                }
+                parts
+            } else {
+                vec![serde_json::json!({ "text": prompt })]
+            };
             (
                 url,
                 serde_json::json!({
-                    "contents": [ { "role": "user", "parts": [ { "text": "" } ] } ]
+                    "contents": [ { "role": "user", "parts": parts } ]
                 }),
             )
         }
@@ -155,11 +204,23 @@ pub fn resolve_endpoint(cfg: &AIConfig) -> (String, serde_json::Value) {
                 .base_url
                 .clone()
                 .unwrap_or_else(|| "https://api.openai.com/v1".into());
+            let content = if has_images {
+                let mut parts = vec![serde_json::json!({ "type": "text", "text": prompt })];
+                for img in images {
+                    parts.push(serde_json::json!({
+                        "type": "image_url",
+                        "image_url": { "url": img }
+                    }));
+                }
+                serde_json::Value::Array(parts)
+            } else {
+                serde_json::json!(prompt)
+            };
             (
                 format!("{}/chat/completions", base.trim_end_matches('/')),
                 serde_json::json!({
                     "model": model, "max_tokens": 256, "stream": true,
-                    "messages": [ { "role": "user", "content": "" } ]
+                    "messages": [ { "role": "user", "content": content } ]
                 }),
             )
         }
@@ -227,6 +288,7 @@ pub async fn ai_complete(
     app: tauri::AppHandle,
     config: AIConfig,
     prompt: String,
+    images: Vec<serde_json::Value>,
 ) -> Result<(), String> {
     let id = next_ai_id();
     {
@@ -234,7 +296,7 @@ pub async fn ai_complete(
         let mut inflight = state.0.lock().map_err(|e| e.to_string())?;
         inflight.insert(id.clone());
     }
-    let result = stream_complete(&app, &config, &prompt, &id).await;
+    let result = stream_complete(&app, &config, &prompt, &images, &id).await;
     if let Some(state) = app.try_state::<AiState>() {
         if let Ok(mut inflight) = state.0.lock() {
             inflight.remove(&id);
@@ -247,20 +309,14 @@ async fn stream_complete(
     app: &tauri::AppHandle,
     config: &AIConfig,
     prompt: &str,
+    images: &[serde_json::Value],
     id: &str,
 ) -> Result<(), String> {
-    let (url, mut body) = resolve_endpoint(config);
-    match config.provider.as_str() {
-        "anthropic" => {
-            body["messages"][0]["content"] = serde_json::json!(prompt);
-        }
-        "gemini" => {
-            body["contents"][0]["parts"][0]["text"] = serde_json::json!(prompt);
-        }
-        _ => {
-            body["messages"][0]["content"] = serde_json::json!(prompt);
-        }
-    }
+    // `resolve_endpoint` builds the content itself: with images it emits the
+    // provider's multimodal array (text + image blocks), without images it
+    // keeps the plain string prompt — preserving the existing single-text
+    // ghost-writer behaviour unchanged.
+    let (url, body) = resolve_endpoint(config, prompt, images);
 
     // Per-phase timeouts instead of a total-request deadline: `Client::timeout`
     // caps the WHOLE request including the streaming body, so any completion

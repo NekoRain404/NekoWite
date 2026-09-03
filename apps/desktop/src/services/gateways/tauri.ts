@@ -54,7 +54,8 @@ export const tauriFsGateway: FsGateway = {
 }
 
 export const tauriAiGateway: AiGateway = {
-  complete: (config, prompt) => invoke<void>('ai_complete', { config, prompt }),
+  complete: (config, prompt, images) =>
+    invoke<void>('ai_complete', { config, prompt, images: images ?? [] }),
   cancel: (id) => invoke<void>('ai_cancel', { id }),
 }
 

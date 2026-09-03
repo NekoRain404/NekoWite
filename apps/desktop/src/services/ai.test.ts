@@ -13,7 +13,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }))
 vi.mock('./errors', () => ({ notifyError: notifyErrorMock }))
 
-import { aiService, buildAIPrompt, getCursorPrefix } from './ai'
+import { aiService, buildAIPrompt, getCursorPrefix, startChatCompletion } from './ai'
 
 interface Handlers {
   [event: string]: (e: { payload: { id: string; text?: string; full?: string; message?: string } }) => void
@@ -174,5 +174,100 @@ describe('aiService', () => {
     await aiService.triggerSuggestion(editor as never, { provider: 'local', model: 'm' })
     expect(notifyErrorMock).toHaveBeenCalledTimes(1)
     expect(notifyErrorMock).toHaveBeenCalledWith('raw boom')
+  })
+})
+
+describe('startChatCompletion', () => {
+  const cfg = { provider: 'local', model: 'm' } as const
+  const noopHandlers = { onChunk: vi.fn(), onDone: vi.fn(), onError: vi.fn() }
+
+  type Payload = { id: string; text?: string; full?: string; message?: string }
+
+  function captureStreamListen(): {
+    handlers: Record<string, (e: { payload: Payload }) => void>
+  } {
+    const handlers: Record<string, (e: { payload: Payload }) => void> = {}
+    listenMock.mockImplementation(
+      ((event: string, cb: never) => {
+        handlers[event] = cb
+        return Promise.resolve(() => {})
+      }) as never,
+    )
+    return { handlers }
+  }
+
+  beforeEach(() => {
+    invokeMock.mockReset()
+    listenMock.mockReset()
+  })
+
+  it('passes images through to ai_complete', async () => {
+    listenMock.mockImplementation(() => Promise.resolve(() => {}))
+    const images = ['data:image/png;base64,AAA']
+    await startChatCompletion({ ...cfg }, 'look', images, noopHandlers)
+    const call = invokeMock.mock.calls.find((c) => c[0] === 'ai_complete')
+    expect(call).toBeDefined()
+    expect(call![1]).toMatchObject({ images })
+  })
+
+  it('sends empty images array when none provided', async () => {
+    listenMock.mockImplementation(() => Promise.resolve(() => {}))
+    await startChatCompletion({ ...cfg }, 'look', [], noopHandlers)
+    const call = invokeMock.mock.calls.find((c) => c[0] === 'ai_complete')
+    expect(call).toBeDefined()
+    expect(call![1]).toMatchObject({ images: [] })
+  })
+
+  it('accumulates ai-chunk text into onChunk', async () => {
+    const { handlers } = captureStreamListen()
+    const onChunk = vi.fn()
+    await startChatCompletion({ ...cfg }, 'look', [], { ...noopHandlers, onChunk })
+    handlers['ai-chunk']({ payload: { id: 'ai-1', text: 'Hello' } })
+    handlers['ai-chunk']({ payload: { id: 'ai-1', text: ' world' } })
+    expect(onChunk).toHaveBeenLastCalledWith('Hello world')
+  })
+
+  it('calls onDone with the accumulated full text', async () => {
+    const { handlers } = captureStreamListen()
+    const onDone = vi.fn()
+    await startChatCompletion({ ...cfg }, 'look', [], { ...noopHandlers, onDone })
+    handlers['ai-chunk']({ payload: { id: 'ai-2', text: 'Hi' } })
+    handlers['ai-done']({ payload: { id: 'ai-2', full: 'Hello world' } })
+    expect(onDone).toHaveBeenCalledWith('Hello world')
+  })
+
+  it('calls onError when ai-error fires for the active stream', async () => {
+    const { handlers } = captureStreamListen()
+    const onError = vi.fn()
+    await startChatCompletion({ ...cfg }, 'look', [], { ...noopHandlers, onError })
+    handlers['ai-chunk']({ payload: { id: 'ai-3', text: 'Hi' } })
+    handlers['ai-error']({ payload: { id: 'ai-3', message: 'boom' } })
+    expect(onError).toHaveBeenCalledWith('boom')
+  })
+
+  it('calls onError when ai_complete rejects without an ai-error event', async () => {
+    invokeMock.mockRejectedValueOnce(new Error('boom'))
+    listenMock.mockImplementation(() => Promise.resolve(() => {}))
+    const onError = vi.fn()
+    await startChatCompletion({ ...cfg }, 'look', [], { ...noopHandlers, onError })
+    expect(onError).toHaveBeenCalledWith('boom')
+  })
+
+  it('cancel() calls ai_cancel for the adopted stream', async () => {
+    const { handlers } = captureStreamListen()
+    const stream = await startChatCompletion({ ...cfg }, 'look', [], noopHandlers)
+    handlers['ai-chunk']({ payload: { id: 'ai-4', text: 'x' } })
+    invokeMock.mockClear()
+    stream.cancel()
+    expect(invokeMock).toHaveBeenCalledWith('ai_cancel', { id: 'ai-4' })
+  })
+
+  it('cancel() on a superseded stream does not cancel the newer stream', async () => {
+    listenMock.mockImplementation(() => Promise.resolve(() => {}))
+    const s1 = await startChatCompletion({ ...cfg }, 'a', [], noopHandlers)
+    await startChatCompletion({ ...cfg }, 'b', [], noopHandlers)
+    invokeMock.mockClear()
+    s1.cancel()
+    expect(invokeMock).not.toHaveBeenCalledWith('ai_cancel', expect.anything())
   })
 })

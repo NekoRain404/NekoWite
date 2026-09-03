@@ -57,7 +57,7 @@ export interface FsGateway {
 }
 
 export interface AiGateway {
-  complete(config: unknown, prompt: string): Promise<void>
+  complete(config: unknown, prompt: string, images?: string[]): Promise<void>
   cancel(id: string): Promise<void>
 }
 

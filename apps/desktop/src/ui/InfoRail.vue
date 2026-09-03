@@ -4,15 +4,23 @@ import { X } from 'lucide-vue-next'
 import ReferencesPanel from './ReferencesPanel.vue'
 import HistoryPanel from './HistoryPanel.vue'
 import OutlinePanel from './OutlinePanel.vue'
+import FileTree from './FileTree.vue'
+import ChatPanel from './ChatPanel.vue'
+import ConflictDialog from '../components/ConflictDialog.vue'
+import { useTabsStore } from '../stores/tabs'
 
 const emit = defineEmits<{ (e: 'close'): void }>()
+const tabs = useTabsStore()
 
-const activeTab = ref<'outline' | 'refs' | 'history'>('outline')
+const activeTab = ref<'ai' | 'outline' | 'refs' | 'history' | 'folders'>('ai')
+const conflict = ref<{ tabId: string; path: string } | null>(null)
 
 const TABS = [
+  { id: 'ai', label: 'AI' },
   { id: 'outline', label: '大纲' },
   { id: 'refs', label: '引用' },
   { id: 'history', label: '历史' },
+  { id: 'folders', label: '文件夹' },
 ] as const
 </script>
 
@@ -42,9 +50,32 @@ const TABS = [
       </button>
     </div>
     <div class="rail-body">
+      <ChatPanel v-show="activeTab === 'ai'" />
       <OutlinePanel v-show="activeTab === 'outline'" />
       <ReferencesPanel v-show="activeTab === 'refs'" />
       <HistoryPanel v-show="activeTab === 'history'" />
+      <div
+        v-show="activeTab === 'folders'"
+        class="rail-folders"
+      >
+        <FileTree
+          v-if="tabs.vault"
+          :vault="tabs.vault"
+          @conflict="conflict = $event"
+        />
+        <p
+          v-else
+          class="rail-empty"
+        >
+          打开文件夹后查看
+        </p>
+      </div>
+      <ConflictDialog
+        v-if="conflict"
+        :tab-id="conflict.tabId"
+        :path="conflict.path"
+        @close="conflict = null"
+      />
     </div>
   </aside>
 </template>
@@ -128,5 +159,23 @@ const TABS = [
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+}
+.rail-folders {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.rail-folders :deep(.file-tree) {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border-right: none;
+  background: transparent;
+}
+.rail-empty {
+  margin: 12px 14px;
+  font-size: 11px;
+  color: var(--app-muted);
 }
 </style>

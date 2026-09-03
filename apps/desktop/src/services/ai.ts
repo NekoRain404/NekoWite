@@ -184,3 +184,109 @@ export const aiService = {
   reject,
   cancelStream,
 }
+
+export interface ChatStreamHandlers {
+  onChunk(text: string): void
+  onDone(full: string): void
+  onError(msg: string): void
+}
+
+export interface ChatStream {
+  cancel(): void
+}
+
+export function startChatCompletion(
+  config: AIConfig,
+  prompt: string,
+  images: string[],
+  handlers: ChatStreamHandlers,
+): Promise<ChatStream> {
+  streamSeq++
+  const mySeq = streamSeq
+  cancelStream()
+
+  let acc = ''
+  let errorNotified = false
+
+  const superseded = (): boolean => mySeq !== streamSeq
+
+  const cancel = (): void => {
+    if (superseded()) return
+    const id = activeId
+    if (id) {
+      cancelledIds.add(id)
+      void Promise.resolve(getGateways().ai.cancel(id)).catch(() => undefined)
+    }
+    cleanupListeners()
+    activeId = null
+  }
+
+  const setupListeners = async (): Promise<boolean> => {
+    try {
+      const offChunk = await listen<{ id: string; text: string }>('ai-chunk', (e) => {
+        if (superseded()) return
+        if (cancelledIds.has(e.payload.id)) return
+        if (activeId !== null && activeId !== e.payload.id) return
+        if (activeId === null) activeId = e.payload.id
+        acc += e.payload.text
+        handlers.onChunk(acc)
+      })
+      if (superseded()) {
+        offChunk()
+        return false
+      }
+      cleanups.push(offChunk)
+      const offDone = await listen<{ id: string; full: string }>('ai-done', (e) => {
+        cancelledIds.delete(e.payload.id)
+        if (superseded()) return
+        if (activeId === null || e.payload.id !== activeId) return
+        cleanupListeners()
+        activeId = null
+        handlers.onDone(e.payload.full)
+      })
+      if (superseded()) {
+        offChunk()
+        offDone()
+        return false
+      }
+      cleanups.push(offDone)
+      const offError = await listen<{ id: string; message: string }>('ai-error', (e) => {
+        cancelledIds.delete(e.payload.id)
+        if (superseded()) return
+        if (activeId === null || e.payload.id !== activeId) return
+        errorNotified = true
+        cleanupListeners()
+        activeId = null
+        handlers.onError(e.payload.message)
+      })
+      if (superseded()) {
+        offChunk()
+        offDone()
+        offError()
+        return false
+      }
+      cleanups.push(offError)
+      return true
+    } catch (e) {
+      cleanupListeners()
+      activeId = null
+      handlers.onError(e instanceof Error ? e.message : String(e))
+      return false
+    }
+  }
+
+  return (async () => {
+    if (!(await setupListeners())) return { cancel }
+    if (superseded()) return { cancel }
+    try {
+      await getGateways().ai.complete(config, prompt, images)
+    } catch (e) {
+      cleanupListeners()
+      activeId = null
+      if (!errorNotified) {
+        handlers.onError(e instanceof Error ? e.message : String(e))
+      }
+    }
+    return { cancel }
+  })()
+}

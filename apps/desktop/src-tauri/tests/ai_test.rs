@@ -17,9 +17,10 @@ fn endpoint_maps_openai() {
         base_url: Some("https://api.openai.com/v1".into()),
         api_key: Some("k".into()),
     };
-    let (url, body) = resolve_endpoint(&cfg);
+    let (url, body) = resolve_endpoint(&cfg, "hello", &[]);
     assert!(url.ends_with("/chat/completions"));
     assert_eq!(body["stream"], true);
+    assert!(body["messages"][0]["content"].is_string(), "no images keeps string content");
 }
 
 #[test]
@@ -30,9 +31,10 @@ fn endpoint_maps_anthropic() {
         base_url: None,
         api_key: None,
     };
-    let (url, body) = resolve_endpoint(&cfg);
+    let (url, body) = resolve_endpoint(&cfg, "hello", &[]);
     assert!(url.ends_with("/v1/messages"));
     assert_eq!(body["stream"], true);
+    assert!(body["messages"][0]["content"].is_string(), "no images keeps string content");
 }
 
 #[test]
@@ -43,9 +45,11 @@ fn endpoint_maps_gemini() {
         base_url: None,
         api_key: None,
     };
-    let (url, _body) = resolve_endpoint(&cfg);
+    let (url, body) = resolve_endpoint(&cfg, "hello", &[]);
     assert!(url.contains(":streamGenerateContent"));
     assert!(url.contains("alt=sse"));
+    assert_eq!(body["contents"][0]["parts"][0]["text"], "hello");
+    assert_eq!(body["contents"][0]["parts"].as_array().unwrap().len(), 1);
 }
 
 #[test]
@@ -120,7 +124,7 @@ fn endpoint_embeds_gemini_key_in_query() {
         base_url: None,
         api_key: Some("sk-gem-key".into()),
     };
-    let (url, _body) = resolve_endpoint(&cfg);
+    let (url, _body) = resolve_endpoint(&cfg, "hello", &[]);
     assert!(
         url.contains("key=sk-gem-key"),
         "gemini key must ride in the URL query, got: {url}"
@@ -254,4 +258,70 @@ fn ai_ids_distinct_in_same_instant() {
 #[test]
 fn ai_ids_unique_across_calls() {
     assert_ne!(next_ai_id(), next_ai_id());
+}
+
+#[test]
+fn endpoint_openai_images_build_array() {
+    let cfg = AIConfig {
+        provider: "openai".into(),
+        model: "gpt-5-mini".into(),
+        base_url: None,
+        api_key: None,
+    };
+    let images = vec![serde_json::json!("data:image/png;base64,AAA")];
+    let (_url, body) = resolve_endpoint(&cfg, "look", &images);
+    let content = &body["messages"][0]["content"];
+    assert!(content.is_array(), "images must switch content to an array");
+    assert_eq!(content[0]["type"], "text");
+    assert_eq!(content[0]["text"], "look");
+    assert_eq!(content[1]["type"], "image_url");
+    assert_eq!(content[1]["image_url"]["url"], "data:image/png;base64,AAA");
+}
+
+#[test]
+fn endpoint_openai_without_images_keeps_string() {
+    let cfg = AIConfig {
+        provider: "openai".into(),
+        model: "gpt-5-mini".into(),
+        base_url: None,
+        api_key: None,
+    };
+    let (_url, body) = resolve_endpoint(&cfg, "hello", &[]);
+    assert!(body["messages"][0]["content"].is_string(), "empty images keeps string content");
+    assert_eq!(body["messages"][0]["content"], "hello");
+}
+
+#[test]
+fn endpoint_anthropic_images_build_base64_source() {
+    let cfg = AIConfig {
+        provider: "anthropic".into(),
+        model: "claude-sonnet-4-5".into(),
+        base_url: None,
+        api_key: None,
+    };
+    let images = vec![serde_json::json!("data:image/png;base64,AAA")];
+    let (_url, body) = resolve_endpoint(&cfg, "look", &images);
+    let content = &body["messages"][0]["content"];
+    assert!(content.is_array(), "images must switch content to an array");
+    assert_eq!(content[0]["type"], "text");
+    assert_eq!(content[1]["type"], "image");
+    assert_eq!(content[1]["source"]["type"], "base64");
+    assert_eq!(content[1]["source"]["media_type"], "image/png");
+    assert_eq!(content[1]["source"]["data"], "AAA");
+}
+
+#[test]
+fn endpoint_gemini_images_build_inline_data() {
+    let cfg = AIConfig {
+        provider: "gemini".into(),
+        model: "gemini-2.5-pro".into(),
+        base_url: None,
+        api_key: None,
+    };
+    let images = vec![serde_json::json!("data:image/png;base64,AAA")];
+    let (_url, body) = resolve_endpoint(&cfg, "look", &images);
+    let parts = &body["contents"][0]["parts"];
+    assert_eq!(parts[0]["text"], "look");
+    assert_eq!(parts[1]["inline_data"]["mime_type"], "image/png");
+    assert_eq!(parts[1]["inline_data"]["data"], "AAA");
 }
