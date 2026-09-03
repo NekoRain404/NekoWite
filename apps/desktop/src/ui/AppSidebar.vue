@@ -8,6 +8,7 @@ import {
   Database,
   FileText,
   FolderOpen,
+  FolderTree,
   Hash,
   Inbox,
   Library,
@@ -105,6 +106,10 @@ const navEntries = computed<NavEntry[]>(() => {
     {
       id: 'cloud', label: '云同步', icon: Cloud,
       active: library.listView === 'cloud', onClick: () => library.setListView('cloud'),
+    },
+    {
+      id: 'folders', label: '文件夹', icon: FolderTree,
+      active: library.listView === 'folders', onClick: () => library.setListView('folders'),
     },
   ]
 })

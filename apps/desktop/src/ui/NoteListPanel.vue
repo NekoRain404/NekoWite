@@ -11,8 +11,10 @@ import { splitFrontmatter } from '@nekowite/editor-core'
 import NoteCard from './NoteCard.vue'
 import GraphPanel from './GraphPanel.vue'
 import AttachmentsPanel from './AttachmentsPanel.vue'
+import FileTree from './FileTree.vue'
 import ContextMenu from './ContextMenu.vue'
 import type { ContextMenuItem } from './ContextMenu.vue'
+import ConflictDialog from '../components/ConflictDialog.vue'
 import { useLibraryStore } from '../stores/library'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
@@ -24,6 +26,7 @@ const tabs = useTabsStore()
 const view = useViewStore()
 
 const sortMenu = ref<{ x: number; y: number } | null>(null)
+const conflict = ref<{ tabId: string; path: string } | null>(null)
 
 const MODES = [
   { id: 'notes', label: '笔记', icon: BookOpen },
@@ -152,6 +155,23 @@ function jumpOutline(line: number, index: number): void {
       class="nl-embed"
     >
       <AttachmentsPanel />
+    </div>
+
+    <div
+      v-else-if="library.listView === 'folders'"
+      class="nl-embed"
+    >
+      <FileTree
+        v-if="tabs.vault"
+        :vault="tabs.vault"
+        @conflict="conflict = $event"
+      />
+      <p
+        v-else
+        class="empty-hint"
+      >
+        打开文件夹后查看
+      </p>
     </div>
 
     <div
@@ -302,6 +322,13 @@ function jumpOutline(line: number, index: number): void {
       @select="onSortSelect"
       @close="sortMenu = null"
     />
+
+    <ConflictDialog
+      v-if="conflict"
+      :tab-id="conflict.tabId"
+      :path="conflict.path"
+      @close="conflict = null"
+    />
   </section>
 </template>
 
@@ -363,6 +390,14 @@ function jumpOutline(line: number, index: number): void {
 .nl-embed :deep(.attachments-panel) {
   height: 100%;
   padding: 6px 8px;
+}
+.nl-embed :deep(.file-tree) {
+  height: 100%;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border-right: none;
+  background: transparent;
 }
 
 .nl-search {

@@ -16,7 +16,7 @@ import {
 import type { LibraryFilter, LibraryCounts, NoteSummary, SortBy, MdLink } from '../services/noteMeta'
 
 /** 列表栏整体视图：notes 模式下列表内容 = filter + query（notes/outline/links 子模式）。 */
-export type ListView = 'notes' | 'graph' | 'attachments' | 'index' | 'cloud'
+export type ListView = 'notes' | 'graph' | 'attachments' | 'index' | 'cloud' | 'folders'
 
 /** notes 视图下的列表子模式。图谱 / 附件 / 索引 / 云同步由 listView 承载。 */
 export type PanelMode = 'notes' | 'outline' | 'links'

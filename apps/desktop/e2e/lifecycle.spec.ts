@@ -52,6 +52,7 @@ test('lifecycle hooks fire live: open, doc change, save, view mode, close tab', 
 
   await page.goto('/')
 
+  await page.locator('.nav-item', { hasText: '文件夹' }).click()
   await page.locator('.tree-name', { hasText: 'welcome.md' }).click()
   await expect(page.locator('.tab-name', { hasText: 'welcome.md' })).toBeVisible()
   await expect(page.locator('.pane.rendered .ProseMirror h1')).toHaveText('Welcome')

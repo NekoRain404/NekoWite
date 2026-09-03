@@ -43,6 +43,7 @@ test.beforeEach(async ({ page }) => {
 test('opens vault, opens welcome.md, edits, and toggles views', async ({ page }) => {
   await page.goto('/')
 
+  await page.locator('.nav-item', { hasText: '文件夹' }).click()
   const tree = page.locator('.file-tree')
   await expect(tree).toBeVisible()
   await expect(page.locator('.tree-name', { hasText: 'welcome.md' })).toBeVisible()
@@ -78,6 +79,7 @@ test('opens vault, opens welcome.md, edits, and toggles views', async ({ page })
 test('toolbar commands format the document (bold + heading dropdown)', async ({ page }) => {
   await page.goto('/')
 
+  await page.locator('.nav-item', { hasText: '文件夹' }).click()
   await page.locator('.tree-name', { hasText: 'welcome.md' }).click()
   const renderedHeading = page.locator('.pane.rendered .ProseMirror h1')
   await expect(renderedHeading).toHaveText('Welcome')
