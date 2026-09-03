@@ -199,4 +199,47 @@ describe('useLibraryStore', () => {
     expect(store.inlinksOf(null)).toEqual([])
     expect(store.resolveLinkPath('notes', 'missing.md')).toBeNull()
   })
+
+  it('clears the previous vault notes and attachment badge the moment a switch starts', async () => {
+    seedNote('/vaultA/a.md', 'A', 1)
+    seedNote('/vaultA/attachments/pic.png', 'img', 1)
+    const store = useLibraryStore()
+    await store.indexVault('/vaultA')
+    expect(store.notes.map((n) => n.path)).toEqual(['/vaultA/a.md'])
+    await vi.waitFor(() => expect(store.attachmentCount).toBe(1))
+
+    // The harness listDir only knows one vault at a time; empty the seed and
+    // seed only the target vault before switching.
+    seed.clear()
+    seedNote('/vaultB/b.md', 'B', 2)
+    const switching = store.indexVault('/vaultB')
+    // The old vault's notes/badge must not linger while the new vault indexes.
+    expect(store.notes).toHaveLength(0)
+    expect(store.attachmentCount).toBe(0)
+    await switching
+    expect(store.notes.map((n) => n.path)).toEqual(['/vaultB/b.md'])
+    await vi.waitFor(() => expect(store.attachmentCount).toBe(0))
+  })
+
+  it('a superseded indexVault cannot overwrite the newer vault with stale results', async () => {
+    seedNote('/vaultA/a.md', 'AAA', 1)
+    const store = useLibraryStore()
+    // Delay the FIRST vault's onFsChange so the second switch lands mid-flight.
+    const firstChange: { resolve?: (cleanup: () => void) => void } = {}
+    vi.mocked(fsService.onFsChange).mockImplementationOnce(
+      () => new Promise<() => void>((resolve) => { firstChange.resolve = resolve }),
+    )
+    const pA = store.indexVault('/vaultA') // stuck at the onFsChange await
+    // pA never reaches runIndex, so the seed can be swapped to the target vault.
+    seed.clear()
+    seedNote('/vaultB/b.md', 'BBB', 2)
+    const pB = store.indexVault('/vaultB') // proceeds immediately
+    await vi.waitFor(() => expect(store.notes.map((n) => n.path)).toEqual(['/vaultB/b.md']))
+
+    // Release the stale switch: it must detect supersession and never set notes.
+    firstChange.resolve?.(() => {})
+    await pA
+    expect(store.notes.map((n) => n.path)).toEqual(['/vaultB/b.md'])
+    await pB
+  })
 })

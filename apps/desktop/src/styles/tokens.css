@@ -37,6 +37,7 @@
   --app-content-width: 760px;
   --app-font: Inter, "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --app-mono-font: "SFMono-Regular", "Cascadia Code", "Roboto Mono", Menlo, Monaco, Consolas, "PingFang SC", "Microsoft YaHei", ui-monospace, monospace;
+  --app-editor-font: var(--app-font);
   --app-body-size: 15px;
   --app-line-height: 1.8;
   --app-code-keyword: #8a4e30;
@@ -92,6 +93,10 @@
 [data-accent="gold"] { --app-accent: #b98b09; --app-accent-soft: #f8f0d6; }
 [data-accent="violet"] { --app-accent: #8a65d1; --app-accent-soft: #eee8f9; }
 [data-accent="slate"] { --app-accent: #607287; --app-accent-soft: #e9edf1; }
+[data-accent="teal"] { --app-accent: #2e9e8f; --app-accent-soft: #e0f3f0; }
+[data-accent="lime"] { --app-accent: #7aa816; --app-accent-soft: #eef6d8; }
+[data-accent="rose"] { --app-accent: #e05c76; --app-accent-soft: #fbe3e8; }
+[data-accent="amber"] { --app-accent: #d98c1f; --app-accent-soft: #faedd6; }
 [data-theme="dark"][data-accent]:not([data-accent="ink"]) {
   --app-accent-soft: color-mix(in srgb, var(--app-accent) 25%, var(--app-panel));
 }

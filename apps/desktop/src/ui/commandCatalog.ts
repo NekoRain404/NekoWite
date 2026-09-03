@@ -63,6 +63,33 @@ export const COMMAND_CATALOG: Record<string, CatalogMeta> = {
 
 export const FALLBACK_COMMAND_ICON: Component = markRaw(Puzzle)
 
+/** id → i18n message key used by the command palette for localized labels. */
+export const COMMAND_KEYS: Record<string, string> = {
+  'heading:h1': 'command.heading:h1',
+  'heading:h2': 'command.heading:h2',
+  'heading:h3': 'command.heading:h3',
+  'heading:h4': 'command.heading:h4',
+  'heading:h5': 'command.heading:h5',
+  'heading:h6': 'command.heading:h6',
+  bold: 'command.bold',
+  italic: 'command.italic',
+  strike: 'command.strike',
+  'inline-code': 'command.inline-code',
+  'list-unordered': 'command.list-unordered',
+  'list-ordered': 'command.list-ordered',
+  'list-task': 'command.list-task',
+  quote: 'command.quote',
+  link: 'command.link',
+  image: 'command.image',
+  'code-block': 'command.code-block',
+  hr: 'command.hr',
+  'insert-component': 'command.insert-component',
+  'math.insert': 'command.math.insert',
+  'table.insert': 'command.table.insert',
+  'callout.insert': 'command.callout.insert',
+  'floatbox.insert': 'command.floatbox.insert',
+}
+
 export function catalogOf(id: string): CatalogMeta {
   return COMMAND_CATALOG[id] ?? { label: id, icon: FALLBACK_COMMAND_ICON }
 }

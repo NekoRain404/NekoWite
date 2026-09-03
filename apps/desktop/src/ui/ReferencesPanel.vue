@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { computeCiteOrder } from '@nekowite/editor-core'
 import { useRefsStore } from '../stores/refs'
 import { editorBridge } from '../services/editorBridge'
+import { t } from '../i18n'
 
 const refs = useRefsStore()
 const bump = ref(0)
@@ -62,7 +63,7 @@ onBeforeUnmount(() => {
 <template>
   <section class="references-panel">
     <h3 class="rail-section-title">
-      引用文献
+      {{ t('references.title') }}
       <span
         v-if="cited.length"
         class="rail-section-count"
@@ -88,7 +89,7 @@ onBeforeUnmount(() => {
             v-else
             class="refs-detail refs-missing"
           >
-            未在引用库中找到
+            {{ t('references.missing') }}
           </span>
         </span>
       </li>
@@ -97,7 +98,7 @@ onBeforeUnmount(() => {
       v-else
       class="rail-empty"
     >
-      本文档还没有引用。
+      {{ t('references.empty') }}
     </p>
   </section>
 </template>

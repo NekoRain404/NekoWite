@@ -15,6 +15,7 @@ import { notifyError } from '../services/errors'
 import { useTabsStore } from '../stores/tabs'
 import ContextMenu from './ContextMenu.vue'
 import type { ContextMenuItem } from './ContextMenu.vue'
+import { t } from '../i18n'
 
 /**
  * 附件库面板：双列缩略图网格浏览 vault 的 attachments/ 目录。
@@ -82,19 +83,19 @@ function referencePathFor(item: AttachmentItem): string {
 
 async function insertItem(item: AttachmentItem): Promise<void> {
   if (!tabs.activeTab) {
-    notifyError('请先打开一个文档，再插入图片')
+    notifyError(t('attachments.openDocFirst'))
     return
   }
   const editor = editorBridge.getEditor()
   if (!editor) {
-    notifyError('编辑器尚未就绪，请稍后再试')
+    notifyError(t('attachments.editorNotReady'))
     return
   }
   const alt = item.name.replace(/\.[^.]+$/, '') || 'image'
   try {
     await editor.insertMarkdownAtCursor(markdownImageBlock(alt, referencePathFor(item)))
   } catch {
-    notifyError('插入图片失败，请重试')
+    notifyError(t('attachments.insertFailed'))
   }
 }
 
@@ -103,7 +104,7 @@ async function copyReference(item: AttachmentItem): Promise<void> {
   try {
     await navigator.clipboard.writeText(rel)
   } catch {
-    notifyError('复制失败，请手动复制')
+    notifyError(t('attachments.copyFailed'))
   }
 }
 
@@ -113,7 +114,7 @@ async function removeItem(item: AttachmentItem): Promise<void> {
   try {
     await deleteAttachment(vault, item.path)
   } catch {
-    notifyError('删除失败，请重试')
+    notifyError(t('attachments.deleteFailed'))
     return
   }
   await reload()
@@ -139,12 +140,12 @@ const menuItems = computed<ContextMenuItem[]>(() => {
   const m = menu.value
   if (!m) return []
   return [
-    { id: 'insert', label: '插入到文档', icon: MENU_ICONS.insert },
-    { id: 'copy', label: '复制相对路径', icon: MENU_ICONS.copy },
+    { id: 'insert', label: t('attachments.insert'), icon: MENU_ICONS.insert },
+    { id: 'copy', label: t('attachments.copyPath'), icon: MENU_ICONS.copy },
     { id: 'sep-delete', separator: true },
     {
       id: 'delete',
-      label: m.confirming ? '确认删除' : '删除',
+      label: m.confirming ? t('attachments.deleteConfirm') : t('common.delete'),
       icon: MENU_ICONS.trash,
       danger: true,
     },
@@ -198,7 +199,7 @@ defineExpose({ reload })
   <section class="attachments-panel">
     <div class="att-toolbar">
       <h3 class="att-title">
-        附件
+        {{ t('attachments.title') }}
         <span
           v-if="items.length"
           class="att-count"
@@ -206,7 +207,7 @@ defineExpose({ reload })
       </h3>
       <button
         class="att-refresh"
-        title="刷新"
+        :title="t('attachments.refresh')"
         :disabled="loading"
         @click="reload"
       >
@@ -228,7 +229,7 @@ defineExpose({ reload })
         :stroke-width="1.6"
       />
       <p class="att-empty-hint">
-        正在加载附件…
+        {{ t('attachments.loading') }}
       </p>
     </div>
 
@@ -241,10 +242,10 @@ defineExpose({ reload })
         :stroke-width="1.6"
       />
       <p class="att-empty-title">
-        附件库为空
+        {{ t('attachments.emptyTitle') }}
       </p>
       <p class="att-empty-hint">
-        在编辑器中粘贴或拖入图片，会自动保存到 vault 的 attachments 目录并出现在这里。
+        {{ t('attachments.emptyHint') }}
       </p>
     </div>
 
@@ -258,7 +259,7 @@ defineExpose({ reload })
         class="att-card"
         role="button"
         tabindex="0"
-        :aria-label="`插入图片 ${item.name}`"
+        :aria-label="t('attachments.insertImage', { name: item.name })"
         @click="insertItem(item)"
         @keydown.enter.prevent="insertItem(item)"
         @keydown.space.prevent="insertItem(item)"

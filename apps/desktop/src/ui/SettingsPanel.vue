@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   Download,
   Palette,
+  RefreshCw,
   SlidersHorizontal,
   Sparkles,
   Type,
@@ -18,7 +19,8 @@ import { fsService } from '../services/fs'
 import { describeExportError, notifyError } from '../services/errors'
 import { useSettingsStore } from '../stores/settings'
 import { useAppearanceStore } from '../stores/appearance'
-import type { Accent } from '../stores/appearance'
+import type { Accent, EditorFontId, MonoFontId, UiFontId } from '../stores/appearance'
+import { getLocale, setLocale, t } from '../i18n'
 import type { ExportRef } from '@nekowite/editor-core'
 
 const emit = defineEmits<{ (e: 'close'): void; (e: 'saved', path: string): void }>()
@@ -31,13 +33,13 @@ const appearance = useAppearanceStore()
 
 type SectionId = 'general' | 'appearance' | 'editor' | 'export' | 'ai'
 
-const SECTIONS: Array<{ id: SectionId; label: string; icon: typeof Type }> = [
-  { id: 'general', label: '常规', icon: SlidersHorizontal },
-  { id: 'appearance', label: '外观', icon: Palette },
-  { id: 'editor', label: '编辑器', icon: Type },
-  { id: 'export', label: '导出', icon: Download },
-  { id: 'ai', label: 'AI', icon: Sparkles },
-]
+const SECTIONS = computed<Array<{ id: SectionId; label: string; icon: typeof Type }>>(() => [
+  { id: 'general', label: t('settings.section.general'), icon: SlidersHorizontal },
+  { id: 'appearance', label: t('settings.section.appearance'), icon: Palette },
+  { id: 'editor', label: t('settings.section.editor'), icon: Type },
+  { id: 'export', label: t('settings.section.export'), icon: Download },
+  { id: 'ai', label: t('settings.section.ai'), icon: Sparkles },
+])
 
 const activeSection = ref<SectionId>('general')
 const dialogRef = ref<HTMLElement | null>(null)
@@ -48,7 +50,37 @@ const showBaseUrl = computed(() => settings.provider === 'local' || settings.pro
 
 const AI_PROVIDERS = ['openai', 'anthropic', 'gemini', 'grok', 'local', 'custom']
 
-const ACCENTS: Accent[] = ['ink', 'coral', 'blue', 'green', 'gold', 'violet', 'slate']
+const modelLoading = ref(false)
+const modelOptions = computed(() => {
+  const list = settings.modelsCache
+  const current = settings.model
+  if (!current || list.includes(current)) return list
+  return [current, ...list]
+})
+
+async function refreshModels(): Promise<void> {
+  if (modelLoading.value) return
+  modelLoading.value = true
+  try {
+    await settings.listModels()
+  } catch (e) {
+    notifyError(`获取模型失败：${e instanceof Error ? e.message : String(e)}`)
+  } finally {
+    modelLoading.value = false
+  }
+}
+
+// Each provider has its own endpoint and credentials, so refetch (and clear the
+// stale cache) whenever the provider changes.
+watch(
+  () => settings.provider,
+  () => {
+    settings.clearModelsCache()
+    void refreshModels()
+  },
+)
+
+const ACCENTS: Accent[] = ['ink', 'coral', 'blue', 'green', 'gold', 'violet', 'slate', 'teal', 'lime', 'rose', 'amber']
 const ACCENT_COLORS: Record<Accent, string> = {
   ink: '#343532',
   coral: '#d65f4d',
@@ -57,6 +89,19 @@ const ACCENT_COLORS: Record<Accent, string> = {
   gold: '#b98b09',
   violet: '#8a65d1',
   slate: '#607287',
+  teal: '#2e9e8f',
+  lime: '#7aa816',
+  rose: '#e05c76',
+  amber: '#d98c1f',
+}
+
+const UI_FONT_OPTIONS: UiFontId[] = ['system', 'inter', 'serif', 'rounded']
+const EDITOR_FONT_OPTIONS: EditorFontId[] = ['system', 'serif', 'sans', 'reading']
+const MONO_FONT_OPTIONS: MonoFontId[] = ['mono', 'cascadia', 'jetbrains']
+
+function onLocaleChange(e: Event): void {
+  const v = (e.target as HTMLSelectElement).value
+  setLocale(v === 'en' ? 'en' : 'zh')
 }
 
 function onOverlayPointerDown(e: PointerEvent): void {
@@ -88,7 +133,7 @@ async function saveAiKey(): Promise<void> {
   try {
     await settings.saveKey()
   } catch (e) {
-    notifyError(`保存 AI Key 失败：${e instanceof Error ? e.message : String(e)}`)
+    notifyError(t('settings.general.saveKeyFailed', { msg: e instanceof Error ? e.message : String(e) }))
   }
 }
 
@@ -106,7 +151,7 @@ async function browseVault(): Promise<void> {
     vaultInput.value = picked
     await saveVault()
   } catch (e) {
-    notifyError(`选择文件夹失败：${e instanceof Error ? e.message : String(e)}`)
+    notifyError(t('settings.general.vaultBrowseFailed', { msg: e instanceof Error ? e.message : String(e) }))
   }
 }
 
@@ -151,15 +196,15 @@ function onExportPdf(): void {
         class="settings-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label="设置"
+        :aria-label="t('settings.dialogTitle')"
         tabindex="-1"
       >
         <div class="dialog-header">
-          <span class="dialog-title">设置</span>
+          <span class="dialog-title">{{ t('settings.dialogTitle') }}</span>
           <span class="dialog-spacer" />
           <button
             class="settings-close"
-            title="关闭"
+            :title="t('common.close')"
             @click="emit('close')"
           >
             <X
@@ -191,61 +236,73 @@ function onExportPdf(): void {
               v-if="activeSection === 'general'"
               class="settings-section"
             >
-              <span class="settings-label">知识库</span>
+              <span class="settings-label">{{ t('settings.general.vault') }}</span>
               <div class="vault-row">
                 <input
                   v-model="vaultInput"
                   class="input"
                   type="text"
-                  placeholder="/path/to/vault"
+                  :placeholder="t('settings.general.vaultPlaceholder')"
                   @keyup.enter="saveVault"
                 >
                 <button
                   class="btn btn-secondary btn-sm vault-browse"
-                  title="浏览…"
+                  :title="t('common.browse')"
                   @click="browseVault"
                 >
-                  浏览…
+                  {{ t('common.browse') }}
                 </button>
               </div>
               <button
                 class="btn btn-secondary settings-save"
                 @click="saveVault"
               >
-                保存并切换
+                {{ t('common.saveAndSwitch') }}
               </button>
-              <span class="settings-note">切换知识库会关闭当前所有打开的文档。</span>
+              <span class="settings-note">{{ t('settings.general.vaultNote') }}</span>
+
+              <span class="settings-label">{{ t('settings.general.language') }}</span>
+              <label class="settings-field">
+                <select
+                  class="input"
+                  :value="getLocale()"
+                  @change="onLocaleChange"
+                >
+                  <option value="zh">{{ t('settings.general.languageZh') }}</option>
+                  <option value="en">{{ t('settings.general.languageEn') }}</option>
+                </select>
+              </label>
             </section>
 
             <section
               v-else-if="activeSection === 'appearance'"
               class="settings-section"
             >
-              <span class="settings-label">主题</span>
+              <span class="settings-label">{{ t('settings.appearance.theme') }}</span>
               <div class="view-modes">
                 <button
                   class="switch-option"
                   :class="{ 'is-active': appearance.theme === 'light' }"
                   @click="appearance.setTheme('light')"
                 >
-                  浅色
+                  {{ t('settings.appearance.themeLight') }}
                 </button>
                 <button
                   class="switch-option"
                   :class="{ 'is-active': appearance.theme === 'dark' }"
                   @click="appearance.setTheme('dark')"
                 >
-                  深色
+                  {{ t('settings.appearance.themeDark') }}
                 </button>
                 <button
                   class="switch-option"
                   :class="{ 'is-active': appearance.theme === 'system' }"
                   @click="appearance.setTheme('system')"
                 >
-                  跟随系统
+                  {{ t('settings.appearance.themeSystem') }}
                 </button>
               </div>
-              <span class="settings-label">强调色</span>
+              <span class="settings-label">{{ t('settings.appearance.accent') }}</span>
               <div class="accent-row">
                 <button
                   v-for="a in ACCENTS"
@@ -257,8 +314,57 @@ function onExportPdf(): void {
                   @click="appearance.setAccent(a)"
                 />
               </div>
+              <span class="settings-label">{{ t('settings.appearance.font') }}</span>
               <label class="settings-field">
-                <span>字号 {{ appearance.bodyFontSize }}px</span>
+                <span>{{ t('settings.appearance.uiFont') }}</span>
+                <select
+                  class="input"
+                  :value="appearance.uiFont"
+                  @change="appearance.setUiFont(($event.target as HTMLSelectElement).value as UiFontId)"
+                >
+                  <option
+                    v-for="f in UI_FONT_OPTIONS"
+                    :key="f"
+                    :value="f"
+                  >
+                    {{ t(`font.${f}`) }}
+                  </option>
+                </select>
+              </label>
+              <label class="settings-field">
+                <span>{{ t('settings.appearance.editorFont') }}</span>
+                <select
+                  class="input"
+                  :value="appearance.editorFont"
+                  @change="appearance.setEditorFont(($event.target as HTMLSelectElement).value as EditorFontId)"
+                >
+                  <option
+                    v-for="f in EDITOR_FONT_OPTIONS"
+                    :key="f"
+                    :value="f"
+                  >
+                    {{ t(`font.${f}`) }}
+                  </option>
+                </select>
+              </label>
+              <label class="settings-field">
+                <span>{{ t('settings.appearance.monoFont') }}</span>
+                <select
+                  class="input"
+                  :value="appearance.monoFont"
+                  @change="appearance.setMonoFont(($event.target as HTMLSelectElement).value as MonoFontId)"
+                >
+                  <option
+                    v-for="f in MONO_FONT_OPTIONS"
+                    :key="f"
+                    :value="f"
+                  >
+                    {{ t(`font.${f}`) }}
+                  </option>
+                </select>
+              </label>
+              <label class="settings-field">
+                <span>{{ t('settings.appearance.fontSize', { size: appearance.bodyFontSize }) }}</span>
                 <input
                   class="input"
                   :value="appearance.bodyFontSize"
@@ -269,7 +375,7 @@ function onExportPdf(): void {
                 >
               </label>
               <label class="settings-field">
-                <span>行高 {{ appearance.lineHeight }}</span>
+                <span>{{ t('settings.appearance.lineHeight', { lh: appearance.lineHeight }) }}</span>
                 <input
                   class="input"
                   :value="appearance.lineHeight"
@@ -286,56 +392,56 @@ function onExportPdf(): void {
               v-else-if="activeSection === 'editor'"
               class="settings-section"
             >
-              <span class="settings-label">视图</span>
+              <span class="settings-label">{{ t('settings.editor.view') }}</span>
               <div class="view-modes">
                 <button
                   class="switch-option"
                   :class="{ 'is-active': view.mode === 'source' }"
                   @click="setMode('source')"
                 >
-                  源码
+                  {{ t('settings.editor.viewSource') }}
                 </button>
                 <button
                   class="switch-option"
                   :class="{ 'is-active': view.mode === 'rendered' }"
                   @click="setMode('rendered')"
                 >
-                  渲染
+                  {{ t('settings.editor.viewRendered') }}
                 </button>
                 <button
                   class="switch-option"
                   :class="{ 'is-active': view.mode === 'split' }"
                   @click="setMode('split')"
                 >
-                  对照
+                  {{ t('settings.editor.viewSplit') }}
                 </button>
               </div>
-              <span class="settings-label">保存</span>
+              <span class="settings-label">{{ t('settings.editor.save') }}</span>
               <label class="settings-field">
-                <span>自动保存间隔</span>
+                <span>{{ t('settings.editor.autosaveInterval') }}</span>
                 <select
                   v-model="settings.autosaveInterval"
                   class="input"
                 >
                   <option :value="'off'">
-                    关闭
+                    {{ t('settings.editor.autosaveOff') }}
                   </option>
                   <option :value="5000">
-                    5秒
+                    {{ t('settings.editor.autosave5s') }}
                   </option>
                   <option :value="15000">
-                    15秒
+                    {{ t('settings.editor.autosave15s') }}
                   </option>
                   <option :value="30000">
-                    30秒
+                    {{ t('settings.editor.autosave30s') }}
                   </option>
                   <option :value="60000">
-                    60秒
+                    {{ t('settings.editor.autosave60s') }}
                   </option>
                 </select>
               </label>
               <label class="settings-field">
-                <span>历史版本上限</span>
+                <span>{{ t('settings.editor.maxHistory') }}</span>
                 <input
                   class="input"
                   :value="settings.maxHistory"
@@ -351,27 +457,27 @@ function onExportPdf(): void {
               v-else-if="activeSection === 'export'"
               class="settings-section"
             >
-              <span class="settings-label">导出（当前文档）</span>
+              <span class="settings-label">{{ t('settings.export.current') }}</span>
               <div class="view-modes">
                 <button
                   class="btn btn-secondary btn-sm"
                   :disabled="!hasActiveTab"
                   @click="onExportHtml"
                 >
-                  导出 HTML
+                  {{ t('settings.export.html') }}
                 </button>
                 <button
                   class="btn btn-secondary btn-sm"
                   :disabled="!hasActiveTab"
                   @click="onExportPdf"
                 >
-                  导出 PDF
+                  {{ t('settings.export.pdf') }}
                 </button>
               </div>
               <span
                 v-if="!hasActiveTab"
                 class="settings-note"
-              >打开一篇文档后可导出。</span>
+              >{{ t('settings.export.none') }}</span>
             </section>
 
             <section
@@ -396,12 +502,38 @@ function onExportPdf(): void {
               </label>
               <label class="settings-field">
                 <span>Model</span>
-                <input
-                  v-model="settings.model"
-                  class="input"
-                  type="text"
-                  placeholder="qwen2.5-coder:3b"
-                >
+                <div class="model-row">
+                  <input
+                    v-model="settings.model"
+                    class="input"
+                    type="text"
+                    list="model-list"
+                    placeholder="qwen2.5-coder:3b"
+                  >
+                  <datalist id="model-list">
+                    <option
+                      v-for="m in modelOptions"
+                      :key="m"
+                      :value="m"
+                    >
+                      {{ m }}
+                    </option>
+                  </datalist>
+                  <button
+                    class="btn btn-secondary btn-sm model-refresh"
+                    :disabled="modelLoading"
+                    title="刷新模型列表"
+                    @click="refreshModels"
+                  >
+                    <RefreshCw
+                      :size="13"
+                      :stroke-width="1.8"
+                      class="model-refresh-icon"
+                      :class="{ spin: modelLoading }"
+                    />
+                    <span>刷新</span>
+                  </button>
+                </div>
               </label>
               <label
                 v-if="showBaseUrl"
@@ -581,6 +713,16 @@ function onExportPdf(): void {
 .vault-row { display: flex; gap: 6px; }
 .vault-row .input { flex: 1; min-width: 0; }
 .vault-browse { flex: none; }
+.model-row { display: flex; gap: 6px; }
+.model-row .input { flex: 1; min-width: 0; }
+.model-refresh { flex: none; padding: 0 10px; }
+.model-refresh:disabled { cursor: default; opacity: 0.6; }
+.model-refresh-icon.spin {
+  animation: model-spin 0.9s linear infinite;
+}
+@keyframes model-spin {
+  to { transform: rotate(360deg); }
+}
 .settings-label {
   margin-top: 6px;
   font-size: 10px;

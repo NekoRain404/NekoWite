@@ -252,6 +252,7 @@ pub fn run() {
             watch_folder,
             ai::ai_complete,
             ai::ai_cancel,
+            ai::ai_list_models,
             keys::store_ai_key,
             keys::load_ai_key,
             keys::set_master_password

@@ -4,6 +4,7 @@ import { buildLinkGraph, computeLayout, type LayoutPoint } from '../services/lin
 import { fsService } from '../services/fs'
 import { vaultFileIndex } from '../services/vaultFiles'
 import { useTabsStore } from '../stores/tabs'
+import { t } from '../i18n'
 
 /**
  * 笔记关系图谱面板：读取当前 vault 的全部笔记，构建链接关系图，
@@ -347,22 +348,22 @@ defineExpose({ rebuild })
       <span
         class="graph-count"
         :class="{ 'is-loading': loading }"
-      >{{ loading ? '正在读取笔记…' : failed ? '读取笔记失败' : `${noteCount} 篇 · ${edgeCount} 条链接` }}</span>
+      >{{ loading ? t('graph.reading') : failed ? t('graph.readFailed') : t('graph.count', { n: noteCount, m: edgeCount }) }}</span>
       <button
         class="graph-btn"
         :disabled="loading || noteCount === 0"
-        title="重新随机布局节点位置"
+        :title="t('graph.relayoutTitle')"
         @click="relayout"
       >
-        重新布局
+        {{ t('graph.relayout') }}
       </button>
       <button
         class="graph-btn"
         :disabled="noteCount === 0"
-        title="恢复默认缩放与位置"
+        :title="t('graph.resetViewTitle')"
         @click="resetView"
       >
-        重置视图
+        {{ t('graph.resetView') }}
       </button>
     </div>
     <div
@@ -389,25 +390,25 @@ defineExpose({ rebuild })
         v-if="!tabs.vault"
         class="graph-empty"
       >
-        打开一个笔记库后查看笔记关系图谱
+        {{ t('graph.empty') }}
       </p>
       <p
         v-else-if="failed"
         class="graph-empty"
       >
-        读取笔记失败，请重试
+        {{ t('graph.readFailedHint') }}
       </p>
       <p
         v-else-if="!loading && noteCount === 0"
         class="graph-empty"
       >
-        笔记库里还没有笔记
+        {{ t('graph.emptyNotes') }}
       </p>
       <p
         v-if="truncated"
         class="graph-truncated"
       >
-        笔记数量较多，仅展示前 {{ MAX_NOTES }} 篇
+        {{ t('graph.truncated', { n: MAX_NOTES }) }}
       </p>
     </div>
   </section>

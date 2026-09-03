@@ -1,5 +1,6 @@
 use nekowite_lib::ai::{
-    ai_id_for, build_prompt, next_ai_id, parse_sse_line, resolve_endpoint, AIConfig, SseBuffer,
+    ai_id_for, build_prompt, http_error_message, next_ai_id, parse_model_ids, parse_sse_line,
+    resolve_endpoint, AIConfig, SseBuffer,
 };
 
 #[test]
@@ -324,4 +325,81 @@ fn endpoint_gemini_images_build_inline_data() {
     assert_eq!(parts[0]["text"], "look");
     assert_eq!(parts[1]["inline_data"]["mime_type"], "image/png");
     assert_eq!(parts[1]["inline_data"]["data"], "AAA");
+}
+
+#[test]
+fn parse_models_openai_data_ids() {
+    let ids = parse_model_ids(r#"{"data":[{"id":"a"},{"id":"b"}]}"#, "openai");
+    assert_eq!(ids, vec!["a", "b"]);
+}
+
+#[test]
+fn parse_models_gemini_name_to_id() {
+    let ids = parse_model_ids(r#"{"models":[{"name":"models/gemini-2.5-pro"}]}"#, "gemini");
+    assert_eq!(ids, vec!["gemini-2.5-pro"]);
+}
+
+#[test]
+fn parse_models_anthropic_data_ids() {
+    let ids = parse_model_ids(r#"{"data":[{"id":"claude-sonnet-4-5"}]}"#, "anthropic");
+    assert_eq!(ids, vec!["claude-sonnet-4-5"]);
+}
+
+#[test]
+fn parse_models_empty_body_returns_empty() {
+    assert_eq!(parse_model_ids("", "openai"), Vec::<String>::new());
+    assert_eq!(parse_model_ids("   ", "openai"), Vec::<String>::new());
+    assert_eq!(parse_model_ids("not json", "openai"), Vec::<String>::new());
+}
+
+#[test]
+fn parse_models_sorts_and_dedups() {
+    let ids = parse_model_ids(r#"{"data":[{"id":"b"},{"id":"a"},{"id":"b"}]}"#, "openai");
+    assert_eq!(ids, vec!["a", "b"]);
+}
+
+#[test]
+fn parse_models_skips_entries_without_id_or_name() {
+    let ids = parse_model_ids(
+        r#"{"data":[{"id":"ok"},{"description":"no id"},{"id":""}]}"#,
+        "openai",
+    );
+    assert_eq!(ids, vec!["ok"]);
+}
+
+// `stream_complete` calls `Response::error_for_status()` after `send()` so a
+// 4xx/5xx is surfaced as an `ai-error` event + `Err` instead of being read as an
+// empty SSE stream. The status->message mapping is extracted into
+// `http_error_message` so it can be tested without a live endpoint; each of
+// these non-2xx codes would short-circuit `bytes_stream()` the same way a real
+// provider error page would.
+
+#[test]
+fn http_error_401_hints_bad_key() {
+    let msg = http_error_message(401);
+    assert!(msg.starts_with("AI 请求失败："), "got: {msg}");
+    assert!(msg.contains("API Key 无效"), "got: {msg}");
+}
+
+#[test]
+fn http_error_429_hints_retry() {
+    let msg = http_error_message(429);
+    assert!(msg.contains("请稍后重试"), "got: {msg}");
+}
+
+#[test]
+fn http_error_5xx_hints_unavailable() {
+    for status in [500, 502, 503, 504] {
+        let msg = http_error_message(status);
+        assert!(msg.contains("服务端暂时不可用"), "status {status} got: {msg}");
+    }
+}
+
+#[test]
+fn http_error_unknown_status_stays_total() {
+    // A hypothetical non-2xx code we did not explicitly map must still yield a
+    // usable message (and never panic), so error_for_status never falls apart on
+    // an unexpected provider page.
+    let msg = http_error_message(599);
+    assert!(msg.starts_with("AI 请求失败：HTTP 599，网络请求失败"), "got: {msg}");
 }

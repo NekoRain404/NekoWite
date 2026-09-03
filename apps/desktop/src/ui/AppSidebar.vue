@@ -28,6 +28,7 @@ import { useLibraryStore } from '../stores/library'
 import { useAppearanceStore } from '../stores/appearance'
 import { insertCiteAtCursor } from '../services/editorBridge'
 import { useRefsStore } from '../stores/refs'
+import { t } from '../i18n'
 
 const props = defineProps<{ vault: string }>()
 const emit = defineEmits<{
@@ -76,39 +77,39 @@ const navEntries = computed<NavEntry[]>(() => {
   const isFilter = (f: string): boolean => inNotes && library.filter === f
   return [
     {
-      id: 'folders', label: '文件夹', icon: FolderTree,
+      id: 'folders', label: t('nav.folders'), icon: FolderTree,
       active: library.listView === 'folders', onClick: () => library.setListView('folders'),
     },
     {
-      id: 'all', label: '全部笔记', icon: FileText, count: counts.all,
+      id: 'all', label: t('nav.all'), icon: FileText, count: counts.all,
       active: isFilter('all'), onClick: () => library.setFilter('all'),
     },
     {
-      id: 'recent', label: '最近', icon: Clock, count: counts.recent,
+      id: 'recent', label: t('nav.recent'), icon: Clock, count: counts.recent,
       active: isFilter('recent'), onClick: () => library.setFilter('recent'),
     },
     {
-      id: 'favorites', label: '收藏', icon: Star, count: counts.favorites,
+      id: 'favorites', label: t('nav.favorites'), icon: Star, count: counts.favorites,
       active: isFilter('favorites'), onClick: () => library.setFilter('favorites'),
     },
     {
-      id: 'uncategorized', label: '未分类', icon: Inbox, count: counts.uncategorized,
+      id: 'uncategorized', label: t('nav.uncategorized'), icon: Inbox, count: counts.uncategorized,
       active: isFilter('uncategorized'), onClick: () => library.setFilter('uncategorized'),
     },
     {
-      id: 'graph', label: '图谱', icon: Network,
+      id: 'graph', label: t('nav.graph'), icon: Network,
       active: library.listView === 'graph', onClick: () => library.setListView('graph'),
     },
     {
-      id: 'attachments', label: '附件', icon: Paperclip, count: library.attachmentCount,
+      id: 'attachments', label: t('nav.attachments'), icon: Paperclip, count: library.attachmentCount,
       active: library.listView === 'attachments', onClick: () => library.setListView('attachments'),
     },
     {
-      id: 'index', label: '索引', icon: Database,
+      id: 'index', label: t('nav.index'), icon: Database,
       active: library.listView === 'index', onClick: () => library.setListView('index'),
     },
     {
-      id: 'cloud', label: '云同步', icon: Cloud,
+      id: 'cloud', label: t('nav.cloud'), icon: Cloud,
       active: library.listView === 'cloud', onClick: () => library.setListView('cloud'),
     },
   ]
@@ -127,7 +128,7 @@ async function restore(entry: TrashEntry): Promise<void> {
     await fsService.restoreFromTrash(props.vault, entry.trash_path)
     await refreshTrash()
   } catch {
-    notifyError('恢复失败，请重试')
+    notifyError(t('nav.restoreFailed'))
   }
 }
 
@@ -159,7 +160,7 @@ watch(
     <div class="sidebar-scroll">
       <button
         class="nav-item vault-item"
-        title="打开其他文件夹"
+        :title="t('nav.openOther')"
         @click="pickFolder"
       >
         <FolderOpen
@@ -206,7 +207,7 @@ watch(
             :size="12"
             :stroke-width="1.8"
           />
-          <span>标签</span>
+          <span>{{ t('nav.tags') }}</span>
         </div>
         <div class="tag-list">
           <button
@@ -214,7 +215,7 @@ watch(
             :key="tc.tag"
             class="nav-item tag-item"
             :class="{ active: library.filter === `tag:${tc.tag}` }"
-            :title="`${tc.count} 篇笔记`"
+            :title="t('nav.noteCount', { n: tc.count })"
             @click="library.setFilter(`tag:${tc.tag}`)"
           >
             <Hash
@@ -245,7 +246,7 @@ watch(
             :size="12"
             :stroke-width="1.8"
           />
-          <span class="group-title">引用文献</span>
+          <span class="group-title">{{ t('nav.references') }}</span>
           <span
             v-if="refs.refs.size"
             class="group-count"
@@ -259,13 +260,13 @@ watch(
             v-model="refQuery"
             class="search-input ref-search"
             type="text"
-            placeholder="搜索 key / 标题 / 作者 / 年份"
+            :placeholder="t('nav.searchRefs')"
           >
           <button
             v-for="r in refResults"
             :key="r.key"
             class="ref-item"
-            :title="`插入引用 [@${r.key}]`"
+            :title="t('nav.insertRef', { key: r.key })"
             @click="insertRef(r.key)"
           >
             <span class="ref-key">{{ r.key }}</span>
@@ -276,7 +277,7 @@ watch(
             v-if="refResults.length === 0"
             class="group-empty"
           >
-            将 .bib / .ris / .json(CSL) 文件放入 vault 根目录
+            {{ t('nav.refEmpty') }}
           </p>
         </div>
       </section>
@@ -298,7 +299,7 @@ watch(
             :size="12"
             :stroke-width="1.8"
           />
-          <span class="group-title">回收站</span>
+          <span class="group-title">{{ t('nav.trash') }}</span>
           <span
             v-if="trashEntries.length"
             class="group-count"
@@ -319,7 +320,7 @@ watch(
             >{{ entry.name }}</span>
             <button
               class="trash-restore"
-              title="恢复"
+              :title="t('nav.restore')"
               @click="restore(entry)"
             >
               <RotateCcw
@@ -332,7 +333,7 @@ watch(
             v-if="trashEntries.length === 0"
             class="group-empty"
           >
-            回收站是空的
+            {{ t('nav.trashEmpty') }}
           </p>
         </div>
       </section>
@@ -352,7 +353,7 @@ watch(
       <span class="footer-spacer" />
       <button
         class="footer-btn"
-        :title="theme === 'dark' ? '切换到浅色' : '切换到深色'"
+        :title="theme === 'dark' ? t('nav.switchLight') : t('nav.switchDark')"
         @click="toggleTheme"
       >
         <Sun
@@ -368,7 +369,7 @@ watch(
       </button>
       <button
         class="footer-btn"
-        title="设置"
+        :title="t('nav.settings')"
         @click="emit('open-settings')"
       >
         <Settings

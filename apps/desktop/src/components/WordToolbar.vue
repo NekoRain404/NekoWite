@@ -22,6 +22,7 @@ import {
   Boxes,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
+import { t } from '../i18n'
 
 const emit = defineEmits<{ (e: 'command', id: string): void }>()
 
@@ -74,7 +75,7 @@ function run(id: string): void {
     >
       <button
         class="toolbar-btn"
-        title="标题"
+        :title="t('toolbar.heading')"
         @click="toggleHeadingMenu"
       >
         <Heading2 :size="15" :stroke-width="1.8" />
@@ -91,29 +92,29 @@ function run(id: string): void {
             @click="pickHeading(level)"
           >
             <span class="heading-preview" :data-level="level">H{{ level }}</span>
-            标题 {{ level }}
+            {{ t('toolbar.headingLevel', { n: level }) }}
           </button>
         </div>
       </Transition>
     </div>
     <span class="toolbar-sep" />
-    <button class="toolbar-btn" title="加粗" @click="run('bold')"><Bold :size="15" :stroke-width="1.8" /></button>
-    <button class="toolbar-btn" title="斜体" @click="run('italic')"><Italic :size="15" :stroke-width="1.8" /></button>
-    <button class="toolbar-btn" title="删除线" @click="run('strike')"><Strikethrough :size="15" :stroke-width="1.8" /></button>
-    <button class="toolbar-btn" title="行内代码" @click="run('inline-code')"><Code :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.bold')" @click="run('bold')"><Bold :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.italic')" @click="run('italic')"><Italic :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.strike')" @click="run('strike')"><Strikethrough :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.inlineCode')" @click="run('inline-code')"><Code :size="15" :stroke-width="1.8" /></button>
     <span class="toolbar-sep" />
-    <button class="toolbar-btn" title="链接" @click="run('link')"><Link :size="15" :stroke-width="1.8" /></button>
-    <button class="toolbar-btn" title="图片" @click="run('image')"><ImageIcon :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.link')" @click="run('link')"><Link :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.image')" @click="run('image')"><ImageIcon :size="15" :stroke-width="1.8" /></button>
     <span class="toolbar-sep" />
-    <button class="toolbar-btn" title="无序列表" @click="run('list-unordered')"><List :size="15" :stroke-width="1.8" /></button>
-    <button class="toolbar-btn" title="有序列表" @click="run('list-ordered')"><ListOrdered :size="15" :stroke-width="1.8" /></button>
-    <button class="toolbar-btn" title="任务列表" @click="run('list-task')"><ListTodo :size="15" :stroke-width="1.8" /></button>
-    <button class="toolbar-btn" title="引用" @click="run('quote')"><Quote :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.listUnordered')" @click="run('list-unordered')"><List :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.listOrdered')" @click="run('list-ordered')"><ListOrdered :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.listTask')" @click="run('list-task')"><ListTodo :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.quote')" @click="run('quote')"><Quote :size="15" :stroke-width="1.8" /></button>
     <span class="toolbar-sep" />
-    <button class="toolbar-btn" title="代码块" @click="run('code-block')"><SquareCode :size="15" :stroke-width="1.8" /></button>
-    <button class="toolbar-btn" title="分隔线" @click="run('hr')"><Minus :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.codeBlock')" @click="run('code-block')"><SquareCode :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.hr')" @click="run('hr')"><Minus :size="15" :stroke-width="1.8" /></button>
     <span class="toolbar-sep" />
-    <button class="toolbar-btn" title="插入 MDX 组件" @click="run('insert-component')"><Braces :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.insertComponent')" @click="run('insert-component')"><Braces :size="15" :stroke-width="1.8" /></button>
     <template v-if="registryItems.length">
       <span class="toolbar-sep" />
       <button

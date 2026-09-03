@@ -2,6 +2,7 @@
 import { onBeforeUnmount, ref } from 'vue'
 import { onNotify, onRecovery } from '../services/errors'
 import type { RecoveryPrompt } from '../services/errors'
+import { t } from '../i18n'
 
 interface ToastMsg {
   id: number
@@ -78,13 +79,13 @@ onBeforeUnmount(() => {
           class="btn btn-primary btn-sm"
           @click="confirmRecovery"
         >
-          恢复
+          {{ t('toast.restore') }}
         </button>
         <button
           class="btn btn-secondary btn-sm"
           @click="dismissRecovery"
         >
-          忽略
+          {{ t('toast.dismiss') }}
         </button>
       </div>
     </div>

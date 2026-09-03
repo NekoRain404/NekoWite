@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useTabsStore } from '../stores/tabs'
+import { t } from '../i18n'
 
 const props = defineProps<{ tabId: string; path: string }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -24,36 +25,36 @@ function later(): void {
   <div class="dialog-overlay">
     <div class="dialog conflict-dialog">
       <div class="conflict-title">
-        文件已在外部被修改
+        {{ t('conflict.title') }}
       </div>
       <div class="conflict-body">
         <span class="conflict-path">
           {{ path }}
         </span>
-        的磁盘内容已变化，而当前有未保存的本地修改。
+        {{ t('conflict.body', { path: '' }) }}
       </div>
       <div class="dialog-actions">
         <button
           class="btn btn-primary"
           @click="reloadFromDisk"
         >
-          以磁盘为准（放弃本地）
+          {{ t('conflict.reloadDisk') }}
         </button>
         <button
           class="btn btn-secondary"
           @click="keepLocal"
         >
-          保留本地
+          {{ t('conflict.keepLocal') }}
         </button>
         <button
           class="btn btn-ghost"
           @click="later"
         >
-          稍后再说
+          {{ t('conflict.later') }}
         </button>
       </div>
       <div class="conflict-note">
-        以磁盘为准将加载磁盘内容并放弃本地修改；保留本地则维持当前内容并保持未保存状态。
+        {{ t('conflict.note') }}
       </div>
     </div>
   </div>

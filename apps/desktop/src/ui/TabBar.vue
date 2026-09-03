@@ -1,30 +1,31 @@
 <script setup lang="ts">
-import { markRaw, ref } from 'vue'
+import { computed, markRaw, ref } from 'vue'
 import { Plus, Trash2, X, XSquare } from 'lucide-vue-next'
 import { useTabsStore } from '../stores/tabs'
 import ContextMenu from './ContextMenu.vue'
 import type { ContextMenuItem } from './ContextMenu.vue'
+import { t } from '../i18n'
 
 const tabs = useTabsStore()
 
 const menu = ref<{ x: number; y: number; tabId: string } | null>(null)
 
-const menuItems: ContextMenuItem[] = [
-  { id: 'close', label: '关闭', icon: markRaw(X) },
-  { id: 'close-others', label: '关闭其他', icon: markRaw(XSquare), separator: true },
-  { id: 'close-all', label: '关闭全部', icon: markRaw(Trash2) },
-]
+const menuItems = computed<ContextMenuItem[]>(() => [
+  { id: 'close', label: t('tabs.close'), icon: markRaw(X) },
+  { id: 'close-others', label: t('tabs.closeOthers'), icon: markRaw(XSquare), separator: true },
+  { id: 'close-all', label: t('tabs.closeAll'), icon: markRaw(Trash2) },
+])
 
 function baseName(path: string | null): string {
-  if (!path) return '未命名'
+  if (!path) return t('tabs.untitled')
   return path.split('/').pop() ?? path
 }
 
 function dotTitle(id: string): string {
   const state = tabs.saveStateOf(id)
-  if (state === 'saving') return '保存中…'
-  if (state === 'dirty') return '未保存'
-  return '已保存'
+  if (state === 'saving') return t('tabs.saving')
+  if (state === 'dirty') return t('tabs.dirty')
+  return t('tabs.saved')
 }
 
 function onTabMouseDown(e: MouseEvent): void {
@@ -66,7 +67,7 @@ async function onMenuSelect(id: string): Promise<void> {
       <span class="tab-name">{{ baseName(tab.path) }}</span>
       <button
         class="tab-close"
-        title="关闭标签"
+        :title="t('tabs.closeTab')"
         @click.stop="tabs.closeTab(tab.id)"
       >
         <X
@@ -77,7 +78,7 @@ async function onMenuSelect(id: string): Promise<void> {
     </div>
     <button
       class="new-tab"
-      title="新建文档"
+      :title="t('tabs.newDoc')"
       @click="tabs.openTab(null)"
     >
       <Plus

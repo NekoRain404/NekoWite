@@ -112,40 +112,45 @@ export const useTabsStore = defineStore('tabs', () => {
   }
 
   async function openTab(path: string | null, initial = ''): Promise<void> {
+    if (path && !vault.value) {
+      notifyError('尚未打开 vault，无法读取文件')
+      return
+    }
     if (path) {
-      // Focus the existing tab instead of opening a duplicate: two tabs on
-      // one file would autosave competing content to the same path.
+      // Synchronous critical section: the duplicate check and the placeholder
+      // push happen in the same tick, before any await. Two quick clicks on
+      // one path are therefore serialized — the second finds the placeholder
+      // (or the fully loaded tab) and focuses it instead of spawning a second
+      // tab after the pending read resolves.
       const existing = tabs.value.find((t) => t.path === path)
       if (existing) {
         activeId.value = existing.id
         return
       }
-      if (!vault.value) {
-        notifyError('尚未打开 vault，无法读取文件')
-        return
+      const tab: OpenTab = {
+        id: nextId(),
+        path,
+        content: initial,
+        savedContent: initial,
+        dirty: false,
+        pendingAssetPaths: [],
       }
-    }
-    let content = initial
-    if (path) {
+      tabs.value.push(tab)
+      activeId.value = tab.id
+      emitLifecycle('onOpenDocument', { id: tab.id, path: tab.path })
       try {
-        content = await fsService.read(vault.value!, path)
+        const content = await fsService.read(vault.value!, path)
+        // The tab may have been closed (or closeAll run) while the read was
+        // pending; never refill a tab that no longer exists.
+        if (tabs.value.some((x) => x.id === tab.id)) {
+          tab.content = content
+          tab.savedContent = content
+        }
       } catch {
+        removeTab(tab.id)
         notifyError(`无法读取文件：${path}`)
         return
       }
-    }
-    const tab: OpenTab = {
-      id: nextId(),
-      path,
-      content,
-      savedContent: content,
-      dirty: false,
-      pendingAssetPaths: [],
-    }
-    tabs.value.push(tab)
-    activeId.value = tab.id
-    emitLifecycle('onOpenDocument', { id: tab.id, path: tab.path })
-    if (tab.path) {
       // Crash-recovery probe must never block opening the file: the prompt is
       // fired after the tab is live, and the user can dismiss or restore it.
       void (async () => {
@@ -160,7 +165,19 @@ export const useTabsStore = defineStore('tabs', () => {
           })
         }
       })()
+      return
     }
+    const tab: OpenTab = {
+      id: nextId(),
+      path: null,
+      content: initial,
+      savedContent: initial,
+      dirty: false,
+      pendingAssetPaths: [],
+    }
+    tabs.value.push(tab)
+    activeId.value = tab.id
+    emitLifecycle('onOpenDocument', { id: tab.id, path: tab.path })
   }
 
   /** Remove a tab without flushing anything (used after the file is gone). */
@@ -189,6 +206,11 @@ export const useTabsStore = defineStore('tabs', () => {
 
   function closeAll(): void {
     for (const t of [...tabs.value]) removeTab(t.id)
+    // Leave no tab-scoped state behind: removeTab only cancels autosave
+    // timers, but a closed tab's saving-flag and self-write window must also
+    // be reset or a later open/switch would inherit the stale remnants.
+    savingIds.value = new Set()
+    selfWrites.clear()
     activeId.value = null
   }
 

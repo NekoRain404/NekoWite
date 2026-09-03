@@ -5,6 +5,7 @@ import { notifyError } from './errors'
 import { getGateways } from './gateways/index'
 import { useSettingsStore } from '../stores/settings'
 import type { AIConfig } from '../stores/settings'
+import { t } from '../i18n'
 
 interface PrefixView {
   state: {
@@ -111,12 +112,21 @@ async function triggerSuggestion(
     // (or an id we never adopted, e.g. a cancelled stream's lingering event)
     // must NOT wipe the current request's listeners.
     const offDone = await listen<{ id: string; full: string }>('ai-done', (e) => {
-      // A done/error for ANY id proves that stream has completed, so its
-      // cancelled-set entry (if it was cancelled) is no longer needed — prune it
-      // to keep cancelledIds bounded.
-      cancelledIds.delete(e.payload.id)
+      const id = e.payload.id
+      // Never adopt a cancelled/expired id: a stale done from a stream that
+      // was cancelled before a newer one registered could otherwise be
+      // adopted here (activeId is still null) and tear down the newer
+      // stream's listeners. Prune the marker and drain the stray event.
+      if (cancelledIds.has(id)) {
+        cancelledIds.delete(id)
+        return
+      }
       if (superseded()) return
-      if (activeId === null || e.payload.id !== activeId) return
+      // Adopt the id even when no chunk arrived yet (a provider that answers
+      // with zero deltas, e.g. only [DONE], still finalizes here); without
+      // this the guard below would bail and leak the listeners forever.
+      if (activeId === null) activeId = id
+      if (activeId !== id) return
       cleanupListeners()
       activeId = null
     })
@@ -127,13 +137,25 @@ async function triggerSuggestion(
     }
     cleanups.push(offDone)
     const offError = await listen<{ id: string; message: string }>('ai-error', (e) => {
-      cancelledIds.delete(e.payload.id)
+      const id = e.payload.id
+      if (cancelledIds.has(id)) {
+        cancelledIds.delete(id)
+        return
+      }
       if (superseded()) return
-      if (activeId === null || e.payload.id !== activeId) return
-      errorNotified = true
+      // Adopt the id (zero-chunk error responses) so the guard below does not
+      // bail, leaving the listeners registered and the toast suppressed.
+      if (activeId === null) activeId = id
+      if (activeId !== id) return
+      // If the raw invoke rejection was delivered before this event (and the
+      // catch already toasted), skip the duplicate toast. Marked together with
+      // the toast so a marked flag always means "an error was reported".
+      if (!errorNotified) {
+        errorNotified = true
+        notifyError(t('error.aiGenFailed', { msg: e.payload.message }))
+      }
       cleanupListeners()
       activeId = null
-      notifyError(`AI 生成失败：${e.payload.message}`)
     })
     if (superseded()) {
       offChunk()
@@ -158,7 +180,10 @@ async function triggerSuggestion(
     activeId = null
     // Rust emits ai-error AND rejects the invoke; the event handler owns the
     // toast, so swallow the raw rejection when an ai-error event was seen.
+    // Mark errorNotified even here so a late-delivered ai-error event does not
+    // toast a second time (defends the reject-first ordering).
     if (!errorNotified) {
+      errorNotified = true
       notifyError(e instanceof Error ? e.message : String(e))
     }
   }
@@ -237,9 +262,16 @@ export function startChatCompletion(
       }
       cleanups.push(offChunk)
       const offDone = await listen<{ id: string; full: string }>('ai-done', (e) => {
-        cancelledIds.delete(e.payload.id)
+        const id = e.payload.id
+        if (cancelledIds.has(id)) {
+          cancelledIds.delete(id)
+          return
+        }
         if (superseded()) return
-        if (activeId === null || e.payload.id !== activeId) return
+        // Adopt the id even when no chunk arrived yet (zero-delta providers)
+        // so the guard below does not bail and leak the listeners.
+        if (activeId === null) activeId = id
+        if (activeId !== id) return
         cleanupListeners()
         activeId = null
         handlers.onDone(e.payload.full)
@@ -251,13 +283,23 @@ export function startChatCompletion(
       }
       cleanups.push(offDone)
       const offError = await listen<{ id: string; message: string }>('ai-error', (e) => {
-        cancelledIds.delete(e.payload.id)
+        const id = e.payload.id
+        if (cancelledIds.has(id)) {
+          cancelledIds.delete(id)
+          return
+        }
         if (superseded()) return
-        if (activeId === null || e.payload.id !== activeId) return
-        errorNotified = true
+        // Adopt the id (zero-chunk error responses) so the guard does not bail.
+        if (activeId === null) activeId = id
+        if (activeId !== id) return
+        // Skip a duplicate onError if the raw rejection already handled it
+        // (defends against the invoke rejection arriving before this event).
+        if (!errorNotified) {
+          errorNotified = true
+          handlers.onError(e.payload.message)
+        }
         cleanupListeners()
         activeId = null
-        handlers.onError(e.payload.message)
       })
       if (superseded()) {
         offChunk()
@@ -283,7 +325,10 @@ export function startChatCompletion(
     } catch (e) {
       cleanupListeners()
       activeId = null
+      // Mark errorNotified even here so a late ai-error event does not call
+      // onError a second time (reject arriving before the event).
       if (!errorNotified) {
+        errorNotified = true
         handlers.onError(e instanceof Error ? e.message : String(e))
       }
     }

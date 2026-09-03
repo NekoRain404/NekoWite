@@ -3,6 +3,7 @@ import { createPinia } from 'pinia'
 import { activatePlugin, loadPlugin } from '@nekowite/plugin-host'
 import type { PluginMeta } from '@nekowite/plugin-host'
 import App from './App.vue'
+import { i18n } from './i18n'
 import { calloutPlugin } from './plugins/callout'
 import { floatboxPlugin } from './plugins/floatbox'
 import { statusPlugin } from './plugins/status'
@@ -41,5 +42,5 @@ async function activateBuiltins(): Promise<void> {
 }
 
 void activateBuiltins().then(() => {
-  createApp(App).use(createPinia()).mount('#app')
+  createApp(App).use(createPinia()).use(i18n).mount('#app')
 })

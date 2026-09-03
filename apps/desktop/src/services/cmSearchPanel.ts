@@ -14,6 +14,7 @@ import {
 } from '@codemirror/search'
 import type { EditorState } from '@codemirror/state'
 import { runScopeHandlers, type EditorView, type Panel, type ViewUpdate } from '@codemirror/view'
+import { t } from '../i18n'
 
 const MATCH_CAP = 999
 
@@ -39,8 +40,8 @@ function countMatches(state: EditorState, query: SearchQuery): MatchStats {
 
 function formatCount(stats: MatchStats, query: SearchQuery): string {
   if (!query.search) return ''
-  if (!query.valid) return '正则无效'
-  if (stats.total === 0) return '无结果'
+  if (!query.valid) return t('searchPanel.invalidRegexp')
+  if (stats.total === 0) return t('searchPanel.noResults')
   const total = stats.overflow ? `${MATCH_CAP}+` : String(stats.total)
   return `${stats.current > 0 ? stats.current : '–'} / ${total}`
 }
@@ -95,8 +96,8 @@ export function createZhSearchPanel(view: EditorView): Panel {
   const searchField = elt('input', {
     class: 'nw-search-field',
     value: query.search,
-    placeholder: '查找',
-    'aria-label': '查找',
+    placeholder: t('searchPanel.find'),
+    'aria-label': t('searchPanel.find'),
     'main-field': 'true',
     autocomplete: 'off',
     spellcheck: 'false',
@@ -104,16 +105,16 @@ export function createZhSearchPanel(view: EditorView): Panel {
   const replaceField = elt('input', {
     class: 'nw-search-field',
     value: query.replace,
-    placeholder: '替换为',
-    'aria-label': '替换为',
+    placeholder: t('searchPanel.replaceWith'),
+    'aria-label': t('searchPanel.replaceWith'),
     autocomplete: 'off',
     spellcheck: 'false',
   })
   const count = elt('span', { class: 'nw-search-count', 'aria-live': 'polite' })
 
-  const caseButton = toggle('区分大小写', 'Aa', query.caseSensitive, commit)
-  const wordButton = toggle('全字匹配', 'ab', query.wholeWord, commit)
-  const regexpButton = toggle('正则表达式', '.*', query.regexp, commit)
+  const caseButton = toggle(t('searchPanel.caseSensitive'), 'Aa', query.caseSensitive, commit)
+  const wordButton = toggle(t('searchPanel.wholeWord'), 'ab', query.wholeWord, commit)
+  const regexpButton = toggle(t('searchPanel.regexp'), '.*', query.regexp, commit)
 
   function actionButton(label: string, name: string, onClick: () => void): HTMLButtonElement {
     const button = elt('button', {
@@ -130,15 +131,15 @@ export function createZhSearchPanel(view: EditorView): Panel {
   }
 
   const navGroup = elt('div', { class: 'nw-search-group' }, [
-    actionButton('上一个', 'previous', () => findPrevious(view)),
-    actionButton('下一个', 'next', () => findNext(view)),
+    actionButton(t('searchPanel.previous'), 'previous', () => findPrevious(view)),
+    actionButton(t('searchPanel.next'), 'next', () => findNext(view)),
   ])
 
   const closeButton = elt('button', {
     type: 'button',
     class: 'nw-search-close',
-    'aria-label': '关闭（Esc）',
-    title: '关闭（Esc）',
+    'aria-label': t('searchPanel.closeEsc'),
+    title: t('searchPanel.closeEsc'),
   })
   closeButton.textContent = '✕'
   closeButton.addEventListener('mousedown', (event) => event.preventDefault())
@@ -146,7 +147,7 @@ export function createZhSearchPanel(view: EditorView): Panel {
 
   const dom = elt(
     'div',
-    { class: 'nw-search', role: 'search', 'aria-label': '查找与替换' },
+    { class: 'nw-search', role: 'search', 'aria-label': t('searchPanel.findReplace') },
     [
       searchField,
       count,
@@ -154,8 +155,8 @@ export function createZhSearchPanel(view: EditorView): Panel {
       elt('div', { class: 'nw-search-group' }, [caseButton, wordButton, regexpButton]),
       replaceField,
       elt('div', { class: 'nw-search-group' }, [
-        actionButton('替换', 'replace', () => replaceNext(view)),
-        actionButton('全部替换', 'replaceAll', () => replaceAll(view)),
+        actionButton(t('searchPanel.replace'), 'replace', () => replaceNext(view)),
+        actionButton(t('searchPanel.replaceAll'), 'replaceAll', () => replaceAll(view)),
       ]),
       closeButton,
     ],

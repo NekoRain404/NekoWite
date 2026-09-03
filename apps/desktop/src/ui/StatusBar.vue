@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
+import { t } from '../i18n'
 
 const tabs = useTabsStore()
 const view = useViewStore()
@@ -33,18 +34,18 @@ const saveState = computed(() => {
 
 const saveLabel = computed(() => {
   switch (saveState.value) {
-    case 'saving': return '保存中'
-    case 'dirty': return '未保存'
-    case 'saved': return '已保存'
+    case 'saving': return t('status.saving')
+    case 'dirty': return t('status.dirty')
+    case 'saved': return t('status.saved')
     default: return ''
   }
 })
 
 const modeLabel = computed(() => {
   switch (view.mode) {
-    case 'source': return '源码'
-    case 'rendered': return '渲染'
-    case 'split': return '对照'
+    case 'source': return t('status.source')
+    case 'rendered': return t('status.rendered')
+    case 'split': return t('status.split')
     default: return view.mode
   }
 })
@@ -52,11 +53,11 @@ const modeLabel = computed(() => {
 
 <template>
   <footer class="status-bar">
-    <span class="status-item">{{ wordCount }} 词</span>
+    <span class="status-item">{{ t('status.words', { n: wordCount }) }}</span>
     <span class="status-sep">·</span>
-    <span class="status-item">{{ charCount }} 字符</span>
+    <span class="status-item">{{ t('status.chars', { n: charCount }) }}</span>
     <span class="status-sep">·</span>
-    <span class="status-item">约 {{ readMinutes }} 分钟</span>
+    <span class="status-item">{{ t('status.readMinutes', { n: readMinutes }) }}</span>
     <span class="status-spacer" />
     <span
       v-if="saveState"

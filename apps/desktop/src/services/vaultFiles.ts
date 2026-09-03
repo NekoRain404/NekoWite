@@ -51,6 +51,9 @@ export async function collectVaultFiles(vault: string, list: ListFn): Promise<st
 export class VaultFileIndex {
   private cache = new Map<string, string[]>()
   private inflight = new Map<string, Promise<string[]>>()
+  /** Per-vault generation token: bumped on every `invalidate` so an in-flight
+   * walk superseded by a fs-change cannot backfill the cache with stale data. */
+  private generation = new Map<string, number>()
 
   constructor(private list: ListFn) {}
 
@@ -59,22 +62,39 @@ export class VaultFileIndex {
     if (cached) return Promise.resolve(cached)
     const pending = this.inflight.get(vault)
     if (pending) return pending
+    const gen = this.generation.get(vault) ?? 0
     const walk = collectVaultFiles(vault, this.list)
-    this.inflight.set(vault, walk)
-    return walk.then(
+    const wrapped = walk.then(
       (files) => {
-        this.cache.set(vault, files)
+        // Only a walk that is still the current generation may populate the
+        // cache; one invalidated mid-flight is discarded (returned to its
+        // caller, but not cached).
+        if ((this.generation.get(vault) ?? 0) === gen) this.cache.set(vault, files)
         return files
       },
       () => [],
-    ).finally(() => {
-      this.inflight.delete(vault)
+    )
+    this.inflight.set(vault, wrapped)
+    // Drop the in-flight slot only if it still belongs to this walk: an
+    // invalidate() during the walk may have replaced it with a newer one.
+    void wrapped.finally(() => {
+      if (this.inflight.get(vault) === wrapped) this.inflight.delete(vault)
     })
+    return wrapped
   }
 
   invalidate(vault?: string): void {
-    if (vault === undefined) this.cache.clear()
-    else this.cache.delete(vault)
+    if (vault === undefined) {
+      this.cache.clear()
+      this.inflight.clear()
+      for (const v of this.generation.keys()) {
+        this.generation.set(v, (this.generation.get(v) ?? 0) + 1)
+      }
+    } else {
+      this.cache.delete(vault)
+      this.inflight.delete(vault)
+      this.generation.set(vault, (this.generation.get(vault) ?? 0) + 1)
+    }
   }
 }
 

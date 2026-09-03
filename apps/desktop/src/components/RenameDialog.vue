@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue'
 import { validateRenameName } from '../services/renameAsset'
+import { t } from '../i18n'
 
 const props = defineProps<{ initial: string }>()
 const emit = defineEmits<{
@@ -48,17 +49,17 @@ onMounted(() => {
   >
     <div class="dialog rename-dialog">
       <div class="rename-title">
-        重命名资源
+        {{ t('renameDialog.title') }}
       </div>
       <div class="rename-hint">
-        粘贴的图片将存入此笔记的专属资源文件夹，请为其命名。
+        {{ t('renameDialog.hint') }}
       </div>
       <input
         ref="inputEl"
         v-model="name"
         class="input"
         :class="{ 'is-invalid': error }"
-        placeholder="文件名"
+        :placeholder="t('renameDialog.placeholder')"
         @input="check"
       >
       <div
@@ -72,14 +73,14 @@ onMounted(() => {
           class="btn btn-ghost"
           @click="cancel"
         >
-          取消
+          {{ t('common.cancel') }}
         </button>
         <button
           class="btn btn-primary"
           :disabled="!!error"
           @click="confirm"
         >
-          确认
+          {{ t('common.confirm') }}
         </button>
       </div>
     </div>

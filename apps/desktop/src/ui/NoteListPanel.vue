@@ -20,6 +20,7 @@ import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 import { parseOutline } from '../services/outline'
 import { dirRelativeToVault } from '../services/noteMeta'
+import { t } from '../i18n'
 
 const library = useLibraryStore()
 const tabs = useTabsStore()
@@ -29,16 +30,16 @@ const sortMenu = ref<{ x: number; y: number } | null>(null)
 const conflict = ref<{ tabId: string; path: string } | null>(null)
 
 const MODES = [
-  { id: 'notes', label: '笔记', icon: BookOpen },
-  { id: 'outline', label: '大纲', icon: ListTree },
-  { id: 'links', label: '链接', icon: Link2 },
+  { id: 'notes', label: t('notelist.notes'), icon: BookOpen },
+  { id: 'outline', label: t('notelist.outline'), icon: ListTree },
+  { id: 'links', label: t('notelist.links'), icon: Link2 },
 ] as const
 
 const PLACEHOLDER_TITLES: Record<string, string> = {
-  graph: '知识图谱',
-  attachments: '附件',
-  index: '索引',
-  cloud: '云同步',
+  graph: 'graph',
+  attachments: 'attachments',
+  index: 'index',
+  cloud: 'cloud',
 }
 
 const activeTab = computed(() => tabs.activeTab)
@@ -74,16 +75,16 @@ function relPath(path: string): string | null {
 }
 
 const sortMenuItems = computed<ContextMenuItem[]>(() => [
-  { id: 'mtime', label: '按修改时间' },
-  { id: 'title', label: '按标题' },
-  { id: 'name', label: '按文件名' },
+  { id: 'mtime', label: t('notelist.sortMtime') },
+  { id: 'title', label: t('notelist.sortTitleField') },
+  { id: 'name', label: t('notelist.sortName') },
 ])
 
 const sortLabel = computed(() => {
   switch (library.sortBy) {
-    case 'mtime': return '修改时间'
-    case 'title': return '标题'
-    case 'name': return '文件名'
+    case 'mtime': return t('notelist.sortMtimeLabel')
+    case 'title': return t('notelist.sortTitleLabel')
+    case 'name': return t('notelist.sortNameLabel')
     default: return ''
   }
 })
@@ -139,7 +140,7 @@ function jumpOutline(line: number, index: number): void {
         v-else
         class="nl-placeholder-title"
       >
-        {{ PLACEHOLDER_TITLES[library.listView] }}
+        {{ t(`notelist.${PLACEHOLDER_TITLES[library.listView]!}`) }}
       </h2>
     </header>
 
@@ -170,7 +171,7 @@ function jumpOutline(line: number, index: number): void {
         v-else
         class="empty-hint"
       >
-        打开文件夹后查看
+        {{ t('notelist.openFolderAfter') }}
       </p>
     </div>
 
@@ -179,7 +180,7 @@ function jumpOutline(line: number, index: number): void {
       class="nl-body nl-empty"
     >
       <p class="empty-hint">
-        即将支持
+        {{ t('notelist.comingSoon') }}
       </p>
     </div>
 
@@ -194,15 +195,15 @@ function jumpOutline(line: number, index: number): void {
           :value="library.query"
           class="nl-search-input"
           type="text"
-          placeholder="搜索笔记…"
+          :placeholder="t('notelist.search')"
           @input="library.setQuery(($event.target as HTMLInputElement).value)"
         >
       </label>
       <div class="nl-meta">
-        <span class="nl-count">{{ library.indexing ? '正在建立索引…' : `${library.visibleNotes.length} 篇笔记` }}</span>
+        <span class="nl-count">{{ library.indexing ? t('notelist.indexing') : t('notelist.count', { n: library.visibleNotes.length }) }}</span>
         <button
           class="nl-sort"
-          :title="`排序：${sortLabel}`"
+          :title="t('notelist.sortTitle', { label: sortLabel })"
           @click="openSortMenu"
         >
           <ArrowDownWideNarrow
@@ -226,7 +227,7 @@ function jumpOutline(line: number, index: number): void {
           v-if="!library.indexing && library.visibleNotes.length === 0"
           class="nl-empty-hint"
         >
-          没有匹配的笔记
+          {{ t('notelist.empty') }}
         </p>
       </div>
     </template>
@@ -241,24 +242,24 @@ function jumpOutline(line: number, index: number): void {
           :key="item.index"
           class="outline-item"
           :style="{ paddingLeft: `${8 + Math.max(0, item.level - 1) * 12}px` }"
-          :title="`跳转到第 ${item.line + 1} 行`"
+          :title="t('notelist.jumpLine', { n: item.line + 1 })"
           @click="jumpOutline(item.line, item.index)"
         >
           <span class="outline-mark" />
-          <span class="outline-text">{{ item.text || '（空标题）' }}</span>
+          <span class="outline-text">{{ item.text || t('notelist.outlineHeading') }}</span>
         </button>
         <p
           v-if="outlineItems.length === 0"
           class="nl-empty-hint"
         >
-          当前文档没有标题
+          {{ t('notelist.outlineEmpty') }}
         </p>
       </template>
       <p
         v-else
         class="nl-empty-hint"
       >
-        打开一篇笔记后查看大纲
+        {{ t('notelist.openNoteOutline') }}
       </p>
     </div>
 
@@ -268,7 +269,7 @@ function jumpOutline(line: number, index: number): void {
     >
       <template v-if="activeTab">
         <p class="nl-group-label">
-          出链
+          {{ t('notelist.outLinks') }}
         </p>
         <button
           v-for="link in links.out"
@@ -285,10 +286,10 @@ function jumpOutline(line: number, index: number): void {
           v-if="links.out.length === 0"
           class="nl-empty-hint"
         >
-          当前文档没有出链
+          {{ t('notelist.outLinksEmpty') }}
         </p>
         <p class="nl-group-label">
-          入链
+          {{ t('notelist.inLinks') }}
         </p>
         <button
           v-for="note in links.back"
@@ -297,20 +298,20 @@ function jumpOutline(line: number, index: number): void {
           @click="openNote(note.path)"
         >
           <span class="link-text">{{ note.title }}</span>
-          <span class="link-target">{{ note.dir || '根目录' }}</span>
+          <span class="link-target">{{ note.dir || t('notelist.rootDir') }}</span>
         </button>
         <p
           v-if="links.back.length === 0"
           class="nl-empty-hint"
         >
-          暂时没有笔记引用当前文档
+          {{ t('notelist.inLinksEmpty') }}
         </p>
       </template>
       <p
         v-else
         class="nl-empty-hint"
       >
-        打开一篇笔记后查看链接
+        {{ t('notelist.openNoteLinks') }}
       </p>
     </div>
 

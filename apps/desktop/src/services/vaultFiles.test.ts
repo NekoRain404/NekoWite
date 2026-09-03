@@ -88,4 +88,28 @@ describe('VaultFileIndex', () => {
     })
     await expect(index.get('gone')).resolves.toEqual([])
   })
+
+  it('discards an in-flight walk superseded by invalidate so newer data wins', async () => {
+    const resolvers: Array<(files: FileEntry[]) => void> = []
+    const list = vi.fn(
+      () =>
+        new Promise<FileEntry[]>((resolve) => {
+          resolvers.push(resolve)
+        }),
+    )
+    const index = new VaultFileIndex(list)
+    const stale = index.get('vault')
+    index.invalidate('vault')
+    const fresh = index.get('vault')
+
+    // The old walk resolves first with stale data — it must not touch cache.
+    resolvers[0]([entry('old.md', 'vault/old.md', false, true)])
+    expect(await stale).toEqual(['vault/old.md'])
+
+    // The new walk wins and populates the cache.
+    resolvers[1]([entry('new.md', 'vault/new.md', false, true)])
+    expect(await fresh).toEqual(['vault/new.md'])
+    expect(await index.get('vault')).toEqual(['vault/new.md'])
+    expect(list).toHaveBeenCalledTimes(2)
+  })
 })

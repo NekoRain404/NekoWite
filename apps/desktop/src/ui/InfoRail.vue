@@ -1,21 +1,22 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { X } from 'lucide-vue-next'
 import ReferencesPanel from './ReferencesPanel.vue'
 import HistoryPanel from './HistoryPanel.vue'
 import OutlinePanel from './OutlinePanel.vue'
 import ChatPanel from './ChatPanel.vue'
+import { t } from '../i18n'
 
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const activeTab = ref<'ai' | 'outline' | 'refs' | 'history'>('ai')
 
-const TABS = [
-  { id: 'ai', label: 'AI' },
-  { id: 'outline', label: '大纲' },
-  { id: 'refs', label: '引用' },
-  { id: 'history', label: '历史' },
-] as const
+const TABS = computed(() => [
+  { id: 'ai', label: t('rail.ai') },
+  { id: 'outline', label: t('rail.outline') },
+  { id: 'refs', label: t('rail.refs') },
+  { id: 'history', label: t('rail.history') },
+] as const)
 </script>
 
 <template>
@@ -23,18 +24,18 @@ const TABS = [
     <div class="rail-header">
       <div class="rail-tabs">
         <button
-          v-for="t in TABS"
-          :key="t.id"
+          v-for="tab in TABS"
+          :key="tab.id"
           class="rail-tab"
-          :class="{ 'is-active': activeTab === t.id }"
-          @click="activeTab = t.id"
+          :class="{ 'is-active': activeTab === tab.id }"
+          @click="activeTab = tab.id"
         >
-          {{ t.label }}
+          {{ tab.label }}
         </button>
       </div>
       <button
         class="rail-close"
-        title="关闭"
+        :title="t('rail.close')"
         @click="emit('close')"
       >
         <X

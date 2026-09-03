@@ -23,6 +23,7 @@ import {
   type ChatImage,
   type ChatMessage,
 } from './chatLogic'
+import { t } from '../i18n'
 
 interface ChatAttachment {
   id: string
@@ -162,7 +163,7 @@ async function send(): Promise<void> {
     },
     onError: (msg) => {
       finalize(index, false)
-      notifyError(`AI 生成失败：${msg}`)
+      notifyError(t('chat.genFailed', { msg }))
     },
   })
     .then((stream) => {
@@ -205,13 +206,13 @@ async function insertIntoDocument(msg: ChatMessage): Promise<void> {
   if (!tabs.activeTab) return
   const editor = editorBridge.getEditor()
   if (!editor) {
-    notifyError('编辑器尚未就绪，请稍后再试')
+    notifyError(t('chat.editorNotReady'))
     return
   }
   try {
     await editor.insertMarkdownAtCursor(`\n\n${msg.content}\n\n`)
   } catch {
-    notifyError('插入失败，请重试')
+    notifyError(t('chat.insertFailed'))
   }
 }
 
@@ -219,7 +220,7 @@ async function copyMessage(msg: ChatMessage): Promise<void> {
   try {
     await navigator.clipboard.writeText(msg.content)
   } catch {
-    notifyError('复制失败，请手动复制')
+    notifyError(t('chat.copyFailed'))
   }
 }
 
@@ -232,11 +233,11 @@ onBeforeUnmount(() => {
   <section class="chat-panel">
     <header class="chat-header">
       <span class="chat-title">
-        AI 助手
+        {{ t('chat.title') }}
       </span>
       <button
         class="chat-clear"
-        title="清空对话"
+        :title="t('chat.clear')"
         :disabled="!hasMessages"
         @click="clearAll"
       >
@@ -261,13 +262,13 @@ onBeforeUnmount(() => {
           :stroke-width="1.6"
         />
         <p class="chat-empty-title">
-          从一个问题开始
+          {{ t('chat.emptyTitle') }}
         </p>
         <p class="chat-empty-hint">
-          在编辑器光标处继续写作，或选中文字让 AI 讨论。
+          {{ t('chat.emptyMsg') }}
         </p>
         <p class="chat-empty-hint">
-          粘贴或拖入图片，让模型看图作答。
+          {{ t('chat.emptyImages') }}
         </p>
       </div>
 
@@ -306,19 +307,19 @@ onBeforeUnmount(() => {
           <button
             v-if="m.streaming"
             class="chat-action chat-stop"
-            title="中止"
+            :title="t('chat.stop')"
             @click="stop"
           >
             <Square
               :size="12"
               :stroke-width="1.8"
             />
-            <span>中止</span>
+            <span>{{ t('chat.stop') }}</span>
           </button>
           <template v-else>
             <button
               class="chat-action"
-              title="插入到文档光标处"
+              :title="t('chat.insertToDoc')"
               :disabled="!tabs.activeTab"
               @click="insertIntoDocument(m)"
             >
@@ -326,18 +327,18 @@ onBeforeUnmount(() => {
                 :size="12"
                 :stroke-width="1.8"
               />
-              <span>插入文档</span>
+              <span>{{ t('chat.insertDoc') }}</span>
             </button>
             <button
               class="chat-action"
-              title="复制内容"
+              :title="t('chat.copyContent')"
               @click="copyMessage(m)"
             >
               <Copy
                 :size="12"
                 :stroke-width="1.8"
               />
-              <span>复制</span>
+              <span>{{ t('chat.copy') }}</span>
             </button>
           </template>
         </div>
@@ -361,7 +362,7 @@ onBeforeUnmount(() => {
           >
           <button
             class="chat-attach-remove"
-            :title="`移除 ${a.name}`"
+            :title="t('chat.remove', { name: a.name })"
             @click="removeAttachment(a.id)"
           >
             <X
@@ -387,7 +388,7 @@ onBeforeUnmount(() => {
         >
         <button
           class="chat-tool"
-          title="添加图片"
+          :title="t('chat.addImage')"
           @click="onPickClick"
         >
           <Paperclip
@@ -399,13 +400,13 @@ onBeforeUnmount(() => {
           v-model="prompt"
           class="chat-textarea"
           rows="1"
-          placeholder="追问、提问或继续写作…"
+          :placeholder="t('chat.placeholder')"
           @keydown="onComposerKeydown"
           @paste="onPaste"
         />
         <button
           class="chat-send"
-          title="发送"
+          :title="t('chat.send')"
           :disabled="!canSend"
           @click="send"
         >
@@ -417,7 +418,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="chat-model">
         <span>{{ modelName }}</span>
-        <span class="chat-hint">Enter 发送 / Shift+Enter 换行</span>
+        <span class="chat-hint">{{ t('chat.hint') }}</span>
       </div>
     </div>
   </section>

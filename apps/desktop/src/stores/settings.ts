@@ -47,6 +47,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const apiKey = ref('')
   const autosaveInterval = ref<AutosaveInterval>(readAutosaveInterval(15000))
   const maxHistory = ref<number>(readNumber(LS_MAXHISTORY, 10))
+  const modelsCache = ref<string[]>([])
 
   watch(provider, (p) => {
     localStorage.setItem(LS_PROVIDER, p)
@@ -80,5 +81,13 @@ export const useSettingsStore = defineStore('settings', () => {
     return cfg
   }
 
-  return { provider, model, baseUrl, apiKey, autosaveInterval, maxHistory, saveKey, loadKey, config }
+  async function listModels(): Promise<void> {
+    modelsCache.value = await getGateways().ai.listModels(config())
+  }
+
+  function clearModelsCache(): void {
+    modelsCache.value = []
+  }
+
+  return { provider, model, baseUrl, apiKey, autosaveInterval, maxHistory, modelsCache, saveKey, loadKey, config, listModels, clearModelsCache }
 })

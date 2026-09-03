@@ -311,6 +311,7 @@ export const memoryAiGateway: AiGateway = {
     void _images
   },
   cancel: async () => undefined,
+  listModels: async () => [],
 }
 
 export const memoryKeyGateway: KeyGateway = {

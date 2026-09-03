@@ -99,4 +99,22 @@ describe('useSettingsStore', () => {
     expect(localStorage.getItem('nekowite.settings.autosaveInterval')).toBe('off')
     expect(localStorage.getItem('nekowite.settings.maxHistory')).toBe('20')
   })
+
+  it('fetches and caches the model list via ai_list_models', async () => {
+    invokeMock.mockResolvedValue(['model-a', 'model-b'])
+    const s = useSettingsStore()
+    await s.listModels()
+    expect(invokeMock).toHaveBeenCalledWith(
+      'ai_list_models',
+      expect.objectContaining({ config: expect.objectContaining({ provider: 'local' }) }),
+    )
+    expect(s.modelsCache).toEqual(['model-a', 'model-b'])
+  })
+
+  it('clears the model cache', () => {
+    const s = useSettingsStore()
+    s.modelsCache = ['a', 'b']
+    s.clearModelsCache()
+    expect(s.modelsCache).toEqual([])
+  })
 })

@@ -227,6 +227,70 @@ pub fn resolve_endpoint(
     }
 }
 
+/// Extract stable, sorted model IDs from a provider's `/models` response.
+///
+/// Robust across providers: OpenAI-compatible and Anthropic place their
+/// entries in a `data` array with an `id` field; Gemini uses a `models` array
+/// holding a fully-qualified `name` (e.g. `models/gemini-2.5-pro`) that we
+/// reduce to its final segment. An empty or unparseable body yields an empty
+/// list so the caller can degrade gracefully.
+pub fn parse_model_ids(body: &str, _provider: &str) -> Vec<String> {
+    let v: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    let arr = v
+        .get("data")
+        .and_then(|d| d.as_array())
+        .or_else(|| v.get("models").and_then(|m| m.as_array()));
+    let Some(arr) = arr else {
+        return Vec::new();
+    };
+    let mut ids: Vec<String> = Vec::new();
+    for item in arr {
+        let id = item
+            .get("id")
+            .and_then(|x| x.as_str())
+            .map(str::to_string)
+            .or_else(|| {
+                item.get("name")
+                    .and_then(|x| x.as_str())
+                    .map(|n| n.rsplit('/').next().unwrap_or(n).to_string())
+            });
+        if let Some(id) = id {
+            if !id.trim().is_empty() {
+                ids.push(id);
+            }
+        }
+    }
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+/// Build a readable, provider-agnostic failure message for a non-2xx HTTP
+/// status returned by an AI provider.
+///
+/// `Response::error_for_status` only flags 4xx/5xx (client/server errors), so
+/// in practice `status` is one of those ranges; the mapping stays total so an
+/// unknown code still yields a generic line, making the function safe to call
+/// directly and unit-testable without a live endpoint. Extracting it keeps
+/// `list_models` and `stream_complete` from each re-deriving a one-off message,
+/// and surfaces a friendly hint (e.g. a bad API key hides a 401 as "无效") instead
+/// of a bare reqwest status string.
+pub fn http_error_message(status: u16) -> String {
+    let hint = match status {
+        400 => "请求格式不正确",
+        401 => "API Key 无效，请检查设置",
+        403 => "API Key 无权限，请检查设置",
+        404 => "接口不存在，请检查 Base URL",
+        429 => "请求过于频繁，请稍后重试",
+        500 | 502 | 503 | 504 => "服务端暂时不可用，请稍后重试",
+        _ => "网络请求失败",
+    };
+    format!("AI 请求失败：HTTP {status}，{hint}")
+}
+
 /// Parse one SSE line for a provider and append any delta to `acc`.
 /// Returns the incremental text, or `None` for comments, blanks, `[DONE]`,
 /// and non-data lines. The accumulated `acc` is used for the final `full`.
@@ -281,6 +345,89 @@ pub async fn ai_cancel(app: tauri::AppHandle, id: String) -> Result<(), String> 
     let mut inflight = state.0.lock().map_err(|e| e.to_string())?;
     inflight.remove(&id);
     Ok(())
+}
+
+/// Resolve the provider's `GET {endpoint}` for listing models, matching the
+/// base/credential conventions of `resolve_endpoint` so the dropdown pulls from
+/// the same origin a completion would use.
+async fn list_models(config: &AIConfig) -> Result<Vec<String>, String> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        .read_timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let (url, headers): (String, Vec<(String, String)>) = match config.provider.as_str() {
+        "anthropic" => {
+            let base = config
+                .base_url
+                .clone()
+                .unwrap_or_else(|| "https://api.anthropic.com".into());
+            let url = format!("{}/v1/models", base.trim_end_matches('/'));
+            let mut headers = vec![("anthropic-version".to_string(), "2023-06-01".to_string())];
+            if let Some(key) = &config.api_key {
+                headers.push(("x-api-key".to_string(), key.clone()));
+            }
+            (url, headers)
+        }
+        "gemini" => {
+            let base = config
+                .base_url
+                .clone()
+                .unwrap_or_else(|| "https://generativelanguage.googleapis.com".into());
+            let mut url = format!("{}/v1beta/models", base.trim_end_matches('/'));
+            if let Some(key) = &config.api_key {
+                url.push_str(&format!("?key={key}"));
+            }
+            (url, Vec::new())
+        }
+        _ => {
+            let base = config
+                .base_url
+                .clone()
+                .unwrap_or_else(|| "https://api.openai.com/v1".into());
+            let url = format!("{}/models", base.trim_end_matches('/'));
+            let headers = if let Some(key) = &config.api_key {
+                vec![("Authorization".to_string(), format!("Bearer {key}"))]
+            } else {
+                Vec::new()
+            };
+            (url, headers)
+        }
+    };
+
+    let mut request = client.get(&url);
+    for (k, v) in &headers {
+        request = request.header(k, v);
+    }
+
+    let body = request
+        .send()
+        .await
+        .map_err(|e| format!("请求模型列表失败：{e}"))?
+        .error_for_status()
+        .map_err(|e| format!("模型列表请求失败：{e}"))?
+        .text()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // A blank body is a legitimate "no models" signal; anything non-empty must
+    // still parse as JSON, otherwise a 500 error page would silently surface as
+    // an empty dropdown instead of a real error.
+    if body.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    serde_json::from_str::<serde_json::Value>(&body)
+        .map_err(|e| format!("模型列表响应解析失败：{e}"))?;
+    Ok(parse_model_ids(&body, &config.provider))
+}
+
+#[tauri::command]
+pub async fn ai_list_models(
+    _app: tauri::AppHandle,
+    config: AIConfig,
+) -> Result<Vec<String>, String> {
+    list_models(&config).await
 }
 
 #[tauri::command]
@@ -364,6 +511,19 @@ async fn stream_complete(
             serde_json::json!({ "id": id, "message": e.to_string() }),
         );
         e.to_string()
+    })?;
+    // A 4xx/5xx must not be read as a normal SSE stream (that would surface the
+    // provider's JSON error page as chunks and end in an empty `ai-done` with no
+    // hint to the user). Surfacing it here mirrors the `send` failure path above:
+    // emit `ai-error` then return `Err`, so the frontend's `onError`/toast fires.
+    // 2xx passes through to `bytes_stream()` unchanged.
+    let response = response.error_for_status().map_err(|e| {
+        let message = http_error_message(e.status().map(|s| s.as_u16()).unwrap_or(0));
+        let _ = app.emit(
+            "ai-error",
+            serde_json::json!({ "id": id, "message": message }),
+        );
+        message
     })?;
 
     let mut stream = response.bytes_stream();

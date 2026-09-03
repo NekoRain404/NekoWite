@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { Copy, Minus, PanelLeftClose, PanelLeftOpen, Square, X } from 'lucide-vue-next'
+import { t } from '../i18n'
 
 const props = defineProps<{
   sidebarVisible: boolean
@@ -73,7 +74,7 @@ onBeforeUnmount(() => {
     <div class="tb-left">
       <button
         class="tb-btn"
-        :title="props.sidebarVisible ? '收起侧栏' : '展开侧栏'"
+        :title="props.sidebarVisible ? t('titlebar.collapseSidebar') : t('titlebar.expandSidebar')"
         @click="emit('toggle-sidebar')"
       >
         <PanelLeftClose
@@ -109,7 +110,7 @@ onBeforeUnmount(() => {
       <button
         v-if="inTauri"
         class="tb-window-btn"
-        title="最小化"
+        :title="t('titlebar.minimize')"
         @click="minimize"
       >
         <Minus
@@ -120,7 +121,7 @@ onBeforeUnmount(() => {
       <button
         v-if="inTauri"
         class="tb-window-btn"
-        :title="maximized ? '还原' : '最大化'"
+        :title="maximized ? t('titlebar.restore') : t('titlebar.maximize')"
         @click="toggleMaximize"
       >
         <Copy
@@ -137,7 +138,7 @@ onBeforeUnmount(() => {
       <button
         v-if="inTauri"
         class="tb-window-btn tb-window-close"
-        title="关闭"
+        :title="t('titlebar.close')"
         @click="close"
       >
         <X

@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { parseOutline, type OutlineItem } from '../services/outline'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
+import { t } from '../i18n'
 
 const tabs = useTabsStore()
 const view = useViewStore()
@@ -18,7 +19,7 @@ function onPick(item: OutlineItem): void {
 <template>
   <section class="outline-panel">
     <h3 class="rail-section-title">
-      大纲
+      {{ t('outline.title') }}
       <span
         v-if="items.length"
         class="rail-section-count"
@@ -36,23 +37,23 @@ function onPick(item: OutlineItem): void {
           <button
             class="outline-item"
             :style="{ paddingLeft: `${(item.level - 1) * 12 + 8}px` }"
-            :title="`跳转到第 ${item.line + 1} 行`"
+            :title="t('outline.jumpLine', { n: item.line + 1 })"
             @click="onPick(item)"
           >
             <span class="outline-level">H{{ item.level }}</span>
-            <span class="outline-text">{{ item.text || '（无标题）' }}</span>
+            <span class="outline-text">{{ item.text || t('outline.emptyHeading') }}</span>
           </button>
         </li>
       </ul>
       <p class="rail-empty">
-        本文档还没有标题，使用 # 到 ###### 即可生成大纲。
+        {{ t('outline.empty') }}
       </p>
     </template>
     <p
       v-else
       class="rail-empty"
     >
-      打开文档以查看大纲
+      {{ t('outline.openDoc') }}
     </p>
   </section>
 </template>

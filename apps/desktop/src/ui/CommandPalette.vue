@@ -6,13 +6,14 @@ import { FileText, Search } from 'lucide-vue-next'
 import { useTabsStore } from '../stores/tabs'
 import { fsService } from '../services/fs'
 import { vaultFileIndex } from '../services/vaultFiles'
-import { catalogOf } from './commandCatalog'
+import { catalogOf, COMMAND_KEYS } from './commandCatalog'
 import {
   fileEntryOf,
   filterEntries,
   groupEntries,
   type PaletteEntry,
 } from './commandPaletteLogic'
+import { t } from '../i18n'
 
 const MOTION_MS = 160
 const FILE_RESULT_LIMIT = 20
@@ -56,7 +57,7 @@ const commandEntries = computed<PaletteEntry[]>(() => {
     byId.set(rawId, {
       id: rawId,
       kind: 'command',
-      label: meta.label === rawId && fallbackLabel ? fallbackLabel : meta.label,
+      label: COMMAND_KEYS[rawId] ? t(COMMAND_KEYS[rawId]) : (meta.label === rawId && fallbackLabel ? fallbackLabel : meta.label),
       keywords: meta.keywords ?? rawId,
       run,
     })
@@ -103,7 +104,7 @@ const rows = computed<PaletteGroupRows[]>(() => {
   let index = 0
   return groups.value.map((group) => ({
     key: group.key,
-    label: group.label,
+    label: group.key === 'command' ? t('palette.groupCommand') : t('palette.groupFile'),
     entries: group.entries.map((entry) => ({ entry, index: index++ })),
   }))
 })
@@ -258,7 +259,7 @@ onBeforeUnmount(() => {
         class="palette"
         role="dialog"
         aria-modal="true"
-        aria-label="命令面板"
+        :aria-label="t('palette.aria')"
       >
         <div class="palette-search">
           <Search
@@ -271,7 +272,7 @@ onBeforeUnmount(() => {
             v-model="query"
             class="palette-input"
             type="text"
-            placeholder="搜索命令或文件…"
+            :placeholder="t('palette.placeholder')"
             role="combobox"
             aria-autocomplete="list"
             aria-expanded="true"
@@ -287,7 +288,7 @@ onBeforeUnmount(() => {
           ref="listRef"
           class="palette-list"
           role="listbox"
-          aria-label="命令与文件"
+          :aria-label="t('palette.aria')"
         >
           <template
             v-for="group in rows"
@@ -329,13 +330,13 @@ onBeforeUnmount(() => {
             v-if="!flatRows.length"
             class="palette-empty"
           >
-            无匹配结果
+            {{ t('palette.empty') }}
           </div>
         </div>
         <div class="palette-footer">
-          <span><kbd>↑</kbd><kbd>↓</kbd> 选择</span>
-          <span><kbd>Enter</kbd> 执行</span>
-          <span><kbd>Esc</kbd> 关闭</span>
+          <span><kbd>↑</kbd><kbd>↓</kbd> {{ t('palette.footerSelect') }}</span>
+          <span><kbd>Enter</kbd> {{ t('palette.footerExecute') }}</span>
+          <span><kbd>Esc</kbd> {{ t('palette.footerClose') }}</span>
         </div>
       </div>
     </div>

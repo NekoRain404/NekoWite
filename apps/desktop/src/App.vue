@@ -20,6 +20,7 @@ import { useRefsStore } from './stores/refs'
 import { useSettingsStore } from './stores/settings'
 import { useAppearanceStore } from './stores/appearance'
 import { useLibraryStore } from './stores/library'
+import { getLocale, t } from './i18n'
 import {
   NOTELIST_WIDTH_DEFAULT,
   NOTELIST_WIDTH_MAX,
@@ -49,19 +50,24 @@ const theme = computed<string>(() => {
   return appearance.effectiveTheme()
 })
 
+const locale = computed<string>(() => getLocale())
+
 const shellStyle = computed<Record<string, string>>(() => ({
   '--app-sidebar-width': `${appearance.sidebarWidth}px`,
   '--app-rail-width': `${appearance.railWidth}px`,
   '--app-notelist-width': `${appearance.notelistWidth}px`,
   '--app-body-size': `${appearance.bodyFontSize}px`,
   '--app-line-height': String(appearance.lineHeight),
+  '--app-font': appearance.uiFontFamily(),
+  '--app-mono-font': appearance.monoFontFamily(),
+  '--app-editor-font': appearance.editorFontFamily(),
 }))
 
 const activeTab = computed(() => tabs.activeTab)
 const activeTitle = computed(() => {
   const path = activeTab.value?.path
-  if (!activeTab.value) return '开始写作'
-  return path ? path.split('/').pop() ?? path : '未命名'
+  if (!activeTab.value) return t('app.defaultTitle')
+  return path ? path.split('/').pop() ?? path : t('tabs.untitled')
 })
 const activeSubtitle = computed(() => {
   const tab = activeTab.value
@@ -141,6 +147,7 @@ async function pickFolder(): Promise<void> {
     :style="shellStyle"
     :data-theme="theme"
     :data-accent="appearance.accent"
+    :data-locale="locale"
   >
     <TitleBar
       :sidebar-visible="sidebarVisible"
@@ -159,7 +166,7 @@ async function pickFolder(): Promise<void> {
       />
       <LayoutResizeHandle
         v-if="vaultPath && sidebarVisible"
-        label="调整侧栏宽度"
+        :label="t('layout.resizeSidebar')"
         :min="SIDEBAR_WIDTH_MIN"
         :max="SIDEBAR_WIDTH_MAX"
         :value="appearance.sidebarWidth"
@@ -172,7 +179,7 @@ async function pickFolder(): Promise<void> {
       />
       <LayoutResizeHandle
         v-if="vaultPath && sidebarVisible"
-        label="调整笔记列表宽度"
+        :label="t('layout.resizeNotelist')"
         :min="NOTELIST_WIDTH_MIN"
         :max="NOTELIST_WIDTH_MAX"
         :value="appearance.notelistWidth"
@@ -191,16 +198,16 @@ async function pickFolder(): Promise<void> {
             />
           </div>
           <p class="onboard-title">
-            欢迎使用 NekoWite
+            {{ t('app.welcome') }}
           </p>
           <p class="onboard-hint">
-            选择一个文件夹作为你的知识库，支持 Markdown、数学公式与文献引用。
+            {{ t('app.welcomeHint') }}
           </p>
           <button
             class="btn btn-primary"
             @click="pickFolder"
           >
-            打开文件夹
+            {{ t('app.openFolder') }}
           </button>
         </div>
       </div>
@@ -212,7 +219,7 @@ async function pickFolder(): Promise<void> {
         </div>
         <LayoutResizeHandle
           v-if="railOpen"
-          label="调整文档信息栏宽度"
+          :label="t('layout.resizeRail')"
           :min="RAIL_WIDTH_MIN"
           :max="RAIL_WIDTH_MAX"
           :value="appearance.railWidth"
@@ -232,7 +239,7 @@ async function pickFolder(): Promise<void> {
         <button
           class="status-btn"
           :class="{ 'is-active': railOpen }"
-          :title="railOpen ? '收起文档信息' : '文档信息（引用 / 历史）'"
+          :title="railOpen ? t('rail.collapse') : t('rail.expand')"
           @click="railOpen = !railOpen"
         >
           <PanelRightClose
@@ -248,7 +255,7 @@ async function pickFolder(): Promise<void> {
         </button>
         <button
           class="status-btn"
-          title="设置"
+          :title="t('common.settings')"
           @click="showSettings = !showSettings"
         >
           <Settings

@@ -61,6 +61,7 @@ export interface FsGateway {
 export interface AiGateway {
   complete(config: unknown, prompt: string, images?: string[]): Promise<void>
   cancel(id: string): Promise<void>
+  listModels(config: unknown): Promise<string[]>
 }
 
 export interface KeyGateway {

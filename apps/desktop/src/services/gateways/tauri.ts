@@ -57,6 +57,7 @@ export const tauriAiGateway: AiGateway = {
   complete: (config, prompt, images) =>
     invoke<void>('ai_complete', { config, prompt, images: images ?? [] }),
   cancel: (id) => invoke<void>('ai_cancel', { id }),
+  listModels: (config) => invoke<string[]>('ai_list_models', { config }),
 }
 
 export const tauriKeyGateway: KeyGateway = {

@@ -2,7 +2,18 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
 export type Theme = 'light' | 'dark' | 'system'
-export type Accent = 'ink' | 'coral' | 'blue' | 'green' | 'gold' | 'violet' | 'slate'
+export type Accent =
+  | 'ink'
+  | 'coral'
+  | 'blue'
+  | 'green'
+  | 'gold'
+  | 'violet'
+  | 'slate'
+  | 'teal'
+  | 'lime'
+  | 'rose'
+  | 'amber'
 
 export const SIDEBAR_WIDTH_MIN = 160
 export const SIDEBAR_WIDTH_MAX = 520
@@ -14,6 +25,30 @@ export const NOTELIST_WIDTH_MIN = 200
 export const NOTELIST_WIDTH_MAX = 520
 export const NOTELIST_WIDTH_DEFAULT = 280
 
+export type UiFontId = 'system' | 'inter' | 'serif' | 'rounded'
+export type EditorFontId = 'system' | 'serif' | 'sans' | 'reading'
+export type MonoFontId = 'mono' | 'cascadia' | 'jetbrains'
+
+export const UI_FONTS: Record<UiFontId, string> = {
+  system: 'Inter, "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
+  inter: '"Inter", "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
+  serif: 'Georgia, "Songti SC", "Noto Serif SC", "Source Han Serif SC", "Times New Roman", serif',
+  rounded: '"Nunito", ui-rounded, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif',
+}
+
+export const EDITOR_FONTS: Record<EditorFontId, string> = {
+  system: 'var(--app-font)',
+  serif: 'Georgia, "Songti SC", "Noto Serif SC", "Source Han Serif SC", "Times New Roman", serif',
+  sans: 'Inter, "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif',
+  reading: '"Literata", "Source Serif 4", Georgia, "Songti SC", serif',
+}
+
+export const MONO_FONTS: Record<MonoFontId, string> = {
+  mono: '"SFMono-Regular", "Cascadia Code", "Roboto Mono", Menlo, Monaco, Consolas, "PingFang SC", "Microsoft YaHei", ui-monospace, monospace',
+  cascadia: '"Cascadia Code", "Cascadia Mono", "SFMono-Regular", Consolas, "PingFang SC", ui-monospace, monospace',
+  jetbrains: '"JetBrains Mono", "Cascadia Code", "SFMono-Regular", Menlo, Monaco, Consolas, ui-monospace, monospace',
+}
+
 interface AppearanceSettings {
   theme: Theme
   accent: Accent
@@ -22,6 +57,9 @@ interface AppearanceSettings {
   sidebarWidth: number
   railWidth: number
   notelistWidth: number
+  uiFont: UiFontId
+  editorFont: EditorFontId
+  monoFont: MonoFontId
 }
 
 const LS_KEY = 'nekowite.appearance'
@@ -34,6 +72,18 @@ const DEFAULTS: AppearanceSettings = {
   sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
   railWidth: RAIL_WIDTH_DEFAULT,
   notelistWidth: NOTELIST_WIDTH_DEFAULT,
+  uiFont: 'system',
+  editorFont: 'system',
+  monoFont: 'mono',
+}
+
+const UI_FONT_IDS: UiFontId[] = ['system', 'inter', 'serif', 'rounded']
+const EDITOR_FONT_IDS: EditorFontId[] = ['system', 'serif', 'sans', 'reading']
+const MONO_FONT_IDS: MonoFontId[] = ['mono', 'cascadia', 'jetbrains']
+const ACCENTS: Accent[] = ['ink', 'coral', 'blue', 'green', 'gold', 'violet', 'slate', 'teal', 'lime', 'rose', 'amber']
+
+function pickFont<T extends string>(value: unknown, valid: T[], fallback: T): T {
+  return typeof value === 'string' && (valid as string[]).includes(value) ? (value as T) : fallback
 }
 
 function clampInt(value: unknown, min: number, max: number, fallback: number): number {
@@ -48,13 +98,21 @@ function readStored(): AppearanceSettings {
   try {
     const parsed = JSON.parse(raw) as Partial<AppearanceSettings>
     return {
-      theme: parsed.theme ?? DEFAULTS.theme,
-      accent: parsed.accent ?? DEFAULTS.accent,
+      theme:
+        parsed.theme === 'light' || parsed.theme === 'dark' || parsed.theme === 'system'
+          ? parsed.theme
+          : DEFAULTS.theme,
+      accent: typeof parsed.accent === 'string' && ACCENTS.includes(parsed.accent as Accent)
+        ? (parsed.accent as Accent)
+        : DEFAULTS.accent,
       bodyFontSize: parsed.bodyFontSize ?? DEFAULTS.bodyFontSize,
       lineHeight: parsed.lineHeight ?? DEFAULTS.lineHeight,
       sidebarWidth: clampInt(parsed.sidebarWidth ?? DEFAULTS.sidebarWidth, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX, DEFAULTS.sidebarWidth),
       railWidth: clampInt(parsed.railWidth ?? DEFAULTS.railWidth, RAIL_WIDTH_MIN, RAIL_WIDTH_MAX, DEFAULTS.railWidth),
       notelistWidth: clampInt(parsed.notelistWidth ?? DEFAULTS.notelistWidth, NOTELIST_WIDTH_MIN, NOTELIST_WIDTH_MAX, DEFAULTS.notelistWidth),
+      uiFont: pickFont(parsed.uiFont, UI_FONT_IDS, DEFAULTS.uiFont),
+      editorFont: pickFont(parsed.editorFont, EDITOR_FONT_IDS, DEFAULTS.editorFont),
+      monoFont: pickFont(parsed.monoFont, MONO_FONT_IDS, DEFAULTS.monoFont),
     }
   } catch {
     return DEFAULTS
@@ -70,6 +128,9 @@ export const useAppearanceStore = defineStore('appearance', () => {
   const sidebarWidth = ref<number>(stored.sidebarWidth)
   const railWidth = ref<number>(stored.railWidth)
   const notelistWidth = ref<number>(stored.notelistWidth)
+  const uiFont = ref<UiFontId>(stored.uiFont)
+  const editorFont = ref<EditorFontId>(stored.editorFont)
+  const monoFont = ref<MonoFontId>(stored.monoFont)
   const systemRevision = ref(0)
 
   function persist(): void {
@@ -83,6 +144,9 @@ export const useAppearanceStore = defineStore('appearance', () => {
         sidebarWidth: sidebarWidth.value,
         railWidth: railWidth.value,
         notelistWidth: notelistWidth.value,
+        uiFont: uiFont.value,
+        editorFont: editorFont.value,
+        monoFont: monoFont.value,
       }),
     )
   }
@@ -131,8 +195,35 @@ export const useAppearanceStore = defineStore('appearance', () => {
     persist()
   }
 
+  function setUiFont(f: UiFontId): void {
+    uiFont.value = f
+    persist()
+  }
+
+  function setEditorFont(f: EditorFontId): void {
+    editorFont.value = f
+    persist()
+  }
+
+  function setMonoFont(f: MonoFontId): void {
+    monoFont.value = f
+    persist()
+  }
+
   function touchSystem(): void {
     systemRevision.value++
+  }
+
+  function uiFontFamily(): string {
+    return UI_FONTS[uiFont.value] ?? UI_FONTS.system
+  }
+
+  function editorFontFamily(): string {
+    return EDITOR_FONTS[editorFont.value] ?? EDITOR_FONTS.system
+  }
+
+  function monoFontFamily(): string {
+    return MONO_FONTS[monoFont.value] ?? MONO_FONTS.mono
   }
 
   return {
@@ -143,6 +234,9 @@ export const useAppearanceStore = defineStore('appearance', () => {
     sidebarWidth,
     railWidth,
     notelistWidth,
+    uiFont,
+    editorFont,
+    monoFont,
     systemRevision,
     effectiveTheme,
     setTheme,
@@ -152,6 +246,12 @@ export const useAppearanceStore = defineStore('appearance', () => {
     setSidebarWidth,
     setRailWidth,
     setNotelistWidth,
+    setUiFont,
+    setEditorFont,
+    setMonoFont,
     touchSystem,
+    uiFontFamily,
+    editorFontFamily,
+    monoFontFamily,
   }
 })

@@ -4,6 +4,7 @@ import { fsService } from '../services/fs'
 import { notifyError } from '../services/errors'
 import { useTabsStore } from '../stores/tabs'
 import type { HistoryEntry } from '../services/gateways/contracts'
+import { t } from '../i18n'
 
 const tabs = useTabsStore()
 const entries = ref<HistoryEntry[]>([])
@@ -21,7 +22,7 @@ async function load(): Promise<void> {
   try {
     entries.value = await fsService.listHistory(tabs.vault, tab.path)
   } catch {
-    notifyError('无法读取历史版本')
+    notifyError(t('history.readFailed'))
     entries.value = []
   }
 }
@@ -60,7 +61,7 @@ onMounted(() => {
   <section class="history-panel">
     <div class="history-header">
       <h3 class="rail-section-title">
-        历史版本
+        {{ t('history.title') }}
         <span
           v-if="entries.length"
           class="rail-section-count"
@@ -68,10 +69,10 @@ onMounted(() => {
       </h3>
       <button
         class="btn btn-ghost btn-sm btn-refresh"
-        title="刷新历史版本"
+        :title="t('history.refreshTitle')"
         @click="load"
       >
-        刷新
+        {{ t('history.refresh') }}
       </button>
     </div>
     <template v-if="hasDoc()">
@@ -94,7 +95,7 @@ onMounted(() => {
             class="btn btn-secondary btn-sm"
             @click="restore(e)"
           >
-            恢复
+            {{ t('history.restore') }}
           </button>
         </li>
       </ul>
@@ -102,14 +103,14 @@ onMounted(() => {
         v-else
         class="rail-empty"
       >
-        暂无历史版本
+        {{ t('history.empty') }}
       </p>
     </template>
     <p
       v-else
       class="rail-empty"
     >
-      打开文档以查看历史版本
+      {{ t('history.openDoc') }}
     </p>
   </section>
 </template>

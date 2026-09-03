@@ -125,4 +125,54 @@ describe('useAppearanceStore', () => {
     expect(s.sidebarWidth).toBe(232)
     expect(s.railWidth).toBe(300)
   })
+
+  it('defaults all fonts to the system/mono presets', () => {
+    const s = useAppearanceStore()
+    expect(s.uiFont).toBe('system')
+    expect(s.editorFont).toBe('system')
+    expect(s.monoFont).toBe('mono')
+    expect(typeof s.uiFontFamily()).toBe('string')
+    expect(typeof s.editorFontFamily()).toBe('string')
+    expect(typeof s.monoFontFamily()).toBe('string')
+    expect(s.uiFontFamily()).toContain('Inter')
+  })
+
+  it('persists and restores font selections', () => {
+    const s = useAppearanceStore()
+    s.setUiFont('serif')
+    s.setEditorFont('reading')
+    s.setMonoFont('jetbrains')
+    const saved = JSON.parse(localStorage.getItem('nekowite.appearance') ?? '{}')
+    expect(saved.uiFont).toBe('serif')
+    expect(saved.editorFont).toBe('reading')
+    expect(saved.monoFont).toBe('jetbrains')
+
+    localStorage.setItem('nekowite.appearance', JSON.stringify({ uiFont: 'rounded', editorFont: 'sans', monoFont: 'cascadia' }))
+    setActivePinia(createPinia())
+    const restored = useAppearanceStore()
+    expect(restored.uiFont).toBe('rounded')
+    expect(restored.editorFont).toBe('sans')
+    expect(restored.monoFont).toBe('cascadia')
+    expect(restored.monoFontFamily()).toContain('Cascadia')
+  })
+
+  it('falls back to defaults for unknown font ids', () => {
+    localStorage.setItem('nekowite.appearance', JSON.stringify({ uiFont: 'comic', editorFont: 'times', monoFont: 'futura' }))
+    const s = useAppearanceStore()
+    expect(s.uiFont).toBe('system')
+    expect(s.editorFont).toBe('system')
+    expect(s.monoFont).toBe('mono')
+  })
+
+  it('restores an extended accent and falls back for unknown accents', () => {
+    localStorage.setItem('nekowite.appearance', JSON.stringify({ accent: 'teal' }))
+    setActivePinia(createPinia())
+    const restored = useAppearanceStore()
+    expect(restored.accent).toBe('teal')
+
+    localStorage.setItem('nekowite.appearance', JSON.stringify({ accent: 'neon' }))
+    setActivePinia(createPinia())
+    const invalid = useAppearanceStore()
+    expect(invalid.accent).toBe('ink')
+  })
 })

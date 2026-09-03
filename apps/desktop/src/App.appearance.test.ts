@@ -138,4 +138,21 @@ describe('App root layout variable binding', () => {
     expect(shell.style.getPropertyValue('--app-sidebar-width')).toBe('520px')
     expect(shell.style.getPropertyValue('--app-body-size')).toBe('12px')
   })
+
+  it('binds interface/editor/mono font families as CSS variables and the locale', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const appearance = useAppearanceStore()
+    appearance.setUiFont('serif')
+    appearance.setEditorFont('reading')
+    appearance.setMonoFont('cascadia')
+
+    const shell = mountApp(pinia)
+    await nextTick()
+
+    expect(shell.style.getPropertyValue('--app-font')).toContain('Georgia')
+    expect(shell.style.getPropertyValue('--app-editor-font')).toContain('Literata')
+    expect(shell.style.getPropertyValue('--app-mono-font')).toContain('Cascadia')
+    expect(shell.getAttribute('data-locale')).toBe('zh')
+  })
 })

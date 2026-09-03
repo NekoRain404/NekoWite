@@ -533,3 +533,87 @@ describe('openTab crash-recovery prompt', () => {
     offRecovery()
   })
 })
+
+describe('openTab duplicate guard', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    resetFsMocks()
+  })
+
+  it('opens a single tab when the same path is requested while the first read is pending', async () => {
+    let resolveRead: (content: string) => void = () => {}
+    readMock.mockImplementation(() => new Promise<string>((r) => { resolveRead = r }))
+    const s = useTabsStore()
+    s.setVault('/vault')
+    const first = s.openTab('/vault/a.md')
+    // The placeholder push is synchronous, so the duplicate request finds it
+    // and focuses it rather than spawning a second tab once the read resolves.
+    const second = s.openTab('/vault/a.md')
+    expect(s.tabs).toHaveLength(1)
+    expect(s.activeId).toBe(s.tabs[0].id)
+    resolveRead('# loaded')
+    await first
+    await second
+    expect(s.tabs).toHaveLength(1)
+    expect(s.tabs[0].path).toBe('/vault/a.md')
+    expect(s.tabs[0].content).toBe('# loaded')
+    expect(readMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('removes the placeholder tab when the read fails', async () => {
+    readMock.mockRejectedValue(new Error('io'))
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    expect(s.tabs).toHaveLength(0)
+    expect(s.activeId).toBeNull()
+  })
+})
+
+describe('closeAll cleanup', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    resetFsMocks()
+  })
+
+  it('clears the saving flag and self-write windows for closed tabs', async () => {
+    let resolveWrite: () => void = () => {}
+    writeMock.mockImplementation(() => new Promise<void>((r) => { resolveWrite = r }))
+    readMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    const tab = s.tabs[0]
+    s.markDirty(tab.id)
+    const pending = s.saveActive()
+    expect(s.saveStateOf(tab.id)).toBe('saving')
+    s.noteSelfWrite('/vault/a.md')
+    expect(s.isSelfWrite('/vault/a.md')).toBe(true)
+
+    s.closeAll()
+
+    // The closed tab's save must not be reported as stuck "saving".
+    expect(s.saveStateOf(tab.id)).toBe('saved')
+    expect(s.isSelfWrite('/vault/a.md')).toBe(false)
+    expect(s.tabs).toHaveLength(0)
+    expect(s.activeId).toBeNull()
+    resolveWrite()
+    await pending
+  })
+
+  it('cancels a pending autosave timer so nothing writes after closeAll', async () => {
+    vi.useFakeTimers()
+    readMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    const tab = s.tabs[0]
+    tab.content = 'changed'
+    s.markDirty(tab.id)
+    s.scheduleAutosave(tab.id)
+    s.closeAll()
+    await vi.advanceTimersByTimeAsync(30000)
+    expect(writeMock).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+})

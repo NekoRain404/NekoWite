@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { Code2, FileText, Star } from 'lucide-vue-next'
 import { formatRelativeTime } from '../services/noteMeta'
 import type { NoteSummary } from '../services/noteMeta'
+import { t } from '../i18n'
 
 const props = defineProps<{
   note: NoteSummary
@@ -50,7 +51,7 @@ const timeLabel = computed(() => formatRelativeTime(props.note.mtime))
       <button
         class="card-star"
         :class="{ on: props.favorite }"
-        :title="props.favorite ? '取消收藏' : '收藏'"
+        :title="props.favorite ? t('notecard.unfavorite') : t('notecard.favorite')"
         @click.stop="emit('toggle-favorite')"
       >
         <Star
@@ -64,7 +65,7 @@ const timeLabel = computed(() => formatRelativeTime(props.note.mtime))
       class="card-summary"
       :class="{ placeholder: !props.note.summary }"
     >
-      {{ props.note.summary || '暂无摘要' }}
+      {{ props.note.summary || t('notecard.noSummary') }}
     </p>
     <div class="card-foot">
       <div class="card-tags">

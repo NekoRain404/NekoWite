@@ -11,6 +11,7 @@ describe('getGateways', () => {
     const { getGateways } = await import('./index')
     const gw = getGateways()
     expect(gw.fs.read).toBeTypeOf('function')
+    expect(gw.ai.listModels).toBeTypeOf('function')
     // Without a mocked invoke the tauri gateway must not resolve a list.
     await expect(gw.fs.list('memoir://demo', '.')).rejects.toThrow()
   })
@@ -20,6 +21,7 @@ describe('getGateways', () => {
     const { getGateways } = await import('./index')
     const gw = getGateways()
     expect(gw.fs.read).toBeTypeOf('function')
+    expect(gw.ai.listModels).toBeTypeOf('function')
     // The default-seeded memory gateway lists the demo welcome.md at the root.
     const root = await gw.fs.list('memoir://demo', '.')
     expect(root.map((e) => e.name)).toContain('welcome.md')

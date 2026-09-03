@@ -4,6 +4,7 @@
 
 .editor-container .ProseMirror {
   outline: none;
+  font-family: var(--app-editor-font);
   font-size: var(--app-body-size);
   line-height: var(--app-line-height);
   color: color-mix(in srgb, var(--app-text) 91%, var(--app-muted));

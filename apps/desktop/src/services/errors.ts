@@ -1,3 +1,5 @@
+import { t } from '../i18n'
+
 export type ConflictDecision = 'reload' | 'keep' | 'ask' | 'none'
 
 export function decideConflict(input: { dirty: boolean; hasDiskChange: boolean }): ConflictDecision {
@@ -39,6 +41,6 @@ export function onRecovery(cb: (p: RecoveryPrompt) => void): () => void {
 // dialog returned a path outside the vault; map that to a user-facing hint.
 export function describeExportError(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e)
-  if (msg.includes('path escapes vault')) return '请选择 vault 内的路径导出'
-  return `导出失败：${msg}`
+  if (msg.includes('path escapes vault')) return t('error.exportOutsideVault')
+  return t('error.exportFailed', { msg })
 }

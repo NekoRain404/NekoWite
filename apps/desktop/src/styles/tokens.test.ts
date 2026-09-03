@@ -11,6 +11,8 @@ const REQUIRED = ['--app-canvas', '--app-panel', '--app-elevated', '--app-border
 const DARK_BLOCK = css.match(/\[data-theme="dark"\]\s*\{([^}]*)\}/)?.[1] ?? ''
 const LIGHT_BLOCK = css.match(/:root\s*\{([^}]*)\}/)?.[1] ?? ''
 
+const ACCENTS = ['ink', 'coral', 'blue', 'green', 'gold', 'violet', 'slate', 'teal', 'lime', 'rose', 'amber']
+
 describe('tokens.css', () => {
   it('defines all semantic tokens in light (:root) and dark ([data-theme=dark])', () => {
     for (const t of REQUIRED) {
@@ -18,10 +20,16 @@ describe('tokens.css', () => {
       expect(DARK_BLOCK, `${t} in dark`).toContain(`${t}:`)
     }
   })
-  it('defines all 7 accent variations', () => {
-    for (const a of ['ink', 'coral', 'blue', 'green', 'gold', 'violet', 'slate']) {
+  it('defines every accent variation', () => {
+    for (const a of ACCENTS) {
       expect(css).toContain(`[data-accent="${a}"]`)
     }
+  })
+  it('resolves the dark mode for ink and every derived accent', () => {
+    // ink gets its own dark block; the rest derive via the combined rule.
+    expect(css).toContain('[data-theme="dark"][data-accent="ink"]')
+    expect(css).toContain('[data-theme="dark"][data-accent]:not([data-accent="ink"])')
+    expect(css).toMatch(/color-mix\(in srgb, var\(--app-accent\) 25%, var\(--app-panel\)\)/)
   })
   it('sets color-scheme per theme so native controls follow', () => {
     expect(LIGHT_BLOCK).toContain('color-scheme: light')

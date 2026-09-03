@@ -8,6 +8,7 @@ import { decideConflict, notifyError } from '../services/errors'
 import { useTabsStore } from '../stores/tabs'
 import ContextMenu from './ContextMenu.vue'
 import type { ContextMenuItem } from './ContextMenu.vue'
+import { t } from '../i18n'
 
 interface TreeNode {
   name: string
@@ -53,13 +54,13 @@ const MENU_ICONS = {
 const menuItems = computed<ContextMenuItem[]>(() => {
   const node = menu.value?.node ?? null
   const items: ContextMenuItem[] = [
-    { id: 'new-file', label: '新建文件', icon: MENU_ICONS.filePlus },
-    { id: 'new-dir', label: '新建文件夹', icon: MENU_ICONS.folderPlus },
+    { id: 'new-file', label: t('filetree.newFile'), icon: MENU_ICONS.filePlus },
+    { id: 'new-dir', label: t('filetree.newFolder'), icon: MENU_ICONS.folderPlus },
   ]
   if (node && root.value && node.path !== root.value.path) {
     items.push(
-      { id: 'rename', label: '重命名', icon: MENU_ICONS.pencil, separator: true },
-      { id: 'delete', label: '删除', icon: MENU_ICONS.trash, danger: true },
+      { id: 'rename', label: t('filetree.rename'), icon: MENU_ICONS.pencil, separator: true },
+      { id: 'delete', label: t('filetree.delete'), icon: MENU_ICONS.trash, danger: true },
     )
   }
   return items
@@ -80,7 +81,7 @@ async function confirmDelete(path: string): Promise<void> {
       }
     }
   } catch {
-    notifyError('删除失败，请重试')
+    notifyError(t('filetree.deleteFailed'))
   } finally {
     confirmPath.value = null
     await refreshAncestors(path)
@@ -106,7 +107,7 @@ async function listChildren(node: TreeNode): Promise<void> {
     const entries = await fsService.list(props.vault, node.path)
     node.children = entries.filter((e) => !(e.is_dir && e.name === 'node_modules')).map(makeNode)
   } catch {
-    notifyError(`无法读取目录：${node.path}`)
+    notifyError(t('filetree.listFailed', { path: node.path }))
   } finally {
     node.loading = false
   }
@@ -250,21 +251,21 @@ async function confirmEdit(): Promise<void> {
   if (!p || confirming) return
   const name = editName.value.trim()
   if (!name) {
-    editError.value = '名称不能为空'
+    editError.value = t('filetree.nameRequired')
     return
   }
   if (name.includes('/')) {
-    editError.value = '名称不能包含 /'
+    editError.value = t('filetree.nameSlash')
     return
   }
   if (name.startsWith('.')) {
-    editError.value = '名称不能以 . 开头'
+    editError.value = t('filetree.nameDot')
     return
   }
   const parent = findDirNode(p.parentPath)
   const dup = parent?.children.some((c) => c.name === name && c.path !== p.nodePath) ?? false
   if (dup) {
-    editError.value = '已存在同名文件或文件夹'
+    editError.value = t('filetree.nameDup')
     return
   }
   confirming = true
@@ -300,7 +301,7 @@ async function applyEdit(p: TreeEdit, name: string): Promise<void> {
       await refreshAncestors(path)
     }
   } catch {
-    notifyError(p.kind === 'rename' ? '重命名失败，请重试' : '创建失败，请重试')
+    notifyError(p.kind === 'rename' ? t('filetree.renameFailed') : t('filetree.createFailed'))
     return
   }
   pendingEdit.value = null
@@ -372,7 +373,7 @@ watch(
     <div class="tree-toolbar">
       <button
         class="tree-tool"
-        title="新建文件"
+        :title="t('filetree.newFile')"
         @click="startCreate('file', currentDirPath)"
       >
         <FilePlus2
@@ -382,7 +383,7 @@ watch(
       </button>
       <button
         class="tree-tool"
-        title="新建文件夹"
+        :title="t('filetree.newFolder')"
         @click="startCreate('dir', currentDirPath)"
       >
         <FolderPlus
@@ -469,7 +470,7 @@ watch(
           <button
             v-if="row.node !== root && confirmPath !== row.node.path"
             class="tree-del"
-            title="移入回收站"
+            :title="t('filetree.trash')"
             @click.stop="confirmPath = row.node.path"
           >
             <Trash2
@@ -486,13 +487,13 @@ watch(
               class="btn btn-secondary btn-sm"
               @click.stop="confirmDelete(row.node.path)"
             >
-              确认
+              {{ t('filetree.confirm') }}
             </button>
             <button
               class="btn btn-ghost btn-sm"
               @click.stop="cancelDelete"
             >
-              取消
+              {{ t('filetree.cancel') }}
             </button>
           </span>
         </div>
@@ -526,7 +527,7 @@ watch(
             class="tree-inline-input"
             :class="{ invalid: !!editError }"
             type="text"
-            :placeholder="inlineEdit.kind === 'file' ? '文件名.md' : '文件夹名称'"
+            :placeholder="inlineEdit.kind === 'file' ? t('filetree.filePlaceholder') : t('filetree.folderPlaceholder')"
             @click.stop
             @keydown.enter.prevent="confirmEdit"
             @keydown.esc.prevent="cancelEdit"

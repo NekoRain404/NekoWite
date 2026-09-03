@@ -104,8 +104,7 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  async function runIndex(v: string): Promise<void> {
-    const seq = ++indexSeq
+  async function runIndex(v: string, seq = ++indexSeq): Promise<void> {
     indexing.value = true
     try {
       const files = await vaultFileIndex.get(v)
@@ -169,30 +168,48 @@ export const useLibraryStore = defineStore('library', () => {
     unlistenFs = null
   }
 
-  /** 侧栏「附件」徽标：attachments/ 顶层条目数（目录也算一个条目）。 */
-  async function refreshAttachmentCount(v: string): Promise<void> {
+  /** 侧栏「附件」徽标：attachments/ 顶层条目数（目录也算一个条目）。
+   * `seq` 可选：传入本次 switch 的 generation，用于丢弃被后续切 vault
+   * 取代的旧结果，避免旧 vault 的附件数覆盖新仓库。 */
+  async function refreshAttachmentCount(v: string, seq?: number): Promise<void> {
     try {
       const entries = await fsService.list(v, ATTACHMENTS_DIR)
-      attachmentCount.value = entries.length
+      if (seq === undefined || seq === indexSeq) attachmentCount.value = entries.length
     } catch {
-      attachmentCount.value = 0
+      if (seq === undefined || seq === indexSeq) attachmentCount.value = 0
     }
   }
 
   async function indexVault(v: string): Promise<void> {
     detachVault()
+    // Capture the switch generation BEFORE any await: an indexVault that gets
+    // interrupted (e.g. at the onFsChange await) must never later run runIndex
+    // with a stale vault and overwrite the newer vault's notes.
+    const mySeq = indexSeq
     vault.value = v
     filter.value = 'all'
     query.value = ''
     panelMode.value = 'notes'
     listView.value = 'notes'
+    // Do not show the previous vault's notes/attachment badge while the new
+    // vault is indexing.
+    notes.value = []
+    attachmentCount.value = 0
+    let listener: (() => void) | null = null
     try {
-      unlistenFs = await fsService.onFsChange(handleFsChange)
+      listener = await fsService.onFsChange(handleFsChange)
     } catch {
-      unlistenFs = null
+      listener = null
     }
-    void refreshAttachmentCount(v)
-    await runIndex(v)
+    if (mySeq !== indexSeq) {
+      // Superseded by a newer vault switch while awaiting: detach our listener
+      // and do not touch the vault-scoped state.
+      listener?.()
+      return
+    }
+    unlistenFs = listener
+    void refreshAttachmentCount(v, mySeq)
+    await runIndex(v, mySeq)
   }
 
   function toggleFavorite(path: string): void {
