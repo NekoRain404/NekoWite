@@ -46,6 +46,12 @@ function sendKey(key: string): KeyboardEvent {
   return ev
 }
 
+function sendKeyInit(init: KeyboardEventInit): KeyboardEvent {
+  const ev = new KeyboardEvent('keydown', { cancelable: true, ...init })
+  document.dispatchEvent(ev)
+  return ev
+}
+
 describe('GhostWriter keydown wiring (C1)', () => {
   beforeEach(() => {
     triggerMock.mockReset()
@@ -103,6 +109,32 @@ describe('GhostWriter keydown wiring (C1)', () => {
     mountGhost()
     const ev = sendKey('Escape')
     expect(rejectMock).not.toHaveBeenCalled()
+    expect(ev.defaultPrevented).toBe(false)
+  })
+
+  it('ignores Tab while an IME is composing (isComposing)', () => {
+    setupEditor(true, true)
+    mountGhost()
+    const ev = sendKeyInit({ key: 'Tab', isComposing: true })
+    expect(triggerMock).not.toHaveBeenCalled()
+    expect(acceptMock).not.toHaveBeenCalled()
+    expect(ev.defaultPrevented).toBe(false)
+  })
+
+  it('ignores Escape while an IME is composing (legacy keyCode 229)', () => {
+    setupEditor(true, true)
+    mountGhost()
+    const ev = sendKeyInit({ key: 'Escape', keyCode: 229 })
+    expect(rejectMock).not.toHaveBeenCalled()
+    expect(ev.defaultPrevented).toBe(false)
+  })
+
+  it('ignores Tab when the IME reports key="Process"', () => {
+    setupEditor(true, true)
+    mountGhost()
+    const ev = sendKeyInit({ key: 'Process' })
+    expect(triggerMock).not.toHaveBeenCalled()
+    expect(acceptMock).not.toHaveBeenCalled()
     expect(ev.defaultPrevented).toBe(false)
   })
 })

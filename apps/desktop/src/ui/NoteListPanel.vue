@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   ArrowDownWideNarrow,
   BookOpen,
   Link2,
   ListTree,
   Search,
+  TextSearch,
 } from 'lucide-vue-next'
 import { splitFrontmatter } from '@nekowite/editor-core'
 import NoteCard from './NoteCard.vue'
@@ -20,6 +21,9 @@ import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 import { parseOutline } from '../services/outline'
 import { dirRelativeToVault } from '../services/noteMeta'
+import { fsService } from '../services/fs'
+import { contentMatchOf, mapWithConcurrency } from '../services/contentSearch'
+import type { ContentMatch } from '../services/contentSearch'
 import { t } from '../i18n'
 
 const library = useLibraryStore()
@@ -28,6 +32,89 @@ const view = useViewStore()
 
 const sortMenu = ref<{ x: number; y: number } | null>(null)
 const conflict = ref<{ tabId: string; path: string } | null>(null)
+
+const CONTENT_SEARCH_CONCURRENCY = 8
+const CONTENT_SEARCH_DEBOUNCE_MS = 200
+
+const contentEnabled = ref(false)
+const contentResults = ref<ContentMatch[]>([])
+const contentSearching = ref(false)
+const contentSearched = ref(false)
+let contentSearchTimer: ReturnType<typeof setTimeout> | null = null
+let contentSearchSeq = 0
+const contentCache = new Map<string, string>()
+
+function clearContentResults(): void {
+  contentSearchSeq += 1
+  if (contentSearchTimer) {
+    clearTimeout(contentSearchTimer)
+    contentSearchTimer = null
+  }
+  contentResults.value = []
+  contentSearching.value = false
+  contentSearched.value = false
+}
+
+function toggleContentSearch(): void {
+  contentEnabled.value = !contentEnabled.value
+}
+
+function scheduleContentSearch(): void {
+  if (contentSearchTimer) clearTimeout(contentSearchTimer)
+  contentSearchTimer = setTimeout(() => {
+    contentSearchTimer = null
+    void runContentSearch()
+  }, CONTENT_SEARCH_DEBOUNCE_MS)
+}
+
+async function runContentSearch(): Promise<void> {
+  const vault = library.vault
+  const q = library.query.trim()
+  if (!vault || !q) {
+    contentResults.value = []
+    contentSearched.value = false
+    contentSearching.value = false
+    return
+  }
+  const seq = ++contentSearchSeq
+  contentSearching.value = true
+  const candidates = library.notes.map((n) => ({ path: n.path, name: n.name }))
+  const hits = await mapWithConcurrency(candidates, CONTENT_SEARCH_CONCURRENCY, async (c) => {
+    let content = contentCache.get(c.path)
+    if (content === undefined) {
+      try {
+        content = await fsService.read(vault, c.path)
+      } catch {
+        return null
+      }
+      contentCache.set(c.path, content)
+    }
+    return contentMatchOf({ path: c.path, name: c.name, content }, q)
+  })
+  if (seq !== contentSearchSeq) return
+  contentResults.value = hits.filter((m): m is ContentMatch => m !== null)
+  contentSearching.value = false
+  contentSearched.value = true
+}
+
+watch(() => library.vault, () => {
+  contentEnabled.value = false
+  clearContentResults()
+  contentCache.clear()
+})
+
+watch(() => library.notes, () => {
+  contentCache.clear()
+  if (contentEnabled.value) scheduleContentSearch()
+})
+
+watch([() => library.query, contentEnabled], () => {
+  if (!contentEnabled.value) {
+    clearContentResults()
+    return
+  }
+  scheduleContentSearch()
+})
 
 const MODES = [
   { id: 'notes', label: t('notelist.notes'), icon: BookOpen },
@@ -185,7 +272,7 @@ function jumpOutline(line: number, index: number): void {
     </div>
 
     <template v-else-if="library.panelMode === 'notes'">
-      <label class="nl-search">
+      <div class="nl-search">
         <Search
           class="nl-search-icon"
           :size="14"
@@ -195,12 +282,25 @@ function jumpOutline(line: number, index: number): void {
           :value="library.query"
           class="nl-search-input"
           type="text"
-          :placeholder="t('notelist.search')"
+          :placeholder="t(contentEnabled ? 'notelist.contentSearchHint' : 'notelist.search')"
           @input="library.setQuery(($event.target as HTMLInputElement).value)"
         >
-      </label>
+        <button
+          type="button"
+          class="nl-search-toggle"
+          :class="{ on: contentEnabled }"
+          :title="t('notelist.searchContent')"
+          :aria-pressed="contentEnabled"
+          @click="toggleContentSearch"
+        >
+          <TextSearch
+            :size="13"
+            :stroke-width="1.8"
+          />
+        </button>
+      </div>
       <div class="nl-meta">
-        <span class="nl-count">{{ library.indexing ? t('notelist.indexing') : t('notelist.count', { n: library.visibleNotes.length }) }}</span>
+        <span class="nl-count">{{ library.indexing ? t('notelist.indexing') : contentEnabled ? t('notelist.contentCount', { n: contentResults.length }) : t('notelist.count', { n: library.visibleNotes.length }) }}</span>
         <button
           class="nl-sort"
           :title="t('notelist.sortTitle', { label: sortLabel })"
@@ -214,21 +314,58 @@ function jumpOutline(line: number, index: number): void {
         </button>
       </div>
       <div class="nl-cards">
-        <NoteCard
-          v-for="note in library.visibleNotes"
-          :key="note.path"
-          :note="note"
-          :active="note.path === activePath"
-          :favorite="library.isFavorite(note.path)"
-          @open="openNote(note.path)"
-          @toggle-favorite="library.toggleFavorite(note.path)"
-        />
-        <p
-          v-if="!library.indexing && library.visibleNotes.length === 0"
-          class="nl-empty-hint"
-        >
-          {{ t('notelist.empty') }}
-        </p>
+        <template v-if="contentEnabled">
+          <p
+            v-if="contentSearching"
+            class="nl-empty-hint"
+          >
+            {{ t('notelist.searching') }}
+          </p>
+          <template v-else-if="contentResults.length > 0">
+            <p class="nl-group-label">
+              {{ t('notelist.contentResults') }}
+            </p>
+            <button
+              v-for="r in contentResults"
+              :key="r.path"
+              class="content-result"
+              :title="r.path"
+              @click="openNote(r.path)"
+            >
+              <span class="content-result-name">{{ r.name }}</span>
+              <span class="content-result-snippet">{{ r.snippet }}</span>
+            </button>
+          </template>
+          <p
+            v-else-if="contentSearched"
+            class="nl-empty-hint"
+          >
+            {{ t('notelist.noContentMatch') }}
+          </p>
+          <p
+            v-else
+            class="nl-empty-hint"
+          >
+            {{ t('notelist.contentSearchHint') }}
+          </p>
+        </template>
+        <template v-else>
+          <NoteCard
+            v-for="note in library.visibleNotes"
+            :key="note.path"
+            :note="note"
+            :active="note.path === activePath"
+            :favorite="library.isFavorite(note.path)"
+            @open="openNote(note.path)"
+            @toggle-favorite="library.toggleFavorite(note.path)"
+          />
+          <p
+            v-if="!library.indexing && library.visibleNotes.length === 0"
+            class="nl-empty-hint"
+          >
+            {{ t('notelist.empty') }}
+          </p>
+        </template>
       </div>
     </template>
 
@@ -417,7 +554,7 @@ function jumpOutline(line: number, index: number): void {
 .nl-search-input {
   width: 100%;
   height: 30px;
-  padding: 0 10px 0 28px;
+  padding: 0 30px 0 28px;
   font-family: var(--app-font);
   font-size: 12px;
   font-weight: 450;
@@ -439,6 +576,37 @@ function jumpOutline(line: number, index: number): void {
   border-color: color-mix(in srgb, var(--app-accent) 55%, var(--app-border));
   background: color-mix(in srgb, var(--app-elevated) 72%, var(--app-panel));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-accent) 14%, transparent);
+}
+.nl-search-toggle {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+  transition: color var(--app-motion-fast) var(--app-ease),
+              background var(--app-motion-fast) var(--app-ease);
+}
+.nl-search-toggle:hover {
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
+}
+.nl-search-toggle.on {
+  color: var(--app-accent);
+  background: color-mix(in srgb, var(--app-accent-soft) 60%, transparent);
+}
+.nl-search-toggle:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
 }
 
 .nl-meta {
@@ -607,6 +775,46 @@ function jumpOutline(line: number, index: number): void {
   text-overflow: ellipsis;
   font-size: 10px;
   color: var(--app-muted);
+}
+
+.content-result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 7px 8px;
+  border: none;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--app-motion-fast) var(--app-ease);
+}
+.content-result:hover {
+  background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
+}
+.content-result:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
+.content-result-name {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--app-text);
+}
+.content-result-snippet {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--app-muted) 88%, transparent);
 }
 
 @media (max-width: 920px) {

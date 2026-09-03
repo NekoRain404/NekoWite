@@ -3,6 +3,17 @@ import { onBeforeUnmount, onMounted } from 'vue'
 import { aiService } from '../services/ai'
 import { editorBridge } from '../services/editorBridge'
 
+// While an IME (e.g. Chinese Pinyin) is composing, the candidate-selection
+// keys (Tab/Esc) belong to the IME, not to the ghost writer. Swallowing them
+// here would break Chinese input, so hand the event back to the IME.
+function isComposing(e: KeyboardEvent): boolean {
+  return (
+    e.isComposing === true || // standard IME composition flag
+    e.keyCode === 229 || // legacy IME composing state for some browsers/IMEs
+    e.key === 'Process' // some IMEs report key="Process" while isComposing=false
+  )
+}
+
 // Only handle Tab/Esc while the focus is actually inside the editor. A
 // window-wide handler would otherwise swallow Tab/Esc in dialogs or the
 // settings panel while a suggestion is active.
@@ -14,6 +25,7 @@ function focusInsideEditor(): boolean {
 }
 
 function onKeydown(e: KeyboardEvent): void {
+  if (isComposing(e)) return
   if (!focusInsideEditor()) return
   const editor = editorBridge.getEditor()
   if (!editor) return

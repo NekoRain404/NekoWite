@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import {
   Copy,
   FilePlus2,
+  FileText,
   Paperclip,
   Send,
   Sparkles,
@@ -18,6 +19,7 @@ import { useSettingsStore } from '../stores/settings'
 import { useTabsStore } from '../stores/tabs'
 import {
   buildChatPrompt,
+  buildContextBlock,
   fileToDataURL,
   nextImageId,
   type ChatImage,
@@ -34,6 +36,70 @@ interface ChatAttachment {
 
 const settings = useSettingsStore()
 const tabs = useTabsStore()
+
+/** Persisted toggle for whether to send the active note / selection as context. */
+const ATTACH_KEY = 'nekowite.chat.attachContext'
+
+function loadAttachDefault(): boolean {
+  try {
+    const raw = localStorage.getItem(ATTACH_KEY)
+    if (raw === '0') return false
+  } catch {
+    /* ignore corrupted storage */
+  }
+  return true
+}
+
+const useCurrentDoc = ref(loadAttachDefault())
+
+function toggleAttach(): void {
+  useCurrentDoc.value = !useCurrentDoc.value
+  try {
+    localStorage.setItem(ATTACH_KEY, useCurrentDoc.value ? '1' : '0')
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+/** YAML `title:` from the leading frontmatter block, if any (minimal scan). */
+function frontmatterTitle(md: string): string {
+  const block = /^---\r?\n([\s\S]*?)\r?\n---/.exec(md)
+  if (!block) return ''
+  const m = /^title:\s*["']?([^"'\n]+)["']?/m.exec(block[1])
+  return m ? m[1].trim() : ''
+}
+
+function noteTitleFromPath(path: string | null): string {
+  if (!path) return ''
+  const base = path.split(/[\\/]/).pop() ?? ''
+  return base.replace(/\.[^.]+$/, '').trim()
+}
+
+function activeSelection(): string {
+  const view = editorBridge.getView()
+  if (!view) return ''
+  const { state } = view
+  const sel = state.selection
+  if (!sel || sel.empty) return ''
+  try {
+    return state.doc.textBetween(sel.from, sel.to, '\n', ' ').trim()
+  } catch {
+    return ''
+  }
+}
+
+/** Build the context block for the active tab: title (frontmatter → filename),
+ * selection in priority over body. Empty string when nothing is usable. */
+function buildActiveContext(): string {
+  const tab = tabs.activeTab
+  if (!tab) return ''
+  const title = frontmatterTitle(tab.content) || noteTitleFromPath(tab.path)
+  return buildContextBlock({
+    noteTitle: title,
+    selection: activeSelection(),
+    noteContent: tab.content,
+  })
+}
 
 const messages = ref<ChatMessage[]>([])
 const attachments = ref<ChatAttachment[]>([])
@@ -132,6 +198,12 @@ async function send(): Promise<void> {
   const text = prompt.value.trim()
   if (!text && attachments.value.length === 0) return
 
+  const context = useCurrentDoc.value ? buildActiveContext() : ''
+  if (useCurrentDoc.value && !context) {
+    notifyError(t('chat.emptyDocHint'))
+    return
+  }
+
   const imageDataUrls = await itemDataUrls(attachments.value)
   const userMessage: ChatMessage = { role: 'user', content: text, images: imageDataUrls }
   const history = [...messages.value, userMessage]
@@ -139,7 +211,7 @@ async function send(): Promise<void> {
   prompt.value = ''
   clearAttachments()
 
-  const chatPrompt = buildChatPrompt(history.map((m) => ({ role: m.role, content: m.content })))
+  const chatPrompt = buildChatPrompt(history.map((m) => ({ role: m.role, content: m.content })), { context })
   const assistant: ChatMessage = { role: 'assistant', content: '', streaming: true }
   messages.value = [...messages.value, assistant]
   const index = messages.value.length - 1
@@ -386,6 +458,19 @@ onBeforeUnmount(() => {
           tabindex="-1"
           @change="onFileChange"
         >
+        <button
+          class="chat-tool"
+          :class="{ 'is-active': useCurrentDoc }"
+          :title="t('chat.attachContextLabel')"
+          :aria-label="t('chat.attachContext')"
+          :aria-pressed="useCurrentDoc"
+          @click="toggleAttach"
+        >
+          <FileText
+            :size="15"
+            :stroke-width="1.8"
+          />
+        </button>
         <button
           class="chat-tool"
           :title="t('chat.addImage')"
@@ -687,6 +772,10 @@ onBeforeUnmount(() => {
 .chat-tool:focus-visible {
   outline: 2px solid var(--app-accent);
   outline-offset: 1px;
+}
+.chat-tool.is-active {
+  color: var(--app-accent);
+  background: color-mix(in srgb, var(--app-accent-soft) 62%, transparent);
 }
 .chat-textarea {
   flex: 1;

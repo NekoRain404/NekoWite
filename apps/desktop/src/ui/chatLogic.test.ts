@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildChatPrompt, fileToDataURL, nextImageId, pickImageMime } from './chatLogic'
+import { buildChatPrompt, buildContextBlock, fileToDataURL, nextImageId, pickImageMime } from './chatLogic'
 
 describe('chatLogic', () => {
   it('jsons the current user turn as the last line', () => {
@@ -63,5 +63,57 @@ describe('chatLogic', () => {
 
   it('produces unique attachment ids', () => {
     expect(nextImageId()).not.toBe(nextImageId())
+  })
+
+  describe('buildContextBlock', () => {
+    it('emits a titled header with the note body', () => {
+      const block = buildContextBlock({ noteTitle: '图论', noteContent: '# 图论\n\n内容' })
+      expect(block).toBe('【当前文档：图论】\n# 图论\n\n内容')
+    })
+
+    it('prefers an active selection over the body', () => {
+      const block = buildContextBlock({
+        noteTitle: '图论',
+        noteContent: '# 图论\n\n长正文',
+        selection: '选中的句子',
+      })
+      expect(block).toBe('【当前文档：图论】\n【选中文本】\n选中的句子')
+      expect(block).not.toContain('长正文')
+    })
+
+    it('truncates an oversized body at maxChars', () => {
+      const block = buildContextBlock({ noteTitle: 'T', noteContent: 'a'.repeat(300), maxChars: 100 })
+      expect(block.endsWith('...')).toBe(true)
+      // Header (8) + newline + the capped 100-char body only.
+      expect(block.length).toBe(8 + 1 + 100)
+    })
+
+    it('returns empty strings when nothing usable is present', () => {
+      expect(buildContextBlock({})).toBe('')
+      expect(buildContextBlock({ noteContent: '   ' })).toBe('')
+    })
+
+    it('omits the header when title is missing', () => {
+      expect(buildContextBlock({ noteContent: '正文' })).toBe('正文')
+    })
+  })
+
+  describe('buildChatPrompt with context', () => {
+    it('prepends a context block before the transcript', () => {
+      const prompt = buildChatPrompt([{ role: 'user', content: '继续' }], {
+        context: '【当前文档：图论】\n正文',
+      })
+      expect(prompt.startsWith('以下是当前文档的上下文，供你参考：\n【当前文档：图论】\n正文\n\n---\n\n用户：继续')).toBe(true)
+    })
+
+    it('falls back to the legacy numeric signature naturally', () => {
+      const prompt = buildChatPrompt([{ role: 'user', content: '继续' }], 6000)
+      expect(prompt).toBe('用户：继续')
+    })
+
+    it('omits the context preamble when context is empty', () => {
+      const prompt = buildChatPrompt([{ role: 'user', content: '继续' }], { context: '' })
+      expect(prompt).toBe('用户：继续')
+    })
   })
 })
