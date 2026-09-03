@@ -70,6 +70,7 @@ const modeLabel = computed(() => {
     <span class="status-item">{{ modeLabel }}</span>
     <span class="status-sep">·</span>
     <span class="status-item">NekoWite {{ VERSION }}</span>
+    <slot name="actions" />
   </footer>
 </template>
 

@@ -35,7 +35,7 @@ const modes: ModeItem[] = [
 .view-switch {
   display: flex;
   gap: 2px;
-  padding: 2px;
+  padding: 1px;
   border: 1px solid color-mix(in srgb, var(--app-border) 88%, transparent);
   border-radius: var(--app-radius);
   background: color-mix(in srgb, var(--app-panel) 74%, transparent);
@@ -44,8 +44,8 @@ const modes: ModeItem[] = [
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 24px;
-  padding: 0 10px;
+  height: 18px;
+  padding: 0 8px;
   font-family: var(--app-font);
   font-size: 11px;
   font-weight: 550;

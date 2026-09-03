@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { PanelLeftClose, PanelLeftOpen } from 'lucide-vue-next'
+import { Copy, Minus, PanelLeftClose, PanelLeftOpen, Square, X } from 'lucide-vue-next'
 
 const props = defineProps<{
   sidebarVisible: boolean
@@ -71,26 +71,6 @@ onBeforeUnmount(() => {
     @dblclick.self="onDoubleClick"
   >
     <div class="tb-left">
-      <div
-        v-if="inTauri"
-        class="traffic-lights"
-      >
-        <button
-          class="tl tl-close"
-          title="关闭"
-          @click="close"
-        />
-        <button
-          class="tl tl-min"
-          title="最小化"
-          @click="minimize"
-        />
-        <button
-          class="tl tl-max"
-          :title="maximized ? '还原' : '最大化'"
-          @click="toggleMaximize"
-        />
-      </div>
       <button
         class="tb-btn"
         :title="props.sidebarVisible ? '收起侧栏' : '展开侧栏'"
@@ -126,7 +106,45 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="tb-right">
-      <slot name="actions" />
+      <button
+        v-if="inTauri"
+        class="tb-window-btn"
+        title="最小化"
+        @click="minimize"
+      >
+        <Minus
+          :size="16"
+          :stroke-width="1.8"
+        />
+      </button>
+      <button
+        v-if="inTauri"
+        class="tb-window-btn"
+        :title="maximized ? '还原' : '最大化'"
+        @click="toggleMaximize"
+      >
+        <Copy
+          v-if="maximized"
+          :size="14"
+          :stroke-width="1.8"
+        />
+        <Square
+          v-else
+          :size="14"
+          :stroke-width="1.8"
+        />
+      </button>
+      <button
+        v-if="inTauri"
+        class="tb-window-btn tb-window-close"
+        title="关闭"
+        @click="close"
+      >
+        <X
+          :size="16"
+          :stroke-width="1.8"
+        />
+      </button>
     </div>
   </header>
 </template>
@@ -150,26 +168,6 @@ onBeforeUnmount(() => {
   gap: 6px;
   min-width: 0;
 }
-.traffic-lights {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-right: 6px;
-}
-.tl {
-  width: 13px;
-  height: 13px;
-  padding: 0;
-  border-radius: 50%;
-  border: 1px solid color-mix(in srgb, var(--app-text) 10%, transparent);
-  cursor: pointer;
-  transition: filter var(--app-motion-fast) var(--app-ease);
-}
-.tl:hover { filter: brightness(1.08); }
-.tl:active { filter: brightness(0.92); }
-.tl-close { background: #ff5f57; }
-.tl-min { background: #ffbd2e; }
-.tl-max { background: #28c840; }
 
 .tb-btn {
   display: inline-flex;
@@ -228,7 +226,33 @@ onBeforeUnmount(() => {
 .tb-right {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
+}
+.tb-window-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+  transition: background var(--app-motion-fast) var(--app-ease),
+              color var(--app-motion-fast) var(--app-ease);
+}
+.tb-window-btn:hover {
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--app-elevated) 62%, transparent);
+}
+.tb-window-btn:active {
+  background: color-mix(in srgb, var(--app-elevated) 40%, transparent);
+}
+.tb-window-close:hover {
+  background: color-mix(in srgb, var(--app-danger) 18%, transparent);
+  color: var(--app-danger);
 }
 </style>

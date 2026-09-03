@@ -144,38 +144,7 @@ async function pickFolder(): Promise<void> {
       :title="activeTitle"
       :subtitle="activeSubtitle"
       @toggle-sidebar="sidebarVisible = !sidebarVisible"
-    >
-      <template #actions>
-        <ViewSwitch />
-        <button
-          class="tb-action"
-          :class="{ 'is-active': railOpen }"
-          :title="railOpen ? '收起文档信息' : '文档信息（引用 / 历史）'"
-          @click="railOpen = !railOpen"
-        >
-          <PanelRightClose
-            v-if="railOpen"
-            :size="16"
-            :stroke-width="1.8"
-          />
-          <PanelRightOpen
-            v-else
-            :size="16"
-            :stroke-width="1.8"
-          />
-        </button>
-        <button
-          class="tb-action"
-          title="设置"
-          @click="showSettings = !showSettings"
-        >
-          <Settings
-            :size="16"
-            :stroke-width="1.8"
-          />
-        </button>
-      </template>
-    </TitleBar>
+    />
 
     <div class="shell-body">
       <Sidebar
@@ -245,7 +214,38 @@ async function pickFolder(): Promise<void> {
       </section>
     </div>
 
-    <StatusBar />
+    <StatusBar>
+      <template #actions>
+        <ViewSwitch />
+        <button
+          class="status-btn"
+          :class="{ 'is-active': railOpen }"
+          :title="railOpen ? '收起文档信息' : '文档信息（引用 / 历史）'"
+          @click="railOpen = !railOpen"
+        >
+          <PanelRightClose
+            v-if="railOpen"
+            :size="14"
+            :stroke-width="1.8"
+          />
+          <PanelRightOpen
+            v-else
+            :size="14"
+            :stroke-width="1.8"
+          />
+        </button>
+        <button
+          class="status-btn"
+          title="设置"
+          @click="showSettings = !showSettings"
+        >
+          <Settings
+            :size="14"
+            :stroke-width="1.8"
+          />
+        </button>
+      </template>
+    </StatusBar>
     <GhostWriter />
     <CommandPalette />
     <SettingsPanel
@@ -300,12 +300,12 @@ html, body, #app { margin: 0; padding: 0; height: 100%; width: 100%; }
   overflow: hidden;
 }
 
-.tb-action {
+.status-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 22px;
   padding: 0;
   border: none;
   border-radius: var(--app-radius-sm);
@@ -315,11 +315,11 @@ html, body, #app { margin: 0; padding: 0; height: 100%; width: 100%; }
   transition: background var(--app-motion-fast) var(--app-ease),
               color var(--app-motion-fast) var(--app-ease);
 }
-.tb-action:hover {
+.status-btn:hover {
   color: var(--app-text);
-  background: color-mix(in srgb, var(--app-elevated) 62%, transparent);
+  background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
 }
-.tb-action.is-active {
+.status-btn.is-active {
   color: var(--app-text);
   background: color-mix(in srgb, var(--app-accent-soft) 72%, var(--app-elevated));
 }

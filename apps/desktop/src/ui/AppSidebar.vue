@@ -76,6 +76,10 @@ const navEntries = computed<NavEntry[]>(() => {
   const isFilter = (f: string): boolean => inNotes && library.filter === f
   return [
     {
+      id: 'folders', label: '文件夹', icon: FolderTree,
+      active: library.listView === 'folders', onClick: () => library.setListView('folders'),
+    },
+    {
       id: 'all', label: '全部笔记', icon: FileText, count: counts.all,
       active: isFilter('all'), onClick: () => library.setFilter('all'),
     },
@@ -106,10 +110,6 @@ const navEntries = computed<NavEntry[]>(() => {
     {
       id: 'cloud', label: '云同步', icon: Cloud,
       active: library.listView === 'cloud', onClick: () => library.setListView('cloud'),
-    },
-    {
-      id: 'folders', label: '文件夹', icon: FolderTree,
-      active: library.listView === 'folders', onClick: () => library.setListView('folders'),
     },
   ]
 })
