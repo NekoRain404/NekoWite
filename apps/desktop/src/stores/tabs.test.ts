@@ -619,6 +619,79 @@ describe('closeAll cleanup', () => {
   })
 })
 
+describe('hasUnsavedWork and flushDirty', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    resetFsMocks()
+  })
+
+  it('hasUnsavedWork is false when every tab is clean', async () => {
+    readMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    expect(s.hasUnsavedWork()).toBe(false)
+  })
+
+  it('hasUnsavedWork is true when any tab is dirty', async () => {
+    readMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    const tab = s.tabs[0]
+    tab.content = 'edited'
+    s.markDirty(tab.id)
+    expect(s.hasUnsavedWork()).toBe(true)
+  })
+
+  it('flushDirty saves every path&#39;d dirty tab and clears dirty', async () => {
+    writeMock.mockResolvedValue(undefined)
+    readMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    await s.openTab('/vault/b.md')
+    const [a, b] = s.tabs
+    a.content = 'changed a'
+    a.dirty = true
+    b.content = 'changed b'
+    b.dirty = true
+
+    const ok = await s.flushDirty()
+    expect(ok).toBe(true)
+    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'changed a', 10)
+    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/b.md', 'changed b', 10)
+    expect(a.dirty).toBe(false)
+    expect(b.dirty).toBe(false)
+  })
+
+  it('flushDirty skips untitled tabs (no save-as dialog in a bulk flush)', async () => {
+    writeMock.mockResolvedValue(undefined)
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab(null, 'untitled body')
+    const t = s.tabs[0]
+    t.dirty = true
+    const ok = await s.flushDirty()
+    expect(ok).toBe(true)
+    expect(writeMock).not.toHaveBeenCalled()
+    // The untitled tab stays dirty; the beforeunload prompt (hasUnsavedWork)
+    // still guards it on close.
+    expect(t.dirty).toBe(true)
+  })
+
+  it('flushDirty returns false when a save fails so the caller can block a lossy action', async () => {
+    writeMock.mockRejectedValueOnce(new Error('disk full'))
+    readMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    s.tabs[0].dirty = true
+    const ok = await s.flushDirty()
+    expect(ok).toBe(false)
+  })
+})
+
 describe('session capture and restore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())

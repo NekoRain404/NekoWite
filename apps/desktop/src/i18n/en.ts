@@ -337,6 +337,8 @@ export const en = {
     deleteFailed: 'Delete failed',
     restoreHistoryFailed: 'Failed to restore the historical version',
     reloadFailed: 'Could not reload file: {path}; current content kept',
+    unsavedWorkPrompt: 'You have unsaved changes. Leave anyway?',
+    unsavedWorkBlocker: 'Some files could not be saved; the vault was not switched.',
     aria: 'Open documents',
   },
   titlebar: {
@@ -621,6 +623,7 @@ export const en = {
     alignLeft: 'Align left',
     alignCenter: 'Align center',
     alignRight: 'Align right',
+    aria: 'Table actions',
   },
   contextMenu: {
     aria: 'Context menu',

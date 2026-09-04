@@ -459,5 +459,27 @@ export const useTabsStore = defineStore('tabs', () => {
     }
   }
 
-  return { tabs, activeId, activeTab, vault, setVault, openTab, closeTab, closeAll, closeOthers, renamePathInTabs, removeTab, setActive, markDirty, markSaving, markSaved, saveStateOf, noteSelfWrite, isSelfWrite, saveActive, reloadFromDisk, scheduleAutosave, cancelAutosave, saveTab, deleteTabFile, restoreHistoryToActive, checkCrashRecovery, captureSession, restoreSession }
+  /** True when any open tab holds unsaved edits. The app uses this to decide
+   *  whether closing the window should prompt the user rather than silently
+   *  dropping the work. */
+  function hasUnsavedWork(): boolean {
+    return tabs.value.some((t) => t.dirty)
+  }
+
+  /** Best-effort save of every dirty tab that has a real path (used before a
+   *  vault switch or an app close, where a pending autosave timer may never
+   *  fire). Untitled tabs are skipped: with no path they would need a save-as
+   *  dialog, which a background/bulk flush must not open. Returns false when a
+   *  path'd save failed so the caller can block the potentially-lossy action. */
+  async function flushDirty(): Promise<boolean> {
+    let ok = true
+    for (const t of tabs.value) {
+      if (!t.dirty || !t.path) continue
+      const saved = await saveTab(t.id)
+      if (!saved) ok = false
+    }
+    return ok
+  }
+
+  return { tabs, activeId, activeTab, vault, setVault, openTab, closeTab, closeAll, closeOthers, renamePathInTabs, removeTab, setActive, markDirty, markSaving, markSaved, saveStateOf, noteSelfWrite, isSelfWrite, saveActive, reloadFromDisk, scheduleAutosave, cancelAutosave, saveTab, deleteTabFile, restoreHistoryToActive, checkCrashRecovery, captureSession, restoreSession, hasUnsavedWork, flushDirty }
 })
