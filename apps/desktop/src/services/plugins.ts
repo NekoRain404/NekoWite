@@ -46,6 +46,42 @@ function isTauriRuntime(): boolean {
   )
 }
 
+/**
+ * Whether the current environment permits executing a vault plugin loaded from a
+ * blob URL (`import('blob:...')`) under the active CSP.
+ *
+ * The production Tauri webview enforces a strict CSP (`script-src 'self'
+ * 'wasm-unsafe-eval'` — no `blob:`, no `'unsafe-eval'`/`'unsafe-inline'`), so a
+ * dynamic `import('blob:...')` of a plugin is silently blocked there. Until the
+ * plugin system is moved behind real isolation (a dedicated process/WebView with
+ * its own CSP), we DETECT that environment and skip the in-window import rather
+ * than failing every plugin load with a CSP error.
+ *
+ * The signal is the presence of the Tauri runtime: the strict, `blob:`-denying
+ * CSP is only injected into the real Tauri webview. In a plain browser (the
+ * Demo, or the unit-test DOM) there is no Tauri runtime, so blob module imports
+ * are not known to be blocked and this returns true — keeping the
+ * permission/integrity code paths reachable and exercised outside the packaged
+ * app. Plugin LOADING therefore remains gated until isolation exists; revisit
+ * this helper (not the CSP) when the plugin host moves into a sandbox.
+ */
+export function isPluginImportAllowedByCsp(): boolean {
+  return !isTauriRuntime()
+}
+
+// Once per session, surface a single user-visible notice that vault plugins are
+// disabled by the security policy — never a silent no-op, and never a repeated
+// CSP error per plugin.
+let cspBlockedNotified = false
+
+function signalPluginLoadingDisabledByCsp(): void {
+  if (cspBlockedNotified) return
+  cspBlockedNotified = true
+  notifyError(
+    'Vault plugins are disabled under the current security policy (CSP blocks in-window module loading). Expected until process/WebView isolation is implemented.',
+  )
+}
+
 // Every vault plugin id this module has activated. Switching vaults must
 // fully deactivate the previous vault's plugins before loading the next one;
 // otherwise a plugin from vault A keeps its components/commands/lifecycle hooks
@@ -470,6 +506,7 @@ export function resetVaultPluginStateForTests(): void {
   permissionDecider = null
   integrityDecider = null
   memoryDigestMap.clear()
+  cspBlockedNotified = false
 }
 
 /**
@@ -506,6 +543,19 @@ export function resetVaultPluginStateForTests(): void {
 export async function loadVaultPlugins(vault: string): Promise<void> {
   deactivateVaultPlugins()
   ensureLifecycleErrorRouter()
+
+  // CSP gate: the production Tauri webview's strict CSP blocks the in-window
+  // `import('blob:...')` that plugin loading relies on. Rather than attempting
+  // (and failing) the import for every plugin, skip the scan entirely and surface
+  // one notice. The permission/integrity/manifest code below stays intact so it
+  // becomes live the moment plugin loading moves behind real isolation. The gate
+  // only triggers in the real Tauri webview — not in the unit-test DOM or the
+  // browser Demo, where the existing integrity/permission scenarios still run.
+  if (!isPluginImportAllowedByCsp()) {
+    signalPluginLoadingDisabledByCsp()
+    return
+  }
+
   const adapter = makeVaultPluginFsAdapter(vault)
   let entries: PluginFsEntry[]
   try {
