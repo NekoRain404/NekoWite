@@ -11,6 +11,7 @@ import 'mathlive/static.css'
 import './styles/tokens.css'
 import './styles/components.css'
 import './styles/editor-content.css'
+import './styles/print.css'
 import './style.css'
 import './math-dialog.css'
 

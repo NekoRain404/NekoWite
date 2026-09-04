@@ -9,6 +9,7 @@ import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 import { useFloatStore } from '../stores/float'
 import { useAppearanceStore } from '../stores/appearance'
+import { resolveDirection } from '../services/rtl'
 import { notifyError } from '../services/errors'
 import { t } from '../i18n'
 import { editorBridge } from '../services/editorBridge'
@@ -38,6 +39,11 @@ const appearance = useAppearanceStore()
 const searchOpen = ref(false)
 const spellPopup = ref<{ x: number; y: number; from: number; to: number; word: string; suggestions: string[] } | null>(null)
 let overlayRaf = 0
+
+// Base direction for the rendered content: the user's explicit override wins,
+// otherwise the document text decides (Arabic/Hebrew -> rtl). Bound as `dir` on
+// the pane root so the browser lays the note out from the correct edge.
+const renderDir = computed(() => resolveDirection(appearance.contentDirection, tabs.activeTab?.content ?? ''))
 
 // Focus / typewriter mode: keep the cursor block vertically centered while it
 // drifts, scrolling only the viewport (never the document). Driven by a rAF so
@@ -541,6 +547,7 @@ watch(
   <div
     ref="scrollEl"
     class="rendered-pane"
+    :dir="renderDir"
     @scroll="onScroll"
   >
     <div

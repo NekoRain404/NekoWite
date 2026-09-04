@@ -1,0 +1,163 @@
+/* Print / PDF export of the live app.
+   When the user prints the window (Cmd/Ctrl+P) we collapse all the app chrome
+   and flush the rendered note to a clean, full-width, light-only document.
+
+   Coordination note: this file deliberately does NOT declare a `@page` rule.
+   The PDF export path injects its own `@page{size;margin}` into the hidden
+   export iframe (src/services/export.ts) so the print dialog honors the
+   configured paper — the two never share a document, so avoiding a `@page`
+   here prevents any conflicting override. Printing the app directly uses the
+   browser's default margins. All rules below are scoped to `@media print` so
+   they never affect on-screen rendering. */
+
+@media print {
+  /* ---------- Hide the app chrome ---------- */
+  .titlebar,
+  .sidebar,
+  .note-list-col,
+  .info-rail,
+  .status-bar,
+  .word-toolbar,
+  .tab-bar,
+  .view-switch,
+  .layout-resize-handle,
+  .split-handle,
+  .resize-guide-line,
+  .onboard,
+  .rail-header,
+  .rail-body,
+  .rail-tabs,
+  .rail-tab,
+  .rail-close,
+  .nw-word-goal,
+  .nw-render-search-host,
+  .nw-spell-popup,
+  .palette-overlay,
+  .dialog-overlay,
+  .toast-stack,
+  .ghost-text,
+  .float-box,
+  .pane.source {
+    display: none !important;
+  }
+
+  /* Only the rendered (preview) pane survives, laid out as natural flow. */
+  .shell,
+  .shell-body,
+  .main,
+  .main-content,
+  .editor-pane,
+  .panes,
+  .pane,
+  .pane.rendered,
+  .rendered-pane {
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: #fff !important;
+    box-shadow: none !important;
+  }
+
+  .panes,
+  .pane.rendered,
+  .rendered-pane {
+    width: 100% !important;
+  }
+
+  /* ---------- Content: full width, light palette, force backgrounds ---------- */
+  .rendered-pane {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .editor-container,
+  .editor-container .ProseMirror {
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .editor-container .ProseMirror {
+    width: 100% !important;
+    color: #000 !important;
+    background: #fff !important;
+    font-size: 11pt;
+    line-height: 1.6;
+    caret-color: #000;
+  }
+
+  /* Links: drop the underline, keep them readable in black. */
+  .editor-container .ProseMirror a {
+    color: #000 !important;
+    text-decoration: none !important;
+  }
+  .editor-container .ProseMirror a::after {
+    display: none !important;
+  }
+
+  /* Code and code blocks: white background, black text, hairline frame. */
+  .editor-container .ProseMirror pre,
+  .editor-container .ProseMirror code {
+    background: #fff !important;
+    color: #000 !important;
+    border: 1px solid #999 !important;
+    box-shadow: none !important;
+  }
+  .editor-container .ProseMirror pre {
+    break-inside: avoid;
+  }
+  .editor-container .ProseMirror .nk-code-copy,
+  .editor-container .ProseMirror .nk-heading-anchor {
+    display: none !important;
+  }
+
+  /* Flatten surfaces that rely on translucent app tokens. */
+  .editor-container .ProseMirror blockquote,
+  .editor-container .ProseMirror th,
+  .editor-container .ProseMirror td {
+    background: #fff !important;
+    color: #000 !important;
+  }
+  .editor-container .ProseMirror th,
+  .editor-container .ProseMirror td {
+    border: 1px solid #000 !important;
+  }
+  .editor-container .ProseMirror blockquote {
+    border-left: 3px solid #000 !important;
+  }
+
+  /* Keep blocks from splitting awkwardly across pages. */
+  .editor-container .ProseMirror h1,
+  .editor-container .ProseMirror h2,
+  .editor-container .ProseMirror h3,
+  .editor-container .ProseMirror h4,
+  .editor-container .ProseMirror h5,
+  .editor-container .ProseMirror h6 {
+    color: #000 !important;
+    break-after: avoid;
+  }
+  .editor-container .ProseMirror img {
+    break-inside: avoid;
+    max-width: 100% !important;
+  }
+
+  /* Markdown task checkboxes: draw a solid frame instead of the accent tint. */
+  .editor-container .ProseMirror li[data-item-type="task"]::before {
+    background: #fff !important;
+    border-color: #000 !important;
+  }
+  .editor-container .ProseMirror li[data-item-type="task"][data-checked="true"]::before {
+    background: #000 !important;
+    border-color: #000 !important;
+  }
+  .editor-container .ProseMirror li[data-item-type="task"][data-checked="true"]::after {
+    background: #fff !important;
+  }
+  .editor-container .ProseMirror li[data-item-type="task"][data-checked="true"] > * {
+    color: #000 !important;
+    text-decoration: line-through;
+    text-decoration-color: #000 !important;
+  }
+}

@@ -161,7 +161,21 @@ function setMode(m: ViewMode): void {
 
 function refsMap(): Map<string, ExportRef> {
   const m = new Map<string, ExportRef>()
-  for (const r of refs.refs.values()) m.set(r.key, { key: r.key, title: r.title, authors: r.authors, year: r.year })
+  for (const r of refs.refs.values()) {
+    m.set(r.key, {
+      key: r.key,
+      title: r.title,
+      authors: r.authors,
+      year: r.year,
+      doi: r.doi,
+      journal: r.journal,
+      volume: r.volume,
+      issue: r.issue,
+      pages: r.pages,
+      publisher: r.publisher,
+      url: r.url,
+    })
+  }
   return m
 }
 

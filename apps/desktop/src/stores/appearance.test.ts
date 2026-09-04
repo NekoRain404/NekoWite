@@ -333,4 +333,33 @@ describe('useAppearanceStore', () => {
     expect(restored.followSystemAccent).toBe(true)
     expect(restored.effectiveAccent()).toBe('coral')
   })
+
+  it('defaults high contrast off and content direction to auto', () => {
+    const s = useAppearanceStore()
+    expect(s.highContrast).toBe(false)
+    expect(s.contentDirection).toBe('auto')
+  })
+
+  it('persists and restores high contrast and content direction', () => {
+    const s = useAppearanceStore()
+    s.setHighContrast(true)
+    s.setContentDirection('rtl')
+    const saved = JSON.parse(localStorage.getItem('nekowite.appearance') ?? '{}')
+    expect(saved.highContrast).toBe(true)
+    expect(saved.contentDirection).toBe('rtl')
+
+    localStorage.setItem('nekowite.appearance', JSON.stringify({ highContrast: false, contentDirection: 'ltr' }))
+    setActivePinia(createPinia())
+    const restored = useAppearanceStore()
+    expect(restored.highContrast).toBe(false)
+    expect(restored.contentDirection).toBe('ltr')
+  })
+
+  it('falls back to defaults for invalid content direction and non-boolean high contrast', () => {
+    localStorage.setItem('nekowite.appearance', JSON.stringify({ contentDirection: 'sideways', highContrast: 'on' }))
+    setActivePinia(createPinia())
+    const invalid = useAppearanceStore()
+    expect(invalid.contentDirection).toBe('auto')
+    expect(invalid.highContrast).toBe(false)
+  })
 })

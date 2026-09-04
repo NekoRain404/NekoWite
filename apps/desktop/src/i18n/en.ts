@@ -557,4 +557,16 @@ export const en = {
   contextMenu: {
     aria: 'Context menu',
   },
+  daily: {
+    new: 'New daily note',
+    opened: 'Daily note opened',
+    exists: 'Daily note already exists',
+    createFailed: 'Failed to create the daily note, please retry',
+  },
+  template: {
+    pickTitle: 'New from template',
+    empty: 'Drop .md template files into <vault>/templates/',
+    createFailed: 'Failed to create a note from the template, please retry',
+    readFailed: 'Failed to read the template, please retry',
+  },
 }

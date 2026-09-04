@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { renderDocument, renderDocumentAsync } from './html'
+import { renderDocument, renderDocumentAsync, formatReference, doiUrl } from './html'
 import type { ExportRef } from './html'
 
 describe('renderDocument', () => {
@@ -65,6 +65,96 @@ describe('renderDocument', () => {
     const html = renderDocument('text')
     // printCss body includes position: relative so floats anchor to the body
     expect(html).toMatch(/body\s*{[^}]*position\s*:\s*relative/)
+  })
+
+  it('renders reference-style links/images resolved from their definitions', () => {
+    const html = renderDocument(
+      'See [text][ref] and ![alt][img].\n\n[ref]: https://example.com\n[img]: https://example.com/a.png\n',
+    )
+    expect(html).toContain('href="https://example.com"')
+    expect(html).toContain('src="https://example.com/a.png"')
+    expect(html).toContain('alt="alt"')
+    expect(html).toContain('See <a href="https://example.com">text</a>')
+  })
+
+  it('renders journal italic and a DOI link in the reference list when metadata is present', () => {
+    const refs = new Map<string, ExportRef>()
+    refs.set('a', {
+      key: 'a',
+      title: 'Great Paper',
+      authors: ['John Smith'],
+      year: '2020',
+      journal: 'Journal of Testing',
+      volume: '12',
+      issue: '3',
+      pages: '45-67',
+      doi: '10.1000/abc',
+    })
+    const html = renderDocument('See [@a].\n', { refs })
+    expect(html).toContain('<em>Journal of Testing</em>')
+    expect(html).toContain('href="https://doi.org/10.1000/abc"')
+  })
+
+  it('degrades to the plain numbered entry when a reference has no rich metadata', () => {
+    const refs = new Map<string, ExportRef>()
+    refs.set('a', { key: 'a', title: 'Alpha', authors: ['Smith'], year: '2020' })
+    const html = renderDocument('See [@a].\n', { refs })
+    expect(html).toContain('a — Alpha (Smith, 2020)')
+    expect(html).not.toContain('<em>')
+  })
+})
+
+describe('formatReference', () => {
+  it('renders a full bibliography entry with italic journal and DOI link', () => {
+    const s = formatReference({
+      key: 'k',
+      title: 'Great Paper',
+      authors: ['John Smith', 'Jane Doe'],
+      year: '2020',
+      journal: 'Journal of Testing',
+      volume: '12',
+      issue: '3',
+      pages: '45-67',
+      doi: '10.1000/abc',
+    })
+    expect(s).toContain('John Smith')
+    expect(s).toContain('2020')
+    expect(s).toContain('<em>Journal of Testing</em>')
+    expect(s).toContain('12(3)')
+    expect(s).toContain('45-67')
+    expect(s).toContain('href="https://doi.org/10.1000/abc"')
+  })
+
+  it('truncates to three authors with "et al."', () => {
+    const s = formatReference({
+      key: 'k',
+      title: 'T',
+      authors: ['A1', 'A2', 'A3', 'A4'],
+      year: '2020',
+      doi: '10.1000/x',
+    })
+    expect(s).toContain('A1, A2, A3, et al.')
+  })
+
+  it('degrades to key — title (authors, year) when no rich fields exist', () => {
+    const s = formatReference({ key: 'a', title: 'Alpha', authors: ['Smith'], year: '2020' })
+    expect(s).toBe('a — Alpha (Smith, 2020)')
+  })
+})
+
+describe('doiUrl', () => {
+  it('builds a doi.org link for a valid DOI', () => {
+    expect(doiUrl('10.1000/xyz')).toBe('https://doi.org/10.1000/xyz')
+  })
+
+  it('normalizes an existing doi.org prefix', () => {
+    expect(doiUrl('https://doi.org/10.1000/xyz')).toBe('https://doi.org/10.1000/xyz')
+  })
+
+  it('returns null for empty, missing or invalid DOIs', () => {
+    expect(doiUrl('')).toBeNull()
+    expect(doiUrl('not-a-doi')).toBeNull()
+    expect(doiUrl(undefined)).toBeNull()
   })
 })
 

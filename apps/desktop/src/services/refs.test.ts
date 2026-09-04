@@ -51,6 +51,76 @@ describe('parseRefs', () => {
     expect(refs[0].authors).toContain('Doe, Jane')
   })
 
+  it('extracts metadata fields from bibtex (journal/volume/issue/pages/doi/publisher/url)', () => {
+    const BIB = `@article{smith2020,
+  title = {A Great Paper},
+  author = {Smith, John},
+  journal = {Journal of Testing},
+  volume = {12},
+  number = {3},
+  pages = {45--67},
+  year = {2020},
+  doi = {10.1000/abc},
+  publisher = {Foo Press},
+  url = {https://example.com/paper},
+}`
+    const r = parseRefs(BIB, 'bib')[0]
+    expect(r.journal).toBe('Journal of Testing')
+    expect(r.volume).toBe('12')
+    expect(r.issue).toBe('3')
+    expect(r.pages).toBe('45-67')
+    expect(r.doi).toBe('10.1000/abc')
+    expect(r.publisher).toBe('Foo Press')
+    expect(r.url).toBe('https://example.com/paper')
+  })
+
+  it('extracts metadata fields from RIS (JO/VL/IS/SP-EP/DO/UR)', () => {
+    const RIS = `TY  - JOUR
+AU  - Smith, John
+TI  - A RIS Paper
+JO  - Journal of RIS
+VL  - 5
+IS  - 2
+SP  - 10
+EP  - 20
+PY  - 2021
+DO  - 10.2000/ris
+UR  - https://example.com/ris
+ER  -`
+    const r = parseRefs(RIS, 'ris')[0]
+    expect(r.journal).toBe('Journal of RIS')
+    expect(r.volume).toBe('5')
+    expect(r.issue).toBe('2')
+    expect(r.pages).toBe('10-20')
+    expect(r.doi).toBe('10.2000/ris')
+    expect(r.url).toBe('https://example.com/ris')
+  })
+
+  it('extracts metadata fields from CSL JSON (container-title/volume/issue/page/DOI/publisher/URL)', () => {
+    const CSL = `[{
+      "id": "doe2019",
+      "title": "The JSON Paper",
+      "author": [{ "family": "Doe", "given": "Jane" }],
+      "issued": { "date-parts": [[2019]] },
+      "type": "article-journal",
+      "container-title": "Journal of JSON",
+      "volume": "9",
+      "issue": "1",
+      "page": "100-110",
+      "DOI": "10.3000/json",
+      "publisher": "Baz Press",
+      "URL": "https://example.com/json"
+    }]`
+    const r = parseRefs(CSL, 'csl')[0]
+    expect(r.journal).toBe('Journal of JSON')
+    expect(r.volume).toBe('9')
+    expect(r.issue).toBe('1')
+    expect(r.pages).toBe('100-110')
+    expect(r.doi).toBe('10.3000/json')
+    expect(r.publisher).toBe('Baz Press')
+    expect(r.url).toBe('https://example.com/json')
+  })
+
   it('returns empty array for unparseable content', () => {
     expect(parseRefs('this is not a reference format', 'bib')).toEqual([])
     expect(parseRefs('', 'ris')).toEqual([])

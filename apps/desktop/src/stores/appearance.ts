@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
 export type Theme = 'light' | 'dark' | 'system'
+export type ContentDirection = 'auto' | 'ltr' | 'rtl'
 export type Accent =
   | 'ink'
   | 'coral'
@@ -73,6 +74,8 @@ interface AppearanceSettings {
   renderTaskChecklist: boolean
   autoSyncScroll: boolean
   confirmBeforeDelete: boolean
+  highContrast: boolean
+  contentDirection: ContentDirection
 }
 
 const LS_KEY = 'nekowite.appearance'
@@ -99,9 +102,12 @@ const DEFAULTS: AppearanceSettings = {
   renderTaskChecklist: true,
   autoSyncScroll: true,
   confirmBeforeDelete: true,
+  highContrast: false,
+  contentDirection: 'auto',
 }
 
 const UI_FONT_IDS: UiFontId[] = ['system', 'inter', 'serif', 'rounded']
+const CONTENT_DIRECTIONS: ContentDirection[] = ['auto', 'ltr', 'rtl']
 const EDITOR_FONT_IDS: EditorFontId[] = ['system', 'serif', 'sans', 'reading']
 const MONO_FONT_IDS: MonoFontId[] = ['mono', 'cascadia', 'jetbrains']
 const ACCENTS: Accent[] = ['ink', 'coral', 'blue', 'green', 'gold', 'violet', 'slate', 'teal', 'lime', 'rose', 'amber']
@@ -152,6 +158,12 @@ function readStored(): AppearanceSettings {
       renderTaskChecklist: readBool(parsed.renderTaskChecklist, DEFAULTS.renderTaskChecklist),
       autoSyncScroll: readBool(parsed.autoSyncScroll, DEFAULTS.autoSyncScroll),
       confirmBeforeDelete: readBool(parsed.confirmBeforeDelete, DEFAULTS.confirmBeforeDelete),
+      highContrast: readBool(parsed.highContrast, DEFAULTS.highContrast),
+      contentDirection:
+        typeof parsed.contentDirection === 'string' &&
+        (CONTENT_DIRECTIONS as string[]).includes(parsed.contentDirection)
+          ? (parsed.contentDirection as ContentDirection)
+          : DEFAULTS.contentDirection,
     }
   } catch {
     return DEFAULTS
@@ -181,6 +193,8 @@ export const useAppearanceStore = defineStore('appearance', () => {
   const renderTaskChecklist = ref<boolean>(stored.renderTaskChecklist)
   const autoSyncScroll = ref<boolean>(stored.autoSyncScroll)
   const confirmBeforeDelete = ref<boolean>(stored.confirmBeforeDelete)
+  const highContrast = ref<boolean>(stored.highContrast)
+  const contentDirection = ref<ContentDirection>(stored.contentDirection)
   const systemRevision = ref(0)
 
   function persist(): void {
@@ -208,6 +222,8 @@ export const useAppearanceStore = defineStore('appearance', () => {
         renderTaskChecklist: renderTaskChecklist.value,
         autoSyncScroll: autoSyncScroll.value,
         confirmBeforeDelete: confirmBeforeDelete.value,
+        highContrast: highContrast.value,
+        contentDirection: contentDirection.value,
       }),
     )
   }
@@ -238,6 +254,16 @@ export const useAppearanceStore = defineStore('appearance', () => {
 
   function setConfirmBeforeDelete(v: boolean): void {
     confirmBeforeDelete.value = v
+    persist()
+  }
+
+  function setHighContrast(v: boolean): void {
+    highContrast.value = v
+    persist()
+  }
+
+  function setContentDirection(d: ContentDirection): void {
+    contentDirection.value = d
     persist()
   }
 
@@ -372,6 +398,8 @@ export const useAppearanceStore = defineStore('appearance', () => {
     renderTaskChecklist,
     autoSyncScroll,
     confirmBeforeDelete,
+    highContrast,
+    contentDirection,
     systemRevision,
     effectiveTheme,
     effectiveAccent,
@@ -396,6 +424,8 @@ export const useAppearanceStore = defineStore('appearance', () => {
     setRenderTaskChecklist,
     setAutoSyncScroll,
     setConfirmBeforeDelete,
+    setHighContrast,
+    setContentDirection,
     touchSystem,
     uiFontFamily,
     editorFontFamily,

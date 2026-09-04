@@ -11,6 +11,13 @@ export interface Reference {
   authors: string[]
   year: string
   type: string
+  doi?: string
+  journal?: string
+  volume?: string
+  issue?: string
+  pages?: string
+  publisher?: string
+  url?: string
 }
 
 const FORCE_TYPE: Record<RefFormat, string> = {
@@ -30,6 +37,22 @@ function authorName(a: { family?: string; given?: string } | string | undefined)
   if (typeof a === 'string') return a
   if (!a) return ''
   return [a.given, a.family].filter(Boolean).join(' ')
+}
+
+// citation-js normalizes every input format to CSL-JSON, so a single safe
+// "text" accessor handles both plain strings and CSL string-arrays across
+// bibtex / ris / json inputs.
+function textField(entry: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    const value = entry[key]
+    if (value == null) continue
+    const str = Array.isArray(value)
+      ? value.filter((v): v is string => typeof v === 'string').join(', ')
+      : String(value)
+    const trimmed = str.trim()
+    if (trimmed) return trimmed
+  }
+  return ''
 }
 
 const STOPWORDS = new Set(['the', 'a', 'an'])
@@ -120,6 +143,13 @@ export function parseRefs(text: string, format: RefFormat): Reference[] {
         authors,
         year: String(year),
         type: String(entry.type ?? ''),
+        doi: textField(entry, 'DOI') || undefined,
+        journal: textField(entry, 'container-title', 'journal', 'containerTitle') || undefined,
+        volume: textField(entry, 'volume') || undefined,
+        issue: textField(entry, 'issue', 'number') || undefined,
+        pages: textField(entry, 'page') || undefined,
+        publisher: textField(entry, 'publisher') || undefined,
+        url: textField(entry, 'URL') || undefined,
       }
     })
   } catch {

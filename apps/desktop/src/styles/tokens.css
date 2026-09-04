@@ -100,3 +100,85 @@
 [data-theme="dark"][data-accent]:not([data-accent="ink"]) {
   --app-accent-soft: color-mix(in srgb, var(--app-accent) 25%, var(--app-panel));
 }
+
+/* ---------- High contrast ----------
+   Driven by `data-contrast="high"` on the shell (see appearance.highContrast).
+   Pushes text/background/border/muted to true black & white, eliminates the
+   washed-out translucency while keeping the --app-* semantics, and lifts the
+   accent to a saturated value. These rules sit AFTER the theme/accent blocks so
+   they win the cascade. */
+
+[data-contrast="high"] {
+  color-scheme: light;
+  --app-canvas: #ffffff;
+  --app-panel: #ffffff;
+  --app-elevated: #ffffff;
+  --app-border: #000000;
+  --app-text: #000000;
+  --app-muted: #1e1e1e;
+  --app-accent: #000000;
+  --app-accent-soft: #d9d9d9;
+  --app-accent-contrast: #ffffff;
+  --app-danger: #c00000;
+  --app-danger-contrast: #ffffff;
+  --app-success: #0b6b30;
+  --app-shadow-menu: 0 0 0 1px #000;
+  --app-shadow-dialog: 0 0 0 1px #000;
+  --app-shadow-card: 0 0 0 1px #000;
+  --app-code-keyword: #8a2600;
+  --app-code-string: #0a6b3c;
+  --app-code-number: #9c5200;
+  --app-code-fn: #1b4786;
+  --app-code-type: #4c2d7a;
+  --app-code-prop: #39471f;
+}
+
+[data-theme="dark"][data-contrast="high"] {
+  color-scheme: dark;
+  --app-canvas: #000000;
+  --app-panel: #000000;
+  --app-elevated: #0c0c0c;
+  --app-border: #ffffff;
+  --app-text: #ffffff;
+  --app-muted: #d8d8d8;
+  --app-accent: #ffffff;
+  --app-accent-soft: #2a2a2a;
+  --app-accent-contrast: #000000;
+  --app-danger: #ff4d4d;
+  --app-danger-contrast: #000000;
+  --app-success: #4dde85;
+  --app-shadow-menu: 0 0 0 1px #fff;
+  --app-shadow-dialog: 0 0 0 1px #fff;
+  --app-shadow-card: 0 0 0 1px #fff;
+  --app-code-keyword: #ffb68a;
+  --app-code-string: #93e6b0;
+  --app-code-number: #f0c37a;
+  --app-code-fn: #a9c9f5;
+  --app-code-type: #cdb3f2;
+  --app-code-prop: #c3d7a4;
+}
+
+/* Keep the user's chosen accent hue in high contrast, pushed to a saturated
+   value for the light theme and a brighter one for the dark theme. */
+[data-contrast="high"][data-accent="ink"] { --app-accent: #000000; --app-accent-soft: #d9d9d9; }
+[data-contrast="high"][data-accent="coral"] { --app-accent: #c22818; --app-accent-soft: #ffd0c7; }
+[data-contrast="high"][data-accent="blue"] { --app-accent: #134fae; --app-accent-soft: #c2d7f7; }
+[data-contrast="high"][data-accent="green"] { --app-accent: #0e7a4f; --app-accent-soft: #b9e6d3; }
+[data-contrast="high"][data-accent="gold"] { --app-accent: #7d5c00; --app-accent-soft: #ffeab2; }
+[data-contrast="high"][data-accent="violet"] { --app-accent: #5b2d9e; --app-accent-soft: #d9c8f5; }
+[data-contrast="high"][data-accent="slate"] { --app-accent: #2b435c; --app-accent-soft: #c6d3e1; }
+[data-contrast="high"][data-accent="teal"] { --app-accent: #0e7f70; --app-accent-soft: #bbe5de; }
+[data-contrast="high"][data-accent="lime"] { --app-accent: #4f7e05; --app-accent-soft: #ddefb0; }
+[data-contrast="high"][data-accent="rose"] { --app-accent: #c21f44; --app-accent-soft: #ffc5cf; }
+[data-contrast="high"][data-accent="amber"] { --app-accent: #925a00; --app-accent-soft: #ffdfb0; }
+[data-theme="dark"][data-contrast="high"][data-accent="ink"] { --app-accent: #ffffff; --app-accent-soft: #2a2a2a; }
+[data-theme="dark"][data-contrast="high"][data-accent="coral"] { --app-accent: #ff6b52; --app-accent-soft: #ff6b52; }
+[data-theme="dark"][data-contrast="high"][data-accent="blue"] { --app-accent: #68a7ff; --app-accent-soft: #68a7ff; }
+[data-theme="dark"][data-contrast="high"][data-accent="green"] { --app-accent: #56e6a1; --app-accent-soft: #56e6a1; }
+[data-theme="dark"][data-contrast="high"][data-accent="gold"] { --app-accent: #ffd340; --app-accent-soft: #ffd340; }
+[data-theme="dark"][data-contrast="high"][data-accent="violet"] { --app-accent: #b38fff; --app-accent-soft: #b38fff; }
+[data-theme="dark"][data-contrast="high"][data-accent="slate"] { --app-accent: #9ec7eb; --app-accent-soft: #9ec7eb; }
+[data-theme="dark"][data-contrast="high"][data-accent="teal"] { --app-accent: #2fe0c9; --app-accent-soft: #2fe0c9; }
+[data-theme="dark"][data-contrast="high"][data-accent="lime"] { --app-accent: #c3ea54; --app-accent-soft: #c3ea54; }
+[data-theme="dark"][data-contrast="high"][data-accent="rose"] { --app-accent: #ff7a99; --app-accent-soft: #ff7a99; }
+[data-theme="dark"][data-contrast="high"][data-accent="amber"] { --app-accent: #ffbb4f; --app-accent-soft: #ffbb4f; }

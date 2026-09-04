@@ -557,4 +557,16 @@ export const zh = {
   contextMenu: {
     aria: '上下文菜单',
   },
+  daily: {
+    new: '新建每日笔记',
+    opened: '已打开今日笔记',
+    exists: '今日笔记已存在',
+    createFailed: '创建每日笔记失败，请重试',
+  },
+  template: {
+    pickTitle: '从模板新建',
+    empty: '在 vault 的 templates/ 目录放入 .md 模板文件',
+    createFailed: '从模板创建笔记失败，请重试',
+    readFailed: '读取模板失败，请重试',
+  },
 }

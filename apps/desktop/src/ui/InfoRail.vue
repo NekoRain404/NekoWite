@@ -6,11 +6,12 @@ import HistoryPanel from './HistoryPanel.vue'
 import OutlinePanel from './OutlinePanel.vue'
 import ChatPanel from './ChatPanel.vue'
 import FrontmatterPanel from './FrontmatterPanel.vue'
+import DocStatsPanel from './DocStatsPanel.vue'
 import { t } from '../i18n'
 
 const emit = defineEmits<{ (e: 'close'): void }>()
 
-const activeTab = ref<'ai' | 'outline' | 'refs' | 'history' | 'meta'>('ai')
+const activeTab = ref<'ai' | 'outline' | 'refs' | 'history' | 'meta' | 'stats'>('ai')
 
 const TABS = computed(() => [
   { id: 'ai', label: t('rail.ai') },
@@ -18,6 +19,7 @@ const TABS = computed(() => [
   { id: 'refs', label: t('rail.refs') },
   { id: 'history', label: t('rail.history') },
   { id: 'meta', label: t('rail.meta') },
+  { id: 'stats', label: 'Stats' },
 ] as const)
 </script>
 
@@ -52,6 +54,7 @@ const TABS = computed(() => [
       <ReferencesPanel v-show="activeTab === 'refs'" />
       <HistoryPanel v-show="activeTab === 'history'" />
       <FrontmatterPanel v-show="activeTab === 'meta'" />
+      <DocStatsPanel v-show="activeTab === 'stats'" />
     </div>
   </aside>
 </template>

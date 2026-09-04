@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { computeCiteOrder } from '@nekowite/editor-core'
+import { computeCiteOrder, doiUrl } from '@nekowite/editor-core'
 import { useRefsStore } from '../stores/refs'
 import { editorBridge } from '../services/editorBridge'
 import { t } from '../i18n'
@@ -16,6 +16,8 @@ interface Cited {
   title: string | null
   authors: string[]
   year: string | null
+  doi: string | null
+  journal: string | null
 }
 
 const cited = computed<Cited[]>(() => {
@@ -27,7 +29,15 @@ const cited = computed<Cited[]>(() => {
   const order = computeCiteOrder(view)
   return [...order.entries()].map(([key, num]) => {
     const ref = refs.get(key)
-    return { key, num, title: ref?.title ?? null, authors: ref?.authors ?? [], year: ref?.year ?? null }
+    return {
+      key,
+      num,
+      title: ref?.title ?? null,
+      authors: ref?.authors ?? [],
+      year: ref?.year ?? null,
+      doi: ref?.doi ?? null,
+      journal: ref?.journal ?? null,
+    }
   })
 })
 
@@ -84,7 +94,21 @@ onBeforeUnmount(() => {
           <span
             v-if="c.title"
             class="refs-detail"
-          >{{ c.title }} ({{ c.authors.join(', ') }}{{ c.year ? `, ${c.year}` : '' }})</span>
+          >
+            {{ c.title }}
+            <span
+              v-if="c.journal"
+              class="refs-journal"
+            > · {{ c.journal }}</span>
+            <span class="refs-meta">({{ c.authors.join(', ') }}{{ c.year ? `, ${c.year}` : '' }})</span>
+            <a
+              v-if="c.doi"
+              :href="doiUrl(c.doi) ?? '#'"
+              class="refs-doi"
+              target="_blank"
+              rel="noopener"
+            >doi:{{ c.doi }}</a>
+          </span>
           <span
             v-else
             class="refs-detail refs-missing"
@@ -154,6 +178,20 @@ onBeforeUnmount(() => {
 }
 .refs-detail {
   color: color-mix(in srgb, var(--app-text) 76%, var(--app-muted));
+  overflow-wrap: anywhere;
+}
+.refs-meta {
+  color: color-mix(in srgb, var(--app-text) 58%, var(--app-muted));
+  margin-left: 4px;
+}
+.refs-journal {
+  font-style: italic;
+  color: color-mix(in srgb, var(--app-text) 84%, var(--app-muted));
+}
+.refs-doi {
+  display: block;
+  color: var(--app-accent);
+  font-size: 10px;
   overflow-wrap: anywhere;
 }
 .refs-missing { color: var(--app-muted); }

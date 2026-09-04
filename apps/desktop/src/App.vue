@@ -331,6 +331,7 @@ async function pickFolder(): Promise<void> {
     :style="shellStyle"
     :data-theme="theme"
     :data-accent="accent"
+    :data-contrast="appearance.highContrast ? 'high' : 'normal'"
     :data-locale="locale"
   >
     <TitleBar

@@ -18,6 +18,13 @@ export interface ExportRef {
   title?: string
   authors?: string[]
   year?: string
+  doi?: string
+  journal?: string
+  volume?: string
+  issue?: string
+  pages?: string
+  publisher?: string
+  url?: string
 }
 
 export type ComponentRenderer = (
@@ -58,6 +65,7 @@ interface RenderNode extends TransformNode {
   title?: string
   width?: number
   imageAlign?: string
+  identifier?: string
 }
 
 interface RenderContext {
@@ -81,6 +89,7 @@ const processor = unified()
     const t = tree as unknown as TransformNode & { children: TransformNode[] }
     mdxJsxMdast(t, file)
     citeMdast(t, file)
+    resolveReferences(t)
     imageDimMdast(t)
   })
 
@@ -95,6 +104,108 @@ function escapeHtml(text: string): string {
 
 function citeKey(value: string): string {
   return value.replace(/^\[@/, '').replace(/\]$/, '')
+}
+
+/** Build a doi.org link for a DOI string, or null when it is empty/invalid.
+ *  Accepts both a raw DOI and an existing doi.org URL, normalizing the prefix. */
+export function doiUrl(doi?: string | null): string | null {
+  if (!doi) return null
+  const cleaned = doi.trim().replace(/^https?:\/\/(dx\.)?doi\.org\//i, '')
+  if (!/^10\.\d{4,9}\/[\w.:()\-/]+$/i.test(cleaned)) return null
+  return `https://doi.org/${cleaned}`
+}
+
+function formatAuthors(authors: string[], max = 3): string {
+  if (authors.length === 0) return ''
+  if (authors.length === 1) return escapeHtml(authors[0])
+  if (authors.length <= max) return authors.map((a) => escapeHtml(a)).join(', ')
+  return `${authors.slice(0, max).map((a) => escapeHtml(a)).join(', ')}, et al.`
+}
+
+/** Format a reference as a bibliography entry. When journal/volume/DOI/etc.
+ *  are present it emits `Authors (Year). Title. <em>Journal</em> Volume(Issue),
+ *  Pages. [DOI link]`; otherwise it degrades to the plain `key — title
+ *  (authors, year)` form. All parts are HTML-escaped and the journal and DOI
+ *  link are marked up for the exported reference list. */
+export function formatReference(ref: ExportRef): string {
+  const hasRich = ref.journal || ref.volume || ref.issue || ref.pages || ref.doi || ref.url || ref.publisher
+  if (!hasRich) {
+    const meta: string[] = []
+    if (ref.authors?.length) meta.push(ref.authors.join(', '))
+    if (ref.year) meta.push(ref.year)
+    const metaSuffix = meta.length ? ` (${meta.join(', ')})` : ''
+    return ref.title ? `${ref.key} — ${escapeHtml(ref.title)}${metaSuffix}` : `${ref.key}${metaSuffix}`
+  }
+  const segs: string[] = []
+  const author = formatAuthors(ref.authors ?? [])
+  if (author) segs.push(ref.year ? `${author} (${escapeHtml(ref.year)})` : author)
+  if (ref.title) segs.push(`${escapeHtml(ref.title)}.`)
+  const venue: string[] = []
+  if (ref.journal) venue.push(`<em>${escapeHtml(ref.journal)}</em>`)
+  const volumeIssue = ref.volume
+    ? `${escapeHtml(ref.volume)}${ref.issue ? `(${escapeHtml(ref.issue)})` : ''}`
+    : ref.issue
+      ? `(${escapeHtml(ref.issue)})`
+      : ''
+  if (volumeIssue) venue.push(volumeIssue)
+  if (ref.pages) venue.push(escapeHtml(ref.pages))
+  if (venue.length) segs.push(`${venue.join(' ')}.`)
+  const doiHref = doiUrl(ref.doi)
+  if (doiHref) {
+    segs.push(`<a href="${escapeHtml(doiHref)}">doi:${escapeHtml(ref.doi ?? '')}</a>`)
+  } else if (ref.url) {
+    segs.push(`<a href="${escapeHtml(ref.url)}">${escapeHtml(ref.url)}</a>`)
+  } else if (ref.publisher) {
+    segs.push(escapeHtml(ref.publisher))
+  }
+  return segs.filter(Boolean).join(' ')
+}
+
+/** Resolve reference-style links/images (`[text][ref]`, `![alt][ref]`) to their
+ *  `[ref]: url` definitions so exported HTML keeps the hyperlink/image src.
+ *  Definitions are collected globally first (they may follow their uses);
+ *  unresolvable references degrade to plain text / nothing. Component bodies
+ *  stay opaque (re-parsed at render time, where definitions resolve locally). */
+function resolveReferences(node: TransformNode): void {
+  const children = Array.isArray(node.children) ? node.children : []
+  const defs = new Map<string, { url: string; title?: string }>()
+  const collect = (list: TransformNode[]): void => {
+    for (const node of list) {
+      if (node.type === 'mdxJsxFlowElement') continue
+      if (node.type === 'definition') {
+        const d = node as RenderNode
+        const id = d.identifier ?? ''
+        if (id && typeof d.url === 'string' && !defs.has(id)) {
+          defs.set(id, { url: d.url, title: d.title })
+        }
+      }
+      if (Array.isArray(node.children)) collect(node.children)
+    }
+  }
+  const walk = (list: TransformNode[]): void => {
+    for (const node of list) {
+      if (node.type === 'mdxJsxFlowElement') continue
+      const r = node as RenderNode
+      if (r.type === 'linkReference' && typeof r.identifier === 'string') {
+        const def = defs.get(r.identifier)
+        if (def) {
+          r.type = 'link'
+          r.url = def.url
+          r.title = def.title
+        }
+      } else if (r.type === 'imageReference' && typeof r.identifier === 'string') {
+        const def = defs.get(r.identifier)
+        if (def) {
+          r.type = 'image'
+          r.url = def.url
+          r.title = def.title
+        }
+      }
+      if (Array.isArray(node.children)) walk(node.children)
+    }
+  }
+  collect(children)
+  walk(children)
 }
 
 function collectCiteOrder(nodes: RenderNode[], numbers: Map<string, number>): void {
@@ -284,13 +395,7 @@ function renderReferences(order: string[], ctx: RenderContext): string {
       const n = i + 1
       const ref = ctx.refs?.get(key)
       if (ref) {
-        const meta: string[] = []
-        if (ref.authors?.length) meta.push(ref.authors.join(', '))
-        if (ref.year) meta.push(ref.year)
-        const text = ref.title
-          ? `${key} — ${ref.title}${meta.length ? ` (${meta.join(', ')})` : ''}`
-          : `${key}${meta.length ? ` (${meta.join(', ')})` : ''}`
-        return `<li>[${n}] ${escapeHtml(text)}</li>`
+        return `<li>[${n}] ${formatReference(ref)}</li>`
       }
       return `<li>[${n}] ${escapeHtml(key)}</li>`
     })

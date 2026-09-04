@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import {
+  Calendar,
   ChevronDown,
   ChevronRight,
   Clock,
@@ -11,6 +12,7 @@ import {
   FolderTree,
   Hash,
   Inbox,
+  LayoutTemplate,
   Library,
   Moon,
   Network,
@@ -32,6 +34,15 @@ import { insertCiteAtCursor } from '../services/editorBridge'
 import { useRefsStore } from '../stores/refs'
 import { parseFrontmatterForPanel, splitFrontmatterRaw } from '../services/noteMeta'
 import { removeTagFromContent } from '../services/tags'
+import {
+  buildDailyVars,
+  ensureDailyNote,
+  listTemplates,
+  nextAvailableName,
+  renderTemplate,
+  type TemplateEntry,
+} from '../services/noteTemplates'
+import TemplatePicker from './TemplatePicker.vue'
 import { t } from '../i18n'
 
 const props = defineProps<{ vault: string }>()
@@ -168,6 +179,67 @@ function insertRef(key: string): void {
   refQuery.value = ''
 }
 
+const templatePickerOpen = ref(false)
+const templateTemplates = ref<TemplateEntry[]>([])
+
+/** Open (or create) today's daily note, rendering the default template on
+ *  first use. Existing notes are opened without a write. */
+async function createDailyNote(): Promise<void> {
+  try {
+    const { path } = await ensureDailyNote(props.vault)
+    await tabs.openTab(path)
+  } catch {
+    notifyError(t('daily.createFailed'))
+  }
+}
+
+async function openTemplatePicker(): Promise<void> {
+  let templates: TemplateEntry[] = []
+  try {
+    templates = await listTemplates(props.vault)
+  } catch {
+    templates = []
+  }
+  templateTemplates.value = templates
+  templatePickerOpen.value = true
+}
+
+function closeTemplatePicker(): void {
+  templatePickerOpen.value = false
+}
+
+/** Collects the vault-root filenames so a new note can avoid a collision. */
+async function rootNoteNames(): Promise<Set<string>> {
+  try {
+    const entries = await fsService.list(props.vault, '.')
+    return new Set(entries.filter((e) => !e.is_dir).map((e) => e.name))
+  } catch {
+    return new Set()
+  }
+}
+
+async function createFromTemplate(entry: TemplateEntry): Promise<void> {
+  let body: string
+  try {
+    body = await fsService.read(props.vault, entry.path)
+  } catch {
+    notifyError(t('template.readFailed'))
+    return
+  }
+  const existing = await rootNoteNames()
+  const fileName = nextAvailableName(entry.name, existing)
+  const path = `${props.vault.replace(/\/+$/, '')}/${fileName}`
+  const content = renderTemplate(body, buildDailyVars(new Date(), { title: entry.name }))
+  try {
+    await fsService.write(props.vault, path, content)
+  } catch {
+    notifyError(t('template.createFailed'))
+    return
+  }
+  templatePickerOpen.value = false
+  await tabs.openTab(path)
+}
+
 const activeDocTags = computed(() => {
   const tab = tabs.activeTab
   if (!tab) return new Set<string>()
@@ -220,6 +292,33 @@ watch(
           :stroke-width="1.8"
         />
       </button>
+
+      <div class="quick-actions">
+        <button
+          class="nav-item quick-action"
+          :title="t('daily.new')"
+          @click="createDailyNote"
+        >
+          <Calendar
+            class="nav-icon"
+            :size="16"
+            :stroke-width="1.8"
+          />
+          <span class="nav-label">{{ t('daily.new') }}</span>
+        </button>
+        <button
+          class="nav-item quick-action"
+          :title="t('template.pickTitle')"
+          @click="openTemplatePicker"
+        >
+          <LayoutTemplate
+            class="nav-icon"
+            :size="16"
+            :stroke-width="1.8"
+          />
+          <span class="nav-label">{{ t('template.pickTitle') }}</span>
+        </button>
+      </div>
 
       <nav class="nav-group">
         <button
@@ -451,6 +550,13 @@ watch(
         />
       </button>
     </div>
+
+    <TemplatePicker
+      v-if="templatePickerOpen"
+      :templates="templateTemplates"
+      @select="createFromTemplate"
+      @close="closeTemplatePicker"
+    />
   </aside>
 </template>
 
@@ -480,6 +586,19 @@ watch(
   flex-direction: column;
   gap: 1px;
   padding-top: 6px;
+}
+
+.quick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-top: 8px;
+  padding-bottom: 2px;
+  border-top: 1px solid color-mix(in srgb, var(--app-border) 44%, transparent);
+}
+.quick-action {
+  height: 30px;
+  font-size: 11.5px;
 }
 
 .nav-item {
