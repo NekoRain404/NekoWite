@@ -59,6 +59,8 @@ export type PluginErrorCode =
   | 'PLUGIN_NOT_FOUND'
   | 'PLUGIN_MANIFEST_INVALID'
   | 'PLUGIN_CODE_PARSE_FAILED'
+  | 'PLUGIN_VERIFY_FAILED'
+  | 'PLUGIN_UNSANDBOXED'
 
 const DEFAULT_PLUGIN_ERROR_MESSAGE: Record<PluginErrorCode, string> = {
   PLUGIN_LOAD_FAILED: 'The plugin failed to load.',
@@ -68,6 +70,8 @@ const DEFAULT_PLUGIN_ERROR_MESSAGE: Record<PluginErrorCode, string> = {
   PLUGIN_NOT_FOUND: 'The plugin could not be found.',
   PLUGIN_MANIFEST_INVALID: 'The plugin manifest (package.json) is invalid.',
   PLUGIN_CODE_PARSE_FAILED: 'The plugin code could not be parsed.',
+  PLUGIN_VERIFY_FAILED: 'The plugin code or manifest changed since it was approved.',
+  PLUGIN_UNSANDBOXED: 'The plugin runs unsandboxed in the main window.',
 }
 
 const DEFAULT_PLUGIN_ERROR_RECOVERY: Record<PluginErrorCode, string> = {
@@ -78,6 +82,8 @@ const DEFAULT_PLUGIN_ERROR_RECOVERY: Record<PluginErrorCode, string> = {
   PLUGIN_NOT_FOUND: 'Reinstall the plugin.',
   PLUGIN_MANIFEST_INVALID: 'Fix or reinstall the plugin manifest.',
   PLUGIN_CODE_PARSE_FAILED: 'Update the plugin to a compatible version.',
+  PLUGIN_VERIFY_FAILED: 'Re-approve the plugin or reinstall it.',
+  PLUGIN_UNSANDBOXED: 'Only approve plugins from a source you trust.',
 }
 
 /** Union of error codes that represent a failure during plugin *loading*
@@ -87,6 +93,7 @@ const LOAD_PHASE_CODES: ReadonlySet<PluginErrorCode> = new Set<PluginErrorCode>(
   'PLUGIN_MANIFEST_INVALID',
   'PLUGIN_CODE_PARSE_FAILED',
   'PLUGIN_NOT_FOUND',
+  'PLUGIN_VERIFY_FAILED',
 ])
 
 export interface PluginErrorOptions {

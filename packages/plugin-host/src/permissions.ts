@@ -46,6 +46,17 @@ export function hasPermission(
   return (decl?.permissions ?? []).includes(permission)
 }
 
+/** The declared capabilities the host does NOT truly isolate. Plugins run in the
+ *  main window context (no webview/worker sandbox), so fs/network/ai are only
+ *  gated by user consent, not capability isolation. Returns the intersection of
+ *  the merged declared permissions with the not-isolated set, preserving order. */
+export function getNonIsolatedPermissions(
+  ...sources: Array<{ permissions?: PluginPermission[] } | undefined>
+): PluginPermission[] {
+  const nonIsolated = new Set<string>(DANGEROUS_PERMISSIONS)
+  return collectPluginPermissions(...sources).filter((p) => nonIsolated.has(p))
+}
+
 /**
  * Thin, observable guard for "point of use" permission checks. Call this right
  * before an action that needs a capability; if the required permission is

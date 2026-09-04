@@ -5,7 +5,9 @@ import {
   loadVaultPlugins,
   resetVaultPluginStateForTests,
   setPluginPermissionDecider,
+  setPluginIntegrityDecider,
 } from './plugins'
+import { computePluginDigest } from '@nekowite/plugin-host'
 import type { PluginMeta } from '@nekowite/plugin-host'
 
 const listMock = vi.hoisted(() => vi.fn())
@@ -245,5 +247,51 @@ describe('distinct plugin failure buckets', () => {
     expect(msg).toContain('@scope/q')
     expect(msg).toContain('permission(s)')
     expect(msg).toContain('Grant the requested permission')
+  })
+})
+
+describe('plugin integrity detection', () => {
+  it('records a baseline fingerprint on first approval', async () => {
+    readMock.mockResolvedValue(pkg())
+    loadMock.mockResolvedValue({ ok: true, id: '@scope/q', meta: META(), definition: {} })
+    await loadVaultPlugins('/vault')
+    expect(activateMock).toHaveBeenCalledTimes(1)
+    const stored = JSON.parse(localStorage.getItem('nekowite.pluginDigests') ?? '{}')
+    expect(stored['@scope/q']).toBeDefined()
+    expect(stored['@scope/q'].d).toEqual(computePluginDigest(pkg(), ''))
+  })
+
+  it('refuses to activate a plugin whose code changed since it was approved', async () => {
+    readMock.mockResolvedValue(pkg(['fs']))
+    loadMock.mockResolvedValue({ ok: true, id: '@scope/q', meta: META(['fs']), definition: {} })
+    setPluginPermissionDecider(() => Promise.resolve(true))
+    // Seed a stale fingerprint so this load's digest does not match.
+    localStorage.setItem(
+      'nekowite.pluginDigests',
+      JSON.stringify({ '@scope/q': { v: '1.0.0', d: 'deadbeef' } }),
+    )
+    await loadVaultPlugins('/vault')
+    expect(activateMock).not.toHaveBeenCalled()
+    expect(getActiveVaultPluginIds()).toEqual([])
+    const msgs = notifyErrorMock.mock.calls.map((c) => String(c[0]))
+    const verifyMsg = msgs.find((m) => m.includes('modified since it was last approved'))
+    expect(verifyMsg).toBeDefined()
+    expect(verifyMsg).toContain('Re-approve the plugin or reinstall it')
+  })
+
+  it('re-activates a modified plugin only after the user re-approves it', async () => {
+    readMock.mockResolvedValue(pkg(['fs']))
+    loadMock.mockResolvedValue({ ok: true, id: '@scope/q', meta: META(['fs']), definition: {} })
+    setPluginPermissionDecider(() => Promise.resolve(true))
+    setPluginIntegrityDecider(() => Promise.resolve(true))
+    localStorage.setItem(
+      'nekowite.pluginDigests',
+      JSON.stringify({ '@scope/q': { v: '1.0.0', d: 'deadbeef' } }),
+    )
+    await loadVaultPlugins('/vault')
+    expect(activateMock).toHaveBeenCalledTimes(1)
+    expect(getActiveVaultPluginIds()).toEqual(['@scope/q'])
+    const stored = JSON.parse(localStorage.getItem('nekowite.pluginDigests') ?? '{}')
+    expect(stored['@scope/q'].d).not.toEqual('deadbeef')
   })
 })

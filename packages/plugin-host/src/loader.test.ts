@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { loadPlugin } from './loader'
+import { loadPlugin, loadPluginsFromDir, computePluginDigest, verifyPluginIntegrity } from './loader'
+import type { PluginDigestStore, PluginFsAdapter } from './loader'
+import { PluginError } from './types'
 
 const importMock = vi.hoisted(() => vi.fn())
 
@@ -17,5 +19,70 @@ describe('loadPlugin', () => {
     const out = await loadPlugin({ id: 'bad', name: 'Bad', version: '1', main: './x.ts' }, importMock)
     expect(out.ok).toBe(false)
     if (!out.ok) expect(out.error).toContain('boom')
+  })
+})
+
+describe('loadPluginsFromDir (injected fs boundary)', () => {
+  it('degrades to a structured load error when no fs adapter is injected', async () => {
+    let err: unknown
+    try {
+      await loadPluginsFromDir('/vault', undefined as unknown as PluginFsAdapter)
+    } catch (e) {
+      err = e
+    }
+    expect(err).toBeInstanceOf(PluginError)
+    expect((err as PluginError).code).toBe('PLUGIN_LOAD_FAILED')
+    expect((err as PluginError).recovery).toContain('inject a file-system adapter')
+  })
+
+  it('reads the plugin dir only through the injected adapter (no node fs)', async () => {
+    const readdir = vi.fn(async () => [{ name: 'demo', isDirectory: () => true }])
+    const readFile = vi.fn(async () =>
+      JSON.stringify({ name: '@scope/demo', version: '1.0.0', main: 'index.js' }),
+    )
+    const fs: PluginFsAdapter = {
+      readdir,
+      readFile,
+      stat: vi.fn(async () => ({ isDirectory: () => true })),
+    }
+    // The entry's dynamic import specifier is not resolvable in tests, so the
+    // manifest yields an ok:false load that is skipped, but the fs boundary and
+    // path joins are exercised without a crash (no node: built-ins referenced).
+    const out = await loadPluginsFromDir('/vault', fs)
+    expect(readdir).toHaveBeenCalledWith('/vault')
+    expect(readFile).toHaveBeenCalledWith('/vault/demo/package.json')
+    expect(out).toEqual([])
+  })
+})
+
+describe('computePluginDigest', () => {
+  it('is deterministic and sensitive to part boundaries', () => {
+    const a = computePluginDigest('ab', 'c')
+    const b = computePluginDigest('a', 'bc')
+    expect(a).toEqual(computePluginDigest('ab', 'c'))
+    expect(a).not.toEqual(b)
+  })
+
+  it('treats undefined/null parts as absent', () => {
+    expect(computePluginDigest('x', undefined, null, 'y')).toEqual(computePluginDigest('x', 'y'))
+  })
+})
+
+describe('verifyPluginIntegrity', () => {
+  const store: PluginDigestStore = {
+    get: (id) => (id === 'approved' ? 'abc' : undefined),
+    set: () => {},
+  }
+
+  it('classifies a matching digest as ok', () => {
+    expect(verifyPluginIntegrity('approved', 'abc', store)).toBe('ok')
+  })
+
+  it('classifies a changed digest as mismatch', () => {
+    expect(verifyPluginIntegrity('approved', 'def', store)).toBe('mismatch')
+  })
+
+  it('classifies an unrecorded plugin as missing', () => {
+    expect(verifyPluginIntegrity('fresh', 'abc', store)).toBe('missing')
   })
 })
