@@ -22,6 +22,7 @@ import {
   Star,
   Sun,
   Tag as TagIcon,
+  Trash2,
   X,
 } from 'lucide-vue-next'
 import { fsService } from '../services/fs'
