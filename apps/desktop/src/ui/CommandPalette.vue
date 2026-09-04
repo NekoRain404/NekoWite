@@ -4,7 +4,7 @@ import type { Component } from 'vue'
 import { BUILTIN_COMMAND_IDS, getCommand, getToolbar, listCommands } from '@nekowite/editor-core'
 import { FileText, Search } from 'lucide-vue-next'
 import { useTabsStore } from '../stores/tabs'
-import { fsService } from '../services/fs'
+import { fsService } from '../platform/gateways/fs'
 import { vaultFileIndex } from '../services/vaultFiles'
 import { catalogOf, COMMAND_KEYS } from './commandCatalog'
 import {

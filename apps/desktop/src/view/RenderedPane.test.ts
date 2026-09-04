@@ -5,7 +5,7 @@ import { useTabsStore } from '../stores/tabs'
 
 const saveAttachmentMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../services/fs', () => ({
+vi.mock('../platform/gateways/fs', () => ({
   fsService: {
     read: vi.fn().mockResolvedValue('Hello\n'),
     write: vi.fn(),
@@ -28,7 +28,7 @@ vi.mock('../services/fs', () => ({
 
 import RenderedPane from './RenderedPane.vue'
 import { editorBridge } from '../services/editorBridge'
-import { fsService } from '../services/fs'
+import { fsService } from '../platform/gateways/fs'
 
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
 

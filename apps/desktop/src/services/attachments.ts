@@ -1,4 +1,4 @@
-import type { FsGateway } from './gateways/contracts'
+import type { FsGateway } from '../platform/gateways/contracts'
 import { notifyError } from './errors'
 
 /**

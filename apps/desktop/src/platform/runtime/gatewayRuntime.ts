@@ -4,7 +4,7 @@
  * Owns the single cached {@link AppGateways} instance for the process. The app
  * bootstrap is the composition root and uses this to inject the same gateways
  * into the application services; the legacy `getGateways()` forwarder (in
- * `services/gateways`) also resolves through here so un-migrated callers and
+ * `platform/gateways/fs`) also resolves through here so any caller and
  * new code share one instance instead of creating their own.
  *
  * Holding the cache here (rather than in a module service code imports

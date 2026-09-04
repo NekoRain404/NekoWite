@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { collectVaultFiles, MAX_DIRS, VaultFileIndex, walkVault } from './vaultFiles'
-import type { FileEntry } from './fs'
+import type { FileEntry } from '../platform/gateways/fs'
 
 // A tiny cap for the truncation tests: building MAX_DIRS+1 = 100_001 directories
 // would be far too slow, so the walk cap is exercised with a small override.

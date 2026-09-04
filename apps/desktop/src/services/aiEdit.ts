@@ -1,4 +1,4 @@
-import { editorBridge } from './editorBridge'
+import { editorSessionManager } from '../features/editor/sessionManager'
 import { notifyError } from './errors'
 import { startChatCompletion } from './ai'
 import type { ChatStream } from './ai'
@@ -34,7 +34,7 @@ export interface AiEditDeps {
 
 /** Real wiring; tests inject a fake through `rewriteSelection`'s `deps`. */
 export const aiEditDeps: AiEditDeps = {
-  getView: () => editorBridge.getView() as EditView | null,
+  getView: () => editorSessionManager.getView() as EditView | null,
   getConfig: () => useSettingsStore().config(),
   notifyError,
   start: startChatCompletion,

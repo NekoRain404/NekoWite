@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { clearIndex, loadIndex, saveIndex, type IndexStorage } from '../../../services/searchIndex'
-import { createMemoryFsGateway } from '../../../services/gateways/memory'
+import { createMemoryFsGateway } from '../../../platform/gateways/memory'
 import { createIndexPersistence } from './indexPersistence'
 
 function memStorage(): IndexStorage {

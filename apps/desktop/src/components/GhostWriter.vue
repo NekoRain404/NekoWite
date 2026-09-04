@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted } from 'vue'
 import { aiService } from '../services/ai'
-import { editorBridge } from '../services/editorBridge'
+import { editorSessionManager } from '../features/editor/sessionManager'
 
 // While an IME (e.g. Chinese Pinyin) is composing, the candidate-selection
 // keys (Tab/Esc) belong to the IME, not to the ghost writer. Swallowing them
@@ -18,7 +18,7 @@ function isComposing(e: KeyboardEvent): boolean {
 // window-wide handler would otherwise swallow Tab/Esc in dialogs or the
 // settings panel while a suggestion is active.
 function focusInsideEditor(): boolean {
-  const view = editorBridge.getView()
+  const view = editorSessionManager.getView()
   if (!view) return false
   const active = document.activeElement
   return !!active && view.dom.contains(active)
@@ -27,7 +27,7 @@ function focusInsideEditor(): boolean {
 function onKeydown(e: KeyboardEvent): void {
   if (isComposing(e)) return
   if (!focusInsideEditor()) return
-  const editor = editorBridge.getEditor()
+  const editor = editorSessionManager.getActiveEditor()
   if (!editor) return
   let has = false
   try {

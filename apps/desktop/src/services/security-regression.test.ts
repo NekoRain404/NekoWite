@@ -33,7 +33,7 @@ const deactivateMock = vi.hoisted(() => vi.fn())
 const notifyErrorMock = vi.hoisted(() => vi.fn())
 const invokeMock = vi.hoisted(() => vi.fn())
 
-vi.mock('./fs', () => ({ fsService: { list: listMock, read: readMock } }))
+vi.mock('../platform/gateways/fs', () => ({ fsService: { list: listMock, read: readMock } }))
 vi.mock('./errors', () => ({
   notifyError: notifyErrorMock,
   describePluginError: (e: { message?: string; recovery?: string }) =>

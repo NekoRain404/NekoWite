@@ -25,8 +25,8 @@ import {
   Trash2,
   X,
 } from 'lucide-vue-next'
-import { fsService } from '../services/fs'
-import type { TrashEntry } from '../services/gateways/contracts'
+import { fsService } from '../platform/gateways/fs'
+import type { TrashEntry } from '../platform/gateways/contracts'
 import { notifyError } from '../services/errors'
 import { useTabsStore } from '../stores/tabs'
 import { useDocumentListStore } from '../stores/documentList'

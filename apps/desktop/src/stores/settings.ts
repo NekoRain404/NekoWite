@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
-import { getGateways } from '../services/gateways/index'
+import { getSharedGateways } from '../platform/runtime/gatewayRuntime'
 
 export interface AIConfig {
   provider: string
@@ -116,11 +116,11 @@ export const useSettingsStore = defineStore('settings', () => {
   watch(exportPdfOrientation, (v) => localStorage.setItem(LS_EXPORT_PDF_ORIENT, v))
 
   async function saveKey(): Promise<void> {
-    await getGateways().keys.storeAiKey(provider.value, apiKey.value)
+    await getSharedGateways().keys.storeAiKey(provider.value, apiKey.value)
   }
 
   async function loadKey(): Promise<void> {
-    const stored = await getGateways().keys.loadAiKey(provider.value)
+    const stored = await getSharedGateways().keys.loadAiKey(provider.value)
     // The backend never returns the raw key to the window — only a fixed mask
     // when a key is configured (and null when not). Never treat the mask as a
     // real key: feed an empty value into the live state so config() does not
@@ -145,7 +145,7 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   async function listModels(): Promise<void> {
-    modelsCache.value = await getGateways().ai.listModels(config())
+    modelsCache.value = await getSharedGateways().ai.listModels(config())
   }
 
   function clearModelsCache(): void {

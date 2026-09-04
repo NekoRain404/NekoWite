@@ -2,7 +2,7 @@ import { defineComponent, h, onBeforeUnmount, onMounted, ref } from 'vue'
 import { definePlugin } from '@nekowite/plugin-host'
 import type { NekoEditor } from '@nekowite/editor-core'
 import { insertMdxComponent } from '@nekowite/editor-core'
-import { editorBridge } from '../services/editorBridge'
+import { editorSessionManager } from '../features/editor/sessionManager'
 import { useFloatStore } from '../stores/float'
 import { t } from '../i18n'
 import {
@@ -85,7 +85,7 @@ function posOf(getPos: (() => number | undefined) | undefined): number | undefin
 }
 
 function resolveView(view: EditorView | null | undefined): EditorView | null {
-  return view ?? editorBridge.getView()
+  return view ?? editorSessionManager.getView()
 }
 
 function applyDelta(view: EditorView | null, getPos: (() => number | undefined) | undefined, delta: Record<string, string>): void {
@@ -320,7 +320,7 @@ function updateFloatChildren(view: EditorView | null, pos: number | undefined, t
 }
 
 export function insertFloatBox(): void {
-  const view = editorBridge.getView()
+  const view = editorSessionManager.getView()
   if (!view) return
   insertMdxComponent(view, { name: 'FloatBox', props: {}, children: t('plugin.floatboxChildren') })
 }

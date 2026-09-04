@@ -1,5 +1,5 @@
-import { fsService } from './fs'
-import type { FileEntry } from './gateways/contracts'
+import { fsService } from '../platform/gateways/fs'
+import type { FileEntry } from '../platform/gateways/contracts'
 
 /** A vault-relative template file in `<vault>/templates/`, with the `.md`
  *  extension stripped for a human-friendly display name. */

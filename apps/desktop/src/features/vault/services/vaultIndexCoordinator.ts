@@ -18,7 +18,7 @@
 
 import { ATTACHMENTS_DIR } from '../../../services/attachments'
 import type { ContentCache } from '../../../services/contentCache'
-import type { FileEntry, FileStat, FsChangeEvent } from '../../../services/gateways/contracts'
+import type { FileEntry, FileStat, FsChangeEvent } from '../../../platform/gateways/contracts'
 import { parseNoteMeta, type NoteSummary } from '../../../services/noteMeta'
 import type { IndexLookupResult } from '../../../services/contentSearch'
 import type { IndexState, StoredIndex } from '../../../services/searchIndex'

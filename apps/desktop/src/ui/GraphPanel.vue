@@ -11,7 +11,7 @@ import {
   type LayoutPoint,
 } from '../services/linkGraph'
 import { computeGraphLayout } from '../services/graphLayoutClient'
-import { fsService, type FsChangeEvent } from '../services/fs'
+import { fsService, type FsChangeEvent } from '../platform/gateways/fs'
 import { vaultFileIndex } from '../services/vaultFiles'
 import { parseFrontmatterBlock, splitFrontmatterRaw } from '../services/noteMeta'
 import { useTabsStore } from '../stores/tabs'

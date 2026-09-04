@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryEventAdapter, createMemoryFsGateway } from './memory'
 import type { FsChangeEvent } from './contracts'
-import { getGateways, resetSharedGateways } from './index'
-import { startChatCompletion } from '../ai'
+import { getSharedGateways, resetSharedGateways } from '../runtime/gatewayRuntime'
+import { startChatCompletion } from '../../services/ai'
 
 describe('memoryFsGateway', () => {
   it('reads and writes to an in-memory map', async () => {
@@ -272,7 +272,7 @@ describe('memoryGateways drive an AI stream', () => {
   afterEach(() => resetSharedGateways())
 
   it('accumulates AI lifecycle events and cancels cleanly', async () => {
-    const gw = getGateways()
+    const gw = getSharedGateways()
     const onChunk = vi.fn()
     const onDone = vi.fn()
     const onError = vi.fn()

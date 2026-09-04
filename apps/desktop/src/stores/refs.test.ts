@@ -5,7 +5,7 @@ import { useRefsStore } from './refs'
 
 const listMock = vi.hoisted(() => vi.fn())
 const readMock = vi.hoisted(() => vi.fn())
-vi.mock('../services/fs', () => ({
+vi.mock('../platform/gateways/fs', () => ({
   fsService: { list: listMock, read: readMock, write: vi.fn(), watch: vi.fn() },
 }))
 

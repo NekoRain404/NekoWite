@@ -64,7 +64,7 @@ import type {
   PluginRevocation,
 } from '@nekowite/plugin-host'
 import { joinPath } from '@nekowite/plugin-host'
-import { fsService } from './fs'
+import { fsService } from '../platform/gateways/fs'
 import { describePluginError, notifyError } from './errors'
 import { t } from '../i18n'
 

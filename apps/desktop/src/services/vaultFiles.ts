@@ -1,5 +1,5 @@
-import { fsService } from './fs'
-import type { FileEntry } from './fs'
+import { fsService } from '../platform/gateways/fs'
+import type { FileEntry } from '../platform/gateways/fs'
 
 const SKIP_DIRS = new Set(['node_modules'])
 /** Upper bound on directories listed during one walk. This is a pathological-tree

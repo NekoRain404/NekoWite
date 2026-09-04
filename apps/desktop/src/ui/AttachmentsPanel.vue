@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, markRaw, onMounted, ref, watch } from 'vue'
 import { Copy, FileImage, ImagePlus, Paperclip, RefreshCw, Trash2 } from 'lucide-vue-next'
-import { fsService } from '../services/fs'
+import { fsService } from '../platform/gateways/fs'
 import {
   deleteAttachment,
   formatBytes,
@@ -10,7 +10,7 @@ import {
   type AttachmentItem,
 } from '../services/attachmentLibrary'
 import { markdownImageBlock, relativePathFromNoteVault } from '../services/attachments'
-import { editorBridge } from '../services/editorBridge'
+import { editorSessionManager } from '../features/editor/sessionManager'
 import { notifyError } from '../services/errors'
 import { useTabsStore } from '../stores/tabs'
 import ContextMenu from './ContextMenu.vue'
@@ -86,7 +86,7 @@ async function insertItem(item: AttachmentItem): Promise<void> {
     notifyError(t('attachments.openDocFirst'))
     return
   }
-  const editor = editorBridge.getEditor()
+  const editor = editorSessionManager.getActiveEditor()
   if (!editor) {
     notifyError(t('attachments.editorNotReady'))
     return

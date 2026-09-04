@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { computeCiteOrder, doiUrl } from '@nekowite/editor-core'
 import { useRefsStore } from '../stores/refs'
-import { editorBridge } from '../services/editorBridge'
+import { editorSessionManager } from '../features/editor/sessionManager'
 import { t } from '../i18n'
 
 const refs = useRefsStore()
@@ -23,7 +23,7 @@ interface Cited {
 const cited = computed<Cited[]>(() => {
   // Re-run whenever the editor signals a doc change (bump) or refs load.
   void bump.value
-  const view = editorBridge.getView()
+  const view = editorSessionManager.getView()
   if (!view) return []
   // Reuse editor-core's numbering so chips in the doc and this panel agree.
   const order = computeCiteOrder(view)
@@ -44,7 +44,7 @@ const cited = computed<Cited[]>(() => {
 function resubscribe(): void {
   unlistenChange?.()
   unlistenChange = null
-  const editor = editorBridge.getEditor()
+  const editor = editorSessionManager.getActiveEditor()
   if (editor) {
     unlistenChange = editor.onContentChange(() => {
       bump.value++
@@ -56,7 +56,7 @@ onMounted(() => {
   // The editor is created lazily (after the first tab opens), so subscribe
   // now if it exists and again whenever it is (re)created.
   resubscribe()
-  offEditorChange = editorBridge.onEditorChange(() => {
+  offEditorChange = editorSessionManager.subscribe(() => {
     resubscribe()
     bump.value++
   })

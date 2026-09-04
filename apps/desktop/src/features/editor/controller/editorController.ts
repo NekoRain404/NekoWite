@@ -8,11 +8,12 @@ import {
 } from '@nekowite/editor-core'
 import type { NekoEditor } from '@nekowite/editor-core'
 import { setActiveEditor } from '@nekowite/plugin-host'
-import { editorBridge } from '../../../services/editorBridge'
+import { watch } from 'vue'
+import { editorSessionManager } from '../sessionManager'
 import { setCalloutView } from '../../../plugins/callout'
 import { createImageSrcResolver } from '../../../services/attachments'
 import { dirRelativeToVault } from '../../../services/noteMeta'
-import { fsService } from '../../../services/fs'
+import { getSharedGateways } from '../../../platform/runtime/gatewayRuntime'
 import { useTabsStore } from '../../../stores/tabs'
 import { useDocumentListStore } from '../../../stores/documentList'
 import { useVaultSessionStore } from '../../../stores/vaultSession'
@@ -48,16 +49,38 @@ export function createEditorController(deps: EditorControllerDeps): EditorContro
   const tabs = useTabsStore()
   const documentList = useDocumentListStore()
   const vaultSession = useVaultSessionStore()
+  let registeredTabId: string | null = null
+
+  // The pane can mount before the first tab opens (a later openTab fires the
+  // activeId watch), so the editor is registered under a placeholder tab id and
+  // re-keyed as tabs activate. getActiveEditor() falls back to the sole live
+  // session when the active tab has not claimed its own yet.
+  const PLACEHOLDER_TAB = '__editor-controller-session__'
+
+  // Re-key the active session whenever the user switches tabs so a panel that
+  // resolves the "active editor" follows the tab that is actually shown. The
+  // pane reuses a single editor instance, so activating a tab without its own
+  // session falls back to that live editor (see sessionManager).
+  const stopActivationWatch = watch(
+    () => tabs.activeId,
+    (id) => {
+      if (id) editorSessionManager.activateSession(id)
+    },
+  )
 
   function mount(): void {
     const el = deps.getEditorEl()
     if (!el) return
     const editor = createEditor(el, { plugins: basicPlugins })
     deps.session.editor = editor
-    editorBridge.setEditor(editor)
+    // Register the editor — for the active tab, or a placeholder when the pane
+    // mounted before any tab was opened — and mark it active.
+    const tabId = tabs.activeId ?? PLACEHOLDER_TAB
+    registeredTabId = tabId
+    editorSessionManager.createSession(tabId, () => editor)
     setActiveEditor(editor)
     configureImageResolver(
-      createImageSrcResolver(fsService, {
+      createImageSrcResolver(getSharedGateways().fs, {
         getVault: () => tabs.vault,
         getNotePath: () => tabs.activeTab?.path ?? null,
       }),
@@ -94,7 +117,12 @@ export function createEditorController(deps: EditorControllerDeps): EditorContro
     configureImageResolver(null)
     configureHeadingAnchorUrl(null)
     configureWikilinkHandler(null)
-    editorBridge.setEditor(null)
+    // Tear down this controller's session. If a later controller has since
+    // claimed the tab (e.g. a re-mount after the pane re-opens), destroySession
+    // only removes its own entry — it never clobbers another registration.
+    if (registeredTabId) editorSessionManager.destroySession(registeredTabId)
+    registeredTabId = null
+    stopActivationWatch()
     setActiveEditor(null)
     editor?.destroy()
   }

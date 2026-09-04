@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createMemoryFsGateway } from '../../../services/gateways/memory'
+import { createMemoryFsGateway } from '../../../platform/gateways/memory'
 import { ContentCache } from '../../../services/contentCache'
 import { clearIndex, loadIndex, saveIndex, type IndexStorage } from '../../../services/searchIndex'
 import type { NoteSummary } from '../../../services/noteMeta'
-import type { FsChangeEvent } from '../../../services/gateways/contracts'
+import type { FsChangeEvent } from '../../../platform/gateways/contracts'
 import { createVaultIndexCoordinator } from './vaultIndexCoordinator'
 
 function memStorage(): IndexStorage {

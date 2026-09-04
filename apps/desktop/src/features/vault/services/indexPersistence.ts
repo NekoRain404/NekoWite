@@ -15,7 +15,7 @@
  */
 
 import type { IndexLookupResult } from '../../../services/contentSearch'
-import type { FileStat } from '../../../services/gateways/contracts'
+import type { FileStat } from '../../../platform/gateways/contracts'
 import {
   buildIndexIncremental,
   buildSearchText,

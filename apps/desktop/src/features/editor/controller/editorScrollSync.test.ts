@@ -5,7 +5,7 @@ import { useViewStore } from '../../../stores/view'
 import { createDocumentSession, type DocumentSession } from '../model/documentSession'
 import { createEditorScrollSync } from './editorScrollSync'
 
-vi.mock('../../../services/fs', () => ({
+vi.mock('../../../platform/gateways/fs', () => ({
   fsService: {
     read: vi.fn().mockResolvedValue('# Welcome\n\nbody'),
     write: vi.fn().mockResolvedValue(undefined),

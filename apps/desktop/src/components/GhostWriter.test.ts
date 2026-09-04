@@ -14,8 +14,8 @@ vi.mock('../services/ai', () => ({
     reject: rejectMock,
   },
 }))
-vi.mock('../services/editorBridge', () => ({
-  editorBridge: { getEditor: getEditorMock, getView: getViewMock },
+vi.mock('../features/editor/sessionManager', () => ({
+  editorSessionManager: { getActiveEditor: getEditorMock, getView: getViewMock },
 }))
 
 import GhostWriter from './GhostWriter.vue'

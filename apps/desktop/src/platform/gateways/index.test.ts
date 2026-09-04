@@ -8,8 +8,8 @@ describe('getGateways', () => {
 
   it('returns tauri gateways when Tauri internals are present', async () => {
     vi.stubGlobal('window', { __TAURI_INTERNALS__: {} })
-    const { getGateways } = await import('./index')
-    const gw = getGateways()
+    const { getSharedGateways } = await import('../runtime/gatewayRuntime')
+    const gw = getSharedGateways()
     expect(gw.fs.read).toBeTypeOf('function')
     expect(gw.ai.listModels).toBeTypeOf('function')
     // Without a mocked invoke the tauri gateway must not resolve a list.
@@ -18,8 +18,8 @@ describe('getGateways', () => {
 
   it('returns memory gateways when running in a plain browser', async () => {
     vi.stubGlobal('window', {})
-    const { getGateways } = await import('./index')
-    const gw = getGateways()
+    const { getSharedGateways } = await import('../runtime/gatewayRuntime')
+    const gw = getSharedGateways()
     expect(gw.fs.read).toBeTypeOf('function')
     expect(gw.ai.listModels).toBeTypeOf('function')
     // The default-seeded memory gateway lists the demo welcome.md at the root.
@@ -36,7 +36,7 @@ describe('createGateways', () => {
 
   it('builds the separated ports for a tauri environment', async () => {
     vi.stubGlobal('window', { __TAURI_INTERNALS__: {} })
-    const { createGateways } = await import('../../platform/gateways')
+    const { createGateways } = await import('./index')
     const gw = createGateways({ environment: 'tauri' })
     expect(gw.fs.read).toBeTypeOf('function')
     // Dialogs and events are first-class ports, not conflated onto `.fs`.
@@ -49,7 +49,7 @@ describe('createGateways', () => {
 
   it('builds the separated ports for a memory environment', async () => {
     vi.stubGlobal('window', {})
-    const { createGateways } = await import('../../platform/gateways')
+    const { createGateways } = await import('./index')
     const gw = createGateways({ environment: 'browser' })
     expect(gw.fs.read).toBeTypeOf('function')
     expect(gw.dialogs.openFolderDialog).toBeTypeOf('function')

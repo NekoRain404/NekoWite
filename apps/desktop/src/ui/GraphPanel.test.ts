@@ -8,7 +8,7 @@ import { resetVaultFileIndex } from '../services/vaultFiles'
 const readMock = vi.hoisted(() => vi.fn())
 const listMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../services/fs', () => ({
+vi.mock('../platform/gateways/fs', () => ({
   fsService: {
     read: readMock,
     list: listMock,

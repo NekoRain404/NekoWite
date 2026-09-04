@@ -11,7 +11,7 @@ const listHistoryMock = vi.hoisted(() => vi.fn())
 const readHistoryMock = vi.hoisted(() => vi.fn())
 const restoreHistoryMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../services/fs', () => ({
+vi.mock('../platform/gateways/fs', () => ({
   fsService: {
     read: readMock,
     write: vi.fn(),
