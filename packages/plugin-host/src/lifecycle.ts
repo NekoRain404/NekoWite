@@ -1,6 +1,7 @@
-import type { PluginContext } from './types'
-import { createPluginError } from './types'
-import type { PluginError } from './types'
+import type { PluginContext, PluginErrorCode } from './types'
+import { PluginError, createPluginError } from './types'
+import { withTimeout } from './timing'
+import { markPluginUnstable } from './runtime'
 
 export type LifecycleEvent =
   | 'onEditorReady'
@@ -39,6 +40,25 @@ interface HookEntry {
 const hooks = new Map<LifecycleEvent, HookEntry[]>()
 
 let activeEditor: unknown = null
+
+/** Default budget (ms) before an *async* lifecycle hook is cancelled. A hook that
+ *  returns a thenable and does not settle in time is rejected with
+ *  PLUGIN_HOOK_TIMEOUT, the host stops waiting, and the plugin is marked
+ *  unstable (deactivated) so a hanging hook cannot leave it half-registered. */
+export const DEFAULT_PLUGIN_HOOK_TIMEOUT_MS = 5000
+
+let lifecycleHookTimeoutMs = DEFAULT_PLUGIN_HOOK_TIMEOUT_MS
+
+/** Configure the async-hook timeout budget. Defaults to
+ *  DEFAULT_PLUGIN_HOOK_TIMEOUT_MS. */
+export function setLifecycleHookTimeout(ms: number): void {
+  lifecycleHookTimeoutMs = ms
+}
+
+/** The current async-hook timeout budget (ms). */
+export function getLifecycleHookTimeout(): number {
+  return lifecycleHookTimeoutMs
+}
 
 export function setActiveEditor(editor: unknown): void {
   activeEditor = editor
@@ -91,6 +111,54 @@ function emitLifecycleError(e: LifecycleErrorEvent): void {
   }
 }
 
+/** Time-box an *async* hook (a hook that returned a thenable). The host stops
+ *  waiting once the budget elapses; a hung hook is surfaced as PLUGIN_HOOK_TIMEOUT
+ *  and the plugin is marked unstable (deactivated) so it cannot leak a running
+ *  hook. A hook that rejects with a non-timeout error is surfaced as
+ *  PLUGIN_HOOK_ERROR and isolated like a synchronous throw — the plugin itself is
+ *  not necessarily deactivated for a one-off rejection. */
+function handleAsyncHook(
+  entry: HookEntry,
+  event: LifecycleEvent,
+  result: Promise<unknown>,
+  isSave: boolean,
+): void {
+  void withTimeout(Promise.resolve(result), lifecycleHookTimeoutMs).then(
+    (resolved) => {
+      // The sync onSave chain can only consume a string returned synchronously;
+      // an async hook's eventual string cannot retroactively rewrite what was
+      // already written to disk, so it is ignored rather than silently applied.
+      if (isSave && typeof resolved === 'string') {
+        console.warn(
+          `[NekoWite:plugin-host] async onSave hook plugin="${entry.id}" returned a string that was ignored (async onSave chaining is unsupported).`,
+        )
+      }
+    },
+    (err) => {
+      const code: PluginErrorCode = err instanceof PluginError ? err.code : 'PLUGIN_HOOK_ERROR'
+      const timeout = code === 'PLUGIN_HOOK_TIMEOUT'
+      const cause = err instanceof Error ? err.message : String(err)
+      const pluginError = createPluginError(code, {
+        pluginId: entry.id,
+        message: timeout
+          ? `Plugin "${entry.id}" lifecycle hook "${event}" exceeded its time budget and was cancelled.`
+          : `Plugin "${entry.id}" failed in lifecycle hook "${event}": ${cause}`,
+        recovery: 'Disable the plugin or check its logs.',
+        cause: err,
+      })
+      console.error(
+        `[NekoWite:plugin-host] lifecycle hook plugin="${entry.id}" event="${event}" ${code}`,
+        pluginError,
+      )
+      emitLifecycleError({ pluginId: entry.id, event, error: pluginError })
+      if (timeout) {
+        // A hung hook must not leave the plugin half-registered: deactivate it.
+        markPluginUnstable(entry.id, `lifecycle hook ${event} ${code}`)
+      }
+    },
+  )
+}
+
 export function emitLifecycle(event: LifecycleEvent, ...args: unknown[]): string | void {
   const isSave = event === 'onSave'
   // onSave transforms chain: once a hook returns a string, that string becomes
@@ -109,7 +177,14 @@ export function emitLifecycle(event: LifecycleEvent, ...args: unknown[]): string
       entry.ctx.editor = activeEditor
       const hookArgs = isSave && next !== undefined ? [args[0], next] : args
       const r = entry.fn(entry.ctx, ...hookArgs)
-      if (isSave && typeof r === 'string') next = r
+      // An async hook (thenable) is time-boxed in the background; the sync chain
+      // and the other hooks keep running regardless, so a slow hook never hangs
+      // the emit or its siblings.
+      if (r && typeof (r as { then?: unknown }).then === 'function') {
+        handleAsyncHook(entry, event, r as Promise<unknown>, isSave)
+      } else if (isSave && typeof r === 'string') {
+        next = r
+      }
     } catch (err) {
       // Isolation: one plugin's failure never blocks others. But failures are
       // surfaced through the error channel + logged instead of being swallowed.

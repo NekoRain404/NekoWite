@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest'
-import { activatePlugin, deactivatePlugin } from './runtime'
+import { activatePlugin, deactivatePlugin, getUnstablePluginIds, isPluginUnstable } from './runtime'
 import { emitLifecycle } from './lifecycle'
 import { getCommand, getComponent, getToolbar, registerCommand, unregisterCommand, unregisterComponent, unregisterToolbar } from '@nekowite/editor-core'
 import type { PluginDefinition, PluginMeta } from './types'
@@ -14,6 +14,9 @@ beforeEach(() => {
   unregisterCommand('deact.cmd')
   unregisterCommand('pre.cmd')
   unregisterCommand('dup.cmd')
+  unregisterCommand('slow.cmd')
+  unregisterCommand('cancel.cmd')
+  unregisterCommand('crasher.cmd')
   unregisterComponent('Callout')
   unregisterComponent('DeactComp')
   unregisterToolbar('p1.toolbar')
@@ -24,6 +27,9 @@ beforeEach(() => {
   deactivatePlugin('bad')
   deactivatePlugin('deact')
   deactivatePlugin('dupbad')
+  deactivatePlugin('slow')
+  deactivatePlugin('cancel')
+  deactivatePlugin('crasher')
 })
 
 describe('activatePlugin', () => {
@@ -186,5 +192,69 @@ describe('deactivatePlugin', () => {
     expect(cleanups[2]).toHaveBeenCalledTimes(1)
     emitLifecycle('onDocChange', { doc: '4' })
     expect(cleanups[2]).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('activation timeout, cancel & crash isolation', () => {
+  it('times out and cancels an async onLoad that never settles (host continues)', async () => {
+    const run = () => {}
+    const res = await activatePlugin(
+      ok('slow', {
+        commands: [{ id: 'slow.cmd', run }],
+        // An async init that never settles: would hang the host if untimed.
+        onLoad: () => new Promise<() => void>(() => {}),
+      }),
+      { timeoutMs: 30 },
+    )
+    expect(res.ok).toBe(false)
+    expect(res.code).toBe('PLUGIN_HOOK_TIMEOUT')
+    // Rolled back: the command that was registered before the hung onLoad is gone.
+    expect(getCommand('slow.cmd')).toBeUndefined()
+    // The plugin is marked failed (unstable), NOT left half-registered.
+    expect(isPluginUnstable('slow')).toBe(true)
+    expect(getUnstablePluginIds()).toContain('slow')
+  })
+
+  it('cancels a running activation when the abort signal fires', async () => {
+    const ac = new AbortController()
+    const resPromise = activatePlugin(
+      ok('cancel', {
+        onLoad: () => new Promise<() => void>(() => {}),
+      }),
+      { signal: ac.signal, timeoutMs: 10000 },
+    )
+    // Let the activation start, then cancel it — the host should stop waiting.
+    await new Promise((r) => setTimeout(r, 20))
+    ac.abort()
+    const res = await resPromise
+    expect(res.ok).toBe(false)
+    expect(res.code).toBe('PLUGIN_ABORTED')
+    expect(isPluginUnstable('cancel')).toBe(true)
+  })
+
+  it('refuses an already-aborted signal without doing any work', async () => {
+    const ac = new AbortController()
+    ac.abort()
+    const run = () => {}
+    const res = await activatePlugin(ok('cancel', { commands: [{ id: 'cancel.cmd', run }] }), { signal: ac.signal })
+    expect(res).toEqual({ ok: false, id: 'cancel', code: 'PLUGIN_ABORTED', error: 'Plugin activation was cancelled.' })
+    expect(getCommand('cancel.cmd')).toBeUndefined()
+  })
+
+  it('isolates a plugin whose activation throws: rolls back and marks it unstable', async () => {
+    const run = () => {}
+    const res = await activatePlugin(
+      ok('crasher', {
+        components: { Callout: {} as never },
+        commands: [{ id: 'crasher.cmd', run }],
+        onLoad: () => {
+          throw new Error('boom')
+        },
+      }),
+    )
+    expect(res.ok).toBe(false)
+    expect(getComponent('Callout')).toBeUndefined()
+    expect(getCommand('crasher.cmd')).toBeUndefined()
+    expect(isPluginUnstable('crasher')).toBe(true)
   })
 })

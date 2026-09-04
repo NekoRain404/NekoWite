@@ -1,15 +1,19 @@
 import {
   activatePlugin,
   assertPermission,
+  buildPluginSignaturePayload,
   collectPluginPermissions,
   computePluginDigest,
   createPluginError,
+  DEFAULT_PLUGIN_ACTIVATION_TIMEOUT_MS,
   deactivatePlugin,
   getNonIsolatedPermissions,
   hasDangerousPermissions,
   loadPlugin,
   onLifecycleError,
+  publisherIdOf,
   verifyPluginIntegrity,
+  verifyPluginSignature,
 } from '@nekowite/plugin-host'
 import type {
   DynamicImport,
@@ -33,6 +37,8 @@ interface VaultPluginPackage {
   version?: string
   main?: string
   permissions?: PluginPermission[]
+  /** Optional HMAC-SHA256 signature (hex) from a trusted publisher. */
+  signature?: string
 }
 
 function joinVault(...parts: string[]): string {
@@ -250,6 +256,217 @@ async function askReapproveIntegrity(
 }
 
 /* ------------------------------------------------------------------------- *
+ * Trust / trusted-source policy (definite plugin-security requirement).
+ *
+ * A plugin may carry an HMAC-SHA256 `signature` (hex) over its normalized
+ * code+manifest payload, produced by a publisher who holds the same trusted
+ * secret the user configures. That is a shared-secret MAC (integrity-of-source),
+ * NOT public-key authentication — the same secret signs and verifies.
+ *
+ * Policy (applied as a gate BEFORE any import):
+ *   - signature present + verifies against the trusted key  → trusted.
+ *   - signature present + FAILS verification (or no key configured) → REFUSE
+ *     with PLUGIN_SIGNATURE_INVALID, never import.
+ *   - no signature → unsigned:
+ *       * the plugin id / publisher id is on the trusted-source allowlist →
+ *         trusted;
+ *       * otherwise, under `permit-unsigned-with-notice` the plugin is ALLOWED
+ *         but explicitly flagged as unsigned/untrusted-source (a console notice,
+ *         not a silent grant — and never a security claim);
+ *       * under `require-trust` the plugin MUST be explicitly trusted (via the
+ *         allowlist or a trust decider); the safe default (no decider) is DENY
+ *         with PLUGIN_UNSIGNED_UNTRUSTED.
+ * The 32-bit FNV-1a digest remains change-detection only; the signature is the
+ * trust anchor. Neither is process isolation.
+ * ------------------------------------------------------------------------- */
+
+const PLUGIN_TRUST_KEY = 'nekowite.pluginTrustKey'
+const PLUGIN_TRUSTED_SOURCES_KEY = 'nekowite.pluginTrustedSources'
+
+/** How unsigned plugins are treated when they are not on the allowlist. */
+export type PluginTrustPolicy = 'permit-unsigned-with-notice' | 'require-trust'
+
+let pluginTrustPolicy: PluginTrustPolicy = 'permit-unsigned-with-notice'
+// In-memory fallbacks so an environment without a working localStorage still
+// records the trust configuration for the session (mirrors the digest map).
+let memoryTrustedKey = ''
+const memoryTrustedSources = new Set<string>()
+
+/** The configured trust policy. Default permits unsigned plugins with a logged
+ *  "unsigned, untrusted-source" notice (so nothing is silently trusted as a
+ *  security claim); `setPluginTrustPolicy('require-trust')` denies them unless
+ *  explicitly trusted. */
+export function getPluginTrustPolicy(): PluginTrustPolicy {
+  return pluginTrustPolicy
+}
+
+/** Set the trust policy for unsigned plugins. */
+export function setPluginTrustPolicy(policy: PluginTrustPolicy): void {
+  pluginTrustPolicy = policy
+}
+
+/** The trusted publisher key material (a hex or UTF-8 secret), or '' if none. */
+export function getPluginTrustedKey(): string {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(PLUGIN_TRUST_KEY)
+      if (raw !== null) return raw
+    }
+  } catch {
+    /* localStorage unavailable → fall through to memory */
+  }
+  return memoryTrustedKey
+}
+
+/** Configure the trusted publisher key used to verify plugin signatures. Only
+ *  plugins signed by a holder of this secret are treated as cryptographically
+ *  trusted; a present-but-unverifiable signature is refused. */
+export function setPluginTrustedKey(keyMaterial: string): void {
+  memoryTrustedKey = keyMaterial
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(PLUGIN_TRUST_KEY, keyMaterial)
+  } catch {
+    /* ignore */
+  }
+}
+
+/** The ids the user has explicitly trusted (publisher ids and/or full plugin ids). */
+export function getPluginTrustedSourceIds(): string[] {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(PLUGIN_TRUSTED_SOURCES_KEY)
+      if (raw) return JSON.parse(raw) as string[]
+    }
+  } catch {
+    /* localStorage unavailable → fall through to memory */
+  }
+  return [...memoryTrustedSources]
+}
+
+/** True when a plugin's id OR its publisher id is in the trusted-source allowlist. */
+export function isPluginTrustedSource(pluginId: string): boolean {
+  const ids = getPluginTrustedSourceIds()
+  return ids.includes(pluginId) || ids.includes(publisherIdOf(pluginId))
+}
+
+/** Add or remove an id on the trusted-source allowlist. */
+export function setPluginTrustedSource(pluginId: string, trusted: boolean): void {
+  const ids = new Set(getPluginTrustedSourceIds())
+  if (trusted) ids.add(pluginId)
+  else ids.delete(pluginId)
+  const list = [...ids]
+  memoryTrustedSources.clear()
+  for (const id of list) memoryTrustedSources.add(id)
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(PLUGIN_TRUSTED_SOURCES_KEY, JSON.stringify(list))
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+type TrustDecider = (req: PluginTrustRequest) => Promise<boolean>
+
+/** A pending trust question for the host to render. `resolve(true)` trusts the
+ *  plugin (recording it on the allowlist); `resolve(false)` refuses it. Only
+ *  reachable for unsigned plugins under the `require-trust` policy (or an
+ *  explicit unsigned-opt-in); a plugin with a FAILING signature is always refused
+ *  and never offered for trust. */
+export interface PluginTrustRequest {
+  meta: PluginMeta
+  signature?: string
+  reason: 'unsigned' | 'unverifiable-key'
+  resolve: (trust: boolean) => void
+}
+
+let trustDecider: TrustDecider | null = null
+
+/** Install the callback that decides whether to trust an unsigned plugin. */
+export function setPluginTrustDecider(fn: TrustDecider | null): void {
+  trustDecider = fn
+}
+
+/** Ask the user whether to trust an unsigned plugin. */
+async function askPluginTrust(meta: PluginMeta, signature: string | undefined, reason: 'unsigned' | 'unverifiable-key'): Promise<boolean> {
+  if (!trustDecider) return false
+  return trustDecider({ meta, signature, reason, resolve: () => {} })
+}
+
+// Track unsigned plugins we already flagged so the console notice is not
+// repeated per reload.
+const unsignedNotified = new Set<string>()
+
+/** A decision from the trust gate: allow (optionally with a notice) or a
+ *  structured refusal. */
+type TrustDecision =
+  | { action: 'allow'; notice?: string }
+  | { action: 'deny'; error: PluginError }
+
+async function decidePluginTrust(
+  meta: PluginMeta,
+  signature: string | undefined,
+  signaturePayload: string | undefined,
+): Promise<TrustDecision> {
+  if (signature && signaturePayload) {
+    const trustedKey = getPluginTrustedKey()
+    if (!trustedKey) {
+      // A present signature we cannot verify against any key: an unverifiable
+      // publisher claim. Refuse (never silently trust an unverified signature).
+      return {
+        action: 'deny',
+        error: createPluginError('PLUGIN_SIGNATURE_INVALID', {
+          pluginId: meta.id,
+          message: `Plugin "${meta.name}" declares a signature but no trusted publisher key is configured; refusing to run it.`,
+          recovery: 'Configure a trusted publisher key, or reinstall the plugin.',
+        }),
+      }
+    }
+    let ok = false
+    try {
+      ok = await verifyPluginSignature(signature, signaturePayload, trustedKey)
+    } catch (e) {
+      console.error(`[NekoWite] signature verification threw plugin="${meta.id}"`, e)
+      ok = false
+    }
+    if (ok) return { action: 'allow' }
+    return {
+      action: 'deny',
+      error: createPluginError('PLUGIN_SIGNATURE_INVALID', {
+        pluginId: meta.id,
+        message: `Plugin "${meta.name}"'s signature failed verification against the trusted publisher key; refusing to run it.`,
+        recovery: 'Only run plugins from a source you trust, or reinstall the plugin.',
+      }),
+    }
+  }
+
+  // Unsigned: explicit trust or allow-with-notice.
+  if (isPluginTrustedSource(meta.id)) return { action: 'allow' }
+  if (pluginTrustPolicy === 'require-trust') {
+    if (await askPluginTrust(meta, undefined, 'unsigned')) {
+      setPluginTrustedSource(meta.id, true)
+      return { action: 'allow' }
+    }
+    return {
+      action: 'deny',
+      error: createPluginError('PLUGIN_UNSIGNED_UNTRUSTED', {
+        pluginId: meta.id,
+        message: `Plugin "${meta.name}" is unsigned and not from a trusted source; refusing to run it.`,
+        recovery: 'Trust it explicitly only if you trust its source, or add its publisher to the trusted sources.',
+      }),
+    }
+  }
+  // Default: allow but never silently trusted — flagged as unsigned/untrusted.
+  if (!unsignedNotified.has(meta.id)) {
+    unsignedNotified.add(meta.id)
+    console.warn(
+      `[NekoWite] plugin "${meta.id}" is unsigned and from an unverified source (allowed under the current policy; NOT cryptographically trusted).`,
+    )
+  }
+  return { action: 'allow' }
+}
+
+/* ------------------------------------------------------------------------- *
  * Unsandboxed-capability signal (task #23/#28). Plugins run in the main window
  * (no webview/worker sandbox), so a declaration of fs/network/ai is consent-gated
  * but NOT capability-isolated. We surface a clear, observable notice that the
@@ -430,6 +647,10 @@ interface PreloadedPlugin {
   error?: PluginError
   digest?: string
   source?: string
+  /** The plugin's manifest-declared HMAC signature, if any. */
+  signature?: string
+  /** The canonical payload the signature is verified over (code+manifest). */
+  signaturePayload?: string
   skip?: boolean
 }
 
@@ -482,11 +703,14 @@ async function preloadVaultPlugin(
     version: pkg.version,
     main: joinVault('plugins', dirName, pkg.main),
     permissions: pkg.permissions,
+    signature: pkg.signature,
   }
 
   // 3. Read the plugin's code source string. Reading the file is safe; only
-  //    importing/executing is gated, and that happens later (after integrity +
-  //    consent are verified). The digest is computed from these exact bytes.
+  //    importing/executing is gated, and that happens later (after the
+  //    trust + integrity + consent gates). The digest is computed from these
+  //    exact bytes; the signature payload is the canonical code+manifest form
+  //    a publisher signs and the host verifies against the trusted key.
   let source: string
   try {
     source = await adapter.readFile(joinPath(vault, meta.main))
@@ -495,16 +719,22 @@ async function preloadVaultPlugin(
   }
 
   const digest = computePluginDigest(raw, source)
-  return { dirName, meta, digest, source }
+  const signaturePayload = buildPluginSignaturePayload(meta.id, meta.version, pkg.main, source, meta.permissions)
+  return { dirName, meta, digest, source, signature: pkg.signature, signaturePayload }
 }
 
 /** Reset in-memory state (active ids, permission verdicts, deciders, unsandboxed
- *  registry, integrity baselines). Test-only. */
+ *  registry, trust config, integrity baselines). Test-only. */
 export function resetVaultPluginStateForTests(): void {
   deactivateVaultPlugins()
   permissionDecisions.clear()
   permissionDecider = null
   integrityDecider = null
+  trustDecider = null
+  pluginTrustPolicy = 'permit-unsigned-with-notice'
+  memoryTrustedKey = ''
+  memoryTrustedSources.clear()
+  unsignedNotified.clear()
   memoryDigestMap.clear()
   cspBlockedNotified = false
 }
@@ -611,6 +841,16 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
       continue
     }
 
+    // GATE 1.5 — trust / source authenticity BEFORE any execution. An invalid
+    // signature is refused outright (never imported); an unsigned plugin is
+    // never silently trusted — it is flagged as unsigned/untrusted-source, or,
+    // under the strict policy, must be explicitly trusted (allowlist/decider).
+    const trust = await decidePluginTrust(meta, p.signature, p.signaturePayload)
+    if (trust.action === 'deny') {
+      notifyError(describePluginError(trust.error))
+      continue
+    }
+
     // GATE 2 — integrity BEFORE any execution. Refuse to silently run a plugin
     // whose code/manifest changed since it was approved. First approval records
     // the baseline; a mismatch is surfaced (re-approve/deny) instead of auto-run.
@@ -709,14 +949,23 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
 
   // Phase 3 — parallel activation of the consented plugins, results recorded in
   // deterministic (consented) order. An activation rejection is captured into an
-  // ok:false result so one failing plugin cannot abort the rest.
+  // ok:false result so one failing plugin cannot abort the rest. Each activation
+  // is time-boxed (async init that exceeds the budget is cancelled and the plugin
+  // marked unstable), and a single AbortController lets the host cancel a running
+  // activation (e.g. when the user switches vaults). A timeout/cancel leaves the
+  // plugin deactivated and the host continues.
+  const activationController = new AbortController()
   const activated = await runBounded(
     consented.map((p) => async () => {
       const loadResult = p.loadResult as LoadResult
-      const res = await activatePlugin(loadResult).catch((e) => ({
+      const res = await activatePlugin(loadResult, {
+        signal: activationController.signal,
+        timeoutMs: DEFAULT_PLUGIN_ACTIVATION_TIMEOUT_MS,
+      }).catch((e) => ({
         ok: false as const,
         id: loadResult.id,
         error: e instanceof Error ? e.message : String(e),
+        code: undefined as PluginErrorCode | undefined,
       }))
       return { meta: p.meta as PluginMeta, res }
     }),
@@ -724,15 +973,30 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
   )
   for (const { meta, res } of activated) {
     if (!res.ok) {
-      notifyError(
-        describePluginError(
-          createPluginError('PLUGIN_ACTIVATE_FAILED', {
-            pluginId: res.id,
-            message: `Plugin "${meta.name}" failed to activate: ${res.error ?? ''}`,
-            recovery: 'Disable and re-enable the plugin, or reinstall it.',
-          }),
-        ),
-      )
+      // A structured timeout/cancel is routed to a distinct message; anything
+      // else is a generic activation failure. In all cases the plugin was
+      // already rolled back/marked unstable by the host, so the host continues.
+      const code = res.code
+      const error =
+        code === 'PLUGIN_HOOK_TIMEOUT'
+          ? createPluginError('PLUGIN_HOOK_TIMEOUT', {
+              pluginId: res.id,
+              message: `Plugin "${meta.name}" exceeded its activation time budget and was cancelled.`,
+              recovery: 'Disable the plugin or check its logs.',
+            })
+          : code === 'PLUGIN_ABORTED'
+            ? createPluginError('PLUGIN_ABORTED', {
+                pluginId: res.id,
+                message: `Plugin "${meta.name}" activation was cancelled.`,
+                recovery: 'Retry activation, or disable the plugin.',
+              })
+            : createPluginError('PLUGIN_ACTIVATE_FAILED', {
+                pluginId: res.id,
+                message: `Plugin "${meta.name}" failed to activate: ${res.error ?? ''}`,
+                recovery: 'Disable and re-enable the plugin, or reinstall it.',
+              })
+      notifyError(describePluginError(error))
+      console.warn(`[NekoWite] vault plugin failed to activate: ${res.id}`, error)
       continue
     }
     activeVaultPluginIds.push(res.id)

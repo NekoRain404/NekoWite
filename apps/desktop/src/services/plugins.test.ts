@@ -2,12 +2,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   askPluginPermission,
   getActiveVaultPluginIds,
+  getPluginTrustedKey,
+  getPluginTrustedSourceIds,
+  getPluginTrustPolicy,
   loadVaultPlugins,
   resetVaultPluginStateForTests,
-  setPluginPermissionDecider,
   setPluginIntegrityDecider,
+  setPluginPermissionDecider,
+  setPluginTrustDecider,
+  setPluginTrustedKey,
+  setPluginTrustedSource,
+  setPluginTrustPolicy,
 } from './plugins'
-import { computePluginDigest } from '@nekowite/plugin-host'
+import { buildPluginSignaturePayload, computePluginDigest, createPluginSignature } from '@nekowite/plugin-host'
 import type { PluginMeta } from '@nekowite/plugin-host'
 
 const listMock = vi.hoisted(() => vi.fn())
@@ -54,6 +61,8 @@ function digestKey(vault: string, id: string): string {
 beforeEach(() => {
   resetVaultPluginStateForTests()
   localStorage.removeItem('nekowite.pluginDigests')
+  localStorage.removeItem('nekowite.pluginTrustKey')
+  localStorage.removeItem('nekowite.pluginTrustedSources')
   vi.clearAllMocks()
   notifyErrorMock.mockClear()
   listMock.mockResolvedValue([
@@ -361,5 +370,101 @@ describe('plugin integrity detection (gated import)', () => {
     expect(getActiveVaultPluginIds()).toEqual(['@scope/q'])
     const stored = JSON.parse(localStorage.getItem('nekowite.pluginDigests') ?? '{}')
     expect(stored[digestKey('/vault', '@scope/q')].d).not.toEqual('deadbeef')
+  })
+})
+
+describe('plugin trust & signature gate (definite security requirement)', () => {
+  const KEY = '4e656b6f2d6b6579' // trusted publisher key (hex-like)
+  const SOURCE = 'export default {}'
+
+  /** A manifest read that returns a signed package.json and a fixed code source. */
+  function signedManifest(signature: string): { raw: string; source: string } {
+    const raw = JSON.stringify({ name: '@scope/q', version: '1.0.0', main: 'index.js', signature })
+    return { raw, source: SOURCE }
+  }
+
+  it('loads a plugin whose signature verifies against the trusted key', async () => {
+    const payload = buildPluginSignaturePayload('@scope/q', '1.0.0', 'index.js', SOURCE, undefined)
+    const signature = await createPluginSignature(payload, KEY)
+    setPluginTrustedKey(KEY)
+    const { raw } = signedManifest(signature)
+    readMock.mockImplementation((_vault, rel) => Promise.resolve(rel.endsWith('package.json') ? raw : SOURCE))
+    await loadVaultPlugins('/vault')
+    // Verification passed → the gated import runs and the plugin activates.
+    expect(loadMock).toHaveBeenCalledTimes(1)
+    expect(activateMock).toHaveBeenCalledTimes(1)
+    expect(getActiveVaultPluginIds()).toEqual(['@scope/q'])
+  })
+
+  it('refuses a plugin whose signature FAILS verification BEFORE importing it', async () => {
+    // Sign with a DIFFERENT key than the one configured → verification fails.
+    const payload = buildPluginSignaturePayload('@scope/q', '1.0.0', 'index.js', SOURCE, undefined)
+    const badSignature = await createPluginSignature(payload, 'deadbeefdeadbeef')
+    setPluginTrustedKey(KEY)
+    const { raw } = signedManifest(badSignature)
+    readMock.mockImplementation((_vault, rel) => Promise.resolve(rel.endsWith('package.json') ? raw : SOURCE))
+    await loadVaultPlugins('/vault')
+    // The signature gate runs BEFORE the import, so the module is NEVER imported
+    // and no top-level side effects can run.
+    expect(loadMock).not.toHaveBeenCalled()
+    expect(activateMock).not.toHaveBeenCalled()
+    expect(getActiveVaultPluginIds()).toEqual([])
+    const msgs = notifyErrorMock.mock.calls.map((c) => String(c[0]))
+    const sigMsg = msgs.find((m) => m.includes('failed verification'))
+    expect(sigMsg).toBeDefined()
+    expect(sigMsg).toContain('trusted publisher key')
+  })
+
+  it('refuses an unsigned plugin under the strict policy (never silently trusted)', async () => {
+    setPluginTrustPolicy('require-trust')
+    // No trusted key, no allowlist, no trust decider — the safe default is deny.
+    readMock.mockResolvedValue(pkg()) // unsigned manifest
+    await loadVaultPlugins('/vault')
+    expect(loadMock).not.toHaveBeenCalled()
+    expect(activateMock).not.toHaveBeenCalled()
+    expect(getActiveVaultPluginIds()).toEqual([])
+    const msgs = notifyErrorMock.mock.calls.map((c) => String(c[0]))
+    const unsignedMsg = msgs.find((m) => m.includes('unsigned and not from a trusted source'))
+    expect(unsignedMsg).toBeDefined()
+  })
+
+  it('loads an unsigned plugin under the strict policy once the user explicitly trusts its publisher', async () => {
+    setPluginTrustPolicy('require-trust')
+    setPluginTrustedSource('@scope', true) // publisher id for '@scope/q'
+    expect(getPluginTrustedSourceIds()).toEqual(['@scope'])
+    readMock.mockResolvedValue(pkg()) // unsigned manifest
+    await loadVaultPlugins('/vault')
+    // Trusted-source allowlist satisfied → the gated import runs.
+    expect(loadMock).toHaveBeenCalledTimes(1)
+    expect(activateMock).toHaveBeenCalledTimes(1)
+    expect(getActiveVaultPluginIds()).toEqual(['@scope/q'])
+  })
+
+  it('trusts an unsigned plugin under the strict policy after a trust decider approves, and records the publisher', async () => {
+    setPluginTrustPolicy('require-trust')
+    const decider = vi.fn(() => Promise.resolve(true))
+    setPluginTrustDecider(decider)
+    readMock.mockResolvedValue(pkg()) // unsigned manifest
+    await loadVaultPlugins('/vault')
+    expect(loadMock).toHaveBeenCalledTimes(1)
+    expect(decider).toHaveBeenCalledTimes(1)
+    // The trust decision is recorded against the specific plugin id so the
+    // plugin is not re-asked on the next reload (conservative: it does not
+    // auto-trust the whole publisher).
+    expect(getPluginTrustedSourceIds()).toEqual(['@scope/q'])
+    expect(getActiveVaultPluginIds()).toEqual(['@scope/q'])
+  })
+
+  it('defaults to the permit-unsigned-with-notice policy (unsigned allowed, never claimed as trusted)', async () => {
+    expect(getPluginTrustPolicy()).toBe('permit-unsigned-with-notice')
+    expect(getPluginTrustedKey()).toBe('')
+    // No key, no allowlist → permitted, not refused (existing behavior preserved).
+    readMock.mockResolvedValue(pkg())
+    await loadVaultPlugins('/vault')
+    expect(loadMock).toHaveBeenCalledTimes(1)
+    expect(getActiveVaultPluginIds()).toEqual(['@scope/q'])
+    // Nothing was recorded as a trusted source for an unsigned plugin under the
+    // default policy — it is not silently trusted.
+    expect(getPluginTrustedSourceIds()).toEqual([])
   })
 })

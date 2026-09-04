@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { emitLifecycle, getActiveEditor, hasLifecycleListeners, onLifecycleError, registerLifecycleHook, setActiveEditor } from './lifecycle'
+import { DEFAULT_PLUGIN_HOOK_TIMEOUT_MS, emitLifecycle, getActiveEditor, hasLifecycleListeners, onLifecycleError, registerLifecycleHook, setActiveEditor, setLifecycleHookTimeout } from './lifecycle'
 import type { LifecycleErrorEvent } from './lifecycle'
 import type { PluginContext } from './types'
 import { PluginError } from './types'
+import { isPluginUnstable } from './runtime'
 
 const ctx = { id: 'p1', name: 'P1', insertComponent: () => {} } as PluginContext
 
@@ -156,5 +157,59 @@ describe('lifecycle hooks', () => {
   it('getActiveEditor returns null when no editor is set', () => {
     setActiveEditor(null)
     expect(getActiveEditor()).toBeNull()
+  })
+
+  it('surfaces an async-hook timeout as PLUGIN_HOOK_TIMEOUT and marks the plugin unstable, without blocking the host', async () => {
+    setLifecycleHookTimeout(30)
+    try {
+      const events: LifecycleErrorEvent[] = []
+      const off = onLifecycleError((e) => events.push(e))
+      // The async hook never settles — it would hang the host if untimed.
+      const hang = vi.fn(() => new Promise<() => void>(() => {}))
+      const sibling = vi.fn()
+      // Use onOpenDocument (no leaked hooks from earlier tests here) and unique ids.
+      const unHang = registerLifecycleHook('async-hang', 'onOpenDocument', hang, ctx)
+      const unSibling = registerLifecycleHook('async-sibling', 'onOpenDocument', sibling, ctx)
+
+      emitLifecycle('onOpenDocument', { id: 't1' })
+      // A synchronous sibling hook still runs immediately (host continues),
+      // even though the async one is still pending.
+      expect(sibling).toHaveBeenCalledTimes(1)
+
+      // After the budget, the hung hook is cancelled and surfaced.
+      await new Promise((r) => setTimeout(r, 60))
+
+      expect(events).toHaveLength(1)
+      expect(events[0].pluginId).toBe('async-hang')
+      expect(events[0].event).toBe('onOpenDocument')
+      expect(events[0].error.code).toBe('PLUGIN_HOOK_TIMEOUT')
+      // The plugin is marked failed (unstable), not left half-running.
+      expect(isPluginUnstable('async-hang')).toBe(true)
+
+      unHang()
+      unSibling()
+      off()
+    } finally {
+      setLifecycleHookTimeout(DEFAULT_PLUGIN_HOOK_TIMEOUT_MS)
+    }
+  })
+
+  it('surfaces an async-hook rejection as PLUGIN_HOOK_ERROR and keeps running (same isolation as a sync throw)', async () => {
+    setLifecycleHookTimeout(1000)
+    try {
+      const events: LifecycleErrorEvent[] = []
+      const off = onLifecycleError((e) => events.push(e))
+      const reject = vi.fn(() => Promise.reject(new Error('async boom')))
+      const un = registerLifecycleHook('async-reject', 'onOpenDocument', reject, ctx)
+      emitLifecycle('onOpenDocument', { id: 't1' })
+      await new Promise((r) => setTimeout(r, 10))
+      expect(events).toHaveLength(1)
+      expect(events[0].error.code).toBe('PLUGIN_HOOK_ERROR')
+      expect(events[0].error.pluginId).toBe('async-reject')
+      un()
+      off()
+    } finally {
+      setLifecycleHookTimeout(DEFAULT_PLUGIN_HOOK_TIMEOUT_MS)
+    }
   })
 })
