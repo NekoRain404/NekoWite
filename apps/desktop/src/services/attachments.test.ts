@@ -1,8 +1,10 @@
-import { describe, expect, it, vi, afterEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 
 import {
   attachmentMonthDir,
   attachmentRelativePath,
+  attachmentSessionCount,
+  classifyAttachmentFiles,
   collectClipboardImages,
   createImageSrcResolver,
   escapeMarkdownAlt,
@@ -10,11 +12,16 @@ import {
   extensionFromMime,
   fileToBase64,
   isImageFile,
+  isPathWithinVault,
   markdownImageBlock,
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENTS_PER_BATCH,
+  MAX_ATTACHMENTS_PER_SESSION,
   mimeFromExtension,
   noteDirectory,
   relativePathFromNote,
   relativePathFromNoteVault,
+  resetAttachmentSession,
   resolveRelativePath,
   suggestedPasteFileName,
   vaultRelativeFromNote,
@@ -137,6 +144,92 @@ describe('collectClipboardImages', () => {
 
   it('returns nothing without a dataTransfer', () => {
     expect(collectClipboardImages(null)).toEqual([])
+  })
+})
+
+describe('attachment limits', () => {
+  // Give a File a synthetic size without allocating `size` bytes.
+  function fileOfSize(name: string, size: number): File {
+    const file = new File(['x'], name, { type: 'image/png' })
+    Object.defineProperty(file, 'size', { value: size, configurable: true })
+    return file
+  }
+
+  beforeEach(() => {
+    resetAttachmentSession()
+  })
+
+  afterEach(() => {
+    resetAttachmentSession()
+  })
+
+  it('rejects an oversize image before any base64 encode', async () => {
+    const big = fileOfSize('big.png', MAX_ATTACHMENT_BYTES + 1)
+    const { accepted, rejected } = classifyAttachmentFiles([big])
+    expect(accepted).toEqual([])
+    expect(rejected).toEqual([{ file: big, reason: 'too-large' }])
+    // The encode path itself must refuse it too, before reading bytes.
+    await expect(fileToBase64(big)).rejects.toThrow()
+  })
+
+  it('caps the number of images in a single paste/drop batch', () => {
+    const files = Array.from({ length: MAX_ATTACHMENTS_PER_BATCH + 3 }, (_, i) =>
+      fileOfSize(`p${i}.png`, 1),
+    )
+    const { accepted, rejected } = classifyAttachmentFiles(files)
+    expect(accepted).toHaveLength(MAX_ATTACHMENTS_PER_BATCH)
+    expect(rejected).toHaveLength(3)
+    expect(rejected.every((r) => r.reason === 'too-many')).toBe(true)
+  })
+
+  it('caps the running total per session', () => {
+    // Fill the session budget one paste/drop at a time — each classify call is a
+    // single batch, itself capped at MAX_ATTACHMENTS_PER_BATCH, so we can't reach
+    // the session limit with one oversized call.
+    const chunks = Math.ceil(MAX_ATTACHMENTS_PER_SESSION / MAX_ATTACHMENTS_PER_BATCH)
+    for (let i = 0; i < chunks; i += 1) {
+      const chunkSize = Math.min(
+        MAX_ATTACHMENTS_PER_BATCH,
+        MAX_ATTACHMENTS_PER_SESSION - i * MAX_ATTACHMENTS_PER_BATCH,
+      )
+      const chunk = Array.from({ length: chunkSize }, (_, j) => fileOfSize(`a${i}-${j}.png`, 1))
+      classifyAttachmentFiles(chunk)
+    }
+    expect(attachmentSessionCount()).toBe(MAX_ATTACHMENTS_PER_SESSION)
+
+    const extra = fileOfSize('extra.png', 1)
+    const { accepted, rejected } = classifyAttachmentFiles([extra])
+    expect(accepted).toEqual([])
+    expect(rejected[0]).toEqual({ file: extra, reason: 'session-full' })
+  })
+
+  it('applies limits through collectClipboardImages for a paste', () => {
+    const accepted = Array.from({ length: MAX_ATTACHMENTS_PER_BATCH }, (_, i) =>
+      fileOfSize(`c${i}.png`, 1),
+    )
+    const items = accepted.map((f) => ({ kind: 'file', type: 'image/png', getAsFile: () => f }))
+    expect(collectClipboardImages(dataTransfer(items as Partial<DataTransferItem>[]))).toHaveLength(
+      MAX_ATTACHMENTS_PER_BATCH,
+    )
+    expect(attachmentSessionCount()).toBe(MAX_ATTACHMENTS_PER_BATCH)
+  })
+})
+
+describe('isPathWithinVault', () => {
+  it('accepts paths at or under the vault and rejects outside paths', () => {
+    expect(isPathWithinVault('/home/u/vault/export.html', '/home/u/vault')).toBe(true)
+    expect(isPathWithinVault('/home/u/vault/notes/a.md', '/home/u/vault')).toBe(true)
+    expect(isPathWithinVault('/home/u/vault', '/home/u/vault')).toBe(true)
+    expect(isPathWithinVault('/home/u/Desktop/export.html', '/home/u/vault')).toBe(false)
+    expect(isPathWithinVault('/home/u/vaulted/export.html', '/home/u/vault')).toBe(false)
+  })
+
+  it('normalises trailing separators and Windows backslashes', () => {
+    expect(isPathWithinVault('/home/u/vault/sub/..', '/home/u/vault/')).toBe(true)
+    expect(isPathWithinVault('C:\\vault\\export.html', 'C:\\vault')).toBe(true)
+    expect(isPathWithinVault('C:\\vault\\export.html', 'C:\\other')).toBe(false)
+    expect(isPathWithinVault('', '/home/u/vault')).toBe(false)
+    expect(isPathWithinVault('/path/to/x', '')).toBe(false)
   })
 })
 

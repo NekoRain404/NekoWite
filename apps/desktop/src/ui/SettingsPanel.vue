@@ -17,6 +17,7 @@ import { exportHtml, exportToPdf } from '../services/export'
 import { exportBaseName } from '../services/exportName'
 import { fsService } from '../services/fs'
 import { describeExportError, notifyError } from '../services/errors'
+import { isPathWithinVault } from '../services/attachments'
 import { useSettingsStore } from '../stores/settings'
 import { useAppearanceStore } from '../stores/appearance'
 import type { Accent, ContentDirection, EditorFontId, MonoFontId, UiFontId } from '../stores/appearance'
@@ -182,11 +183,25 @@ function refsMap(): Map<string, ExportRef> {
 async function onExportHtml(): Promise<void> {
   const tab = tabs.activeTab
   if (!tab) return
-  const savePath = await fsService.saveFileDialog(exportBaseName(tab.path) + '.html', tabs.vault ?? undefined)
+  // The native dialog lets the user aim anywhere (Desktop, Home, …), but the
+  // Rust `write_file` command is vault-confined — an absolute path outside the
+  // vault is rejected with "path escapes vault" and the export silently fails.
+  // (Preferred fix, needing a backend change: a dedicated non-confined
+  // `export_file` command that writes an absolute path outside the vault.)
+  // Until that lands, do not lead the user to a doomed path: short-circuit a
+  // vault-external destination up front and tell them to pick a vault path.
+  const vault = tabs.vault
+  const savePath = await fsService.saveFileDialog(exportBaseName(tab.path) + '.html', vault ?? undefined)
   if (!savePath) return
+  if (vault && !isPathWithinVault(savePath, vault)) {
+    notifyError(t('error.exportOutsideVault'))
+    return
+  }
   try {
-    await exportHtml(tab.content, tabs.vault ?? '', savePath, { title: exportBaseName(tab.path), refs: refsMap() })
+    await exportHtml(tab.content, vault ?? '', savePath, { title: exportBaseName(tab.path), refs: refsMap() })
   } catch (e) {
+    // Belt-and-braces: if the backend still rejects (e.g. a symlink resolved
+    // outside, or no vault open) describeExportError maps it to a clear hint.
     notifyError(describeExportError(e))
   }
 }

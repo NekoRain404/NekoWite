@@ -1,4 +1,5 @@
 import type { FsGateway } from './gateways/contracts'
+import { notifyError } from './errors'
 
 /**
  * Attachment pipeline helpers: MIME↔extension mapping for the supported
@@ -7,6 +8,20 @@ import type { FsGateway } from './gateways/contracts'
  */
 
 export const ATTACHMENTS_DIR = 'attachments'
+
+/**
+ * Frontend attachment limits, enforced BEFORE any base64 encode or IPC.
+ *
+ * The paste/drop pipeline reads a whole image into memory as base64 (≈4/3 the
+ * byte size), ships it over IPC, and the Rust side decodes it again — so an
+ * unbounded image or a large paste can spike memory on both processes. These
+ * caps reject early: an oversize image, an over-count batch, and the running
+ * per-session total. They are the single source of truth for the limits that
+ * {@link classifyAttachmentFiles} and {@link fileToBase64} enforce.
+ */
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024 // 10 MiB per image
+export const MAX_ATTACHMENTS_PER_BATCH = 10 // images accepted per single paste/drop
+export const MAX_ATTACHMENTS_PER_SESSION = 50 // running total per app session
 
 export const ATTACHMENT_EXTENSIONS = [
   'png',
@@ -132,6 +147,12 @@ export function markdownImageBlock(alt: string, relPath: string): string {
 }
 
 export async function fileToBase64(file: Blob): Promise<string> {
+  // Last line of defense before we read the whole file into memory: reject an
+  // oversize attachment before Buffering it, so a direct caller (e.g. the chat
+  // drop path that bypasses collectClipboardImages) cannot blow up memory.
+  if (file.size > MAX_ATTACHMENT_BYTES) {
+    throw new Error(`Attachment exceeds the ${formatAttachmentBytes(MAX_ATTACHMENT_BYTES)} limit`)
+  }
   const bytes = new Uint8Array(await file.arrayBuffer())
   const chunkSize = 0x8000
   let binary = ''
@@ -139,6 +160,99 @@ export async function fileToBase64(file: Blob): Promise<string> {
     binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize))
   }
   return btoa(binary)
+}
+
+export type AttachmentLimitReason = 'too-large' | 'too-many' | 'session-full'
+
+export interface AttachmentRejection {
+  file: File
+  reason: AttachmentLimitReason
+}
+
+export interface AttachmentLimitResult {
+  accepted: File[]
+  rejected: AttachmentRejection[]
+}
+
+// Running count of attachment files accepted into the paste/drop pipeline this
+// app session. Reset by the app on a fresh session and, under test, between
+// cases via {@link resetAttachmentSession}.
+let attachmentSessionUsed = 0
+
+/** How many attachment files have been accepted this session. */
+export function attachmentSessionCount(): number {
+  return attachmentSessionUsed
+}
+
+/** Clear the per-session attachment budget (used when a session/vault is reset). */
+export function resetAttachmentSession(): void {
+  attachmentSessionUsed = 0
+}
+
+/** Human-readable size, e.g. `10 MB`, for user-facing limit messages. */
+export function formatAttachmentBytes(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(0)} MB`
+}
+
+/**
+ * Classify `files` against the attachment limits, reserving a session slot for
+ * every file that passes. Pure w.r.t. output — it returns the accepted list and
+ * a structured list of rejections so callers and tests can act on each reason
+ * (size vs. per-batch count vs. per-session total).
+ *
+ * Order matters: a file is culled for size first, then the per-batch cap, then
+ * the per-session cap. That keeps the "too many in one paste" message accurate
+ * while still bounding the running session total.
+ */
+export function classifyAttachmentFiles(files: File[]): AttachmentLimitResult {
+  const accepted: File[] = []
+  const rejected: AttachmentRejection[] = []
+  for (const file of files) {
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      rejected.push({ file, reason: 'too-large' })
+      continue
+    }
+    if (accepted.length >= MAX_ATTACHMENTS_PER_BATCH) {
+      rejected.push({ file, reason: 'too-many' })
+      continue
+    }
+    if (attachmentSessionUsed + accepted.length >= MAX_ATTACHMENTS_PER_SESSION) {
+      rejected.push({ file, reason: 'session-full' })
+      continue
+    }
+    accepted.push(file)
+  }
+  attachmentSessionUsed += accepted.length
+  return { accepted, rejected }
+}
+
+function describeAttachmentRejections(rejected: AttachmentRejection[]): string {
+  const tooLarge = rejected.filter((r) => r.reason === 'too-large').length
+  const tooMany = rejected.filter((r) => r.reason === 'too-many').length
+  const sessionFull = rejected.filter((r) => r.reason === 'session-full').length
+  const parts: string[] = []
+  if (tooLarge) {
+    parts.push(`${tooLarge} too large (max ${formatAttachmentBytes(MAX_ATTACHMENT_BYTES)})`)
+  }
+  if (tooMany) {
+    parts.push(`${tooMany} over the ${MAX_ATTACHMENTS_PER_BATCH}-per-paste limit`)
+  }
+  if (sessionFull) {
+    parts.push(`${sessionFull} over the ${MAX_ATTACHMENTS_PER_SESSION}-per-session limit`)
+  }
+  return `Some images skipped: ${parts.join('; ')}`
+}
+
+/**
+ * Filter `files` through the limits, notifying the user about any rejections,
+ * and return only the survivors. The paste/drop/rename pipeline keeps working
+ * on the accepted files while the user is told why the rest were dropped
+ * (rather than silently discarding or risking a memory blowup).
+ */
+export function applyAttachmentLimits(files: File[]): File[] {
+  const { accepted, rejected } = classifyAttachmentFiles(files)
+  if (rejected.length) notifyError(describeAttachmentRejections(rejected))
+  return accepted
 }
 
 export function collectClipboardImages(data: DataTransfer | null): File[] {
@@ -149,8 +263,8 @@ export function collectClipboardImages(data: DataTransfer | null): File[] {
     const file = item.getAsFile()
     if (file && isImageFile(file)) fromItems.push(file)
   }
-  if (fromItems.length) return uniqueFiles(fromItems)
-  return uniqueFiles(Array.from(data.files ?? []).filter(isImageFile))
+  if (fromItems.length) return applyAttachmentLimits(uniqueFiles(fromItems))
+  return applyAttachmentLimits(uniqueFiles(Array.from(data.files ?? []).filter(isImageFile)))
 }
 
 function uniqueFiles(files: File[]): File[] {
@@ -269,6 +383,21 @@ export function vaultRelativeFromNoteVault(notePath: string, vault: string, src:
   }
   const fromDir = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : ''
   return resolveRelativePath(fromDir, src)
+}
+
+/** True when `candidate` (an absolute OS-native path, e.g. one returned by the
+ * native save dialog) lies at or under `vault`. Both sides are normalized to
+ * forward slashes and trailing separators stripped, so the test is agnostic to
+ * the vault root spelling (with/without a trailing slash) and to Windows
+ * backslashes. Lexical, not canonical: the Rust write still independently
+ * proves a path stays inside the vault via `resolve_within`. */
+export function isPathWithinVault(candidate: string, vault: string): boolean {
+  if (!candidate || !vault) return false
+  const normalize = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '')
+  const target = normalize(candidate)
+  const root = normalize(vault)
+  if (target === root) return true
+  return target.startsWith(`${root}/`)
 }
 
 export interface ImageSrcResolverContext {
