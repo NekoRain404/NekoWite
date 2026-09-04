@@ -199,11 +199,18 @@ const brokenCount = computed(() => graph.value?.broken.length ?? 0)
 async function readWithConcurrency(
   vault: string,
   paths: string[],
+  shouldAbort: () => boolean = () => false,
 ): Promise<Array<{ path: string; content: string }>> {
   const out: Array<{ path: string; content: string }> = []
   let cursor = 0
   const workers = Array.from({ length: Math.min(READ_CONCURRENCY, paths.length) }, async () => {
     while (cursor < paths.length) {
+      // Stop issuing reads once the build is superseded (e.g. a newer rebuild
+      // or a vault switch bumped `generation`). Without this, a stale in-flight
+      // readWithConcurrency keeps calling fsService.read — which in tests
+      // crosses test boundaries (resetMock) and bleeds read counts. The
+      // post-await generation check backstop remains.
+      if (shouldAbort()) return
       const path = paths[cursor++]!
       try {
         out.push({ path, content: await fsService.read(vault, path) })
@@ -237,7 +244,7 @@ async function rebuild(): Promise<void> {
     const useCap = cap > 0
     const selected = useCap ? paths.slice(0, cap) : paths
     truncated.value = useCap && paths.length > cap
-    const contents = await readWithConcurrency(vault, selected)
+    const contents = await readWithConcurrency(vault, selected, () => thisGeneration !== generation)
     if (thisGeneration !== generation) return
     contentsRecord.value = new Map(contents.map((c) => [c.path, c.content]))
     currentPathSet = new Set(selected)
