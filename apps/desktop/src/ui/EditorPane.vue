@@ -205,10 +205,17 @@ onBeforeUnmount(() => {
       class="editor-empty"
     >
       <div class="empty-icon">
-        <FileText :size="28" :stroke-width="1.5" />
+        <FileText
+          :size="28"
+          :stroke-width="1.5"
+        />
       </div>
-      <p class="empty-title">{{ t('editorPane.emptyTitle') }}</p>
-      <p class="empty-hint">{{ t('editorPane.emptyHint') }}</p>
+      <p class="empty-title">
+        {{ t('editorPane.emptyTitle') }}
+      </p>
+      <p class="empty-hint">
+        {{ t('editorPane.emptyHint') }}
+      </p>
     </div>
   </div>
 </template>
