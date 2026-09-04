@@ -23,6 +23,10 @@ const REQUIRED_RUNTIME_EXPORTS = [
   // runtime.ts
   'activatePlugin',
   'deactivatePlugin',
+  'markPluginUnstable',
+  'getUnstablePluginIds',
+  'isPluginUnstable',
+  'resetUnstablePlugin',
   // lifecycle.ts
   'setActiveEditor',
   'getActiveEditor',
@@ -37,6 +41,25 @@ const REQUIRED_RUNTIME_EXPORTS = [
   'hasPermission',
   'getNonIsolatedPermissions',
   'assertPermission',
+  // governance.ts
+  'recordPluginEvent',
+  'onPluginEvent',
+  'getAuditLog',
+  'clearAuditLog',
+  'sanitizeAuditDetail',
+  'flushAuditLogToFile',
+  'loadAuditLogFromFile',
+  'recordPluginVersion',
+  'getRecordedPluginVersion',
+  'markBadVersion',
+  'setPluginVersionRange',
+  'isVersionAllowed',
+  'getLastKnownGoodVersion',
+  'rollbackPoint',
+  'revokePlugin',
+  'unrevokePlugin',
+  'isPluginRevoked',
+  'getRevokedPlugins',
 ] as const
 
 describe('plugin-host public API surface', () => {

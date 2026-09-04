@@ -153,7 +153,7 @@ function handleAsyncHook(
       emitLifecycleError({ pluginId: entry.id, event, error: pluginError })
       if (timeout) {
         // A hung hook must not leave the plugin half-registered: deactivate it.
-        markPluginUnstable(entry.id, `lifecycle hook ${event} ${code}`)
+        markPluginUnstable(entry.id, `lifecycle hook ${event} ${code}`, 'timeout')
       }
     },
   )

@@ -1,6 +1,19 @@
-import { describe, expect, it, beforeEach, vi } from 'vitest'
-import { activatePlugin, deactivatePlugin, getUnstablePluginIds, isPluginUnstable } from './runtime'
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
+import {
+  activatePlugin,
+  deactivatePlugin,
+  DEFAULT_MAX_IN_FLIGHT_ACTIVATIONS,
+  DEFAULT_PLUGIN_SESSION_QUOTA_MS,
+  getInFlightActivationCount,
+  getPluginSessionUsage,
+  getUnstablePluginIds,
+  isPluginUnstable,
+  resetUnstablePlugin,
+  setMaxInFlightActivations,
+  setPluginSessionQuota,
+} from './runtime'
 import { emitLifecycle } from './lifecycle'
+import { onPluginEvent, getAuditLog } from './governance'
 import { getCommand, getComponent, getToolbar, registerCommand, unregisterCommand, unregisterComponent, unregisterToolbar } from '@nekowite/editor-core'
 import type { PluginDefinition, PluginMeta } from './types'
 
@@ -256,5 +269,92 @@ describe('activation timeout, cancel & crash isolation', () => {
     expect(getComponent('Callout')).toBeUndefined()
     expect(getCommand('crasher.cmd')).toBeUndefined()
     expect(isPluginUnstable('crasher')).toBe(true)
+  })
+})
+
+describe('resource quota & crash-restart-on-unstable', () => {
+  const defaults = { quota: DEFAULT_PLUGIN_SESSION_QUOTA_MS, inFlight: DEFAULT_MAX_IN_FLIGHT_ACTIVATIONS }
+
+  afterEach(() => {
+    setPluginSessionQuota(defaults.quota)
+    setMaxInFlightActivations(defaults.inFlight)
+    deactivatePlugin('quota')
+    deactivatePlugin('inflight-a')
+    deactivatePlugin('inflight-b')
+    deactivatePlugin('reset')
+  })
+
+  it('quarantines a plugin whose session resource quota is exceeded', async () => {
+    setPluginSessionQuota(5)
+    const res = await activatePlugin(
+      ok('quota', { onLoad: () => new Promise((r) => setTimeout(r, 30)) }),
+      { timeoutMs: 2000 },
+    )
+    expect(res.ok).toBe(false)
+    expect(res.code).toBe('PLUGIN_QUOTA_EXCEEDED')
+    expect(isPluginUnstable('quota')).toBe(true)
+    expect(getPluginSessionUsage('quota')).toBeGreaterThanOrEqual(5)
+  })
+
+  it('refuses to auto-restart an unstable plugin until it is explicitly reset', async () => {
+    // Make it unstable.
+    const first = await activatePlugin(ok('reset', { onLoad: () => { throw new Error('boom') } }))
+    expect(first.ok).toBe(false)
+    expect(isPluginUnstable('reset')).toBe(true)
+
+    // An automatic re-activation is refused (crash-restart-on-unstable).
+    const retry = await activatePlugin(ok('reset', {}))
+    expect(retry.ok).toBe(false)
+    expect(retry.code).toBe('PLUGIN_UNSTABLE')
+    expect(retry.error).toContain('re-approval')
+
+    // Explicit user re-approval clears the flag and grants a fresh budget.
+    resetUnstablePlugin('reset')
+    expect(isPluginUnstable('reset')).toBe(false)
+    expect(getPluginSessionUsage('reset')).toBe(0)
+
+    const recovered = await activatePlugin(ok('reset', {}))
+    expect(recovered.ok).toBe(true)
+    deactivatePlugin('reset')
+  })
+
+  it('bounds concurrent in-flight activations and refuses overflow', async () => {
+    setMaxInFlightActivations(1)
+    const ac = new AbortController()
+    const firstPromise = activatePlugin(
+      ok('inflight-a', { onLoad: () => new Promise<() => void>(() => {}) }),
+      { signal: ac.signal, timeoutMs: 10000 },
+    )
+    // Let the first activation start (and hold the in-flight slot).
+    await new Promise((r) => setTimeout(r, 20))
+    expect(getInFlightActivationCount()).toBe(1)
+
+    // A second activation while the cap is reached is refused without doing work.
+    const second = await activatePlugin(ok('inflight-b', {}))
+    expect(second.ok).toBe(false)
+    expect(second.code).toBe('PLUGIN_ACTIVATE_FAILED')
+    expect(second.error).toContain('concurrently')
+
+    // Cancelling the first releases the slot.
+    ac.abort()
+    const first = await firstPromise
+    expect(first.ok).toBe(false)
+    expect(first.code).toBe('PLUGIN_ABORTED')
+    expect(getInFlightActivationCount()).toBe(0)
+  })
+
+  it('records activate/deactivate/crash/timeout events in the audit log', async () => {
+    const events: string[] = []
+    const off = onPluginEvent((e) => events.push(`${e.pluginId}:${e.event}`))
+    try {
+      const res = await activatePlugin(ok('aud', { onLoad: () => { throw new Error('boom') } }))
+      expect(res.ok).toBe(false)
+      deactivatePlugin('aud') // no-op (never active)
+      const log = getAuditLog()
+      expect(log.some((e) => e.pluginId === 'aud' && e.event === 'crash')).toBe(true)
+      expect(events).toContain('aud:crash')
+    } finally {
+      off()
+    }
   })
 })

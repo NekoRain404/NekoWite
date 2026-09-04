@@ -7,17 +7,46 @@ import {
   createPluginError,
   DEFAULT_PLUGIN_ACTIVATION_TIMEOUT_MS,
   deactivatePlugin,
+  flushAuditLogToFile,
+  getAuditLog,
+  getGovernancePluginIds,
+  getLastKnownGoodVersion,
   getNonIsolatedPermissions,
+  getPluginAuditEvents,
+  getPluginVersionRange,
+  getRecordedPluginVersion,
+  getRevokedPlugins,
+  getUnstablePluginIds,
+  governanceRefusal,
   hasDangerousPermissions,
+  isPluginRevoked,
+  isPluginUnstable,
+  isVersionAllowed,
+  loadAuditLogFromFile,
+  loadGovernance,
   loadPlugin,
+  markBadVersion,
   onLifecycleError,
+  onPluginEvent,
   publisherIdOf,
+  recordPluginEvent,
+  recordPluginVersion,
+  resetGovernanceForTests,
+  resetUnstablePlugin,
+  revokePlugin,
+  rollbackPoint,
+  serializeGovernance,
+  setAuditLogFileSink,
+  setPluginVersionRange,
+  unrevokePlugin,
   verifyPluginIntegrity,
   verifyPluginSignature,
 } from '@nekowite/plugin-host'
 import type {
+  AuditLogFileSink,
   DynamicImport,
   LoadResult,
+  PluginAuditEvent,
   PluginDefinition,
   PluginDigestStore,
   PluginError,
@@ -26,6 +55,9 @@ import type {
   PluginFsEntry,
   PluginMeta,
   PluginPermission,
+  PluginVersionRange,
+  RecordedPluginVersion,
+  PluginRevocation,
 } from '@nekowite/plugin-host'
 import { joinPath } from '@nekowite/plugin-host'
 import { fsService } from './fs'
@@ -83,9 +115,184 @@ let cspBlockedNotified = false
 function signalPluginLoadingDisabledByCsp(): void {
   if (cspBlockedNotified) return
   cspBlockedNotified = true
+  recordPluginEvent('*', 'import-refused', 'CSP blocks in-window plugin loading (no process/WebView isolation)')
   notifyError(
     'Vault plugins are disabled under the current security policy (CSP blocks in-window module loading). Expected until process/WebView isolation is implemented.',
   )
+}
+
+/* ------------------------------------------------------------------------- *
+ * Plugin governance (audit log + version policy/rollback + revocation).
+ *
+ * The policy functions live in @nekowite/plugin-host/governance; this module
+ * (a) persists the governance snapshot to localStorage (the revocation list, the
+ * recorded versions, version ranges, bad versions), (b) persists the audit log to
+ * a vault-relative file through fsService when that service is available, and
+ * (c) routes audit events so governance decisions are never silent. All of these
+ * are additive to the existing trust/integrity/consent gates.
+ * ------------------------------------------------------------------------- */
+
+const PLUGIN_GOVERNANCE_KEY = 'nekowite.pluginGovernance'
+
+let auditRouterOff: (() => void) | null = null
+
+/** Restore the persisted governance snapshot (revocations, versions, ranges, bad
+ *  versions) so policy survives a reload. Best-effort, never throws. */
+function loadGovernanceFromStorage(): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(PLUGIN_GOVERNANCE_KEY)
+      if (raw) loadGovernance(raw)
+    }
+  } catch {
+    /* localStorage unavailable / corrupt → keep the in-memory baseline */
+  }
+}
+
+/** Persist the governance snapshot to localStorage after a mutation. */
+function saveGovernanceToStorage(): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(PLUGIN_GOVERNANCE_KEY, serializeGovernance())
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Best-effort audit-log file persistence via the app's fs service. Returns the
+ *  sink, or null when a writable file service is unavailable (so an environment
+ *  without a real fs keeps the in-memory ring + subscription only). */
+function setupAuditFilePersistence(vault: string): AuditLogFileSink | null {
+  const write = (fsService as { write?: unknown }).write
+  const read = (fsService as { read?: unknown }).read
+  if (typeof write !== 'function' || typeof read !== 'function') return null
+  const rel = '.nekowite/plugin-audit.log'
+  const sink: AuditLogFileSink = {
+    path: joinVault(vault, rel),
+    exists: async () => {
+      const stat = (fsService as { stat?: (v: string, p: string) => Promise<unknown> }).stat
+      if (typeof stat !== 'function') return false
+      try {
+        await stat(vault, rel)
+        return true
+      } catch {
+        return false
+      }
+    },
+    read: () => (fsService as { read: (v: string, p: string) => Promise<string> }).read(vault, rel),
+    write: (_p, content) =>
+      (fsService as { write: (v: string, p: string, c: string) => Promise<void> }).write(vault, rel, content),
+  }
+  setAuditLogFileSink(sink)
+  void loadAuditLogFromFile()
+  return sink
+}
+
+/** Route audit events so a governance decision is observable (logged, and
+ *  surfaced via the error channel for the user-facing refusals). Subscription is
+ *  kept separate from the per-refusal notifyError so it never double-notifies at
+ *  the exact refusal sites; this is the status/UI channel (exported via
+ *  `onPluginEvent`). */
+function setupAuditRouter(): void {
+  if (auditRouterOff) return
+  auditRouterOff = onPluginEvent((ev) => {
+    if (ev.pluginId === '*') return
+    console.info(`[NekoWite:audit] plugin "${ev.pluginId}" ${ev.event}${ev.detail ? ` — ${ev.detail}` : ''}`)
+  })
+}
+
+/** A snapshot of the governance state, for a settings/status surface. */
+export function getPluginGovernance(): {
+  audit: PluginAuditEvent[]
+  revoked: PluginRevocation[]
+  versions: Record<string, RecordedPluginVersion>
+  ranges: Record<string, PluginVersionRange>
+  unstable: string[]
+  lastKnownGood: Record<string, string>
+} {
+  const versions: Record<string, RecordedPluginVersion> = {}
+  const ranges: Record<string, PluginVersionRange> = {}
+  const lastKnownGood: Record<string, string> = {}
+  for (const id of getGovernancePluginIds()) {
+    const rec = getRecordedPluginVersion(id)
+    if (rec) versions[id] = rec
+    const range = getPluginVersionRange(id)
+    if (range) ranges[id] = range
+    const good = getLastKnownGoodVersion(id)
+    if (good) lastKnownGood[id] = good
+  }
+  return {
+    audit: getAuditLog(),
+    revoked: getRevokedPlugins(),
+    versions,
+    ranges,
+    unstable: getUnstablePluginIds(),
+    lastKnownGood,
+  }
+}
+
+/** The audit events recorded for a plugin id, newest-last. */
+export function getVaultPluginAuditEvents(pluginId: string): PluginAuditEvent[] {
+  return getPluginAuditEvents(pluginId)
+}
+
+/** Public governance wrappers (wired for a settings/status surface + tests). */
+
+/** Clear a plugin's unstable flag (user-mediated re-approval) so it can run again. */
+export function resetUnstableVaultPlugin(pluginId: string): void {
+  resetUnstablePlugin(pluginId)
+}
+
+/** True when a vault plugin is currently quarantined as unstable. */
+export function isVaultPluginUnstable(pluginId: string): boolean {
+  return isPluginUnstable(pluginId)
+}
+
+/** Revoke a plugin id (all versions) or a specific version/range. Persisted. */
+export function revokeVaultPlugin(pluginId: string, version = 'all', reason?: string): void {
+  revokePlugin(pluginId, version, reason)
+  saveGovernanceToStorage()
+}
+
+/** Remove a revocation. Persisted. */
+export function unrevokeVaultPlugin(pluginId: string, version = 'all'): void {
+  unrevokePlugin(pluginId, version)
+  saveGovernanceToStorage()
+}
+
+/** Configure the supported version range for a plugin. Persisted. */
+export function setVaultPluginVersionRange(pluginId: string, range: PluginVersionRange): void {
+  setPluginVersionRange(pluginId, range)
+  saveGovernanceToStorage()
+}
+
+/** The configured version range for a plugin, if any. */
+export function getVaultPluginVersionRange(pluginId: string): PluginVersionRange | undefined {
+  return getPluginVersionRange(pluginId)
+}
+
+/** Mark a plugin version as known-bad (refused on next load). Persisted. */
+export function markVaultPluginVersionBad(pluginId: string, version: string): boolean {
+  const disallowed = markBadVersion(pluginId, version)
+  saveGovernanceToStorage()
+  return disallowed
+}
+
+/** The recorded version + digest for a plugin (the host's last load). */
+export function getVaultPluginRecordedVersion(pluginId: string): RecordedPluginVersion | undefined {
+  return getRecordedPluginVersion(pluginId)
+}
+
+/** The last-known-good version a plugin can be rolled back to (BEST-EFFORT; not
+ *  auto-run — a rolled-back version must still pass the digest/trust gate). */
+export function getVaultPluginRollbackPoint(pluginId: string): { version: string; digest?: string; requiresReapproval: true } | null {
+  return rollbackPoint(pluginId)
+}
+
+/** Whether a specific plugin version is revoked (the refusal reason is included). */
+export function isVaultPluginRevoked(pluginId: string, version: string): boolean {
+  return isPluginRevoked(pluginId, version).revoked
 }
 
 // Every vault plugin id this module has activated. Switching vaults must
@@ -724,7 +931,7 @@ async function preloadVaultPlugin(
 }
 
 /** Reset in-memory state (active ids, permission verdicts, deciders, unsandboxed
- *  registry, trust config, integrity baselines). Test-only. */
+ *  registry, trust config, integrity baselines, governance). Test-only. */
 export function resetVaultPluginStateForTests(): void {
   deactivateVaultPlugins()
   permissionDecisions.clear()
@@ -737,6 +944,11 @@ export function resetVaultPluginStateForTests(): void {
   unsignedNotified.clear()
   memoryDigestMap.clear()
   cspBlockedNotified = false
+  resetGovernanceForTests()
+  if (auditRouterOff) {
+    auditRouterOff()
+    auditRouterOff = null
+  }
 }
 
 /**
@@ -773,6 +985,14 @@ export function resetVaultPluginStateForTests(): void {
 export async function loadVaultPlugins(vault: string): Promise<void> {
   deactivateVaultPlugins()
   ensureLifecycleErrorRouter()
+  // Governance: restore the persisted policy (revocations, versions, ranges, bad
+  // versions), attach the audit router, and best-effort wire the audit log to a
+  // vault-relative file via the fs service (when available). All run before the
+  // CSP gate so governance decisions are always observed, even when the CSP
+  // disables in-window plugin loading.
+  loadGovernanceFromStorage()
+  setupAuditRouter()
+  setupAuditFilePersistence(vault)
 
   // CSP gate: the production Tauri webview's strict CSP blocks the in-window
   // `import('blob:...')` that plugin loading relies on. Rather than attempting
@@ -783,6 +1003,7 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
   // browser Demo, where the existing integrity/permission scenarios still run.
   if (!isPluginImportAllowedByCsp()) {
     signalPluginLoadingDisabledByCsp()
+    void flushAuditLogToFile()
     return
   }
 
@@ -820,12 +1041,47 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
     const source = p.source
     if (!meta || !source) continue
 
+    // GATE 0 — revocation, BEFORE any execution. A revoked plugin (id or version
+    // /range) is refused here with the recorded reason, so its module is never
+    // imported. Non-silent: audited + surfaced via the error channel.
+    const rev = isPluginRevoked(meta.id, meta.version)
+    if (rev.revoked) {
+      recordPluginEvent(meta.id, 'revoked', rev.reason ?? 'revoked', { version: meta.version, sanitize: true })
+      const refused = governanceRefusal(
+        meta.id,
+        'revoked',
+        `Plugin "${meta.name}" has been revoked${rev.reason ? `: ${rev.reason}` : ''} and will not be loaded.`,
+        'Remove or update the plugin, or unrevoke it if you trust the new version.',
+      )
+      notifyError(describePluginError(refused))
+      continue
+    }
+
+    // GATE 0.5 — version policy. A version outside the configured supported range,
+    // or one recorded as bad, is refused before any execution. A rollback point
+    // (last-known-good) is surfaced so the user can make an informed decision.
+    if (!isVersionAllowed(meta.id, meta.version)) {
+      recordPluginEvent(meta.id, 'version-refused', `version ${meta.version} is not allowed`, { version: meta.version })
+      const point = rollbackPoint(meta.id)
+      const refused = governanceRefusal(
+        meta.id,
+        'version-refused',
+        `Plugin "${meta.name}" version ${meta.version} is outside the supported range or is a known-bad version.`,
+        point
+          ? `Roll back to ${point.version} (BEST-EFFORT: it still must pass the digest/trust gate) or update the plugin.`
+          : 'Update the plugin to a supported version, or remove it.',
+      )
+      notifyError(describePluginError(refused))
+      continue
+    }
+
     // GATE 1 — permission consent BEFORE any execution. Only capabilities
     // declared in the manifest are known pre-import; those are the trust
     // contract. A denial here means the module is never imported.
     const preManifest = { permissions: meta.permissions } as PluginDefinition
     if (!(await askPluginPermission(meta, preManifest))) {
       const declared = collectPluginPermissions(meta, preManifest)
+      recordPluginEvent(meta.id, 'permission-denied', `declared permissions: ${declared.join(', ') || 'none'}`, { version: meta.version })
       notifyError(
         describePluginError(
           createPluginError('PLUGIN_PERMISSION_DENIED', {
@@ -847,6 +1103,11 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
     // under the strict policy, must be explicitly trusted (allowlist/decider).
     const trust = await decidePluginTrust(meta, p.signature, p.signaturePayload)
     if (trust.action === 'deny') {
+      if (trust.error.code === 'PLUGIN_SIGNATURE_INVALID') {
+        recordPluginEvent(meta.id, 'signature-invalid', trust.error.message, { version: meta.version, sanitize: true })
+      } else if (trust.error.code === 'PLUGIN_UNSIGNED_UNTRUSTED') {
+        recordPluginEvent(meta.id, 'import-refused', 'unsigned and not from a trusted source', { version: meta.version })
+      }
       notifyError(describePluginError(trust.error))
       continue
     }
@@ -862,6 +1123,7 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
         const expected = getRecordedDigest(vault, meta.id)
         const reapprove = await askReapproveIntegrity(meta, expected ?? '', digest)
         if (!reapprove) {
+          recordPluginEvent(meta.id, 'verify-failed', 'code/manifest changed since approval; refused', { version: meta.version })
           notifyError(
             describePluginError(
               createPluginError('PLUGIN_VERIFY_FAILED', {
@@ -901,12 +1163,21 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
     }
     const definition = loadResult.definition
 
+    // The gated import ran (plugin code executed). Record the loaded version +
+    // digest and the load audit event so the governance policy can reason about
+    // future loads (version range, rollback, revocation).
+    recordPluginVersion(meta.id, meta.version, digest)
+    recordPluginEvent(meta.id, 'load', 'loaded', { version: meta.version })
+    saveGovernanceToStorage()
+    void flushAuditLogToFile()
+
     // Post-import defensive consent: a plugin may declare capabilities in its
     // code that were not in the manifest. Re-verify the merged set so a
     // code-level declaration is still consent-gated. (Top-level has run by now,
     // but we refuse to register/activate the plugin and surface the denial.)
     if (!(await askPluginPermission(meta, definition))) {
       const declared = collectPluginPermissions(meta, definition)
+      recordPluginEvent(meta.id, 'permission-denied', `declared permissions: ${declared.join(', ') || 'none'}`, { version: meta.version })
       notifyError(
         describePluginError(
           createPluginError('PLUGIN_PERMISSION_DENIED', {
@@ -990,11 +1261,23 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
                 message: `Plugin "${meta.name}" activation was cancelled.`,
                 recovery: 'Retry activation, or disable the plugin.',
               })
-            : createPluginError('PLUGIN_ACTIVATE_FAILED', {
-                pluginId: res.id,
-                message: `Plugin "${meta.name}" failed to activate: ${res.error ?? ''}`,
-                recovery: 'Disable and re-enable the plugin, or reinstall it.',
-              })
+            : code === 'PLUGIN_UNSTABLE'
+              ? createPluginError('PLUGIN_UNSTABLE', {
+                  pluginId: res.id,
+                  message: `Plugin "${meta.name}" is in an unstable state and requires re-approval before it can run again.`,
+                  recovery: 'Re-approve the plugin (reset), then reload the vault.',
+                })
+              : code === 'PLUGIN_QUOTA_EXCEEDED'
+                ? createPluginError('PLUGIN_QUOTA_EXCEEDED', {
+                    pluginId: res.id,
+                    message: `Plugin "${meta.name}" exceeded its session resource quota and was deactivated; re-approve it to run again.`,
+                    recovery: 'Re-approve the plugin to grant a fresh session budget.',
+                  })
+                : createPluginError('PLUGIN_ACTIVATE_FAILED', {
+                    pluginId: res.id,
+                    message: `Plugin "${meta.name}" failed to activate: ${res.error ?? ''}`,
+                    recovery: 'Disable and re-enable the plugin, or reinstall it.',
+                  })
       notifyError(describePluginError(error))
       console.warn(`[NekoWite] vault plugin failed to activate: ${res.id}`, error)
       continue
@@ -1002,4 +1285,8 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
     activeVaultPluginIds.push(res.id)
     console.info(`[NekoWite] vault plugin activated: ${res.id}`)
   }
+  // Flush the audit log to its file (best-effort) so the activate/deactivate/
+  // crash decisions recorded during this scan reach the persisted file, reflecting
+  // the full load + activation cycle rather than only the initial loads.
+  void flushAuditLogToFile()
 }

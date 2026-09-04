@@ -69,6 +69,9 @@ export type PluginErrorCode =
   | 'PLUGIN_HOOK_TIMEOUT'
   | 'PLUGIN_ABORTED'
   | 'PLUGIN_UNSTABLE'
+  | 'PLUGIN_REVOKED'
+  | 'PLUGIN_VERSION_REFUSED'
+  | 'PLUGIN_QUOTA_EXCEEDED'
 
 const DEFAULT_PLUGIN_ERROR_MESSAGE: Record<PluginErrorCode, string> = {
   PLUGIN_LOAD_FAILED: 'The plugin failed to load.',
@@ -85,6 +88,9 @@ const DEFAULT_PLUGIN_ERROR_MESSAGE: Record<PluginErrorCode, string> = {
   PLUGIN_HOOK_TIMEOUT: 'A lifecycle hook of the plugin exceeded its time budget and was cancelled.',
   PLUGIN_ABORTED: 'Plugin activation was cancelled.',
   PLUGIN_UNSTABLE: 'The plugin entered an unstable state and was disabled.',
+  PLUGIN_REVOKED: 'This plugin has been revoked and is no longer permitted to run.',
+  PLUGIN_VERSION_REFUSED: 'This plugin version is outside the supported version range.',
+  PLUGIN_QUOTA_EXCEEDED: 'The plugin exceeded its session resource quota and was disabled.',
 }
 
 const DEFAULT_PLUGIN_ERROR_RECOVERY: Record<PluginErrorCode, string> = {
@@ -102,6 +108,9 @@ const DEFAULT_PLUGIN_ERROR_RECOVERY: Record<PluginErrorCode, string> = {
   PLUGIN_HOOK_TIMEOUT: 'Disable the plugin or check its logs.',
   PLUGIN_ABORTED: 'Retry activation, or disable the plugin.',
   PLUGIN_UNSTABLE: 'Disable and re-enable the plugin, or reinstall it.',
+  PLUGIN_REVOKED: 'The publisher revoked this plugin; update or remove it.',
+  PLUGIN_VERSION_REFUSED: 'Update the plugin to a supported version, or remove it.',
+  PLUGIN_QUOTA_EXCEEDED: 'Let the plugin fail, then re-approve it to grant a fresh session budget.',
 }
 
 /** Union of error codes that represent a failure during plugin *loading*
@@ -114,6 +123,8 @@ const LOAD_PHASE_CODES: ReadonlySet<PluginErrorCode> = new Set<PluginErrorCode>(
   'PLUGIN_VERIFY_FAILED',
   'PLUGIN_SIGNATURE_INVALID',
   'PLUGIN_UNSIGNED_UNTRUSTED',
+  'PLUGIN_REVOKED',
+  'PLUGIN_VERSION_REFUSED',
 ])
 
 export interface PluginErrorOptions {
