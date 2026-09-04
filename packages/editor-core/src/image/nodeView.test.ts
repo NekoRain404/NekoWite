@@ -3,6 +3,8 @@ import type { Node as ProseNode } from '@milkdown/prose/model'
 
 import { configureImageResolver } from './resolver'
 import { makeImageNodeView } from './nodeView'
+import { imageSelectionPlugin } from './selection'
+import { createEditor, basicPlugins } from '../editor'
 
 /** Flush every pending microtask (resolver chain) before asserting. */
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
@@ -129,5 +131,28 @@ describe('image node view', () => {
     expect(retry).toBeTruthy()
     retry.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     expect(dom.getAttribute('data-failed')).toBe('false')
+  })
+
+  it('clicking the figure selects the image (handleClick -> NodeSelection)', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open('# t\n\n![](attachments/a.png)\n')
+    const view = editor.getView()
+    const fig = el.querySelector('.neko-image') as HTMLElement
+    expect(fig).toBeTruthy()
+    // A mouse click on a real editor goes through PM's click pipeline which
+    // invokes this handler; the jsdom synthetic click does not, so invoke the
+    // handler directly here (the E2E covers the pipeline end-to-end).
+    const props = imageSelectionPlugin.spec.props as {
+      handleClick: (v: unknown, pos: number, e: { target: EventTarget | null }) => boolean
+    }
+    const handled = props.handleClick(view, 0, { target: fig })
+    expect(handled).toBe(true)
+    const { NodeSelection } = await import('@milkdown/prose/state')
+    expect(view.state.selection instanceof NodeSelection).toBe(true)
+    const imageSel = view.state.selection as unknown as { node: { type: { name: string } } }
+    expect(imageSel.node.type.name).toBe('image')
+    editor.destroy()
   })
 })

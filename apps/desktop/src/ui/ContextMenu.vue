@@ -137,13 +137,20 @@ onBeforeUnmount(() => {
         v-for="item in items"
         :key="item.id"
       >
+        <!-- A separator is an optional LEADING divider, not a branch. An item
+             that sets `separator: true` AND still carries its own label
+             (FileTree's rename, TabBar's close-others) renders BOTH: the
+             divider up front, then the item itself. A pure separator item
+             (`{ id, separator: true }`, AttachmentsPanel) renders just the
+             divider — the v-if/v-else pair used to swallow such an item's
+             button entirely. -->
         <div
           v-if="item.separator"
           class="ctx-menu-separator"
           role="separator"
         />
         <button
-          v-else
+          v-if="!item.separator || Boolean(item.label)"
           class="ctx-menu-item"
           :class="{ 'is-danger': item.danger }"
           role="menuitem"
