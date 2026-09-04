@@ -3,6 +3,8 @@ pub mod fs;
 pub mod keys;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::Emitter;
 
@@ -12,6 +14,63 @@ impl Default for WatcherState {
     fn default() -> Self {
         Self(Mutex::new(None))
     }
+}
+
+/// Server-side record of the vault root(s) the user actually opened this
+/// session. The frontend registers a vault (via `register_vault`, or
+/// implicitly when the native folder dialog returns a pick) and every
+/// path-confined command then refuses a `vault_root` that is NOT in this set —
+/// closing the hole where window code could pass an arbitrary absolute path
+/// (e.g. `/home/user/.ssh`) as the "vault root" to read/write outside any
+/// vault the user opened.
+#[derive(Default)]
+pub struct VaultRegistry(Mutex<HashSet<PathBuf>>);
+
+impl VaultRegistry {
+    /// Record `root` (canonicalized) as an opened vault.
+    pub fn register(&self, root: &str) -> Result<PathBuf, String> {
+        let canonical = canonicalize_vault_root(root)?;
+        let mut set = self.0.lock().map_err(|e| e.to_string())?;
+        set.insert(canonical.clone());
+        Ok(canonical)
+    }
+
+    /// Prove `root` was opened by the user. Returns the canonicalized root or
+    /// an error with a recovery hint when the root was never authorized.
+    pub fn authorize(&self, root: &str) -> Result<PathBuf, String> {
+        let canonical = canonicalize_vault_root(root)?;
+        let set = self.0.lock().map_err(|e| e.to_string())?;
+        if set.contains(&canonical) {
+            Ok(canonical)
+        } else {
+            Err(vault_root_unauthorized_error(root))
+        }
+    }
+}
+
+/// Canonicalize a vault root, rejecting relative paths the same way the fs
+/// layer does.
+fn canonicalize_vault_root(root: &str) -> Result<PathBuf, String> {
+    let p = Path::new(root);
+    if !p.is_absolute() {
+        return Err("vault root must be an absolute path".into());
+    }
+    p.canonicalize()
+        .map_err(|e| format!("vault root not accessible: {e}"))
+}
+
+fn vault_root_unauthorized_error(root: &str) -> String {
+    format!(
+        "vault root is not open: {root}. \
+         The backend only serves paths inside a vault the user actually opened. \
+         Open the vault with register_vault (or pick it again with the folder dialog) before using it."
+    )
+}
+
+/// Require `root` to be a vault the user opened this session, or fail with a
+/// recovery hint. Called at the top of every path-confined command.
+fn require_opened_vault(registry: &VaultRegistry, root: &str) -> Result<(), String> {
+    registry.authorize(root).map(|_| ())
 }
 
 #[tauri::command]
@@ -27,12 +86,22 @@ fn ping() -> String {
 // main thread.
 
 #[tauri::command(rename_all = "snake_case")]
-async fn read_file(vault_root: String, path: String) -> Result<String, String> {
+async fn read_file(
+    vault_root: String,
+    path: String,
+    state: tauri::State<'_, VaultRegistry>,
+) -> Result<String, String> {
+    require_opened_vault(&state, &vault_root)?;
     fs::read_file(&vault_root, &path)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-async fn stat_file(vault_root: String, path: String) -> Result<fs::FileStat, String> {
+async fn stat_file(
+    vault_root: String,
+    path: String,
+    state: tauri::State<'_, VaultRegistry>,
+) -> Result<fs::FileStat, String> {
+    require_opened_vault(&state, &vault_root)?;
     fs::stat_file(&vault_root, &path)
 }
 
@@ -42,52 +111,99 @@ async fn write_file(
     path: String,
     content: String,
     max_history: Option<u32>,
+    state: tauri::State<'_, VaultRegistry>,
 ) -> Result<(), String> {
+    require_opened_vault(&state, &vault_root)?;
     fs::write_file(&vault_root, &path, &content, max_history)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-async fn delete_file(vault_root: String, path: String) -> Result<String, String> {
+async fn delete_file(
+    vault_root: String,
+    path: String,
+    state: tauri::State<'_, VaultRegistry>,
+) -> Result<String, String> {
+    require_opened_vault(&state, &vault_root)?;
     fs::delete_file(&vault_root, &path)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-async fn list_trash(vault_root: String) -> Result<Vec<fs::TrashEntry>, String> {
+async fn list_trash(
+    vault_root: String,
+    state: tauri::State<'_, VaultRegistry>,
+) -> Result<Vec<fs::TrashEntry>, String> {
+    require_opened_vault(&state, &vault_root)?;
     fs::list_trash(&vault_root)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-async fn restore_from_trash(vault_root: String, trash_path: String) -> Result<String, String> {
+async fn restore_from_trash(
+    vault_root: String,
+    trash_path: String,
+    state: tauri::State<'_, VaultRegistry>,
+) -> Result<String, String> {
+    require_opened_vault(&state, &vault_root)?;
     fs::restore_from_trash(&vault_root, &trash_path)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-async fn clear_trash(vault: String) -> Result<usize, String> {
+async fn clear_trash(
+    vault: String,
+    state: tauri::State<'_, VaultRegistry>,
+) -> Result<usize, String> {
+    require_opened_vault(&state, &vault)?;
     fs::clear_trash(&vault)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-async fn list_history(vault_root: String, path: String) -> Result<Vec<fs::HistoryEntry>, String> {
+async fn list_history(
+    vault_root: String,
+    path: String,
+    state: tauri::State<'_, VaultRegistry>,
+) -> Result<Vec<fs::HistoryEntry>, String> {
+    require_opened_vault(&state, &vault_root)?;
     fs::list_history(&vault_root, &path)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-async fn read_history(vault_root: String, path: String, id: String) -> Result<String, String> {
+async fn read_history(
+    vault_root: String,
+    path: String,
+    id: String,
+    state: tauri::State<'_, VaultRegistry>,
+) -> Result<String, String> {
+    require_opened_vault(&state, &vault_root)?;
     fs::read_history(&vault_root, &path, &id)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-async fn restore_history(vault_root: String, path: String, id: String) -> Result<String, String> {
+async fn restore_history(
+    vault_root: String,
+    path: String,
+    id: String,
+    state: tauri::State<'_, VaultRegistry>,
+) -> Result<String, String> {
+    require_opened_vault(&state, &vault_root)?;
     fs::restore_history(&vault_root, &path, &id)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-async fn list_dir(vault_root: String, path: Option<String>) -> Result<Vec<fs::FileEntry>, String> {
+async fn list_dir(
+    vault_root: String,
+    path: Option<String>,
+    state: tauri::State<'_, VaultRegistry>,
+) -> Result<Vec<fs::FileEntry>, String> {
+    require_opened_vault(&state, &vault_root)?;
     fs::list_dir(&vault_root, path.as_deref())
 }
 
 #[tauri::command(rename_all = "snake_case")]
-async fn search_notes(vault_root: String, query: String) -> Result<Vec<fs::FileEntry>, String> {
+async fn search_notes(
+    vault_root: String,
+    query: String,
+    state: tauri::State<'_, VaultRegistry>,
+) -> Result<Vec<fs::FileEntry>, String> {
+    require_opened_vault(&state, &vault_root)?;
     fs::search_notes(&vault_root, &query, 100)
 }
 
@@ -97,27 +213,61 @@ async fn save_attachment(
     file_name: String,
     base64: String,
     dir: String,
+    state: tauri::State<'_, VaultRegistry>,
 ) -> Result<String, String> {
+    require_opened_vault(&state, &vault)?;
     fs::save_attachment(&vault, &file_name, &base64, &dir)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-async fn resolve_media_path(vault: String, rel_path: String) -> Result<String, String> {
+async fn resolve_media_path(
+    vault: String,
+    rel_path: String,
+    state: tauri::State<'_, VaultRegistry>,
+) -> Result<String, String> {
+    require_opened_vault(&state, &vault)?;
     fs::resolve_media_path(&vault, &rel_path)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-async fn create_dir(vault: String, path: String) -> Result<String, String> {
+async fn create_dir(
+    vault: String,
+    path: String,
+    state: tauri::State<'_, VaultRegistry>,
+) -> Result<String, String> {
+    require_opened_vault(&state, &vault)?;
     fs::create_dir(&vault, &path)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-async fn rename_entry(vault: String, from: String, to: String) -> Result<String, String> {
+async fn rename_entry(
+    vault: String,
+    from: String,
+    to: String,
+    state: tauri::State<'_, VaultRegistry>,
+) -> Result<String, String> {
+    require_opened_vault(&state, &vault)?;
     fs::rename_entry(&vault, &from, &to)
 }
 
+/// Register a vault root the user opened. Call this right after the user picks
+/// a vault (folder dialog) or restores a previously opened one, BEFORE any
+/// path-confined command, so the backend will serve it. This is the authority
+/// that lets path-confined commands distinguish "a vault the user opened" from
+/// arbitrary absolute paths.
+#[tauri::command(rename_all = "snake_case")]
+fn register_vault(
+    vault_root: String,
+    state: tauri::State<'_, VaultRegistry>,
+) -> Result<(), String> {
+    state.register(&vault_root).map(|_| ())
+}
+
 #[tauri::command]
-async fn open_folder_dialog(app: tauri::AppHandle) -> Result<Option<String>, String> {
+async fn open_folder_dialog(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, VaultRegistry>,
+) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     let picked = app
         .dialog()
@@ -125,6 +275,11 @@ async fn open_folder_dialog(app: tauri::AppHandle) -> Result<Option<String>, Str
         .blocking_pick_folder()
         .and_then(|f| f.into_path().ok())
         .map(|p| p.to_string_lossy().to_string());
+    // The native dialog is a genuine user gesture, so the picked folder is a
+    // vault the user actually opened — register it so fs commands can serve it.
+    if let Some(ref path) = picked {
+        let _ = state.register(path);
+    }
     Ok(picked)
 }
 
@@ -154,9 +309,11 @@ async fn save_file_dialog(
 async fn watch_folder(
     app: tauri::AppHandle,
     state: tauri::State<'_, WatcherState>,
+    vault_registry: tauri::State<'_, VaultRegistry>,
     vault_root: String,
     path: Option<String>,
 ) -> Result<(), String> {
+    require_opened_vault(&vault_registry, &vault_root)?;
     allow_vault_media(&app, &vault_root);
     let resolved = match path {
         Some(p) => fs::resolve_within(&vault_root, &p)?,
@@ -248,6 +405,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(WatcherState::default())
+        .manage(VaultRegistry::default())
         .manage(ai::AiState::default())
         .manage(keys::KeyVault::default())
         .invoke_handler(tauri::generate_handler![
@@ -268,6 +426,7 @@ pub fn run() {
             resolve_media_path,
             create_dir,
             rename_entry,
+            register_vault,
             open_folder_dialog,
             save_file_dialog,
             watch_folder,
@@ -276,7 +435,8 @@ pub fn run() {
             ai::ai_list_models,
             keys::store_ai_key,
             keys::load_ai_key,
-            keys::set_master_password
+            keys::set_master_password,
+            keys::unlock_vault
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

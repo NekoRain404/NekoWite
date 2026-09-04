@@ -2565,6 +2565,7 @@ dependencies = [
  "iota_stronghold",
  "notify",
  "reqwest 0.12.28",
+ "rust-argon2 2.1.0",
  "serde",
  "serde_json",
  "sha2",
