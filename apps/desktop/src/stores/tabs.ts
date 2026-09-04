@@ -5,6 +5,7 @@ import { armSuppressReapply } from '../services/suppressReapply'
 import { fsService } from '../services/fs'
 import type { HistoryEntry } from '../services/gateways/contracts'
 import { notifyError, notifyRecovery } from '../services/errors'
+import { announce } from '../services/announcer'
 import { t as i18nT } from '../i18n'
 import { assetsDirForNote, moveAttachments, rewireTempRefsInContent } from '../services/renameAsset'
 import { useSettingsStore } from './settings'
@@ -372,6 +373,8 @@ export const useTabsStore = defineStore('tabs', () => {
         t.dirty = false
       }
       emitLifecycle('onSaved', editor, content)
+      // Screen-reader status: a save round-trip landed (dirty → saved).
+      announce(i18nT('recovery.saved'))
       return true
     } catch {
       notifyError(i18nT('tabs.saveFailed'))
@@ -415,6 +418,7 @@ export const useTabsStore = defineStore('tabs', () => {
       t.content = content
       t.savedContent = content
       t.dirty = false
+      announce(i18nT('recovery.restored'))
       return content
     } catch {
       notifyError(i18nT('tabs.restoreHistoryFailed'))
@@ -481,5 +485,29 @@ export const useTabsStore = defineStore('tabs', () => {
     return ok
   }
 
-  return { tabs, activeId, activeTab, vault, setVault, openTab, closeTab, closeAll, closeOthers, renamePathInTabs, removeTab, setActive, markDirty, markSaving, markSaved, saveStateOf, noteSelfWrite, isSelfWrite, saveActive, reloadFromDisk, scheduleAutosave, cancelAutosave, saveTab, deleteTabFile, restoreHistoryToActive, checkCrashRecovery, captureSession, restoreSession, hasUnsavedWork, flushDirty }
+  /** Untitled tabs (no path) holding unsaved edits. These need a Save-As dialog
+   *  a background flush must not open, so a vault switch must prompt first —
+   *  see {@link untitledDirtyTabs} consumers (vault-switch guard). */
+  function untitledDirtyTabs(): OpenTab[] {
+    return tabs.value.filter((t) => !t.path && t.dirty)
+  }
+
+  /** Vault-relative `.tmp` paths still referenced by any open tab — either a
+   *  staged asset awaiting relocation (`pendingAssetPaths`) or a live `![alt](
+   *  .tmp/… )` ref in the note body. The recovery closed-loop uses this as the
+   *  "not orphaned" predicate so a still-referenced temp file is never GC'd. */
+  function referencedTmpPaths(): Set<string> {
+    const referenced = new Set<string>()
+    for (const tab of tabs.value) {
+      for (const path of tab.pendingAssetPaths) referenced.add(path)
+      if (tab.content) {
+        for (const match of tab.content.matchAll(/\.tmp\/[^\s"')\]>,]+/g)) {
+          referenced.add(match[0])
+        }
+      }
+    }
+    return referenced
+  }
+
+  return { tabs, activeId, activeTab, vault, setVault, openTab, closeTab, closeAll, closeOthers, renamePathInTabs, removeTab, setActive, markDirty, markSaving, markSaved, saveStateOf, noteSelfWrite, isSelfWrite, saveActive, reloadFromDisk, scheduleAutosave, cancelAutosave, saveTab, deleteTabFile, restoreHistoryToActive, checkCrashRecovery, captureSession, restoreSession, hasUnsavedWork, flushDirty, untitledDirtyTabs, referencedTmpPaths }
 })

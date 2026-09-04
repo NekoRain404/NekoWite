@@ -1,13 +1,16 @@
-import { ref, type Ref } from 'vue'
+import { ref, watch, type Ref } from 'vue'
 import type { NekoEditor } from '@nekowite/editor-core'
 import {
   applySpellReplacement,
   cancelOverlayRefresh,
   getView,
+  renderSearchState,
   scheduleOverlayRefresh,
   setSpellEnabled,
   suggestionsFromAttr,
 } from '../../../services/renderSearch'
+import { announce } from '../../../services/announcer'
+import { t } from '../../../i18n'
 import type { DocumentSession } from '../model/documentSession'
 
 export interface EditorSearchOverlayDeps {
@@ -35,6 +38,8 @@ export interface EditorSearchOverlay {
   syncSpellEnabled(enabled: boolean): void
   /** Register the overlay change listener; returns an unsubscribe. */
   attachChangeListener(): () => void
+  /** Stop the internal reactive subscriptions (call on pane teardown). */
+  dispose(): void
   closeSearch(): void
   openSpellPopup(span: HTMLElement, clientX: number, clientY: number): void
   handleSpellSuggestion(text: string): void
@@ -51,6 +56,18 @@ export interface EditorSearchOverlay {
 export function createEditorSearchOverlay(deps: EditorSearchOverlayDeps): EditorSearchOverlay {
   const searchOpen = ref(false)
   const spellPopup = ref<SpellPopup | null>(null)
+
+  // Live-region: announce the live match count as the user types a query, so a
+  // keyboard-only / screen-reader user hears "N matches" or "no matches" without
+  // having to keep the count text in view. Only while the find panel is open.
+  const stopCountAnnouncer = watch(
+    () => renderSearchState.ranges.length,
+    (count) => {
+      if (!searchOpen.value) return
+      if (count === 0) announce(t('find.notFound'), { assertive: true })
+      else announce(t('recovery.searchCount', { count }))
+    },
+  )
 
   function scheduleRefresh(): void {
     scheduleOverlayRefresh()
@@ -98,6 +115,10 @@ export function createEditorSearchOverlay(deps: EditorSearchOverlayDeps): Editor
     spellPopup.value = null
   }
 
+  function dispose(): void {
+    stopCountAnnouncer()
+  }
+
   return {
     searchOpen,
     spellPopup,
@@ -105,6 +126,7 @@ export function createEditorSearchOverlay(deps: EditorSearchOverlayDeps): Editor
     cancelRefresh,
     syncSpellEnabled,
     attachChangeListener,
+    dispose,
     closeSearch,
     openSpellPopup,
     handleSpellSuggestion,

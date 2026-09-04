@@ -100,14 +100,22 @@ makes the lost window **recoverable** (not silently dropped):
   note's assets dir on first save (`relocatePendingAssets`). If a crash happens before the
   first save, the `.tmp` asset is still on disk and the note body still references it, so a
   later save relocates it. Failed/stranded `.tmp` assets do not block saving (best-effort).
-
-Crash-litter cleanup of orphaned `.tmp` files is **not yet automatic**; it is a known
-follow-up. The `.tmp` reference model guarantees no content is silently dropped, only
-potentially stranded.
+- **Orphaned `.tmp` scan + auto-GC** (`app/recoveryClosedLoop.ts`): on vault open the app
+  scans `.tmp`, then partitions the files into *referenced* (still held by an open tab — a
+  pending staged asset or a `.tmp` src in the live body) and *orphaned* (crash-litter nobody
+  references). Referenced files are left for the normal relocation-on-save. Orphaned files
+  surface a **recoverable-versions notice** (Restore moves them into the vault attachment
+  library so the image data survives; Dismiss leaves them for the age sweep) and, when older
+  than a threshold (7 days), are **auto-GC'd** (moved to the trash, so they stay recoverable)
+  provided they are still confirmed untracked. The scan and GC are cancellable and
+  non-blocking (fire-and-forget from the bootstrap, never awaiting the vault open), and re-arm
+  on each vault switch after cancelling the prior vault's in-flight run.
 
 Tests: `stores/tabs.test.ts` `checkCrashRecovery` (differs → prompt, identical → null,
 file newer → null), `stores/tabs.test.ts` crash-recovery prompt + restore,
-`stores/tabs.test.ts` `.tmp` relocation on first save.
+`stores/tabs.test.ts` `.tmp` relocation on first save,
+`app/recoveryClosedLoop.test.ts` (orphan scan → notice + restore-to-attachments, referenced
+excluded, GC age threshold, cancel mid-flight).
 
 ---
 
@@ -121,14 +129,19 @@ Closing the app (window close) or switching vaults must not silently drop unsave
   the session (so tabs are reopened) and flushes window geometry. Because it cannot await an
   async save inside `beforeunload`, the confirm is the guard; the history snapshot from the
   last autosave remains recoverable on reopen.
-- On **vault switch** (`App.vue` `applyVault`), the app flushes all path'd dirty tabs
+- On **vault switch** (`appBootstrap.ts` `applyVault`), the app flushes all path'd dirty tabs
   (`tabs.flushDirty()`) before `closeAll()`. If any save fails it aborts the switch (and
-  shows a toast) rather than losing the edits. Untitled tabs are skipped by `flushDirty`
-  (they need a Save-As dialog, which a background flush must not open) and are still
-  protected by the `beforeunload` prompt on app close.
+  shows a toast) rather than losing the edits. Untitled tabs (no path) are skipped by
+  `flushDirty` (they need a Save-As dialog, which a background flush must not open); a switch
+  now checks `tabs.untitledDirtyTabs()` and, if any exist, surfaces a **keep-or-discard
+  prompt** (`requestUntitledVaultSwitch`) and **blocks the switch** until the user chooses:
+  "Restore" saves each via Save-As then proceeds, "Dismiss" discards them then proceeds — so
+  unnamed dirty work is never silently dropped by a switch (P0.4).
 
 Tests: `stores/tabs.test.ts` `hasUnsavedWork`, `flushDirty` (saves path'd dirty tabs, skips
-untitled, returns false on save failure).
+untitled, returns false on save failure), `untitledDirtyTabs`, `referencedTmpPaths`;
+`app/recoveryClosedLoop.test.ts` `requestUntitledVaultSwitch` (restore → save, dismiss →
+discard).
 
 ---
 
@@ -150,7 +163,11 @@ untitled, returns false on save failure).
    crash recovery: newest history newer than disk → prompt → restore
       │
       ▼
+   orphaned `.tmp` scan on vault open → recoverable-versions notice + age GC
+      │
+      ▼
    unsaved-work guard: beforeunload prompt + vault-switch flushDirty
+       + unnamed dirty prompt (keep-or-discard, blocks the switch)
 ```
 
 Nothing in the above descends into destroying or rewriting the user's Markdown source

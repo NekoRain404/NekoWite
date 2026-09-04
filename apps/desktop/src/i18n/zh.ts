@@ -339,6 +339,7 @@ export const zh = {
     reloadFailed: '无法重新加载文件：{path}，已保留当前内容',
     unsavedWorkPrompt: '你有未保存的更改，仍要离开吗？',
     unsavedWorkBlocker: '部分文件无法保存，未切换 vault',
+    untitledVaultSwitchMsg: '你有 {count} 个未命名的未保存文档。选择“恢复”在切换前保存；选择“忽略”则丢弃。',
     aria: '打开的文档',
   },
   titlebar: {
@@ -545,6 +546,14 @@ export const zh = {
   toast: {
     restore: '恢复',
     dismiss: '忽略',
+  },
+  recovery: {
+    saved: '文档已保存',
+    restored: '已恢复历史版本',
+    searchCount: '找到 {count} 处匹配',
+    wordGoalReached: '已达成字数目标：{goal} 字',
+    wordGoalProgress: '已完成 {current} / {goal} 字',
+    tmpNotice: '发现 {count} 个因会话中断遗留的可恢复临时文件。',
   },
   plugin: {
     loadFailed: '插件加载失败：{id}（{error}）',

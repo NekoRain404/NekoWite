@@ -1,4 +1,4 @@
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import type { NekoEditor } from '@nekowite/editor-core'
 import { useAppearanceStore } from '../../../stores/appearance'
 import { useTabsStore } from '../../../stores/tabs'
@@ -8,6 +8,8 @@ import {
   shouldCenterScroll,
   wordProgress,
 } from '../../../services/editorBehaviors'
+import { announce } from '../../../services/announcer'
+import { t } from '../../../i18n'
 
 export interface UseEditorFocusOptions {
   /** Returns the live editor (may be null before/after mount). */
@@ -86,6 +88,19 @@ export function useEditorFocus(options: UseEditorFocusOptions) {
   const wordProgressPct = computed(() =>
     Math.round(wordProgress(wordCount.value, appearance.wordGoal) * 100),
   )
+
+  // Live-region: annonce when the word goal is reached (or the user crosses back
+  // below it while the goal is set) so a screen-reader user hears the milestone
+  // without re-reading the whole status line.
+  watch(wordGoalMet, (met) => {
+    // Only announce when a goal is actually set (goal=0 disables the widget).
+    if (appearance.wordGoal === 0) return
+    announce(
+      met
+        ? t('recovery.wordGoalReached', { goal: appearance.wordGoal })
+        : t('recovery.wordGoalProgress', { current: wordCount.value, goal: appearance.wordGoal }),
+    )
+  })
 
   return {
     wordCount,
