@@ -64,7 +64,7 @@ async function refreshModels(): Promise<void> {
   try {
     await settings.listModels()
   } catch (e) {
-    notifyError(`获取模型失败：${e instanceof Error ? e.message : String(e)}`)
+    notifyError(t('aiSettings.getModelsFailed', { msg: e instanceof Error ? e.message : String(e) }))
   } finally {
     modelLoading.value = false
   }
@@ -671,7 +671,7 @@ function onExportPdf(): void {
               v-else-if="activeSection === 'ai'"
               class="settings-section"
             >
-              <span class="settings-label">AI 设置</span>
+              <span class="settings-label">{{ t('settings.section.ai') }}</span>
               <label class="settings-field">
                 <span>Provider</span>
                 <select
@@ -709,7 +709,7 @@ function onExportPdf(): void {
                   <button
                     class="btn btn-secondary btn-sm model-refresh"
                     :disabled="modelLoading"
-                    title="刷新模型列表"
+                    :title="t('aiSettings.refreshModels')"
                     @click="refreshModels"
                   >
                     <RefreshCw
@@ -718,7 +718,7 @@ function onExportPdf(): void {
                       class="model-refresh-icon"
                       :class="{ spin: modelLoading }"
                     />
-                    <span>刷新</span>
+                    <span>{{ t('aiSettings.refresh') }}</span>
                   </button>
                 </div>
               </label>
@@ -747,9 +747,9 @@ function onExportPdf(): void {
                 class="btn btn-secondary settings-save"
                 @click="saveAiKey"
               >
-                保存 Key
+                {{ t('aiSettings.saveKey') }}
               </button>
-              <span class="settings-note">Key 经加密存储，由主密码保护（本机文件级）。</span>
+              <span class="settings-note">{{ t('aiSettings.keyNote') }}</span>
               <label class="settings-field settings-toggle">
                 <span>{{ t('aiSettings.systemPrompt') }}</span>
                 <input

@@ -459,6 +459,7 @@ export const zh = {
     baseUrl: 'Base URL',
     apiKey: 'API Key',
     refreshModels: '刷新模型列表',
+    getModelsFailed: '获取模型失败：{msg}',
     refresh: '刷新',
     saveKey: '保存 Key',
     keyNote: 'Key 经加密存储，由主密码保护（本机文件级）。',

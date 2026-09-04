@@ -459,6 +459,7 @@ export const en = {
     baseUrl: 'Base URL',
     apiKey: 'API Key',
     refreshModels: 'Refresh model list',
+    getModelsFailed: 'Failed to fetch models: {msg}',
     refresh: 'Refresh',
     saveKey: 'Save key',
     keyNote: 'Keys are encrypted and protected by your master password (local).',

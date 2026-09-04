@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { createEditor, basicPlugins, configureImageResolver, configureHeadingAnchorUrl } from '@nekowite/editor-core'
+import { createEditor, basicPlugins, configureImageResolver, configureHeadingAnchorUrl, configureWikilinkHandler } from '@nekowite/editor-core'
 import type { NekoEditor } from '@nekowite/editor-core'
 import { emitLifecycle, setActiveEditor } from '@nekowite/plugin-host'
 import { consumeSuppressReapply } from '../services/suppressReapply'
@@ -9,6 +9,7 @@ import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 import { useFloatStore } from '../stores/float'
 import { useAppearanceStore } from '../stores/appearance'
+import { useLibraryStore } from '../stores/library'
 import { resolveDirection } from '../services/rtl'
 import { notifyError } from '../services/errors'
 import { t } from '../i18n'
@@ -21,6 +22,7 @@ import RenderSearchPanel from './RenderSearchPanel.vue'
 import RenameDialog from '../components/RenameDialog.vue'
 import { assetsDirForNote, suggestRename } from '../services/renameAsset'
 import { parseOutline } from '../services/outline'
+import { dirRelativeToVault } from '../services/noteMeta'
 import { anchorHeadingIndex, countDocumentLines, lineRatio } from '../services/scrollSyncAnchors'
 import {
   collectClipboardImages,
@@ -35,6 +37,7 @@ const tabs = useTabsStore()
 const view = useViewStore()
 const floatStore = useFloatStore()
 const appearance = useAppearanceStore()
+const library = useLibraryStore()
 
 const searchOpen = ref(false)
 const spellPopup = ref<{ x: number; y: number; from: number; to: number; word: string; suggestions: string[] } | null>(null)
@@ -403,6 +406,17 @@ onMounted(async () => {
     if (!path || !vault) return `#${slug}`
     return `${vault.replace(/\/+$/, '')}/${path}#${slug}`
   })
+  // Ctrl/Cmd+click on a [[wikilink]] chip opens the target note. Resolve the
+  // wiki target against the current note's vault-relative directory using the
+  // library index (same resolution as the backlinks/links panels).
+  configureWikilinkHandler((target) => {
+    const path = tabs.activeTab?.path
+    const vault = tabs.vault
+    if (!path || !vault) return
+    const relDir = dirRelativeToVault(path, vault)
+    const resolved = library.resolveLinkPath(relDir, target)
+    if (resolved) void tabs.openTab(resolved)
+  })
   const current = tabs.activeTab
   if (current) await applyContent(current.content)
 
@@ -490,6 +504,7 @@ onBeforeUnmount(() => {
   setCalloutView(null)
   configureImageResolver(null)
   configureHeadingAnchorUrl(null)
+  configureWikilinkHandler(null)
   editorBridge.setEditor(null)
   setActiveEditor(null)
   editorEl.value?.removeEventListener('pointerdown', onContainerPointerDownCapture, true)

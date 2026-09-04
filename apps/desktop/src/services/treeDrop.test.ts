@@ -45,9 +45,15 @@ describe('resolveDropTarget', () => {
     expect(r).toMatchObject({ ok: true, reason: 'ok', from: 'docs', to: 'archive/docs' })
   })
 
-  it('moves a file to the vault root (bare basename)', () => {
-    const r = resolveDropTarget(rows, 'docs/a.md', '.', '.')
-    expect(r).toMatchObject({ ok: true, reason: 'ok', from: 'docs/a.md', to: 'a.md' })
+  it('moves a file to the vault root (absolute root re-parents)', () => {
+    const absRows: DropRow[] = [
+      { path: '/vault', isDir: true },
+      { path: '/vault/docs', isDir: true },
+      { path: '/vault/docs/a.md', isDir: false },
+      { path: '/vault/b.md', isDir: false },
+    ]
+    const r = resolveDropTarget(absRows, '/vault/docs/a.md', '/vault', '/vault')
+    expect(r).toMatchObject({ ok: true, reason: 'ok', from: '/vault/docs/a.md', to: '/vault/a.md' })
   })
 
   it('rejects dropping a node onto itself', () => {
@@ -64,13 +70,13 @@ describe('resolveDropTarget', () => {
   })
 
   it('rejects a destination that already exists (conflict)', () => {
-    const rowsWithRootFile: DropRow[] = [
-      { path: '.', isDir: true },
-      { path: 'docs', isDir: true },
-      { path: 'docs/a.md', isDir: false },
-      { path: 'a.md', isDir: false },
+    const rootFileRows: DropRow[] = [
+      { path: '/vault', isDir: true },
+      { path: '/vault/docs', isDir: true },
+      { path: '/vault/docs/a.md', isDir: false },
+      { path: '/vault/a.md', isDir: false },
     ]
-    const r = resolveDropTarget(rowsWithRootFile, 'docs/a.md', '.', '.')
+    const r = resolveDropTarget(rootFileRows, '/vault/docs/a.md', '/vault', '/vault')
     expect(r.reason).toBe('conflict')
     expect(r.ok).toBe(false)
     expect(r.to).toBeNull()
@@ -89,11 +95,11 @@ describe('resolveDropTarget', () => {
 
   it('treats a no-op reposition as self', () => {
     // A file that already lives at root dropped onto the root is a no-op.
-    const plain: DropRow[] = [
-      { path: '.', isDir: true },
-      { path: 'a.md', isDir: false },
+    const plainRoot: DropRow[] = [
+      { path: '/vault', isDir: true },
+      { path: '/vault/a.md', isDir: false },
     ]
-    const noop = resolveDropTarget(plain, 'a.md', '.', '.')
+    const noop = resolveDropTarget(plainRoot, '/vault/a.md', '/vault', '/vault')
     expect(noop.reason).toBe('self')
     expect(noop.ok).toBe(false)
   })

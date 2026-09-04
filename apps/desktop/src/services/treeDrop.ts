@@ -86,8 +86,11 @@ export function resolveDropTarget(
   }
 
   const name = basename(dragPath)
+  // Always build the destination as an absolute path (the same space `from`
+  // and the row paths live in). Dropping onto the vault root re-parents the
+  // entry to the root, so the destination is `<rootPath>/<name>`.
   const to = rootPath !== undefined && targetPath === rootPath
-    ? name
+    ? joinPath(rootPath, name)
     : joinPath(targetPath, name)
 
   // Relocating to the place it already lives (e.g. dragging a root file who
