@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { NodeSelection } from '@milkdown/prose/state'
 import {
   getImageAttrs,
   deleteImageNode,
@@ -80,10 +81,30 @@ function syncFromNode(): void {
   if (attrs.src) probe.src = attrs.src
 }
 
+/**
+ * `updateImageAttrs` writes the new attrs with a `setNodeMarkup` transaction.
+ * On a leaf node that is a ReplaceStep at the selection anchor, and
+ * ProseMirror's mapping treats the anchor boundary of such a replace as
+ * "deleted" — so the NodeSelection is remapped to a text caret, the image
+ * selection plugin emits null, and the panel would close itself after every
+ * single field edit (typing one character in Alt would dismiss the panel;
+ * a multi-field edit was impossible). Restoring the NodeSelection with a
+ * selection-only transaction (no doc change, no undo step) keeps the panel
+ * open across a series of edits. The same repair belongs in editor-core's
+ * attribute writers — this panel-level repair is the contract the UI needs.
+ */
+function reselectImage(view: ReturnType<NekoEditor['getView']>, pos: number): void {
+  const node = view.state.doc.nodeAt(pos)
+  if (!node || node.type.name !== 'image') return
+  view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, pos)))
+}
+
 const patch = (p: Record<string, unknown>): void => {
   const sel = selected.value
   if (!sel || !props.editor || syncing) return
-  updateImageAttrs(props.editor.getView(), sel.pos, p as never)
+  const view = props.editor.getView()
+  updateImageAttrs(view, sel.pos, p as never)
+  reselectImage(view, sel.pos)
 }
 
 // `flush: 'sync'` is essential: without it Vue fires these watchers
@@ -118,15 +139,21 @@ watch(link, (v) => {
 function onRestore(): void {
   const sel = selected.value
   if (!sel || !props.editor) return
-  restoreImageSize(props.editor.getView(), sel.pos)
+  const view = props.editor.getView()
+  restoreImageSize(view, sel.pos)
+  reselectImage(view, sel.pos)
   width.value = ''
   syncFromNode()
 }
 function onReplace(): void {
   const sel = selected.value
   if (!sel || !props.editor) return
+  const view = props.editor.getView()
   const src = link.value.trim()
-  if (src) updateImageAttrs(props.editor.getView(), sel.pos, { src })
+  if (src) {
+    updateImageAttrs(view, sel.pos, { src })
+    reselectImage(view, sel.pos)
+  }
 }
 function onDelete(): void {
   const sel = selected.value

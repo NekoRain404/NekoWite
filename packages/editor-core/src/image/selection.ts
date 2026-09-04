@@ -67,6 +67,26 @@ function selectionToImage(selection: NodeSelection): ImageSelectionState | null 
  */
 export const imageSelectionPlugin = new Plugin({
   key: IMAGE_SELECTION_PLUGIN_KEY,
+  props: {
+    // Click-to-select: the image is an atom, so ProseMirror's default click
+    // would place a text caret NEXT to it (and never reach a NodeSelection,
+    // which is what opens the property panel — only the arrow-key image keymap
+    // produced one before). The click-position `pos` is the text position BESIDE
+    // the atom, so detect the click by its DOM target (the image node view's
+    // `.neko-image` figure), resolve the node's real position via posAtDOM, and
+    // select it. Returning `true` (handled) stops PM's default caret placement.
+    handleClick: (view, _pos, event) => {
+      const target = event.target as Element | null
+      const figure = target?.closest?.('.neko-image')
+      if (!figure) return false
+      const nodePos = view.posAtDOM(figure, 0)
+      const node = view.state.doc.nodeAt(nodePos)
+      if (!node || node.type.name !== 'image') return false
+      const tr = view.state.tr.setSelection(NodeSelection.create(view.state.doc, nodePos))
+      if (!tr.selection.eq(view.state.selection)) view.dispatch(tr)
+      return true
+    },
+  },
   view: (view: EditorView) => {
     const sync = (): void => {
       const sel = view.state.selection

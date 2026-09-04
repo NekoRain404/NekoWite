@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { createApp, type App as VueApp } from 'vue'
 import { NodeSelection } from '@milkdown/prose/state'
-import { createEditor, basicPlugins } from '@nekowite/editor-core'
+import { createEditor, basicPlugins, getImageAttrs } from '@nekowite/editor-core'
 import type { NekoEditor } from '@nekowite/editor-core'
 import ImagePanel from './ImagePanel.vue'
 
@@ -148,5 +148,61 @@ describe('ImagePanel accessibility', () => {
 
     expect(document.querySelector('.neko-image-panel')).toBeNull()
     expect(document.activeElement).toBe(outside)
+  })
+
+  // Regression (B3 real-usage): a `setNodeMarkup` write is a same-size replace
+  // AT the NodeSelection anchor; ProseMirror's mapping treats the anchor
+  // boundary as deleted and remaps the selection to a text caret. Left alone,
+  // the image-selection plugin emits null on the FIRST typed character and the
+  // panel closes itself mid-edit. The panel re-establishes the NodeSelection
+  // after each write, so a user can keep editing field after field.
+  it('stays open and keeps the image selected across an attribute edit', async () => {
+    const { editor, pos } = await makeImageEditor()
+    mountPanel(editor)
+    editor.getView().dispatch(
+      editor.getView().state.tr.setSelection(NodeSelection.create(editor.getView().state.doc, pos)),
+    )
+    await flush()
+
+    const altInput = document.getElementById('neko-image-alt') as HTMLInputElement
+    altInput.value = 'high res'
+    altInput.dispatchEvent(new Event('input', { bubbles: true }))
+    await flush()
+
+    // The write landed in the doc model ...
+    const view = editor.getView()
+    expect(getImageAttrs(view, pos)?.alt).toBe('high res')
+    // ... and the panel survived: still visible, still focused, still selected.
+    expect(document.querySelector('.neko-image-panel')).not.toBeNull()
+    expect(document.activeElement).toBe(altInput)
+    expect(view.state.selection).toBeInstanceOf(NodeSelection)
+    expect((view.state.selection as NodeSelection).from).toBe(pos)
+  })
+
+  it('stays open across a series of edits (alt, then width, then align)', async () => {
+    const { editor, pos } = await makeImageEditor()
+    mountPanel(editor)
+    editor.getView().dispatch(
+      editor.getView().state.tr.setSelection(NodeSelection.create(editor.getView().state.doc, pos)),
+    )
+    await flush()
+
+    const altInput = document.getElementById('neko-image-alt') as HTMLInputElement
+    altInput.value = 'resized'
+    altInput.dispatchEvent(new Event('input', { bubbles: true }))
+    await flush()
+    const widthInput = document.getElementById('neko-image-width') as HTMLInputElement
+    widthInput.value = '240'
+    widthInput.dispatchEvent(new Event('input', { bubbles: true }))
+    await flush()
+    const alignSelect = document.getElementById('neko-image-align') as HTMLSelectElement
+    alignSelect.value = 'center'
+    alignSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    await flush()
+
+    const attrs = getImageAttrs(editor.getView(), pos)
+    expect(attrs).toMatchObject({ alt: 'resized', width: 240, align: 'center' })
+    expect(document.querySelector('.neko-image-panel')).not.toBeNull()
+    expect(editor.getView().state.selection).toBeInstanceOf(NodeSelection)
   })
 })
