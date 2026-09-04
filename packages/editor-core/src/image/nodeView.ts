@@ -4,6 +4,7 @@ import type { NodeViewConstructor } from '@milkdown/prose/view'
 import { resolveImageSrc } from './resolver'
 import { imageDimSchema } from './schema'
 import { nextWidth } from './resize'
+import { advanceResizeDrag, beginResizeDrag, commitResizeDrag } from './drag'
 
 /**
  * Node view for the commonmark `image` node.
@@ -86,19 +87,29 @@ export const makeImageNodeView: NodeViewConstructor = (node, view, getPos) => {
     event.preventDefault()
     const startWidth = Number(node.attrs.width) || dom.clientWidth || 0
     const startX = event.clientX
+    // A drag is one atomic gesture: buffer every move and commit a single
+    // transaction (a single undo step) when the pointer lifts. The live visual
+    // tracks the drag by applying the width to the DOM directly; the model
+    // catches up once, on pointerup.
+    let drag = beginResizeDrag(startWidth)
     const onMove = (ev: PointerEvent): void => {
       const pos = getPos()
       if (typeof pos !== 'number') return
       const next = nextWidth(startWidth, ev.clientX - startX)
-      const tr = view.state.tr.setNodeMarkup(pos, undefined, {
-        ...node.attrs,
-        width: next,
-      })
-      view.dispatch(tr)
+      drag = advanceResizeDrag(drag, pos, next)
+      dom.style.width = `${next}px`
     }
     const onUp = (): void => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      const commit = commitResizeDrag(drag)
+      if (commit) {
+        const tr = view.state.tr.setNodeMarkup(commit.pos, undefined, {
+          ...node.attrs,
+          width: commit.width,
+        })
+        view.dispatch(tr)
+      }
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)

@@ -24,21 +24,14 @@ import {
 } from '../services/renderSearch'
 import { suggestionsFromAttr } from '../services/renderSearch'
 import { debounce } from '../services/timing'
-import { countWords, isWordGoalMet, shouldCenterScroll, wordProgress } from '../services/editorBehaviors'
 import RenderSearchPanel from './RenderSearchPanel.vue'
 import RenameDialog from '../components/RenameDialog.vue'
-import { assetsDirForNote, suggestRename } from '../services/renameAsset'
 import { parseOutline } from '../services/outline'
 import { dirRelativeToVault } from '../services/noteMeta'
 import { anchorHeadingIndex, countDocumentLines, lineRatio } from '../services/scrollSyncAnchors'
-import {
-  collectClipboardImages,
-  createImageSrcResolver,
-  escapeMarkdownAlt,
-  fileToBase64,
-  markdownImageBlock,
-  relativePathFromNoteVault,
-} from '../services/attachments'
+import { createImageSrcResolver } from '../services/attachments'
+import { useImagePasteDrop } from '../composables/useImagePasteDrop'
+import { useEditorFocus } from '../composables/useEditorFocus'
 
 const tabs = useTabsStore()
 const view = useViewStore()
@@ -53,54 +46,6 @@ const spellPopup = ref<{ x: number; y: number; from: number; to: number; word: s
 // otherwise the document text decides (Arabic/Hebrew -> rtl). Bound as `dir` on
 // the pane root so the browser lays the note out from the correct edge.
 const renderDir = computed(() => resolveDirection(appearance.contentDirection, tabs.activeTab?.content ?? ''))
-
-// Focus / typewriter mode: keep the cursor block vertically centered while it
-// drifts, scrolling only the viewport (never the document). Driven by a rAF so
-// we re-frame after ProseMirror has synced the DOM for this interaction.
-let focusRaf = 0
-
-function centerCursor(): void {
-  const scroller = scrollEl.value
-  const v = editor?.getView()
-  if (!scroller || !v) return
-  if (!appearance.focusMode) return
-  const head = v.state.selection.head
-  const coords = v.coordsAtPos(head)
-  if (!coords) return
-  const rect = scroller.getBoundingClientRect()
-  const cursorTop = coords.top - rect.top
-  // Leave the scroll alone while the caret sits near the middle, so an
-  // already-centered caret does not chase itself on every keystroke.
-  if (!shouldCenterScroll(cursorTop, scroller.clientHeight)) return
-  const target = scroller.scrollTop + (cursorTop - scroller.clientHeight / 2)
-  const clamped = Math.max(0, Math.min(target, scroller.scrollHeight - scroller.clientHeight))
-  if (Math.abs(scroller.scrollTop - clamped) < 0.5) return
-  scroller.scrollTop = clamped
-}
-
-function queueCenterCursor(): void {
-  if (!appearance.focusMode) return
-  if (focusRaf) return
-  focusRaf = requestAnimationFrame(() => {
-    focusRaf = 0
-    centerCursor()
-  })
-}
-
-function onEditorFocusKeydown(): void {
-  queueCenterCursor()
-}
-
-function onEditorFocusPointerdown(): void {
-  queueCenterCursor()
-}
-
-// Word-count goal: a slim top progress reading is shown while wordGoal > 0,
-// flipping to the accent color once the goal is reached. Count is derived from
-// the live tab content with the same CJK/latin algorithm the status bar uses.
-const wordCount = computed(() => countWords(tabs.activeTab?.content ?? ''))
-const wordGoalMet = computed(() => isWordGoalMet(wordCount.value, appearance.wordGoal))
-const wordProgressPct = computed(() => Math.round(wordProgress(wordCount.value, appearance.wordGoal) * 100))
 
 const scrollEl = ref<HTMLElement | null>(null)
 const editorEl = ref<HTMLElement | null>(null)
@@ -122,6 +67,32 @@ let pendingExternal: string | null = null
 // Set by setRatio() so the next scroll event (the async echo of a programmatic
 // scroll) is swallowed, breaking the split-mode sync feedback loop.
 let suppressScroll = false
+
+// Focus/typewriter centering + the word-count goal live in a composable so the
+// pane owns less. The calls read the live `editor`/`scrollEl` via closures.
+const {
+  wordCount,
+  wordGoalMet,
+  wordProgressPct,
+  queueCenterCursor,
+  onFocusKeydown,
+  onFocusPointerdown,
+  cancelFocusRaf,
+} = useEditorFocus({
+  getEditor: () => editor,
+  getScrollEl: () => scrollEl.value,
+})
+
+const {
+  renamePrompt,
+  onRenameConfirm,
+  onRenameCancel,
+  onPaste,
+  onDrop,
+  onDragOver,
+} = useImagePasteDrop({
+  getEditor: () => editor,
+})
 
 // Full-document Markdown serialization (`editor.save()`) round-trips the whole
 // doc through the Milkdown serializer on every markdownUpdated. Collapse a
@@ -298,78 +269,6 @@ function onKeydown(e: KeyboardEvent): void {
   }
 }
 
-interface RenamePrompt {
-  initial: string
-  resolve: (choice: { ok: boolean; name: string }) => void
-}
-
-const renamePrompt = ref<RenamePrompt | null>(null)
-
-function promptRename(file: File): Promise<{ ok: boolean; name: string }> {
-  return new Promise((resolve) => {
-    renamePrompt.value = { initial: suggestRename(file), resolve }
-  })
-}
-
-function onRenameConfirm(name: string): void {
-  renamePrompt.value?.resolve({ ok: true, name })
-  renamePrompt.value = null
-}
-
-function onRenameCancel(): void {
-  renamePrompt.value?.resolve({ ok: false, name: '' })
-  renamePrompt.value = null
-}
-
-/** Ask the user to rename each pasted/dropped image, persist it into the
- * note's assets dir (or `.tmp` while the note is unsaved), and insert a
- * markdown image block (referencing it relatively) at the caret. */
-async function insertImageFiles(files: File[]): Promise<void> {
-  if (!editor) return
-  if (!tabs.vault) {
-    notifyError(t('rendered.saveImageNoVault'))
-    return
-  }
-  for (const file of files) {
-    try {
-      const choice = await promptRename(file)
-      if (!choice.ok) continue
-      const base64 = await fileToBase64(file)
-      const tab = tabs.activeTab
-      const dir = assetsDirForNote(tab?.path ?? null, tabs.vault ?? '') || undefined
-      const savedPath = await fsService.saveAttachment(tabs.vault, choice.name, base64, dir)
-      if (tab && dir === '.tmp') tab.pendingAssetPaths.push(savedPath)
-      const ref = relativePathFromNoteVault(tab?.path ?? '', tabs.vault ?? '', savedPath)
-      await editor.insertMarkdownAtCursor(markdownImageBlock(escapeMarkdownAlt(choice.name), ref))
-    } catch {
-      notifyError(t('attachments.insertFailed'))
-    }
-  }
-}
-
-function onPaste(e: ClipboardEvent): void {
-  const files = collectClipboardImages(e.clipboardData)
-  if (files.length === 0) return
-  // Captured before ProseMirror's own paste handling sees the event.
-  e.preventDefault()
-  e.stopPropagation()
-  void insertImageFiles(files)
-}
-
-function onDrop(e: DragEvent): void {
-  const files = collectClipboardImages(e.dataTransfer)
-  if (files.length === 0) return
-  e.preventDefault()
-  e.stopPropagation()
-  void insertImageFiles(files)
-}
-
-function onDragOver(e: DragEvent): void {
-  // Allow drops over the editor pane; the drop handler only intercepts
-  // image files and leaves text drags to ProseMirror.
-  e.preventDefault()
-}
-
 function setRatio(r: number): void {
   const el = scrollEl.value
   if (!el) return
@@ -467,8 +366,8 @@ onMounted(async () => {
   scrollEl.value?.addEventListener('dragover', onDragOver)
   scrollEl.value?.addEventListener('dragenter', onDragOver)
   window.addEventListener('keydown', onKeydown)
-  editorEl.value.addEventListener('keydown', onEditorFocusKeydown)
-  editorEl.value.addEventListener('pointerdown', onEditorFocusPointerdown)
+  editorEl.value.addEventListener('keydown', onFocusKeydown)
+  editorEl.value.addEventListener('pointerdown', onFocusPointerdown)
 
   unlistenChange = editor.onContentChange(() => {
     if (applyingExternal || !editor) return
@@ -516,10 +415,7 @@ onBeforeUnmount(() => {
   }
   markdownSync.cancel()
   cancelOverlayRefresh()
-  if (focusRaf) {
-    cancelAnimationFrame(focusRaf)
-    focusRaf = 0
-  }
+  cancelFocusRaf()
   if (tabs.activeId) tabs.cancelAutosave(tabs.activeId)
   setCalloutView(null)
   configureImageResolver(null)
@@ -529,8 +425,8 @@ onBeforeUnmount(() => {
   setActiveEditor(null)
   editorEl.value?.removeEventListener('pointerdown', onContainerPointerDownCapture, true)
   editorEl.value?.removeEventListener('click', onEditorClick)
-  editorEl.value?.removeEventListener('keydown', onEditorFocusKeydown)
-  editorEl.value?.removeEventListener('pointerdown', onEditorFocusPointerdown)
+  editorEl.value?.removeEventListener('keydown', onFocusKeydown)
+  editorEl.value?.removeEventListener('pointerdown', onFocusPointerdown)
   scrollEl.value?.removeEventListener('paste', onPaste, true)
   scrollEl.value?.removeEventListener('drop', onDrop, true)
   scrollEl.value?.removeEventListener('dragover', onDragOver)
