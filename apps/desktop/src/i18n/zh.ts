@@ -337,6 +337,8 @@ export const zh = {
     deleteFailed: '删除失败',
     restoreHistoryFailed: '恢复历史版本失败',
     reloadFailed: '无法重新加载文件：{path}，已保留当前内容',
+    unsavedWorkPrompt: '你有未保存的更改，仍要离开吗？',
+    unsavedWorkBlocker: '部分文件无法保存，未切换 vault',
     aria: '打开的文档',
   },
   titlebar: {
@@ -621,6 +623,7 @@ export const zh = {
     alignLeft: '左对齐',
     alignCenter: '居中',
     alignRight: '右对齐',
+    aria: '表格操作',
   },
   contextMenu: {
     aria: '上下文菜单',

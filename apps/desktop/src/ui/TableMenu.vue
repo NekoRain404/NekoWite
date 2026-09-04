@@ -52,7 +52,7 @@ onBeforeUnmount(() => {
     v-if="inTable && editor"
     class="neko-table-menu"
     role="toolbar"
-    :aria-label="t('tableMenu.toggleHeader')"
+    :aria-label="t('tableMenu.aria')"
     @pointerdown.stop
     @click.stop
   >

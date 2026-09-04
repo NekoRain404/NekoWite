@@ -27,6 +27,7 @@ import { useSettingsStore } from './stores/settings'
 import { useAppearanceStore } from './stores/appearance'
 import { useLibraryStore } from './stores/library'
 import { getLocale, t } from './i18n'
+import { notifyError } from './services/errors'
 import {
   NOTELIST_WIDTH_DEFAULT,
   NOTELIST_WIDTH_MAX,
@@ -247,6 +248,15 @@ function onWindowBlur(): void {
 }
 
 async function applyVault(path: string): Promise<void> {
+  // A vault switch must not silently drop unsaved edits from the vault we are
+  // leaving. Flush the current dirty tabs first; if one fails to save, block
+  // the switch so the work is not lost to a pending autosave timer that will
+  // never fire on the new vault.
+  const flushed = await tabs.flushDirty()
+  if (!flushed) {
+    notifyError(t('tabs.unsavedWorkBlocker'))
+    return
+  }
   // Authorize the vault root with the backend BEFORE any path-confined command:
   // the Rust commands now reject any root the user did not open this session.
   // A fresh folder pick is already auto-authorized by open_folder_dialog, but the
@@ -328,7 +338,15 @@ onMounted(() => {
   void setupWindowTracking()
 })
 
-function onBeforeUnload(): void {
+function onBeforeUnload(e?: BeforeUnloadEvent): void {
+  // With autosave on, a dirty tab's pending timer may never fire if the window
+  // is closed first. Rather than silently losing those edits, prompt the user
+  // (the webview surfaces the native "leave?" confirm); the crash-recovery
+  // history path still preserves the last autosaved snapshot on reopen.
+  if (tabs.hasUnsavedWork()) {
+    e?.preventDefault()
+    if (e) e.returnValue = t('tabs.unsavedWorkPrompt')
+  }
   tabs.captureSession()
   flushWindowState()
 }

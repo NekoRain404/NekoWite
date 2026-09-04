@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import {
   getImageAttrs,
   deleteImageNode,
   onImageSelectionChange,
   restoreImageSize,
   updateImageAttrs,
+  clearImageSelection,
 } from '@nekowite/editor-core'
 import type { NekoEditor, ImageSelectionState } from '@nekowite/editor-core'
 import { t } from '../i18n'
@@ -21,6 +22,32 @@ const align = ref('')
 const natural = ref<{ width: number; height: number } | null>(null)
 
 const visible = computed(() => selected.value !== null)
+
+const altInput = ref<HTMLInputElement | null>(null)
+let prevFocus: HTMLElement | null = null
+
+// Focus management: a keyboard user who selects an image must be able to edit
+// its properties without reaching for the mouse. Move focus into the panel's
+// first field when it appears, and return it to whatever was focused before
+// (typically the editor) when the panel closes.
+watch(visible, (on) => {
+  if (on) {
+    prevFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    void nextTick(() => altInput.value?.focus())
+  } else {
+    const prev = prevFocus
+    prevFocus = null
+    if (prev && prev.isConnected) prev.focus()
+  }
+})
+
+function onKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    clearImageSelection()
+  }
+}
 
 let unlisten: (() => void) | null = null
 let naturalRev = 0
@@ -67,28 +94,34 @@ const patch = (p: Record<string, unknown>): void => {
   updateImageAttrs(props.editor.getView(), sel.pos, p as never)
 }
 
+// `flush: 'sync'` is essential: without it Vue fires these watchers
+// asynchronously, AFTER `syncFromNode()` has already reset the `syncing` guard,
+// so the initial field population would re-patch the node with identical values
+// and dispatch a spurious no-change transaction — resetting the NodeSelection
+// and closing the panel the moment it opens. Synchronous flush runs the watcher
+// while `syncing` is still true, so the guard is honored.
 watch(align, (v) => {
   if (!visible.value) return
   patch({ align: v === 'left' || v === 'center' || v === 'right' ? v : null })
-})
+}, { flush: 'sync' })
 watch(width, (v) => {
   if (!visible.value) return
   const n = Number(v)
   patch({ width: Number.isFinite(n) && n > 0 ? n : null })
-})
+}, { flush: 'sync' })
 watch(alt, (v) => {
   if (!visible.value) return
   patch({ alt: v })
-})
+}, { flush: 'sync' })
 watch(title, (v) => {
   if (!visible.value) return
   patch({ title: v })
-})
+}, { flush: 'sync' })
 watch(link, (v) => {
   if (!visible.value) return
   const attrs = currentAttrs()
   if (attrs && v !== attrs.src) patch({ src: v })
-})
+}, { flush: 'sync' })
 
 function onRestore(): void {
   const sel = selected.value
@@ -142,35 +175,50 @@ onBeforeUnmount(() => {
     v-if="visible"
     class="neko-image-panel"
     role="dialog"
+    aria-modal="false"
     :aria-label="t('imagePanel.aria')"
     @pointerdown.stop
     @click.stop
+    @keydown="onKeydown"
   >
     <div class="neko-image-panel-title">
       {{ t('imagePanel.title') }}
     </div>
 
-    <label class="neko-image-field">
+    <label
+      class="neko-image-field"
+      for="neko-image-alt"
+    >
       <span class="neko-image-field-label">{{ t('imagePanel.alt') }}</span>
       <input
+        id="neko-image-alt"
+        ref="altInput"
         v-model="alt"
         type="text"
         class="neko-image-input"
       >
     </label>
 
-    <label class="neko-image-field">
-      <span class="neko-image-field-label">{{ t('imagePanel.title') }}</span>
+    <label
+      class="neko-image-field"
+      for="neko-image-title"
+    >
+      <span class="neko-image-field-label">{{ t('imagePanel.titleField') }}</span>
       <input
+        id="neko-image-title"
         v-model="title"
         type="text"
         class="neko-image-input"
       >
     </label>
 
-    <label class="neko-image-field">
+    <label
+      class="neko-image-field"
+      for="neko-image-link"
+    >
       <span class="neko-image-field-label">{{ t('imagePanel.link') }}</span>
       <input
+        id="neko-image-link"
         v-model="link"
         type="text"
         class="neko-image-input"
@@ -178,18 +226,26 @@ onBeforeUnmount(() => {
     </label>
 
     <div class="neko-image-row">
-      <label class="neko-image-field neko-image-width">
+      <label
+        class="neko-image-field neko-image-width"
+        for="neko-image-width"
+      >
         <span class="neko-image-field-label">{{ t('imagePanel.width') }}</span>
         <input
+          id="neko-image-width"
           v-model="width"
           type="number"
           min="1"
           class="neko-image-input"
         >
       </label>
-      <label class="neko-image-field">
+      <label
+        class="neko-image-field"
+        for="neko-image-align"
+      >
         <span class="neko-image-field-label">{{ t('imagePanel.align') }}</span>
         <select
+          id="neko-image-align"
           v-model="align"
           class="neko-image-input"
         >
