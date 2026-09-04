@@ -92,6 +92,11 @@ export default defineConfig({
   plugins: [vue()],
   clearScreen: false,
   server: { port: 1420, strictPort: true },
+  // The off-main-thread graph layout uses `new Worker(new URL(..., import.meta.url),
+  // { type: 'module' })`. That worker chunk can contain code-split imports, which
+  // the default `iife` worker output format does not support — build it as an ES
+  // module so Rollup can emit (and dynamically import) auxiliary chunks.
+  worker: { format: 'es' },
   build: {
     // KaTeX fonts (largest ~63KB .ttf, ~33KB .woff2) must be embedded as
     // data: URIs so the ?inline KaTeX CSS string stays self-contained when
