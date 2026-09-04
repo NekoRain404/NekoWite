@@ -47,6 +47,26 @@ describe('createEditor', () => {
     expect(view.state.doc.textContent).toContain('Second')
   })
 
+  it('fires onContentChange on a plain doc-changing dispatch (not only via markdownUpdated)', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open('# Hello\n')
+    let fired = 0
+    editor.onContentChange(() => {
+      fired++
+    })
+    // A plain typed-character transaction updates the DOM but may not re-derive
+    // a *different* markdown string, so Milkdown's markdownUpdated does not
+    // always fire. The content-sync + lifecycle emit(keyed off onContentChange)
+    // must still run — keyed off ProseMirror's authoritative docChanged signal.
+    const view = editor.getView()
+    view.dispatch(view.state.tr.insertText(' world'))
+    expect(fired).toBeGreaterThan(0)
+    // And the change is observable through save().
+    expect(await editor.save()).toContain('Hello world')
+  })
+
   it('insertMarkdownAtCursor inserts a parsed image at the caret', async () => {
     const el = document.createElement('div')
     document.body.appendChild(el)
