@@ -310,3 +310,77 @@
   float: left;
   height: 0;
 }
+
+/* ---------- Image node (M3) ---------- */
+/* The image node view wraps the <img> in a <figure class="neko-image">. It is
+   inline-sized (the img's width/height are set inline), and shows a selected
+   outline + a visible corner handle when the node is under a NodeSelection. */
+.editor-container .ProseMirror .neko-image {
+  position: relative;
+  display: inline-block;
+  margin: 0.15em 0.3em;
+  max-width: 100%;
+  cursor: default;
+}
+.editor-container .ProseMirror .neko-image img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 3px;
+  user-select: none;
+}
+.editor-container .ProseMirror .neko-image[data-selected="true"] {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+}
+.editor-container .ProseMirror .neko-image[data-failed="true"] img {
+  opacity: 0.35;
+}
+/* Visible resize handle (bottom-right corner). Shown on selection. */
+.editor-container .ProseMirror .neko-image-handle {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--app-accent);
+  border: 1px solid var(--app-canvas);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--app-accent) 40%, transparent);
+  cursor: nwse-resize;
+  opacity: 0;
+  transition: opacity var(--app-motion-fast) var(--app-ease);
+}
+.editor-container .ProseMirror .neko-image[data-selected="true"] .neko-image-handle {
+  opacity: 1;
+}
+/* Recoverable error overlay (failed-to-load image). */
+.editor-container .ProseMirror .neko-image-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: color-mix(in srgb, var(--app-canvas) 78%, transparent);
+  border-radius: 3px;
+  font-size: 12px;
+  color: var(--app-muted);
+}
+.editor-container .ProseMirror .neko-image-error[hidden] {
+  display: none;
+}
+.editor-container .ProseMirror .neko-image-error-retry {
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, var(--app-border) 80%, transparent);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-elevated);
+  color: var(--app-text);
+  font-size: 11px;
+  cursor: pointer;
+}
+.editor-container .ProseMirror .neko-image-error-retry:hover {
+  border-color: var(--app-accent);
+  color: var(--app-accent);
+}
