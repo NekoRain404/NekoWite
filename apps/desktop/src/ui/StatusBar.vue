@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 import { useAppearanceStore } from '../stores/appearance'
+import { taskProgress } from '../services/editorBehaviors'
 import { t } from '../i18n'
 
 const tabs = useTabsStore()
@@ -27,6 +28,7 @@ const content = computed(() => tabs.activeTab?.content ?? '')
 const wordCount = computed(() => countWords(content.value))
 const charCount = computed(() => content.value.length)
 const readMinutes = computed(() => (wordCount.value === 0 ? 0 : Math.max(1, Math.ceil(wordCount.value / 300))))
+const taskInfo = computed(() => taskProgress(content.value))
 
 const saveState = computed(() => {
   const tab = tabs.activeTab
@@ -62,6 +64,13 @@ const modeLabel = computed(() => {
       <span class="status-sep">·</span>
       <span class="status-item">{{ t('status.readMinutes', { n: readMinutes }) }}</span>
     </template>
+    <span
+      v-if="taskInfo.total > 0"
+      class="status-item status-task"
+      :class="{ 'is-done': taskInfo.done === taskInfo.total }"
+    >
+      {{ t('status.tasks', { done: taskInfo.done, total: taskInfo.total }) }}
+    </span>
     <span class="status-spacer" />
     <span
       v-if="saveState"
@@ -97,6 +106,7 @@ const modeLabel = computed(() => {
 .status-item { white-space: nowrap; }
 .status-sep { opacity: 0.6; }
 .status-spacer { flex: 1; }
+.status-task.is-done { color: var(--app-accent); }
 .status-save {
   display: inline-flex;
   align-items: center;

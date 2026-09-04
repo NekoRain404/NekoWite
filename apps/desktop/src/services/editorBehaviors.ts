@@ -42,3 +42,36 @@ export function shouldCenterScroll(cursorTop: number, viewportHeight: number): b
   const band = viewportHeight * 0.25
   return cursorTop < band || cursorTop > viewportHeight - band
 }
+
+export interface TaskProgress {
+  done: number
+  total: number
+}
+
+// Matches fenced code delimiters (backticks or tildes) that may be indented up
+// to three spaces per CommonMark.
+const FENCE_RE = /^\s{0,3}(`{3,}|~{3,})/
+
+// A task-list item: ordered/unordered marker, optional indentation, then a
+// checkbox `- [ ]` / `- [x]` / `- [X]` (GFM also allows `*` and `+`).
+const TASK_RE = /^\s*[-*+]\s+\[( |x|X)\](?:\s|$)/
+
+/** Count completed vs. total task-list items in a markdown string, ignoring
+ *  lines inside fenced code blocks (which may legitimately contain `- [x]`). */
+export function taskProgress(content: string): TaskProgress {
+  let done = 0
+  let total = 0
+  let inFence = false
+  for (const line of content.split('\n')) {
+    if (FENCE_RE.test(line)) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence) continue
+    const match = TASK_RE.exec(line)
+    if (!match) continue
+    total += 1
+    if (match[1] !== ' ') done += 1
+  }
+  return { done, total }
+}

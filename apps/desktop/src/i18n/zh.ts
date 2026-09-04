@@ -297,6 +297,7 @@ export const zh = {
     words: '{n} 词',
     chars: '{n} 字符',
     readMinutes: '约 {n} 分钟',
+    tasks: '已完成 {done}/{total} 任务',
     saving: '保存中',
     dirty: '未保存',
     saved: '已保存',
@@ -382,7 +383,11 @@ export const zh = {
     noSuggestions: '无建议',
     replace: '替换',
   },
-chat: {
+  session: {
+    restoreFailed: '无法恢复上次打开的标签页',
+    restored: '已恢复 {n} 个标签页',
+  },
+  chat: {
     title: 'AI 助手',
     clear: '清空对话',
     emptyTitle: '从一个问题开始',

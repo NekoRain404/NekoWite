@@ -6,7 +6,9 @@ import type { MilkdownPlugin } from '@milkdown/ctx'
 import { $prose } from '@milkdown/utils'
 
 import { cite, citeNodeView, citeOrderSyncPlugin, citeRemark } from '../cite'
+import { codeBlockCopyNodeView } from '../codeblock'
 import { footnoteReferenceNodeView } from '../footnote'
+import { headingAnchorNodeView } from '../heading'
 import {
   highlight,
   highlightRemark,
@@ -37,6 +39,8 @@ export const basicPlugins: MilkdownPlugin[] = [
   ...imageDimSchema,
   ...imageDimRemark,
   imageNodeView,
+  codeBlockCopyNodeView,
+  headingAnchorNodeView,
   ...gfm.flat(),
   footnoteReferenceNodeView,
   ...citeRemark,

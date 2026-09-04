@@ -198,7 +198,10 @@ async fn watch_folder(
         .map_err(|e| e.to_string())?;
     // Replacing the managed watcher drops the previous one, so a vault
     // switch stops the abandoned watcher instead of stacking a new thread.
-    *state.0.lock().unwrap() = Some(new_watcher);
+    // A poisoned lock must not panic — return the error instead so the stale
+    // watcher stays in place rather than being torn down mid-switch.
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    *guard = Some(new_watcher);
     Ok(())
 }
 

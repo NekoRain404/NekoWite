@@ -1,7 +1,7 @@
 use nekowite_lib::fs::{
-    atomic_write, clear_trash, create_dir, delete_file, encode_rel_path, is_mdx_path, list_dir,
-    list_dir_entries, list_history, list_trash, read_file, read_history, rename_entry,
-    resolve_media_path, resolve_within, restore_from_trash, restore_history,
+    atomic_write, cleanup_stale_tmp, clear_trash, create_dir, delete_file, encode_rel_path,
+    is_mdx_path, list_dir, list_dir_entries, list_history, list_trash, read_file, read_history,
+    rename_entry, resolve_media_path, resolve_within, restore_from_trash, restore_history,
     sanitize_attachment_name, sanitize_path, save_attachment, should_skip_entry,
     snapshot_history, stat_file, write_file,
 };
@@ -912,4 +912,117 @@ fn save_attachment_empty_dir_falls_back_to_attachments() {
     }
 
     std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// A renamed single file carries its history snapshots and its trash entry to
+/// the new vault-relative key, so neither becomes unreachable / lost.
+#[test]
+fn rename_entry_moves_history_and_trash() {
+    let vault = temp_vault("rename-history-trash");
+    let root = vault.to_str().unwrap().to_string();
+    let path = "docs/a.md";
+
+    // Give it history: save twice so the first write is snapshotted.
+    write_file(&root, path, "v1", Some(10)).unwrap();
+    tick();
+    write_file(&root, path, "v2", Some(10)).unwrap();
+    assert!(!list_history(&root, path).unwrap().is_empty(), "history exists");
+
+    // Move the current file into the trash, then recreate a file at the same
+    // path so a trash entry AND a live file coexist under the same encoded key.
+    let trash_path = delete_file(&root, path).unwrap();
+    assert!(Path::new(&trash_path)
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .contains("a.md"));
+    write_file(&root, path, "v3", Some(10)).unwrap();
+    assert_eq!(list_trash(&root).unwrap().len(), 1);
+
+    // Rename the live file; history + trash must follow to the new key.
+    let rel = rename_entry(&root, path, "docs/b.md").unwrap();
+    assert_eq!(rel, "docs/b.md");
+
+    let hist_new = list_history(&root, "docs/b.md").unwrap();
+    let hist_old = list_history(&root, "docs/a.md").unwrap();
+    assert!(!hist_new.is_empty(), "history migrated to the new path");
+    assert!(hist_old.is_empty(), "history no longer under the old path");
+
+    let trash = list_trash(&root).unwrap();
+    assert_eq!(trash.len(), 1, "single trash entry follows the rename");
+    assert_eq!(trash[0].original_path, "docs/b.md");
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// Concurrent `write_file`s on the same vault never panic, leave no `.tmp`
+/// litter, and never corrupt the file: the read-old -> snapshot -> write
+/// sequence is serialized, and the final content is one written payload.
+#[test]
+fn write_file_concurrent_serializes() {
+    let vault = temp_vault("write-concurrent");
+    let root = vault.to_str().unwrap().to_string();
+    let path = "note.md";
+
+    write_file(&root, path, "seed", Some(10)).unwrap();
+
+    let mut handles = Vec::new();
+    for i in 0..16 {
+        let root = root.clone();
+        handles.push(std::thread::spawn(move || {
+            let content = format!("payload-{i}");
+            for _ in 0..50 {
+                write_file(&root, "note.md", &content, Some(10)).unwrap();
+            }
+        }));
+    }
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    let final_content = read_file(&root, path).unwrap();
+    assert!(
+        final_content.starts_with("payload-"),
+        "final content is one of the written payloads, got {final_content:?}"
+    );
+
+    // No crash litter: every successful write renamed its temp into place.
+    let tmp: Vec<_> = std::fs::read_dir(&vault)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+        .collect();
+    assert!(tmp.is_empty(), "no .tmp litter after concurrent writes");
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// `cleanup_stale_tmp` removes only `.tmp` siblings older than `max_age`,
+/// leaving fresh temp files, directories, and unrelated files untouched.
+#[test]
+fn cleanup_stale_tmp_removes() {
+    let dir = temp_vault("tmp-clean");
+    let old_tmp = dir.join(".note.111.tmp");
+    let fresh_tmp = dir.join(".note.222.tmp");
+    std::fs::write(&old_tmp, "stale").unwrap();
+
+    // Let the stale file age well past the threshold, then create the fresh
+    // one so the two differ by far more than any mtime granularity.
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    std::fs::write(&fresh_tmp, "fresh").unwrap();
+    std::fs::write(dir.join("keep.md"), "keep").unwrap();
+    let max_age = std::time::Duration::from_millis(20);
+
+    let removed = cleanup_stale_tmp(&dir, max_age).unwrap();
+    assert_eq!(removed, 1, "exactly the stale tmp is removed");
+    assert!(!old_tmp.exists(), "stale tmp removed");
+    assert!(fresh_tmp.exists(), "fresh tmp kept");
+    assert!(dir.join("keep.md").exists(), "non-tmp file untouched");
+
+    // A directory named `*.tmp` must never be deleted.
+    std::fs::create_dir_all(dir.join(".a.tmp")).unwrap();
+    assert_eq!(cleanup_stale_tmp(&dir, max_age).unwrap(), 0);
+
+    std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -297,6 +297,7 @@ export const en = {
     words: '{n} words',
     chars: '{n} chars',
     readMinutes: '~{n} min',
+    tasks: '{done}/{total} tasks done',
     saving: 'Saving',
     dirty: 'Unsaved',
     saved: 'Saved',
@@ -382,7 +383,11 @@ export const en = {
     noSuggestions: 'No suggestions',
     replace: 'Replace',
   },
-chat: {
+  session: {
+    restoreFailed: 'Could not restore the previous tabs',
+    restored: 'Restored {n} tabs',
+  },
+  chat: {
     title: 'AI Assistant',
     clear: 'Clear chat',
     emptyTitle: 'Start with a question',

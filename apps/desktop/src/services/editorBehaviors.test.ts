@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { countWords, isWordGoalMet, shouldCenterScroll, wordProgress } from './editorBehaviors'
+import { countWords, isWordGoalMet, shouldCenterScroll, taskProgress, wordProgress } from './editorBehaviors'
 
 describe('editorBehaviors', () => {
   describe('countWords', () => {
@@ -79,6 +79,45 @@ describe('editorBehaviors', () => {
       expect(shouldCenterScroll(100, 0)).toBe(false)
       expect(shouldCenterScroll(NaN, 400)).toBe(false)
       expect(shouldCenterScroll(100, -4)).toBe(false)
+    })
+  })
+
+  describe('taskProgress', () => {
+    it('returns zero for content with no tasks', () => {
+      expect(taskProgress('')).toEqual({ done: 0, total: 0 })
+      expect(taskProgress('plain text\nwithout tasks')).toEqual({ done: 0, total: 0 })
+    })
+
+    it('counts unchecked and checked boxes across the bullet styles', () => {
+      const md = '- [ ] todo\n- [x] done\n* [X] done2\n+ [ ] todo2\n'
+      expect(taskProgress(md)).toEqual({ done: 2, total: 4 })
+    })
+
+    it('supports indented nested task items', () => {
+      const md = '- [x] parent\n  - [ ] child\n  - [x] done\n'
+      expect(taskProgress(md)).toEqual({ done: 2, total: 3 })
+    })
+
+    it('treats the whole active heading as one checkbox when present', () => {
+      // A stray `## [x]` heading is NOT a task — only list markers count.
+      const md = '## [x] Heading\n- [x] real\n'
+      expect(taskProgress(md)).toEqual({ done: 1, total: 1 })
+    })
+
+    it('skips task-looking lines inside fenced code blocks', () => {
+      const md = '```md\n- [ ] from code\n- [x] also code\n```\n- [ ] real\n'
+      expect(taskProgress(md)).toEqual({ done: 0, total: 1 })
+    })
+
+    it('handles tilde fences and re-enters counting after closing', () => {
+      const md = '~~~\n- [ ] code\n~~~\n- [x] after\n'
+      expect(taskProgress(md)).toEqual({ done: 1, total: 1 })
+    })
+
+    it('requires a checkbox marker right after the bullet', () => {
+      // `- [ ]note` (no space) is not a task; `- [ ]` alone is.
+      const md = '- [ ]note\n- [ ] task\n'
+      expect(taskProgress(md)).toEqual({ done: 0, total: 1 })
     })
   })
 })

@@ -48,6 +48,28 @@
 .editor-container .ProseMirror h2 + *,
 .editor-container .ProseMirror h3 + * { margin-top: 0.55em; }
 
+/* Trailing "#" deep-link anchor on each heading: hidden until hover, copies a
+   fragment for the heading when clicked (see the heading node view). */
+.editor-container .ProseMirror .nk-heading-anchor {
+  display: inline-block;
+  margin-left: 0.45em;
+  padding: 0 0.2em;
+  border: none;
+  background: none;
+  color: var(--app-muted);
+  font-size: 0.78em;
+  font-family: var(--app-mono-font);
+  line-height: 1;
+  vertical-align: baseline;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--app-motion-fast) var(--app-ease),
+              color var(--app-motion-fast) var(--app-ease);
+}
+.editor-container .ProseMirror .nk-heading:hover .nk-heading-anchor,
+.editor-container .ProseMirror .nk-heading-anchor:focus-visible { opacity: 1; }
+.editor-container .ProseMirror .nk-heading-anchor:hover { color: var(--app-accent); }
+
 /* ---------- Inline ---------- */
 .editor-container .ProseMirror a {
   color: var(--app-accent);
@@ -67,10 +89,13 @@
 
 /* ---------- Blockquote ---------- */
 .editor-container .ProseMirror blockquote {
-  border-left: 3px solid color-mix(in srgb, var(--app-border) 90%, var(--app-muted));
-  padding: 0.1em 0 0.1em 1em;
-  color: color-mix(in srgb, var(--app-text) 74%, var(--app-muted));
+  border-left: 3px solid var(--app-accent);
+  border-radius: 0 var(--app-radius-sm) var(--app-radius-sm) 0;
+  padding: 0.55em 1em;
+  background: color-mix(in srgb, var(--app-panel) 58%, var(--app-canvas));
+  color: color-mix(in srgb, var(--app-text) 78%, var(--app-muted));
 }
+.editor-container .ProseMirror blockquote > * + * { margin-top: 0.5em; }
 
 /* ---------- Lists ---------- */
 .editor-container .ProseMirror ul,
@@ -117,6 +142,12 @@
 }
 .editor-container .ProseMirror li[data-item-type="task"][data-checked="true"] > * {
   color: var(--app-muted);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--app-muted) 55%, transparent);
+}
+/* A checked task's nested sub-list stays readable and unstruck. */
+.editor-container .ProseMirror li[data-item-type="task"][data-checked="true"] > ul {
+  text-decoration: none;
 }
 
 /* ---------- Code block ---------- */
@@ -136,6 +167,42 @@
   padding: 0;
   font-size: inherit;
 }
+
+/* Copy button lives in a corner of the code block — a top-right affordance
+   that appears on hover and swaps to a checkmark once copied. */
+.editor-container .ProseMirror .nk-code-block {
+  position: relative;
+}
+.editor-container .ProseMirror .nk-code-block pre { margin: 0; }
+.editor-container .ProseMirror .nk-code-copy {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.55rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid color-mix(in srgb, var(--app-border) 80%, transparent);
+  border-radius: var(--app-radius-sm);
+  background: color-mix(in srgb, var(--app-elevated) 90%, var(--app-panel));
+  color: var(--app-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--app-motion-fast) var(--app-ease),
+              color var(--app-motion-fast) var(--app-ease),
+              border-color var(--app-motion-fast) var(--app-ease);
+}
+.editor-container .ProseMirror .nk-code-block:hover .nk-code-copy,
+.editor-container .ProseMirror .nk-code-copy:focus-visible { opacity: 1; }
+.editor-container .ProseMirror .nk-code-copy:hover {
+  color: var(--app-accent);
+  border-color: color-mix(in srgb, var(--app-accent) 50%, var(--app-border));
+}
+.editor-container .ProseMirror .nk-code-copy .nk-code-copy-state { display: none; }
+.editor-container .ProseMirror .nk-code-block.nk-copied .nk-code-copy { color: var(--app-success); }
+.editor-container .ProseMirror .nk-code-block.nk-copied .nk-code-copy > svg:first-child { display: none; }
+.editor-container .ProseMirror .nk-code-block.nk-copied .nk-code-copy .nk-code-copy-state { display: inline-flex; }
 
 /* ---------- Table ---------- */
 .editor-container .ProseMirror table {
@@ -168,8 +235,23 @@
 /* ---------- Misc blocks ---------- */
 .editor-container .ProseMirror hr {
   border: none;
-  border-top: 1px solid var(--app-border);
-  margin: 1.8em 0;
+  background: linear-gradient(90deg, transparent, var(--app-border), transparent);
+  height: 1px;
+  width: min(72%, 34em);
+  margin: 2.2em auto;
+  position: relative;
+  border-radius: 999px;
+}
+.editor-container .ProseMirror hr::before {
+  content: '◆';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 0 0.6em;
+  background: var(--app-canvas);
+  color: var(--app-muted);
+  font-size: 0.62em;
 }
 .editor-container .ProseMirror img {
   max-width: 100%;
@@ -187,6 +269,29 @@
   border-radius: 999px;
   padding: 0.08em 0.55em;
   white-space: nowrap;
+}
+
+/* Footnote reference: a small superscript chip tinted with the accent. */
+.editor-container .ProseMirror .footnote-ref {
+  background: color-mix(in srgb, var(--app-accent-soft) 80%, var(--app-elevated));
+  border-radius: 999px;
+  padding: 0.02em 0.42em;
+  vertical-align: super;
+  font-weight: 600;
+}
+
+/* External links: an arrow glyph after the label. Clicking opens in a new
+   tab (the click is handled in the rendered pane). */
+.editor-container .ProseMirror a[href^="http"]::after {
+  content: '';
+  display: inline-block;
+  width: 0.72em;
+  height: 0.72em;
+  margin-left: 0.18em;
+  vertical-align: -0.08em;
+  background: currentColor;
+  -webkit-mask: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg>') center / contain no-repeat;
+  mask: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg>') center / contain no-repeat;
 }
 
 /* Selection inside the editor */

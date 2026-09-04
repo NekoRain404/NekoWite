@@ -5,7 +5,8 @@ use serde::Serialize;
 use std::io;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Serialize, Clone)]
 pub struct FileEntry {
@@ -168,6 +169,20 @@ fn time_nonce() -> u128 {
 
 /// Snapshot cap used when the caller does not pass `max_history`.
 const DEFAULT_MAX_HISTORY: usize = 10;
+
+/// Serializes the read-old -> snapshot -> atomic-write sequence inside a
+/// single process so two concurrent `write_file`s on the same vault can never
+/// interleave: one writer might capture a predecessor snapshot while the
+/// other lands a newer write, dropping the newest snapshot from the chain.
+/// A process-internal lock is enough — the atomic rename already guarantees
+/// the file itself is never torn.
+static WRITE_LOCK: Mutex<()> = Mutex::new(());
+
+/// How old a `.tmp` sibling must be before the next write in that directory
+/// treats it as crash litter and cleans it up. Fresh temp files written by a
+/// currently-running writer (unique nonce name, recent mtime) are never
+/// touched, so cleaning cannot race a live write.
+const STALE_TMP_MAX_AGE: Duration = Duration::from_secs(3600);
 
 /// Reject the resolved path if any component between `base` and `path` is a
 /// symlink (lstat — non-following). `canonicalize_loose` resolves *live*
@@ -500,6 +515,39 @@ fn prune_history(dir: &Path, max: usize) -> Result<(), String> {
     Ok(())
 }
 
+/// Remove `.tmp` siblings in `dir` whose modified time is older than
+/// `max_age`, returning how many were removed. These are crash remnants of
+/// [`atomic_write`]/[`snapshot_history`] (which write a `.<name>.<nonce>.tmp`
+/// sibling then rename it into place); on a crash the temp file survives.
+/// Cleaning is bounded to mtime so a temp file a live writer just created
+/// (fresh mtime, unique nonce name) is never deleted mid-write.
+pub fn cleanup_stale_tmp(dir: &Path, max_age: Duration) -> Result<usize, String> {
+    let now = SystemTime::now();
+    let rd = std::fs::read_dir(dir).map_err(|e| e.to_string())?;
+    let mut removed = 0usize;
+    for entry in rd.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            continue;
+        }
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if !name.ends_with(".tmp") {
+            continue;
+        }
+        let stale = p
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|mt| now.duration_since(mt).ok())
+            .map(|age| age > max_age)
+            .unwrap_or(false);
+        if stale && std::fs::remove_file(&p).is_ok() {
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
 /// Write `content` to `path` under the vault, snapshotting the previous
 /// content first (when it exists, differs, and is non-empty).
 ///
@@ -507,13 +555,25 @@ fn prune_history(dir: &Path, max: usize) -> Result<(), String> {
 /// `Option<u32>` keeps the command compatible with the current frontend, which
 /// invokes `write_file` with only `{ vault_root, path, content }`; Tauri maps a
 /// missing optional argument to `None`.
+///
+/// The read-old -> snapshot -> atomic-write sequence holds [`WRITE_LOCK`], so
+/// concurrent saves on the same vault are serialized and cannot interleave a
+/// stale snapshot with a newer write. The directory the file lives in is also
+/// swept for stale `.tmp` crash litter before the write.
 pub fn write_file(
     vault_root: &str,
     path: &str,
     content: &str,
     max_history: Option<u32>,
 ) -> Result<(), String> {
+    // Serialize the whole read-snapshot-write sequence. `write_file` does no
+    // `.await`, so the guard never crosses a yield point and cannot deadlock
+    // the async executor; it just windows two concurrent saves apart.
+    let _guard = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
     let resolved = resolve_within(vault_root, path)?;
+    if let Some(parent) = resolved.parent() {
+        let _ = cleanup_stale_tmp(parent, STALE_TMP_MAX_AGE);
+    }
     let old = if resolved.exists() {
         match std::fs::read_to_string(&resolved) {
             Ok(old) => Some(old),
@@ -1007,11 +1067,19 @@ pub fn create_dir(vault_root: &str, path: &str) -> Result<String, String> {
 
 /// Rename (move) a file or directory within the vault. The target must not
 /// exist. Returns the canonical vault-relative path of the moved entry.
+///
+/// For a renamed *file*, the history snapshots and trash entry keyed by the
+/// old vault-relative path are migrated to the new key too, so a rename doesn't
+/// silently orphan (make unreachable) a file's history or a trash restore.
+/// A renamed *directory* is a plain move for now: the file tree inside it
+/// still carries old relative paths, so migrating the whole subtree's keys is
+/// deliberately out of scope here (single-file renames are covered).
 pub fn rename_entry(vault_root: &str, from: &str, to: &str) -> Result<String, String> {
     let (resolved_from, relative_from) = resolve_within_rel(vault_root, from)?;
     if !resolved_from.exists() {
         return Err(format!("not found: {relative_from}"));
     }
+    let is_dir = resolved_from.is_dir();
     let (resolved_to, relative_to) = resolve_within_rel(vault_root, to)?;
     if resolved_to.exists() {
         return Err(format!("target already exists: {relative_to}"));
@@ -1020,5 +1088,88 @@ pub fn rename_entry(vault_root: &str, from: &str, to: &str) -> Result<String, St
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     std::fs::rename(&resolved_from, &resolved_to).map_err(|e| e.to_string())?;
+    if !is_dir {
+        move_history_key(vault_root, &relative_from, &relative_to);
+        move_trash_key(vault_root, &relative_from, &relative_to);
+    }
     Ok(relative_to)
+}
+
+/// Migrate a file's history snapshots from the key for `from_rel` to the key
+/// for `to_rel`. Best-effort: a renamed entry must not fail because a side
+/// table could not be moved, so every error is swallowed. When the target key
+/// already holds snapshots (a file of that relative path was previously saved),
+/// the two directories are merged file-by-file instead of clobbering.
+fn move_history_key(vault_root: &str, from_rel: &str, to_rel: &str) {
+    let history_root = Path::new(vault_root).join(".nekowite").join("history");
+    let from_dir = history_root.join(encode_rel_path(from_rel));
+    let to_dir = history_root.join(encode_rel_path(to_rel));
+    if !from_dir.exists() {
+        return;
+    }
+    if !to_dir.exists() {
+        let _ = std::fs::rename(&from_dir, &to_dir);
+        return;
+    }
+    let Ok(rd) = std::fs::read_dir(&from_dir) else { return };
+    for entry in rd.flatten() {
+        let src = entry.path();
+        let name = src
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        let mut target = to_dir.join(&name);
+        if target.exists() {
+            let ts = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or_default();
+            target = to_dir.join(format!("{name}-merged-{ts}"));
+        }
+        let _ = std::fs::rename(&src, &target);
+    }
+    let _ = std::fs::remove_dir(&from_dir);
+}
+
+/// Migrate the trash entry for a renamed file from the key for `from_rel` to
+/// the key for `to_rel`. Handles both the exact key a [`delete_file`] wrote and
+/// any `-<ts>` collision-suffixed variants. Best-effort, like
+/// [`move_history_key`].
+fn move_trash_key(vault_root: &str, from_rel: &str, to_rel: &str) {
+    let trash_root = Path::new(vault_root).join(".nekowite-trash");
+    if !trash_root.is_dir() {
+        return;
+    }
+    let from_key = encode_rel_path(from_rel);
+    let to_key = encode_rel_path(to_rel);
+    let Ok(rd) = std::fs::read_dir(&trash_root) else { return };
+    for entry in rd.flatten() {
+        let p = entry.path();
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let suffix = name.strip_prefix(&from_key).unwrap_or("");
+        // Only the exact key or a `-<digits>` collision variant matches; a
+        // longer path that merely starts with the same text never does.
+        let matched = suffix.is_empty()
+            || (suffix.len() > 1
+                && suffix.starts_with('-')
+                && suffix[1..].chars().all(|c| c.is_ascii_digit()));
+        if !matched {
+            continue;
+        }
+        let new_name = if suffix.is_empty() {
+            to_key.clone()
+        } else {
+            format!("{to_key}{suffix}")
+        };
+        let mut target = trash_root.join(&new_name);
+        if target.exists() {
+            let ts = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or_default();
+            target = trash_root.join(format!("{new_name}-{ts}"));
+        }
+        let _ = std::fs::rename(&p, &target);
+    }
 }

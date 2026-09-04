@@ -10,7 +10,7 @@ const makeFootnoteReferenceNodeView: NodeViewConstructor = (node) => {
   dom.className = 'footnote-ref'
   dom.style.color = 'var(--app-accent, #6e8bd6)'
   dom.style.fontSize = '0.75em'
-  dom.style.lineHeight = '0'
+  dom.style.lineHeight = '1'
   dom.style.marginLeft = '0.15em'
   dom.style.cursor = 'default'
 

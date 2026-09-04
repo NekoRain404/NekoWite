@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi'
 import { FolderOpen, PanelRightClose, PanelRightOpen, Settings } from 'lucide-vue-next'
 import TitleBar from './ui/TitleBar.vue'
 import Sidebar from './ui/AppSidebar.vue'
@@ -33,6 +35,12 @@ import {
   SIDEBAR_WIDTH_MIN,
 } from './stores/appearance'
 import { loadVaultPlugins } from './services/plugins'
+import {
+  clampForDisplay,
+  loadWindowState,
+  saveWindowState,
+  type WindowState,
+} from './stores/windowState'
 
 const tabs = useTabsStore()
 const refs = useRefsStore()
@@ -86,6 +94,114 @@ watch(
   },
 )
 
+// --- Window geometry persistence -------------------------------
+// Window state is captured to localStorage and applied on the next launch. It
+// runs before the vault is opened so the restored layout is visible while the
+// editor initializes, and never blocks startup if Tauri is unavailable.
+
+const inTauri =
+  typeof (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== 'undefined'
+const WINDOW_TRACK_MS = 300
+let unlistenResized: (() => void) | null = null
+let unlistenMoved: (() => void) | null = null
+let windowSaveTimer: ReturnType<typeof setTimeout> | null = null
+let lastWindowState: WindowState | null = null
+
+function persistWindowGeometry(state: WindowState | null): void {
+  if (!state) return
+  lastWindowState = state
+  saveWindowState(state)
+}
+
+async function captureWindowGeometry(): Promise<void> {
+  if (!inTauri) return
+  try {
+    const win = getCurrentWindow()
+    const [size, position, maximized] = await Promise.all([
+      win.innerSize(),
+      win.innerPosition(),
+      win.isMaximized(),
+    ])
+    persistWindowGeometry({
+      width: size.width,
+      height: size.height,
+      x: position.x,
+      y: position.y,
+      maximized,
+    })
+  } catch {
+    // Geometry read is best-effort; never surface it.
+  }
+}
+
+async function restoreWindowState(): Promise<void> {
+  if (!inTauri) return
+  const stored = loadWindowState()
+  if (!stored) return
+  try {
+    const win = getCurrentWindow()
+    if (stored.maximized) {
+      await win.maximize()
+    } else {
+      // Clamp against the current desktop so a monitor that was unplugged (or
+      // a resolution that shrank) cannot leave the window off screen.
+      const clamped = clampForDisplay(stored, {
+        availWidth: window.screen?.availWidth ?? stored.width,
+        availHeight: window.screen?.availHeight ?? stored.height,
+      })
+      await win.setSize(new LogicalSize(clamped.width, clamped.height))
+      await win.setPosition(new LogicalPosition(clamped.x, clamped.y))
+    }
+  } catch {
+    // A failed restore (e.g. minimal environment) must not break startup.
+  }
+}
+
+async function setupWindowTracking(): Promise<void> {
+  if (!inTauri) return
+  const scheduleSave = (): void => {
+    if (windowSaveTimer) clearTimeout(windowSaveTimer)
+    windowSaveTimer = setTimeout(() => {
+      windowSaveTimer = null
+      void captureWindowGeometry()
+    }, WINDOW_TRACK_MS)
+  }
+  // Track geometry eagerly from the event payloads too, so an unload that
+  // fires before the debounce still has the freshest values to flush.
+  const patch = (prev: WindowState | null, next: Partial<WindowState>): WindowState => ({
+    width: 0,
+    height: 0,
+    x: 0,
+    y: 0,
+    maximized: false,
+    ...(prev ?? {}),
+    ...next,
+  })
+  try {
+    const win = getCurrentWindow()
+    unlistenResized = await win.onResized(({ payload }) => {
+      lastWindowState = patch(lastWindowState, { width: payload.width, height: payload.height })
+      scheduleSave()
+    })
+    unlistenMoved = await win.onMoved(({ payload }) => {
+      lastWindowState = patch(lastWindowState, { x: payload.x, y: payload.y })
+      scheduleSave()
+    })
+  } catch {
+    unlistenResized = null
+    unlistenMoved = null
+  }
+  void captureWindowGeometry()
+}
+
+function flushWindowState(): void {
+  if (windowSaveTimer) {
+    clearTimeout(windowSaveTimer)
+    windowSaveTimer = null
+  }
+  persistWindowGeometry(lastWindowState)
+}
+
 let unlistenMedia: (() => void) | null = null
 let blurSaving = false
 
@@ -116,6 +232,9 @@ function applyVault(path: string): void {
 }
 
 onMounted(() => {
+  // Restore window geometry before the vault is opened so the layout is in
+  // place while the editor initializes.
+  void restoreWindowState()
   if (typeof window.matchMedia === 'function') {
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
     const onChange = (): void => {
@@ -127,17 +246,34 @@ onMounted(() => {
     }
   }
   window.addEventListener('blur', onWindowBlur)
+  window.addEventListener('beforeunload', onBeforeUnload)
   void settings.loadKey().catch(() => {
     // stronghold init/key-file errors are surfaced by the settings panel; a
     // failed background load on startup should not reject the mount
   })
   const saved = localStorage.getItem('nekowite.vault')
   if (saved) applyVault(saved)
+  // Reopen the tabs that were open at the last capture (no-op when there is no
+  // matching session). Runs after the vault is applied so restoreSession sees
+  // the correct vault and its duplicate guard can focus existing tabs.
+  void tabs.restoreSession()
+  void setupWindowTracking()
 })
 
+function onBeforeUnload(): void {
+  tabs.captureSession()
+  flushWindowState()
+}
+
 onBeforeUnmount(() => {
+  onBeforeUnload()
   unlistenMedia?.()
   window.removeEventListener('blur', onWindowBlur)
+  window.removeEventListener('beforeunload', onBeforeUnload)
+  unlistenResized?.()
+  unlistenMoved?.()
+  unlistenResized = null
+  unlistenMoved = null
 })
 
 function onOpenFolder(path: string): void {

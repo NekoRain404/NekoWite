@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { createEditor, basicPlugins, configureImageResolver } from '@nekowite/editor-core'
+import { createEditor, basicPlugins, configureImageResolver, configureHeadingAnchorUrl } from '@nekowite/editor-core'
 import type { NekoEditor } from '@nekowite/editor-core'
 import { emitLifecycle, setActiveEditor } from '@nekowite/plugin-host'
 import { consumeSuppressReapply } from '../services/suppressReapply'
@@ -190,6 +190,15 @@ function onContainerPointerDownCapture(e: PointerEvent): void {
 
 function onEditorClick(e: MouseEvent): void {
   const target = e.target as Element | null
+  // External links open in a new tab; internal/markdown links are left alone.
+  const anchor = target?.closest?.('a') as HTMLAnchorElement | null
+  const href = anchor?.getAttribute('href') ?? ''
+  if (anchor && /^https?:\/\//.test(href)) {
+    e.preventDefault()
+    e.stopPropagation()
+    window.open(href, '_blank', 'noopener,noreferrer')
+    return
+  }
   const span = target?.closest?.('.nkw-spell') as HTMLElement | null
   if (span) {
     e.preventDefault()
@@ -379,6 +388,15 @@ onMounted(async () => {
       getNotePath: () => tabs.activeTab?.path ?? null,
     }),
   )
+  // Heading anchors copy a deep-link fragment. Prefer the note's vault-relative
+  // path so the link is resolvable from anywhere; fall back to a bare fragment
+  // for unsaved docs. Reads live tab state at click time.
+  configureHeadingAnchorUrl((slug) => {
+    const path = tabs.activeTab?.path
+    const vault = tabs.vault
+    if (!path || !vault) return `#${slug}`
+    return `${vault.replace(/\/+$/, '')}/${path}#${slug}`
+  })
   const current = tabs.activeTab
   if (current) await applyContent(current.content)
 
@@ -465,6 +483,7 @@ onBeforeUnmount(() => {
   if (tabs.activeId) tabs.cancelAutosave(tabs.activeId)
   setCalloutView(null)
   configureImageResolver(null)
+  configureHeadingAnchorUrl(null)
   editorBridge.setEditor(null)
   setActiveEditor(null)
   editorEl.value?.removeEventListener('pointerdown', onContainerPointerDownCapture, true)

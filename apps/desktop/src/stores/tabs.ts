@@ -5,8 +5,10 @@ import { armSuppressReapply } from '../services/suppressReapply'
 import { fsService } from '../services/fs'
 import type { HistoryEntry } from '../services/gateways/contracts'
 import { notifyError, notifyRecovery } from '../services/errors'
+import { t } from '../i18n'
 import { assetsDirForNote, moveAttachments, rewireTempRefsInContent } from '../services/renameAsset'
 import { useSettingsStore } from './settings'
+import { parseSession, SESSION_KEY, serializeSession } from '../services/session'
 
 export interface OpenTab {
   id: string
@@ -111,6 +113,51 @@ export const useTabsStore = defineStore('tabs', () => {
     vault.value = v
   }
 
+  /** Persist the current tab layout (paths only) to localStorage so a later
+   * launch can restore them. Tabs with a null path (unsaved untitled docs)
+   * cannot be restored by path and are skipped. When there are genuinely no
+   * tabs left the key is cleared so an empty editor is not resurrected. */
+  function captureSession(): void {
+    try {
+      const raw = serializeSession({
+        vault: vault.value,
+        activeId: activeTab.value?.path ?? null,
+        tabs: tabs.value,
+      })
+      if (raw === null) {
+        if (tabs.value.length === 0) localStorage.removeItem(SESSION_KEY)
+        return
+      }
+      localStorage.setItem(SESSION_KEY, raw)
+    } catch {
+      // localStorage can be unavailable (some webviews); session restore is
+      // best-effort and must never break tab operations.
+    }
+  }
+
+  /** Replay the stored session through `openTab`, which already handles the
+   * duplicate guard and the async content refill. No-op when there is no
+   * session for the currently-open vault. */
+  async function restoreSession(): Promise<void> {
+    const session = parseSession(localStorage.getItem(SESSION_KEY))
+    if (!session || session.vault !== vault.value) return
+    for (const path of session.paths) {
+      await openTab(path)
+    }
+    // Reactivate the defaulted active tab via its path: ids are regenerated
+    // on open, so the stored reference must be a path. Fall back to the last
+    // opened tab (already active) when it no longer exists.
+    if (session.activeId) {
+      const active = tabs.value.find((t) => t.path === session.activeId)
+      if (active) activeId.value = active.id
+    }
+    // Nothing could be restored (e.g. every file read failed) — surface a
+    // hint. Only when the restore ran on a fresh, empty tab set.
+    if (session.paths.length > 0 && tabs.value.every((t) => !t.path)) {
+      notifyError(t('session.restoreFailed'))
+    }
+  }
+
   async function openTab(path: string | null, initial = ''): Promise<void> {
     if (path && !vault.value) {
       notifyError('尚未打开 vault，无法读取文件')
@@ -165,6 +212,7 @@ export const useTabsStore = defineStore('tabs', () => {
           })
         }
       })()
+      captureSession()
       return
     }
     const tab: OpenTab = {
@@ -178,6 +226,7 @@ export const useTabsStore = defineStore('tabs', () => {
     tabs.value.push(tab)
     activeId.value = tab.id
     emitLifecycle('onOpenDocument', { id: tab.id, path: tab.path })
+    captureSession()
   }
 
   /** Remove a tab without flushing anything (used after the file is gone). */
@@ -202,6 +251,7 @@ export const useTabsStore = defineStore('tabs', () => {
       if (!ok) return // save failed — keep the tab so nothing is lost
     }
     removeTab(id)
+    captureSession()
   }
 
   function closeAll(): void {
@@ -404,5 +454,5 @@ export const useTabsStore = defineStore('tabs', () => {
     }
   }
 
-  return { tabs, activeId, activeTab, vault, setVault, openTab, closeTab, closeAll, closeOthers, renamePathInTabs, removeTab, setActive, markDirty, markSaving, markSaved, saveStateOf, noteSelfWrite, isSelfWrite, saveActive, reloadFromDisk, scheduleAutosave, cancelAutosave, saveTab, deleteTabFile, restoreHistoryToActive, checkCrashRecovery }
+  return { tabs, activeId, activeTab, vault, setVault, openTab, closeTab, closeAll, closeOthers, renamePathInTabs, removeTab, setActive, markDirty, markSaving, markSaved, saveStateOf, noteSelfWrite, isSelfWrite, saveActive, reloadFromDisk, scheduleAutosave, cancelAutosave, saveTab, deleteTabFile, restoreHistoryToActive, checkCrashRecovery, captureSession, restoreSession }
 })

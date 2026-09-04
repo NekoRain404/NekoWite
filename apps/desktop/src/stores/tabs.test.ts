@@ -7,6 +7,7 @@ import { onRecovery } from '../services/errors'
 import type { RecoveryPrompt } from '../services/errors'
 import { useTabsStore } from './tabs'
 import { useSettingsStore } from './settings'
+import { SESSION_KEY } from '../services/session'
 
 const readMock = vi.hoisted(() => vi.fn())
 const writeMock = vi.hoisted(() => vi.fn())
@@ -615,5 +616,55 @@ describe('closeAll cleanup', () => {
     await vi.advanceTimersByTimeAsync(30000)
     expect(writeMock).not.toHaveBeenCalled()
     vi.useRealTimers()
+  })
+})
+
+describe('session capture and restore', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    resetFsMocks()
+  })
+
+  it('captures the open tabs to localStorage and restores them after closeAll', async () => {
+    readMock.mockResolvedValue('content')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    await s.openTab('/vault/b.md')
+    // openTab captures the already-set-path session on each open; the active
+    // tab is referenced by path (ids are regenerated on restore).
+    expect(JSON.parse(localStorage.getItem(SESSION_KEY) ?? '{}').activeId).toBe('/vault/b.md')
+
+    s.closeAll()
+    expect(s.tabs).toHaveLength(0)
+
+    await s.restoreSession()
+    expect(s.tabs.map((t) => t.path)).toEqual(['/vault/a.md', '/vault/b.md'])
+    expect(s.activeTab?.path).toBe('/vault/b.md')
+    expect(s.tabs[0].content).toBe('content')
+  })
+
+  it('does nothing when the session vault does not match the current vault', async () => {
+    readMock.mockResolvedValue('content')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+
+    s.closeAll()
+    s.setVault('/other')
+    await s.restoreSession()
+    expect(s.tabs).toHaveLength(0)
+  })
+
+  it('restoring does not duplicate a tab that is already open', async () => {
+    readMock.mockResolvedValue('content')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    await s.openTab('/vault/b.md')
+
+    await s.restoreSession()
+    expect(s.tabs).toHaveLength(2)
+    expect(readMock).toHaveBeenCalledTimes(2)
   })
 })
