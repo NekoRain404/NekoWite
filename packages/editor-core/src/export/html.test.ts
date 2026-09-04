@@ -3,6 +3,13 @@ import { renderDocument, renderDocumentAsync, formatReference, doiUrl } from './
 import type { ExportRef } from './html'
 
 describe('renderDocument', () => {
+  // Kept first in this describe: it must run before any async render, since
+  // the async entry point loads KaTeX into the module-level cache that the
+  // synchronous path reuses. With KaTeX not yet loaded, sync math must throw.
+  it('throws a clear error for math when KaTeX is not loaded', () => {
+    expect(() => renderDocument('Inline $E=mc^2$\n')).toThrowError(/KaTeX is not loaded/)
+  })
+
   it('renders headings, lists, links, code', () => {
     const html = renderDocument('# Title\n\n- a\n- b\n\n[link](https://x.dev)\n\n`code`\n')
     expect(html).toContain('<h1')
@@ -14,6 +21,16 @@ describe('renderDocument', () => {
   it('renders katex math', async () => {
     const html = await renderDocumentAsync('Inline $E=mc^2$ and block:\n\n$$x^2$$\n')
     expect(html).toContain('katex')
+  })
+
+  // Runs after the async render above, so the module-level KaTeX instance is
+  // already loaded: the sync path must reuse it and render math properly
+  // (not degrade to raw LaTeX).
+  it('renders katex math synchronously when KaTeX is already loaded', () => {
+    const html = renderDocument('Inline $E=mc^2$\n')
+    expect(html).toContain('katex')
+    expect(html).not.toContain('math-latex')
+    expect(html).not.toContain('$E=mc^2$')
   })
 
   it('numbers citations and appends reference list', () => {
