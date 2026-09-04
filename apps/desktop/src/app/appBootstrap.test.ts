@@ -48,6 +48,7 @@ const h = vi.hoisted(() => {
     requestUntitledVaultSwitch: vi.fn(),
     setActiveEditor: vi.fn(),
     editorBridgeSetEditor: vi.fn(),
+    editorSessionManager: { destroyAll: vi.fn(), destroySession: vi.fn() },
     notifyError: vi.fn(),
     notifyRecovery: vi.fn(),
   }
@@ -84,6 +85,10 @@ vi.mock('../services/editorBridge', () => ({
 
 vi.mock('@nekowite/plugin-host', () => ({
   setActiveEditor: h.setActiveEditor,
+}))
+
+vi.mock('../features/editor/sessionManager', () => ({
+  editorSessionManager: h.editorSessionManager,
 }))
 
 vi.mock('../stores/tabs', () => ({ useTabsStore: () => h.tabsMock }))
@@ -130,6 +135,7 @@ describe('createDesktopRuntime', () => {
     h.windowTracking.restore.mockResolvedValue(undefined)
     h.windowTracking.start.mockResolvedValue(undefined)
     h.requestUntitledVaultSwitch.mockResolvedValue('save')
+    h.editorSessionManager.destroyAll.mockImplementation(() => {})
   })
 
   describe('start (startup ordering)', () => {
@@ -193,6 +199,35 @@ describe('createDesktopRuntime', () => {
       expect(runtime.vaultPath.value).toBeNull()
       expect(h.tabsMock.setVault).not.toHaveBeenCalled()
       expect(h.notifyError).toHaveBeenCalled()
+    })
+
+    it('does not switch when the vault root fails to register; stays on the current vault and surfaces an error', async () => {
+      // Commit a first (valid) vault so there is a "current" vault to stay on.
+      const runtime = createDesktopRuntime()
+      await runtime.applyVault('/current')
+      expect(runtime.vaultPath.value).toBe('/current')
+      const registrationsAfterFirst = h.gateways.fs.registerVault.mock.calls.length
+
+      // The next open has a stale/deleted vault (missing or permission lost).
+      h.gateways.fs.registerVault.mockRejectedValueOnce(new Error('permission denied'))
+      await runtime.applyVault('/bad')
+
+      // No switch is committed: the previous vault stays active and not a single
+      // vault-scoped start (index / plugins / refs / tmp-recovery) was kicked off.
+      expect(runtime.vaultPath.value).toBe('/current')
+      expect(h.gateways.fs.registerVault.mock.calls.length).toBe(registrationsAfterFirst + 1)
+      expect(h.tabsMock.setVault).toHaveBeenLastCalledWith('/current')
+      expect(h.tabsMock.closeAll).toHaveBeenCalledTimes(1)
+      expect(h.vaultSessionMock.indexVault).toHaveBeenCalledTimes(1)
+      expect(h.vaultSessionMock.indexVault).toHaveBeenCalledWith('/current')
+      expect(h.loadVaultPlugins).toHaveBeenCalledTimes(1)
+      expect(h.refsMock.loadVault).toHaveBeenCalledTimes(1)
+      expect(h.tmpRecovery.gc).toHaveBeenCalledTimes(1)
+      expect(h.tmpRecovery.scan).toHaveBeenCalledTimes(1)
+
+      // A clear, recoverable error is surfaced, and the bad path is NOT persisted.
+      expect(h.notifyError).toHaveBeenCalledWith('could not open the vault (missing/permission): /bad')
+      expect(localStorage.getItem(VAULT_LS_KEY)).toBe('/current')
     })
   })
 
@@ -280,6 +315,8 @@ describe('createDesktopRuntime', () => {
       expect(h.refsMock.clear).toHaveBeenCalled()
       expect(h.setActiveEditor).toHaveBeenCalledWith(null)
       expect(h.editorBridgeSetEditor).toHaveBeenCalledWith(null)
+      // Every live editor session is destroyed on teardown.
+      expect(h.editorSessionManager.destroyAll).toHaveBeenCalled()
       expect(h.windowTracking.dispose).toHaveBeenCalled()
 
       // The in-flight switch is aborted: even when the pending flush resolves, it
