@@ -2,7 +2,9 @@ import { registerCommand, registerComponent, registerToolbar, getComponent, unre
 import type { LoadResult } from './loader'
 import { registerLifecycleHook } from './lifecycle'
 import type { LifecycleEvent } from './lifecycle'
-import type { PluginContext, PluginDefinition } from './types'
+import type { PluginContext, PluginDefinition, PluginErrorCode } from './types'
+import { PluginError } from './types'
+import { withTimeout } from './timing'
 
 interface ActivePlugin {
   definition: PluginDefinition
@@ -14,6 +16,15 @@ interface ActivePlugin {
 
 const active = new Map<string, ActivePlugin>()
 
+/** Default budget for a plugin's async `onLoad`/activation work. Once elapses the
+ *  host stops waiting and marks the plugin unstable instead of hanging. */
+export const DEFAULT_PLUGIN_ACTIVATION_TIMEOUT_MS = 5000
+
+/** Plugins that entered an unstable state (activation threw, or a hook or the
+ *  init timed out). The host deactivates them and records the failure so a
+ *  crashing/looping plugin is never silently left half-registered. */
+const unstable = new Set<string>()
+
 function runUnregister(un: () => void): void {
   try {
     un()
@@ -22,7 +33,50 @@ function runUnregister(un: () => void): void {
   }
 }
 
-export async function activatePlugin(result: LoadResult): Promise<{ ok: boolean; id: string; error?: string }> {
+export interface ActivatePluginOptions {
+  /** Budget (ms) for the plugin's async init/onLoad. Defaults to
+   *  DEFAULT_PLUGIN_ACTIVATION_TIMEOUT_MS. A plugin that exceeds it is cancelled
+   *  (its awaited init is stopped), rolled back, and marked unstable. */
+  timeoutMs?: number
+  /** Thread an abort signal so a caller (e.g. vault switch) can cancel a running
+   *  activation. On abort the plugin is rolled back and marked unstable. */
+  signal?: AbortSignal
+}
+
+export interface ActivationResult {
+  ok: boolean
+  id: string
+  error?: string
+  /** Structured code when the failure is a recognised plugin failure mode, so
+   *  the host can route it to a distinct message instead of a generic "failed". */
+  code?: PluginErrorCode
+}
+
+/** Mark a plugin as having entered an unstable state: deactivate it (so its
+ *  registrations/hooks are released and it is left in a safe state) and record
+ *  the failure. The host keeps running — isolation, not a crash. */
+export function markPluginUnstable(id: string, reason?: string): void {
+  deactivatePlugin(id)
+  unstable.add(id)
+  if (reason) {
+    console.warn(`[NekoWite:plugin-host] plugin "${id}" entered unstable state: ${reason}`)
+  }
+}
+
+/** The ids of plugins disabled because they entered an unstable state. */
+export function getUnstablePluginIds(): string[] {
+  return [...unstable]
+}
+
+/** True when a plugin has been disabled for instability. */
+export function isPluginUnstable(id: string): boolean {
+  return unstable.has(id)
+}
+
+export async function activatePlugin(
+  result: LoadResult,
+  options?: ActivatePluginOptions,
+): Promise<ActivationResult> {
   if (!result.ok) return { ok: false, id: result.id, error: result.error }
   const { id, definition } = result
   // Already active: re-activation is an ok no-op. Registering twice would
@@ -33,10 +87,16 @@ export async function activatePlugin(result: LoadResult): Promise<{ ok: boolean;
   // (main.ts builtin bootstrap, services/plugins.ts vault scan) and can
   // legitimately re-run for the same ids, so idempotence beats an error here.
   if (active.has(id)) return { ok: true, id }
+  // Cancel before doing any work: a caller that already aborted should never
+  // have the plugin registered.
+  if (options?.signal?.aborted) {
+    return { ok: false, id, code: 'PLUGIN_ABORTED', error: 'Plugin activation was cancelled.' }
+  }
   const registeredComponents: string[] = []
   const registeredCommands: string[] = []
   const registeredToolbar: string[] = []
   const hookUnregisters: Array<() => void> = []
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_PLUGIN_ACTIVATION_TIMEOUT_MS
   try {
     const components = definition.components ?? {}
     for (const name of Object.keys(components)) {
@@ -58,8 +118,18 @@ export async function activatePlugin(result: LoadResult): Promise<{ ok: boolean;
         if (!getComponent(insertName)) throw new Error(`component not found: ${insertName}`)
       },
     }
-    const onLoadUnlisten = definition.onLoad?.(ctx) as unknown
-    if (typeof onLoadUnlisten === 'function') hookUnregisters.push(onLoadUnlisten as () => void)
+    const onLoadResult = (definition.onLoad?.(ctx) ?? undefined) as
+      | void
+      | (() => void)
+      | Promise<void | (() => void)>
+      | undefined
+    if (onLoadResult && typeof (onLoadResult as { then?: unknown }).then === 'function') {
+      // Async init: bound it so a hung onLoad is cancelled, not a stall.
+      const resolved = await withTimeout(Promise.resolve(onLoadResult), timeoutMs, { signal: options?.signal })
+      if (typeof resolved === 'function') hookUnregisters.push(resolved as () => void)
+    } else if (typeof onLoadResult === 'function') {
+      hookUnregisters.push(onLoadResult as () => void)
+    }
 
     const lifecycleFns: Array<[LifecycleEvent, unknown]> = [
       ['onEditorReady', definition.onEditorReady],
@@ -95,13 +165,31 @@ export async function activatePlugin(result: LoadResult): Promise<{ ok: boolean;
     }
 
     active.set(id, { definition, registeredComponents, registeredCommands, registeredToolbar, hookUnregisters })
+    unstable.delete(id)
     return { ok: true, id }
   } catch (err) {
+    // Isolation + safe state: roll back everything we registered, then mark the
+    // plugin unstable so the host keeps running but the plugin is disabled, not
+    // half-registered. Synchronous registration can throw (duplicate command id)
+    // and async init can time out / abort — all land here, none escape.
     for (const un of hookUnregisters) runUnregister(un)
     for (const componentName of registeredComponents) unregisterComponent(componentName)
     for (const commandId of registeredCommands) unregisterCommand(commandId)
     for (const toolbarId of registeredToolbar) unregisterToolbar(toolbarId)
-    return { ok: false, id, error: err instanceof Error ? err.message : String(err) }
+    // Recognise a structured timeout/cancel so the host can route a distinct
+    // message; everything else is a plain activation failure.
+    const code: PluginErrorCode | undefined =
+      err instanceof PluginError &&
+      (err.code === 'PLUGIN_HOOK_TIMEOUT' || err.code === 'PLUGIN_ABORTED')
+        ? err.code
+        : undefined
+    markPluginUnstable(id, code ?? undefined)
+    return {
+      ok: false,
+      id,
+      error: err instanceof Error ? err.message : String(err),
+      ...(code ? { code } : {}),
+    }
   }
 }
 
@@ -125,5 +213,6 @@ export function deactivatePlugin(id: string): void {
     // isolation: a plugin's failure must never propagate
   } finally {
     active.delete(id)
+    unstable.delete(id)
   }
 }

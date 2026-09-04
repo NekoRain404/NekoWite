@@ -13,6 +13,9 @@ export interface PluginMeta {
   main: string
   /** Optional manifest-declared capabilities (e.g. from `package.json`). */
   permissions?: PluginPermission[]
+  /** Optional HMAC-SHA256 signature (hex) from a trusted publisher, verified
+   *  against the user's trusted key before the plugin is imported. */
+  signature?: string
 }
 
 export interface PluginContext {
@@ -33,7 +36,7 @@ export interface PluginDefinition extends RegistrationBatch {
   components?: Record<string, Component>
   toolbar?: ToolbarItem[]
   commands?: EditorCommand[]
-  onLoad?(ctx: PluginContext): void | (() => void)
+  onLoad?(ctx: PluginContext): void | (() => void) | Promise<void | (() => void)>
   onUnload?(ctx: PluginContext): void
   onEditorReady?(ctx: PluginContext, editor: unknown): void | (() => void)
   onDocChange?(ctx: PluginContext, e: { doc: string }): void | (() => void)
@@ -61,6 +64,11 @@ export type PluginErrorCode =
   | 'PLUGIN_CODE_PARSE_FAILED'
   | 'PLUGIN_VERIFY_FAILED'
   | 'PLUGIN_UNSANDBOXED'
+  | 'PLUGIN_SIGNATURE_INVALID'
+  | 'PLUGIN_UNSIGNED_UNTRUSTED'
+  | 'PLUGIN_HOOK_TIMEOUT'
+  | 'PLUGIN_ABORTED'
+  | 'PLUGIN_UNSTABLE'
 
 const DEFAULT_PLUGIN_ERROR_MESSAGE: Record<PluginErrorCode, string> = {
   PLUGIN_LOAD_FAILED: 'The plugin failed to load.',
@@ -72,6 +80,11 @@ const DEFAULT_PLUGIN_ERROR_MESSAGE: Record<PluginErrorCode, string> = {
   PLUGIN_CODE_PARSE_FAILED: 'The plugin code could not be parsed.',
   PLUGIN_VERIFY_FAILED: 'This plugin\'s code or manifest changed since you approved it.',
   PLUGIN_UNSANDBOXED: 'The plugin runs unsandboxed in the main window.',
+  PLUGIN_SIGNATURE_INVALID: 'This plugin\'s signature could not be verified against the trusted publisher key; refusing to run it.',
+  PLUGIN_UNSIGNED_UNTRUSTED: 'This plugin is unsigned and not from a trusted source; refusing to run it.',
+  PLUGIN_HOOK_TIMEOUT: 'A lifecycle hook of the plugin exceeded its time budget and was cancelled.',
+  PLUGIN_ABORTED: 'Plugin activation was cancelled.',
+  PLUGIN_UNSTABLE: 'The plugin entered an unstable state and was disabled.',
 }
 
 const DEFAULT_PLUGIN_ERROR_RECOVERY: Record<PluginErrorCode, string> = {
@@ -84,6 +97,11 @@ const DEFAULT_PLUGIN_ERROR_RECOVERY: Record<PluginErrorCode, string> = {
   PLUGIN_CODE_PARSE_FAILED: 'Update the plugin to a compatible version.',
   PLUGIN_VERIFY_FAILED: 'Re-approve it only if you trust the new version, or reinstall it.',
   PLUGIN_UNSANDBOXED: 'Only approve plugins from a source you trust.',
+  PLUGIN_SIGNATURE_INVALID: 'Only run plugins from a source you trust; reinstall the plugin or add its publisher key.',
+  PLUGIN_UNSIGNED_UNTRUSTED: 'Trust the plugin explicitly only if you trust its source, or add its publisher to the trusted sources.',
+  PLUGIN_HOOK_TIMEOUT: 'Disable the plugin or check its logs.',
+  PLUGIN_ABORTED: 'Retry activation, or disable the plugin.',
+  PLUGIN_UNSTABLE: 'Disable and re-enable the plugin, or reinstall it.',
 }
 
 /** Union of error codes that represent a failure during plugin *loading*
@@ -94,6 +112,8 @@ const LOAD_PHASE_CODES: ReadonlySet<PluginErrorCode> = new Set<PluginErrorCode>(
   'PLUGIN_CODE_PARSE_FAILED',
   'PLUGIN_NOT_FOUND',
   'PLUGIN_VERIFY_FAILED',
+  'PLUGIN_SIGNATURE_INVALID',
+  'PLUGIN_UNSIGNED_UNTRUSTED',
 ])
 
 export interface PluginErrorOptions {

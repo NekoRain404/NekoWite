@@ -1,4 +1,4 @@
-import type { PluginDefinition, PluginMeta } from './types'
+import type { PluginDefinition, PluginMeta, PluginPermission } from './types'
 import { createPluginError } from './types'
 
 export type { PluginDefinition, PluginMeta } from './types'
@@ -154,4 +154,151 @@ export function verifyPluginIntegrity(
   const expected = store.get(id)
   if (expected === undefined) return 'missing'
   return expected === actualDigest ? 'ok' : 'mismatch'
+}
+
+/* ------------------------------------------------------------------------- *
+ * Plugin trust: HMAC-SHA256 signature verification + trusted-source policy.
+ *
+ * The 32-bit FNV-1a digest above is CHANGE-DETECTION, NOT authentication: it is
+ * unkeyed, so anyone (including a tamperer) can recompute it. The trust anchor
+ * is a HMAC-SHA256 signature (a shared-secret MAC) over a canonical
+ * code+manifest payload, verified through the standard Web Crypto API
+ * (globalThis.crypto.subtle — zero new dependencies, present in both the
+ * browser webview and Node). A signature that verifies against a user-supplied
+ * trusted publisher key proves the plugin was produced by an author who holds
+ * that same secret: integrity-of-source.
+ *
+ * Honest limits (documented in docs/PLUGIN_SDK.md):
+ *  - This is a shared-secret MAC, NOT public-key (asymmetric) authentication:
+ *    the SAME secret signs and verifies, so it authenticates to a shared secret,
+ *    not to a published public key. (A real Ed25519 scheme would avoid the
+ *    shared-secret property, but adds a crypto dependency this repo avoids.)
+ *  - It is not process isolation: a signed plugin still runs in the main
+ *    window and a granted permission can reach Tauri IPC / the file system.
+ *  - Without a configured trusted key, a present signature cannot be verified
+ *    and is treated as a refusal, not silently accepted.
+ * ------------------------------------------------------------------------- */
+
+/** User-supplied trusted publisher key material: a hex string (decoded to raw
+ *  bytes) or any other UTF-8 string used verbatim as the HMAC key. */
+export type PluginTrustKey = string
+
+/** The trust verdict for a plugin, before the trusted-source policy applies.
+ *  - 'trusted'  — a present signature verified against the trusted key.
+ *  - 'invalid'  — a signature was present but FAILED verification (REFUSE).
+ *  - 'unsigned' — no signature; falls under the trusted-source policy
+ *                 (explicit user trust / allowlist, or an unstamped notice). */
+export type PluginTrustVerdict = 'trusted' | 'unsigned' | 'invalid'
+
+/** The "publisher id" for a plugin id. Scoped packages (`@scope/name`) are
+ *  attributed to their scope (`@scope`); unscoped ids (`name`) to themselves.
+ *  Used by the trusted-source allowlist so trusting a publisher trusts all its
+ *  plugins rather than one id at a time. */
+export function publisherIdOf(pluginId: string): string {
+  if (pluginId.startsWith('@')) {
+    const slash = pluginId.indexOf('/')
+    if (slash > 0) return pluginId.slice(0, slash)
+  }
+  return pluginId
+}
+
+function utf8Encode(str: string): Uint8Array {
+  return new TextEncoder().encode(str)
+}
+
+function fromHex(hex: string): Uint8Array {
+  if (!/^[0-9a-fA-F]+$/.test(hex) || hex.length % 2 !== 0) {
+    throw new Error(`invalid hex: ${hex.slice(0, 16)}…`)
+  }
+  const bytes = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+  }
+  return bytes
+}
+
+function toHex(bytes: Uint8Array): string {
+  let out = ''
+  for (const b of bytes) out += b.toString(16).padStart(2, '0')
+  return out
+}
+
+/** Encode the trusted key material: a valid even-length hex string is treated as
+ *  raw key bytes; any other string is used as its UTF-8 bytes. */
+export function encodePluginKeyMaterial(keyMaterial: PluginTrustKey): Uint8Array {
+  const trimmed = keyMaterial.trim()
+  if (/^[0-9a-fA-F]+$/.test(trimmed) && trimmed.length % 2 === 0) {
+    return fromHex(trimmed)
+  }
+  return utf8Encode(keyMaterial)
+}
+
+/** Canonical, deterministic payload the publisher signs and the host verifies.
+ *  Key order is fixed, permissions are sorted — so the same plugin always yields
+ *  the same payload. Signed over the declared manifest fields + the exact code
+ *  bytes the host will execute. */
+export function buildPluginSignaturePayload(
+  id: string,
+  version: string,
+  main: string,
+  code: string,
+  permissions?: PluginPermission[],
+): string {
+  const perms = [...(permissions ?? [])].slice().sort()
+  return JSON.stringify({ id, version, main, permissions: perms, code })
+}
+
+async function importPluginHmacKey(keyMaterial: PluginTrustKey): Promise<CryptoKey> {
+  const subtle = (globalThis as { crypto?: { subtle?: SubtleCrypto } }).crypto?.subtle
+  if (!subtle) {
+    throw createPluginError('PLUGIN_SIGNATURE_INVALID', {
+      pluginId: '',
+      message: 'Web Crypto is unavailable in this environment; cannot verify a plugin signature.',
+      recovery: 'Run the plugin host in an environment with Web Crypto.',
+    })
+  }
+  const keyBytes = encodePluginKeyMaterial(keyMaterial)
+  return subtle.importKey('raw', keyBytes as BufferSource, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'])
+}
+
+/** Verify a plugin's hex signature (HMAC-SHA256, shared-secret key) over the
+ *  given payload. Returns false on any verification failure, and never imports. */
+export async function verifyPluginSignature(
+  signature: string,
+  payload: string,
+  keyMaterial: PluginTrustKey,
+): Promise<boolean> {
+  const subtle = (globalThis as { crypto?: { subtle?: SubtleCrypto } }).crypto?.subtle
+  if (!subtle) {
+    throw createPluginError('PLUGIN_SIGNATURE_INVALID', {
+      pluginId: '',
+      message: 'Web Crypto is unavailable in this environment; cannot verify a plugin signature.',
+      recovery: 'Run the plugin host in an environment with Web Crypto.',
+    })
+  }
+  const key = await importPluginHmacKey(keyMaterial)
+  const sig = fromHex(signature)
+  const data = utf8Encode(payload)
+  return subtle.verify('HMAC', key, sig as BufferSource, data as BufferSource)
+}
+
+/** Produce a hex HMAC-SHA256 signature over a payload with a trusted key. This
+ *  is the publisher-side companion to verifyPluginSignature (also useful for a
+ *  future signing CLI and for the test suite to craft genuine signatures). */
+export async function createPluginSignature(
+  payload: string,
+  keyMaterial: PluginTrustKey,
+): Promise<string> {
+  const subtle = (globalThis as { crypto?: { subtle?: SubtleCrypto } }).crypto?.subtle
+  if (!subtle) {
+    throw createPluginError('PLUGIN_SIGNATURE_INVALID', {
+      pluginId: '',
+      message: 'Web Crypto is unavailable in this environment; cannot sign a plugin.',
+      recovery: 'Run the plugin host in an environment with Web Crypto.',
+    })
+  }
+  const key = await importPluginHmacKey(keyMaterial)
+  const data = utf8Encode(payload)
+  const sig = new Uint8Array(await subtle.sign('HMAC', key, data as BufferSource))
+  return toHex(sig)
 }
