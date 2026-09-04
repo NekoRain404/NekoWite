@@ -13,6 +13,9 @@ export interface ChatSessionMessage {
   role: ChatSessionRole
   content: string
   images?: ChatSessionImage[]
+  /** Human-readable short status explaining images that were refused or
+   * evicted by a storage cap (e.g. "image too large"). */
+  imageNotice?: string
 }
 
 export interface ChatSession {
@@ -28,6 +31,44 @@ export const TITLE_MAX_LENGTH = 20
 /** Cap images saved per message so a data-URL heavy chat cannot blow the
  * localStorage quota on its own. */
 const MAX_IMAGES_PER_MESSAGE = 4
+
+/** Max base64 length (≈ bytes on disk) of a single image Data URL. Images
+ * larger than this are refused: the image is not stored and the message is
+ * marked "image too large" instead of being silently dropped or overflowing
+ * storage. Tune here. */
+export const MAX_IMAGE_BASE64_LENGTH = 2 * 1024 * 1024 // ~2 MB of base64 text
+
+/** Max aggregate base64 length of all image Data URLs in one session. When an
+ * append would cross this, the session's OLDEST images are evicted first.
+ * Tune here. */
+export const MAX_IMAGE_BYTES_PER_SESSION = 16 * 1024 * 1024 // ~16 MB
+
+/** Max aggregate base64 length of all image Data URLs across every session.
+ * Beyond this the least-recently-updated sessions lose images first.
+ * Tune here. */
+export const MAX_IMAGE_BYTES_TOTAL = 32 * 1024 * 1024 // ~32 MB
+
+/** Status notice attached to a message whose image was refused by the
+ * per-image size cap. */
+export const IMAGE_TOO_LARGE = 'image too large'
+
+/** Status notice attached to a message whose images were evicted by a storage
+ * budget. */
+export const IMAGE_EVICTED_NOTICE = 'image(s) removed (storage limit)'
+
+/** The three image budgets, split out so they can be overridden for tests or
+ * tuned in one place. */
+export interface ImageLimits {
+  maxPerImage: number
+  maxPerSession: number
+  maxTotal: number
+}
+
+export const DEFAULT_IMAGE_LIMITS: ImageLimits = {
+  maxPerImage: MAX_IMAGE_BASE64_LENGTH,
+  maxPerSession: MAX_IMAGE_BYTES_PER_SESSION,
+  maxTotal: MAX_IMAGE_BYTES_TOTAL,
+}
 
 interface StoredState {
   v: 1
@@ -94,6 +135,7 @@ function sanitizeMessage(value: unknown): ChatSessionMessage | null {
     const images = o.images.map(sanitizeImage).filter((v): v is ChatSessionImage => v !== null)
     if (images.length) msg.images = images.slice(0, MAX_IMAGES_PER_MESSAGE)
   }
+  if (typeof o.imageNotice === 'string') msg.imageNotice = o.imageNotice
   return msg
 }
 
@@ -120,10 +162,116 @@ function sanitizeSession(value: unknown): ChatSession | null {
 
 /** Strip transient fields (`streaming`) before anything reaches storage. */
 function toStoredMessage(message: ChatSessionMessage): ChatSessionMessage {
-  if (message.images && message.images.length) {
-    return { role: message.role, content: message.content, images: message.images }
+  const out: ChatSessionMessage = { role: message.role, content: message.content }
+  if (message.images && message.images.length) out.images = message.images
+  if (message.imageNotice) out.imageNotice = message.imageNotice
+  return out
+}
+
+function imageBytesOf(msg: ChatSessionMessage): number {
+  return (msg.images ?? []).reduce((sum, img) => sum + img.dataUrl.length, 0)
+}
+
+function sessionImageBytes(session: ChatSession): number {
+  return session.messages.reduce((sum, msg) => sum + imageBytesOf(msg), 0)
+}
+
+function totalImageBytes(sessions: ChatSession[]): number {
+  return sessions.reduce((sum, s) => sum + sessionImageBytes(s), 0)
+}
+
+/** Append an explanation to a message's existing notice, or set it. */
+function markNotice(msg: ChatSessionMessage, notice: string): void {
+  msg.imageNotice = msg.imageNotice ? `${msg.imageNotice}; ${notice}` : notice
+}
+
+/** Render an eviction summary (for tests) and set a notice on every message
+ * that actually lost images. */
+function noticeEviction(msg: ChatSessionMessage, before: number): void {
+  if (before !== (msg.images?.length ?? 0)) markNotice(msg, IMAGE_EVICTED_NOTICE)
+}
+
+/** Enforce image storage caps over a list of sessions, mutating in place:
+ *  1. drop images over `maxPerImage` and beyond `MAX_IMAGES_PER_MESSAGE`;
+ *  2. keep each session under `maxPerSession`, evicting oldest images first;
+ *  3. keep the cross-session total under `maxTotal`, evicting from the
+ *     least-recently-updated session first.
+ * Affected messages get an `imageNotice` so the UI can explain what happened.
+ * Returns the number of images dropped/evicted. */
+export function applyImageCaps(
+  sessions: ChatSession[],
+  limits: ImageLimits = DEFAULT_IMAGE_LIMITS,
+): number {
+  let dropped = 0
+
+  // 1. Per-image size cap + per-message count cap.
+  for (const session of sessions) {
+    for (const msg of session.messages) {
+      if (!msg.images || msg.images.length === 0) continue
+      const kept: ChatSessionImage[] = []
+      let notice: string | undefined
+      for (const img of msg.images) {
+        if (img.dataUrl.length > limits.maxPerImage) {
+          if (!notice) notice = IMAGE_TOO_LARGE
+          dropped += 1
+          continue
+        }
+        if (kept.length >= MAX_IMAGES_PER_MESSAGE) {
+          if (!notice) notice = IMAGE_EVICTED_NOTICE
+          dropped += 1
+          continue
+        }
+        kept.push(img)
+      }
+      if (kept.length === 0) msg.images = undefined
+      else msg.images = kept
+      if (notice) msg.imageNotice = notice
+    }
   }
-  return { role: message.role, content: message.content }
+
+  // 2. Per-session budget, evicting the session's oldest images first.
+  for (const session of sessions) {
+    let budget = sessionImageBytes(session)
+    if (budget <= limits.maxPerSession) continue
+    for (const msg of session.messages) {
+      if (budget <= limits.maxPerSession) break
+      const images = msg.images
+      if (!images || images.length === 0) continue
+      const before = images.length
+      while (images.length > 0 && budget > limits.maxPerSession) {
+        budget -= images.shift()!.dataUrl.length
+        dropped += 1
+      }
+      if (images.length === 0) msg.images = undefined
+      noticeEviction(msg, before)
+    }
+  }
+
+  // 3. Cross-session budget, evicting from least-recently-updated sessions.
+  let total = totalImageBytes(sessions)
+  if (total > limits.maxTotal) {
+    const lru = [...sessions].sort((a, b) => a.updated - b.updated)
+    for (const session of lru) {
+      if (total <= limits.maxTotal) break
+      for (const msg of session.messages) {
+        if (total <= limits.maxTotal) break
+        const images = msg.images
+        if (!images || images.length === 0) continue
+        const before = images.length
+        while (images.length > 0 && total > limits.maxTotal) {
+          total -= images.shift()!.dataUrl.length
+          dropped += 1
+        }
+        if (images.length === 0) msg.images = undefined
+        noticeEviction(msg, before)
+      }
+    }
+  }
+
+  if (dropped > 0) {
+    console.warn(`[chatSession] image caps: dropped/evicted ${dropped} image(s)`)
+  }
+  return dropped
 }
 
 export const useChatSessionStore = defineStore('chatSession', () => {
@@ -144,9 +292,14 @@ export const useChatSessionStore = defineStore('chatSession', () => {
         }
         if (typeof parsed.activeId === 'string') nextActive = parsed.activeId
       }
-    } catch {
+    } catch (err) {
       // Corrupted / private-mode storage: fall through to a fresh state.
+      console.warn('[chatSession] load failed, starting fresh', err)
     }
+    // Re-assert image budgets on load so legacy oversized/over-budget data
+    // is pruned (and your images are evicted oldest-first / LRU) rather than
+    // breaking JSON parsing or blow the quota on the next persist.
+    applyImageCaps(next)
     if (!next.some((s) => s.id === nextActive)) nextActive = null
     if (next.length === 0) {
       const seeded = createSession()
@@ -172,9 +325,10 @@ export const useChatSessionStore = defineStore('chatSession', () => {
     }
     try {
       localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(payload))
-    } catch {
+    } catch (err) {
       // Quota exceeded because of image data-URLs: retry text-only, otherwise
       // give up quietly — an in-memory session is better than a thrown error.
+      console.warn('[chatSession] persist failed, retrying without images', err)
       const textOnly: StoredState = {
         ...payload,
         sessions: payload.sessions.map((s) => ({
@@ -184,8 +338,8 @@ export const useChatSessionStore = defineStore('chatSession', () => {
       }
       try {
         localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(textOnly))
-      } catch {
-        /* ignore */
+      } catch (innerErr) {
+        console.warn('[chatSession] persist failed even without images', innerErr)
       }
     }
   }
@@ -240,6 +394,7 @@ export const useChatSessionStore = defineStore('chatSession', () => {
     }
     session.messages = [...session.messages, message]
     session.updated = Date.now()
+    applyImageCaps(sessions.value)
   }
 
   /** Patch the newest message of the active session (used while streaming).
@@ -250,6 +405,7 @@ export const useChatSessionStore = defineStore('chatSession', () => {
     const index = session.messages.length - 1
     session.messages = session.messages.map((m, i) => (i === index ? { ...m, ...patch } : m))
     session.updated = Date.now()
+    applyImageCaps(sessions.value)
   }
 
   /** Replace the active session's messages, deriving the title from the first
@@ -263,6 +419,7 @@ export const useChatSessionStore = defineStore('chatSession', () => {
       const first = session.messages.find((m) => m.role === 'user' && m.content)
       if (first) session.title = titleFromText(first.content)
     }
+    applyImageCaps(sessions.value)
     persist()
   }
 

@@ -473,6 +473,8 @@ export const en = {
     systemPrompt: 'System prompt',
     systemPromptHint: 'Sent as a system message with every request',
     systemPromptPlaceholder: 'e.g. You are an academic writing assistant…',
+    allowPrivate: 'Allow local/private addresses',
+    allowPrivateHint: 'Allow localhost or private-range custom URLs (local models). Turn off for stricter SSRF protection.',
   },
   error: {
     exportOutsideVault: 'Please choose a path inside the vault to export',

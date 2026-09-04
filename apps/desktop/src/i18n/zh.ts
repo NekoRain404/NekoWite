@@ -473,6 +473,8 @@ export const zh = {
     systemPrompt: '系统提示词',
     systemPromptHint: '作为 system 消息随每次请求发送',
     systemPromptPlaceholder: '例如：你是一名学术写作助手……',
+    allowPrivate: '允许本地/内网地址',
+    allowPrivateHint: '允许使用 localhost 或私有网段的自定义地址（本地模型）。关闭后可对请求地址做更严格的 SSRF 防护。',
   },
   error: {
     exportOutsideVault: '请选择 vault 内的路径导出',

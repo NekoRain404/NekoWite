@@ -754,6 +754,21 @@ function onExportPdf(): void {
                   placeholder="http://localhost:1234/v1"
                 >
               </label>
+              <label
+                v-if="showBaseUrl"
+                class="settings-field settings-toggle"
+              >
+                <span>{{ t('aiSettings.allowPrivate') }}</span>
+                <input
+                  v-model="settings.allowPrivate"
+                  type="checkbox"
+                  class="checkbox"
+                >
+              </label>
+              <span
+                v-if="showBaseUrl"
+                class="settings-note"
+              >{{ t('aiSettings.allowPrivateHint') }}</span>
               <label class="settings-field">
                 <span>API Key</span>
                 <input
