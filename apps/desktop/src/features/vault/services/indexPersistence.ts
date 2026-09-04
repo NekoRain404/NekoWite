@@ -20,6 +20,7 @@ import {
   buildIndexIncremental,
   buildSearchText,
   docToken,
+  INDEX_VERSION,
   queryIndex,
   type IndexState,
   type StoredIndex,
@@ -183,7 +184,7 @@ export function createIndexPersistence(deps: IndexPersistenceDeps): IndexPersist
 
   function upsert(vault: string, path: string, content: string, mtime: number, size: number): void {
     if (!currentIndex) {
-      currentIndex = { version: 1, vault, builtAt: Date.now(), notes: {} }
+      currentIndex = { version: INDEX_VERSION, vault, builtAt: Date.now(), notes: {} }
     }
     const text = buildSearchText(path, content, vault, mtime, size)
     currentIndex.notes[path] = { token: docToken(mtime, size), text, mtime, size }

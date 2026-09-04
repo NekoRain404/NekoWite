@@ -2,18 +2,23 @@ import { describe, expect, it } from 'vitest'
 import {
   buildIndexIncremental,
   buildSearchText,
+  checksumOf,
   clearIndex,
   docToken,
+  INDEX_VERSION,
+  indexMetaKey,
+  indexShardKey,
   indexStateOf,
   loadIndex,
   queryIndex,
   saveIndex,
   searchableText,
+  shardLabelForPath,
   type IndexStorage,
   type StoredIndex,
 } from './searchIndex'
 
-function memoryStorage(): IndexStorage {
+function memoryStorage(): IndexStorage & { keys(): string[] } {
   const m = new Map<string, string>()
   return {
     getItem: (k) => m.get(k) ?? null,
@@ -23,7 +28,12 @@ function memoryStorage(): IndexStorage {
     removeItem: (k) => {
       m.delete(k)
     },
+    keys: () => [...m.keys()],
   }
+}
+
+function storeKeys(store: IndexStorage & { keys(): string[] }): string[] {
+  return store.keys()
 }
 
 /** A tiny harness that hands out stats/reads from an in-memory file map and
@@ -96,22 +106,141 @@ describe('docToken', () => {
   })
 })
 
-describe('persistence', () => {
+describe('persistence (sharded)', () => {
   it('round-trips a stored index and clears it', () => {
     const store = memoryStorage()
-    const index: StoredIndex = { version: 1, vault: '/v', builtAt: 1, notes: {} }
+    const index: StoredIndex = { version: INDEX_VERSION, vault: '/v', builtAt: 1, notes: {} }
     saveIndex(index, store)
     expect(loadIndex('/v', store)).toEqual(index)
     clearIndex('/v', store)
     expect(loadIndex('/v', store)).toBeNull()
+    // clearIndex also removes every possible shard key + any residual .tmp.
+    expect([...storeKeys(store)].some((k) => k.includes('.meta'))).toBe(false)
   })
 
-  it('rejects corrupt / wrong-version payloads', () => {
+  it('rejects corrupt / wrong-version metadata, and a missing shard is flagged corrupt', () => {
     const store = memoryStorage()
-    store.setItem('nekowite.searchIndex.v1./v', 'not json')
+    store.setItem(indexMetaKey('/v'), 'not json')
     expect(loadIndex('/v', store)).toBeNull()
-    store.setItem('nekowite.searchIndex.v1./v', JSON.stringify({ version: 99, vault: '/v', notes: {} }))
+    store.setItem(
+      indexMetaKey('/v'),
+      JSON.stringify({ version: 99, vault: '/v', noteCount: 0, shards: {} }),
+    )
     expect(loadIndex('/v', store)).toBeNull()
+
+    // A meta that lists a shard whose key is missing must report it corrupt and
+    // leave that note out of memory (so a targeted rebuild re-reads it).
+    const label = shardLabelForPath('/v/a.md')
+    const payload = JSON.stringify({
+      notes: { '/v/a.md': { token: '1:1', text: 'alpha', mtime: 1, size: 1 } },
+    })
+    store.setItem(indexShardKey('/v', label), payload)
+    store.setItem(
+      indexMetaKey('/v'),
+      JSON.stringify({
+        version: INDEX_VERSION,
+        vault: '/v',
+        builtAt: 1,
+        noteCount: 1,
+        shards: { [label]: { count: 1, checksum: checksumOf(payload) } },
+      }),
+    )
+    const loaded = loadIndex('/v', store)
+    expect(loaded?.notes['/v/a.md']?.text).toBe('alpha')
+    expect(loaded?.corruptShards).toBeUndefined()
+
+    // Drop the shard byte (simulate corruption) -> checksum mismatch.
+    store.setItem(indexShardKey('/v', label), payload + 'x')
+    const corrupt = loadIndex('/v', store)
+    expect(corrupt?.notes['/v/a.md']).toBeUndefined()
+    expect(corrupt?.corruptShards).toEqual([label])
+  })
+})
+
+describe('sharding', () => {
+  it('splits a large set across more than one shard', () => {
+    const store = memoryStorage()
+    const notes: Record<string, { token: string; text: string; mtime: number; size: number }> = {}
+    for (let i = 0; i < 200; i += 1) {
+      notes[`/v/n${i}.md`] = { token: '1:1', text: `note ${i}`, mtime: 1, size: 1 }
+    }
+    saveIndex({ version: INDEX_VERSION, vault: '/v', builtAt: 1, notes }, store)
+    const shardKeys = [...storeKeys(store)].filter((k) => k.includes('.2048-shard-'))
+    expect(shardKeys.length).toBeGreaterThan(1)
+    // Every note is retrievable after a round-trip.
+    const loaded = loadIndex('/v', store)
+    expect(Object.keys(loaded?.notes ?? {})).toHaveLength(200)
+  })
+
+  it('a corrupted shard checksum triggers a targeted rebuild of just that shard', async () => {
+    const store = memoryStorage()
+    const files = new Map<string, FileState>()
+    for (let i = 0; i < 40; i += 1) {
+      files.set(`n${i}.md`, file(`n${i}.md`, `body ${i}`, i + 1))
+    }
+    const h = harness(files)
+    const result1 = await buildIndexIncremental(
+      '/v',
+      [...files.keys()],
+      { stat: h.stat, read: h.read },
+      null,
+    )
+    saveIndex(result1.index, store)
+    expect((loadIndex('/v', store)?.corruptShards ?? []).length).toBe(0)
+
+    // Corrupt ONE shard by overwriting its stored payload.
+    const label = shardLabelForPath('n0.md')
+    store.setItem(indexShardKey('/v', label), 'torn-{ garbage')
+    const corrupt = loadIndex('/v', store)
+    expect(corrupt?.corruptShards).toContain(label)
+
+    // Build from the corrupted index: the corrupt shard's notes are re-read, the
+    // rest are skipped -> a targeted rebuild (not a full one).
+    h.readCalls.length = 0
+    const rebuild = await buildIndexIncremental(
+      '/v',
+      [...files.keys()],
+      { stat: h.stat, read: h.read },
+      corrupt,
+    )
+    expect(rebuild.rebuiltShards).toContain(label)
+    expect(rebuild.built).toBeGreaterThan(0)
+    expect(rebuild.skipped).toBeGreaterThan(0)
+    saveIndex(rebuild.index, store)
+    // After re-save the corrupt shard is healed and no shard is flagged.
+    expect((loadIndex('/v', store)?.corruptShards ?? []).length).toBe(0)
+    expect((loadIndex('/v', store)?.notes ?? {})['n0.md']).toBeDefined()
+  })
+
+  it('atomic write leaves no torn shard: the previous value survives until the swap', () => {
+    const store = memoryStorage()
+    const key = indexShardKey('/v', 'a')
+    // Commit an initial valid value.
+    store.setItem(key, '{"old":true}')
+    // A write that crashes AFTER staging the temp but BEFORE the swap leaves the
+    // committed value untouched (no torn/partial JSON under the real key).
+    let swapFailed = false
+    const flaky: IndexStorage = {
+      getItem: (k) => store.getItem(k),
+      setItem: (k, v) => {
+        if (k === key && swapFailed) throw new Error('interrupted before swap')
+        store.setItem(k, v)
+      },
+      removeItem: (k) => store.removeItem(k),
+    }
+    swapFailed = true
+    expect(() => {
+      const payload = JSON.stringify({ notes: { '/v/a.md': { token: '1:1', text: 'x', mtime: 1, size: 1 } } })
+      const tmpKey = `${key}.tmp`
+      flaky.setItem(tmpKey, payload) // temp staged
+      flaky.setItem(key, payload) // swap throws -> interrupted
+    }).toThrow()
+    swapFailed = false
+    // The real key still holds the old, valid JSON; a reload parses it fine.
+    expect(store.getItem(key)).toBe('{"old":true}')
+    expect(() => JSON.parse(store.getItem(key)!)).not.toThrow()
+    // A stale temp key from the interrupted write is harmless/cleaned on load.
+    expect(store.getItem(`${key}.tmp`)).toBeDefined()
   })
 })
 

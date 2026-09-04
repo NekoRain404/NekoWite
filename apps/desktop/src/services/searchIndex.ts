@@ -7,11 +7,31 @@
  * cannot match, while the full-body scan remains the source of truth for the
  * snippet (see contentSearch `searchWithIndex`).
  *
- * The index is stored per-vault in localStorage (a compact JSON blob). A
- * per-note version token (`mtime:size`) lets a rebuild update only the notes
- * that actually changed, and a `text` field holds the lowercased haystack of
- * every searchable field — including the full body, so a deep-body match is
- * captured by the index itself and never silently dropped.
+ * The index is stored per-vault in **shards** so a large vault never serializes
+ * one huge blob. Notes are partitioned across a fixed number of shards by a
+ * stable hash of their path (`shardLabelForPath`), each shard is persisted under
+ * its own storage key (see {@link indexShardKey}), and a **shard metadata**
+ * record carries a per-shard checksum so a corrupted shard is detected and only
+ * that shard (not the whole index) is rebuilt. A per-note version token
+ * (`mtime:size`) lets a rebuild update only the notes that actually changed, and
+ * a `text` field holds the lowercased haystack of every searchable field —
+ * including the full body, so a deep-body match is captured by the index itself
+ * and never silently dropped.
+ *
+ * Persistence detail: the wiring (`indexCoordinatorWiring.ts`) calls
+ * {@link loadIndex}/{@link saveIndex}/{@link clearIndex} synchronously, so the
+ * built-in shard store is the synchronous `IndexStorage` (localStorage under
+ * multiple keys). An fs-backed store — writing each shard to a `.nekowite/index/`
+ * JSON file via the async {@link FsPort} and swapping via an atomic `rename` —
+ * would require those three functions to become async and the wiring to await
+ * them; that is intentionally left as a documented, out-of-scope backend gap
+ * (localStorage `setItem` is atomic per key, so the temp→swap below already
+ * guarantees no torn shard).
+ *
+ * Shard writes are atomic (temp key → swap), and the metadata record is written
+ * last as a commit marker, so an interrupted write never leaves a torn index: on
+ * the next load a shard whose checksum no longer matches the metadata is dropped
+ * from the in-memory `notes` and rebuilt by the incremental build step.
  */
 
 import { parseNoteMeta } from './noteMeta'
@@ -28,10 +48,32 @@ export interface IndexedDoc {
 }
 
 export interface StoredIndex {
-  version: 1
+  version: number
   vault: string
   builtAt: number
   notes: Record<string, IndexedDoc>
+  /** Path-hash shard labels whose loaded checksum failed. When present, the
+   *  persistence layer rebuilds just those shards on the next build/save. */
+  corruptShards?: string[]
+}
+
+/** Integrity record for one shard of an index. */
+export interface IndexShardMetaEntry {
+  /** Number of notes stored in this shard. */
+  count: number
+  /** FNV-1a checksum (hex) of the shard's canonical JSON payload. */
+  checksum: string
+}
+
+/** Top-level shard metadata (the "commit" record written last on a save). */
+export interface IndexShardMeta {
+  version: number
+  vault: string
+  builtAt: number
+  /** Total note count across all shards. */
+  noteCount: number
+  /** Per-shard integrity: label → `{ count, checksum }`. */
+  shards: Record<string, IndexShardMetaEntry>
 }
 
 /** UI-facing state of the persistent index for the current vault. */
@@ -43,8 +85,18 @@ export interface IndexStorage {
   removeItem(key: string): void
 }
 
-const INDEX_VERSION = 1
-const LS_PREFIX = 'nekowite.searchIndex'
+/** Current on-disk index format version. A stored index whose metadata version
+ *  does not match is treated as stale and rebuilt. */
+export const INDEX_VERSION = 2
+const LS_PREFIX = 'nekowite.searchIndex.v2'
+
+/** Number of path-hash shards an index is split across. A vault with few notes
+ *  only materialises the shards that actually contain a note. */
+export const INDEX_SHARD_COUNT = 16
+
+/** Shard name prefix, e.g. `2048-shard-a`. A note's shard label is derived from
+ *  a stable hash of its path, so the same note always lands in the same shard. */
+export const INDEX_SHARD_NAME_PREFIX = '2048-shard-'
 
 /** In-memory fallback used when localStorage is unavailable (some test envs). */
 const memoryStorage: IndexStorage = (() => {
@@ -70,8 +122,50 @@ function defaultStorage(): IndexStorage {
   return memoryStorage
 }
 
+/** Storage key for the shard-metadata (commit) record of `vault`. */
+export function indexMetaKey(vault: string): string {
+  return `${LS_PREFIX}.${vault}.meta`
+}
+
+/** Storage key for one shard of `vault`'s index. */
+export function indexShardKey(vault: string, label: string): string {
+  return `${LS_PREFIX}.${vault}.${INDEX_SHARD_NAME_PREFIX}${label}`
+}
+
+/** Back-compat alias for the index's primary (metadata) key. */
 export function indexKey(vault: string): string {
-  return `${LS_PREFIX}.v1.${vault}`
+  return indexMetaKey(vault)
+}
+
+/** Stable FNV-1a checksum (8 hex chars) of a string payload, used to detect a
+ *  corrupted/torn shard before trusting it. */
+export function checksumOf(value: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < value.length; i += 1) {
+    h ^= value.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return (h >>> 0).toString(16).padStart(8, '0')
+}
+
+/** Stable 32-bit hash of a path, so the same path always maps to the same shard
+ *  regardless of insertion order. */
+export function hashPath(path: string): number {
+  let h = 5381
+  for (let i = 0; i < path.length; i += 1) {
+    h = ((h << 5) + h + path.charCodeAt(i)) | 0
+  }
+  return h >>> 0
+}
+
+/** Shard label (`0`…`9` then `a`…`f` for the default 16 shards) for a path. */
+export function shardLabelForPath(path: string, count = INDEX_SHARD_COUNT): string {
+  return (hashPath(path) % count).toString(36)
+}
+
+/** Every possible shard label for the configured shard count. */
+export function shardLabels(count = INDEX_SHARD_COUNT): string[] {
+  return Array.from({ length: count }, (_, i) => i.toString(36))
 }
 
 /** Version token for a note's indexed content. */
@@ -114,28 +208,103 @@ export function buildSearchText(
   return searchableText(path, content, meta)
 }
 
+/** Write `value` to `key` atomically (temp key, then swap, then clean the temp),
+ *  so an interrupted write never leaves a shard that fails to parse — the
+ *  previous committed value under `key` is untouched until the new one is fully
+ *  staged. */
+function storageSetAtomic(storage: IndexStorage, key: string, value: string): void {
+  storage.setItem(`${key}.tmp`, value)
+  storage.setItem(key, value)
+  storage.removeItem(`${key}.tmp`)
+}
+
+/** Load `vault`'s sharded index. Assembles every shard listed in the metadata,
+ *  verifying each shard's checksum (and JSON). A shard that fails validation is
+ *  dropped from `notes` and recorded in `index.corruptShards` so the incremental
+ *  build step re-reads exactly those notes (rebuilding only that shard). Returns
+ *  null when there is no metadata, the metadata is corrupt, or the metadata
+ *  version is stale (the caller then rebuilds the whole index). */
 export function loadIndex(
   vault: string,
   storage: IndexStorage = defaultStorage(),
 ): StoredIndex | null {
-  const raw = storage.getItem(indexKey(vault))
-  if (!raw) return null
+  const rawMeta = storage.getItem(indexMetaKey(vault))
+  if (!rawMeta) return null
+  let meta: IndexShardMeta
   try {
-    const parsed = JSON.parse(raw) as StoredIndex
-    if (parsed.version !== INDEX_VERSION) return null
-    if (!parsed.notes || typeof parsed.notes !== 'object') return null
-    return parsed
+    meta = JSON.parse(rawMeta) as IndexShardMeta
   } catch {
     return null
   }
+  if (meta.version !== INDEX_VERSION) return null
+  if (!meta.shards || typeof meta.shards !== 'object') return null
+  const notes: Record<string, IndexedDoc> = {}
+  const corruptShards: string[] = []
+  for (const [label, shardMeta] of Object.entries(meta.shards)) {
+    const raw = storage.getItem(indexShardKey(vault, label))
+    if (raw && shardMeta.checksum && checksumOf(raw) === shardMeta.checksum) {
+      try {
+        const parsed = JSON.parse(raw) as { notes?: Record<string, IndexedDoc> }
+        if (parsed.notes && typeof parsed.notes === 'object') {
+          Object.assign(notes, parsed.notes)
+          continue
+        }
+      } catch {
+        // fall through to mark the shard corrupt
+      }
+    }
+    corruptShards.push(label)
+  }
+  const index: StoredIndex = {
+    version: meta.version,
+    vault: meta.vault,
+    builtAt: meta.builtAt,
+    notes,
+  }
+  if (corruptShards.length > 0) index.corruptShards = corruptShards
+  return index
 }
 
+/** Save `index`, splitting its notes across path-hash shards. Each shard is
+ *  written atomically under its own key with a per-shard checksum, then the
+ *  metadata record is written (last) as the commit marker. Empty shards are
+ *  never materialised, so a small vault only touches the shards it needs. */
 export function saveIndex(index: StoredIndex, storage: IndexStorage = defaultStorage()): void {
-  storage.setItem(indexKey(index.vault), JSON.stringify(index))
+  const groups = new Map<string, Record<string, IndexedDoc>>()
+  for (const [path, doc] of Object.entries(index.notes)) {
+    const label = shardLabelForPath(path)
+    let bucket = groups.get(label)
+    if (!bucket) {
+      bucket = {}
+      groups.set(label, bucket)
+    }
+    bucket[path] = doc
+  }
+  const meta: IndexShardMeta = {
+    version: index.version,
+    vault: index.vault,
+    builtAt: index.builtAt,
+    noteCount: Object.keys(index.notes).length,
+    shards: {},
+  }
+  for (const [label, bucket] of groups) {
+    const payload = JSON.stringify({ notes: bucket })
+    storageSetAtomic(storage, indexShardKey(index.vault, label), payload)
+    meta.shards[label] = { count: Object.keys(bucket).length, checksum: checksumOf(payload) }
+  }
+  storageSetAtomic(storage, indexMetaKey(index.vault), JSON.stringify(meta))
 }
 
+/** Drop `vault`'s entire sharded index (metadata + every possible shard key).
+ *  Stale `.tmp` keys from an interrupted write are cleaned too. */
 export function clearIndex(vault: string, storage: IndexStorage = defaultStorage()): void {
-  storage.removeItem(indexKey(vault))
+  for (const label of shardLabels()) {
+    const key = indexShardKey(vault, label)
+    storage.removeItem(key)
+    storage.removeItem(`${key}.tmp`)
+  }
+  storage.removeItem(indexMetaKey(vault))
+  storage.removeItem(`${indexMetaKey(vault)}.tmp`)
 }
 
 /** Candidate note paths whose indexed text contains `query`. Returns an empty
@@ -200,6 +369,9 @@ export interface IndexBuildResult {
   removed: number
   /** Notes that failed to read/stat. */
   failed: number
+  /** Shard labels whose stored checksum failed at load and were re-indexed in
+   *  this run (a targeted shard rebuild, not a full-index rebuild). */
+  rebuiltShards: string[]
 }
 
 const DEFAULT_CONCURRENCY = 4
@@ -293,5 +465,8 @@ export async function buildIndexIncremental(
     changed: changed.size,
     removed,
     failed,
+    // Shards whose checksum failed at load were dropped from `notes`, so every
+    // note in them was (re)read above — report them as a targeted rebuild.
+    rebuiltShards: existing?.corruptShards ?? [],
   }
 }

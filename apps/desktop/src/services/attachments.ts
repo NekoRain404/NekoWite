@@ -23,6 +23,48 @@ export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024 // 10 MiB per image
 export const MAX_ATTACHMENTS_PER_BATCH = 10 // images accepted per single paste/drop
 export const MAX_ATTACHMENTS_PER_SESSION = 50 // running total per app session
 
+/** Per-vault attachment total cap (bytes). A vault accumulating an unbounded
+ *  set of large images would bloat it; this is the ceiling for the whole vault. */
+export const MAX_ATTACHMENTS_PER_VAULT_BYTES = 512 * 1024 * 1024 // 512 MB
+
+/** Per-batch byte cap for a single paste/drop. Mirrors
+ *  {@link MAX_ATTACHMENTS_PER_BATCH} but by bytes, so a drop of many large files
+ *  is rejected before any IPC/copy rather than reading gigabytes into memory. */
+export const MAX_ATTACHMENTS_PER_BATCH_BYTES = 100 * 1024 * 1024 // 100 MB
+
+/** Minimum free disk the vault filesystem must retain after a write. Below this
+ *  the import is refused up front (a clear error) instead of failing mid-copy. */
+export const MIN_ATTACHMENT_FREE_DISK_BYTES = 25 * 1024 * 1024 // 25 MB
+
+/** Files at or above this size take the streaming/file-path route (write the
+ *  bytes out via the backend) instead of base64-over-IPC, so a large file never
+ *  spills a full base64 copy into JS memory. Smaller files keep the existing
+ *  low-copy base64 path. */
+export const STREAM_IMPORT_MIN_BYTES = 8 * 1024 * 1024 // 8 MiB
+
+/**
+ * The exact backend command a true zero-base64 streaming/file-path import would
+ * call.
+ *
+ * The current {@link FsPort} (`platform/gateways/contracts`) only exposes
+ * `saveAttachment(vault, fileName, base64, dir)`, which ships bytes as base64
+ * over IPC (≈4/3x the byte size plus a Rust decode). A genuine streaming
+ * file-path import would instead copy from the OS path to the vault attachment
+ * dir without a JS hop:
+ *
+ *   import_attachment(vault: string, src_abs_path: string, dir?: string)
+ *     -> Promise<string>   // the vault-relative path written
+ *
+ * That command is OUT OF SCOPE here (no backend command exists and `src-tauri`
+ * is off-limits), so the frontend implements the reject-before-write policy —
+ * per-file, per-batch, per-vault-total and disk-free-space guards — and degrades
+ * cleanly: small files keep the base64 path; large files are accepted (when the
+ * policy permits) and routed to the streaming route, which would call the
+ * not-yet-implemented command and falls back to base64 when it is unavailable.
+ */
+export const STREAM_IMPORT_BACKEND_COMMAND =
+  'import_attachment(vault, src_abs_path, dir?) → Promise<string>'
+
 export const ATTACHMENT_EXTENSIONS = [
   'png',
   'jpg',
@@ -211,7 +253,13 @@ function readBlobAsDataUrl(blob: Blob): Promise<string> {
   })
 }
 
-export type AttachmentLimitReason = 'too-large' | 'too-many' | 'session-full'
+export type AttachmentLimitReason =
+  | 'too-large'
+  | 'too-many'
+  | 'session-full'
+  | 'vault-total'
+  | 'batch-total'
+  | 'low-disk'
 
 export interface AttachmentRejection {
   file: File
@@ -221,6 +269,33 @@ export interface AttachmentRejection {
 export interface AttachmentLimitResult {
   accepted: File[]
   rejected: AttachmentRejection[]
+}
+
+/**
+ * Context for the streaming/file-path import policy: how much the vault already
+ * hold and how much free disk the vault's filesystem has. The caller gathers
+ * this once per import (list + stat the attachments dir / read the free-space)
+ * and passes it so the policy can reject before any write.
+ */
+export interface AttachmentImportContext {
+  /** Bytes already stored in the vault's attachment dirs. */
+  vaultTotalBytes: number
+  /** Remaining free bytes on the vault filesystem. */
+  freeDiskBytes: number
+}
+
+export interface AttachmentImportPlan {
+  /** Files persisted through the streaming/file-path route (no base64 read). */
+  stream: File[]
+  /** Files persisted through the existing base64 route. */
+  base64: File[]
+  /** Accepted files in input order (a union of `stream` and `base64`). */
+  accepted: File[]
+  rejected: AttachmentRejection[]
+  /** Total bytes the accepted files would consume. */
+  acceptedBytes: number
+  /** True when at least one accepted file must take the streaming route. */
+  requiresStreaming: boolean
 }
 
 // Running count of attachment files accepted into the paste/drop pipeline this
@@ -279,6 +354,9 @@ function describeAttachmentRejections(rejected: AttachmentRejection[]): string {
   const tooLarge = rejected.filter((r) => r.reason === 'too-large').length
   const tooMany = rejected.filter((r) => r.reason === 'too-many').length
   const sessionFull = rejected.filter((r) => r.reason === 'session-full').length
+  const vaultTotal = rejected.filter((r) => r.reason === 'vault-total').length
+  const batchTotal = rejected.filter((r) => r.reason === 'batch-total').length
+  const lowDisk = rejected.filter((r) => r.reason === 'low-disk').length
   const parts: string[] = []
   if (tooLarge) {
     parts.push(`${tooLarge} too large (max ${formatAttachmentBytes(MAX_ATTACHMENT_BYTES)})`)
@@ -289,6 +367,23 @@ function describeAttachmentRejections(rejected: AttachmentRejection[]): string {
   if (sessionFull) {
     parts.push(`${sessionFull} over the ${MAX_ATTACHMENTS_PER_SESSION}-per-session limit`)
   }
+  if (batchTotal) {
+    parts.push(
+      `${batchTotal} over the ${formatAttachmentBytes(MAX_ATTACHMENTS_PER_BATCH_BYTES)}-per-paste byte limit`,
+    )
+  }
+  if (vaultTotal) {
+    parts.push(
+      `${vaultTotal} over the ${formatAttachmentBytes(MAX_ATTACHMENTS_PER_VAULT_BYTES)}-vault limit`,
+    )
+  }
+  if (lowDisk) {
+    parts.push(
+      `${lowDisk} over the free-disk headroom (needs ${formatAttachmentBytes(
+        MIN_ATTACHMENT_FREE_DISK_BYTES,
+      )} free)`,
+    )
+  }
   return `Some images skipped: ${parts.join('; ')}`
 }
 
@@ -297,11 +392,99 @@ function describeAttachmentRejections(rejected: AttachmentRejection[]): string {
  * and return only the survivors. The paste/drop/rename pipeline keeps working
  * on the accepted files while the user is told why the rest were dropped
  * (rather than silently discarding or risking a memory blowup).
+ *
+ * When `context` is supplied the full streaming policy is applied (per-batch /
+ * per-vault byte caps + free-disk guard); otherwise the count-based limits
+ * remain (back-compat for callers that cannot gather the disk context).
  */
-export function applyAttachmentLimits(files: File[]): File[] {
+export function applyAttachmentLimits(files: File[], context?: AttachmentImportContext): File[] {
+  if (context) {
+    const plan = planAttachmentImport(files, context)
+    if (plan.rejected.length) notifyError(describeAttachmentRejections(plan.rejected))
+    return plan.accepted
+  }
   const { accepted, rejected } = classifyAttachmentFiles(files)
   if (rejected.length) notifyError(describeAttachmentRejections(rejected))
   return accepted
+}
+
+/** True when `file` is large enough that it should be written out via the
+ *  backend streaming/file-path route rather than base64-encoded over IPC. */
+export function shouldStreamImport(file: File, minBytes = STREAM_IMPORT_MIN_BYTES): boolean {
+  return file.size >= minBytes
+}
+
+/**
+ * Plan an attachment import against the FULL policy:
+ *   - per-single-file cap (the existing 10 MiB),
+ *   - per-batch count cap (the existing 10 per paste),
+ *   - per-batch byte cap,
+ *   - per-vault total cap,
+ *   - disk-free-space guard.
+ *
+ * It is pure w.r.t. the filesystem: it reads no bytes and issues no write. It
+ * returns the accepted set split into the streaming route (`stream`, files at or
+ * above {@link STREAM_IMPORT_MIN_BYTES}) and the base64 route (`base64`), plus
+ * structured rejections so the caller can surface each reason — nothing is ever
+ * silently dropped. Rejection order: per-file size, per-batch count, per-batch
+ * bytes, per-vault total, free-disk (the most specific first).
+ */
+export function planAttachmentImport(
+  files: File[],
+  context: AttachmentImportContext,
+  opts: {
+    maxFileBytes?: number
+    maxBatchBytes?: number
+    maxVaultTotalBytes?: number
+    minFreeBytes?: number
+  } = {},
+): AttachmentImportPlan {
+  const maxFile = opts.maxFileBytes ?? MAX_ATTACHMENT_BYTES
+  const maxBatchBytes = opts.maxBatchBytes ?? MAX_ATTACHMENTS_PER_BATCH_BYTES
+  const maxVaultTotal = opts.maxVaultTotalBytes ?? MAX_ATTACHMENTS_PER_VAULT_BYTES
+  const minFree = opts.minFreeBytes ?? MIN_ATTACHMENT_FREE_DISK_BYTES
+
+  const stream: File[] = []
+  const base64: File[] = []
+  const accepted: File[] = []
+  const rejected: AttachmentRejection[] = []
+  let acceptedBytes = 0
+
+  for (const file of files) {
+    if (file.size > maxFile) {
+      rejected.push({ file, reason: 'too-large' })
+      continue
+    }
+    if (stream.length + base64.length >= MAX_ATTACHMENTS_PER_BATCH) {
+      rejected.push({ file, reason: 'too-many' })
+      continue
+    }
+    if (acceptedBytes + file.size > maxBatchBytes) {
+      rejected.push({ file, reason: 'batch-total' })
+      continue
+    }
+    if (context.vaultTotalBytes + acceptedBytes + file.size > maxVaultTotal) {
+      rejected.push({ file, reason: 'vault-total' })
+      continue
+    }
+    if (context.freeDiskBytes - file.size < minFree) {
+      rejected.push({ file, reason: 'low-disk' })
+      continue
+    }
+    acceptedBytes += file.size
+    accepted.push(file)
+    if (shouldStreamImport(file)) stream.push(file)
+    else base64.push(file)
+  }
+
+  return {
+    stream,
+    base64,
+    accepted,
+    rejected,
+    acceptedBytes,
+    requiresStreaming: stream.length > 0,
+  }
 }
 
 export function collectClipboardImages(data: DataTransfer | null): File[] {
