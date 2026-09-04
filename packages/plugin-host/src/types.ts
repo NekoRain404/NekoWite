@@ -47,3 +47,81 @@ export interface PluginDefinition extends RegistrationBatch {
 export function definePlugin(def: PluginDefinition): PluginDefinition {
   return def
 }
+
+/** Categorised plugin failures. Every plugin-originated error should be
+ *  expressed with one of these codes so the host can route it to a distinct
+ *  user-facing message + recovery hint instead of a generic "plugin failed". */
+export type PluginErrorCode =
+  | 'PLUGIN_LOAD_FAILED'
+  | 'PLUGIN_ACTIVATE_FAILED'
+  | 'PLUGIN_HOOK_ERROR'
+  | 'PLUGIN_PERMISSION_DENIED'
+  | 'PLUGIN_NOT_FOUND'
+  | 'PLUGIN_MANIFEST_INVALID'
+  | 'PLUGIN_CODE_PARSE_FAILED'
+
+const DEFAULT_PLUGIN_ERROR_MESSAGE: Record<PluginErrorCode, string> = {
+  PLUGIN_LOAD_FAILED: 'The plugin failed to load.',
+  PLUGIN_ACTIVATE_FAILED: 'The plugin failed to activate.',
+  PLUGIN_HOOK_ERROR: 'A lifecycle hook of the plugin threw an error.',
+  PLUGIN_PERMISSION_DENIED: 'The plugin was denied a required permission.',
+  PLUGIN_NOT_FOUND: 'The plugin could not be found.',
+  PLUGIN_MANIFEST_INVALID: 'The plugin manifest (package.json) is invalid.',
+  PLUGIN_CODE_PARSE_FAILED: 'The plugin code could not be parsed.',
+}
+
+const DEFAULT_PLUGIN_ERROR_RECOVERY: Record<PluginErrorCode, string> = {
+  PLUGIN_LOAD_FAILED: 'Reinstall the plugin or check its entry file.',
+  PLUGIN_ACTIVATE_FAILED: 'Disable and re-enable the plugin, or reinstall it.',
+  PLUGIN_HOOK_ERROR: 'Disable the plugin or check its logs.',
+  PLUGIN_PERMISSION_DENIED: 'Grant the requested permission in the plugin settings.',
+  PLUGIN_NOT_FOUND: 'Reinstall the plugin.',
+  PLUGIN_MANIFEST_INVALID: 'Fix or reinstall the plugin manifest.',
+  PLUGIN_CODE_PARSE_FAILED: 'Update the plugin to a compatible version.',
+}
+
+/** Union of error codes that represent a failure during plugin *loading*
+ *  (before activation). Used to choose a sensible default `phase`. */
+const LOAD_PHASE_CODES: ReadonlySet<PluginErrorCode> = new Set<PluginErrorCode>([
+  'PLUGIN_LOAD_FAILED',
+  'PLUGIN_MANIFEST_INVALID',
+  'PLUGIN_CODE_PARSE_FAILED',
+  'PLUGIN_NOT_FOUND',
+])
+
+export interface PluginErrorOptions {
+  pluginId: string
+  /** User-facing summary. Falls back to a default derived from `code`. */
+  message?: string
+  /** Optional, actionable hint e.g. "reinstall the plugin" / "grant the permission". */
+  recovery?: string
+  /** 'load' (before activation) or 'run' (activation/lifecycle). */
+  phase?: 'load' | 'run'
+  /** The original thrown value, preserved for logs and debugging. */
+  cause?: unknown
+}
+
+/** A structured, categorised plugin error carrying an error code, a
+ *  user-facing message, and an actionable recovery hint so plugin failures are
+ *  observable and actionable rather than silent. */
+export class PluginError extends Error {
+  readonly code: PluginErrorCode
+  readonly pluginId: string
+  readonly phase: 'load' | 'run'
+  readonly recovery?: string
+
+  constructor(code: PluginErrorCode, opts: PluginErrorOptions) {
+    const message = opts.message?.trim() || DEFAULT_PLUGIN_ERROR_MESSAGE[code]
+    super(message, opts.cause !== undefined ? { cause: opts.cause } : undefined)
+    this.name = 'PluginError'
+    this.code = code
+    this.pluginId = opts.pluginId
+    this.phase = opts.phase ?? (LOAD_PHASE_CODES.has(code) ? 'load' : 'run')
+    this.recovery = opts.recovery ?? DEFAULT_PLUGIN_ERROR_RECOVERY[code]
+  }
+}
+
+/** Convenience factory for the structured plugin error. */
+export function createPluginError(code: PluginErrorCode, opts: PluginErrorOptions): PluginError {
+  return new PluginError(code, opts)
+}
