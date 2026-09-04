@@ -1,76 +1,68 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import { createEditor, basicPlugins, configureImageResolver, configureHeadingAnchorUrl, configureWikilinkHandler, clearImageSelection } from '@nekowite/editor-core'
+import { emitLifecycle } from '@nekowite/plugin-host'
 import type { NekoEditor } from '@nekowite/editor-core'
-import { emitLifecycle, setActiveEditor } from '@nekowite/plugin-host'
-import { consumeSuppressReapply } from '../services/suppressReapply'
-import { setCalloutView } from '../plugins/callout'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 import { useFloatStore } from '../stores/float'
 import { useAppearanceStore } from '../stores/appearance'
-import { useLibraryStore } from '../stores/library'
 import { resolveDirection } from '../services/rtl'
-import { notifyError } from '../services/errors'
 import { t } from '../i18n'
-import { editorBridge } from '../services/editorBridge'
-import { fsService } from '../services/fs'
-import {
-  applySpellReplacement,
-  cancelOverlayRefresh,
-  getView,
-  scheduleOverlayRefresh,
-  setSpellEnabled,
-} from '../services/renderSearch'
-import { suggestionsFromAttr } from '../services/renderSearch'
-import { debounce } from '../services/timing'
 import RenderSearchPanel from './RenderSearchPanel.vue'
 import ImagePanel from '../ui/ImagePanel.vue'
 import TableMenu from '../ui/TableMenu.vue'
 import RenameDialog from '../components/RenameDialog.vue'
-import { parseOutline } from '../services/outline'
-import { dirRelativeToVault } from '../services/noteMeta'
-import { anchorHeadingIndex, countDocumentLines, lineRatio } from '../services/scrollSyncAnchors'
-import { createImageSrcResolver } from '../services/attachments'
-import { useImagePasteDrop } from '../composables/useImagePasteDrop'
-import { useEditorFocus } from '../composables/useEditorFocus'
+import { createDocumentSession } from '../features/editor/model/documentSession'
+import { createEditorController } from '../features/editor/controller/editorController'
+import { createEditorPersistence } from '../features/editor/controller/editorPersistence'
+import { createEditorExternalSync } from '../features/editor/controller/editorExternalSync'
+import { createEditorScrollSync } from '../features/editor/controller/editorScrollSync'
+import { createEditorSearchOverlay } from '../features/editor/controller/editorSearchOverlay'
+import { createEditorSelection } from '../features/editor/controller/editorSelection'
+import { useImagePasteDrop } from '../features/editor/composables/useImagePasteDrop'
+import { useEditorFocus } from '../features/editor/composables/useEditorFocus'
 
 const tabs = useTabsStore()
 const view = useViewStore()
 const floatStore = useFloatStore()
 const appearance = useAppearanceStore()
-const library = useLibraryStore()
 
-const searchOpen = ref(false)
-const spellPopup = ref<{ x: number; y: number; from: number; to: number; word: string; suggestions: string[] } | null>(null)
+const scrollEl = ref<HTMLElement | null>(null)
+const editorEl = ref<HTMLElement | null>(null)
+const editorForPanel = shallowRef<NekoEditor | null>(null)
+
+// The pane is a thin orchestrator: it owns only the template-bound DOM refs and
+// reactive UI state, delegating editor lifecycle, persistence, external sync,
+// scroll sync, search overlay and selection to the controller modules.
+const session = createDocumentSession()
 
 // Base direction for the rendered content: the user's explicit override wins,
 // otherwise the document text decides (Arabic/Hebrew -> rtl). Bound as `dir` on
 // the pane root so the browser lays the note out from the correct edge.
 const renderDir = computed(() => resolveDirection(appearance.contentDirection, tabs.activeTab?.content ?? ''))
 
-const scrollEl = ref<HTMLElement | null>(null)
-const editorEl = ref<HTMLElement | null>(null)
-let editor: NekoEditor | null = null
-// Reactive handle for child panels (ImagePanel) so the template can pass it.
-const editorForPanel = shallowRef<NekoEditor | null>(null)
-let unlistenChange: (() => void) | null = null
-let unlistenOverlayRefresh: (() => void) | null = null
-let applyingExternal = false
-let parseFailed = false
-let gen = 0
-let calloutViewSet = false
-let docChangeTimer: ReturnType<typeof setTimeout> | null = null
-let lastDoc = ''
-// Markdown last produced by (or applied to) the editor. The tab-content
-// watcher uses it to recognize the echo of an editor-originated update and
-// skip the full re-open it would otherwise trigger on every edit burst.
-let lastLocalMarkdown: string | null = null
-// Content that arrived while an applyContent was in flight.
-let pendingExternal: string | null = null
-// Set by setRatio() so the next scroll event (the async echo of a programmatic
-// scroll) is swallowed, breaking the split-mode sync feedback loop.
-let suppressScroll = false
+const editorController = createEditorController({
+  session,
+  getEditorEl: () => editorEl.value,
+})
+const persistence = createEditorPersistence({ session })
+const searchOverlay = createEditorSearchOverlay({
+  session,
+  getEditor: () => session.editor,
+})
+const externalSync = createEditorExternalSync({
+  session,
+  getEditor: () => session.editor,
+  scheduleOverlayRefresh: () => searchOverlay.scheduleRefresh(),
+})
+const scrollSync = createEditorScrollSync({
+  session,
+  getScrollEl: () => scrollEl.value,
+  getEditorEl: () => editorEl.value,
+})
+const selection = createEditorSelection({ getEditor: () => session.editor })
+
+const { searchOpen, spellPopup } = searchOverlay
 
 // Focus/typewriter centering + the word-count goal live in a composable so the
 // pane owns less. The calls read the live `editor`/`scrollEl` via closures.
@@ -83,7 +75,7 @@ const {
   onFocusPointerdown,
   cancelFocusRaf,
 } = useEditorFocus({
-  getEditor: () => editor,
+  getEditor: () => session.editor,
   getScrollEl: () => scrollEl.value,
 })
 
@@ -95,115 +87,34 @@ const {
   onDrop,
   onDragOver,
 } = useImagePasteDrop({
-  getEditor: () => editor,
+  getEditor: () => session.editor,
 })
 
-// Full-document Markdown serialization (`editor.save()`) round-trips the whole
-// doc through the Milkdown serializer on every markdownUpdated. Collapse a
-// typing burst into ONE serialization shortly after input settles, while still
-// marking the tab dirty / re-arming autosave per keystroke so the save state
-// (dirty flag, autosave timer) stays exactly as before.
-const MARKDOWN_SYNC_MS = 120
-const markdownSync = debounce(() => {
-  void persistMarkdown()
-}, MARKDOWN_SYNC_MS)
-
-async function persistMarkdown(): Promise<void> {
-  if (!editor) return
-  const active = tabs.activeTab
-  if (!active) return
-  // Capture generation BEFORE the await: a reloadFromDisk during the save
-  // bumps gen, and the stale markdown must not win.
-  const myGen = gen
-  const markdown = await editor.save()
-  if (tabs.activeTab?.id !== active.id) return
-  if (myGen !== gen) return
-  // The echo of a change we already applied is not an edit.
-  if (markdown === lastLocalMarkdown && markdown === active.content) return
-  lastLocalMarkdown = markdown
-  active.content = markdown
-  lastDoc = markdown
-  if (docChangeTimer) return
-  docChangeTimer = setTimeout(() => {
-    emitLifecycle('onDocChange', { doc: lastDoc })
-    docChangeTimer = null
-  }, 300)
-}
-
-async function applyContent(content: string): Promise<void> {
-  if (!editor) return
-  applyingExternal = true
-  try {
-    await editor.open(content)
-    floatStore.select(null)
-    // Capture the editor's canonical serialization immediately. The
-    // debounced markdownUpdated emit would otherwise arrive later and — for
-    // files needing canonicalization (e.g. CRLF) — mark a freshly opened
-    // tab dirty, causing an autosave rewrite with no user edit.
-    const initial = await editor.save()
-    lastLocalMarkdown = initial
-    const active = tabs.activeTab
-    // Only adopt the serializer's canonicalization when the tab still holds the
-    // text we just opened. While `open()` was in flight an external write may
-    // have replaced it with newer content (the async disk read that fills a
-    // placeholder tab). Overwriting that here would drop the real document and
-    // leave the editor permanently empty; respecting the newer content lets the
-    // content watcher re-open with it instead.
-    if (active && active.content !== initial && active.content === content) {
-      active.content = initial
-      if (!active.dirty) active.savedContent = initial
-    }
-    if (!calloutViewSet) {
-      try {
-        setCalloutView(editor.getView())
-        calloutViewSet = true
-      } catch {
-        // The editor view is expected to be ready once open() resolves.
-        parseFailed = true
-        notifyError(t('rendered.parseFailed'))
-        view.setMode('source')
-      }
-    }
-  } catch {
-    parseFailed = true
-    notifyError(t('rendered.parseFailed'))
-    view.setMode('source')
-  } finally {
-    applyingExternal = false
-    // A content change that arrived mid-apply must not be dropped.
-    const pending = pendingExternal
-    pendingExternal = null
-    if (pending !== null && pending !== lastLocalMarkdown && !parseFailed) {
-      gen++
-      void applyContent(pending)
-    } else {
-      scheduleOverlayRefresh()
-    }
-  }
-}
+let unlistenChange: (() => void) | null = null
+let unlistenOverlayRefresh: (() => void) | null = null
 
 function onScroll(): void {
-  // A programmatic scroll (setRatio) fires its scroll event asynchronously;
-  // swallow exactly that one event so it cannot write back to the store and
-  // re-enter the split-mode sync loop (which fights the mouse wheel).
-  if (suppressScroll) {
-    suppressScroll = false
-    return
-  }
-  if (scrollEl.value) view.syncScroll('rendered', scrollEl.value.scrollTop)
+  scrollSync.onScroll()
 }
 
 function getRatio(): number {
-  const el = scrollEl.value
-  if (!el) return 0
-  const range = el.scrollHeight - el.clientHeight
-  return range > 0 ? el.scrollTop / range : 0
+  return scrollSync.getRatio()
+}
+
+function setRatio(r: number): void {
+  scrollSync.setRatio(r)
+}
+
+function getHeadingEls(): HTMLElement[] {
+  return scrollSync.getHeadingEls()
+}
+
+function setScrollToLine(line: number): void {
+  scrollSync.setScrollToLine(line)
 }
 
 function onContainerPointerDownCapture(e: PointerEvent): void {
-  const target = e.target as Element | null
-  if (target && target.closest('.float-box')) return
-  floatStore.select(null)
+  selection.handlePointerDown(e)
 }
 
 function onEditorClick(e: MouseEvent): void {
@@ -221,7 +132,7 @@ function onEditorClick(e: MouseEvent): void {
   if (span) {
     e.preventDefault()
     e.stopPropagation()
-    openSpellPopup(span, e.clientX, e.clientY)
+    searchOverlay.openSpellPopup(span, e.clientX, e.clientY)
     return
   }
   if (spellPopup.value) {
@@ -230,26 +141,8 @@ function onEditorClick(e: MouseEvent): void {
   }
 }
 
-function openSpellPopup(span: HTMLElement, clientX: number, clientY: number): void {
-  const from = Number(span.dataset.from ?? NaN)
-  const to = Number(span.dataset.to ?? NaN)
-  const word = span.dataset.word ?? ''
-  const suggestions = suggestionsFromAttr(span.dataset.suggestions ?? null)
-  if (!Number.isFinite(from) || !Number.isFinite(to) || !word) return
-  spellPopup.value = { x: clientX, y: clientY, from, to, word, suggestions }
-}
-
 function onSpellSuggestion(text: string): void {
-  const pop = spellPopup.value
-  if (!pop) return
-  const view = getView()
-  if (view) applySpellReplacement(view, pop.from, pop.to, text)
-  spellPopup.value = null
-}
-
-function onSearchClose(): void {
-  searchOpen.value = false
-  spellPopup.value = null
+  searchOverlay.handleSpellSuggestion(text)
 }
 
 function onKeydown(e: KeyboardEvent): void {
@@ -273,92 +166,16 @@ function onKeydown(e: KeyboardEvent): void {
   }
 }
 
-function setRatio(r: number): void {
-  const el = scrollEl.value
-  if (!el) return
-  const range = el.scrollHeight - el.clientHeight
-  if (range <= 0) return
-  const target = r * range
-  // Only arm the suppression when the position actually changes — a no-op
-  // assignment fires no scroll event, so the flag must not leak.
-  if (Math.abs(el.scrollTop - target) < 0.5) return
-  suppressScroll = true
-  el.scrollTop = target
-}
-
-function getHeadingEls(): HTMLElement[] {
-  const root = editorEl.value
-  if (!root) return []
-  return Array.from(root.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'))
-}
-
-/** Scroll so the block containing the given 1-based source line is top-most,
- * anchored on the nearest heading; falls back to a line-proportional ratio. */
-function setScrollToLine(line: number): void {
-  const el = scrollEl.value
-  if (!el) return
-  const content = tabs.activeTab?.content ?? ''
-  const items = parseOutline(content)
-  const index = anchorHeadingIndex(items, line)
-  if (index === null) {
-    setRatio(lineRatio(line, countDocumentLines(content)))
-    return
-  }
-  const target = getHeadingEls()[index]
-  if (!target) {
-    setRatio(lineRatio(line, countDocumentLines(content)))
-    return
-  }
-  const range = el.scrollHeight - el.clientHeight
-  if (range <= 0) return
-  // Content-space top of the heading, minus the same 16px scroll-margin-top
-  // the editor styles use, so the heading sits just inside the viewport.
-  const pos =
-    target.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop - 16
-  const clamped = Math.max(0, Math.min(pos, range))
-  if (Math.abs(el.scrollTop - clamped) < 0.5) return
-  suppressScroll = true
-  el.scrollTop = clamped
-}
-
 defineExpose({ getRatio, setRatio, getHeadingEls, setScrollToLine })
 
 onMounted(async () => {
   if (!editorEl.value) return
-  editor = createEditor(editorEl.value, { plugins: basicPlugins })
-  editorForPanel.value = editor
-  editorBridge.setEditor(editor)
-  setActiveEditor(editor)
-  configureImageResolver(
-    createImageSrcResolver(fsService, {
-      getVault: () => tabs.vault,
-      getNotePath: () => tabs.activeTab?.path ?? null,
-    }),
-  )
-  // Heading anchors copy a deep-link fragment. Prefer the note's vault-relative
-  // path so the link is resolvable from anywhere; fall back to a bare fragment
-  // for unsaved docs. Reads live tab state at click time.
-  configureHeadingAnchorUrl((slug) => {
-    const path = tabs.activeTab?.path
-    const vault = tabs.vault
-    if (!path || !vault) return `#${slug}`
-    return `${vault.replace(/\/+$/, '')}/${path}#${slug}`
-  })
-  // Ctrl/Cmd+click on a [[wikilink]] chip opens the target note. Resolve the
-  // wiki target against the current note's vault-relative directory using the
-  // library index (same resolution as the backlinks/links panels).
-  configureWikilinkHandler((target) => {
-    const path = tabs.activeTab?.path
-    const vault = tabs.vault
-    if (!path || !vault) return
-    const relDir = dirRelativeToVault(path, vault)
-    const resolved = library.resolveLinkPath(relDir, target)
-    if (resolved) void tabs.openTab(resolved)
-  })
+  editorController.mount()
+  editorForPanel.value = session.editor
   const current = tabs.activeTab
-  if (current) await applyContent(current.content)
+  if (current) await externalSync.applyContent(current.content)
 
-  emitLifecycle('onEditorReady', editor)
+  emitLifecycle('onEditorReady', session.editor)
 
   editorEl.value.addEventListener('pointerdown', onContainerPointerDownCapture, true)
   editorEl.value.addEventListener('click', onEditorClick)
@@ -374,35 +191,18 @@ onMounted(async () => {
   editorEl.value.addEventListener('keydown', onFocusKeydown)
   editorEl.value.addEventListener('pointerdown', onFocusPointerdown)
 
-  unlistenChange = editor.onContentChange(() => {
-    if (applyingExternal || !editor) return
-    const active = tabs.activeTab
-    if (!active) return
-    // Keep the dirty flag & autosave timer per-keystroke (cheap, and the save
-    // state must reflect each edit immediately), but defer the expensive
-    // full-document serialization until the typing burst settles.
-    tabs.markDirty(active.id)
-    tabs.scheduleAutosave(active.id)
-    markdownSync.run()
-  })
-
-  // Keep the find/spell overlays in sync with model changes. Coalesced in
-  // renderSearch (rAF + idle debounce) so a typing burst does not re-scan the
-  // whole document on every keystroke.
-  unlistenOverlayRefresh = editor.onContentChange(() => {
-    if (applyingExternal) return
-    scheduleOverlayRefresh()
-  })
+  unlistenChange = persistence.attachChangeListener()
+  unlistenOverlayRefresh = searchOverlay.attachChangeListener()
 
   // Spell check is a reactive setting: sync the live toggle (default true) so
   // the renderSearch overlay honors it on open, and re-apply on change.
-  setSpellEnabled(appearance.spellCheckEnabled)
+  searchOverlay.syncSpellEnabled(appearance.spellCheckEnabled)
 })
 
 watch(
   () => appearance.spellCheckEnabled,
   (enabled) => {
-    setSpellEnabled(enabled)
+    searchOverlay.syncSpellEnabled(enabled)
   },
 )
 
@@ -414,22 +214,11 @@ watch(
 )
 
 onBeforeUnmount(() => {
-  if (docChangeTimer) {
-    clearTimeout(docChangeTimer)
-    docChangeTimer = null
-  }
-  markdownSync.cancel()
-  cancelOverlayRefresh()
+  persistence.cancel()
+  searchOverlay.cancelRefresh()
   cancelFocusRaf()
   if (tabs.activeId) tabs.cancelAutosave(tabs.activeId)
-  setCalloutView(null)
-  clearImageSelection()
-  configureImageResolver(null)
-  configureHeadingAnchorUrl(null)
-  configureWikilinkHandler(null)
   editorForPanel.value = null
-  editorBridge.setEditor(null)
-  setActiveEditor(null)
   editorEl.value?.removeEventListener('pointerdown', onContainerPointerDownCapture, true)
   editorEl.value?.removeEventListener('click', onEditorClick)
   editorEl.value?.removeEventListener('keydown', onFocusKeydown)
@@ -441,42 +230,21 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   unlistenChange?.()
   unlistenOverlayRefresh?.()
-  editor?.destroy()
-  editor = null
+  scrollSync.cancel()
+  editorController.destroy()
 })
 
 watch(
   () => tabs.activeTab?.content,
   (content) => {
-    // I2: a save-time rewrite syncs the model but must not re-open the editor
-    // (that would replace the user's live text and reset caret/scroll). The
-    // flag is armed by tabs.saveActive and consumed once here.
-    if (consumeSuppressReapply()) return
-    if (content === undefined) return
-    if (applyingExternal) {
-      pendingExternal = content
-      return
-    }
-    // The echo of an editor-originated update: content was set from the
-    // editor's own serialization, so re-opening would re-parse the whole
-    // document (wiping undo history and stored positions) for no change.
-    if (content === lastLocalMarkdown) return
-    if (parseFailed) return
-    gen++
-    void applyContent(content)
+    externalSync.onContentChanged(content)
   },
 )
 
 watch(
   () => view.mode,
   (mode) => {
-    if (!parseFailed) return
-    if (mode === 'source') return
-    parseFailed = false
-    const content = tabs.activeTab?.content
-    if (content === undefined) return
-    gen++
-    void applyContent(content)
+    externalSync.onModeChanged(mode)
   },
 )
 </script>
@@ -506,7 +274,7 @@ watch(
     <RenderSearchPanel
       v-if="searchOpen"
       class="nw-render-search-host"
-      @close="onSearchClose"
+      @close="searchOverlay.closeSearch"
     />
     <div
       ref="editorEl"
