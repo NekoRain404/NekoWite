@@ -185,6 +185,10 @@ describe('useAppearanceStore', () => {
     expect(s.lineNumbers).toBe(true)
     expect(s.autosaveOnBlur).toBe(true)
     expect(s.statusBarWords).toBe(true)
+    expect(s.followSystemAccent).toBe(false)
+    expect(s.renderTaskChecklist).toBe(true)
+    expect(s.autoSyncScroll).toBe(true)
+    expect(s.confirmBeforeDelete).toBe(true)
   })
 
   it('persists and restores editor behavior flags', () => {
@@ -196,6 +200,10 @@ describe('useAppearanceStore', () => {
     s.setLineNumbers(false)
     s.setAutosaveOnBlur(false)
     s.setStatusBarWords(false)
+    s.setFollowSystemAccent(true)
+    s.setRenderTaskChecklist(false)
+    s.setAutoSyncScroll(false)
+    s.setConfirmBeforeDelete(false)
     const saved = JSON.parse(localStorage.getItem('nekowite.appearance') ?? '{}')
     expect(saved.focusMode).toBe(true)
     expect(saved.wordGoal).toBe(1200)
@@ -204,6 +212,10 @@ describe('useAppearanceStore', () => {
     expect(saved.lineNumbers).toBe(false)
     expect(saved.autosaveOnBlur).toBe(false)
     expect(saved.statusBarWords).toBe(false)
+    expect(saved.followSystemAccent).toBe(true)
+    expect(saved.renderTaskChecklist).toBe(false)
+    expect(saved.autoSyncScroll).toBe(false)
+    expect(saved.confirmBeforeDelete).toBe(false)
 
     localStorage.setItem('nekowite.appearance', JSON.stringify({
       focusMode: true,
@@ -213,6 +225,10 @@ describe('useAppearanceStore', () => {
       lineNumbers: false,
       autosaveOnBlur: false,
       statusBarWords: false,
+      followSystemAccent: true,
+      renderTaskChecklist: false,
+      autoSyncScroll: false,
+      confirmBeforeDelete: false,
     }))
     setActivePinia(createPinia())
     const restored = useAppearanceStore()
@@ -223,6 +239,10 @@ describe('useAppearanceStore', () => {
     expect(restored.lineNumbers).toBe(false)
     expect(restored.autosaveOnBlur).toBe(false)
     expect(restored.statusBarWords).toBe(false)
+    expect(restored.followSystemAccent).toBe(true)
+    expect(restored.renderTaskChecklist).toBe(false)
+    expect(restored.autoSyncScroll).toBe(false)
+    expect(restored.confirmBeforeDelete).toBe(false)
   })
 
   it('falls back to defaults for old (missing-field) and invalid localStorage', () => {
@@ -236,6 +256,10 @@ describe('useAppearanceStore', () => {
     expect(s.lineNumbers).toBe(true)
     expect(s.autosaveOnBlur).toBe(true)
     expect(s.statusBarWords).toBe(true)
+    expect(s.followSystemAccent).toBe(false)
+    expect(s.renderTaskChecklist).toBe(true)
+    expect(s.autoSyncScroll).toBe(true)
+    expect(s.confirmBeforeDelete).toBe(true)
 
     localStorage.setItem('nekowite.appearance', JSON.stringify({
       focusMode: 'yes',
@@ -245,6 +269,10 @@ describe('useAppearanceStore', () => {
       lineNumbers: 'off',
       autosaveOnBlur: 0,
       statusBarWords: [],
+      followSystemAccent: 'on',
+      renderTaskChecklist: 0,
+      autoSyncScroll: 'no',
+      confirmBeforeDelete: [],
     }))
     setActivePinia(createPinia())
     const invalid = useAppearanceStore()
@@ -255,6 +283,10 @@ describe('useAppearanceStore', () => {
     expect(invalid.lineNumbers).toBe(true)
     expect(invalid.autosaveOnBlur).toBe(true)
     expect(invalid.statusBarWords).toBe(true)
+    expect(invalid.followSystemAccent).toBe(false)
+    expect(invalid.renderTaskChecklist).toBe(true)
+    expect(invalid.autoSyncScroll).toBe(true)
+    expect(invalid.confirmBeforeDelete).toBe(true)
   })
 
   it('clamps wordGoal into [0, 100000] and rounds', () => {
@@ -267,5 +299,38 @@ describe('useAppearanceStore', () => {
     expect(s.wordGoal).toBe(1235)
     s.setWordGoal(0)
     expect(s.wordGoal).toBe(0)
+  })
+
+  it('effectiveAccent returns the user pick by default', () => {
+    const s = useAppearanceStore()
+    s.setAccent('blue')
+    expect(s.effectiveAccent()).toBe('blue')
+  })
+
+  it('effectiveAccent follows light/dark when followSystemAccent is on', () => {
+    const s = useAppearanceStore()
+    s.setFollowSystemAccent(true)
+    // Explicit light theme -> automatic light accent.
+    s.setTheme('light')
+    expect(s.effectiveAccent()).toBe('coral')
+    // Explicit dark theme -> automatic dark accent.
+    s.setTheme('dark')
+    expect(s.effectiveAccent()).toBe('violet')
+    // Theme kept even when the user changes the accent pick (system controls it).
+    s.setAccent('teal')
+    expect(s.effectiveAccent()).toBe('violet')
+  })
+
+  it('persists followSystemAccent and restores it', () => {
+    const s = useAppearanceStore()
+    s.setFollowSystemAccent(true)
+    const saved = JSON.parse(localStorage.getItem('nekowite.appearance') ?? '{}')
+    expect(saved.followSystemAccent).toBe(true)
+
+    localStorage.setItem('nekowite.appearance', JSON.stringify({ followSystemAccent: true, theme: 'light' }))
+    setActivePinia(createPinia())
+    const restored = useAppearanceStore()
+    expect(restored.followSystemAccent).toBe(true)
+    expect(restored.effectiveAccent()).toBe('coral')
   })
 })

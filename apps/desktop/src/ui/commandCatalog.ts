@@ -25,6 +25,7 @@ import {
   Strikethrough,
   Table,
 } from 'lucide-vue-next'
+import { t } from '../i18n'
 
 export interface CatalogMeta {
   label: string
@@ -32,33 +33,35 @@ export interface CatalogMeta {
   keywords?: string
 }
 
-/** id → 中文标签 + 图标. Builtins use the editor-core command ids; the
+/** id → localized label + icon. Builtins use the editor-core command ids; the
  * registry-only ids below are the first-party feature commands. Anything
- * unknown (a third-party plugin command) falls back to `Puzzle`. */
+ * unknown (a third-party plugin command) falls back to `Puzzle`. The label is
+ * resolved through `t()` so the palette never renders hardcoded text; the
+ * reactive display path uses `COMMAND_KEYS` instead (see CommandPalette). */
 export const COMMAND_CATALOG: Record<string, CatalogMeta> = {
-  'heading:h1': { label: '标题 1', icon: markRaw(Heading1), keywords: 'heading h1' },
-  'heading:h2': { label: '标题 2', icon: markRaw(Heading2), keywords: 'heading h2' },
-  'heading:h3': { label: '标题 3', icon: markRaw(Heading3), keywords: 'heading h3' },
-  'heading:h4': { label: '标题 4', icon: markRaw(Heading4), keywords: 'heading h4' },
-  'heading:h5': { label: '标题 5', icon: markRaw(Heading5), keywords: 'heading h5' },
-  'heading:h6': { label: '标题 6', icon: markRaw(Heading6), keywords: 'heading h6' },
-  bold: { label: '加粗', icon: markRaw(Bold), keywords: 'bold b' },
-  italic: { label: '斜体', icon: markRaw(Italic), keywords: 'italic i' },
-  strike: { label: '删除线', icon: markRaw(Strikethrough), keywords: 'strike strikethrough' },
-  'inline-code': { label: '行内代码', icon: markRaw(Code), keywords: 'code' },
-  'list-unordered': { label: '无序列表', icon: markRaw(List), keywords: 'bullet ul' },
-  'list-ordered': { label: '有序列表', icon: markRaw(ListOrdered), keywords: 'number ol' },
-  'list-task': { label: '任务列表', icon: markRaw(ListTodo), keywords: 'todo check' },
-  quote: { label: '引用', icon: markRaw(Quote), keywords: 'blockquote' },
-  link: { label: '链接', icon: markRaw(Link), keywords: 'url href' },
-  image: { label: '图片', icon: markRaw(Image), keywords: 'img picture' },
-  'code-block': { label: '代码块', icon: markRaw(SquareCode), keywords: 'fence code' },
-  hr: { label: '分隔线', icon: markRaw(Minus), keywords: 'rule separator' },
-  'insert-component': { label: '插入 MDX 组件', icon: markRaw(Braces), keywords: 'mdx component' },
-  'math.insert': { label: '插入数学公式', icon: markRaw(Sigma), keywords: 'math latex' },
-  'table.insert': { label: '插入表格', icon: markRaw(Table), keywords: 'table grid' },
-  'callout.insert': { label: '插入 Callout', icon: markRaw(MessageSquareQuote), keywords: 'callout' },
-  'floatbox.insert': { label: '插入 FloatBox', icon: markRaw(Boxes), keywords: 'float box' },
+  'heading:h1': { label: t('command.heading:h1'), icon: markRaw(Heading1), keywords: 'heading h1' },
+  'heading:h2': { label: t('command.heading:h2'), icon: markRaw(Heading2), keywords: 'heading h2' },
+  'heading:h3': { label: t('command.heading:h3'), icon: markRaw(Heading3), keywords: 'heading h3' },
+  'heading:h4': { label: t('command.heading:h4'), icon: markRaw(Heading4), keywords: 'heading h4' },
+  'heading:h5': { label: t('command.heading:h5'), icon: markRaw(Heading5), keywords: 'heading h5' },
+  'heading:h6': { label: t('command.heading:h6'), icon: markRaw(Heading6), keywords: 'heading h6' },
+  bold: { label: t('command.bold'), icon: markRaw(Bold), keywords: 'bold b' },
+  italic: { label: t('command.italic'), icon: markRaw(Italic), keywords: 'italic i' },
+  strike: { label: t('command.strike'), icon: markRaw(Strikethrough), keywords: 'strike strikethrough' },
+  'inline-code': { label: t('command.inline-code'), icon: markRaw(Code), keywords: 'code' },
+  'list-unordered': { label: t('command.list-unordered'), icon: markRaw(List), keywords: 'bullet ul' },
+  'list-ordered': { label: t('command.list-ordered'), icon: markRaw(ListOrdered), keywords: 'number ol' },
+  'list-task': { label: t('command.list-task'), icon: markRaw(ListTodo), keywords: 'todo check' },
+  quote: { label: t('command.quote'), icon: markRaw(Quote), keywords: 'blockquote' },
+  link: { label: t('command.link'), icon: markRaw(Link), keywords: 'url href' },
+  image: { label: t('command.image'), icon: markRaw(Image), keywords: 'img picture' },
+  'code-block': { label: t('command.code-block'), icon: markRaw(SquareCode), keywords: 'fence code' },
+  hr: { label: t('command.hr'), icon: markRaw(Minus), keywords: 'rule separator' },
+  'insert-component': { label: t('command.insert-component'), icon: markRaw(Braces), keywords: 'mdx component' },
+  'math.insert': { label: t('command.math.insert'), icon: markRaw(Sigma), keywords: 'math latex' },
+  'table.insert': { label: t('command.table.insert'), icon: markRaw(Table), keywords: 'table grid' },
+  'callout.insert': { label: t('command.callout.insert'), icon: markRaw(MessageSquareQuote), keywords: 'callout' },
+  'floatbox.insert': { label: t('command.floatbox.insert'), icon: markRaw(Boxes), keywords: 'float box' },
 }
 
 export const FALLBACK_COMMAND_ICON: Component = markRaw(Puzzle)

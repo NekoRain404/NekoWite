@@ -227,6 +227,7 @@ watch(
           :key="entry.id"
           class="nav-item"
           :class="{ active: entry.active }"
+          :aria-current="entry.active ? 'page' : undefined"
           @click="entry.onClick"
         >
           <component

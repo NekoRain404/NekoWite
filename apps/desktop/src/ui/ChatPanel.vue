@@ -427,6 +427,8 @@ onBeforeUnmount(() => {
     <div
       ref="scrollEl"
       class="chat-scroll"
+      role="log"
+      aria-live="polite"
     >
       <div
         v-if="!hasMessages"

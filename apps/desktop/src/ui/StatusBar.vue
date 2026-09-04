@@ -56,7 +56,10 @@ const modeLabel = computed(() => {
 </script>
 
 <template>
-  <footer class="status-bar">
+  <footer
+    class="status-bar"
+    role="status"
+  >
     <template v-if="appearance.statusBarWords">
       <span class="status-item">{{ t('status.words', { n: wordCount }) }}</span>
       <span class="status-sep">·</span>

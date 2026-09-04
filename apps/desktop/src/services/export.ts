@@ -2,7 +2,10 @@ import { renderDocumentAsync, type ExportRef, type RenderDocumentOptions } from 
 import { fsService } from './fs'
 import { buildComponentRenderers } from './exportRenderers'
 import { createImageSrcResolver } from './attachments'
+import { splitFrontmatterRaw } from './noteMeta'
 import { useTabsStore } from '../stores/tabs'
+import { useSettingsStore } from '../stores/settings'
+import type { ExportPdfPageSize, ExportPdfOrientation } from '../stores/settings'
 
 export { buildComponentRenderers }
 
@@ -29,6 +32,45 @@ function storeContext(): { getVault(): string | null; getNotePath(): string | nu
   }
 }
 
+/** Read export params from the settings store, degrading to defaults outside
+ * an active pinia (the export pipeline is also exercised by unit tests). */
+function exportSettings(): {
+  includeFrontmatter: boolean
+  pageSize: ExportPdfPageSize
+  orientation: ExportPdfOrientation
+} {
+  try {
+    const settings = useSettingsStore()
+    return {
+      includeFrontmatter: settings.exportIncludeFrontmatter,
+      pageSize: settings.exportPdfPageSize,
+      orientation: settings.exportPdfOrientation,
+    }
+  } catch {
+    return { includeFrontmatter: true, pageSize: 'A4', orientation: 'portrait' }
+  }
+}
+
+/** Strip the YAML frontmatter block when the export should not include it. */
+function prepareSource(source: string, includeFrontmatter: boolean): string {
+  if (includeFrontmatter) return source
+  return splitFrontmatterRaw(source).body
+}
+
+/** Add a print `@page` rule so the browser print dialog honors the configured
+ * paper size and orientation for the PDF export. */
+function injectPdfPageCss(
+  html: string,
+  size: ExportPdfPageSize,
+  orientation: ExportPdfOrientation,
+): string {
+  const rule = `@page{size:${size} ${orientation};margin:1cm;}`
+  const style = `<style>${rule}</style>`
+  const idx = html.indexOf('</head>')
+  if (idx === -1) return style + html
+  return html.slice(0, idx) + style + html.slice(idx)
+}
+
 function toRenderOptions(opts: ExportUiOptions): RenderDocumentOptions {
   const ctx = storeContext()
   return {
@@ -45,16 +87,18 @@ function toRenderOptions(opts: ExportUiOptions): RenderDocumentOptions {
 }
 
 export async function exportHtml(source: string, vault: string, savePath: string, opts: ExportUiOptions): Promise<void> {
-  const html = await renderDocumentAsync(source, toRenderOptions(opts))
+  const { includeFrontmatter } = exportSettings()
+  const html = await renderDocumentAsync(prepareSource(source, includeFrontmatter), toRenderOptions(opts))
   await fsService.write(vault, savePath, html)
 }
 
 export async function exportToPdf(source: string, opts: ExportUiOptions): Promise<void> {
   if (typeof document === 'undefined') return
-  const html = await renderDocumentAsync(source, toRenderOptions(opts))
+  const { includeFrontmatter, pageSize, orientation } = exportSettings()
+  const html = await renderDocumentAsync(prepareSource(source, includeFrontmatter), toRenderOptions(opts))
   const iframe = document.createElement('iframe')
   iframe.style.display = 'none'
-  iframe.srcdoc = html
+  iframe.srcdoc = injectPdfPageCss(html, pageSize, orientation)
   document.body.appendChild(iframe)
 
   let cleanupTimer: ReturnType<typeof setTimeout> | undefined

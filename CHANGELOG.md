@@ -6,10 +6,13 @@
 
 ### Changed
 
+- **插件安全边界如实说明**：此前文档宣称「插件沙箱（webview/worker）」已实现，但插件实际运行在主窗口上下文。现文档（README/CHANGELOG）改为「沙箱隔离规划中」，并提供**权限声明机制**：插件可在 manifest/`definePlugin` 中声明 `permissions`（`ai`/`fs`/`network`/`clipboard`），声明敏感能力（`ai`/`fs`/`network`）的插件在激活前由宿主弹确认，未授权则不激活（纯 UI 插件自动放行）。
 - **界面全面重制**（借鉴 Memoir 的设计语言）：自定义标题栏（红绿灯窗口控制 + 拖拽区 + 视图分段切换）、侧栏整合搜索/文件树/引用/回收站与主题切换、图标化格式工具栏（含标题级别下拉）、Memoir 风格内容排版（标题阶梯/任务框/代码块/表格/引用文献胶囊）、右栏文档信息（引用 + 历史版本）、CJK 感知字数与阅读时长状态栏、空文档欢迎态；窗口改为无边框自定义装饰。
 
 ### Fixed
 
+- **插件从不反激活**：切换 vault 只加载新插件、从不卸载旧插件，导致插件 A 的组件/命令/生命周期钩子泄漏进 vault B（且重复激活为静默 no-op，切回 A 时无法重载）。现切换 vault 时先卸载上一 vault 的全部插件再加载新插件。
+- **vault 插件加载路径**：`services/plugins.ts` 此前用相对路径 `import(specifier)`，Vite 打包后无法解析成文件系统路径，产物中 vault 插件加载失败。现改为经 Tauri 读取插件源码后以 blob 模块动态加载（`/* @vite-ignore */` 阻断静态分析）；浏览器（memory）演示模式无真实插件文件，维持 mock 不加载。
 - 工具栏 H1–H6/加粗/斜体/删除线/行内代码/列表/任务列表/引用/链接/图片/代码块/分隔线/MDX 插入命令此前全部未注册（按钮无效果），已在 editor-core 补全并可切换（toggle）
 - 编辑器回写循环：编辑触发的全文档重解析（丢失撤销历史/浮动定位），现以本地序列化镜像识别回显；保存期间继续输入不再被旧内容覆盖
 - YAML frontmatter 打开后保存即损坏（解析为分隔线+二级标题），现于 open/save 前后抽出与回拼，字节保真
@@ -35,4 +38,4 @@
 - **v1.3 导出**：PDF + HTML 导出（含渲染后的数学与组件），KaTeX 字体内嵌为 data URI 的自包含导出
 - **v1.4 AI**：AI ghost-writer，BYOK（OpenAI/Claude/Gemini/Grok/本地 LM Studio/Ollama），Tab 接收，加密密钥存储
 - **v1.5 浮动元素**：浮动图片/文本框/贴纸，可任意摆放（自由画布辅助能力），导出时保留绝对定位
-- **v1.6 深度插件**：生命周期钩子（onLoad/onActivate/onDocChange/onSave 等）、活动编辑器追踪、更全注册面、插件沙箱（webview/worker）
+- **v1.6 深度插件**：生命周期钩子（onLoad/onActivate/onDocChange/onSave 等）、活动编辑器追踪、更全注册面、插件权限声明（敏感能力激活前确认；沙箱隔离（webview/worker）规划中）

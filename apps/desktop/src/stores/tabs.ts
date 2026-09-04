@@ -5,7 +5,7 @@ import { armSuppressReapply } from '../services/suppressReapply'
 import { fsService } from '../services/fs'
 import type { HistoryEntry } from '../services/gateways/contracts'
 import { notifyError, notifyRecovery } from '../services/errors'
-import { t } from '../i18n'
+import { t as i18nT } from '../i18n'
 import { assetsDirForNote, moveAttachments, rewireTempRefsInContent } from '../services/renameAsset'
 import { useSettingsStore } from './settings'
 import { parseSession, SESSION_KEY, serializeSession } from '../services/session'
@@ -154,13 +154,13 @@ export const useTabsStore = defineStore('tabs', () => {
     // Nothing could be restored (e.g. every file read failed) — surface a
     // hint. Only when the restore ran on a fresh, empty tab set.
     if (session.paths.length > 0 && tabs.value.every((t) => !t.path)) {
-      notifyError(t('session.restoreFailed'))
+      notifyError(i18nT('session.restoreFailed'))
     }
   }
 
   async function openTab(path: string | null, initial = ''): Promise<void> {
     if (path && !vault.value) {
-      notifyError('尚未打开 vault，无法读取文件')
+      notifyError(i18nT('tabs.openVaultFirst'))
       return
     }
     if (path) {
@@ -195,7 +195,7 @@ export const useTabsStore = defineStore('tabs', () => {
         }
       } catch {
         removeTab(tab.id)
-        notifyError(`无法读取文件：${path}`)
+        notifyError(i18nT('tabs.readFileFailed', { path }))
         return
       }
       // Crash-recovery probe must never block opening the file: the prompt is
@@ -204,7 +204,7 @@ export const useTabsStore = defineStore('tabs', () => {
         const entry = await checkCrashRecovery(tab.id)
         if (entry) {
           notifyRecovery({
-            message: `检测到上次程序中断，检测到未保存的更改（${new Date(entry.mtime).toLocaleString()}），恢复最近版本？`,
+            message: i18nT('tabs.crashRecoveryMsg', { time: new Date(entry.mtime).toLocaleString() }),
             onRestore: () => {
               void restoreHistoryToActive(tab.id, entry.id)
             },
@@ -320,7 +320,7 @@ export const useTabsStore = defineStore('tabs', () => {
       }
       return false
     } catch {
-      notifyError('保存附件失败，图片仍保留在临时目录')
+      notifyError(i18nT('tabs.saveAttachmentFailed'))
       return false
     }
   }
@@ -369,7 +369,7 @@ export const useTabsStore = defineStore('tabs', () => {
       emitLifecycle('onSaved', editor, content)
       return true
     } catch {
-      notifyError('保存失败，内容已保留在编辑器中，请重试')
+      notifyError(i18nT('tabs.saveFailed'))
       return false
     } finally {
       markSaved(t.id)
@@ -388,7 +388,7 @@ export const useTabsStore = defineStore('tabs', () => {
     try {
       await fsService.deleteFile(vault.value, path)
     } catch {
-      notifyError('删除失败')
+      notifyError(i18nT('tabs.deleteFailed'))
       return
     }
     // Close every tab on that path: autosave from a leftover tab would
@@ -412,7 +412,7 @@ export const useTabsStore = defineStore('tabs', () => {
       t.dirty = false
       return content
     } catch {
-      notifyError('恢复历史版本失败')
+      notifyError(i18nT('tabs.restoreHistoryFailed'))
       return null
     }
   }
@@ -450,7 +450,7 @@ export const useTabsStore = defineStore('tabs', () => {
       t.savedContent = t.content
       t.dirty = false
     } catch {
-      notifyError(`无法重新加载文件：${t.path}，已保留当前内容`)
+      notifyError(i18nT('tabs.reloadFailed', { path: t.path }))
     }
   }
 

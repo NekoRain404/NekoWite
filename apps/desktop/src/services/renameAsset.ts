@@ -1,4 +1,5 @@
 import { relativePathFromNoteVault, suggestedPasteFileName } from './attachments'
+import { t } from '../i18n'
 
 export interface AssetMove {
   /** vault-relative source path (e.g. `.tmp/pic.png`) */
@@ -16,11 +17,11 @@ export function suggestRename(file: { name: string; type: string }): string {
  * sanitizer enforces. Returns an error message, or `null` when acceptable. */
 export function validateRenameName(name: string): string | null {
   const trimmed = name.trim()
-  if (!trimmed) return '请输入文件名'
-  if (trimmed.includes('/') || trimmed.includes('\\')) return '文件名不能包含路径分隔符'
-  if (trimmed.includes('..')) return '文件名不能包含连续的 .'
-  if (trimmed.startsWith('.')) return '文件名不能以 . 开头'
-  if (!trimmed.includes('.')) return '请保留扩展名，如 .png'
+  if (!trimmed) return t('renameDialog.nameRequired')
+  if (trimmed.includes('/') || trimmed.includes('\\')) return t('renameDialog.slashForbidden')
+  if (trimmed.includes('..')) return t('renameDialog.dotDotForbidden')
+  if (trimmed.startsWith('.')) return t('renameDialog.dotForbidden')
+  if (!trimmed.includes('.')) return t('renameDialog.extensionRequired')
   return null
 }
 

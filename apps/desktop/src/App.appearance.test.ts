@@ -95,6 +95,32 @@ describe('App root theme/accent binding', () => {
 
     expect(shell.getAttribute('data-theme')).toBe('dark')
   })
+
+  it('switches data-accent to the automatic accent when following the system accent', async () => {
+    mediaMatches.set('(prefers-color-scheme: dark)', false)
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const appearance = useAppearanceStore()
+    // A user-chosen accent is ignored once "follow system accent" is on.
+    appearance.setAccent('teal')
+    appearance.setFollowSystemAccent(true)
+
+    const shell = mountApp(pinia)
+    await nextTick()
+    // Light theme -> automatic coral accent.
+    expect(shell.getAttribute('data-accent')).toBe('coral')
+
+    // OS flips to dark -> accent follows to violet.
+    mediaMatches.set('(prefers-color-scheme: dark)', true)
+    mediaListeners.get('(prefers-color-scheme: dark)')?.forEach((cb) => cb())
+    await nextTick()
+    expect(shell.getAttribute('data-accent')).toBe('violet')
+
+    // Turning the follow-key back off restores the user accent (still dark).
+    appearance.setFollowSystemAccent(false)
+    await nextTick()
+    expect(shell.getAttribute('data-accent')).toBe('teal')
+  })
 })
 
 describe('App root layout variable binding', () => {

@@ -1,3 +1,5 @@
+import { t } from '../i18n'
+
 export interface NoteSummary {
   path: string
   name: string
@@ -331,7 +333,7 @@ export function parseNoteMeta(
   return {
     path,
     name,
-    title: parsed.title || extractH1(body) || fileNameTitle(name) || '未命名',
+    title: parsed.title || extractH1(body) || fileNameTitle(name) || t('note.untitled'),
     tags,
     summary: extractSummary(body),
     mtime: meta.mtime,
@@ -428,10 +430,10 @@ export function formatRelativeTime(mtime: number, now = Date.now()): string {
   const minute = 60_000
   const hour = 3_600_000
   const day = 86_400_000
-  if (diff < minute) return '刚刚'
-  if (diff < hour) return `${Math.floor(diff / minute)} 分钟前`
-  if (diff < day) return `${Math.floor(diff / hour)} 小时前`
-  if (diff < 30 * day) return `${Math.floor(diff / day)} 天前`
+  if (diff < minute) return t('time.justNow')
+  if (diff < hour) return t('time.minutesAgo', { n: Math.floor(diff / minute) })
+  if (diff < day) return t('time.hoursAgo', { n: Math.floor(diff / hour) })
+  if (diff < 30 * day) return t('time.daysAgo', { n: Math.floor(diff / day) })
   const d = new Date(mtime)
   return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
 }

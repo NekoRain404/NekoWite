@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { buildLinkGraph, computeLayout, type LayoutPoint } from '../services/linkGraph'
 import { fsService } from '../services/fs'
 import { vaultFileIndex } from '../services/vaultFiles'
@@ -27,6 +27,10 @@ const failed = ref(false)
 const truncated = ref(false)
 const noteCount = ref(0)
 const edgeCount = ref(0)
+
+const canvasAriaLabel = computed(() =>
+  t('graph.count', { n: noteCount.value, m: edgeCount.value }),
+)
 
 const layout = ref<LayoutPoint[]>([])
 const hoverId = ref<string | null>(null)
@@ -373,6 +377,8 @@ defineExpose({ rebuild })
       <canvas
         ref="canvas"
         class="graph-canvas"
+        role="img"
+        :aria-label="canvasAriaLabel"
         @mousedown="onPointerDown"
         @mousemove="onPointerMove"
         @mouseup="onPointerUp"

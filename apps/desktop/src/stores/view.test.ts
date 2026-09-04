@@ -37,6 +37,37 @@ describe('useViewStore', () => {
     s.setSplitRatio(Number.NaN)
     expect(s.splitRatio).toBe(0.5)
   })
+  it('defaults the document-open mode to rendered', () => {
+    expect(useViewStore().defaultMode).toBe('rendered')
+  })
+  it('persists a chosen default mode and initialises the live mode from it', () => {
+    const s = useViewStore()
+    s.setDefaultMode('split')
+    expect(s.defaultMode).toBe('split')
+    expect(localStorage.getItem('nekowite.view.defaultMode')).toBe('split')
+    // A fresh store (e.g. new document/session) opens with the stored default.
+    setActivePinia(createPinia())
+    const fresh = useViewStore()
+    expect(fresh.defaultMode).toBe('split')
+    expect(fresh.mode).toBe('split')
+  })
+  it('ignores an invalid default mode and falls back to rendered', () => {
+    localStorage.setItem('nekowite.view.defaultMode', 'vaporwave')
+    setActivePinia(createPinia())
+    expect(useViewStore().defaultMode).toBe('rendered')
+    expect(useViewStore().mode).toBe('rendered')
+  })
+  it('resetToDefault returns the live mode to the configured default', () => {
+    const s = useViewStore()
+    s.setMode('source')
+    expect(s.mode).toBe('source')
+    s.resetToDefault()
+    expect(s.mode).toBe('rendered')
+    s.setDefaultMode('split')
+    s.setMode('rendered')
+    s.resetToDefault()
+    expect(s.mode).toBe('split')
+  })
   it('stores and consumes the pending outline target', () => {
     const s = useViewStore()
     expect(s.pendingOutlineTarget).toBeNull()

@@ -13,6 +13,7 @@ export interface ContextMenuItem {
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { t } from '../i18n'
 
 const props = defineProps<{
   x: number
@@ -127,7 +128,7 @@ onBeforeUnmount(() => {
       class="ctx-menu"
       :class="{ 'is-open': shown }"
       role="menu"
-      aria-label="上下文菜单"
+      :aria-label="t('contextMenu.aria')"
       :style="{ left: `${pos.left}px`, top: `${pos.top}px` }"
       @contextmenu.prevent
       @keydown="onMenuKeydown"

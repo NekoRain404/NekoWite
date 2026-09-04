@@ -25,71 +25,73 @@ const timeLabel = computed(() => formatRelativeTime(props.note.mtime))
   <article
     class="note-card"
     :class="{ active: props.active }"
-    role="button"
-    tabindex="0"
-    :title="props.note.path"
-    @click="emit('open')"
-    @keydown.enter.prevent="emit('open')"
-    @keydown.space.prevent="emit('open')"
+    role="listitem"
   >
-    <div class="card-head">
-      <Code2
-        v-if="isMdx"
-        class="card-icon"
-        :size="14"
-        :stroke-width="1.8"
-      />
-      <FileText
-        v-else
-        class="card-icon"
-        :size="14"
-        :stroke-width="1.8"
-      />
-      <h3 class="card-title">
-        {{ props.note.title }}
-      </h3>
-      <button
-        class="card-star"
-        :class="{ on: props.favorite }"
-        :title="props.favorite ? t('notecard.unfavorite') : t('notecard.favorite')"
-        @click.stop="emit('toggle-favorite')"
-      >
-        <Star
+    <button
+      class="card-main"
+      type="button"
+      :title="props.note.path"
+      @click="emit('open')"
+    >
+      <div class="card-head">
+        <Code2
+          v-if="isMdx"
+          class="card-icon"
           :size="14"
           :stroke-width="1.8"
-          class="star-icon"
         />
-      </button>
-    </div>
-    <p
-      class="card-summary"
-      :class="{ placeholder: !props.note.summary }"
-    >
-      {{ props.note.summary || t('notecard.noSummary') }}
-    </p>
-    <div class="card-foot">
-      <div class="card-tags">
-        <span
-          v-for="tag in shownTags"
-          :key="tag"
-          class="card-tag"
-        >{{ tag }}</span>
+        <FileText
+          v-else
+          class="card-icon"
+          :size="14"
+          :stroke-width="1.8"
+        />
+        <h3 class="card-title">
+          {{ props.note.title }}
+        </h3>
       </div>
-      <span class="card-time">{{ timeLabel }}</span>
-    </div>
+      <p
+        class="card-summary"
+        :class="{ placeholder: !props.note.summary }"
+      >
+        {{ props.note.summary || t('notecard.noSummary') }}
+      </p>
+      <div class="card-foot">
+        <div class="card-tags">
+          <span
+            v-for="tag in shownTags"
+            :key="tag"
+            class="card-tag"
+          >{{ tag }}</span>
+        </div>
+        <span class="card-time">{{ timeLabel }}</span>
+      </div>
+    </button>
+    <button
+      class="card-star"
+      :class="{ on: props.favorite }"
+      :title="props.favorite ? t('notecard.unfavorite') : t('notecard.favorite')"
+      :aria-label="props.favorite ? t('notecard.unfavorite') : t('notecard.favorite')"
+      :aria-pressed="props.favorite"
+      @click.stop="emit('toggle-favorite')"
+    >
+      <Star
+        :size="14"
+        :stroke-width="1.8"
+        class="star-icon"
+      />
+    </button>
   </article>
 </template>
 
 <style scoped>
 .note-card {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
   border-radius: var(--app-radius-lg);
   background: transparent;
   border: 1px solid transparent;
-  cursor: pointer;
   user-select: none;
   transition: background var(--app-motion-fast) var(--app-ease),
               border-color var(--app-motion-fast) var(--app-ease),
@@ -98,21 +100,38 @@ const timeLabel = computed(() => formatRelativeTime(props.note.mtime))
 .note-card:hover {
   background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
 }
-.note-card:focus-visible {
-  outline: 2px solid var(--app-accent);
-  outline-offset: 1px;
-}
 .note-card.active {
   background: color-mix(in srgb, var(--app-accent-soft) 72%, var(--app-panel));
   border-color: transparent;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-accent) 10%, transparent);
 }
 
+.card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: var(--app-font);
+  font-size: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.card-main:focus-visible,
+.card-star:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
+
 .card-head {
   display: grid;
-  grid-template-columns: 14px minmax(0, 1fr) auto;
+  grid-template-columns: 14px minmax(0, 1fr);
   align-items: center;
   gap: 7px;
+  padding-right: 24px;
 }
 .card-icon {
   color: var(--app-accent);
@@ -129,6 +148,9 @@ const timeLabel = computed(() => formatRelativeTime(props.note.mtime))
   color: var(--app-text);
 }
 .card-star {
+  position: absolute;
+  top: 10px;
+  right: 12px;
   display: inline-flex;
   align-items: center;
   justify-content: center;

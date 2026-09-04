@@ -69,6 +69,10 @@ interface AppearanceSettings {
   lineNumbers: boolean
   autosaveOnBlur: boolean
   statusBarWords: boolean
+  followSystemAccent: boolean
+  renderTaskChecklist: boolean
+  autoSyncScroll: boolean
+  confirmBeforeDelete: boolean
 }
 
 const LS_KEY = 'nekowite.appearance'
@@ -91,6 +95,10 @@ const DEFAULTS: AppearanceSettings = {
   lineNumbers: true,
   autosaveOnBlur: true,
   statusBarWords: true,
+  followSystemAccent: false,
+  renderTaskChecklist: true,
+  autoSyncScroll: true,
+  confirmBeforeDelete: true,
 }
 
 const UI_FONT_IDS: UiFontId[] = ['system', 'inter', 'serif', 'rounded']
@@ -140,6 +148,10 @@ function readStored(): AppearanceSettings {
       lineNumbers: readBool(parsed.lineNumbers, DEFAULTS.lineNumbers),
       autosaveOnBlur: readBool(parsed.autosaveOnBlur, DEFAULTS.autosaveOnBlur),
       statusBarWords: readBool(parsed.statusBarWords, DEFAULTS.statusBarWords),
+      followSystemAccent: readBool(parsed.followSystemAccent, DEFAULTS.followSystemAccent),
+      renderTaskChecklist: readBool(parsed.renderTaskChecklist, DEFAULTS.renderTaskChecklist),
+      autoSyncScroll: readBool(parsed.autoSyncScroll, DEFAULTS.autoSyncScroll),
+      confirmBeforeDelete: readBool(parsed.confirmBeforeDelete, DEFAULTS.confirmBeforeDelete),
     }
   } catch {
     return DEFAULTS
@@ -165,6 +177,10 @@ export const useAppearanceStore = defineStore('appearance', () => {
   const lineNumbers = ref<boolean>(stored.lineNumbers)
   const autosaveOnBlur = ref<boolean>(stored.autosaveOnBlur)
   const statusBarWords = ref<boolean>(stored.statusBarWords)
+  const followSystemAccent = ref<boolean>(stored.followSystemAccent)
+  const renderTaskChecklist = ref<boolean>(stored.renderTaskChecklist)
+  const autoSyncScroll = ref<boolean>(stored.autoSyncScroll)
+  const confirmBeforeDelete = ref<boolean>(stored.confirmBeforeDelete)
   const systemRevision = ref(0)
 
   function persist(): void {
@@ -188,6 +204,10 @@ export const useAppearanceStore = defineStore('appearance', () => {
         lineNumbers: lineNumbers.value,
         autosaveOnBlur: autosaveOnBlur.value,
         statusBarWords: statusBarWords.value,
+        followSystemAccent: followSystemAccent.value,
+        renderTaskChecklist: renderTaskChecklist.value,
+        autoSyncScroll: autoSyncScroll.value,
+        confirmBeforeDelete: confirmBeforeDelete.value,
       }),
     )
   }
@@ -199,6 +219,34 @@ export const useAppearanceStore = defineStore('appearance', () => {
     if (theme.value !== 'system') return theme.value
     if (typeof window.matchMedia !== 'function') return 'light'
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  }
+
+  function setFollowSystemAccent(v: boolean): void {
+    followSystemAccent.value = v
+    persist()
+  }
+
+  function setRenderTaskChecklist(v: boolean): void {
+    renderTaskChecklist.value = v
+    persist()
+  }
+
+  function setAutoSyncScroll(v: boolean): void {
+    autoSyncScroll.value = v
+    persist()
+  }
+
+  function setConfirmBeforeDelete(v: boolean): void {
+    confirmBeforeDelete.value = v
+    persist()
+  }
+
+  /** The accent actually applied. When "follow system accent" is on, the accent
+   * ignores the user pick and adapts to the effective light/dark theme (browsers
+   * expose no OS accent API, so this is the reliable substitute). */
+  function effectiveAccent(): Accent {
+    if (!followSystemAccent.value) return accent.value
+    return effectiveTheme() === 'dark' ? 'violet' : 'coral'
   }
 
   function setTheme(t: Theme): void {
@@ -320,8 +368,13 @@ export const useAppearanceStore = defineStore('appearance', () => {
     lineNumbers,
     autosaveOnBlur,
     statusBarWords,
+    followSystemAccent,
+    renderTaskChecklist,
+    autoSyncScroll,
+    confirmBeforeDelete,
     systemRevision,
     effectiveTheme,
+    effectiveAccent,
     setTheme,
     setAccent,
     setBodyFontSize,
@@ -339,6 +392,10 @@ export const useAppearanceStore = defineStore('appearance', () => {
     setLineNumbers,
     setAutosaveOnBlur,
     setStatusBarWords,
+    setFollowSystemAccent,
+    setRenderTaskChecklist,
+    setAutoSyncScroll,
+    setConfirmBeforeDelete,
     touchSystem,
     uiFontFamily,
     editorFontFamily,

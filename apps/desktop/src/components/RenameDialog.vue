@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue'
 import { validateRenameName } from '../services/renameAsset'
+import { useFocusTrap } from '../composables/useFocusTrap'
 import { t } from '../i18n'
 
 const props = defineProps<{ initial: string }>()
@@ -12,6 +13,9 @@ const emit = defineEmits<{
 const name = ref(props.initial)
 const error = ref<string | null>(null)
 const inputEl = ref<HTMLInputElement | null>(null)
+const dialogEl = ref<HTMLElement | null>(null)
+const active = ref(true)
+useFocusTrap(dialogEl, active, { initialFocus: false })
 
 function check(): void {
   error.value = validateRenameName(name.value)
@@ -47,8 +51,17 @@ onMounted(() => {
     @click.self="cancel"
     @keydown="onKeydown"
   >
-    <div class="dialog rename-dialog">
-      <div class="rename-title">
+    <div
+      ref="dialogEl"
+      class="dialog rename-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="rename-title"
+    >
+      <div
+        id="rename-title"
+        class="rename-title"
+      >
         {{ t('renameDialog.title') }}
       </div>
       <div class="rename-hint">

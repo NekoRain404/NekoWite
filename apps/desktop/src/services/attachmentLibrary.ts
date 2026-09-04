@@ -1,6 +1,7 @@
 import { ATTACHMENTS_DIR, extensionFromFileName } from './attachments'
 import { fsService } from './fs'
 import type { FileEntry, FsGateway } from './gateways/contracts'
+import { t } from '../i18n'
 
 /**
  * Attachment library: recursive listing of the vault's `attachments/` tree
@@ -92,15 +93,15 @@ const MINUTE = 60_000
 const HOUR = 60 * MINUTE
 const DAY = 24 * HOUR
 
-/** Compact Chinese relative time: 刚刚 / N 分钟前 / N 小时前 / N 天前, then a
+/** Compact relative time localised via `t()`: 刚刚 / N 分钟前 / N 小时前 / N 天前, then a
  * `YYYY-MM-DD` date. Zero/invalid mtimes (unknown) degrade gracefully. */
 export function formatRelativeTime(mtime: number, now = Date.now()): string {
-  if (!Number.isFinite(mtime) || mtime <= 0) return '未知时间'
+  if (!Number.isFinite(mtime) || mtime <= 0) return t('time.unknown')
   const delta = now - mtime
-  if (delta < MINUTE) return '刚刚'
-  if (delta < HOUR) return `${Math.floor(delta / MINUTE)} 分钟前`
-  if (delta < DAY) return `${Math.floor(delta / HOUR)} 小时前`
-  if (delta < 7 * DAY) return `${Math.floor(delta / DAY)} 天前`
+  if (delta < MINUTE) return t('time.justNow')
+  if (delta < HOUR) return t('time.minutesAgo', { n: Math.floor(delta / MINUTE) })
+  if (delta < DAY) return t('time.hoursAgo', { n: Math.floor(delta / HOUR) })
+  if (delta < 7 * DAY) return t('time.daysAgo', { n: Math.floor(delta / DAY) })
   const d = new Date(mtime)
   const pad = (v: number) => String(v).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`

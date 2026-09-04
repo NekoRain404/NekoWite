@@ -9,6 +9,7 @@ import RenderedPane from '../view/RenderedPane.vue'
 import LayoutResizeHandle from './LayoutResizeHandle.vue'
 import WordToolbar from '../components/WordToolbar.vue'
 import FloatToolbar from '../components/FloatToolbar.vue'
+import { t } from '../i18n'
 
 const view = useViewStore()
 const tabs = useTabsStore()
@@ -180,7 +181,7 @@ onBeforeUnmount(() => {
         <LayoutResizeHandle
           v-if="view.mode === 'split'"
           class="split-handle"
-          label="调整分屏比例"
+          :label="t('editorPane.resizeSplit')"
           :min="SPLIT_RATIO_MIN"
           :max="SPLIT_RATIO_MAX"
           :value="view.splitRatio"
@@ -206,8 +207,8 @@ onBeforeUnmount(() => {
       <div class="empty-icon">
         <FileText :size="28" :stroke-width="1.5" />
       </div>
-      <p class="empty-title">从左侧打开一个文件开始写作</p>
-      <p class="empty-hint">Ctrl+S 保存 · Ctrl+Z 撤销 · 支持数学公式、引用与 MDX 组件</p>
+      <p class="empty-title">{{ t('editorPane.emptyTitle') }}</p>
+      <p class="empty-hint">{{ t('editorPane.emptyHint') }}</p>
     </div>
   </div>
 </template>

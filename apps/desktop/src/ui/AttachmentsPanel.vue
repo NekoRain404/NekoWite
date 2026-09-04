@@ -260,6 +260,7 @@ defineExpose({ reload })
         role="button"
         tabindex="0"
         :aria-label="t('attachments.insertImage', { name: item.name })"
+        aria-haspopup="menu"
         @click="insertItem(item)"
         @keydown.enter.prevent="insertItem(item)"
         @keydown.space.prevent="insertItem(item)"

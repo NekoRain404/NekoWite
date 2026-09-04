@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useFloatStore } from '../stores/float'
+import { t } from '../i18n'
 
 const floatStore = useFloatStore()
 </script>
@@ -11,24 +12,24 @@ const floatStore = useFloatStore()
   >
     <button
       class="btn btn-secondary btn-sm"
-      title="置前"
+      :title="t('floatToolbar.bringForward')"
       @click="floatStore.bringForward()"
     >
-      置前
+      {{ t('floatToolbar.bringForward') }}
     </button>
     <button
       class="btn btn-secondary btn-sm"
-      title="置后"
+      :title="t('floatToolbar.sendBackward')"
       @click="floatStore.sendBackward()"
     >
-      置后
+      {{ t('floatToolbar.sendBackward') }}
     </button>
     <button
       class="btn btn-danger btn-sm"
-      title="删除"
+      :title="t('common.delete')"
       @click="floatStore.removeSelected()"
     >
-      删除
+      {{ t('common.delete') }}
     </button>
   </div>
 </template>

@@ -8,6 +8,7 @@ import { t } from '../i18n'
 
 const tabs = useTabsStore()
 
+const tabBarEl = ref<HTMLElement | null>(null)
 const menu = ref<{ x: number; y: number; tabId: string } | null>(null)
 
 const menuItems = computed<ContextMenuItem[]>(() => [
@@ -38,6 +39,38 @@ function onTabAuxClick(e: MouseEvent, id: string): void {
   void tabs.closeTab(id)
 }
 
+function tabEls(): HTMLElement[] {
+  const el = tabBarEl.value
+  if (!el) return []
+  return [...el.querySelectorAll<HTMLElement>('[data-tab-id]')]
+}
+
+/** Roving tabindex: only the active tab is reachable via Tab. */
+function tabindexOf(id: string): number {
+  return id === tabs.activeId ? 0 : -1
+}
+
+function onTabKeydown(e: KeyboardEvent, id: string): void {
+  if (e.target !== e.currentTarget) return
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault()
+    tabs.setActive(id)
+    return
+  }
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+  e.preventDefault()
+  const list = tabEls()
+  const idx = list.findIndex((el) => el.getAttribute('data-tab-id') === id)
+  if (idx < 0 || list.length === 0) return
+  const offset = e.key === 'ArrowRight' ? 1 : -1
+  const next = list[(idx + offset + list.length) % list.length]
+  const nextId = next?.getAttribute('data-tab-id')
+  if (nextId) {
+    tabs.setActive(nextId)
+    next?.focus()
+  }
+}
+
 async function onMenuSelect(id: string): Promise<void> {
   const target = menu.value
   if (!target) return
@@ -48,13 +81,23 @@ async function onMenuSelect(id: string): Promise<void> {
 </script>
 
 <template>
-  <div class="tab-bar">
+  <div
+    ref="tabBarEl"
+    class="tab-bar"
+    role="tablist"
+    :aria-label="t('tabs.aria')"
+  >
     <div
       v-for="tab in tabs.tabs"
       :key="tab.id"
       class="tab"
       :class="{ active: tab.id === tabs.activeId }"
+      role="tab"
+      :aria-selected="tab.id === tabs.activeId"
+      :tabindex="tabindexOf(tab.id)"
+      :data-tab-id="tab.id"
       @click="tabs.setActive(tab.id)"
+      @keydown="onTabKeydown($event, tab.id)"
       @mousedown="onTabMouseDown($event)"
       @auxclick="onTabAuxClick($event, tab.id)"
       @contextmenu.prevent="menu = { x: $event.clientX, y: $event.clientY, tabId: tab.id }"
@@ -68,6 +111,7 @@ async function onMenuSelect(id: string): Promise<void> {
       <button
         class="tab-close"
         :title="t('tabs.closeTab')"
+        :aria-label="t('tabs.closeTab')"
         @click.stop="tabs.closeTab(tab.id)"
       >
         <X
@@ -79,6 +123,7 @@ async function onMenuSelect(id: string): Promise<void> {
     <button
       class="new-tab"
       :title="t('tabs.newDoc')"
+      :aria-label="t('tabs.newDoc')"
       @click="tabs.openTab(null)"
     >
       <Plus

@@ -304,6 +304,7 @@ function jumpOutline(line: number, index: number): void {
         <button
           class="nl-sort"
           :title="t('notelist.sortTitle', { label: sortLabel })"
+          aria-haspopup="menu"
           @click="openSortMenu"
         >
           <ArrowDownWideNarrow
@@ -313,7 +314,11 @@ function jumpOutline(line: number, index: number): void {
           <span>{{ sortLabel }}</span>
         </button>
       </div>
-      <div class="nl-cards">
+      <div
+        class="nl-cards"
+        role="list"
+        :aria-label="t('notelist.aria')"
+      >
         <template v-if="contentEnabled">
           <p
             v-if="contentSearching"

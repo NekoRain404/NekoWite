@@ -1,5 +1,8 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { nextTick } from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
 import { exportHtml, exportToPdf, buildComponentRenderers } from './export'
+import { useSettingsStore } from '../stores/settings'
 
 const writeMock = vi.hoisted(() => vi.fn())
 vi.mock('./fs', () => ({ fsService: { write: writeMock } }))
@@ -101,5 +104,79 @@ describe('exportToPdf', () => {
     expect(iframe.remove).not.toHaveBeenCalled()
     vi.advanceTimersByTime(1)
     expect(iframe.remove).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('export applies settings-store params', () => {
+  interface PdfIframe {
+    style: Record<string, string>
+    srcdoc: string
+    contentWindow: { print: () => void; focus: () => void } | null
+    remove: ReturnType<typeof vi.fn>
+    onload: (() => void) | null
+  }
+
+  function makeIframe(print: () => void): PdfIframe {
+    const iframe: PdfIframe = {
+      style: {},
+      srcdoc: '',
+      contentWindow: { print, focus: vi.fn() },
+      remove: vi.fn(),
+      onload: null,
+    }
+    return iframe
+  }
+
+  function stubDom(iframe: PdfIframe): void {
+    vi.spyOn(document, 'createElement').mockReturnValue(iframe as unknown as HTMLElement)
+    vi.spyOn(document.body, 'appendChild').mockReturnValue(iframe as unknown as HTMLElement)
+  }
+
+  beforeEach(() => {
+    writeMock.mockReset()
+    setActivePinia(createPinia())
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
+
+  it('omits yaml frontmatter from html when configured off', async () => {
+    const settings = useSettingsStore()
+    settings.exportIncludeFrontmatter = false
+    await nextTick()
+    writeMock.mockResolvedValue(undefined)
+    await exportHtml('---\ntitle: Secret\n---\n# H\n', 'vault', 'out.html', { title: 'Doc' })
+    const html = writeMock.mock.calls[0][2] as string
+    expect(html).toContain('<h1>H</h1>')
+    expect(html).not.toContain('title: Secret')
+  })
+
+  it('keeps yaml frontmatter in html by default', async () => {
+    writeMock.mockResolvedValue(undefined)
+    await exportHtml('---\ntitle: Secret\n---\n# H\n', 'vault', 'out.html', { title: 'Doc' })
+    const html = writeMock.mock.calls[0][2] as string
+    expect(html).toContain('title: Secret')
+  })
+
+  it('injects the configured @page rule into the pdf iframe', async () => {
+    const settings = useSettingsStore()
+    settings.exportPdfPageSize = 'Letter'
+    settings.exportPdfOrientation = 'landscape'
+    await nextTick()
+    const iframe = makeIframe(() => undefined)
+    stubDom(iframe)
+    await exportToPdf('# T\n', {})
+    expect(iframe.srcdoc).toContain('@page{size:Letter landscape;margin:1cm;}')
+    expect(iframe.srcdoc).toContain('<!DOCTYPE html>')
+  })
+
+  it('defaults to A4 portrait pdf rules', async () => {
+    const iframe = makeIframe(() => undefined)
+    stubDom(iframe)
+    await exportToPdf('# T\n', {})
+    expect(iframe.srcdoc).toContain('@page{size:A4 portrait;margin:1cm;}')
   })
 })

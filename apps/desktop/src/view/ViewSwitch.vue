@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useViewStore } from '../stores/view'
 import type { ViewMode } from '../stores/view'
+import { t } from '../i18n'
 
 const view = useViewStore()
 
@@ -9,20 +11,26 @@ interface ModeItem {
   label: string
 }
 
-const modes: ModeItem[] = [
-  { key: 'source', label: '源码' },
-  { key: 'rendered', label: '渲染' },
-  { key: 'split', label: '对照' },
-]
+const modes = computed<ModeItem[]>(() => [
+  { key: 'source', label: t('viewswitch.source') },
+  { key: 'rendered', label: t('viewswitch.rendered') },
+  { key: 'split', label: t('viewswitch.split') },
+])
 </script>
 
 <template>
-  <div class="view-switch">
+  <div
+    class="view-switch"
+    role="tablist"
+    :aria-label="t('viewswitch.aria')"
+  >
     <button
       v-for="m in modes"
       :key="m.key"
       class="switch-option"
       :class="{ 'is-active': view.mode === m.key }"
+      role="tab"
+      :aria-selected="view.mode === m.key"
       :title="m.label"
       @click="view.setMode(m.key)"
     >

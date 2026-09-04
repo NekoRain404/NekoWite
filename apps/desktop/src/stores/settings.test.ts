@@ -23,6 +23,9 @@ function clearLs(): void {
   localStorage.removeItem('nekowite.ai.systemPromptOn')
   localStorage.removeItem('nekowite.settings.autosaveInterval')
   localStorage.removeItem('nekowite.settings.maxHistory')
+  localStorage.removeItem('nekowite.settings.exportFrontmatter')
+  localStorage.removeItem('nekowite.settings.exportPageSize')
+  localStorage.removeItem('nekowite.settings.exportOrientation')
 }
 
 describe('useSettingsStore', () => {
@@ -163,5 +166,43 @@ describe('useSettingsStore', () => {
     s.modelsCache = ['a', 'b']
     s.clearModelsCache()
     expect(s.modelsCache).toEqual([])
+  })
+
+  it('defaults export params to include frontmatter on A4 portrait', () => {
+    const s = useSettingsStore()
+    expect(s.exportIncludeFrontmatter).toBe(true)
+    expect(s.exportPdfPageSize).toBe('A4')
+    expect(s.exportPdfOrientation).toBe('portrait')
+  })
+
+  it('reads persisted export params from localStorage', () => {
+    localStorage.setItem('nekowite.settings.exportFrontmatter', 'false')
+    localStorage.setItem('nekowite.settings.exportPageSize', 'Letter')
+    localStorage.setItem('nekowite.settings.exportOrientation', 'landscape')
+    const s = useSettingsStore()
+    expect(s.exportIncludeFrontmatter).toBe(false)
+    expect(s.exportPdfPageSize).toBe('Letter')
+    expect(s.exportPdfOrientation).toBe('landscape')
+  })
+
+  it('persists export param changes to localStorage', async () => {
+    const s = useSettingsStore()
+    s.exportIncludeFrontmatter = false
+    s.exportPdfPageSize = 'Letter'
+    s.exportPdfOrientation = 'landscape'
+    await nextTick()
+    expect(localStorage.getItem('nekowite.settings.exportFrontmatter')).toBe('false')
+    expect(localStorage.getItem('nekowite.settings.exportPageSize')).toBe('Letter')
+    expect(localStorage.getItem('nekowite.settings.exportOrientation')).toBe('landscape')
+  })
+
+  it('falls back to defaults for invalid export params', () => {
+    localStorage.setItem('nekowite.settings.exportFrontmatter', 'yes')
+    localStorage.setItem('nekowite.settings.exportPageSize', 'Tabloid')
+    localStorage.setItem('nekowite.settings.exportOrientation', 'sideways')
+    const s = useSettingsStore()
+    expect(s.exportIncludeFrontmatter).toBe(true)
+    expect(s.exportPdfPageSize).toBe('A4')
+    expect(s.exportPdfOrientation).toBe('portrait')
   })
 })

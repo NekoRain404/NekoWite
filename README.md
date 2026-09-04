@@ -38,7 +38,7 @@ E2E 在浏览器模式下运行（不依赖 Tauri 进程），通过 `page.addIn
 - ✅ **v1.3 导出**: PDF + HTML 导出（含渲染后的数学与组件）
 - ✅ **v1.4 AI**: AI ghost-writer，BYOK（OpenAI/Claude/Gemini/Grok/本地 LM Studio/Ollama），Tab 接收
 - ✅ **v1.5 浮动元素**: 浮动图片/文本框/贴纸，可任意摆放（自由画布辅助能力）
-- ✅ **v1.6 深度插件**: 生命周期钩子、样式主题、更全注册面、插件沙箱（webview/worker）
+- ✅ **v1.6 深度插件**: 生命周期钩子、样式主题、更全注册面、插件权限声明（激活敏感能力前先确认）；插件沙箱（webview/worker）隔离仍在规划中
 
 ## 插件开发
 
@@ -90,3 +90,17 @@ export const quotePlugin = definePlugin({
 ```
 
 插件由 `@nekowite/plugin-host` 的加载器/激活器管理：`loadPlugin` 负责加载并校验（必须有 default export），`activatePlugin` 负责注册并与 `onLoad` 生命周期联动；激活失败时自动回滚已注册项，保证插件隔离与错误处理。
+
+### 安全边界（重要）
+
+当前插件**运行在主窗口的同一 JS 上下文中**——不是 webview/worker 隔离沙箱。这意味着插件代码与主应用共享运行环境，理论上可触达应用注册表与 Tauri IPC；我们因此只信任本地自装的插件，**真沙箱（webview/worker 隔离）仍在规划中**。
+
+为让这一边界可感知，插件可在 manifest（`package.json`）或 `definePlugin` 中声明 `permissions` 字段，列出它需要的能力（`ai`/`fs`/`network`/`clipboard`）：
+
+```json
+{ "name": "my-plug", "version": "1.0.0", "main": "index.js", "permissions": ["fs"] }
+```
+
+- 声明了**敏感能力**（`ai`/`fs`/`network`）的插件，宿主会在激活前弹出确认；未获用户允许则不激活（纯 UI 插件，即未声明任何能力，自动放行）。
+- 未声明 `permissions` 的插件将按纯 UI 插件处理，敏感能力默认拒绝。
+- 由于没有沙箱，vault 插件经 Tauri 读取源码后以 blob 模块动态加载；插件内的裸导入（如 `import { defineComponent } from 'vue'`）无法从 blob URL 解析，vault 插件需自包含或使用绝对 URL。浏览器（memory）演示模式没有真实插件文件，vault 插件不会加载。

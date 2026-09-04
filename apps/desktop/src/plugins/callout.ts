@@ -2,6 +2,7 @@ import { defineComponent, h } from 'vue'
 import { definePlugin } from '@nekowite/plugin-host'
 import type { NekoEditor } from '@nekowite/editor-core'
 import { insertMdxComponent } from '@nekowite/editor-core'
+import { t } from '../i18n'
 
 type EditorView = ReturnType<NekoEditor['getView']>
 
@@ -38,5 +39,5 @@ function insertCallout(): void {
 export const calloutPlugin = definePlugin({
   name: 'Callout',
   components: { Callout },
-  toolbar: [{ id: 'callout.insert', label: '插入 Callout', run: insertCallout }],
+  toolbar: [{ id: 'callout.insert', label: t('command.callout.insert'), run: insertCallout }],
 })

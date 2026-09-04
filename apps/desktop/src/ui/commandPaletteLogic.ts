@@ -1,3 +1,5 @@
+import { t } from '../i18n'
+
 export type PaletteKind = 'command' | 'file'
 
 export interface PaletteEntry {
@@ -16,8 +18,8 @@ export interface PaletteGroup {
 }
 
 export const GROUP_LABELS: Record<PaletteKind, string> = {
-  command: '命令',
-  file: '文件',
+  command: t('palette.groupCommand'),
+  file: t('palette.groupFile'),
 }
 
 const GROUP_ORDER: PaletteKind[] = ['command', 'file']

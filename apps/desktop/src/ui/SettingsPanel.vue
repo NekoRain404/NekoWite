@@ -303,7 +303,10 @@ function onExportPdf(): void {
                 </button>
               </div>
               <span class="settings-label">{{ t('settings.appearance.accent') }}</span>
-              <div class="accent-row">
+              <div
+                class="accent-row"
+                :class="{ 'is-disabled': appearance.followSystemAccent }"
+              >
                 <button
                   v-for="a in ACCENTS"
                   :key="a"
@@ -314,6 +317,19 @@ function onExportPdf(): void {
                   @click="appearance.setAccent(a)"
                 />
               </div>
+              <label class="settings-field settings-toggle">
+                <span>{{ t('settings.appearance.followSystemAccent') }}</span>
+                <input
+                  :checked="appearance.followSystemAccent"
+                  type="checkbox"
+                  class="checkbox"
+                  @change="appearance.setFollowSystemAccent(($event.target as HTMLInputElement).checked)"
+                >
+              </label>
+              <span
+                v-if="appearance.followSystemAccent"
+                class="settings-note"
+              >{{ t('settings.appearance.followAccentHint') }}</span>
               <span class="settings-label">{{ t('settings.appearance.font') }}</span>
               <label class="settings-field">
                 <span>{{ t('settings.appearance.uiFont') }}</span>
@@ -426,6 +442,30 @@ function onExportPdf(): void {
                   {{ t('settings.editor.viewSplit') }}
                 </button>
               </div>
+              <span class="settings-label">{{ t('settings.editor.defaultView') }}</span>
+              <div class="view-modes">
+                <button
+                  class="switch-option"
+                  :class="{ 'is-active': view.defaultMode === 'source' }"
+                  @click="view.setDefaultMode('source')"
+                >
+                  {{ t('settings.editor.viewSource') }}
+                </button>
+                <button
+                  class="switch-option"
+                  :class="{ 'is-active': view.defaultMode === 'rendered' }"
+                  @click="view.setDefaultMode('rendered')"
+                >
+                  {{ t('settings.editor.viewRendered') }}
+                </button>
+                <button
+                  class="switch-option"
+                  :class="{ 'is-active': view.defaultMode === 'split' }"
+                  @click="view.setDefaultMode('split')"
+                >
+                  {{ t('settings.editor.viewSplit') }}
+                </button>
+              </div>
               <span class="settings-label">{{ t('settings.editor.save') }}</span>
               <label class="settings-field">
                 <span>{{ t('settings.editor.autosaveInterval') }}</span>
@@ -489,6 +529,24 @@ function onExportPdf(): void {
                   @change="appearance.setLineNumbers(($event.target as HTMLInputElement).checked)"
                 >
               </label>
+              <label class="settings-field settings-toggle">
+                <span>{{ t('settings.editor.renderTaskChecklist') }}</span>
+                <input
+                  :checked="appearance.renderTaskChecklist"
+                  type="checkbox"
+                  class="checkbox"
+                  @change="appearance.setRenderTaskChecklist(($event.target as HTMLInputElement).checked)"
+                >
+              </label>
+              <label class="settings-field settings-toggle">
+                <span>{{ t('settings.editor.autoSyncScroll') }}</span>
+                <input
+                  :checked="appearance.autoSyncScroll"
+                  type="checkbox"
+                  class="checkbox"
+                  @change="appearance.setAutoSyncScroll(($event.target as HTMLInputElement).checked)"
+                >
+              </label>
               <label class="settings-field">
                 <span>{{ t('settings.editor.wordGoal', { goal: appearance.wordGoal }) }}</span>
                 <input
@@ -519,6 +577,15 @@ function onExportPdf(): void {
                   @change="appearance.setStatusBarWords(($event.target as HTMLInputElement).checked)"
                 >
               </label>
+              <label class="settings-field settings-toggle">
+                <span>{{ t('settings.editor.confirmBeforeDelete') }}</span>
+                <input
+                  :checked="appearance.confirmBeforeDelete"
+                  type="checkbox"
+                  class="checkbox"
+                  @change="appearance.setConfirmBeforeDelete(($event.target as HTMLInputElement).checked)"
+                >
+              </label>
             </section>
 
             <section
@@ -546,6 +613,44 @@ function onExportPdf(): void {
                 v-if="!hasActiveTab"
                 class="settings-note"
               >{{ t('settings.export.none') }}</span>
+              <span class="settings-label">{{ t('settings.export.defaults') }}</span>
+              <label class="settings-field settings-toggle">
+                <span>{{ t('settings.export.frontmatter') }}</span>
+                <input
+                  :checked="settings.exportIncludeFrontmatter"
+                  type="checkbox"
+                  class="checkbox"
+                  @change="settings.exportIncludeFrontmatter = ($event.target as HTMLInputElement).checked"
+                >
+              </label>
+              <label class="settings-field">
+                <span>{{ t('settings.export.pageSize') }}</span>
+                <select
+                  v-model="settings.exportPdfPageSize"
+                  class="input"
+                >
+                  <option value="A4">
+                    {{ t('settings.export.pageSizeA4') }}
+                  </option>
+                  <option value="Letter">
+                    {{ t('settings.export.pageSizeLetter') }}
+                  </option>
+                </select>
+              </label>
+              <label class="settings-field">
+                <span>{{ t('settings.export.orientation') }}</span>
+                <select
+                  v-model="settings.exportPdfOrientation"
+                  class="input"
+                >
+                  <option value="portrait">
+                    {{ t('settings.export.portrait') }}
+                  </option>
+                  <option value="landscape">
+                    {{ t('settings.export.landscape') }}
+                  </option>
+                </select>
+              </label>
             </section>
 
             <section
@@ -864,4 +969,5 @@ function onExportPdf(): void {
 .view-modes { display: flex; gap: 6px; flex-wrap: wrap; }
 .view-modes button:disabled { opacity: 0.5; cursor: not-allowed; }
 .accent-row { display: flex; gap: 6px; }
+.accent-row.is-disabled { opacity: 0.5; pointer-events: none; }
 </style>

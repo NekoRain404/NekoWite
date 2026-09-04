@@ -96,6 +96,7 @@ function run(id: string): void {
       <button
         class="toolbar-btn"
         :title="t('toolbar.heading')"
+        :aria-label="t('toolbar.heading')"
         @click="toggleHeadingMenu"
       >
         <Heading2 :size="15" :stroke-width="1.8" />
@@ -118,25 +119,25 @@ function run(id: string): void {
       </Transition>
     </div>
     <span class="toolbar-sep" />
-    <button class="toolbar-btn" :title="t('toolbar.bold')" @click="run('bold')"><Bold :size="15" :stroke-width="1.8" /></button>
-    <button class="toolbar-btn" :title="t('toolbar.italic')" @click="run('italic')"><Italic :size="15" :stroke-width="1.8" /></button>
-    <button class="toolbar-btn" :title="t('toolbar.strike')" @click="run('strike')"><Strikethrough :size="15" :stroke-width="1.8" /></button>
-    <button class="toolbar-btn" :title="t('toolbar.inlineCode')" @click="run('inline-code')"><Code :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.bold')" :aria-label="t('toolbar.bold')" @click="run('bold')"><Bold :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.italic')" :aria-label="t('toolbar.italic')" @click="run('italic')"><Italic :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.strike')" :aria-label="t('toolbar.strike')" @click="run('strike')"><Strikethrough :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.inlineCode')" :aria-label="t('toolbar.inlineCode')" @click="run('inline-code')"><Code :size="15" :stroke-width="1.8" /></button>
     <span class="toolbar-sep" />
-    <button class="toolbar-btn" :title="t('toolbar.link')" @click="run('link')"><Link :size="15" :stroke-width="1.8" /></button>
-    <button class="toolbar-btn" :title="t('toolbar.image')" @click="run('image')"><ImageIcon :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.link')" :aria-label="t('toolbar.link')" @click="run('link')"><Link :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.image')" :aria-label="t('toolbar.image')" @click="run('image')"><ImageIcon :size="15" :stroke-width="1.8" /></button>
     <span class="toolbar-sep" />
-    <button class="toolbar-btn" :title="t('toolbar.listUnordered')" @click="run('list-unordered')"><List :size="15" :stroke-width="1.8" /></button>
-    <button class="toolbar-btn" :title="t('toolbar.listOrdered')" @click="run('list-ordered')"><ListOrdered :size="15" :stroke-width="1.8" /></button>
-    <button class="toolbar-btn" :title="t('toolbar.listTask')" @click="run('list-task')"><ListTodo :size="15" :stroke-width="1.8" /></button>
-    <button class="toolbar-btn" :title="t('toolbar.quote')" @click="run('quote')"><Quote :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.listUnordered')" :aria-label="t('toolbar.listUnordered')" @click="run('list-unordered')"><List :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.listOrdered')" :aria-label="t('toolbar.listOrdered')" @click="run('list-ordered')"><ListOrdered :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.listTask')" :aria-label="t('toolbar.listTask')" @click="run('list-task')"><ListTodo :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.quote')" :aria-label="t('toolbar.quote')" @click="run('quote')"><Quote :size="15" :stroke-width="1.8" /></button>
     <span class="toolbar-sep" />
-    <button class="toolbar-btn" :title="t('toolbar.codeBlock')" @click="run('code-block')"><SquareCode :size="15" :stroke-width="1.8" /></button>
-    <button class="toolbar-btn" :title="t('toolbar.hr')" @click="run('hr')"><Minus :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.codeBlock')" :aria-label="t('toolbar.codeBlock')" @click="run('code-block')"><SquareCode :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.hr')" :aria-label="t('toolbar.hr')" @click="run('hr')"><Minus :size="15" :stroke-width="1.8" /></button>
     <span class="toolbar-sep" />
-    <button class="toolbar-btn" :title="t('toolbar.insertComponent')" @click="run('insert-component')"><Braces :size="15" :stroke-width="1.8" /></button>
+    <button class="toolbar-btn" :title="t('toolbar.insertComponent')" :aria-label="t('toolbar.insertComponent')" @click="run('insert-component')"><Braces :size="15" :stroke-width="1.8" /></button>
     <div ref="aiMenuEl" class="heading-menu-wrap">
-      <button class="toolbar-btn" :title="t('ai.title')" @click="toggleAiMenu">
+      <button class="toolbar-btn" :title="t('ai.title')" :aria-label="t('ai.title')" @click="toggleAiMenu">
         <Sparkles :size="15" :stroke-width="1.8" />
       </button>
       <Transition name="menu">
@@ -163,6 +164,7 @@ function run(id: string): void {
         :key="`reg-${item.id}`"
         class="toolbar-btn"
         :title="item.label"
+        :aria-label="item.label"
         @click="item.run()"
       >
         <component :is="REGISTRY_ICONS[item.id]" v-if="REGISTRY_ICONS[item.id]" :size="15" :stroke-width="1.8" />

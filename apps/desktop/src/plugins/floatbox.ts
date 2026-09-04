@@ -4,6 +4,7 @@ import type { NekoEditor } from '@nekowite/editor-core'
 import { insertMdxComponent } from '@nekowite/editor-core'
 import { editorBridge } from '../services/editorBridge'
 import { useFloatStore } from '../stores/float'
+import { t } from '../i18n'
 import {
   applyDrag,
   applyResize,
@@ -321,11 +322,11 @@ function updateFloatChildren(view: EditorView | null, pos: number | undefined, t
 export function insertFloatBox(): void {
   const view = editorBridge.getView()
   if (!view) return
-  insertMdxComponent(view, { name: 'FloatBox', props: {}, children: '浮动内容' })
+  insertMdxComponent(view, { name: 'FloatBox', props: {}, children: t('plugin.floatboxChildren') })
 }
 
 export const floatboxPlugin = definePlugin({
   name: 'FloatBox',
   components: { FloatBox },
-  toolbar: [{ id: 'floatbox.insert', label: '插入 FloatBox', run: insertFloatBox }],
+  toolbar: [{ id: 'floatbox.insert', label: t('command.floatbox.insert'), run: insertFloatBox }],
 })

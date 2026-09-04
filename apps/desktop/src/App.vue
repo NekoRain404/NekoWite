@@ -15,8 +15,10 @@ import LayoutResizeHandle from './ui/LayoutResizeHandle.vue'
 import ViewSwitch from './view/ViewSwitch.vue'
 import Toast from './components/AppToast.vue'
 import ConflictDialog from './components/ConflictDialog.vue'
+import PermissionDialog from './components/PermissionDialog.vue'
 import GhostWriter from './components/GhostWriter.vue'
 import CommandPalette from './ui/CommandPalette.vue'
+import { useViewStore } from './stores/view'
 import { useTabsStore } from './stores/tabs'
 import { useRefsStore } from './stores/refs'
 import { useSettingsStore } from './stores/settings'
@@ -34,7 +36,8 @@ import {
   SIDEBAR_WIDTH_MAX,
   SIDEBAR_WIDTH_MIN,
 } from './stores/appearance'
-import { loadVaultPlugins } from './services/plugins'
+import { loadVaultPlugins, setPluginPermissionDecider } from './services/plugins'
+import type { PluginPermissionRequest } from './services/plugins'
 import {
   clampForDisplay,
   loadWindowState,
@@ -43,6 +46,7 @@ import {
 } from './stores/windowState'
 
 const tabs = useTabsStore()
+const view = useViewStore()
 const refs = useRefsStore()
 const settings = useSettingsStore()
 const appearance = useAppearanceStore()
@@ -52,11 +56,16 @@ const showSettings = ref(false)
 const sidebarVisible = ref(true)
 const railOpen = ref(false)
 const conflict = ref<{ tabId: string; path: string } | null>(null)
+const pluginPermission = ref<PluginPermissionRequest | null>(null)
 
 const theme = computed<string>(() => {
   void appearance.systemRevision
   return appearance.effectiveTheme()
 })
+
+// Honors "follow system accent": when on, the accent ignores the user pick and
+// adapts to the effective light/dark theme (browsers expose no OS accent API).
+const accent = computed<string>(() => appearance.effectiveAccent())
 
 const locale = computed<string>(() => getLocale())
 
@@ -91,6 +100,16 @@ watch(
   () => {
     const path = tabs.activeTab?.path
     if (path) library.touchRecent(path)
+  },
+)
+
+// A newly focused/open document starts in the configured default view mode,
+// so "default view on open" stays meaningful even though the live mode is a
+// single window-wide value the user can still change per session.
+watch(
+  () => tabs.activeId,
+  () => {
+    view.resetToDefault()
   },
 )
 
@@ -235,6 +254,20 @@ onMounted(() => {
   // Restore window geometry before the vault is opened so the layout is in
   // place while the editor initializes.
   void restoreWindowState()
+  // Vault plugins run in the same process as the app (no sandbox). When one
+  // declares dangerous capabilities, ask the user before activating it.
+  setPluginPermissionDecider((meta, permissions) => {
+    return new Promise<boolean>((resolve) => {
+      pluginPermission.value = {
+        meta,
+        permissions,
+        resolve: (allowed) => {
+          pluginPermission.value = null
+          resolve(allowed)
+        },
+      }
+    })
+  })
   if (typeof window.matchMedia === 'function') {
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
     const onChange = (): void => {
@@ -297,7 +330,7 @@ async function pickFolder(): Promise<void> {
     class="shell"
     :style="shellStyle"
     :data-theme="theme"
-    :data-accent="appearance.accent"
+    :data-accent="accent"
     :data-locale="locale"
   >
     <TitleBar
@@ -429,6 +462,13 @@ async function pickFolder(): Promise<void> {
       :tab-id="conflict.tabId"
       :path="conflict.path"
       @close="conflict = null"
+    />
+    <PermissionDialog
+      v-if="pluginPermission"
+      :meta="pluginPermission.meta"
+      :permissions="pluginPermission.permissions"
+      @allow="pluginPermission.resolve(true)"
+      @deny="pluginPermission.resolve(false)"
     />
   </div>
 </template>

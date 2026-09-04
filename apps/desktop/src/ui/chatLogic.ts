@@ -1,4 +1,5 @@
 import { extensionFromFileName, fileToBase64, mimeFromExtension } from '../services/attachments'
+import { t } from '../i18n'
 
 export type ChatRole = 'user' | 'assistant'
 
@@ -52,7 +53,7 @@ function truncate(s: string, maxChars: number): string {
  * only the most recent turns (capped at `maxChars`). `history` must already
  * end with the current user turn. */
 function buildChatTranscript(history: ChatTurn[], maxChars = 6000): string {
-  const label = (role: ChatRole): string => (role === 'user' ? '用户' : '助手')
+  const label = (role: ChatRole): string => (role === 'user' ? t('chat.user') : t('chat.assistant'))
   const lines: string[] = []
   let used = 0
   for (let i = history.length - 1; i >= 0; i -= 1) {
@@ -67,7 +68,7 @@ function buildChatTranscript(history: ChatTurn[], maxChars = 6000): string {
 
 /** Build a readable context block for the active note. A non-empty selection
  * takes priority over the full body; the note body is truncated so the block
- * never blows the token budget. Pure logic: no `t()`, no editor access. */
+ * never blows the token budget. Uses `t()` (module-safe i18n), no editor access. */
 export function buildContextBlock(context: {
   noteTitle?: string
   selection?: string
@@ -79,10 +80,10 @@ export function buildContextBlock(context: {
   const selection = context.selection?.trim() ?? ''
   const content = context.noteContent?.trim() ?? ''
   const lines: string[] = []
-  const header = title ? `【当前文档：${title}】` : ''
+  const header = title ? t('chat.currentDocHeader', { title }) : ''
   if (selection) {
     if (header) lines.push(header)
-    lines.push('【选中文本】')
+    lines.push(t('chat.selectionHeader'))
     lines.push(truncate(selection, maxChars))
   } else if (content) {
     if (header) lines.push(header)
@@ -108,5 +109,5 @@ export function buildChatPrompt(
   const context = opts.context?.trim() ?? ''
   const body = buildChatTranscript(history, maxChars)
   if (!context) return body
-  return `以下是当前文档的上下文，供你参考：\n${context}\n\n---\n\n${body}`
+  return t('chat.contextIntro', { context, body })
 }

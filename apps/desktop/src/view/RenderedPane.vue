@@ -142,13 +142,13 @@ async function applyContent(content: string): Promise<void> {
       } catch {
         // The editor view is expected to be ready once open() resolves.
         parseFailed = true
-        notifyError('文档解析失败，已切换到源码视图，请检查文档格式')
+        notifyError(t('rendered.parseFailed'))
         view.setMode('source')
       }
     }
   } catch {
     parseFailed = true
-    notifyError('文档解析失败，已切换到源码视图，请检查文档格式')
+    notifyError(t('rendered.parseFailed'))
     view.setMode('source')
   } finally {
     applyingExternal = false
@@ -284,7 +284,7 @@ function onRenameCancel(): void {
 async function insertImageFiles(files: File[]): Promise<void> {
   if (!editor) return
   if (!tabs.vault) {
-    notifyError('尚未打开 vault，无法保存图片')
+    notifyError(t('rendered.saveImageNoVault'))
     return
   }
   for (const file of files) {
@@ -299,7 +299,7 @@ async function insertImageFiles(files: File[]): Promise<void> {
       const ref = relativePathFromNoteVault(tab?.path ?? '', tabs.vault ?? '', savedPath)
       await editor.insertMarkdownAtCursor(markdownImageBlock(escapeMarkdownAlt(choice.name), ref))
     } catch {
-      notifyError('图片插入失败，请重试')
+      notifyError(t('attachments.insertFailed'))
     }
   }
 }

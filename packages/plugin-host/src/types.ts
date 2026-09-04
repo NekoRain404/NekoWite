@@ -1,11 +1,18 @@
 import type { Component } from 'vue'
 import type { EditorCommand, RegistrationBatch, ToolbarItem } from '@nekowite/editor-core'
 
+/** Sensitive capabilities a plugin may declare it needs. The host surfaces
+ *  these to the user before activation; without a real sandbox, declaring them
+ *  is how the plugin makes the boundary explicit so the user can judge risk. */
+export type PluginPermission = 'ai' | 'fs' | 'network' | 'clipboard'
+
 export interface PluginMeta {
   id: string
   name: string
   version: string
   main: string
+  /** Optional manifest-declared capabilities (e.g. from `package.json`). */
+  permissions?: PluginPermission[]
 }
 
 export interface PluginContext {
@@ -20,6 +27,9 @@ export interface PluginContext {
 
 export interface PluginDefinition extends RegistrationBatch {
   name?: string
+  /** Optional capabilities this plugin declares it needs. The host may gate
+   *  activation of dangerous capabilities on user confirmation. */
+  permissions?: PluginPermission[]
   components?: Record<string, Component>
   toolbar?: ToolbarItem[]
   commands?: EditorCommand[]

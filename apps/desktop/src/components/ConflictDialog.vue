@@ -1,11 +1,24 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useTabsStore } from '../stores/tabs'
+import { useFocusTrap } from '../composables/useFocusTrap'
 import { t } from '../i18n'
 
 const props = defineProps<{ tabId: string; path: string }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const tabs = useTabsStore()
+
+const active = ref(true)
+const dialogEl = ref<HTMLElement | null>(null)
+useFocusTrap(dialogEl, active)
+
+function onKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    emit('close')
+  }
+}
 
 async function reloadFromDisk(): Promise<void> {
   await tabs.reloadFromDisk(props.tabId)
@@ -22,9 +35,21 @@ function later(): void {
 </script>
 
 <template>
-  <div class="dialog-overlay">
-    <div class="dialog conflict-dialog">
-      <div class="conflict-title">
+  <div
+    class="dialog-overlay"
+    @keydown="onKeydown"
+  >
+    <div
+      ref="dialogEl"
+      class="dialog conflict-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="conflict-title"
+    >
+      <div
+        id="conflict-title"
+        class="conflict-title"
+      >
         {{ t('conflict.title') }}
       </div>
       <div class="conflict-body">
