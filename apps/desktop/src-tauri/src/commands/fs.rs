@@ -147,8 +147,18 @@ pub async fn rename_entry(
 pub fn register_vault(
     vault_root: String,
     state: tauri::State<'_, VaultRegistry>,
+    app: tauri::AppHandle,
 ) -> Result<(), String> {
-    state.register(&vault_root).map(|_| ())
+    state.register(&vault_root)?;
+    // Registering a vault is the authoritative "the user opened this path" event
+    // and fires on EVERY open path (folder dialog + localStorage restore). Extend
+    // the asset protocol scope to the whole vault here so pasted/unstaged images —
+    // which live under `.tmp/` or a per-note `<name>_assets/` directory, NOT
+    // `attachments/` — are servable via asset:// immediately. Previously this
+    // only happened from watch_folder, so a vault opened by restore had a stale
+    // scope and those images 404'd (imported but never displayed).
+    allow_vault_media(&app, &vault_root);
+    Ok(())
 }
 
 #[tauri::command]
