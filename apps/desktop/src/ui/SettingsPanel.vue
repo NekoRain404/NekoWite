@@ -563,6 +563,50 @@ function onExportPdf(): void {
                 保存 Key
               </button>
               <span class="settings-note">Key 经加密存储，由主密码保护（本机文件级）。</span>
+              <label class="settings-field settings-toggle">
+                <span>{{ t('aiSettings.systemPrompt') }}</span>
+                <input
+                  v-model="settings.systemPromptOn"
+                  type="checkbox"
+                  class="checkbox"
+                >
+              </label>
+              <label
+                v-if="settings.systemPromptOn"
+                class="settings-field"
+              >
+                <span>{{ t('aiSettings.systemPromptHint') }}</span>
+                <textarea
+                  v-model="settings.systemPrompt"
+                  class="input textarea"
+                  rows="3"
+                  :placeholder="t('aiSettings.systemPromptPlaceholder')"
+                />
+              </label>
+              <label class="settings-field">
+                <span>{{ t('aiSettings.temperature') }}</span>
+                <input
+                  class="input"
+                  :value="settings.temperature"
+                  type="number"
+                  min="0"
+                  max="2"
+                  step="0.1"
+                  @change="settings.temperature = Math.min(2, Math.max(0, Number(($event.target as HTMLInputElement).value) || 0.7))"
+                >
+              </label>
+              <label class="settings-field">
+                <span>{{ t('aiSettings.maxTokens') }}</span>
+                <input
+                  class="input"
+                  :value="settings.maxTokens"
+                  type="number"
+                  min="128"
+                  max="8192"
+                  step="64"
+                  @change="settings.maxTokens = Math.min(8192, Math.max(128, Math.round(Number(($event.target as HTMLInputElement).value) || 256)))"
+                >
+              </label>
             </section>
           </div>
         </div>
@@ -731,6 +775,24 @@ function onExportPdf(): void {
   color: color-mix(in srgb, var(--app-muted) 82%, transparent);
 }
 .settings-section .settings-label:first-child { margin-top: 0; }
+.settings-toggle {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+.settings-toggle > span { color: var(--app-text); font-size: 12px; }
+.checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--app-accent);
+  cursor: pointer;
+}
+.textarea {
+  resize: vertical;
+  min-height: 64px;
+  font-family: var(--app-font);
+  line-height: 1.5;
+}
 .view-modes { display: flex; gap: 6px; flex-wrap: wrap; }
 .view-modes button:disabled { opacity: 0.5; cursor: not-allowed; }
 .accent-row { display: flex; gap: 6px; }

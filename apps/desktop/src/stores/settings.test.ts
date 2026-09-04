@@ -17,6 +17,10 @@ function clearLs(): void {
   localStorage.removeItem('nekowite.ai.provider')
   localStorage.removeItem('nekowite.ai.model')
   localStorage.removeItem('nekowite.ai.baseUrl')
+  localStorage.removeItem('nekowite.ai.temperature')
+  localStorage.removeItem('nekowite.ai.maxTokens')
+  localStorage.removeItem('nekowite.ai.systemPrompt')
+  localStorage.removeItem('nekowite.ai.systemPromptOn')
   localStorage.removeItem('nekowite.settings.autosaveInterval')
   localStorage.removeItem('nekowite.settings.maxHistory')
 }
@@ -89,6 +93,49 @@ describe('useSettingsStore', () => {
     const s = useSettingsStore()
     expect(s.autosaveInterval).toBe(15000)
     expect(s.maxHistory).toBe(10)
+  })
+
+  it('defaults AI tuning knobs and carries them in config', () => {
+    const s = useSettingsStore()
+    expect(s.temperature).toBe(0.7)
+    expect(s.maxTokens).toBe(256)
+    expect(s.systemPrompt).toBe('')
+    const cfg = s.config()
+    expect(cfg.temperature).toBe(0.7)
+    expect(cfg.max_tokens).toBe(256)
+    expect(cfg.system_prompt).toBeUndefined()
+  })
+
+  it('persists AI tuning knobs and includes them in config when set', async () => {
+    const s = useSettingsStore()
+    s.temperature = 1.2
+    s.maxTokens = 1024
+    s.systemPromptOn = true
+    s.systemPrompt = 'Be concise.'
+    await nextTick()
+    expect(localStorage.getItem('nekowite.ai.temperature')).toBe('1.2')
+    expect(localStorage.getItem('nekowite.ai.maxTokens')).toBe('1024')
+    expect(localStorage.getItem('nekowite.ai.systemPrompt')).toBe('Be concise.')
+    expect(localStorage.getItem('nekowite.ai.systemPromptOn')).toBe('true')
+    const cfg = s.config()
+    expect(cfg.temperature).toBe(1.2)
+    expect(cfg.max_tokens).toBe(1024)
+    expect(cfg.system_prompt).toBe('Be concise.')
+  })
+
+  it('omits the system prompt when the toggle is off', async () => {
+    const s = useSettingsStore()
+    s.systemPromptOn = false
+    s.systemPrompt = 'Be concise.'
+    await nextTick()
+    expect(s.config().system_prompt).toBeUndefined()
+  })
+
+  it('omits a whitespace-only system prompt from config', async () => {
+    const s = useSettingsStore()
+    s.systemPrompt = '   '
+    await nextTick()
+    expect(s.config().system_prompt).toBeUndefined()
   })
 
   it('persists autosaveInterval and maxHistory changes to localStorage', async () => {

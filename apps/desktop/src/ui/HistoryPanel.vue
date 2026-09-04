@@ -1,13 +1,20 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
+import { GitCompareArrows } from 'lucide-vue-next'
 import { fsService } from '../services/fs'
 import { notifyError } from '../services/errors'
 import { useTabsStore } from '../stores/tabs'
 import type { HistoryEntry } from '../services/gateways/contracts'
+import DiffView from './DiffView.vue'
 import { t } from '../i18n'
 
 const tabs = useTabsStore()
 const entries = ref<HistoryEntry[]>([])
+
+/** The entry being compared against the current content, or null to close. */
+const comparing = ref<HistoryEntry | null>(null)
+/** Historical text of `comparing`, loaded lazily on open. */
+const historyText = ref('')
 
 function hasDoc(): boolean {
   return Boolean(tabs.vault && tabs.activeTab?.path)
@@ -44,6 +51,27 @@ async function restore(entry: HistoryEntry): Promise<void> {
   // reload below keeps the panel in sync even if the restored content equals
   // the current content (no reactive change).
   await load()
+}
+
+async function openCompare(entry: HistoryEntry): Promise<void> {
+  const tab = tabs.activeTab
+  if (!tab?.path || !tabs.vault) return
+  try {
+    historyText.value = await fsService.readHistory(tabs.vault, tab.path, entry.id)
+    comparing.value = entry
+  } catch {
+    notifyError(t('history.readHistoryFailed'))
+  }
+}
+
+function closeCompare(): void {
+  comparing.value = null
+  historyText.value = ''
+}
+
+async function restoreFromDiff(): Promise<void> {
+  if (comparing.value) await restore(comparing.value)
+  closeCompare()
 }
 
 function formatSize(bytes: number): string {
@@ -92,13 +120,32 @@ onMounted(() => {
           </span>
           <code class="history-id">{{ e.id }}</code>
           <button
-            class="btn btn-secondary btn-sm"
+            class="btn btn-ghost btn-sm btn-compare"
+            :title="t('history.compare')"
+            @click="openCompare(e)"
+          >
+            <GitCompareArrows
+              :size="12"
+              :stroke-width="1.8"
+            />
+            {{ t('history.compare') }}
+          </button>
+          <button
+            class="btn btn-secondary btn-sm btn-restore"
             @click="restore(e)"
           >
             {{ t('history.restore') }}
           </button>
         </li>
       </ul>
+      <DiffView
+        v-if="comparing && historyText"
+        :current="tabs.activeTab?.content ?? ''"
+        :history="historyText"
+        :history-time="new Date(comparing.mtime).toLocaleString()"
+        @restore="restoreFromDiff"
+        @close="closeCompare"
+      />
       <p
         v-else
         class="rail-empty"

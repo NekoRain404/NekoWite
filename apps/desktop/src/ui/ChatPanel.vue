@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   Copy,
   FilePlus2,
   FileText,
   Paperclip,
+  Plus,
   Send,
   Sparkles,
   Square,
@@ -17,6 +18,8 @@ import { editorBridge } from '../services/editorBridge'
 import { collectClipboardImages, isImageFile } from '../services/attachments'
 import { useSettingsStore } from '../stores/settings'
 import { useTabsStore } from '../stores/tabs'
+import { useChatSessionStore } from '../stores/chatSession'
+import type { ChatSessionMessage } from '../stores/chatSession'
 import {
   buildChatPrompt,
   buildContextBlock,
@@ -36,6 +39,7 @@ interface ChatAttachment {
 
 const settings = useSettingsStore()
 const tabs = useTabsStore()
+const chatSessions = useChatSessionStore()
 
 /** Persisted toggle for whether to send the active note / selection as context. */
 const ATTACH_KEY = 'nekowite.chat.attachContext'
@@ -112,6 +116,63 @@ let cancelFn: (() => void) | null = null
 const modelName = computed(() => settings.model)
 const canSend = computed(() => !streaming.value && (prompt.value.trim().length > 0 || attachments.value.length > 0))
 const hasMessages = computed(() => messages.value.length > 0)
+
+/** Strip transient `streaming` before persisting; keep images as-is. */
+function toSessionMessage(m: ChatMessage): ChatSessionMessage {
+  const stored: ChatSessionMessage = { role: m.role, content: m.content }
+  if (m.images && m.images.length) stored.images = m.images
+  return stored
+}
+
+function fromSessionMessage(m: ChatSessionMessage): ChatMessage {
+  const msg: ChatMessage = { role: m.role, content: m.content }
+  if (m.images && m.images.length) msg.images = m.images
+  return msg
+}
+
+/** Load the active session's messages (on mount and on session switch). */
+function loadActiveSession(): void {
+  const session = chatSessions.activeSession
+  messages.value = session ? session.messages.map(fromSessionMessage) : []
+}
+
+/** Commit the working copy to the active session and persist. */
+function syncSession(): void {
+  chatSessions.setMessages(messages.value.map(toSessionMessage))
+}
+
+function newSession(): void {
+  if (streaming.value) stop()
+  chatSessions.newSession()
+  loadActiveSession()
+  clearAttachments()
+  prompt.value = ''
+  scrollToBottom()
+}
+
+function onSessionChange(e: Event): void {
+  const id = (e.target as HTMLSelectElement).value || null
+  if (id === chatSessions.activeId) return
+  if (streaming.value) stop()
+  chatSessions.switchSession(id)
+  loadActiveSession()
+  clearAttachments()
+  prompt.value = ''
+  scrollToBottom()
+}
+
+function deleteActiveSession(): void {
+  if (streaming.value) stop()
+  chatSessions.deleteSession(chatSessions.activeId ?? '')
+  loadActiveSession()
+  clearAttachments()
+  prompt.value = ''
+  scrollToBottom()
+}
+
+onMounted(() => {
+  loadActiveSession()
+})
 
 function scrollToBottom(): void {
   void nextTick(() => {
@@ -208,6 +269,7 @@ async function send(): Promise<void> {
   const userMessage: ChatMessage = { role: 'user', content: text, images: imageDataUrls }
   const history = [...messages.value, userMessage]
   messages.value = [...messages.value, userMessage]
+  syncSession()
   prompt.value = ''
   clearAttachments()
 
@@ -255,6 +317,7 @@ function finalize(index: number, retainEmpty: boolean): void {
   }
   streaming.value = false
   cancelFn = null
+  syncSession()
 }
 
 function stop(): void {
@@ -270,6 +333,7 @@ function clearAll(): void {
   aiService.cancelStream()
   streaming.value = false
   messages.value = []
+  chatSessions.clearMessages()
   clearAttachments()
   prompt.value = ''
 }
@@ -304,6 +368,46 @@ onBeforeUnmount(() => {
 <template>
   <section class="chat-panel">
     <header class="chat-header">
+      <div class="chat-session-row">
+        <button
+          class="chat-tool"
+          :title="t('chat.newSession')"
+          :aria-label="t('chat.newSession')"
+          @click="newSession"
+        >
+          <Plus
+            :size="14"
+            :stroke-width="1.8"
+          />
+        </button>
+        <select
+          class="chat-session-select"
+          :value="chatSessions.activeId ?? undefined"
+          :title="t('chat.sessions')"
+          :aria-label="t('chat.sessions')"
+          @change="onSessionChange"
+        >
+          <option
+            v-for="s in chatSessions.sessions"
+            :key="s.id"
+            :value="s.id"
+          >
+            {{ s.title || t('chat.untitled') }}
+          </option>
+        </select>
+        <button
+          class="chat-tool"
+          :title="t('chat.deleteSession')"
+          :aria-label="t('chat.deleteSession')"
+          :disabled="chatSessions.sessions.length <= 1"
+          @click="deleteActiveSession"
+        >
+          <Trash2
+            :size="13"
+            :stroke-width="1.8"
+          />
+        </button>
+      </div>
       <span class="chat-title">
         {{ t('chat.title') }}
       </span>
@@ -524,6 +628,40 @@ onBeforeUnmount(() => {
   gap: 6px;
   flex: none;
   padding: 12px 14px 6px;
+}
+.chat-session-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.chat-session-select {
+  flex: 1;
+  min-width: 0;
+  max-width: 130px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--app-border) 60%, transparent);
+  border-radius: var(--app-radius-sm);
+  background: color-mix(in srgb, var(--app-elevated) 42%, var(--app-panel));
+  color: var(--app-text);
+  font-family: var(--app-font);
+  font-size: 11px;
+  line-height: 1.4;
+  outline: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: border-color var(--app-motion-fast) var(--app-ease),
+              box-shadow var(--app-motion-fast) var(--app-ease);
+}
+.chat-session-select:focus {
+  border-color: color-mix(in srgb, var(--app-accent) 55%, var(--app-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-accent) 14%, transparent);
+}
+.chat-session-select:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .chat-title {
   font-size: 10px;

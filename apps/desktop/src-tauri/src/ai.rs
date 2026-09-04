@@ -6,12 +6,28 @@ use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{Emitter, Manager};
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Default)]
 pub struct AIConfig {
     pub provider: String,
     pub model: String,
     pub base_url: Option<String>,
     pub api_key: Option<String>,
+    /// Sampling temperature (0.0–2.0). `None` omits the field, letting the
+    /// provider use its own default.
+    pub temperature: Option<f32>,
+    /// Completion token cap. `None` falls back to the legacy hardcoded 256.
+    pub max_tokens: Option<u32>,
+    /// Optional system prompt. `None`/empty adds no system message.
+    pub system_prompt: Option<String>,
+}
+
+/// The system prompt to send, normalised so blanks become `None`.
+fn system_prompt_of(cfg: &AIConfig) -> Option<String> {
+    cfg.system_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 #[derive(Serialize, Clone)]
@@ -155,12 +171,22 @@ pub fn resolve_endpoint(
             } else {
                 serde_json::json!(prompt)
             };
+            let mut body = serde_json::json!({
+                "model": model,
+                "max_tokens": cfg.max_tokens.unwrap_or(256),
+                "stream": true,
+                "messages": [ { "role": "user", "content": content } ]
+            });
+            // Anthropic carries the system prompt as a top-level `system` field.
+            if let Some(sys) = system_prompt_of(cfg) {
+                body["system"] = serde_json::Value::String(sys);
+            }
+            if let Some(temp) = cfg.temperature {
+                body["temperature"] = serde_json::json!(temp);
+            }
             (
                 format!("{}/v1/messages", base.trim_end_matches('/')),
-                serde_json::json!({
-                    "model": model, "max_tokens": 256, "stream": true,
-                    "messages": [ { "role": "user", "content": content } ]
-                }),
+                body,
             )
         }
         "gemini" => {
@@ -191,11 +217,29 @@ pub fn resolve_endpoint(
             } else {
                 vec![serde_json::json!({ "text": prompt })]
             };
+            let mut body = serde_json::json!({
+                "contents": [ { "role": "user", "parts": parts } ]
+            });
+            // Gemini puts the system prompt in `systemInstruction.parts[].text`;
+            // there is no plain string field, so materialise the object.
+            if let Some(sys) = system_prompt_of(cfg) {
+                body["systemInstruction"] = serde_json::json!({
+                    "parts": [ { "text": sys } ]
+                });
+            }
+            if let Some(temp) = cfg.temperature {
+                body["generationConfig"] = serde_json::json!({ "temperature": temp });
+            }
+            if let Some(mt) = cfg.max_tokens {
+                if let Some(gc) = body.get_mut("generationConfig") {
+                    gc["maxOutputTokens"] = serde_json::json!(mt);
+                } else {
+                    body["generationConfig"] = serde_json::json!({ "maxOutputTokens": mt });
+                }
+            }
             (
                 url,
-                serde_json::json!({
-                    "contents": [ { "role": "user", "parts": parts } ]
-                }),
+                body,
             )
         }
         _ => {
@@ -216,12 +260,25 @@ pub fn resolve_endpoint(
             } else {
                 serde_json::json!(prompt)
             };
+            // OpenAI-compatible (openai/grok/local/custom): the system prompt
+            // becomes `messages[0]` so any images still ride in `messages[1]`.
+            let mut messages = Vec::new();
+            if let Some(sys) = system_prompt_of(cfg) {
+                messages.push(serde_json::json!({ "role": "system", "content": sys }));
+            }
+            messages.push(serde_json::json!({ "role": "user", "content": content }));
+            let mut body = serde_json::json!({
+                "model": model,
+                "max_tokens": cfg.max_tokens.unwrap_or(256),
+                "stream": true,
+                "messages": messages
+            });
+            if let Some(temp) = cfg.temperature {
+                body["temperature"] = serde_json::json!(temp);
+            }
             (
                 format!("{}/chat/completions", base.trim_end_matches('/')),
-                serde_json::json!({
-                    "model": model, "max_tokens": 256, "stream": true,
-                    "messages": [ { "role": "user", "content": content } ]
-                }),
+                body,
             )
         }
     }

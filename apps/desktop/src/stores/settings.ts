@@ -7,6 +7,9 @@ export interface AIConfig {
   model: string
   base_url?: string
   api_key?: string
+  temperature?: number
+  max_tokens?: number
+  system_prompt?: string
 }
 
 export type AutosaveInterval = 'off' | 5000 | 15000 | 30000 | 60000
@@ -14,6 +17,10 @@ export type AutosaveInterval = 'off' | 5000 | 15000 | 30000 | 60000
 const LS_PROVIDER = 'nekowite.ai.provider'
 const LS_MODEL = 'nekowite.ai.model'
 const LS_BASE_URL = 'nekowite.ai.baseUrl'
+const LS_TEMPERATURE = 'nekowite.ai.temperature'
+const LS_MAX_TOKENS = 'nekowite.ai.maxTokens'
+const LS_SYSTEM_PROMPT = 'nekowite.ai.systemPrompt'
+const LS_SYSTEM_PROMPT_ON = 'nekowite.ai.systemPromptOn'
 const LS_AUTOSAVE = 'nekowite.settings.autosaveInterval'
 const LS_MAXHISTORY = 'nekowite.settings.maxHistory'
 
@@ -48,6 +55,13 @@ export const useSettingsStore = defineStore('settings', () => {
   const autosaveInterval = ref<AutosaveInterval>(readAutosaveInterval(15000))
   const maxHistory = ref<number>(readNumber(LS_MAXHISTORY, 10))
   const modelsCache = ref<string[]>([])
+  // AI tuning knobs persist per-session like provider/model/baseUrl. The
+  // system prompt is empty by default so existing installs see no behaviour
+  // change until they opt in.
+  const temperature = ref<number>(readNumber(LS_TEMPERATURE, 0.7))
+  const maxTokens = ref<number>(readNumber(LS_MAX_TOKENS, 256))
+  const systemPrompt = ref(readLs(LS_SYSTEM_PROMPT, ''))
+  const systemPromptOn = ref(localStorage.getItem(LS_SYSTEM_PROMPT_ON) === 'true')
 
   watch(provider, (p) => {
     localStorage.setItem(LS_PROVIDER, p)
@@ -60,6 +74,10 @@ export const useSettingsStore = defineStore('settings', () => {
   })
   watch(model, (m) => localStorage.setItem(LS_MODEL, m))
   watch(baseUrl, (b) => localStorage.setItem(LS_BASE_URL, b))
+  watch(temperature, (v) => localStorage.setItem(LS_TEMPERATURE, String(v)))
+  watch(maxTokens, (v) => localStorage.setItem(LS_MAX_TOKENS, String(v)))
+  watch(systemPrompt, (v) => localStorage.setItem(LS_SYSTEM_PROMPT, v))
+  watch(systemPromptOn, (v) => localStorage.setItem(LS_SYSTEM_PROMPT_ON, String(v)))
   watch(autosaveInterval, (v) => localStorage.setItem(LS_AUTOSAVE, String(v)))
   watch(maxHistory, (v) => localStorage.setItem(LS_MAXHISTORY, String(v)))
 
@@ -78,6 +96,11 @@ export const useSettingsStore = defineStore('settings', () => {
       cfg.base_url = baseUrl.value
     }
     if (apiKey.value) cfg.api_key = apiKey.value
+    cfg.temperature = temperature.value
+    cfg.max_tokens = maxTokens.value
+    if (systemPromptOn.value && systemPrompt.value.trim()) {
+      cfg.system_prompt = systemPrompt.value.trim()
+    }
     return cfg
   }
 
@@ -89,5 +112,5 @@ export const useSettingsStore = defineStore('settings', () => {
     modelsCache.value = []
   }
 
-  return { provider, model, baseUrl, apiKey, autosaveInterval, maxHistory, modelsCache, saveKey, loadKey, config, listModels, clearModelsCache }
+  return { provider, model, baseUrl, apiKey, temperature, maxTokens, systemPrompt, systemPromptOn, autosaveInterval, maxHistory, modelsCache, saveKey, loadKey, config, listModels, clearModelsCache }
 })

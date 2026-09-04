@@ -3,10 +3,12 @@ import { createApp, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import HistoryPanel from './HistoryPanel.vue'
 import { useTabsStore } from '../stores/tabs'
+import { onNotify } from '../services/errors'
 
 const readMock = vi.hoisted(() => vi.fn())
 const statMock = vi.hoisted(() => vi.fn())
 const listHistoryMock = vi.hoisted(() => vi.fn())
+const readHistoryMock = vi.hoisted(() => vi.fn())
 const restoreHistoryMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../services/fs', () => ({
@@ -18,7 +20,7 @@ vi.mock('../services/fs', () => ({
     deleteFile: vi.fn(),
     stat: statMock,
     listHistory: listHistoryMock,
-    readHistory: vi.fn(),
+    readHistory: readHistoryMock,
     restoreHistory: restoreHistoryMock,
     openFolderDialog: vi.fn(),
     saveFileDialog: vi.fn(),
@@ -57,6 +59,7 @@ describe('HistoryPanel', () => {
     readMock.mockReset()
     statMock.mockReset()
     listHistoryMock.mockReset()
+    readHistoryMock.mockReset()
     restoreHistoryMock.mockReset()
     readMock.mockResolvedValue('# hello')
     statMock.mockResolvedValue({ size: 8, mtime: Number.MAX_SAFE_INTEGER })
@@ -120,7 +123,7 @@ describe('HistoryPanel', () => {
 
     const before = historyCallCount()
     const firstRow = host.querySelectorAll('.history-item')[0]
-    const restoreBtn = firstRow.querySelector<HTMLButtonElement>('button')
+    const restoreBtn = firstRow.querySelector<HTMLButtonElement>('.btn-restore')
     expect(restoreBtn).toBeTruthy()
     restoreBtn?.click()
 
@@ -144,5 +147,88 @@ describe('HistoryPanel', () => {
     refreshBtn?.click()
 
     await vi.waitFor(() => expect(historyCallCount()).toBeGreaterThan(before))
+  })
+
+  it('opens a diff view against the current content', async () => {
+    listHistoryMock.mockResolvedValue([
+      { id: 'ver-2', size: 100, mtime: 200 },
+      { id: 'ver-1', size: 100, mtime: 100 },
+    ])
+    readHistoryMock.mockResolvedValue('# old title\n\nbody')
+    readMock.mockResolvedValue('# new title\n\nbody')
+    await openDoc()
+    const host = mountPanel()
+    await flush()
+
+    const firstRow = host.querySelectorAll('.history-item')[0]
+    const compareBtn = firstRow.querySelector<HTMLButtonElement>('.btn-compare')
+    expect(compareBtn).toBeTruthy()
+    compareBtn?.click()
+
+    await vi.waitFor(() =>
+      expect(readHistoryMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'ver-2'),
+    )
+    await vi.waitFor(() => expect(host.querySelector('.diff-view')).toBeTruthy())
+
+    const lines = Array.from(host.querySelectorAll('.diff-line'))
+    expect(lines.some((l) => l.classList.contains('diff-line-del'))).toBe(true)
+    expect(lines.some((l) => l.classList.contains('diff-line-add'))).toBe(true)
+  })
+
+  it('restores from within the diff view', async () => {
+    listHistoryMock.mockResolvedValue([
+      { id: 'ver-1', size: 100, mtime: 100 },
+    ])
+    readHistoryMock.mockResolvedValue('# old\n\nbody')
+    readMock.mockResolvedValue('# new\n\nbody')
+    restoreHistoryMock.mockResolvedValue('# old\n\nbody')
+    await openDoc()
+    const host = mountPanel()
+    await flush()
+
+    host.querySelector<HTMLButtonElement>('.btn-compare')?.click()
+    await vi.waitFor(() => expect(host.querySelector('.diff-view')).toBeTruthy())
+
+    host.querySelector<HTMLButtonElement>('.btn-diff-restore')?.click()
+    await vi.waitFor(() =>
+      expect(restoreHistoryMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'ver-1'),
+    )
+  })
+
+  it('closes the diff view via the close button', async () => {
+    listHistoryMock.mockResolvedValue([
+      { id: 'ver-1', size: 100, mtime: 100 },
+    ])
+    readHistoryMock.mockResolvedValue('# old')
+    readMock.mockResolvedValue('# new')
+    await openDoc()
+    const host = mountPanel()
+    await flush()
+
+    host.querySelector<HTMLButtonElement>('.btn-compare')?.click()
+    await vi.waitFor(() => expect(host.querySelector('.diff-view')).toBeTruthy())
+
+    host.querySelector<HTMLButtonElement>('.diff-close')?.click()
+    await flush()
+    expect(host.querySelector('.diff-view')).toBeNull()
+  })
+
+  it('shows a toast when reading the history content fails', async () => {
+    listHistoryMock.mockResolvedValue([
+      { id: 'ver-1', size: 100, mtime: 100 },
+    ])
+    readHistoryMock.mockRejectedValue(new Error('boom'))
+    await openDoc()
+    const host = mountPanel()
+    await flush()
+
+    const notified: string[] = []
+    const off = onNotify((msg) => notified.push(msg))
+    host.querySelector<HTMLButtonElement>('.btn-compare')?.click()
+    await flush()
+    off()
+
+    expect(host.querySelector('.diff-view')).toBeNull()
+    expect(notified).toContain('无法读取历史版本内容')
   })
 })

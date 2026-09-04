@@ -16,18 +16,24 @@ import {
   Minus,
   Quote,
   Sigma,
+  Sparkles,
   SquareCode,
   Strikethrough,
   Table as TableIcon,
   Boxes,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
+import { rewriteSelection } from '../services/aiEdit'
+import type { EditAction } from '../services/aiEdit'
 import { t } from '../i18n'
 
 const emit = defineEmits<{ (e: 'command', id: string): void }>()
 
 const headingMenuOpen = ref(false)
 const headingEl = ref<HTMLElement | null>(null)
+
+const aiMenuOpen = ref(false)
+const aiMenuEl = ref<HTMLElement | null>(null)
 
 const HEADING_LEVELS = [1, 2, 3, 4, 5, 6]
 
@@ -40,11 +46,25 @@ function pickHeading(level: number): void {
   emit('command', `heading:h${level}`)
 }
 
+function toggleAiMenu(): void {
+  aiMenuOpen.value = !aiMenuOpen.value
+}
+
+function runAi(action: EditAction): void {
+  aiMenuOpen.value = false
+  void rewriteSelection(action)
+}
+
 function onDocPointerDown(e: PointerEvent): void {
-  if (!headingMenuOpen.value) return
-  if (headingEl.value && !headingEl.value.contains(e.target as Node)) {
-    headingMenuOpen.value = false
+  if (!headingMenuOpen.value && !aiMenuOpen.value) return
+  if (headingEl.value && headingEl.value.contains(e.target as Node)) {
+    return
   }
+  if (aiMenuEl.value && aiMenuEl.value.contains(e.target as Node)) {
+    return
+  }
+  headingMenuOpen.value = false
+  aiMenuOpen.value = false
 }
 
 onMounted(() => document.addEventListener('pointerdown', onDocPointerDown, true))
@@ -115,6 +135,27 @@ function run(id: string): void {
     <button class="toolbar-btn" :title="t('toolbar.hr')" @click="run('hr')"><Minus :size="15" :stroke-width="1.8" /></button>
     <span class="toolbar-sep" />
     <button class="toolbar-btn" :title="t('toolbar.insertComponent')" @click="run('insert-component')"><Braces :size="15" :stroke-width="1.8" /></button>
+    <div ref="aiMenuEl" class="heading-menu-wrap">
+      <button class="toolbar-btn" :title="t('ai.title')" @click="toggleAiMenu">
+        <Sparkles :size="15" :stroke-width="1.8" />
+      </button>
+      <Transition name="menu">
+        <div v-if="aiMenuOpen" class="heading-menu">
+          <button class="heading-option" @click="runAi('rewrite')">
+            <span class="heading-preview">RW</span>
+            {{ t('ai.rewrite') }}
+          </button>
+          <button class="heading-option" @click="runAi('polish')">
+            <span class="heading-preview">PL</span>
+            {{ t('ai.polish') }}
+          </button>
+          <button class="heading-option" @click="runAi('translate')">
+            <span class="heading-preview">TR</span>
+            {{ t('ai.translate') }}
+          </button>
+        </div>
+      </Transition>
+    </div>
     <template v-if="registryItems.length">
       <span class="toolbar-sep" />
       <button

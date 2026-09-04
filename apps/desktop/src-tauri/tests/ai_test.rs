@@ -17,6 +17,7 @@ fn endpoint_maps_openai() {
         model: "gpt-5-mini".into(),
         base_url: Some("https://api.openai.com/v1".into()),
         api_key: Some("k".into()),
+        ..Default::default()
     };
     let (url, body) = resolve_endpoint(&cfg, "hello", &[]);
     assert!(url.ends_with("/chat/completions"));
@@ -31,6 +32,7 @@ fn endpoint_maps_anthropic() {
         model: "claude-sonnet-4-5".into(),
         base_url: None,
         api_key: None,
+        ..Default::default()
     };
     let (url, body) = resolve_endpoint(&cfg, "hello", &[]);
     assert!(url.ends_with("/v1/messages"));
@@ -45,6 +47,7 @@ fn endpoint_maps_gemini() {
         model: "gemini-2.5-pro".into(),
         base_url: None,
         api_key: None,
+        ..Default::default()
     };
     let (url, body) = resolve_endpoint(&cfg, "hello", &[]);
     assert!(url.contains(":streamGenerateContent"));
@@ -119,11 +122,12 @@ fn sse_parses_anthropic_content_block_start() {
 
 #[test]
 fn endpoint_embeds_gemini_key_in_query() {
-    let cfg = AIConfig {
+let cfg = AIConfig {
         provider: "gemini".into(),
         model: "gemini-2.5-pro".into(),
         base_url: None,
         api_key: Some("sk-gem-key".into()),
+        ..Default::default()
     };
     let (url, _body) = resolve_endpoint(&cfg, "hello", &[]);
     assert!(
@@ -268,6 +272,7 @@ fn endpoint_openai_images_build_array() {
         model: "gpt-5-mini".into(),
         base_url: None,
         api_key: None,
+        ..Default::default()
     };
     let images = vec![serde_json::json!("data:image/png;base64,AAA")];
     let (_url, body) = resolve_endpoint(&cfg, "look", &images);
@@ -286,6 +291,7 @@ fn endpoint_openai_without_images_keeps_string() {
         model: "gpt-5-mini".into(),
         base_url: None,
         api_key: None,
+        ..Default::default()
     };
     let (_url, body) = resolve_endpoint(&cfg, "hello", &[]);
     assert!(body["messages"][0]["content"].is_string(), "empty images keeps string content");
@@ -299,6 +305,7 @@ fn endpoint_anthropic_images_build_base64_source() {
         model: "claude-sonnet-4-5".into(),
         base_url: None,
         api_key: None,
+        ..Default::default()
     };
     let images = vec![serde_json::json!("data:image/png;base64,AAA")];
     let (_url, body) = resolve_endpoint(&cfg, "look", &images);
@@ -318,6 +325,7 @@ fn endpoint_gemini_images_build_inline_data() {
         model: "gemini-2.5-pro".into(),
         base_url: None,
         api_key: None,
+        ..Default::default()
     };
     let images = vec![serde_json::json!("data:image/png;base64,AAA")];
     let (_url, body) = resolve_endpoint(&cfg, "look", &images);
@@ -402,4 +410,104 @@ fn http_error_unknown_status_stays_total() {
     // an unexpected provider page.
     let msg = http_error_message(599);
     assert!(msg.starts_with("AI 请求失败：HTTP 599，网络请求失败"), "got: {msg}");
+}
+
+fn tuned_cfg(provider: &str) -> AIConfig {
+    AIConfig {
+        provider: provider.into(),
+        model: "m".into(),
+        base_url: None,
+        api_key: None,
+        temperature: Some(0.7),
+        max_tokens: Some(512),
+        system_prompt: Some("You are a helpful editor assistant.".into()),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn openai_body_puts_system_first_and_writes_tuning() {
+    let (_url, body) = resolve_endpoint(&tuned_cfg("openai"), "hello", &[]);
+    assert_eq!(body["temperature"], serde_json::json!(0.7_f32), "temperature as written by the f32 config");
+    assert_eq!(body["max_tokens"], 512);
+    assert_eq!(body["messages"][0]["role"], "system");
+    assert_eq!(
+        body["messages"][0]["content"],
+        "You are a helpful editor assistant."
+    );
+    assert_eq!(body["messages"][1]["role"], "user");
+    assert_eq!(body["messages"][2], serde_json::json!(null), "no third message");
+}
+
+#[test]
+fn openai_images_keep_message_after_system() {
+    let cfg = tuned_cfg("openai");
+    let images = vec![serde_json::json!("data:image/png;base64,AAA")];
+    let (_url, body) = resolve_endpoint(&cfg, "look", &images);
+    assert_eq!(body["messages"][0]["role"], "system");
+    assert_eq!(body["messages"][1]["role"], "user");
+    assert!(
+        body["messages"][1]["content"][1]["type"] == "image_url",
+        "image block must ride the user message, not the system one"
+    );
+}
+
+#[test]
+fn anthropic_body_uses_top_level_system() {
+    let (_url, body) = resolve_endpoint(&tuned_cfg("anthropic"), "hello", &[]);
+    assert_eq!(body["temperature"], serde_json::json!(0.7_f32));
+    assert_eq!(body["max_tokens"], 512);
+    assert_eq!(body["system"], "You are a helpful editor assistant.");
+    assert_eq!(body["messages"][0]["role"], "user");
+}
+
+#[test]
+fn gemini_body_uses_system_instruction_and_generation_config() {
+    let (_url, body) = resolve_endpoint(&tuned_cfg("gemini"), "hello", &[]);
+    assert_eq!(
+        body["systemInstruction"]["parts"][0]["text"],
+        "You are a helpful editor assistant."
+    );
+    assert_eq!(body["generationConfig"]["temperature"], serde_json::json!(0.7_f32));
+    assert_eq!(body["generationConfig"]["maxOutputTokens"], 512);
+    assert_eq!(body["contents"][0]["role"], "user");
+}
+
+#[test]
+fn untuned_cfg_keeps_legacy_defaults() {
+    let cfg = AIConfig {
+        provider: "openai".into(),
+        model: "m".into(),
+        base_url: None,
+        api_key: None,
+        ..Default::default()
+    };
+    let (url, body) = resolve_endpoint(&cfg, "hello", &[]);
+    assert!(url.ends_with("/chat/completions"));
+    assert_eq!(body["max_tokens"], 256, "default max_tokens stays 256");
+    assert!(body.get("temperature").is_none(), "no temperature by default");
+    assert_eq!(
+        body["messages"].as_array().unwrap().len(),
+        1,
+        "no system message by default"
+    );
+    assert_eq!(body["messages"][0]["role"], "user");
+}
+
+#[test]
+fn blank_system_prompt_behaves_as_absent() {
+    let cfg = AIConfig {
+        provider: "openai".into(),
+        model: "m".into(),
+        base_url: None,
+        api_key: None,
+        system_prompt: Some("   ".into()),
+        ..Default::default()
+    };
+    let (_url, body) = resolve_endpoint(&cfg, "hello", &[]);
+    assert_eq!(
+        body["messages"].as_array().unwrap().len(),
+        1,
+        "whitespace-only system prompt must be dropped"
+    );
 }

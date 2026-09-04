@@ -9,8 +9,12 @@ import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 import { useFloatStore } from '../stores/float'
 import { notifyError } from '../services/errors'
+import { t } from '../i18n'
 import { editorBridge } from '../services/editorBridge'
 import { fsService } from '../services/fs'
+import { applySpellReplacement, getView, refreshOverlays } from '../services/renderSearch'
+import { suggestionsFromAttr } from '../services/renderSearch'
+import RenderSearchPanel from './RenderSearchPanel.vue'
 import RenameDialog from '../components/RenameDialog.vue'
 import { assetsDirForNote, suggestRename } from '../services/renameAsset'
 import { parseOutline } from '../services/outline'
@@ -28,10 +32,25 @@ const tabs = useTabsStore()
 const view = useViewStore()
 const floatStore = useFloatStore()
 
+const searchOpen = ref(false)
+const spellPopup = ref<{ x: number; y: number; from: number; to: number; word: string; suggestions: string[] } | null>(null)
+let overlayRaf = 0
+
+// rAF-throttled overlay refresh: coalesce bursts of model changes into one
+// deterministic pass, and ensure it runs AFTER ProseMirror's own DOM sync.
+function queueOverlayRefresh(): void {
+  if (overlayRaf) return
+  overlayRaf = requestAnimationFrame(() => {
+    overlayRaf = 0
+    refreshOverlays()
+  })
+}
+
 const scrollEl = ref<HTMLElement | null>(null)
 const editorEl = ref<HTMLElement | null>(null)
 let editor: NekoEditor | null = null
 let unlistenChange: (() => void) | null = null
+let unlistenOverlayRefresh: (() => void) | null = null
 let applyingExternal = false
 let parseFailed = false
 let gen = 0
@@ -88,6 +107,8 @@ async function applyContent(content: string): Promise<void> {
     if (pending !== null && pending !== lastLocalMarkdown && !parseFailed) {
       gen++
       void applyContent(pending)
+    } else {
+      queueOverlayRefresh()
     }
   }
 }
@@ -116,9 +137,61 @@ function onContainerPointerDownCapture(e: PointerEvent): void {
   floatStore.select(null)
 }
 
+function onEditorClick(e: MouseEvent): void {
+  const target = e.target as Element | null
+  const span = target?.closest?.('.nkw-spell') as HTMLElement | null
+  if (span) {
+    e.preventDefault()
+    e.stopPropagation()
+    openSpellPopup(span, e.clientX, e.clientY)
+    return
+  }
+  if (spellPopup.value) {
+    const hit = target?.closest?.('.nw-spell-popup')
+    if (!hit) spellPopup.value = null
+  }
+}
+
+function openSpellPopup(span: HTMLElement, clientX: number, clientY: number): void {
+  const from = Number(span.dataset.from ?? NaN)
+  const to = Number(span.dataset.to ?? NaN)
+  const word = span.dataset.word ?? ''
+  const suggestions = suggestionsFromAttr(span.dataset.suggestions ?? null)
+  if (!Number.isFinite(from) || !Number.isFinite(to) || !word) return
+  spellPopup.value = { x: clientX, y: clientY, from, to, word, suggestions }
+}
+
+function onSpellSuggestion(text: string): void {
+  const pop = spellPopup.value
+  if (!pop) return
+  const view = getView()
+  if (view) applySpellReplacement(view, pop.from, pop.to, text)
+  spellPopup.value = null
+}
+
+function onSearchClose(): void {
+  searchOpen.value = false
+  spellPopup.value = null
+}
+
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape' && floatStore.selectedId) {
     floatStore.select(null)
+  }
+  if (e.key === 'Escape' && (searchOpen.value || spellPopup.value)) {
+    searchOpen.value = false
+    spellPopup.value = null
+    return
+  }
+  // Ctrl/Cmd+F opens the rendered-pane find panel. In source mode and when
+  // focus is inside the CodeMirror host (split mode), leave the shortcut to
+  // the source view's own search panel.
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+    if (view.mode === 'source') return
+    const target = e.target as Element | null
+    if (target && target.closest('.cm-editor')) return
+    e.preventDefault()
+    searchOpen.value = true
   }
 }
 
@@ -261,6 +334,7 @@ onMounted(async () => {
   emitLifecycle('onEditorReady', editor)
 
   editorEl.value.addEventListener('pointerdown', onContainerPointerDownCapture, true)
+  editorEl.value.addEventListener('click', onEditorClick)
   // Paste/drop must be captured on the PANE (an ancestor) so they run before
   // ProseMirror's own at-target handlers on the editor root; otherwise PM
   // would already have consumed the event (e.g. inserting remote <img> html)
@@ -296,6 +370,12 @@ onMounted(async () => {
       }, 300)
     })()
   })
+
+  // Keep the find/spell overlays in sync with every model change.
+  unlistenOverlayRefresh = editor.onContentChange(() => {
+    if (applyingExternal) return
+    queueOverlayRefresh()
+  })
 })
 
 onBeforeUnmount(() => {
@@ -303,18 +383,24 @@ onBeforeUnmount(() => {
     clearTimeout(docChangeTimer)
     docChangeTimer = null
   }
+  if (overlayRaf) {
+    cancelAnimationFrame(overlayRaf)
+    overlayRaf = 0
+  }
   if (tabs.activeId) tabs.cancelAutosave(tabs.activeId)
   setCalloutView(null)
   configureImageResolver(null)
   editorBridge.setEditor(null)
   setActiveEditor(null)
   editorEl.value?.removeEventListener('pointerdown', onContainerPointerDownCapture, true)
+  editorEl.value?.removeEventListener('click', onEditorClick)
   scrollEl.value?.removeEventListener('paste', onPaste, true)
   scrollEl.value?.removeEventListener('drop', onDrop, true)
   scrollEl.value?.removeEventListener('dragover', onDragOver)
   scrollEl.value?.removeEventListener('dragenter', onDragOver)
   window.removeEventListener('keydown', onKeydown)
   unlistenChange?.()
+  unlistenOverlayRefresh?.()
   editor?.destroy()
   editor = null
 })
@@ -361,10 +447,45 @@ watch(
     class="rendered-pane"
     @scroll="onScroll"
   >
+    <RenderSearchPanel
+      v-if="searchOpen"
+      class="nw-render-search-host"
+      @close="onSearchClose"
+    />
     <div
       ref="editorEl"
       class="editor-container"
     />
+    <div
+      v-if="spellPopup"
+      class="nw-spell-popup"
+      :style="{ left: `${spellPopup.x}px`, top: `${spellPopup.y}px` }"
+      @click.stop
+    >
+      <div class="nw-spell-popup-title">
+        {{ spellPopup.word }}
+      </div>
+      <div class="nw-spell-popup-label">
+        {{ t('spell.suggestions') }}
+      </div>
+      <template v-if="spellPopup.suggestions.length">
+        <button
+          v-for="s in spellPopup.suggestions"
+          :key="s"
+          class="nw-spell-popup-item"
+          type="button"
+          @click="onSpellSuggestion(s)"
+        >
+          {{ s }}
+        </button>
+      </template>
+      <div
+        v-else
+        class="nw-spell-popup-none"
+      >
+        {{ t('spell.noSuggestions') }}
+      </div>
+    </div>
   </div>
   <RenameDialog
     v-if="renamePrompt"
@@ -395,5 +516,76 @@ watch(
 .editor-container :deep(h5),
 .editor-container :deep(h6) {
   scroll-margin-top: 16px;
+}
+
+.rendered-pane :deep(.nw-find-hit) {
+  background: color-mix(in srgb, var(--app-accent) 28%, transparent);
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--app-accent) 28%, transparent);
+  color: inherit;
+}
+.rendered-pane :deep(.nw-find-active) {
+  background: var(--app-accent);
+  color: var(--app-accent-contrast);
+  box-shadow: none;
+}
+
+/* Spell squiggle: wavy underline, clickable, theme-token driven. */
+.rendered-pane :deep(.nkw-spell) {
+  text-decoration: underline wavy var(--app-danger);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  border-radius: 2px;
+}
+.rendered-pane :deep(.nkw-spell:hover) {
+  background: color-mix(in srgb, var(--app-danger) 12%, transparent);
+}
+
+/* Suggestion popup for a clicked misspelled word. */
+.nw-spell-popup {
+  position: fixed;
+  z-index: 60;
+  min-width: 150px;
+  max-width: 240px;
+  padding: 6px;
+  background: var(--app-elevated);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--app-text) 16%, transparent);
+  font-family: var(--app-font);
+  font-size: 12px;
+}
+.nw-spell-popup-title {
+  padding: 2px 6px;
+  font-weight: 600;
+  color: var(--app-danger);
+}
+.nw-spell-popup-label {
+  padding: 2px 6px;
+  color: var(--app-muted);
+  font-size: 11px;
+}
+.nw-spell-popup-item {
+  display: block;
+  width: 100%;
+  padding: 4px 6px;
+  border: none;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-text);
+  font-family: var(--app-font);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.nw-spell-popup-item:hover {
+  background: color-mix(in srgb, var(--app-accent) 18%, transparent);
+  color: var(--app-accent);
+}
+.nw-spell-popup-none {
+  padding: 4px 6px;
+  color: var(--app-muted);
+  font-size: 11px;
 }
 </style>
