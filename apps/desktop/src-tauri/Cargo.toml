@@ -26,3 +26,6 @@ sha2 = "0.10"
 iota_stronghold = "2"
 base64 = "0.22"
 chrono = "0.4"
+# Argon2id password-based KDF for the master password (rust-argon2); already a
+# transitive dependency of tauri-plugin-stronghold, so no new build cost.
+rust-argon2 = "2"

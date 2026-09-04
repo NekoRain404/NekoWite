@@ -1,4 +1,8 @@
-use nekowite_lib::keys::{ensure_keyfile, validate_password};
+use nekowite_lib::keys::{
+    ai_key_presence, decode_keyfile, derive_master_key, encode_keyfile_password,
+    encode_keyfile_passwordless, ensure_keyfile, read_vault_key_state, validate_password,
+    verifier_of, VaultKeyState, AI_KEY_MASKED,
+};
 #[cfg(unix)]
 use nekowite_lib::keys::{open_snapshot, reencrypt_vault};
 use std::fs;
@@ -19,7 +23,7 @@ fn temp_dir(label: &str) -> PathBuf {
     dir
 }
 
-/// Write a 32-byte key file at `path` with mode `0600` (unix; the platform
+/// Write a passwordless key file at `path` with mode `0600` (unix; the platform
 /// default elsewhere — the tests that use this only assert content).
 #[cfg(unix)]
 fn write_key_file(path: &Path, bytes: &[u8]) {
@@ -63,8 +67,8 @@ fn ensure_keyfile_errors_on_non_notfound() {
     fs::remove_dir_all(&dir).unwrap();
 }
 
-/// A master key file that is not exactly 32 bytes must be rejected, not
-/// silently regenerated (a corrupt/partial key must never be overwritten).
+/// A master key file that is not a valid versioned key file must be rejected,
+/// not silently regenerated (a corrupt/partial key must never be overwritten).
 #[test]
 #[cfg(unix)]
 fn ensure_keyfile_rejects_wrong_length() {
@@ -92,6 +96,77 @@ fn validate_password_rejects_empty() {
     assert!(validate_password("").is_err());
     assert!(validate_password("   ").is_err());
     assert!(validate_password("correct horse battery staple").is_ok());
+}
+
+/// [C] The master password MUST NOT be reduced to a single round of SHA-256.
+/// `derive_master_key` uses Argon2id, so its output differs from `SHA-256(pw)`.
+#[test]
+fn derived_key_is_not_plain_sha256() {
+    use sha2::{Digest, Sha256};
+    let password = "hunter2";
+    let salt = [7u8; 32];
+    let derived = derive_master_key(password, &salt).unwrap();
+    let sha = Sha256::digest(password.as_bytes());
+    assert_ne!(
+        derived.as_slice(),
+        sha.as_slice(),
+        "KDF output must not be plain SHA-256 of the password"
+    );
+    // Argon2id is keyed by the salt: the same password + different salt yields a
+    // different key, and re-deriving with the same salt is stable.
+    let salt2 = [8u8; 32];
+    let derived2 = derive_master_key(password, &salt2).unwrap();
+    assert_ne!(derived, derived2, "different salt must give a different key");
+    assert_eq!(
+        derive_master_key(password, &salt).unwrap(),
+        derived,
+        "same password + salt is deterministic"
+    );
+}
+
+/// [C] The on-disk master key file for a password-protected vault is a salt +
+/// one-way verifier, NEVER the raw decryption key. Reading the file alone (or
+/// `ensure_keyfile`) must not yield a usable Stronghold key.
+#[test]
+fn disk_keyfile_cannot_unlock_without_password() {
+    let dir = temp_dir("kdf-disk");
+    let key_path = dir.join("master.key");
+    let password = "correct horse battery staple";
+    let salt = [42u8; 32];
+    let master = derive_master_key(password, &salt).unwrap();
+    let verifier = verifier_of(&master);
+
+    let bytes = encode_keyfile_password(&salt, &verifier);
+    fs::write(&key_path, &bytes).unwrap();
+
+    // The file decodes to a Locked state, never a raw Auto key.
+    match read_vault_key_state(&key_path).unwrap() {
+        VaultKeyState::Locked { salt: s, verifier: v } => {
+            assert_eq!(s, salt);
+            assert_eq!(v, verifier);
+        }
+        VaultKeyState::Auto(k) => panic!("keyfile leaked a raw key: {k:?}"),
+    }
+
+    // The file content cannot be the raw key, and the verifier is not the key.
+    assert_ne!(bytes.as_slice(), master.as_slice(), "keyfile must not contain the raw key");
+    assert_ne!(verifier.as_slice(), master.as_slice(), "verifier must differ from the key");
+    // `ensure_keyfile` refuses to hand back a raw key from a locked file.
+    assert!(ensure_keyfile(&key_path).is_err());
+
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+/// [B] The IPC-facing key reader discloses only a fixed masked indicator, never
+/// the real API key.
+#[test]
+fn ai_key_presence_never_discloses_the_key() {
+    assert_eq!(ai_key_presence(None), None, "no key stays None");
+    let disclosed = ai_key_presence(Some("sk-super-secret".to_string())).unwrap();
+    assert_eq!(disclosed, AI_KEY_MASKED, "presence reports the masked indicator");
+    assert_ne!(disclosed, "sk-super-secret", "the real key must not be returned");
+    // The masked indicator is a fixed literal, not derived from the secret.
+    assert_eq!(AI_KEY_MASKED, "••••••••");
 }
 
 /// Full re-encrypt round-trip through REAL stronghold (no AppHandle needed —
@@ -125,13 +200,23 @@ fn reencrypt_vault_migrates_records_to_new_key() {
             .unwrap();
         stronghold.save().unwrap();
     }
-    write_key_file(&key_path, &old_key);
+    write_key_file(&key_path, &encode_keyfile_passwordless(&old_key));
 
     let records = vec![(b"openai".to_vec(), b"sk-old".to_vec())];
-    reencrypt_vault(&snapshot, &key_path, &new_key, &records).unwrap();
+    reencrypt_vault(
+        &snapshot,
+        &key_path,
+        &new_key,
+        &encode_keyfile_passwordless(&new_key),
+        &records,
+    )
+    .unwrap();
 
-    // New master.key on disk, old key file replaced.
-    assert_eq!(fs::read(&key_path).unwrap(), new_key.to_vec());
+    // New master.key on disk is a passwordless keyfile holding the new key.
+    match read_vault_key_state(&key_path).unwrap() {
+        VaultKeyState::Auto(k) => assert_eq!(k, new_key),
+        VaultKeyState::Locked { .. } => panic!("expected passwordless keyfile"),
+    }
 
     // Snapshot now decrypts with the new key and retains the record.
     let stronghold = Stronghold::new(snapshot.clone(), new_key.to_vec()).unwrap();
@@ -187,8 +272,8 @@ fn open_snapshot_recovers_with_master_key_old_backup() {
 
     // Simulate the interrupted-swap state: master.key holds the NEW key (which
     // cannot decrypt the old snapshot yet), the OLD key survives in the backup.
-    write_key_file(&key_path, &new_key);
-    write_key_file(&dir.join("master.key.old"), &old_key);
+    write_key_file(&key_path, &encode_keyfile_passwordless(&new_key));
+    write_key_file(&dir.join("master.key.old"), &encode_keyfile_passwordless(&old_key));
 
     // The new key alone would fail; the `master.key.old` fallback recovers.
     let stronghold = open_snapshot(&snapshot, &key_path, new_key.to_vec()).unwrap();
@@ -205,4 +290,24 @@ fn open_snapshot_recovers_with_master_key_old_backup() {
     assert!(open_snapshot(&snapshot, &key_path, new_key.to_vec()).is_err());
 
     fs::remove_dir_all(&dir).unwrap();
+}
+
+/// `decode_keyfile` round-trips both key file modes and rejects malformed
+/// inputs.
+#[test]
+fn keyfile_roundtrips_and_rejects_garbage() {
+    let key = [5u8; 32];
+    let auto = decode_keyfile(&encode_keyfile_passwordless(&key)).unwrap();
+    assert_eq!(auto, VaultKeyState::Auto(key));
+
+    let salt = [6u8; 32];
+    let verifier = [7u8; 32];
+    let locked = decode_keyfile(&encode_keyfile_password(&salt, &verifier)).unwrap();
+    assert_eq!(locked, VaultKeyState::Locked { salt, verifier });
+
+    assert!(decode_keyfile(&[]).is_err());
+    assert!(decode_keyfile(&[0u8; 16]).is_err());
+    assert!(decode_keyfile(&[1u8, 99u8]).is_err());
+    // Wrong length for the declared mode.
+    assert!(decode_keyfile(&encode_keyfile_passwordless(&key)[..33]).is_err());
 }

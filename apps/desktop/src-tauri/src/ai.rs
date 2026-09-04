@@ -561,6 +561,24 @@ fn is_active(app: &tauri::AppHandle, id: &str) -> bool {
     }
 }
 
+/// Resolve the API key for an AI request. The key is never disclosed to the
+/// window (see `keys::load_ai_key`, which returns only a masked indicator), so
+/// the backend injects the *stored* key for the provider here when the caller
+/// did not supply a real one. A real key supplied by the app's own settings
+/// page (a freshly typed, not-yet-saved key) is kept as-is; only a missing or
+/// masked value is backfilled from the vault.
+fn hydrate_stored_key(app: &tauri::AppHandle, config: &mut AIConfig) -> Result<(), String> {
+    if let Some(k) = config.api_key.as_deref() {
+        if k != crate::keys::AI_KEY_MASKED {
+            return Ok(());
+        }
+    }
+    if let Some(stored) = crate::keys::load_ai_key_internal(app, &config.provider)? {
+        config.api_key = Some(stored);
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn ai_cancel(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let state = app.state::<AiState>();
@@ -653,16 +671,17 @@ async fn list_models(config: &AIConfig) -> Result<Vec<String>, String> {
 
 #[tauri::command]
 pub async fn ai_list_models(
-    _app: tauri::AppHandle,
-    config: AIConfig,
+    app: tauri::AppHandle,
+    mut config: AIConfig,
 ) -> Result<Vec<String>, String> {
+    hydrate_stored_key(&app, &mut config)?;
     list_models(&config).await
 }
 
 #[tauri::command]
 pub async fn ai_complete(
     app: tauri::AppHandle,
-    config: AIConfig,
+    mut config: AIConfig,
     prompt: String,
     images: Vec<serde_json::Value>,
 ) -> Result<(), String> {
@@ -678,6 +697,12 @@ pub async fn ai_complete(
     // A rejected internal/loopback endpoint surfaces a clear user-facing error
     // instead of a silent failure or a request phoning a forbidden host.
     let result = async {
+        // Backfill the key from the vault when the caller did not supply a real
+        // one (the window never receives the decrypted key anymore).
+        hydrate_stored_key(&app, &mut config).map_err(|e| {
+            emit_ai_error(&app, &id, &e);
+            e
+        })?;
         validate_base_url(&config).map_err(|e| {
             emit_ai_error(&app, &id, &e);
             e

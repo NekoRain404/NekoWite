@@ -21,6 +21,31 @@ impl Default for KeyVault {
 /// Client id used for the single provider-key client inside the vault.
 const VAULT_CLIENT_ID: [u8; 32] = [1u8; 32];
 
+/// What the on-disk `master.key` actually holds. It NEVER holds a raw
+/// decryption key when a master password is set — only a verifier derived from
+/// the password via a proper KDF, so the file alone cannot unlock the vault.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VaultKeyState {
+    /// No master password set (legacy/auto-generated): a random 32-byte key is
+    /// stored so the vault auto-unlocks on launch. There is no secret password
+    /// to protect here; the file permissions (0600) are the boundary.
+    Auto([u8; 32]),
+    /// A master password is set: the file carries the KDF salt and a one-way
+    /// verifier. The Stronghold key is only recoverable by deriving it from the
+    /// password; the file alone cannot decrypt the snapshot.
+    Locked { salt: [u8; 32], verifier: [u8; 32] },
+}
+
+/// Key-file format version byte.
+const KEYFILE_VERSION: u8 = 1;
+/// Mode byte: 0 = passwordless (raw key), 1 = password (salt + verifier).
+const MODE_PASSWORDLESS: u8 = 0;
+const MODE_PASSWORD: u8 = 1;
+
+/// Fixed masked indicator returned to the frontend by `load_ai_key`. Never the
+/// real API key — only a "a key is configured" marker the settings UI can show.
+pub const AI_KEY_MASKED: &str = "••••••••";
+
 /// Resolve the app data dir without panicking.
 fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
@@ -73,13 +98,105 @@ fn sibling_suffixed(path: &Path, suffix: &str) -> PathBuf {
     p
 }
 
-/// Read a master key file, validating it is exactly 32 bytes.
-fn read_keyfile(path: &Path) -> Result<Vec<u8>, String> {
-    let bytes = fs::read(path).map_err(|e| e.to_string())?;
-    if bytes.len() == 32 {
-        Ok(bytes)
-    } else {
-        Err(format!("master key file has invalid length {}", bytes.len()))
+// ---------------------------------------------------------------------------
+// Key file (de)serialization + master-key derivation.
+// ---------------------------------------------------------------------------
+
+/// Serialize a passwordless key file: `[version=1, mode=0, key(32)]`.
+pub fn encode_keyfile_passwordless(key: &[u8; 32]) -> Vec<u8> {
+    let mut out = vec![KEYFILE_VERSION, MODE_PASSWORDLESS];
+    out.extend_from_slice(key);
+    out
+}
+
+/// Serialize a password key file: `[version=1, mode=1, salt(32), verifier(32)]`.
+pub fn encode_keyfile_password(salt: &[u8; 32], verifier: &[u8; 32]) -> Vec<u8> {
+    let mut out = vec![KEYFILE_VERSION, MODE_PASSWORD];
+    out.extend_from_slice(salt);
+    out.extend_from_slice(verifier);
+    out
+}
+
+/// Decode a master key file into its state. Rejects wrong lengths, wrong
+/// version, or unknown modes so a corrupt/partial key is never silently used.
+pub fn decode_keyfile(bytes: &[u8]) -> Result<VaultKeyState, String> {
+    let invalid = || {
+        format!(
+            "master key file has invalid length {} (expected 34 or 66)",
+            bytes.len()
+        )
+    };
+    if bytes.len() < 2 {
+        return Err(invalid());
+    }
+    if bytes[0] != KEYFILE_VERSION {
+        return Err(invalid());
+    }
+    match bytes[1] {
+        MODE_PASSWORDLESS => {
+            if bytes.len() != 34 {
+                return Err(invalid());
+            }
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&bytes[2..34]);
+            Ok(VaultKeyState::Auto(key))
+        }
+        MODE_PASSWORD => {
+            if bytes.len() != 66 {
+                return Err(invalid());
+            }
+            let mut salt = [0u8; 32];
+            salt.copy_from_slice(&bytes[2..34]);
+            let mut verifier = [0u8; 32];
+            verifier.copy_from_slice(&bytes[34..66]);
+            Ok(VaultKeyState::Locked { salt, verifier })
+        }
+        mode => Err(format!("master key file has unknown mode {mode}")),
+    }
+}
+
+/// Derive the 32-byte Stronghold master key from a user password + per-vault
+/// salt using **Argon2id** (OWASP-recommended parameters: 19 MiB, t=2, p=1).
+/// This replaces the old single-round SHA-256, which was both weak and allowed
+/// a raw key — here the output is a KDF-hardened key that is never persisted.
+pub fn derive_master_key(password: &str, salt: &[u8]) -> Result<[u8; 32], String> {
+    let config = argon2::Config::owasp2();
+    let hash = argon2::hash_raw(password.as_bytes(), salt, &config)
+        .map_err(|e| format!("key derivation failed: {e}"))?;
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&hash[..32]);
+    Ok(out)
+}
+
+/// One-way verification value stored in a password-protected key file. It is
+/// derived from the *master key* (not the password directly) so it is NEVER
+/// itself usable as the Stronghold key — it only lets an unlock confirm the
+/// password was correct.
+pub fn verifier_of(master_key: &[u8; 32]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(master_key);
+    hasher.finalize().into()
+}
+
+/// Read a master key file and return its [`VaultKeyState`]. A missing file is
+/// treated as first-run: a fresh random passwordless key is generated and
+/// persisted (mode `0600`). Any other read error is propagated so a damaged key
+/// is never silently overwritten; wrong lengths/modes are rejected by
+/// [`decode_keyfile`].
+pub fn read_vault_key_state(path: &Path) -> Result<VaultKeyState, String> {
+    match fs::read(path) {
+        Ok(bytes) => decode_keyfile(&bytes),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            let mut key = [0u8; 32];
+            getrandom::getrandom(&mut key).map_err(|e| e.to_string())?;
+            write_keyfile(path, &encode_keyfile_passwordless(&key))?;
+            Ok(VaultKeyState::Auto(key))
+        }
+        Err(e) => Err(format!("cannot read master key file: {e}")),
     }
 }
 
@@ -103,7 +220,7 @@ fn write_key_file_at(path: &Path, bytes: &[u8]) -> Result<(), String> {
 
 /// Overwrite `path` with `bytes`, forcing mode `0600` (unix). Written atomically
 /// via a temp sibling + fsync + rename so a partial write can never leave a
-/// corrupt key file. Used by `ensure_keyfile` on first creation;
+/// corrupt key file. Used by `read_vault_key_state` on first creation;
 /// `reencrypt_vault` stages the new key at `master.key.new` instead.
 fn write_keyfile(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let tmp = sibling_tmp(path);
@@ -120,49 +237,43 @@ fn fsync_file(path: &Path) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// Create a 32-byte master key file at `path` if it does not exist (mode
-/// `0600`), or read it back if it already does. Returns the key bytes.
+/// Read an on-disk master key that is directly usable as a Stronghold key. Only
+/// valid for a **passwordless** key file; a password-protected file returns an
+/// error (its key must be derived from the password). Used by the load-time
+/// recovery in [`open_snapshot`] against the `master.key.old` backup.
+fn read_unlockable_keyfile(path: &Path) -> Result<Vec<u8>, String> {
+    match read_vault_key_state(path)? {
+        VaultKeyState::Auto(key) => Ok(key.to_vec()),
+        VaultKeyState::Locked { .. } => {
+            Err("backup master key is password-protected".to_string())
+        }
+    }
+}
+
+/// Create/read a master key and return its raw 32 bytes, ONLY for the
+/// passwordless case. If a master password is set the vault is locked and an
+/// error is returned (call [`unlock_vault`]); the raw key is never revealed.
 ///
 /// Only a missing file (`ErrorKind::NotFound`) triggers generation; any other
 /// read failure (EIO, permission denied, …) is propagated so a damaged key is
-/// never silently overwritten. A file that exists but is not exactly 32 bytes
-/// is likewise an error, not silently regenerated.
+/// never silently overwritten. A file that is malformed is likewise an error.
 ///
 /// Pure and `AppHandle`-free so the file logic is unit-testable in
 /// `tests/keys_test.rs`. `ensure_master_key` wraps this with the app data dir.
 pub fn ensure_keyfile(path: &Path) -> Result<Vec<u8>, String> {
-    match fs::read(path) {
-        Ok(bytes) if bytes.len() == 32 => return Ok(bytes),
-        Ok(bytes) => {
-            return Err(format!(
-                "master key file has invalid length {} (expected 32)",
-                bytes.len()
-            ))
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(format!("cannot read master key file: {e}")),
+    match read_vault_key_state(path)? {
+        VaultKeyState::Auto(key) => Ok(key.to_vec()),
+        VaultKeyState::Locked { .. } => Err(
+            "master key is password-protected; the vault is locked (call unlock_vault)".into(),
+        ),
     }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let mut bytes = [0u8; 32];
-    getrandom::getrandom(&mut bytes).map_err(|e| e.to_string())?;
-    write_keyfile(path, &bytes)?;
-    Ok(bytes.to_vec())
 }
 
 /// Ensure the master key file exists under the app data dir and return its
-/// 32 bytes. Auto-generated on first run (mode `0600`), stable across runs.
+/// 32 bytes (passwordless only). Auto-generated on first run (mode `0600`),
+/// stable across runs.
 pub fn ensure_master_key(app: &tauri::AppHandle) -> Result<Vec<u8>, String> {
     ensure_keyfile(&master_key_path(app)?)
-}
-
-/// Derive a 32-byte master key from a user-set master password (SHA-256).
-fn derive_key_from_password(password: &str) -> [u8; 32] {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(password.as_bytes());
-    hasher.finalize().into()
 }
 
 /// Reject an empty master password.
@@ -193,15 +304,15 @@ pub fn open_snapshot(
     match Stronghold::new(snapshot_path, master_key) {
         Ok(stronghold) => Ok(stronghold),
         Err(primary_err) => {
-            let backup = read_keyfile(&sibling_suffixed(key_path, "old"))
+            let backup = read_unlockable_keyfile(&sibling_suffixed(key_path, "old"))
                 .and_then(|backup_key| {
                     Stronghold::new(snapshot_path, backup_key).map_err(|e| e.to_string())
                 });
             match backup {
                 Ok(stronghold) => Ok(stronghold),
                 // Surface the primary error: the backup is missing or also
-                // wrong, and its own error would only repeat the same
-                // decryption failure.
+                // wrong (or password-protected), and its own error would only
+                // repeat the same decryption failure.
                 Err(_) => Err(primary_err.to_string()),
             }
         }
@@ -210,33 +321,50 @@ pub fn open_snapshot(
 
 /// Open the managed stronghold, initializing it lazily with the current
 /// master key if it has not been opened yet. `init` supplies the snapshot
-/// path, master key path, and master key (resolved *before* locking so the
+/// path, master key path, and the key state (resolved *before* locking so the
 /// caller does not borrow the app while holding the vault guard).
+///
+/// A password-protected vault that has not been unlocked yet errors here with a
+/// recovery hint instead of auto-opening, so the locked state is never bypassed.
 fn open_vault<R>(
     app: &tauri::AppHandle,
-    init: &mut dyn FnMut() -> Result<(PathBuf, PathBuf, Vec<u8>), String>,
+    init: &mut dyn FnMut() -> Result<(PathBuf, PathBuf, VaultKeyState), String>,
     f: impl FnOnce(&Stronghold) -> Result<R, String>,
 ) -> Result<R, String> {
     let state = app.state::<KeyVault>();
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
     if guard.is_none() {
-        let (snapshot_path, key_path, master_key) = init()?;
-        *guard = Some(open_snapshot(&snapshot_path, &key_path, master_key)?);
+        let (snapshot_path, key_path, key_state) = init()?;
+        let master_key = match key_state {
+            VaultKeyState::Auto(key) => key,
+            VaultKeyState::Locked { .. } => {
+                return Err(
+                    "vault is locked: unlock it with your master password first \
+                     (unlock_vault)"
+                        .into(),
+                )
+            }
+        };
+        *guard = Some(open_snapshot(&snapshot_path, &key_path, master_key.to_vec())?);
     }
     let stronghold = guard.as_ref().expect("open_vault guarantees a stronghold");
     f(stronghold)
 }
 
 /// Init source that auto-generates/reads the master key file.
-fn default_init(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf, Vec<u8>), String> {
+fn default_init(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf, VaultKeyState), String> {
     let key_path = master_key_path(app)?;
-    Ok((stronghold_path(app)?, key_path, ensure_master_key(app)?))
+    Ok((
+        stronghold_path(app)?,
+        key_path.clone(),
+        read_vault_key_state(&key_path)?,
+    ))
 }
 
 /// Borrow-safe wrapper of [`default_init`] for `open_vault`.
 fn init_with_default(
     app: &tauri::AppHandle,
-) -> impl FnMut() -> Result<(PathBuf, PathBuf, Vec<u8>), String> + '_ {
+) -> impl FnMut() -> Result<(PathBuf, PathBuf, VaultKeyState), String> + '_ {
     || default_init(app)
 }
 
@@ -290,6 +418,12 @@ fn tighten_saved_snapshot(app: &tauri::AppHandle) -> Result<(), String> {
 /// write so the key survives restarts.
 #[tauri::command]
 pub fn store_ai_key(app: tauri::AppHandle, provider: String, key: String) -> Result<(), String> {
+    // Never store the masked "a key is configured" indicator as a real key —
+    // the settings UI shows it as a placeholder and must not persist it over a
+    // previously-saved credential.
+    if key == AI_KEY_MASKED {
+        return Err("this is the masked placeholder, not an API key: re-enter the key".into());
+    }
     let provider_bytes = provider.into_bytes();
     let key_bytes = key.into_bytes();
     open_vault(&app, &mut init_with_default(&app), |stronghold| {
@@ -304,11 +438,13 @@ pub fn store_ai_key(app: tauri::AppHandle, provider: String, key: String) -> Res
     Ok(())
 }
 
-/// Load the stored API key for a provider, or `None` if none has been saved.
-/// Serializes as `string | null` on the JS side.
-#[tauri::command]
-pub fn load_ai_key(app: tauri::AppHandle, provider: String) -> Result<Option<String>, String> {
-    let provider_bytes = provider.into_bytes();
+/// Read the stored API key for a provider, for AI request use *inside Rust
+/// only*. Never exposed over IPC — it is the sole path that yields the real key.
+pub fn load_ai_key_internal(
+    app: &tauri::AppHandle,
+    provider: &str,
+) -> Result<Option<String>, String> {
+    let provider_bytes = provider.as_bytes().to_vec();
     open_vault(&app, &mut init_with_default(&app), |stronghold| {
         let client = get_or_create_client(stronghold)?;
         let value = client
@@ -319,17 +455,35 @@ pub fn load_ai_key(app: tauri::AppHandle, provider: String) -> Result<Option<Str
     })
 }
 
+/// Map the presence of a stored key to its disclosed form. Never returns the
+/// real key: it returns [`AI_KEY_MASKED`] when a key is configured (so the
+/// settings UI can show "a key is set") and `None` otherwise. Pure and
+/// unit-testable.
+pub fn ai_key_presence(store_value: Option<String>) -> Option<String> {
+    store_value.map(|_| AI_KEY_MASKED.to_string())
+}
+
+/// Return whether an API key is configured for a provider, without disclosing
+/// it. Serializes as `string | null` on the JS side (`Some` is the masked
+/// indicator, never the real key) so the settings UI can signal "a key is set".
+#[tauri::command]
+pub fn load_ai_key(app: tauri::AppHandle, provider: String) -> Result<Option<String>, String> {
+    Ok(ai_key_presence(load_ai_key_internal(&app, &provider)?))
+}
+
 /// Re-encrypt the snapshot at `snapshot_path` with `new_key`, migrating
-/// `records` over, and swap the new master key in at `key_path`. Pure
-/// path-level function, testable without an `AppHandle`.
+/// `records` over, and swap the new master key file in at `key_path`. `keyfile`
+/// is the serialized key blob to persist (`master.key` = salt+verifier for a
+/// password-protected vault, or a passwordless raw key). Pure path-level
+/// function, testable without an `AppHandle`.
 ///
 /// Crash-safe two-phase swap. Every step leaves the on-disk key files and the
 /// snapshot mutually recoverable, so a crash at ANY point loses no stored key
 /// (load-time recovery is `open_snapshot`'s `master.key.old` retry):
 ///
-/// 1. Write + fsync the new key to the `master.key.new` staging file. The old
-///    `master.key` and old snapshot are untouched, so the vault stays readable
-///    with the old key.
+/// 1. Write + fsync the new key blob to the `master.key.new` staging file. The
+///    old `master.key` and old snapshot are untouched, so the vault stays
+///    readable with the old key.
 /// 2. Build the new-key snapshot at the temp sibling (clearing any stale temp
 ///    from a previously interrupted run first), `save()` it, and fsync it.
 ///    Still nothing swapped, so the old pair remains consistent.
@@ -352,6 +506,7 @@ pub fn reencrypt_vault(
     snapshot_path: &Path,
     key_path: &Path,
     new_key: &[u8],
+    keyfile: &[u8],
     records: &[(Vec<u8>, Vec<u8>)],
 ) -> Result<(), String> {
     let new_key_staging = sibling_suffixed(key_path, "new");
@@ -361,7 +516,7 @@ pub fn reencrypt_vault(
     // 1. Durable new key material at the staging path. Clear any stale staging
     //    file from a previously interrupted run first.
     let _ = fs::remove_file(&new_key_staging);
-    write_key_file_at(&new_key_staging, new_key)?;
+    write_key_file_at(&new_key_staging, keyfile)?;
 
     // 2. Rebuild under the new key at a temp path. Clear any stale temp file
     //    first, or `Stronghold::new` would try to load it with the new key and
@@ -407,29 +562,49 @@ pub fn reencrypt_vault(
     Ok(())
 }
 
-/// Set (or replace) the master password. Derives a new 32-byte master key from
-/// the password, re-encrypts the stronghold snapshot with it, and updates the
-/// `master.key` file so future launches unlock with the new password.
+/// Resolve the currently open vault's records, then re-encrypt the snapshot
+/// under a key derived from `password` and swap in the new verifier file.
 ///
 /// The vault mutex is held across the ENTIRE operation — record collection,
 /// the crash-safe two-phase swap, and the reload — so a concurrent
 /// `store_ai_key` can neither read stale (old-key) records mid-swap nor save
 /// old-key ciphertext into the swapped snapshot afterwards.
+///
+/// Changing an already-password-protected vault requires it to be unlocked
+/// first (call [`unlock_vault`] with the current password), then this command
+/// with the new one.
 #[tauri::command]
 pub fn set_master_password(app: tauri::AppHandle, password: String) -> Result<(), String> {
     validate_password(&password)?;
     let snapshot_path = stronghold_path(&app)?;
     let key_path = master_key_path(&app)?;
-    let new_key = derive_key_from_password(&password);
+
+    // Fresh per-vault salt: even two users picking the same password end up with
+    // different derived keys, and the salt is stored (not secret) in the file.
+    let mut salt = [0u8; 32];
+    getrandom::getrandom(&mut salt).map_err(|e| e.to_string())?;
+    let new_key = derive_master_key(&password, &salt)?;
+    let verifier = verifier_of(&new_key);
+    let keyfile = encode_keyfile_password(&salt, &verifier);
 
     let state = app.state::<KeyVault>();
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
 
     // Open the vault under the held lock if it is not open yet (same lazy
-    // init as `open_vault`).
+    // init as `open_vault`). A password-protected vault must be unlocked first.
     if guard.is_none() {
-        let (snapshot, key_file, master_key) = default_init(&app)?;
-        *guard = Some(open_snapshot(&snapshot, &key_file, master_key)?);
+        let (snapshot, key_file, key_state) = default_init(&app)?;
+        let master_key = match key_state {
+            VaultKeyState::Auto(key) => key,
+            VaultKeyState::Locked { .. } => {
+                return Err(
+                    "vault is locked: call unlock_vault with the CURRENT password \
+                     before changing it"
+                        .into(),
+                )
+            }
+        };
+        *guard = Some(open_snapshot(&snapshot, &key_file, master_key.to_vec())?);
     }
 
     // Collect existing records from the currently open (old-key) vault.
@@ -448,7 +623,7 @@ pub fn set_master_password(app: tauri::AppHandle, password: String) -> Result<()
     }
 
     // Two-phase swap of the key + snapshot on disk.
-    if let Err(e) = reencrypt_vault(&snapshot_path, &key_path, &new_key, &records) {
+    if let Err(e) = reencrypt_vault(&snapshot_path, &key_path, &new_key, &keyfile, &records) {
         // The disk may or may not have been swapped by the time the error
         // surfaced, so drop the in-memory handle: the next command re-opens
         // from disk (recovering via `master.key.old` if needed) instead of
@@ -469,4 +644,58 @@ pub fn set_master_password(app: tauri::AppHandle, password: String) -> Result<()
         }
     }
     Ok(())
+}
+
+/// Unlock a password-protected vault. Derives the master key from `password`
+/// and the stored salt, verifies it against the stored verifier, and opens the
+/// stronghold so subsequent commands (`store_ai_key`, AI requests, …) can use
+/// it. A no-op when the vault is already unlocked.
+///
+/// If the snapshot still decrypts under the previous password (a crash midway
+/// through [`set_master_password`]), the `master.key.old` backup salt + verifier
+/// is tried before giving up, so the recovery path works with the old password.
+#[tauri::command]
+pub fn unlock_vault(app: tauri::AppHandle, password: String) -> Result<(), String> {
+    validate_password(&password)?;
+    let state = app.state::<KeyVault>();
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    if guard.is_some() {
+        return Ok(());
+    }
+    let snapshot_path = stronghold_path(&app)?;
+    let key_path = master_key_path(&app)?;
+
+    // Collect the candidate (salt, verifier) pairs: the current key file, and
+    // the `.old` backup if it is a password-protected one (crash recovery).
+    let mut candidates: Vec<(PathBuf, [u8; 32], [u8; 32])> = Vec::new();
+    if let VaultKeyState::Locked { salt, verifier } = read_vault_key_state(&key_path)? {
+        candidates.push((snapshot_path.clone(), salt, verifier));
+    } else {
+        return Err("no master password is set".into());
+    }
+    let backup_path = sibling_suffixed(&key_path, "old");
+    if let Ok(VaultKeyState::Locked { salt, verifier }) = read_vault_key_state(&backup_path) {
+        candidates.push((snapshot_path.clone(), salt, verifier));
+    }
+
+    let mut last_err = "incorrect master password".to_string();
+    for (snapshot, salt, verifier) in candidates {
+        let derived = match derive_master_key(&password, &salt) {
+            Ok(k) => k,
+            Err(e) => {
+                last_err = e;
+                continue;
+            }
+        };
+        if verifier_of(&derived) != verifier {
+            continue;
+        }
+        if let Ok(stronghold) = Stronghold::new(snapshot, derived.to_vec()) {
+            *guard = Some(stronghold);
+            return Ok(());
+        }
+        // The derived key matched the verifier but the snapshot refused it;
+        // fall through and let the next candidate (the `.old` backup) try.
+    }
+    Err(last_err)
 }
