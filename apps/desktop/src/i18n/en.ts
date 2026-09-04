@@ -527,6 +527,12 @@ export const en = {
       'Plugin “{name}” requests access to: {perms}. It runs in the same process as the app (no sandbox isolation) — only allow it if you trust the plugin.',
     permissionAllow: 'Allow',
     permissionDeny: 'Deny',
+    integrityTitle: 'Plugin code changed',
+    integrityBody:
+      'The plugin “{name}” changed since you approved it (its manifest or code fingerprint differs). Re-approve it only if you trust the new version; otherwise deny and reinstall it.',
+    integrityDigest: 'Recorded: {expected}\nCurrent: {actual}',
+    integrityAllow: 'Re-approve',
+    integrityDeny: 'Deny',
     permissionAi: 'AI capability',
     permissionFs: 'File read/write',
     permissionNetwork: 'Network access',

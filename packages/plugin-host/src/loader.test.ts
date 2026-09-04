@@ -85,4 +85,24 @@ describe('verifyPluginIntegrity', () => {
   it('classifies an unrecorded plugin as missing', () => {
     expect(verifyPluginIntegrity('fresh', 'abc', store)).toBe('missing')
   })
+
+  it('supports a vault-scoped store so the same id in two vaults never collides', () => {
+    // The production composite-key scheme: a store that keys its entries by
+    // vault + id. The same plugin id approved in vault A must not be treated as
+    // approved in vault B.
+    const toKey = (vault: string, id: string): string =>
+      `${vault}${String.fromCharCode(0)}${id}`
+    const entries = new Map<string, string>()
+    const vaultA: PluginDigestStore = {
+      get: (id) => entries.get(toKey('/vaultA', id)),
+      set: (id, digest) => {
+        entries.set(toKey('/vaultA', id), digest)
+      },
+    }
+    vaultA.set('@scope/q', 'abc')
+    expect(verifyPluginIntegrity('@scope/q', 'abc', vaultA)).toBe('ok')
+    // The same id in a different vault has never been approved.
+    const vaultB: PluginDigestStore = { get: () => undefined, set: () => {} }
+    expect(verifyPluginIntegrity('@scope/q', 'abc', vaultB)).toBe('missing')
+  })
 })

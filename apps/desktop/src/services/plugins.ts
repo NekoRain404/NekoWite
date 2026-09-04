@@ -18,9 +18,12 @@ import type {
   PluginDigestStore,
   PluginError,
   PluginErrorCode,
+  PluginFsAdapter,
+  PluginFsEntry,
   PluginMeta,
   PluginPermission,
 } from '@nekowite/plugin-host'
+import { joinPath } from '@nekowite/plugin-host'
 import { fsService } from './fs'
 import { describePluginError, notifyError } from './errors'
 import { t } from '../i18n'
@@ -99,11 +102,13 @@ export async function askPluginPermission(meta: PluginMeta, definition: PluginDe
 }
 
 /* ------------------------------------------------------------------------- *
- * Plugin integrity (task #24). We fingerprint the exact bytes the host will
- * execute — the package.json manifest text plus the loaded code — and compare
- * it to the last value the user approved. A mismatch means the plugin was
- * modified since approval: we refuse to silently run it and instead surface a
- * structured PLUGIN_VERIFY_FAILED with a confirm/deny path.
+ * Task #24 — plugin change detection. We fingerprint the exact bytes the host
+ * will execute — the package.json manifest text plus the loaded code — and
+ * compare it to the last value the user approved. This is change detection, NOT
+ * cryptographic authentication: the 32-bit FNV-1a digest is not signed and must
+ * never be presented as proof of provenance. A mismatch simply means the plugin
+ * was modified since approval and we refuse to silently run it, surfacing a
+ * structured PLUGIN_VERIFY_FAILED with a re-approve/deny path instead.
  * ------------------------------------------------------------------------- */
 
 const PLUGIN_DIGESTS_KEY = 'nekowite.pluginDigests'
@@ -141,24 +146,36 @@ function writeDigestMap(map: DigestMap): void {
   for (const [key, value] of Object.entries(map)) memoryDigestMap.set(key, value)
 }
 
-/** The last-approved digest for a plugin id, if any. */
-function getRecordedDigest(id: string): string | undefined {
-  return readDigestMap()[id]?.d
+/** Composite storage key for a plugin baseline: vault + plugin id, NUL-separated
+ *  so a vault path and an id that both contain "/" can never collide. Two
+ *  different vaults therefore never share an approval record for the same id. */
+function digestStorageKey(vault: string, id: string): string {
+  // NUL separator: a vault path and a plugin id can both contain "/", so a
+  // plain concatenation (or "/" join) could collide across vaults.
+  return `${vault}\u0000${id}`
+}
+
+/** The last-approved digest for a (vault, plugin id) pair, if any. */
+function getRecordedDigest(vault: string, id: string): string | undefined {
+  return readDigestMap()[digestStorageKey(vault, id)]?.d
 }
 
 /** Record (or re-approve) a plugin's digest as the new expected baseline. */
-function setRecordedDigest(id: string, version: string, digest: string): void {
+function setRecordedDigest(vault: string, id: string, version: string, digest: string): void {
   const map = readDigestMap()
-  map[id] = { v: version, d: digest }
+  map[digestStorageKey(vault, id)] = { v: version, d: digest }
   writeDigestMap(map)
 }
 
-// Adapter so plugin-host's validate helper can read the persisted value.
-const integrityStore: PluginDigestStore = {
-  get: getRecordedDigest,
-  set: () => {
-    /* recording happens through setRecordedDigest (needs the version too) */
-  },
+// Adapter so plugin-host's validate helper can read the persisted value, scoped
+// to the vault currently being loaded (closing over `vault`).
+function makeVaultIntegrityStore(vault: string): PluginDigestStore {
+  return {
+    get: (id) => getRecordedDigest(vault, id),
+    set: () => {
+      /* recording happens through setRecordedDigest (needs the version too) */
+    },
+  }
 }
 
 type IntegrityDecider = (
@@ -168,6 +185,16 @@ type IntegrityDecider = (
 ) => Promise<boolean>
 
 let integrityDecider: IntegrityDecider | null = null
+
+/** A pending re-approval question for the host to render. `resolve(true)`
+ *  re-approves the plugin (recording its new fingerprint as the baseline);
+ *  `resolve(false)` refuses to run the modified plugin. */
+export interface PluginIntegrityRequest {
+  meta: PluginMeta
+  expectedDigest: string
+  actualDigest: string
+  resolve: (reapprove: boolean) => void
+}
 
 /** Install the callback that decides whether to re-approve a plugin whose code
  *  changed since it was last approved. `true` re-approves (records the new
@@ -237,26 +264,54 @@ export function deactivateVaultPlugins(): void {
   unsandboxedNotified.clear()
 }
 
-/** Read a plugin's JS source from the vault and evaluate it as an ES module via
- *  a blob URL. In the Tauri app the webview has no Node fs access, so the source
- *  is read through the Rust commands; the "vite-ignore" annotation keeps Vite
- *  from statically analyzing the runtime blob specifier. Bare imports inside
- *  the plugin (e.g. `import { defineComponent } from 'vue'`) will NOT resolve
- *  from a blob URL — a vault plugin must be self-contained or use absolute URLs
- *  — which is one visible consequence of plugins running in the main window
- *  context without a real sandbox.
- *
- *  The loaded code string is handed back to `onCode` so the loader can fingerprint
- *  the exact bytes it is about to execute (used by the integrity gate). */
-async function importVaultSource(
-  vault: string,
-  relPath: string,
-  onCode?: (code: string) => void,
-): Promise<{ default?: PluginDefinition }> {
-  if (!isTauriRuntime()) return Promise.reject(new Error('browser-demo: no real vault plugin files'))
-  const code = await fsService.read(vault, relPath)
-  onCode?.(code)
-  const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }))
+/**
+ * The file-access boundary between the vault plugin loader and the app's fs
+ * service. Constructed from the app's existing vault file service (Tauri Rust
+ * commands in the desktop, the in-memory demo gateway in a browser), and injected
+ * into the loader so the adapter boundary that plugin-host defines is exercised
+ * in production as well as in tests. `readFile`/`readdir` take loader-style
+ * POSIX paths rooted at the vault root; they are translated to vault-relative
+ * paths for the underlying `fsService`.
+ */
+function makeVaultPluginFsAdapter(vault: string): PluginFsAdapter {
+  const vaultRoot = vault.replace(/\/+$/, '')
+  function toRelative(absPath: string): string {
+    if (absPath === vaultRoot) return ''
+    if (vaultRoot !== '' && absPath.startsWith(vaultRoot + '/')) {
+      return absPath.slice(vaultRoot.length + 1)
+    }
+    return absPath.replace(/^\/+/, '')
+  }
+  return {
+    readFile: (path) => fsService.read(vault, toRelative(path)),
+    readdir: async (dir) => {
+      const entries = await fsService.list(vault, toRelative(dir))
+      return entries.map((e): PluginFsEntry => ({ name: e.name, isDirectory: () => e.is_dir }))
+    },
+    stat: async (path) => {
+      // The Rust stat command returns size/mtime (no is_directory flag); the
+      // loader only needs stat as a fallback when a readdir entry omits
+      // isDirectory(), which our readdir always provides, so this is best-effort.
+      await fsService.stat(vault, toRelative(path))
+      return { isDirectory: () => false }
+    },
+  }
+}
+
+/**
+ * Evaluate a plugin's source string as an ES module via a blob URL. This is the
+ * ONLY place plugin code is (potentially) executed, and the loader calls it only
+ * AFTER the integrity and consent gates pass — so a tampered/unapproved plugin's
+ * top-level side effects can never run. In the Tauri app the webview has no Node
+ * fs access; bare imports inside the plugin (e.g. `import { defineComponent }
+ * from 'vue'`) will NOT resolve from a blob URL — which is one visible
+ * consequence of plugins running in the main window context without a real
+ * sandbox. The "vite-ignore" annotation keeps Vite from statically analyzing the
+ * runtime blob specifier.
+ */
+async function importSource(source: string): Promise<{ default?: PluginDefinition }> {
+  if (!isTauriRuntime()) return Promise.reject(new Error('browser-demo: plugin execution disabled'))
+  const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }))
   try {
     return (await import(/* @vite-ignore */ url)) as { default?: PluginDefinition }
   } finally {
@@ -264,10 +319,10 @@ async function importVaultSource(
   }
 }
 
-// The per-plugin work (read manifest → read code → dynamic import) is
-// independent across plugins and is the bulk of startup cost, so it runs
-// concurrently with a bounded parallelism that keeps the allocator/IO sane.
-// Permission confirmation and activation ordering stay deterministic.
+// The per-plugin work (read manifest → read code) is independent across plugins
+// and the bulk of the scan, so it runs concurrently with a bounded parallelism
+// that keeps the allocator/IO sane. Integrity/consent gating and the import stay
+// sequential and deterministic.
 const MAX_PARALLEL_PLUGIN_LOADS = 4
 
 /** Run `tasks` (index-aligned) with at most `limit` concurrent promises, while
@@ -327,26 +382,26 @@ function loadFailure(meta: PluginMeta, error: string): PluginError {
   return createPluginError(code, { pluginId: meta.id, message, recovery })
 }
 
-/** A single plugin's async-preloaded stage (manifest + code read + import),
+/** A single plugin's async-preloaded stage (manifest + code read + digest),
  *  result-shaped so each failure bucket is separately diagnosable. `skip` marks
- *  a directory that is not actually a plugin (no manifest), dropped silently. */
+ *  a directory that is not actually a plugin (no manifest), dropped silently.
+ *  `source` carries the exact bytes that will be executed; `loadResult` is
+ *  populated only after the gated import. */
 interface PreloadedPlugin {
   dirName: string
   meta?: PluginMeta
   loadResult?: LoadResult
   error?: PluginError
   digest?: string
+  source?: string
   skip?: boolean
 }
 
-/** Read a plugin's manifest and then load its code, tagging each distinct
- *  failure (missing file / invalid manifest / code parse / load) with a
- *  structured code + recovery hint instead of one generic "plugin failed".
- *
- *  The code is read once through `importVaultSource` (which captures the loaded
- *  bytes) and fingerprinted together with the manifest by `computePluginDigest`
- *  so the host can later detect a modified plugin. */
+/** Read a plugin's manifest and its code SOURCE (without executing it — no
+ *  import), fingerprinting the exact bytes the host would run so the integrity
+ *  gate can refuse a modified plugin BEFORE any module code executes. */
 async function preloadVaultPlugin(
+  adapter: PluginFsAdapter,
   vault: string,
   dirName: string,
 ): Promise<PreloadedPlugin> {
@@ -355,7 +410,7 @@ async function preloadVaultPlugin(
   //    a *malformed* manifest, by contrast, is a real failure below.
   let raw: string
   try {
-    raw = await fsService.read(vault, joinVault('plugins', dirName, 'package.json'))
+    raw = await adapter.readFile(joinPath(vault, 'plugins', dirName, 'package.json'))
   } catch {
     return { dirName, skip: true }
   }
@@ -393,26 +448,18 @@ async function preloadVaultPlugin(
     permissions: pkg.permissions,
   }
 
-  // 3. Read the plugin's code + dynamic import (inside loadPlugin). The importer
-  //    is built here (per-plugin) so we can capture the exact loaded code for
-  //    the integrity fingerprint. Independent of other plugins, so it
-  //    participates in the bounded-concurrency phase.
-  let loadedCode = ''
-  const importer: DynamicImport = (main) => importVaultSource(vault, main, (code) => {
-    loadedCode = code
-  })
-  let result: LoadResult
+  // 3. Read the plugin's code source string. Reading the file is safe; only
+  //    importing/executing is gated, and that happens later (after integrity +
+  //    consent are verified). The digest is computed from these exact bytes.
+  let source: string
   try {
-    result = await loadPlugin(meta, importer)
+    source = await adapter.readFile(joinPath(vault, meta.main))
   } catch (e) {
-    // loadPlugin normally swallows load errors into an ok:false result, but a
-    // dynamic-import rejection can still escape (e.g. a sandboxed importer) —
-    // classify it the same way instead of bubbling and aborting the whole scan.
     return { dirName, meta, error: loadFailure(meta, e instanceof Error ? e.message : String(e)) }
   }
-  if (!result.ok) return { dirName, meta, error: loadFailure(meta, result.error) }
-  const digest = computePluginDigest(raw, loadedCode)
-  return { dirName, meta, loadResult: result, digest }
+
+  const digest = computePluginDigest(raw, source)
+  return { dirName, meta, digest, source }
 }
 
 /** Reset in-memory state (active ids, permission verdicts, deciders, unsandboxed
@@ -428,50 +475,59 @@ export function resetVaultPluginStateForTests(): void {
 /**
  * Scan `vault/plugins/<id>/` for user plugins and activate each one.
  *
- * Reading goes through the Rust fs commands (the webview has no Node fs
- * access) while `loadPlugin`/`activatePlugin` keep the plugin-host contract.
- * Every previously-activated vault plugin is deactivated first so switching
- * vaults never leaks a plugin's components/commands/lifecycle hooks into the
- * next vault. Best-effort: a missing plugins dir is not an error; per-plugin
- * failures are surfaced through the app's error toast.
+ * Reading goes through the injected `PluginFsAdapter` (built from the app's vault
+ * file service, so the boundary plugin-host defines is real in production), while
+ * `loadPlugin`/`activatePlugin` keep the plugin-host contract. Every
+ * previously-activated vault plugin is deactivated first so switching vaults
+ * never leaks a plugin's components/commands/lifecycle hooks into the next
+ * vault. Best-effort: a missing plugins dir is not an error; per-plugin failures
+ * are surfaced through the app's error toast.
  *
- * Loading is staged to keep startup time from growing linearly with plugin
- * count:
- *  1. Per-plugin independent work (read manifest → read code → dynamic import)
- *     runs concurrently with bounded parallelism, fingerprinting each plugin's
- *     bytes as it goes.
- *  2. Permission confirmation stays sequential (it drives a user dialog), the
- *     point-of-use permission guard runs as each plugin passes consent, and a
- *     plugin that declares non-isolated capabilities surfaces a "trusted-but-
- *     unsandboxed" notice instead of being silently confirmed.
- *  3. Integrity verification: the recorded fingerprint is compared to the
- *     last-approved one. A mismatch is refused (confirm/deny) rather than run.
- *  4. Activation of the consented plugins runs concurrently, but recorded in a
+ * Loading is staged to keep startup time from growing linearly with plugin count,
+ * AND so no plugin code is executed before it is verified:
+ *  1. Per-plugin independent work (read manifest → read code → fingerprint) runs
+ *     concurrently with bounded parallelism. NO module is imported here; each
+ *     plugin's source string is only read and digested.
+ *  2. Permission confirmation (manifest-declared capabilities) stays sequential
+ *     (it drives a user dialog), followed by the integrity gate. A plugin that
+ *     fails either gate is NEVER imported.
+ *  3. Only after consent + integrity pass does the loader import (execute) the
+ *     plugin source — the last action before activation. This is the security
+ *     boundary: a tampered or unapproved plugin's top-level side effects never
+ *     run, even if it would later be "not activated."
+ *  4. Post-import, a plugin that declares additional capabilities in its code is
+ *     consent-checked again (best-effort, since top-level already ran), a
+ *     point-of-use permission guard runs, and non-isolated declarations surface
+ *     a "trusted-but-unsandboxed" notice.
+ *  5. Activation of the consented plugins runs concurrently, but recorded in a
  *     deterministic order (sorted by plugin id) so the UI/registration order is
  *     stable across reloads.
  */
 export async function loadVaultPlugins(vault: string): Promise<void> {
   deactivateVaultPlugins()
   ensureLifecycleErrorRouter()
-  let dirs
+  const adapter = makeVaultPluginFsAdapter(vault)
+  let entries: PluginFsEntry[]
   try {
-    dirs = await fsService.list(vault, 'plugins')
+    entries = await adapter.readdir(joinPath(vault, 'plugins'))
   } catch {
     return
   }
-  const pluginDirs = dirs.filter((d) => d.is_dir)
+  const pluginDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name)
 
-  // Phase 1 — parallel, independent per-plugin work (manifest + code + import).
+  // Phase 1 — parallel, independent per-plugin work (manifest + code + digest).
+  // No import happens here; execution is deferred until after the gates below.
   const preloaded = await runBounded(
-    pluginDirs.map((dir) => () => preloadVaultPlugin(vault, dir.name)),
+    pluginDirs.map((name) => () => preloadVaultPlugin(adapter, vault, name)),
     MAX_PARALLEL_PLUGIN_LOADS,
   )
   // Deterministic registration order for the UI, independent of IO timing.
   preloaded.sort((a, b) => (a.meta?.id ?? a.dirName).localeCompare(b.meta?.id ?? b.dirName))
 
-  // Phase 2 — sequential permission confirmation (user dialog) + point-of-use
-  // permission guard + integrity verification. Collect the consented plugins
-  // for concurrent activation.
+  // Phase 2 — sequential permission confirmation (user dialog) + integrity
+  // verification, THEN the gated import. Collect the consented plugins for
+  // concurrent activation.
+  const integrityStore = makeVaultIntegrityStore(vault)
   const consented: PreloadedPlugin[] = []
   for (const p of preloaded) {
     // A directory without a manifest is not a plugin; drop it quietly.
@@ -480,15 +536,85 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
       notifyError(describePluginError(p.error))
       continue
     }
-    const loadResult = p.loadResult
-    if (!loadResult || !loadResult.ok) {
-      // Defensive: p.error was absent, so this should never happen, but avoid
-      // activating an errored result.
-      notifyError(describePluginError(p.error ?? createPluginError('PLUGIN_LOAD_FAILED', { pluginId: p.dirName })))
+    const meta = p.meta
+    const source = p.source
+    if (!meta || !source) continue
+
+    // GATE 1 — permission consent BEFORE any execution. Only capabilities
+    // declared in the manifest are known pre-import; those are the trust
+    // contract. A denial here means the module is never imported.
+    const preManifest = { permissions: meta.permissions } as PluginDefinition
+    if (!(await askPluginPermission(meta, preManifest))) {
+      const declared = collectPluginPermissions(meta, preManifest)
+      notifyError(
+        describePluginError(
+          createPluginError('PLUGIN_PERMISSION_DENIED', {
+            pluginId: meta.id,
+            message:
+              declared.length > 0
+                ? `Plugin "${meta.name}" requires permission(s): ${declared.join(', ')} but consent was not granted.`
+                : t('plugin.permissionSkipped', { name: meta.name }),
+            recovery: 'Grant the requested permission in the plugin settings, then reload the vault.',
+          }),
+        ),
+      )
       continue
     }
-    const meta = loadResult.meta
+
+    // GATE 2 — integrity BEFORE any execution. Refuse to silently run a plugin
+    // whose code/manifest changed since it was approved. First approval records
+    // the baseline; a mismatch is surfaced (re-approve/deny) instead of auto-run.
+    let baseline: { id: string; version: string; digest: string } | null = null
+    const digest = p.digest
+    if (digest) {
+      const verdict = verifyPluginIntegrity(meta.id, digest, integrityStore)
+      if (verdict === 'mismatch') {
+        const expected = getRecordedDigest(vault, meta.id)
+        const reapprove = await askReapproveIntegrity(meta, expected ?? '', digest)
+        if (!reapprove) {
+          notifyError(
+            describePluginError(
+              createPluginError('PLUGIN_VERIFY_FAILED', {
+                pluginId: meta.id,
+                message: `Plugin "${meta.name}"'s code or manifest changed since you approved it; refusing to run it.`,
+                recovery: 'Re-approve it only if you trust the new version, or reinstall the plugin.',
+              }),
+            ),
+          )
+          continue
+        }
+        // Re-approved: adopt the new fingerprint as the baseline after import succeeds.
+        baseline = { id: meta.id, version: meta.version, digest }
+      } else if (verdict === 'missing') {
+        // First approval in this store: record the baseline fingerprint after import succeeds.
+        baseline = { id: meta.id, version: meta.version, digest }
+      }
+    }
+
+    // GATE 3 — the import (LAST action before activation). Only reached after
+    // consent + integrity pass, so a tampered/unapproved plugin's top-level
+    // module code never executes.
+    const importer: DynamicImport = () => importSource(source)
+    let loadResult: LoadResult
+    try {
+      loadResult = await loadPlugin(meta, importer)
+    } catch (e) {
+      // loadPlugin normally swallows load errors into an ok:false result, but a
+      // dynamic-import rejection can still escape — classify it the same way
+      // instead of bubbling and aborting the whole scan.
+      notifyError(describePluginError(loadFailure(meta, e instanceof Error ? e.message : String(e))))
+      continue
+    }
+    if (!loadResult.ok) {
+      notifyError(describePluginError(loadFailure(meta, loadResult.error)))
+      continue
+    }
     const definition = loadResult.definition
+
+    // Post-import defensive consent: a plugin may declare capabilities in its
+    // code that were not in the manifest. Re-verify the merged set so a
+    // code-level declaration is still consent-gated. (Top-level has run by now,
+    // but we refuse to register/activate the plugin and surface the denial.)
     if (!(await askPluginPermission(meta, definition))) {
       const declared = collectPluginPermissions(meta, definition)
       notifyError(
@@ -505,6 +631,7 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
       )
       continue
     }
+
     // Point-of-use guard: re-verify every declared permission is present before
     // activation; a missing capability rejects loudly instead of silently
     // proceeding. Today consent is all-or-nothing, so the granted set equals the
@@ -516,39 +643,17 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
         detail: 'activate its declared capabilities',
       })
     }
-    // Integrity gate: refuse to silently run a plugin whose code/manifest changed
-    // since it was approved. First approval records the baseline; a mismatch is
-    // surfaced (confirm/deny) instead of auto-run.
-    const digest = p.digest
-    if (digest) {
-      const verdict = verifyPluginIntegrity(meta.id, digest, integrityStore)
-      if (verdict === 'mismatch') {
-        const expected = getRecordedDigest(meta.id)
-        const reapprove = await askReapproveIntegrity(meta, expected ?? '', digest)
-        if (!reapprove) {
-          notifyError(
-            describePluginError(
-              createPluginError('PLUGIN_VERIFY_FAILED', {
-                pluginId: meta.id,
-                message: `Plugin "${meta.name}" was modified since it was last approved; refusing to run it.`,
-                recovery: 'Re-approve the plugin or reinstall it.',
-              }),
-            ),
-          )
-          continue
-        }
-        // Re-approved: adopt the new fingerprint as the baseline.
-        setRecordedDigest(meta.id, meta.version, digest)
-      } else if (verdict === 'missing') {
-        // First approval in this store: record the baseline fingerprint.
-        setRecordedDigest(meta.id, meta.version, digest)
-      }
-    }
+
+    // Adopt the (re-)approved fingerprint as the new baseline now that we have
+    // committed to running this plugin.
+    if (baseline) setRecordedDigest(vault, baseline.id, baseline.version, baseline.digest)
+
     // A declared capability is not capability-isolated while the plugin runs in
     // the main window; once we have decided to run it, make that explicit rather
     // than pretending to sandbox it.
     const nonIsolated = getNonIsolatedPermissions(meta, definition)
     signalUnsandboxedCapabilities(meta, nonIsolated)
+    p.loadResult = loadResult
     consented.push(p)
   }
 

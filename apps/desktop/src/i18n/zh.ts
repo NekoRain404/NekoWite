@@ -527,6 +527,12 @@ export const zh = {
       '插件「{name}」请求访问以下能力：{perms}。当前插件与主应用同进程运行（无沙箱隔离），仅在信任该插件时允许。',
     permissionAllow: '允许',
     permissionDeny: '拒绝',
+    integrityTitle: '插件代码已变更',
+    integrityBody:
+      '插件「{name}」自你上次批准后已发生变化（清单或代码指纹不一致）。仅当你信任新版本时才重新批准；否则请拒绝并重新安装。',
+    integrityDigest: '已记录：{expected}\n当前：{actual}',
+    integrityAllow: '重新批准',
+    integrityDeny: '拒绝',
     permissionAi: 'AI 能力',
     permissionFs: '文件读写',
     permissionNetwork: '网络访问',
