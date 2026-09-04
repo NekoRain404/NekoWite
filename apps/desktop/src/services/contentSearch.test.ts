@@ -94,8 +94,8 @@ describe('contentMetaMatch', () => {
   })
 })
 
-describe('searchContentMatches (metadata-first)', () => {
-  it('reads the body only for candidates whose metadata matches', async () => {
+describe('searchContentMatches (full-body scan)', () => {
+  it('finds a query that matches only deep in a note body (metadata-first regression)', async () => {
     const reads: string[] = []
     const candidates: ContentSearchCandidate[] = [
       {
@@ -109,7 +109,8 @@ describe('searchContentMatches (metadata-first)', () => {
           return 'we study graph algorithms'
         },
       },
-      // metadata misses the query, body hits -> cheaply rejected, never read.
+      // metadata misses the query, but the body hits deep in the text ->
+      // must still be read and returned (never silently dropped).
       {
         path: '/v/b.md',
         name: 'b.md',
@@ -122,10 +123,11 @@ describe('searchContentMatches (metadata-first)', () => {
         },
       },
     ]
-    const hits = await searchContentMatches(candidates, 'graph')
-    expect(reads).toEqual(['a'])
-    expect(hits.map((h) => h.path)).toEqual(['/v/a.md'])
+    const hits = await searchContentMatches(candidates, 'graph', undefined, 1)
+    expect(reads).toEqual(['a', 'b'])
+    expect(hits.map((h) => h.path)).toEqual(['/v/a.md', '/v/b.md'])
     expect(hits[0]!.snippet).toContain('graph')
+    expect(hits[1]!.snippet).toContain('graph')
   })
 
   it('returns an empty result for a blank query', async () => {
