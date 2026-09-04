@@ -96,8 +96,10 @@ export function metaHaystack(
   return `${meta.path} ${meta.name} ${meta.title} ${meta.tags.join(' ')} ${meta.summary}`.toLowerCase()
 }
 
-/** Cheap, disk-free prefilter: does `query` appear in the index metadata
- *  (path / name / title / tags / first-line)? */
+/** Cheap, disk-free metadata check: does `query` appear in the index metadata
+ *  (path / name / title / tags / first-line)? Standalone helper — the complete
+ *  content search does NOT use this to gate body reads, since a note can match
+ *  only deep in its body. */
 export function contentMetaMatch(meta: ContentMeta, query: string): boolean {
   const q = query.trim().toLowerCase()
   if (!q) return false
@@ -129,16 +131,18 @@ export async function mapWithConcurrency<T, R>(
   return results
 }
 
-/** Run the metadata-first full-text search. Candidates whose index metadata
- *  misses the query are rejected WITHOUT reading their body — only
- *  metadata-matching candidates are read, then folded once and body-matched so
- *  the lowercased form is reused for both the match and the snippet. The
- *  expected tradeoff is that a match sitting deep in a body (not reflected in
- *  path / name / title / tags / first-line) is not surfaced.
+/** Run the complete full-text search. Every candidate's body is read and
+ *  matched, so a hit sitting deep in a note body is surfaced even when the
+ *  note's index metadata (path / name / title / tags / first-line) does not
+ *  contain the query — a metadata-first prefilter would silently drop those
+ *  notes. Each body is folded to lowercase once and that single folded form is
+ *  reused for both the match and the snippet, so a body is never folded twice.
  *
- *  `signal` cancels in-flight work: it is checked between awaits (before each
- *  read and again after it) so a superseded search stops before its next read /
- *  match step instead of grinding through the whole vault. */
+ *  Cost is bounded by the caller's debounce, by `concurrency` (no more than
+ *  `concurrency` bodies are read at once), and by `signal`: it is checked
+ *  before each read, again after it, and at the top of each worker loop, so a
+ *  superseded search stops scheduling new reads/matches (latest-wins) instead
+ *  of grinding through the whole vault. */
 export async function searchContentMatches(
   candidates: readonly ContentSearchCandidate[],
   query: string,
@@ -149,11 +153,8 @@ export async function searchContentMatches(
   if (!q) return []
   if (signal?.aborted) return []
 
-  const metaHits = candidates.filter((c) => metaHaystack(c).includes(q))
-  if (signal?.aborted) return []
-
   const hits = await mapWithConcurrency(
-    metaHits,
+    candidates,
     concurrency,
     async (c) => {
       if (signal?.aborted) return null
