@@ -7,3 +7,6 @@ test-results/
 playwright-report/
 *.local
 .DS_Store
+
+# local release build artifact
+/nekowite-bin
