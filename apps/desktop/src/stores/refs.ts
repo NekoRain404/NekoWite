@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { fsService } from '../services/fs'
+import { fsService } from '../platform/gateways/fs'
 import { detectFormat, parseRefs, type Reference } from '../services/refs'
 
 export const useRefsStore = defineStore('refs', () => {

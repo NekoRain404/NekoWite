@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { UnlistenFn } from '@tauri-apps/api/event'
 import { ChevronRight, FilePlus2, FileText, Folder, FolderOpen, FolderPlus, PencilLine, Trash2 } from 'lucide-vue-next'
-import { fsService } from '../services/fs'
-import type { FileEntry, FsChangeEvent } from '../services/fs'
+import { fsService } from '../platform/gateways/fs'
+import type { FileEntry, FsChangeEvent } from '../platform/gateways/fs'
 import { resolveDropTarget, type DropRow } from '../services/treeDrop'
 import { decideConflict, notifyError } from '../services/errors'
 import { useTabsStore } from '../stores/tabs'
@@ -34,7 +33,7 @@ const emit = defineEmits<{
 
 const tabs = useTabsStore()
 const root = ref<TreeNode | null>(null)
-const unlisten = ref<UnlistenFn | null>(null)
+const unlisten = ref<(() => void) | null>(null)
 const confirmPath = ref<string | null>(null)
 const activePath = computed(() => tabs.activeTab?.path ?? null)
 const selectedDirPath = ref<string | null>(null)

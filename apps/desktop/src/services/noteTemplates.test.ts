@@ -6,7 +6,7 @@ const writeMock = vi.hoisted(() => vi.fn())
 const createDirMock = vi.hoisted(() => vi.fn())
 const readMock = vi.hoisted(() => vi.fn())
 
-vi.mock('./fs', () => ({
+vi.mock('../platform/gateways/fs', () => ({
   fsService: {
     list: listMock,
     stat: statMock,

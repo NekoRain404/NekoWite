@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createMemoryFsGateway } from './gateways/memory'
-import type { FileEntry, FsGateway } from './gateways/contracts'
+import { createMemoryFsGateway } from '../platform/gateways/memory'
+import type { FileEntry, FsGateway } from '../platform/gateways/contracts'
 import {
   deleteAttachment,
   formatBytes,

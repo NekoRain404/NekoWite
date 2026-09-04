@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import type { NekoEditor } from '@nekowite/editor-core'
-import { fsService } from '../../../services/fs'
+import { fsService } from '../../../platform/gateways/fs'
 import { notifyError } from '../../../services/errors'
 import { t } from '../../../i18n'
 import { useTabsStore } from '../../../stores/tabs'

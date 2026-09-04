@@ -1,6 +1,6 @@
 import { ATTACHMENTS_DIR, extensionFromFileName } from './attachments'
-import { fsService } from './fs'
-import type { FileEntry, FsGateway } from './gateways/contracts'
+import { fsService } from '../platform/gateways/fs'
+import type { FileEntry, FsGateway } from '../platform/gateways/contracts'
 import { t } from '../i18n'
 
 /**

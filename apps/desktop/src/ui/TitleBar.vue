@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { getCurrentWindow } from '@tauri-apps/api/window'
+import { getWindowControls } from '../platform/window'
 import { Copy, Minus, PanelLeftClose, PanelLeftOpen, Square, X } from 'lucide-vue-next'
 import { t } from '../i18n'
 
@@ -21,7 +21,7 @@ let unlistenResized: (() => void) | null = null
 async function refreshMaximized(): Promise<void> {
   if (!inTauri) return
   try {
-    maximized.value = await getCurrentWindow().isMaximized()
+    maximized.value = await getWindowControls().isMaximized()
   } catch {
     maximized.value = false
   }
@@ -29,17 +29,17 @@ async function refreshMaximized(): Promise<void> {
 
 function minimize(): void {
   if (!inTauri) return
-  void getCurrentWindow().minimize().catch(() => undefined)
+  void getWindowControls().minimize().catch(() => undefined)
 }
 
 function toggleMaximize(): void {
   if (!inTauri) return
-  void getCurrentWindow().toggleMaximize().catch(() => undefined)
+  void getWindowControls().toggleMaximize().catch(() => undefined)
 }
 
 function close(): void {
   if (!inTauri) return
-  void getCurrentWindow().close().catch(() => undefined)
+  void getWindowControls().close().catch(() => undefined)
 }
 
 function onDoubleClick(): void {
@@ -51,7 +51,7 @@ onMounted(async () => {
   if (!inTauri) return
   await refreshMaximized()
   try {
-    unlistenResized = await getCurrentWindow().onResized(() => {
+    unlistenResized = await getWindowControls().onResized(() => {
       void refreshMaximized()
     })
   } catch {

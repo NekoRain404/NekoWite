@@ -1,7 +1,7 @@
 import type { NekoEditor } from '@nekowite/editor-core'
-import { editorBridge } from './editorBridge'
+import { editorSessionManager } from '../features/editor/sessionManager'
 import { notifyError } from './errors'
-import { getGateways } from './gateways/index'
+import { getSharedGateways } from '../platform/runtime/gatewayRuntime'
 import { useSettingsStore } from '../stores/settings'
 import type { AIConfig } from '../stores/settings'
 import { t } from '../i18n'
@@ -56,7 +56,7 @@ function cancelStream(): void {
     // activeId check, so drop them here to keep cancelledIds bounded.
     cancelledIds.clear()
     cancelledIds.add(id)
-    void Promise.resolve(getGateways().ai.cancel(id)).catch(() => undefined)
+    void Promise.resolve(getSharedGateways().ai.cancel(id)).catch(() => undefined)
   }
   cleanupListeners()
   activeId = null
@@ -78,7 +78,7 @@ async function triggerSuggestion(
   const mySeq = streamSeq
   cancelStream()
 
-  const editor = editorArg ?? editorBridge.getEditor()
+  const editor = editorArg ?? editorSessionManager.getActiveEditor()
   if (!editor) return
 
   const config = configArg ?? useSettingsStore().config()
@@ -91,7 +91,7 @@ async function triggerSuggestion(
   const superseded = (): boolean => mySeq !== streamSeq
 
   try {
-    const offChunk = await getGateways().events.on<{ id: string; text: string }>('ai-chunk', (e) => {
+    const offChunk = await getSharedGateways().events.on<{ id: string; text: string }>('ai-chunk', (e) => {
       if (superseded()) return
       if (cancelledIds.has(e.id)) return
       if (activeId !== null && activeId !== e.id) return
@@ -110,7 +110,7 @@ async function triggerSuggestion(
     // Cleanup only for the stream we actually own. done/error for a stale id
     // (or an id we never adopted, e.g. a cancelled stream's lingering event)
     // must NOT wipe the current request's listeners.
-    const offDone = await getGateways().events.on<{ id: string; full: string }>('ai-done', (e) => {
+    const offDone = await getSharedGateways().events.on<{ id: string; full: string }>('ai-done', (e) => {
       const id = e.id
       // Never adopt a cancelled/expired id: a stale done from a stream that
       // was cancelled before a newer one registered could otherwise be
@@ -135,7 +135,7 @@ async function triggerSuggestion(
       return
     }
     cleanups.push(offDone)
-    const offError = await getGateways().events.on<{ id: string; message: string }>('ai-error', (e) => {
+    const offError = await getSharedGateways().events.on<{ id: string; message: string }>('ai-error', (e) => {
       const id = e.id
       if (cancelledIds.has(id)) {
         cancelledIds.delete(id)
@@ -173,7 +173,7 @@ async function triggerSuggestion(
   if (superseded()) return
 
   try {
-    await getGateways().ai.complete(config, prompt)
+    await getSharedGateways().ai.complete(config, prompt)
   } catch (e) {
     cleanupListeners()
     activeId = null
@@ -192,13 +192,13 @@ function accept(): void {
   // Bump the generation so a trigger that is still awaiting listener
   // registration cannot attach after the suggestion was accepted/rejected.
   streamSeq++
-  editorBridge.getEditor()?.acceptSuggestion()
+  editorSessionManager.getActiveEditor()?.acceptSuggestion()
   cancelStream()
 }
 
 function reject(): void {
   streamSeq++
-  editorBridge.getEditor()?.rejectSuggestion()
+  editorSessionManager.getActiveEditor()?.rejectSuggestion()
   cancelStream()
 }
 
@@ -239,7 +239,7 @@ export function startChatCompletion(
     const id = activeId
     if (id) {
       cancelledIds.add(id)
-      void Promise.resolve(getGateways().ai.cancel(id)).catch(() => undefined)
+      void Promise.resolve(getSharedGateways().ai.cancel(id)).catch(() => undefined)
     }
     cleanupListeners()
     activeId = null
@@ -247,7 +247,7 @@ export function startChatCompletion(
 
   const setupListeners = async (): Promise<boolean> => {
     try {
-      const offChunk = await getGateways().events.on<{ id: string; text: string }>('ai-chunk', (e) => {
+      const offChunk = await getSharedGateways().events.on<{ id: string; text: string }>('ai-chunk', (e) => {
         if (superseded()) return
         if (cancelledIds.has(e.id)) return
         if (activeId !== null && activeId !== e.id) return
@@ -260,7 +260,7 @@ export function startChatCompletion(
         return false
       }
       cleanups.push(offChunk)
-      const offDone = await getGateways().events.on<{ id: string; full: string }>('ai-done', (e) => {
+      const offDone = await getSharedGateways().events.on<{ id: string; full: string }>('ai-done', (e) => {
         const id = e.id
         if (cancelledIds.has(id)) {
           cancelledIds.delete(id)
@@ -281,7 +281,7 @@ export function startChatCompletion(
         return false
       }
       cleanups.push(offDone)
-      const offError = await getGateways().events.on<{ id: string; message: string }>('ai-error', (e) => {
+      const offError = await getSharedGateways().events.on<{ id: string; message: string }>('ai-error', (e) => {
         const id = e.id
         if (cancelledIds.has(id)) {
           cancelledIds.delete(id)
@@ -320,7 +320,7 @@ export function startChatCompletion(
     if (!(await setupListeners())) return { cancel }
     if (superseded()) return { cancel }
     try {
-      await getGateways().ai.complete(config, prompt, images)
+      await getSharedGateways().ai.complete(config, prompt, images)
     } catch (e) {
       cleanupListeners()
       activeId = null

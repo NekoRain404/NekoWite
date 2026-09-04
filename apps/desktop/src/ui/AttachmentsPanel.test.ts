@@ -11,7 +11,7 @@ const statMock = vi.hoisted(() => vi.fn())
 const deleteFileMock = vi.hoisted(() => vi.fn())
 const resolveMediaPathMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../services/fs', () => ({
+vi.mock('../platform/gateways/fs', () => ({
   fsService: {
     read: vi.fn(),
     write: vi.fn(),

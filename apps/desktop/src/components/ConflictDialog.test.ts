@@ -9,7 +9,7 @@ const writeMock = vi.hoisted(() => vi.fn())
 const statMock = vi.hoisted(() => vi.fn())
 const listHistoryMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../services/fs', () => ({
+vi.mock('../platform/gateways/fs', () => ({
   fsService: {
     read: readMock,
     write: writeMock,

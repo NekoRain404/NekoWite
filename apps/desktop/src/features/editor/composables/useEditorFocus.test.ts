@@ -14,7 +14,7 @@ import { announce } from '../../../services/announcer'
 
 const readMock = vi.hoisted(() => vi.fn())
 const writeMock = vi.hoisted(() => vi.fn())
-vi.mock('../../../services/fs', () => ({
+vi.mock('../../../platform/gateways/fs', () => ({
   fsService: { read: readMock, write: writeMock },
 }))
 

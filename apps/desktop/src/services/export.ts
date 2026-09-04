@@ -1,5 +1,5 @@
 import type { ExportRef, RenderDocumentOptions } from '@nekowite/editor-core'
-import { fsService } from './fs'
+import { fsService } from '../platform/gateways/fs'
 import { buildComponentRenderers } from './exportRenderers'
 import { createImageSrcResolver } from './attachments'
 import { splitFrontmatterRaw } from './noteMeta'

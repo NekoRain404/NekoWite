@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useTabsStore } from '../stores/tabs'
 
-vi.mock('../services/fs', () => ({
+vi.mock('../platform/gateways/fs', () => ({
   fsService: {
     read: vi.fn().mockResolvedValue('Hello world\n'),
     write: vi.fn(),

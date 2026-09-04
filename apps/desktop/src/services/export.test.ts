@@ -5,7 +5,7 @@ import { exportHtml, exportToPdf, buildComponentRenderers } from './export'
 import { useSettingsStore } from '../stores/settings'
 
 const writeMock = vi.hoisted(() => vi.fn())
-vi.mock('./fs', () => ({ fsService: { write: writeMock } }))
+vi.mock('../platform/gateways/fs', () => ({ fsService: { write: writeMock } }))
 
 describe('buildComponentRenderers', () => {
   it('renders Callout to aside', () => {

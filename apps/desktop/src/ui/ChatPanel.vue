@@ -14,7 +14,7 @@ import {
 } from 'lucide-vue-next'
 import { startChatCompletion, aiService } from '../services/ai'
 import { notifyError } from '../services/errors'
-import { editorBridge } from '../services/editorBridge'
+import { editorSessionManager } from '../features/editor/sessionManager'
 import { collectClipboardImages, isImageFile } from '../services/attachments'
 import { useSettingsStore } from '../stores/settings'
 import { useTabsStore } from '../stores/tabs'
@@ -80,7 +80,7 @@ function noteTitleFromPath(path: string | null): string {
 }
 
 function activeSelection(): string {
-  const view = editorBridge.getView()
+  const view = editorSessionManager.getView()
   if (!view) return ''
   const { state } = view
   const sel = state.selection
@@ -340,7 +340,7 @@ function clearAll(): void {
 
 async function insertIntoDocument(msg: ChatMessage): Promise<void> {
   if (!tabs.activeTab) return
-  const editor = editorBridge.getEditor()
+  const editor = editorSessionManager.getActiveEditor()
   if (!editor) {
     notifyError(t('chat.editorNotReady'))
     return

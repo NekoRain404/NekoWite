@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { GitCompareArrows } from 'lucide-vue-next'
-import { fsService } from '../services/fs'
+import { fsService } from '../platform/gateways/fs'
 import { notifyError } from '../services/errors'
 import { useTabsStore } from '../stores/tabs'
-import type { HistoryEntry } from '../services/gateways/contracts'
+import type { HistoryEntry } from '../platform/gateways/contracts'
 import DiffView from './DiffView.vue'
 import { t } from '../i18n'
 

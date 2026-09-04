@@ -10,7 +10,7 @@
  */
 
 import { contentCache } from '../../../services/contentCache'
-import { fsService } from '../../../services/fs'
+import { fsService } from '../../../platform/gateways/fs'
 import { clearIndex, loadIndex, saveIndex } from '../../../services/searchIndex'
 import { vaultFileIndex } from '../../../services/vaultFiles'
 import {

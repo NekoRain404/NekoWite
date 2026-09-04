@@ -6,7 +6,7 @@ import { createDocumentSession, type DocumentSession } from '../model/documentSe
 import { createEditorPersistence } from './editorPersistence'
 import type { NekoEditor } from '@nekowite/editor-core'
 
-vi.mock('../../../services/fs', () => ({
+vi.mock('../../../platform/gateways/fs', () => ({
   fsService: {
     read: vi.fn().mockResolvedValue('# Title\n\nbody'),
     write: vi.fn().mockResolvedValue(undefined),

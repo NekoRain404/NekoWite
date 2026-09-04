@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { NekoEditor } from '@nekowite/editor-core'
-import { editorBridge } from '../services/editorBridge'
+import { editorSessionManager } from '../features/editor/sessionManager'
 
 type EditorView = NonNullable<ReturnType<NekoEditor['getView']>>
 
@@ -30,7 +30,7 @@ export const useFloatStore = defineStore('float', () => {
   function bumpZ(step: number): void {
     const pos = activePos.value
     if (pos == null) return
-    const view = editorBridge.getView()
+    const view = editorSessionManager.getView()
     if (!view) return
     const node = view.state.doc.nodeAt(pos)
     if (!node) return
@@ -65,7 +65,7 @@ export const useFloatStore = defineStore('float', () => {
   function removeSelected(): void {
     const pos = activePos.value
     if (pos == null) return
-    const view = editorBridge.getView()
+    const view = editorSessionManager.getView()
     if (!view) return
     const node = view.state.doc.nodeAt(pos)
     if (!node) return

@@ -10,7 +10,8 @@ import {
   createEditor,
 } from '@nekowite/editor-core'
 import { setCalloutView } from '../../../plugins/callout'
-import { editorBridge } from '../../../services/editorBridge'
+import { editorSessionManager } from '../sessionManager'
+import { useTabsStore } from '../../../stores/tabs'
 import { createDocumentSession, type DocumentSession } from '../model/documentSession'
 import { createEditorController } from './editorController'
 
@@ -45,27 +46,33 @@ describe('editorController', () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     session = createDocumentSession()
+    // Tear down any session a prior case left behind (module singleton).
+    editorSessionManager.destroyAll()
     vi.mocked(createEditor).mockClear()
     vi.mocked(configureImageResolver).mockClear()
     vi.mocked(configureHeadingAnchorUrl).mockClear()
     vi.mocked(configureWikilinkHandler).mockClear()
     vi.mocked(clearImageSelection).mockClear()
     vi.mocked(setCalloutView).mockClear()
+    // The pane only mounts when a tab is open; give the controller an active
+    // tab so its session is registered and promoted.
+    useTabsStore().setActive('tab-1')
   })
 
-  it('mount() creates the editor and registers it with the bridge', () => {
+  it('mount() creates the editor and registers a session for the active tab', () => {
     const host = document.createElement('div')
     const controller = createEditorController({ session, getEditorEl: () => host })
     controller.mount()
     expect(createEditor).toHaveBeenCalledWith(host, { plugins: basicPlugins })
     expect(session.editor).toBeTruthy()
-    expect(editorBridge.getEditor()).toBe(session.editor)
+    expect(editorSessionManager.getSession('tab-1')).toBe(session.editor)
+    expect(editorSessionManager.getActiveEditor()).toBe(session.editor)
     expect(configureImageResolver).toHaveBeenCalled()
     expect(configureHeadingAnchorUrl).toHaveBeenCalled()
     expect(configureWikilinkHandler).toHaveBeenCalled()
   })
 
-  it('destroy() tears down the view, bridge and decorators', () => {
+  it('destroy() tears down the view, session and decorators', () => {
     const host = document.createElement('div')
     const controller = createEditorController({ session, getEditorEl: () => host })
     controller.mount()
@@ -77,7 +84,8 @@ describe('editorController', () => {
     expect(configureHeadingAnchorUrl).toHaveBeenLastCalledWith(null)
     expect(configureWikilinkHandler).toHaveBeenLastCalledWith(null)
     expect(session.editor).toBeNull()
-    expect(editorBridge.getEditor()).toBeNull()
+    expect(editorSessionManager.getSession('tab-1')).toBeNull()
+    expect(editorSessionManager.getActiveEditor()).toBeNull()
     expect(editor.destroy).toHaveBeenCalled()
   })
 })

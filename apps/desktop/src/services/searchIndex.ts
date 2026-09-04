@@ -35,7 +35,7 @@
  */
 
 import { parseNoteMeta } from './noteMeta'
-import type { FileStat } from './gateways/contracts'
+import type { FileStat } from '../platform/gateways/contracts'
 
 export interface IndexedDoc {
   /** Version token `${mtime}:${size}` — changed files produce a different token. */

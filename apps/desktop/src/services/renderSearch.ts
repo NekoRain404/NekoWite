@@ -24,7 +24,7 @@ import {
   type DecorationSource,
 } from '@milkdown/prose/view'
 import { findMisspelled, suggestions } from './spellcheck'
-import { editorBridge } from './editorBridge'
+import { editorSessionManager } from '../features/editor/sessionManager'
 import { debounce } from './timing'
 
 type EditorView = NonNullable<ReturnType<NekoEditor['getView']>>
@@ -59,7 +59,7 @@ export function setRenderSearchState(patch: Partial<RenderSearchState>): void {
 }
 
 export function getView(): EditorView | null {
-  return editorBridge.getView()
+  return editorSessionManager.getView()
 }
 
 function escapeRegExp(input: string): string {

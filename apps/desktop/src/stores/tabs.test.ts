@@ -19,7 +19,7 @@ const readHistoryMock = vi.hoisted(() => vi.fn())
 const createDirMock = vi.hoisted(() => vi.fn())
 const renameEntryMock = vi.hoisted(() => vi.fn())
 const saveFileDialogMock = vi.hoisted(() => vi.fn())
-vi.mock('../services/fs', () => ({
+vi.mock('../platform/gateways/fs', () => ({
   fsService: {
     read: readMock,
     write: writeMock,
