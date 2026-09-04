@@ -697,4 +697,32 @@ watch(
   color: var(--app-muted);
   font-size: 11px;
 }
+
+/* Column-width resize: prosemirror-tables arms a thin handle at each column
+   divider on hover and flags the editor root with `.resize-cursor`. The handle
+   is visual only — pointer events are passed through so the underlying cell
+   still reacts to clicks (and the drag is detected by cursor-x proximity). */
+.editor-container :deep(.ProseMirror.resize-cursor) {
+  cursor: col-resize;
+}
+.editor-container :deep(.tableWrapper) {
+  overflow-x: auto;
+}
+.editor-container :deep(.column-resize-handle) {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  z-index: 20;
+  background: color-mix(in srgb, var(--app-accent) 55%, transparent);
+  pointer-events: none;
+}
+.editor-container :deep(.column-resize-dragging)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--app-accent) 18%, transparent);
+  pointer-events: none;
+}
 </style>

@@ -12,9 +12,17 @@
 
 import type { EditorView } from '@milkdown/prose/view'
 import { Plugin, PluginKey, Selection } from '@milkdown/prose/state'
-import { addRowAfter, findTable, isInTable, selectedRect } from '@milkdown/prose/tables'
+import { addRowAfter, CellSelection, findTable, isInTable, selectedRect } from '@milkdown/prose/tables'
+
+import {
+  copyCells,
+  cutCells,
+  getTableClipboard,
+  pasteCells,
+} from './clipboard'
 
 export const TABLE_AUTO_ROW_PLUGIN_KEY = 'nekowite.tableAutoRow'
+export const TABLE_CLIPBOARD_PLUGIN_KEY = 'nekowite.tableClipboard'
 
 /** True when the cursor sits in the final row and final column of a table. */
 export function isInLastCell(view: EditorView): boolean {
@@ -43,6 +51,60 @@ export const tableAutoRowKeymap = new Plugin({
       const sel = Selection.near($pos)
       view.dispatch(view.state.tr.setSelection(sel).scrollIntoView())
       return true
+    },
+  },
+})
+
+/**
+ * Cell copy / cut / paste keyboard bindings.
+ *
+ * Mod/Cmd+C / X / V ONLY intercept when there is an active cell selection (or,
+ * for paste, when the caret is inside a table). Outside a table every keystroke
+ * returns false so the normal text copy/cut/paste path is left untouched.
+ *
+ * Copy/cut write the cell selection to a tab-separated fragment. Cut then
+ * clears the selected cells in a single transaction (one undo step). Paste
+ * reads the in-session buffer (set by our own copy/cut); when it is empty it
+ * returns false so the browser's native paste event — which prosemirror-tables
+ * `handlePaste` already processes for cell selections — lands external
+ * TSV/table content in the grid.
+ */
+export const tableClipboardKeymap = new Plugin({
+  key: new PluginKey(TABLE_CLIPBOARD_PLUGIN_KEY),
+  props: {
+    handleKeyDown(view: EditorView, event: KeyboardEvent): boolean {
+      const mod = event.ctrlKey || event.metaKey
+      if (!mod || !event.key) return false
+      const key = event.key.toLowerCase()
+      const sel = view.state.selection
+      const inCellSelection = sel instanceof CellSelection
+
+      if (key === 'c') {
+        if (!inCellSelection) return false
+        event.preventDefault()
+        return copyCells(view)
+      }
+
+      if (key === 'x') {
+        if (!inCellSelection) return false
+        event.preventDefault()
+        return cutCells(view)
+      }
+
+      if (key === 'v') {
+        if (!inCellSelection && !isInTable(view.state)) return false
+        const text = getTableClipboard()
+        // Only intercept when we have an in-session copy (copy/cut wrote the
+        // buffer). Otherwise fall through to the native paste event, which
+        // prosemirror-tables' `handlePaste` already processes for cell
+        // selections — so external TSV/table content still lands in the grid.
+        if (!text) return false
+        event.preventDefault()
+        pasteCells(view, text)
+        return true
+      }
+
+      return false
     },
   },
 })
