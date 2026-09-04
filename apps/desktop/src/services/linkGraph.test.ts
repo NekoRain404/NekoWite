@@ -91,6 +91,39 @@ describe('resolveLinkPath', () => {
     const upper = ['A.MD', 'sub/B.MDX']
     expect(resolveLinkPath('A.MD', 'sub/B', upper)).toBe('sub/B.MDX')
   })
+
+  it('resolves a sibling-dir wiki link to the note in the same directory, not a same-name root note', () => {
+    const paths = ['note.md', 'folder/note.md', 'folder/other.md']
+    // From a note inside folder/, the wikilink resolves to the sibling note in
+    // the same directory even though a root-level note shares its filename.
+    expect(resolveLinkPath('folder/other.md', 'note', paths)).toBe('folder/note.md')
+  })
+
+  it('chooses deterministically between same-name notes, independent of input order', () => {
+    const paths = ['guides/quick start.md', 'docs/quick start.md']
+    expect(resolveLinkPath('a.md', 'quick start', paths)).toBe('docs/quick start.md')
+    // Reversing the input order must not change the winner (no "first by array
+    // order" fallback).
+    expect(resolveLinkPath('a.md', 'quick start', [...paths].reverse())).toBe(
+      'docs/quick start.md',
+    )
+  })
+
+  it('prefers the same-name note whose directory best matches the source note', () => {
+    const paths = ['a/proj.md', 'x/p1/proj.md', 'x/y/sub/proj.md']
+    // Exact sibling (x/y/proj.md) does not exist; among the same-name notes the
+    // one sharing the most leading directories (x/y/sub/proj.md) wins.
+    expect(resolveLinkPath('x/y/note.md', 'proj', paths)).toBe('x/y/sub/proj.md')
+  })
+
+  it('anchors a leading-slash link to the vault root, not the note directory', () => {
+    const paths = ['guides/quick start.md', 'docs/quick start.md']
+    // /guides/quick start means vault-root guides/; it must NOT be resolved
+    // against the source note's docs/ directory (docs/guides/… does not exist).
+    expect(resolveLinkPath('docs/a.md', '/guides/quick start', paths)).toBe(
+      'guides/quick start.md',
+    )
+  })
 })
 
 describe('buildLinkGraph', () => {

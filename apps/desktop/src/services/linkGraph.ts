@@ -114,11 +114,30 @@ function hasMarkdownExtension(value: string): boolean {
   return lower.endsWith('.md') || lower.endsWith('.mdx')
 }
 
+/** Count how many leading directory segments two vault-relative paths share
+ * (`docs/` vs `docs/notes/b.md` → 1). Used to rank a best-match fallback. */
+function leadingSharedSegments(a: string, b: string): number {
+  const left = a.split('/').filter(Boolean)
+  const right = b.split('/').filter(Boolean)
+  let i = 0
+  while (i < left.length && i < right.length && left[i] === right[i]) i += 1
+  return i
+}
+
 /** Resolve a link target found in `fromNotePath` against the vault's note
  * paths. Relative paths go through the shared resolver; extension-less
  * wiki names first try `.md`/`.mdx` suffixes on the resolved path, then
- * fall back to matching by file-name stem. Returns the vault-relative
- * path of the matched note, or null when nothing matches. */
+ * fall back to a DETERMINISTIC best-match by file-name stem. Returns the
+ * vault-relative path of the matched note, or null when nothing matches.
+ *
+ * A leading `/` anchors the target to the vault ROOT (vault-relative),
+ * independently of the source note's directory. That root anchor is kept
+ * lossless: stripping it and resolving against the note directory would
+ * produce a spurious sub-path, silently miss the exact match, and fall back
+ * to "the first note with that filename" — picking a wrong same-name note.
+ * The stem fallback is likewise deterministic: it prefers the path sharing
+ * the most leading directories with the source note, then the
+ * lexicographically smallest path, never "first by input order". */
 export function resolveLinkPath(
   fromNotePath: string,
   linkTarget: string,
@@ -128,22 +147,35 @@ export function resolveLinkPath(
   if (!normalized || normalized.startsWith('#') || SCHEME_RE.test(normalized)) return null
   const withoutAnchor = normalized.split('#')[0].trim()
   if (!withoutAnchor) return null
-  const resolved = resolveRelativePath(noteDirectory(fromNotePath), withoutAnchor)
-  if (hasMarkdownExtension(resolved)) {
-    const exact = allPaths.find((path) => path === resolved)
+  const rootRelative = withoutAnchor.startsWith('/')
+  const target = rootRelative ? withoutAnchor.replace(/^\/+/, '') : withoutAnchor
+  if (!target) return null
+  const resolved = rootRelative
+    ? target
+    : resolveRelativePath(noteDirectory(fromNotePath), target)
+
+  const candidates = hasMarkdownExtension(resolved)
+    ? [resolved]
+    : [`${resolved}.md`, `${resolved}.mdx`]
+  for (const candidate of candidates) {
+    const exact = allPaths.find((path) => path === candidate)
     if (exact) return exact
-  } else {
-    for (const candidate of [`${resolved}.md`, `${resolved}.mdx`]) {
-      const exact = allPaths.find((path) => path === candidate)
-      if (exact) return exact
+  }
+
+  const stem = basenameStem(target).toLowerCase()
+  if (!stem) return null
+  const fromDir = noteDirectory(fromNotePath)
+  let best: string | null = null
+  let bestShared = -1
+  for (const path of allPaths) {
+    if (basenameStem(path).toLowerCase() !== stem) continue
+    const shared = leadingSharedSegments(fromDir, path)
+    if (best === null || shared > bestShared || (shared === bestShared && path < best)) {
+      best = path
+      bestShared = shared
     }
   }
-  const stem = basenameStem(withoutAnchor).toLowerCase()
-  if (stem) {
-    const byStem = allPaths.find((path) => basenameStem(path).toLowerCase() === stem)
-    if (byStem) return byStem
-  }
-  return null
+  return best
 }
 
 /** Build the note graph: every note becomes a node, every successfully

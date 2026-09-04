@@ -7,7 +7,7 @@ import {
   graphSignature,
   type LayoutPoint,
 } from '../services/linkGraph'
-import { fsService } from '../services/fs'
+import { fsService, type FsChangeEvent } from '../services/fs'
 import { vaultFileIndex } from '../services/vaultFiles'
 import { useTabsStore } from '../stores/tabs'
 import { t } from '../i18n'
@@ -19,9 +19,13 @@ import { t } from '../i18n'
 
 // vaultReady 缺省（undefined）时组件自行以 tabs.vault 是否就绪为准；
 // 显式传 false 可暂停加载（例如父容器尚未挂载完 vault）。
-const props = withDefaults(defineProps<{ vaultReady?: boolean | undefined }>(), {
-  vaultReady: undefined,
-})
+const props = withDefaults(
+  defineProps<{ vaultReady?: boolean | undefined; maxNotes?: number }>(),
+  {
+    vaultReady: undefined,
+    maxNotes: 200,
+  },
+)
 
 const tabs = useTabsStore()
 
@@ -33,6 +37,12 @@ const failed = ref(false)
 const truncated = ref(false)
 const noteCount = ref(0)
 const edgeCount = ref(0)
+/** Total number of markdown notes found in the vault, before the node cap is
+ * applied. Surfaced so truncation is never silent: the graph shows the actual
+ * "showing the first N of M" rather than hiding how many notes are dropped. */
+const totalNotes = ref(0)
+/** Node cap. Configurable via the `maxNotes` prop; defaults to 200. */
+const maxNotes = computed(() => Math.max(1, props.maxNotes))
 
 const canvasAriaLabel = computed(() =>
   t('graph.count', { n: noteCount.value, m: edgeCount.value }),
@@ -43,8 +53,10 @@ const hoverId = ref<string | null>(null)
 const hoverX = ref(0)
 const hoverY = ref(0)
 
-const MAX_NOTES = 200
 const READ_CONCURRENCY = 8
+/** Coalesce bursts of fs-change events into a single graph rebuild (a save may
+ * otherwise fire several read/stat events for one note). */
+const REBUILD_DEBOUNCE_MS = 300
 
 // Canvas 无法使用 CSS 变量，颜色经 getComputedStyle 读取 --app-* token；
 // token 缺失时（如测试环境）退化为中性灰，正常主题下不会用到。
@@ -73,6 +85,12 @@ let degrees = new Map<string, number>()
 let resizeObserver: ResizeObserver | null = null
 let themeObserver: MutationObserver | null = null
 let generation = 0
+// fs-change subscription and a debounced rebuild so the graph stays fresh while
+// the panel is open (not just on vault switch). Derived from the library/fs
+// change event; coalesces a burst and is cancelled on vault switch/teardown.
+let unlistenFs: (() => void) | null = null
+let rebuildTimer: ReturnType<typeof setTimeout> | null = null
+let disposed = false
 
 // 布局缓存：图谱结构与画布尺寸都没变时，直接复用上次计算结果，避免
 // resize/主题/视图切换等与内容无关的更新反复重跑昂贵的力导向布局。
@@ -120,8 +138,10 @@ async function rebuild(): Promise<void> {
   try {
     const paths = await vaultFileIndex.get(vault)
     if (thisGeneration !== generation) return
-    truncated.value = paths.length > MAX_NOTES
-    const contents = await readWithConcurrency(vault, paths.slice(0, MAX_NOTES))
+    const cap = maxNotes.value
+    totalNotes.value = paths.length
+    truncated.value = paths.length > cap
+    const contents = await readWithConcurrency(vault, paths.slice(0, cap))
     if (thisGeneration !== generation) return
     graph = buildLinkGraph(contents)
     degrees = new Map(graph.nodes.map((node) => [node.id, node.degree]))
@@ -136,6 +156,7 @@ async function rebuild(): Promise<void> {
     layout.value = []
     noteCount.value = 0
     edgeCount.value = 0
+    totalNotes.value = 0
     failed.value = true
     draw()
   } finally {
@@ -335,9 +356,39 @@ function fileName(path: string): string {
   return path.replace(/\\/g, '/').split('/').pop() ?? path
 }
 
+/** Debounce a rebuild so a burst of fs-change events collapses into one pass. */
+function scheduleRebuild(): void {
+  if (rebuildTimer !== null) clearTimeout(rebuildTimer)
+  rebuildTimer = setTimeout(() => {
+    rebuildTimer = null
+    if (disposed) return
+    void rebuild()
+  }, REBUILD_DEBOUNCE_MS)
+}
+
+/** Auto-rebuild the graph when note/link data changes (not just on vault
+ * switch). Only markdown changes affect the graph; attachment/directory churn
+ * is ignored. Invalidate the vault file index so an add/delete is picked up,
+ * then coalesce the rebuild. The resize/theme-only non-recompute behavior is
+ * preserved: relayout() reuses cached points when the node/edge set is
+ * unchanged. */
+function onFsChangeHandler(e: FsChangeEvent): void {
+  if (disposed) return
+  const vault = tabs.vault
+  if (!vault || props.vaultReady === false) return
+  if (!/\.(md|mdx)$/i.test(e.path)) return
+  vaultFileIndex.invalidate(vault)
+  scheduleRebuild()
+}
+
 watch(
   () => [tabs.vault, props.vaultReady] as const,
   ([vault]) => {
+    // Cancel any pending rebuild from the previous vault/state before acting.
+    if (rebuildTimer !== null) {
+      clearTimeout(rebuildTimer)
+      rebuildTimer = null
+    }
     if (vault && props.vaultReady !== false) {
       void rebuild()
       return
@@ -349,6 +400,8 @@ watch(
     layout.value = []
     noteCount.value = 0
     edgeCount.value = 0
+    totalNotes.value = 0
+    truncated.value = false
     loading.value = false
     failed.value = false
     draw()
@@ -377,9 +430,30 @@ onMounted(() => {
     attributes: true,
     attributeFilter: ['data-theme', 'data-accent'],
   })
+  // Subscribe to fs-change events so the graph rebuilds while the panel stays
+  // open. The listener is vault-agnostic (it reads tabs.vault at event time),
+  // so one registration survives vault switches; teardown unlistens. Wrapped in
+  // Promise.resolve so a gateway that returns a plain value (test mock) or a
+  // promise both work.
+  const pending = fsService.onFsChange(onFsChangeHandler)
+  Promise.resolve(pending)
+    .then((unlisten) => {
+      if (disposed) unlisten?.()
+      else unlistenFs = unlisten
+    })
+    .catch(() => {
+      // Registration failed (test/fallback gateway): keep existing behavior.
+    })
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  if (rebuildTimer !== null) {
+    clearTimeout(rebuildTimer)
+    rebuildTimer = null
+  }
+  unlistenFs?.()
+  unlistenFs = null
   generation += 1
   resizeObserver?.disconnect()
   resizeObserver = null
@@ -458,7 +532,10 @@ defineExpose({ rebuild })
         v-if="truncated"
         class="graph-truncated"
       >
-        {{ t('graph.truncated', { n: MAX_NOTES }) }}
+        {{ t('graph.truncated', { n: maxNotes }) }}<span
+          v-if="totalNotes > maxNotes"
+          class="graph-truncated-total"
+        > · 共 {{ totalNotes }} 篇</span>
       </p>
     </div>
   </section>
@@ -571,5 +648,9 @@ defineExpose({ rebuild })
   padding: 4px 12px;
   background: color-mix(in srgb, var(--app-panel) 72%, transparent);
   font-size: 10px;
+}
+.graph-truncated-total {
+  margin-left: 4px;
+  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
 }
 </style>
