@@ -6,7 +6,6 @@ import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
 import remarkFrontmatter from 'remark-frontmatter'
 import remarkMath from 'remark-math'
-import katexCss from 'katex/dist/katex.min.css?inline'
 import type { Root } from 'mdast'
 import { citeMdast } from '../cite'
 import { imageDimMdast } from '../image'
@@ -16,12 +15,21 @@ import { mdxJsxMdast, parseMdxTag } from '../mdx'
 // MathLive / the app's own renderer). Loading it lazily keeps the startup
 // import graph free of ~1MB of math machinery; the sync `renderDocument`
 // (tests only) degrades to plain-text math when KaTeX isn't loaded yet.
+// The KaTeX CSS is pulled in the same lazy way (via `?inline`, so the fonts
+// stay data: URIs and the exported HTML is self-contained) rather than being
+// statically imported, which would drag the whole vendor-katex chunk into the
+// entry's modulepreload graph.
 let katexModule: (typeof import('katex'))['default'] | null = null
+let katexCss = ''
 
 async function loadKatex(): Promise<void> {
   if (katexModule) return
-  const mod = await import('katex')
+  const [mod, cssMod] = await Promise.all([
+    import('katex'),
+    import('katex/dist/katex.min.css?inline'),
+  ])
   katexModule = mod.default ?? mod
+  katexCss = cssMod.default ?? cssMod
 }
 
 export interface ExportRef {
@@ -89,6 +97,11 @@ interface RenderContext {
   // as an atom whose children are opaque — cites inside a component body are
   // never numbered nor registered in the reference list.
   literalCites?: boolean
+  // Set during render when at least one math node is actually emitted. The
+  // exported <style> only injects the KaTeX CSS when math is present, so a
+  // document with no math stays lean and sync/async output stays identical
+  // (KaTeX CSS is only available after the lazy export-time load).
+  hasMath?: boolean
 }
 
 const processor = unified()
@@ -245,6 +258,7 @@ function renderChildren(nodes: RenderNode[], ctx: RenderContext): string {
 }
 
 function renderMath(node: RenderNode, ctx: RenderContext, display: boolean): string {
+  ctx.hasMath = true
   const value = node.value ?? ''
   if (ctx.math === 'text') {
     const delim = display ? '$$' : '$'
@@ -492,7 +506,7 @@ function renderFromChildren(children: RenderNode[], opts?: RenderDocumentOptions
   const style =
     opts?.includeCss === false
       ? ''
-      : `<style>${math === 'katex' ? katexCss : ''}${printCss}</style>`
+      : `<style>${math === 'katex' && ctx.hasMath ? katexCss : ''}${printCss}</style>`
 
   return (
     `<!DOCTYPE html><html><head><meta charset="utf-8">` +
