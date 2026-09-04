@@ -37,8 +37,12 @@ too (they are erased at runtime, but still carry the API).
 | `encodePluginKeyMaterial(key)` | loader | Encode a trusted key (hex or UTF-8) into raw HMAC bytes. |
 | `activatePlugin(result, options?)` | runtime | Register a plugin's components/commands/toolbar + lifecycle hooks, time-boxed. |
 | `deactivatePlugin(id)` | runtime | Unregister everything a plugin registered. |
-| `markPluginUnstable(id, reason?)` | runtime | Deactivate a plugin that entered an unstable state and record the failure. |
+| `markPluginUnstable(id, reason?, eventType?)` | runtime | Deactivate a plugin that entered an unstable state and record the failure. |
 | `getUnstablePluginIds()` / `isPluginUnstable(id)` | runtime | Read whether a plugin was disabled for instability. |
+| `resetUnstablePlugin(id)` | runtime | Explicitly re-approve an unstable plugin (clears the flag + grants a fresh session budget) so it can run again. |
+| `setPluginSessionQuota(ms)` / `getPluginSessionQuota()` | runtime | Configure/read the per-plugin per-session wall-clock budget (quota). |
+| `setMaxInFlightActivations(n)` / `getMaxInFlightActivations()` | runtime | Configure/read the max concurrent activations. |
+| `getPluginSessionUsage(id)` / `getInFlightActivationCount()` | runtime | Read a plugin's cumulative session usage / current in-flight activations. |
 | `setLifecycleHookTimeout(ms)` / `getLifecycleHookTimeout()` | lifecycle | Configure (or read) the async-hook timeout budget. |
 | `setActiveEditor` / `getActiveEditor` | lifecycle | Point (or read) the active editor for the plugin context. |
 | `registerLifecycleHook(id, event, fn, ctx)` | lifecycle | Register a single lifecycle hook (rarely needed directly). |
@@ -51,13 +55,27 @@ too (they are erased at runtime, but still carry the API).
 | `hasPermission(decl, perm)` | permissions | Whether a permission is declared. |
 | `getNonIsolatedPermissions(...sources)` | permissions | Declared capabilities the host does not truly isolate. |
 | `assertPermission(decl, perm, opts)` | permissions | Throw a structured `PLUGIN_PERMISSION_DENIED` if the permission is absent. |
+| `recordPluginEvent(pluginId, event, detail?, opts?)` | governance | Record a structured non-secret audit event (load/activate/deactivate/timeout/crash/revoke/…). |
+| `onPluginEvent(listener)` | governance | Subscribe to audit events; returns an unsubscribe function. |
+| `getAuditLog()` / `getPluginAuditEvents(id)` / `clearAuditLog()` | governance | Read (or clear) the in-memory audit ring. |
+| `sanitizeAuditDetail(detail)` | governance | Defensive secret redaction for audit detail. |
+| `setAuditLogFileSink(sink)` / `flushAuditLogToFile()` / `loadAuditLogFromFile()` | governance | Persist (or reload) the audit log to a file via the app's fs service. |
+| `recordPluginVersion(id, version, digest)` | governance | Record the loaded version+digest (contributes to last-known-good). |
+| `setPluginVersionRange(id, range)` / `isVersionAllowed(id, version)` | governance | Configure/check the supported version range for a plugin. |
+| `getLastKnownGoodVersion(id)` | governance | The last recorded version that was not marked bad. |
+| `rollbackPoint(id)` | governance | The last-known-good version+digest (`requiresReapproval: true`) — NEVER auto-run. |
+| `revokePlugin(id, version?, reason?)` / `unrevokePlugin(id, version?)` | governance | Add/remove a plugin revocation (version may be 'all' or a range). |
+| `isPluginRevoked(id, version)` / `getRevokedPlugins()` | governance | Check (or list) revoked plugins; the reason is included. |
+| `serializeGovernance()` / `loadGovernance(json)` | governance | Persist/restore the governance snapshot (revocations, versions, ranges, bad versions). |
 | `version` | index | Host API version string (see § 5). |
 
 The barrelled **types** include `PluginDefinition`, `PluginPermission`, `PluginMeta`,
 `PluginContext`, `PluginErrorCode`, `PluginErrorOptions`, `LoadResult`, `LoadedPlugin`,
 `PluginFsAdapter`, `PluginDigestStore`, `PluginIntegrityVerdict`, `PluginTrustKey`,
 `PluginTrustVerdict`, `ActivatePluginOptions`, `ActivationResult`, `LifecycleEvent`,
-`LifecycleEventArgMap`, and `LifecycleErrorEvent`.
+`LifecycleEventArgMap`, `LifecycleErrorEvent`, and the governance types
+`PluginAuditEvent`, `PluginAuditEventType`, `PluginVersionRange`, `PluginRevocation`,
+`AuditLogFileSink`, `RecordedPluginVersion`, and `SemVer`.
 
 ### editor-core re-exports used by plugins
 
@@ -270,7 +288,55 @@ A bad plugin must never hang or take down the host. The host therefore:
 > the explicit future work, and until then the strict CSP (below) refuses vault plugins in
 > a production Tauri build.
 
-### 4.3 CSP note (re-stated)
+### 4.3 Resource quota & unstable recovery (P0.1 — honest scope)
+
+On top of the per-activation/hook timeout + cancel, the host enforces a **resource
+quota** so a bad plugin cannot burn unbounded wall-clock:
+
+- **Per-plugin per-session budget** (`setPluginSessionQuota`, default 15s of cumulative
+  activation wall-clock). A plugin that exhausts it is **quarantined** — marked unstable
+  (`PLUGIN_QUOTA_EXCEEDED`) and deactivated.
+- **Max concurrent activations** (`setMaxInFlightActivations`, default 4). A burst of slow
+  inits beyond the cap is refused (`PLUGIN_ACTIVATE_FAILED`) instead of piling up.
+- **Crash-restart-on-unstable.** Once a plugin is marked unstable (crash, hook/activation
+  timeout, cancel, or quota), **it is refused on the next automatic activation** with
+  `PLUGIN_UNSTABLE`. It can only run again after an explicit user-mediated re-approval:
+  `resetUnstablePlugin(id)` clears the flag **and grants a fresh session budget**.
+
+> ⚠️ **This is a bound, not a sandbox.** The quota bounds *wall-clock* and *concurrency*
+> (i.e. the host stops *waiting*). It does **not** bound a plugin's **memory, globals, or
+> synchronous CPU** — a plugin that spins the event loop synchronously cannot be
+> pre-empted. There is still **no OS-process/Worker isolation**, and the strict CSP
+> (§ 4.5) refuses vault plugins in a production Tauri build.
+
+### 4.4 Governance: audit log, revocation & version policy
+
+For third-party distribution the host applies a governance layer on top of the gates
+(`packages/plugin-host/src/governance.ts`):
+
+- **Audit log.** `recordPluginEvent(pluginId, event, detail?)` records every
+  load/activate/deactivate/timeout/crash/signature-invalid/revoked/... to a structured,
+  **non-secret** in-memory ring. Subscribe via `onPluginEvent` to surface it in a status
+  UI. `detail` is defensively redacted (`sanitizeAuditDetail`), so a token/key is never
+  logged even if a caller passes one. The log is best-effort **persisted to a file**
+  (`setAuditLogFileSink` + `flushAuditLogToFile`) through the app's fs service when one is
+  available.
+- **Revocation.** `revokePlugin(id, version?, reason?)` adds a persisted revocation
+  (`version` is `'all'`, an exact version, or a range). A revoked plugin is refused at
+  load with the recorded reason, **before any import**.
+- **Version policy + rollback.** `recordPluginVersion(id, version, digest)` records the
+  loaded version+digest; `setPluginVersionRange(id, {min,max})` and `markBadVersion(id,
+  version)` define what may load; `isVersionAllowed(id, version)` is the gate.
+  `rollbackPoint(id)` returns the last-known-good version.
+
+> ⚠️ **Rollback is BEST-EFFORT and NEVER auto-runs.** Because the host has no isolated
+> context in which to run old code safely, a `rollbackPoint` result carries
+> `requiresReapproval: true`. To actually run a rolled-back version you must subject it to
+> the same **digest + trust gate** as any other plugin; failing that, it is refused
+> (`PLUGIN_VERSION_REFUSED`). The host surfaces the last-known-good version so a real user
+> can make an informed decision; it does not silently downgrade.
+
+### 4.5 CSP note (re-stated)
 
 Vault plugins load through in-window `import('blob:...')`. The production Tauri CSP is
 strict (`script-src 'self' 'wasm-unsafe-eval'` — no `blob:`, no `'unsafe-eval'`) and

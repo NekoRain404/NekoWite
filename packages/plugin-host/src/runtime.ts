@@ -5,6 +5,7 @@ import type { LifecycleEvent } from './lifecycle'
 import type { PluginContext, PluginDefinition, PluginErrorCode } from './types'
 import { PluginError } from './types'
 import { withTimeout } from './timing'
+import { recordPluginEvent, type PluginAuditEventType } from './governance'
 
 interface ActivePlugin {
   definition: PluginDefinition
@@ -21,9 +22,82 @@ const active = new Map<string, ActivePlugin>()
 export const DEFAULT_PLUGIN_ACTIVATION_TIMEOUT_MS = 5000
 
 /** Plugins that entered an unstable state (activation threw, or a hook or the
- *  init timed out). The host deactivates them and records the failure so a
- *  crashing/looping plugin is never silently left half-registered. */
+ *  init timed out, or the session resource quota was exhausted). The host
+ *  deactivates them and records the failure so a crashing/looping plugin is never
+ *  silently left half-registered. A plugin in this set is REFUSED on the next
+ *  activation until it is explicitly re-approved with `resetUnstablePlugin`. */
 const unstable = new Set<string>()
+
+/* ------------------------------------------------------------------------- *
+ * Resource quota (P0.1 — honest scope). This is NOT OS-process/Worker
+ * isolation. It bounds two things on the current in-window host:
+ *   1. a max wall-clock budget per plugin per session (cumulative activation
+ *      time), after which the plugin is quarantined (marked unstable) and must
+ *      be explicitly re-approved;
+ *   2. a max number of concurrent in-flight activations.
+ * It does NOT bound a plugin's memory, globals, or synchronous CPU — a plugin
+ * that spins the event loop synchronously still cannot be pre-empted (see
+ * documentation in docs/SECURITY.md). The existing per-hook/activation timeout +
+ * AbortSignal cancel remain the primary pre-emption mechanism.
+ * ------------------------------------------------------------------------- */
+
+/** Default cumulative wall-clock budget (ms) a plugin may consume on activation
+ *  work during a session before it is quarantined. */
+export const DEFAULT_PLUGIN_SESSION_QUOTA_MS = 15000
+
+/** Default max number of plugins activating concurrently in the host. */
+export const DEFAULT_MAX_IN_FLIGHT_ACTIVATIONS = 4
+
+let sessionQuotaMs = DEFAULT_PLUGIN_SESSION_QUOTA_MS
+let maxInFlightActivations = DEFAULT_MAX_IN_FLIGHT_ACTIVATIONS
+let inFlightActivations = 0
+const sessionUsageMs = new Map<string, number>()
+
+/** Configure the per-plugin per-session wall-clock budget (ms). */
+export function setPluginSessionQuota(ms: number): void {
+  sessionQuotaMs = ms
+}
+
+/** The current per-plugin per-session wall-clock budget (ms). */
+export function getPluginSessionQuota(): number {
+  return sessionQuotaMs
+}
+
+/** Configure the max number of concurrent in-flight activations. */
+export function setMaxInFlightActivations(n: number): void {
+  maxInFlightActivations = n
+}
+
+/** The current max concurrent activation cap. */
+export function getMaxInFlightActivations(): number {
+  return maxInFlightActivations
+}
+
+/** How many activations are currently in flight (awaiting an async init). */
+export function getInFlightActivationCount(): number {
+  return inFlightActivations
+}
+
+/** A plugin's recorded cumulative activation wall-clock for the session (ms). */
+export function getPluginSessionUsage(id: string): number {
+  return sessionUsageMs.get(id) ?? 0
+}
+
+/** Reset a plugin's recorded session usage (grants a fresh budget). Used by
+ *  `resetUnstablePlugin` so re-approval is a genuine fresh start. */
+export function resetPluginSessionUsage(id: string): void {
+  sessionUsageMs.delete(id)
+}
+
+/** Add the elapsed activation wall-clock to a plugin's session budget. Returns the
+ *  new cumulative total. Guarded so a bad clock never throws. */
+function addSessionUsage(id: string, startedAt: number): number {
+  const now = Date.now()
+  const elapsed = Math.max(0, now - startedAt)
+  const total = (sessionUsageMs.get(id) ?? 0) + elapsed
+  sessionUsageMs.set(id, total)
+  return total
+}
 
 function runUnregister(un: () => void): void {
   try {
@@ -54,10 +128,13 @@ export interface ActivationResult {
 
 /** Mark a plugin as having entered an unstable state: deactivate it (so its
  *  registrations/hooks are released and it is left in a safe state) and record
- *  the failure. The host keeps running — isolation, not a crash. */
-export function markPluginUnstable(id: string, reason?: string): void {
+ *  the failure to the audit log. The host keeps running — isolation, not a crash.
+ *  `eventType` lets the caller record WHY it became unstable (crash / timeout /
+ *  cancel / quota-exceeded), defaulting to 'crash'. */
+export function markPluginUnstable(id: string, reason?: string, eventType: PluginAuditEventType = 'crash'): void {
   deactivatePlugin(id)
   unstable.add(id)
+  recordPluginEvent(id, eventType, reason ?? 'entered unstable state')
   if (reason) {
     console.warn(`[NekoWite:plugin-host] plugin "${id}" entered unstable state: ${reason}`)
   }
@@ -71,6 +148,18 @@ export function getUnstablePluginIds(): string[] {
 /** True when a plugin has been disabled for instability. */
 export function isPluginUnstable(id: string): boolean {
   return unstable.has(id)
+}
+
+/** Explicitly re-approve an unstable plugin so it can run again ("crash-restart-
+ *  on-unstable" recovery). This is user-mediated: a plugin never auto-restarts
+ *  after being marked unstable. Re-approval also grants a fresh session resource
+ *  budget (the previous usage is reset), so the re-approval is a genuine restart
+ *  rather than an immediate re-quarantine. */
+export function resetUnstablePlugin(id: string): void {
+  if (unstable.delete(id)) {
+    resetPluginSessionUsage(id)
+    recordPluginEvent(id, 'reset-unstable', 're-approved by user')
+  }
 }
 
 export async function activatePlugin(
@@ -92,11 +181,52 @@ export async function activatePlugin(
   if (options?.signal?.aborted) {
     return { ok: false, id, code: 'PLUGIN_ABORTED', error: 'Plugin activation was cancelled.' }
   }
+
+  // Re-approval gate ("crash-restart-on-unstable"): a plugin that entered an
+  // unstable state (activation crashed, a hook timed out, or the session resource
+  // quota was exhausted) is REFUSED here rather than silently auto-restarting. It
+  // must be explicitly reset (re-approved) via `resetUnstablePlugin` to run again.
+  if (isPluginUnstable(id)) {
+    return {
+      ok: false,
+      id,
+      code: 'PLUGIN_UNSTABLE',
+      error: `Plugin "${definition.name ?? id}" is in an unstable state and requires re-approval before it can run again.`,
+    }
+  }
+
+  // Resource quota: a plugin whose cumulative activation budget for the session is
+  // already exhausted is quarantined (marked unstable) so it cannot keep burning
+  // wall-clock. Recovery is an explicit `resetUnstablePlugin`.
+  const used = sessionUsageMs.get(id) ?? 0
+  if (used >= sessionQuotaMs) {
+    markPluginUnstable(id, `session resource quota exhausted (${used}ms >= ${sessionQuotaMs}ms)`, 'quota-exceeded')
+    return {
+      ok: false,
+      id,
+      code: 'PLUGIN_QUOTA_EXCEEDED',
+      error: `Plugin "${definition.name ?? id}" exceeded its session resource quota and was deactivated; re-approve it to run again.`,
+    }
+  }
+
+  // Concurrent-activation cap: bound how many plugins may be mid-activation at
+  // once, so a burst of slow inits cannot pile up on the host.
+  if (inFlightActivations >= maxInFlightActivations) {
+    return {
+      ok: false,
+      id,
+      code: 'PLUGIN_ACTIVATE_FAILED',
+      error: `Plugin "${definition.name ?? id}" could not start: too many plugins are activating concurrently.`,
+    }
+  }
+  inFlightActivations++
+
   const registeredComponents: string[] = []
   const registeredCommands: string[] = []
   const registeredToolbar: string[] = []
   const hookUnregisters: Array<() => void> = []
   const timeoutMs = options?.timeoutMs ?? DEFAULT_PLUGIN_ACTIVATION_TIMEOUT_MS
+  const startedAt = Date.now()
   try {
     const components = definition.components ?? {}
     for (const name of Object.keys(components)) {
@@ -166,6 +296,22 @@ export async function activatePlugin(
 
     active.set(id, { definition, registeredComponents, registeredCommands, registeredToolbar, hookUnregisters })
     unstable.delete(id)
+    recordPluginEvent(id, 'activate', 'activated', { version: result.meta?.version })
+    // Account the elapsed wall-clock against the session budget. If this
+    // activation pushed the plugin over its quota, quarantine it (it already
+    // registered, so markPluginUnstable tears it down) and require re-approval.
+    const total = addSessionUsage(id, startedAt)
+    if (total >= sessionQuotaMs) {
+      inFlightActivations--
+      markPluginUnstable(id, `session resource quota exceeded (${total}ms >= ${sessionQuotaMs}ms)`, 'quota-exceeded')
+      return {
+        ok: false,
+        id,
+        code: 'PLUGIN_QUOTA_EXCEEDED',
+        error: `Plugin "${definition.name ?? id}" exceeded its session resource quota and was deactivated; re-approve it to run again.`,
+      }
+    }
+    inFlightActivations--
     return { ok: true, id }
   } catch (err) {
     // Isolation + safe state: roll back everything we registered, then mark the
@@ -183,7 +329,11 @@ export async function activatePlugin(
       (err.code === 'PLUGIN_HOOK_TIMEOUT' || err.code === 'PLUGIN_ABORTED')
         ? err.code
         : undefined
-    markPluginUnstable(id, code ?? undefined)
+    const eventType: PluginAuditEventType =
+      code === 'PLUGIN_HOOK_TIMEOUT' ? 'timeout' : code === 'PLUGIN_ABORTED' ? 'cancel' : 'crash'
+    addSessionUsage(id, startedAt)
+    inFlightActivations--
+    markPluginUnstable(id, code ?? undefined, eventType)
     return {
       ok: false,
       id,
@@ -214,5 +364,6 @@ export function deactivatePlugin(id: string): void {
   } finally {
     active.delete(id)
     unstable.delete(id)
+    recordPluginEvent(id, 'deactivate', 'deactivated')
   }
 }

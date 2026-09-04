@@ -76,14 +76,54 @@ When a master password is set, the Stronghold key is derived from the password w
 one-way verifier and the salt are persisted; the derived key is never written. A
 password-protected vault must be unlocked (`unlock_vault`) before use.
 
+### 6. Plugin governance (audit log, version policy/rollback, revocation, resource quota)
+
+Beyond the trust/integrity gates, the host enforces a governance layer
+(`packages/plugin-host/src/governance.ts` + the quota/unstable logic in `runtime.ts`):
+
+- **Audit log** — every load/activate/deactivate/timeout/crash/revoke/signature-invalid
+  decision is recorded to a structured, **non-secret** in-memory ring
+  (`recordPluginEvent`), delivered to subscriber(s) via `onPluginEvent`, and
+  **best-effort persisted to a vault-relative file** through the fs service when a
+  writable file service is present. `detail` is defensively redacted (bearer tokens,
+  provider API keys, ≥24-hex blobs, quoted key/token/secret values), so a secret is
+  never written even if a caller mistakenly passes one. *(Verified: `governance.test.ts`
+  — redaction, ring bound, subscriber isolation, file round-trip.)*
+- **Revocation list** — a persisted list of revoked plugin ids+versions/ranges.
+  A revoked plugin is refused **at load, before any import**, with the recorded
+  reason. *(Verified: `security-regression.test.ts` — revoked plugin never reaches the
+  import boundary; `governance.test.ts` — exact/range/'all' matching.)*
+- **Version policy + rollback** — the host records the version+digest at load, refuses
+  a version that is a recorded bad version or outside a configured min/max range, and
+  exposes `rollbackPoint(pluginId)` = the last-known-good version+digest. **Rollback
+  is BEST-EFFORT and never auto-runs**: a rolled-back version still must pass the same
+  digest + trust gate before execution (documented in `PLUGIN_SDK.md` § governance).
+  *(Verified: `governance.test.ts`; `security-regression.test.ts` version-range refusal.)*
+- **Resource quota + unstable reset (P0.1, honest scope)** — a per-plugin per-session
+  wall-clock budget and a max-concurrent-activation cap. A plugin exceeding the quota is
+  **marked unstable and quarantined** (crash-restart-on-unstable): it is refused on the
+  next automatic activation and only runs again after an explicit
+  `resetUnstablePlugin(pluginId)` (user-mediated re-approval, which also grants a fresh
+  budget). *(Verified: `runtime.test.ts` — quota quarantine, in-flight cap, reset.)*
+
+> ⚠️ **This is NOT OS-process/Worker isolation.** The quota bounds wall-clock and
+> concurrency; it does not bound a plugin's **memory, globals, or synchronous CPU**. A
+> plugin that spins the event loop synchronously cannot be pre-empted. The per-hook /
+> per-activation timeout + AbortSignal cancel remain the primary pre-emption mechanism.
+
 ## Not yet implemented (honest caps)
 
 - **True process / webview / worker isolation.** Vault plugins run in the main window
   (shared JS context). There is no sandbox separating a plugin's JS or its capability
   access from the app. `assertPermission` is a consent gate, **not** a capability
   boundary; a plugin declaring `fs`/`network`/`ai` runs "trusted-but-unsandboxed".
+  The resource quota is a *bound*, not a sandbox (see § 6 caveat).
 - **Signed plugin provenance.** No publisher signature / trust anchor. The digest is
-  change detection only (see the caveat above).
+  change detection only (see the caveat above). The HMAC signature is a shared-secret
+  MAC, not public-key authentication.
+- **Automatic rollback.** `rollbackPoint` surfaces the last-known-good version and
+  requires the same digest/trust gate before running. The host never executes old code
+  automatically, because there is no isolated context to run it in.
 - **Per-capability grants.** Consent is all-or-nothing per plugin today; a future
   per-capability grant is enforced at `assertPermission` (point-of-use guard).
 - **Master password is not a full app lock.** It gates the Stronghold vault, not the
