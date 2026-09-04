@@ -106,4 +106,47 @@ describe('ImagePanel accessibility', () => {
 
     expect(document.querySelector('.neko-image-panel')).toBeNull()
   })
+
+  it('traps Tab focus inside the panel while open (wraps last → first)', async () => {
+    const { editor, pos } = await makeImageEditor()
+    mountPanel(editor)
+    editor.getView().dispatch(
+      editor.getView().state.tr.setSelection(NodeSelection.create(editor.getView().state.doc, pos)),
+    )
+    await flush()
+
+    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('.neko-image-actions button'))
+    const last = buttons[buttons.length - 1]
+    last.focus()
+    expect(document.activeElement).toBe(last)
+
+    // Forward Tab wraps from the last control back to the first (Alt input).
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    const firstInput = document.getElementById('neko-image-alt')
+    expect(document.activeElement).toBe(firstInput)
+  })
+
+  it('restores focus to the previously focused element on close', async () => {
+    const { editor, pos } = await makeImageEditor()
+    // Place focus on an element *outside* the panel before selecting the image,
+    // so the trap captures it as the focus to restore on close.
+    const outside = document.createElement('button')
+    outside.textContent = 'outside'
+    document.body.appendChild(outside)
+    outside.focus()
+
+    mountPanel(editor)
+    editor.getView().dispatch(
+      editor.getView().state.tr.setSelection(NodeSelection.create(editor.getView().state.doc, pos)),
+    )
+    await flush()
+    expect(document.activeElement).toBe(document.getElementById('neko-image-alt'))
+
+    const panel = document.querySelector<HTMLElement>('.neko-image-panel')!
+    panel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flush()
+
+    expect(document.querySelector('.neko-image-panel')).toBeNull()
+    expect(document.activeElement).toBe(outside)
+  })
 })

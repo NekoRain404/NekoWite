@@ -5,9 +5,10 @@ import { useVaultSessionStore } from '../stores/vaultSession'
 import { useRefsStore } from '../stores/refs'
 import { getSharedGateways } from '../platform/runtime/gatewayRuntime'
 import { loadVaultPlugins } from '../services/plugins'
-import { notifyError } from '../services/errors'
+import { notifyError, notifyRecovery } from '../services/errors'
 import { t } from '../i18n'
 import { setupWindowTracking, type WindowTracking } from './windowState'
+import { createTmpRecovery, requestUntitledVaultSwitch } from './recoveryClosedLoop'
 
 const VAULT_LS_KEY = 'nekowite.vault'
 
@@ -50,22 +51,58 @@ export function createDesktopRuntime(): DesktopRuntime {
   const { fs: fsPort, dialogs } = gateways
   const vaultPath = ref<string | null>(null)
   const windowTracking = setupWindowTracking()
+  // Owns the orphaned-`.tmp` scan/GC. A controller is created per vault switch:
+  // `cancel()` permanently flags one instance, so a fresh instance is armed for
+  // each new vault (and the prior one is cancelled first so a stale scan can
+  // never write results into the new vault).
+  let tmpRecovery: ReturnType<typeof createTmpRecovery> | null = null
+
+  function makeTmpRecovery() {
+    return createTmpRecovery({
+      fs: fsPort,
+      getReferencedTmp: () => tabs.referencedTmpPaths(),
+      notify: notifyRecovery,
+    })
+  }
   let started = false
 
   async function applyVault(path: string): Promise<void> {
     // A vault switch must not silently drop unsaved edits from the vault we are
     // leaving. Flush the current dirty tabs first; if one fails to save, block
-    // the switch so the work is not lost to a pending autosave timer that will
+    // the switch so the work is lost to a pending autosave timer that will
     // never fire on the new vault.
     const flushed = await tabs.flushDirty()
     if (!flushed) {
       notifyError(t('tabs.unsavedWorkBlocker'))
       return
     }
+    // Unnamed dirty docs have no path, so `flushDirty` skipped them (a Save-As
+    // dialog is too interactive for a background/bulk flush). A switch must not
+    // silently discard them either — surface a keep-or-discard prompt and block
+    // the switch until the user chooses: save-as each (restore) and proceed, or
+    // discard them (dismiss) and proceed.
+    const untitled = tabs.untitledDirtyTabs()
+    if (untitled.length > 0) {
+      const choice = await requestUntitledVaultSwitch({ count: untitled.length, notify: notifyRecovery })
+      if (choice === 'save') {
+        for (const tab of untitled) {
+          const saved = await tabs.saveTab(tab.id)
+          if (!saved) {
+            notifyError(t('tabs.unsavedWorkBlocker'))
+            return
+          }
+        }
+      } else {
+        for (const tab of untitled) tabs.removeTab(tab.id)
+      }
+    }
     // Authorize the vault root with the backend BEFORE any path-confined command:
     // the Rust commands now reject any root the user did not open this session.
     // A fresh folder pick is already auto-authorized by open_folder_dialog, but the
     // localStorage-restore path needs this explicit call. Must run before indexVault.
+    // Cancel a prior vault's in-flight scan/GC so its results can never leak here,
+    // then arm a fresh controller for the new vault.
+    tmpRecovery?.cancel()
     await fsPort.registerVault(path).catch(() => {
       // Registration failure (e.g. stale path) must not crash startup; the tree
       // surfaces the bad vault and the user can pick another folder.
@@ -75,6 +112,16 @@ export function createDesktopRuntime(): DesktopRuntime {
     // would route every save to "path escapes vault" errors. Start fresh.
     tabs.closeAll()
     tabs.setVault(path)
+    // Crash-litter reconciliation (recovery closed-loop). GC first (sweeps only
+    // old, confirmed-orphaned `.tmp` files), then scan surfaces a "recoverable
+    // versions" notice for the fresh orphans left by an interrupted session.
+    // Fire-and-forget (never blocks vault open) and cancellable.
+    const recovery = makeTmpRecovery()
+    tmpRecovery = recovery
+    void (async () => {
+      void recovery.gc(path)
+      void recovery.scan(path)
+    })()
     void vaultSession.indexVault(path)
     void loadVaultPlugins(path)
     void refs.loadVault(path).catch(() => {

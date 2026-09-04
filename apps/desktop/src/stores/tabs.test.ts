@@ -692,6 +692,42 @@ describe('hasUnsavedWork and flushDirty', () => {
   })
 })
 
+describe('untitledDirtyTabs and referencedTmpPaths', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    resetFsMocks()
+  })
+
+  it('untitledDirtyTabs returns only no-path dirty tabs', async () => {
+    readMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    await s.openTab(null, 'untitled')
+    const [pathd, untitled] = s.tabs
+    expect(s.untitledDirtyTabs()).toEqual([])
+
+    pathd.dirty = true
+    untitled.dirty = true
+    expect(s.untitledDirtyTabs()).toEqual([untitled])
+  })
+
+  it('referencedTmpPaths unions pending staged assets and .tmp refs in the body', async () => {
+    readMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab(null, '![pic](.tmp/paste-1.png)\n\n![pic](.tmp/paste-2.png)')
+    const tab = s.tabs[0]
+    tab.pendingAssetPaths = ['.tmp/staged.png']
+
+    const refs = s.referencedTmpPaths()
+    expect(refs.has('.tmp/paste-1.png')).toBe(true)
+    expect(refs.has('.tmp/paste-2.png')).toBe(true)
+    expect(refs.has('.tmp/staged.png')).toBe(true)
+    expect(refs.has('.tmp/unrelated.png')).toBe(false)
+  })
+})
+
 describe('session capture and restore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())

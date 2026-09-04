@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import {
   getImageAttrs,
   deleteImageNode,
@@ -9,6 +9,7 @@ import {
   clearImageSelection,
 } from '@nekowite/editor-core'
 import type { NekoEditor, ImageSelectionState } from '@nekowite/editor-core'
+import { useFocusTrap } from '../composables/useFocusTrap'
 import { t } from '../i18n'
 
 const props = defineProps<{ editor: NekoEditor | null }>()
@@ -23,23 +24,14 @@ const natural = ref<{ width: number; height: number } | null>(null)
 
 const visible = computed(() => selected.value !== null)
 
-const altInput = ref<HTMLInputElement | null>(null)
-let prevFocus: HTMLElement | null = null
-
-// Focus management: a keyboard user who selects an image must be able to edit
-// its properties without reaching for the mouse. Move focus into the panel's
-// first field when it appears, and return it to whatever was focused before
-// (typically the editor) when the panel closes.
-watch(visible, (on) => {
-  if (on) {
-    prevFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    void nextTick(() => altInput.value?.focus())
-  } else {
-    const prev = prevFocus
-    prevFocus = null
-    if (prev && prev.isConnected) prev.focus()
-  }
-})
+// Non-modal property panel focus management (reuses the app's focus-trap
+// pattern, same as the ConflictDialog): on open, focus moves to the first
+// focusable field (the Alt input); Tab / Shift+Tab cycle inside; on close
+// (Escape or a deselection), focus returns to whatever had it before — typically
+// the editor. It stays non-modal (`aria-modal="false"`) but is focus-contained
+// only while it is open so a keyboard user can edit an image without a mouse.
+const panelEl = ref<HTMLElement | null>(null)
+useFocusTrap(panelEl, visible)
 
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') {
@@ -173,6 +165,7 @@ onBeforeUnmount(() => {
 <template>
   <div
     v-if="visible"
+    ref="panelEl"
     class="neko-image-panel"
     role="dialog"
     aria-modal="false"
@@ -192,7 +185,6 @@ onBeforeUnmount(() => {
       <span class="neko-image-field-label">{{ t('imagePanel.alt') }}</span>
       <input
         id="neko-image-alt"
-        ref="altInput"
         v-model="alt"
         type="text"
         class="neko-image-input"

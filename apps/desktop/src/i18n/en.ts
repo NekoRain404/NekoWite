@@ -339,6 +339,7 @@ export const en = {
     reloadFailed: 'Could not reload file: {path}; current content kept',
     unsavedWorkPrompt: 'You have unsaved changes. Leave anyway?',
     unsavedWorkBlocker: 'Some files could not be saved; the vault was not switched.',
+    untitledVaultSwitchMsg: 'You have {count} unsaved document(s) without a path. Restore to save them before switching; Dismiss to discard them.',
     aria: 'Open documents',
   },
   titlebar: {
@@ -545,6 +546,14 @@ export const en = {
   toast: {
     restore: 'Restore',
     dismiss: 'Dismiss',
+  },
+  recovery: {
+    saved: 'Document saved',
+    restored: 'Restored the previous version',
+    searchCount: '{count} match(es) found',
+    wordGoalReached: 'Word goal reached: {goal} words',
+    wordGoalProgress: '{current} of {goal} words',
+    tmpNotice: 'Found {count} recoverable temporary file(s) left by an interrupted session.',
   },
   plugin: {
     loadFailed: 'Plugin failed to load: {id} ({error})',

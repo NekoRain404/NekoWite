@@ -98,4 +98,65 @@ describe('TableMenu accessibility', () => {
     await flush()
     expect(document.querySelector('.neko-table-menu')).toBeNull()
   })
+
+  it('navigates between buttons with ArrowRight/ArrowLeft', async () => {
+    const editor = await makeEmptyEditor()
+    mountMenu(editor)
+    insertTable(editor.getView(), 2, 2)
+    placeCursorInDataCell(editor)
+    await flush()
+
+    const toolbar = document.querySelector<HTMLElement>('.neko-table-menu')!
+    const buttons = Array.from(toolbar.querySelectorAll<HTMLButtonElement>('button'))
+    buttons[0].focus()
+
+    // ArrowRight moves to the next button and wraps to the first at the end.
+    toolbar.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    expect(document.activeElement).toBe(buttons[1])
+    toolbar.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
+    expect(document.activeElement).toBe(buttons[0])
+  })
+
+  it('traps Tab focus inside the toolbar while focused', async () => {
+    const editor = await makeEmptyEditor()
+    mountMenu(editor)
+    insertTable(editor.getView(), 2, 2)
+    placeCursorInDataCell(editor)
+    await flush()
+
+    const toolbar = document.querySelector<HTMLElement>('.neko-table-menu')!
+    const buttons = Array.from(toolbar.querySelectorAll<HTMLButtonElement>('button'))
+    buttons[0].focus()
+
+    // Forward Tab from the last button wraps back to the first.
+    buttons[buttons.length - 1].focus()
+    toolbar.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    expect(document.activeElement).toBe(buttons[0])
+
+    // Shift+Tab from the first wraps to the last.
+    buttons[0].focus()
+    toolbar.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }))
+    expect(document.activeElement).toBe(buttons[buttons.length - 1])
+  })
+
+  it('restores focus to the previously focused element on Escape', async () => {
+    const editor = await makeEmptyEditor()
+    mountMenu(editor)
+    insertTable(editor.getView(), 2, 2)
+    placeCursorInDataCell(editor)
+    await flush()
+
+    const toolbar = document.querySelector<HTMLElement>('.neko-table-menu')!
+    const outside = document.createElement('button')
+    document.body.appendChild(outside)
+    outside.focus()
+
+    const firstBtn = toolbar.querySelector<HTMLButtonElement>('button')!
+    firstBtn.focus()
+    // Focus entering the toolbar: capture the prior element.
+    firstBtn.dispatchEvent(new FocusEvent('focusin', { relatedTarget: outside, bubbles: true }))
+
+    toolbar.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(document.activeElement).toBe(outside)
+  })
 })
