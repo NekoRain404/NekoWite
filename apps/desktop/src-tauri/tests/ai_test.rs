@@ -121,8 +121,8 @@ fn sse_parses_anthropic_content_block_start() {
 }
 
 #[test]
-fn endpoint_embeds_gemini_key_in_query() {
-let cfg = AIConfig {
+fn endpoint_does_not_embed_gemini_key_in_url() {
+    let cfg = AIConfig {
         provider: "gemini".into(),
         model: "gemini-2.5-pro".into(),
         base_url: None,
@@ -131,8 +131,8 @@ let cfg = AIConfig {
     };
     let (url, _body) = resolve_endpoint(&cfg, "hello", &[]);
     assert!(
-        url.contains("key=sk-gem-key"),
-        "gemini key must ride in the URL query, got: {url}"
+        !url.contains("sk-gem-key") && !url.contains("key="),
+        "gemini key must NOT ride in the URL query (it goes in the x-goog-api-key header), got: {url}"
     );
 }
 

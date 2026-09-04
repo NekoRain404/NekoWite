@@ -1021,7 +1021,9 @@ pub fn save_attachment(
 ) -> Result<String, String> {
     let bytes = decode_base64(base64)?;
     let name = sanitize_attachment_name(file_name)?;
-    let root = resolve_within(vault_root, ".")?;
+    // Path-confinement guard: validates the vault base resolves inside the
+    // vault; the binding is unused (the target dir is resolved below via dir_abs).
+    let _root = resolve_within(vault_root, ".")?;
     let dir = dir.trim();
     if Path::new(dir).is_absolute() {
         return Err("attachment dir must be vault-relative".into());
