@@ -83,7 +83,13 @@ function tryMergeComponent(
   return null
 }
 
-const TEXT_BLOCK = new Set(['paragraph', 'listItem'])
+// Contexts whose inline content is NOT a candidate for a whole-block component
+// merge: a paragraph/list item may have a single component span the whole block,
+// but a GFM table cell holds a component inside its own paragraph wrapper, and
+// the mdxComponent node is a *block* atom that cannot live in that paragraph
+// (Milkdown would throw "Cannot create node for paragraph"). Inside these
+// contexts the JSX stays as raw `html` nodes so it is preserved verbatim.
+const TEXT_BLOCK = new Set(['paragraph', 'listItem', 'tableCell', 'tableHeader'])
 
 function transform(
   nodes: MdNode[],
