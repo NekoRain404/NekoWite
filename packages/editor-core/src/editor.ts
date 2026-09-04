@@ -88,18 +88,28 @@ export function createEditor(
     setTableFeatureView(v)
     const dispatch = v.dispatch.bind(v)
     v.dispatch = (tr) => {
-      const prevDoc = v.state.doc
       const hadSuggestion = hasSuggestionFor(v)
+      const docChanged = tr.docChanged
       dispatch(tr)
       const hasNow = hasSuggestionFor(v)
       if (
         hadSuggestion &&
         !hasNow &&
-        v.state.doc !== prevDoc &&
+        docChanged &&
         tr.getMeta(SUGGESTION_META) === undefined
       ) {
         notifySuggestion('cleared')
       }
+      // A transaction that changes the document is the authoritative "content
+      // changed" signal. Milkdown's markdownUpdated only re-fires when the
+      // re-derived markdown string differs, so on some input paths (e.g. plain
+      // typed characters where the recomputed string happens to read the same)
+      // it never fires — and the app's content sync + lifecycle emit, which are
+      // keyed off onContentChange, would silently stop updating active.content
+      // and never emit onDocChange. Key off ProseMirror's docChanged instead;
+      // the debounced sync layer coalesces the burst. markdownUpdated is kept
+      // as a secondary signal — double-firing is harmless (idempotent + debounced).
+      if (docChanged) changeHandlers.forEach((handler) => handler())
     }
     return created
   })

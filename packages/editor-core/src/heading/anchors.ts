@@ -37,7 +37,10 @@ export const makeHeadingAnchorNodeView: NodeViewConstructor = (node) => {
   anchor.className = 'nk-heading-anchor'
   anchor.contentEditable = 'false'
   anchor.setAttribute('aria-label', 'Copy link')
-  anchor.textContent = '#'
+  // The "#" glyph is rendered by the host stylesheet (::before) rather than as
+  // a real text node, so the heading's own textContent stays clean (the copy
+  // link is presentational, not part of the heading text). The aria-label keeps
+  // the button accessible for screen readers regardless of visual state.
   headingEl.appendChild(anchor)
 
   let slug = ''
