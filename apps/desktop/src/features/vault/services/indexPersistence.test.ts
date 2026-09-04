@@ -1,16 +1,16 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { clearIndex, loadIndex, saveIndex, type IndexStorage } from '../../../services/searchIndex'
+import { clearIndex, loadIndex, saveIndex, type AsyncIndexStorage } from '../../../services/searchIndex'
 import { createMemoryFsGateway } from '../../../platform/gateways/memory'
 import { createIndexPersistence } from './indexPersistence'
 
-function memStorage(): IndexStorage {
+function memStorage(): AsyncIndexStorage {
   const m = new Map<string, string>()
   return {
-    getItem: (k) => m.get(k) ?? null,
-    setItem: (k, v) => {
+    getItem: async (k) => m.get(k) ?? null,
+    setItem: async (k, v) => {
       m.set(k, String(v))
     },
-    removeItem: (k) => {
+    removeItem: async (k) => {
       m.delete(k)
     },
   }
@@ -19,7 +19,7 @@ function memStorage(): IndexStorage {
 const VAULT = 'memoir://demo'
 
 describe('createIndexPersistence', () => {
-  let storage: IndexStorage
+  let storage: AsyncIndexStorage
   let stateLog: Array<{ state: string; progress: unknown }>
 
   function makePersistence(gateway: ReturnType<typeof createMemoryFsGateway>) {
@@ -59,11 +59,11 @@ describe('createIndexPersistence', () => {
     expect(persistence.candidatePaths('旧内容')).toEqual(['a.md'])
 
     // Simulate an incremental upload after a save: direct upsert on the mirror.
-    persistence.upsert(VAULT, 'a.md', '新内容', 999, 3)
+    await persistence.upsert(VAULT, 'a.md', '新内容', 999, 3)
     expect(persistence.candidatePaths('新内容')).toEqual(['a.md'])
     expect(persistence.candidatePaths('旧内容')).toEqual([])
 
-    persistence.remove('a.md')
+    await persistence.remove('a.md')
     expect(persistence.candidatePaths('新内容')).toEqual([])
   })
 
@@ -105,12 +105,42 @@ describe('createIndexPersistence', () => {
     expect(slowPersistence.candidatePaths('AAA')).toEqual([])
   })
 
+  it('vault switch (detach) cancels a superseded async load/save', async () => {
+    const storage = memStorage()
+    let saveCalled = false
+    let releaseLoad!: () => void
+    const persistence = createIndexPersistence({
+      load: () =>
+        new Promise((resolve) => {
+          releaseLoad = () => {
+            resolve(loadIndex(VAULT, storage))
+          }
+        }),
+      save: async () => {
+        saveCalled = true
+      },
+      clear: async () => {},
+      stat: () => Promise.resolve({ size: 1, mtime: 1 }),
+      read: () => Promise.resolve('x'),
+      getStat: () => undefined,
+      onState: () => {},
+    })
+    const p = persistence.build(VAULT, ['a.md']) // starts, awaits load
+    persistence.detach() // vault switch bumps seq
+    releaseLoad() // the stale load resolves now
+    await p
+    // The superseded build must never persist (save) or touch the mirror.
+    expect(saveCalled).toBe(false)
+    expect(persistence.state()).toBe('idle')
+    expect(persistence.candidatePaths('x')).toEqual([])
+  })
+
   it('detach cancels in-flight work and clears the mirror', async () => {
     let aborted = false
     const persistence = createIndexPersistence({
-      load: () => null,
-      save: () => {},
-      clear: () => {},
+      load: async () => null,
+      save: async () => {},
+      clear: async () => {},
       stat: () => Promise.resolve({ size: 1, mtime: 1 }),
       read: () => Promise.resolve('x'),
       getStat: () => undefined,

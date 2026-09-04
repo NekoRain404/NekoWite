@@ -1,11 +1,15 @@
 /** Window geometry persistence across app restarts.
  *
- * Records the window size, position and maximized state in localStorage so a
- * later launch can restore the exact layout. The geometry is clamped into the
- * currently-available desktop area before being applied, so a monitor that
- * was unplugged (or a resolution that shrank) cannot leave the window off
- * screen or otherwise unreachable. All logic here is pure and side-effect free
- * except `loadWindowState`/`saveWindowState`, which touch localStorage. */
+ * Records the window size, position and maximized state so a later launch can
+ * restore the exact layout. The geometry is clamped into the currently-available
+ * desktop area before being applied, so a monitor that was unplugged (or a
+ * resolution that shrank) cannot leave the window off screen or otherwise
+ * unreachable. All logic here is pure and side-effect free except
+ * `loadWindowState`/`saveWindowState`, which go through the persistence port
+ * (`services/persistence`). The window-state domain is versioned (`version: 1`)
+ * so a future schema change can migrate an existing blob on load. */
+
+import { createDomainPersister, persistence } from '../services/persistence'
 
 export const WINDOW_STATE_KEY = 'nekowite.windowState'
 
@@ -58,22 +62,29 @@ export function clampForDisplay(state: WindowState, display: DisplayBounds): Win
   return { ...state, width, height, x, y }
 }
 
+/** Versioned window-state domain. `defaults` is null (no persisted geometry);
+ *  `parse` returns a valid state or null (corrupt → null → defaults), and the
+ *  load runs a `migrate()` chain (currently none) before parsing. */
+const windowStateDomain = createDomainPersister<WindowState | null>(persistence, {
+  key: WINDOW_STATE_KEY,
+  version: 1,
+  defaults: () => null,
+  parse: (raw) => {
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      return isValidWindowState(parsed) ? parsed : null
+    } catch {
+      // Missing/corrupted storage is not an error; start with defaults.
+      return null
+    }
+  },
+  serialize: (state) => JSON.stringify(state),
+})
+
 export function loadWindowState(): WindowState | null {
-  try {
-    const raw = localStorage.getItem(WINDOW_STATE_KEY)
-    if (!raw) return null
-    const parsed: unknown = JSON.parse(raw)
-    return isValidWindowState(parsed) ? parsed : null
-  } catch {
-    // Missing/corrupted storage is not an error; start with defaults.
-    return null
-  }
+  return windowStateDomain.load()
 }
 
 export function saveWindowState(state: WindowState): void {
-  try {
-    localStorage.setItem(WINDOW_STATE_KEY, JSON.stringify(state))
-  } catch {
-    // Storage unavailable — geometry simply won't persist.
-  }
+  windowStateDomain.save(state)
 }

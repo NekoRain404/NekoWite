@@ -1,19 +1,19 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createMemoryFsGateway } from '../../../platform/gateways/memory'
 import { ContentCache } from '../../../services/contentCache'
-import { clearIndex, loadIndex, saveIndex, type IndexStorage } from '../../../services/searchIndex'
+import { clearIndex, loadIndex, saveIndex, type AsyncIndexStorage } from '../../../services/searchIndex'
 import type { NoteSummary } from '../../../services/noteMeta'
 import type { FsChangeEvent } from '../../../platform/gateways/contracts'
 import { createVaultIndexCoordinator } from './vaultIndexCoordinator'
 
-function memStorage(): IndexStorage {
+function memStorage(): AsyncIndexStorage {
   const m = new Map<string, string>()
   return {
-    getItem: (k) => m.get(k) ?? null,
-    setItem: (k, v) => {
+    getItem: async (k) => m.get(k) ?? null,
+    setItem: async (k, v) => {
       m.set(k, String(v))
     },
-    removeItem: (k) => {
+    removeItem: async (k) => {
       m.delete(k)
     },
   }

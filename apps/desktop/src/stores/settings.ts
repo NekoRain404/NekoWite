@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import { getSharedGateways } from '../platform/runtime/gatewayRuntime'
+import { persistence } from '../services/persistence'
 
 export interface AIConfig {
   provider: string
@@ -39,19 +40,19 @@ const LS_EXPORT_PDF_PAGE = 'nekowite.settings.exportPageSize'
 const LS_EXPORT_PDF_ORIENT = 'nekowite.settings.exportOrientation'
 
 function readLs(key: string, fallback: string): string {
-  const v = localStorage.getItem(key)
+  const v = persistence.get(key)
   return v && v.length > 0 ? v : fallback
 }
 
 function readNumber(key: string, fallback: number): number {
-  const v = localStorage.getItem(key)
+  const v = persistence.get(key)
   if (!v || v.length === 0) return fallback
   const n = Number(v)
   return Number.isFinite(n) ? n : fallback
 }
 
 function readAutosaveInterval(fallback: AutosaveInterval): AutosaveInterval {
-  const v = localStorage.getItem(LS_AUTOSAVE)
+  const v = persistence.get(LS_AUTOSAVE)
   if (v === 'off') return 'off'
   const n = Number(v)
   return n === 5000 || n === 15000 || n === 30000 || n === 60000
@@ -60,14 +61,14 @@ function readAutosaveInterval(fallback: AutosaveInterval): AutosaveInterval {
 }
 
 function readBool(key: string, fallback: boolean): boolean {
-  const v = localStorage.getItem(key)
+  const v = persistence.get(key)
   if (v === 'true') return true
   if (v === 'false') return false
   return fallback
 }
 
 function readEnum<T extends string>(key: string, values: readonly T[], fallback: T): T {
-  const v = localStorage.getItem(key)
+  const v = persistence.get(key)
   return typeof v === 'string' && (values as readonly string[]).includes(v) ? (v as T) : fallback
 }
 
@@ -87,14 +88,14 @@ export const useSettingsStore = defineStore('settings', () => {
   const temperature = ref<number>(readNumber(LS_TEMPERATURE, 0.7))
   const maxTokens = ref<number>(readNumber(LS_MAX_TOKENS, 256))
   const systemPrompt = ref(readLs(LS_SYSTEM_PROMPT, ''))
-  const systemPromptOn = ref(localStorage.getItem(LS_SYSTEM_PROMPT_ON) === 'true')
+  const systemPromptOn = ref(persistence.get(LS_SYSTEM_PROMPT_ON) === 'true')
   const allowPrivate = ref<boolean>(readBool(LS_ALLOW_PRIVATE, true))
   const exportIncludeFrontmatter = ref<boolean>(readBool(LS_EXPORT_FRONTMATTER, true))
   const exportPdfPageSize = ref<ExportPdfPageSize>(readEnum(LS_EXPORT_PDF_PAGE, ['A4', 'Letter'], 'A4'))
   const exportPdfOrientation = ref<ExportPdfOrientation>(readEnum(LS_EXPORT_PDF_ORIENT, ['portrait', 'landscape'], 'portrait'))
 
   watch(provider, (p) => {
-    localStorage.setItem(LS_PROVIDER, p)
+    persistence.set(LS_PROVIDER, p)
     // The key is stored per provider; reload it whenever the provider changes
     // so the next completion uses the right credential.
     void loadKey().catch(() => {
@@ -102,18 +103,18 @@ export const useSettingsStore = defineStore('settings', () => {
       // should not reject the watcher
     })
   })
-  watch(model, (m) => localStorage.setItem(LS_MODEL, m))
-  watch(baseUrl, (b) => localStorage.setItem(LS_BASE_URL, b))
-  watch(temperature, (v) => localStorage.setItem(LS_TEMPERATURE, String(v)))
-  watch(maxTokens, (v) => localStorage.setItem(LS_MAX_TOKENS, String(v)))
-  watch(systemPrompt, (v) => localStorage.setItem(LS_SYSTEM_PROMPT, v))
-  watch(systemPromptOn, (v) => localStorage.setItem(LS_SYSTEM_PROMPT_ON, String(v)))
-  watch(allowPrivate, (v) => localStorage.setItem(LS_ALLOW_PRIVATE, String(v)))
-  watch(autosaveInterval, (v) => localStorage.setItem(LS_AUTOSAVE, String(v)))
-  watch(maxHistory, (v) => localStorage.setItem(LS_MAXHISTORY, String(v)))
-  watch(exportIncludeFrontmatter, (v) => localStorage.setItem(LS_EXPORT_FRONTMATTER, String(v)))
-  watch(exportPdfPageSize, (v) => localStorage.setItem(LS_EXPORT_PDF_PAGE, v))
-  watch(exportPdfOrientation, (v) => localStorage.setItem(LS_EXPORT_PDF_ORIENT, v))
+  watch(model, (m) => persistence.set(LS_MODEL, m))
+  watch(baseUrl, (b) => persistence.set(LS_BASE_URL, b))
+  watch(temperature, (v) => persistence.set(LS_TEMPERATURE, String(v)))
+  watch(maxTokens, (v) => persistence.set(LS_MAX_TOKENS, String(v)))
+  watch(systemPrompt, (v) => persistence.set(LS_SYSTEM_PROMPT, v))
+  watch(systemPromptOn, (v) => persistence.set(LS_SYSTEM_PROMPT_ON, String(v)))
+  watch(allowPrivate, (v) => persistence.set(LS_ALLOW_PRIVATE, String(v)))
+  watch(autosaveInterval, (v) => persistence.set(LS_AUTOSAVE, String(v)))
+  watch(maxHistory, (v) => persistence.set(LS_MAXHISTORY, String(v)))
+  watch(exportIncludeFrontmatter, (v) => persistence.set(LS_EXPORT_FRONTMATTER, String(v)))
+  watch(exportPdfPageSize, (v) => persistence.set(LS_EXPORT_PDF_PAGE, v))
+  watch(exportPdfOrientation, (v) => persistence.set(LS_EXPORT_PDF_ORIENT, v))
 
   async function saveKey(): Promise<void> {
     await getSharedGateways().keys.storeAiKey(provider.value, apiKey.value)

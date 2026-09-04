@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { emitLifecycle, getActiveEditor } from '@nekowite/plugin-host'
 import { armSuppressReapply } from '../services/suppressReapply'
 import { fsService } from '../platform/gateways/fs'
+import { persistence } from '../services/persistence'
 import type { HistoryEntry } from '../platform/gateways/contracts'
 import { notifyError, notifyRecovery } from '../services/errors'
 import { announce } from '../services/announcer'
@@ -126,10 +127,10 @@ export const useTabsStore = defineStore('tabs', () => {
         tabs: tabs.value,
       })
       if (raw === null) {
-        if (tabs.value.length === 0) localStorage.removeItem(SESSION_KEY)
+        if (tabs.value.length === 0) persistence.remove(SESSION_KEY)
         return
       }
-      localStorage.setItem(SESSION_KEY, raw)
+      persistence.set(SESSION_KEY, raw)
     } catch {
       // localStorage can be unavailable (some webviews); session restore is
       // best-effort and must never break tab operations.
@@ -140,7 +141,7 @@ export const useTabsStore = defineStore('tabs', () => {
    * duplicate guard and the async content refill. No-op when there is no
    * session for the currently-open vault. */
   async function restoreSession(): Promise<void> {
-    const session = parseSession(localStorage.getItem(SESSION_KEY))
+    const session = parseSession(persistence.get(SESSION_KEY))
     if (!session || session.vault !== vault.value) return
     for (const path of session.paths) {
       await openTab(path)

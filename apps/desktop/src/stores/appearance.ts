@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { createDomainPersister, persistence } from '../services/persistence'
 
 export type Theme = 'light' | 'dark' | 'system'
 export type ContentDirection = 'auto' | 'ltr' | 'rtl'
@@ -126,48 +127,65 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
   return Math.round(Math.min(max, Math.max(min, numeric)))
 }
 
-function readStored(): AppearanceSettings {
-  const raw = localStorage.getItem(LS_KEY)
-  if (!raw) return DEFAULTS
-  try {
-    const parsed = JSON.parse(raw) as Partial<AppearanceSettings>
-    return {
-      theme:
-        parsed.theme === 'light' || parsed.theme === 'dark' || parsed.theme === 'system'
-          ? parsed.theme
-          : DEFAULTS.theme,
-      accent: typeof parsed.accent === 'string' && ACCENTS.includes(parsed.accent as Accent)
-        ? (parsed.accent as Accent)
-        : DEFAULTS.accent,
-      bodyFontSize: parsed.bodyFontSize ?? DEFAULTS.bodyFontSize,
-      lineHeight: parsed.lineHeight ?? DEFAULTS.lineHeight,
-      sidebarWidth: clampInt(parsed.sidebarWidth ?? DEFAULTS.sidebarWidth, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX, DEFAULTS.sidebarWidth),
-      railWidth: clampInt(parsed.railWidth ?? DEFAULTS.railWidth, RAIL_WIDTH_MIN, RAIL_WIDTH_MAX, DEFAULTS.railWidth),
-      notelistWidth: clampInt(parsed.notelistWidth ?? DEFAULTS.notelistWidth, NOTELIST_WIDTH_MIN, NOTELIST_WIDTH_MAX, DEFAULTS.notelistWidth),
-      uiFont: pickFont(parsed.uiFont, UI_FONT_IDS, DEFAULTS.uiFont),
-      editorFont: pickFont(parsed.editorFont, EDITOR_FONT_IDS, DEFAULTS.editorFont),
-      monoFont: pickFont(parsed.monoFont, MONO_FONT_IDS, DEFAULTS.monoFont),
-      focusMode: readBool(parsed.focusMode, DEFAULTS.focusMode),
-      wordGoal: clampInt(parsed.wordGoal ?? DEFAULTS.wordGoal, 0, WORD_GOAL_MAX, DEFAULTS.wordGoal),
-      spellCheckEnabled: readBool(parsed.spellCheckEnabled, DEFAULTS.spellCheckEnabled),
-      softWrap: readBool(parsed.softWrap, DEFAULTS.softWrap),
-      lineNumbers: readBool(parsed.lineNumbers, DEFAULTS.lineNumbers),
-      autosaveOnBlur: readBool(parsed.autosaveOnBlur, DEFAULTS.autosaveOnBlur),
-      statusBarWords: readBool(parsed.statusBarWords, DEFAULTS.statusBarWords),
-      followSystemAccent: readBool(parsed.followSystemAccent, DEFAULTS.followSystemAccent),
-      renderTaskChecklist: readBool(parsed.renderTaskChecklist, DEFAULTS.renderTaskChecklist),
-      autoSyncScroll: readBool(parsed.autoSyncScroll, DEFAULTS.autoSyncScroll),
-      confirmBeforeDelete: readBool(parsed.confirmBeforeDelete, DEFAULTS.confirmBeforeDelete),
-      highContrast: readBool(parsed.highContrast, DEFAULTS.highContrast),
-      contentDirection:
-        typeof parsed.contentDirection === 'string' &&
-        (CONTENT_DIRECTIONS as string[]).includes(parsed.contentDirection)
-          ? (parsed.contentDirection as ContentDirection)
-          : DEFAULTS.contentDirection,
-    }
-  } catch {
-    return DEFAULTS
+/** Parse a stored appearance blob with field-by-field validation, returning null
+ *  when it is corrupt (the domain persister then falls back to `defaults`). */
+function parseStored(raw: string): AppearanceSettings | null {
+  const parsed = JSON.parse(raw) as Partial<AppearanceSettings>
+  return {
+    theme:
+      parsed.theme === 'light' || parsed.theme === 'dark' || parsed.theme === 'system'
+        ? parsed.theme
+        : DEFAULTS.theme,
+    accent: typeof parsed.accent === 'string' && ACCENTS.includes(parsed.accent as Accent)
+      ? (parsed.accent as Accent)
+      : DEFAULTS.accent,
+    bodyFontSize: parsed.bodyFontSize ?? DEFAULTS.bodyFontSize,
+    lineHeight: parsed.lineHeight ?? DEFAULTS.lineHeight,
+    sidebarWidth: clampInt(parsed.sidebarWidth ?? DEFAULTS.sidebarWidth, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX, DEFAULTS.sidebarWidth),
+    railWidth: clampInt(parsed.railWidth ?? DEFAULTS.railWidth, RAIL_WIDTH_MIN, RAIL_WIDTH_MAX, DEFAULTS.railWidth),
+    notelistWidth: clampInt(parsed.notelistWidth ?? DEFAULTS.notelistWidth, NOTELIST_WIDTH_MIN, NOTELIST_WIDTH_MAX, DEFAULTS.notelistWidth),
+    uiFont: pickFont(parsed.uiFont, UI_FONT_IDS, DEFAULTS.uiFont),
+    editorFont: pickFont(parsed.editorFont, EDITOR_FONT_IDS, DEFAULTS.editorFont),
+    monoFont: pickFont(parsed.monoFont, MONO_FONT_IDS, DEFAULTS.monoFont),
+    focusMode: readBool(parsed.focusMode, DEFAULTS.focusMode),
+    wordGoal: clampInt(parsed.wordGoal ?? DEFAULTS.wordGoal, 0, WORD_GOAL_MAX, DEFAULTS.wordGoal),
+    spellCheckEnabled: readBool(parsed.spellCheckEnabled, DEFAULTS.spellCheckEnabled),
+    softWrap: readBool(parsed.softWrap, DEFAULTS.softWrap),
+    lineNumbers: readBool(parsed.lineNumbers, DEFAULTS.lineNumbers),
+    autosaveOnBlur: readBool(parsed.autosaveOnBlur, DEFAULTS.autosaveOnBlur),
+    statusBarWords: readBool(parsed.statusBarWords, DEFAULTS.statusBarWords),
+    followSystemAccent: readBool(parsed.followSystemAccent, DEFAULTS.followSystemAccent),
+    renderTaskChecklist: readBool(parsed.renderTaskChecklist, DEFAULTS.renderTaskChecklist),
+    autoSyncScroll: readBool(parsed.autoSyncScroll, DEFAULTS.autoSyncScroll),
+    confirmBeforeDelete: readBool(parsed.confirmBeforeDelete, DEFAULTS.confirmBeforeDelete),
+    highContrast: readBool(parsed.highContrast, DEFAULTS.highContrast),
+    contentDirection:
+      typeof parsed.contentDirection === 'string' &&
+      (CONTENT_DIRECTIONS as string[]).includes(parsed.contentDirection)
+        ? (parsed.contentDirection as ContentDirection)
+        : DEFAULTS.contentDirection,
   }
+}
+
+/** Versioned appearance domain (schema `version: 1`). A corrupt/missing blob
+ *  yields `defaults`; a future schema bump registers a `migrations` chain that
+ *  runs on load before parsing. */
+const appearanceDomain = createDomainPersister<AppearanceSettings>(persistence, {
+  key: LS_KEY,
+  version: 1,
+  defaults: () => ({ ...DEFAULTS }),
+  parse: (raw) => {
+    try {
+      return parseStored(raw)
+    } catch {
+      return null
+    }
+  },
+  serialize: (value) => JSON.stringify(value),
+})
+
+function readStored(): AppearanceSettings {
+  return appearanceDomain.load()
 }
 
 export const useAppearanceStore = defineStore('appearance', () => {
@@ -198,34 +216,31 @@ export const useAppearanceStore = defineStore('appearance', () => {
   const systemRevision = ref(0)
 
   function persist(): void {
-    localStorage.setItem(
-      LS_KEY,
-      JSON.stringify({
-        theme: theme.value,
-        accent: accent.value,
-        bodyFontSize: bodyFontSize.value,
-        lineHeight: lineHeight.value,
-        sidebarWidth: sidebarWidth.value,
-        railWidth: railWidth.value,
-        notelistWidth: notelistWidth.value,
-        uiFont: uiFont.value,
-        editorFont: editorFont.value,
-        monoFont: monoFont.value,
-        focusMode: focusMode.value,
-        wordGoal: wordGoal.value,
-        spellCheckEnabled: spellCheckEnabled.value,
-        softWrap: softWrap.value,
-        lineNumbers: lineNumbers.value,
-        autosaveOnBlur: autosaveOnBlur.value,
-        statusBarWords: statusBarWords.value,
-        followSystemAccent: followSystemAccent.value,
-        renderTaskChecklist: renderTaskChecklist.value,
-        autoSyncScroll: autoSyncScroll.value,
-        confirmBeforeDelete: confirmBeforeDelete.value,
-        highContrast: highContrast.value,
-        contentDirection: contentDirection.value,
-      }),
-    )
+    appearanceDomain.save({
+      theme: theme.value,
+      accent: accent.value,
+      bodyFontSize: bodyFontSize.value,
+      lineHeight: lineHeight.value,
+      sidebarWidth: sidebarWidth.value,
+      railWidth: railWidth.value,
+      notelistWidth: notelistWidth.value,
+      uiFont: uiFont.value,
+      editorFont: editorFont.value,
+      monoFont: monoFont.value,
+      focusMode: focusMode.value,
+      wordGoal: wordGoal.value,
+      spellCheckEnabled: spellCheckEnabled.value,
+      softWrap: softWrap.value,
+      lineNumbers: lineNumbers.value,
+      autosaveOnBlur: autosaveOnBlur.value,
+      statusBarWords: statusBarWords.value,
+      followSystemAccent: followSystemAccent.value,
+      renderTaskChecklist: renderTaskChecklist.value,
+      autoSyncScroll: autoSyncScroll.value,
+      confirmBeforeDelete: confirmBeforeDelete.value,
+      highContrast: highContrast.value,
+      contentDirection: contentDirection.value,
+    })
   }
 
   function effectiveTheme(): 'light' | 'dark' {
