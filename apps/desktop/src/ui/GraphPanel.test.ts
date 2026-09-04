@@ -3,7 +3,7 @@ import { createApp, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import GraphPanel from './GraphPanel.vue'
 import { useTabsStore } from '../stores/tabs'
-import { vaultFileIndex } from '../services/vaultFiles'
+import { resetVaultFileIndex } from '../services/vaultFiles'
 
 const readMock = vi.hoisted(() => vi.fn())
 const listMock = vi.hoisted(() => vi.fn())
@@ -52,7 +52,7 @@ describe('GraphPanel', () => {
     setActivePinia(pinia)
     readMock.mockReset()
     listMock.mockReset()
-    vaultFileIndex.invalidate()
+    resetVaultFileIndex()
   })
 
   afterEach(() => {

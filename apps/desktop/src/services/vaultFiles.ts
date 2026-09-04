@@ -182,4 +182,12 @@ export class VaultFileIndex {
   }
 }
 
-export const vaultFileIndex = new VaultFileIndex((vault, dir) => fsService.list(vault, dir))
+export let vaultFileIndex = new VaultFileIndex((vault, dir) => fsService.list(vault, dir))
+
+/** Recreate the singleton index with a fresh cache/in-flight/generation state.
+ * For tests so a walk or cached entry left by one test cannot leak into the
+ * next (the in-flight walk record and the cached file list are the leak
+ * vectors across cases in the same worker). */
+export function resetVaultFileIndex(): void {
+  vaultFileIndex = new VaultFileIndex((vault, dir) => fsService.list(vault, dir))
+}
