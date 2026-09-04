@@ -12,6 +12,7 @@ import type {
 } from './contracts'
 
 export const tauriFsGateway: FsGateway = {
+  registerVault: (vault) => invoke<void>('register_vault', { vault_root: vault }),
   read: (vault, path) => invoke<string>('read_file', { vault_root: vault, path }),
   stat: (vault, path) => invoke<FileStat>('stat_file', { vault_root: vault, path }),
   write: (vault, path, content, maxHistory) =>

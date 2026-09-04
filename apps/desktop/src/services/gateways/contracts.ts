@@ -28,6 +28,10 @@ export interface FileStat {
 }
 
 export interface FsGateway {
+  /** Authorize a vault root with the backend before issuing any path-confined
+   * command. The Rust path-confined commands reject any root that was not
+   * registered this session, so this must run before the first read/list. */
+  registerVault(vault: string): Promise<void>
   read(vault: string, path: string): Promise<string>
   stat(vault: string, path: string): Promise<FileStat>
   write(vault: string, path: string, content: string, maxHistory?: number): Promise<void>
