@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi'
+import { fsService } from './services/fs'
 import { FolderOpen, PanelRightClose, PanelRightOpen, Settings } from 'lucide-vue-next'
 import TitleBar from './ui/TitleBar.vue'
 import Sidebar from './ui/AppSidebar.vue'
@@ -245,7 +246,15 @@ function onWindowBlur(): void {
   })
 }
 
-function applyVault(path: string): void {
+async function applyVault(path: string): Promise<void> {
+  // Authorize the vault root with the backend BEFORE any path-confined command:
+  // the Rust commands now reject any root the user did not open this session.
+  // A fresh folder pick is already auto-authorized by open_folder_dialog, but the
+  // localStorage-restore path needs this explicit call. Must run before indexVault.
+  await fsService.registerVault(path).catch(() => {
+    // Registration failure (e.g. stale path) must not crash startup; the tree
+    // surfaces the bad vault and the user can pick another folder.
+  })
   vaultPath.value = path
   // Open tabs keep absolute paths from the previous vault — leaving them open
   // would route every save to "path escapes vault" errors. Start fresh.
@@ -311,7 +320,7 @@ onMounted(() => {
     // failed background load on startup should not reject the mount
   })
   const saved = localStorage.getItem('nekowite.vault')
-  if (saved) applyVault(saved)
+  if (saved) void applyVault(saved)
   // Reopen the tabs that were open at the last capture (no-op when there is no
   // matching session). Runs after the vault is applied so restoreSession sees
   // the correct vault and its duplicate guard can focus existing tabs.
@@ -337,7 +346,7 @@ onBeforeUnmount(() => {
 
 function onOpenFolder(path: string): void {
   localStorage.setItem('nekowite.vault', path)
-  applyVault(path)
+  void applyVault(path)
 }
 
 function onConflict(req: { tabId: string; path: string }): void {
@@ -345,7 +354,6 @@ function onConflict(req: { tabId: string; path: string }): void {
 }
 
 async function pickFolder(): Promise<void> {
-  const { fsService } = await import('./services/fs')
   const picked = await fsService.openFolderDialog()
   if (picked) onOpenFolder(picked)
 }

@@ -81,6 +81,7 @@ export function createMemoryFsGateway(
   }
 
   return {
+    registerVault: async () => {},
     read: async (_vault, path) => {
       const content = files.get(path)
       if (content === undefined) {

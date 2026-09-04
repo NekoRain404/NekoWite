@@ -29,6 +29,9 @@ const LS_MAX_TOKENS = 'nekowite.ai.maxTokens'
 const LS_SYSTEM_PROMPT = 'nekowite.ai.systemPrompt'
 const LS_SYSTEM_PROMPT_ON = 'nekowite.ai.systemPromptOn'
 const LS_ALLOW_PRIVATE = 'nekowite.ai.allowPrivate'
+// The Rust backend returns this fixed placeholder instead of the raw API key (the
+// key never leaves the vault store to the window). Must match the Rust constant.
+const AI_KEY_MASKED = '••••••••'
 const LS_AUTOSAVE = 'nekowite.settings.autosaveInterval'
 const LS_MAXHISTORY = 'nekowite.settings.maxHistory'
 const LS_EXPORT_FRONTMATTER = 'nekowite.settings.exportFrontmatter'
@@ -118,7 +121,12 @@ export const useSettingsStore = defineStore('settings', () => {
 
   async function loadKey(): Promise<void> {
     const stored = await getGateways().keys.loadAiKey(provider.value)
-    apiKey.value = stored ?? ''
+    // The backend never returns the raw key to the window — only a fixed mask
+    // when a key is configured (and null when not). Never treat the mask as a
+    // real key: feed an empty value into the live state so config() does not
+    // send it back, and so the settings field stays empty until the user types
+    // a new key. The Rust side backfills the real key from the vault for AI calls.
+    apiKey.value = stored && stored !== AI_KEY_MASKED ? stored : ''
   }
 
   function config(): AIConfig {
