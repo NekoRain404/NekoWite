@@ -1,12 +1,28 @@
+//! Vault file store: reading, writing, listing, searching, history snapshots
+//! and attachments.
+//!
+//! Every function takes a `vault_root` (the vault the user opened) as its first
+//! argument and resolves the requested path through
+//! [`crate::domain::path_policy`] before touching the disk, so every operation
+//! is traceable to the vault root and confined inside it. The command layer
+//! additionally proves the root was opened this session (see
+//! [`crate::state::require_opened_vault`]) before calling in.
+
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use chrono::Local;
 use serde::Serialize;
 use std::io;
 use std::io::Write;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use crate::domain::path_policy::{
+    encode_rel_path, resolve_within, resolve_within_rel,
+};
+use crate::domain::vault::{is_mdx_path, should_skip_entry};
+use crate::storage::trash_store::move_trash_key;
 
 #[derive(Serialize, Clone)]
 pub struct FileEntry {
@@ -14,13 +30,6 @@ pub struct FileEntry {
     pub path: String,
     pub is_dir: bool,
     pub is_mdx: bool,
-}
-
-#[derive(Serialize, Clone)]
-pub struct TrashEntry {
-    pub name: String,
-    pub trash_path: String,
-    pub original_path: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -34,129 +43,6 @@ pub struct HistoryEntry {
 pub struct FileStat {
     pub size: u64,
     pub mtime: u64,
-}
-
-pub fn is_mdx_path(p: &str) -> bool {
-    let path = Path::new(p);
-    let has_node_modules = path
-        .components()
-        .any(|c| c.as_os_str() == "node_modules");
-    if has_node_modules {
-        return false;
-    }
-    matches!(
-        path.extension().and_then(|e| e.to_str()),
-        Some("mdx") | Some("md") | Some("markdown")
-    )
-}
-
-/// Decide whether an entry should be hidden from listings: hidden files and
-/// dirs (name starts with `.`), build output directories (exact dir name),
-/// and symlinks. Files whose name merely carries a build-dir prefix (e.g.
-/// `dist.md`) are kept — only the exact directory name matches.
-pub fn should_skip_entry(name: &str, is_symlink: bool) -> bool {
-    if is_symlink {
-        return true;
-    }
-    if name.starts_with('.') {
-        return true;
-    }
-    matches!(name, "node_modules" | "dist" | "build" | "target" | "out")
-}
-
-/// Legacy relative-only guard, kept for callers that work purely on
-/// vault-relative names. Absolute paths are handled by [`resolve_within`].
-pub fn sanitize_path(p: &str) -> Result<PathBuf, String> {
-    let path = Path::new(p);
-    if path.is_absolute() || path.components().any(|c| c.as_os_str() == "..") {
-        return Err("path escapes workspace".into());
-    }
-    Ok(path.to_path_buf())
-}
-
-/// Resolve `requested` against the vault `base` and prove the result stays
-/// inside the vault.
-///
-/// Both the absolute vault root (as returned by the folder dialog) and
-/// vault-relative paths (e.g. `"."` or `"docs/hello.mdx"`) are accepted;
-/// anything that canonicalizes outside `base`, or traverses with `..`, is
-/// rejected. Live symlinks that resolve back inside `base` are allowed
-/// (their canonical target still lies within the vault); any symlink that
-/// still appears as a component between `base` and the result — including a
-/// dangling symlink whose target is currently absent — is rejected, because
-/// its target could be materialized later and redirect the read/write
-/// outside the vault at use time.
-pub fn resolve_within(base: &str, requested: &str) -> Result<PathBuf, String> {
-    resolve_within_rel(base, requested).map(|(resolved, _)| resolved)
-}
-
-/// Resolve `requested` against the vault `base` and prove the result stays
-/// inside the vault, returning both the resolved absolute path and the
-/// canonical vault-relative form.
-///
-/// Both the absolute vault root (as returned by the folder dialog) and
-/// vault-relative paths (e.g. `"."` or `"docs/hello.mdx"`) are accepted;
-/// anything that canonicalizes outside `base`, or traverses with `..`, is
-/// rejected. Live symlinks that resolve back inside `base` are allowed
-/// (their canonical target still lies within the vault); any symlink that
-/// still appears as a component between `base` and the result — including a
-/// dangling symlink whose target is currently absent — is rejected, because
-/// its target could be materialized later and redirect the read/write
-/// outside the vault at use time.
-///
-/// The relative form is what history/trash keys are built from: it is
-/// canonical (no `.`/`..` components, symlinks resolved away), so an absolute
-/// spelling (what `list_dir` entries carry) and a relative spelling of the
-/// same file always produce the same key.
-pub fn resolve_within_rel(base: &str, requested: &str) -> Result<(PathBuf, String), String> {
-    let base_path = Path::new(base);
-    if !base_path.is_absolute() {
-        return Err("vault root must be an absolute path".into());
-    }
-    let canonical_base = base_path
-        .canonicalize()
-        .map_err(|e| format!("vault root not accessible: {e}"))?;
-
-    let requested_path = Path::new(requested);
-    let combined = if requested_path.is_absolute() {
-        requested_path.to_path_buf()
-    } else {
-        canonical_base.join(requested_path)
-    };
-
-    let mut normalized = PathBuf::new();
-    for component in combined.components() {
-        match component {
-            Component::ParentDir => return Err("path escapes vault".into()),
-            Component::CurDir => {}
-            other => normalized.push(other.as_os_str()),
-        }
-    }
-
-    let canonical = canonicalize_loose(&normalized)
-        .map_err(|e| format!("cannot resolve path: {e}"))?;
-    if !canonical.starts_with(&canonical_base) {
-        return Err("path escapes vault".into());
-    }
-    reject_symlink_components(&canonical_base, &canonical)?;
-    let relative = canonical
-        .strip_prefix(&canonical_base)
-        .map_err(|_| "path escapes vault".to_string())?
-        .to_string_lossy()
-        .to_string();
-    Ok((canonical, relative))
-}
-
-/// Resolve `path` inside the vault and encode the canonical vault-relative
-/// form as a history key. Every history caller goes through this so all
-/// spellings of a file land on the same key. The vault root itself has no
-/// meaningful relative form and is rejected.
-fn encoded_history_key(vault_root: &str, path: &str) -> Result<String, String> {
-    let (_, relative) = resolve_within_rel(vault_root, path)?;
-    if relative.is_empty() {
-        return Err("path is the vault root".into());
-    }
-    Ok(encode_rel_path(&relative))
 }
 
 /// Nanosecond clock reading used to make temp file names unique.
@@ -183,61 +69,6 @@ static WRITE_LOCK: Mutex<()> = Mutex::new(());
 /// currently-running writer (unique nonce name, recent mtime) are never
 /// touched, so cleaning cannot race a live write.
 const STALE_TMP_MAX_AGE: Duration = Duration::from_secs(3600);
-
-/// Reject the resolved path if any component between `base` and `path` is a
-/// symlink (lstat — non-following). `canonicalize_loose` resolves *live*
-/// symlinks away, so only *dangling* symlinks survive as literal components
-/// in its missing-tail re-append; those cannot be proven to stay inside the
-/// vault, so they are rejected outright.
-fn reject_symlink_components(base: &Path, path: &Path) -> Result<(), String> {
-    let Some(relative) = path.strip_prefix(base).ok() else {
-        return Err("path escapes vault".into());
-    };
-    let mut probe = base.to_path_buf();
-    for component in relative.components() {
-        probe.push(component);
-        let is_symlink = probe
-            .symlink_metadata()
-            .map(|meta| meta.file_type().is_symlink())
-            .unwrap_or(false);
-        if is_symlink {
-            return Err("path escapes vault".into());
-        }
-    }
-    Ok(())
-}
-
-/// Canonicalize `path` even when its final segment does not exist yet (e.g.
-/// a file about to be written): canonicalize the nearest existing ancestor
-/// and re-append the missing tail so symlinks can still be resolved.
-fn canonicalize_loose(path: &Path) -> io::Result<PathBuf> {
-    if let Ok(canonical) = path.canonicalize() {
-        return Ok(canonical);
-    }
-    let mut missing: Vec<std::ffi::OsString> = Vec::new();
-    let mut current = path.to_path_buf();
-    loop {
-        match current.canonicalize() {
-            Ok(canonical) => {
-                let mut out = canonical;
-                for segment in missing.iter().rev() {
-                    out.push(segment);
-                }
-                return Ok(out);
-            }
-            Err(_) => match current.file_name() {
-                Some(name) => {
-                    missing.push(name.to_os_string());
-                    match current.parent() {
-                        Some(parent) => current = parent.to_path_buf(),
-                        None => return path.canonicalize(),
-                    }
-                }
-                None => return path.canonicalize(),
-            },
-        }
-    }
-}
 
 pub fn read_file(vault_root: &str, path: &str) -> Result<String, String> {
     let resolved = resolve_within(vault_root, path)?;
@@ -322,84 +153,16 @@ fn sync_parent_dir(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Encode a vault-relative path into a single safe file name for use under
-/// `.nekowite/history/` and `.nekowite-trash/`.
-///
-/// The mapping is injective, so two distinct paths can never share a history
-/// directory or a trash key — the previous `__` scheme collapsed `docs/a.md`
-/// and a literal `docs__a.md` (and `.a/b` with `a/b`) onto the same key.
-/// `%`, `/`, `_` and a leading `.` are percent-escaped; every other character
-/// passes through. Escaping `_` as well keeps the `__` marker out of new
-/// keys, which is what lets [`decode_rel_path`] tell legacy keys apart
-/// unambiguously. The result never contains `/`, never starts with `.`, and
-/// is never `.`/`..`, so it is always exactly one safe filesystem component
-/// (a `..` run that merely appears inside the name is harmless — it is part
-/// of one component, not a traversal).
-pub fn encode_rel_path(p: &str) -> String {
-    if p.is_empty() {
-        // Not a real path; keep a stable, safe placeholder.
-        return "_".into();
+/// Resolve `path` inside the vault and encode the canonical vault-relative
+/// form as a history key. Every history caller goes through this so all
+/// spellings of a file land on the same key. The vault root itself has no
+/// meaningful relative form and is rejected.
+fn encoded_history_key(vault_root: &str, path: &str) -> Result<String, String> {
+    let (_, relative) = resolve_within_rel(vault_root, path)?;
+    if relative.is_empty() {
+        return Err("path is the vault root".into());
     }
-    let mut out = String::with_capacity(p.len());
-    for (i, c) in p.chars().enumerate() {
-        match c {
-            '%' => out.push_str("%25"),
-            '/' => out.push_str("%2F"),
-            '_' => out.push_str("%5F"),
-            // A leading dot would make the name hidden (or even `.`/`..`).
-            '.' if i == 0 => out.push_str("%2E"),
-            c => out.push(c),
-        }
-    }
-    out
-}
-
-/// Undo [`encode_rel_path`], recovering the vault-relative path a trash key
-/// stands for. Best-effort by design, because trash entries written by the
-/// previous `__` encoder must keep working: a name carrying one of our known
-/// escape sequences is percent-decoded, a name containing `__` (which the
-/// current encoder never emits, since `_` is escaped) is treated as legacy
-/// and its `__` markers become `/`, and anything else is itself. A legacy
-/// file whose own name contains an uppercase escape sequence can still be
-/// mis-decoded — the old scheme was lossy the same way.
-fn decode_rel_path(encoded: &str) -> String {
-    const KNOWN: [&str; 4] = ["%2F", "%25", "%5F", "%2E"];
-    if KNOWN.iter().any(|seq| encoded.contains(seq)) {
-        return percent_decode(encoded);
-    }
-    if encoded.contains("__") {
-        // Legacy encoder: `/` became `__`.
-        let legacy = encoded.replace("__", "/");
-        if is_safe_rel(&legacy) {
-            return legacy;
-        }
-    }
-    encoded.to_string()
-}
-
-/// Unescape exactly the sequences [`encode_rel_path`] emits. `%25` must be
-/// replaced last so an escaped `%` is never re-expanded into a fake escape
-/// (e.g. the key `%252F` is a literal `%2F`, not a `/`).
-fn percent_decode(encoded: &str) -> String {
-    const ESCAPES: [(&str, &str); 4] = [
-        ("%2F", "/"),
-        ("%5F", "_"),
-        ("%2E", "."),
-        ("%25", "%"),
-    ];
-    let mut out = encoded.to_string();
-    for (from, to) in ESCAPES {
-        out = out.replace(from, to);
-    }
-    out
-}
-
-/// A decoded relative path is usable only if it is non-empty, not absolute,
-/// and has no `.`/`..` components (which the encoding must never produce).
-fn is_safe_rel(p: &str) -> bool {
-    !p.is_empty()
-        && !p.starts_with('/')
-        && !p.split('/').any(|c| c == "." || c == "..")
+    Ok(encode_rel_path(&relative))
 }
 
 /// Snapshot `old_content` into `.nekowite/history/<encoded>/<unix_ms>.<ext>`
@@ -596,147 +359,6 @@ pub fn write_file(
         }
     }
     atomic_write(&resolved, content)
-}
-
-/// Move `path` into `.nekowite-trash/<encode(path)>`, appending `-<ts>` if a
-/// same-named entry already sits in the trash. Returns the trash path.
-///
-/// The key is built from the CANONICAL vault-relative path, not the argument
-/// as given: the frontend hands us absolute paths (as returned by
-/// `list_dir`), and encoding those directly produced keys
-/// [`decode_rel_path`] could never turn back into a usable vault path.
-pub fn delete_file(vault_root: &str, path: &str) -> Result<String, String> {
-    let (resolved, relative) = resolve_within_rel(vault_root, path)?;
-    if relative.is_empty() {
-        return Err("cannot delete the vault root".into());
-    }
-    let trash_root = Path::new(vault_root).join(".nekowite-trash");
-    std::fs::create_dir_all(&trash_root).map_err(|e| e.to_string())?;
-    let encoded = encode_rel_path(&relative);
-    let mut target = trash_root.join(&encoded);
-    if target.exists() {
-        let ts = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or_default();
-        target = trash_root.join(format!("{encoded}-{ts}"));
-    }
-    std::fs::rename(&resolved, &target).map_err(|e| e.to_string())?;
-    Ok(target.to_string_lossy().to_string())
-}
-
-/// List `.nekowite-trash/`, decoding each entry back to its original vault
-/// path where the encoding permits.
-pub fn list_trash(vault_root: &str) -> Result<Vec<TrashEntry>, String> {
-    let trash_root = Path::new(vault_root).join(".nekowite-trash");
-    let mut out = Vec::new();
-    let rd = match std::fs::read_dir(&trash_root) {
-        Ok(rd) => rd,
-        Err(_) => return Ok(out),
-    };
-    for entry in rd.flatten() {
-        let p = entry.path();
-        let Ok(meta) = p.metadata() else { continue };
-        if !meta.is_file() {
-            continue;
-        }
-        let name = p
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-        let decoded = decode_rel_path(&name);
-        // Only surface a path that is a sane vault-relative form AND that we
-        // could actually resolve inside the vault — the same rule
-        // `restore_from_trash` applies, so the UI never offers a restore
-        // that would be refused.
-        let original_path = if is_safe_rel(&decoded)
-            && resolve_within(vault_root, &decoded).is_ok()
-        {
-            decoded
-        } else {
-            String::new()
-        };
-        out.push(TrashEntry {
-            name,
-            trash_path: p.to_string_lossy().to_string(),
-            original_path,
-        });
-    }
-    out.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(out)
-}
-
-/// Permanently delete every entry under `.nekowite-trash/`, returning how many
-/// were removed. A missing trash directory is not an error — it returns 0.
-///
-/// Only direct children of the trash directory are touched (each is the single
-/// encoded, safe component [`delete_file`] wrote), so traversal is impossible;
-/// the defensive `.`/`..`/empty-name guard is belt and braces rather than a
-/// requirement.
-pub fn clear_trash(vault_root: &str) -> Result<usize, String> {
-    let trash_root = Path::new(vault_root).join(".nekowite-trash");
-    if !trash_root.exists() {
-        return Ok(0);
-    }
-    let rd = std::fs::read_dir(&trash_root).map_err(|e| e.to_string())?;
-    let mut removed = 0usize;
-    for entry in rd.flatten() {
-        let p = entry.path();
-        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if name.is_empty() || name == "." || name == ".." {
-            continue;
-        }
-        if p.is_dir() {
-            std::fs::remove_dir_all(&p).map_err(|e| e.to_string())?;
-        } else {
-            std::fs::remove_file(&p).map_err(|e| e.to_string())?;
-        }
-        removed += 1;
-    }
-    Ok(removed)
-}
-
-/// Move a trash entry back to its original vault path. If that path is now
-/// occupied, append `-restored-<ts>` and return the new path.
-pub fn restore_from_trash(vault_root: &str, trash_path: &str) -> Result<String, String> {
-    let resolved_trash = resolve_within(vault_root, trash_path)?;
-    let trash_root = Path::new(vault_root).join(".nekowite-trash");
-    let canonical_trash = trash_root
-        .canonicalize()
-        .map_err(|e| format!("cannot resolve trash directory: {e}"))?;
-    if !resolved_trash.starts_with(&canonical_trash) {
-        return Err("trash path outside .nekowite-trash".into());
-    }
-    let name = resolved_trash
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("")
-        .to_string();
-    let original_rel = decode_rel_path(&name);
-    if !is_safe_rel(&original_rel) {
-        return Err("cannot restore: invalid trash entry name".into());
-    }
-    let original_abs = resolve_within(vault_root, &original_rel)?;
-    let mut target = original_abs;
-    if target.exists() {
-        let ts = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or_default();
-        let parent = target
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_default();
-        let fname = target
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("file")
-            .to_string();
-        target = parent.join(format!("{fname}-restored-{ts}"));
-    }
-    std::fs::rename(&resolved_trash, &target).map_err(|e| e.to_string())?;
-    Ok(target.to_string_lossy().to_string())
 }
 
 /// List the history snapshots for `path`, newest first.
@@ -1163,46 +785,4 @@ fn move_history_key(vault_root: &str, from_rel: &str, to_rel: &str) {
         let _ = std::fs::rename(&src, &target);
     }
     let _ = std::fs::remove_dir(&from_dir);
-}
-
-/// Migrate the trash entry for a renamed file from the key for `from_rel` to
-/// the key for `to_rel`. Handles both the exact key a [`delete_file`] wrote and
-/// any `-<ts>` collision-suffixed variants. Best-effort, like
-/// [`move_history_key`].
-fn move_trash_key(vault_root: &str, from_rel: &str, to_rel: &str) {
-    let trash_root = Path::new(vault_root).join(".nekowite-trash");
-    if !trash_root.is_dir() {
-        return;
-    }
-    let from_key = encode_rel_path(from_rel);
-    let to_key = encode_rel_path(to_rel);
-    let Ok(rd) = std::fs::read_dir(&trash_root) else { return };
-    for entry in rd.flatten() {
-        let p = entry.path();
-        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        let suffix = name.strip_prefix(&from_key).unwrap_or("");
-        // Only the exact key or a `-<digits>` collision variant matches; a
-        // longer path that merely starts with the same text never does.
-        let matched = suffix.is_empty()
-            || (suffix.len() > 1
-                && suffix.starts_with('-')
-                && suffix[1..].chars().all(|c| c.is_ascii_digit()));
-        if !matched {
-            continue;
-        }
-        let new_name = if suffix.is_empty() {
-            to_key.clone()
-        } else {
-            format!("{to_key}{suffix}")
-        };
-        let mut target = trash_root.join(&new_name);
-        if target.exists() {
-            let ts = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or_default();
-            target = trash_root.join(format!("{new_name}-{ts}"));
-        }
-        let _ = std::fs::rename(&p, &target);
-    }
 }

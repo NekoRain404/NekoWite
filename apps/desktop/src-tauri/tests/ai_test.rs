@@ -1,4 +1,4 @@
-use nekowite_lib::ai::{
+use nekowite_lib::providers::ai::client::{
     ai_id_for, build_prompt, http_error_message, next_ai_id, parse_model_ids, parse_sse_line,
     resolve_endpoint, AIConfig, SseBuffer,
 };
