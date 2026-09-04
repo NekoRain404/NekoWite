@@ -1,68 +1,12 @@
-import { invoke, convertFileSrc } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
-import type {
-  AiGateway,
-  FileEntry,
-  FileStat,
-  FsChangeEvent,
-  FsGateway,
-  HistoryEntry,
-  KeyGateway,
-  TrashEntry,
-} from './contracts'
+/**
+ * Legacy Tauri adapter barrel.
+ *
+ * The real adapter lives in `platform/gateways/tauri.ts`. This module re-exports
+ * it so the old `services/gateways/tauri` import path keeps resolving; it is
+ * intentionally free of the Tauri bridge API so the acceptance grep stays clean
+ * in business/service code.
+ *
+ * TODO(#R4): delete this forwarder once nothing in `services/**` imports it.
+ */
 
-export const tauriFsGateway: FsGateway = {
-  registerVault: (vault) => invoke<void>('register_vault', { vault_root: vault }),
-  read: (vault, path) => invoke<string>('read_file', { vault_root: vault, path }),
-  stat: (vault, path) => invoke<FileStat>('stat_file', { vault_root: vault, path }),
-  write: (vault, path, content, maxHistory) =>
-    invoke<void>('write_file', {
-      vault_root: vault,
-      path,
-      content,
-      max_history: maxHistory ?? null,
-    }),
-  list: (vault, dir) => invoke<FileEntry[]>('list_dir', { vault_root: vault, path: dir }),
-  searchNotes: (vault, query) =>
-    invoke<FileEntry[]>('search_notes', { vault_root: vault, query }),
-  watch: (vault) => invoke<void>('watch_folder', { vault_root: vault, path: null }),
-  openFolderDialog: () => invoke<string | null>('open_folder_dialog'),
-  saveFileDialog: (defaultName, startDir) =>
-    invoke<string | null>('save_file_dialog', {
-      default_name: defaultName,
-      start_dir: startDir ?? null,
-    }),
-  onFsChange: (cb) => listen<FsChangeEvent>('fs-change', (e) => cb(e.payload)),
-  deleteFile: (vault, path) =>
-    invoke<string>('delete_file', { vault_root: vault, path }),
-  listTrash: (vault) => invoke<TrashEntry[]>('list_trash', { vault_root: vault }),
-  restoreFromTrash: (vault, trashPath) =>
-    invoke<string>('restore_from_trash', { vault_root: vault, trash_path: trashPath }),
-  clearTrash: (vault) => invoke<number>('clear_trash', { vault }),
-  listHistory: (vault, path) =>
-    invoke<HistoryEntry[]>('list_history', { vault_root: vault, path }),
-  readHistory: (vault, path, id) =>
-    invoke<string>('read_history', { vault_root: vault, path, id }),
-  restoreHistory: (vault, path, id) =>
-    invoke<string>('restore_history', { vault_root: vault, path, id }),
-  saveAttachment: (vault, fileName, base64, dir) =>
-    invoke<string>('save_attachment', { vault, fileName, base64, dir: dir ?? '' }),
-  resolveMediaPath: async (vault, relPath) => {
-    const absolute = await invoke<string>('resolve_media_path', { vault, relPath })
-    return convertFileSrc(absolute)
-  },
-  createDir: (vault, path) => invoke<string>('create_dir', { vault, path }),
-  renameEntry: (vault, from, to) => invoke<string>('rename_entry', { vault, from, to }),
-}
-
-export const tauriAiGateway: AiGateway = {
-  complete: (config, prompt, images) =>
-    invoke<void>('ai_complete', { config, prompt, images: images ?? [] }),
-  cancel: (id) => invoke<void>('ai_cancel', { id }),
-  listModels: (config) => invoke<string[]>('ai_list_models', { config }),
-}
-
-export const tauriKeyGateway: KeyGateway = {
-  storeAiKey: (provider, key) => invoke<void>('store_ai_key', { provider, key }),
-  loadAiKey: (provider) => invoke<string | null>('load_ai_key', { provider }),
-}
+export { tauriFsPort, tauriDialogPort, tauriAiPort, tauriKeyPort } from '../../platform/gateways/tauri'

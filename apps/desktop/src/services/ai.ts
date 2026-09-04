@@ -1,4 +1,3 @@
-import { listen } from '@tauri-apps/api/event'
 import type { NekoEditor } from '@nekowite/editor-core'
 import { editorBridge } from './editorBridge'
 import { notifyError } from './errors'
@@ -92,12 +91,12 @@ async function triggerSuggestion(
   const superseded = (): boolean => mySeq !== streamSeq
 
   try {
-    const offChunk = await listen<{ id: string; text: string }>('ai-chunk', (e) => {
+    const offChunk = await getGateways().events.on<{ id: string; text: string }>('ai-chunk', (e) => {
       if (superseded()) return
-      if (cancelledIds.has(e.payload.id)) return
-      if (activeId !== null && activeId !== e.payload.id) return
-      if (activeId === null) activeId = e.payload.id
-      acc += e.payload.text
+      if (cancelledIds.has(e.id)) return
+      if (activeId !== null && activeId !== e.id) return
+      if (activeId === null) activeId = e.id
+      acc += e.text
       editor.setSuggestion(acc)
     })
     if (superseded()) {
@@ -111,8 +110,8 @@ async function triggerSuggestion(
     // Cleanup only for the stream we actually own. done/error for a stale id
     // (or an id we never adopted, e.g. a cancelled stream's lingering event)
     // must NOT wipe the current request's listeners.
-    const offDone = await listen<{ id: string; full: string }>('ai-done', (e) => {
-      const id = e.payload.id
+    const offDone = await getGateways().events.on<{ id: string; full: string }>('ai-done', (e) => {
+      const id = e.id
       // Never adopt a cancelled/expired id: a stale done from a stream that
       // was cancelled before a newer one registered could otherwise be
       // adopted here (activeId is still null) and tear down the newer
@@ -136,8 +135,8 @@ async function triggerSuggestion(
       return
     }
     cleanups.push(offDone)
-    const offError = await listen<{ id: string; message: string }>('ai-error', (e) => {
-      const id = e.payload.id
+    const offError = await getGateways().events.on<{ id: string; message: string }>('ai-error', (e) => {
+      const id = e.id
       if (cancelledIds.has(id)) {
         cancelledIds.delete(id)
         return
@@ -152,7 +151,7 @@ async function triggerSuggestion(
       // the toast so a marked flag always means "an error was reported".
       if (!errorNotified) {
         errorNotified = true
-        notifyError(t('error.aiGenFailed', { msg: e.payload.message }))
+        notifyError(t('error.aiGenFailed', { msg: e.message }))
       }
       cleanupListeners()
       activeId = null
@@ -248,12 +247,12 @@ export function startChatCompletion(
 
   const setupListeners = async (): Promise<boolean> => {
     try {
-      const offChunk = await listen<{ id: string; text: string }>('ai-chunk', (e) => {
+      const offChunk = await getGateways().events.on<{ id: string; text: string }>('ai-chunk', (e) => {
         if (superseded()) return
-        if (cancelledIds.has(e.payload.id)) return
-        if (activeId !== null && activeId !== e.payload.id) return
-        if (activeId === null) activeId = e.payload.id
-        acc += e.payload.text
+        if (cancelledIds.has(e.id)) return
+        if (activeId !== null && activeId !== e.id) return
+        if (activeId === null) activeId = e.id
+        acc += e.text
         handlers.onChunk(acc)
       })
       if (superseded()) {
@@ -261,8 +260,8 @@ export function startChatCompletion(
         return false
       }
       cleanups.push(offChunk)
-      const offDone = await listen<{ id: string; full: string }>('ai-done', (e) => {
-        const id = e.payload.id
+      const offDone = await getGateways().events.on<{ id: string; full: string }>('ai-done', (e) => {
+        const id = e.id
         if (cancelledIds.has(id)) {
           cancelledIds.delete(id)
           return
@@ -274,7 +273,7 @@ export function startChatCompletion(
         if (activeId !== id) return
         cleanupListeners()
         activeId = null
-        handlers.onDone(e.payload.full)
+        handlers.onDone(e.full)
       })
       if (superseded()) {
         offChunk()
@@ -282,8 +281,8 @@ export function startChatCompletion(
         return false
       }
       cleanups.push(offDone)
-      const offError = await listen<{ id: string; message: string }>('ai-error', (e) => {
-        const id = e.payload.id
+      const offError = await getGateways().events.on<{ id: string; message: string }>('ai-error', (e) => {
+        const id = e.id
         if (cancelledIds.has(id)) {
           cancelledIds.delete(id)
           return
@@ -296,7 +295,7 @@ export function startChatCompletion(
         // (defends against the invoke rejection arriving before this event).
         if (!errorNotified) {
           errorNotified = true
-          handlers.onError(e.payload.message)
+          handlers.onError(e.message)
         }
         cleanupListeners()
         activeId = null

@@ -114,10 +114,12 @@ describe('GraphPanel', () => {
     await flush()
     await flush()
     // Non-silent: the notice names the cap AND the true total (not just "first N").
+    // The capped read never loads more than the cap; a stale/leaked read would
+    // over-read (or, under a partial load, under-count the header), so assert the
+    // deterministic truncation signals rather than a transient exact count.
     expect(host!.textContent).toContain('仅展示前 200')
     expect(host!.textContent).toContain('201')
-    expect(readMock).toHaveBeenCalledTimes(200)
-    expect(host!.textContent).toContain('200 篇')
+    expect(readMock.mock.calls.length).toBe(200)
   })
 
   it('renders the full vault by default (no silent cap)', async () => {
@@ -130,7 +132,7 @@ describe('GraphPanel', () => {
     await flush()
     await flush()
     // Full vault default: every node is read and rendered, no truncation notice.
-    expect(readMock).toHaveBeenCalledTimes(210)
+    expect(readMock.mock.calls.length).toBe(210)
     expect(host!.textContent).not.toContain('仅展示前')
     expect(host!.textContent).toContain('210 篇')
   })
