@@ -74,6 +74,32 @@ describe('useSettingsStore', () => {
     expect(s.apiKey).toBe('sk-gemini')
   })
 
+  it('treats the fixed mask as presence only, never as a real key (no raw key can surface)', async () => {
+    // The Rust backend returns this fixed placeholder (AI_KEY_MASKED) instead of
+    // the raw key. The store must feed an EMPTY value into live state so
+    // config() never sends the mask as a real key, and the settings field stays
+    // empty until the user types a new one.
+    invokeMock.mockResolvedValue('••••••••')
+    const s = useSettingsStore()
+    await s.loadKey()
+    expect(s.apiKey).toBe('')
+    expect(s.config().api_key).toBeUndefined()
+  })
+
+  it('returns an empty key when the backend reports no key configured', async () => {
+    invokeMock.mockResolvedValue(null)
+    const s = useSettingsStore()
+    await s.loadKey()
+    expect(s.apiKey).toBe('')
+    expect(s.config().api_key).toBeUndefined()
+  })
+
+  it('only a user-typed key ever flows into config()', async () => {
+    const s = useSettingsStore()
+    s.apiKey = 'sk-realkey'
+    expect(s.config().api_key).toBe('sk-realkey')
+  })
+
   it('saves the key for the current provider', async () => {
     invokeMock.mockResolvedValue(undefined)
     const s = useSettingsStore()
