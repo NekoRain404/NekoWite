@@ -75,6 +75,8 @@ describe('mdx round-trip fixtures (byte-identical)', () => {
     ['mixed CJK/en/emoji', '混合 中文 and English 💯 special 字符！\n'],
     ['list with task', '- [ ] todo\n- [x] done\n'],
     ['link + autolink', '[a](http://x.com) <b@c.com>\n'],
+    ['gfm strikethrough', '~~removed~~ and a ~~gone~~ word\n'],
+    ['strikethrough + bold/italic', '**bold** and ~~strike~~ with *italic*.\n'],
   ]
 
   for (const [label, input] of fixtures) {

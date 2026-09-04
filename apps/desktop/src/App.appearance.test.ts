@@ -3,6 +3,7 @@ import { createApp, nextTick, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import App from './App.vue'
 import { useAppearanceStore } from './stores/appearance'
+import { fsService } from './platform/gateways/fs'
 
 const invokeMock = vi.hoisted(() => vi.fn())
 
@@ -180,5 +181,119 @@ describe('App root layout variable binding', () => {
     expect(shell.style.getPropertyValue('--app-editor-font')).toContain('Literata')
     expect(shell.style.getPropertyValue('--app-mono-font')).toContain('Cascadia')
     expect(shell.getAttribute('data-locale')).toBe('zh')
+  })
+})
+
+const VAULT_LS_KEY = 'nekowite.vault'
+
+/** Mount the real App with a persisted vault so the sidebar (and its picker /
+ * trash group) is rendered, and wait until the startup applyVault committed. */
+async function mountAppWithVault(): Promise<HTMLElement> {
+  localStorage.setItem(VAULT_LS_KEY, '/seed/bravo')
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  const shell = mountApp(pinia)
+  await vi.waitFor(() => expect(document.querySelector('.vault-item')).not.toBeNull())
+  return shell
+}
+
+describe('App open-folder dialog wiring (A1)', () => {
+  beforeEach(() => {
+    invokeMock.mockReset()
+    invokeMock.mockResolvedValue(undefined)
+    document.body.innerHTML = ''
+    mounted = []
+    localStorage.removeItem(VAULT_LS_KEY)
+  })
+
+  afterEach(() => {
+    // No spy may leak into the other suites of this file.
+    vi.restoreAllMocks()
+    mounted.forEach((app) => app.unmount())
+    mounted = []
+    document.body.innerHTML = ''
+    localStorage.removeItem(VAULT_LS_KEY)
+  })
+
+  it('applies the folder the sidebar dialog picks and commits it as the vault', async () => {
+    // The E2E always mocks `open_folder_dialog` -> null, so the dialog path
+    // (picked -> emits open-folder -> runtime applies it) is never exercised.
+    const pickSpy = vi.spyOn(fsService, 'openFolderDialog').mockResolvedValue('/picked/alfa')
+    const shell = await mountAppWithVault()
+    expect(document.querySelector('.vault-item .nav-label')?.textContent).toBe('bravo')
+
+    // Startup restore must not have consulted the native dialog.
+    expect(pickSpy).not.toHaveBeenCalled()
+
+    ;(document.querySelector('.vault-item') as HTMLButtonElement).click()
+
+    // The picked path flows sidebar -> shell -> App -> runtime.applyVault and is
+    // committed (localStorage persisted, sidebar re-renders the new name).
+    await vi.waitFor(() =>
+      expect(localStorage.getItem(VAULT_LS_KEY)).toBe('/picked/alfa'),
+    )
+    expect(pickSpy).toHaveBeenCalledTimes(1)
+    expect(shell.querySelector('.vault-item .nav-label')?.textContent).toBe('alfa')
+  })
+
+  it('leaves the current vault untouched when the dialog is cancelled', async () => {
+    const pickSpy = vi.spyOn(fsService, 'openFolderDialog').mockResolvedValue(null)
+    await mountAppWithVault()
+
+    ;(document.querySelector('.vault-item') as HTMLButtonElement).click()
+    await nextTick()
+
+    expect(pickSpy).toHaveBeenCalledTimes(1)
+    expect(localStorage.getItem(VAULT_LS_KEY)).toBe('/seed/bravo')
+    expect(document.querySelector('.vault-item .nav-label')?.textContent).toBe('bravo')
+  })
+})
+
+describe('App trash restore wiring', () => {
+  beforeEach(() => {
+    invokeMock.mockReset()
+    invokeMock.mockResolvedValue(undefined)
+    document.body.innerHTML = ''
+    mounted = []
+    localStorage.removeItem(VAULT_LS_KEY)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    mounted.forEach((app) => app.unmount())
+    mounted = []
+    document.body.innerHTML = ''
+    localStorage.removeItem(VAULT_LS_KEY)
+  })
+
+  it('restores a trash entry through the gateway and refreshes the trash list', async () => {
+    const entry = {
+      name: 'docs-enc-key',
+      trash_path: 'docs-enc-key',
+      original_path: 'docs/a.md',
+    }
+    const listTrashSpy = vi.spyOn(fsService, 'listTrash').mockResolvedValue([entry])
+    const restoreSpy = vi.spyOn(fsService, 'restoreFromTrash').mockResolvedValue('docs/a.md')
+    await mountAppWithVault()
+
+    // Opening the trash group refreshes it from the gateway.
+    const trashHeader = [...document.querySelectorAll('.group-header')].find(
+      (h) => h.textContent?.includes('回收站'),
+    )
+    expect(trashHeader).toBeDefined()
+    ;(trashHeader as HTMLButtonElement).click()
+    await vi.waitFor(() => expect(document.querySelector('.trash-restore')).not.toBeNull())
+    expect(listTrashSpy).toHaveBeenCalledWith('/seed/bravo')
+    expect(document.querySelector('.trash-name')?.textContent).toBe(entry.name)
+
+    // The restore button routes through restoreFromTrash with the trash key and
+    // then re-polls the list (so the restored entry disappears on a real backend).
+    ;(document.querySelector('.trash-restore') as HTMLButtonElement).click()
+    await vi.waitFor(() =>
+      expect(restoreSpy).toHaveBeenCalledWith('/seed/bravo', entry.trash_path),
+    )
+    await vi.waitFor(() =>
+      expect(listTrashSpy.mock.calls.length).toBeGreaterThanOrEqual(2),
+    )
   })
 })

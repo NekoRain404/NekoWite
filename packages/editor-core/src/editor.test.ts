@@ -47,6 +47,40 @@ describe('createEditor', () => {
     expect(view.state.doc.textContent).toContain('Second')
   })
 
+  it('undo() then redo() restores, re-applies and restores the edited content', async () => {
+    const { undo, redo, undoDepth, redoDepth } = await import('@milkdown/prose/history')
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open('# Title\n\nSome body text.\n')
+    const original = await editor.save()
+
+    // A regular document-changing transaction is undoable (unlike open()).
+    const view = editor.getView()
+    view.dispatch(view.state.tr.insertText('EDITED'))
+    const edited = await editor.save()
+    expect(edited).not.toBe(original)
+    expect(undoDepth(view.state)).toBeGreaterThan(0)
+
+    // Undo: content returns to the opened document. The dispatch callback must
+    // actually apply the undo transaction (a no-op callback works only for the
+    // "nothing to undo" assertion above, where nothing is dispatched).
+    const apply = (tr: Parameters<typeof view.dispatch>[0]) => view.dispatch(tr)
+    expect(undo(view.state, apply)).toBe(true)
+    expect(undoDepth(view.state)).toBe(0)
+    expect(await editor.save()).toBe(original)
+
+    // Redo: the edit re-applies.
+    expect(redoDepth(view.state)).toBeGreaterThan(0)
+    expect(redo(view.state, apply)).toBe(true)
+    expect(await editor.save()).toBe(edited)
+
+    // Undo again: back to the original once more.
+    expect(undo(view.state, apply)).toBe(true)
+    expect(await editor.save()).toBe(original)
+    expect(redoDepth(view.state)).toBeGreaterThan(0)
+  })
+
   it('fires onContentChange on a plain doc-changing dispatch (not only via markdownUpdated)', async () => {
     const el = document.createElement('div')
     document.body.appendChild(el)
