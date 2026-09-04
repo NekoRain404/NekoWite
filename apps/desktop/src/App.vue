@@ -16,6 +16,7 @@ import ViewSwitch from './view/ViewSwitch.vue'
 import Toast from './components/AppToast.vue'
 import ConflictDialog from './components/ConflictDialog.vue'
 import PermissionDialog from './components/PermissionDialog.vue'
+import PluginIntegrityDialog from './components/PluginIntegrityDialog.vue'
 import GhostWriter from './components/GhostWriter.vue'
 import CommandPalette from './ui/CommandPalette.vue'
 import { useViewStore } from './stores/view'
@@ -36,8 +37,15 @@ import {
   SIDEBAR_WIDTH_MAX,
   SIDEBAR_WIDTH_MIN,
 } from './stores/appearance'
-import { loadVaultPlugins, setPluginPermissionDecider } from './services/plugins'
-import type { PluginPermissionRequest } from './services/plugins'
+import {
+  loadVaultPlugins,
+  setPluginIntegrityDecider,
+  setPluginPermissionDecider,
+} from './services/plugins'
+import type {
+  PluginIntegrityRequest,
+  PluginPermissionRequest,
+} from './services/plugins'
 import {
   clampForDisplay,
   loadWindowState,
@@ -57,6 +65,7 @@ const sidebarVisible = ref(true)
 const railOpen = ref(false)
 const conflict = ref<{ tabId: string; path: string } | null>(null)
 const pluginPermission = ref<PluginPermissionRequest | null>(null)
+const pluginIntegrity = ref<PluginIntegrityRequest | null>(null)
 
 const theme = computed<string>(() => {
   void appearance.systemRevision
@@ -268,6 +277,23 @@ onMounted(() => {
       }
     })
   })
+  // When a plugin's code/manifest changed since the user last approved it, the
+  // loader refuses to run it silently. Present the change-detection prompt so a
+  // real user can approve the new version (recorded as the new baseline) or
+  // deny it. With no UI present the safe default (deny) applies.
+  setPluginIntegrityDecider((meta, expectedDigest, actualDigest) => {
+    return new Promise<boolean>((resolve) => {
+      pluginIntegrity.value = {
+        meta,
+        expectedDigest,
+        actualDigest,
+        resolve: (reapprove) => {
+          pluginIntegrity.value = null
+          resolve(reapprove)
+        },
+      }
+    })
+  })
   if (typeof window.matchMedia === 'function') {
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
     const onChange = (): void => {
@@ -470,6 +496,14 @@ async function pickFolder(): Promise<void> {
       :permissions="pluginPermission.permissions"
       @allow="pluginPermission.resolve(true)"
       @deny="pluginPermission.resolve(false)"
+    />
+    <PluginIntegrityDialog
+      v-if="pluginIntegrity"
+      :meta="pluginIntegrity.meta"
+      :expected-digest="pluginIntegrity.expectedDigest"
+      :actual-digest="pluginIntegrity.actualDigest"
+      @allow="pluginIntegrity.resolve(true)"
+      @deny="pluginIntegrity.resolve(false)"
     />
   </div>
 </template>
