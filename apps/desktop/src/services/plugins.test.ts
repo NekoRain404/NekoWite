@@ -2,19 +2,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   askPluginPermission,
   getActiveVaultPluginIds,
+  getPluginRecordedDigestForTest,
   getPluginTrustedKey,
   getPluginTrustedSourceIds,
   getPluginTrustPolicy,
+  getVaultPluginAuditLogPath,
   loadVaultPlugins,
+  PLUGIN_GOVERNANCE_FILE,
   resetVaultPluginStateForTests,
   setPluginIntegrityDecider,
   setPluginPermissionDecider,
+  setPluginRecordedDigestForTest,
   setPluginTrustDecider,
   setPluginTrustedKey,
   setPluginTrustedSource,
   setPluginTrustPolicy,
 } from './plugins'
-import { buildPluginSignaturePayload, computePluginDigest, createPluginSignature } from '@nekowite/plugin-host'
+import { buildPluginSignaturePayload, computePluginDigest, createMacEnvelope, createPluginSignature } from '@nekowite/plugin-host'
 import type { PluginMeta } from '@nekowite/plugin-host'
 
 const listMock = vi.hoisted(() => vi.fn())
@@ -50,12 +54,6 @@ const META = (permissions?: string[]): PluginMeta => ({
 
 function pkg(permissions?: string[]): string {
   return JSON.stringify({ name: '@scope/q', version: '1.0.0', main: 'index.js', permissions })
-}
-
-/** The composite digest-store key the loader records baselines under. Mirrors the
- *  production `vault + id` scheme so tests inspect the real on-disk shape. */
-function digestKey(vault: string, id: string): string {
-  return `${vault}${String.fromCharCode(0)}${id}`
 }
 
 beforeEach(() => {
@@ -313,11 +311,8 @@ describe('plugin integrity detection (gated import)', () => {
     loadMock.mockResolvedValue({ ok: true, id: '@scope/q', meta: META(), definition: {} })
     await loadVaultPlugins('/vault')
     expect(activateMock).toHaveBeenCalledTimes(1)
-    const stored = JSON.parse(localStorage.getItem('nekowite.pluginDigests') ?? '{}')
-    const key = digestKey('/vault', '@scope/q')
-    expect(stored[key]).toBeDefined()
     // The digest is computed over the manifest text AND the loaded source bytes.
-    expect(stored[key].d).toEqual(computePluginDigest(pkg(), pkg()))
+    expect(getPluginRecordedDigestForTest('/vault', '@scope/q')).toEqual(computePluginDigest(pkg(), pkg()))
   })
 
   it('keys the baseline by vault so two vaults never share an approval record', async () => {
@@ -325,12 +320,9 @@ describe('plugin integrity detection (gated import)', () => {
     loadMock.mockResolvedValue({ ok: true, id: '@scope/q', meta: META(), definition: {} })
     await loadVaultPlugins('/vaultA')
     await loadVaultPlugins('/vaultB')
-    const stored = JSON.parse(localStorage.getItem('nekowite.pluginDigests') ?? '{}')
-    const keys = Object.keys(stored)
-    expect(keys).toHaveLength(2)
-    expect(stored[digestKey('/vaultA', '@scope/q')]).toBeDefined()
-    expect(stored[digestKey('/vaultB', '@scope/q')]).toBeDefined()
-    expect(keys[0]).not.toBe('@scope/q')
+    // The baseline is keyed by vault + id (the composite key is never just the id).
+    expect(getPluginRecordedDigestForTest('/vaultA', '@scope/q')).toBeDefined()
+    expect(getPluginRecordedDigestForTest('/vaultB', '@scope/q')).toBeDefined()
   })
 
   it('NEVER imports (executes) a plugin whose code changed since it was approved', async () => {
@@ -338,10 +330,7 @@ describe('plugin integrity detection (gated import)', () => {
     loadMock.mockResolvedValue({ ok: true, id: '@scope/q', meta: META(['fs']), definition: {} })
     setPluginPermissionDecider(() => Promise.resolve(true))
     // Seed a stale fingerprint so this load's digest does not match.
-    localStorage.setItem(
-      'nekowite.pluginDigests',
-      JSON.stringify({ [digestKey('/vault', '@scope/q')]: { v: '1.0.0', d: 'deadbeef' } }),
-    )
+    setPluginRecordedDigestForTest('/vault', '@scope/q', '1.0.0', 'deadbeef')
     await loadVaultPlugins('/vault')
     // The security boundary: the module is never imported, so its top-level
     // side effects can never run for a modified/unapproved plugin.
@@ -359,17 +348,14 @@ describe('plugin integrity detection (gated import)', () => {
     loadMock.mockResolvedValue({ ok: true, id: '@scope/q', meta: META(['fs']), definition: {} })
     setPluginPermissionDecider(() => Promise.resolve(true))
     setPluginIntegrityDecider(() => Promise.resolve(true))
-    localStorage.setItem(
-      'nekowite.pluginDigests',
-      JSON.stringify({ [digestKey('/vault', '@scope/q')]: { v: '1.0.0', d: 'deadbeef' } }),
-    )
+    setPluginRecordedDigestForTest('/vault', '@scope/q', '1.0.0', 'deadbeef')
     await loadVaultPlugins('/vault')
     // Re-approval leads to the gated import (the module executes) and activation.
     expect(loadMock).toHaveBeenCalledTimes(1)
     expect(activateMock).toHaveBeenCalledTimes(1)
     expect(getActiveVaultPluginIds()).toEqual(['@scope/q'])
-    const stored = JSON.parse(localStorage.getItem('nekowite.pluginDigests') ?? '{}')
-    expect(stored[digestKey('/vault', '@scope/q')].d).not.toEqual('deadbeef')
+    // The new fingerprint is adopted as the baseline.
+    expect(getPluginRecordedDigestForTest('/vault', '@scope/q')).not.toEqual('deadbeef')
   })
 })
 
@@ -466,5 +452,84 @@ describe('plugin trust & signature gate (definite security requirement)', () => 
     // Nothing was recorded as a trusted source for an unsigned plugin under the
     // default policy — it is not silently trusted.
     expect(getPluginTrustedSourceIds()).toEqual([])
+  })
+})
+
+describe('audit log path (vault-relative, never collides with notes)', () => {
+  it('chooses a deterministic hidden path under .nekowite/ that never ends in a note/doc extension', () => {
+    const p = getVaultPluginAuditLogPath('/vault')
+    // The audit log lives under the vault's hidden .nekowite/ dir, so it can never
+    // collide with a user note/doc path.
+    expect(p).toBe('/vault/.nekowite/vault-plugin-audit.log')
+    expect(p).toMatch(/\.nekowite\//)
+    expect(p.endsWith('.md')).toBe(false)
+    expect(p.endsWith('.mdx')).toBe(false)
+    expect(p.endsWith('.markdown')).toBe(false)
+  })
+
+  it('keeps the audit log distinct from the governance trust-state file', () => {
+    expect(getVaultPluginAuditLogPath('/vault')).not.toMatch(/governance/)
+  })
+})
+
+describe('governance trust-state file (MAC-protected, P1.8)', () => {
+  it('refuses trust contained in a tampered governance file (no silent trust)', async () => {
+    // A known per-install MAC key; build a VALID envelope with it, then corrupt the
+    // MAC so the load detects tampering and refuses the contained trust.
+    const key = 'a'.repeat(64)
+    const payload = JSON.stringify({
+      governance: '{}',
+      trustedKey: '',
+      trustedSources: ['@scope'], // the tampered file claims '@scope' is trusted
+      digests: {},
+    })
+    const env = await createMacEnvelope(payload, key)
+    const tampered = JSON.stringify({ payload: env.payload, mac: '0'.repeat(64) })
+
+    readMock.mockImplementation((_vault, rel) => {
+      if (rel.endsWith(PLUGIN_GOVERNANCE_FILE)) return Promise.resolve(tampered)
+      if (rel.endsWith('.mackey')) return Promise.resolve(key)
+      return Promise.resolve(pkg())
+    })
+
+    setPluginTrustPolicy('require-trust')
+    await loadVaultPlugins('/vault')
+
+    // The plugin is unsigned; the tampered file claimed '@scope' trusted, but the
+    // MAC failed, so no trust is granted → refused at load, never imported.
+    expect(loadMock).not.toHaveBeenCalled()
+    expect(activateMock).not.toHaveBeenCalled()
+    expect(getActiveVaultPluginIds()).toEqual([])
+    // Nothing from the tampered file is trusted.
+    expect(getPluginTrustedSourceIds()).toEqual([])
+    // A notice is surfaced — non-silent.
+    const msgs = notifyErrorMock.mock.calls.map((c) => String(c[0]))
+    expect(msgs.some((m) => m.includes('integrity'))).toBe(true)
+  })
+
+  it('loads trust from a governance file whose MAC verifies', async () => {
+    const key = 'b'.repeat(64)
+    const payload = JSON.stringify({
+      governance: '{}',
+      trustedKey: '',
+      trustedSources: ['@scope'],
+      digests: {},
+    })
+    const env = await createMacEnvelope(payload, key)
+
+    readMock.mockImplementation((_vault, rel) => {
+      if (rel.endsWith(PLUGIN_GOVERNANCE_FILE)) return Promise.resolve(JSON.stringify(env))
+      if (rel.endsWith('.mackey')) return Promise.resolve(key)
+      return Promise.resolve(pkg())
+    })
+
+    setPluginTrustPolicy('require-trust')
+    await loadVaultPlugins('/vault')
+
+    // The integrity-checked file approved '@scope' — the unsigned plugin loads.
+    expect(loadMock).toHaveBeenCalledTimes(1)
+    expect(activateMock).toHaveBeenCalledTimes(1)
+    expect(getActiveVaultPluginIds()).toEqual(['@scope/q'])
+    expect(getPluginTrustedSourceIds()).toEqual(['@scope'])
   })
 })

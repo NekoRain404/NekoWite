@@ -7,6 +7,7 @@ import {
   resetVaultPluginStateForTests,
   revokeVaultPlugin,
   setPluginPermissionDecider,
+  setPluginRecordedDigestForTest,
   setPluginTrustPolicy,
   setPluginTrustedKey,
   setVaultPluginVersionRange,
@@ -59,10 +60,6 @@ const META = (permissions?: string[]): PluginMeta => ({
 
 function pkg(extra?: Record<string, unknown>): string {
   return JSON.stringify({ name: '@scope/q', version: '1.0.0', main: 'index.js', ...extra })
-}
-
-function digestKey(vault: string, id: string): string {
-  return `${vault}${String.fromCharCode(0)}${id}`
 }
 
 beforeEach(() => {
@@ -141,10 +138,7 @@ describe('security invariant: a tampered plugin is refused', () => {
     readMock.mockResolvedValue(pkg({ permissions: ['fs'] }))
     loadMock.mockResolvedValue({ ok: true, id: '@scope/q', meta: META(['fs']), definition: {} })
     // Seed a stale fingerprint so the freshly-computed digest does not match.
-    localStorage.setItem(
-      'nekowite.pluginDigests',
-      JSON.stringify({ [digestKey('/vault', '@scope/q')]: { v: '1.0.0', d: 'deadbeef' } }),
-    )
+    setPluginRecordedDigestForTest('/vault', '@scope/q', '1.0.0', 'deadbeef')
     await loadVaultPlugins('/vault')
     expect(loadMock).not.toHaveBeenCalled()
     expect(activateMock).not.toHaveBeenCalled()

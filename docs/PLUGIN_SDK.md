@@ -264,6 +264,21 @@ policy applied before any import is:
 > distribution, set `setPluginTrustPolicy('require-trust')` so unsigned plugins are
 > refused until explicitly trusted.
 
+> 📦 **Where the trust state lives.** The trusted key, trusted-source allowlist, plugin
+> digests, revocations, and version policy are persisted as a single vault-relative
+> JSON file (`.nekowite/plugin-governance.json`) wrapped in a **keyed HMAC-SHA256**
+> envelope, **not** in `localStorage`. On load the MAC is verified; a failure **refuses
+> the contained trust** (reset / trust-nothing) and surfaces a notice rather than
+> silently trusting attacker-controlled values. `localStorage` is retained only as a
+> NON-authoritative "saw this notice" flag.
+>
+> ⚠️ **Honest residual:** there is **no OS keychain** exposed to the frontend, so the
+> HMAC key is a **per-install secret** persisted in a sibling file
+> (`.nekowite/plugin-governance.mackey`). This is **MAC-detection, not a secure hardware
+> root** — an attacker who can read both the file and its key can recompute the MAC. It
+> stops a localStorage-only attacker and detects corruption / stale reads; it is not
+> proof against a party with full vault file access.
+
 ### 4.2 Timeout, cancel & crash isolation
 
 A bad plugin must never hang or take down the host. The host therefore:
