@@ -25,6 +25,7 @@ import {
 } from '@milkdown/prose/view'
 import { findMisspelled, suggestions } from './spellcheck'
 import { editorBridge } from './editorBridge'
+import { debounce } from './timing'
 
 type EditorView = NonNullable<ReturnType<NekoEditor['getView']>>
 
@@ -235,6 +236,28 @@ export function refreshOverlays(): void {
   }
 
   view.setProps({ decorations: decorationsProvider })
+}
+
+/** Idle window (ms) after the last model change before overlays refresh. */
+const OVERLAY_REFRESH_IDLE_MS = 90
+
+// Coalesce the burst of changes that a typing run produces into ONE refresh
+// shortly after input settles. The final call is scheduled on the next
+// animation frame so ProseMirror has already synced the DOM. `refreshOverlays`
+// itself stays synchronous for explicit, user-driven calls (query, toggle,
+// navigate); this is the deferred companion the editor's change listener uses.
+const overlayRefresh = debounce(() => {
+  requestAnimationFrame(() => refreshOverlays())
+}, OVERLAY_REFRESH_IDLE_MS)
+
+/** Defer an overlay refresh: bursty model changes become a single refresh. */
+export function scheduleOverlayRefresh(): void {
+  overlayRefresh.run()
+}
+
+/** Drop a scheduled (not-yet-run) overlay refresh. */
+export function cancelOverlayRefresh(): void {
+  overlayRefresh.cancel()
 }
 
 export function scrollRangeIntoView(view: EditorView, range: FindRange): void {

@@ -15,8 +15,15 @@ import { notifyError } from '../services/errors'
 import { t } from '../i18n'
 import { editorBridge } from '../services/editorBridge'
 import { fsService } from '../services/fs'
-import { applySpellReplacement, getView, refreshOverlays, setSpellEnabled } from '../services/renderSearch'
+import {
+  applySpellReplacement,
+  cancelOverlayRefresh,
+  getView,
+  scheduleOverlayRefresh,
+  setSpellEnabled,
+} from '../services/renderSearch'
 import { suggestionsFromAttr } from '../services/renderSearch'
+import { debounce } from '../services/timing'
 import { countWords, isWordGoalMet, shouldCenterScroll, wordProgress } from '../services/editorBehaviors'
 import RenderSearchPanel from './RenderSearchPanel.vue'
 import RenameDialog from '../components/RenameDialog.vue'
@@ -41,7 +48,6 @@ const library = useLibraryStore()
 
 const searchOpen = ref(false)
 const spellPopup = ref<{ x: number; y: number; from: number; to: number; word: string; suggestions: string[] } | null>(null)
-let overlayRaf = 0
 
 // Base direction for the rendered content: the user's explicit override wins,
 // otherwise the document text decides (Arabic/Hebrew -> rtl). Bound as `dir` on
@@ -96,16 +102,6 @@ const wordCount = computed(() => countWords(tabs.activeTab?.content ?? ''))
 const wordGoalMet = computed(() => isWordGoalMet(wordCount.value, appearance.wordGoal))
 const wordProgressPct = computed(() => Math.round(wordProgress(wordCount.value, appearance.wordGoal) * 100))
 
-// rAF-throttled overlay refresh: coalesce bursts of model changes into one
-// deterministic pass, and ensure it runs AFTER ProseMirror's own DOM sync.
-function queueOverlayRefresh(): void {
-  if (overlayRaf) return
-  overlayRaf = requestAnimationFrame(() => {
-    overlayRaf = 0
-    refreshOverlays()
-  })
-}
-
 const scrollEl = ref<HTMLElement | null>(null)
 const editorEl = ref<HTMLElement | null>(null)
 let editor: NekoEditor | null = null
@@ -126,6 +122,38 @@ let pendingExternal: string | null = null
 // Set by setRatio() so the next scroll event (the async echo of a programmatic
 // scroll) is swallowed, breaking the split-mode sync feedback loop.
 let suppressScroll = false
+
+// Full-document Markdown serialization (`editor.save()`) round-trips the whole
+// doc through the Milkdown serializer on every markdownUpdated. Collapse a
+// typing burst into ONE serialization shortly after input settles, while still
+// marking the tab dirty / re-arming autosave per keystroke so the save state
+// (dirty flag, autosave timer) stays exactly as before.
+const MARKDOWN_SYNC_MS = 120
+const markdownSync = debounce(() => {
+  void persistMarkdown()
+}, MARKDOWN_SYNC_MS)
+
+async function persistMarkdown(): Promise<void> {
+  if (!editor) return
+  const active = tabs.activeTab
+  if (!active) return
+  // Capture generation BEFORE the await: a reloadFromDisk during the save
+  // bumps gen, and the stale markdown must not win.
+  const myGen = gen
+  const markdown = await editor.save()
+  if (tabs.activeTab?.id !== active.id) return
+  if (myGen !== gen) return
+  // The echo of a change we already applied is not an edit.
+  if (markdown === lastLocalMarkdown && markdown === active.content) return
+  lastLocalMarkdown = markdown
+  active.content = markdown
+  lastDoc = markdown
+  if (docChangeTimer) return
+  docChangeTimer = setTimeout(() => {
+    emitLifecycle('onDocChange', { doc: lastDoc })
+    docChangeTimer = null
+  }, 300)
+}
 
 async function applyContent(content: string): Promise<void> {
   if (!editor) return
@@ -168,7 +196,7 @@ async function applyContent(content: string): Promise<void> {
       gen++
       void applyContent(pending)
     } else {
-      queueOverlayRefresh()
+      scheduleOverlayRefresh()
     }
   }
 }
@@ -438,34 +466,22 @@ onMounted(async () => {
 
   unlistenChange = editor.onContentChange(() => {
     if (applyingExternal || !editor) return
-    void (async () => {
-      const active = tabs.activeTab
-      if (!active) return
-      // Capture the generation BEFORE the await: a reloadFromDisk during the
-      // save bumps gen, and the stale markdown must not win.
-      const myGen = gen
-      const markdown = await editor!.save()
-      if (tabs.activeTab?.id !== active.id) return
-      if (myGen !== gen) return
-      // A debounced echo of a change we already applied is not an edit.
-      if (markdown === lastLocalMarkdown && markdown === active.content) return
-      lastLocalMarkdown = markdown
-      active.content = markdown
-      tabs.markDirty(active.id)
-      tabs.scheduleAutosave(active.id)
-      lastDoc = markdown
-      if (docChangeTimer) return
-      docChangeTimer = setTimeout(() => {
-        emitLifecycle('onDocChange', { doc: lastDoc })
-        docChangeTimer = null
-      }, 300)
-    })()
+    const active = tabs.activeTab
+    if (!active) return
+    // Keep the dirty flag & autosave timer per-keystroke (cheap, and the save
+    // state must reflect each edit immediately), but defer the expensive
+    // full-document serialization until the typing burst settles.
+    tabs.markDirty(active.id)
+    tabs.scheduleAutosave(active.id)
+    markdownSync.run()
   })
 
-  // Keep the find/spell overlays in sync with every model change.
+  // Keep the find/spell overlays in sync with model changes. Coalesced in
+  // renderSearch (rAF + idle debounce) so a typing burst does not re-scan the
+  // whole document on every keystroke.
   unlistenOverlayRefresh = editor.onContentChange(() => {
     if (applyingExternal) return
-    queueOverlayRefresh()
+    scheduleOverlayRefresh()
   })
 
   // Spell check is a reactive setting: sync the live toggle (default true) so
@@ -492,10 +508,8 @@ onBeforeUnmount(() => {
     clearTimeout(docChangeTimer)
     docChangeTimer = null
   }
-  if (overlayRaf) {
-    cancelAnimationFrame(overlayRaf)
-    overlayRaf = 0
-  }
+  markdownSync.cancel()
+  cancelOverlayRefresh()
   if (focusRaf) {
     cancelAnimationFrame(focusRaf)
     focusRaf = 0

@@ -21,7 +21,6 @@ import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 import { parseOutline } from '../services/outline'
 import { dirRelativeToVault } from '../services/noteMeta'
-import { fsService } from '../services/fs'
 import { contentMatchOf, mapWithConcurrency } from '../services/contentSearch'
 import type { ContentMatch } from '../services/contentSearch'
 import { t } from '../i18n'
@@ -42,7 +41,6 @@ const contentSearching = ref(false)
 const contentSearched = ref(false)
 let contentSearchTimer: ReturnType<typeof setTimeout> | null = null
 let contentSearchSeq = 0
-const contentCache = new Map<string, string>()
 
 function clearContentResults(): void {
   contentSearchSeq += 1
@@ -80,15 +78,9 @@ async function runContentSearch(): Promise<void> {
   contentSearching.value = true
   const candidates = library.notes.map((n) => ({ path: n.path, name: n.name }))
   const hits = await mapWithConcurrency(candidates, CONTENT_SEARCH_CONCURRENCY, async (c) => {
-    let content = contentCache.get(c.path)
-    if (content === undefined) {
-      try {
-        content = await fsService.read(vault, c.path)
-      } catch {
-        return null
-      }
-      contentCache.set(c.path, content)
-    }
+    // notes indexed content is reused via the shared cache; only a miss reads disk.
+    const content = await library.noteContent(c.path)
+    if (content === null) return null
     return contentMatchOf({ path: c.path, name: c.name, content }, q)
   })
   if (seq !== contentSearchSeq) return
@@ -100,11 +92,9 @@ async function runContentSearch(): Promise<void> {
 watch(() => library.vault, () => {
   contentEnabled.value = false
   clearContentResults()
-  contentCache.clear()
 })
 
 watch(() => library.notes, () => {
-  contentCache.clear()
   if (contentEnabled.value) scheduleContentSearch()
 })
 

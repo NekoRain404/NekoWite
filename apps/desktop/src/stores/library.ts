@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { fsService } from '../services/fs'
 import type { FsChangeEvent } from '../services/fs'
 import { vaultFileIndex } from '../services/vaultFiles'
+import { contentCache } from '../services/contentCache'
 import { ATTACHMENTS_DIR } from '../services/attachments'
 import {
   aggregateTagCounts,
@@ -64,6 +65,7 @@ export const useLibraryStore = defineStore('library', () => {
   let unlistenFs: (() => void) | null = null
   let indexSeq = 0
   let reindexTimer: ReturnType<typeof setTimeout> | null = null
+  let attachmentRefreshTimer: ReturnType<typeof setTimeout> | null = null
 
   function persist(): void {
     localStorage.setItem(LS_KEY, JSON.stringify({ favorites: favorites.value, recents: recents.value }))
@@ -87,16 +89,19 @@ export const useLibraryStore = defineStore('library', () => {
 
   async function readNoteSummary(v: string, path: string): Promise<NoteSummary | null> {
     try {
-      const content = await fsService.read(v, path)
+      const [content, stat] = await Promise.all([
+        fsService.read(v, path),
+        fsService.stat(v, path).catch(() => null),
+      ])
+      // Reuse the content we already read: it feeds the note list's full-text
+      // search and the graph's link walk without a second fs read. Evicted on a
+      // miss (LRU) — see contentCache.
+      contentCache.set(path, content)
       let mtime = 0
       let size = content.length
-      try {
-        const stat = await fsService.stat(v, path)
+      if (stat) {
         mtime = stat.mtime
         size = stat.size
-      } catch {
-        // stat is best-effort: memory gateway and fresh files always work,
-        // exotic filesystems may not — fall back to content-derived values.
       }
       return parseNoteMeta(path, content, { mtime, size, vault: v })
     } catch {
@@ -106,6 +111,9 @@ export const useLibraryStore = defineStore('library', () => {
 
   async function runIndex(v: string, seq = ++indexSeq): Promise<void> {
     indexing.value = true
+    // A full (re)index re-reads every note below, so the previous session's
+    // cached content is stale; drop it before repopulating with fresh reads.
+    contentCache.clear()
     try {
       const files = await vaultFileIndex.get(v)
       if (seq !== indexSeq) return
@@ -140,12 +148,20 @@ export const useLibraryStore = defineStore('library', () => {
     if (!v) return
     if (!isMdPath(e.path)) {
       vaultFileIndex.invalidate(v)
-      void refreshAttachmentCount(v)
+      // Batch bursts of external file activity into one re-list instead of one
+      // per fs-change event (an editor saving many attachments at once would
+      // otherwise refetch the attachments dir repeatedly).
+      if (attachmentRefreshTimer) clearTimeout(attachmentRefreshTimer)
+      attachmentRefreshTimer = setTimeout(() => {
+        attachmentRefreshTimer = null
+        void refreshAttachmentCount(v)
+      }, 200)
       return
     }
     vaultFileIndex.invalidate(v)
     if (e.kind === 'remove') {
       notes.value = notes.value.filter((n) => n.path !== e.path)
+      contentCache.delete(e.path)
       return
     }
     const summary = await readNoteSummary(v, e.path)
@@ -164,8 +180,14 @@ export const useLibraryStore = defineStore('library', () => {
       clearTimeout(reindexTimer)
       reindexTimer = null
     }
+    if (attachmentRefreshTimer) {
+      clearTimeout(attachmentRefreshTimer)
+      attachmentRefreshTimer = null
+    }
     unlistenFs?.()
     unlistenFs = null
+    // Drop cached content so a switched-to vault never reuses the old vault's notes.
+    contentCache.clear()
   }
 
   /** 侧栏「附件」徽标：attachments/ 顶层条目数（目录也算一个条目）。
@@ -177,6 +199,23 @@ export const useLibraryStore = defineStore('library', () => {
       if (seq === undefined || seq === indexSeq) attachmentCount.value = entries.length
     } catch {
       if (seq === undefined || seq === indexSeq) attachmentCount.value = 0
+    }
+  }
+
+  /** Full-text/graph read that reuses the shared content cache populated by the
+   * indexer; on a miss reads from disk (caching the result). Returns null when
+   * the note is unreadable. Centralizes fs access so the UI never reads directly. */
+  async function noteContent(path: string): Promise<string | null> {
+    const cached = contentCache.get(path)
+    if (cached !== undefined) return cached
+    const v = vault.value
+    if (!v) return null
+    try {
+      const content = await fsService.read(v, path)
+      contentCache.set(path, content)
+      return content
+    } catch {
+      return null
     }
   }
 
@@ -318,6 +357,7 @@ export const useLibraryStore = defineStore('library', () => {
     setListView,
     setQuery,
     setSortBy,
+    noteContent,
     resolveLinkPath,
     outlinksOf,
     inlinksOf,
