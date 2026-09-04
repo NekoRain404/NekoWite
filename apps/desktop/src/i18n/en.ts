@@ -51,6 +51,11 @@ export const en = {
       lineHeight: 'Line height {lh}',
       followSystemAccent: 'Follow system accent',
       followAccentHint: 'When on, the accent adapts to the system light/dark theme (coral in light, violet in dark).',
+      highContrast: 'High contrast',
+      contentDirection: 'Content direction',
+      directionAuto: 'Auto',
+      directionLtr: 'Left to right (LTR)',
+      directionRtl: 'Right to left (RTL)',
     },
     editor: {
       view: 'View',

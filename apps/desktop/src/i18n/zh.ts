@@ -51,6 +51,11 @@ export const zh = {
       lineHeight: '行高 {lh}',
       followSystemAccent: '跟随系统强调色',
       followAccentHint: '开启后强调色自动随系统深浅切换（浅色 → 珊瑚，深色 → 紫罗兰）。',
+      highContrast: '高对比度',
+      contentDirection: '内容方向',
+      directionAuto: '自动',
+      directionLtr: '左到右 (LTR)',
+      directionRtl: '右到左 (RTL)',
     },
     editor: {
       view: '视图',

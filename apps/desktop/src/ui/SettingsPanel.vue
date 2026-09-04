@@ -19,7 +19,7 @@ import { fsService } from '../services/fs'
 import { describeExportError, notifyError } from '../services/errors'
 import { useSettingsStore } from '../stores/settings'
 import { useAppearanceStore } from '../stores/appearance'
-import type { Accent, EditorFontId, MonoFontId, UiFontId } from '../stores/appearance'
+import type { Accent, ContentDirection, EditorFontId, MonoFontId, UiFontId } from '../stores/appearance'
 import { getLocale, setLocale, t } from '../i18n'
 import type { ExportRef } from '@nekowite/editor-core'
 
@@ -415,6 +415,26 @@ function onExportPdf(): void {
                   step="0.1"
                   @change="appearance.setLineHeight(Math.min(2.4, Math.max(1.2, Number(($event.target as HTMLInputElement).value) || 1.8)))"
                 >
+              </label>
+              <label class="settings-field settings-toggle">
+                <span>{{ t('settings.appearance.highContrast') }}</span>
+                <input
+                  type="checkbox"
+                  :checked="appearance.highContrast"
+                  @change="appearance.setHighContrast(($event.target as HTMLInputElement).checked)"
+                >
+              </label>
+              <label class="settings-field">
+                <span>{{ t('settings.appearance.contentDirection') }}</span>
+                <select
+                  class="input"
+                  :value="appearance.contentDirection"
+                  @change="appearance.setContentDirection(($event.target as HTMLSelectElement).value as ContentDirection)"
+                >
+                  <option value="auto">{{ t('settings.appearance.directionAuto') }}</option>
+                  <option value="ltr">{{ t('settings.appearance.directionLtr') }}</option>
+                  <option value="rtl">{{ t('settings.appearance.directionRtl') }}</option>
+                </select>
               </label>
               <span class="settings-label">{{ t('settings.editor.behavior') }}</span>
               <label class="settings-field settings-toggle">
