@@ -120,7 +120,6 @@ export function emitLifecycle(event: LifecycleEvent, ...args: unknown[]): string
         recovery: 'Disable the plugin or check its logs.',
         cause: err,
       })
-      // eslint-disable-next-line no-console
       console.error(
         `[NekoWite:plugin-host] lifecycle hook failed plugin="${entry.id}" event="${event}"`,
         pluginError,
