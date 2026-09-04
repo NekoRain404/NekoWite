@@ -386,6 +386,16 @@ function onExportPdf(): void {
                   @change="appearance.setLineHeight(Math.min(2.4, Math.max(1.2, Number(($event.target as HTMLInputElement).value) || 1.8)))"
                 >
               </label>
+              <span class="settings-label">{{ t('settings.editor.behavior') }}</span>
+              <label class="settings-field settings-toggle">
+                <span>{{ t('settings.editor.focusMode') }}</span>
+                <input
+                  :checked="appearance.focusMode"
+                  type="checkbox"
+                  class="checkbox"
+                  @change="appearance.setFocusMode(($event.target as HTMLInputElement).checked)"
+                >
+              </label>
             </section>
 
             <section
@@ -449,6 +459,64 @@ function onExportPdf(): void {
                   min="1"
                   max="100"
                   @change="settings.maxHistory = Math.min(100, Math.max(1, Math.round(Number(($event.target as HTMLInputElement).value) || 10)))"
+                >
+              </label>
+              <span class="settings-label">{{ t('settings.editor.behavior') }}</span>
+              <label class="settings-field settings-toggle">
+                <span>{{ t('settings.editor.spellCheck') }}</span>
+                <input
+                  :checked="appearance.spellCheckEnabled"
+                  type="checkbox"
+                  class="checkbox"
+                  @change="appearance.setSpellCheckEnabled(($event.target as HTMLInputElement).checked)"
+                >
+              </label>
+              <label class="settings-field settings-toggle">
+                <span>{{ t('settings.editor.softWrap') }}</span>
+                <input
+                  :checked="appearance.softWrap"
+                  type="checkbox"
+                  class="checkbox"
+                  @change="appearance.setSoftWrap(($event.target as HTMLInputElement).checked)"
+                >
+              </label>
+              <label class="settings-field settings-toggle">
+                <span>{{ t('settings.editor.lineNumbers') }}</span>
+                <input
+                  :checked="appearance.lineNumbers"
+                  type="checkbox"
+                  class="checkbox"
+                  @change="appearance.setLineNumbers(($event.target as HTMLInputElement).checked)"
+                >
+              </label>
+              <label class="settings-field">
+                <span>{{ t('settings.editor.wordGoal', { goal: appearance.wordGoal }) }}</span>
+                <input
+                  class="input"
+                  :value="appearance.wordGoal"
+                  type="number"
+                  min="0"
+                  max="100000"
+                  step="100"
+                  @change="appearance.setWordGoal(Number(($event.target as HTMLInputElement).value) || 0)"
+                >
+              </label>
+              <label class="settings-field settings-toggle">
+                <span>{{ t('settings.editor.autosaveOnBlur') }}</span>
+                <input
+                  :checked="appearance.autosaveOnBlur"
+                  type="checkbox"
+                  class="checkbox"
+                  @change="appearance.setAutosaveOnBlur(($event.target as HTMLInputElement).checked)"
+                >
+              </label>
+              <label class="settings-field settings-toggle">
+                <span>{{ t('settings.editor.statusBarWords') }}</span>
+                <input
+                  :checked="appearance.statusBarWords"
+                  type="checkbox"
+                  class="checkbox"
+                  @change="appearance.setStatusBarWords(($event.target as HTMLInputElement).checked)"
                 >
               </label>
             </section>

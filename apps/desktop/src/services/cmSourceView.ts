@@ -13,7 +13,7 @@ import {
   ViewPlugin,
   highlightActiveLine,
   keymap,
-  lineNumbers,
+  lineNumbers as lineNumbersGutter,
   type DecorationSet,
   type ViewUpdate,
 } from '@codemirror/view'
@@ -201,16 +201,29 @@ const fencedCodeHighlighter = ViewPlugin.fromClass(
   { decorations: (value) => value.decorations },
 )
 
-export function sourceExtensions(): Extension[] {
+export interface SourceExtensionsOptions {
+  /** Show the line-number gutter. Default true. */
+  lineNumbers?: boolean
+  /** Soft-wrap long lines. Default true. */
+  softWrap?: boolean
+}
+
+export const SOURCE_EXT_DEFAULTS: Required<SourceExtensionsOptions> = {
+  lineNumbers: true,
+  softWrap: true,
+}
+
+export function sourceExtensions(opts: SourceExtensionsOptions = {}): Extension[] {
+  const { lineNumbers, softWrap } = { ...SOURCE_EXT_DEFAULTS, ...opts }
   return [
     history(),
     // GFM base so strikethrough / task lists / tables parse with proper tags.
     markdown({ base: markdownLanguage }),
     syntaxHighlighting(mdHighlight),
     fencedCodeHighlighter,
-    lineNumbers(),
+    ...(lineNumbers ? [lineNumbersGutter()] : []),
     highlightActiveLine(),
-    EditorView.lineWrapping,
+    ...(softWrap ? [EditorView.lineWrapping] : []),
     search({ top: true, createPanel: createZhSearchPanel }),
     keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
     sourceTheme,

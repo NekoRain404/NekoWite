@@ -2,10 +2,12 @@
 import { computed } from 'vue'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
+import { useAppearanceStore } from '../stores/appearance'
 import { t } from '../i18n'
 
 const tabs = useTabsStore()
 const view = useViewStore()
+const appearance = useAppearanceStore()
 
 const VERSION = 'v0.1.0'
 
@@ -53,11 +55,13 @@ const modeLabel = computed(() => {
 
 <template>
   <footer class="status-bar">
-    <span class="status-item">{{ t('status.words', { n: wordCount }) }}</span>
-    <span class="status-sep">·</span>
-    <span class="status-item">{{ t('status.chars', { n: charCount }) }}</span>
-    <span class="status-sep">·</span>
-    <span class="status-item">{{ t('status.readMinutes', { n: readMinutes }) }}</span>
+    <template v-if="appearance.statusBarWords">
+      <span class="status-item">{{ t('status.words', { n: wordCount }) }}</span>
+      <span class="status-sep">·</span>
+      <span class="status-item">{{ t('status.chars', { n: charCount }) }}</span>
+      <span class="status-sep">·</span>
+      <span class="status-item">{{ t('status.readMinutes', { n: readMinutes }) }}</span>
+    </template>
     <span class="status-spacer" />
     <span
       v-if="saveState"

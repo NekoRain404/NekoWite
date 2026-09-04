@@ -87,6 +87,19 @@ watch(
 )
 
 let unlistenMedia: (() => void) | null = null
+let blurSaving = false
+
+// Save on window blur when enabled, but only for tabs with unsaved work so a
+// mere focus change never produces a no-op write or a spurious history entry.
+function onWindowBlur(): void {
+  if (!appearance.autosaveOnBlur) return
+  const tab = tabs.activeTab
+  if (!tab?.dirty || blurSaving) return
+  blurSaving = true
+  void tabs.saveActive().finally(() => {
+    blurSaving = false
+  })
+}
 
 function applyVault(path: string): void {
   vaultPath.value = path
@@ -113,6 +126,7 @@ onMounted(() => {
       unlistenMedia = (): void => mq.removeEventListener('change', onChange)
     }
   }
+  window.addEventListener('blur', onWindowBlur)
   void settings.loadKey().catch(() => {
     // stronghold init/key-file errors are surfaced by the settings panel; a
     // failed background load on startup should not reject the mount
@@ -123,6 +137,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   unlistenMedia?.()
+  window.removeEventListener('blur', onWindowBlur)
 })
 
 function onOpenFolder(path: string): void {

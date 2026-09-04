@@ -49,6 +49,8 @@ export const MONO_FONTS: Record<MonoFontId, string> = {
   jetbrains: '"JetBrains Mono", "Cascadia Code", "SFMono-Regular", Menlo, Monaco, Consolas, ui-monospace, monospace',
 }
 
+export const WORD_GOAL_MAX = 100000
+
 interface AppearanceSettings {
   theme: Theme
   accent: Accent
@@ -60,6 +62,13 @@ interface AppearanceSettings {
   uiFont: UiFontId
   editorFont: EditorFontId
   monoFont: MonoFontId
+  focusMode: boolean
+  wordGoal: number
+  spellCheckEnabled: boolean
+  softWrap: boolean
+  lineNumbers: boolean
+  autosaveOnBlur: boolean
+  statusBarWords: boolean
 }
 
 const LS_KEY = 'nekowite.appearance'
@@ -75,6 +84,13 @@ const DEFAULTS: AppearanceSettings = {
   uiFont: 'system',
   editorFont: 'system',
   monoFont: 'mono',
+  focusMode: false,
+  wordGoal: 0,
+  spellCheckEnabled: true,
+  softWrap: true,
+  lineNumbers: true,
+  autosaveOnBlur: true,
+  statusBarWords: true,
 }
 
 const UI_FONT_IDS: UiFontId[] = ['system', 'inter', 'serif', 'rounded']
@@ -84,6 +100,10 @@ const ACCENTS: Accent[] = ['ink', 'coral', 'blue', 'green', 'gold', 'violet', 's
 
 function pickFont<T extends string>(value: unknown, valid: T[], fallback: T): T {
   return typeof value === 'string' && (valid as string[]).includes(value) ? (value as T) : fallback
+}
+
+function readBool(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback
 }
 
 function clampInt(value: unknown, min: number, max: number, fallback: number): number {
@@ -113,6 +133,13 @@ function readStored(): AppearanceSettings {
       uiFont: pickFont(parsed.uiFont, UI_FONT_IDS, DEFAULTS.uiFont),
       editorFont: pickFont(parsed.editorFont, EDITOR_FONT_IDS, DEFAULTS.editorFont),
       monoFont: pickFont(parsed.monoFont, MONO_FONT_IDS, DEFAULTS.monoFont),
+      focusMode: readBool(parsed.focusMode, DEFAULTS.focusMode),
+      wordGoal: clampInt(parsed.wordGoal ?? DEFAULTS.wordGoal, 0, WORD_GOAL_MAX, DEFAULTS.wordGoal),
+      spellCheckEnabled: readBool(parsed.spellCheckEnabled, DEFAULTS.spellCheckEnabled),
+      softWrap: readBool(parsed.softWrap, DEFAULTS.softWrap),
+      lineNumbers: readBool(parsed.lineNumbers, DEFAULTS.lineNumbers),
+      autosaveOnBlur: readBool(parsed.autosaveOnBlur, DEFAULTS.autosaveOnBlur),
+      statusBarWords: readBool(parsed.statusBarWords, DEFAULTS.statusBarWords),
     }
   } catch {
     return DEFAULTS
@@ -131,6 +158,13 @@ export const useAppearanceStore = defineStore('appearance', () => {
   const uiFont = ref<UiFontId>(stored.uiFont)
   const editorFont = ref<EditorFontId>(stored.editorFont)
   const monoFont = ref<MonoFontId>(stored.monoFont)
+  const focusMode = ref<boolean>(stored.focusMode)
+  const wordGoal = ref<number>(stored.wordGoal)
+  const spellCheckEnabled = ref<boolean>(stored.spellCheckEnabled)
+  const softWrap = ref<boolean>(stored.softWrap)
+  const lineNumbers = ref<boolean>(stored.lineNumbers)
+  const autosaveOnBlur = ref<boolean>(stored.autosaveOnBlur)
+  const statusBarWords = ref<boolean>(stored.statusBarWords)
   const systemRevision = ref(0)
 
   function persist(): void {
@@ -147,6 +181,13 @@ export const useAppearanceStore = defineStore('appearance', () => {
         uiFont: uiFont.value,
         editorFont: editorFont.value,
         monoFont: monoFont.value,
+        focusMode: focusMode.value,
+        wordGoal: wordGoal.value,
+        spellCheckEnabled: spellCheckEnabled.value,
+        softWrap: softWrap.value,
+        lineNumbers: lineNumbers.value,
+        autosaveOnBlur: autosaveOnBlur.value,
+        statusBarWords: statusBarWords.value,
       }),
     )
   }
@@ -210,6 +251,41 @@ export const useAppearanceStore = defineStore('appearance', () => {
     persist()
   }
 
+  function setFocusMode(v: boolean): void {
+    focusMode.value = v
+    persist()
+  }
+
+  function setWordGoal(n: number): void {
+    wordGoal.value = clampInt(n, 0, WORD_GOAL_MAX, DEFAULTS.wordGoal)
+    persist()
+  }
+
+  function setSpellCheckEnabled(v: boolean): void {
+    spellCheckEnabled.value = v
+    persist()
+  }
+
+  function setSoftWrap(v: boolean): void {
+    softWrap.value = v
+    persist()
+  }
+
+  function setLineNumbers(v: boolean): void {
+    lineNumbers.value = v
+    persist()
+  }
+
+  function setAutosaveOnBlur(v: boolean): void {
+    autosaveOnBlur.value = v
+    persist()
+  }
+
+  function setStatusBarWords(v: boolean): void {
+    statusBarWords.value = v
+    persist()
+  }
+
   function touchSystem(): void {
     systemRevision.value++
   }
@@ -237,6 +313,13 @@ export const useAppearanceStore = defineStore('appearance', () => {
     uiFont,
     editorFont,
     monoFont,
+    focusMode,
+    wordGoal,
+    spellCheckEnabled,
+    softWrap,
+    lineNumbers,
+    autosaveOnBlur,
+    statusBarWords,
     systemRevision,
     effectiveTheme,
     setTheme,
@@ -249,6 +332,13 @@ export const useAppearanceStore = defineStore('appearance', () => {
     setUiFont,
     setEditorFont,
     setMonoFont,
+    setFocusMode,
+    setWordGoal,
+    setSpellCheckEnabled,
+    setSoftWrap,
+    setLineNumbers,
+    setAutosaveOnBlur,
+    setStatusBarWords,
     touchSystem,
     uiFontFamily,
     editorFontFamily,

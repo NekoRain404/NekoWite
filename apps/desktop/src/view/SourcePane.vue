@@ -3,6 +3,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { EditorView } from '@codemirror/view'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
+import { useAppearanceStore } from '../stores/appearance'
 import { createCodeMirrorHost, type CodeMirrorHostHandle } from '../services/codeMirrorHost'
 import {
   sourceExtensions,
@@ -12,6 +13,7 @@ import {
 
 const tabs = useTabsStore()
 const view = useViewStore()
+const appearance = useAppearanceStore()
 
 const container = ref<HTMLDivElement | null>(null)
 let host: CodeMirrorHostHandle | null = null
@@ -39,7 +41,7 @@ onMounted(() => {
   mirroredTabId = tabs.activeId
   host = createCodeMirrorHost({
     doc: tabs.activeTab?.content ?? '',
-    extensions: sourceExtensions(),
+    extensions: sourceExtensions({ lineNumbers: appearance.lineNumbers, softWrap: appearance.softWrap }),
     onChange: emitChange,
     onCreateEditor: (editorView) => {
       editorView.scrollDOM.addEventListener('scroll', onScroll, { passive: true })
@@ -47,6 +49,17 @@ onMounted(() => {
   })
   host.mount(container.value)
 })
+
+// Hot-swap the source view layout when line-number / soft-wrap toggles change.
+// codeMirrorHost.reconfigure wraps the whole extension set in a Compartment, so
+// this re-applies the Markdown highlighting and search panel unchanged while
+// only the layout extensions flip on/off.
+watch(
+  [() => appearance.lineNumbers, () => appearance.softWrap],
+  () => {
+    host?.reconfigure(sourceExtensions({ lineNumbers: appearance.lineNumbers, softWrap: appearance.softWrap }))
+  },
+)
 
 watch(
   () => tabs.activeId,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createEditor, basicPlugins, configureImageResolver } from '@nekowite/editor-core'
 import type { NekoEditor } from '@nekowite/editor-core'
 import { emitLifecycle, setActiveEditor } from '@nekowite/plugin-host'
@@ -8,12 +8,14 @@ import { setCalloutView } from '../plugins/callout'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 import { useFloatStore } from '../stores/float'
+import { useAppearanceStore } from '../stores/appearance'
 import { notifyError } from '../services/errors'
 import { t } from '../i18n'
 import { editorBridge } from '../services/editorBridge'
 import { fsService } from '../services/fs'
-import { applySpellReplacement, getView, refreshOverlays } from '../services/renderSearch'
+import { applySpellReplacement, getView, refreshOverlays, setSpellEnabled } from '../services/renderSearch'
 import { suggestionsFromAttr } from '../services/renderSearch'
+import { countWords, isWordGoalMet, shouldCenterScroll, wordProgress } from '../services/editorBehaviors'
 import RenderSearchPanel from './RenderSearchPanel.vue'
 import RenameDialog from '../components/RenameDialog.vue'
 import { assetsDirForNote, suggestRename } from '../services/renameAsset'
@@ -31,10 +33,59 @@ import {
 const tabs = useTabsStore()
 const view = useViewStore()
 const floatStore = useFloatStore()
+const appearance = useAppearanceStore()
 
 const searchOpen = ref(false)
 const spellPopup = ref<{ x: number; y: number; from: number; to: number; word: string; suggestions: string[] } | null>(null)
 let overlayRaf = 0
+
+// Focus / typewriter mode: keep the cursor block vertically centered while it
+// drifts, scrolling only the viewport (never the document). Driven by a rAF so
+// we re-frame after ProseMirror has synced the DOM for this interaction.
+let focusRaf = 0
+
+function centerCursor(): void {
+  const scroller = scrollEl.value
+  const v = editor?.getView()
+  if (!scroller || !v) return
+  if (!appearance.focusMode) return
+  const head = v.state.selection.head
+  const coords = v.coordsAtPos(head)
+  if (!coords) return
+  const rect = scroller.getBoundingClientRect()
+  const cursorTop = coords.top - rect.top
+  // Leave the scroll alone while the caret sits near the middle, so an
+  // already-centered caret does not chase itself on every keystroke.
+  if (!shouldCenterScroll(cursorTop, scroller.clientHeight)) return
+  const target = scroller.scrollTop + (cursorTop - scroller.clientHeight / 2)
+  const clamped = Math.max(0, Math.min(target, scroller.scrollHeight - scroller.clientHeight))
+  if (Math.abs(scroller.scrollTop - clamped) < 0.5) return
+  scroller.scrollTop = clamped
+}
+
+function queueCenterCursor(): void {
+  if (!appearance.focusMode) return
+  if (focusRaf) return
+  focusRaf = requestAnimationFrame(() => {
+    focusRaf = 0
+    centerCursor()
+  })
+}
+
+function onEditorFocusKeydown(): void {
+  queueCenterCursor()
+}
+
+function onEditorFocusPointerdown(): void {
+  queueCenterCursor()
+}
+
+// Word-count goal: a slim top progress reading is shown while wordGoal > 0,
+// flipping to the accent color once the goal is reached. Count is derived from
+// the live tab content with the same CJK/latin algorithm the status bar uses.
+const wordCount = computed(() => countWords(tabs.activeTab?.content ?? ''))
+const wordGoalMet = computed(() => isWordGoalMet(wordCount.value, appearance.wordGoal))
+const wordProgressPct = computed(() => Math.round(wordProgress(wordCount.value, appearance.wordGoal) * 100))
 
 // rAF-throttled overlay refresh: coalesce bursts of model changes into one
 // deterministic pass, and ensure it runs AFTER ProseMirror's own DOM sync.
@@ -344,6 +395,8 @@ onMounted(async () => {
   scrollEl.value?.addEventListener('dragover', onDragOver)
   scrollEl.value?.addEventListener('dragenter', onDragOver)
   window.addEventListener('keydown', onKeydown)
+  editorEl.value.addEventListener('keydown', onEditorFocusKeydown)
+  editorEl.value.addEventListener('pointerdown', onEditorFocusPointerdown)
 
   unlistenChange = editor.onContentChange(() => {
     if (applyingExternal || !editor) return
@@ -376,7 +429,25 @@ onMounted(async () => {
     if (applyingExternal) return
     queueOverlayRefresh()
   })
+
+  // Spell check is a reactive setting: sync the live toggle (default true) so
+  // the renderSearch overlay honors it on open, and re-apply on change.
+  setSpellEnabled(appearance.spellCheckEnabled)
 })
+
+watch(
+  () => appearance.spellCheckEnabled,
+  (enabled) => {
+    setSpellEnabled(enabled)
+  },
+)
+
+watch(
+  () => appearance.focusMode,
+  (on) => {
+    if (on) queueCenterCursor()
+  },
+)
 
 onBeforeUnmount(() => {
   if (docChangeTimer) {
@@ -387,6 +458,10 @@ onBeforeUnmount(() => {
     cancelAnimationFrame(overlayRaf)
     overlayRaf = 0
   }
+  if (focusRaf) {
+    cancelAnimationFrame(focusRaf)
+    focusRaf = 0
+  }
   if (tabs.activeId) tabs.cancelAutosave(tabs.activeId)
   setCalloutView(null)
   configureImageResolver(null)
@@ -394,6 +469,8 @@ onBeforeUnmount(() => {
   setActiveEditor(null)
   editorEl.value?.removeEventListener('pointerdown', onContainerPointerDownCapture, true)
   editorEl.value?.removeEventListener('click', onEditorClick)
+  editorEl.value?.removeEventListener('keydown', onEditorFocusKeydown)
+  editorEl.value?.removeEventListener('pointerdown', onEditorFocusPointerdown)
   scrollEl.value?.removeEventListener('paste', onPaste, true)
   scrollEl.value?.removeEventListener('drop', onDrop, true)
   scrollEl.value?.removeEventListener('dragover', onDragOver)
@@ -447,6 +524,21 @@ watch(
     class="rendered-pane"
     @scroll="onScroll"
   >
+    <div
+      v-if="appearance.wordGoal > 0"
+      class="nw-word-goal"
+      :class="{ 'is-done': wordGoalMet }"
+    >
+      <span class="nw-word-goal-label">
+        {{ t('settings.editor.wordGoalProgress', { current: wordCount, goal: appearance.wordGoal }) }}
+      </span>
+      <span class="nw-word-goal-track">
+        <span
+          class="nw-word-goal-fill"
+          :style="{ width: `${wordProgressPct}%` }"
+        />
+      </span>
+    </div>
     <RenderSearchPanel
       v-if="searchOpen"
       class="nw-render-search-host"
@@ -501,6 +593,50 @@ watch(
   height: 100%;
   overflow: auto;
   background: var(--app-canvas);
+}
+.nw-word-goal {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: var(--app-content-width);
+  margin: 0 auto;
+  padding: 10px 24px 8px;
+  background: color-mix(in srgb, var(--app-canvas) 86%, transparent);
+  backdrop-filter: blur(3px);
+  font-family: var(--app-font);
+  font-size: 11px;
+  color: var(--app-muted);
+}
+.nw-word-goal-label {
+  flex: none;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.nw-word-goal-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-border) 80%, transparent);
+  overflow: hidden;
+}
+.nw-word-goal-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--app-accent);
+  transition: width var(--app-motion-fast) var(--app-ease),
+              background var(--app-motion-fast) var(--app-ease);
+}
+.nw-word-goal.is-done .nw-word-goal-fill {
+  background: var(--app-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--app-accent) 55%, transparent);
+}
+.nw-word-goal.is-done .nw-word-goal-label {
+  color: var(--app-accent);
+  font-weight: 600;
 }
 .editor-container {
   position: relative;

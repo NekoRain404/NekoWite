@@ -175,4 +175,97 @@ describe('useAppearanceStore', () => {
     const invalid = useAppearanceStore()
     expect(invalid.accent).toBe('ink')
   })
+
+  it('defaults editor behavior flags and disables the word goal', () => {
+    const s = useAppearanceStore()
+    expect(s.focusMode).toBe(false)
+    expect(s.wordGoal).toBe(0)
+    expect(s.spellCheckEnabled).toBe(true)
+    expect(s.softWrap).toBe(true)
+    expect(s.lineNumbers).toBe(true)
+    expect(s.autosaveOnBlur).toBe(true)
+    expect(s.statusBarWords).toBe(true)
+  })
+
+  it('persists and restores editor behavior flags', () => {
+    const s = useAppearanceStore()
+    s.setFocusMode(true)
+    s.setWordGoal(1200)
+    s.setSpellCheckEnabled(false)
+    s.setSoftWrap(false)
+    s.setLineNumbers(false)
+    s.setAutosaveOnBlur(false)
+    s.setStatusBarWords(false)
+    const saved = JSON.parse(localStorage.getItem('nekowite.appearance') ?? '{}')
+    expect(saved.focusMode).toBe(true)
+    expect(saved.wordGoal).toBe(1200)
+    expect(saved.spellCheckEnabled).toBe(false)
+    expect(saved.softWrap).toBe(false)
+    expect(saved.lineNumbers).toBe(false)
+    expect(saved.autosaveOnBlur).toBe(false)
+    expect(saved.statusBarWords).toBe(false)
+
+    localStorage.setItem('nekowite.appearance', JSON.stringify({
+      focusMode: true,
+      wordGoal: 500,
+      spellCheckEnabled: false,
+      softWrap: false,
+      lineNumbers: false,
+      autosaveOnBlur: false,
+      statusBarWords: false,
+    }))
+    setActivePinia(createPinia())
+    const restored = useAppearanceStore()
+    expect(restored.focusMode).toBe(true)
+    expect(restored.wordGoal).toBe(500)
+    expect(restored.spellCheckEnabled).toBe(false)
+    expect(restored.softWrap).toBe(false)
+    expect(restored.lineNumbers).toBe(false)
+    expect(restored.autosaveOnBlur).toBe(false)
+    expect(restored.statusBarWords).toBe(false)
+  })
+
+  it('falls back to defaults for old (missing-field) and invalid localStorage', () => {
+    localStorage.setItem('nekowite.appearance', JSON.stringify({ theme: 'dark' }))
+    setActivePinia(createPinia())
+    const s = useAppearanceStore()
+    expect(s.focusMode).toBe(false)
+    expect(s.wordGoal).toBe(0)
+    expect(s.spellCheckEnabled).toBe(true)
+    expect(s.softWrap).toBe(true)
+    expect(s.lineNumbers).toBe(true)
+    expect(s.autosaveOnBlur).toBe(true)
+    expect(s.statusBarWords).toBe(true)
+
+    localStorage.setItem('nekowite.appearance', JSON.stringify({
+      focusMode: 'yes',
+      wordGoal: 'many',
+      spellCheckEnabled: 1,
+      softWrap: null,
+      lineNumbers: 'off',
+      autosaveOnBlur: 0,
+      statusBarWords: [],
+    }))
+    setActivePinia(createPinia())
+    const invalid = useAppearanceStore()
+    expect(invalid.focusMode).toBe(false)
+    expect(invalid.wordGoal).toBe(0)
+    expect(invalid.spellCheckEnabled).toBe(true)
+    expect(invalid.softWrap).toBe(true)
+    expect(invalid.lineNumbers).toBe(true)
+    expect(invalid.autosaveOnBlur).toBe(true)
+    expect(invalid.statusBarWords).toBe(true)
+  })
+
+  it('clamps wordGoal into [0, 100000] and rounds', () => {
+    const s = useAppearanceStore()
+    s.setWordGoal(-10)
+    expect(s.wordGoal).toBe(0)
+    s.setWordGoal(999999)
+    expect(s.wordGoal).toBe(100000)
+    s.setWordGoal(1234.6)
+    expect(s.wordGoal).toBe(1235)
+    s.setWordGoal(0)
+    expect(s.wordGoal).toBe(0)
+  })
 })
