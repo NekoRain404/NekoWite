@@ -9,15 +9,28 @@ export interface MdxComponentAttrs {
   name: string
   props: Record<string, string>
   children: string
+  /** Exact source text of the JSX element, captured on parse. An unknown /
+   * uneditable element keeps its raw source so an unmodified document
+   * round-trips byte-for-byte (expressions, attribute order, and inline vs
+   * block form are all preserved verbatim). */
+  raw?: string
 }
 
 export const mdxComponent = $node('mdxComponent', () => ({
+  // The node is a block atom (a non-editable source placeholder). It was NOT
+  // made `inline`/grouped 'inline': ProseMirror separates block vs inline nodes
+  // via `spec.inline` (an `inline` group member is still `isBlock`), so a node
+  // in both groups fails schema validation with "Mixing inline and block
+  // content". Whole-block components therefore stay block atoms; components
+  // inside a GFM table cell (whose content is a paragraph) are left as raw HTML
+  // by mdxJsxMdast so they are preserved, not dropped/corrupted on open.
   group: 'block',
   atom: true,
   attrs: {
     name: { default: 'Component' },
     props: { default: {} as Record<string, string> },
     children: { default: '' },
+    raw: { default: undefined },
   },
   parseDOM: [{ tag: 'div[data-mdx-component]' }],
   toDOM: (node) => {
@@ -32,8 +45,9 @@ export const mdxComponent = $node('mdxComponent', () => ({
       node.type === 'mdxJsxFlowElement' &&
       typeof node.value === 'string',
     runner: (state, node, type) => {
-      const attrs = parseMdxTag(node.value as string)
-      state.addNode(type, attrs)
+      const source = node.value as string
+      const attrs = parseMdxTag(source)
+      state.addNode(type, { ...attrs, raw: source })
     },
   },
   toMarkdown: {
@@ -43,6 +57,7 @@ export const mdxComponent = $node('mdxComponent', () => ({
         name: node.attrs.name,
         props: node.attrs.props,
         children: node.attrs.children,
+        raw: node.attrs.raw,
       }
       state.addNode('html', undefined, mdxComponentToMarkdown(attrs))
     },
@@ -50,7 +65,12 @@ export const mdxComponent = $node('mdxComponent', () => ({
 }))
 
 export function mdxComponentToMarkdown(attrs: MdxComponentAttrs): string {
-  const { name, props, children } = attrs
+  const { name, props, children, raw } = attrs
+  // An element parsed from source carries its captured raw source. Emit it
+  // verbatim so JSX attribute expressions, attribute order, self-closing form,
+  // and inline-vs-block layout all round-trip byte-for-byte (the structured
+  // attrs below only hold strings and would mangle `{expr}`/reorder attrs).
+  if (raw) return raw
   const propStr = Object.entries(props)
     .map(([k, v]) => ` ${k}="${escapeMdxText(v)}"`)
     .join('')
@@ -122,7 +142,7 @@ const mdxNodeView: NodeViewConstructor = (node, view, getPos) => {
   let app: App | null = null
 
   const render = (): void => {
-    const { name, props, children } = node.attrs as MdxComponentAttrs
+    const { name, props, children, raw } = node.attrs as MdxComponentAttrs
     const component = getComponent(name)
     if (app) {
       app.unmount()
@@ -136,10 +156,13 @@ const mdxNodeView: NodeViewConstructor = (node, view, getPos) => {
       )
       app.mount(dom)
     } else {
+      // Unregistered / unknown component: render a non-editable source
+      // placeholder showing the exact JSX so the author sees what will be
+      // written back, and the node serializes the raw source verbatim.
       dom.className = 'mdx-component mdx-component-placeholder'
       const source = document.createElement('div')
       source.className = 'mdx-component-source'
-      source.textContent = mdxComponentToMarkdown({ name, props, children })
+      source.textContent = mdxComponentToMarkdown({ name, props, children, raw })
       dom.appendChild(source)
     }
   }
