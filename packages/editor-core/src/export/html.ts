@@ -13,8 +13,13 @@ import { mdxJsxMdast, parseMdxTag } from '../mdx'
 
 // KaTeX is only needed at export time (the editor preview renders math via
 // MathLive / the app's own renderer). Loading it lazily keeps the startup
-// import graph free of ~1MB of math machinery; the sync `renderDocument`
-// (tests only) degrades to plain-text math when KaTeX isn't loaded yet.
+// import graph free of ~1MB of math machinery. The async `renderDocumentAsync`
+// always awaits the lazy load before rendering; the sync `renderDocument` can
+// only render math if KaTeX is ALREADY loaded in this process (e.g. a prior
+// async render or an explicit preload). If math is present but KaTeX is not
+// yet loaded, the sync path throws a clear, actionable error rather than
+// silently emitting raw LaTeX. Documents without math never touch KaTeX and
+// stay byte-for-byte identical across both render entry points.
 // The KaTeX CSS is pulled in the same lazy way (via `?inline`, so the fonts
 // stay data: URIs and the exported HTML is self-contained) rather than being
 // statically imported, which would drag the whole vendor-katex chunk into the
@@ -267,14 +272,22 @@ function renderMath(node: RenderNode, ctx: RenderContext, display: boolean): str
       ? `<div class="math-latex">${inner}</div>`
       : `<span class="math-latex">${inner}</span>`
   }
-  let html = ''
   const katex = katexModule
-  if (katex) {
-    try {
-      html = katex.renderToString(value, { displayMode: display, throwOnError: false })
-    } catch {
-      html = ''
-    }
+  if (!katex) {
+    // A synchronous renderer cannot `await` the lazy KaTeX load. Math was
+    // requested in KaTeX mode, but KaTeX is not loaded in this process yet.
+    // Fail loudly instead of silently emitting raw LaTeX.
+    throw new Error(
+      'math was requested but KaTeX is not loaded; call the async ' +
+        'renderDocumentAsync(), or ensure a prior render loaded KaTeX ' +
+        '(e.g. a prior async render) before using the sync renderDocument()',
+    )
+  }
+  let html = ''
+  try {
+    html = katex.renderToString(value, { displayMode: display, throwOnError: false })
+  } catch {
+    html = ''
   }
   if (!html) {
     const inner = `$${escapeHtml(value)}$`
