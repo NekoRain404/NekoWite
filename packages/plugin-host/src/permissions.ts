@@ -1,4 +1,5 @@
 import type { PluginPermission } from './types'
+import { createPluginError } from './types'
 
 /**
  * Capabilities that grant a plugin access well beyond rendering registerable
@@ -35,4 +36,35 @@ export function collectPluginPermissions(
     }
   }
   return out
+}
+
+/** True when `permission` is present in the declared set. */
+export function hasPermission(
+  decl: { permissions?: PluginPermission[] } | undefined,
+  permission: PluginPermission,
+): boolean {
+  return (decl?.permissions ?? []).includes(permission)
+}
+
+/**
+ * Thin, observable guard for "point of use" permission checks. Call this right
+ * before an action that needs a capability; if the required permission is
+ * absent it throws a structured PLUGIN_PERMISSION_DENIED error (with a clear
+ * ask + recovery hint) instead of silently proceeding. This is NOT full IPC
+ * sandboxing — it just makes a missing permission loud and actionable. The
+ * host can catch it and reject the action.
+ */
+export function assertPermission(
+  decl: { permissions?: PluginPermission[] } | undefined,
+  permission: PluginPermission,
+  opts?: { pluginId?: string; detail?: string; recovery?: string },
+): void {
+  if (hasPermission(decl, permission)) return
+  const pluginId = opts?.pluginId ?? 'unknown'
+  const ask = opts?.detail ? ` to ${opts.detail}` : ''
+  throw createPluginError('PLUGIN_PERMISSION_DENIED', {
+    pluginId,
+    message: `Plugin "${pluginId}" needs the "${permission}" permission${ask} but it was not granted.`,
+    recovery: opts?.recovery ?? `Grant the "${permission}" permission in the plugin settings.`,
+  })
 }

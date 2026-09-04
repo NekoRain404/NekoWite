@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { emitLifecycle, getActiveEditor, hasLifecycleListeners, registerLifecycleHook, setActiveEditor } from './lifecycle'
+import { emitLifecycle, getActiveEditor, hasLifecycleListeners, onLifecycleError, registerLifecycleHook, setActiveEditor } from './lifecycle'
+import type { LifecycleErrorEvent } from './lifecycle'
 import type { PluginContext } from './types'
+import { PluginError } from './types'
 
 const ctx = { id: 'p1', name: 'P1', insertComponent: () => {} } as PluginContext
 
@@ -24,6 +26,42 @@ describe('lifecycle hooks', () => {
     registerLifecycleHook('p2', 'onSaved', ok, ctx)
     expect(() => emitLifecycle('onSaved', null, 'c')).not.toThrow()
     expect(ok).toHaveBeenCalled()
+  })
+
+  it('surfaces a thrown hook through onLifecycleError without blocking others', () => {
+    const events: LifecycleErrorEvent[] = []
+    const off = onLifecycleError((e) => events.push(e))
+    const boom = vi.fn(() => {
+      throw new Error('boom')
+    })
+    const ok = vi.fn()
+    registerLifecycleHook('p1', 'onDocChange', boom, ctx)
+    registerLifecycleHook('p2', 'onDocChange', ok, ctx)
+    expect(() => emitLifecycle('onDocChange', { doc: 'x' })).not.toThrow()
+    expect(ok).toHaveBeenCalled()
+    expect(events).toHaveLength(1)
+    expect(events[0].pluginId).toBe('p1')
+    expect(events[0].event).toBe('onDocChange')
+    expect(events[0].error).toBeInstanceOf(PluginError)
+    expect(events[0].error.code).toBe('PLUGIN_HOOK_ERROR')
+    expect(events[0].error.pluginId).toBe('p1')
+    expect(events[0].error.recovery).toContain('Disable the plugin')
+    off()
+  })
+
+  it('a throwing error subscriber does not break delivery to later subscribers', () => {
+    const events: LifecycleErrorEvent[] = []
+    const bad = onLifecycleError(() => {
+      throw new Error('subscriber boom')
+    })
+    const good = onLifecycleError((e) => events.push(e))
+    registerLifecycleHook('p1', 'onSave', () => {
+      throw new Error('hook boom')
+    }, ctx)
+    expect(() => emitLifecycle('onSave', null, 'c')).not.toThrow()
+    expect(events).toHaveLength(1)
+    bad()
+    good()
   })
 
   it('unregister removes the hook', () => {
