@@ -1,22 +1,40 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, computed, nextTick, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
 import { getCommand } from '@nekowite/editor-core'
 import { FileText } from 'lucide-vue-next'
 import { useViewStore, SPLIT_RATIO_DEFAULT, SPLIT_RATIO_MAX, SPLIT_RATIO_MIN } from '../stores/view'
 import { useTabsStore } from '../stores/tabs'
-import SourcePane from '../view/SourcePane.vue'
+import type { EditorView } from '@codemirror/view'
 import RenderedPane from '../view/RenderedPane.vue'
 import LayoutResizeHandle from './LayoutResizeHandle.vue'
 import WordToolbar from '../components/WordToolbar.vue'
 import FloatToolbar from '../components/FloatToolbar.vue'
 import { t } from '../i18n'
 
+// The source (CodeMirror) pane is loaded only when the user actually needs it.
+// Its graph (@codemirror/*, @lezer/*, the host and highlighting services) would
+// otherwise be pulled into the first-load bundle even though the Milkdown
+// rendered view is what shows on open. Importing it on demand keeps CodeMirror
+// off the eager path and lets the pane be torn down (v-if, not v-show) so it is
+// not kept resident while the rendered editor is displayed.
+type SourcePaneExpose = {
+  getRatio(): number
+  setRatio(r: number): void
+  focus(): void
+  getText(): string
+  getSourceView(): EditorView | null
+  getVisibleUnit(): number | null
+  setMeasureSuppressed(suppressed: boolean): void
+}
+
+const SourcePane = defineAsyncComponent(() => import('../view/SourcePane.vue'))
+
 const view = useViewStore()
 const tabs = useTabsStore()
 
 const hasTab = computed(() => tabs.activeTab !== null)
 
-const sourcePane = ref<InstanceType<typeof SourcePane> | null>(null)
+const sourcePane = ref<SourcePaneExpose | null>(null)
 const renderedPane = ref<InstanceType<typeof RenderedPane> | null>(null)
 let syncing = false
 
@@ -59,20 +77,46 @@ watch(
   },
 )
 
+// The source pane is loaded on demand (CodeMirror is async). Entering split
+// mode from the rendered view can happen before that chunk has resolved, so we
+// remember the pane that was visible before the switch and re-align once the
+// source pane's ref populates. The pane that was visible before entering split
+// is the reference: align the other pane to its scroll position once layout is
+// done. Both entries do nothing until both panes actually exist.
+let pendingSplitAlignFrom: 'source' | 'rendered' | null = null
+
+function alignSplitPanes(prev: 'source' | 'rendered'): void {
+  if (prev === 'rendered') {
+    drive(sourcePane.value, renderedPane.value)
+  } else {
+    drive(renderedPane.value, sourcePane.value)
+  }
+}
+
 watch(
   () => view.mode,
   (mode, prev) => {
     if (mode !== 'split' || prev === 'split' || syncing) return
-    // The pane that was visible before entering split is the reference:
-    // align the other pane to its scroll position once layout is done.
+    pendingSplitAlignFrom = prev
     void nextTick(() => {
       if (view.mode !== 'split' || syncing) return
-      if (prev === 'rendered') {
-        drive(sourcePane.value, renderedPane.value)
-      } else {
-        drive(renderedPane.value, sourcePane.value)
-      }
+      // The source pane may still be resolving its async chunk — the ref
+      // watcher below retries once it mounts.
+      if (!sourcePane.value || !renderedPane.value) return
+      pendingSplitAlignFrom = null
+      alignSplitPanes(prev)
     })
+  },
+)
+
+watch(
+  () => sourcePane.value,
+  () => {
+    if (view.mode !== 'split' || syncing) return
+    if (!pendingSplitAlignFrom || !sourcePane.value || !renderedPane.value) return
+    const prev = pendingSplitAlignFrom
+    pendingSplitAlignFrom = null
+    alignSplitPanes(prev)
   },
 )
 
@@ -173,7 +217,7 @@ onBeforeUnmount(() => {
         :class="view.mode"
       >
         <SourcePane
-          v-show="view.mode !== 'rendered'"
+          v-if="view.mode !== 'rendered'"
           ref="sourcePane"
           class="pane source"
           :style="sourceStyle"
