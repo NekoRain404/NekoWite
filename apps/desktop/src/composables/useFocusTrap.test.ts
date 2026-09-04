@@ -1,3 +1,5 @@
+/* eslint-disable vue/one-component-per-file -- a test file legitimately defines
+ * a small host component via defineComponent to exercise the focus trap. */
 import { afterEach, describe, expect, it } from 'vitest'
 import { createApp, defineComponent, h, nextTick, ref, type App as VueApp, type Ref } from 'vue'
 

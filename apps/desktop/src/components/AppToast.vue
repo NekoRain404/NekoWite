@@ -58,13 +58,13 @@ onBeforeUnmount(() => {
   <div class="toast-stack">
     <TransitionGroup name="toast">
       <div
-        v-for="t in toasts"
-        :key="t.id"
+        v-for="toast in toasts"
+        :key="toast.id"
         class="toast"
         role="alert"
-        @click="dismiss(t.id)"
+        @click="dismiss(toast.id)"
       >
-        {{ t.message }}
+        {{ toast.message }}
       </div>
     </TransitionGroup>
     <div

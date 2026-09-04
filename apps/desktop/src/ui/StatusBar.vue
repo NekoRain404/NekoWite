@@ -80,7 +80,11 @@ const modeLabel = computed(() => {
       class="status-save"
       :data-state="saveState"
     >
-      <span class="save-dot" :class="{ 'is-shown': saveState !== 'saved' }" :data-state="saveState" />
+      <span
+        class="save-dot"
+        :class="{ 'is-shown': saveState !== 'saved' }"
+        :data-state="saveState"
+      />
       {{ saveLabel }}
     </span>
     <span class="status-sep">·</span>
