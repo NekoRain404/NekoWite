@@ -1,17 +1,17 @@
 import { ref } from 'vue'
 import type { NekoEditor } from '@nekowite/editor-core'
-import { fsService } from '../services/fs'
-import { notifyError } from '../services/errors'
-import { t } from '../i18n'
-import { useTabsStore } from '../stores/tabs'
-import { assetsDirForNote, suggestRename } from '../services/renameAsset'
+import { fsService } from '../../../services/fs'
+import { notifyError } from '../../../services/errors'
+import { t } from '../../../i18n'
+import { useTabsStore } from '../../../stores/tabs'
+import { assetsDirForNote, suggestRename } from '../../../services/renameAsset'
 import {
   collectClipboardImages,
   escapeMarkdownAlt,
   fileToBase64,
   markdownImageBlock,
   relativePathFromNoteVault,
-} from '../services/attachments'
+} from '../../../services/attachments'
 
 interface RenamePrompt {
   initial: string

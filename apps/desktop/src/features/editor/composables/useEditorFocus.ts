@@ -1,13 +1,13 @@
 import { computed } from 'vue'
 import type { NekoEditor } from '@nekowite/editor-core'
-import { useAppearanceStore } from '../stores/appearance'
-import { useTabsStore } from '../stores/tabs'
+import { useAppearanceStore } from '../../../stores/appearance'
+import { useTabsStore } from '../../../stores/tabs'
 import {
   countWords,
   isWordGoalMet,
   shouldCenterScroll,
   wordProgress,
-} from '../services/editorBehaviors'
+} from '../../../services/editorBehaviors'
 
 export interface UseEditorFocusOptions {
   /** Returns the live editor (may be null before/after mount). */
