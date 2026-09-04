@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   clearAuditLog,
+  createMacEnvelope,
   flushAuditLogToFile,
+  generateMacSecret,
   getAuditLog,
   getLastAuditEvent,
   getLastKnownGoodVersion,
@@ -27,6 +29,7 @@ import {
   setAuditLogFileSink,
   setPluginVersionRange,
   unrevokePlugin,
+  verifyMacEnvelope,
   versionSatisfies,
 } from './governance'
 
@@ -133,10 +136,72 @@ describe('audit log', () => {
     expect(read).not.toHaveBeenCalled()
   })
 
+  it('treats a non-JSON read (e.g. a Markdown note or a path mismatch) as an empty log — no throw, no warning', async () => {
+    // A sink that exists but whose content is a Markdown note (this is how the
+    // `# Welcome` crash happened: the read opened a note instead of the log).
+    const read = vi.fn(async () => '# Welcome\n\nThis is a note, not an audit log.')
+    setAuditLogFileSink({
+      path: '/vault/.nekowite/vault-plugin-audit.log',
+      exists: async () => true,
+      read,
+      write: async () => {},
+    })
+    await expect(loadAuditLogFromFile()).resolves.toBe(false)
+    expect(getAuditLog()).toHaveLength(0)
+
+    // A failed restore never blocks recording NEW events going forward.
+    recordPluginEvent('p', 'load')
+    expect(getAuditLog()).toHaveLength(1)
+  })
+
+  it('treats a throwing read as an empty log too (never throws to the caller)', async () => {
+    setAuditLogFileSink({
+      path: '/vault/.nekowite/vault-plugin-audit.log',
+      exists: async () => true,
+      read: async () => { throw new Error('fs error') },
+      write: async () => {},
+    })
+    await expect(loadAuditLogFromFile()).resolves.toBe(false)
+    expect(getAuditLog()).toHaveLength(0)
+  })
+
   it('clearAuditLog empties the ring', () => {
     recordPluginEvent('a', 'load')
     clearAuditLog()
     expect(getAuditLog()).toHaveLength(0)
+  })
+})
+
+describe('MAC envelope (governance state integrity)', () => {
+  it('createMacEnvelope then verifyMacEnvelope round-trips a payload', async () => {
+    const payload = JSON.stringify({ trustedSources: ['@scope'], n: 1 })
+    const env = await createMacEnvelope(payload, 's3cret')
+    expect(env.mac).toMatch(/^[0-9a-f]{64}$/)
+    await expect(verifyMacEnvelope(env, 's3cret')).resolves.toBe(true)
+  })
+
+  it('detects a tampered MAC / payload / wrong key (returns false, never throws)', async () => {
+    const payload = JSON.stringify({ trustedSources: ['@scope'] })
+    const env = await createMacEnvelope(payload, 's3cret')
+
+    // Tampered MAC.
+    await expect(verifyMacEnvelope({ payload: env.payload, mac: '0'.repeat(64) }, 's3cret')).resolves.toBe(false)
+    // Tampered payload.
+    await expect(verifyMacEnvelope({ payload: `${payload} `, mac: env.mac }, 's3cret')).resolves.toBe(false)
+    // Wrong key.
+    await expect(verifyMacEnvelope(env, 'wrong-secret')).resolves.toBe(false)
+  })
+
+  it('rejects a non-envelope / malformed input', async () => {
+    await expect(verifyMacEnvelope(null, 's')).resolves.toBe(false)
+    await expect(verifyMacEnvelope({}, 's')).resolves.toBe(false)
+    await expect(verifyMacEnvelope({ payload: 'x' }, 's')).resolves.toBe(false)
+    await expect(verifyMacEnvelope({ payload: 'x', mac: 'abc' }, 's')).resolves.toBe(false)
+  })
+
+  it('generateMacSecret produces a 64-hex secret', () => {
+    expect(generateMacSecret()).toMatch(/^[0-9a-f]{64}$/)
+    expect(generateMacSecret()).not.toEqual(generateMacSecret())
   })
 })
 

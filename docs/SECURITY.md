@@ -93,6 +93,22 @@ Beyond the trust/integrity gates, the host enforces a governance layer
   A revoked plugin is refused **at load, before any import**, with the recorded
   reason. *(Verified: `security-regression.test.ts` — revoked plugin never reaches the
   import boundary; `governance.test.ts` — exact/range/'all' matching.)*
+- **Trust/revocation/version/digest state is persisted in an integrity-checked
+  file, NOT localStorage.** The trusted publisher key, trusted-source allowlist,
+  plugin digests, revocations, and version policy are written to a single
+  vault-relative JSON file (`.nekowite/plugin-governance.json`) wrapped in a
+  **keyed HMAC-SHA256** envelope. On load the MAC is verified; a **failure
+  refuses the contained trust** (reset / trust-nothing) and surfaces a notice —
+  we never silently load attacker-controlled values. `localStorage` is retained only
+  as a NON-authoritative "saw this notice" flag, never for trust data. *(Verified:
+  `governance.test.ts` — MAC create/verify + tamper detection; `plugins.test.ts` — a
+  tampered governance file refuses the trust it contains; `storage` is file-backed.)*
+  > ⚠️ **Residual (honest):** there is **no OS keychain** exposed to the frontend, so
+  > the HMAC key is a **per-install secret** persisted in a sibling file
+  > (`.nekowite/plugin-governance.mackey`). This is **MAC-detection, not a secure
+  > hardware root**: an attacker who can read BOTH the file and its key can recompute
+  > the MAC. It stops a localStorage-only attacker and detects corruption/stale reads;
+  > it is not proof against a party with full vault file access.
 - **Version policy + rollback** — the host records the version+digest at load, refuses
   a version that is a recorded bad version or outside a configured min/max range, and
   exposes `rollbackPoint(pluginId)` = the last-known-good version+digest. **Rollback

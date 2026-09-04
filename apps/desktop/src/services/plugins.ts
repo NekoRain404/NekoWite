@@ -2,12 +2,15 @@ import {
   activatePlugin,
   assertPermission,
   buildPluginSignaturePayload,
+  clearAuditLog,
   collectPluginPermissions,
   computePluginDigest,
+  createMacEnvelope,
   createPluginError,
   DEFAULT_PLUGIN_ACTIVATION_TIMEOUT_MS,
   deactivatePlugin,
   flushAuditLogToFile,
+  generateMacSecret,
   getAuditLog,
   getGovernancePluginIds,
   getLastKnownGoodVersion,
@@ -39,6 +42,7 @@ import {
   setAuditLogFileSink,
   setPluginVersionRange,
   unrevokePlugin,
+  verifyMacEnvelope,
   verifyPluginIntegrity,
   verifyPluginSignature,
 } from '@nekowite/plugin-host'
@@ -125,40 +129,43 @@ function signalPluginLoadingDisabledByCsp(): void {
  * Plugin governance (audit log + version policy/rollback + revocation).
  *
  * The policy functions live in @nekowite/plugin-host/governance; this module
- * (a) persists the governance snapshot to localStorage (the revocation list, the
- * recorded versions, version ranges, bad versions), (b) persists the audit log to
- * a vault-relative file through fsService when that service is available, and
- * (c) routes audit events so governance decisions are never silent. All of these
- * are additive to the existing trust/integrity/consent gates.
+ * (a) persists the SECURITY-relevant governance/trust state (revocations,
+ * recorded versions, version ranges, bad versions, trusted key, trusted sources,
+ * plugin digests) to a vault-relative, MAC-protected file via fsService — NOT to
+ * localStorage, which a WebView profile / localStorage attacker could rewrite,
+ * (b) persists the (non-secret) audit log to a vault-relative file through
+ * fsService when available, and (c) routes audit events so governance decisions
+ * are never silent. All of these are additive to the existing trust/integrity/
+ * consent gates. localStorage is retained only as a NON-authoritative notice flag.
  * ------------------------------------------------------------------------- */
 
-const PLUGIN_GOVERNANCE_KEY = 'nekowite.pluginGovernance'
+// The trust/governance records (trust key, trusted sources, plugin digests,
+// revocations, version policy) are SECURITY-relevant and so are persisted in an
+// integrity-checked (keyed-HMAC) vault file — NEVER as authoritative data in
+// localStorage, which a WebView profile / localStorage attacker could rewrite.
+// localStorage remains only a NON-authoritative fast cache for non-security UI
+// state (e.g. "saw this notice"). See docs/SECURITY.md + docs/PLUGIN_SDK.md.
+
+/** Vault-relative path of the MAC-protected governance/trust state file. */
+export const PLUGIN_GOVERNANCE_FILE = '.nekowite/plugin-governance.json'
+/** Vault-relative path of the per-install HMAC secret that keys that file. */
+export const PLUGIN_GOVERNANCE_MACKEY_FILE = '.nekowite/plugin-governance.mackey'
+/** Vault-relative path of the (non-secret) audit log file. */
+export const PLUGIN_AUDIT_LOG_FILE = '.nekowite/vault-plugin-audit.log'
+/** Non-authoritative localStorage flag: "surfaced the tamper notice this session." */
+const PLUGIN_TAMPER_NOTICE_KEY = 'nekowite.pluginGovernanceTamperNotice'
 
 let auditRouterOff: (() => void) | null = null
 
-/** Restore the persisted governance snapshot (revocations, versions, ranges, bad
- *  versions) so policy survives a reload. Best-effort, never throws. */
-function loadGovernanceFromStorage(): void {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const raw = localStorage.getItem(PLUGIN_GOVERNANCE_KEY)
-      if (raw) loadGovernance(raw)
-    }
-  } catch {
-    /* localStorage unavailable / corrupt → keep the in-memory baseline */
-  }
-}
-
-/** Persist the governance snapshot to localStorage after a mutation. */
-function saveGovernanceToStorage(): void {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(PLUGIN_GOVERNANCE_KEY, serializeGovernance())
-    }
-  } catch {
-    /* ignore */
-  }
-}
+// The vault the governance file is currently scoped to (set on every load so a
+// save always targets the right vault, and so a stale sink from a previous vault
+// can never write into this one).
+let currentVault: string | null = null
+const GOVERNANCE_SAVE_DEBOUNCE_MS = 250
+let governanceSaveTimer: ReturnType<typeof setTimeout> | null = null
+// Session cache of the per-install MAC secret per vault, so a save within the
+// same session reuses the key that loaded the file (idempotent MAC).
+const macSecretCache = new Map<string, string>()
 
 /** Best-effort audit-log file persistence via the app's fs service. Returns the
  *  sink, or null when a writable file service is unavailable (so an environment
@@ -167,7 +174,11 @@ function setupAuditFilePersistence(vault: string): AuditLogFileSink | null {
   const write = (fsService as { write?: unknown }).write
   const read = (fsService as { read?: unknown }).read
   if (typeof write !== 'function' || typeof read !== 'function') return null
-  const rel = '.nekowite/plugin-audit.log'
+  // Deterministic, vault-relative, and intentionally hidden under `.nekowite/` so
+  // the audit log is never surfaced in the file tree and never collides with a
+  // user note/doc path (no `*.md`/`*.mdx`). `read`/`write`/`exists` all use the
+  // SAME vault-relative argument convention, so what we write is what we read.
+  const rel = PLUGIN_AUDIT_LOG_FILE
   const sink: AuditLogFileSink = {
     path: joinVault(vault, rel),
     exists: async () => {
@@ -187,6 +198,19 @@ function setupAuditFilePersistence(vault: string): AuditLogFileSink | null {
   setAuditLogFileSink(sink)
   void loadAuditLogFromFile()
   return sink
+}
+
+/** The deterministic vault-relative audit-log path (absolute per `vault`). The
+ *  file never collides with a note/doc path because it lives under `.nekowite/`
+ *  and its basename does not end in `.md`/`.mdx`. */
+export function getVaultPluginAuditLogPath(vault: string): string {
+  return joinVault(vault, PLUGIN_AUDIT_LOG_FILE)
+}
+
+/** Dispose any configured audit-log file sink. Called on vault switch so a stale
+ *  sink from a previous vault can never write (or read) into the next vault. */
+function disposeAuditLogFileSink(): void {
+  setAuditLogFileSink(null)
 }
 
 /** Route audit events so a governance decision is observable (logged, and
@@ -249,22 +273,23 @@ export function isVaultPluginUnstable(pluginId: string): boolean {
   return isPluginUnstable(pluginId)
 }
 
-/** Revoke a plugin id (all versions) or a specific version/range. Persisted. */
+/** Revoke a plugin id (all versions) or a specific version/range. Persisted to the
+ *  MAC-protected governance file (best-effort, async). */
 export function revokeVaultPlugin(pluginId: string, version = 'all', reason?: string): void {
   revokePlugin(pluginId, version, reason)
-  saveGovernanceToStorage()
+  scheduleGovernanceSave()
 }
 
-/** Remove a revocation. Persisted. */
+/** Remove a revocation. Persisted to the MAC-protected governance file. */
 export function unrevokeVaultPlugin(pluginId: string, version = 'all'): void {
   unrevokePlugin(pluginId, version)
-  saveGovernanceToStorage()
+  scheduleGovernanceSave()
 }
 
-/** Configure the supported version range for a plugin. Persisted. */
+/** Configure the supported version range for a plugin. Persisted to the file. */
 export function setVaultPluginVersionRange(pluginId: string, range: PluginVersionRange): void {
   setPluginVersionRange(pluginId, range)
-  saveGovernanceToStorage()
+  scheduleGovernanceSave()
 }
 
 /** The configured version range for a plugin, if any. */
@@ -275,7 +300,7 @@ export function getVaultPluginVersionRange(pluginId: string): PluginVersionRange
 /** Mark a plugin version as known-bad (refused on next load). Persisted. */
 export function markVaultPluginVersionBad(pluginId: string, version: string): boolean {
   const disallowed = markBadVersion(pluginId, version)
-  saveGovernanceToStorage()
+  scheduleGovernanceSave()
   return disallowed
 }
 
@@ -360,39 +385,43 @@ export async function askPluginPermission(meta: PluginMeta, definition: PluginDe
  * structured PLUGIN_VERIFY_FAILED with a re-approve/deny path instead.
  * ------------------------------------------------------------------------- */
 
-const PLUGIN_DIGESTS_KEY = 'nekowite.pluginDigests'
 interface DigestEntry {
   v: string
   d: string
 }
 type DigestMap = Record<string, DigestEntry>
 
-// localStorage-backed persistence with an in-memory fallback so an environment
-// without a working localStorage still records the baseline for the session.
+// Authoritative, in-memory digest baseline. This is loaded from (and saved to)
+// the MAC-protected governance file; it is NEVER read from localStorage as an
+// authoritative value (a WebView profile / localStorage attacker must not be able
+// to rewrite an approval baseline). localStorage is no longer used for digests.
 const memoryDigestMap = new Map<string, DigestEntry>()
 
 function readDigestMap(): DigestMap {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const raw = localStorage.getItem(PLUGIN_DIGESTS_KEY)
-      if (raw) return JSON.parse(raw) as DigestMap
-    }
-  } catch {
-    /* localStorage unavailable / corrupt → fall through to memory */
-  }
   return Object.fromEntries(memoryDigestMap)
 }
 
 function writeDigestMap(map: DigestMap): void {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(PLUGIN_DIGESTS_KEY, JSON.stringify(map))
-    }
-  } catch {
-    /* ignore */
-  }
   memoryDigestMap.clear()
   for (const [key, value] of Object.entries(map)) memoryDigestMap.set(key, value)
+  scheduleGovernanceSave()
+}
+
+/** Test-only: seed a recorded baseline digest for a (vault, id) pair. Mirrors the
+ *  authoritative in-memory store so tests can drive the integrity gate without
+ *  going through the MAC file. */
+export function setPluginRecordedDigestForTest(
+  vault: string,
+  id: string,
+  version: string,
+  digest: string,
+): void {
+  memoryDigestMap.set(digestStorageKey(vault, id), { v: version, d: digest })
+}
+
+/** Test-only: read the recorded baseline digest for a (vault, id) pair. */
+export function getPluginRecordedDigestForTest(vault: string, id: string): string | undefined {
+  return memoryDigestMap.get(digestStorageKey(vault, id))?.d
 }
 
 /** Composite storage key for a plugin baseline: vault + plugin id, NUL-separated
@@ -487,15 +516,14 @@ async function askReapproveIntegrity(
  * trust anchor. Neither is process isolation.
  * ------------------------------------------------------------------------- */
 
-const PLUGIN_TRUST_KEY = 'nekowite.pluginTrustKey'
-const PLUGIN_TRUSTED_SOURCES_KEY = 'nekowite.pluginTrustedSources'
-
 /** How unsigned plugins are treated when they are not on the allowlist. */
 export type PluginTrustPolicy = 'permit-unsigned-with-notice' | 'require-trust'
 
 let pluginTrustPolicy: PluginTrustPolicy = 'permit-unsigned-with-notice'
-// In-memory fallbacks so an environment without a working localStorage still
-// records the trust configuration for the session (mirrors the digest map).
+// Authoritative in-memory trust configuration. Loaded from (and saved to) the
+// MAC-protected governance file; NEVER read as an authoritative value from
+// localStorage (a WebView profile / localStorage attacker must not be able to
+// rewrite trust). `pluginTrustPolicy` is a session policy, not persisted.
 let memoryTrustedKey = ''
 const memoryTrustedSources = new Set<string>()
 
@@ -507,46 +535,27 @@ export function getPluginTrustPolicy(): PluginTrustPolicy {
   return pluginTrustPolicy
 }
 
-/** Set the trust policy for unsigned plugins. */
+/** Set the trust policy for unsigned plugins (session-only; not persisted). */
 export function setPluginTrustPolicy(policy: PluginTrustPolicy): void {
   pluginTrustPolicy = policy
 }
 
 /** The trusted publisher key material (a hex or UTF-8 secret), or '' if none. */
 export function getPluginTrustedKey(): string {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const raw = localStorage.getItem(PLUGIN_TRUST_KEY)
-      if (raw !== null) return raw
-    }
-  } catch {
-    /* localStorage unavailable → fall through to memory */
-  }
   return memoryTrustedKey
 }
 
 /** Configure the trusted publisher key used to verify plugin signatures. Only
  *  plugins signed by a holder of this secret are treated as cryptographically
- *  trusted; a present-but-unverifiable signature is refused. */
+ *  trusted; a present-but-unverifiable signature is refused. Persisted to the
+ *  MAC-protected governance file (best-effort, async). */
 export function setPluginTrustedKey(keyMaterial: string): void {
   memoryTrustedKey = keyMaterial
-  try {
-    if (typeof localStorage !== 'undefined') localStorage.setItem(PLUGIN_TRUST_KEY, keyMaterial)
-  } catch {
-    /* ignore */
-  }
+  scheduleGovernanceSave()
 }
 
 /** The ids the user has explicitly trusted (publisher ids and/or full plugin ids). */
 export function getPluginTrustedSourceIds(): string[] {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const raw = localStorage.getItem(PLUGIN_TRUSTED_SOURCES_KEY)
-      if (raw) return JSON.parse(raw) as string[]
-    }
-  } catch {
-    /* localStorage unavailable → fall through to memory */
-  }
   return [...memoryTrustedSources]
 }
 
@@ -556,20 +565,181 @@ export function isPluginTrustedSource(pluginId: string): boolean {
   return ids.includes(pluginId) || ids.includes(publisherIdOf(pluginId))
 }
 
-/** Add or remove an id on the trusted-source allowlist. */
+/** Add or remove an id on the trusted-source allowlist. Persisted to the
+ *  MAC-protected governance file (best-effort, async). */
 export function setPluginTrustedSource(pluginId: string, trusted: boolean): void {
   const ids = new Set(getPluginTrustedSourceIds())
   if (trusted) ids.add(pluginId)
   else ids.delete(pluginId)
-  const list = [...ids]
   memoryTrustedSources.clear()
-  for (const id of list) memoryTrustedSources.add(id)
+  for (const id of ids) memoryTrustedSources.add(id)
+  scheduleGovernanceSave()
+}
+
+/* ------------------------------------------------------------------------- *
+ * Governance trust-state file (MAC-protected) — P1.8.
+ *
+ * The SECURITY-relevant records (trusted key, trusted sources, plugin digests,
+ * governance revocations/versions/ranges) are persisted in a single vault-relative
+ * JSON file, wrapped in a keyed-HMAC envelope so tampering is DETECTED. On a MAC
+ * failure the contained trust is refused (reset / trust-nothing) and a notice is
+ * surfaced — we never silently load attacker-controlled values.
+ *
+ * Honest scope (documented in docs/SECURITY.md + docs/PLUGIN_SDK.md):
+ *   - The HMAC key is a per-install secret persisted in a sibling file (there is
+ *     no OS keychain exposed to the frontend). An attacker who can read BOTH the
+ *     file and its key can recompute the MAC, so this is TAMPER-DETECTION, not a
+ *     secure hardware root. It stops a localStorage-only attacker from rewriting
+ *     trust, and it detects casual corruption / stale reads.
+ *   - localStorage is retained ONLY as a non-authoritative "saw this notice" flag,
+ *     never for trust/revocation/digest data.
+ * ------------------------------------------------------------------------- */
+
+/** The serialized security-relevant records written into the MAC envelope. */
+interface GovernanceFilePayload {
+  governance: string
+  trustedKey: string
+  trustedSources: string[]
+  digests: DigestMap
+}
+
+/** Reset the in-memory trust records (never trust a tampered file). */
+function resetTrustRecordsForTamper(): void {
+  memoryTrustedKey = ''
+  memoryTrustedSources.clear()
+  memoryDigestMap.clear()
+}
+
+/** Surface a single user-visible + console notice that the governance state failed
+ *  its integrity check and was reset. Uses a localStorage flag purely as a
+ *  NON-authoritative "seen this session" guard. */
+function signalGovernanceTamperNotice(): void {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      if (localStorage.getItem(PLUGIN_TAMPER_NOTICE_KEY)) return
+      localStorage.setItem(PLUGIN_TAMPER_NOTICE_KEY, '1')
+    } catch {
+      /* ignore */
+    }
+  }
+  console.warn(
+    '[NekoWite] plugin governance state failed integrity (HMAC) verification; refusing the trust it contains and resetting it.',
+  )
+  notifyError(
+    'Plugin trust/governance state failed its integrity check and was reset. No trust from that file was accepted.',
+  )
+}
+
+/** Load (or generate) the per-install HMAC secret for a vault, cached per session.
+ *  Best-effort: if no key file exists we generate a fresh 32-byte secret and try
+ *  to persist it; if that fails the secret still keys MACs for this session. */
+async function loadGovernanceMacSecret(vault: string): Promise<string> {
+  const cached = macSecretCache.get(vault)
+  if (cached) return cached
   try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(PLUGIN_TRUSTED_SOURCES_KEY, JSON.stringify(list))
+    const raw = await fsService.read(vault, PLUGIN_GOVERNANCE_MACKEY_FILE)
+    if (typeof raw === 'string' && /^[0-9a-f]{64}$/i.test(raw)) {
+      macSecretCache.set(vault, raw)
+      return raw
     }
   } catch {
-    /* ignore */
+    /* no key file yet — generate a fresh one below */
+  }
+  const secret = generateMacSecret()
+  macSecretCache.set(vault, secret)
+  const write = (fsService as { write?: unknown }).write
+  if (typeof write === 'function') {
+    try {
+      await (write as (v: string, p: string, c: string) => Promise<void>)(vault, PLUGIN_GOVERNANCE_MACKEY_FILE, secret)
+    } catch {
+      /* best-effort: without a writable key store, MAC protection is session-only */
+    }
+  }
+  return secret
+}
+
+/** Collect the current security-relevant records into a payload string. */
+function buildGovernancePayload(): GovernanceFilePayload {
+  return {
+    governance: serializeGovernance(),
+    trustedKey: memoryTrustedKey,
+    trustedSources: [...memoryTrustedSources],
+    digests: readDigestMap(),
+  }
+}
+
+/** Debounced, async persistence of the governance state to the MAC file. Fire-and-
+ *  forget; a missing/incomplete fs is a silent no-op (state still lives in memory
+ *  for the session). */
+function scheduleGovernanceSave(): void {
+  if (!currentVault) return
+  if (governanceSaveTimer) clearTimeout(governanceSaveTimer)
+  governanceSaveTimer = setTimeout(() => {
+    governanceSaveTimer = null
+    void writeGovernanceFile()
+  }, GOVERNANCE_SAVE_DEBOUNCE_MS)
+}
+
+/** Write the MAC-protected governance file for the current vault. */
+async function writeGovernanceFile(): Promise<void> {
+  if (!currentVault) return
+  try {
+    const secret = await loadGovernanceMacSecret(currentVault)
+    const payloadStr = JSON.stringify(buildGovernancePayload())
+    const envelope = await createMacEnvelope(payloadStr, secret)
+    await fsService.write(currentVault, PLUGIN_GOVERNANCE_FILE, JSON.stringify(envelope))
+  } catch {
+    /* best-effort persistence; never break a mutation because the file write failed */
+  }
+}
+
+/**
+ * Load the MAC-protected governance file for a vault into the authoritative
+ * in-memory trust records. Assumes `currentVault` is already set.
+ *
+ *  - File absent                 -> first run; keep any in-memory (session) state.
+ *  - Content not a MAC envelope  -> not a governance file (a stale/mismatched read,
+ *                                   e.g. a note or a libwebfs path mismatch); keep
+ *                                   in-memory state, never clobber the file.
+ *  - MAC verify FAILS            -> TAMPERED: reset trust-nothing + surface a notice
+ *                                   (never silently trust the file's contents).
+ *  - MAC verify PASSES           -> apply the file's records authoritatively.
+ */
+async function loadGovernanceFile(vault: string): Promise<void> {
+  currentVault = vault
+  let raw: string
+  try {
+    raw = await fsService.read(vault, PLUGIN_GOVERNANCE_FILE)
+  } catch {
+    return // first run: no governance file yet
+  }
+  let framed: unknown
+  try {
+    framed = JSON.parse(raw)
+  } catch {
+    return // not JSON — treat as uninitialized / stale read; keep in-memory state
+  }
+  if (!framed || typeof (framed as { payload?: unknown }).payload !== 'string' || typeof (framed as { mac?: unknown }).mac !== 'string') {
+    return // not a MAC envelope; not a governance file we wrote — never clobber it
+  }
+  const secret = await loadGovernanceMacSecret(vault)
+  const ok = await verifyMacEnvelope(framed, secret)
+  if (!ok) {
+    resetTrustRecordsForTamper()
+    signalGovernanceTamperNotice()
+    return
+  }
+  try {
+    const payload = JSON.parse((framed as { payload: string }).payload) as GovernanceFilePayload
+    memoryTrustedKey = typeof payload.trustedKey === 'string' ? payload.trustedKey : ''
+    memoryTrustedSources.clear()
+    for (const id of Array.isArray(payload.trustedSources) ? payload.trustedSources : []) memoryTrustedSources.add(id)
+    memoryDigestMap.clear()
+    for (const [k, v] of Object.entries(payload.digests ?? {})) memoryDigestMap.set(k, v)
+    if (typeof payload.governance === 'string') loadGovernance(payload.governance)
+  } catch {
+    resetTrustRecordsForTamper()
+    signalGovernanceTamperNotice()
   }
 }
 
@@ -944,6 +1114,12 @@ export function resetVaultPluginStateForTests(): void {
   unsignedNotified.clear()
   memoryDigestMap.clear()
   cspBlockedNotified = false
+  currentVault = null
+  macSecretCache.clear()
+  if (governanceSaveTimer) {
+    clearTimeout(governanceSaveTimer)
+    governanceSaveTimer = null
+  }
   resetGovernanceForTests()
   if (auditRouterOff) {
     auditRouterOff()
@@ -984,13 +1160,16 @@ export function resetVaultPluginStateForTests(): void {
  */
 export async function loadVaultPlugins(vault: string): Promise<void> {
   deactivateVaultPlugins()
+  // On every vault load, dispose the previous vault's audit-log sink and clear the
+  // audit ring: a stale sink (closure over a prior vault) must never write into
+  // this vault, and events must not leak across a vault switch. A fresh log is
+  // then reloaded from THIS vault's file below.
+  disposeAuditLogFileSink()
+  clearAuditLog()
   ensureLifecycleErrorRouter()
-  // Governance: restore the persisted policy (revocations, versions, ranges, bad
-  // versions), attach the audit router, and best-effort wire the audit log to a
-  // vault-relative file via the fs service (when available). All run before the
-  // CSP gate so governance decisions are always observed, even when the CSP
-  // disables in-window plugin loading.
-  loadGovernanceFromStorage()
+  // Attach the audit router and best-effort wire the audit log to a vault-relative
+  // file via the fs service (when available). This runs before the CSP gate so
+  // governance decisions are always observed.
   setupAuditRouter()
   setupAuditFilePersistence(vault)
 
@@ -1006,6 +1185,12 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
     void flushAuditLogToFile()
     return
   }
+
+  // Governance/trust state (revocations, versions, ranges, trusted key, trusted
+  // sources, digests) is persisted in a MAC-protected vault file. Load it now that
+  // we're scoping to this vault — after the CSP gate so a CSP-blocked build does
+  // not touch the file system. On a MAC failure this refuses the contained trust.
+  await loadGovernanceFile(vault)
 
   const adapter = makeVaultPluginFsAdapter(vault)
   let entries: PluginFsEntry[]
@@ -1168,7 +1353,7 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
     // future loads (version range, rollback, revocation).
     recordPluginVersion(meta.id, meta.version, digest)
     recordPluginEvent(meta.id, 'load', 'loaded', { version: meta.version })
-    saveGovernanceToStorage()
+    scheduleGovernanceSave()
     void flushAuditLogToFile()
 
     // Post-import defensive consent: a plugin may declare capabilities in its
