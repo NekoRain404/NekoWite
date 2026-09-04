@@ -777,3 +777,39 @@ describe('session capture and restore', () => {
     expect(readMock).toHaveBeenCalledTimes(2)
   })
 })
+
+describe('deleteTabFile (FileTree delete route)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    resetFsMocks()
+    readMock.mockResolvedValue('# hello')
+    deleteFileMock.mockResolvedValue('trash-key')
+    listHistoryMock.mockResolvedValue([])
+    statMock.mockResolvedValue({ size: 1, mtime: 1 })
+  })
+
+  it('trashes the file through the gateway and closes every tab on that path', async () => {
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    expect(s.tabs).toHaveLength(1)
+
+    await s.deleteTabFile(s.tabs[0].id)
+
+    expect(deleteFileMock).toHaveBeenCalledWith('/vault', '/vault/a.md')
+    expect(s.tabs).toHaveLength(0)
+    expect(s.activeId).toBeNull()
+  })
+
+  it('is a no-op for a tab without a path or when no vault is set', async () => {
+    const s = useTabsStore()
+    await s.deleteTabFile('missing')
+    expect(deleteFileMock).not.toHaveBeenCalled()
+
+    // An untitled tab (no path) is never trashed through this route.
+    await s.openTab(null)
+    await s.deleteTabFile(s.tabs[0].id)
+    expect(deleteFileMock).not.toHaveBeenCalled()
+    expect(s.tabs).toHaveLength(1)
+  })
+})
