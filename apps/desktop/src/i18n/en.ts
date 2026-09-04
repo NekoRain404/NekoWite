@@ -182,6 +182,7 @@ export const en = {
     indexNeedsRebuild: 'Index needs rebuild',
     rebuildIndex: 'Rebuild',
     rebuildIndexTitle: 'Rebuild the search index',
+    vaultTruncated: 'Vault too large: listing truncated, some notes may be missing',
   },
   filetree: {
     newFile: 'New file',

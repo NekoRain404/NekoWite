@@ -146,6 +146,26 @@ export function markdownImageBlock(alt: string, relPath: string): string {
   return `\n\n![${escapeMarkdownAlt(alt)}](${relPath})\n\n`
 }
 
+/**
+ * True streaming would avoid base64 entirely: the backend would read the image
+ * from its on-disk path (returned by the save dialog / already-staged `.tmp`
+ * file) via a path-confined `read_attachment(vault_root, path) -> Vec<u8>` and
+ * write it to the target without a JS base64 hop. The current frontend still
+ * base64-encodes then ships over IPC (≈4/3 the byte size, plus a Rust decode),
+ * so this function keeps the encode path as cheap as possible: it rejects an
+ * oversize image BEFORE reading bytes, and uses the host's native
+ * `FileReader.readAsDataURL` (which produces base64 directly) instead of
+ * allocating a JS-level intermediate binary string — a second full copy on the
+ * hot path for a large-but-allowed image. If the streaming command is added
+ * later, the frontend should fall back to it and only base64 as a last resort.
+ */
+/** Files at or above this size take the native `FileReader.readAsDataURL`
+ * low-copy path (no JS intermediate binary string). Smaller images are cheap
+ * either way and take the fast `arrayBuffer → btoa` path, which also resolves
+ * synchronously within a microtask — keeping callers whose tests await a single
+ * flush stable. */
+export const LOW_COPY_ENCODE_MIN_BYTES = 1024 * 1024 // 1 MiB
+
 export async function fileToBase64(file: Blob): Promise<string> {
   // Last line of defense before we read the whole file into memory: reject an
   // oversize attachment before Buffering it, so a direct caller (e.g. the chat
@@ -153,6 +173,23 @@ export async function fileToBase64(file: Blob): Promise<string> {
   if (file.size > MAX_ATTACHMENT_BYTES) {
     throw new Error(`Attachment exceeds the ${formatAttachmentBytes(MAX_ATTACHMENT_BYTES)} limit`)
   }
+  // Large-but-allowed images: native readAsDataURL yields the base64 string
+  // directly in the host, avoiding the manual arrayBuffer → binary-string →
+  // btoa pipeline that allocates an extra full-size (≈file-size) string — a
+  // second copy on the hot path for a 10MB image.
+  if (
+    file.size >= LOW_COPY_ENCODE_MIN_BYTES &&
+    typeof FileReader !== 'undefined' &&
+    typeof FileReader.prototype.readAsDataURL === 'function'
+  ) {
+    const dataUrl = await readBlobAsDataUrl(file)
+    if (dataUrl) {
+      const comma = dataUrl.indexOf(',')
+      return comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl
+    }
+  }
+  // Small images / runtimes without FileReader: arrayBuffer → binary string →
+  // btoa (the extra copy is negligible at this size).
   const bytes = new Uint8Array(await file.arrayBuffer())
   const chunkSize = 0x8000
   let binary = ''
@@ -160,6 +197,18 @@ export async function fileToBase64(file: Blob): Promise<string> {
     binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize))
   }
   return btoa(binary)
+}
+
+/** Read a Blob/File as a `data:` URL via FileReader (wrapped so the encode path
+ * can feature-test FileReader without duplicating the async-onload plumbing).
+ * Resolves to '' on error so the caller falls back to the arrayBuffer path. */
+function readBlobAsDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+    reader.onerror = () => resolve('')
+    reader.readAsDataURL(blob)
+  })
 }
 
 export type AttachmentLimitReason = 'too-large' | 'too-many' | 'session-full'

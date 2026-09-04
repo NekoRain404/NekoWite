@@ -9,6 +9,7 @@
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
     "test:e2e": "pnpm --filter @nekowite/desktop exec playwright test",
+    "perf": "pnpm --filter @nekowite/desktop perf",
     "tauri": "pnpm --filter @nekowite/desktop tauri"
   },
   "devDependencies": {

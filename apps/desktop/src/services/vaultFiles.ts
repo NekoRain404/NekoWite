@@ -2,11 +2,17 @@ import { fsService } from './fs'
 import type { FileEntry } from './fs'
 
 const SKIP_DIRS = new Set(['node_modules'])
-/** Upper bound on directories listed during one walk. Raise the cap rather than
- * silently dropping files on large vaults (still keeps a pathological tree from
- * walking forever). When the cap is hit the caller is told via `truncated`
- * instead of silently returning a partial list. */
-export const MAX_DIRS = 2048
+/** Upper bound on directories listed during one walk. This is a pathological-tree
+ * guard, NOT a vault-size cap: the default is deliberately far larger than any
+ * realistic vault (100k dirs ≈ a vault with tens of thousands of nested folders),
+ * so a 10k-file vault can never hit it. When the cap IS hit (a truly pathological
+ * tree) the caller is told via `truncated` instead of silently returning a partial
+ * list — that signal is surfaced by the note list so it is never silent.
+ *
+ * Overridable per-walk via `walkVault(vault, list, { maxDirs })` and per-index via
+ * `new VaultFileIndex(list, maxDirs)`, which is what the tests use to exercise the
+ * truncated path without materializing 100k directories. */
+export const MAX_DIRS = 100_000
 /** Number of directory listings fetched concurrently within one BFS level. */
 const LIST_CONCURRENCY = 8
 
@@ -27,9 +33,19 @@ export async function collectVaultFiles(vault: string, list: ListFn): Promise<st
   return (await walkVault(vault, list)).files
 }
 
+export interface WalkOptions {
+  /** Directory cap for this walk. Defaults to {@link MAX_DIRS} (generous). */
+  maxDirs?: number
+}
+
 /** Like {@link collectVaultFiles} but also reports whether the directory cap
  * was hit, so the caller can warn the user the vault was truncated. */
-export async function walkVault(vault: string, list: ListFn): Promise<VaultWalkResult> {
+export async function walkVault(
+  vault: string,
+  list: ListFn,
+  opts?: WalkOptions,
+): Promise<VaultWalkResult> {
+  const maxDirs = opts?.maxDirs ?? MAX_DIRS
   const files: string[] = []
   const seen = new Set<string>()
   let queue: string[] = [vault]
@@ -37,7 +53,7 @@ export async function walkVault(vault: string, list: ListFn): Promise<VaultWalkR
   let truncated = false
 
   while (queue.length) {
-    const remaining = MAX_DIRS - visited
+    const remaining = maxDirs - visited
     if (remaining <= 0) {
       truncated = true
       break
@@ -112,7 +128,7 @@ export class VaultFileIndex {
   private generation = new Map<string, number>()
   private truncated = new Map<string, boolean>()
 
-  constructor(private list: ListFn) {}
+  constructor(private list: ListFn, private readonly maxDirs: number = MAX_DIRS) {}
 
   get(vault: string): Promise<string[]> {
     const cached = this.cache.get(vault)
@@ -120,7 +136,7 @@ export class VaultFileIndex {
     const pending = this.inflight.get(vault)
     if (pending) return pending
     const gen = this.generation.get(vault) ?? 0
-    const walk = walkVault(vault, this.list)
+    const walk = walkVault(vault, this.list, { maxDirs: this.maxDirs })
     const wrapped = walk.then(
       (result) => {
         // Only a walk that is still the current generation may populate the

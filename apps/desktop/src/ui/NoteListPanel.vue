@@ -362,6 +362,14 @@ function jumpOutline(line: number, index: number): void {
           <span>{{ sortLabel }}</span>
         </button>
       </div>
+      <p
+        v-if="library.vaultTruncated && !library.indexing"
+        class="nl-truncated"
+        role="status"
+        :title="t('notelist.vaultTruncated')"
+      >
+        {{ t('notelist.vaultTruncated') }}
+      </p>
       <div
         class="nl-cards"
         role="list"
@@ -713,6 +721,17 @@ function jumpOutline(line: number, index: number): void {
 .nl-index-rebuild:hover {
   color: var(--app-text);
   background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
+}
+.nl-truncated {
+  margin: 0 12px 4px;
+  padding: 5px 9px;
+  border: 1px solid color-mix(in srgb, #d97706 45%, transparent);
+  border-radius: var(--app-radius-sm);
+  background: color-mix(in srgb, #d97706 12%, transparent);
+  color: color-mix(in srgb, #d97706 82%, var(--app-text));
+  font-size: 10.5px;
+  font-weight: 550;
+  line-height: 1.4;
 }
 .nl-sort {
   display: inline-flex;

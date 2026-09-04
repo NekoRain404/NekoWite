@@ -886,26 +886,57 @@ pub fn list_dir_entries(dir: &Path) -> Result<Vec<FileEntry>, String> {
 
 /// Recursively collect markdown files under the vault whose path matches
 /// `query` (case-insensitive substring). Applies the same filtering as
-/// listings ([`should_skip_entry`]) and is bounded so a huge vault cannot
-/// produce an unbounded walk: `limit` results, at most 512 directories and a
-/// recursion depth of 24. Returns entries ordered by path depth then name.
+/// listings ([`should_skip_entry`]).
+///
+/// Bounded so a pathological vault cannot produce an unbounded walk, but the
+/// bounds are deliberately GENEROUS so a large vault's search is never silently
+/// capped (a 10k-file vault is far under them): `limit` results, at most
+/// [`SEARCH_MAX_DIRS`] directories and a recursion depth of
+/// [`SEARCH_MAX_DEPTH`]. Returns entries ordered by path depth then name.
 pub fn search_notes(vault_root: &str, query: &str, limit: usize) -> Result<Vec<FileEntry>, String> {
+    search_notes_with_max(vault_root, query, limit, None)
+}
+
+/// Like [`search_notes`] but lets the caller override the directory cap;
+/// `None` uses the generous [`SEARCH_MAX_DIRS`] default. The frontend does not
+/// pass an override today, so a large vault's search is not capped; the
+/// override exists as an explicit guard for a future client that wants to bound
+/// an unusually deep/hostile tree.
+pub fn search_notes_with_max(
+    vault_root: &str,
+    query: &str,
+    limit: usize,
+    max_dirs: Option<usize>,
+) -> Result<Vec<FileEntry>, String> {
     let root = resolve_within(vault_root, ".")?;
     let q = query.trim().to_lowercase();
     let mut out = Vec::new();
     if q.is_empty() {
         return Ok(out);
     }
+    let max = max_dirs.unwrap_or(SEARCH_MAX_DIRS);
     let mut visited = 0usize;
-    walk_search(&root, &q, &mut out, limit, &mut visited, 0);
+    walk_search(&root, &q, &mut out, limit, &mut visited, 0, max);
     Ok(out)
 }
 
-const SEARCH_MAX_DIRS: usize = 512;
-const SEARCH_MAX_DEPTH: usize = 24;
+// Search-bounds guard. Thresholds are set far above any realistic vault (a
+// 10k-file vault is typically well under 1k directories), so they only trip on
+// a genuinely pathological tree and are surfaced as a bounded result rather
+// than silently dropping matches.
+const SEARCH_MAX_DIRS: usize = 100_000;
+const SEARCH_MAX_DEPTH: usize = 64;
 
-fn walk_search(dir: &Path, query: &str, out: &mut Vec<FileEntry>, limit: usize, visited: &mut usize, depth: usize) {
-    if out.len() >= limit || *visited >= SEARCH_MAX_DIRS || depth > SEARCH_MAX_DEPTH {
+fn walk_search(
+    dir: &Path,
+    query: &str,
+    out: &mut Vec<FileEntry>,
+    limit: usize,
+    visited: &mut usize,
+    depth: usize,
+    max_dirs: usize,
+) {
+    if out.len() >= limit || *visited >= max_dirs || depth > SEARCH_MAX_DEPTH {
         return;
     }
     *visited += 1;
@@ -929,7 +960,7 @@ fn walk_search(dir: &Path, query: &str, out: &mut Vec<FileEntry>, limit: usize, 
         }
         let path_str = entry_path.to_string_lossy().to_string();
         if entry_path.is_dir() {
-            walk_search(&entry_path, query, out, limit, visited, depth + 1);
+            walk_search(&entry_path, query, out, limit, visited, depth + 1, max_dirs);
             continue;
         }
         if !is_mdx_path(&path_str) {

@@ -13,6 +13,7 @@ import {
   fileToBase64,
   isImageFile,
   isPathWithinVault,
+  LOW_COPY_ENCODE_MIN_BYTES,
   markdownImageBlock,
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS_PER_BATCH,
@@ -119,9 +120,48 @@ describe('markdown helpers', () => {
 })
 
 describe('fileToBase64', () => {
+  // Give a File a synthetic size without allocating `size` bytes (used to build
+  // an oversize image cheaply).
+  function fileOfSize(name: string, size: number): File {
+    const file = new File(['x'], name, { type: 'image/png' })
+    Object.defineProperty(file, 'size', { value: size, configurable: true })
+    return file
+  }
+
   it('encodes file bytes as base64', async () => {
     const file = new File([new Uint8Array([104, 105])], 'x.png', { type: 'image/png' })
     await expect(fileToBase64(file)).resolves.toBe(btoa('hi'))
+  })
+
+  it('rejects an oversize image BEFORE any encode (never reads bytes)', async () => {
+    const big = fileOfSize('big.png', MAX_ATTACHMENT_BYTES + 1)
+    // If the encode path read the file, FileReader.readAsDataURL would be called.
+    const spy = vi.spyOn(FileReader.prototype, 'readAsDataURL')
+    await expect(fileToBase64(big)).rejects.toThrow(/exceeds/)
+    expect(spy).not.toHaveBeenCalled()
+    spy.mockRestore()
+  })
+
+  it('uses the native FileReader low-copy path for large-but-allowed images', async () => {
+    const file = new File([new Uint8Array([104, 105])], 'x.png', { type: 'image/png' })
+    // Override the reported size to route it onto the low-copy (FileReader) path
+    // without allocating the bytes; the content itself is still just 'hi'.
+    Object.defineProperty(file, 'size', {
+      value: LOW_COPY_ENCODE_MIN_BYTES + 1,
+      configurable: true,
+    })
+    const spy = vi.spyOn(FileReader.prototype, 'readAsDataURL')
+    await expect(fileToBase64(file)).resolves.toBe(btoa('hi'))
+    expect(spy).toHaveBeenCalledTimes(1)
+    spy.mockRestore()
+  })
+
+  it('keeps small images on the fast arrayBuffer path (no FileReader)', async () => {
+    const file = new File([new Uint8Array([104, 105])], 'x.png', { type: 'image/png' })
+    const spy = vi.spyOn(FileReader.prototype, 'readAsDataURL')
+    await expect(fileToBase64(file)).resolves.toBe(btoa('hi'))
+    expect(spy).not.toHaveBeenCalled()
+    spy.mockRestore()
   })
 })
 
