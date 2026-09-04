@@ -44,3 +44,20 @@ export function describeExportError(e: unknown): string {
   if (msg.includes('path escapes vault')) return t('error.exportOutsideVault')
   return t('error.exportFailed', { msg })
 }
+
+/**
+ * Compose a user-facing, actionable message from a structured plugin error
+ * (e.g. a `PluginError` from @nekowite/plugin-host). The plugin error already
+ * holds the plugin-specific detail and an optional recovery hint, so this just
+ * formats them for the error toast.
+ */
+export function describePluginError(e: {
+  code?: string
+  pluginId?: string
+  message?: string
+  recovery?: string
+}): string {
+  const base = e.message?.trim() || (e.code ? `Plugin error (${e.code})` : 'Plugin error')
+  const hint = e.recovery?.trim()
+  return hint ? `${base} ${hint}` : base
+}
