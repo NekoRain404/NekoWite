@@ -32,7 +32,7 @@ vi.mock('../services/fs', () => ({
 }))
 
 import { fsService } from '../services/fs'
-import { vaultFileIndex } from '../services/vaultFiles'
+import { resetVaultFileIndex, vaultFileIndex } from '../services/vaultFiles'
 import { useLibraryStore } from './library'
 
 function seedNote(path: string, content: string, mtime = 0): void {
@@ -71,7 +71,7 @@ describe('useLibraryStore', () => {
     localStorage.clear()
     seed.clear()
     changeHandlers.clear()
-    vaultFileIndex.invalidate()
+    resetVaultFileIndex()
     vi.mocked(fsService.list).mockImplementation(async (vault: string, dir: string) => listDir(vault, dir))
   })
 
