@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildLinkGraph,
+  buildLinkGraphDetailed,
   computeLayout,
   computeLayoutChunked,
   extractLinks,
+  extractLinksDetailed,
+  findBrokenLinks,
   graphSignature,
+  orphanNodes,
+  refreshNode,
   resolveLinkPath,
 } from './linkGraph'
 
@@ -164,6 +169,114 @@ describe('buildLinkGraph', () => {
 
   it('returns empty graph for empty input', () => {
     expect(buildLinkGraph([])).toEqual({ nodes: [], edges: [] })
+  })
+})
+
+describe('extractLinksDetailed', () => {
+  it('records the link kind and display text', () => {
+    expect(extractLinksDetailed('[[笔记A]] 与 [[带别名|别名]] 与 [标签](note.md)')).toEqual([
+      { target: '笔记A', kind: 'wiki', text: '' },
+      { target: '带别名', kind: 'wiki', text: '别名' },
+      { target: 'note.md', kind: 'markdown', text: '标签' },
+    ])
+  })
+
+  it('matches extractLinks for targets (kind is the only extra field)', () => {
+    const md = '[[a]] [b](./b.md)'
+    expect(extractLinks(md)).toEqual(['a', './b.md'])
+    expect(extractLinksDetailed(md).map((l) => l.target)).toEqual(['a', './b.md'])
+  })
+})
+
+describe('buildLinkGraphDetailed', () => {
+  it('tracks edge kind and collects broken link targets', () => {
+    const g = buildLinkGraphDetailed([
+      { path: 'a.md', content: '[[b]] [c](c.md) [[不存在]]' },
+      { path: 'b.md', content: '[[a]]' },
+      { path: 'c.md', content: '' },
+    ])
+    expect(g.edges).toEqual([
+      { from: 'a.md', to: 'b.md', kind: 'wiki' },
+      { from: 'a.md', to: 'c.md', kind: 'markdown' },
+      { from: 'b.md', to: 'a.md', kind: 'wiki' },
+    ])
+    expect(g.broken).toEqual([{ from: 'a.md', target: '不存在', text: '' }])
+  })
+
+  it('keeps orphan nodes (degree 0) in the node list', () => {
+    const g = buildLinkGraphDetailed([
+      { path: 'hub.md', content: '[[孤岛]]' },
+      { path: '孤岛.md', content: '没有任何链接' },
+    ])
+    const nodes = g.nodes.map((n) => n.id)
+    expect(nodes).toContain('孤岛.md')
+    expect(g.nodes.find((n) => n.id === '孤岛.md')?.degree).toBe(1)
+  })
+})
+
+describe('orphanNodes', () => {
+  it('returns only the degree-0 nodes', () => {
+    const graph = buildLinkGraphDetailed([
+      { path: 'hub.md', content: '[[a]]' },
+      { path: 'a.md', content: '[[hub]]' },
+      { path: 'orphan.md', content: '' },
+    ])
+    expect(orphanNodes(graph).map((n) => n.id)).toEqual(['orphan.md'])
+  })
+})
+
+describe('findBrokenLinks', () => {
+  it('lists every target that resolves to no note', () => {
+    const broken = findBrokenLinks([
+      { path: 'a.md', content: '[[ok]] [[missing]] [x](./nope.md)' },
+      { path: 'ok.md', content: '' },
+    ])
+    expect(broken).toEqual([
+      { from: 'a.md', target: 'missing', text: '' },
+      { from: 'a.md', target: './nope.md', text: 'x' },
+    ])
+  })
+})
+
+describe('refreshNode (incremental)', () => {
+  const allPaths = ['a.md', 'b.md', 'c.md']
+
+  it('refreshes only the changed note out-edges, keeping its in-edges', () => {
+    const initial = buildLinkGraphDetailed([
+      { path: 'a.md', content: '[[b]] [[c]]' },
+      { path: 'b.md', content: '[[a]]' },
+      { path: 'c.md', content: '' },
+    ])
+    const updated = refreshNode(initial, 'a.md', '[[b]] only', allPaths)
+    // a loses its edge to c but keeps b's incoming edge (b→a).
+    expect(updated.edges).toHaveLength(2)
+    expect(updated.edges).toContainEqual({ from: 'a.md', to: 'b.md', kind: 'wiki' })
+    expect(updated.edges).toContainEqual({ from: 'b.md', to: 'a.md', kind: 'wiki' })
+    expect(updated.nodes.find((n) => n.id === 'a.md')?.degree).toBe(2)
+    expect(updated.nodes.find((n) => n.id === 'b.md')?.degree).toBe(2)
+    expect(updated.nodes.find((n) => n.id === 'c.md')?.degree).toBe(0)
+  })
+
+  it('adds a new node and edges when the note is created', () => {
+    const initial = buildLinkGraphDetailed([
+      { path: 'a.md', content: '[x](a.md)' },
+    ])
+    const updated = refreshNode(initial, 'd.md', '[[a]]', ['a.md', 'd.md'])
+    expect(updated.nodes.map((n) => n.id)).toContain('d.md')
+    expect(updated.edges).toContainEqual({ from: 'd.md', to: 'a.md', kind: 'wiki' })
+  })
+
+  it('deletes the node and every edge touching it when content is null', () => {
+    const initial = buildLinkGraphDetailed([
+      { path: 'a.md', content: '[[b]]' },
+      { path: 'b.md', content: '[[a]]' },
+      { path: 'c.md', content: '' },
+    ])
+    const updated = refreshNode(initial, 'b.md', null, allPaths)
+    expect(updated.nodes.map((n) => n.id).sort()).toEqual(['a.md', 'c.md'])
+    expect(updated.edges).toEqual([])
+    // Both a→b and b→a are removed, so a is now orphaned (degree 0).
+    expect(updated.nodes.find((n) => n.id === 'a.md')?.degree).toBe(0)
   })
 })
 

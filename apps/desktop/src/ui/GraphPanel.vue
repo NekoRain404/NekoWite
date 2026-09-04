@@ -1,29 +1,40 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
-  buildLinkGraph,
-  computeLayout,
-  computeLayoutChunked,
+  buildLinkGraphDetailed,
   graphSignature,
+  orphanNodes,
+  refreshNode,
+  type DetailedGraph,
+  type LinkGraphEdge,
+  type LinkGraphNode,
   type LayoutPoint,
 } from '../services/linkGraph'
+import { computeGraphLayout } from '../services/graphLayoutClient'
 import { fsService, type FsChangeEvent } from '../services/fs'
 import { vaultFileIndex } from '../services/vaultFiles'
+import { parseFrontmatterBlock, splitFrontmatterRaw } from '../services/noteMeta'
 import { useTabsStore } from '../stores/tabs'
 import { t } from '../i18n'
 
 /**
  * 笔记关系图谱面板：读取当前 vault 的全部笔记，构建链接关系图，
  * 用手写 Canvas 力导向布局渲染（纯 Canvas，不引入图谱库）。
+ *
+ * 默认渲染全量 vault（不设固定上限）；可通过 maxNotes prop / 面板内的上限
+ * 选择器放宽到 200/500 或切回全量，截断时以显式“展示前 N / 共 M”提示，绝不
+ * 静默丢弃。布局对大图走 Web Worker（缺失时回退到分块主线程路径），并支持
+ * 按目录、标签、链接类型筛选，以及断链/孤立节点的可见统计与切换。
  */
 
 // vaultReady 缺省（undefined）时组件自行以 tabs.vault 是否就绪为准；
 // 显式传 false 可暂停加载（例如父容器尚未挂载完 vault）。
+// maxNotes 缺省为 0（全量）；传 >0 表示一个可配置的渲染上限。
 const props = withDefaults(
   defineProps<{ vaultReady?: boolean | undefined; maxNotes?: number }>(),
   {
     vaultReady: undefined,
-    maxNotes: 200,
+    maxNotes: 0,
   },
 )
 
@@ -37,12 +48,18 @@ const failed = ref(false)
 const truncated = ref(false)
 const noteCount = ref(0)
 const edgeCount = ref(0)
-/** Total number of markdown notes found in the vault, before the node cap is
- * applied. Surfaced so truncation is never silent: the graph shows the actual
- * "showing the first N of M" rather than hiding how many notes are dropped. */
+/** Total number of markdown notes found in the vault, before any node cap is
+ * applied. Surfaced so truncation is never silent (showing first N depends on M). */
 const totalNotes = ref(0)
-/** Node cap. Configurable via the `maxNotes` prop; defaults to 200. */
-const maxNotes = computed(() => Math.max(1, props.maxNotes))
+/** Active node cap. 0 means "full vault" (render all). */
+const capValue = ref(Math.max(0, props.maxNotes))
+
+// Filters: directory, tag, link kind, plus broken/orphan visibility toggles.
+const filterDir = ref('')
+const filterTag = ref('')
+const filterLink = ref<'all' | 'wiki' | 'markdown'>('all')
+const showOrphans = ref(true)
+const showBroken = ref(true)
 
 const canvasAriaLabel = computed(() =>
   t('graph.count', { n: noteCount.value, m: edgeCount.value }),
@@ -80,8 +97,16 @@ function themeColors(): ThemeColors {
 
 let width = 0
 let height = 0
-let graph: ReturnType<typeof buildLinkGraph> | null = null
-let degrees = new Map<string, number>()
+/** Full detailed graph (all nodes/edges, uncapped by any render cap), updated
+ *  incrementally on content-only fs changes. */
+const graph = ref<DetailedGraph | null>(null)
+/** Vault-relative path → raw content, kept so a single-note edit refreshes just
+ *  that note rather than re-reading every note. */
+const contentsRecord = ref<Map<string, string>>(new Map())
+/** The path set the current graph was built from (used to detect structural
+ *  add/delete/move changes that force a full rebuild). */
+let currentPathSet = new Set<string>()
+let degreeMap = new Map<string, number>()
 let resizeObserver: ResizeObserver | null = null
 let themeObserver: MutationObserver | null = null
 let generation = 0
@@ -98,20 +123,83 @@ let layoutCache: { sig: string; w: number; h: number; points: LayoutPoint[] } | 
 // 并发令牌：新的布局/清空会递增，用于丢弃已被取代的异步布局结果。
 let layoutToken = 0
 
-/** 节点数不超过该值时布局足够快，直接走同步路径（仍带迭代上限）。 */
-const SYNC_LAYOUT_LIMIT = 30
-
 // 视图变换：screen = layout * scale + offset
 let scale = 1
 let offsetX = 0
 let offsetY = 0
 
+/** Directory (parent path) of a vault-relative node path, or '' for root. */
+function dirOf(path: string): string {
+  const i = path.lastIndexOf('/')
+  return i < 0 ? '' : path.slice(0, i)
+}
+
+/** Distinct directories across the graph's nodes, for the filter dropdown. */
+const directories = computed(() => {
+  const g = graph.value
+  if (!g) return []
+  const set = new Set<string>()
+  for (const node of g.nodes) set.add(dirOf(node.id))
+  return [...set].sort((a, b) => a.localeCompare(b))
+})
+
+/** path → tags parsed from each note's frontmatter, for the tag filter. */
+const nodeTags = computed(() => {
+  const map = new Map<string, string[]>()
+  for (const [path, content] of contentsRecord.value) {
+    const { front } = splitFrontmatterRaw(content)
+    map.set(path, parseFrontmatterBlock(front).tags)
+  }
+  return map
+})
+
+/** Distinct tags across the graph's nodes, for the filter dropdown. */
+const tagOptions = computed(() => {
+  const set = new Set<string>()
+  for (const tags of nodeTags.value.values()) for (const tag of tags) set.add(tag)
+  return [...set].sort((a, b) => a.localeCompare(b))
+})
+
+/** Nodes that are linked to by a broken (unresolvable) link, shown distinctly. */
+const brokenSources = computed(() => {
+  const g = graph.value
+  if (!g) return new Set<string>()
+  return new Set(g.broken.map((b) => b.from))
+})
+
+/** Nodes/edges after applying directory, tag and link-type filters (and the
+ *  orphan-visibility toggle). Layout runs on this filtered graph, so a filter
+ *  change re-lays out rather than silently keeping hidden nodes. */
+const visibleGraph = computed<{ nodes: LinkGraphNode[]; edges: LinkGraphEdge[] } | null>(() => {
+  const g = graph.value
+  if (!g) return null
+  const useDir = filterDir.value !== ''
+  const useTag = filterTag.value !== ''
+  const useLink = filterLink.value !== 'all'
+  const nodes = g.nodes.filter((n) => {
+    if (useDir && dirOf(n.id) !== filterDir.value) return false
+    if (useTag && !(nodeTags.value.get(n.id) ?? []).includes(filterTag.value)) return false
+    if (!showOrphans.value && n.degree === 0) return false
+    return true
+  })
+  const ids = new Set(nodes.map((n) => n.id))
+  const edges = g.edges.filter((e) => {
+    if (!ids.has(e.from) || !ids.has(e.to)) return false
+    if (useLink && e.kind !== filterLink.value) return false
+    return true
+  })
+  return { nodes, edges }
+})
+
+/** Orphan (degree-0) nodes in the full graph, for the legend count. */
+const orphanCount = computed(() => (graph.value ? orphanNodes(graph.value).length : 0))
+/** Broken-link count, for the legend count. */
+const brokenCount = computed(() => graph.value?.broken.length ?? 0)
+
 async function readWithConcurrency(
   vault: string,
   paths: string[],
 ): Promise<Array<{ path: string; content: string }>> {
-  // 直接按完成顺序 push，不再预分配定长数组后 filter(Boolean)，避免产生
-  // 一列 undefined 洞以及多余的一次全量遍历。
   const out: Array<{ path: string; content: string }> = []
   let cursor = 0
   const workers = Array.from({ length: Math.min(READ_CONCURRENCY, paths.length) }, async () => {
@@ -128,9 +216,15 @@ async function readWithConcurrency(
   return out
 }
 
+function pathSetEquals(a: string[], b: Set<string>): boolean {
+  if (a.length !== b.size) return false
+  for (const p of a) if (!b.has(p)) return false
+  return true
+}
+
 async function rebuild(): Promise<void> {
   const vault = tabs.vault
-  if (!vault) return
+  if (!vault || props.vaultReady === false) return
   const thisGeneration = ++generation
   loading.value = true
   failed.value = false
@@ -138,19 +232,23 @@ async function rebuild(): Promise<void> {
   try {
     const paths = await vaultFileIndex.get(vault)
     if (thisGeneration !== generation) return
-    const cap = maxNotes.value
     totalNotes.value = paths.length
-    truncated.value = paths.length > cap
-    const contents = await readWithConcurrency(vault, paths.slice(0, cap))
+    const cap = capValue.value
+    const useCap = cap > 0
+    const selected = useCap ? paths.slice(0, cap) : paths
+    truncated.value = useCap && paths.length > cap
+    const contents = await readWithConcurrency(vault, selected)
     if (thisGeneration !== generation) return
-    graph = buildLinkGraph(contents)
-    degrees = new Map(graph.nodes.map((node) => [node.id, node.degree]))
-    noteCount.value = graph.nodes.length
-    edgeCount.value = graph.edges.length
+    contentsRecord.value = new Map(contents.map((c) => [c.path, c.content]))
+    currentPathSet = new Set(selected)
+    graph.value = buildLinkGraphDetailed(contents)
+    degreeMap = new Map(graph.value.nodes.map((node) => [node.id, node.degree]))
+    noteCount.value = graph.value.nodes.length
+    edgeCount.value = graph.value.edges.length
     await relayout()
   } catch {
     if (thisGeneration !== generation) return
-    graph = null
+    graph.value = null
     layoutToken += 1
     layoutCache = null
     layout.value = []
@@ -164,14 +262,50 @@ async function rebuild(): Promise<void> {
   }
 }
 
+/** Incrementally apply a single-note fs-change to an already-built graph.
+ *  A content-only change refreshes only that note's node/edges; a structural
+ *  change (add/remove/move) falls back to a full rebuild because other notes'
+ *  links may re-resolve. */
+async function applyChange(path: string, kind: string): Promise<void> {
+  const vault = tabs.vault
+  if (!vault || !graph.value) return
+  if (kind === 'remove') {
+    void rebuild()
+    return
+  }
+  const paths = await vaultFileIndex.get(vault)
+  if (!pathSetEquals(paths, currentPathSet)) {
+    // Path set changed (add / move / delete) — a full recompute is the safe,
+    // correct path (links from other notes may now resolve differently).
+    void rebuild()
+    return
+  }
+  const thisGeneration = generation
+  try {
+    const content = await fsService.read(vault, path)
+    if (thisGeneration !== generation) return
+    contentsRecord.value.set(path, content)
+    const candidate = refreshNode(graph.value, path, content, Array.from(currentPathSet))
+    graph.value = candidate
+    degreeMap = new Map(candidate.nodes.map((n) => [n.id, n.degree]))
+    noteCount.value = candidate.nodes.length
+    edgeCount.value = candidate.edges.length
+    await relayout()
+  } catch {
+    void rebuild()
+  }
+}
+
 async function relayout(force = false): Promise<void> {
-  const g = graph
-  if (!g) return
+  const g = visibleGraph.value
+  if (!g || g.nodes.length === 0) {
+    layout.value = []
+    draw()
+    return
+  }
   const safeW = Math.max(width, 320)
   const safeH = Math.max(height, 240)
   const sig = graphSignature(g.nodes, g.edges)
-  // 图谱结构与画布尺寸都没变时复用上次结果，避免 resize/主题/视图切换等
-  // 与内容无关的更新反复重跑昂贵的力导向布局（仅当节点/边真正变化才重算）。
   if (
     !force &&
     layoutCache &&
@@ -185,13 +319,11 @@ async function relayout(force = false): Promise<void> {
   }
   const token = ++layoutToken
   const options = { seed: Math.floor(Math.random() * 0x7fffffff) }
-  // 小图足够快，直接用同步路径（仍带自适应迭代上限）；大图用分块异步路径，
-  // 在帧间让出主线程，避免阻塞输入。
-  const points =
-    g.nodes.length <= SYNC_LAYOUT_LIMIT
-      ? computeLayout(g.nodes, g.edges, safeW, safeH, options)
-      : await computeLayoutChunked(g.nodes, g.edges, safeW, safeH, options)
-  if (token !== layoutToken || g !== graph) return
+  // 小图足够快，直接用同步路径（仍带自适应迭代上限）；大图走 Web Worker，
+  // 缺失时回退到分块主线程路径（两者产出相同坐标）。这里统一走 computeGraphLayout，
+  // 内部自动选择 worker 或分块回退。
+  const points = await computeGraphLayout(g.nodes, g.edges, safeW, safeH, options)
+  if (token !== layoutToken) return
   layoutCache = { sig, w: safeW, h: safeH, points }
   layout.value = points
   draw()
@@ -212,7 +344,7 @@ function nodeRadius(degree: number): number {
 function pickNode(canvasX: number, canvasY: number): string | null {
   let best: { id: string; dist: number } | null = null
   for (const point of layout.value) {
-    const radius = Math.max(nodeRadius(degrees.get(point.id) ?? 0) + 4, 8)
+    const radius = Math.max(nodeRadius(degreeMap.get(point.id) ?? 0) + 4, 8)
     const dist = Math.hypot(point.x - canvasX, point.y - canvasY)
     if (dist <= radius && (best === null || dist < best.dist)) best = { id: point.id, dist }
   }
@@ -245,8 +377,10 @@ function draw(): void {
   ctx.clearRect(0, 0, width, height)
 
   const points = layout.value
-  if (points.length === 0) return
+  const g = graph.value
+  if (points.length === 0 || !g) return
   const byId = new Map(points.map((p) => [p.id, p]))
+  const sources = brokenSources.value
 
   ctx.save()
   ctx.translate(offsetX, offsetY)
@@ -256,27 +390,56 @@ function draw(): void {
   ctx.strokeStyle = colors.border
   ctx.globalAlpha = 0.4
   ctx.beginPath()
-  if (graph) {
-    for (const edge of graph.edges) {
-      const a = byId.get(edge.from)
-      const b = byId.get(edge.to)
-      if (!a || !b) continue
-      ctx.moveTo(a.x, a.y)
-      ctx.lineTo(b.x, b.y)
-    }
+  for (const edge of visibleGraph.value?.edges ?? []) {
+    const a = byId.get(edge.from)
+    const b = byId.get(edge.to)
+    if (!a || !b) continue
+    ctx.moveTo(a.x, a.y)
+    ctx.lineTo(b.x, b.y)
   }
   ctx.stroke()
   ctx.globalAlpha = 1
 
+  // Broken links (targets with no node) are drawn as short dashed stubs from the
+  // source node, so an unresolved link is visible rather than silently dropped.
+  if (showBroken.value && g.broken.length > 0) {
+    ctx.save()
+    ctx.setLineDash([4 / scale, 4 / scale])
+    ctx.strokeStyle = colors.muted
+    ctx.globalAlpha = 0.6
+    ctx.lineWidth = 1 / scale
+    let i = 0
+    for (const b of g.broken) {
+      const a = byId.get(b.from)
+      if (!a) continue
+      const angle = (i * 2.399963) % (Math.PI * 2)
+      const len = 16
+      ctx.beginPath()
+      ctx.moveTo(a.x, a.y)
+      ctx.lineTo(a.x + Math.cos(angle) * len, a.y + Math.sin(angle) * len)
+      ctx.stroke()
+      i += 1
+    }
+    ctx.restore()
+    ctx.globalAlpha = 1
+  }
+
   for (const point of points) {
-    const degree = degrees.get(point.id) ?? 0
+    const degree = degreeMap.get(point.id) ?? 0
     const radius = nodeRadius(degree)
     const hovered = point.id === hoverId.value
+    const isBrokenSource = showBroken.value && sources.has(point.id)
     ctx.beginPath()
     ctx.arc(point.x, point.y, hovered ? radius + 2 : radius, 0, Math.PI * 2)
     ctx.fillStyle = degree > 0 ? colors.accent : colors.muted
     ctx.fill()
-    if (hovered) {
+    if (isBrokenSource) {
+      ctx.lineWidth = 1.5 / scale
+      ctx.strokeStyle = colors.accent
+      ctx.setLineDash([2 / scale, 2 / scale])
+      ctx.stroke()
+      ctx.setLineDash([])
+    } else if (hovered) {
       ctx.lineWidth = 1.5 / scale
       ctx.strokeStyle = colors.accent
       ctx.stroke()
@@ -356,35 +519,28 @@ function fileName(path: string): string {
   return path.replace(/\\/g, '/').split('/').pop() ?? path
 }
 
-/** Debounce a rebuild so a burst of fs-change events collapses into one pass. */
-function scheduleRebuild(): void {
-  if (rebuildTimer !== null) clearTimeout(rebuildTimer)
-  rebuildTimer = setTimeout(() => {
-    rebuildTimer = null
-    if (disposed) return
-    void rebuild()
-  }, REBUILD_DEBOUNCE_MS)
-}
-
 /** Auto-rebuild the graph when note/link data changes (not just on vault
- * switch). Only markdown changes affect the graph; attachment/directory churn
- * is ignored. Invalidate the vault file index so an add/delete is picked up,
- * then coalesce the rebuild. The resize/theme-only non-recompute behavior is
- * preserved: relayout() reuses cached points when the node/edge set is
- * unchanged. */
+ *  switch). Only markdown changes affect the graph; attachment/directory churn
+ *  is ignored. Invalidate the vault file index so an add/delete is picked up,
+ *  then apply the change incrementally where the path set is unchanged
+ *  (resize/theme-only updates still reuse the cached layout via relayout()). */
 function onFsChangeHandler(e: FsChangeEvent): void {
   if (disposed) return
   const vault = tabs.vault
   if (!vault || props.vaultReady === false) return
   if (!/\.(md|mdx)$/i.test(e.path)) return
   vaultFileIndex.invalidate(vault)
-  scheduleRebuild()
+  if (rebuildTimer !== null) clearTimeout(rebuildTimer)
+  rebuildTimer = setTimeout(() => {
+    rebuildTimer = null
+    if (disposed) return
+    void applyChange(e.path, e.kind)
+  }, REBUILD_DEBOUNCE_MS)
 }
 
 watch(
   () => [tabs.vault, props.vaultReady] as const,
   ([vault]) => {
-    // Cancel any pending rebuild from the previous vault/state before acting.
     if (rebuildTimer !== null) {
       clearTimeout(rebuildTimer)
       rebuildTimer = null
@@ -394,7 +550,7 @@ watch(
       return
     }
     generation += 1
-    graph = null
+    graph.value = null
     layoutToken += 1
     layoutCache = null
     layout.value = []
@@ -408,6 +564,21 @@ watch(
   },
   { immediate: true },
 )
+
+// Re-run the layout when any filter toggles (visible graph changes). The layout
+// cache key already covers node/edge structure, so this only re-lays out when
+// the filtered graph actually changed.
+watch(
+  [filterDir, filterTag, filterLink, showOrphans, showBroken],
+  () => {
+    void relayout(true)
+  },
+)
+
+// Changing the render cap reads a different slice of the vault.
+watch(capValue, () => {
+  void rebuild()
+})
 
 onMounted(() => {
   const el = container.value
@@ -430,11 +601,6 @@ onMounted(() => {
     attributes: true,
     attributeFilter: ['data-theme', 'data-accent'],
   })
-  // Subscribe to fs-change events so the graph rebuilds while the panel stays
-  // open. The listener is vault-agnostic (it reads tabs.vault at event time),
-  // so one registration survives vault switches; teardown unlistens. Wrapped in
-  // Promise.resolve so a gateway that returns a plain value (test mock) or a
-  // promise both work.
   const pending = fsService.onFsChange(onFsChangeHandler)
   Promise.resolve(pending)
     .then((unlisten) => {
@@ -471,14 +637,68 @@ defineExpose({ rebuild })
         class="graph-count"
         :class="{ 'is-loading': loading }"
       >{{ loading ? t('graph.reading') : failed ? t('graph.readFailed') : t('graph.count', { n: noteCount, m: edgeCount }) }}</span>
-      <button
-        class="graph-btn"
-        :disabled="loading || noteCount === 0"
-        :title="t('graph.relayoutTitle')"
-        @click="relayout(true)"
+      <label
+        class="graph-filter"
+        :title="t('graph.capLabel')"
       >
-        {{ t('graph.relayout') }}
-      </button>
+        <select
+          v-model="capValue"
+          class="graph-select"
+          :aria-label="t('graph.capLabel')"
+        >
+          <option :value="0">{{ t('graph.showFull') }}</option>
+          <option :value="200">200</option>
+          <option :value="500">500</option>
+        </select>
+      </label>
+      <label
+        class="graph-filter"
+        :title="t('graph.filterDir')"
+      >
+        <select
+          v-model="filterDir"
+          class="graph-select"
+          :aria-label="t('graph.filterDir')"
+        >
+          <option value="">{{ t('graph.allDirs') }}</option>
+          <option
+            v-for="d in directories"
+            :key="d"
+            :value="d"
+          >{{ d || t('notelist.rootDir') }}</option>
+        </select>
+      </label>
+      <label
+        class="graph-filter"
+        :title="t('graph.filterTag')"
+      >
+        <select
+          v-model="filterTag"
+          class="graph-select"
+          :aria-label="t('graph.filterTag')"
+        >
+          <option value="">{{ t('graph.allTags') }}</option>
+          <option
+            v-for="tag in tagOptions"
+            :key="tag"
+            :value="tag"
+          >{{ tag }}</option>
+        </select>
+      </label>
+      <label
+        class="graph-filter"
+        :title="t('graph.filterLink')"
+      >
+        <select
+          v-model="filterLink"
+          class="graph-select"
+          :aria-label="t('graph.filterLink')"
+        >
+          <option value="all">{{ t('graph.allLinks') }}</option>
+          <option value="wiki">{{ t('graph.wikiLinks') }}</option>
+          <option value="markdown">{{ t('graph.markdownLinks') }}</option>
+        </select>
+      </label>
       <button
         class="graph-btn"
         :disabled="noteCount === 0"
@@ -486,6 +706,42 @@ defineExpose({ rebuild })
         @click="resetView"
       >
         {{ t('graph.resetView') }}
+      </button>
+    </div>
+    <div
+      class="graph-toolbar graph-toolbar-alt"
+    >
+      <span
+        class="graph-legend"
+        :title="t('graph.legend')"
+      >
+        <span class="legend-dot legend-orphan" />{{ t('graph.orphansCount', { n: orphanCount }) }}
+      </span>
+      <span
+        class="graph-legend"
+        :title="t('graph.legend')"
+      >
+        <span class="legend-dot legend-broken" />{{ t('graph.brokenLinksCount', { n: brokenCount }) }}
+      </span>
+      <label class="graph-toggle">
+        <input
+          v-model="showOrphans"
+          type="checkbox"
+        >{{ t('graph.showOrphans') }}
+      </label>
+      <label class="graph-toggle">
+        <input
+          v-model="showBroken"
+          type="checkbox"
+        >{{ t('graph.showBroken') }}
+      </label>
+      <button
+        class="graph-btn"
+        :disabled="loading || noteCount === 0"
+        :title="t('graph.relayoutTitle')"
+        @click="relayout(true)"
+      >
+        {{ t('graph.relayout') }}
       </button>
     </div>
     <div
@@ -532,10 +788,7 @@ defineExpose({ rebuild })
         v-if="truncated"
         class="graph-truncated"
       >
-        {{ t('graph.truncated', { n: maxNotes }) }}<span
-          v-if="totalNotes > maxNotes"
-          class="graph-truncated-total"
-        > · 共 {{ totalNotes }} 篇</span>
+        {{ t('graph.truncatedFull', { n: capValue, total: totalNotes }) }}
       </p>
     </div>
   </section>
@@ -553,7 +806,11 @@ defineExpose({ rebuild })
 .graph-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.graph-toolbar-alt {
+  margin-top: -4px;
 }
 .graph-count {
   flex: 1;
@@ -595,6 +852,65 @@ defineExpose({ rebuild })
 .graph-btn:focus-visible {
   outline: 2px solid var(--app-accent);
   outline-offset: 1px;
+}
+.graph-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.graph-select {
+  height: 24px;
+  max-width: 130px;
+  padding: 0 6px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-sm);
+  background: color-mix(in srgb, var(--app-elevated) 60%, var(--app-panel));
+  color: var(--app-text);
+  font-family: var(--app-font);
+  font-size: 11px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.graph-select:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
+.graph-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.legend-orphan {
+  background: var(--app-muted);
+}
+.legend-broken {
+  background: color-mix(in srgb, var(--app-accent) 60%, transparent);
+  box-shadow: 0 0 0 1px var(--app-border);
+}
+.graph-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 550;
+  color: var(--app-muted);
+  cursor: pointer;
+}
+.graph-toggle input {
+  margin: 0;
+  accent-color: var(--app-accent);
+  cursor: pointer;
 }
 .graph-canvas-wrap {
   position: relative;

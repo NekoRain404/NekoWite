@@ -15,6 +15,18 @@ import {
   resolveLinkTarget,
 } from '../services/noteMeta'
 import type { LibraryFilter, LibraryCounts, NoteSummary, SortBy, MdLink } from '../services/noteMeta'
+import {
+  buildIndexIncremental,
+  buildSearchText,
+  clearIndex,
+  docToken,
+  loadIndex,
+  queryIndex,
+  saveIndex,
+  type IndexState,
+  type StoredIndex,
+} from '../services/searchIndex'
+import type { IndexLookupResult } from '../services/contentSearch'
 
 /** 列表栏整体视图：notes 模式下列表内容 = filter + query（notes/outline/links 子模式）。 */
 export type ListView = 'notes' | 'graph' | 'attachments' | 'index' | 'cloud' | 'folders'
@@ -68,6 +80,11 @@ export const useLibraryStore = defineStore('library', () => {
    * it exceeded MAX_DIRS. Surfaced so the UI can warn instead of silently
    * dropping files. Reset on vault switch; set during index. */
   const vaultTruncated = ref(false)
+  /** Persistent full-text search index state (building / up-to-date / stale).
+   *  Read by the note list to show the index status + rebuild control. */
+  const indexState = ref<IndexState>('idle')
+  /** Progress of the background index build, or null when idle. */
+  const indexProgress = ref<{ done: number; total: number } | null>(null)
 
   let unlistenFs: (() => void) | null = null
   let indexSeq = 0
@@ -81,6 +98,12 @@ export const useLibraryStore = defineStore('library', () => {
   const mdChangeTimers = new Map<string, ReturnType<typeof setTimeout>>()
   /** path → latest markdown change generation; a stale read must never win. */
   const mdChangeSeq = new Map<string, number>()
+  /** In-memory mirror of the persistent search index for the current vault.
+   *  Guarded by a build generation + AbortController so a rebuild can supersede
+   *  an in-flight one and vault switches cancel it (no stale index survives). */
+  let currentSearchIndex: StoredIndex | null = null
+  let searchIndexAbort: AbortController | null = null
+  let searchIndexSeq = 0
 
   function persist(): void {
     localStorage.setItem(LS_KEY, JSON.stringify({ favorites: favorites.value, recents: recents.value }))
@@ -232,6 +255,7 @@ export const useLibraryStore = defineStore('library', () => {
       notes.value = notes.value.filter((n) => n.path !== path)
       contentCache.delete(path)
       noteStatCache.delete(path)
+      removeSearchIndexNote(path)
       return
     }
     // A modify/create changed the file on disk; force a fresh read so we never
@@ -245,6 +269,12 @@ export const useLibraryStore = defineStore('library', () => {
     if (!summary) {
       notes.value = notes.value.filter((n) => n.path !== path)
       return
+    }
+    // Incrementally refresh the persistent index entry for this note in place,
+    // so a search immediately sees the new content without a full rebuild.
+    const freshContent = contentCache.get(path)
+    if (freshContent !== undefined) {
+      upsertSearchIndex(v, path, freshContent, summary.mtime, summary.size)
     }
     const rest = notes.value.filter((n) => n.path !== path)
     rest.push(summary)
@@ -266,6 +296,11 @@ export const useLibraryStore = defineStore('library', () => {
     for (const timer of mdChangeTimers.values()) clearTimeout(timer)
     mdChangeTimers.clear()
     mdChangeSeq.clear()
+    searchIndexSeq += 1
+    cancelSearchIndexBuild()
+    currentSearchIndex = null
+    indexState.value = 'idle'
+    indexProgress.value = null
     unlistenFs?.()
     unlistenFs = null
     // Reset the truncation warning; the fresh index sets it again if needed.
@@ -305,6 +340,122 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
+  /** Read a note's body for the search-index build, reusing the shared content
+   *  cache so a note the note-list indexer already read is never fetched twice. */
+  async function searchRead(path: string): Promise<string> {
+    const cached = contentCache.get(path)
+    if (cached !== undefined) return cached
+    const v = vault.value
+    if (!v) return ''
+    try {
+      const content = await fsService.read(v, path)
+      contentCache.set(path, content)
+      return content
+    } catch {
+      return ''
+    }
+  }
+
+  /** Persist one note's index entry (updated in place after a fs change). The
+   *  in-memory mirror and the stored blob both reflect the entry so a later
+   *  background build reconciles, not rebuilds, this note. */
+  function upsertSearchIndex(v: string, path: string, content: string, mtime: number, size: number): void {
+    if (!currentSearchIndex) {
+      currentSearchIndex = { version: 1, vault: v, builtAt: Date.now(), notes: {} }
+    }
+    const text = buildSearchText(path, content, v, mtime, size)
+    currentSearchIndex.notes[path] = { token: docToken(mtime, size), text, mtime, size }
+    saveIndex(currentSearchIndex)
+  }
+
+  /** Drop a note's index entry after it is removed from the vault. */
+  function removeSearchIndexNote(path: string): void {
+    if (!currentSearchIndex || !currentSearchIndex.notes[path]) return
+    delete currentSearchIndex.notes[path]
+    saveIndex(currentSearchIndex)
+  }
+
+  /** Look up a note's persistent-index entry for content search. `upToDate` is
+   *  false whenever the note's stat differs from the entry (or we cannot know),
+   *  so the search falls back to a full-body read and never misses a match. */
+  function indexEntryFor(path: string): IndexLookupResult | null {
+    const index = currentSearchIndex
+    if (!index) return null
+    const doc = index.notes[path]
+    if (!doc) return null
+    const stat = noteStatCache.get(path)
+    const upToDate =
+      stat !== undefined && stat.mtime === doc.mtime && stat.size === doc.size
+    return { upToDate, text: doc.text }
+  }
+
+  /** Candidate note paths (from the persistent index) whose text contains the
+   *  query. Combined with the live fallback scan in the UI, this accelerates
+   *  search without regressing completeness. */
+  function indexCandidatePaths(query: string): string[] {
+    if (!currentSearchIndex) return []
+    return queryIndex(currentSearchIndex, query)
+  }
+
+  /** Build (or incrementally refresh) the persistent search index for `vault`
+   *  in the background. Only notes whose mtime/size changed are re-read; the
+   *  first-ever build reconciles every note. Cancellable (latest-wins) and
+   *  yields so a large vault never blocks input. */
+  async function buildSearchIndex(v: string, opts: { force?: boolean } = {}): Promise<void> {
+    const mySeq = ++searchIndexSeq
+    searchIndexAbort?.abort()
+    const controller = new AbortController()
+    searchIndexAbort = controller
+    indexState.value = 'building'
+    indexProgress.value = { done: 0, total: 0 }
+    try {
+      const existing = loadIndex(v)
+      const paths = await vaultFileIndex.get(v)
+      if (mySeq !== searchIndexSeq || vault.value !== v) return
+      indexProgress.value = { done: 0, total: paths.length }
+      const result = await buildIndexIncremental(
+        v,
+        paths,
+        {
+          stat: (path) => fsService.stat(v, path).catch(() => null),
+          read: (path) => searchRead(path),
+        },
+        existing,
+        {
+          signal: controller.signal,
+          force: opts.force,
+          onProgress: (done, total) => {
+            if (mySeq === searchIndexSeq) indexProgress.value = { done, total }
+          },
+        },
+      )
+      if (mySeq !== searchIndexSeq || vault.value !== v || controller.signal.aborted) return
+      currentSearchIndex = result.index
+      saveIndex(result.index)
+      indexState.value = result.failed > 0 ? 'stale' : 'up-to-date'
+    } finally {
+      if (mySeq === searchIndexSeq) {
+        indexProgress.value = null
+        searchIndexAbort = null
+      }
+    }
+  }
+
+  /** Cancel an in-flight background index build (latest-wins). */
+  function cancelSearchIndexBuild(): void {
+    searchIndexAbort?.abort()
+    searchIndexAbort = null
+  }
+
+  /** Clear the persistent index and rebuild it from scratch in the background. */
+  async function rebuildIndex(): Promise<void> {
+    const v = vault.value
+    if (!v) return
+    clearIndex(v)
+    currentSearchIndex = null
+    await buildSearchIndex(v, { force: true })
+  }
+
   async function indexVault(v: string): Promise<void> {
     detachVault()
     // Capture the switch generation BEFORE any await: an indexVault that gets
@@ -335,6 +486,10 @@ export const useLibraryStore = defineStore('library', () => {
     unlistenFs = listener
     void refreshAttachmentCount(v, mySeq)
     await runIndex(v, mySeq)
+    // Kick off the background persistent index build (first-ever build or an
+    // incremental catch-up). It reuses the content cache the note index just
+    // populated, so it is cheap, and it never blocks input.
+    void buildSearchIndex(v)
   }
 
   function toggleFavorite(path: string): void {
@@ -431,11 +586,18 @@ export const useLibraryStore = defineStore('library', () => {
     indexing,
     attachmentCount,
     vaultTruncated,
+    indexState,
+    indexProgress,
     visibleNotes,
     tagCounts,
     counts,
     indexVault,
     detachVault,
+    buildSearchIndex,
+    cancelSearchIndexBuild,
+    rebuildIndex,
+    indexEntryFor,
+    indexCandidatePaths,
     toggleFavorite,
     isFavorite,
     touchRecent,

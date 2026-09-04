@@ -37,10 +37,10 @@ let pinia: Pinia
 let mounted: VueApp[] = []
 let host: HTMLElement | null = null
 
-function mountPanel(vaultReady?: boolean): void {
+function mountPanel(props?: { vaultReady?: boolean; maxNotes?: number }): void {
   host = document.createElement('div')
   document.body.appendChild(host)
-  const app = createApp(GraphPanel, vaultReady === undefined ? {} : { vaultReady })
+  const app = createApp(GraphPanel, props ?? {})
   app.use(pinia)
   app.mount(host)
   mounted.push(app)
@@ -104,17 +104,35 @@ describe('GraphPanel', () => {
     expect(readMock.mock.calls.length).toBe(readsAfterMount + 2)
   })
 
-  it('truncates beyond 200 notes with a hint', async () => {
+  it('truncates beyond the configured cap with a visible total', async () => {
     const many = Array.from({ length: 201 }, (_v, i) => fileEntry(`n${i}.md`))
     listMock.mockResolvedValue(many)
     readMock.mockResolvedValue('无链接')
     const tabs = useTabsStore()
     tabs.setVault('/vault-3')
+    mountPanel({ maxNotes: 200 })
+    await flush()
+    await flush()
+    // Non-silent: the notice names the cap AND the true total (not just "first N").
+    expect(host!.textContent).toContain('仅展示前 200')
+    expect(host!.textContent).toContain('201')
+    expect(readMock).toHaveBeenCalledTimes(200)
+    expect(host!.textContent).toContain('200 篇')
+  })
+
+  it('renders the full vault by default (no silent cap)', async () => {
+    const many = Array.from({ length: 210 }, (_v, i) => fileEntry(`n${i}.md`))
+    listMock.mockResolvedValue(many)
+    readMock.mockResolvedValue('无链接')
+    const tabs = useTabsStore()
+    tabs.setVault('/vault-full')
     mountPanel()
     await flush()
     await flush()
-    expect(host!.textContent).toContain('仅展示前 200 篇')
-    expect(readMock).toHaveBeenCalledTimes(200)
+    // Full vault default: every node is read and rendered, no truncation notice.
+    expect(readMock).toHaveBeenCalledTimes(210)
+    expect(host!.textContent).not.toContain('仅展示前')
+    expect(host!.textContent).toContain('210 篇')
   })
 
   it('honours vaultReady=false and skips loading', async () => {
@@ -122,7 +140,7 @@ describe('GraphPanel', () => {
     readMock.mockResolvedValue('')
     const tabs = useTabsStore()
     tabs.setVault('/vault-4')
-    mountPanel(false)
+    mountPanel({ vaultReady: false })
     await flush()
     await flush()
     expect(readMock).not.toHaveBeenCalled()
