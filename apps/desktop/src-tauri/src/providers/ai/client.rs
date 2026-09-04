@@ -1,10 +1,23 @@
+//! Shared AI client layer.
+//!
+//! This module owns the parts of the AI request path that are provider-agnostic:
+//! the streaming HTTP loop, SSE reassembly, concurrency limiter, SSRF guard,
+//! cancel/emit plumbing and the shared DTOs. Provider-specific request
+//! construction and SSE text extraction live in [`super::gemini`] and
+//! [`super::openai_compatible`], which `resolve_endpoint`/`parse_sse_line`
+//! dispatch to by provider name.
+
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tauri::{Emitter, Manager};
+
+use crate::state::{AiState, MAX_PENDING};
+use crate::storage::key_store::{load_ai_key_internal, AI_KEY_MASKED};
+
+use super::gemini;
+use super::openai_compatible;
 
 #[derive(Deserialize, Clone, Default)]
 pub struct AIConfig {
@@ -28,7 +41,7 @@ pub struct AIConfig {
 }
 
 /// The system prompt to send, normalised so blanks become `None`.
-fn system_prompt_of(cfg: &AIConfig) -> Option<String> {
+pub(crate) fn system_prompt_of(cfg: &AIConfig) -> Option<String> {
     cfg.system_prompt
         .as_deref()
         .map(str::trim)
@@ -41,39 +54,6 @@ pub struct AIChunk {
     pub id: String,
     pub text: String,
 }
-
-/// Set of in-flight completion ids. `ai_cancel` removes an id, the stream
-/// loop in `ai_complete` checks membership before each chunk and breaks when
-/// the id is gone.
-///
-/// Also carries a bounded concurrency limiter: at most [`CONCURRENCY_LIMIT`]
-/// completions stream at once, with [`MAX_PENDING`] more allowed to queue.
-/// Beyond that a request is rejected with a clear "busy" error instead of
-/// spawning an unbounded number of connections (which would duplicate billing,
-/// open many sockets, and stutter every stream).
-pub struct AiState {
-    pub inflight: Mutex<HashSet<String>>,
-    /// Concurrency cap for streaming completions. The permit is held for the
-    /// whole request, so a bounded number of connections are ever open.
-    semaphore: Arc<tokio::sync::Semaphore>,
-    /// How many requests are currently queued waiting for a permit. Bounds the
-    /// wait queue so saturation surfaces a fast "busy" error rather than a
-    /// growing backlog of idle connections.
-    pending: AtomicUsize,
-}
-
-impl Default for AiState {
-    fn default() -> Self {
-        Self {
-            inflight: Mutex::new(HashSet::new()),
-            semaphore: Arc::new(tokio::sync::Semaphore::new(CONCURRENCY_LIMIT)),
-            pending: AtomicUsize::new(0),
-        }
-    }
-}
-
-const CONCURRENCY_LIMIT: usize = 3;
-const MAX_PENDING: usize = 8;
 
 /// RAII guard that decrements the pending counter on drop, so a task aborted
 /// while waiting for a permit never leaks its queue slot.
@@ -89,7 +69,7 @@ impl Drop for PendingGuard<'_> {
 /// one streaming request. Bounded by [`CONCURRENCY_LIMIT`] in-flight permits and
 /// [`MAX_PENDING`] queued waiters; a saturated pool returns a clear "busy" error
 /// instead of spawning unbounded connections.
-async fn acquire_slot(state: &AiState) -> Result<tokio::sync::OwnedSemaphorePermit, String> {
+pub async fn acquire_slot(state: &AiState) -> Result<tokio::sync::OwnedSemaphorePermit, String> {
     let guard = PendingGuard(state);
     let prev = state.pending.fetch_add(1, Ordering::SeqCst);
     if prev >= MAX_PENDING {
@@ -108,7 +88,7 @@ async fn acquire_slot(state: &AiState) -> Result<tokio::sync::OwnedSemaphorePerm
     Ok(permit)
 }
 
-fn emit_ai_error(app: &tauri::AppHandle, id: &str, message: &str) {
+pub fn emit_ai_error(app: &tauri::AppHandle, id: &str, message: &str) {
     let _ = app.emit(
         "ai-error",
         serde_json::json!({ "id": id, "message": message }),
@@ -122,7 +102,7 @@ fn emit_ai_error(app: &tauri::AppHandle, id: &str, message: &str) {
 /// (for legitimate local models such as Ollama / LM Studio). The default
 /// provider endpoints (api.anthropic.com, api.openai.com, ...) are public and
 /// never rejected.
-fn validate_base_url(cfg: &AIConfig) -> Result<(), String> {
+pub fn validate_base_url(cfg: &AIConfig) -> Result<(), String> {
     if cfg.allow_private {
         return Ok(());
     }
@@ -298,7 +278,7 @@ pub fn build_prompt(cursor_prefix: &str) -> String {
 /// payload. Anthropic/Gemini require the mime and base64 separately, while the
 /// OpenAI-compatible path sends the whole data URL verbatim as `image_url.url`.
 /// A malformed value falls back to `image/png` so the request body stays valid.
-fn split_data_url(data_url: &str) -> (String, String) {
+pub(crate) fn split_data_url(data_url: &str) -> (String, String) {
     let s = data_url.strip_prefix("data:").unwrap_or(data_url);
     let (meta, data) = match s.split_once(',') {
         Some((m, d)) => (m, d),
@@ -313,139 +293,18 @@ fn split_data_url(data_url: &str) -> (String, String) {
     (mime, data.to_string())
 }
 
+/// Resolve a completion's request endpoint + body for the configured provider.
+/// Provider-specific construction is delegated to [`super::gemini`] and
+/// [`super::openai_compatible`].
 pub fn resolve_endpoint(
     cfg: &AIConfig,
     prompt: &str,
     images: &[serde_json::Value],
 ) -> (String, serde_json::Value) {
-    let model = cfg.model.clone();
-    let has_images = !images.is_empty();
     match cfg.provider.as_str() {
-        "anthropic" => {
-            let base = cfg
-                .base_url
-                .clone()
-                .unwrap_or_else(|| "https://api.anthropic.com".into());
-            let content = if has_images {
-                let mut blocks = vec![serde_json::json!({ "type": "text", "text": prompt })];
-                for img in images {
-                    let (mime, data) = split_data_url(img.as_str().unwrap_or(""));
-                    blocks.push(serde_json::json!({
-                        "type": "image",
-                        "source": { "type": "base64", "media_type": mime, "data": data }
-                    }));
-                }
-                serde_json::Value::Array(blocks)
-            } else {
-                serde_json::json!(prompt)
-            };
-            let mut body = serde_json::json!({
-                "model": model,
-                "max_tokens": cfg.max_tokens.unwrap_or(256),
-                "stream": true,
-                "messages": [ { "role": "user", "content": content } ]
-            });
-            // Anthropic carries the system prompt as a top-level `system` field.
-            if let Some(sys) = system_prompt_of(cfg) {
-                body["system"] = serde_json::Value::String(sys);
-            }
-            if let Some(temp) = cfg.temperature {
-                body["temperature"] = serde_json::json!(temp);
-            }
-            (
-                format!("{}/v1/messages", base.trim_end_matches('/')),
-                body,
-            )
-        }
-        "gemini" => {
-            let base = cfg
-                .base_url
-                .clone()
-                .unwrap_or_else(|| "https://generativelanguage.googleapis.com".into());
-            // The URL stays free of the API key so proxies/servers never log it.
-            // The credential rides in the `x-goog-api-key` request header, which
-            // `stream_complete` sets (Gemini rejects `Authorization: Bearer`).
-            let url = format!(
-                "{}/v1beta/models/{}:streamGenerateContent?alt=sse",
-                base.trim_end_matches('/'),
-                model
-            );
-            let parts = if has_images {
-                let mut parts = vec![serde_json::json!({ "text": prompt })];
-                for img in images {
-                    let (mime, data) = split_data_url(img.as_str().unwrap_or(""));
-                    parts.push(serde_json::json!({
-                        "inline_data": { "mime_type": mime, "data": data }
-                    }));
-                }
-                parts
-            } else {
-                vec![serde_json::json!({ "text": prompt })]
-            };
-            let mut body = serde_json::json!({
-                "contents": [ { "role": "user", "parts": parts } ]
-            });
-            // Gemini puts the system prompt in `systemInstruction.parts[].text`;
-            // there is no plain string field, so materialise the object.
-            if let Some(sys) = system_prompt_of(cfg) {
-                body["systemInstruction"] = serde_json::json!({
-                    "parts": [ { "text": sys } ]
-                });
-            }
-            if let Some(temp) = cfg.temperature {
-                body["generationConfig"] = serde_json::json!({ "temperature": temp });
-            }
-            if let Some(mt) = cfg.max_tokens {
-                if let Some(gc) = body.get_mut("generationConfig") {
-                    gc["maxOutputTokens"] = serde_json::json!(mt);
-                } else {
-                    body["generationConfig"] = serde_json::json!({ "maxOutputTokens": mt });
-                }
-            }
-            (
-                url,
-                body,
-            )
-        }
-        _ => {
-            // openai / grok / local / custom
-            let base = cfg
-                .base_url
-                .clone()
-                .unwrap_or_else(|| "https://api.openai.com/v1".into());
-            let content = if has_images {
-                let mut parts = vec![serde_json::json!({ "type": "text", "text": prompt })];
-                for img in images {
-                    parts.push(serde_json::json!({
-                        "type": "image_url",
-                        "image_url": { "url": img }
-                    }));
-                }
-                serde_json::Value::Array(parts)
-            } else {
-                serde_json::json!(prompt)
-            };
-            // OpenAI-compatible (openai/grok/local/custom): the system prompt
-            // becomes `messages[0]` so any images still ride in `messages[1]`.
-            let mut messages = Vec::new();
-            if let Some(sys) = system_prompt_of(cfg) {
-                messages.push(serde_json::json!({ "role": "system", "content": sys }));
-            }
-            messages.push(serde_json::json!({ "role": "user", "content": content }));
-            let mut body = serde_json::json!({
-                "model": model,
-                "max_tokens": cfg.max_tokens.unwrap_or(256),
-                "stream": true,
-                "messages": messages
-            });
-            if let Some(temp) = cfg.temperature {
-                body["temperature"] = serde_json::json!(temp);
-            }
-            (
-                format!("{}/chat/completions", base.trim_end_matches('/')),
-                body,
-            )
-        }
+        "anthropic" => openai_compatible::endpoint_anthropic(cfg, prompt, images),
+        "gemini" => gemini::endpoint(cfg, prompt, images),
+        _ => openai_compatible::endpoint_default(cfg, prompt, images),
     }
 }
 
@@ -530,21 +389,9 @@ pub fn parse_sse_line(line: &str, provider: &str, acc: &mut String) -> Option<St
         Err(_) => return None,
     };
     let text = match provider {
-        // Anthropic streams the FIRST text block inside `content_block_start`
-        // (`content_block.text`) and only subsequent deltas via
-        // `content_block_delta` (`delta.text`). Read both so the initial text
-        // is not dropped.
-        "anthropic" => v["delta"]["text"]
-            .as_str()
-            .map(str::to_string)
-            .or_else(|| v["content_block"]["text"].as_str().map(str::to_string)),
-        "gemini" => v["candidates"][0]["content"]["parts"][0]["text"]
-            .as_str()
-            .map(str::to_string),
-        _ => v["choices"][0]["delta"]["content"]
-            .as_str()
-            .map(str::to_string)
-            .or_else(|| v["choices"][0]["text"].as_str().map(str::to_string)),
+        "anthropic" => openai_compatible::extract_anthropic_text(&v),
+        "gemini" => gemini::extract_text(&v),
+        _ => openai_compatible::extract_openai_text(&v),
     };
     if let Some(t) = &text {
         acc.push_str(t);
@@ -567,30 +414,22 @@ fn is_active(app: &tauri::AppHandle, id: &str) -> bool {
 /// did not supply a real one. A real key supplied by the app's own settings
 /// page (a freshly typed, not-yet-saved key) is kept as-is; only a missing or
 /// masked value is backfilled from the vault.
-fn hydrate_stored_key(app: &tauri::AppHandle, config: &mut AIConfig) -> Result<(), String> {
+pub fn hydrate_stored_key(app: &tauri::AppHandle, config: &mut AIConfig) -> Result<(), String> {
     if let Some(k) = config.api_key.as_deref() {
-        if k != crate::keys::AI_KEY_MASKED {
+        if k != AI_KEY_MASKED {
             return Ok(());
         }
     }
-    if let Some(stored) = crate::keys::load_ai_key_internal(app, &config.provider)? {
+    if let Some(stored) = load_ai_key_internal(app, &config.provider)? {
         config.api_key = Some(stored);
     }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn ai_cancel(app: tauri::AppHandle, id: String) -> Result<(), String> {
-    let state = app.state::<AiState>();
-    let mut inflight = state.inflight.lock().map_err(|e| e.to_string())?;
-    inflight.remove(&id);
     Ok(())
 }
 
 /// Resolve the provider's `GET {endpoint}` for listing models, matching the
 /// base/credential conventions of `resolve_endpoint` so the dropdown pulls from
 /// the same origin a completion would use.
-async fn list_models(config: &AIConfig) -> Result<Vec<String>, String> {
+pub async fn list_models(config: &AIConfig) -> Result<Vec<String>, String> {
     // Reject a private/loopback Base URL unless the user opts in (see
     // `validate_base_url`); a model dropdown must never phone an internal host.
     validate_base_url(config)?;
@@ -669,64 +508,7 @@ async fn list_models(config: &AIConfig) -> Result<Vec<String>, String> {
     Ok(parse_model_ids(&body, &config.provider))
 }
 
-#[tauri::command]
-pub async fn ai_list_models(
-    app: tauri::AppHandle,
-    mut config: AIConfig,
-) -> Result<Vec<String>, String> {
-    hydrate_stored_key(&app, &mut config)?;
-    list_models(&config).await
-}
-
-#[tauri::command]
-pub async fn ai_complete(
-    app: tauri::AppHandle,
-    mut config: AIConfig,
-    prompt: String,
-    images: Vec<serde_json::Value>,
-) -> Result<(), String> {
-    let id = next_ai_id();
-    {
-        let state = app.state::<AiState>();
-        let mut inflight = state.inflight.lock().map_err(|e| e.to_string())?;
-        inflight.insert(id.clone());
-    }
-    // Everything below, including the validation guard, runs inside a single
-    // guarded block so every early-return path (invalid Base URL, saturated
-    // concurrency pool) still falls through to the `remove(&id)` cleanup below.
-    // A rejected internal/loopback endpoint surfaces a clear user-facing error
-    // instead of a silent failure or a request phoning a forbidden host.
-    let result = async {
-        // Backfill the key from the vault when the caller did not supply a real
-        // one (the window never receives the decrypted key anymore).
-        hydrate_stored_key(&app, &mut config).map_err(|e| {
-            emit_ai_error(&app, &id, &e);
-            e
-        })?;
-        validate_base_url(&config).map_err(|e| {
-            emit_ai_error(&app, &id, &e);
-            e
-        })?;
-        // Bound concurrency: acquire a slot before opening a connection. A
-        // saturated/over-quota request gets a clear "busy" error rather than
-        // unbounded task spawning. The permit is held for the whole stream.
-        let state = app.state::<AiState>();
-        let _permit = acquire_slot(&state).await.map_err(|e| {
-            emit_ai_error(&app, &id, &e);
-            e
-        })?;
-        stream_complete(&app, &config, &prompt, &images, &id).await
-    }
-    .await;
-    if let Some(state) = app.try_state::<AiState>() {
-        if let Ok(mut inflight) = state.inflight.lock() {
-            inflight.remove(&id);
-        }
-    }
-    result
-}
-
-async fn stream_complete(
+pub async fn stream_complete(
     app: &tauri::AppHandle,
     config: &AIConfig,
     prompt: &str,

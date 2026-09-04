@@ -1,9 +1,15 @@
-use nekowite_lib::fs::{
-    atomic_write, cleanup_stale_tmp, clear_trash, create_dir, delete_file, encode_rel_path,
-    is_mdx_path, list_dir, list_dir_entries, list_history, list_trash, read_file, read_history,
-    rename_entry, resolve_media_path, resolve_within, restore_from_trash, restore_history,
-    sanitize_attachment_name, sanitize_path, save_attachment, search_notes,
-    search_notes_with_max, should_skip_entry, snapshot_history, stat_file, write_file,
+use nekowite_lib::domain::path_policy::{
+    encode_rel_path, resolve_within, sanitize_path,
+};
+use nekowite_lib::domain::vault::{is_mdx_path, should_skip_entry};
+use nekowite_lib::storage::file_store::{
+    atomic_write, cleanup_stale_tmp, create_dir, list_dir, list_dir_entries, list_history,
+    read_file, read_history, rename_entry, resolve_media_path, restore_history,
+    sanitize_attachment_name, save_attachment, search_notes, search_notes_with_max,
+    snapshot_history, stat_file, write_file,
+};
+use nekowite_lib::storage::trash_store::{
+    clear_trash, delete_file, list_trash, restore_from_trash,
 };
 use std::path::{Path, PathBuf};
 
@@ -639,7 +645,7 @@ fn read_history_rejects_unsafe_ids() {
 /// (history, trash, .git) and hidden files.
 #[test]
 fn watcher_filter_skips_hidden_components() {
-    use nekowite_lib::has_hidden_component;
+    use nekowite_lib::domain::path_policy::has_hidden_component;
 
     assert!(has_hidden_component(Path::new(
         "/vault/.nekowite/history/docs%2Fa.md/1.md"

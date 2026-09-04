@@ -1,10 +1,10 @@
-use nekowite_lib::keys::{
+use nekowite_lib::storage::key_store::{
     ai_key_presence, decode_keyfile, derive_master_key, encode_keyfile_password,
     encode_keyfile_passwordless, ensure_keyfile, read_vault_key_state, validate_password,
     verifier_of, VaultKeyState, AI_KEY_MASKED,
 };
 #[cfg(unix)]
-use nekowite_lib::keys::{open_snapshot, reencrypt_vault};
+use nekowite_lib::domain::recovery::{open_snapshot, reencrypt_vault};
 use std::fs;
 #[cfg(unix)]
 use std::io::Write;
