@@ -50,10 +50,15 @@ export const tauriFsPort: FsPort = {
     invoke<string>('read_history', { vault_root: vault, path, id }),
   restoreHistory: (vault, path, id) =>
     invoke<string>('restore_history', { vault_root: vault, path, id }),
+  // NOTE: the Rust commands are declared #[tauri::command(rename_all =
+  // "snake_case")] and @tauri-apps/api passes the JS args VERBATIM (no case
+  // conversion), so the object keys MUST be the Rust parameter names
+  // (`file_name`, `rel_path`, ...) — a camelCase key makes the invoke reject
+  // and the image save/display silently break (real WebKitGTK-verified).
   saveAttachment: (vault, fileName, base64, dir) =>
-    invoke<string>('save_attachment', { vault, fileName, base64, dir: dir ?? '' }),
+    invoke<string>('save_attachment', { vault, file_name: fileName, base64, dir: dir ?? '' }),
   resolveMediaPath: async (vault, relPath) => {
-    const absolute = await invoke<string>('resolve_media_path', { vault, relPath })
+    const absolute = await invoke<string>('resolve_media_path', { vault, rel_path: relPath })
     return convertFileSrc(absolute)
   },
   createDir: (vault, path) => invoke<string>('create_dir', { vault, path }),
