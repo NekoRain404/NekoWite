@@ -209,12 +209,24 @@ async fn watch_folder(
 /// attachments tree) no matter where the vault lives on disk. The static
 /// `assetScope` in tauri.conf.json only covers relative patterns, so vaults
 /// opened from arbitrary locations need this runtime grant.
+///
+/// The whole vault is allowed so images referenced by notes always resolve:
+/// attachments live under `attachments/`, but pasted images may be staged under
+/// `.tmp` (an unsaved tab) or written to per-note `<name>_assets/` directories
+/// anywhere in the tree. The app's internal metadata trees are explicitly
+/// FORBIDDEN so a content-injection attack cannot read history snapshots, trash,
+/// or `.git` through `asset://` — `forbid_directory` takes precedence over
+/// `allow_directory`, and this also covers platforms where the scope's dotfile
+/// glob matching is off (a transitive path could otherwise reach `.nekowite`).
 fn allow_vault_media(app: &tauri::AppHandle, vault_root: &str) {
     use tauri::Manager;
     let path = std::path::PathBuf::from(vault_root);
     let path = path.canonicalize().unwrap_or(path);
     let scope = app.asset_protocol_scope();
     let _ = scope.allow_directory(&path, true);
+    for hidden in [".nekowite", ".nekowite-trash", ".git"] {
+        let _ = scope.forbid_directory(path.join(hidden), true);
+    }
 }
 
 /// True when any path component starts with `.`, i.e. the path is a hidden

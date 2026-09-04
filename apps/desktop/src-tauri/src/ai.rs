@@ -1,8 +1,8 @@
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{Emitter, Manager};
 
@@ -19,6 +19,12 @@ pub struct AIConfig {
     pub max_tokens: Option<u32>,
     /// Optional system prompt. `None`/empty adds no system message.
     pub system_prompt: Option<String>,
+    /// Opt-in to allow private/loopback Base URLs (e.g. Ollama / LM Studio).
+    /// Default `false`: a Base URL whose host is a literal private, loopback,
+    /// link-local, CGNAT or unspecified IP (or `localhost`) is rejected. The
+    /// frontend must send this to reach a local model endpoint.
+    #[serde(default)]
+    pub allow_private: bool,
 }
 
 /// The system prompt to send, normalised so blanks become `None`.
@@ -39,8 +45,170 @@ pub struct AIChunk {
 /// Set of in-flight completion ids. `ai_cancel` removes an id, the stream
 /// loop in `ai_complete` checks membership before each chunk and breaks when
 /// the id is gone.
-#[derive(Default)]
-pub struct AiState(pub Mutex<HashSet<String>>);
+///
+/// Also carries a bounded concurrency limiter: at most [`CONCURRENCY_LIMIT`]
+/// completions stream at once, with [`MAX_PENDING`] more allowed to queue.
+/// Beyond that a request is rejected with a clear "busy" error instead of
+/// spawning an unbounded number of connections (which would duplicate billing,
+/// open many sockets, and stutter every stream).
+pub struct AiState {
+    pub inflight: Mutex<HashSet<String>>,
+    /// Concurrency cap for streaming completions. The permit is held for the
+    /// whole request, so a bounded number of connections are ever open.
+    semaphore: Arc<tokio::sync::Semaphore>,
+    /// How many requests are currently queued waiting for a permit. Bounds the
+    /// wait queue so saturation surfaces a fast "busy" error rather than a
+    /// growing backlog of idle connections.
+    pending: AtomicUsize,
+}
+
+impl Default for AiState {
+    fn default() -> Self {
+        Self {
+            inflight: Mutex::new(HashSet::new()),
+            semaphore: Arc::new(tokio::sync::Semaphore::new(CONCURRENCY_LIMIT)),
+            pending: AtomicUsize::new(0),
+        }
+    }
+}
+
+const CONCURRENCY_LIMIT: usize = 3;
+const MAX_PENDING: usize = 8;
+
+/// RAII guard that decrements the pending counter on drop, so a task aborted
+/// while waiting for a permit never leaks its queue slot.
+struct PendingGuard<'a>(&'a AiState);
+
+impl Drop for PendingGuard<'_> {
+    fn drop(&mut self) {
+        self.0.pending.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Acquire a concurrency slot, holding the returned permit for the duration of
+/// one streaming request. Bounded by [`CONCURRENCY_LIMIT`] in-flight permits and
+/// [`MAX_PENDING`] queued waiters; a saturated pool returns a clear "busy" error
+/// instead of spawning unbounded connections.
+async fn acquire_slot(state: &AiState) -> Result<tokio::sync::OwnedSemaphorePermit, String> {
+    let guard = PendingGuard(state);
+    let prev = state.pending.fetch_add(1, Ordering::SeqCst);
+    if prev >= MAX_PENDING {
+        return Err("AI 请求过多（并发已满），请稍后重试".into());
+    }
+    // `acquire_owned` takes an `Arc`, so the queue is the semaphore itself and
+    // the permit is owned (not tied to `state`), letting it be held across the
+    // whole stream without borrowing the Tauri state.
+    let permit = state
+        .semaphore
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| "AI 服务不可用".to_string())?;
+    drop(guard);
+    Ok(permit)
+}
+
+fn emit_ai_error(app: &tauri::AppHandle, id: &str, message: &str) {
+    let _ = app.emit(
+        "ai-error",
+        serde_json::json!({ "id": id, "message": message }),
+    );
+}
+
+/// Guard against SSRF / internal-endpoint abuse via a user-supplied `base_url`.
+/// Only `http`/`https` are accepted; hosts that are literal private, loopback,
+/// link-local, CGNAT or unspecified IPs (plus the literal `localhost` name) are
+/// rejected unless the caller explicitly opts in via [`AIConfig::allow_private`]
+/// (for legitimate local models such as Ollama / LM Studio). The default
+/// provider endpoints (api.anthropic.com, api.openai.com, ...) are public and
+/// never rejected.
+fn validate_base_url(cfg: &AIConfig) -> Result<(), String> {
+    if cfg.allow_private {
+        return Ok(());
+    }
+    if let Some(base) = cfg.base_url.as_deref() {
+        validate_public_url(base)?;
+    }
+    Ok(())
+}
+
+fn validate_public_url(base: &str) -> Result<(), String> {
+    let url = reqwest::Url::parse(base)
+        .map_err(|_| format!("AI Base URL 无效：{base}（应为 http:// 或 https:// 格式）"))?;
+    if url.scheme() != "http" && url.scheme() != "https" {
+        return Err(format!("AI Base URL 必须使用 http:// 或 https://：{base}"));
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| format!("AI Base URL 缺少主机名：{base}"))?;
+    if is_private_or_loopback_host(host) {
+        return Err(format!(
+            "AI Base URL 指向了本机/内网地址（{host}）。为安全起见已默认拒绝连接内网。\
+             如果你确实要连接本地模型（如 Ollama / LM Studio），请在设置中开启“允许本地/内网地址”后再试。"
+        ));
+    }
+    Ok(())
+}
+
+fn is_private_or_loopback_host(host: &str) -> bool {
+    // `Url::host_str()` serialises IPv6 with surrounding brackets (`[::1]`),
+    // which would not parse as an `IpAddr`; strip them so it does.
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    let lower = host.to_ascii_lowercase();
+    if lower == "localhost" || lower.ends_with(".localhost") {
+        return true;
+    }
+    match host.parse::<std::net::IpAddr>() {
+        Ok(ip) => is_private_or_loopback_ip(ip),
+        Err(_) => false,
+    }
+}
+
+fn is_private_or_loopback_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            let o = v4.octets();
+            o[0] == 0                                        // 0.0.0.0/8 "this network"
+                || o[0] == 127                                // 127.0.0.0/8 loopback
+                || o[0] == 10                                 // 10.0.0.0/8 private
+                || (o[0] == 100 && (16..=127).contains(&o[1])) // 100.64.0.0/10 CGNAT
+                || (o[0] == 169 && o[1] == 254)               // 169.254.0.0/16 link-local
+                || (o[0] == 172 && (16..=31).contains(&o[1])) // 172.16.0.0/12 private
+                || (o[0] == 192 && o[1] == 168)               // 192.168.0.0/16 private
+        }
+        std::net::IpAddr::V6(v6) => {
+            let seg = v6.segments();
+            v6.is_loopback()                                // ::1/128
+                || v6.is_unspecified()                      // ::
+                || (seg[0] & 0xfe00) == 0xfc00              // fc00::/7 unique-local
+                || (seg[0] & 0xffc0) == 0xfe80              // fe80::/10 link-local
+                || is_ipv4_mapped_private(v6)
+        }
+    }
+}
+
+/// `::ffff:a.b.c.d` — an IPv4 address embedded in IPv6. Decode the trailing 32
+/// bits and re-run the IPv4 guard so a v4 range check cannot be bypassed by
+/// writing the address as IPv4-mapped IPv6.
+fn is_ipv4_mapped_private(v6: std::net::Ipv6Addr) -> bool {
+    let seg = v6.segments();
+    if !(seg[0] == 0
+        && seg[1] == 0
+        && seg[2] == 0
+        && seg[3] == 0
+        && seg[4] == 0
+        && seg[5] == 0xffff)
+    {
+        return false;
+    }
+    let v4 = std::net::Ipv4Addr::new(
+        (seg[6] >> 8) as u8,
+        (seg[6] & 0xff) as u8,
+        (seg[7] >> 8) as u8,
+        (seg[7] & 0xff) as u8,
+    );
+    is_private_or_loopback_ip(std::net::IpAddr::V4(v4))
+}
 
 static AI_ID_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -194,17 +362,14 @@ pub fn resolve_endpoint(
                 .base_url
                 .clone()
                 .unwrap_or_else(|| "https://generativelanguage.googleapis.com".into());
-            let mut url = format!(
+            // The URL stays free of the API key so proxies/servers never log it.
+            // The credential rides in the `x-goog-api-key` request header, which
+            // `stream_complete` sets (Gemini rejects `Authorization: Bearer`).
+            let url = format!(
                 "{}/v1beta/models/{}:streamGenerateContent?alt=sse",
                 base.trim_end_matches('/'),
                 model
             );
-            // Gemini authenticates via the `key` query parameter (or the
-            // `x-goog-api-key` header), NOT `Authorization: Bearer`. Embed the
-            // key in the query so the request is actually authorized.
-            if let Some(key) = &cfg.api_key {
-                url.push_str(&format!("&key={key}"));
-            }
             let parts = if has_images {
                 let mut parts = vec![serde_json::json!({ "text": prompt })];
                 for img in images {
@@ -389,7 +554,7 @@ pub fn parse_sse_line(line: &str, provider: &str, acc: &mut String) -> Option<St
 
 fn is_active(app: &tauri::AppHandle, id: &str) -> bool {
     let state = app.state::<AiState>();
-    let guard = state.0.lock();
+    let guard = state.inflight.lock();
     match guard {
         Ok(inflight) => inflight.contains(id),
         Err(_) => false,
@@ -399,7 +564,7 @@ fn is_active(app: &tauri::AppHandle, id: &str) -> bool {
 #[tauri::command]
 pub async fn ai_cancel(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let state = app.state::<AiState>();
-    let mut inflight = state.0.lock().map_err(|e| e.to_string())?;
+    let mut inflight = state.inflight.lock().map_err(|e| e.to_string())?;
     inflight.remove(&id);
     Ok(())
 }
@@ -408,6 +573,9 @@ pub async fn ai_cancel(app: tauri::AppHandle, id: String) -> Result<(), String> 
 /// base/credential conventions of `resolve_endpoint` so the dropdown pulls from
 /// the same origin a completion would use.
 async fn list_models(config: &AIConfig) -> Result<Vec<String>, String> {
+    // Reject a private/loopback Base URL unless the user opts in (see
+    // `validate_base_url`); a model dropdown must never phone an internal host.
+    validate_base_url(config)?;
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(15))
         .read_timeout(Duration::from_secs(15))
@@ -432,11 +600,15 @@ async fn list_models(config: &AIConfig) -> Result<Vec<String>, String> {
                 .base_url
                 .clone()
                 .unwrap_or_else(|| "https://generativelanguage.googleapis.com".into());
-            let mut url = format!("{}/v1beta/models", base.trim_end_matches('/'));
-            if let Some(key) = &config.api_key {
-                url.push_str(&format!("?key={key}"));
-            }
-            (url, Vec::new())
+            // Keep the key out of the URL; it rides in the `x-goog-api-key`
+            // header instead so it is never logged by a proxy/server.
+            let url = format!("{}/v1beta/models", base.trim_end_matches('/'));
+            let headers = if let Some(key) = &config.api_key {
+                vec![("x-goog-api-key".to_string(), key.clone())]
+            } else {
+                Vec::new()
+            };
+            (url, headers)
         }
         _ => {
             let base = config
@@ -497,12 +669,32 @@ pub async fn ai_complete(
     let id = next_ai_id();
     {
         let state = app.state::<AiState>();
-        let mut inflight = state.0.lock().map_err(|e| e.to_string())?;
+        let mut inflight = state.inflight.lock().map_err(|e| e.to_string())?;
         inflight.insert(id.clone());
     }
-    let result = stream_complete(&app, &config, &prompt, &images, &id).await;
+    // Everything below, including the validation guard, runs inside a single
+    // guarded block so every early-return path (invalid Base URL, saturated
+    // concurrency pool) still falls through to the `remove(&id)` cleanup below.
+    // A rejected internal/loopback endpoint surfaces a clear user-facing error
+    // instead of a silent failure or a request phoning a forbidden host.
+    let result = async {
+        validate_base_url(&config).map_err(|e| {
+            emit_ai_error(&app, &id, &e);
+            e
+        })?;
+        // Bound concurrency: acquire a slot before opening a connection. A
+        // saturated/over-quota request gets a clear "busy" error rather than
+        // unbounded task spawning. The permit is held for the whole stream.
+        let state = app.state::<AiState>();
+        let _permit = acquire_slot(&state).await.map_err(|e| {
+            emit_ai_error(&app, &id, &e);
+            e
+        })?;
+        stream_complete(&app, &config, &prompt, &images, &id).await
+    }
+    .await;
     if let Some(state) = app.try_state::<AiState>() {
-        if let Ok(mut inflight) = state.0.lock() {
+        if let Ok(mut inflight) = state.inflight.lock() {
             inflight.remove(&id);
         }
     }
@@ -552,8 +744,13 @@ async fn stream_complete(
             request = request.header("anthropic-version", "2023-06-01");
         }
         "gemini" => {
-            // Gemini keys ride in the URL `?key=` (set in resolve_endpoint);
-            // no Authorization header — Gemini rejects Bearer auth.
+            // Gemini keys ride in the `x-goog-api-key` header, NOT in the URL
+            // (removed from `resolve_endpoint`) and NOT `Authorization: Bearer`
+            // (Gemini rejects Bearer auth). Keeping it in a header stops the
+            // secret from being logged by proxies/servers.
+            if let Some(key) = &config.api_key {
+                request = request.header("x-goog-api-key", key);
+            }
         }
         _ => {
             if let Some(key) = &config.api_key {
@@ -638,4 +835,113 @@ async fn stream_complete(
     }
     let _ = app.emit("ai-done", serde_json::json!({ "id": id, "full": full }));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_loopback_and_private_bases() {
+        for base in [
+            "http://localhost:11434",
+            "http://localhost:11434/v1",
+            "http://127.0.0.1:11434",
+            "http://10.0.0.5",
+            "http://172.16.0.1",
+            "http://172.31.255.255",
+            "http://192.168.1.1",
+            "http://169.254.169.254",
+            "http://100.64.0.1",
+            "http://0.0.0.0:8080",
+            "http://[::1]:8080",
+            "http://[fc00::1]",
+            "http://[fe80::1]",
+            "http://[::ffff:127.0.0.1]",
+        ] {
+            assert!(validate_public_url(base).is_err(), "should reject {base}");
+        }
+    }
+
+    #[test]
+    fn helper_flags_private_loopback_and_mapped_ips() {
+        for host in [
+            "127.0.0.1", "10.0.0.5", "172.16.0.1", "192.168.1.1", "169.254.169.254",
+            "100.64.0.1", "0.0.0.0", "::1", "::", "fc00::1", "fe80::1",
+            "::ffff:127.0.0.1", "::ffff:192.168.0.5", "localhost",
+        ] {
+            assert!(is_private_or_loopback_host(host), "should flag {host}");
+        }
+        for host in ["8.8.8.8", "203.0.113.9", "2606:4700:4700::1111", "api.openai.com"] {
+            assert!(!is_private_or_loopback_host(host), "should allow {host}");
+        }
+    }
+
+    #[test]
+    fn accepts_public_http_and_https_bases() {
+        for base in [
+            "https://api.openai.com/v1",
+            "https://generativelanguage.googleapis.com",
+            "https://api.anthropic.com",
+            "http://203.0.113.9:8000/v1",
+            "https://llm.internal.example.com",
+        ] {
+            assert!(validate_public_url(base).is_ok(), "should accept {base}");
+        }
+    }
+
+    #[test]
+    fn rejects_non_http_schemes_and_missing_host() {
+        assert!(validate_public_url("ftp://example.com").is_err());
+        assert!(validate_public_url("file:///etc/passwd").is_err());
+        assert!(validate_public_url("http://").is_err());
+        assert!(validate_public_url("not a url").is_err());
+    }
+
+    #[test]
+    fn allow_private_opts_out() {
+        let cfg = AIConfig {
+            provider: "openai".into(),
+            model: "gpt-4o".into(),
+            base_url: Some("http://localhost:11434/v1".into()),
+            api_key: None,
+            temperature: None,
+            max_tokens: None,
+            system_prompt: None,
+            allow_private: true,
+        };
+        assert!(validate_base_url(&cfg).is_ok());
+    }
+
+    #[test]
+    fn default_bases_are_not_rejected() {
+        let cfg = AIConfig {
+            provider: "openai".into(),
+            model: "gpt-4o".into(),
+            base_url: None,
+            api_key: None,
+            temperature: None,
+            max_tokens: None,
+            system_prompt: None,
+            allow_private: false,
+        };
+        assert!(validate_base_url(&cfg).is_ok());
+    }
+
+    #[test]
+    fn gemini_url_has_no_key_embedded() {
+        let cfg = AIConfig {
+            provider: "gemini".into(),
+            model: "gemini-2.5-pro".into(),
+            base_url: None,
+            api_key: Some("SECRET-KEY".into()),
+            temperature: None,
+            max_tokens: None,
+            system_prompt: None,
+            allow_private: false,
+        };
+        let (url, _body) = resolve_endpoint(&cfg, "hi", &[]);
+        assert!(!url.contains("SECRET-KEY"), "key must not appear in URL: {url}");
+        assert!(!url.contains("key="), "url must not carry a key query param: {url}");
+    }
 }
