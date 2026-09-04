@@ -21,8 +21,8 @@ import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 import { parseOutline } from '../services/outline'
 import { dirRelativeToVault } from '../services/noteMeta'
-import { contentMatchOf, mapWithConcurrency } from '../services/contentSearch'
-import type { ContentMatch } from '../services/contentSearch'
+import { searchContentMatches } from '../services/contentSearch'
+import type { ContentMatch, ContentSearchCandidate } from '../services/contentSearch'
 import { t } from '../i18n'
 
 const library = useLibraryStore()
@@ -40,10 +40,11 @@ const contentResults = ref<ContentMatch[]>([])
 const contentSearching = ref(false)
 const contentSearched = ref(false)
 let contentSearchTimer: ReturnType<typeof setTimeout> | null = null
-let contentSearchSeq = 0
+let contentSearchAbort: AbortController | null = null
 
 function clearContentResults(): void {
-  contentSearchSeq += 1
+  contentSearchAbort?.abort()
+  contentSearchAbort = null
   if (contentSearchTimer) {
     clearTimeout(contentSearchTimer)
     contentSearchTimer = null
@@ -66,6 +67,11 @@ function scheduleContentSearch(): void {
 }
 
 async function runContentSearch(): Promise<void> {
+  // Supersede any in-flight search, even when the query clears below: a real
+  // AbortController stops the previous run's reads/matches instead of only
+  // discarding its stale results.
+  contentSearchAbort?.abort()
+  contentSearchAbort = null
   const vault = library.vault
   const q = library.query.trim()
   if (!vault || !q) {
@@ -74,17 +80,20 @@ async function runContentSearch(): Promise<void> {
     contentSearching.value = false
     return
   }
-  const seq = ++contentSearchSeq
+  const controller = new AbortController()
+  contentSearchAbort = controller
   contentSearching.value = true
-  const candidates = library.notes.map((n) => ({ path: n.path, name: n.name }))
-  const hits = await mapWithConcurrency(candidates, CONTENT_SEARCH_CONCURRENCY, async (c) => {
-    // notes indexed content is reused via the shared cache; only a miss reads disk.
-    const content = await library.noteContent(c.path)
-    if (content === null) return null
-    return contentMatchOf({ path: c.path, name: c.name, content }, q)
-  })
-  if (seq !== contentSearchSeq) return
-  contentResults.value = hits.filter((m): m is ContentMatch => m !== null)
+  const candidates: ContentSearchCandidate[] = library.notes.map((n) => ({
+    path: n.path,
+    name: n.name,
+    title: n.title,
+    tags: n.tags,
+    summary: n.summary,
+    readContent: () => library.noteContent(n.path),
+  }))
+  const hits = await searchContentMatches(candidates, q, controller.signal, CONTENT_SEARCH_CONCURRENCY)
+  if (controller.signal.aborted) return
+  contentResults.value = hits
   contentSearching.value = false
   contentSearched.value = true
 }

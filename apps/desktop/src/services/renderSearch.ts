@@ -132,9 +132,15 @@ interface WrapEntry {
   attrs?: Record<string, string>
 }
 
+/** The last find/spell entries computed by `refreshOverlays`. The decorations
+ *  provider reads this cache instead of re-scanning the model on every
+ *  ProseMirror update, so a typing burst never re-traverses the whole doc. */
+let cachedEntries: WrapEntry[] = []
+
 /** Build the overlay entries for a given document state from the current
- *  panel state. Pure: never mutates reactive state, so it can run inside the
- *  view's render pass. */
+ *  panel state. Pure: never mutates reactive state. This is the only function
+ *  that traverses the document, so it runs solely in the coalesced refresh
+ *  path — never per-render. */
 function computeEntries(state: EditorState): WrapEntry[] {
   const entries: WrapEntry[] = []
   if (renderSearchState.open && renderSearchState.query) {
@@ -201,9 +207,10 @@ function flattenSource(source: DecorationSource): Decoration[] {
 /** Compute the overlay decorations for a state during the view's render pass.
  *  A top-level `decorations` editor prop shadows `props.decorations` from
  *  state plugins, so we merge our find/spell marks in on top of whatever the
- *  plugins contribute (e.g. the AI suggestion ghost widget). */
+ *  plugins contribute (e.g. the AI suggestion ghost widget). Reads the cached
+ *  entries from the last coalesced `refreshOverlays` — cheap, no doc scan. */
 function decorationsProvider(state: EditorState): DecorationSet {
-  let combined = buildDecorationSet(state, computeEntries(state))
+  let combined = buildDecorationSet(state, cachedEntries)
   for (const plugin of state.plugins) {
     const deco = plugin.spec.props?.decorations
     if (typeof deco !== 'function') continue
@@ -215,15 +222,22 @@ function decorationsProvider(state: EditorState): DecorationSet {
   return combined
 }
 
-/** Re-apply find + spell overlays for the current state. Idempotent: resolves
- *  the live model ranges, updates the reactive panel state, then asks the view
- *  to re-render with the fresh decoration set. */
+/** Re-apply find + spell overlays for the current state. Idempotent: this is
+ *  the one place the model is scanned, and it caches the resulting entries so
+ *  the per-render decorations provider stays cheap. It resolves the live model
+ *  ranges, updates the reactive panel state, then asks the view to re-render
+ *  with the fresh decoration set. */
 export function refreshOverlays(): void {
   const view = getView()
   if (!view) return
 
+  const entries = computeEntries(view.state)
+  cachedEntries = entries
+
   if (renderSearchState.open && renderSearchState.query) {
-    const ranges = findRangesInDoc(view, renderSearchState.query, renderSearchState.caseSensitive)
+    const ranges = entries
+      .filter((e) => e.cls.startsWith('nw-find-hit'))
+      .map((e) => ({ from: e.from, to: e.to }))
     renderSearchState.ranges = ranges
     if (ranges.length) {
       if (renderSearchState.active >= ranges.length) renderSearchState.active = 0
@@ -243,21 +257,35 @@ const OVERLAY_REFRESH_IDLE_MS = 90
 
 // Coalesce the burst of changes that a typing run produces into ONE refresh
 // shortly after input settles. The final call is scheduled on the next
-// animation frame so ProseMirror has already synced the DOM. `refreshOverlays`
-// itself stays synchronous for explicit, user-driven calls (query, toggle,
-// navigate); this is the deferred companion the editor's change listener uses.
-const overlayRefresh = debounce(() => {
-  requestAnimationFrame(() => refreshOverlays())
-}, OVERLAY_REFRESH_IDLE_MS)
+// animation frame so ProseMirror has already synced the DOM. The rAF is
+// coalesced behind a single id so a scan never overlaps a pending scan.
+// `refreshOverlays` itself stays synchronous for explicit, user-driven calls
+// (query, toggle, navigate); this is the deferred companion the editor's
+// change listener uses.
+let overlayRafId = 0
+
+function runOverlayRefresh(): void {
+  if (overlayRafId) cancelAnimationFrame(overlayRafId)
+  overlayRafId = requestAnimationFrame(() => {
+    overlayRafId = 0
+    refreshOverlays()
+  })
+}
+
+const overlayRefresh = debounce(runOverlayRefresh, OVERLAY_REFRESH_IDLE_MS)
 
 /** Defer an overlay refresh: bursty model changes become a single refresh. */
 export function scheduleOverlayRefresh(): void {
   overlayRefresh.run()
 }
 
-/** Drop a scheduled (not-yet-run) overlay refresh. */
+/** Drop a scheduled overlay refresh and any pending rAF scan. */
 export function cancelOverlayRefresh(): void {
   overlayRefresh.cancel()
+  if (overlayRafId) {
+    cancelAnimationFrame(overlayRafId)
+    overlayRafId = 0
+  }
 }
 
 export function scrollRangeIntoView(view: EditorView, range: FindRange): void {
