@@ -14,7 +14,9 @@ import { createImageSrcResolver } from '../../../services/attachments'
 import { dirRelativeToVault } from '../../../services/noteMeta'
 import { fsService } from '../../../services/fs'
 import { useTabsStore } from '../../../stores/tabs'
-import { useLibraryStore } from '../../../stores/library'
+import { useDocumentListStore } from '../../../stores/documentList'
+import { useVaultSessionStore } from '../../../stores/vaultSession'
+import { resolveLinkPath as queryResolveLinkPath } from '../../vault/services/libraryQueries'
 import type { DocumentSession } from '../model/documentSession'
 
 type EditorView = NonNullable<ReturnType<NekoEditor['getView']>>
@@ -44,7 +46,8 @@ export interface EditorController {
  */
 export function createEditorController(deps: EditorControllerDeps): EditorController {
   const tabs = useTabsStore()
-  const library = useLibraryStore()
+  const documentList = useDocumentListStore()
+  const vaultSession = useVaultSessionStore()
 
   function mount(): void {
     const el = deps.getEditorEl()
@@ -76,7 +79,7 @@ export function createEditorController(deps: EditorControllerDeps): EditorContro
       const vault = tabs.vault
       if (!path || !vault) return
       const relDir = dirRelativeToVault(path, vault)
-      const resolved = library.resolveLinkPath(relDir, target)
+      const resolved = queryResolveLinkPath(documentList.notes, vaultSession.vault, relDir, target)
       if (resolved) void tabs.openTab(resolved)
     })
   }

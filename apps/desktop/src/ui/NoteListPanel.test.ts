@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createApp, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import NoteListPanel from './NoteListPanel.vue'
-import { useLibraryStore } from '../stores/library'
+import { useFileTreeStore } from '../stores/fileTree'
+import { useDocumentListStore } from '../stores/documentList'
 
 let pinia: Pinia
 let host: HTMLElement | null = null
@@ -33,8 +34,7 @@ describe('NoteListPanel truncation notice', () => {
   })
 
   it('does not show the notice when the vault is not truncated', async () => {
-    const library = useLibraryStore()
-    library.vaultTruncated = false
+    useFileTreeStore().vaultTruncated = false
     mountPanel()
     await flush()
     expect(host!.textContent).not.toContain('截断')
@@ -42,9 +42,8 @@ describe('NoteListPanel truncation notice', () => {
   })
 
   it('surfaces the truncation signal to the user when the vault walk was capped', async () => {
-    const library = useLibraryStore()
-    library.vaultTruncated = true
-    library.indexing = false
+    useFileTreeStore().vaultTruncated = true
+    useDocumentListStore().indexing = false
     mountPanel()
     await flush()
     // The default test locale is zh, so the notice resolves to the zh string.

@@ -16,16 +16,21 @@ import FileTree from './FileTree.vue'
 import ContextMenu from './ContextMenu.vue'
 import type { ContextMenuItem } from './ContextMenu.vue'
 import ConflictDialog from '../components/ConflictDialog.vue'
-import { useLibraryStore } from '../stores/library'
+import { useDocumentListStore } from '../stores/documentList'
+import { useVaultSessionStore } from '../stores/vaultSession'
+import { useFileTreeStore } from '../stores/fileTree'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 import { parseOutline } from '../services/outline'
 import { dirRelativeToVault } from '../services/noteMeta'
+import { inlinksOf as queryInlinks, outlinksOf as queryOutlinks } from '../features/vault/services/libraryQueries'
 import { searchWithIndex } from '../services/contentSearch'
 import type { ContentMatch, ContentSearchCandidate } from '../services/contentSearch'
 import { t } from '../i18n'
 
-const library = useLibraryStore()
+const documentList = useDocumentListStore()
+const vaultSession = useVaultSessionStore()
+const fileTree = useFileTreeStore()
 const tabs = useTabsStore()
 const view = useViewStore()
 
@@ -57,8 +62,8 @@ function clearContentResults(): void {
 /** Short label for the persistent search-index state, shown in the note-list
  *  meta row. While building it shows an incremental progress count. */
 const indexStatusLabel = computed(() => {
-  const s = library.indexState
-  const progress = library.indexProgress
+  const s = documentList.indexState
+  const progress = documentList.indexProgress
   if (s === 'building' && progress) {
     return t('notelist.indexBuildingProgress', { done: progress.done, total: progress.total })
   }
@@ -78,7 +83,7 @@ const indexStatusLabel = computed(() => {
 
 /** Whether the index state deserves a visible chip (not the idle "no vault"). */
 const showIndexStatus = computed(
-  () => library.indexState !== 'idle' && indexStatusLabel.value !== '',
+  () => documentList.indexState !== 'idle' && indexStatusLabel.value !== '',
 )
 
 function toggleContentSearch(): void {
@@ -99,8 +104,8 @@ async function runContentSearch(): Promise<void> {
   // discarding its stale results.
   contentSearchAbort?.abort()
   contentSearchAbort = null
-  const vault = library.vault
-  const q = library.query.trim()
+  const vault = vaultSession.vault
+  const q = documentList.query.trim()
   if (!vault || !q) {
     contentResults.value = []
     contentSearched.value = false
@@ -110,18 +115,18 @@ async function runContentSearch(): Promise<void> {
   const controller = new AbortController()
   contentSearchAbort = controller
   contentSearching.value = true
-  const candidates: ContentSearchCandidate[] = library.notes.map((n) => ({
+  const candidates: ContentSearchCandidate[] = documentList.notes.map((n) => ({
     path: n.path,
     name: n.name,
     title: n.title,
     tags: n.tags,
     summary: n.summary,
-    readContent: () => library.noteContent(n.path),
+    readContent: () => vaultSession.noteContent(n.path),
   }))
   const hits = await searchWithIndex(
     candidates,
     q,
-    (path) => library.indexEntryFor(path),
+    (path) => vaultSession.indexEntryFor(path),
     controller.signal,
     CONTENT_SEARCH_CONCURRENCY,
   )
@@ -131,16 +136,16 @@ async function runContentSearch(): Promise<void> {
   contentSearched.value = true
 }
 
-watch(() => library.vault, () => {
+watch(() => vaultSession.vault, () => {
   contentEnabled.value = false
   clearContentResults()
 })
 
-watch(() => library.notes, () => {
+watch(() => documentList.notes, () => {
   if (contentEnabled.value) scheduleContentSearch()
 })
 
-watch([() => library.query, contentEnabled], () => {
+watch([() => documentList.query, contentEnabled], () => {
   if (!contentEnabled.value) {
     clearContentResults()
     return
@@ -166,8 +171,8 @@ const activePath = computed(() => activeTab.value?.path ?? null)
 
 const relDir = computed(() => {
   const path = activePath.value
-  if (!path || !library.vault) return ''
-  return dirRelativeToVault(path, library.vault)
+  if (!path || !vaultSession.vault) return ''
+  return dirRelativeToVault(path, vaultSession.vault)
 })
 
 const outlineItems = computed(() => {
@@ -181,14 +186,14 @@ const links = computed(() => {
   const tab = activeTab.value
   if (!tab || !tab.path) return { out: [], back: [] }
   return {
-    out: library.outlinksOf(relDir.value, tab.content),
-    back: library.inlinksOf(relPath(tab.path)),
+    out: queryOutlinks(documentList.notes, vaultSession.vault, relDir.value, tab.content),
+    back: queryInlinks(documentList.notes, relPath(tab.path)),
   }
 })
 
 function relPath(path: string): string | null {
-  if (!library.vault) return null
-  const dir = dirRelativeToVault(path, library.vault)
+  if (!vaultSession.vault) return null
+  const dir = dirRelativeToVault(path, vaultSession.vault)
   const name = path.split('/').pop() ?? path
   return dir ? `${dir}/${name}` : name
 }
@@ -200,7 +205,7 @@ const sortMenuItems = computed<ContextMenuItem[]>(() => [
 ])
 
 const sortLabel = computed(() => {
-  switch (library.sortBy) {
+  switch (documentList.sortBy) {
     case 'mtime': return t('notelist.sortMtimeLabel')
     case 'title': return t('notelist.sortTitleLabel')
     case 'name': return t('notelist.sortNameLabel')
@@ -214,7 +219,7 @@ function openSortMenu(e: MouseEvent): void {
 }
 
 function onSortSelect(id: string): void {
-  if (id === 'mtime' || id === 'title' || id === 'name') library.setSortBy(id)
+  if (id === 'mtime' || id === 'title' || id === 'name') documentList.setSortBy(id)
 }
 
 function openNote(path: string | null): void {
@@ -230,11 +235,11 @@ function jumpOutline(line: number, index: number): void {
 <template>
   <section class="note-list">
     <header
-      v-if="library.listView === 'notes' || PLACEHOLDER_TITLES[library.listView]"
+      v-if="documentList.listView === 'notes' || PLACEHOLDER_TITLES[documentList.listView]"
       class="nl-header"
     >
       <div
-        v-if="library.listView === 'notes'"
+        v-if="documentList.listView === 'notes'"
         class="nl-switch"
         role="tablist"
       >
@@ -242,10 +247,10 @@ function jumpOutline(line: number, index: number): void {
           v-for="m in MODES"
           :key="m.id"
           class="switch-option nl-mode-btn"
-          :class="{ 'is-active': library.panelMode === m.id }"
+          :class="{ 'is-active': documentList.panelMode === m.id }"
           role="tab"
-          :aria-selected="library.panelMode === m.id"
-          @click="library.setPanelMode(m.id)"
+          :aria-selected="documentList.panelMode === m.id"
+          @click="documentList.setPanelMode(m.id)"
         >
           <component
             :is="m.icon"
@@ -259,26 +264,26 @@ function jumpOutline(line: number, index: number): void {
         v-else
         class="nl-placeholder-title"
       >
-        {{ t(`notelist.${PLACEHOLDER_TITLES[library.listView]!}`) }}
+        {{ t(`notelist.${PLACEHOLDER_TITLES[documentList.listView]!}`) }}
       </h2>
     </header>
 
     <div
-      v-if="library.listView === 'graph'"
+      v-if="documentList.listView === 'graph'"
       class="nl-embed"
     >
       <GraphPanel />
     </div>
 
     <div
-      v-else-if="library.listView === 'attachments'"
+      v-else-if="documentList.listView === 'attachments'"
       class="nl-embed"
     >
       <AttachmentsPanel />
     </div>
 
     <div
-      v-else-if="library.listView === 'folders'"
+      v-else-if="documentList.listView === 'folders'"
       class="nl-embed"
     >
       <FileTree
@@ -295,7 +300,7 @@ function jumpOutline(line: number, index: number): void {
     </div>
 
     <div
-      v-else-if="library.listView !== 'notes'"
+      v-else-if="documentList.listView !== 'notes'"
       class="nl-body nl-empty"
     >
       <p class="empty-hint">
@@ -303,7 +308,7 @@ function jumpOutline(line: number, index: number): void {
       </p>
     </div>
 
-    <template v-else-if="library.panelMode === 'notes'">
+    <template v-else-if="documentList.panelMode === 'notes'">
       <div class="nl-search">
         <Search
           class="nl-search-icon"
@@ -311,11 +316,11 @@ function jumpOutline(line: number, index: number): void {
           :stroke-width="1.8"
         />
         <input
-          :value="library.query"
+          :value="documentList.query"
           class="nl-search-input"
           type="text"
           :placeholder="t(contentEnabled ? 'notelist.contentSearchHint' : 'notelist.search')"
-          @input="library.setQuery(($event.target as HTMLInputElement).value)"
+          @input="documentList.setQuery(($event.target as HTMLInputElement).value)"
         >
         <button
           type="button"
@@ -332,20 +337,20 @@ function jumpOutline(line: number, index: number): void {
         </button>
       </div>
       <div class="nl-meta">
-        <span class="nl-count">{{ library.indexing ? t('notelist.indexing') : contentEnabled ? t('notelist.contentCount', { n: contentResults.length }) : t('notelist.count', { n: library.visibleNotes.length }) }}</span>
+        <span class="nl-count">{{ documentList.indexing ? t('notelist.indexing') : contentEnabled ? t('notelist.contentCount', { n: contentResults.length }) : t('notelist.count', { n: documentList.visibleNotes.length }) }}</span>
         <span
           v-if="showIndexStatus"
           class="nl-index"
-          :class="`is-${library.indexState}`"
+          :class="`is-${documentList.indexState}`"
           :title="t('notelist.indexStateTitle', { state: indexStatusLabel })"
         >
           {{ indexStatusLabel }}
         </span>
         <button
-          v-if="library.indexState === 'stale' || library.indexState === 'needs-rebuild'"
+          v-if="documentList.indexState === 'stale' || documentList.indexState === 'needs-rebuild'"
           class="nl-index-rebuild"
           :title="t('notelist.rebuildIndexTitle')"
-          @click="library.rebuildIndex()"
+          @click="vaultSession.rebuildIndex()"
         >
           {{ t('notelist.rebuildIndex') }}
         </button>
@@ -363,7 +368,7 @@ function jumpOutline(line: number, index: number): void {
         </button>
       </div>
       <p
-        v-if="library.vaultTruncated && !library.indexing"
+        v-if="fileTree.vaultTruncated && !documentList.indexing"
         class="nl-truncated"
         role="status"
         :title="t('notelist.vaultTruncated')"
@@ -412,16 +417,16 @@ function jumpOutline(line: number, index: number): void {
         </template>
         <template v-else>
           <NoteCard
-            v-for="note in library.visibleNotes"
+            v-for="note in documentList.visibleNotes"
             :key="note.path"
             :note="note"
             :active="note.path === activePath"
-            :favorite="library.isFavorite(note.path)"
+            :favorite="documentList.isFavorite(note.path)"
             @open="openNote(note.path)"
-            @toggle-favorite="library.toggleFavorite(note.path)"
+            @toggle-favorite="documentList.toggleFavorite(note.path)"
           />
           <p
-            v-if="!library.indexing && library.visibleNotes.length === 0"
+            v-if="!documentList.indexing && documentList.visibleNotes.length === 0"
             class="nl-empty-hint"
           >
             {{ t('notelist.empty') }}
@@ -431,7 +436,7 @@ function jumpOutline(line: number, index: number): void {
     </template>
 
     <div
-      v-else-if="library.panelMode === 'outline'"
+      v-else-if="documentList.panelMode === 'outline'"
       class="nl-body"
     >
       <template v-if="activeTab">
@@ -462,7 +467,7 @@ function jumpOutline(line: number, index: number): void {
     </div>
 
     <div
-      v-else-if="library.panelMode === 'links'"
+      v-else-if="documentList.panelMode === 'links'"
       class="nl-body"
     >
       <template v-if="activeTab">
