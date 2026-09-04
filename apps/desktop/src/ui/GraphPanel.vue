@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { buildLinkGraph, computeLayout, type LayoutPoint } from '../services/linkGraph'
+import {
+  buildLinkGraph,
+  computeLayout,
+  computeLayoutChunked,
+  graphSignature,
+  type LayoutPoint,
+} from '../services/linkGraph'
 import { fsService } from '../services/fs'
 import { vaultFileIndex } from '../services/vaultFiles'
 import { useTabsStore } from '../stores/tabs'
@@ -68,6 +74,15 @@ let resizeObserver: ResizeObserver | null = null
 let themeObserver: MutationObserver | null = null
 let generation = 0
 
+// 布局缓存：图谱结构与画布尺寸都没变时，直接复用上次计算结果，避免
+// resize/主题/视图切换等与内容无关的更新反复重跑昂贵的力导向布局。
+let layoutCache: { sig: string; w: number; h: number; points: LayoutPoint[] } | null = null
+// 并发令牌：新的布局/清空会递增，用于丢弃已被取代的异步布局结果。
+let layoutToken = 0
+
+/** 节点数不超过该值时布局足够快，直接走同步路径（仍带迭代上限）。 */
+const SYNC_LAYOUT_LIMIT = 30
+
 // 视图变换：screen = layout * scale + offset
 let scale = 1
 let offsetX = 0
@@ -77,7 +92,9 @@ async function readWithConcurrency(
   vault: string,
   paths: string[],
 ): Promise<Array<{ path: string; content: string }>> {
-  const out = new Array<{ path: string; content: string }>(paths.length)
+  // 直接按完成顺序 push，不再预分配定长数组后 filter(Boolean)，避免产生
+  // 一列 undefined 洞以及多余的一次全量遍历。
+  const out: Array<{ path: string; content: string }> = []
   let cursor = 0
   const workers = Array.from({ length: Math.min(READ_CONCURRENCY, paths.length) }, async () => {
     while (cursor < paths.length) {
@@ -90,7 +107,7 @@ async function readWithConcurrency(
     }
   })
   await Promise.all(workers)
-  return out.filter(Boolean)
+  return out
 }
 
 async function rebuild(): Promise<void> {
@@ -110,10 +127,12 @@ async function rebuild(): Promise<void> {
     degrees = new Map(graph.nodes.map((node) => [node.id, node.degree]))
     noteCount.value = graph.nodes.length
     edgeCount.value = graph.edges.length
-    relayout()
+    await relayout()
   } catch {
     if (thisGeneration !== generation) return
     graph = null
+    layoutToken += 1
+    layoutCache = null
     layout.value = []
     noteCount.value = 0
     edgeCount.value = 0
@@ -124,13 +143,36 @@ async function rebuild(): Promise<void> {
   }
 }
 
-function relayout(): void {
-  if (!graph) return
+async function relayout(force = false): Promise<void> {
+  const g = graph
+  if (!g) return
   const safeW = Math.max(width, 320)
   const safeH = Math.max(height, 240)
-  layout.value = computeLayout(graph.nodes, graph.edges, safeW, safeH, {
-    seed: Math.floor(Math.random() * 0x7fffffff),
-  })
+  const sig = graphSignature(g.nodes, g.edges)
+  // 图谱结构与画布尺寸都没变时复用上次结果，避免 resize/主题/视图切换等
+  // 与内容无关的更新反复重跑昂贵的力导向布局（仅当节点/边真正变化才重算）。
+  if (
+    !force &&
+    layoutCache &&
+    layoutCache.sig === sig &&
+    layoutCache.w === safeW &&
+    layoutCache.h === safeH
+  ) {
+    layout.value = layoutCache.points
+    draw()
+    return
+  }
+  const token = ++layoutToken
+  const options = { seed: Math.floor(Math.random() * 0x7fffffff) }
+  // 小图足够快，直接用同步路径（仍带自适应迭代上限）；大图用分块异步路径，
+  // 在帧间让出主线程，避免阻塞输入。
+  const points =
+    g.nodes.length <= SYNC_LAYOUT_LIMIT
+      ? computeLayout(g.nodes, g.edges, safeW, safeH, options)
+      : await computeLayoutChunked(g.nodes, g.edges, safeW, safeH, options)
+  if (token !== layoutToken || g !== graph) return
+  layoutCache = { sig, w: safeW, h: safeH, points }
+  layout.value = points
   draw()
 }
 
@@ -302,6 +344,8 @@ watch(
     }
     generation += 1
     graph = null
+    layoutToken += 1
+    layoutCache = null
     layout.value = []
     noteCount.value = 0
     edgeCount.value = 0
@@ -357,7 +401,7 @@ defineExpose({ rebuild })
         class="graph-btn"
         :disabled="loading || noteCount === 0"
         :title="t('graph.relayoutTitle')"
-        @click="relayout"
+        @click="relayout(true)"
       >
         {{ t('graph.relayout') }}
       </button>

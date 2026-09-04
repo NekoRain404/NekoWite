@@ -25,6 +25,9 @@ export type PanelMode = 'notes' | 'outline' | 'links'
 const LS_KEY = 'nekowite.library'
 const RECENTS_MAX = 20
 const INDEX_CONCURRENCY = 8
+/** Coalesce bursts of markdown fs-change events for one path into a single
+ * re-index (a save may otherwise emit several read + stat + index updates). */
+const MD_CHANGE_DEBOUNCE_MS = 200
 
 interface PersistedLibrary {
   favorites?: unknown
@@ -61,11 +64,23 @@ export const useLibraryStore = defineStore('library', () => {
   const vault = ref<string | null>(null)
   const indexing = ref(false)
   const attachmentCount = ref(0)
+  /** True when the last directory walk for the open vault was truncated because
+   * it exceeded MAX_DIRS. Surfaced so the UI can warn instead of silently
+   * dropping files. Reset on vault switch; set during index. */
+  const vaultTruncated = ref(false)
 
   let unlistenFs: (() => void) | null = null
   let indexSeq = 0
   let reindexTimer: ReturnType<typeof setTimeout> | null = null
   let attachmentRefreshTimer: ReturnType<typeof setTimeout> | null = null
+  /** path → { mtime, size } for the last index/read of that note, used to skip
+   * re-reading unchanged files on a re-index. Store-scoped so it resets per
+   * Pinia instance (tests). */
+  const noteStatCache = new Map<string, { mtime: number; size: number }>()
+  /** path → pending markdown re-index timer (coalesced per note). */
+  const mdChangeTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  /** path → latest markdown change generation; a stale read must never win. */
+  const mdChangeSeq = new Map<string, number>()
 
   function persist(): void {
     localStorage.setItem(LS_KEY, JSON.stringify({ favorites: favorites.value, recents: recents.value }))
@@ -87,33 +102,59 @@ export const useLibraryStore = defineStore('library', () => {
     computeLibraryCounts(notes.value, favorites.value, recents.value),
   )
 
-  async function readNoteSummary(v: string, path: string): Promise<NoteSummary | null> {
+  /** Index one note into a {@link NoteSummary}. When we already have cached
+   * metadata for the path it first cheaply stats the file and, if mtime/size are
+   * unchanged, reuses the cached content without a second read — so a full
+   * re-index of an untouched tree stops re-reading every file. `force` bypasses
+   * the cache for fs-change driven re-indexes, where the file is known to have
+   * changed. `shouldCommit` gates the shared-cache mutation so a superseded
+   * (stale) read never overwrites a newer note's cached content/stat. */
+  async function indexNote(
+    v: string,
+    path: string,
+    opts: { force?: boolean; shouldCommit?: () => boolean } = {},
+  ): Promise<NoteSummary | null> {
+    const cached = noteStatCache.get(path)
+    if (cached !== undefined && !opts.force) {
+      try {
+        const stat = await fsService.stat(v, path)
+        if (stat.mtime === cached.mtime && stat.size === cached.size) {
+          const content = contentCache.get(path) ?? contentCache.peek(path)
+          if (content !== undefined) {
+            return parseNoteMeta(path, content, { mtime: stat.mtime, size: stat.size, vault: v })
+          }
+          // Content was evicted from the LRU — fall through to a fresh read.
+        }
+      } catch {
+        // stat failed — fall through to a fresh read below.
+      }
+    }
     try {
       const [content, stat] = await Promise.all([
         fsService.read(v, path),
         fsService.stat(v, path).catch(() => null),
       ])
-      // Reuse the content we already read: it feeds the note list's full-text
-      // search and the graph's link walk without a second fs read. Evicted on a
-      // miss (LRU) — see contentCache.
-      contentCache.set(path, content)
-      let mtime = 0
-      let size = content.length
-      if (stat) {
-        mtime = stat.mtime
-        size = stat.size
+      const mtime = stat?.mtime ?? 0
+      const size = stat?.size ?? content.length
+      if (opts.shouldCommit ? opts.shouldCommit() : true) {
+        // Reuse the content we just read: it feeds the note list's full-text
+        // search and the graph's link walk without a second fs read. Evicted
+        // on a miss (LRU) — see contentCache.
+        contentCache.set(path, content)
+        noteStatCache.set(path, { mtime, size })
       }
       return parseNoteMeta(path, content, { mtime, size, vault: v })
     } catch {
+      if (opts.shouldCommit ? opts.shouldCommit() : true) noteStatCache.delete(path)
       return null
     }
   }
 
   async function runIndex(v: string, seq = ++indexSeq): Promise<void> {
     indexing.value = true
-    // A full (re)index re-reads every note below, so the previous session's
-    // cached content is stale; drop it before repopulating with fresh reads.
-    contentCache.clear()
+    // Do NOT clear the content/stat caches here: indexNote compares mtime/size
+    // and skips re-reading unchanged files, so a re-index of an untouched tree
+    // is cheap instead of re-reading every note.
     try {
       const files = await vaultFileIndex.get(v)
       if (seq !== indexSeq) return
@@ -123,7 +164,7 @@ export const useLibraryStore = defineStore('library', () => {
         while (cursor < files.length) {
           const path = files[cursor]
           cursor += 1
-          const summary = await readNoteSummary(v, path)
+          const summary = await indexNote(v, path)
           if (summary) results.push(summary)
         }
       }
@@ -132,6 +173,7 @@ export const useLibraryStore = defineStore('library', () => {
       )
       if (seq !== indexSeq) return
       notes.value = results
+      vaultTruncated.value = vaultFileIndex.isTruncated(v)
       const alive = new Set(results.map((n) => n.path))
       if (favorites.value.some((p) => !alive.has(p)) || recents.value.some((p) => !alive.has(p))) {
         favorites.value = favorites.value.filter((p) => alive.has(p))
@@ -143,7 +185,7 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  async function handleFsChange(e: FsChangeEvent): Promise<void> {
+  function handleFsChange(e: FsChangeEvent): void {
     const v = vault.value
     if (!v) return
     if (!isMdPath(e.path)) {
@@ -159,17 +201,52 @@ export const useLibraryStore = defineStore('library', () => {
       return
     }
     vaultFileIndex.invalidate(v)
-    if (e.kind === 'remove') {
-      notes.value = notes.value.filter((n) => n.path !== e.path)
-      contentCache.delete(e.path)
+    // Coalesce bursts of change events for one note into a single re-index, and
+    // stamp a per-path generation so an older in-flight read can never clobber
+    // the newest summary — latest-wins.
+    const path = e.path
+    const existing = mdChangeTimers.get(path)
+    if (existing) clearTimeout(existing)
+    const generation = (mdChangeSeq.get(path) ?? 0) + 1
+    mdChangeSeq.set(path, generation)
+    mdChangeTimers.set(
+      path,
+      setTimeout(() => {
+        mdChangeTimers.delete(path)
+        void applyMdChange(v, path, e.kind, generation)
+      }, MD_CHANGE_DEBOUNCE_MS),
+    )
+  }
+
+  /** Apply a coalesced markdown change. A newer event (or a vault switch) that
+   * superseded `generation` while the debounce/read was in flight is discarded,
+   * so stale state never overwrites newer state. */
+  async function applyMdChange(
+    v: string,
+    path: string,
+    kind: string,
+    generation: number,
+  ): Promise<void> {
+    if (vault.value !== v || mdChangeSeq.get(path) !== generation) return
+    if (kind === 'remove') {
+      notes.value = notes.value.filter((n) => n.path !== path)
+      contentCache.delete(path)
+      noteStatCache.delete(path)
       return
     }
-    const summary = await readNoteSummary(v, e.path)
+    // A modify/create changed the file on disk; force a fresh read so we never
+    // serve a stale summary from the stat/content cache, and gate the cache
+    // write so a stale in-flight read cannot clobber a newer note.
+    const summary = await indexNote(v, path, {
+      force: true,
+      shouldCommit: () => vault.value === v && mdChangeSeq.get(path) === generation,
+    })
+    if (vault.value !== v || mdChangeSeq.get(path) !== generation) return
     if (!summary) {
-      notes.value = notes.value.filter((n) => n.path !== e.path)
+      notes.value = notes.value.filter((n) => n.path !== path)
       return
     }
-    const rest = notes.value.filter((n) => n.path !== e.path)
+    const rest = notes.value.filter((n) => n.path !== path)
     rest.push(summary)
     notes.value = rest
   }
@@ -184,10 +261,19 @@ export const useLibraryStore = defineStore('library', () => {
       clearTimeout(attachmentRefreshTimer)
       attachmentRefreshTimer = null
     }
+    // Drop pending markdown re-indexes/sequence so a change queued for the old
+    // vault can never touch the new vault's notes.
+    for (const timer of mdChangeTimers.values()) clearTimeout(timer)
+    mdChangeTimers.clear()
+    mdChangeSeq.clear()
     unlistenFs?.()
     unlistenFs = null
-    // Drop cached content so a switched-to vault never reuses the old vault's notes.
-    contentCache.clear()
+    // Reset the truncation warning; the fresh index sets it again if needed.
+    vaultTruncated.value = false
+    // Content/stat caches are keyed by absolute path and bounded, so keep them
+    // across switches: re-indexing a vault reuses unchanged notes instead of
+    // re-reading every file. (Tabs are closed on switch, so no stale path is
+    // ever queried.)
   }
 
   /** 侧栏「附件」徽标：attachments/ 顶层条目数（目录也算一个条目）。
@@ -344,6 +430,7 @@ export const useLibraryStore = defineStore('library', () => {
     vault,
     indexing,
     attachmentCount,
+    vaultTruncated,
     visibleNotes,
     tagCounts,
     counts,

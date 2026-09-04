@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { collectVaultFiles, VaultFileIndex } from './vaultFiles'
+import { collectVaultFiles, MAX_DIRS, VaultFileIndex, walkVault } from './vaultFiles'
 import type { FileEntry } from './fs'
 
 function entry(name: string, path: string, isDir: boolean, isMdx = false): FileEntry {
@@ -62,6 +62,37 @@ describe('collectVaultFiles', () => {
     })
     expect(files).toEqual(['vault/welcome.md'])
   })
+  it('lists sibling directories concurrently and still returns a deterministic result', async () => {
+    const gates = new Map<string, () => void>()
+    const list = vi.fn(async (_v: string, dir: string) => {
+      if (dir === 'vault') {
+        return [entry('a', 'vault/a', true), entry('b', 'vault/b', true)]
+      }
+      // Gate the two siblings so we can observe they are requested in parallel.
+      await new Promise<void>((resolve) => gates.set(dir, resolve))
+      return dir === 'vault/a'
+        ? [entry('one.md', 'vault/a/one.md', false, true)]
+        : [entry('two.md', 'vault/b/two.md', false, true)]
+    })
+    const p = collectVaultFiles('vault', list)
+    // Both sibling dirs must be requested without waiting for the first to
+    // resolve — if listing were serial, only 'vault/a' would be in flight now.
+    await new Promise((r) => setTimeout(r, 0))
+    const requested = list.mock.calls.map(([, d]) => d)
+    expect(requested).toContain('vault/a')
+    expect(requested).toContain('vault/b')
+    for (const dir of ['vault/a', 'vault/b']) gates.get(dir)?.()
+    await expect(p).resolves.toEqual(['vault/a/one.md', 'vault/b/two.md'])
+  })
+  it('flags truncated and does not silently drop when the directory cap is hit', async () => {
+    const dirs = Array.from({ length: MAX_DIRS + 1 }, (_, i) => `d${i}`)
+    const result = await walkVault('vault', async (_v, dir) => {
+      if (dir === 'vault') return dirs.map((name) => entry(name, `vault/${name}`, true))
+      return [entry('note.md', `${dir}/note.md`, false, true)]
+    })
+    expect(result.truncated).toBe(true)
+    expect(result.files).toHaveLength(MAX_DIRS - 1)
+  })
 })
 
 describe('VaultFileIndex', () => {
@@ -87,6 +118,24 @@ describe('VaultFileIndex', () => {
       throw new Error('no vault')
     })
     await expect(index.get('gone')).resolves.toEqual([])
+  })
+
+  it('reports false for a vault that fits under the directory cap', async () => {
+    const { list } = fakeList()
+    const index = new VaultFileIndex(list)
+    await index.get('vault')
+    expect(index.isTruncated('vault')).toBe(false)
+  })
+  it('reports true when the directory cap was hit, and clears it on invalidate', async () => {
+    const dirs = Array.from({ length: MAX_DIRS + 1 }, (_, i) => `d${i}`)
+    const index = new VaultFileIndex(async (_v, dir) => {
+      if (dir === 'vault') return dirs.map((name) => entry(name, `vault/${name}`, true))
+      return []
+    })
+    await index.get('vault')
+    expect(index.isTruncated('vault')).toBe(true)
+    index.invalidate('vault')
+    expect(index.isTruncated('vault')).toBe(false)
   })
 
   it('discards an in-flight walk superseded by invalidate so newer data wins', async () => {
