@@ -100,6 +100,18 @@ export default defineConfig({
     assetsInlineLimit: 1000000,
     rollupOptions: {
       output: { manualChunks },
+      // `remark-math` pulls in `micromark-extension-math`, whose root index
+      // re-exports `lib/html.js` — a module that statically `import katex
+      // from 'katex'` solely to implement the `mathHtml` HTML serializer.
+      // We never invoke that serializer (the export pipeline renders math from
+      // its own mdast walk), so that static `import 'katex'` would otherwise
+      // drag the whole 1.7MB `vendor-katex` chunk into the entry's initial
+      // modulepreload graph at startup. Marking `katex` as side-effect-free
+      // lets Rollup tree-shake that unused import; KaTeX is then only reached
+      // through the app's own on-demand `import('katex')`/`?inline` CSS.
+      treeshake: {
+        moduleSideEffects: (id) => !id.includes('node_modules/katex'),
+      },
     },
   },
   test: {

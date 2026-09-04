@@ -1,3 +1,8 @@
+// Referenced so consumer packages compiling this source see the lazy
+// `mathlive/static.css` module type (the desktop tsconfig has no `*.css`
+// wildcard for library files).
+// eslint-disable-next-line @typescript-eslint/triple-slash-reference
+/// <reference path="./mathlive-css.d.ts" />
 import type * as MathLiveNS from 'mathlive'
 
 type MathLiveGlobal = {
@@ -13,7 +18,16 @@ let mathliveModule: MathLiveModule | null = null
 function loadMathLive(): Promise<MathLiveModule | null> {
   if (!mathlivePromise) {
     mathlivePromise = import('mathlive')
-      .then((mod) => {
+      .then(async (mod) => {
+        // MathLive's field styles are only needed once the math editor is
+        // actually opened; load them on demand (rather than statically during
+        // app bootstrap) so the startup bundle stays free of MathLive's CSS.
+        // A CSS failure is cosmetic — the field just renders unstyled.
+        try {
+          await import('mathlive/static.css')
+        } catch {
+          /* no-op */
+        }
         mathliveModule = mod
         return mod
       })
