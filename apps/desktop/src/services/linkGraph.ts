@@ -183,26 +183,59 @@ function mulberry32(seed: number): () => number {
   }
 }
 
-/** Simple Fruchterman-Reingold style force-directed layout: pairwise
- * repulsion, spring attraction on edges, a light pull toward the canvas
- * center and linear cooling. Precomputed (~300 iterations, no animation);
- * the same inputs and seed always yield the same coordinates, clamped to
- * the canvas. */
-export function computeLayout(
+/**
+ * Layout iteration budget. The pairwise repulsion is O(n²) per pass, so a
+ * fixed 300-iteration run on a 200-node graph is ~6M node-pair computations
+ * that would block the main thread. Scale the budget down with node count to
+ * keep total work bounded, while small graphs still converge with the full
+ * budget.
+ */
+const MIN_ITERATIONS = 40
+const MAX_ITERATIONS = 300
+const PAIR_BUDGET = 1_500_000
+const DEFAULT_SEED = 20240903
+
+function adaptiveIterationCount(count: number): number {
+  const pairs = Math.max(1, (count * (count - 1)) / 2)
+  return Math.min(MAX_ITERATIONS, Math.max(MIN_ITERATIONS, Math.floor(PAIR_BUDGET / pairs)))
+}
+
+interface LayoutState {
+  ids: string[]
+  px: Float64Array
+  py: Float64Array
+  total: number
+  neighbors: number[][]
+  ideal: number
+  iterations: number
+  temp: number
+  cooling: number
+  gravity: number
+  centerX: number
+  centerY: number
+  margin: number
+  width: number
+  height: number
+  random: () => number
+}
+
+/** Prepare the initial simulation state shared by the synchronous and chunked
+ * layout paths. Yields null when there is nothing to lay out. */
+function prepareLayout(
   nodes: Array<{ id: string }>,
   edges: Array<{ from: string; to: string }>,
   width: number,
   height: number,
-  options: LayoutOptions = {},
-): LayoutPoint[] {
+  options: LayoutOptions,
+): LayoutState | null {
   const count = nodes.length
-  if (count === 0 || width <= 0 || height <= 0) return []
+  if (count === 0 || width <= 0 || height <= 0) return null
   const margin = Math.min(24, width / 4, height / 4)
   const innerW = Math.max(1, width - margin * 2)
   const innerH = Math.max(1, height - margin * 2)
   const centerX = width / 2
   const centerY = height / 2
-  const random = mulberry32(options.seed ?? 20240903)
+  const random = mulberry32(options.seed ?? DEFAULT_SEED)
 
   const index = new Map<string, number>()
   const ids: string[] = []
@@ -211,7 +244,6 @@ export function computeLayout(
     index.set(node.id, ids.length)
     ids.push(node.id)
   }
-
   const total = ids.length
   const px = new Float64Array(total)
   const py = new Float64Array(total)
@@ -233,57 +265,91 @@ export function computeLayout(
   }
 
   const ideal = Math.max(24, Math.sqrt((innerW * innerH) / Math.max(total, 1)))
-  const iterations = Math.max(1, options.iterations ?? 300)
-  let temp = Math.max(innerW, innerH) * 0.12
-  const cooling = temp / iterations
-  const gravity = 0.02
+  const iterations =
+    options.iterations !== undefined
+      ? Math.max(1, Math.floor(options.iterations))
+      : adaptiveIterationCount(total)
+  const temp = Math.max(innerW, innerH) * 0.12
+  const cooling = temp / Math.max(iterations, 1)
 
-  for (let step = 0; step < iterations; step++) {
-    const fx = new Float64Array(total)
-    const fy = new Float64Array(total)
-    for (let i = 0; i < total; i++) {
-      for (let j = i + 1; j < total; j++) {
-        let dx = px[i] - px[j]
-        let dy = py[i] - py[j]
-        let dist = Math.sqrt(dx * dx + dy * dy)
-        if (dist < 0.01) {
-          dx = (random() - 0.5) * 0.1
-          dy = (random() - 0.5) * 0.1
-          dist = Math.sqrt(dx * dx + dy * dy)
-        }
-        const force = (ideal * ideal) / dist
-        const ux = (dx / dist) * force
-        const uy = (dy / dist) * force
-        fx[i] += ux
-        fy[i] += uy
-        fx[j] -= ux
-        fy[j] -= uy
+  return {
+    ids,
+    px,
+    py,
+    total,
+    neighbors,
+    ideal,
+    iterations,
+    temp,
+    cooling,
+    gravity: 0.02,
+    centerX,
+    centerY,
+    margin,
+    width,
+    height,
+    random,
+  }
+}
+
+/** One Fruchterman-Reingold iteration: pairwise repulsion, spring attraction
+ * on edges, a light pull toward the canvas center and linear cooling. Mutates
+ * the position buffer in place; shared by the sync and chunked paths so both
+ * produce identical coordinates for identical inputs and seed. */
+function stepLayout(state: LayoutState): void {
+  const { px, py, neighbors, ideal, gravity, centerX, centerY, total, random } = state
+  const fx = new Float64Array(total)
+  const fy = new Float64Array(total)
+  const temp = state.temp
+
+  for (let i = 0; i < total; i++) {
+    for (let j = i + 1; j < total; j++) {
+      let dx = px[i] - px[j]
+      let dy = py[i] - py[j]
+      let dist = Math.sqrt(dx * dx + dy * dy)
+      if (dist < 0.01) {
+        dx = (random() - 0.5) * 0.1
+        dy = (random() - 0.5) * 0.1
+        dist = Math.sqrt(dx * dx + dy * dy)
       }
+      const force = (ideal * ideal) / dist
+      const ux = (dx / dist) * force
+      const uy = (dy / dist) * force
+      fx[i] += ux
+      fy[i] += uy
+      fx[j] -= ux
+      fy[j] -= uy
     }
-    for (let a = 0; a < total; a++) {
-      for (const b of neighbors[a]) {
-        if (b <= a) continue
-        const dx = px[a] - px[b]
-        const dy = py[a] - py[b]
-        const dist = Math.max(0.01, Math.sqrt(dx * dx + dy * dy))
-        const force = (dist * dist) / ideal
-        const ux = (dx / dist) * force
-        const uy = (dy / dist) * force
-        fx[a] -= ux
-        fy[a] -= uy
-        fx[b] += ux
-        fy[b] += uy
-      }
-    }
-    for (let i = 0; i < total; i++) {
-      fx[i] += (centerX - px[i]) * gravity
-      fy[i] += (centerY - py[i]) * gravity
-      px[i] += Math.max(-temp, Math.min(temp, fx[i]))
-      py[i] += Math.max(-temp, Math.min(temp, fy[i]))
-    }
-    temp = Math.max(1, temp - cooling)
   }
 
+  for (let a = 0; a < total; a++) {
+    for (const b of neighbors[a]) {
+      if (b <= a) continue
+      const dx = px[a] - px[b]
+      const dy = py[a] - py[b]
+      const dist = Math.max(0.01, Math.sqrt(dx * dx + dy * dy))
+      const force = (dist * dist) / ideal
+      const ux = (dx / dist) * force
+      const uy = (dy / dist) * force
+      fx[a] -= ux
+      fy[a] -= uy
+      fx[b] += ux
+      fy[b] += uy
+    }
+  }
+
+  for (let i = 0; i < total; i++) {
+    fx[i] += (centerX - px[i]) * gravity
+    fy[i] += (centerY - py[i]) * gravity
+    px[i] += Math.max(-temp, Math.min(temp, fx[i]))
+    py[i] += Math.max(-temp, Math.min(temp, fy[i]))
+  }
+
+  state.temp = Math.max(1, temp - state.cooling)
+}
+
+function finalizePoints(state: LayoutState): LayoutPoint[] {
+  const { ids, px, py, total, margin, width, height } = state
   const points: LayoutPoint[] = []
   for (let i = 0; i < total; i++) {
     points.push({
@@ -293,4 +359,87 @@ export function computeLayout(
     })
   }
   return points
+}
+
+/** Cooperative yield to the event loop so a large layout never blocks input
+ * for long. Prefers the scheduler API, then requestAnimationFrame, then a
+ * macrotask timeout. */
+function yieldToMainThread(): Promise<void> {
+  const scheduler = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler
+  if (typeof scheduler?.yield === 'function') return scheduler.yield()
+  return new Promise<void>((resolve) => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => resolve())
+    } else {
+      setTimeout(resolve, 0)
+    }
+  })
+}
+
+/**
+ * Simple Fruchterman-Reingold style force-directed layout: pairwise
+ * repulsion, spring attraction on edges, a light pull toward the canvas
+ * center and linear cooling. Runs synchronously on the calling thread; the
+ * iteration count scales with node count and is always capped, so tiny
+ * graphs are cheap and large graphs stay time-bounded. The same inputs and
+ * seed always yield the same coordinates, clamped to the canvas.
+ */
+export function computeLayout(
+  nodes: Array<{ id: string }>,
+  edges: Array<{ from: string; to: string }>,
+  width: number,
+  height: number,
+  options: LayoutOptions = {},
+): LayoutPoint[] {
+  const state = prepareLayout(nodes, edges, width, height, options)
+  if (!state) return []
+  for (let step = 0; step < state.iterations; step++) stepLayout(state)
+  return finalizePoints(state)
+}
+
+/**
+ * Chunked variant of {@link computeLayout}: yields to the event loop every few
+ * milliseconds so a large graph never blocks input. Produces identical
+ * coordinates to `computeLayout` for the same inputs and seed — the only
+ * difference is scheduling, not the math. Await it from the UI; pass `seed`
+ * in `options` for reproducibility.
+ */
+export async function computeLayoutChunked(
+  nodes: Array<{ id: string }>,
+  edges: Array<{ from: string; to: string }>,
+  width: number,
+  height: number,
+  options: LayoutOptions = {},
+): Promise<LayoutPoint[]> {
+  const state = prepareLayout(nodes, edges, width, height, options)
+  if (!state) return []
+  const now = (): number => (typeof performance !== 'undefined' ? performance.now() : Date.now())
+  let lastYield = now()
+  for (let step = 0; step < state.iterations; step++) {
+    stepLayout(state)
+    if (step + 1 < state.iterations && now() - lastYield > 8) {
+      await yieldToMainThread()
+      lastYield = now()
+    }
+  }
+  return finalizePoints(state)
+}
+
+/**
+ * Order-insensitive structural key for a graph (set of node ids + set of
+ * directed edges) used to cache layouts across presentational updates
+ * (resize, theme, view toggles) so a re-layout only runs when the graph
+ * actually changed.
+ */
+export function graphSignature(
+  nodes: Array<{ id: string }>,
+  edges: Array<{ from: string; to: string }>,
+): string {
+  const nodeIds = nodes.map((node) => node.id).sort()
+  const edgeKeys = edges
+    .map((edge) =>
+      edge.from < edge.to ? `${edge.from}\u0000${edge.to}` : `${edge.to}\u0000${edge.from}`,
+    )
+    .sort()
+  return `${nodeIds.join('\u0001')}|${edgeKeys.join('\u0001')}`
 }

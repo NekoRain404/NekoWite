@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { buildLinkGraph, computeLayout, extractLinks, resolveLinkPath } from './linkGraph'
+import {
+  buildLinkGraph,
+  computeLayout,
+  computeLayoutChunked,
+  extractLinks,
+  graphSignature,
+  resolveLinkPath,
+} from './linkGraph'
 
 describe('extractLinks', () => {
   it('extracts wiki link targets', () => {
@@ -184,5 +191,64 @@ describe('computeLayout', () => {
     expect(computeLayout([{ id: 'only.md' }], [], 100, 100)).toHaveLength(1)
     expect(computeLayout(nodes, edges, 0, 600)).toEqual([])
     expect(computeLayout([{ id: 'a.md' }, { id: 'a.md' }], [], 200, 200)).toHaveLength(1)
+  })
+})
+
+describe('computeLayoutChunked', () => {
+  const nodes = [
+    { id: 'a.md' },
+    { id: 'b.md' },
+    { id: 'c.md' },
+    { id: 'd.md' },
+  ]
+  const edges = [
+    { from: 'a.md', to: 'b.md' },
+    { from: 'b.md', to: 'c.md' },
+    { from: 'c.md', to: 'd.md' },
+  ]
+
+  it('returns the same coordinates as the synchronous layout for the same seed', async () => {
+    const sync = computeLayout(nodes, edges, 800, 600, { seed: 7 })
+    const chunked = await computeLayoutChunked(nodes, edges, 800, 600, { seed: 7 })
+    expect(chunked).toEqual(sync)
+  })
+
+  it('is deterministic across runs', async () => {
+    const first = await computeLayoutChunked(nodes, edges, 800, 600, { seed: 11 })
+    const second = await computeLayoutChunked(nodes, edges, 800, 600, { seed: 11 })
+    expect(first).toEqual(second)
+  })
+
+  it('handles empty and single-node graphs', async () => {
+    expect(await computeLayoutChunked([], [], 800, 600)).toEqual([])
+    expect(await computeLayoutChunked([{ id: 'only.md' }], [], 100, 100)).toHaveLength(1)
+  })
+})
+
+describe('graphSignature', () => {
+  it('is order-insensitive for the same structure', () => {
+    const a = graphSignature(
+      [{ id: 'a.md' }, { id: 'b.md' }],
+      [{ from: 'a.md', to: 'b.md' }],
+    )
+    const b = graphSignature(
+      [{ id: 'b.md' }, { id: 'a.md' }],
+      [{ from: 'b.md', to: 'a.md' }],
+    )
+    expect(a).toBe(b)
+  })
+
+  it('changes when nodes or edges change', () => {
+    const base = graphSignature([{ id: 'a.md' }, { id: 'b.md' }], [{ from: 'a.md', to: 'b.md' }])
+    const moreNodes = graphSignature(
+      [{ id: 'a.md' }, { id: 'b.md' }, { id: 'c.md' }],
+      [{ from: 'a.md', to: 'b.md' }],
+    )
+    const moreEdges = graphSignature(
+      [{ id: 'a.md' }, { id: 'b.md' }, { id: 'c.md' }],
+      [{ from: 'a.md', to: 'b.md' }, { from: 'b.md', to: 'c.md' }],
+    )
+    expect(moreNodes).not.toBe(base)
+    expect(moreEdges).not.toBe(base)
   })
 })

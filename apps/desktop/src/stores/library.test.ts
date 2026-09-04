@@ -221,6 +221,74 @@ describe('useLibraryStore', () => {
     await vi.waitFor(() => expect(store.attachmentCount).toBe(0))
   })
 
+  it('coalesces a burst of markdown change events into a single re-index', async () => {
+    seedNote('/vault/a.md', 'A', 1)
+    const store = useLibraryStore()
+    await store.indexVault('/vault')
+    const handler = [...changeHandlers][0]
+    const readsBefore = vi.mocked(fsService.read).mock.calls.length
+    seedNote('/vault/a.md', '---\ntitle: 第一版\n---\none', 2)
+    handler({ path: '/vault/a.md', kind: 'modify' })
+    seedNote('/vault/a.md', '---\ntitle: 最终版\n---\ntwo', 3)
+    handler({ path: '/vault/a.md', kind: 'modify' })
+    await vi.waitFor(() => {
+      expect(store.notes.find((n) => n.path === '/vault/a.md')?.title).toBe('最终版')
+    })
+    // Both events coalesce into a single fresh read of the note.
+    expect(vi.mocked(fsService.read).mock.calls.length - readsBefore).toBe(1)
+  })
+
+  it('latest-wins: a stale markdown read never overwrites newer state', async () => {
+    vi.useFakeTimers()
+    try {
+      seedNote('/vault/a.md', 'A', 1)
+      const store = useLibraryStore()
+      await store.indexVault('/vault')
+      const handler = [...changeHandlers][0]
+
+      // The first post-change read hangs until released (the "stale" read).
+      let releaseStale!: (content: string) => void
+      const staleRead = new Promise<string>((resolve) => {
+        releaseStale = resolve
+      })
+      let reindexReads = 0
+      vi.mocked(fsService.read).mockImplementation(async (_v: string, path: string) => {
+        if (path === '/vault/a.md' && reindexReads === 0) {
+          reindexReads += 1
+          return staleRead
+        }
+        return seed.get(path)?.content ?? ''
+      })
+
+      seedNote('/vault/a.md', '---\ntitle: 旧内容\n---\nold', 2)
+      handler({ path: '/vault/a.md', kind: 'modify' })
+      await vi.advanceTimersByTimeAsync(200) // stale applyMdChange starts, hangs on read
+
+      // A newer modify arrives while the stale read is still in flight.
+      seedNote('/vault/a.md', '---\ntitle: 新内容\n---\nnew', 3)
+      handler({ path: '/vault/a.md', kind: 'modify' })
+      await vi.advanceTimersByTimeAsync(200) // fresh applyMdChange completes
+
+      expect(store.notes.find((n) => n.path === '/vault/a.md')?.title).toBe('新内容')
+
+      // The stale read resolves last — it must be discarded (latest-wins).
+      releaseStale('---\ntitle: 旧内容\n---\nold')
+      await vi.advanceTimersByTimeAsync(0)
+      await Promise.resolve()
+      expect(store.notes.find((n) => n.path === '/vault/a.md')?.title).toBe('新内容')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('surfaces vault truncation via a store flag', async () => {
+    seedNote('/vault/a.md', 'A', 1)
+    const store = useLibraryStore()
+    vi.spyOn(vaultFileIndex, 'isTruncated').mockReturnValueOnce(true)
+    await store.indexVault('/vault')
+    expect(store.vaultTruncated).toBe(true)
+  })
+
   it('a superseded indexVault cannot overwrite the newer vault with stale results', async () => {
     seedNote('/vaultA/a.md', 'AAA', 1)
     const store = useLibraryStore()
