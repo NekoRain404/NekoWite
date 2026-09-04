@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 
 import {
+  applyAttachmentLimits,
   attachmentMonthDir,
   attachmentRelativePath,
   attachmentSessionCount,
@@ -11,6 +12,7 @@ import {
   extensionFromFileName,
   extensionFromMime,
   fileToBase64,
+  formatAttachmentBytes,
   isImageFile,
   isPathWithinVault,
   LOW_COPY_ENCODE_MIN_BYTES,
@@ -18,12 +20,18 @@ import {
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS_PER_BATCH,
   MAX_ATTACHMENTS_PER_SESSION,
+  MAX_ATTACHMENTS_PER_VAULT_BYTES,
+  MIN_ATTACHMENT_FREE_DISK_BYTES,
   mimeFromExtension,
   noteDirectory,
+  planAttachmentImport,
   relativePathFromNote,
   relativePathFromNoteVault,
   resetAttachmentSession,
   resolveRelativePath,
+  shouldStreamImport,
+  STREAM_IMPORT_BACKEND_COMMAND,
+  STREAM_IMPORT_MIN_BYTES,
   suggestedPasteFileName,
   vaultRelativeFromNote,
   vaultRelativeFromNoteVault,
@@ -389,5 +397,88 @@ describe('vault-aware relative paths', () => {
       'attachments/2026-09/a.png',
     )
     expect(vaultRelativeFromNoteVault('/home/u/vault/docs/note.md', '/home/u/vault', '../../x/a.png')).toBe('x/a.png')
+  })
+})
+
+describe('streaming / file-path import policy (P1.4)', () => {
+  // Give a File a synthetic size without allocating `size` bytes.
+  function fileOfSize(name: string, size: number, type = 'image/png'): File {
+    const file = new File(['x'], name, { type })
+    Object.defineProperty(file, 'size', { value: size, configurable: true })
+    return file
+  }
+
+  it('rejects oversize / over-batch / over-vault-total / low-disk before any write', () => {
+    const spy = vi.spyOn(FileReader.prototype, 'readAsDataURL')
+
+    // 1. Per-file size cap.
+    const tooLarge = fileOfSize('big.png', MAX_ATTACHMENT_BYTES + 1)
+    let plan = planAttachmentImport([tooLarge], { vaultTotalBytes: 0, freeDiskBytes: 10 * 1024 * 1024 })
+    expect(plan.accepted).toEqual([])
+    expect(plan.rejected).toEqual([{ file: tooLarge, reason: 'too-large' }])
+
+    // 2. Per-batch byte cap (overridden to a small ceiling so a single batch can
+    //    trip it without violating the per-file cap).
+    const batchFiles = [fileOfSize('a.png', 5 * 1024 * 1024), fileOfSize('b.png', 6 * 1024 * 1024)]
+    plan = planAttachmentImport(batchFiles, { vaultTotalBytes: 0, freeDiskBytes: 500 * 1024 * 1024 }, {
+      maxBatchBytes: 10 * 1024 * 1024,
+    })
+    expect(plan.accepted).toEqual([batchFiles[0]])
+    expect(plan.rejected).toEqual([{ file: batchFiles[1], reason: 'batch-total' }])
+
+    // 3. Per-vault total cap.
+    const vaultFile = fileOfSize('v.png', 5 * 1024 * 1024)
+    plan = planAttachmentImport([vaultFile], {
+      vaultTotalBytes: MAX_ATTACHMENTS_PER_VAULT_BYTES - 1,
+      freeDiskBytes: 500 * 1024 * 1024,
+    })
+    expect(plan.accepted).toEqual([])
+    expect(plan.rejected).toEqual([{ file: vaultFile, reason: 'vault-total' }])
+
+    // 4. Disk-free-space guard: not enough room left after this file.
+    const diskFile = fileOfSize('d.png', 5 * 1024 * 1024)
+    plan = planAttachmentImport([diskFile], {
+      vaultTotalBytes: 0,
+      freeDiskBytes: MIN_ATTACHMENT_FREE_DISK_BYTES + 1,
+    })
+    expect(plan.accepted).toEqual([])
+    expect(plan.rejected).toEqual([{ file: diskFile, reason: 'low-disk' }])
+
+    // None of the above read any bytes into base64 (reject-before-Write).
+    expect(spy).not.toHaveBeenCalled()
+    spy.mockRestore()
+  })
+
+  it('routes a large file through the streaming/file-path route (no base64 read for it)', () => {
+    const spy = vi.spyOn(FileReader.prototype, 'readAsDataURL')
+    const large = fileOfSize('large.png', STREAM_IMPORT_MIN_BYTES + 1)
+    const small = fileOfSize('small.png', 1024)
+    const plan = planAttachmentImport([large, small], { vaultTotalBytes: 0, freeDiskBytes: 500 * 1024 * 1024 })
+    expect(plan.stream).toEqual([large])
+    expect(plan.base64).toEqual([small])
+    expect(plan.requiresStreaming).toBe(true)
+    expect(plan.accepted).toEqual([large, small])
+    // The streaming route never base64-encodes the large file.
+    expect(spy).not.toHaveBeenCalled()
+    spy.mockRestore()
+  })
+
+  it('exposes the exact backend command a true streaming import would call (honest gap)', () => {
+    expect(STREAM_IMPORT_BACKEND_COMMAND).toContain('import_attachment')
+  })
+
+  it('applyAttachmentLimits with a vault context routes through the full policy', () => {
+    const large = fileOfSize('large.png', STREAM_IMPORT_MIN_BYTES + 1)
+    const accepted = applyAttachmentLimits([large], { vaultTotalBytes: 0, freeDiskBytes: 500 * 1024 * 1024 })
+    expect(accepted).toEqual([large])
+    // Without a context it reverts to the legacy count-based path (still accepts).
+    const legacy = applyAttachmentLimits([large])
+    expect(legacy).toEqual([large])
+  })
+
+  it('shouldStreamImport splits on the streaming threshold', () => {
+    expect(shouldStreamImport(fileOfSize('a.png', STREAM_IMPORT_MIN_BYTES))).toBe(true)
+    expect(shouldStreamImport(fileOfSize('a.png', STREAM_IMPORT_MIN_BYTES - 1))).toBe(false)
+    expect(formatAttachmentBytes(MAX_ATTACHMENT_BYTES)).toBe(`${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB`)
   })
 })
