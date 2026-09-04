@@ -29,7 +29,8 @@ import { fsService } from '../services/fs'
 import type { TrashEntry } from '../services/gateways/contracts'
 import { notifyError } from '../services/errors'
 import { useTabsStore } from '../stores/tabs'
-import { useLibraryStore } from '../stores/library'
+import { useDocumentListStore } from '../stores/documentList'
+import { useFileTreeStore } from '../stores/fileTree'
 import { useAppearanceStore } from '../stores/appearance'
 import { insertCiteAtCursor } from '../services/editorBridge'
 import { useRefsStore } from '../stores/refs'
@@ -53,7 +54,8 @@ const emit = defineEmits<{
   (e: 'open-settings'): void
 }>()
 
-const library = useLibraryStore()
+const documentList = useDocumentListStore()
+const fileTree = useFileTreeStore()
 const refs = useRefsStore()
 const appearance = useAppearanceStore()
 const tabs = useTabsStore()
@@ -90,45 +92,45 @@ interface NavEntry {
 }
 
 const navEntries = computed<NavEntry[]>(() => {
-  const counts = library.counts
-  const inNotes = library.listView === 'notes'
-  const isFilter = (f: string): boolean => inNotes && library.filter === f
+  const counts = documentList.counts
+  const inNotes = documentList.listView === 'notes'
+  const isFilter = (f: string): boolean => inNotes && documentList.filter === f
   return [
     {
       id: 'folders', label: t('nav.folders'), icon: FolderTree,
-      active: library.listView === 'folders', onClick: () => library.setListView('folders'),
+      active: documentList.listView === 'folders', onClick: () => documentList.setListView('folders'),
     },
     {
       id: 'all', label: t('nav.all'), icon: FileText, count: counts.all,
-      active: isFilter('all'), onClick: () => library.setFilter('all'),
+      active: isFilter('all'), onClick: () => documentList.setFilter('all'),
     },
     {
       id: 'recent', label: t('nav.recent'), icon: Clock, count: counts.recent,
-      active: isFilter('recent'), onClick: () => library.setFilter('recent'),
+      active: isFilter('recent'), onClick: () => documentList.setFilter('recent'),
     },
     {
       id: 'favorites', label: t('nav.favorites'), icon: Star, count: counts.favorites,
-      active: isFilter('favorites'), onClick: () => library.setFilter('favorites'),
+      active: isFilter('favorites'), onClick: () => documentList.setFilter('favorites'),
     },
     {
       id: 'uncategorized', label: t('nav.uncategorized'), icon: Inbox, count: counts.uncategorized,
-      active: isFilter('uncategorized'), onClick: () => library.setFilter('uncategorized'),
+      active: isFilter('uncategorized'), onClick: () => documentList.setFilter('uncategorized'),
     },
     {
       id: 'graph', label: t('nav.graph'), icon: Network,
-      active: library.listView === 'graph', onClick: () => library.setListView('graph'),
+      active: documentList.listView === 'graph', onClick: () => documentList.setListView('graph'),
     },
     {
-      id: 'attachments', label: t('nav.attachments'), icon: Paperclip, count: library.attachmentCount,
-      active: library.listView === 'attachments', onClick: () => library.setListView('attachments'),
+      id: 'attachments', label: t('nav.attachments'), icon: Paperclip, count: fileTree.attachmentCount,
+      active: documentList.listView === 'attachments', onClick: () => documentList.setListView('attachments'),
     },
     {
       id: 'index', label: t('nav.index'), icon: Database,
-      active: library.listView === 'index', onClick: () => library.setListView('index'),
+      active: documentList.listView === 'index', onClick: () => documentList.setListView('index'),
     },
     {
       id: 'cloud', label: t('nav.cloud'), icon: Cloud,
-      active: library.listView === 'cloud', onClick: () => library.setListView('cloud'),
+      active: documentList.listView === 'cloud', onClick: () => documentList.setListView('cloud'),
     },
   ]
 })
@@ -345,7 +347,7 @@ watch(
       </nav>
 
       <section
-        v-if="library.tagCounts.length"
+        v-if="documentList.tagCounts.length"
         class="sidebar-section"
       >
         <div class="section-title">
@@ -357,15 +359,15 @@ watch(
         </div>
         <div class="tag-list">
           <div
-            v-for="tc in library.tagCounts"
+            v-for="tc in documentList.tagCounts"
             :key="tc.tag"
             class="tag-row"
           >
             <button
               class="nav-item tag-item"
-              :class="{ active: library.filter === `tag:${tc.tag}` }"
+              :class="{ active: documentList.filter === `tag:${tc.tag}` }"
               :title="t('nav.noteCount', { n: tc.count })"
-              @click="library.setFilter(`tag:${tc.tag}`)"
+              @click="documentList.setFilter(`tag:${tc.tag}`)"
             >
               <Hash
                 class="nav-icon"

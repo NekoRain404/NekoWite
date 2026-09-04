@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { Hash, Plus, X } from 'lucide-vue-next'
 import { useTabsStore } from '../stores/tabs'
-import { useLibraryStore } from '../stores/library'
+import { useDocumentListStore } from '../stores/documentList'
 import {
   emptyFrontmatterFields,
   fileNameTitle,
@@ -16,7 +16,7 @@ import { normalizeTag, normalizeTags } from '../services/tags'
 import { t } from '../i18n'
 
 const tabs = useTabsStore()
-const library = useLibraryStore()
+const documentList = useDocumentListStore()
 
 const tab = computed(() => tabs.activeTab)
 
@@ -24,7 +24,7 @@ const form = ref<FrontmatterFields>(emptyFrontmatterFields())
 const hasFront = ref(false)
 const tagInput = ref('')
 
-const suggestions = computed(() => library.tagCounts.map((c) => c.tag))
+const suggestions = computed(() => documentList.tagCounts.map((c) => c.tag))
 const otherEntries = computed(() => Object.entries(form.value.other))
 
 const isDirty = computed(() => {

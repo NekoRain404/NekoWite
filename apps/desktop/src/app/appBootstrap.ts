@@ -1,7 +1,7 @@
 import { ref, type Ref } from 'vue'
 import { useTabsStore } from '../stores/tabs'
 import { useSettingsStore } from '../stores/settings'
-import { useLibraryStore } from '../stores/library'
+import { useVaultSessionStore } from '../stores/vaultSession'
 import { useRefsStore } from '../stores/refs'
 import { fsService } from '../services/fs'
 import { loadVaultPlugins } from '../services/plugins'
@@ -42,7 +42,7 @@ export interface DesktopRuntime {
 export function createDesktopRuntime(): DesktopRuntime {
   const tabs = useTabsStore()
   const settings = useSettingsStore()
-  const library = useLibraryStore()
+  const vaultSession = useVaultSessionStore()
   const refs = useRefsStore()
   const vaultPath = ref<string | null>(null)
   const windowTracking = setupWindowTracking()
@@ -71,7 +71,7 @@ export function createDesktopRuntime(): DesktopRuntime {
     // would route every save to "path escapes vault" errors. Start fresh.
     tabs.closeAll()
     tabs.setVault(path)
-    void library.indexVault(path)
+    void vaultSession.indexVault(path)
     void loadVaultPlugins(path)
     void refs.loadVault(path).catch(() => {
       // A stale vault path (deleted/renamed folder) must not crash startup;

@@ -7,11 +7,11 @@ import { useAppDialogs } from './app/appDialogs'
 import { activeTabSubtitle, activeTabTitle } from './app/tabMeta'
 import { useViewStore } from './stores/view'
 import { useTabsStore } from './stores/tabs'
-import { useLibraryStore } from './stores/library'
+import { useDocumentListStore } from './stores/documentList'
 
 const tabs = useTabsStore()
 const view = useViewStore()
-const library = useLibraryStore()
+const documentList = useDocumentListStore()
 
 // App shell is a thin orchestrator: it owns the app sub-objects (runtime,
 // dialogs, lifecycle) and the small local UI state, then lets <AppShell> render
@@ -34,7 +34,7 @@ watch(
   () => tabs.activeId,
   () => {
     const path = tabs.activeTab?.path
-    if (path) library.touchRecent(path)
+    if (path) documentList.touchRecent(path)
   },
 )
 
