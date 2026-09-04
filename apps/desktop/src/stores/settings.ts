@@ -10,6 +10,11 @@ export interface AIConfig {
   temperature?: number
   max_tokens?: number
   system_prompt?: string
+  // Allow a private/loopback base_url (e.g. a local model server). On by
+  // default because the app is local-model-first (the default base_url is
+  // localhost); disable it for strict SSRF protection when pointing at a
+  // public endpoint.
+  allow_private?: boolean
 }
 
 export type AutosaveInterval = 'off' | 5000 | 15000 | 30000 | 60000
@@ -23,6 +28,7 @@ const LS_TEMPERATURE = 'nekowite.ai.temperature'
 const LS_MAX_TOKENS = 'nekowite.ai.maxTokens'
 const LS_SYSTEM_PROMPT = 'nekowite.ai.systemPrompt'
 const LS_SYSTEM_PROMPT_ON = 'nekowite.ai.systemPromptOn'
+const LS_ALLOW_PRIVATE = 'nekowite.ai.allowPrivate'
 const LS_AUTOSAVE = 'nekowite.settings.autosaveInterval'
 const LS_MAXHISTORY = 'nekowite.settings.maxHistory'
 const LS_EXPORT_FRONTMATTER = 'nekowite.settings.exportFrontmatter'
@@ -79,6 +85,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const maxTokens = ref<number>(readNumber(LS_MAX_TOKENS, 256))
   const systemPrompt = ref(readLs(LS_SYSTEM_PROMPT, ''))
   const systemPromptOn = ref(localStorage.getItem(LS_SYSTEM_PROMPT_ON) === 'true')
+  const allowPrivate = ref<boolean>(readBool(LS_ALLOW_PRIVATE, true))
   const exportIncludeFrontmatter = ref<boolean>(readBool(LS_EXPORT_FRONTMATTER, true))
   const exportPdfPageSize = ref<ExportPdfPageSize>(readEnum(LS_EXPORT_PDF_PAGE, ['A4', 'Letter'], 'A4'))
   const exportPdfOrientation = ref<ExportPdfOrientation>(readEnum(LS_EXPORT_PDF_ORIENT, ['portrait', 'landscape'], 'portrait'))
@@ -98,6 +105,7 @@ export const useSettingsStore = defineStore('settings', () => {
   watch(maxTokens, (v) => localStorage.setItem(LS_MAX_TOKENS, String(v)))
   watch(systemPrompt, (v) => localStorage.setItem(LS_SYSTEM_PROMPT, v))
   watch(systemPromptOn, (v) => localStorage.setItem(LS_SYSTEM_PROMPT_ON, String(v)))
+  watch(allowPrivate, (v) => localStorage.setItem(LS_ALLOW_PRIVATE, String(v)))
   watch(autosaveInterval, (v) => localStorage.setItem(LS_AUTOSAVE, String(v)))
   watch(maxHistory, (v) => localStorage.setItem(LS_MAXHISTORY, String(v)))
   watch(exportIncludeFrontmatter, (v) => localStorage.setItem(LS_EXPORT_FRONTMATTER, String(v)))
@@ -124,6 +132,7 @@ export const useSettingsStore = defineStore('settings', () => {
     if (systemPromptOn.value && systemPrompt.value.trim()) {
       cfg.system_prompt = systemPrompt.value.trim()
     }
+    cfg.allow_private = allowPrivate.value
     return cfg
   }
 
@@ -135,5 +144,5 @@ export const useSettingsStore = defineStore('settings', () => {
     modelsCache.value = []
   }
 
-  return { provider, model, baseUrl, apiKey, temperature, maxTokens, systemPrompt, systemPromptOn, autosaveInterval, maxHistory, modelsCache, exportIncludeFrontmatter, exportPdfPageSize, exportPdfOrientation, saveKey, loadKey, config, listModels, clearModelsCache }
+  return { provider, model, baseUrl, apiKey, temperature, maxTokens, systemPrompt, systemPromptOn, allowPrivate, autosaveInterval, maxHistory, modelsCache, exportIncludeFrontmatter, exportPdfPageSize, exportPdfOrientation, saveKey, loadKey, config, listModels, clearModelsCache }
 })

@@ -1,15 +1,24 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import {
   CHAT_SESSIONS_KEY,
   createSession,
   titleFromText,
   useChatSessionStore,
+  applyImageCaps,
+  IMAGE_EVICTED_NOTICE,
+  IMAGE_TOO_LARGE,
+  MAX_IMAGE_BASE64_LENGTH,
 } from './chatSession'
 
 function sessionStore() {
   const s = useChatSessionStore()
   return s
+}
+
+/** A tiny helper to build image Data URLs of a controllable (base64) length. */
+function dataUrl(length: number): string {
+  return 'data:image/png;base64,' + 'a'.repeat(length)
 }
 
 describe('titleFromText', () => {
@@ -194,5 +203,87 @@ describe('chatSession store', () => {
     store.clearMessages()
     expect(store.sessions[0].messages).toEqual([])
     expect(store.sessions[0].title).toBe('')
+  })
+})
+
+describe('image storage caps', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+  })
+
+  it('rejects a single image over the per-image cap and marks the message', () => {
+    const session = createSession()
+    session.messages = [
+      { role: 'user', content: 'pic', images: [{ id: 'big', name: 'big.png', dataUrl: dataUrl(600) }] },
+    ]
+    applyImageCaps([session], { maxPerImage: 500, maxPerSession: 10000, maxTotal: 10000 })
+    const msg = session.messages[0]
+    expect(msg.images).toBeUndefined()
+    expect(msg.imageNotice).toBe(IMAGE_TOO_LARGE)
+  })
+
+  it('appendMessage refuses a genuinely oversized image (real cap) and marks it', () => {
+    const store = sessionStore()
+    store.appendMessage({
+      role: 'user',
+      content: 'pic',
+      images: [{ id: 'big', name: 'big.png', dataUrl: dataUrl(MAX_IMAGE_BASE64_LENGTH + 1) }],
+    })
+    const msg = store.sessions[0].messages[0]
+    expect(msg.images).toBeUndefined()
+    expect(msg.imageNotice).toBe(IMAGE_TOO_LARGE)
+  })
+
+  it('a session over its image budget evicts the oldest images first', () => {
+    const session = createSession()
+    session.messages = [
+      { role: 'user', content: 'old', images: [{ id: 'o1', name: 'o.png', dataUrl: dataUrl(300) }] },
+      { role: 'user', content: 'new', images: [{ id: 'n1', name: 'n.png', dataUrl: dataUrl(300) }] },
+    ]
+    applyImageCaps([session], { maxPerImage: 1000, maxPerSession: 500, maxTotal: 10000 })
+    expect(session.messages[0].images).toBeUndefined()
+    expect(session.messages[0].imageNotice).toBe(IMAGE_EVICTED_NOTICE)
+    expect(session.messages[1].images).toHaveLength(1)
+    expect(session.messages[1].images![0].id).toBe('n1')
+  })
+
+  it('the total cap evicts images from the least-recently-updated session first', () => {
+    const old = createSession()
+    old.updated = 100
+    const fresh = createSession()
+    fresh.updated = 200
+    old.messages = [
+      { role: 'user', content: 'a', images: [{ id: '1', name: 'a.png', dataUrl: dataUrl(300) }] },
+    ]
+    fresh.messages = [
+      { role: 'user', content: 'b', images: [{ id: '2', name: 'b.png', dataUrl: dataUrl(300) }] },
+    ]
+    applyImageCaps([old, fresh], { maxPerImage: 1000, maxPerSession: 1000, maxTotal: 500 })
+    expect(old.messages[0].images).toBeUndefined()
+    expect(old.messages[0].imageNotice).toBe(IMAGE_EVICTED_NOTICE)
+    expect(fresh.messages[0].images).toHaveLength(1)
+    expect(fresh.messages[0].images![0].id).toBe('2')
+  })
+
+  it('handles a localStorage read failure without throwing', () => {
+    const spy = vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => {
+      throw new Error('storage unavailable')
+    })
+    setActivePinia(createPinia())
+    const store = sessionStore()
+    expect(store.sessions).toHaveLength(1)
+    spy.mockRestore()
+  })
+
+  it('handles a localStorage write failure without throwing', () => {
+    const spy = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceededError')
+    })
+    setActivePinia(createPinia())
+    const store = sessionStore()
+    expect(store.sessions).toHaveLength(1)
+    expect(() => store.persist()).not.toThrow()
+    spy.mockRestore()
   })
 })
