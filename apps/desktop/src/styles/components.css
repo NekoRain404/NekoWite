@@ -355,3 +355,86 @@
 [data-theme="dark"] .math-dialog {
   box-shadow: 0 16px 40px rgb(0 0 0 / 45%);
 }
+
+/* ============ Table insert dialog passthrough ============ */
+/* editor-core renders .table-overlay/.table-dialog (inserting a custom rows×cols
+   GFM table); align their surface to the shared dialog variants. */
+.table-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--app-canvas) 55%, transparent);
+  backdrop-filter: blur(2px);
+}
+.table-dialog {
+  min-width: 260px;
+  padding: 16px 18px;
+  background: var(--app-elevated);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 16%);
+}
+[data-theme="dark"] .table-dialog {
+  box-shadow: 0 16px 40px rgb(0 0 0 / 45%);
+}
+.table-dialog-title {
+  margin-bottom: 12px;
+  font-weight: 650;
+  color: var(--app-text);
+}
+.table-dialog-grid {
+  display: flex;
+  gap: 16px;
+}
+.table-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--app-muted);
+}
+.table-dialog-stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.table-dialog-stepper button {
+  width: 26px;
+  height: 26px;
+  border: 1px solid color-mix(in srgb, var(--app-border) 80%, transparent);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-panel);
+  color: var(--app-text);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.table-dialog-stepper span {
+  min-width: 32px;
+  text-align: center;
+  color: var(--app-text);
+  font-variant-numeric: tabular-nums;
+}
+.table-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.table-dialog-actions button {
+  padding: 6px 14px;
+  border: 1px solid color-mix(in srgb, var(--app-border) 80%, transparent);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-panel);
+  color: var(--app-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.table-dialog-actions button.primary {
+  background: var(--app-accent);
+  border-color: var(--app-accent);
+  color: var(--app-accent-contrast);
+}

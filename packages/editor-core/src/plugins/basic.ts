@@ -19,7 +19,9 @@ import {
 import {
   imageDimRemark,
   imageDimSchema,
+  imageKeymapPlugin,
   imageNodeView,
+  imageSelectionPlugin,
 } from '../image'
 import {
   mathDisplay,
@@ -30,7 +32,9 @@ import {
   mathRemark,
 } from '../math'
 import { mdxComponent, mdxComponentNodeView, mdxJsxRemark } from '../mdx'
+import { tableAutoRowKeymap } from '../table/keymap'
 import { tableFeaturePlugin } from '../table/plugin'
+import { tableSelectionPlugin } from '../table/selection'
 import { suggestionPlugin } from '../suggest'
 import { wikilink, wikilinkNodeView, wikilinkRemark } from '../wikilink'
 
@@ -69,12 +73,16 @@ const nativeInputPlugin = new Plugin({
 })
 
 export const basicPlugins: MilkdownPlugin[] = [
+  // Runs before the GFM table keymap so Tab on the last cell can append a row.
+  $prose(() => tableAutoRowKeymap),
   ...mdxJsxRemark,
   mdxComponentNodeView,
   ...commonmark,
   ...imageDimSchema,
   ...imageDimRemark,
   imageNodeView,
+  $prose(() => imageSelectionPlugin),
+  $prose(() => imageKeymapPlugin),
   codeBlockCopyNodeView,
   headingAnchorNodeView,
   ...gfm.flat(),
@@ -99,6 +107,7 @@ export const basicPlugins: MilkdownPlugin[] = [
   listener,
   mdxComponent,
   tableFeaturePlugin,
+  $prose(() => tableSelectionPlugin),
   $prose(() => suggestionPlugin),
   $prose(() => nativeInputPlugin),
 ]

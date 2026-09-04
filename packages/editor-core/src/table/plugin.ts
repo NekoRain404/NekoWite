@@ -4,6 +4,7 @@ import type { Node, Schema } from '@milkdown/prose/model'
 import type { EditorView } from '@milkdown/prose/view'
 
 import { registerCommand, registerToolbar } from '../registry'
+import { openTableDialog } from './dialog'
 
 export const TABLE_COMMAND_ID = 'table.insert'
 
@@ -49,7 +50,7 @@ export function insertTable(view: EditorView, rows: number, cols: number): void 
 
 function insertTableAtCursor(): void {
   if (activeView) {
-    insertTable(activeView, 3, 3)
+    openTableDialog(activeView, { rows: 3, cols: 3 })
   }
 }
 

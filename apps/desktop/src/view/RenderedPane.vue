@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { createEditor, basicPlugins, configureImageResolver, configureHeadingAnchorUrl, configureWikilinkHandler } from '@nekowite/editor-core'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { createEditor, basicPlugins, configureImageResolver, configureHeadingAnchorUrl, configureWikilinkHandler, clearImageSelection } from '@nekowite/editor-core'
 import type { NekoEditor } from '@nekowite/editor-core'
 import { emitLifecycle, setActiveEditor } from '@nekowite/plugin-host'
 import { consumeSuppressReapply } from '../services/suppressReapply'
@@ -25,6 +25,8 @@ import {
 import { suggestionsFromAttr } from '../services/renderSearch'
 import { debounce } from '../services/timing'
 import RenderSearchPanel from './RenderSearchPanel.vue'
+import ImagePanel from '../ui/ImagePanel.vue'
+import TableMenu from '../ui/TableMenu.vue'
 import RenameDialog from '../components/RenameDialog.vue'
 import { parseOutline } from '../services/outline'
 import { dirRelativeToVault } from '../services/noteMeta'
@@ -50,6 +52,8 @@ const renderDir = computed(() => resolveDirection(appearance.contentDirection, t
 const scrollEl = ref<HTMLElement | null>(null)
 const editorEl = ref<HTMLElement | null>(null)
 let editor: NekoEditor | null = null
+// Reactive handle for child panels (ImagePanel) so the template can pass it.
+const editorForPanel = shallowRef<NekoEditor | null>(null)
 let unlistenChange: (() => void) | null = null
 let unlistenOverlayRefresh: (() => void) | null = null
 let applyingExternal = false
@@ -322,6 +326,7 @@ defineExpose({ getRatio, setRatio, getHeadingEls, setScrollToLine })
 onMounted(async () => {
   if (!editorEl.value) return
   editor = createEditor(editorEl.value, { plugins: basicPlugins })
+  editorForPanel.value = editor
   editorBridge.setEditor(editor)
   setActiveEditor(editor)
   configureImageResolver(
@@ -418,9 +423,11 @@ onBeforeUnmount(() => {
   cancelFocusRaf()
   if (tabs.activeId) tabs.cancelAutosave(tabs.activeId)
   setCalloutView(null)
+  clearImageSelection()
   configureImageResolver(null)
   configureHeadingAnchorUrl(null)
   configureWikilinkHandler(null)
+  editorForPanel.value = null
   editorBridge.setEditor(null)
   setActiveEditor(null)
   editorEl.value?.removeEventListener('pointerdown', onContainerPointerDownCapture, true)
@@ -504,7 +511,16 @@ watch(
     <div
       ref="editorEl"
       class="editor-container"
-    />
+    >
+      <ImagePanel
+        v-if="editorForPanel"
+        :editor="editorForPanel"
+      />
+      <TableMenu
+        v-if="editorForPanel"
+        :editor="editorForPanel"
+      />
+    </div>
     <div
       v-if="spellPopup"
       class="nw-spell-popup"

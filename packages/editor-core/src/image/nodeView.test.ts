@@ -18,13 +18,27 @@ function fakeNode(attrs: Record<string, string>): ProseNode {
   } as unknown as ProseNode
 }
 
-function makeView(node: ProseNode): { dom: HTMLImageElement; update: (n: ProseNode) => boolean } {
+function makeView(node: ProseNode): {
+  dom: HTMLElement
+  img: HTMLImageElement
+  selectNode: () => void
+  deselectNode: () => void
+  update: (n: ProseNode) => boolean
+} {
   // The factory only reads `node`; the view/getPos args stay unused there.
   const spec = (makeImageNodeView as (n: ProseNode) => unknown)(node) as {
-    dom: HTMLImageElement
+    dom: HTMLElement
     update: (n: ProseNode) => boolean
+    selectNode?: () => void
+    deselectNode?: () => void
   }
-  return spec
+  return {
+    dom: spec.dom,
+    img: spec.dom.querySelector('img') as HTMLImageElement,
+    selectNode: spec.selectNode ?? (() => undefined),
+    deselectNode: spec.deselectNode ?? (() => undefined),
+    update: spec.update,
+  }
 }
 
 afterEach(() => {
@@ -33,32 +47,33 @@ afterEach(() => {
 
 describe('image node view', () => {
   it('renders an img with the raw document src when no resolver is set', () => {
-    const { dom } = makeView(fakeNode({ src: 'attachments/a.png', alt: 'A', title: '' }))
-    expect(dom.tagName).toBe('IMG')
-    expect(dom.getAttribute('src')).toBe('attachments/a.png')
-    expect(dom.getAttribute('alt')).toBe('A')
-    expect(dom.hasAttribute('title')).toBe(false)
+    const { dom, img } = makeView(fakeNode({ src: 'attachments/a.png', alt: 'A', title: '' }))
+    expect(dom.tagName).toBe('FIGURE')
+    expect(img.tagName).toBe('IMG')
+    expect(img.getAttribute('src')).toBe('attachments/a.png')
+    expect(img.getAttribute('alt')).toBe('A')
+    expect(img.hasAttribute('title')).toBe(false)
   })
 
   it('swaps in the resolved display URL asynchronously, keeping attrs intact', async () => {
     configureImageResolver(async () => 'data:image/png;base64,XYZ')
-    const { dom } = makeView(fakeNode({ src: 'attachments/a.png', alt: 'A', title: 'T' }))
-    expect(dom.getAttribute('src')).toBe('attachments/a.png')
+    const { img } = makeView(fakeNode({ src: 'attachments/a.png', alt: 'A', title: 'T' }))
+    expect(img.getAttribute('src')).toBe('attachments/a.png')
     await flush()
-    expect(dom.getAttribute('src')).toBe('data:image/png;base64,XYZ')
-    expect(dom.getAttribute('alt')).toBe('A')
-    expect(dom.getAttribute('title')).toBe('T')
+    expect(img.getAttribute('src')).toBe('data:image/png;base64,XYZ')
+    expect(img.getAttribute('alt')).toBe('A')
+    expect(img.getAttribute('title')).toBe('T')
   })
 
   it('applies a newer update and ignores the stale resolution result', async () => {
     configureImageResolver(async (src) => `resolved:${src}`)
     const node = fakeNode({ src: 'a.png', alt: '', title: '' })
-    const { dom, update } = makeView(node)
+    const { img, update } = makeView(node)
     // Re-render with a different src before the first promise settles.
     const second = fakeNode({ src: 'b.png', alt: '', title: '' })
     expect(update(second)).toBe(true)
     await flush()
-    expect(dom.getAttribute('src')).toBe('resolved:b.png')
+    expect(img.getAttribute('src')).toBe('resolved:b.png')
   })
 
   it('rejects updates of a different node type', () => {
@@ -68,8 +83,9 @@ describe('image node view', () => {
     expect(update(other)).toBe(false)  })
 
   it('renders an empty img for an empty src', () => {
-    const { dom } = makeView(fakeNode({ src: '', alt: '', title: '' }))
-    expect(dom.hasAttribute('src')).toBe(false)
+    const { img, dom } = makeView(fakeNode({ src: '', alt: '', title: '' }))
+    expect(img.hasAttribute('src')).toBe(false)
+    expect(dom.getAttribute('data-failed')).toBe('true')
   })
 
   it('never lets the async swap mutate the document model', async () => {
@@ -80,5 +96,38 @@ describe('image node view', () => {
     await flush()
     // The node's attrs are untouched — serialization fidelity is preserved.
     expect(node.attrs.src).toBe('attachments/a.png')
+  })
+
+  it('toggles the selected state via selectNode/deselectNode', () => {
+    const { dom, selectNode, deselectNode } = makeView(
+      fakeNode({ src: 'a.png', alt: '', title: '' }),
+    )
+    expect(dom.getAttribute('data-selected')).toBe('false')
+    selectNode()
+    expect(dom.getAttribute('data-selected')).toBe('true')
+    deselectNode()
+    expect(dom.getAttribute('data-selected')).toBe('false')
+  })
+
+  it('exposes a visible resize handle and aria-label from alt', () => {
+    const { dom, img } = makeView(fakeNode({ src: 'a.png', alt: 'Cat photo', title: '' }))
+    expect(dom.querySelector('[data-testid="neko-image-handle"]')).toBeTruthy()
+    expect(dom.getAttribute('role')).toBe('img')
+    expect(dom.getAttribute('aria-label')).toBe('Cat photo')
+    expect(img.getAttribute('alt')).toBe('Cat photo')
+  })
+
+  it('marks the wrapper failed and exposes the recoverable overlay', () => {
+    const { dom } = makeView(fakeNode({ src: 'a.png', alt: '', title: '' }))
+    const img = dom.querySelector('img') as HTMLImageElement
+    img.dispatchEvent(new Event('error'))
+    expect(dom.getAttribute('data-failed')).toBe('true')
+    const overlay = dom.querySelector('.neko-image-error') as HTMLElement
+    expect(overlay).toBeTruthy()
+    expect(overlay.hasAttribute('hidden')).toBe(false)
+    const retry = dom.querySelector('.neko-image-error-retry') as HTMLButtonElement
+    expect(retry).toBeTruthy()
+    retry.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(dom.getAttribute('data-failed')).toBe('false')
   })
 })

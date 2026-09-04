@@ -4,20 +4,40 @@ interface MdNode {
   type: string
   value?: string
   width?: number
+  height?: number
   imageAlign?: string
   children?: MdNode[]
 }
 
-// Parse a trailing `{width=300 align=center}` block so the width/align become
-// real node attrs instead of adjacent text. Width is emitted before align by
-// imageDimMarkdown, but we accept either order on input.
-function parseDims(value: string): { width?: number; align?: string } | null {
-  const m = /^\{\s*((?:width=\d+)\s*)?((?:align=(left|center|right))\s*)?\}$/.exec(value)
+// Parse a trailing `{width=300 height=200 align=center}` block so the
+// width/height/align become real node attrs instead of adjacent text. The
+// imageDimMarkdown serializer emits width, then align, then height, but any
+// order is accepted on input.
+function parseDims(value: string): { width?: number; height?: number; align?: string } | null {
+  const m = /^\{\s*([\s\w=]+?)\s*\}$/.exec(value)
   if (!m) return null
-  const width = m[1] ? Number(/width=(\d+)/.exec(m[1])![1]) : undefined
-  const align = m[2] ? (/align=(left|center|right)/.exec(m[2])![1]) : undefined
-  if (width === undefined && align === undefined) return null
-  return { width, align }
+  const parts = m[1].split(/\s+/)
+  let width: number | undefined
+  let height: number | undefined
+  let align: string | undefined
+  for (const part of parts) {
+    const w = /^width=(\d+)$/.exec(part)
+    if (w) {
+      width = Number(w[1])
+      continue
+    }
+    const h = /^height=(\d+)$/.exec(part)
+    if (h) {
+      height = Number(h[1])
+      continue
+    }
+    const a = /^align=(left|center|right)$/.exec(part)
+    if (a) {
+      align = a[1]
+    }
+  }
+  if (width === undefined && height === undefined && align === undefined) return null
+  return { width, height, align }
 }
 
 function transform(nodes: MdNode[]): MdNode[] {
@@ -34,6 +54,7 @@ function transform(nodes: MdNode[]): MdNode[] {
         out.push({
           ...node,
           width: dims.width ?? undefined,
+          height: dims.height ?? undefined,
           imageAlign: dims.align ?? undefined,
         })
         i += 1
