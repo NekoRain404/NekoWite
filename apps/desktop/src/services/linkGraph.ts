@@ -22,6 +22,27 @@ export interface LinkGraph {
   edges: LinkGraphEdge[]
 }
 
+/** How a link was written: a `[[wikilink]]` or a `[label](target.md)` markdown
+ *  link. Kept on detailed edges so the graph can filter by link type. */
+export type LinkKind = 'wiki' | 'markdown'
+
+export interface DetailedEdge extends LinkGraphEdge {
+  kind: LinkKind
+}
+
+/** A link target that could not be resolved to any note in the vault. */
+export interface BrokenLink {
+  from: string
+  target: string
+  text: string
+}
+
+export interface DetailedGraph {
+  nodes: LinkGraphNode[]
+  edges: DetailedEdge[]
+  broken: BrokenLink[]
+}
+
 export interface LayoutPoint {
   id: string
   x: number
@@ -86,19 +107,33 @@ function inlineTarget(raw: string): string | null {
  * note body. Frontmatter and fenced code blocks are ignored; http(s),
  * anchors and non-markdown (attachment/image) targets are skipped. */
 export function extractLinks(content: string): string[] {
+  return extractLinksDetailed(content).map((link) => link.target)
+}
+
+/** Like {@link extractLinks} but keeps the link kind (wiki vs. markdown) and
+ * the display text, so callers can filter by link type and show broken links. */
+export function extractLinksDetailed(
+  content: string,
+): Array<{ target: string; kind: LinkKind; text: string }> {
   const { body } = splitFrontmatter(content)
   const text = stripCodeFences(body)
-  const links: string[] = []
+  const links: Array<{ target: string; kind: LinkKind; text: string }> = []
   for (const match of text.matchAll(WIKI_OR_MD_RE)) {
-    if (match[1] !== undefined) {
-      const target = wikiTarget(match[1])
-      if (target) links.push(target)
-      continue
-    }
     const start = match.index ?? 0
     if (start > 0 && text[start - 1] === '!') continue
+    if (match[1] !== undefined) {
+      const target = wikiTarget(match[1])
+      if (!target) continue
+      // The wiki alias lives outside a capture group, so pull it from the raw
+      // `[[target|alias]]` match: `match[0]` is the whole `[[…]]` token.
+      const inner = match[0].slice(2, -2)
+      const pipe = inner.lastIndexOf('|')
+      const alias = pipe >= 0 ? inner.slice(pipe + 1).trim() : ''
+      links.push({ target, kind: 'wiki', text: alias })
+      continue
+    }
     const target = inlineTarget(match[3] ?? '')
-    if (target) links.push(target)
+    if (target) links.push({ target, kind: 'markdown', text: (match[2] ?? '').trim() })
   }
   return links
 }
@@ -176,6 +211,125 @@ export function resolveLinkPath(
     }
   }
   return best
+}
+
+/** Build a richer graph that also tracks each edge's link kind and every
+ * unresolved (broken) link target. `broken` lists link targets that resolve to
+ * no note, useful for a visible "broken links" warning. */
+export function buildLinkGraphDetailed(notes: Array<{ path: string; content: string }>): DetailedGraph {
+  const paths = notes.map((note) => note.path)
+  const edgeKeys = new Set<string>()
+  const edges: DetailedEdge[] = []
+  const broken: BrokenLink[] = []
+  for (const note of notes) {
+    for (const link of extractLinksDetailed(note.content)) {
+      const resolved = resolveLinkPath(note.path, link.target, paths)
+      if (!resolved) {
+        broken.push({ from: note.path, target: link.target, text: link.text })
+        continue
+      }
+      if (resolved === note.path) continue
+      const key = `${note.path} ${resolved}`
+      if (edgeKeys.has(key)) continue
+      edgeKeys.add(key)
+      edges.push({ from: note.path, to: resolved, kind: link.kind })
+    }
+  }
+  const degree = new Map<string, number>()
+  for (const path of paths) degree.set(path, 0)
+  for (const edge of edges) {
+    degree.set(edge.from, (degree.get(edge.from) ?? 0) + 1)
+    degree.set(edge.to, (degree.get(edge.to) ?? 0) + 1)
+  }
+  const nodes: LinkGraphNode[] = paths.map((path) => ({ id: path, degree: degree.get(path) ?? 0 }))
+  return { nodes, edges, broken }
+}
+
+/** Nodes with no edges — "orphaned" notes that nothing links to and that link
+ *  to nothing. Kept as a pure helper so the UI can show a count / highlight. */
+export function orphanNodes(graph: Pick<LinkGraph, 'nodes'>): LinkGraphNode[] {
+  return graph.nodes.filter((node) => node.degree === 0)
+}
+
+/** Find every broken link (a target that resolves to no note) across the whole
+ *  vault. `from` is the note path that contains the link; `target` is the raw
+ *  link target. */
+export function findBrokenLinks(
+  notes: Array<{ path: string; content: string }>,
+): Array<BrokenLink> {
+  const paths = notes.map((note) => note.path)
+  const broken: BrokenLink[] = []
+  for (const note of notes) {
+    for (const link of extractLinksDetailed(note.content)) {
+      const resolved = resolveLinkPath(note.path, link.target, paths)
+      if (!resolved) broken.push({ from: note.path, target: link.target, text: link.text })
+    }
+  }
+  return broken
+}
+
+/** Incrementally update a {@link DetailedGraph} after one note's content
+ *  changes, without re-reading every note or rebuilding the whole graph.
+ *
+ *  Only the changed note's OUTGOING edges are recomputed (its incoming edges,
+ *  from other notes, are unaffected by its own content). Degrees are
+ *  recomputed in one cheap pass over the edge list. When `content` is null the
+ *  note is removed: its node and every edge touching it are dropped. The path
+ *  set must otherwise be unchanged (a real add/delete/move changes which other
+ *  notes' links resolve, so callers should fall back to a full rebuild there).
+ */
+export function refreshNode(
+  graph: DetailedGraph,
+  path: string,
+  content: string | null,
+  allPaths: string[],
+): DetailedGraph {
+  const paths = allPaths.length > 0 ? allPaths : graph.nodes.map((n) => n.id)
+  const pathSet = new Set(paths)
+  // A content change only affects the note's OUTGOING edges; an update must keep
+  // its incoming edges (other notes still link to it), while a delete drops both.
+  const edges =
+    content === null
+      ? graph.edges.filter((edge) => edge.from !== path && edge.to !== path)
+      : graph.edges.filter((edge) => edge.from !== path)
+  const broken = graph.broken.filter((b) => b.from !== path)
+  const nodesById = new Map(graph.nodes.map((n) => [n.id, n]))
+
+  if (content === null) {
+    // Delete: drop the node and every edge touching it.
+    nodesById.delete(path)
+  } else {
+    // Update / create: ensure the node exists, then re-extract its links.
+    if (!nodesById.has(path) && pathSet.has(path)) {
+      nodesById.set(path, { id: path, degree: 0 })
+    }
+    const edgeKeys = new Set(edges.map((e) => `${e.from} ${e.to}`))
+    for (const link of extractLinksDetailed(content)) {
+      const resolved = resolveLinkPath(path, link.target, paths)
+      if (!resolved) {
+        broken.push({ from: path, target: link.target, text: link.text })
+        continue
+      }
+      if (resolved === path) continue
+      const key = `${path} ${resolved}`
+      if (edgeKeys.has(key)) continue
+      edgeKeys.add(key)
+      edges.push({ from: path, to: resolved, kind: link.kind })
+    }
+  }
+
+  const degree = new Map<string, number>()
+  for (const id of nodesById.keys()) degree.set(id, 0)
+  for (const edge of edges) {
+    degree.set(edge.from, (degree.get(edge.from) ?? 0) + 1)
+    degree.set(edge.to, (degree.get(edge.to) ?? 0) + 1)
+  }
+  const ordered = paths
+    .filter((p) => nodesById.has(p))
+    .map((p) => ({ id: p, degree: degree.get(p) ?? 0 }))
+  const extras = Array.from(nodesById.values()).filter((n) => !pathSet.has(n.id))
+  const nodes: LinkGraphNode[] = ordered.length > 0 ? ordered.concat(extras) : Array.from(nodesById.values())
+  return { nodes, edges, broken }
 }
 
 /** Build the note graph: every note becomes a node, every successfully

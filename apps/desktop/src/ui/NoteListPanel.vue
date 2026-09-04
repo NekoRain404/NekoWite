@@ -21,7 +21,7 @@ import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 import { parseOutline } from '../services/outline'
 import { dirRelativeToVault } from '../services/noteMeta'
-import { searchContentMatches } from '../services/contentSearch'
+import { searchWithIndex } from '../services/contentSearch'
 import type { ContentMatch, ContentSearchCandidate } from '../services/contentSearch'
 import { t } from '../i18n'
 
@@ -53,6 +53,33 @@ function clearContentResults(): void {
   contentSearching.value = false
   contentSearched.value = false
 }
+
+/** Short label for the persistent search-index state, shown in the note-list
+ *  meta row. While building it shows an incremental progress count. */
+const indexStatusLabel = computed(() => {
+  const s = library.indexState
+  const progress = library.indexProgress
+  if (s === 'building' && progress) {
+    return t('notelist.indexBuildingProgress', { done: progress.done, total: progress.total })
+  }
+  switch (s) {
+    case 'building':
+      return t('notelist.indexBuilding')
+    case 'up-to-date':
+      return t('notelist.indexUpToDate')
+    case 'stale':
+      return t('notelist.indexStale')
+    case 'needs-rebuild':
+      return t('notelist.indexNeedsRebuild')
+    default:
+      return ''
+  }
+})
+
+/** Whether the index state deserves a visible chip (not the idle "no vault"). */
+const showIndexStatus = computed(
+  () => library.indexState !== 'idle' && indexStatusLabel.value !== '',
+)
 
 function toggleContentSearch(): void {
   contentEnabled.value = !contentEnabled.value
@@ -91,7 +118,13 @@ async function runContentSearch(): Promise<void> {
     summary: n.summary,
     readContent: () => library.noteContent(n.path),
   }))
-  const hits = await searchContentMatches(candidates, q, controller.signal, CONTENT_SEARCH_CONCURRENCY)
+  const hits = await searchWithIndex(
+    candidates,
+    q,
+    (path) => library.indexEntryFor(path),
+    controller.signal,
+    CONTENT_SEARCH_CONCURRENCY,
+  )
   if (controller.signal.aborted) return
   contentResults.value = hits
   contentSearching.value = false
@@ -300,6 +333,22 @@ function jumpOutline(line: number, index: number): void {
       </div>
       <div class="nl-meta">
         <span class="nl-count">{{ library.indexing ? t('notelist.indexing') : contentEnabled ? t('notelist.contentCount', { n: contentResults.length }) : t('notelist.count', { n: library.visibleNotes.length }) }}</span>
+        <span
+          v-if="showIndexStatus"
+          class="nl-index"
+          :class="`is-${library.indexState}`"
+          :title="t('notelist.indexStateTitle', { state: indexStatusLabel })"
+        >
+          {{ indexStatusLabel }}
+        </span>
+        <button
+          v-if="library.indexState === 'stale' || library.indexState === 'needs-rebuild'"
+          class="nl-index-rebuild"
+          :title="t('notelist.rebuildIndexTitle')"
+          @click="library.rebuildIndex()"
+        >
+          {{ t('notelist.rebuildIndex') }}
+        </button>
         <button
           class="nl-sort"
           :title="t('notelist.sortTitle', { label: sortLabel })"
@@ -624,6 +673,46 @@ function jumpOutline(line: number, index: number): void {
   font-weight: 500;
   color: color-mix(in srgb, var(--app-muted) 88%, transparent);
   font-variant-numeric: tabular-nums;
+}
+.nl-index {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: color-mix(in srgb, var(--app-accent) 88%, var(--app-muted));
+  background: color-mix(in srgb, var(--app-accent-soft) 60%, transparent);
+}
+.nl-index.is-building {
+  color: var(--app-muted);
+  background: color-mix(in srgb, var(--app-elevated) 70%, transparent);
+}
+.nl-index.is-stale,
+.nl-index.is-needs-rebuild {
+  color: color-mix(in srgb, #d97706 80%, var(--app-text));
+  background: color-mix(in srgb, #d97706 14%, transparent);
+}
+.nl-index-rebuild {
+  flex: none;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--app-border) 80%, transparent);
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-muted);
+  font-family: var(--app-font);
+  font-size: 10.5px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: background var(--app-motion-fast) var(--app-ease),
+              color var(--app-motion-fast) var(--app-ease);
+}
+.nl-index-rebuild:hover {
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
 }
 .nl-sort {
   display: inline-flex;

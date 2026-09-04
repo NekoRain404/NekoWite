@@ -289,6 +289,53 @@ describe('useLibraryStore', () => {
     expect(store.vaultTruncated).toBe(true)
   })
 
+  it('builds the persistent search index and answers candidate queries', async () => {
+    seedNote('/vault/a.md', '---\ntitle: Alpha\n---\n关于图论与算法', 1)
+    seedNote('/vault/sub/b.md', '---\ntitle: Beta\n---\n与图论无关的内容', 2)
+    const store = useLibraryStore()
+    await store.indexVault('/vault')
+    await store.buildSearchIndex('/vault')
+    // A query that appears only deep in the body (not in title/tags/summary) is
+    // found through the persistent index (its text includes the full body).
+    expect(store.indexCandidatePaths('图论')).toEqual(['/vault/a.md', '/vault/sub/b.md'])
+    expect(store.indexCandidatePaths('无关')).toEqual(['/vault/sub/b.md'])
+    expect(store.indexCandidatePaths('  ')).toEqual([])
+    expect(store.indexState).toBe('up-to-date')
+  })
+
+  it('updates a changed note index entry incrementally from an fs-change', async () => {
+    seedNote('/vault/a.md', '---\ntitle: Alpha\n---\n旧内容', 1)
+    const store = useLibraryStore()
+    await store.indexVault('/vault')
+    await store.buildSearchIndex('/vault')
+    expect(store.indexCandidatePaths('旧内容')).toEqual(['/vault/a.md'])
+    const handler = [...changeHandlers][0]
+    seedNote('/vault/a.md', '---\ntitle: Alpha\n---\n新内容', 999)
+    handler({ path: '/vault/a.md', kind: 'modify' })
+    await vi.waitFor(() => {
+      expect(store.indexCandidatePaths('新内容')).toEqual(['/vault/a.md'])
+      expect(store.indexCandidatePaths('旧内容')).toEqual([])
+    })
+    // A removed note is dropped from the index too.
+    seedNote('/vault/a.md', '再见', 100)
+    handler({ path: '/vault/a.md', kind: 'remove' })
+    await vi.waitFor(() => {
+      expect(store.indexCandidatePaths('新内容')).toEqual([])
+    })
+  })
+
+  it('rebuildIndex clears and re-runs the background build', async () => {
+    seedNote('/vault/a.md', '---\ntitle: Alpha\n---\n关于图论', 1)
+    const store = useLibraryStore()
+    await store.indexVault('/vault')
+    await store.buildSearchIndex('/vault')
+    expect(store.indexCandidatePaths('图论')).toEqual(['/vault/a.md'])
+    // Force a rebuild; the index state should return to up-to-date afterwards.
+    await store.rebuildIndex()
+    expect(store.indexCandidatePaths('图论')).toEqual(['/vault/a.md'])
+    expect(store.indexState).toBe('up-to-date')
+  })
+
   it('a superseded indexVault cannot overwrite the newer vault with stale results', async () => {
     seedNote('/vaultA/a.md', 'AAA', 1)
     const store = useLibraryStore()

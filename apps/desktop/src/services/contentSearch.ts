@@ -131,6 +131,15 @@ export async function mapWithConcurrency<T, R>(
   return results
 }
 
+/** Result of looking up a note's entry in the persistent search index.
+ *  `upToDate` means the stored index text matches the note's current disk state
+ *  (stat token), so an absence of the query in `text` is authoritative and the
+ *  body never needs to be read. `text` is the lowercased searchable haystack. */
+export interface IndexLookupResult {
+  upToDate: boolean
+  text: string
+}
+
 /** Run the complete full-text search. Every candidate's body is read and
  *  matched, so a hit sitting deep in a note body is surfaced even when the
  *  note's index metadata (path / name / title / tags / first-line) does not
@@ -161,6 +170,61 @@ export async function searchContentMatches(
       const content = await c.readContent()
       if (content === null || signal?.aborted) return null
       // Fold the body once; reuse for both the match and the snippet.
+      const folded = content.toLowerCase()
+      const idx = folded.indexOf(q)
+      if (idx < 0) return null
+      return {
+        path: c.path,
+        name: c.name,
+        snippet: snippetAt(content, q, idx),
+      }
+    },
+    signal,
+  )
+
+  if (signal?.aborted) return []
+  return hits.filter((m): m is ContentMatch => m !== null)
+}
+
+/** Full-text search accelerated by the persistent index.
+ *
+ *  The index holds a lowercased haystack of every searchable field (including
+ *  the full body), so for a note whose index entry is up-to-date an absence of
+ *  the query in `text` is definitive and the body is never read. When the entry
+ *  is missing or stale (index still building, note just changed), we fall back
+ *  to reading the body — preserving completeness, so a deep-body-only match is
+ *  never dropped just because the index does not yet cover it.
+ *
+ *  A positive index hit still reads the body to produce the snippet (the full
+ *  body scan + snippet remains the source of truth for what is shown).
+ *
+ *  Cancellation and bounded concurrency behave exactly like
+ *  {@link searchContentMatches}: `indexLookup` is only consulted before a read,
+ *  and `signal` is checked before/after every read and at the top of each
+ *  worker loop, so a superseded search stops scheduling new work (latest-wins).
+ */
+export async function searchWithIndex(
+  candidates: readonly ContentSearchCandidate[],
+  query: string,
+  indexLookup: (path: string) => IndexLookupResult | null,
+  signal?: AbortSignal,
+  concurrency = CONTENT_SEARCH_CONCURRENCY,
+): Promise<ContentMatch[]> {
+  const q = query.trim().toLowerCase()
+  if (!q) return []
+  if (signal?.aborted) return []
+
+  const hits = await mapWithConcurrency(
+    candidates,
+    concurrency,
+    async (c) => {
+      if (signal?.aborted) return null
+      const entry = indexLookup(c.path)
+      // An up-to-date index that does not contain the query is authoritative:
+      // the note's full body is part of the index text, so it cannot match.
+      if (entry && entry.upToDate && !entry.text.includes(q)) return null
+      const content = await c.readContent()
+      if (content === null || signal?.aborted) return null
       const folded = content.toLowerCase()
       const idx = folded.indexOf(q)
       if (idx < 0) return null
