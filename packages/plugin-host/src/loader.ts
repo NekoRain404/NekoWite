@@ -101,7 +101,15 @@ export async function loadPluginsFromDir(
       version: pkg.version,
       main: joinPath(dir, pkg.main),
     }
-    const result = await loadPlugin(meta, (specifier) => import(specifier))
+    // The plugin entry specifier is resolved at RUNTIME (a vault path joined
+    // with the plugin's declared `main`), so it is never a statically-analyzable
+    // import. `/* @vite-ignore */` tells Vite to leave it alone rather than warn
+    // that it cannot analyze a dynamic specifier. This is intentional and must be
+    // re-reviewed when plugin process/Worker isolation is implemented: the
+    // specifier will STILL be runtime-determined there, but the host should route
+    // it through that isolated loader (not a bare in-window dynamic import), and
+    // its execution stays CSP-gated regardless.
+    const result = await loadPlugin(meta, (specifier) => import(/* @vite-ignore */ specifier))
     if (result.ok) plugins.push({ meta, definition: result.definition })
   }
   return plugins
