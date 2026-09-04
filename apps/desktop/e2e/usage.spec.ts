@@ -61,7 +61,9 @@ test('real usage: open, edit, save, views, drop-image -> rename prompt', async (
     .poll(() => page.evaluate(() => (window as unknown as { __saveAttachments: unknown[] }).__saveAttachments.length))
     .toBeGreaterThan(0)
   const attachmentArgs = await page.evaluate(() => (window as unknown as { __saveAttachments: Array<Record<string, unknown>> }).__saveAttachments[0])
-  expect(attachmentArgs['fileName']).toBe('saved-diagram.png')
+  // The Rust command parameter is `file_name` (snake_case) — a camelCase key
+  // makes the invoke reject in the real WebView.
+  expect(attachmentArgs['file_name']).toBe('saved-diagram.png')
   expect(attachmentArgs['dir']).toBe('welcome_assets')
   expect(attachmentArgs['vault']).toBe(VAULT)
   // The image block was inserted into the rendered document (the mock's
