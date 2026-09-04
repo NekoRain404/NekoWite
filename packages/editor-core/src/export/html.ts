@@ -6,12 +6,23 @@ import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
 import remarkFrontmatter from 'remark-frontmatter'
 import remarkMath from 'remark-math'
-import katex from 'katex'
 import katexCss from 'katex/dist/katex.min.css?inline'
 import type { Root } from 'mdast'
 import { citeMdast } from '../cite'
 import { imageDimMdast } from '../image'
 import { mdxJsxMdast, parseMdxTag } from '../mdx'
+
+// KaTeX is only needed at export time (the editor preview renders math via
+// MathLive / the app's own renderer). Loading it lazily keeps the startup
+// import graph free of ~1MB of math machinery; the sync `renderDocument`
+// (tests only) degrades to plain-text math when KaTeX isn't loaded yet.
+let katexModule: (typeof import('katex'))['default'] | null = null
+
+async function loadKatex(): Promise<void> {
+  if (katexModule) return
+  const mod = await import('katex')
+  katexModule = mod.default ?? mod
+}
 
 export interface ExportRef {
   key: string
@@ -243,10 +254,13 @@ function renderMath(node: RenderNode, ctx: RenderContext, display: boolean): str
       : `<span class="math-latex">${inner}</span>`
   }
   let html = ''
-  try {
-    html = katex.renderToString(value, { displayMode: display, throwOnError: false })
-  } catch {
-    html = ''
+  const katex = katexModule
+  if (katex) {
+    try {
+      html = katex.renderToString(value, { displayMode: display, throwOnError: false })
+    } catch {
+      html = ''
+    }
   }
   if (!html) {
     const inner = `$${escapeHtml(value)}$`
@@ -495,6 +509,7 @@ export function renderDocument(markdown: string, opts?: RenderDocumentOptions): 
  * display URLs before rendering, so exported HTML/PDF keep working images. */
 export async function renderDocumentAsync(markdown: string, opts?: RenderDocumentOptions): Promise<string> {
   const children = parseChildren(markdown)
+  await loadKatex()
   if (opts?.resolveImage) {
     await resolveImageNodes(children, opts.resolveImage, new Map())
   }

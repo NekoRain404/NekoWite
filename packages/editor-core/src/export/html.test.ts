@@ -11,8 +11,8 @@ describe('renderDocument', () => {
     expect(html).toContain('<code>')
   })
 
-  it('renders katex math', () => {
-    const html = renderDocument('Inline $E=mc^2$ and block:\n\n$$x^2$$\n')
+  it('renders katex math', async () => {
+    const html = await renderDocumentAsync('Inline $E=mc^2$ and block:\n\n$$x^2$$\n')
     expect(html).toContain('katex')
   })
 

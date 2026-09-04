@@ -1,4 +1,4 @@
-import { renderDocumentAsync, type ExportRef, type RenderDocumentOptions } from '@nekowite/editor-core'
+import type { ExportRef, RenderDocumentOptions } from '@nekowite/editor-core'
 import { fsService } from './fs'
 import { buildComponentRenderers } from './exportRenderers'
 import { createImageSrcResolver } from './attachments'
@@ -8,6 +8,18 @@ import { useSettingsStore } from '../stores/settings'
 import type { ExportPdfPageSize, ExportPdfOrientation } from '../stores/settings'
 
 export { buildComponentRenderers }
+
+// The export implementation pulls in KaTeX (and the remark/cite parsing
+// pipeline behind it) purely to render markdown to HTML/PDF, which only
+// happens on explicit user export. Loading it on demand keeps the editor's
+// startup bundle free of that ~1MB of math machinery.
+async function renderDocumentAsync(
+  markdown: string,
+  opts?: RenderDocumentOptions,
+): Promise<string> {
+  const mod = await import('@nekowite/editor-core')
+  return mod.renderDocumentAsync(markdown, opts)
+}
 
 export interface ExportUiOptions {
   title?: string
