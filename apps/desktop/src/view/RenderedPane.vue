@@ -168,7 +168,13 @@ async function applyContent(content: string): Promise<void> {
     const initial = await editor.save()
     lastLocalMarkdown = initial
     const active = tabs.activeTab
-    if (active && active.content !== initial) {
+    // Only adopt the serializer's canonicalization when the tab still holds the
+    // text we just opened. While `open()` was in flight an external write may
+    // have replaced it with newer content (the async disk read that fills a
+    // placeholder tab). Overwriting that here would drop the real document and
+    // leave the editor permanently empty; respecting the newer content lets the
+    // content watcher re-open with it instead.
+    if (active && active.content !== initial && active.content === content) {
       active.content = initial
       if (!active.dirty) active.savedContent = initial
     }
@@ -633,13 +639,13 @@ watch(
         {{ t('spell.noSuggestions') }}
       </div>
     </div>
+    <RenameDialog
+      v-if="renamePrompt"
+      :initial="renamePrompt.initial"
+      @confirm="onRenameConfirm"
+      @cancel="onRenameCancel"
+    />
   </div>
-  <RenameDialog
-    v-if="renamePrompt"
-    :initial="renamePrompt.initial"
-    @confirm="onRenameConfirm"
-    @cancel="onRenameCancel"
-  />
 </template>
 
 <style scoped>
