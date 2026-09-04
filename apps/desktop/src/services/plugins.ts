@@ -65,6 +65,7 @@ import type {
 } from '@nekowite/plugin-host'
 import { joinPath } from '@nekowite/plugin-host'
 import { fsService } from '../platform/gateways/fs'
+import { persistence } from './persistence'
 import { describePluginError, notifyError } from './errors'
 import { t } from '../i18n'
 
@@ -614,14 +615,11 @@ function resetTrustRecordsForTamper(): void {
  *  its integrity check and was reset. Uses a localStorage flag purely as a
  *  NON-authoritative "seen this session" guard. */
 function signalGovernanceTamperNotice(): void {
-  if (typeof localStorage !== 'undefined') {
-    try {
-      if (localStorage.getItem(PLUGIN_TAMPER_NOTICE_KEY)) return
-      localStorage.setItem(PLUGIN_TAMPER_NOTICE_KEY, '1')
-    } catch {
-      /* ignore */
-    }
-  }
+  // The "saw this notice" guard is a NON-authoritative UI flag routed through
+  // the persistence port (localStorage in the webview/tauri, memory in tests);
+  // it is never a security decision.
+  if (persistence.get(PLUGIN_TAMPER_NOTICE_KEY)) return
+  persistence.set(PLUGIN_TAMPER_NOTICE_KEY, '1')
   console.warn(
     '[NekoWite] plugin governance state failed integrity (HMAC) verification; refusing the trust it contains and resetting it.',
   )

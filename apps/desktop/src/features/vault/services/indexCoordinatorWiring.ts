@@ -11,13 +11,36 @@
 
 import { contentCache } from '../../../services/contentCache'
 import { fsService } from '../../../platform/gateways/fs'
-import { clearIndex, loadIndex, saveIndex } from '../../../services/searchIndex'
+import {
+  clearIndex,
+  createFileIndexStorage,
+  defaultAsyncIndexStorage,
+  loadIndex,
+  saveIndex,
+  type AsyncIndexStorage,
+} from '../../../services/searchIndex'
 import { vaultFileIndex } from '../../../services/vaultFiles'
 import {
   createVaultIndexCoordinator,
   type VaultIndexCoordinator,
   type VaultIndexCoordinatorCallbacks,
 } from './vaultIndexCoordinator'
+
+/** True when running under Tauri (the fs-backed `.nekowite/index/` store is then
+ *  the authoritative shard source). In the browser demo / memory tests the shard
+ *  store falls back to the NON-authoritative localStorage sharded cache. */
+function isTauriEnv(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    Boolean((window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__)
+  )
+}
+
+/** Per-vault async shard storage: fs-backed files in Tauri, localStorage cache
+ *  otherwise. */
+function indexStorageFor(vault: string): AsyncIndexStorage {
+  return isTauriEnv() ? createFileIndexStorage(fsService, vault) : defaultAsyncIndexStorage()
+}
 
 export function createBoundVaultIndexCoordinator(
   callbacks: VaultIndexCoordinatorCallbacks,
@@ -33,9 +56,9 @@ export function createBoundVaultIndexCoordinator(
       invalidate: (v) => vaultFileIndex.invalidate(v),
     },
     cache: contentCache,
-    loadIndex: (v) => loadIndex(v),
-    saveIndex: (i) => saveIndex(i),
-    clearIndex: (v) => clearIndex(v),
+    loadIndex: (v) => loadIndex(v, indexStorageFor(v)),
+    saveIndex: (i) => saveIndex(i, indexStorageFor(i.vault)),
+    clearIndex: (v) => clearIndex(v, indexStorageFor(v)),
     onNotes: callbacks.onNotes,
     onIndexing: callbacks.onIndexing,
     onTruncated: callbacks.onTruncated,

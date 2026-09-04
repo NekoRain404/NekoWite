@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
+import { persistence } from '../services/persistence'
 
 export type ChatSessionRole = 'user' | 'assistant'
 
@@ -282,7 +283,7 @@ export const useChatSessionStore = defineStore('chatSession', () => {
     let next: ChatSession[] = []
     let nextActive: string | null = null
     try {
-      const raw = localStorage.getItem(CHAT_SESSIONS_KEY)
+      const raw = persistence.get(CHAT_SESSIONS_KEY)
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<StoredState>
         if (Array.isArray(parsed.sessions)) {
@@ -324,10 +325,12 @@ export const useChatSessionStore = defineStore('chatSession', () => {
       })),
     }
     try {
-      localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(payload))
+      persistence.set(CHAT_SESSIONS_KEY, JSON.stringify(payload))
     } catch (err) {
       // Quota exceeded because of image data-URLs: retry text-only, otherwise
       // give up quietly — an in-memory session is better than a thrown error.
+      // (The persistence port swallows quota errors, so this branch is a safe
+      //  backstop for adapters that do surface a write failure.)
       console.warn('[chatSession] persist failed, retrying without images', err)
       const textOnly: StoredState = {
         ...payload,
@@ -337,7 +340,7 @@ export const useChatSessionStore = defineStore('chatSession', () => {
         })),
       }
       try {
-        localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(textOnly))
+        persistence.set(CHAT_SESSIONS_KEY, JSON.stringify(textOnly))
       } catch (innerErr) {
         console.warn('[chatSession] persist failed even without images', innerErr)
       }

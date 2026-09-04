@@ -72,10 +72,10 @@ export interface VaultIndexCoordinatorDeps {
   fileIndex: FileIndexPort
   /** Shared bounded content cache. */
   cache: ContentCache
-  /** Persistent search-index blob access. */
-  loadIndex(vault: string): StoredIndex | null
-  saveIndex(index: StoredIndex): void
-  clearIndex(vault: string): void
+  /** Persistent search-index blob access (async: shards live on fs/localStorage). */
+  loadIndex(vault: string): Promise<StoredIndex | null>
+  saveIndex(index: StoredIndex): Promise<void>
+  clearIndex(vault: string): Promise<void>
   // Reactive store targets (mirror coordinator state into Pinia).
   onNotes(notes: NoteSummary[]): void
   onIndexing(indexing: boolean): void
@@ -237,7 +237,7 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
       notes = notes.filter((n) => n.path !== path)
       deps.cache.delete(path)
       noteStatCache.delete(path)
-      persistence.remove(path)
+      await persistence.remove(path)
       deps.onNotes(notes)
       return
     }
@@ -253,7 +253,7 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
     }
     const freshContent = deps.cache.get(path)
     if (freshContent !== undefined) {
-      persistence.upsert(v, path, freshContent, summary.mtime, summary.size)
+      await persistence.upsert(v, path, freshContent, summary.mtime, summary.size)
     }
     notes = [...notes.filter((n) => n.path !== path), summary]
     deps.onNotes(notes)

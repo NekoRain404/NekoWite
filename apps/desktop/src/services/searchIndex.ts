@@ -18,24 +18,25 @@
  * including the full body, so a deep-body match is captured by the index itself
  * and never silently dropped.
  *
- * Persistence detail: the wiring (`indexCoordinatorWiring.ts`) calls
- * {@link loadIndex}/{@link saveIndex}/{@link clearIndex} synchronously, so the
- * built-in shard store is the synchronous `IndexStorage` (localStorage under
- * multiple keys). An fs-backed store — writing each shard to a `.nekowite/index/`
- * JSON file via the async {@link FsPort} and swapping via an atomic `rename` —
- * would require those three functions to become async and the wiring to await
- * them; that is intentionally left as a documented, out-of-scope backend gap
- * (localStorage `setItem` is atomic per key, so the temp→swap below already
- * guarantees no torn shard).
+ * Persistence detail: the shard store is the async {@link AsyncIndexStorage}. The
+ * wiring (`indexCoordinatorWiring.ts`) selects the backend by environment — an
+ * fs-backed store (`createFileIndexStorage`) writing each shard to a
+ * `.nekowite/index/` JSON file via the async {@link FsPort} in Tauri, else the
+ * localStorage sharded store as a NON-authoritative fallback (the browser demo /
+ * tests). Because `loadIndex`/`saveIndex`/`clearIndex` are async, the coordinator
+ * `await`s them; the query API (`queryIndex`, `indexEntryFor`, `searchWithIndex`)
+ * stays synchronous over the in-memory mirror.
  *
- * Shard writes are atomic (temp key → swap), and the metadata record is written
+ * Shard writes are atomic (temp blob → swap), and the metadata record is written
  * last as a commit marker, so an interrupted write never leaves a torn index: on
  * the next load a shard whose checksum no longer matches the metadata is dropped
- * from the in-memory `notes` and rebuilt by the incremental build step.
+ * from the in-memory `notes` and rebuilt by the incremental build step. The
+ * fs-backed store maps the meta/shard keys to `.nekowite/index/{manifest,shard-NN}.
+ * json`, keeping the same atomic temp→swap (via `<file>.tmp`).
  */
 
 import { parseNoteMeta } from './noteMeta'
-import type { FileStat } from '../platform/gateways/contracts'
+import type { FileStat, FsPort } from '../platform/gateways/contracts'
 
 export interface IndexedDoc {
   /** Version token `${mtime}:${size}` — changed files produce a different token. */
@@ -79,10 +80,22 @@ export interface IndexShardMeta {
 /** UI-facing state of the persistent index for the current vault. */
 export type IndexState = 'idle' | 'building' | 'up-to-date' | 'stale' | 'needs-rebuild'
 
+/** Synchronous string storage (localStorage / memory fallback). Used internally
+ *  by the default async adapter; the public index functions accept the async
+ *  {@link AsyncIndexStorage}. */
 export interface IndexStorage {
   getItem(key: string): string | null
   setItem(key: string, value: string): void
   removeItem(key: string): void
+}
+
+/** Async string storage for the sharded index. Implemented by the fs-backed
+ *  `.nekowite/index/` store and by the localStorage fallback; `loadIndex` /
+ *  `saveIndex` / `clearIndex` are async over this interface. */
+export interface AsyncIndexStorage {
+  getItem(key: string): Promise<string | null>
+  setItem(key: string, value: string): Promise<void>
+  removeItem(key: string): Promise<void>
 }
 
 /** Current on-disk index format version. A stored index whose metadata version
@@ -120,6 +133,67 @@ function defaultStorage(): IndexStorage {
     // ignore — fall through to memory
   }
   return memoryStorage
+}
+
+/** The default async store: a thin promise wrapper over the sync localStorage /
+ *  memory store. This is the NON-authoritative fallback used by the browser demo
+ *  and tests; Tauri uses {@link createFileIndexStorage} instead. */
+export function defaultAsyncIndexStorage(): AsyncIndexStorage {
+  const sync = defaultStorage()
+  return {
+    getItem: async (key) => sync.getItem(key),
+    setItem: async (key, value) => {
+      sync.setItem(key, value)
+    },
+    removeItem: async (key) => {
+      sync.removeItem(key)
+    },
+  }
+}
+
+/** Vault-relative path of a key within `.nekowite/index/`. The metadata record is
+ *  always `manifest.json`; each shard is `shard-<label>.json`; a staged atomic
+ *  write uses a `<file>.tmp` sibling. */
+function filePathForIndexKey(key: string, baseDir: string): string {
+  const isTmp = key.endsWith('.tmp')
+  const base = isTmp ? key.slice(0, -'.tmp'.length) : key
+  let name: string
+  if (base.endsWith('.meta')) {
+    name = 'manifest.json'
+  } else {
+    const marker = '2048-shard-'
+    const idx = base.lastIndexOf(marker)
+    name = `shard-${idx >= 0 ? base.slice(idx + marker.length) : encodeURIComponent(base)}.json`
+  }
+  return `${baseDir}/${name}${isTmp ? '.tmp' : ''}`
+}
+
+/** fs-backed shard storage: one JSON file per shard plus a `manifest.json` under
+ *  `.nekowite/index/`, written via the async {@link FsPort}. Writes pass
+ *  `maxHistory=0` so an index shard never accumulates undo snapshots. A missing
+ *  or unreadable file reads as `null` (so `loadIndex` flags it corrupt and the
+ *  incremental build re-reads exactly those notes). */
+export function createFileIndexStorage(fs: FsPort, vault: string, baseDir = '.nekowite/index'): AsyncIndexStorage {
+  const fileFor = (key: string): string => filePathForIndexKey(key, baseDir)
+  return {
+    async getItem(key) {
+      try {
+        return await fs.read(vault, fileFor(key))
+      } catch {
+        return null
+      }
+    },
+    async setItem(key, value) {
+      await fs.write(vault, fileFor(key), String(value), 0)
+    },
+    async removeItem(key) {
+      try {
+        await fs.deleteFile(vault, fileFor(key))
+      } catch {
+        // Missing file is a no-op remove.
+      }
+    },
+  }
 }
 
 /** Storage key for the shard-metadata (commit) record of `vault`. */
@@ -212,10 +286,10 @@ export function buildSearchText(
  *  so an interrupted write never leaves a shard that fails to parse — the
  *  previous committed value under `key` is untouched until the new one is fully
  *  staged. */
-function storageSetAtomic(storage: IndexStorage, key: string, value: string): void {
-  storage.setItem(`${key}.tmp`, value)
-  storage.setItem(key, value)
-  storage.removeItem(`${key}.tmp`)
+async function storageSetAtomic(storage: AsyncIndexStorage, key: string, value: string): Promise<void> {
+  await storage.setItem(`${key}.tmp`, value)
+  await storage.setItem(key, value)
+  await storage.removeItem(`${key}.tmp`)
 }
 
 /** Load `vault`'s sharded index. Assembles every shard listed in the metadata,
@@ -224,11 +298,11 @@ function storageSetAtomic(storage: IndexStorage, key: string, value: string): vo
  *  build step re-reads exactly those notes (rebuilding only that shard). Returns
  *  null when there is no metadata, the metadata is corrupt, or the metadata
  *  version is stale (the caller then rebuilds the whole index). */
-export function loadIndex(
+export async function loadIndex(
   vault: string,
-  storage: IndexStorage = defaultStorage(),
-): StoredIndex | null {
-  const rawMeta = storage.getItem(indexMetaKey(vault))
+  storage: AsyncIndexStorage = defaultAsyncIndexStorage(),
+): Promise<StoredIndex | null> {
+  const rawMeta = await storage.getItem(indexMetaKey(vault))
   if (!rawMeta) return null
   let meta: IndexShardMeta
   try {
@@ -241,7 +315,7 @@ export function loadIndex(
   const notes: Record<string, IndexedDoc> = {}
   const corruptShards: string[] = []
   for (const [label, shardMeta] of Object.entries(meta.shards)) {
-    const raw = storage.getItem(indexShardKey(vault, label))
+    const raw = await storage.getItem(indexShardKey(vault, label))
     if (raw && shardMeta.checksum && checksumOf(raw) === shardMeta.checksum) {
       try {
         const parsed = JSON.parse(raw) as { notes?: Record<string, IndexedDoc> }
@@ -269,7 +343,7 @@ export function loadIndex(
  *  written atomically under its own key with a per-shard checksum, then the
  *  metadata record is written (last) as the commit marker. Empty shards are
  *  never materialised, so a small vault only touches the shards it needs. */
-export function saveIndex(index: StoredIndex, storage: IndexStorage = defaultStorage()): void {
+export async function saveIndex(index: StoredIndex, storage: AsyncIndexStorage = defaultAsyncIndexStorage()): Promise<void> {
   const groups = new Map<string, Record<string, IndexedDoc>>()
   for (const [path, doc] of Object.entries(index.notes)) {
     const label = shardLabelForPath(path)
@@ -289,22 +363,22 @@ export function saveIndex(index: StoredIndex, storage: IndexStorage = defaultSto
   }
   for (const [label, bucket] of groups) {
     const payload = JSON.stringify({ notes: bucket })
-    storageSetAtomic(storage, indexShardKey(index.vault, label), payload)
+    await storageSetAtomic(storage, indexShardKey(index.vault, label), payload)
     meta.shards[label] = { count: Object.keys(bucket).length, checksum: checksumOf(payload) }
   }
-  storageSetAtomic(storage, indexMetaKey(index.vault), JSON.stringify(meta))
+  await storageSetAtomic(storage, indexMetaKey(index.vault), JSON.stringify(meta))
 }
 
 /** Drop `vault`'s entire sharded index (metadata + every possible shard key).
  *  Stale `.tmp` keys from an interrupted write are cleaned too. */
-export function clearIndex(vault: string, storage: IndexStorage = defaultStorage()): void {
+export async function clearIndex(vault: string, storage: AsyncIndexStorage = defaultAsyncIndexStorage()): Promise<void> {
   for (const label of shardLabels()) {
     const key = indexShardKey(vault, label)
-    storage.removeItem(key)
-    storage.removeItem(`${key}.tmp`)
+    await storage.removeItem(key)
+    await storage.removeItem(`${key}.tmp`)
   }
-  storage.removeItem(indexMetaKey(vault))
-  storage.removeItem(`${indexMetaKey(vault)}.tmp`)
+  await storage.removeItem(indexMetaKey(vault))
+  await storage.removeItem(`${indexMetaKey(vault)}.tmp`)
 }
 
 /** Candidate note paths whose indexed text contains `query`. Returns an empty

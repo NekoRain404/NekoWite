@@ -28,11 +28,11 @@ import {
 
 export interface IndexPersistenceDeps {
   /** Load the persisted index for `vault`, or null when none/unchanged. */
-  load(vault: string): StoredIndex | null
+  load(vault: string): Promise<StoredIndex | null>
   /** Persist `index` (atomic blob write). */
-  save(index: StoredIndex): void
+  save(index: StoredIndex): Promise<void>
   /** Drop the persisted index for `vault` (rebuild start). */
-  clear(vault: string): void
+  clear(vault: string): Promise<void>
   /** Stat one note for the incremental reconcile (null on unreadable). */
   stat(path: string): Promise<FileStat | null>
   /** Read one note body for the index (cached by the caller). */
@@ -55,9 +55,9 @@ export interface IndexPersistence {
   /** Build from scratch: drop the persisted index then force a full build. */
   rebuild(vault: string, paths: string[]): Promise<void>
   /** Persist one changed note's entry in place. */
-  upsert(vault: string, path: string, content: string, mtime: number, size: number): void
+  upsert(vault: string, path: string, content: string, mtime: number, size: number): Promise<void>
   /** Drop a removed note's entry from the index. */
-  remove(path: string): void
+  remove(path: string): Promise<void>
   /** Look up a note's persistent-index entry for content search. */
   entryFor(path: string): IndexLookupResult | null
   /** Candidate note paths whose indexed text contains `query`. */
@@ -90,7 +90,7 @@ export function createIndexPersistence(deps: IndexPersistenceDeps): IndexPersist
     progress = { done: 0, total: 0 }
     fire()
     try {
-      const existing = deps.load(vault)
+      const existing = await deps.load(vault)
       if (mySeq !== seq) return
       progress = { done: 0, total: paths.length }
       fire()
@@ -112,7 +112,7 @@ export function createIndexPersistence(deps: IndexPersistenceDeps): IndexPersist
       )
       if (mySeq !== seq || controller.signal.aborted) return
       currentIndex = result.index
-      deps.save(result.index)
+      await deps.save(result.index)
       state = result.failed > 0 ? 'stale' : 'up-to-date'
       fire()
     } finally {
@@ -135,7 +135,7 @@ export function createIndexPersistence(deps: IndexPersistenceDeps): IndexPersist
     currentIndex = null
     state = 'idle'
     progress = null
-    deps.clear(vault)
+    void deps.clear(vault)
     fire()
   }
 
@@ -144,7 +144,7 @@ export function createIndexPersistence(deps: IndexPersistenceDeps): IndexPersist
     abort?.abort()
     const controller = new AbortController()
     abort = controller
-    deps.clear(vault)
+    await deps.clear(vault)
     // Clear the in-memory mirror first so a rebuild is truly from scratch.
     currentIndex = null
     state = 'building'
@@ -170,7 +170,7 @@ export function createIndexPersistence(deps: IndexPersistenceDeps): IndexPersist
       )
       if (mySeq !== seq || controller.signal.aborted) return
       currentIndex = result.index
-      deps.save(result.index)
+      await deps.save(result.index)
       state = result.failed > 0 ? 'stale' : 'up-to-date'
       fire()
     } finally {
@@ -182,19 +182,19 @@ export function createIndexPersistence(deps: IndexPersistenceDeps): IndexPersist
     }
   }
 
-  function upsert(vault: string, path: string, content: string, mtime: number, size: number): void {
+  async function upsert(vault: string, path: string, content: string, mtime: number, size: number): Promise<void> {
     if (!currentIndex) {
       currentIndex = { version: INDEX_VERSION, vault, builtAt: Date.now(), notes: {} }
     }
     const text = buildSearchText(path, content, vault, mtime, size)
     currentIndex.notes[path] = { token: docToken(mtime, size), text, mtime, size }
-    deps.save(currentIndex)
+    await deps.save(currentIndex)
   }
 
-  function remove(path: string): void {
+  async function remove(path: string): Promise<void> {
     if (!currentIndex || !currentIndex.notes[path]) return
     delete currentIndex.notes[path]
-    deps.save(currentIndex)
+    await deps.save(currentIndex)
   }
 
   function entryFor(path: string): IndexLookupResult | null {
