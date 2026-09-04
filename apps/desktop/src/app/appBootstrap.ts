@@ -3,7 +3,7 @@ import { useTabsStore } from '../stores/tabs'
 import { useSettingsStore } from '../stores/settings'
 import { useVaultSessionStore } from '../stores/vaultSession'
 import { useRefsStore } from '../stores/refs'
-import { fsService } from '../services/fs'
+import { getSharedGateways } from '../platform/runtime/gatewayRuntime'
 import { loadVaultPlugins } from '../services/plugins'
 import { notifyError } from '../services/errors'
 import { t } from '../i18n'
@@ -44,6 +44,10 @@ export function createDesktopRuntime(): DesktopRuntime {
   const settings = useSettingsStore()
   const vaultSession = useVaultSessionStore()
   const refs = useRefsStore()
+  // Bootstrap is the composition root: it resolves the shared gateway instance
+  // (owned by platform/runtime) and reaches into the narrow ports it needs.
+  const gateways = getSharedGateways()
+  const { fs: fsPort, dialogs } = gateways
   const vaultPath = ref<string | null>(null)
   const windowTracking = setupWindowTracking()
   let started = false
@@ -62,7 +66,7 @@ export function createDesktopRuntime(): DesktopRuntime {
     // the Rust commands now reject any root the user did not open this session.
     // A fresh folder pick is already auto-authorized by open_folder_dialog, but the
     // localStorage-restore path needs this explicit call. Must run before indexVault.
-    await fsService.registerVault(path).catch(() => {
+    await fsPort.registerVault(path).catch(() => {
       // Registration failure (e.g. stale path) must not crash startup; the tree
       // surfaces the bad vault and the user can pick another folder.
     })
@@ -85,7 +89,7 @@ export function createDesktopRuntime(): DesktopRuntime {
   }
 
   async function pickFolder(): Promise<void> {
-    const picked = await fsService.openFolderDialog()
+    const picked = await dialogs.openFolderDialog()
     if (picked) onOpenFolder(picked)
   }
 

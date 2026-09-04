@@ -1,5 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
-import { createMemoryFsGateway } from './memory'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createMemoryEventAdapter, createMemoryFsGateway } from './memory'
+import type { FsChangeEvent } from './contracts'
+import { getGateways, resetSharedGateways } from './index'
+import { startChatCompletion } from '../ai'
 
 describe('memoryFsGateway', () => {
   it('reads and writes to an in-memory map', async () => {
@@ -206,5 +209,89 @@ describe('memoryFsGateway', () => {
     const dir = await fs.list('memoir://demo', 'attachments/2026-09')
     expect(dir.map((e) => e.name)).toContain('a.png')
     vi.useRealTimers()
+  })
+})
+
+describe('memoryFsGateway controllable failures', () => {
+  it('simulates a failing fs command via an injected failure', async () => {
+    const fs = createMemoryFsGateway({ 'a.md': 'x' }, { fail: { read: new Error('disk failure') } })
+    await expect(fs.read('memoir://demo', 'a.md')).rejects.toThrow('disk failure')
+  })
+
+  it('supports an error factory for a fresh error per call', async () => {
+    const fs = createMemoryFsGateway({ 'a.md': 'x' }, { fail: { stat: () => new Error('EIO') } })
+    await expect(fs.stat('memoir://demo', 'a.md')).rejects.toThrow('EIO')
+    await expect(fs.stat('memoir://demo', 'a.md')).rejects.toThrow('EIO')
+  })
+
+  it('simulates a slow backend / timeout with delayMs', async () => {
+    vi.useFakeTimers()
+    const fs = createMemoryFsGateway({ 'a.md': 'x' }, { delayMs: 500 })
+    let result: string | null = null
+    const pending = fs.read('memoir://demo', 'a.md').then((r) => {
+      result = r
+    })
+    expect(result).toBeNull()
+    await vi.advanceTimersByTimeAsync(500)
+    await pending
+    expect(result).toBe('x')
+    vi.useRealTimers()
+  })
+})
+
+describe('memoryFsGateway event simulation', () => {
+  it('delivers simulated fs-change events to onFsChange subscribers', async () => {
+    const events = createMemoryEventAdapter()
+    const fs = createMemoryFsGateway({}, { events })
+    const received: FsChangeEvent[] = []
+    await fs.onFsChange((e) => received.push(e))
+    await events.emit('fs-change', { path: 'a.md', kind: 'create' })
+    await events.emit('fs-change', { path: 'b.md', kind: 'remove' })
+    expect(received).toEqual([
+      { path: 'a.md', kind: 'create' },
+      { path: 'b.md', kind: 'remove' },
+    ])
+  })
+
+  it('cancels an fs-change subscription via the returned unsubscribe', async () => {
+    const events = createMemoryEventAdapter()
+    const fs = createMemoryFsGateway({}, { events })
+    let count = 0
+    const off = await fs.onFsChange(() => {
+      count++
+    })
+    await events.emit('fs-change', { path: 'a.md', kind: 'create' })
+    off()
+    await events.emit('fs-change', { path: 'b.md', kind: 'remove' })
+    expect(count).toBe(1)
+  })
+})
+
+describe('memoryGateways drive an AI stream', () => {
+  beforeEach(() => resetSharedGateways())
+  afterEach(() => resetSharedGateways())
+
+  it('accumulates AI lifecycle events and cancels cleanly', async () => {
+    const gw = getGateways()
+    const onChunk = vi.fn()
+    const onDone = vi.fn()
+    const onError = vi.fn()
+    const stream = await startChatCompletion(
+      { provider: 'local', model: 'm' },
+      'look',
+      [],
+      { onChunk, onDone, onError },
+    )
+    // Stream adopts the first chunk's id; subsequent chunks accumulate.
+    await gw.events.emit('ai-chunk', { id: 'ai-1', text: 'Hello' })
+    await gw.events.emit('ai-chunk', { id: 'ai-1', text: ' world' })
+    expect(onChunk).toHaveBeenCalledWith('Hello world')
+
+    // Cancel mid-stream: later events for the cancelled id must be ignored.
+    stream.cancel()
+    await gw.events.emit('ai-chunk', { id: 'ai-1', text: ' ghost' })
+    await gw.events.emit('ai-done', { id: 'ai-1', full: 'Hello world ghost' })
+    expect(onDone).not.toHaveBeenCalled()
+    expect(onChunk).toHaveBeenCalledTimes(2)
   })
 })
