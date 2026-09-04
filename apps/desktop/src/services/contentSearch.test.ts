@@ -3,9 +3,12 @@ import {
   SNIPPET_RADIUS,
   buildSnippet,
   contentMatchOf,
+  contentMetaMatch,
   mapWithConcurrency,
   matchContent,
+  searchContentMatches,
 } from './contentSearch'
+import type { ContentSearchCandidate } from './contentSearch'
 
 describe('matchContent', () => {
   it('matches case-insensitively and ignores whitespace around the query', () => {
@@ -71,6 +74,126 @@ describe('contentMatchOf', () => {
   it('returns null on a miss or a blank query', () => {
     expect(contentMatchOf({ path: '/vault/a.md', name: 'a.md', content: '正文' }, 'nope')).toBeNull()
     expect(contentMatchOf({ path: '/vault/a.md', name: 'a.md', content: '正文' }, '  ')).toBeNull()
+  })
+})
+
+describe('contentMetaMatch', () => {
+  it('matches case-insensitively across path/name/title/tags/summary', () => {
+    const meta = {
+      path: '/vault/dir/note.md',
+      name: 'note.md',
+      title: 'Graph Theory',
+      tags: ['math', 'graph'],
+      summary: 'an intro to graph algorithms',
+    }
+    expect(contentMetaMatch(meta, 'graph')).toBe(true)
+    expect(contentMetaMatch(meta, 'MATH')).toBe(true)
+    expect(contentMetaMatch(meta, 'algorithms')).toBe(true)
+    expect(contentMetaMatch(meta, 'zzz')).toBe(false)
+    expect(contentMetaMatch(meta, '  ')).toBe(false)
+  })
+})
+
+describe('searchContentMatches (metadata-first)', () => {
+  it('reads the body only for candidates whose metadata matches', async () => {
+    const reads: string[] = []
+    const candidates: ContentSearchCandidate[] = [
+      {
+        path: '/v/a.md',
+        name: 'a.md',
+        title: 'Graph Theory',
+        tags: [],
+        summary: '',
+        readContent: async () => {
+          reads.push('a')
+          return 'we study graph algorithms'
+        },
+      },
+      // metadata misses the query, body hits -> cheaply rejected, never read.
+      {
+        path: '/v/b.md',
+        name: 'b.md',
+        title: 'Combinatorics',
+        tags: [],
+        summary: '',
+        readContent: async () => {
+          reads.push('b')
+          return 'a graph is a structure'
+        },
+      },
+    ]
+    const hits = await searchContentMatches(candidates, 'graph')
+    expect(reads).toEqual(['a'])
+    expect(hits.map((h) => h.path)).toEqual(['/v/a.md'])
+    expect(hits[0]!.snippet).toContain('graph')
+  })
+
+  it('returns an empty result for a blank query', async () => {
+    const candidates: ContentSearchCandidate[] = [
+      {
+        path: '/v/a.md',
+        name: 'a.md',
+        title: 'Alpha',
+        tags: [],
+        summary: '',
+        readContent: async () => 'alpha graph',
+      },
+    ]
+    expect(await searchContentMatches(candidates, '  ')).toEqual([])
+  })
+
+  it('stops reading remaining candidates once aborted', async () => {
+    const controller = new AbortController()
+    const reads: string[] = []
+    const candidates: ContentSearchCandidate[] = [
+      {
+        path: '/v/a.md',
+        name: 'a.md',
+        title: 'Graph A',
+        tags: [],
+        summary: '',
+        readContent: async () => {
+          reads.push('a')
+          // Simulate a superseding search aborting while this read is in flight.
+          controller.abort()
+          await new Promise((r) => setTimeout(r, 5))
+          return 'graph in a'
+        },
+      },
+      {
+        path: '/v/b.md',
+        name: 'b.md',
+        title: 'Graph B',
+        tags: [],
+        summary: '',
+        readContent: async () => {
+          reads.push('b')
+          await new Promise((r) => setTimeout(r, 1))
+          return 'graph in b'
+        },
+      },
+    ]
+    const hits = await searchContentMatches(candidates, 'graph', controller.signal, 1)
+    expect(hits).toEqual([])
+    expect(reads).toEqual(['a'])
+  })
+
+  it('returns no matches when aborted before starting any read', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const candidates: ContentSearchCandidate[] = [
+      {
+        path: '/v/a.md',
+        name: 'a.md',
+        title: 'Graph A',
+        tags: [],
+        summary: '',
+        readContent: async () => {
+          throw new Error('should not read')
+        },
+      },
+    ]
+    expect(await searchContentMatches(candidates, 'graph', controller.signal)).toEqual([])
   })
 })
 
