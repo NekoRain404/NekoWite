@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { collectVaultFiles, MAX_DIRS, VaultFileIndex, walkVault } from './vaultFiles'
 import type { FileEntry } from './fs'
 
+// A tiny cap for the truncation tests: building MAX_DIRS+1 = 100_001 directories
+// would be far too slow, so the walk cap is exercised with a small override.
+const SMALL_MAX_DIRS = 4
+
 function entry(name: string, path: string, isDir: boolean, isMdx = false): FileEntry {
   return { name, path, is_dir: isDir, is_mdx: isMdx }
 }
@@ -85,13 +89,38 @@ describe('collectVaultFiles', () => {
     await expect(p).resolves.toEqual(['vault/a/one.md', 'vault/b/two.md'])
   })
   it('flags truncated and does not silently drop when the directory cap is hit', async () => {
-    const dirs = Array.from({ length: MAX_DIRS + 1 }, (_, i) => `d${i}`)
-    const result = await walkVault('vault', async (_v, dir) => {
-      if (dir === 'vault') return dirs.map((name) => entry(name, `vault/${name}`, true))
-      return [entry('note.md', `${dir}/note.md`, false, true)]
-    })
+    const dirs = Array.from({ length: SMALL_MAX_DIRS + 1 }, (_, i) => `d${i}`)
+    const result = await walkVault(
+      'vault',
+      async (_v, dir) => {
+        if (dir === 'vault') return dirs.map((name) => entry(name, `vault/${name}`, true))
+        return [entry('note.md', `${dir}/note.md`, false, true)]
+      },
+      { maxDirs: SMALL_MAX_DIRS },
+    )
     expect(result.truncated).toBe(true)
-    expect(result.files).toHaveLength(MAX_DIRS - 1)
+    expect(result.files).toHaveLength(SMALL_MAX_DIRS - 1)
+  })
+
+  it('raises the default directory cap far above any realistic vault', () => {
+    // The default must not silently cap a large vault. A 10k-file vault with a
+    // handful of dirs each must never hit this bound.
+    expect(MAX_DIRS).toBeGreaterThanOrEqual(100_000)
+  })
+
+  it('does not truncate a vault that fits under the cap', async () => {
+    // The vault root counts as one visited directory, so SMALL_MAX_DIRS - 1
+    // second-level dirs leaves every visit within the cap — no truncation.
+    const dirs = Array.from({ length: SMALL_MAX_DIRS - 1 }, (_, i) => `d${i}`)
+    const result = await walkVault(
+      'vault',
+      async (_v, dir) => {
+        if (dir === 'vault') return dirs.map((name) => entry(name, `vault/${name}`, true))
+        return [entry('note.md', `${dir}/note.md`, false, true)]
+      },
+      { maxDirs: SMALL_MAX_DIRS },
+    )
+    expect(result.truncated).toBe(false)
   })
 })
 
@@ -127,11 +156,14 @@ describe('VaultFileIndex', () => {
     expect(index.isTruncated('vault')).toBe(false)
   })
   it('reports true when the directory cap was hit, and clears it on invalidate', async () => {
-    const dirs = Array.from({ length: MAX_DIRS + 1 }, (_, i) => `d${i}`)
-    const index = new VaultFileIndex(async (_v, dir) => {
-      if (dir === 'vault') return dirs.map((name) => entry(name, `vault/${name}`, true))
-      return []
-    })
+    const dirs = Array.from({ length: SMALL_MAX_DIRS + 1 }, (_, i) => `d${i}`)
+    const index = new VaultFileIndex(
+      async (_v, dir) => {
+        if (dir === 'vault') return dirs.map((name) => entry(name, `vault/${name}`, true))
+        return []
+      },
+      SMALL_MAX_DIRS,
+    )
     await index.get('vault')
     expect(index.isTruncated('vault')).toBe(true)
     index.invalidate('vault')

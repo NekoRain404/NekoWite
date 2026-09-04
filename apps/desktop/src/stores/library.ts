@@ -40,6 +40,26 @@ const INDEX_CONCURRENCY = 8
 /** Coalesce bursts of markdown fs-change events for one path into a single
  * re-index (a save may otherwise emit several read + stat + index updates). */
 const MD_CHANGE_DEBOUNCE_MS = 200
+/** Yield to the event loop every N indexed notes so a 10k-file vault never
+ * blocks input while the note list is being built. fs reads already yield, but
+ * a note fully served from the content/stat cache can pop without a macrotask,
+ * so an explicit periodic yield keeps the main thread responsive. */
+const INDEX_YIELD_EVERY = 32
+
+/** Cooperative yield to the event loop so a large note-list index never blocks
+ * input for long. Prefers the scheduler API, then requestAnimationFrame, then a
+ * macrotask timeout. */
+function yieldToMainThread(): Promise<void> {
+  const scheduler = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler
+  if (typeof scheduler?.yield === 'function') return scheduler.yield()
+  return new Promise<void>((resolve) => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => resolve())
+    } else {
+      setTimeout(resolve, 0)
+    }
+  })
+}
 
 interface PersistedLibrary {
   favorites?: unknown
@@ -189,6 +209,10 @@ export const useLibraryStore = defineStore('library', () => {
           cursor += 1
           const summary = await indexNote(v, path)
           if (summary) results.push(summary)
+          // Every so often hand control back to the event loop so a large vault
+          // never freezes input (a note fully served from cache may not await a
+          // macrotask, so this is the explicit guarantee).
+          if (cursor % INDEX_YIELD_EVERY === 0) await yieldToMainThread()
         }
       }
       await Promise.all(

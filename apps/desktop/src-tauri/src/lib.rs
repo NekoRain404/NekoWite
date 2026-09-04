@@ -201,10 +201,15 @@ async fn list_dir(
 async fn search_notes(
     vault_root: String,
     query: String,
+    max_dirs: Option<usize>,
     state: tauri::State<'_, VaultRegistry>,
 ) -> Result<Vec<fs::FileEntry>, String> {
     require_opened_vault(&state, &vault_root)?;
-    fs::search_notes(&vault_root, &query, 100)
+    // The frontend does not send `max_dirs`, so it defaults to the generous
+    // SEARCH_MAX_DIRS — a large vault's search is no longer silently capped.
+    // The optional arg is the explicit guard for a future client that wants to
+    // bound an unusually deep/hostile tree.
+    fs::search_notes_with_max(&vault_root, &query, 100, max_dirs)
 }
 
 #[tauri::command(rename_all = "snake_case")]

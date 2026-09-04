@@ -182,6 +182,7 @@ export const zh = {
     indexNeedsRebuild: '索引需要重建',
     rebuildIndex: '重建',
     rebuildIndexTitle: '重建搜索索引',
+    vaultTruncated: '笔记库过大：列表已截断，可能有笔记未显示',
   },
   filetree: {
     newFile: '新建文件',
