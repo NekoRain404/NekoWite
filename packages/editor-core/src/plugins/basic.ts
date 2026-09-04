@@ -4,6 +4,7 @@ import { history } from '@milkdown/plugin-history'
 import { listener } from '@milkdown/plugin-listener'
 import type { MilkdownPlugin } from '@milkdown/ctx'
 import { Plugin } from '@milkdown/prose/state'
+import { columnResizing } from '@milkdown/prose/tables'
 import type { EditorView } from '@milkdown/prose/view'
 import { $prose } from '@milkdown/utils'
 
@@ -32,7 +33,7 @@ import {
   mathRemark,
 } from '../math'
 import { mdxComponent, mdxComponentNodeView, mdxJsxRemark } from '../mdx'
-import { tableAutoRowKeymap } from '../table/keymap'
+import { tableAutoRowKeymap, tableClipboardKeymap } from '../table/keymap'
 import { tableFeaturePlugin } from '../table/plugin'
 import { tableSelectionPlugin } from '../table/selection'
 import { suggestionPlugin } from '../suggest'
@@ -75,6 +76,9 @@ const nativeInputPlugin = new Plugin({
 export const basicPlugins: MilkdownPlugin[] = [
   // Runs before the GFM table keymap so Tab on the last cell can append a row.
   $prose(() => tableAutoRowKeymap),
+  // Cell copy/cut/paste only fires on an active cell selection (or an in-table
+  // caret for paste); Mod/Cmd+C/X/V outside a table fall through untouched.
+  $prose(() => tableClipboardKeymap),
   ...mdxJsxRemark,
   mdxComponentNodeView,
   ...commonmark,
@@ -85,6 +89,10 @@ export const basicPlugins: MilkdownPlugin[] = [
   $prose(() => imageKeymapPlugin),
   codeBlockCopyNodeView,
   headingAnchorNodeView,
+  // Runs before the GFM `tableEditing` so the column-width drag handle gets a
+  // turn before the broad cell-selection mouse handler. One drag = one undo
+  // (prosemirror-tables commits the colwidth on pointer-up as a single step).
+  $prose(() => columnResizing({})),
   ...gfm.flat(),
   footnoteReferenceNodeView,
   ...citeRemark,
