@@ -188,10 +188,15 @@ export const useTabsStore = defineStore('tabs', () => {
       try {
         const content = await fsService.read(vault.value!, path)
         // The tab may have been closed (or closeAll run) while the read was
-        // pending; never refill a tab that no longer exists.
-        if (tabs.value.some((x) => x.id === tab.id)) {
-          tab.content = content
-          tab.savedContent = content
+        // pending; never refill a tab that no longer exists. Resolve the
+        // reactive proxy stored in the store (NOT the raw local `tab`): the
+        // read is async, so RenderedPane may already be watch-ing
+        // activeTab.content, and a raw-object write bypasses Vue's reactivity
+        // and never notifies it — leaving the editor permanently empty.
+        const stored = tabs.value.find((x) => x.id === tab.id)
+        if (stored) {
+          stored.content = content
+          stored.savedContent = content
         }
       } catch {
         removeTab(tab.id)

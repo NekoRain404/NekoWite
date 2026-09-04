@@ -50,6 +50,9 @@
 
 /* Trailing "#" deep-link anchor on each heading: hidden until hover, copies a
    fragment for the heading when clicked (see the heading node view). */
+.editor-container .ProseMirror .nk-heading-anchor::before {
+  content: '#';
+}
 .editor-container .ProseMirror .nk-heading-anchor {
   display: inline-block;
   margin-left: 0.45em;
