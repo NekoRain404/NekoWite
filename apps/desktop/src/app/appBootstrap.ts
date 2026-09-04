@@ -11,6 +11,7 @@ import { setupWindowTracking, type WindowTracking } from './windowState'
 import { createTmpRecovery, requestUntitledVaultSwitch } from './recoveryClosedLoop'
 import { setActiveEditor } from '@nekowite/plugin-host'
 import { editorBridge } from '../services/editorBridge'
+import { editorSessionManager } from '../features/editor/sessionManager'
 
 const VAULT_LS_KEY = 'nekowite.vault'
 
@@ -20,10 +21,11 @@ export interface DesktopRuntime {
   /** Window size/position persistence, shared with the lifecycle module. */
   windowTracking: WindowTracking
   /** Switch the app to a new vault, flushing dirty tabs and authorizing the
-   *  root with the backend before any path-confined command. */
+   *  root with the backend before any path-confined command. Registration failure
+   *  (missing/permission) does not switch; the switch stays on the current vault. */
   applyVault(path: string): Promise<void>
-  /** Record the chosen vault and switch to it. Used by the sidebar and the
-   *  settings "vault saved" flow. */
+  /** Open and switch to the chosen vault. Used by the sidebar and the settings
+   *  "vault saved" flow. The vault is recorded only once applyVault commits. */
   onOpenFolder(path: string): void
   /** Open the native folder picker and switch to the chosen vault. */
   pickFolder(): Promise<void>
@@ -126,15 +128,27 @@ export function createDesktopRuntime(): DesktopRuntime {
     // the Rust commands now reject any root the user did not open this session.
     // A fresh folder pick is already auto-authorized by open_folder_dialog, but the
     // localStorage-restore path needs this explicit call. Must run before indexVault.
-    await fsPort.registerVault(path).catch(() => {
-      // Registration failure (e.g. stale path) must not crash startup; the tree
-      // surfaces the bad vault and the user can pick another folder.
-    })
+    //
+    // Registration success is a PRECONDITION to committing the switch. If the vault
+    // is stale (deleted / permission lost), committing it would take over the UI and
+    // then fail every subsequent path-confined command from Rust. So on failure we
+    // DO NOT switch: no setVault/closeAll/index/plugins/refs/tmp-recovery, we surface
+    // a recoverable error, and we stay on the current vault (the previous state).
+    try {
+      await fsPort.registerVault(path)
+    } catch {
+      if (isStale()) return
+      notifyError(`could not open the vault (missing/permission): ${path}`)
+      return
+    }
     if (isStale()) return
 
     // Commit to the new vault. Only a current switch reaches this point, so a
-    // superseded switch never applies its vault/path/tab-set to the session.
+    // superseded switch never applies its vault/path/tab-set to the session. Record
+    // the chosen vault only now that the switch is actually committed, so a failed
+    // open never leaves a bad path behind to retry on the next launch.
     vaultPath.value = path
+    localStorage.setItem(VAULT_LS_KEY, path)
     // Open tabs keep absolute paths from the previous vault — leaving them open
     // would route every save to "path escapes vault" errors. Start fresh.
     tabs.closeAll()
@@ -186,7 +200,8 @@ export function createDesktopRuntime(): DesktopRuntime {
   }
 
   function onOpenFolder(path: string): void {
-    localStorage.setItem(VAULT_LS_KEY, path)
+    // The chosen vault is recorded (localStorage) only inside applyVault, on a
+    // successful commit — so a failed open never persists a bad path.
     void applyVault(path)
   }
 
@@ -248,9 +263,13 @@ export function createDesktopRuntime(): DesktopRuntime {
     deactivateVaultPlugins()
     // Drop vault-scoped refs state so no stale reference list survives.
     refs.clear()
-    // Release the current editor session (plugin-host active editor + bridge).
+    // Release the current editor session (plugin-host active editor + bridge) and
+    // destroy every live editor session. Idempotent on the manager (an empty map is
+    // a no-op, so a controller that already destroyed its own session is not
+    // double-destroyed).
     setActiveEditor(null)
     editorBridge.setEditor(null)
+    editorSessionManager.destroyAll()
     // Release window tracking listeners. Idempotent.
     windowTracking.dispose()
   }

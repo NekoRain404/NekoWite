@@ -19,7 +19,15 @@ const documentList = useDocumentListStore()
 // lives here — those moved into the app/ modules.
 const runtime = createDesktopRuntime()
 const dialogs = useAppDialogs()
-const lifecycle = createAppLifecycle({ windowTracking: runtime.windowTracking })
+// The lifecycle owns app teardown: its `unmount()` disposes the runtime first
+// (cancels in-flight vault switch/recovery, detaches index + fs-watcher,
+// deactivates plugins, destroys the editor session, releases window tracking),
+// then removes its own window listeners. So onBeforeUnmount is the one place the
+// composition root tears everything down.
+const lifecycle = createAppLifecycle({
+  windowTracking: runtime.windowTracking,
+  disposeRuntime: () => runtime.dispose(),
+})
 
 const dialogState = dialogs.state
 
@@ -63,6 +71,9 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  // Single app teardown: lifecycle.unmount() disposes the runtime AND removes the
+  // window listeners, so nothing (vault switch, recovery scan, fs watcher, plugins,
+  // editor session) outlives the app.
   lifecycle.unmount()
 })
 </script>

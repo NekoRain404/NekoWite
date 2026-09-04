@@ -187,4 +187,24 @@ describe('createAppLifecycle', () => {
     expect(h.tabsMock.captureSession).toHaveBeenCalled()
     expect(h.windowTracking.dispose).toHaveBeenCalled()
   })
+
+  it('unmount disposes the runtime (the composition root) and removes window listeners', async () => {
+    const disposeRuntime = vi.fn()
+    const removeEventListenerSpy = vi.spyOn(window, 'removeEventListener')
+    try {
+      const lifecycle = createAppLifecycle({ windowTracking: h.windowTracking, disposeRuntime })
+      await lifecycle.mount()
+      lifecycle.unmount()
+
+      // The runtime (vault switch/recovery/index/plugins/editor/window-tracking)
+      // is torn down by the lifecycle teardown, and this module's own window
+      // listeners are removed.
+      expect(disposeRuntime).toHaveBeenCalledTimes(1)
+      expect(h.windowTracking.dispose).toHaveBeenCalled()
+      expect(removeEventListenerSpy).toHaveBeenCalledWith('blur', expect.any(Function))
+      expect(removeEventListenerSpy).toHaveBeenCalledWith('beforeunload', expect.any(Function))
+    } finally {
+      removeEventListenerSpy.mockRestore()
+    }
+  })
 })

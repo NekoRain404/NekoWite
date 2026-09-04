@@ -10,7 +10,10 @@ export interface AppLifecycleHandle {
   /** Register OS-theme, window-blur, before-unload and (in Tauri) the native
    *  close-requested listener. */
   mount(): void
-  /** Flush session/window state and detach every listener. Idempotent. */
+  /** Flush session/window state, dispose the runtime and detach every listener.
+   *  Idempotent. This is the single app teardown entry point: it owns BOTH the
+   *  runtime disposal (vault switch / recovery / index / plugins / editor session
+   *  / window tracking) and this module's own listeners. */
   unmount(): void
 }
 
@@ -39,7 +42,13 @@ function isTauriRuntime(): boolean {
  * re-entrancy-guarded (`closing`) so the `win.close()` it issues to finish the
  * native close is allowed through a second time.
  */
-export function createAppLifecycle(deps: { windowTracking: WindowTracking }): AppLifecycleHandle {
+export function createAppLifecycle(deps: {
+  windowTracking: WindowTracking
+  /** Called from `unmount()` to tear down the application runtime (vault switch /
+   *  recovery / index / plugins / editor session / window tracking). Wired by the
+   *  composition root (`App.vue`) so the runtime and lifecyle cleanup paths meet. */
+  disposeRuntime?: () => void
+}): AppLifecycleHandle {
   const tabs = useTabsStore()
   const appearance = useAppearanceStore()
   let unlistenMedia: (() => void) | null = null
@@ -156,8 +165,14 @@ export function createAppLifecycle(deps: { windowTracking: WindowTracking }): Ap
 
   function unmount(): void {
     // Flush once even if mount() never ran, so a hot teardown of an unstubbed
-    // shell still captures the session and window geometry.
+    // shell still captures the session and window geometry. This must run BEFORE
+    // runtime disposal (which releases window tracking), so the freshest layout is
+    // persisted.
     onBeforeUnload()
+    // Dispose the runtime: cancel in-flight vault switches / recovery, detach the
+    // index coordinator (unsubscribes the fs watcher), deactivate plugins, destroy
+    // editor sessions and release window tracking. Idempotent.
+    deps.disposeRuntime?.()
     unlistenMedia?.()
     unlistenMedia = null
     unlistenCloseRequested?.()

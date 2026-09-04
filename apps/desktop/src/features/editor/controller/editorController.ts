@@ -108,7 +108,6 @@ export function createEditorController(deps: EditorControllerDeps): EditorContro
   }
 
   function destroy(): void {
-    const editor = deps.session.editor
     deps.session.editor = null
     // Order matters: detach the decorators/resolvers and the plugin-view callback
     // before destroying the ProseMirror view so a destroyed view is never re-wired.
@@ -117,14 +116,16 @@ export function createEditorController(deps: EditorControllerDeps): EditorContro
     configureImageResolver(null)
     configureHeadingAnchorUrl(null)
     configureWikilinkHandler(null)
-    // Tear down this controller's session. If a later controller has since
-    // claimed the tab (e.g. a re-mount after the pane re-opens), destroySession
-    // only removes its own entry — it never clobbers another registration.
+    // Tear down this controller's session — `destroySession` is the single owner
+    // of the editor instance's `destroy()`, so the controller never calls
+    // `editor?.destroy()` itself (that would destroy the same instance twice). If
+    // a later controller has since claimed the tab (e.g. a re-mount after the
+    // pane re-opens), destroySession only removes its own entry — it never clobbers
+    // another registration.
     if (registeredTabId) editorSessionManager.destroySession(registeredTabId)
     registeredTabId = null
     stopActivationWatch()
     setActiveEditor(null)
-    editor?.destroy()
   }
 
   function getView(): EditorView | null {

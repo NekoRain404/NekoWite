@@ -87,5 +87,8 @@ describe('editorController', () => {
     expect(editorSessionManager.getSession('tab-1')).toBeNull()
     expect(editorSessionManager.getActiveEditor()).toBeNull()
     expect(editor.destroy).toHaveBeenCalled()
+    // The session manager is the single owner of the editor's destroy — the
+    // controller never destroys the same instance a second time.
+    expect(editor.destroy).toHaveBeenCalledTimes(1)
   })
 })
