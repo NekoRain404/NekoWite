@@ -13,8 +13,14 @@ const readMock = vi.hoisted(() => vi.fn())
 const loadMock = vi.hoisted(() => vi.fn())
 const activateMock = vi.hoisted(() => vi.fn())
 const deactivateMock = vi.hoisted(() => vi.fn())
+const notifyErrorMock = vi.hoisted(() => vi.fn())
 
 vi.mock('./fs', () => ({ fsService: { list: listMock, read: readMock } }))
+vi.mock('./errors', () => ({
+  notifyError: notifyErrorMock,
+  describePluginError: (e: { message?: string; recovery?: string }) =>
+    `${e.message ?? ''}${e.recovery ? ` ${e.recovery}` : ''}`,
+}))
 vi.mock('@nekowite/plugin-host', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@nekowite/plugin-host')>()
   return {
@@ -40,6 +46,7 @@ function pkg(permissions?: string[]): string {
 beforeEach(() => {
   resetVaultPluginStateForTests()
   vi.clearAllMocks()
+  notifyErrorMock.mockClear()
   listMock.mockResolvedValue([
     { name: 'quote', path: '/vault/plugins/quote', is_dir: true, is_mdx: false },
   ])
@@ -136,5 +143,107 @@ describe('permission gate during loadVaultPlugins', () => {
     await loadVaultPlugins('/vault')
     expect(activateMock).toHaveBeenCalledTimes(1)
     expect(getActiveVaultPluginIds()).toEqual(['@scope/q'])
+  })
+})
+
+describe('parallel loading & isolation', () => {
+  it('activates multiple plugins in deterministic sorted order', async () => {
+    listMock.mockResolvedValue([
+      { name: 'zzz', path: '/vault/plugins/zzz', is_dir: true, is_mdx: false },
+      { name: 'aaa', path: '/vault/plugins/aaa', is_dir: true, is_mdx: false },
+    ])
+    readMock.mockImplementation((_vault, rel) =>
+      Promise.resolve(
+        rel.includes('zzz')
+          ? JSON.stringify({ name: '@scope/zzz', version: '1.0.0', main: 'index.js' })
+          : JSON.stringify({ name: '@scope/aaa', version: '1.0.0', main: 'index.js' }),
+      ),
+    )
+    loadMock.mockImplementation(async (meta) => ({ ok: true, id: meta.id, meta, definition: {} }))
+    activateMock.mockImplementation(async (res) => ({ ok: true, id: res.id }))
+    await loadVaultPlugins('/vault')
+    expect(getActiveVaultPluginIds()).toEqual(['@scope/aaa', '@scope/zzz'])
+  })
+
+  it('isolates a failing plugin so the others still activate', async () => {
+    listMock.mockResolvedValue([
+      { name: 'good', path: '/vault/plugins/good', is_dir: true, is_mdx: false },
+      { name: 'bad', path: '/vault/plugins/bad', is_dir: true, is_mdx: false },
+    ])
+    readMock.mockImplementation((_vault, rel) =>
+      Promise.resolve(
+        rel.includes('good')
+          ? JSON.stringify({ name: '@scope/good', version: '1.0.0', main: 'index.js' })
+          : JSON.stringify({ name: '@scope/bad', version: '1.0.0', main: 'index.js' }),
+      ),
+    )
+    loadMock.mockImplementation(async (meta) =>
+      meta.id === '@scope/bad'
+        ? { ok: false, id: meta.id, error: 'boom' }
+        : { ok: true, id: meta.id, meta, definition: {} },
+    )
+    activateMock.mockImplementation(async (res) => ({ ok: true, id: res.id }))
+    await loadVaultPlugins('/vault')
+    expect(getActiveVaultPluginIds()).toEqual(['@scope/good'])
+    expect(notifyErrorMock).toHaveBeenCalled()
+    expect(String(notifyErrorMock.mock.calls[0]?.[0])).toContain('@scope/bad')
+  })
+})
+
+describe('distinct plugin failure buckets', () => {
+  it('silently skips a directory without a manifest (not a plugin)', async () => {
+    readMock.mockRejectedValue(new Error('missing'))
+    await loadVaultPlugins('/vault')
+    expect(activateMock).not.toHaveBeenCalled()
+    expect(getActiveVaultPluginIds()).toEqual([])
+    expect(notifyErrorMock).not.toHaveBeenCalled()
+  })
+
+  it('routes a missing entry file to a not-found recovery hint', async () => {
+    loadMock.mockRejectedValue(new Error('Cannot find module "./index.js"'))
+    await loadVaultPlugins('/vault')
+    expect(activateMock).not.toHaveBeenCalled()
+    const msg = String(notifyErrorMock.mock.calls[0]?.[0])
+    expect(msg).toContain('could not be found')
+    expect(msg).toContain('Reinstall the plugin')
+  })
+
+  it('routes an invalid manifest (bad JSON) to a manifest-invalid error message', async () => {
+    readMock.mockResolvedValue('not json')
+    await loadVaultPlugins('/vault')
+    expect(activateMock).not.toHaveBeenCalled()
+    const msg = String(notifyErrorMock.mock.calls[0]?.[0])
+    expect(msg).toContain('invalid manifest')
+  })
+
+  it('routes a parse/load code failure distinctly from an activation failure', async () => {
+    // Load failure (import throws)
+    loadMock.mockRejectedValue(new Error('SyntaxError: Unexpected token'))
+    await loadVaultPlugins('/vault')
+    expect(activateMock).not.toHaveBeenCalled()
+    const loadMsg = String(notifyErrorMock.mock.calls[0]?.[0])
+    expect(loadMsg).toContain('could not be parsed/imported')
+
+    // Activation failure
+    notifyErrorMock.mockClear()
+    loadMock.mockResolvedValue({ ok: true, id: '@scope/q', meta: META(), definition: {} })
+    activateMock.mockResolvedValue({ ok: false, id: '@scope/q', error: 'register failed' })
+    await loadVaultPlugins('/vault')
+    expect(getActiveVaultPluginIds()).toEqual([])
+    const actMsg = String(notifyErrorMock.mock.calls[0]?.[0])
+    expect(actMsg).toContain('failed to activate')
+    expect(actMsg).toContain('Disable and re-enable the plugin')
+  })
+
+  it('routes a permission denial through a structured permission-denied error', async () => {
+    readMock.mockResolvedValue(pkg(['fs']))
+    loadMock.mockResolvedValue({ ok: true, id: '@scope/q', meta: META(['fs']), definition: {} })
+    await loadVaultPlugins('/vault')
+    expect(activateMock).not.toHaveBeenCalled()
+    expect(getActiveVaultPluginIds()).toEqual([])
+    const msg = String(notifyErrorMock.mock.calls[0]?.[0])
+    expect(msg).toContain('@scope/q')
+    expect(msg).toContain('permission(s)')
+    expect(msg).toContain('Grant the requested permission')
   })
 })

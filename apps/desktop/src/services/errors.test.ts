@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { decideConflict, describeExportError } from './errors'
+import { decideConflict, describeExportError, describePluginError } from './errors'
 
 describe('decideConflict', () => {
   it('reloads silently when tab is clean', () => {
@@ -22,5 +22,23 @@ describe('describeExportError', () => {
   })
   it('passes through plain strings', () => {
     expect(describeExportError('boom')).toBe('导出失败：boom')
+  })
+})
+
+describe('describePluginError', () => {
+  it('joins the message with the recovery hint', () => {
+    expect(
+      describePluginError({
+        code: 'PLUGIN_PERMISSION_DENIED',
+        message: 'Plugin needs fs.',
+        recovery: 'Grant it in settings.',
+      }),
+    ).toBe('Plugin needs fs. Grant it in settings.')
+  })
+  it('returns just the message when there is no recovery hint', () => {
+    expect(describePluginError({ message: 'boom' })).toBe('boom')
+  })
+  it('falls back to a code-based label when there is no message', () => {
+    expect(describePluginError({ code: 'PLUGIN_LOAD_FAILED' })).toContain('PLUGIN_LOAD_FAILED')
   })
 })

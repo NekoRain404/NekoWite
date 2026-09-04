@@ -1,12 +1,24 @@
 import {
   activatePlugin,
+  assertPermission,
+  collectPluginPermissions,
+  createPluginError,
   deactivatePlugin,
   hasDangerousPermissions,
   loadPlugin,
+  onLifecycleError,
 } from '@nekowite/plugin-host'
-import type { PluginDefinition, PluginMeta, PluginPermission } from '@nekowite/plugin-host'
+import type {
+  DynamicImport,
+  LoadResult,
+  PluginDefinition,
+  PluginError,
+  PluginErrorCode,
+  PluginMeta,
+  PluginPermission,
+} from '@nekowite/plugin-host'
 import { fsService } from './fs'
-import { notifyError } from './errors'
+import { describePluginError, notifyError } from './errors'
 import { t } from '../i18n'
 
 interface VaultPluginPackage {
@@ -72,7 +84,7 @@ export function getActiveVaultPluginIds(): string[] {
 export async function askPluginPermission(meta: PluginMeta, definition: PluginDefinition): Promise<boolean> {
   // Merge manifest- and definition-declared permissions. Pure UI plugins declare
   // nothing and always pass; anything reaching the user is a dangerous one.
-  const declared = [...getPluginPermissions(meta), ...(definition.permissions ?? [])]
+  const declared = collectPluginPermissions(meta, definition)
   if (!hasDangerousPermissions({ permissions: declared })) return true
   const cached = permissionDecisions.get(meta.id)
   if (typeof cached === 'boolean') return cached
@@ -116,6 +128,147 @@ function createVaultImporter(vault: string): (main: string) => Promise<{ default
   return () => Promise.reject(new Error('browser-demo: no real vault plugin files'))
 }
 
+// The per-plugin work (read manifest → read code → dynamic import) is
+// independent across plugins and is the bulk of startup cost, so it runs
+// concurrently with a bounded parallelism that keeps the allocator/IO sane.
+// Permission confirmation and activation ordering stay deterministic.
+const MAX_PARALLEL_PLUGIN_LOADS = 4
+
+/** Run `tasks` (index-aligned) with at most `limit` concurrent promises, while
+ *  preserving the original task order in the returned array. */
+async function runBounded<T>(tasks: Array<() => Promise<T>>, limit: number): Promise<T[]> {
+  const results: T[] = new Array(tasks.length)
+  let next = 0
+  const workers = Array.from({ length: Math.min(limit, tasks.length) }, async () => {
+    while (next < tasks.length) {
+      const i = next++
+      results[i] = await tasks[i]()
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
+let lifecycleErrorOff: (() => void) | null = null
+
+/** Route plugin lifecycle hook errors (a throwing hook, still isolated by the
+ *  host) into the app error channel so a failure is observable and actionable. */
+function ensureLifecycleErrorRouter(): void {
+  if (lifecycleErrorOff) return
+  lifecycleErrorOff = onLifecycleError((ev) => {
+     
+    console.error(`[NekoWite] plugin lifecycle hook failed plugin="${ev.pluginId}" event="${ev.event}"`, ev.error)
+    notifyError(describePluginError(ev.error))
+  })
+}
+
+/** Turn a raw dynamic-import failure string into a structured plugin error code
+ *  so the loader can distinguish a code/parse problem from a generic load
+ *  failure (missing entry file, unresolved module, etc.). */
+function classifyLoadError(error: string): PluginErrorCode {
+  if (/syntax|parse|unexpected|SyntaxError|Unexpected/i.test(error)) return 'PLUGIN_CODE_PARSE_FAILED'
+  if (/cannot find module|module not found|no such file|failed to fetch|not found|does not provide an export|404/i.test(error)) {
+    return 'PLUGIN_NOT_FOUND'
+  }
+  return 'PLUGIN_LOAD_FAILED'
+}
+
+/** Build a structured plugin error for a load-stage failure, keyed off the
+ *  classified code so the recovery hint matches the problem. */
+function loadFailure(meta: PluginMeta, error: string): PluginError {
+  const code = classifyLoadError(error)
+  const message =
+    code === 'PLUGIN_CODE_PARSE_FAILED'
+      ? `Plugin "${meta.name}" could not be parsed/imported: ${error}`
+      : code === 'PLUGIN_NOT_FOUND'
+        ? `Plugin "${meta.name}" could not be found (its entry file may be missing): ${error}`
+        : t('plugin.loadFailed', { id: meta.id, error })
+  const recovery =
+    code === 'PLUGIN_CODE_PARSE_FAILED'
+      ? 'Update the plugin to a compatible version.'
+      : code === 'PLUGIN_NOT_FOUND'
+        ? 'Reinstall the plugin, or check that its entry file exists.'
+        : 'Reinstall the plugin or check its entry file.'
+  return createPluginError(code, { pluginId: meta.id, message, recovery })
+}
+
+/** A single plugin's async-preloaded stage (manifest + code read + import),
+ *  result-shaped so each failure bucket is separately diagnosable. `skip` marks
+ *  a directory that is not actually a plugin (no manifest), dropped silently. */
+interface PreloadedPlugin {
+  dirName: string
+  meta?: PluginMeta
+  loadResult?: LoadResult
+  error?: PluginError
+  skip?: boolean
+}
+
+/** Read a plugin's manifest and then load its code, tagging each distinct
+ *  failure (missing file / invalid manifest / code parse / load) with a
+ *  structured code + recovery hint instead of one generic "plugin failed". */
+async function preloadVaultPlugin(
+  vault: string,
+  dirName: string,
+  importer: DynamicImport,
+): Promise<PreloadedPlugin> {
+  // 1. Read the manifest. A directory with no package.json is not a plugin
+  //    (e.g. an arbitrary subfolder of plugins/), so it is skipped silently —
+  //    a *malformed* manifest, by contrast, is a real failure below.
+  let raw: string
+  try {
+    raw = await fsService.read(vault, joinVault('plugins', dirName, 'package.json'))
+  } catch {
+    return { dirName, skip: true }
+  }
+
+  // 2. Parse the manifest, distinguishing "invalid JSON" from "missing fields".
+  let pkg: VaultPluginPackage
+  try {
+    pkg = JSON.parse(raw) as VaultPluginPackage
+  } catch {
+    return {
+      dirName,
+      error: createPluginError('PLUGIN_MANIFEST_INVALID', {
+        pluginId: dirName,
+        message: `Plugin "${dirName}" has an invalid manifest (package.json is not valid JSON).`,
+        recovery: 'Fix or reinstall the plugin manifest.',
+      }),
+    }
+  }
+  if (!pkg.name || !pkg.version || !pkg.main) {
+    return {
+      dirName,
+      error: createPluginError('PLUGIN_MANIFEST_INVALID', {
+        pluginId: dirName,
+        message: `Plugin "${dirName}" manifest is missing required fields (name, version, main).`,
+        recovery: 'Fix the package.json manifest.',
+      }),
+    }
+  }
+
+  const meta: PluginMeta = {
+    id: pkg.name,
+    name: pkg.name,
+    version: pkg.version,
+    main: joinVault('plugins', dirName, pkg.main),
+    permissions: pkg.permissions,
+  }
+
+  // 3. Read the plugin's code + dynamic import (inside loadPlugin). Independent
+  //    of other plugins, so it participates in the bounded-concurrency phase.
+  let result: LoadResult
+  try {
+    result = await loadPlugin(meta, importer)
+  } catch (e) {
+    // loadPlugin normally swallows load errors into an ok:false result, but a
+    // dynamic-import rejection can still escape (e.g. a sandboxed importer) —
+    // classify it the same way instead of bubbling and aborting the whole scan.
+    return { dirName, meta, error: loadFailure(meta, e instanceof Error ? e.message : String(e)) }
+  }
+  if (!result.ok) return { dirName, meta, error: loadFailure(meta, result.error) }
+  return { dirName, meta, loadResult: result }
+}
+
 /** Reset in-memory state (active ids, permission verdicts, decider). Test-only. */
 export function resetVaultPluginStateForTests(): void {
   deactivateVaultPlugins()
@@ -132,9 +285,20 @@ export function resetVaultPluginStateForTests(): void {
  * vaults never leaks a plugin's components/commands/lifecycle hooks into the
  * next vault. Best-effort: a missing plugins dir is not an error; per-plugin
  * failures are surfaced through the app's error toast.
+ *
+ * Loading is staged to keep startup time from growing linearly with plugin
+ * count:
+ *  1. Per-plugin independent work (read manifest → read code → dynamic import)
+ *     runs concurrently with bounded parallelism.
+ *  2. Permission confirmation stays sequential (it drives a user dialog), and
+ *     the point-of-use permission guard runs as each plugin passes consent.
+ *  3. Activation of the consented plugins runs concurrently, but recorded in a
+ *     deterministic order (sorted by plugin id) so the UI/registration order is
+ *     stable across reloads.
  */
 export async function loadVaultPlugins(vault: string): Promise<void> {
   deactivateVaultPlugins()
+  ensureLifecycleErrorRouter()
   const importer = createVaultImporter(vault)
   let dirs
   try {
@@ -142,37 +306,94 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
   } catch {
     return
   }
-  for (const dir of dirs.filter((d) => d.is_dir)) {
-    let pkg: VaultPluginPackage
-    try {
-      pkg = JSON.parse(
-        await fsService.read(vault, joinVault('plugins', dir.name, 'package.json')),
-      ) as VaultPluginPackage
-    } catch {
+  const pluginDirs = dirs.filter((d) => d.is_dir)
+
+  // Phase 1 — parallel, independent per-plugin work.
+  const preloaded = await runBounded(
+    pluginDirs.map((dir) => () => preloadVaultPlugin(vault, dir.name, importer)),
+    MAX_PARALLEL_PLUGIN_LOADS,
+  )
+  // Deterministic registration order for the UI, independent of IO timing.
+  preloaded.sort((a, b) => (a.meta?.id ?? a.dirName).localeCompare(b.meta?.id ?? b.dirName))
+
+  // Phase 2 — sequential permission confirmation (user dialog) + point-of-use
+  // permission guard. Collect the consented plugins for concurrent activation.
+  const consented: PreloadedPlugin[] = []
+  for (const p of preloaded) {
+    // A directory without a manifest is not a plugin; drop it quietly.
+    if (p.skip) continue
+    if (p.error) {
+      notifyError(describePluginError(p.error))
       continue
     }
-    if (!pkg.name || !pkg.version || !pkg.main) continue
-    const meta: PluginMeta = {
-      id: pkg.name,
-      name: pkg.name,
-      version: pkg.version,
-      main: joinVault('plugins', dir.name, pkg.main),
-      permissions: pkg.permissions,
-    }
-    const result = await loadPlugin(meta, importer)
-    if (!result.ok) {
-      notifyError(t('plugin.loadFailed', { id: result.id, error: result.error }))
+    const loadResult = p.loadResult
+    if (!loadResult || !loadResult.ok) {
+      // Defensive: p.error was absent, so this should never happen, but avoid
+      // activating an errored result.
+      notifyError(describePluginError(p.error ?? createPluginError('PLUGIN_LOAD_FAILED', { pluginId: p.dirName })))
       continue
     }
-    if (!(await askPluginPermission(meta, result.definition))) {
-      notifyError(t('plugin.permissionSkipped', { name: meta.name }))
+    const meta = loadResult.meta
+    const definition = loadResult.definition
+    if (!(await askPluginPermission(meta, definition))) {
+      const declared = collectPluginPermissions(meta, definition)
+      notifyError(
+        describePluginError(
+          createPluginError('PLUGIN_PERMISSION_DENIED', {
+            pluginId: meta.id,
+            message:
+              declared.length > 0
+                ? `Plugin "${meta.name}" requires permission(s): ${declared.join(', ')} but consent was not granted.`
+                : t('plugin.permissionSkipped', { name: meta.name }),
+            recovery: 'Grant the requested permission in the plugin settings, then reload the vault.',
+          }),
+        ),
+      )
       continue
     }
-    const res = await activatePlugin(result)
-    if (!res.ok) notifyError(t('plugin.loadFailed', { id: res.id, error: res.error }))
-    else {
-      activeVaultPluginIds.push(res.id)
-      console.info(`[NekoWite] vault plugin activated: ${res.id}`)
+    // Point-of-use guard: re-verify every declared permission is present before
+    // activation; a missing capability rejects loudly instead of silently
+    // proceeding. Today consent is all-or-nothing, so the granted set equals the
+    // declared set — this is where a future per-capability grant is enforced.
+    const granted = collectPluginPermissions(meta, definition)
+    for (const permission of granted) {
+      assertPermission({ permissions: granted }, permission, {
+        pluginId: meta.id,
+        detail: 'activate its declared capabilities',
+      })
     }
+    consented.push(p)
+  }
+
+  // Phase 3 — parallel activation of the consented plugins, results recorded in
+  // deterministic (consented) order. An activation rejection is captured into an
+  // ok:false result so one failing plugin cannot abort the rest.
+  const activated = await runBounded(
+    consented.map((p) => async () => {
+      const loadResult = p.loadResult as LoadResult
+      const res = await activatePlugin(loadResult).catch((e) => ({
+        ok: false as const,
+        id: loadResult.id,
+        error: e instanceof Error ? e.message : String(e),
+      }))
+      return { meta: p.meta as PluginMeta, res }
+    }),
+    MAX_PARALLEL_PLUGIN_LOADS,
+  )
+  for (const { meta, res } of activated) {
+    if (!res.ok) {
+      notifyError(
+        describePluginError(
+          createPluginError('PLUGIN_ACTIVATE_FAILED', {
+            pluginId: res.id,
+            message: `Plugin "${meta.name}" failed to activate: ${res.error ?? ''}`,
+            recovery: 'Disable and re-enable the plugin, or reinstall it.',
+          }),
+        ),
+      )
+      continue
+    }
+    activeVaultPluginIds.push(res.id)
+    console.info(`[NekoWite] vault plugin activated: ${res.id}`)
   }
 }
