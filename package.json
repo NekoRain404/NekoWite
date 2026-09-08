@@ -1,0 +1,24 @@
+{
+  "name": "nekowite",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "pnpm --filter @nekowite/desktop dev",
+    "build": "pnpm --filter @nekowite/desktop build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test:e2e": "pnpm --filter @nekowite/desktop exec playwright test",
+    "perf": "pnpm --filter @nekowite/desktop perf",
+    "tauri": "pnpm --filter @nekowite/desktop tauri"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9",
+    "@typescript-eslint/eslint-plugin": "^8",
+    "@typescript-eslint/parser": "^8",
+    "eslint": "^9",
+    "eslint-plugin-vue": "^9",
+    "globals": "^14",
+    "vue-eslint-parser": "^9"
+  }
+}

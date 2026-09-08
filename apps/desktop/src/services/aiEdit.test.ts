@@ -1,0 +1,128 @@
+import { describe, expect, it, vi } from 'vitest'
+import { buildEditPrompt, rewriteSelection } from './aiEdit'
+import type { AiEditDeps, EditView } from './aiEdit'
+import type { ChatStreamHandlers } from './ai'
+
+function fakeView(): EditView & {
+  dispatch: ReturnType<typeof vi.fn>
+  focus: ReturnType<typeof vi.fn>
+} {
+  return {
+    state: {
+      selection: { from: 3, to: 10, empty: false },
+      doc: { textBetween: vi.fn(() => 'hello world') },
+      tr: { insertText: vi.fn((text: string) => ({ kind: 'tr', text })) },
+    },
+    dispatch: vi.fn(),
+    focus: vi.fn(),
+  } as never
+}
+
+function fakeDeps(
+  view: EditView | null = fakeView(),
+): { deps: Partial<AiEditDeps>; state: { handlers: ChatStreamHandlers | null } } {
+  const state = { handlers: null as ChatStreamHandlers | null }
+  return {
+    deps: {
+      getView: () => view,
+      getConfig: () => ({ provider: 'local', model: 'm' }),
+      notifyError: vi.fn(),
+      start: vi.fn((_cfg, _prompt, _images, handlers) => {
+        state.handlers = handlers
+        return Promise.resolve({ cancel: vi.fn() })
+      }),
+      translate: vi.fn((k: string) => k),
+    },
+    state,
+  }
+}
+
+describe('buildEditPrompt', () => {
+  it('builds a rewrite prompt around the selection', () => {
+    const p = buildEditPrompt('rewrite', 'draft text')
+    expect(p).toContain('Rewrite')
+    expect(p).toContain('draft text')
+    expect(p.endsWith('draft text')).toBe(true)
+  })
+
+  it('builds a polish prompt around the selection', () => {
+    const p = buildEditPrompt('polish', 'rough text')
+    expect(p).toContain('Polish')
+    expect(p).toContain('rough text')
+  })
+
+  it('builds a translate prompt with an explicit target language', () => {
+    const p = buildEditPrompt('translate', '原文', 'Simplified Chinese')
+    expect(p).toContain('Translate')
+    expect(p).toContain('into Simplified Chinese')
+    expect(p).toContain('原文')
+  })
+
+  it('translate falls back when no target language is given', () => {
+    const p = buildEditPrompt('translate', '原文')
+    expect(p).toContain('Output only the translation')
+    expect(p).toContain('原文')
+    expect(p).not.toContain('into ')
+  })
+})
+
+describe('rewriteSelection', () => {
+  it('notifies when there is no editor view and does not call the model', async () => {
+    const { deps } = fakeDeps(null)
+    const notify = deps.notifyError as ReturnType<typeof vi.fn>
+    await rewriteSelection('rewrite', deps)
+    expect(notify).toHaveBeenCalledWith('chat.editorNotReady')
+    expect(deps.start).not.toHaveBeenCalled()
+  })
+
+  it('notifies ai.noSelection for an empty selection', async () => {
+    const view = fakeView()
+    view.state.selection = { from: 5, to: 5, empty: true }
+    const { deps } = fakeDeps(view)
+    const notify = deps.notifyError as ReturnType<typeof vi.fn>
+    await rewriteSelection('polish', deps)
+    expect(notify).toHaveBeenCalledWith('ai.noSelection')
+    expect(deps.start).not.toHaveBeenCalled()
+  })
+
+  it('sends the selection text as the prompt with the current config', async () => {
+    const view = fakeView()
+    const { deps, state } = fakeDeps(view)
+    await rewriteSelection('polish', deps)
+    expect(deps.start).toHaveBeenCalledTimes(1)
+    const start = deps.start as ReturnType<typeof vi.fn>
+    expect(start.mock.calls[0][0]).toEqual({ provider: 'local', model: 'm' })
+    expect(start.mock.calls[0][1]).toContain('hello world')
+    expect(start.mock.calls[0][1]).toContain('Polish')
+    expect(start.mock.calls[0][2]).toEqual([])
+    expect(view.state.doc.textBetween).toHaveBeenCalledWith(3, 10, '\n', ' ')
+    expect(state.handlers).not.toBeNull()
+  })
+
+  it('translate targets the current interface language', async () => {
+    const { deps } = fakeDeps(fakeView())
+    await rewriteSelection('translate', deps)
+    const start = deps.start as ReturnType<typeof vi.fn>
+    expect(start.mock.calls[0][1]).toContain('into Simplified Chinese')
+  })
+
+  it('replaces the selection with the completion on done', async () => {
+    const view = fakeView()
+    const { deps, state } = fakeDeps(view)
+    await rewriteSelection('rewrite', deps)
+    state.handlers!.onDone('polished output')
+    expect(view.state.tr.insertText).toHaveBeenCalledWith('polished output', 3, 10)
+    expect(view.dispatch).toHaveBeenCalledWith({ kind: 'tr', text: 'polished output' })
+    expect(view.focus).toHaveBeenCalled()
+  })
+
+  it('reports completion errors through notifyError', async () => {
+    const view = fakeView()
+    const { deps, state } = fakeDeps(view)
+    const notify = deps.notifyError as ReturnType<typeof vi.fn>
+    await rewriteSelection('polish', deps)
+    state.handlers!.onError('boom')
+    expect(notify).toHaveBeenCalledWith('boom')
+    expect(view.dispatch).not.toHaveBeenCalled()
+  })
+})

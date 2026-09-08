@@ -1,0 +1,33 @@
+# dependencies
+node_modules/
+
+# package manager local store
+.pnpm-store/
+
+# app runtime data (search index, history, trash)
+.nekowite/
+.nekowite-trash/
+
+# build output
+dist/
+target/
+src-tauri/target/
+
+# test / coverage artifacts
+test-results/
+playwright-report/
+coverage/
+
+# local ephemeral files
+*.local
+.DS_Store
+Thumbs.db
+
+# local release build artifact
+/nekowite-bin
+
+# editor / OS
+.idea/
+.vscode/
+*.swp
+*.swo

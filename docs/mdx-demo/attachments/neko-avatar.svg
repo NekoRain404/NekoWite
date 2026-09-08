@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="500" viewBox="0 0 500 500">
+  <rect width="500" height="500" fill="#f1f5f9"/>
+  <circle cx="250" cy="250" r="190" fill="#e0f2fe" stroke="#0ea5e9" stroke-width="8"/>
+  <text x="250" y="270" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="150" fill="#0ea5e9">🐱</text>
+</svg>

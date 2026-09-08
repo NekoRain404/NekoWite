@@ -1,0 +1,189 @@
+---
+title: NekoWite MDX 综合示例
+date: 2026-09-08
+tags:
+  - demo
+  - mdx
+  - writing
+author: NekoWite Team
+---
+
+# NekoWite MDX 综合示例
+
+欢迎！这是一个专门用来**验证编辑器能力**的 MDX 文档。下面的内容混合了图片、MDX 组件、数学、引用、表格、任务、代码、Wikilink 等等。
+
+> 提示：你可以通过右上角的“源码 / 渲染 / 对照”切换视图，观察 MDX 的往返保真能力。
+
+## 一、图片
+
+### 1.1 居中大图
+
+![NekoWite 示例横幅](attachments/neko-banner.svg){width=640 align=center}
+
+### 1.2 左对齐小图
+
+![专注写作卡片](attachments/focus-card.svg){width=320 align=left}
+
+### 1.3 图片带标题
+
+![Neko 头像](attachments/neko-avatar.svg "这是带着标题的图片"){width=220 align=right}
+
+## 二、内置 MDX 组件
+
+### 2.1 Callout
+
+<Callout type="info">
+
+**信息提示**：这里是 Callout 的内容，支持 Markdown 语法。
+
+</Callout>
+
+<Callout type="success">
+
+**做得不错**：你已经成功渲染了一个 Callout。
+
+</Callout>
+
+<Callout type="warn">
+
+**注意**：Callout 支持 `info`、`success`、`warn` 等类型。
+
+</Callout>
+
+### 2.2 FloatBox（浮动框）
+
+<FloatBox x="20" y="20" w="280" h="180" angle="0" z="1">
+
+这是一个可以拖拽、缩放、旋转的悬浮框。直接点击并拖动它试试。
+
+</FloatBox>
+
+<FloatBox x="360" y="30" w="240" h="160" angle="-3" z="2">
+
+第二个 FloatBox，可以和第一个重叠、调整层级。
+
+</FloatBox>
+
+## 三、公式与引用
+
+### 3.1 行内公式
+
+质能方程 $E = mc^2$，勾股定理 $a^2 + b^2 = c^2$。
+
+### 3.2 块级公式
+
+$$
+\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+$$
+
+$$
+\nabla \cdot \mathbf{E} = \frac{\rho}{\varepsilon_0}
+$$
+
+### 3.3 引用文献
+
+这是标准引用语法 [@smith2020]，另一篇 [@doe2021]，以及再次引用 [@smith2020]。
+
+## 四、结构化内容
+
+### 4.1 表格
+
+| 功能       | 状态 | 说明                 |
+| -------- | -- | ------------------ |
+| Markdown | ✅  | 完整支持               |
+| MDX 组件   | ✅  | Callout / FloatBox |
+| 数学公式     | ✅  | KaTeX / MathLive   |
+| 图片       | ✅  | 支持对齐、尺寸            |
+
+### 4.2 任务列表
+
+- [x] 验证图片渲染
+- [x] 验证 Callout
+- [ ] 验证 FloatBox 拖拽
+- [ ] 导出 PDF / HTML
+
+### 4.3 嵌套列表与引用
+
+1. 第一项
+2. 第二项
+   - 子项 A
+   - 子项 B
+3. 第三项
+
+> 这是一段引用
+>
+> 第二行引用内容
+
+### 4.4 删除线
+
+~~这段文字被删除~~，**这段加粗**，*这段斜体*，`inline code`。
+
+## 五、代码块
+
+```javascript
+// 一个简单的 JavaScript 示例
+const greeting = (name) => `Hello, ${name}!`
+console.log(greeting('NekoWite'))
+```
+
+```python
+# Python 示例
+def fib(n):
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+
+print([fib(i) for i in range(10)])
+```
+
+## 六、链接与笔记网络
+
+### 6.1 普通链接
+
+[访问 NekoWite 仓库](https://github.com/NekoRain404/NekoWite)
+
+### 6.2 Wikilink
+
+连接笔记网络：[[notes/neko-notes]]、[[notes/mdx-syntax]]、[[notes/neko-notes|别名：Neko 笔记]]。
+
+### 6.3 自动链接
+
+<https://example.com>
+
+## 七、MDX 高级特性
+
+### 7.1 自定义表达式
+
+<CustomComponent foo={1} bar="hello" disabled>
+
+这段文字在自定义组件内部。
+
+</CustomComponent>
+
+### 7.2 MDX import / export
+
+<div class="mdx-demo-note">
+
+| MDX 特性    | 说明                        |
+| --------- | ------------------------- |
+| `import`  | 导入组件或模块                   |
+| `export`  | 导出 meta、组件、常量             |
+| JSX 属性表达式 | `foo={1}`、`disabled`      |
+| 嵌套组件      | `<Outer><Inner/></Outer>` |
+
+</div>
+
+## 八、YAML Frontmatter
+
+文档顶部的 frontmatter 包含 `title`、`date`、`tags`、`author`。在源码视图中可看到完整结构；编辑器会保留它。
+
+## 九、保存与导出
+
+生成完这份文档后，你可以：
+
+- 在编辑器内直接编辑
+- 切换到源码视图观察 MDX 语法
+- 尝试导出为 HTML / PDF
+- 修改 Callout、FloatBox 的属性
+
+***
+
+*NekoWite · 让写作回到内容本身。*
