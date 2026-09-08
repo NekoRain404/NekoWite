@@ -129,6 +129,14 @@ export function createAppLifecycle(deps: {
       // With `closing` still true, the re-fired close-requested falls through and
       // allows the native close.
       await getCurrentWindow().close()
+    } catch {
+      // Never let an unexpected save/flush error swallow the user's X. Try the
+      // native close; if even that fails, fall back to destroy so the process
+      // cannot become unclosable. Data protection is still best-effort above.
+      notifyError(t('tabs.unsavedWorkBlocker'))
+      await getCurrentWindow().close().catch(async () => {
+        await getCurrentWindow().destroy().catch(() => undefined)
+      })
     } finally {
       closing = false
     }
