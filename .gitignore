@@ -25,6 +25,7 @@ Thumbs.db
 
 # local release build artifact
 /nekowite-bin
+/release/
 
 # editor / OS
 .idea/

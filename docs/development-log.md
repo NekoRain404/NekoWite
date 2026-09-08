@@ -50,3 +50,4 @@ pnpm --filter @nekowite/desktop tauri build --bundles nsis
 - Windows x64 NSIS 安装包：`release/nekowite_0.1.0_x64-setup.exe`（5.3 MB，未签名）。
 - 原生可执行文件：`apps/desktop/src-tauri/target/release/nekowite.exe`（17 MB）。
 - 当前产物未使用 Authenticode 签名；Windows SmartScreen 可能提示“未知发布者”。如需正式分发，应先配置代码签名再重新打包。
+- `release/` 与 `target/` 均为本地构建产物，不纳入 Git；源码、测试与打包记录由 Git 管理。
