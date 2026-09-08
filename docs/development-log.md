@@ -18,6 +18,7 @@
 - `chore: initial project baseline` — 建立可版本化的项目基线，包含 Vue/Tauri 应用、编辑器核心、插件宿主、文档、演示内容与 CI。
 - 前端外观增强（主题 + 强调色）：8 → 15 套主题、11 → 15 个强调色、设置面板主题色卡与单色展示。
 - `feat(templates): add ten built-in default note templates` — 从模板新建始终提供每日日记、每周复盘、会议记录、学习笔记、读书笔记、实验记录、文献阅读、研究计划、测试用例、决策记录 10 个内置模板；同名用户模板可覆盖，内置模板使用稳定英文文件名避免中文路径。
+- `docs: record template feature and windows bundle` — 记录内置模板功能验证与 Windows 打包产物`release/nekowite_0.1.0_x64-setup.exe`（SHA-256：`1bf064945dca7e71699697b753dc5a79f9d201999696a711681dd624c2e4ba8f`）。
 
 ## 当前外观状态
 
@@ -41,4 +42,11 @@ pnpm --filter @nekowite/desktop test
 pnpm --filter @nekowite/desktop typecheck
 pnpm --filter @nekowite/desktop exec eslint <changed files>
 pnpm --filter @nekowite/desktop build
+pnpm --filter @nekowite/desktop tauri build --bundles nsis
 ```
+
+## 构建产物
+
+- Windows x64 NSIS 安装包：`release/nekowite_0.1.0_x64-setup.exe`（5.3 MB，未签名）。
+- 原生可执行文件：`apps/desktop/src-tauri/target/release/nekowite.exe`（17 MB）。
+- 当前产物未使用 Authenticode 签名；Windows SmartScreen 可能提示“未知发布者”。如需正式分发，应先配置代码签名再重新打包。
