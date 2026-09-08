@@ -21,11 +21,22 @@ pub mod storage;
 // Re-exported at the crate root for convenience/back-compat: the vault
 // registry is the authority that path-confined commands consult (and it is what
 // `tests/vault_auth_test.rs` exercises).
+use tauri::Manager;
+
 pub use state::VaultRegistry;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_single_instance::init(|app, _args, _cwd| {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }),
+        )
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(state::WatcherState::default())

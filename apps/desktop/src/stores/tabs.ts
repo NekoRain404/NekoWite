@@ -353,8 +353,15 @@ export const useTabsStore = defineStore('tabs', () => {
     const next = emitLifecycle('onSave', editor, t.content)
     const content = typeof next === 'string' ? next : t.content
     try {
-      await fsService.write(vault.value, path, content, settings.maxHistory)
+      // Arm the self-write window BEFORE the disk write: Tauri's recursive fs
+      // watcher may report the modified path while the write is still in
+      // flight. If we only marked it after the await returned, the watcher's
+      // "external change" would reload the very file we just saved, replacing
+      // the live editor content and resetting the caret (the "input jumps"
+      // symptom). The existing 2s expiration keeps normal external edits
+      // observable.
       noteSelfWrite(path)
+      await fsService.write(vault.value, path, content, settings.maxHistory)
       // The write round-trip is a window in which the user can keep typing.
       // Never clobber newer editor content with the captured text.
       const userTyped = t.content !== contentAtStart
@@ -395,6 +402,9 @@ export const useTabsStore = defineStore('tabs', () => {
     if (!t || !t.path || !vault.value) return
     const path = t.path
     try {
+      // Suppress the delete's own fs-change so the tab is not reloaded from a
+      // missing file before deleteTabFile closes it.
+      noteSelfWrite(path)
       await fsService.deleteFile(vault.value, path)
     } catch {
       notifyError(i18nT('tabs.deleteFailed'))
@@ -414,8 +424,11 @@ export const useTabsStore = defineStore('tabs', () => {
     // could rename stale editor content over the freshly restored version.
     cancelAutosave(id)
     try {
-      const content = await fsService.restoreHistory(vault.value, t.path, versionId)
+      // Arm before the native restore: its atomic write can surface an
+      // fs-change before the invoke resolves. Marking after would let the
+      // watcher reload the restored file and interrupt the editor.
       noteSelfWrite(t.path)
+      const content = await fsService.restoreHistory(vault.value, t.path, versionId)
       t.content = content
       t.savedContent = content
       t.dirty = false
