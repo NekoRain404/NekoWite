@@ -41,9 +41,19 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
   async function applyContent(content: string): Promise<void> {
     const editor = deps.getEditor()
     if (!editor) return
+    // Idempotence guard: the editor already holds this exact canonical text.
+    // Re-opening it now would replace the live model, wiping undo history,
+    // stored caret/scroll and interrupting typing. A failed parse stays
+    // eligible so switching back to rendered mode can retry.
+    if (content === deps.session.appliedContent && !deps.session.parseFailed) return
     deps.session.applyingExternal = true
     try {
       await editor.open(content)
+      // Mark the exact content as applied immediately after open() succeeds.
+      // Later canonicalization (save()) can change the tab's text, but the
+      // editor model is now loaded; another open of this same source must be
+      // skipped or it would reset the user's selection/undo/scroll.
+      deps.session.appliedContent = content
       floatStore.select(null)
       // Capture the editor's canonical serialization immediately. The
       // debounced markdownUpdated emit would otherwise arrive later and — for

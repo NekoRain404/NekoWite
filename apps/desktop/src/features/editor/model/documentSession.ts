@@ -18,6 +18,10 @@ export interface DocumentSession {
   gen: number
   /** Markdown last produced by (or applied to) the editor. */
   lastLocalMarkdown: string | null
+  /** The exact content currently loaded into the editor. Used to make
+   *  external-sync re-open idempotent so a watcher echo or a duplicate open
+   *  never replaces the live model (which resets caret/undo/scroll). */
+  appliedContent: string | null
   /** True while an `open()` is applying externally-supplied content. */
   applyingExternal: boolean
   /** True when the last `open()` threw (unknown MDX), so the source view is used. */
@@ -39,6 +43,7 @@ export function createDocumentSession(): DocumentSession {
     editor: null,
     gen: 0,
     lastLocalMarkdown: null,
+    appliedContent: null,
     applyingExternal: false,
     parseFailed: false,
     pendingExternal: null,

@@ -396,16 +396,33 @@ async function applyEdit(p: TreeEdit, name: string): Promise<void> {
 async function handleFsChange(e: FsChangeEvent): Promise<void> {
   // The watcher also reports the app's own writes; don't treat those as an
   // external modification (they would produce spurious conflict dialogs).
-  const selfWrite = tabs.isSelfWrite(e.path)
-  if (!selfWrite) {
-    const active = tabs.activeTab
-    if (active && active.path === e.path) {
-      const decision = decideConflict({ dirty: active.dirty, hasDiskChange: true })
-      if (decision === 'reload') {
-        await tabs.reloadFromDisk(active.id)
-      } else if (decision === 'ask') {
-        emit('conflict', { tabId: active.id, path: e.path })
+  // The time-window self-write marker is armed BEFORE the native write, but a
+  // watcher event can still race the JS/event queue. For a modified active
+  // tab, compare the bytes on disk with the live tab content: if they match,
+  // this is our own write (or a no-op touch) and must NOT reload the editor,
+  // because reloading replaces the live model and resets the caret/undo.
+  const active = tabs.activeTab
+  if (!tabs.isSelfWrite(e.path) && active && active.path === e.path && e.kind === 'modified') {
+    try {
+      // Compare against the content last persisted by us, not the live editor
+      // text: the serializer may canonicalize Markdown (whitespace, tables,
+      // YAML) as the user types, so `active.content` can differ from the file
+      // even though this event is only our own save echo.
+      const disk = await fsService.read(props.vault, active.path)
+      if (disk === active.savedContent) {
+        await refreshAncestors(e.path)
+        return
       }
+    } catch {
+      // A read failure below should still surface as a normal fs event.
+    }
+  }
+  if (!tabs.isSelfWrite(e.path) && active && active.path === e.path) {
+    const decision = decideConflict({ dirty: active.dirty, hasDiskChange: true })
+    if (decision === 'reload') {
+      await tabs.reloadFromDisk(active.id)
+    } else if (decision === 'ask') {
+      emit('conflict', { tabId: active.id, path: e.path })
     }
   }
   await refreshAncestors(e.path)

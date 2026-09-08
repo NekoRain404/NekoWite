@@ -24,6 +24,15 @@
 - `chore(release): add Windows packaging workflow` — 新增 `scripts/package-win.sh` 一键打包脚本（测试 → 类型检查 → lint → 编译 → `release/`），并约定后续每个可感知改动均交付 **免安装 Windows 可执行文件**及 SHA-256，便于直接双击验证。
 - `chore(release): make portable exe the default` — 默认交付 `release/nekowite_<version>_x64.exe`（免安装）；NSIS 安装包改为可选（`PORTABLE=0`）。
 
+### 2026-09-09
+
+- `fix(editor): prevent caret jumping from duplicate instances` — 修复输入时光标乱跳与多实例冲突：
+  - 注册 `tauri-plugin-single-instance`，再次启动时只恢复、显示并聚焦已有主窗口，不再创建共享同一知识库的第二个进程。
+  - 保存、删除与恢复历史在磁盘操作前标记自写窗口，避免把应用自身写入误判为外部修改。
+  - 文件监听对活动文档的 `modified` 事件先读取磁盘并与 `savedContent` 比较，内容一致时只刷新目录树，不重载编辑器。
+  - 编辑器外部同步依据 `appliedContent` 做幂等保护，重复 `open()` 不再清空撤销历史、光标与滚动位置。
+  - 验证：983 个测试全部通过，前端类型检查与 lint 通过；Windows 免安装包 `release/nekowite_0.1.0_x64.exe`（SHA-256：`af308f470179641a8b415f4de80b4b2264e2ee481fbf56379af92b7a18d25b3c`）构建成功；双实例启动验证仅保留单进程。
+
 ## 当前外观状态
 
 - 主题（15）：默认 / 暖阳 / 森林 / 海洋 / 樱花 / 薄雾 / 石墨 / 午夜 / 薰衣草 / 沙漠 / 薄荷 / 咖啡 / 梅子 / 暮色 / 绯红
@@ -54,6 +63,7 @@ bash scripts/package-win.sh
 
 ## 构建产物
 
+- 免安装可执行文件：`release/nekowite_0.1.0_x64.exe`（17,255,424 字节，未签名），SHA-256：`af308f470179641a8b415f4de80b4b2264e2ee481fbf56379af92b7a18d25b3c`。
 - Windows x64 NSIS 安装包：`release/nekowite_0.1.0_x64-setup.exe`（5.3 MB，未签名）。
 - 原生可执行文件：`apps/desktop/src-tauri/target/release/nekowite.exe`（17 MB）。
 - 当前产物未使用 Authenticode 签名；Windows SmartScreen 可能提示“未知发布者”。如需正式分发，应先配置代码签名再重新打包。
