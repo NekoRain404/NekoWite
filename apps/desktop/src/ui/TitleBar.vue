@@ -42,8 +42,24 @@ function close(): void {
   void getWindowControls().close().catch(() => undefined)
 }
 
-function onDoubleClick(): void {
-  // Memoir-style: double-click anywhere on the title bar toggles maximize.
+function isTitlebarInteractive(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false
+  if (target instanceof HTMLElement && target.isContentEditable) return true
+  return target.closest(
+    'button, a, input, select, textarea, label, summary, [role="button"], [role="link"]',
+  ) !== null
+}
+
+function onTitlebarMouseDown(event: MouseEvent): void {
+  if (!inTauri || event.button !== 0 || event.detail !== 1) return
+  if (isTitlebarInteractive(event.target)) return
+  event.preventDefault()
+  void getWindowControls().startDragging().catch(() => undefined)
+}
+
+function onTitlebarDoubleClick(event: MouseEvent): void {
+  if (!inTauri) return
+  if (isTitlebarInteractive(event.target)) return
   toggleMaximize()
 }
 
@@ -68,8 +84,8 @@ onBeforeUnmount(() => {
 <template>
   <header
     class="titlebar"
-    data-tauri-drag-region
-    @dblclick.self="onDoubleClick"
+    @mousedown="onTitlebarMouseDown"
+    @dblclick="onTitlebarDoubleClick"
   >
     <div class="tb-left">
       <button
@@ -91,10 +107,7 @@ onBeforeUnmount(() => {
       <span class="tb-app">NekoWite</span>
     </div>
 
-    <div
-      class="tb-center"
-      data-tauri-drag-region
-    >
+    <div class="tb-center">
       <span
         class="tb-title"
         :title="props.title"
