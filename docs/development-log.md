@@ -21,6 +21,7 @@
 - `docs: record template feature and windows bundle` — 记录内置模板功能验证与 Windows 打包产物`release/nekowite_0.1.0_x64-setup.exe`（SHA-256：`1bf064945dca7e71699697b753dc5a79f9d201999696a711681dd624c2e4ba8f`）。
 - `fix(ui): restrict window dragging to titlebar` — 修复整个界面均可拖拽的问题：移除 Tauri 原生 `data-tauri-drag-region`，改为自定义标题栏仅空白区域调用 `startDragging()`；按钮/链接/输入框/可编辑元素不触发拖动，双击标题栏空白处保持最大化/还原，并补充 TitleBar 回归测试。
 - `fix(ui): make close fallback reliable` — 修复右上角 X 无法关闭的问题：标题栏 X 优先走正常 `close()`（保留关闭前保存），失败时自动调用 `destroy()` 兜底；关闭保存流程增加异常保护，并为关闭按钮与 close-requested 异常路径补充回归测试。
+- `chore(release): add Windows packaging workflow` — 新增 `scripts/package-win.sh` 一键打包脚本（测试 → 类型检查 → lint → NSIS → `release/`），并约定后续每个可感知改动均交付 Windows 安装包与 SHA-256，便于快速验证。
 
 ## 当前外观状态
 
@@ -37,14 +38,16 @@ git add <files>
 git commit -m "feat(appearance): add crimson palette and four accents"
 ```
 
-## 验证命令
+## 验证与交付
 
 ```bash
 pnpm --filter @nekowite/desktop test
 pnpm --filter @nekowite/desktop typecheck
 pnpm --filter @nekowite/desktop exec eslint <changed files>
 pnpm --filter @nekowite/desktop build
-pnpm --filter @nekowite/desktop tauri build --bundles nsis
+# 每次用户可感知改动交付前，统一产出 Windows 安装包：
+bash scripts/package-win.sh
+# 产物：release/nekowite_<version>_x64-setup.exe
 ```
 
 ## 构建产物
