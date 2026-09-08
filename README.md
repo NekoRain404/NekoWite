@@ -123,3 +123,10 @@ export default definePlugin({
 ## 许可证
 
 仓库当前未附带独立的 LICENSE 文件。代码使用前请先确认项目维护者发布的许可说明。
+
+## 构建与打包
+
+```bash
+bash scripts/package-win.sh
+# 产物：release/nekowite_<version>_x64-setup.exe
+```

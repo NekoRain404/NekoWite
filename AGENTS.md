@@ -28,6 +28,7 @@
 - Current accent colors are sufficient and should remain unchanged.
 - Continue improving complete color theme palettes independently from accent colors.
 - Keep the current light/dark themes as the base.
+- **Every user-visible change must be delivered as a packaged Windows binary.** After tests/typecheck/lint/build pass, run `bash scripts/package-win.sh`, copy the NSIS installer into `release/`, and report the `.exe` path plus SHA-256 so the user can run it immediately.
 
 ## Future Codex Configuration
 
