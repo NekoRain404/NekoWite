@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import { FilePlus2, X } from 'lucide-vue-next'
 import { useFocusTrap } from '../composables/useFocusTrap'
 import { t } from '../i18n'
-import type { TemplateEntry } from '../services/noteTemplates'
+import { isBuiltinTemplate, type TemplateEntry } from '../services/noteTemplates'
 
 const props = defineProps<{ templates: TemplateEntry[] }>()
 const emit = defineEmits<{
@@ -75,7 +75,7 @@ function onKeydown(e: KeyboardEvent): void {
           @click="pick(entry)"
         >
           <span class="template-name">{{ entry.name }}</span>
-          <span class="template-path">{{ entry.path }}</span>
+          <span class="template-path">{{ isBuiltinTemplate(entry) ? t('template.builtin') : entry.path }}</span>
         </button>
         <p
           v-if="props.templates.length === 0"

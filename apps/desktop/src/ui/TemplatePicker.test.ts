@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createApp, type App as VueApp } from 'vue'
 import TemplatePicker from './TemplatePicker.vue'
 import type { TemplateEntry } from '../services/noteTemplates'
+import { t } from '../i18n'
 
 interface Received {
   select: TemplateEntry[]
@@ -78,6 +79,17 @@ describe('TemplatePicker', () => {
     try {
       overlayEl(host).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
       expect(received.close).toBe(1)
+    } finally {
+      app.unmount()
+      host.remove()
+    }
+  })
+
+  it('labels built-in templates with a friendly source instead of the internal path', () => {
+    const { host, app } = mountPi([{ name: '每日日记', path: 'builtin:daily' }])
+    try {
+      const pathText = host.querySelector('.template-path')?.textContent?.trim()
+      expect(pathText).toBe(t('template.builtin'))
     } finally {
       app.unmount()
       host.remove()

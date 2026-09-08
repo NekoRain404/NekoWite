@@ -661,7 +661,8 @@ export const en = {
   },
   template: {
     pickTitle: 'New from template',
-    empty: 'Drop .md template files into <vault>/templates/',
+    builtin: 'Built-in template',
+    empty: 'No templates available. Built-in templates are always available.',
     createFailed: 'Failed to create a note from the template, please retry',
     readFailed: 'Failed to read the template, please retry',
   },

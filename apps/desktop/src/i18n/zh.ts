@@ -661,7 +661,8 @@ export const zh = {
   },
   template: {
     pickTitle: '从模板新建',
-    empty: '在 vault 的 templates/ 目录放入 .md 模板文件',
+    builtin: '内置模板',
+    empty: '暂无可选模板，内置模板始终可用。',
     createFailed: '从模板创建笔记失败，请重试',
     readFailed: '读取模板失败，请重试',
   },

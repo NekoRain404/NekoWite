@@ -41,7 +41,9 @@ import {
   ensureDailyNote,
   listTemplates,
   nextAvailableName,
+  readTemplate,
   renderTemplate,
+  templateFileBase,
   type TemplateEntry,
 } from '../services/noteTemplates'
 import TemplatePicker from './TemplatePicker.vue'
@@ -224,15 +226,15 @@ async function rootNoteNames(): Promise<Set<string>> {
 async function createFromTemplate(entry: TemplateEntry): Promise<void> {
   let body: string
   try {
-    body = await fsService.read(props.vault, entry.path)
+    body = await readTemplate(props.vault, entry)
   } catch {
     notifyError(t('template.readFailed'))
     return
   }
   const existing = await rootNoteNames()
-  const fileName = nextAvailableName(entry.name, existing)
+  const fileName = nextAvailableName(templateFileBase(entry), existing)
   const path = `${props.vault.replace(/\/+$/, '')}/${fileName}`
-  const content = renderTemplate(body, buildDailyVars(new Date(), { title: entry.name }))
+  const content = renderTemplate(body, buildDailyVars(new Date(), { title: templateFileBase(entry) }))
   try {
     await fsService.write(props.vault, path, content)
   } catch {
