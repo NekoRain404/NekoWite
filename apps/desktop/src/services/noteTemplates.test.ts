@@ -18,6 +18,7 @@ vi.mock('../platform/gateways/fs', () => ({
 
 import {
   DEFAULT_DAILY_TEMPLATE,
+  DEFAULT_TEMPLATES,
   buildDailyVars,
   dailyNoteFileName,
   dailyNotePath,
@@ -25,7 +26,9 @@ import {
   listTemplates,
   nextAvailableName,
   nextUntitledName,
+  readTemplate,
   renderTemplate,
+  templateFileBase,
 } from './noteTemplates'
 
 describe('noteTemplates', () => {
@@ -135,8 +138,26 @@ describe('noteTemplates', () => {
   })
 
   describe('listTemplates', () => {
-    it('lists markdown templates, strips the extension and sorts them', async () => {
+    it('returns the ten built-in templates when the vault has no templates', async () => {
+      const out = await listTemplates('/vault')
+      expect(out).toEqual(DEFAULT_TEMPLATES)
+      expect(out.map((entry) => entry.name)).toEqual([
+        '每日日记',
+        '每周复盘',
+        '会议记录',
+        '学习笔记',
+        '读书笔记',
+        '实验记录',
+        '文献阅读',
+        '研究计划',
+        '测试用例',
+        '决策记录',
+      ])
+    })
+
+    it('lists user markdown templates after the built-ins and strips the extension', async () => {
       listMock.mockResolvedValue([
+        { name: 'custom.md', path: 'templates/custom.md', is_dir: false, is_mdx: true },
         { name: 'daily.md', path: 'templates/daily.md', is_dir: false, is_mdx: true },
         { name: 'note.txt', path: 'templates/note.txt', is_dir: false, is_mdx: false },
         { name: 'sub', path: 'templates/sub', is_dir: true, is_mdx: false },
@@ -145,14 +166,54 @@ describe('noteTemplates', () => {
       const out = await listTemplates('/vault')
       expect(listMock).toHaveBeenCalledWith('/vault', 'templates')
       expect(out).toEqual([
+        ...DEFAULT_TEMPLATES,
+        { name: 'custom', path: 'templates/custom.md' },
         { name: 'daily', path: 'templates/daily.md' },
         { name: 'meeting', path: 'templates/meeting.MD' },
       ])
     })
 
-    it('returns an empty list when the templates directory cannot be listed', async () => {
+    it('keeps built-in templates when the templates directory cannot be listed', async () => {
       listMock.mockRejectedValue(new Error('boom'))
-      await expect(listTemplates('/vault')).resolves.toEqual([])
+      await expect(listTemplates('/vault')).resolves.toEqual(DEFAULT_TEMPLATES)
+    })
+
+    it('lets a user template override the built-in template with the same name', async () => {
+      listMock.mockResolvedValue([
+        { name: '每日日记.md', path: 'templates/每日日记.md', is_dir: false, is_mdx: true },
+      ])
+      const out = await listTemplates('/vault')
+      expect(out).toHaveLength(DEFAULT_TEMPLATES.length)
+      expect(out[0]).toEqual({ name: '每日日记', path: 'templates/每日日记.md' })
+    })
+  })
+
+  describe('templateFileBase', () => {
+    it('uses the built-in slug so output filenames stay ASCII', () => {
+      const daily = DEFAULT_TEMPLATES.find((entry) => entry.name === '每日日记')
+      if (!daily) throw new Error('built-in daily template missing')
+      expect(templateFileBase(daily)).toBe('daily')
+    })
+
+    it('uses the display name for user templates without a slug', () => {
+      expect(templateFileBase({ name: '我的模板', path: 'templates/我的模板.md' })).toBe('我的模板')
+    })
+  })
+
+  describe('readTemplate', () => {
+    it('returns the built-in body without touching the vault', async () => {
+      const entry = DEFAULT_TEMPLATES.find((item) => item.name === '每日日记')
+      if (!entry) throw new Error('built-in daily template missing')
+      const body = await readTemplate('/vault', entry)
+      expect(body).toContain('# {{title}}')
+      expect(readMock).not.toHaveBeenCalled()
+    })
+
+    it('reads a user template from the vault templates directory', async () => {
+      readMock.mockResolvedValue('user body')
+      const body = await readTemplate('/vault', { name: 'custom', path: 'templates/custom.md' })
+      expect(body).toBe('user body')
+      expect(readMock).toHaveBeenCalledWith('/vault', 'templates/custom.md')
     })
   })
 
