@@ -39,7 +39,12 @@ function toggleMaximize(): void {
 
 function close(): void {
   if (!inTauri) return
-  void getWindowControls().close().catch(() => undefined)
+  // User clicked the explicit X. Prefer the normal close path so dirty tabs can
+  // flush, but an unexpected IPC/close failure must never leave the app unable
+  // to exit; the native destroy is the final escape hatch.
+  void getWindowControls().close().catch(() => {
+    void getWindowControls().destroy().catch(() => undefined)
+  })
 }
 
 function isTitlebarInteractive(target: EventTarget | null): boolean {

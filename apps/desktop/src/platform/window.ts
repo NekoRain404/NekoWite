@@ -16,6 +16,7 @@ export interface WindowControls {
   minimize(): Promise<void>
   toggleMaximize(): Promise<void>
   close(): Promise<void>
+  destroy(): Promise<void>
   startDragging(): Promise<void>
   onResized(cb: () => void): Promise<() => void>
 }
@@ -27,6 +28,7 @@ export function getWindowControls(): WindowControls {
     minimize: () => win.minimize(),
     toggleMaximize: () => win.toggleMaximize(),
     close: () => win.close(),
+    destroy: () => win.destroy(),
     startDragging: () => win.startDragging(),
     onResized: (cb) => win.onResized(cb),
   }

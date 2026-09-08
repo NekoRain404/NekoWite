@@ -7,6 +7,7 @@ const controls = vi.hoisted(() => ({
   minimize: vi.fn(),
   toggleMaximize: vi.fn(),
   close: vi.fn(),
+  destroy: vi.fn(),
   startDragging: vi.fn(),
   onResized: vi.fn(),
 }))
@@ -35,6 +36,7 @@ describe('TitleBar', () => {
     controls.minimize.mockResolvedValue(undefined)
     controls.toggleMaximize.mockResolvedValue(undefined)
     controls.close.mockResolvedValue(undefined)
+    controls.destroy.mockResolvedValue(undefined)
     controls.startDragging.mockResolvedValue(undefined)
     controls.onResized.mockResolvedValue(() => {})
   })
@@ -86,6 +88,36 @@ describe('TitleBar', () => {
       if (!icon) throw new Error('icon missing')
       icon.dispatchEvent(new MouseEvent('mousedown', { button: 0, detail: 1, bubbles: true }))
       expect(controls.startDragging).not.toHaveBeenCalled()
+    } finally {
+      app.unmount()
+    }
+  })
+
+  it('asks the native window to close, with destroy as a fallback', async () => {
+    const { host, app } = mount()
+    try {
+      const close = host.querySelector('.tb-window-close')
+      if (!close) throw new Error('close control missing')
+      controls.close.mockResolvedValueOnce(undefined)
+      close.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      expect(controls.close).toHaveBeenCalledTimes(1)
+      expect(controls.destroy).not.toHaveBeenCalled()
+    } finally {
+      app.unmount()
+    }
+  })
+
+  it('uses destroy when the native close fails', async () => {
+    const { host, app } = mount()
+    try {
+      const close = host.querySelector('.tb-window-close')
+      if (!close) throw new Error('close control missing')
+      controls.close.mockRejectedValueOnce(new Error('close blocked'))
+      close.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(controls.destroy).toHaveBeenCalledTimes(1)
     } finally {
       app.unmount()
     }
