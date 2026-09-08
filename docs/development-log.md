@@ -33,6 +33,13 @@
   - 编辑器外部同步依据 `appliedContent` 做幂等保护，重复 `open()` 不再清空撤销历史、光标与滚动位置。
   - 验证：983 个测试全部通过，前端类型检查与 lint 通过；Windows 免安装包 `release/nekowite_0.1.0_x64.exe`（SHA-256：`af308f470179641a8b415f4de80b4b2264e2ee481fbf56379af92b7a18d25b3c`）构建成功；双实例启动验证仅保留单进程。
 
+- `fix(editor): stabilize heading edge input` — 修复标题末尾点击后按 Enter 跳回开头、连续删除误触斜杠的问题：
+  - 标题节点视图改为外层包裹 + 真实 `h1` 作为 ProseMirror 内容 DOM，锚点按钮移到可编辑区域外，避免 Chromium 把光标放在非内容边界。
+  - 移除拦截普通文本输入的 `beforeinput` 插件，让 Enter/Backspace/`/` 走 ProseMirror 原生输入流程，避免 DOM 与模型失同步。
+  - 标题包装层占满整行，右侧空白仍属于可编辑内容；补充标题与后续段落间距规则。
+  - 新增 E2E 回归测试：标题末尾 → Enter → 输入 `abc` → 三次 Backspace → 输入 `/`，逐节点验证光标与内容。
+  - 验证：editor-core 281 个测试、desktop 983 个测试全部通过，类型检查与 lint 通过。
+
 ## 当前外观状态
 
 - 主题（15）：默认 / 暖阳 / 森林 / 海洋 / 樱花 / 薄雾 / 石墨 / 午夜 / 薰衣草 / 沙漠 / 薄荷 / 咖啡 / 梅子 / 暮色 / 绯红
