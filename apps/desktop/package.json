@@ -1,0 +1,50 @@
+{
+  "name": "@nekowite/desktop",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "check:export-css": "node scripts/check-katex.ts",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "vue-tsc -b",
+    "lint": "eslint src",
+    "perf": "vitest run --config vitest.perf.config.ts"
+  },
+  "dependencies": {
+    "@citation-js/core": "^0.7",
+    "@citation-js/plugin-bibtex": "^0.7",
+    "@citation-js/plugin-csl": "^0.7",
+    "@citation-js/plugin-ris": "^0.7",
+    "@codemirror/commands": "^6.11.0",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/search": "^6.7.2",
+    "@codemirror/state": "^6.7.2",
+    "@codemirror/view": "^6.43.10",
+    "@lezer/highlight": "^1.2.3",
+    "@milkdown/prose": "7.22.1",
+    "@nekowite/editor-core": "workspace:*",
+    "@nekowite/plugin-host": "workspace:*",
+    "@tauri-apps/api": "^2",
+    "lucide-vue-next": "^1.0.0",
+    "mathlive": "^0.103.0",
+    "pinia": "^3",
+    "vue": "^3.5",
+    "vue-i18n": "^11.4.10"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@tauri-apps/cli": "^2",
+    "@vitejs/plugin-vue": "^6",
+    "eslint": "^9",
+    "happy-dom": "^20.11.12",
+    "typescript": "~5.9",
+    "vite": "^7",
+    "vitest": "^3",
+    "vue-tsc": "^3"
+  }
+}

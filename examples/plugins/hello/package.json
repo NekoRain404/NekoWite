@@ -1,0 +1,13 @@
+{
+  "name": "hello",
+  "version": "1.0.0",
+  "description": "Minimal NekoWite plugin: inserts a greeting and observes the editor lifecycle.",
+  "main": "index.js",
+  "type": "module",
+  "keywords": [
+    "nekowite",
+    "plugin",
+    "example"
+  ],
+  "license": "MIT"
+}

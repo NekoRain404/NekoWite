@@ -1,0 +1,16 @@
+{
+  "name": "@nekowite/plugin-host",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "@nekowite/editor-core": "workspace:*",
+    "vue": "^3.5"
+  },
+  "devDependencies": { "@types/node": "^26", "vitest": "^3", "typescript": "~5.9" }
+}

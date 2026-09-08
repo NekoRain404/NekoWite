@@ -1,0 +1,248 @@
+:root {
+  color-scheme: light;
+  --app-canvas: #fbfaf6;
+  --app-panel: #f5f3ee;
+  --app-elevated: #fffefb;
+  --app-border: #e7e3db;
+  --app-text: #292a27;
+  --app-muted: #8c8982;
+  --app-accent: #343532;
+  --app-accent-soft: #e7e5df;
+  --app-accent-contrast: #ffffff;
+  --app-danger: #c94c41;
+  --app-danger-contrast: #ffffff;
+  --app-success: #5ca878;
+  --app-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --app-motion-fast: 140ms;
+  --app-motion: 160ms;
+  /* Radius ladder: window 16 > dialog 14 > menu/card 10 > button/input 8 >
+     segmented 6 > inline-code 5. */
+  --app-radius-xl: 14px;
+  --app-radius-lg: 10px;
+  --app-radius: 8px;
+  --app-radius-sm: 6px;
+  --app-radius-xs: 5px;
+  /* Elevation: hairline rings + top-edge highlight instead of hard borders. */
+  --app-shadow-menu: 0 16px 40px rgb(37 33 27 / 18%), 0 4px 12px rgb(37 33 27 / 8%),
+    inset 0 1px rgb(255 255 255 / 52%);
+  --app-shadow-dialog: 0 28px 72px rgb(37 33 27 / 24%), 0 8px 24px rgb(37 33 27 / 10%),
+    inset 0 1px rgb(255 255 255 / 52%);
+  --app-shadow-card: 0 1px 2px rgb(48 42 34 / 5%), 0 3px 8px -2px rgb(48 42 34 / 6%);
+  /* Layout metrics (Memoir-derived). */
+  --app-sidebar-width: 232px;
+  --app-rail-width: 300px;
+  --app-titlebar-height: 44px;
+  --app-toolbar-height: 42px;
+  --app-statusbar-height: 35px;
+  --app-content-width: 760px;
+  --app-font: Inter, "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --app-mono-font: "SFMono-Regular", "Cascadia Code", "Roboto Mono", Menlo, Monaco, Consolas, "PingFang SC", "Microsoft YaHei", ui-monospace, monospace;
+  --app-editor-font: var(--app-font);
+  --app-body-size: 15px;
+  --app-line-height: 1.8;
+  --app-code-keyword: #8a4e30;
+  --app-code-string: #2d7a56;
+  --app-code-number: #b56a16;
+  --app-code-fn: #3d5f8f;
+  --app-code-type: #6a548f;
+  --app-code-prop: #5c6848;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  font-family: var(--app-font);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --app-canvas: #171714;
+  --app-panel: #1d1d1a;
+  --app-elevated: #24241f;
+  --app-border: #37362f;
+  --app-text: #f0eee8;
+  --app-muted: #a5a198;
+  --app-accent: #efede7;
+  --app-accent-soft: #393832;
+  --app-accent-contrast: #171715;
+  --app-danger: #ef766b;
+  --app-danger-contrast: #171715;
+  --app-success: #5ca878;
+  --app-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --app-radius-xl: 14px;
+  --app-radius-lg: 10px;
+  --app-radius: 8px;
+  --app-radius-sm: 6px;
+  --app-radius-xs: 5px;
+  --app-shadow-menu: 0 16px 40px rgb(0 0 0 / 42%), 0 4px 12px rgb(0 0 0 / 24%),
+    inset 0 1px rgb(255 255 255 / 5%);
+  --app-shadow-dialog: 0 28px 72px rgb(0 0 0 / 46%), 0 8px 24px rgb(0 0 0 / 26%),
+    inset 0 1px rgb(255 255 255 / 5%);
+  --app-shadow-card: 0 1px 2px rgb(0 0 0 / 16%), 0 4px 10px -2px rgb(0 0 0 / 14%);
+  --app-code-keyword: #e0a57a;
+  --app-code-string: #86c4a4;
+  --app-code-number: #e0b36a;
+  --app-code-fn: #8fb0dd;
+  --app-code-type: #b7a3dd;
+  --app-code-prop: #b3c49a;
+}
+
+[data-accent="ink"] { --app-accent: #343532; --app-accent-soft: #e7e5df; }
+[data-theme="dark"][data-accent="ink"] { --app-accent: #efede7; --app-accent-soft: #393832; }
+[data-accent="coral"] { --app-accent: #d65f4d; --app-accent-soft: #f6e3de; }
+[data-accent="blue"] { --app-accent: #3f7edb; --app-accent-soft: #e7effb; }
+[data-accent="green"] { --app-accent: #3e9b73; --app-accent-soft: #e5f3ed; }
+[data-accent="gold"] { --app-accent: #b98b09; --app-accent-soft: #f8f0d6; }
+[data-accent="violet"] { --app-accent: #8a65d1; --app-accent-soft: #eee8f9; }
+[data-accent="slate"] { --app-accent: #607287; --app-accent-soft: #e9edf1; }
+[data-accent="teal"] { --app-accent: #2e9e8f; --app-accent-soft: #e0f3f0; }
+[data-accent="lime"] { --app-accent: #7aa816; --app-accent-soft: #eef6d8; }
+[data-accent="rose"] { --app-accent: #e05c76; --app-accent-soft: #fbe3e8; }
+[data-accent="amber"] { --app-accent: #d98c1f; --app-accent-soft: #faedd6; }
+[data-accent="orange"] { --app-accent: #e9782e; --app-accent-soft: #fce9da; }
+[data-accent="pink"] { --app-accent: #e85c9e; --app-accent-soft: #fce1ee; }
+[data-accent="cyan"] { --app-accent: #1e9cc4; --app-accent-soft: #def3fa; }
+[data-accent="cocoa"] { --app-accent: #8c5a3c; --app-accent-soft: #f1e3d8; }
+[data-theme="dark"][data-accent]:not([data-accent="ink"]) {
+  --app-accent-soft: color-mix(in srgb, var(--app-accent) 25%, var(--app-panel));
+}
+
+/* ---------- High contrast ----------
+   Driven by `data-contrast="high"` on the shell (see appearance.highContrast).
+   Pushes text/background/border/muted to true black & white, eliminates the
+   washed-out translucency while keeping the --app-* semantics, and lifts the
+   accent to a saturated value. These rules sit AFTER the theme/accent blocks so
+   they win the cascade. */
+
+[data-contrast="high"] {
+  color-scheme: light;
+  --app-canvas: #ffffff;
+  --app-panel: #ffffff;
+  --app-elevated: #ffffff;
+  --app-border: #000000;
+  --app-text: #000000;
+  --app-muted: #1e1e1e;
+  --app-accent: #000000;
+  --app-accent-soft: #d9d9d9;
+  --app-accent-contrast: #ffffff;
+  --app-danger: #c00000;
+  --app-danger-contrast: #ffffff;
+  --app-success: #0b6b30;
+  --app-shadow-menu: 0 0 0 1px #000;
+  --app-shadow-dialog: 0 0 0 1px #000;
+  --app-shadow-card: 0 0 0 1px #000;
+  --app-code-keyword: #8a2600;
+  --app-code-string: #0a6b3c;
+  --app-code-number: #9c5200;
+  --app-code-fn: #1b4786;
+  --app-code-type: #4c2d7a;
+  --app-code-prop: #39471f;
+}
+
+/* ---------- Complete color palettes ----------
+   `data-color-scheme` adds a full surface/text/semantic palette on top of the
+   base light/dark tokens. It intentionally does NOT override --app-accent, so
+   the user's accent choice remains independent. Each palette has explicit
+   light and dark variants, including code highlighting, status colors and
+   elevation shadows. */
+
+[data-color-scheme="default"] { --app-canvas: #fbfaf6; --app-panel: #f5f3ee; --app-elevated: #fffefb; --app-border: #e7e3db; --app-text: #292a27; --app-muted: #8c8982; --app-danger: #c94c41; --app-danger-contrast: #ffffff; --app-success: #5ca878; --app-shadow-menu: 0 16px 40px rgb(37 33 27 / 18%), 0 4px 12px rgb(37 33 27 / 8%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-dialog: 0 28px 72px rgb(37 33 27 / 24%), 0 8px 24px rgb(37 33 27 / 10%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-card: 0 1px 2px rgb(48 42 34 / 5%), 0 3px 8px -2px rgb(48 42 34 / 6%); --app-code-keyword: #8a4e30; --app-code-string: #2d7a56; --app-code-number: #b56a16; --app-code-fn: #3d5f8f; --app-code-type: #6a548f; --app-code-prop: #5c6848; }
+[data-theme="dark"][data-color-scheme="default"] { --app-canvas: #171714; --app-panel: #1d1d1a; --app-elevated: #24241f; --app-border: #37362f; --app-text: #f0eee8; --app-muted: #a5a198; --app-danger: #ef766b; --app-danger-contrast: #171715; --app-success: #5ca878; --app-shadow-menu: 0 16px 40px rgb(0 0 0 / 42%), 0 4px 12px rgb(0 0 0 / 24%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-dialog: 0 28px 72px rgb(0 0 0 / 46%), 0 8px 24px rgb(0 0 0 / 26%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-card: 0 1px 2px rgb(0 0 0 / 16%), 0 4px 10px -2px rgb(0 0 0 / 14%); --app-code-keyword: #e0a57a; --app-code-string: #86c4a4; --app-code-number: #e0b36a; --app-code-fn: #8fb0dd; --app-code-type: #b7a3dd; --app-code-prop: #b3c49a; }
+
+[data-color-scheme="sunset"] { --app-canvas: #fff7f0; --app-panel: #fbece1; --app-elevated: #fffdf8; --app-border: #edd7c4; --app-text: #3a261d; --app-muted: #9a7b68; --app-danger: #c95040; --app-danger-contrast: #ffffff; --app-success: #4f9d63; --app-shadow-menu: 0 16px 40px rgb(83 45 28 / 18%), 0 4px 12px rgb(83 45 28 / 8%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-dialog: 0 28px 72px rgb(83 45 28 / 24%), 0 8px 24px rgb(83 45 28 / 10%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-card: 0 1px 2px rgb(83 45 28 / 6%), 0 3px 8px -2px rgb(83 45 28 / 7%); --app-code-keyword: #a45028; --app-code-string: #2d7a4e; --app-code-number: #b56a1b; --app-code-fn: #3d5f8f; --app-code-type: #7b4a83; --app-code-prop: #78613a; }
+[data-theme="dark"][data-color-scheme="sunset"] { --app-canvas: #231713; --app-panel: #2c1d17; --app-elevated: #38251d; --app-border: #55392b; --app-text: #f6e4d6; --app-muted: #c09178; --app-danger: #f07f6d; --app-danger-contrast: #2a1710; --app-success: #75bd88; --app-shadow-menu: 0 16px 40px rgb(0 0 0 / 48%), 0 4px 12px rgb(0 0 0 / 26%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-dialog: 0 28px 72px rgb(0 0 0 / 52%), 0 8px 24px rgb(0 0 0 / 30%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-card: 0 1px 2px rgb(0 0 0 / 20%), 0 4px 10px -2px rgb(0 0 0 / 17%); --app-code-keyword: #f0a37d; --app-code-string: #93c9a2; --app-code-number: #eeb778; --app-code-fn: #9bb8df; --app-code-type: #c3a7d6; --app-code-prop: #c1c49a; }
+
+[data-color-scheme="forest"] { --app-canvas: #f4f8f1; --app-panel: #e8f0e2; --app-elevated: #fdfefa; --app-border: #d6e2ca; --app-text: #22301f; --app-muted: #708366; --app-danger: #b94b3d; --app-danger-contrast: #ffffff; --app-success: #3e8b59; --app-shadow-menu: 0 16px 40px rgb(31 49 28 / 18%), 0 4px 12px rgb(31 49 28 / 8%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-dialog: 0 28px 72px rgb(31 49 28 / 24%), 0 8px 24px rgb(31 49 28 / 10%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-card: 0 1px 2px rgb(31 49 28 / 6%), 0 3px 8px -2px rgb(31 49 28 / 7%); --app-code-keyword: #7d552d; --app-code-string: #2f7a4b; --app-code-number: #9d6a1e; --app-code-fn: #3a6b63; --app-code-type: #6c5884; --app-code-prop: #5c6b3d; }
+[data-theme="dark"][data-color-scheme="forest"] { --app-canvas: #131b12; --app-panel: #1a2418; --app-elevated: #243020; --app-border: #3b4d36; --app-text: #e8f3e2; --app-muted: #a6bb9b; --app-danger: #ef7f6d; --app-danger-contrast: #121a11; --app-success: #6fc98a; --app-shadow-menu: 0 16px 40px rgb(0 0 0 / 48%), 0 4px 12px rgb(0 0 0 / 26%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-dialog: 0 28px 72px rgb(0 0 0 / 52%), 0 8px 24px rgb(0 0 0 / 30%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-card: 0 1px 2px rgb(0 0 0 / 20%), 0 4px 10px -2px rgb(0 0 0 / 17%); --app-code-keyword: #e6a67e; --app-code-string: #95d0a3; --app-code-number: #e0bd79; --app-code-fn: #94c4bd; --app-code-type: #c3addd; --app-code-prop: #b7c88d; }
+
+[data-color-scheme="ocean"] { --app-canvas: #f2f8fc; --app-panel: #e5f0f7; --app-elevated: #fbfeff; --app-border: #cfe0ec; --app-text: #1c2e3d; --app-muted: #668094; --app-danger: #b84b4d; --app-danger-contrast: #ffffff; --app-success: #2f8c9a; --app-shadow-menu: 0 16px 40px rgb(23 53 72 / 18%), 0 4px 12px rgb(23 53 72 / 8%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-dialog: 0 28px 72px rgb(23 53 72 / 24%), 0 8px 24px rgb(23 53 72 / 10%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-card: 0 1px 2px rgb(23 53 72 / 6%), 0 3px 8px -2px rgb(23 53 72 / 7%); --app-code-keyword: #8a4a55; --app-code-string: #2b786e; --app-code-number: #98621d; --app-code-fn: #286b9b; --app-code-type: #725c9c; --app-code-prop: #3f6b70; }
+[data-theme="dark"][data-color-scheme="ocean"] { --app-canvas: #0f1a22; --app-panel: #16232d; --app-elevated: #1e303c; --app-border: #355366; --app-text: #e4f2fa; --app-muted: #9fb9c9; --app-danger: #f0837d; --app-danger-contrast: #0c161e; --app-success: #6cc6b9; --app-shadow-menu: 0 16px 40px rgb(0 0 0 / 50%), 0 4px 12px rgb(0 0 0 / 28%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-dialog: 0 28px 72px rgb(0 0 0 / 56%), 0 8px 24px rgb(0 0 0 / 32%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-card: 0 1px 2px rgb(0 0 0 / 22%), 0 4px 10px -2px rgb(0 0 0 / 18%); --app-code-keyword: #eea2ae; --app-code-string: #8fd2c2; --app-code-number: #e7c083; --app-code-fn: #94c1e1; --app-code-type: #c2a9e0; --app-code-prop: #9ac0c5; }
+
+[data-color-scheme="sakura"] { --app-canvas: #fdf3f5; --app-panel: #f8e8eb; --app-elevated: #fffafa; --app-border: #ecd2d8; --app-text: #3a232a; --app-muted: #9d7b83; --app-danger: #be4c5a; --app-danger-contrast: #ffffff; --app-success: #4b9285; --app-shadow-menu: 0 16px 40px rgb(74 37 50 / 18%), 0 4px 12px rgb(74 37 50 / 8%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-dialog: 0 28px 72px rgb(74 37 50 / 24%), 0 8px 24px rgb(74 37 50 / 10%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-card: 0 1px 2px rgb(74 37 50 / 6%), 0 3px 8px -2px rgb(74 37 50 / 7%); --app-code-keyword: #9d4c5b; --app-code-string: #2e7c6c; --app-code-number: #a96b2c; --app-code-fn: #6f5a94; --app-code-type: #8d6494; --app-code-prop: #7b6657; }
+[data-theme="dark"][data-color-scheme="sakura"] { --app-canvas: #1f1417; --app-panel: #281a1e; --app-elevated: #352128; --app-border: #5b3842; --app-text: #f8e8ec; --app-muted: #c494a0; --app-danger: #f18a95; --app-danger-contrast: #1d1115; --app-success: #7fc4b6; --app-shadow-menu: 0 16px 40px rgb(0 0 0 / 50%), 0 4px 12px rgb(0 0 0 / 28%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-dialog: 0 28px 72px rgb(0 0 0 / 56%), 0 8px 24px rgb(0 0 0 / 32%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-card: 0 1px 2px rgb(0 0 0 / 22%), 0 4px 10px -2px rgb(0 0 0 / 18%); --app-code-keyword: #f0a4b0; --app-code-string: #95d0c2; --app-code-number: #e9c087; --app-code-fn: #b3a0d9; --app-code-type: #d0a7d5; --app-code-prop: #c5b7a1; }
+
+[data-color-scheme="mist"] { --app-canvas: #f7f8fa; --app-panel: #eef0f4; --app-elevated: #fefeff; --app-border: #dfe3ea; --app-text: #2b303a; --app-muted: #8b95a3; --app-danger: #b95657; --app-danger-contrast: #ffffff; --app-success: #3f8f87; --app-shadow-menu: 0 16px 40px rgb(40 50 65 / 18%), 0 4px 12px rgb(40 50 65 / 8%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-dialog: 0 28px 72px rgb(40 50 65 / 24%), 0 8px 24px rgb(40 50 65 / 10%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-card: 0 1px 2px rgb(40 50 65 / 6%), 0 3px 8px -2px rgb(40 50 65 / 7%); --app-code-keyword: #8b5267; --app-code-string: #2e7a74; --app-code-number: #9b6734; --app-code-fn: #3f6f9d; --app-code-type: #74649c; --app-code-prop: #5c6a72; }
+[data-theme="dark"][data-color-scheme="mist"] { --app-canvas: #15171c; --app-panel: #1b1e25; --app-elevated: #242831; --app-border: #3c4350; --app-text: #eef1f6; --app-muted: #a7b0be; --app-danger: #ef8786; --app-danger-contrast: #13161d; --app-success: #74c4ba; --app-shadow-menu: 0 16px 40px rgb(0 0 0 / 50%), 0 4px 12px rgb(0 0 0 / 28%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-dialog: 0 28px 72px rgb(0 0 0 / 56%), 0 8px 24px rgb(0 0 0 / 32%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-card: 0 1px 2px rgb(0 0 0 / 22%), 0 4px 10px -2px rgb(0 0 0 / 18%); --app-code-keyword: #eba6bb; --app-code-string: #8ed3c7; --app-code-number: #e6c28b; --app-code-fn: #9fc2e0; --app-code-type: #baa7dd; --app-code-prop: #b9c4ce; }
+
+[data-color-scheme="graphite"] { --app-canvas: #ececec; --app-panel: #e0e0e0; --app-elevated: #f6f6f6; --app-border: #c7c7c7; --app-text: #202020; --app-muted: #757575; --app-danger: #b04443; --app-danger-contrast: #ffffff; --app-success: #3d8055; --app-shadow-menu: 0 16px 40px rgb(40 40 40 / 18%), 0 4px 12px rgb(40 40 40 / 8%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-dialog: 0 28px 72px rgb(40 40 40 / 24%), 0 8px 24px rgb(40 40 40 / 10%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-card: 0 1px 2px rgb(40 40 40 / 6%), 0 3px 8px -2px rgb(40 40 40 / 7%); --app-code-keyword: #7d424f; --app-code-string: #2c7050; --app-code-number: #8b5b2b; --app-code-fn: #3c5f83; --app-code-type: #63558a; --app-code-prop: #545e50; }
+[data-theme="dark"][data-color-scheme="graphite"] { --app-canvas: #0d0d0d; --app-panel: #131313; --app-elevated: #1c1c1c; --app-border: #333333; --app-text: #f2f2f2; --app-muted: #9e9e9e; --app-danger: #ef726d; --app-danger-contrast: #0d0d0d; --app-success: #74bd82; --app-shadow-menu: 0 16px 40px rgb(0 0 0 / 54%), 0 4px 12px rgb(0 0 0 / 30%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-dialog: 0 28px 72px rgb(0 0 0 / 58%), 0 8px 24px rgb(0 0 0 / 34%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-card: 0 1px 2px rgb(0 0 0 / 24%), 0 4px 10px -2px rgb(0 0 0 / 20%); --app-code-keyword: #e69a9f; --app-code-string: #8ac49b; --app-code-number: #d9b37e; --app-code-fn: #96b5d3; --app-code-type: #b5a4d3; --app-code-prop: #b1bb9f; }
+
+[data-color-scheme="midnight"] { --app-canvas: #0f1220; --app-panel: #151a2c; --app-elevated: #1e2438; --app-border: #323c58; --app-text: #eef1fa; --app-muted: #a2acc5; --app-danger: #ef6f7a; --app-danger-contrast: #0e111e; --app-success: #63b7a6; --app-shadow-menu: 0 16px 40px rgb(0 0 0 / 54%), 0 4px 12px rgb(0 0 0 / 30%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-dialog: 0 28px 72px rgb(0 0 0 / 58%), 0 8px 24px rgb(0 0 0 / 34%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-card: 0 1px 2px rgb(0 0 0 / 24%), 0 4px 10px -2px rgb(0 0 0 / 20%); --app-code-keyword: #f09faa; --app-code-string: #8cc9bb; --app-code-number: #e5bb83; --app-code-fn: #a0bde1; --app-code-type: #bca9df; --app-code-prop: #b7c29f; }
+[data-theme="dark"][data-color-scheme="midnight"] { --app-canvas: #0a0c14; --app-panel: #10131f; --app-elevated: #181c2c; --app-border: #2c3450; --app-text: #f0f3fc; --app-muted: #a9b2c8; --app-danger: #f07a86; --app-danger-contrast: #090b12; --app-success: #6dc2b1; --app-shadow-menu: 0 16px 40px rgb(0 0 0 / 56%), 0 4px 12px rgb(0 0 0 / 32%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-dialog: 0 28px 72px rgb(0 0 0 / 60%), 0 8px 24px rgb(0 0 0 / 36%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-card: 0 1px 2px rgb(0 0 0 / 26%), 0 4px 10px -2px rgb(0 0 0 / 22%); --app-code-keyword: #f0a3ad; --app-code-string: #93d2c1; --app-code-number: #e9c189; --app-code-fn: #a7c4e5; --app-code-type: #c4adde; --app-code-prop: #bdc9a6; }
+
+[data-color-scheme="lavender"] { --app-canvas: #f7f4fb; --app-panel: #ece5f5; --app-elevated: #fefdff; --app-border: #d9cdea; --app-text: #2e253d; --app-muted: #897c9f; --app-danger: #a94f7b; --app-danger-contrast: #ffffff; --app-success: #4c8d78; --app-shadow-menu: 0 16px 40px rgb(61 43 96 / 18%), 0 4px 12px rgb(61 43 96 / 8%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-dialog: 0 28px 72px rgb(61 43 96 / 24%), 0 8px 24px rgb(61 43 96 / 10%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-card: 0 1px 2px rgb(61 43 96 / 6%), 0 3px 8px -2px rgb(61 43 96 / 7%); --app-code-keyword: #8b4d7e; --app-code-string: #2f7a63; --app-code-number: #986b2d; --app-code-fn: #5c5fb1; --app-code-type: #79549b; --app-code-prop: #666c53; }
+[data-theme="dark"][data-color-scheme="lavender"] { --app-canvas: #16111f; --app-panel: #1e172a; --app-elevated: #2a2138; --app-border: #44375b; --app-text: #efeaf7; --app-muted: #b2a4c6; --app-danger: #ef89ad; --app-danger-contrast: #17101e; --app-success: #77c4a8; --app-shadow-menu: 0 16px 40px rgb(0 0 0 / 52%), 0 4px 12px rgb(0 0 0 / 30%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-dialog: 0 28px 72px rgb(0 0 0 / 58%), 0 8px 24px rgb(0 0 0 / 34%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-card: 0 1px 2px rgb(0 0 0 / 24%), 0 4px 10px -2px rgb(0 0 0 / 20%); --app-code-keyword: #e4a3cf; --app-code-string: #93d0b8; --app-code-number: #dfbc81; --app-code-fn: #a2a6e0; --app-code-type: #c1a1dd; --app-code-prop: #b8bf9e; }
+
+[data-color-scheme="desert"] { --app-canvas: #fbf4e8; --app-panel: #f4e8d4; --app-elevated: #fffdf7; --app-border: #e6d3b6; --app-text: #3e2f1d; --app-muted: #9a8260; --app-danger: #b5563e; --app-danger-contrast: #ffffff; --app-success: #6a8f4e; --app-shadow-menu: 0 16px 40px rgb(79 54 27 / 18%), 0 4px 12px rgb(79 54 27 / 8%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-dialog: 0 28px 72px rgb(79 54 27 / 24%), 0 8px 24px rgb(79 54 27 / 10%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-card: 0 1px 2px rgb(79 54 27 / 6%), 0 3px 8px -2px rgb(79 54 27 / 7%); --app-code-keyword: #a75932; --app-code-string: #4d7d3c; --app-code-number: #9a6f2f; --app-code-fn: #6b5f98; --app-code-type: #8d5a5a; --app-code-prop: #756a3e; }
+[data-theme="dark"][data-color-scheme="desert"] { --app-canvas: #1d1710; --app-panel: #282017; --app-elevated: #352b1f; --app-border: #594a34; --app-text: #f4ead8; --app-muted: #c0a987; --app-danger: #f08a70; --app-danger-contrast: #1c130c; --app-success: #9bc27f; --app-shadow-menu: 0 16px 40px rgb(0 0 0 / 52%), 0 4px 12px rgb(0 0 0 / 30%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-dialog: 0 28px 72px rgb(0 0 0 / 58%), 0 8px 24px rgb(0 0 0 / 34%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-card: 0 1px 2px rgb(0 0 0 / 24%), 0 4px 10px -2px rgb(0 0 0 / 20%); --app-code-keyword: #e9a77c; --app-code-string: #a8c989; --app-code-number: #ddba7a; --app-code-fn: #b0a8d4; --app-code-type: #d5a0a0; --app-code-prop: #c1b385; }
+
+[data-color-scheme="mint"] { --app-canvas: #eef9f5; --app-panel: #e0f2ea; --app-elevated: #fcfffd; --app-border: #c8e6d9; --app-text: #1d3330; --app-muted: #6c9a8e; --app-danger: #b64e57; --app-danger-contrast: #ffffff; --app-success: #2f8f79; --app-shadow-menu: 0 16px 40px rgb(24 73 63 / 18%), 0 4px 12px rgb(24 73 63 / 8%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-dialog: 0 28px 72px rgb(24 73 63 / 24%), 0 8px 24px rgb(24 73 63 / 10%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-card: 0 1px 2px rgb(24 73 63 / 6%), 0 3px 8px -2px rgb(24 73 63 / 7%); --app-code-keyword: #8b4f6e; --app-code-string: #28785e; --app-code-number: #8f672a; --app-code-fn: #3a6e9d; --app-code-type: #6f5a9b; --app-code-prop: #4d6b5c; }
+[data-theme="dark"][data-color-scheme="mint"] { --app-canvas: #0e1a17; --app-panel: #142521; --app-elevated: #1d332e; --app-border: #31554c; --app-text: #e3f5ef; --app-muted: #96c3b5; --app-danger: #f08b91; --app-danger-contrast: #0d1714; --app-success: #70c9b1; --app-shadow-menu: 0 16px 40px rgb(0 0 0 / 52%), 0 4px 12px rgb(0 0 0 / 30%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-dialog: 0 28px 72px rgb(0 0 0 / 58%), 0 8px 24px rgb(0 0 0 / 34%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-card: 0 1px 2px rgb(0 0 0 / 24%), 0 4px 10px -2px rgb(0 0 0 / 20%); --app-code-keyword: #e5a0b8; --app-code-string: #8ed2b6; --app-code-number: #d7b889; --app-code-fn: #9ab9dd; --app-code-type: #bba4dc; --app-code-prop: #a6baae; }
+
+[data-color-scheme="coffee"] { --app-canvas: #f5eeea; --app-panel: #ebe0d8; --app-elevated: #fffaf7; --app-border: #dcc8bc; --app-text: #33221a; --app-muted: #8b7063; --app-danger: #ad4b42; --app-danger-contrast: #ffffff; --app-success: #4d8069; --app-shadow-menu: 0 16px 40px rgb(57 35 22 / 18%), 0 4px 12px rgb(57 35 22 / 8%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-dialog: 0 28px 72px rgb(57 35 22 / 24%), 0 8px 24px rgb(57 35 22 / 10%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-card: 0 1px 2px rgb(57 35 22 / 6%), 0 3px 8px -2px rgb(57 35 22 / 7%); --app-code-keyword: #8e4d3b; --app-code-string: #39724e; --app-code-number: #8b612b; --app-code-fn: #5a5893; --app-code-type: #7a4f66; --app-code-prop: #6b6042; }
+[data-theme="dark"][data-color-scheme="coffee"] { --app-canvas: #17110e; --app-panel: #201713; --app-elevated: #2e211b; --app-border: #4f3b30; --app-text: #f2e7df; --app-muted: #b79584; --app-danger: #ef7b70; --app-danger-contrast: #150e0b; --app-success: #8cba9d; --app-shadow-menu: 0 16px 40px rgb(0 0 0 / 52%), 0 4px 12px rgb(0 0 0 / 30%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-dialog: 0 28px 72px rgb(0 0 0 / 58%), 0 8px 24px rgb(0 0 0 / 34%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-card: 0 1px 2px rgb(0 0 0 / 24%), 0 4px 10px -2px rgb(0 0 0 / 20%); --app-code-keyword: #e59d86; --app-code-string: #9ac49f; --app-code-number: #d2ab79; --app-code-fn: #a0a0d0; --app-code-type: #c293ae; --app-code-prop: #bcac8a; }
+
+[data-color-scheme="plum"] { --app-canvas: #f9f1f5; --app-panel: #f0e1ea; --app-elevated: #fffafd; --app-border: #e2c8d7; --app-text: #35202d; --app-muted: #976e87; --app-danger: #b34e65; --app-danger-contrast: #ffffff; --app-success: #4a876f; --app-shadow-menu: 0 16px 40px rgb(60 36 54 / 18%), 0 4px 12px rgb(60 36 54 / 8%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-dialog: 0 28px 72px rgb(60 36 54 / 24%), 0 8px 24px rgb(60 36 54 / 10%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-card: 0 1px 2px rgb(60 36 54 / 6%), 0 3px 8px -2px rgb(60 36 54 / 7%); --app-code-keyword: #95496b; --app-code-string: #31765b; --app-code-number: #98642d; --app-code-fn: #6554a2; --app-code-type: #865b91; --app-code-prop: #6b654d; }
+[data-theme="dark"][data-color-scheme="plum"] { --app-canvas: #180e16; --app-panel: #221420; --app-elevated: #311c2b; --app-border: #533348; --app-text: #f6e6f1; --app-muted: #c18fa9; --app-danger: #f28da1; --app-danger-contrast: #160c13; --app-success: #84bc9f; --app-shadow-menu: 0 16px 40px rgb(0 0 0 / 52%), 0 4px 12px rgb(0 0 0 / 30%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-dialog: 0 28px 72px rgb(0 0 0 / 58%), 0 8px 24px rgb(0 0 0 / 34%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-card: 0 1px 2px rgb(0 0 0 / 24%), 0 4px 10px -2px rgb(0 0 0 / 20%); --app-code-keyword: #eca4bd; --app-code-string: #93cbb0; --app-code-number: #dbb181; --app-code-fn: #af9be0; --app-code-type: #c9a1d2; --app-code-prop: #b9b298; }
+
+[data-color-scheme="dusk"] { --app-canvas: #f0f2fa; --app-panel: #e4e7f5; --app-elevated: #fbfcff; --app-border: #ced4ea; --app-text: #252941; --app-muted: #7581a6; --app-danger: #a9506c; --app-danger-contrast: #ffffff; --app-success: #4d8095; --app-shadow-menu: 0 16px 40px rgb(43 52 92 / 18%), 0 4px 12px rgb(43 52 92 / 8%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-dialog: 0 28px 72px rgb(43 52 92 / 24%), 0 8px 24px rgb(43 52 92 / 10%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-card: 0 1px 2px rgb(43 52 92 / 6%), 0 3px 8px -2px rgb(43 52 92 / 7%); --app-code-keyword: #874f79; --app-code-string: #33758a; --app-code-number: #8e663b; --app-code-fn: #4d5fa9; --app-code-type: #735c96; --app-code-prop: #5d6887; }
+[data-theme="dark"][data-color-scheme="dusk"] { --app-canvas: #101223; --app-panel: #171a31; --app-elevated: #222647; --app-border: #374069; --app-text: #e9ecfa; --app-muted: #9ba6ca; --app-danger: #ef8ba4; --app-danger-contrast: #0f1120; --app-success: #7eb4c5; --app-shadow-menu: 0 16px 40px rgb(0 0 0 / 54%), 0 4px 12px rgb(0 0 0 / 32%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-dialog: 0 28px 72px rgb(0 0 0 / 60%), 0 8px 24px rgb(0 0 0 / 36%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-card: 0 1px 2px rgb(0 0 0 / 26%), 0 4px 10px -2px rgb(0 0 0 / 22%); --app-code-keyword: #e1a3bd; --app-code-string: #91bcd0; --app-code-number: #d6af83; --app-code-fn: #a0aaeb; --app-code-type: #bda2d8; --app-code-prop: #aab3cc; }
+
+[data-color-scheme="crimson"] { --app-canvas: #fbf1f2; --app-panel: #f4e0e2; --app-elevated: #fffafb; --app-border: #e8c7ca; --app-text: #3a2024; --app-muted: #99747a; --app-danger: #b8424d; --app-danger-contrast: #ffffff; --app-success: #4d8371; --app-shadow-menu: 0 16px 40px rgb(74 34 42 / 18%), 0 4px 12px rgb(74 34 42 / 8%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-dialog: 0 28px 72px rgb(74 34 42 / 24%), 0 8px 24px rgb(74 34 42 / 10%), inset 0 1px rgb(255 255 255 / 52%); --app-shadow-card: 0 1px 2px rgb(74 34 42 / 6%), 0 3px 8px -2px rgb(74 34 42 / 7%); --app-code-keyword: #9d4354; --app-code-string: #2f755d; --app-code-number: #9b6128; --app-code-fn: #6b5398; --app-code-type: #8c547b; --app-code-prop: #6d5f45; }
+[data-theme="dark"][data-color-scheme="crimson"] { --app-canvas: #1a1012; --app-panel: #25161a; --app-elevated: #341e23; --app-border: #5a363e; --app-text: #f7e6e8; --app-muted: #c2939b; --app-danger: #f47d88; --app-danger-contrast: #180d10; --app-success: #88bb9e; --app-shadow-menu: 0 16px 40px rgb(0 0 0 / 52%), 0 4px 12px rgb(0 0 0 / 30%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-dialog: 0 28px 72px rgb(0 0 0 / 58%), 0 8px 24px rgb(0 0 0 / 34%), inset 0 1px rgb(255 255 255 / 5%); --app-shadow-card: 0 1px 2px rgb(0 0 0 / 24%), 0 4px 10px -2px rgb(0 0 0 / 20%); --app-code-keyword: #efa0ab; --app-code-string: #98c8ab; --app-code-number: #dfb17f; --app-code-fn: #b0a0d7; --app-code-type: #d29abe; --app-code-prop: #bcae91; }
+
+[data-theme="dark"][data-contrast="high"] {
+  color-scheme: dark;
+  --app-canvas: #000000;
+  --app-panel: #000000;
+  --app-elevated: #0c0c0c;
+  --app-border: #ffffff;
+  --app-text: #ffffff;
+  --app-muted: #d8d8d8;
+  --app-accent: #ffffff;
+  --app-accent-soft: #2a2a2a;
+  --app-accent-contrast: #000000;
+  --app-danger: #ff4d4d;
+  --app-danger-contrast: #000000;
+  --app-success: #4dde85;
+  --app-shadow-menu: 0 0 0 1px #fff;
+  --app-shadow-dialog: 0 0 0 1px #fff;
+  --app-shadow-card: 0 0 0 1px #fff;
+  --app-code-keyword: #ffb68a;
+  --app-code-string: #93e6b0;
+  --app-code-number: #f0c37a;
+  --app-code-fn: #a9c9f5;
+  --app-code-type: #cdb3f2;
+  --app-code-prop: #c3d7a4;
+}
+
+/* Keep the user's chosen accent hue in high contrast, pushed to a saturated
+   value for the light theme and a brighter one for the dark theme. */
+[data-contrast="high"][data-accent="ink"] { --app-accent: #000000; --app-accent-soft: #d9d9d9; }
+[data-contrast="high"][data-accent="coral"] { --app-accent: #c22818; --app-accent-soft: #ffd0c7; }
+[data-contrast="high"][data-accent="blue"] { --app-accent: #134fae; --app-accent-soft: #c2d7f7; }
+[data-contrast="high"][data-accent="green"] { --app-accent: #0e7a4f; --app-accent-soft: #b9e6d3; }
+[data-contrast="high"][data-accent="gold"] { --app-accent: #7d5c00; --app-accent-soft: #ffeab2; }
+[data-contrast="high"][data-accent="violet"] { --app-accent: #5b2d9e; --app-accent-soft: #d9c8f5; }
+[data-contrast="high"][data-accent="slate"] { --app-accent: #2b435c; --app-accent-soft: #c6d3e1; }
+[data-contrast="high"][data-accent="teal"] { --app-accent: #0e7f70; --app-accent-soft: #bbe5de; }
+[data-contrast="high"][data-accent="lime"] { --app-accent: #4f7e05; --app-accent-soft: #ddefb0; }
+[data-contrast="high"][data-accent="rose"] { --app-accent: #c21f44; --app-accent-soft: #ffc5cf; }
+[data-contrast="high"][data-accent="amber"] { --app-accent: #925a00; --app-accent-soft: #ffdfb0; }
+[data-contrast="high"][data-accent="orange"] { --app-accent: #a43c00; --app-accent-soft: #ffd0b0; }
+[data-contrast="high"][data-accent="pink"] { --app-accent: #b31d70; --app-accent-soft: #ffc1df; }
+[data-contrast="high"][data-accent="cyan"] { --app-accent: #006e96; --app-accent-soft: #b8e8f7; }
+[data-contrast="high"][data-accent="cocoa"] { --app-accent: #55300f; --app-accent-soft: #e7cdb7; }
+[data-theme="dark"][data-contrast="high"][data-accent="ink"] { --app-accent: #ffffff; --app-accent-soft: #2a2a2a; }
+[data-theme="dark"][data-contrast="high"][data-accent="coral"] { --app-accent: #ff6b52; --app-accent-soft: #ff6b52; }
+[data-theme="dark"][data-contrast="high"][data-accent="blue"] { --app-accent: #68a7ff; --app-accent-soft: #68a7ff; }
+[data-theme="dark"][data-contrast="high"][data-accent="green"] { --app-accent: #56e6a1; --app-accent-soft: #56e6a1; }
+[data-theme="dark"][data-contrast="high"][data-accent="gold"] { --app-accent: #ffd340; --app-accent-soft: #ffd340; }
+[data-theme="dark"][data-contrast="high"][data-accent="violet"] { --app-accent: #b38fff; --app-accent-soft: #b38fff; }
+[data-theme="dark"][data-contrast="high"][data-accent="slate"] { --app-accent: #9ec7eb; --app-accent-soft: #9ec7eb; }
+[data-theme="dark"][data-contrast="high"][data-accent="teal"] { --app-accent: #2fe0c9; --app-accent-soft: #2fe0c9; }
+[data-theme="dark"][data-contrast="high"][data-accent="lime"] { --app-accent: #c3ea54; --app-accent-soft: #c3ea54; }
+[data-theme="dark"][data-contrast="high"][data-accent="rose"] { --app-accent: #ff7a99; --app-accent-soft: #ff7a99; }
+[data-theme="dark"][data-contrast="high"][data-accent="amber"] { --app-accent: #ffbb4f; --app-accent-soft: #ffbb4f; }
+[data-theme="dark"][data-contrast="high"][data-accent="orange"] { --app-accent: #ff9a52; --app-accent-soft: #ff9a52; }
+[data-theme="dark"][data-contrast="high"][data-accent="pink"] { --app-accent: #ff8fc0; --app-accent-soft: #ff8fc0; }
+[data-theme="dark"][data-contrast="high"][data-accent="cyan"] { --app-accent: #66d2f5; --app-accent-soft: #66d2f5; }
+[data-theme="dark"][data-contrast="high"][data-accent="cocoa"] { --app-accent: #c79272; --app-accent-soft: #c79272; }

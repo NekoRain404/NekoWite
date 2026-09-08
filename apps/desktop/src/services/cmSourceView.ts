@@ -1,0 +1,231 @@
+// CodeMirror 6 setup for the markdown source view: GFM parsing, a highlight
+// style whose classes mirror editor-content.css typography (all colors via
+// --app-* tokens, so dark/light follows data-theme), a fenced-code block
+// surface, line numbers/ruler, soft wrap, and the zh search panel.
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
+import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language'
+import { search, searchKeymap } from '@codemirror/search'
+import { RangeSetBuilder, type Extension } from '@codemirror/state'
+import {
+  Decoration,
+  EditorView,
+  ViewPlugin,
+  highlightActiveLine,
+  keymap,
+  lineNumbers as lineNumbersGutter,
+  type DecorationSet,
+  type ViewUpdate,
+} from '@codemirror/view'
+import { tags as highlightTags } from '@lezer/highlight'
+import { createZhSearchPanel } from './cmSearchPanel'
+
+const mdHighlight = HighlightStyle.define([
+  { tag: highlightTags.heading1, class: 'cm-md-h1 cm-md-heading' },
+  { tag: highlightTags.heading2, class: 'cm-md-h2 cm-md-heading' },
+  { tag: highlightTags.heading3, class: 'cm-md-h3 cm-md-heading' },
+  { tag: highlightTags.heading4, class: 'cm-md-h4 cm-md-heading' },
+  { tag: highlightTags.heading5, class: 'cm-md-h5 cm-md-heading' },
+  { tag: highlightTags.heading6, class: 'cm-md-h6 cm-md-heading' },
+  { tag: highlightTags.processingInstruction, class: 'cm-md-mark' },
+  { tag: highlightTags.atom, class: 'cm-md-task' },
+  { tag: highlightTags.emphasis, class: 'cm-md-emphasis' },
+  { tag: highlightTags.strong, class: 'cm-md-strong' },
+  { tag: highlightTags.strikethrough, class: 'cm-md-strikethrough' },
+  { tag: highlightTags.link, class: 'cm-md-link' },
+  { tag: highlightTags.url, class: 'cm-md-url' },
+  { tag: highlightTags.monospace, class: 'cm-md-code' },
+  { tag: highlightTags.quote, class: 'cm-md-quote' },
+  { tag: highlightTags.contentSeparator, class: 'cm-md-hr' },
+  { tag: highlightTags.comment, class: 'cm-md-comment' },
+  { tag: highlightTags.lineComment, class: 'cm-md-comment' },
+  { tag: highlightTags.blockComment, class: 'cm-md-comment' },
+  { tag: highlightTags.labelName, class: 'cm-md-label' },
+  { tag: highlightTags.string, class: 'cm-md-string' },
+  { tag: highlightTags.keyword, class: 'cm-code-keyword' },
+  { tag: highlightTags.controlKeyword, class: 'cm-code-keyword' },
+  { tag: highlightTags.definitionKeyword, class: 'cm-code-keyword' },
+  { tag: highlightTags.moduleKeyword, class: 'cm-code-keyword' },
+  { tag: highlightTags.bool, class: 'cm-code-number' },
+  { tag: highlightTags.number, class: 'cm-code-number' },
+  { tag: highlightTags.literal, class: 'cm-code-number' },
+  { tag: highlightTags.regexp, class: 'cm-code-string' },
+  { tag: highlightTags.typeName, class: 'cm-code-type' },
+  { tag: highlightTags.className, class: 'cm-code-type' },
+  { tag: highlightTags.function(highlightTags.variableName), class: 'cm-code-fn' },
+  { tag: highlightTags.function(highlightTags.propertyName), class: 'cm-code-fn' },
+  { tag: highlightTags.definition(highlightTags.variableName), class: 'cm-code-fn' },
+  { tag: highlightTags.propertyName, class: 'cm-code-prop' },
+  { tag: highlightTags.variableName, class: 'cm-code-name' },
+  { tag: highlightTags.operator, class: 'cm-code-operator' },
+  { tag: highlightTags.invalid, class: 'cm-code-invalid' },
+])
+
+// Every value goes through --app-* tokens: the editor follows data-theme
+// (light/dark) with no reconfiguration.
+const sourceTheme = EditorView.theme({
+  '&': {
+    height: '100%',
+    backgroundColor: 'var(--app-canvas)',
+    color: 'var(--app-text)',
+    fontSize: '13.5px',
+  },
+  '.cm-scroller': {
+    height: '100%',
+    overflow: 'auto',
+    overflowAnchor: 'none',
+    overscrollBehavior: 'contain',
+    fontFamily: 'var(--app-mono-font)',
+    lineHeight: '1.7',
+  },
+  '.cm-content': {
+    padding: '24px 24px 48px',
+    caretColor: 'var(--app-accent)',
+  },
+  '.cm-line': {
+    padding: '0 8px 0 0',
+  },
+  '.cm-cursor, .cm-dropCursor': {
+    borderLeftColor: 'var(--app-accent)',
+    borderLeftWidth: '1.5px',
+  },
+  '&.cm-focused': {
+    outline: 'none',
+  },
+  '.cm-gutters': {
+    backgroundColor: 'var(--app-canvas)',
+    color: 'color-mix(in srgb, var(--app-muted) 72%, transparent)',
+    borderRight: '1px solid color-mix(in srgb, var(--app-border) 70%, transparent)',
+  },
+  '.cm-lineNumbers .cm-gutterElement': {
+    minWidth: '34px',
+    padding: '0 10px 0 8px',
+    fontSize: '10px',
+    lineHeight: 'inherit',
+  },
+  '.cm-activeLine, .cm-activeLineGutter': {
+    backgroundColor: 'color-mix(in srgb, var(--app-text) 4%, transparent)',
+  },
+  '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
+    backgroundColor: 'color-mix(in srgb, var(--app-accent) 26%, transparent) !important',
+  },
+  '.cm-content ::selection': {
+    backgroundColor: 'color-mix(in srgb, var(--app-accent) 26%, transparent)',
+  },
+  '.cm-searchMatch': {
+    backgroundColor: 'color-mix(in srgb, var(--app-code-number) 32%, transparent)',
+    borderRadius: '2px',
+  },
+  '.cm-searchMatch-selected': {
+    backgroundColor: 'color-mix(in srgb, var(--app-code-number) 52%, transparent)',
+  },
+  '.cm-panels': {
+    backgroundColor: 'color-mix(in srgb, var(--app-elevated) 82%, var(--app-canvas))',
+    color: 'var(--app-text)',
+    zIndex: 1,
+  },
+  '.cm-panels-top': {
+    borderBottom: '1px solid color-mix(in srgb, var(--app-border) 88%, transparent)',
+  },
+  '.cm-placeholder': {
+    color: 'color-mix(in srgb, var(--app-muted) 70%, transparent)',
+  },
+  '.cm-tooltip': {
+    backgroundColor: 'var(--app-elevated)',
+    border: '1px solid var(--app-border)',
+    borderRadius: 'var(--app-radius-sm)',
+    boxShadow: 'var(--app-shadow-card)',
+  },
+})
+
+// Module-level gate shared between the split-drag coordinator (EditorPane →
+// SourcePane.setMeasureSuppressed) and the decoration plugin below. While the
+// split handle is being dragged the source pane's width changes every frame;
+// suppressing the per-frame decoration rebuild and measure keeps the drag fluid
+// instead of re-traversing visibleRanges + syntaxTree on each resize.
+const measureGate = { suppressed: false }
+
+function setMeasureSuppressed(suppressed: boolean): void {
+  measureGate.suppressed = suppressed
+}
+
+function isMeasureSuppressed(): boolean {
+  return measureGate.suppressed
+}
+
+export { setMeasureSuppressed, isMeasureSuppressed }
+
+const codeBlockLine = Decoration.line({ class: 'cm-md-codeblock' })
+
+function decorateCodeBlocks(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>()
+  for (const { from, to } of view.visibleRanges) {
+    syntaxTree(view.state).iterate({
+      from,
+      to,
+      enter(node) {
+        if (node.name !== 'FencedCode' && node.name !== 'CodeBlock') return
+        const first = view.state.doc.lineAt(node.from)
+        const last = view.state.doc.lineAt(Math.max(node.from, node.to - 1))
+        for (let number = first.number; number <= last.number; number += 1) {
+          const line = view.state.doc.line(number)
+          builder.add(line.from, line.from, codeBlockLine)
+        }
+      },
+    })
+  }
+  return builder.finish()
+}
+
+const fencedCodeHighlighter = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet
+    constructor(view: EditorView) {
+      this.decorations = decorateCodeBlocks(view)
+    }
+    update(update: ViewUpdate) {
+      // During a split drag, widths change every frame and would otherwise
+      // rebuild the whole decoration set (traversing visibleRanges + the
+      // syntax tree) on each resize. Hold the stale set until the drag ends,
+      // then let the trailing measure refresh it.
+      if (isMeasureSuppressed()) return
+      if (
+        update.docChanged ||
+        update.viewportChanged ||
+        syntaxTree(update.startState) !== syntaxTree(update.state)
+      ) {
+        this.decorations = decorateCodeBlocks(update.view)
+      }
+    }
+  },
+  { decorations: (value) => value.decorations },
+)
+
+export interface SourceExtensionsOptions {
+  /** Show the line-number gutter. Default true. */
+  lineNumbers?: boolean
+  /** Soft-wrap long lines. Default true. */
+  softWrap?: boolean
+}
+
+export const SOURCE_EXT_DEFAULTS: Required<SourceExtensionsOptions> = {
+  lineNumbers: true,
+  softWrap: true,
+}
+
+export function sourceExtensions(opts: SourceExtensionsOptions = {}): Extension[] {
+  const { lineNumbers, softWrap } = { ...SOURCE_EXT_DEFAULTS, ...opts }
+  return [
+    history(),
+    // GFM base so strikethrough / task lists / tables parse with proper tags.
+    markdown({ base: markdownLanguage }),
+    syntaxHighlighting(mdHighlight),
+    fencedCodeHighlighter,
+    ...(lineNumbers ? [lineNumbersGutter()] : []),
+    highlightActiveLine(),
+    ...(softWrap ? [EditorView.lineWrapping] : []),
+    search({ top: true, createPanel: createZhSearchPanel }),
+    keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
+    sourceTheme,
+  ]
+}
