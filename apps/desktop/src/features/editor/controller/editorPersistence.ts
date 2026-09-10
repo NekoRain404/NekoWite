@@ -45,8 +45,12 @@ export function createEditorPersistence(deps: EditorPersistenceDeps): EditorPers
     const markdown = await editor.save()
     if (tabs.activeTab?.id !== active.id) return
     if (myGen !== deps.session.gen) return
-    // The echo of a change we already applied is not an edit.
-    if (markdown === deps.session.lastLocalMarkdown && markdown === active.content) return
+    // The model has not moved since the last snapshot (a re-open / external
+    // apply only re-loaded the same text) — there is nothing new to persist.
+    // Writing it back here would push the serializer's canonical form into the
+    // tab, replacing the raw Markdown the user is typing in the source pane and
+    // resetting its caret.
+    if (markdown === deps.session.lastLocalMarkdown) return
     deps.session.lastLocalMarkdown = markdown
     active.content = markdown
     deps.session.lastDoc = markdown

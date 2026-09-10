@@ -87,4 +87,23 @@ describe('editorPersistence', () => {
     await vi.advanceTimersByTimeAsync(200)
     expect(editor.save).not.toHaveBeenCalled()
   })
+
+  it('does not rewrite the tab when the model is unchanged (source-mode echo)', async () => {
+    vi.useFakeTimers()
+    const { editor } = makeFakeEditor('# Canonical\n')
+    session.editor = editor as unknown as NekoEditor
+    // The editor model already holds the text the tab stores (a re-open or an
+    // external apply). Serializing it again must NOT push anything into the
+    // tab: in source mode that write replaces the raw Markdown the user is
+    // typing in and resets the CodeMirror caret to the document start.
+    session.lastLocalMarkdown = '# Canonical\n'
+    tabs.activeTab!.content = '# Raw source\n'
+    const persistence = createEditorPersistence({ session })
+    tabs.markDirty(tabs.activeTab!.id)
+    persistence.scheduleSerialize()
+    await vi.advanceTimersByTimeAsync(200)
+
+    expect(editor.save).toHaveBeenCalledTimes(1)
+    expect(tabs.activeTab?.content).toBe('# Raw source\n')
+  })
 })
