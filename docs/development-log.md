@@ -51,6 +51,7 @@
   - 源码模式若干用例缺少建立焦点的点击，导致按键落到工具栏按钮上。
   - 行首 Enter 的期望值有误（标准语义为光标停在被下推文本行首），文档末尾空行的 `End` 合法列只有 0。
 - **验证**：editor-core 281 个测试、desktop 989 个测试、全部 E2E（含 app / caret-debug / usage / lifecycle / security-csp / editor-input 共 40 个用例）通过，类型检查、lint 与生产构建通过。
+- **交付**：免安装 Windows 可执行文件 `release/nekowite_0.1.0_x64.exe`（17,255,424 字节，未签名），SHA-256：`acc1a3f7dceb6999240211abc390f0e2c00a765963db57077bd0039d11dbed53`。
 
 ## 当前外观状态
 
@@ -82,7 +83,7 @@ bash scripts/package-win.sh
 
 ## 构建产物
 
-- 免安装可执行文件：`release/nekowite_0.1.0_x64.exe`（17,255,424 字节，未签名），SHA-256：`af308f470179641a8b415f4de80b4b2264e2ee481fbf56379af92b7a18d25b3c`。
+- 免安装可执行文件：`release/nekowite_0.1.0_x64.exe`（17,255,424 字节，未签名），SHA-256：`acc1a3f7dceb6999240211abc390f0e2c00a765963db57077bd0039d11dbed53`（含源码模式光标回跳与 `Ctrl+Shift+Z` 重做修复）。
 - Windows x64 NSIS 安装包：`release/nekowite_0.1.0_x64-setup.exe`（5.3 MB，未签名）。
 - 原生可执行文件：`apps/desktop/src-tauri/target/release/nekowite.exe`（17 MB）。
 - 当前产物未使用 Authenticode 签名；Windows SmartScreen 可能提示“未知发布者”。如需正式分发，应先配置代码签名再重新打包。
