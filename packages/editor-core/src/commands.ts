@@ -179,11 +179,33 @@ function runLink(view: EditorView): void {
   toggleMark(link, { href: 'https://' })(view.state, view.dispatch)
 }
 
+/**
+ * Host hook for the `image` command.
+ *
+ * Inserting an image needs bytes from outside the editor (a clipboard payload
+ * or a file the user picks), which editor-core cannot reach. The host app
+ * registers a handler that runs the picker + import + insert flow; without one
+ * the command still produces a visible placeholder instead of silently doing
+ * nothing, so an embedder gets a node it can then point at a real file.
+ */
+let imageInsertHandler: (() => void) | null = null
+
+export function setImageInsertHandler(handler: (() => void) | null): void {
+  imageInsertHandler = handler
+}
+
 function runImage(view: EditorView): void {
+  if (imageInsertHandler) {
+    imageInsertHandler()
+    return
+  }
   const schema = view.state.schema
   const image = schema.nodes.image
   if (!image) return
-  view.dispatch(view.state.tr.replaceSelectionWith(image.create({ src: '', alt: '' })))
+  // An empty `src` renders as a broken image with nothing to click; a visible
+  // alt plus a placeholder URL makes the inserted node editable in the image
+  // panel.
+  view.dispatch(view.state.tr.replaceSelectionWith(image.create({ src: 'https://', alt: 'image' })))
 }
 
 function runHr(view: EditorView): void {

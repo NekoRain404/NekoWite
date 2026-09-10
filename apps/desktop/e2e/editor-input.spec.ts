@@ -176,19 +176,42 @@ async function pressKey(page: Page, key: string): Promise<void> {
 }
 
 /**
- * Click the end of a heading and wait until the caret actually sits inside it.
+ * Put the caret at the end of the heading text.
+ *
  * A click alone only starts focus transfer; pressing a key before ProseMirror
  * owns the selection drops the keystroke on the floor.
+ *
+ * The point is taken at the END OF THE TEXT, not at the end of the `<h1>`
+ * element. The element spans the whole content column, so its right edge is
+ * blank space — and ProseMirror resolves blank space to the nearest position,
+ * which is the paragraph *below* the heading while the pane is still settling.
+ * The text rect also only exists once the heading has been painted, so it is
+ * polled rather than read once.
  */
 async function focusHeadingEnd(page: Page): Promise<void> {
-  // Click the h1 (the ProseMirror content DOM) rather than its wrapper: the
-  // wrapper spans the full text column, so its far-right edge is the heading's
-  // blank area — the exact edge that used to place the caret outside the
-  // editor's content.
   const heading = page.locator('.pane.rendered .ProseMirror h1').first()
   await expect(heading).toBeVisible()
-  const box = (await heading.boundingBox())!
-  await heading.click({ position: { x: Math.max(1, box.width - 2), y: box.height / 2 } })
+  let point: { x: number; y: number } | null = null
+  await expect
+    .poll(
+      async () => {
+        point = await heading.evaluate((el) => {
+          const range = document.createRange()
+          range.selectNodeContents(el)
+          const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0)
+          const last = rects[rects.length - 1]
+          if (!last || !el.textContent) return null
+          return { x: Math.max(last.left + 1, last.right - 2), y: last.top + last.height / 2 }
+        })
+        return point !== null
+      },
+      { timeout: 5000, intervals: [30] },
+    )
+    .toBe(true)
+  const target = point as { x: number; y: number } | null
+  if (!target) throw new Error('heading text never rendered')
+
+  await page.mouse.click(target.x, target.y)
   await expect
     .poll(async () => (await renderedCaret(page)).path, { timeout: 5000 })
     .toMatch(/H1>(?:SPAN>)?#text$/)

@@ -10,7 +10,7 @@ import {
   type AttachmentItem,
 } from '../services/attachmentLibrary'
 import { markdownImageBlock, relativePathFromNoteVault } from '../services/attachments'
-import { editorSessionManager } from '../features/editor/sessionManager'
+import { insertMarkdownAtCursor } from '../services/editorInsert'
 import { notifyError } from '../services/errors'
 import { useTabsStore } from '../stores/tabs'
 import ContextMenu from './ContextMenu.vue'
@@ -86,14 +86,12 @@ async function insertItem(item: AttachmentItem): Promise<void> {
     notifyError(t('attachments.openDocFirst'))
     return
   }
-  const editor = editorSessionManager.getActiveEditor()
-  if (!editor) {
-    notifyError(t('attachments.editorNotReady'))
-    return
-  }
   const alt = item.name.replace(/\.[^.]+$/, '') || 'image'
   try {
-    await editor.insertMarkdownAtCursor(markdownImageBlock(alt, referencePathFor(item)))
+    // Routed by view mode: in source mode the image has to land in the
+    // CodeMirror text, not in the hidden rendered model.
+    const inserted = await insertMarkdownAtCursor(markdownImageBlock(alt, referencePathFor(item)))
+    if (inserted === false) notifyError(t('attachments.editorNotReady'))
   } catch {
     notifyError(t('attachments.insertFailed'))
   }

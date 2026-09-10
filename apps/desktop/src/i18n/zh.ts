@@ -243,6 +243,8 @@ export const zh = {
     openDocFirst: '请先打开一个文档，再插入图片',
     editorNotReady: '编辑器尚未就绪，请稍后再试',
     insertFailed: '插入图片失败，请重试',
+    pickFailed: '打开文件选择器失败，请重试',
+    importFailed: '导入图片失败，请重试',
     copyFailed: '复制失败，请手动复制',
     deleteFailed: '删除失败，请重试',
   },

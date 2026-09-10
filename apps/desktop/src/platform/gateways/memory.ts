@@ -37,6 +37,34 @@ const DEFAULT_SEED: Record<string, string> = {
     '# Welcome to NekoWite (demo)\n\nThis is the in-browser demo vault.',
 }
 
+/**
+ * Picked-file payloads for the browser demo.
+ *
+ * The real picker returns absolute paths and the Rust side reads the bytes
+ * itself, so no file content ever crosses IPC. The demo has neither a native
+ * dialog nor a real filesystem: a test queues `path -> base64` here and this
+ * makes `pickImageFiles` hand those paths back, which keeps the whole
+ * pick -> import -> insert flow exercisable in a browser.
+ */
+const demoPickedFiles = new Map<string, string>()
+let demoPickQueue: string[] = []
+
+/** Queue the files the next `dialogs.pickImageFiles()` call should return. */
+export function seedMemoryPickedFiles(files: Record<string, string>): void {
+  for (const [path, base64] of Object.entries(files)) {
+    const name = path.replace(/\\/g, '/').split('/').pop() ?? path
+    demoPickedFiles.set(path, base64)
+    demoPickedFiles.set(name, base64)
+    demoPickQueue.push(path)
+  }
+}
+
+/** Drop every queued demo pick (test isolation). */
+export function resetMemoryPickedFiles(): void {
+  demoPickedFiles.clear()
+  demoPickQueue = []
+}
+
 // Inlined from services/attachments so `platform` never depends back on a
 // service module (docs/dev.md §5.3 forbids platform → service).
 const ATTACHMENT_MIME: Record<string, string> = {
@@ -303,6 +331,14 @@ export function createMemoryFsGateway(
     // Simulated native dialogs: the demo always "picks" the in-memory vault.
     openFolderDialog: async () => 'memoir://demo',
     saveFileDialog: async () => null,
+    // One-shot, like the native dialog: a queued pick is consumed by the call
+    // that reads it, so reopening the picker starts empty instead of
+    // re-importing the previous selection.
+    pickImageFiles: async () => {
+      const next = demoPickQueue
+      demoPickQueue = []
+      return next
+    },
     // Simulated fs-change subscription: emit on the shared event bus to fire it.
     onFsChange: (cb) => events.on<FsChangeEvent>('fs-change', cb),
     saveAttachment: async (_vault, fileName, base64, dir) => {
@@ -321,6 +357,33 @@ export function createMemoryFsGateway(
       // derivation surfaces the attachments tree for free.
       files.set(relPath, base64)
       attachments.set(relPath, base64)
+      modified.set(relPath, Date.now())
+      return relPath
+    },
+    // The demo has no real filesystem, so the picked "path" is the file name
+    // and the payload is whatever the harness stashed for it. This mirrors the
+    // real command's contract (absolute source path in, vault-relative out)
+    // closely enough for the UI flow to be exercised in a browser.
+    importAttachment: async (_vault, sourcePath, dir) => {
+      const name = sourcePath.replace(/\\/g, '/').split('/').pop() ?? ''
+      if (!name) throw new Error(`Picked file has no usable name: ${sourcePath}`)
+      const payload = demoPickedFiles.get(sourcePath) ?? demoPickedFiles.get(name)
+      if (payload === undefined) {
+        throw new Error(`No such picked file in demo vault: ${sourcePath}`)
+      }
+      const cleanDir = dir && dir.trim() ? dir.trim().replace(/^\/+|\/+$/g, '') : ''
+      const targetDir = cleanDir || `attachments/${attachmentMonthDir()}`
+      const dot = name.lastIndexOf('.')
+      const stem = dot > 0 ? name.slice(0, dot) : name
+      const ext = dot > 0 ? name.slice(dot) : ''
+      let relPath = `${targetDir}/${name}`
+      let n = 0
+      while (files.has(relPath) || attachments.has(relPath)) {
+        n += 1
+        relPath = `${targetDir}/${stem}-${n}${ext}`
+      }
+      files.set(relPath, payload)
+      attachments.set(relPath, payload)
       modified.set(relPath, Date.now())
       return relPath
     },
@@ -433,5 +496,6 @@ export function createMemoryDialogPort(fs: FsGateway): DialogPort {
   return {
     openFolderDialog: () => fs.openFolderDialog(),
     saveFileDialog: (defaultName, startDir) => fs.saveFileDialog(defaultName, startDir),
+    pickImageFiles: () => fs.pickImageFiles(),
   }
 }

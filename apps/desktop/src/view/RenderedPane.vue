@@ -11,7 +11,6 @@ import { t } from '../i18n'
 import RenderSearchPanel from './RenderSearchPanel.vue'
 import ImagePanel from '../ui/ImagePanel.vue'
 import TableMenu from '../ui/TableMenu.vue'
-import RenameDialog from '../components/RenameDialog.vue'
 import { createDocumentSession } from '../features/editor/model/documentSession'
 import { createEditorController } from '../features/editor/controller/editorController'
 import { createEditorPersistence } from '../features/editor/controller/editorPersistence'
@@ -19,7 +18,6 @@ import { createEditorExternalSync } from '../features/editor/controller/editorEx
 import { createEditorScrollSync } from '../features/editor/controller/editorScrollSync'
 import { createEditorSearchOverlay } from '../features/editor/controller/editorSearchOverlay'
 import { createEditorSelection } from '../features/editor/controller/editorSelection'
-import { useImagePasteDrop } from '../features/editor/composables/useImagePasteDrop'
 import { useEditorFocus } from '../features/editor/composables/useEditorFocus'
 
 const tabs = useTabsStore()
@@ -77,17 +75,6 @@ const {
 } = useEditorFocus({
   getEditor: () => session.editor,
   getScrollEl: () => scrollEl.value,
-})
-
-const {
-  renamePrompt,
-  onRenameConfirm,
-  onRenameCancel,
-  onPaste,
-  onDrop,
-  onDragOver,
-} = useImagePasteDrop({
-  getEditor: () => session.editor,
 })
 
 let unlistenChange: (() => void) | null = null
@@ -179,14 +166,6 @@ onMounted(async () => {
 
   editorEl.value.addEventListener('pointerdown', onContainerPointerDownCapture, true)
   editorEl.value.addEventListener('click', onEditorClick)
-  // Paste/drop must be captured on the PANE (an ancestor) so they run before
-  // ProseMirror's own at-target handlers on the editor root; otherwise PM
-  // would already have consumed the event (e.g. inserting remote <img> html)
-  // before the attachment pipeline can intercept image files.
-  scrollEl.value?.addEventListener('paste', onPaste, true)
-  scrollEl.value?.addEventListener('drop', onDrop, true)
-  scrollEl.value?.addEventListener('dragover', onDragOver)
-  scrollEl.value?.addEventListener('dragenter', onDragOver)
   window.addEventListener('keydown', onKeydown)
   editorEl.value.addEventListener('keydown', onFocusKeydown)
   editorEl.value.addEventListener('pointerdown', onFocusPointerdown)
@@ -223,10 +202,6 @@ onBeforeUnmount(() => {
   editorEl.value?.removeEventListener('click', onEditorClick)
   editorEl.value?.removeEventListener('keydown', onFocusKeydown)
   editorEl.value?.removeEventListener('pointerdown', onFocusPointerdown)
-  scrollEl.value?.removeEventListener('paste', onPaste, true)
-  scrollEl.value?.removeEventListener('drop', onDrop, true)
-  scrollEl.value?.removeEventListener('dragover', onDragOver)
-  scrollEl.value?.removeEventListener('dragenter', onDragOver)
   window.removeEventListener('keydown', onKeydown)
   unlistenChange?.()
   unlistenOverlayRefresh?.()
@@ -319,12 +294,6 @@ watch(
         {{ t('spell.noSuggestions') }}
       </div>
     </div>
-    <RenameDialog
-      v-if="renamePrompt"
-      :initial="renamePrompt.initial"
-      @confirm="onRenameConfirm"
-      @cancel="onRenameCancel"
-    />
   </div>
 </template>
 

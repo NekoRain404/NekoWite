@@ -42,7 +42,11 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
    *  In source mode it stays mounted (v-show) but is hidden, and the source
    *  pane owns the text — feeding its edits through the Markdown serializer
    *  here would write the canonicalized result back into the tab and replace
-   *  the document the user is typing in. */
+   *  the document the user is typing in.
+   *
+   *  Split mode keeps the preview live on purpose: the model follows source
+   *  edits, and `editorPersistence` is what stops the serializer's output from
+   *  being pushed back over the raw Markdown (see `isSourceAuthored`). */
   function renderedPaneOwnsText(): boolean {
     return view.mode !== 'source'
   }

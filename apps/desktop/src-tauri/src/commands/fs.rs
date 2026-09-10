@@ -203,6 +203,47 @@ pub async fn save_file_dialog(
     }))
 }
 
+/// Native multi-select image picker. Returns the absolute paths the user chose
+/// (empty when the dialog was cancelled), filtered to the image extensions the
+/// import path accepts so an "All files" selection cannot smuggle a
+/// non-image into the vault.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn pick_image_files(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    use tauri_plugin_dialog::FilePath;
+    let picked = app
+        .dialog()
+        .file()
+        .add_filter("Images", file_store::IMPORT_IMAGE_EXTENSIONS)
+        .blocking_pick_files();
+    let Some(paths) = picked else {
+        return Ok(Vec::new());
+    };
+    Ok(paths
+        .into_iter()
+        .filter_map(|p| match p {
+            FilePath::Path(p) => Some(p),
+            _ => None,
+        })
+        .filter(|p| file_store::is_importable_image(p))
+        .map(|p| p.to_string_lossy().to_string())
+        .collect())
+}
+
+/// Copy a user-picked image into the vault's assets directory and return its
+/// vault-relative path. The bytes move backend-side (no base64 IPC hop) and the
+/// destination is still confined to the opened vault.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn import_attachment(
+    vault: String,
+    source_path: String,
+    dir: String,
+    state: tauri::State<'_, VaultRegistry>,
+) -> Result<String, String> {
+    require_opened_vault(&state, &vault)?;
+    file_store::import_attachment(&vault, &source_path, &dir)
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub async fn watch_folder(
     app: tauri::AppHandle,

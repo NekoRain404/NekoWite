@@ -67,6 +67,11 @@ export interface FsPort {
    * `notes/foo_assets` or `.tmp`); when omitted the legacy
    * `attachments/{YYYY-MM}` layout is used. */
   saveAttachment(vault: string, fileName: string, base64: string, dir?: string): Promise<string>
+  /** Copy an image the user picked from disk into the vault, returning its
+   * vault-relative path. `sourcePath` is an absolute path returned by
+   * {@link DialogPort.pickImageFiles}; the bytes never cross the IPC boundary.
+   * `dir` is the optional vault-relative target directory. */
+  importAttachment(vault: string, sourcePath: string, dir?: string): Promise<string>
   /** Turn a vault-relative attachment path into a URL usable as <img src>. */
   resolveMediaPath(vault: string, relPath: string): Promise<string>
   /** Create a directory (with parents) inside the vault; returns its
@@ -81,6 +86,9 @@ export interface FsPort {
 export interface DialogPort {
   openFolderDialog(): Promise<string | null>
   saveFileDialog(defaultName: string, startDir?: string): Promise<string | null>
+  /** Native multi-select image picker. Returns the absolute paths chosen, or an
+   * empty array when the dialog was cancelled. */
+  pickImageFiles(): Promise<string[]>
 }
 
 /**

@@ -1,6 +1,8 @@
 import { emitLifecycle } from '@nekowite/plugin-host'
 import { debounce } from '../../../services/timing'
 import { useTabsStore } from '../../../stores/tabs'
+import { clearSourceAuthored, isSourceAuthored } from '../../../services/editorOwnership'
+import { getSourceViewHandle } from '../../../services/sourceView'
 import type { DocumentSession } from '../model/documentSession'
 
 export interface EditorPersistenceDeps {
@@ -45,6 +47,17 @@ export function createEditorPersistence(deps: EditorPersistenceDeps): EditorPers
     const markdown = await editor.save()
     if (tabs.activeTab?.id !== active.id) return
     if (myGen !== deps.session.gen) return
+    // Publish anything the source pane is still coalescing before reading the
+    // tab. Without this a keystroke that has not cleared the host's debounce
+    // window is invisible here, and the model's older serialization would be
+    // written over it — the "my last character disappeared" family.
+    getSourceViewHandle()?.flush()
+    // The tab currently holds text the source pane authored and the model has
+    // not caught up with, so this serialization is stale: writing it would
+    // replace the raw Markdown under the user's caret. Note this is about the
+    // text, not the mode — a rendered-pane edit still in flight when the view
+    // switches to source must land, or that edit would be lost.
+    if (isSourceAuthored(active.content)) return
     // The model has not moved since the last snapshot (a re-open / external
     // apply only re-loaded the same text) — there is nothing new to persist.
     // Writing it back here would push the serializer's canonical form into the
@@ -72,6 +85,9 @@ export function createEditorPersistence(deps: EditorPersistenceDeps): EditorPers
       if (deps.session.applyingExternal || !deps.session.editor) return
       const active = tabs.activeTab
       if (!active) return
+      // A real rendered-pane edit: the model authors the text again, so the
+      // source pane's authored marker no longer describes the tab.
+      clearSourceAuthored()
       // Keep the dirty flag & autosave timer per-keystroke (cheap, and the save
       // state must reflect each edit immediately), but defer the expensive
       // full-document serialization until the typing burst settles.

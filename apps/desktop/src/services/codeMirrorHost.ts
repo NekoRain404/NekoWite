@@ -33,6 +33,8 @@ export interface CodeMirrorHostHandle {
   getView(): EditorView | null
   /** Emit any pending debounced edit immediately; returns the doc text. */
   flush(): string
+  /** True while a local edit is still waiting for its debounce window. */
+  hasPendingEdit(): boolean
   /** Hot-swap the extension set (props changes) via the Compartment. */
   reconfigure(extensions: Extension[]): void
   /**
@@ -125,5 +127,13 @@ export function createCodeMirrorHost(options: CodeMirrorHostOptions): CodeMirror
     view = null
   }
 
-  return { mount, getView: () => view, flush, reconfigure, setText, destroy }
+  return {
+    mount,
+    getView: () => view,
+    flush,
+    hasPendingEdit: () => timer !== null,
+    reconfigure,
+    setText,
+    destroy,
+  }
 }

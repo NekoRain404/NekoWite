@@ -81,6 +81,16 @@ pub fn resolve_within_rel(base: &str, requested: &str) -> Result<(PathBuf, Strin
         .map_err(|_| "path escapes vault".to_string())?
         .to_string_lossy()
         .to_string();
+    // The relative half is the *vault-relative* form, not an OS path: every
+    // caller hands it back to the frontend, which joins it into markdown image
+    // URLs, compares it against file-tree paths and encodes it into
+    // history/trash keys — all of which assume `/`. Windows joins with `\`, so
+    // normalise here once instead of at each of the call sites.
+    let relative = if std::path::MAIN_SEPARATOR == '\\' {
+        relative.replace('\\', "/")
+    } else {
+        relative
+    };
     Ok((canonical, relative))
 }
 

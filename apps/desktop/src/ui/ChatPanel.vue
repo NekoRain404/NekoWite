@@ -15,6 +15,7 @@ import {
 import { startChatCompletion, aiService } from '../services/ai'
 import { notifyError } from '../services/errors'
 import { editorSessionManager } from '../features/editor/sessionManager'
+import { insertMarkdownAtCursor } from '../services/editorInsert'
 import { collectClipboardImages, isImageFile } from '../services/attachments'
 import { useSettingsStore } from '../stores/settings'
 import { useTabsStore } from '../stores/tabs'
@@ -340,13 +341,11 @@ function clearAll(): void {
 
 async function insertIntoDocument(msg: ChatMessage): Promise<void> {
   if (!tabs.activeTab) return
-  const editor = editorSessionManager.getActiveEditor()
-  if (!editor) {
-    notifyError(t('chat.editorNotReady'))
-    return
-  }
   try {
-    await editor.insertMarkdownAtCursor(`\n\n${msg.content}\n\n`)
+    // Mode-aware: in source mode the message has to land in the CodeMirror
+    // text rather than in the hidden rendered model.
+    const inserted = await insertMarkdownAtCursor(`\n\n${msg.content}\n\n`)
+    if (inserted === false) notifyError(t('chat.editorNotReady'))
   } catch {
     notifyError(t('chat.insertFailed'))
   }

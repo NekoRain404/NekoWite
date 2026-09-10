@@ -3,7 +3,7 @@ import { TextSelection } from '@milkdown/prose/state'
 
 import { createEditor } from './editor'
 import type { NekoEditor } from './editor'
-import { registerBuiltinCommands } from './commands'
+import { registerBuiltinCommands, setImageInsertHandler } from './commands'
 import { runBuiltinCommandOn } from './commands'
 import { getCommand } from './registry'
 
@@ -160,8 +160,33 @@ describe('builtin toolbar commands', () => {
     expect(await save()).toContain('[Hello](https://)')
   })
 
-  it('image inserts an image node', async () => {
+  it('image inserts a placeholder node when no host handler is registered', async () => {
     const { editor, save } = await setup('')
+    runBuiltinCommandOn('image', editor.getView())
+    expect(await save()).toContain('![')
+  })
+
+  it('image delegates to the host handler and inserts nothing itself', async () => {
+    const { editor, save } = await setup('')
+    let calls = 0
+    setImageInsertHandler(() => {
+      calls += 1
+    })
+    try {
+      runBuiltinCommandOn('image', editor.getView())
+      expect(calls).toBe(1)
+      // The handler owns the insert: a placeholder must not also land in the
+      // document, or every pick would add a stray broken image.
+      expect(await save()).not.toContain('![')
+    } finally {
+      setImageInsertHandler(null)
+    }
+  })
+
+  it('image falls back to the placeholder once the handler is cleared', async () => {
+    const { editor, save } = await setup('')
+    setImageInsertHandler(() => undefined)
+    setImageInsertHandler(null)
     runBuiltinCommandOn('image', editor.getView())
     expect(await save()).toContain('![')
   })
