@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
-import { getCommand, setImageInsertHandler } from '@nekowite/editor-core'
+import { setImageInsertHandler } from '@nekowite/editor-core'
 import { FileText } from 'lucide-vue-next'
 import { useViewStore, SPLIT_RATIO_DEFAULT, SPLIT_RATIO_MAX, SPLIT_RATIO_MIN } from '../stores/view'
 import { useTabsStore } from '../stores/tabs'
@@ -11,8 +11,10 @@ import WordToolbar from '../components/WordToolbar.vue'
 import FloatToolbar from '../components/FloatToolbar.vue'
 import RenameDialog from '../components/RenameDialog.vue'
 import { useImageIntake } from '../features/editor/composables/useImageIntake'
-import { getSourceView, sourceViewHasFocus } from '../services/sourceView'
-import { runSourceCommand } from '../services/sourceCommands'
+import { runEditorCommand } from '../services/runEditorCommand'
+import { useFloatStore } from '../stores/float'
+import { getSourceView } from '../services/sourceView'
+import { noteFocusedPane, resetFocusedPane } from '../services/editorOwnership'
 import { t } from '../i18n'
 
 // The source (CodeMirror) pane is loaded only when the user actually needs it.
@@ -35,6 +37,7 @@ const SourcePane = defineAsyncComponent(() => import('../view/SourcePane.vue'))
 
 const view = useViewStore()
 const tabs = useTabsStore()
+const floatStore = useFloatStore()
 
 const hasTab = computed(() => tabs.activeTab !== null)
 
@@ -139,6 +142,17 @@ watch(
   },
 )
 
+// The floating-box toolbar lives on the shared pane container, so it stays on
+// screen in source mode even though the element it operates on is hidden. Its
+// buttons edit the rendered model, which source mode does not own, so the
+// selection is dropped rather than offering controls that cannot work.
+watch(
+  () => view.mode,
+  (mode) => {
+    if (mode === 'source') floatStore.select(null)
+  },
+)
+
 let resizing = false
 
 function onSplitResizeStart(): void {
@@ -202,45 +216,38 @@ watch(
 )
 
 /**
- * True when the CodeMirror pane is the one holding the user's input, so the
- * Markdown-level command implementations must be used instead of the
- * ProseMirror ones (which would edit the hidden, stale rendered model).
+ * Dispatch a toolbar command through the shared, mode-aware runner so the
+ * button does the same thing in every view mode (the palette and the plugin
+ * buttons use the same entry point).
  */
-function sourceOwnsCommand(): boolean {
-  if (view.mode === 'source') return true
-  return view.mode === 'split' && sourceViewHasFocus()
-}
-
 function handleCommand(id: string): void {
-  if (sourceOwnsCommand()) {
-    // The image button needs bytes from outside the editor in every mode, so
-    // it goes to the picker before the text-transform lookup.
-    if (id === 'image') {
-      void insertImagesFromPicker()
-      return
-    }
-    const sourceView = getSourceView()
-    if (sourceView && runSourceCommand(sourceView, id)) return
-  }
-  const cmd = getCommand(id)
-  if (cmd) {
-    cmd.run()
-    return
-  }
-  // Surface-only: concrete markdown actions for builtin buttons are
-  // completed in Tasks 10/13. No-op safely here.
+  runEditorCommand(id)
 }
 
 function onKeydown(e: KeyboardEvent): void {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault()
-    // The source pane coalesces edits for a frame before writing them to the
-    // tab, so an immediate Ctrl+S could otherwise persist the text from before
-    // the last keystroke. Flushing first makes the save see the live document;
-    // it is a no-op when nothing is pending.
-    sourcePane.value?.getText()
+    // saveTab flushes the source pane itself, so the save always sees the live
+    // document.
     void tabs.saveActive()
   }
+}
+
+/**
+ * Remember which editor pane the user is working in, so a command invoked from
+ * a surface that takes focus itself (the command palette, a toolbar button)
+ * still targets the right pane.
+ */
+function onFocusIn(e: FocusEvent): void {
+  const target = e.target as Node | null
+  if (!target) return
+  const sourceDom = getSourceView()?.dom
+  if (sourceDom && sourceDom.contains(target)) {
+    noteFocusedPane('source')
+    return
+  }
+  const renderedEl = panesEl.value?.querySelector('.pane.rendered')
+  if (renderedEl && renderedEl.contains(target)) noteFocusedPane('rendered')
 }
 
 /**
@@ -256,6 +263,7 @@ function attachPaneListeners(el: HTMLElement | null): void {
     listenersOn.removeEventListener('drop', onDrop, true)
     listenersOn.removeEventListener('dragover', onDragOver)
     listenersOn.removeEventListener('dragenter', onDragOver)
+    listenersOn.removeEventListener('focusin', onFocusIn)
   }
   listenersOn = el
   if (!el) return
@@ -266,6 +274,7 @@ function attachPaneListeners(el: HTMLElement | null): void {
   el.addEventListener('drop', onDrop, true)
   el.addEventListener('dragover', onDragOver)
   el.addEventListener('dragenter', onDragOver)
+  el.addEventListener('focusin', onFocusIn)
 }
 
 watch(panesEl, (el) => attachPaneListeners(el))
@@ -280,6 +289,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   attachPaneListeners(null)
   setImageInsertHandler(null)
+  resetFocusedPane()
   window.removeEventListener('keydown', onKeydown)
 })
 </script>

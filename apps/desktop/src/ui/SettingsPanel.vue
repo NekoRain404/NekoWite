@@ -16,6 +16,7 @@ import { useRefsStore } from '../stores/refs'
 import { exportHtml, exportToPdf } from '../services/export'
 import { exportBaseName } from '../services/exportName'
 import { fsService } from '../platform/gateways/fs'
+import { flushSourceEdits } from '../services/sourceView'
 import { describeExportError, notifyError } from '../services/errors'
 import { isPathWithinVault } from '../services/attachments'
 import { useSettingsStore } from '../stores/settings'
@@ -208,6 +209,8 @@ async function onExportHtml(): Promise<void> {
     return
   }
   try {
+    // The tab lags the source pane by its debounce window; export the live text.
+    flushSourceEdits()
     await exportHtml(tab.content, vault ?? '', savePath, { title: exportBaseName(tab.path), refs: refsMap() })
   } catch (e) {
     // Belt-and-braces: if the backend still rejects (e.g. a symlink resolved
@@ -219,6 +222,7 @@ async function onExportHtml(): Promise<void> {
 function onExportPdf(): void {
   const tab = tabs.activeTab
   if (!tab) return
+  flushSourceEdits()
   exportToPdf(tab.content, { title: exportBaseName(tab.path), refs: refsMap() })
 }
 </script>

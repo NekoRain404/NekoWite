@@ -320,13 +320,28 @@ export async function sourceCaretToEnd(page: Page): Promise<void> {
     .toBeGreaterThanOrEqual(0)
 }
 
-/** Click a rendered paragraph and wait until the caret is inside the editor. */
+/**
+ * Click a rendered paragraph and wait until the caret is inside the editor.
+ *
+ * A paragraph spans the whole content column, so a click near its right edge
+ * lands in blank space whose caret mapping is only unambiguous once the pane
+ * has settled. The click is retried so a lost race cannot turn into a caret in
+ * the wrong block.
+ */
 export async function focusParagraph(page: Page, index: number): Promise<void> {
   const paragraph = page.locator('.pane.rendered .ProseMirror p').nth(index)
-  await paragraph.click()
-  await expect
-    .poll(async () => (await renderedCaret(page)).path, { timeout: 5000 })
-    .toContain('P')
+  await expect(paragraph).toBeVisible()
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await paragraph.click()
+    try {
+      await expect
+        .poll(async () => (await renderedCaret(page)).path, { timeout: 1000, intervals: [40] })
+        .toContain('P')
+      break
+    } catch (error) {
+      if (attempt === 2) throw error
+    }
+  }
   await waitForRenderedCaretSettle(page)
 }
 
@@ -370,6 +385,69 @@ export async function focusHeadingEnd(page: Page): Promise<void> {
   await expect
     .poll(async () => (await renderedCaret(page)).path, { timeout: 5000 })
     .toMatch(/H1>(?:SPAN>)?#text$/)
+  await waitForRenderedCaretSettle(page)
+}
+
+/**
+ * Place the rendered caret at a character offset inside the Nth paragraph,
+ * through the editor's own model.
+ *
+ * Reaching a specific offset by clicking and then arrowing is a chain of
+ * six input events, each of which must be resolved against a selection
+ * ProseMirror has already adopted; under load a single lost press moves the
+ * caret a paragraph away. Tests that assert on an exact caret position use
+ * this instead, so the starting point is exact by construction.
+ */
+export async function placeRenderedCaretInParagraph(
+  page: Page,
+  paragraphIndex: number,
+  offset: number,
+): Promise<void> {
+  await page.evaluate(
+    async ({ index, at }) => {
+      const mod = (await import('/src/features/editor/sessionManager.ts')) as unknown as {
+        editorSessionManager: { getView(): unknown }
+      }
+      const view = mod.editorSessionManager.getView() as {
+        dom: HTMLElement
+        posAtDOM(node: Node, offset: number): number
+        state: {
+          doc: { resolve(position: number): unknown }
+          selection: { constructor: { near(pos: unknown, bias?: number): unknown } }
+          tr: { setSelection(selection: unknown): unknown }
+        }
+        dispatch(tr: unknown): void
+        focus(): void
+      } | null
+      if (!view) return
+      const paragraphs = Array.from(
+        view.dom.querySelectorAll(':scope > p'),
+      ) as HTMLElement[]
+      const element = paragraphs[index]
+      if (!element) return
+      // Walk to the character at `at` within the paragraph's text, then let
+      // ProseMirror map that DOM position back into the document.
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+      let node = walker.nextNode()
+      let remaining = at
+      let target: { node: Node; offset: number } | null = null
+      while (node) {
+        const length = node.textContent?.length ?? 0
+        if (remaining <= length) {
+          target = { node, offset: remaining }
+          break
+        }
+        remaining -= length
+        node = walker.nextNode()
+      }
+      if (!target) return
+      const pos = view.posAtDOM(target.node, target.offset)
+      const Selection = view.state.selection.constructor
+      view.dispatch(view.state.tr.setSelection(Selection.near(view.state.doc.resolve(pos), 1)))
+      view.focus()
+    },
+    { index: paragraphIndex, at: offset },
+  )
   await waitForRenderedCaretSettle(page)
 }
 

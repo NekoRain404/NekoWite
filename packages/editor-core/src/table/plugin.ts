@@ -3,7 +3,7 @@ import { editorViewCtx, EditorViewReady } from '@milkdown/core'
 import type { Node, Schema } from '@milkdown/prose/model'
 import type { EditorView } from '@milkdown/prose/view'
 
-import { registerCommand, registerToolbar } from '../registry'
+import { registerCommand, registerMarkdownCommand, registerToolbar } from '../registry'
 import { openTableDialog } from './dialog'
 
 export const TABLE_COMMAND_ID = 'table.insert'
@@ -57,6 +57,9 @@ function insertTableAtCursor(): void {
 export function tableFeature(): void {
   registerCommand({ id: TABLE_COMMAND_ID, run: insertTableAtCursor })
   registerToolbar({ id: TABLE_COMMAND_ID, label: 'Table', run: insertTableAtCursor })
+  // Source mode: the dialog steps a table grid, but there is no grid to step
+  // without the rendered editor, so a default 3x3 Markdown table is inserted.
+  registerMarkdownCommand(TABLE_COMMAND_ID, () => `\n${tableMarkdown(3, 3)}\n`)
 }
 
 export const tableFeaturePlugin: MilkdownPlugin = (ctx) => {

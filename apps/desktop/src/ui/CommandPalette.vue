@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Component } from 'vue'
-import { BUILTIN_COMMAND_IDS, getCommand, getToolbar, listCommands } from '@nekowite/editor-core'
+import { BUILTIN_COMMAND_IDS, getToolbar, listCommands } from '@nekowite/editor-core'
+import { runEditorCommand } from '../services/runEditorCommand'
 import { FileText, Search } from 'lucide-vue-next'
 import { useTabsStore } from '../stores/tabs'
 import { fsService } from '../platform/gateways/fs'
@@ -62,9 +63,12 @@ const commandEntries = computed<PaletteEntry[]>(() => {
       run,
     })
   }
-  for (const id of BUILTIN_COMMAND_IDS) add(id, () => getCommand(id)?.run())
-  for (const cmd of listCommands()) add(cmd.id, () => getCommand(cmd.id)?.run())
-  for (const item of getToolbar()) add(item.id, item.run, item.label)
+  // Every command goes through the mode-aware runner: these are ProseMirror
+  // commands (or plugin commands resolving the rendered view), so in source
+  // mode they would otherwise edit the hidden model and appear to do nothing.
+  for (const id of BUILTIN_COMMAND_IDS) add(id, () => runEditorCommand(id))
+  for (const cmd of listCommands()) add(cmd.id, () => runEditorCommand(cmd.id))
+  for (const item of getToolbar()) add(item.id, () => runEditorCommand(item.id), item.label)
   return [...byId.values()]
 })
 

@@ -2,8 +2,9 @@ import { editorViewCtx, EditorViewReady } from '@milkdown/core'
 import type { MilkdownPlugin } from '@milkdown/ctx'
 import type { EditorView } from '@milkdown/prose/view'
 
-import { registerCommand, registerToolbar } from '../registry'
+import { registerCommand, registerMarkdownCommand, registerToolbar } from '../registry'
 import { openMathDialog } from './dialog'
+import { mathToMarkdown } from './nodes'
 
 export const MATH_COMMAND_ID = 'math.insert'
 
@@ -32,6 +33,12 @@ export function mathFeature(): void {
   }
   registerCommand({ id: MATH_COMMAND_ID, run })
   registerToolbar({ id: MATH_COMMAND_ID, label: '∑ f(x)', run })
+  // Source mode has no math node: insert the display-math Markdown with the
+  // caret inside the delimiters, ready for the LaTeX to be typed.
+  registerMarkdownCommand(MATH_COMMAND_ID, () => {
+    const text = mathToMarkdown('', 'display')
+    return { text, caret: text.indexOf('\n') + 1 }
+  })
 }
 
 export const mathFeaturePlugin: MilkdownPlugin = (ctx) => {

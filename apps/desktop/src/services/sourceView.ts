@@ -50,6 +50,22 @@ export function getSourceViewHandle(): SourceViewHandle | null {
   return handle
 }
 
+/**
+ * Publish any source-pane edit still inside the host's debounce window.
+ *
+ * `tab.content` lags a keystroke by up to that window, so anything that reads
+ * the document for a one-shot purpose — saving it, exporting it, sending it to
+ * the model — must flush first or it works from text that is already stale.
+ * Safe to call at any time; it is a no-op with nothing pending.
+ */
+export function flushSourceEdits(): void {
+  try {
+    handle?.flush()
+  } catch {
+    // A torn-down host must not break the save/export that called us.
+  }
+}
+
 /** The live source view, or null while the source pane is not mounted. */
 export function getSourceView(): EditorView | null {
   if (!handle) return null

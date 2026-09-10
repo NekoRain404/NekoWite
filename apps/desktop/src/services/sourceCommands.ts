@@ -87,12 +87,20 @@ function trimmedRange(view: EditorView, from: number, to: number): { from: numbe
   return { from, to: end }
 }
 
-/** Replace the selection with `insert`, leaving the caret after it. */
-export function insertSourceText(view: EditorView, insert: string): void {
+/**
+ * Replace the selection with `insert`.
+ *
+ * `caret` places the cursor inside the inserted text (an offset from the start);
+ * it defaults to the end, which is what a plain paste wants. A template that
+ * the user is meant to fill in — a math block, an MDX component — parks the
+ * caret where the content goes.
+ */
+export function insertSourceText(view: EditorView, insert: string, caret?: number): void {
+  const offset = caret === undefined ? insert.length : Math.max(0, Math.min(caret, insert.length))
   view.dispatch(
     view.state.changeByRange((range) => ({
       changes: { from: range.from, to: range.to, insert },
-      range: EditorSelection.cursor(range.from + insert.length),
+      range: EditorSelection.cursor(range.from + offset),
     })),
   )
   view.focus()

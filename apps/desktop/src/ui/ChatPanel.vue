@@ -16,6 +16,7 @@ import { startChatCompletion, aiService } from '../services/ai'
 import { notifyError } from '../services/errors'
 import { editorSessionManager } from '../features/editor/sessionManager'
 import { insertMarkdownAtCursor } from '../services/editorInsert'
+import { flushSourceEdits } from '../services/sourceView'
 import { collectClipboardImages, isImageFile } from '../services/attachments'
 import { useSettingsStore } from '../stores/settings'
 import { useTabsStore } from '../stores/tabs'
@@ -98,6 +99,9 @@ function activeSelection(): string {
 function buildActiveContext(): string {
   const tab = tabs.activeTab
   if (!tab) return ''
+  // The note is sent to the model as context; flush so it is the live text
+  // rather than whatever the source pane had published a debounce window ago.
+  flushSourceEdits()
   const title = frontmatterTitle(tab.content) || noteTitleFromPath(tab.path)
   return buildContextBlock({
     noteTitle: title,

@@ -8,6 +8,7 @@ import {
   focusParagraph,
   sourceCaretToEnd,
   modelMarkdown,
+  placeRenderedCaretInParagraph,
   waitForRenderedCaretSettle,
 } from './support/editorHarness'
 
@@ -47,14 +48,10 @@ async function composeAndCommit(page: Page, preedit: string, committed: string):
 test.describe('rendered pane - IME composition', () => {
   test('a committed CJK syllable lands once, in order, without moving earlier text', async ({ page }) => {
     await openNote(page)
-    await focusParagraph(page, 0)
-    // Park the caret after "alpha" with the keyboard. A click resolves against
-    // a hit test (the paragraph spans the whole column, so its centre is past
-    // the text); the caret position is what this test is built on, so it is set
-    // deterministically.
-    await page.keyboard.press('Home')
-    for (let i = 0; i < 5; i += 1) await page.keyboard.press('ArrowRight')
-    await waitForRenderedCaretSettle(page)
+    // Park the caret after "alpha" through the model: the position is what this
+    // test is built on, and reaching it by click-then-arrow is a chain of input
+    // events that can drop one under load.
+    await placeRenderedCaretInParagraph(page, 0, 5)
 
     // Type latin first so a caret reset would be obvious in the model.
     await page.keyboard.type('ab')

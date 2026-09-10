@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { emitLifecycle, getActiveEditor } from '@nekowite/plugin-host'
 import { armSuppressReapply } from '../services/suppressReapply'
 import { fsService } from '../platform/gateways/fs'
+import { flushSourceEdits } from '../services/sourceView'
 import { persistence } from '../services/persistence'
 import type { HistoryEntry } from '../platform/gateways/contracts'
 import { notifyError, notifyRecovery } from '../services/errors'
@@ -348,6 +349,10 @@ export const useTabsStore = defineStore('tabs', () => {
     if (t.pendingAssetPaths.length > 0) {
       await relocatePendingAssets(t, vault.value, path)
     }
+    // The source pane coalesces keystrokes before publishing them to the tab,
+    // so flush first: every save path (explicit, autosave, close) must persist
+    // the live document, not one that is a debounce window behind.
+    flushSourceEdits()
     const editor = getActiveEditor()
     const contentAtStart = t.content
     const next = emitLifecycle('onSave', editor, t.content)
