@@ -64,6 +64,8 @@ pub fn run() {
             commands::fs::register_vault,
             commands::fs::open_folder_dialog,
             commands::fs::save_file_dialog,
+            commands::fs::pick_image_files,
+            commands::fs::import_attachment,
             commands::fs::watch_folder,
             commands::ai::ai_complete,
             commands::ai::ai_cancel,

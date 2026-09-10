@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
-import { getCommand } from '@nekowite/editor-core'
+import { getCommand, setImageInsertHandler } from '@nekowite/editor-core'
 import { FileText } from 'lucide-vue-next'
 import { useViewStore, SPLIT_RATIO_DEFAULT, SPLIT_RATIO_MAX, SPLIT_RATIO_MIN } from '../stores/view'
 import { useTabsStore } from '../stores/tabs'
@@ -9,6 +9,10 @@ import RenderedPane from '../view/RenderedPane.vue'
 import LayoutResizeHandle from './LayoutResizeHandle.vue'
 import WordToolbar from '../components/WordToolbar.vue'
 import FloatToolbar from '../components/FloatToolbar.vue'
+import RenameDialog from '../components/RenameDialog.vue'
+import { useImageIntake } from '../features/editor/composables/useImageIntake'
+import { getSourceView, sourceViewHasFocus } from '../services/sourceView'
+import { runSourceCommand } from '../services/sourceCommands'
 import { t } from '../i18n'
 
 // The source (CodeMirror) pane is loaded only when the user actually needs it.
@@ -36,7 +40,22 @@ const hasTab = computed(() => tabs.activeTab !== null)
 
 const sourcePane = ref<SourcePaneExpose | null>(null)
 const renderedPane = ref<InstanceType<typeof RenderedPane> | null>(null)
+const panesEl = ref<HTMLElement | null>(null)
 let syncing = false
+
+// Image intake (paste / drop / file picker) is shared by both panes, so it is
+// registered on the common ancestor rather than inside the rendered pane: the
+// source pane used to have no handler at all, which is why pasting an image in
+// source mode fell through to the raw-text paste.
+const {
+  renamePrompt,
+  onRenameConfirm,
+  onRenameCancel,
+  onPaste,
+  onDrop,
+  onDragOver,
+  insertImagesFromPicker,
+} = useImageIntake()
 
 interface ScrollPane {
   getRatio(): number
@@ -182,7 +201,27 @@ watch(
   },
 )
 
+/**
+ * True when the CodeMirror pane is the one holding the user's input, so the
+ * Markdown-level command implementations must be used instead of the
+ * ProseMirror ones (which would edit the hidden, stale rendered model).
+ */
+function sourceOwnsCommand(): boolean {
+  if (view.mode === 'source') return true
+  return view.mode === 'split' && sourceViewHasFocus()
+}
+
 function handleCommand(id: string): void {
+  if (sourceOwnsCommand()) {
+    // The image button needs bytes from outside the editor in every mode, so
+    // it goes to the picker before the text-transform lookup.
+    if (id === 'image') {
+      void insertImagesFromPicker()
+      return
+    }
+    const sourceView = getSourceView()
+    if (sourceView && runSourceCommand(sourceView, id)) return
+  }
   const cmd = getCommand(id)
   if (cmd) {
     cmd.run()
@@ -195,15 +234,52 @@ function handleCommand(id: string): void {
 function onKeydown(e: KeyboardEvent): void {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault()
+    // The source pane coalesces edits for a frame before writing them to the
+    // tab, so an immediate Ctrl+S could otherwise persist the text from before
+    // the last keystroke. Flushing first makes the save see the live document;
+    // it is a no-op when nothing is pending.
+    sourcePane.value?.getText()
     void tabs.saveActive()
   }
 }
 
+/**
+ * Paste/drop listeners are attached to the pane container, which is created
+ * together with the first tab, so they follow the element rather than
+ * mount order (an empty app has no `.panes` to attach to yet).
+ */
+let listenersOn: HTMLElement | null = null
+function attachPaneListeners(el: HTMLElement | null): void {
+  if (listenersOn === el) return
+  if (listenersOn) {
+    listenersOn.removeEventListener('paste', onPaste, true)
+    listenersOn.removeEventListener('drop', onDrop, true)
+    listenersOn.removeEventListener('dragover', onDragOver)
+    listenersOn.removeEventListener('dragenter', onDragOver)
+  }
+  listenersOn = el
+  if (!el) return
+  // Capture phase, on an ancestor of both panes: this must run before
+  // ProseMirror's and CodeMirror's own at-target handlers, or an image paste
+  // would already have been consumed as HTML / a file path.
+  el.addEventListener('paste', onPaste, true)
+  el.addEventListener('drop', onDrop, true)
+  el.addEventListener('dragover', onDragOver)
+  el.addEventListener('dragenter', onDragOver)
+}
+
+watch(panesEl, (el) => attachPaneListeners(el))
+
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
+  // The `image` toolbar / palette command has no way to reach the clipboard or
+  // the file picker from editor-core; this is the host side of that hook.
+  setImageInsertHandler(() => void insertImagesFromPicker())
 })
 
 onBeforeUnmount(() => {
+  attachPaneListeners(null)
+  setImageInsertHandler(null)
   window.removeEventListener('keydown', onKeydown)
 })
 </script>
@@ -213,6 +289,7 @@ onBeforeUnmount(() => {
     <template v-if="hasTab">
       <WordToolbar @command="handleCommand" />
       <div
+        ref="panesEl"
         class="panes"
         :class="view.mode"
       >
@@ -243,6 +320,12 @@ onBeforeUnmount(() => {
         />
         <FloatToolbar />
       </div>
+      <RenameDialog
+        v-if="renamePrompt"
+        :initial="renamePrompt.initial"
+        @confirm="onRenameConfirm"
+        @cancel="onRenameCancel"
+      />
     </template>
     <div
       v-else

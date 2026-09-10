@@ -129,6 +129,7 @@ function run(id: string): void {
       class="toolbar-btn"
       :title="t('toolbar.bold')"
       :aria-label="t('toolbar.bold')"
+      @mousedown.prevent
       @click="run('bold')"
     >
       <Bold
@@ -140,6 +141,7 @@ function run(id: string): void {
       class="toolbar-btn"
       :title="t('toolbar.italic')"
       :aria-label="t('toolbar.italic')"
+      @mousedown.prevent
       @click="run('italic')"
     >
       <Italic
@@ -151,6 +153,7 @@ function run(id: string): void {
       class="toolbar-btn"
       :title="t('toolbar.strike')"
       :aria-label="t('toolbar.strike')"
+      @mousedown.prevent
       @click="run('strike')"
     >
       <Strikethrough
@@ -162,6 +165,7 @@ function run(id: string): void {
       class="toolbar-btn"
       :title="t('toolbar.inlineCode')"
       :aria-label="t('toolbar.inlineCode')"
+      @mousedown.prevent
       @click="run('inline-code')"
     >
       <Code
@@ -174,6 +178,7 @@ function run(id: string): void {
       class="toolbar-btn"
       :title="t('toolbar.link')"
       :aria-label="t('toolbar.link')"
+      @mousedown.prevent
       @click="run('link')"
     >
       <Link
@@ -185,6 +190,7 @@ function run(id: string): void {
       class="toolbar-btn"
       :title="t('toolbar.image')"
       :aria-label="t('toolbar.image')"
+      @mousedown.prevent
       @click="run('image')"
     >
       <ImageIcon
@@ -197,6 +203,7 @@ function run(id: string): void {
       class="toolbar-btn"
       :title="t('toolbar.listUnordered')"
       :aria-label="t('toolbar.listUnordered')"
+      @mousedown.prevent
       @click="run('list-unordered')"
     >
       <List
@@ -208,6 +215,7 @@ function run(id: string): void {
       class="toolbar-btn"
       :title="t('toolbar.listOrdered')"
       :aria-label="t('toolbar.listOrdered')"
+      @mousedown.prevent
       @click="run('list-ordered')"
     >
       <ListOrdered
@@ -219,6 +227,7 @@ function run(id: string): void {
       class="toolbar-btn"
       :title="t('toolbar.listTask')"
       :aria-label="t('toolbar.listTask')"
+      @mousedown.prevent
       @click="run('list-task')"
     >
       <ListTodo
@@ -230,6 +239,7 @@ function run(id: string): void {
       class="toolbar-btn"
       :title="t('toolbar.quote')"
       :aria-label="t('toolbar.quote')"
+      @mousedown.prevent
       @click="run('quote')"
     >
       <Quote
@@ -242,6 +252,7 @@ function run(id: string): void {
       class="toolbar-btn"
       :title="t('toolbar.codeBlock')"
       :aria-label="t('toolbar.codeBlock')"
+      @mousedown.prevent
       @click="run('code-block')"
     >
       <SquareCode
@@ -253,6 +264,7 @@ function run(id: string): void {
       class="toolbar-btn"
       :title="t('toolbar.hr')"
       :aria-label="t('toolbar.hr')"
+      @mousedown.prevent
       @click="run('hr')"
     >
       <Minus
@@ -265,6 +277,7 @@ function run(id: string): void {
       class="toolbar-btn"
       :title="t('toolbar.insertComponent')"
       :aria-label="t('toolbar.insertComponent')"
+      @mousedown.prevent
       @click="run('insert-component')"
     >
       <Braces
@@ -324,6 +337,7 @@ function run(id: string): void {
         class="toolbar-btn"
         :title="item.label"
         :aria-label="item.label"
+        @mousedown.prevent
         @click="item.run()"
       >
         <component

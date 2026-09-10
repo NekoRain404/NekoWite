@@ -68,6 +68,17 @@ git add <files>
 git commit -m "feat(appearance): add crimson palette and four accents"
 ```
 
+### 2026-09-10
+
+- `fix(editor): make image intake work in every view mode` — 修复「源码模式无法粘贴图片」「插入图片不弹文件选择器」及同类的模式假设错误：
+  - 图片粘贴 / 拖放处理器从渲染面板上移到两种视图共用的面板容器（捕获阶段），源码模式同样生效；源码模式插入改为写 CodeMirror 文本。
+  - 新增后端命令 `pick_image_files` / `import_attachment`（原生多选、扩展名白名单、10 MB 上限、字节不过 IPC、目标目录限定在 vault 内、重名加后缀），工具栏与命令面板的「图片」命令改为打开选择器并把所选文件复制进笔记资源目录；`editor-core` 暴露 `setImageInsertHandler` 宿主钩子，未注册时仍插入可见占位节点而不是空 `src` 图片。
+  - 新增 `services/editorInsert.ts`、`services/editorOwnership.ts`、`services/sourceCommands.ts`、`services/sourceView.ts`：按视图模式把「插入 / 工具栏命令 / 焦点归属」路由到真正负责输入的面板；源码模式下内置命令改为等价的 Markdown 文本变换，编辑器不再被按钮抢焦点。
+  - 修复对照模式下源码编辑被序列化结果覆盖（按「标签页文本是否由源码面板产生」判定，并在回写前冲刷源码面板待提交编辑），`Ctrl+S` 前也会冲刷，避免漏存最后一次按键。
+  - 修复 `resolve_within_rel` 在 Windows 上返回反斜杠相对路径的问题（影响图片引用、历史/回收站键），顺带修复该平台此前失败的 3 个附件测试。
+  - 验证：desktop 单元测试 1028 通过（含新增 `sourceCommands`/`editorInsert`/`useImageIntake`/`EditorPane` 用例）；editor-core 281 通过；`cargo test` 除 4 个既有的 Windows 路径分隔符用例（`/etc/passwd` 与 `ends_with("a/b")` 假设，与本改动无关）外全部通过，`cargo clippy -D warnings` 通过；`pnpm -r typecheck`、`pnpm -r lint` 通过；Playwright E2E 全部通过（新增 `e2e/image-insert.spec.ts` 10 项，`editor-input.spec.ts` 连跑 3 轮 96 项稳定）。
+  - 测试基建：`e2e/support/editorHarness.ts` 新增附件/选择器命令 mock 与图片粘贴、拖放、选择器助手；`focusHeadingEnd` 改为点击标题「文本末端」（元素整行宽，右端是空白区，点击映射在布局收敛前会落到下一段），并在测量前等待标题文本完成绘制。
+
 ## 验证与交付
 
 ```bash

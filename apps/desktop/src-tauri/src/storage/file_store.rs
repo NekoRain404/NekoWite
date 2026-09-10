@@ -606,6 +606,89 @@ pub fn decode_base64(data: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("attachment data is not valid base64: {e}"))
 }
 
+/// Largest image the picker-based import accepts, mirroring the frontend's
+/// `MAX_ATTACHMENT_BYTES` so both entry points agree on what "too large" means.
+pub const MAX_IMPORT_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Image extensions the import path accepts. A native file picker is a user
+/// gesture, but the picked path is still an arbitrary filesystem location, so
+/// the set of things we are willing to copy into a vault stays closed: an
+/// allowlist of image extensions, no executables, scripts or archives.
+pub const IMPORT_IMAGE_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "svg", "ico", "tiff", "tif",
+];
+
+/// True when `path`'s extension is on the import allowlist (case-insensitive).
+pub fn is_importable_image(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .is_some_and(|e| IMPORT_IMAGE_EXTENSIONS.contains(&e.as_str()))
+}
+
+/// Copy an image the user picked in the native dialog into the vault,
+/// returning its vault-relative path.
+///
+/// Unlike [`save_attachment`] the bytes never round-trip through the frontend
+/// as base64: the backend reads the source path directly and writes it into the
+/// vault. That keeps a large photo from being encoded (≈4/3 the byte size),
+/// shipped over IPC, decoded and written — and it means the file's real name
+/// and extension are preserved instead of being re-derived from MIME type.
+///
+/// The source path is intentionally outside the vault (that is the point of a
+/// file picker), so it is NOT passed through `resolve_within`. Instead the
+/// destination is confined to the vault by [`resolve_within_rel`] exactly like
+/// [`save_attachment`], the extension is allowlisted, and the size is capped.
+pub fn import_attachment(vault_root: &str, source_path: &str, dir: &str) -> Result<String, String> {
+    let source = Path::new(source_path);
+    if !source.is_absolute() {
+        return Err("picked file path must be absolute".into());
+    }
+    let metadata =
+        std::fs::metadata(source).map_err(|e| format!("picked file not readable: {e}"))?;
+    if !metadata.is_file() {
+        return Err("picked path is not a file".into());
+    }
+    if !is_importable_image(source) {
+        return Err("picked file is not a supported image".into());
+    }
+    if metadata.len() > MAX_IMPORT_BYTES {
+        return Err(format!(
+            "image is larger than the {} MB import limit",
+            MAX_IMPORT_BYTES / (1024 * 1024)
+        ));
+    }
+    let file_name = source
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "picked file has no usable name".to_string())?;
+    // Reuses the same name sanitizer as the paste path, so an odd source name
+    // can never steer the destination out of the target directory.
+    let name = sanitize_attachment_name(file_name)?;
+
+    let _root = resolve_within(vault_root, ".")?;
+    let dir = dir.trim();
+    if Path::new(dir).is_absolute() {
+        return Err("attachment dir must be vault-relative".into());
+    }
+    let dir = if dir.is_empty() || dir == "." { "" } else { dir.trim_matches('/') };
+    let (dir_abs, dir_rel) = if dir.is_empty() {
+        let month = attachment_month_dir();
+        let rel = format!("attachments/{month}");
+        let abs = resolve_within(vault_root, &rel)?;
+        (abs, rel)
+    } else {
+        resolve_within_rel(vault_root, dir)?
+    };
+    std::fs::create_dir_all(&dir_abs).map_err(|e| e.to_string())?;
+    let unique = unique_attachment_name(&name, &dir_abs);
+    let relative = format!("{dir_rel}/{unique}");
+    let target = resolve_within(vault_root, &relative)?;
+    let bytes = std::fs::read(source).map_err(|e| format!("reading picked file failed: {e}"))?;
+    atomic_write_bytes(&target, &bytes)?;
+    Ok(relative)
+}
+
 /// Reduce a pasted/typed attachment name to a bare `stem.ext` file name.
 /// Path separators, `..` runs and extension-less names are rejected, so the
 /// name can never steer the write out of the attachments directory.

@@ -243,6 +243,8 @@ export const en = {
     openDocFirst: 'Open a document first to insert an image',
     editorNotReady: 'Editor is not ready yet, try again shortly',
     insertFailed: 'Failed to insert image, please retry',
+    pickFailed: 'Could not open the file picker, please retry',
+    importFailed: 'Failed to import the image, please retry',
     copyFailed: 'Failed to copy, please copy manually',
     deleteFailed: 'Delete failed, please retry',
   },

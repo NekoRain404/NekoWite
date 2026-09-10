@@ -63,6 +63,8 @@ export const tauriFsPort: FsPort = {
   },
   createDir: (vault, path) => invoke<string>('create_dir', { vault, path }),
   renameEntry: (vault, from, to) => invoke<string>('rename_entry', { vault, from, to }),
+  importAttachment: (vault, sourcePath, dir) =>
+    invoke<string>('import_attachment', { vault, source_path: sourcePath, dir: dir ?? '' }),
 }
 
 export const tauriDialogPort: DialogPort = {
@@ -72,6 +74,7 @@ export const tauriDialogPort: DialogPort = {
       default_name: defaultName,
       start_dir: startDir ?? null,
     }),
+  pickImageFiles: () => invoke<string[]>('pick_image_files'),
 }
 
 export const tauriAiPort: AiPort = {
