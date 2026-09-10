@@ -8,6 +8,7 @@ import type { RecoveryPrompt } from '../services/errors'
 import { useTabsStore } from './tabs'
 import { useSettingsStore } from './settings'
 import { SESSION_KEY } from '../services/session'
+import { setSourceViewHandle } from '../services/sourceView'
 
 const readMock = vi.hoisted(() => vi.fn())
 const writeMock = vi.hoisted(() => vi.fn())
@@ -811,5 +812,61 @@ describe('deleteTabFile (FileTree delete route)', () => {
     await s.deleteTabFile(s.tabs[0].id)
     expect(deleteFileMock).not.toHaveBeenCalled()
     expect(s.tabs).toHaveLength(1)
+  })
+})
+
+describe('saveTab flushes the source pane first', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    resetFsMocks()
+  })
+
+  afterEach(() => {
+    setSourceViewHandle(null)
+  })
+
+  it('persists edits still inside the source pane debounce window', async () => {
+    readMock.mockResolvedValue('start')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    s.markDirty(s.activeId!)
+
+    // The source pane coalesces keystrokes: the tab still holds the old text
+    // while the editor already has the new text. Saving must publish the
+    // pending edit first, or the last keystrokes are lost on disk.
+    setSourceViewHandle({
+      getView: () => null,
+      flush: () => {
+        s.tabs[0].content = 'start plus the pending keystrokes'
+      },
+    })
+    s.tabs[0].content = 'start'
+
+    await s.saveTab(s.activeId!)
+
+    expect(writeMock).toHaveBeenCalledWith(
+      '/vault',
+      '/vault/a.md',
+      'start plus the pending keystrokes',
+      expect.anything(),
+    )
+  })
+
+  it('survives a source pane whose flush throws', async () => {
+    readMock.mockResolvedValue('start')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    s.markDirty(s.activeId!)
+    setSourceViewHandle({
+      getView: () => null,
+      flush: () => {
+        throw new Error('host torn down')
+      },
+    })
+
+    await expect(s.saveTab(s.activeId!)).resolves.toBe(true)
+    expect(writeMock).toHaveBeenCalled()
   })
 })

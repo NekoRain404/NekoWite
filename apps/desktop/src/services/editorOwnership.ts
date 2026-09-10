@@ -28,10 +28,44 @@ function currentMode(): string | null {
 }
 
 /** True when the CodeMirror pane is the one the user is typing into. */
+/**
+ * Which pane the user was last working in.
+ *
+ * Split mode cannot ask the DOM at command time: a command is often invoked
+ * from a surface that has just taken focus itself (the command palette's input,
+ * a toolbar button), so `document.activeElement` describes the *button*, not
+ * the pane the user meant. Remembering the last editor pane that held focus
+ * keeps the intent across those hops.
+ */
+export type EditorPane = 'source' | 'rendered'
+
+let lastFocusedPane: EditorPane | null = null
+
+/** Record which editor pane last received focus. */
+export function noteFocusedPane(pane: EditorPane): void {
+  lastFocusedPane = pane
+}
+
+/** The last pane focus landed in, or null before the user has touched either. */
+export function getFocusedPane(): EditorPane | null {
+  return lastFocusedPane
+}
+
+/** Drop the recorded pane (teardown / no document). */
+export function resetFocusedPane(): void {
+  lastFocusedPane = null
+}
+
 export function sourcePaneOwnsInput(): boolean {
   const mode = currentMode()
   if (mode === 'source') return true
-  if (mode === 'split') return sourceViewHasFocus()
+  if (mode === 'split') {
+    // Prefer the remembered pane; fall back to the live DOM before the user
+    // has focused either one.
+    if (lastFocusedPane === 'source') return true
+    if (lastFocusedPane === 'rendered') return false
+    return sourceViewHasFocus()
+  }
   return false
 }
 

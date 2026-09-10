@@ -82,6 +82,16 @@ const REGISTRY_ICONS: Record<string, Component> = {
 function run(id: string): void {
   emit('command', id)
 }
+
+/**
+ * Plugin/registry buttons resolve their own view, which is the rendered one —
+ * in source mode that edit would be lost. Routing them through the same
+ * `command` event as the builtin buttons puts them on the shared, mode-aware
+ * path.
+ */
+function runRegistry(id: string): void {
+  emit('command', id)
+}
 </script>
 
 <template>
@@ -338,7 +348,7 @@ function run(id: string): void {
         :title="item.label"
         :aria-label="item.label"
         @mousedown.prevent
-        @click="item.run()"
+        @click="runRegistry(item.id)"
       >
         <component
           :is="REGISTRY_ICONS[item.id]"

@@ -228,6 +228,64 @@ async function focusParagraph(page: Page, index: number): Promise<void> {
   await waitForRenderedCaretSettle(page)
 }
 
+/**
+ * Place the rendered caret at a character offset inside the Nth paragraph,
+ * through the editor's own model.
+ *
+ * Reaching an exact offset by clicking and then arrowing is a chain of input
+ * events that each have to be resolved against an adopted selection; under
+ * load one lost press moves the caret a paragraph away. Tests that assert on an
+ * exact caret position start from here instead.
+ */
+async function placeRenderedCaretInParagraph(
+  page: Page,
+  paragraphIndex: number,
+  offset: number,
+): Promise<void> {
+  await page.evaluate(
+    async ({ index, at }) => {
+      const mod = (await import('/src/features/editor/sessionManager.ts')) as unknown as {
+        editorSessionManager: { getView(): unknown }
+      }
+      const view = mod.editorSessionManager.getView() as {
+        dom: HTMLElement
+        posAtDOM(node: Node, offset: number): number
+        state: {
+          doc: { resolve(position: number): unknown }
+          selection: { constructor: { near(pos: unknown, bias?: number): unknown } }
+          tr: { setSelection(selection: unknown): unknown }
+        }
+        dispatch(tr: unknown): void
+        focus(): void
+      } | null
+      if (!view) return
+      const paragraphs = Array.from(view.dom.querySelectorAll(':scope > p')) as HTMLElement[]
+      const element = paragraphs[index]
+      if (!element) return
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+      let node = walker.nextNode()
+      let remaining = at
+      let target: { node: Node; offset: number } | null = null
+      while (node) {
+        const length = node.textContent?.length ?? 0
+        if (remaining <= length) {
+          target = { node, offset: remaining }
+          break
+        }
+        remaining -= length
+        node = walker.nextNode()
+      }
+      if (!target) return
+      const pos = view.posAtDOM(target.node, target.offset)
+      const Selection = view.state.selection.constructor
+      view.dispatch(view.state.tr.setSelection(Selection.near(view.state.doc.resolve(pos), 1)))
+      view.focus()
+    },
+    { index: paragraphIndex, at: offset },
+  )
+  await waitForRenderedCaretSettle(page)
+}
+
 /** Type a value with the real keyboard, one physical press per character. */
 async function typeChars(page: Page, value: string): Promise<void> {
   for (const ch of value) await page.keyboard.type(ch)
@@ -554,9 +612,7 @@ test.describe('rendered pane', () => {
 
   test('Enter in the middle of a paragraph splits it', async ({ page }) => {
     await openNote(page)
-    await focusParagraph(page, 0)
-    await pressKey(page, 'Home')
-    for (let i = 0; i < 5; i++) await pressKey(page, 'ArrowRight')
+    await placeRenderedCaretInParagraph(page, 0, 5)
     await pressKey(page, 'Enter')
 
     const state = await renderedCaret(page)

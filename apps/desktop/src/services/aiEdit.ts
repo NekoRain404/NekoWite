@@ -1,4 +1,6 @@
 import { editorSessionManager } from '../features/editor/sessionManager'
+import { getTextSelection, replaceTextSelection } from './editorTextSelection'
+import type { TextSelection } from './editorTextSelection'
 import { notifyError } from './errors'
 import { startChatCompletion } from './ai'
 import type { ChatStream } from './ai'
@@ -26,6 +28,10 @@ export interface EditView {
 
 export interface AiEditDeps {
   getView(): EditView | null
+  /** The current text selection in whichever pane owns the document. */
+  readSelection(): TextSelection | null
+  /** Replace that selection; false when it can no longer be applied. */
+  applySelection(text: string): boolean
   getConfig(): AIConfig
   notifyError(msg: string): void
   start: typeof startChatCompletion
@@ -35,6 +41,8 @@ export interface AiEditDeps {
 /** Real wiring; tests inject a fake through `rewriteSelection`'s `deps`. */
 export const aiEditDeps: AiEditDeps = {
   getView: () => editorSessionManager.getView() as EditView | null,
+  readSelection: getTextSelection,
+  applySelection: replaceTextSelection,
   getConfig: () => useSettingsStore().config(),
   notifyError,
   start: startChatCompletion,
@@ -83,26 +91,29 @@ export async function rewriteSelection(
   deps: Partial<AiEditDeps> = {},
 ): Promise<ChatStream> {
   const d: AiEditDeps = { ...aiEditDeps, ...deps }
+  // `deps.getView` is the injectable seam tests use; the selection itself comes
+  // from the mode-aware accessor below.
   const view = d.getView()
   if (!view) {
     d.notifyError(d.translate('chat.editorNotReady'))
     return { cancel: () => undefined }
   }
-  const { from, to, empty } = view.state.selection
-  if (empty) {
+  // Read and apply through the mode-aware accessors: a rewrite started in
+  // source mode must act on the Markdown, not on the hidden rendered model,
+  // where the result would be silently discarded when the model is re-opened
+  // from the tab.
+  const selection = d.readSelection()
+  if (!selection || selection.text.trim() === '') {
     d.notifyError(d.translate('ai.noSelection'))
     return { cancel: () => undefined }
   }
-  const selected = view.state.doc.textBetween(from, to, '\n', ' ')
   const target =
     action === 'translate' ? targetOfLocale(getLocale()) : undefined
-  const prompt = buildEditPrompt(action, selected, target)
+  const prompt = buildEditPrompt(action, selection.text, target)
   return d.start(d.getConfig(), prompt, [], {
     onChunk: () => undefined,
     onDone: (full) => {
-      const tr = view.state.tr.insertText(full, from, to)
-      view.dispatch(tr)
-      view.focus()
+      if (!d.applySelection(full)) d.notifyError(d.translate('ai.noSelection'))
     },
     onError: (msg) => d.notifyError(msg),
   })

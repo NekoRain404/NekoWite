@@ -79,6 +79,19 @@ git commit -m "feat(appearance): add crimson palette and four accents"
   - 验证：desktop 单元测试 1028 通过（含新增 `sourceCommands`/`editorInsert`/`useImageIntake`/`EditorPane` 用例）；editor-core 281 通过；`cargo test` 除 4 个既有的 Windows 路径分隔符用例（`/etc/passwd` 与 `ends_with("a/b")` 假设，与本改动无关）外全部通过，`cargo clippy -D warnings` 通过；`pnpm -r typecheck`、`pnpm -r lint` 通过；Playwright E2E 全部通过（新增 `e2e/image-insert.spec.ts` 10 项，`editor-input.spec.ts` 连跑 3 轮 96 项稳定）。
   - 测试基建：`e2e/support/editorHarness.ts` 新增附件/选择器命令 mock 与图片粘贴、拖放、选择器助手；`focusHeadingEnd` 改为点击标题「文本末端」（元素整行宽，右端是空白区，点击映射在布局收敛前会落到下一段），并在测量前等待标题文本完成绘制。
 
+### 2026-09-11
+
+- `fix(editor): route every command entry point by view mode` — 继续排查「假设渲染面板永远是活动编辑器」这一类逻辑错误，又发现并修复 7 处：
+  - AI 改写 / 润色 / 翻译在源码模式下读写隐藏的渲染模型，结果在切回渲染模式时被静默丢弃；新增 `services/editorTextSelection.ts` 作为模式感知的选区读写层，`rewriteSelection` 改为经由它操作实际负责输入的面板。
+  - 插件按钮（`math.insert` / `table.insert` / `callout.insert` / `floatbox.insert`）原先各自调用 `run()` 并自行解析渲染视图，源码模式下插入丢失；`editor-core` 新增 `registerMarkdownCommand`，这些命令声明其 Markdown 形式，源码模式下插入文本（`$$…$$`、3×3 GFM 表格、对应 JSX）。
+  - 命令面板每一项都直接 `getCommand(id)?.run()`，连「加粗」在源码模式下也改的是隐藏模型；现与工具栏共用新增的 `services/runEditorCommand.ts`。
+  - 按 id 分发后 `callout.insert` / `floatbox.insert` 失效（它们只注册为工具栏项、无命令注册），分发回退到工具栏注册表。
+  - 对照模式下的分发依赖瞬时 DOM 焦点，而命令面板打开时焦点已移到其输入框；现记住最后聚焦的编辑面板（`noteFocusedPane`）。
+  - 保存 / 导出 / 聊天上下文直接读取标签页文本，可能落后源码面板一次按键的合并窗口；`saveTab`（显式、自动、关闭保存）、导出与聊天上下文在读取前先冲刷待提交编辑。
+  - 源码模式下浮动框工具栏仍显示但按钮编辑隐藏模型；切到源码模式时清除浮动框选中。
+  - 测试基建：`focusParagraph` 增加点击重试；新增基于模型定位光标的 `placeRenderedCaretInParagraph`，替换「点击 + 连按方向键」这种在负载下会丢按键的定位方式，消除两处固有 flaky。
+  - 验证：desktop 单元测试 1052 通过（新增 `editorTextSelection`/`runEditorCommand`/`markdown 注册表`/`tabs 冲刷`/浮动框模式用例），editor-core 290 通过；`pnpm -r typecheck`、`pnpm -r lint`、`cargo clippy -D warnings` 通过；Playwright 全量 64 项通过，`editor-input` + `input-ime` 连跑 4 轮 144 项稳定。
+
 ## 验证与交付
 
 ```bash

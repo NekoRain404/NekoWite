@@ -167,3 +167,69 @@ describe('EditorPane image intake', () => {
     expect(document.body.querySelector('.rename-dialog')).toBeNull()
   })
 })
+
+describe('EditorPane float selection across modes', () => {
+  beforeEach(() => {
+    pinia = createPinia()
+    setActivePinia(pinia)
+    saveAttachmentMock.mockReset()
+    importAttachmentMock.mockReset()
+    resetMemoryPickedFiles()
+    document.body.innerHTML = ''
+    mounted = []
+  })
+
+  afterEach(() => {
+    mounted.forEach((app) => app.unmount())
+    mounted = []
+    document.body.innerHTML = ''
+    resetMemoryPickedFiles()
+  })
+
+  it('drops the floating-box selection when the source pane takes over', async () => {
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    await tabs.openTab('notes/a.md')
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const app = createApp(EditorPane)
+    app.use(pinia)
+    app.mount(host)
+    mounted.push(app)
+    await flush()
+
+    const { useFloatStore } = await import('../stores/float')
+    const { useViewStore } = await import('../stores/view')
+    useFloatStore().select('float-1')
+
+    // The floating-box toolbar is rendered on the shared pane container, so in
+    // source mode it would still be visible while the element it edits is
+    // hidden — its buttons would edit the model source mode does not own.
+    useViewStore().setMode('source')
+    await flush()
+
+    expect(useFloatStore().selectedId).toBeNull()
+  })
+
+  it('keeps the selection while the rendered pane is still visible', async () => {
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    await tabs.openTab('notes/a.md')
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const app = createApp(EditorPane)
+    app.use(pinia)
+    app.mount(host)
+    mounted.push(app)
+    await flush()
+
+    const { useFloatStore } = await import('../stores/float')
+    const { useViewStore } = await import('../stores/view')
+    useFloatStore().select('float-1')
+
+    // Split mode shows both panes, so the selection is still meaningful.
+    useViewStore().setMode('split')
+    await flush()
+    expect(useFloatStore().selectedId).toBe('float-1')
+  })
+})

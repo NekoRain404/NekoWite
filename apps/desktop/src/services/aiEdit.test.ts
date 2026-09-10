@@ -25,6 +25,23 @@ function fakeDeps(
   return {
     deps: {
       getView: () => view,
+      // The selection accessors are the mode-aware seam; here they mirror the
+      // fake view so the tests exercise `rewriteSelection` itself.
+      readSelection: () => {
+        const sel = view?.state.selection
+        if (!sel || sel.empty) return null
+        return {
+          from: sel.from,
+          to: sel.to,
+          text: view!.state.doc.textBetween(sel.from, sel.to, '\n', ' '),
+        }
+      },
+      applySelection: (text: string) => {
+        if (!view) return false
+        view.dispatch(view.state.tr.insertText(text, view.state.selection.from, view.state.selection.to))
+        view.focus()
+        return true
+      },
       getConfig: () => ({ provider: 'local', model: 'm' }),
       notifyError: vi.fn(),
       start: vi.fn((_cfg, _prompt, _images, handlers) => {
@@ -124,5 +141,35 @@ describe('rewriteSelection', () => {
     state.handlers!.onError('boom')
     expect(notify).toHaveBeenCalledWith('boom')
     expect(view.dispatch).not.toHaveBeenCalled()
+  })
+  it('applies the completion through the injected mode-aware accessor', async () => {
+    // The real accessor routes to CodeMirror in source mode; this asserts the
+    // result is applied via that seam rather than through a held view, which is
+    // what made a source-mode rewrite land in the hidden model.
+    const view = fakeView()
+    const apply = vi.fn(() => true)
+    const { deps, state } = fakeDeps(view)
+    deps.applySelection = apply
+    await rewriteSelection('rewrite', deps)
+    state.handlers!.onDone('rewritten')
+    expect(apply).toHaveBeenCalledWith('rewritten')
+  })
+
+  it('notifies when the selection can no longer be applied', async () => {
+    const { deps, state } = fakeDeps(fakeView())
+    deps.applySelection = () => false
+    const notify = deps.notifyError as ReturnType<typeof vi.fn>
+    await rewriteSelection('rewrite', deps)
+    state.handlers!.onDone('rewritten')
+    expect(notify).toHaveBeenCalledWith('ai.noSelection')
+  })
+
+  it('treats a whitespace-only selection as empty', async () => {
+    const { deps } = fakeDeps(fakeView())
+    deps.readSelection = () => ({ from: 0, to: 3, text: '   ' })
+    const notify = deps.notifyError as ReturnType<typeof vi.fn>
+    await rewriteSelection('polish', deps)
+    expect(notify).toHaveBeenCalledWith('ai.noSelection')
+    expect(deps.start).not.toHaveBeenCalled()
   })
 })
