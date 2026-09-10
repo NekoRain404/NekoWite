@@ -40,6 +40,18 @@
   - 新增 E2E 回归测试：标题末尾 → Enter → 输入 `abc` → 三次 Backspace → 输入 `/`，逐节点验证光标与内容。
   - 验证：editor-core 281 个测试、desktop 983 个测试全部通过，类型检查与 lint 通过。
 
+## 输入健壮性全量测试：源码模式光标回跳与重做失效
+
+- **测试覆盖**：新增 `apps/desktop/e2e/editor-input.spec.ts`（30 个用例），覆盖源码 / 渲染 / 对照三种模式：连续字符输入、修饰键与符号、CJK `insertText`、连续 Enter、行首与行中 Enter、连续 Backspace、Backspace 并行、Delete、方向键与 Home/End、全选替换、撤销重做、多行粘贴、Markdown 标点、Tab 缩进、编辑中触发自动保存、Markdown 快捷语法、斜杠菜单、模式往返切换。
+- **定位到的真实缺陷**：
+  - 源码模式编辑经隐藏渲染面板回写成规范化 Markdown，替换原文并把 CodeMirror 光标重置到开头；现源码模式不再回写（`editorExternalSync` 的 `renderedPaneOwnsText()`），`persistMarkdown` 亦只在模型真正变化时才写入标签页。
+  - Windows 上 `Ctrl+Shift+Z` 无法重做：CodeMirror 仅在 `linux` 平台标记下绑定该组合键，现于 `cmSourceView` 显式绑定（`Ctrl+Shift+Z` / `Cmd+Shift+Z`）。
+- **测试脚手架修正**（非产品缺陷，避免误报）：
+  - 渲染面板在点击后需等待 ProseMirror 落定（约 20ms 合并 flush），否则 CDP 的零延迟按键会落在尚未采纳的选区上；新增 `waitForRenderedCaretSettle` / `pressKey` 辅助函数。
+  - 源码模式若干用例缺少建立焦点的点击，导致按键落到工具栏按钮上。
+  - 行首 Enter 的期望值有误（标准语义为光标停在被下推文本行首），文档末尾空行的 `End` 合法列只有 0。
+- **验证**：editor-core 281 个测试、desktop 989 个测试、全部 E2E（含 app / caret-debug / usage / lifecycle / security-csp / editor-input 共 40 个用例）通过，类型检查、lint 与生产构建通过。
+
 ## 当前外观状态
 
 - 主题（15）：默认 / 暖阳 / 森林 / 海洋 / 樱花 / 薄雾 / 石墨 / 午夜 / 薰衣草 / 沙漠 / 薄荷 / 咖啡 / 梅子 / 暮色 / 绯红

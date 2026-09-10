@@ -2,7 +2,7 @@
 // style whose classes mirror editor-content.css typography (all colors via
 // --app-* tokens, so dark/light follows data-theme), a fenced-code block
 // surface, line numbers/ruler, soft wrap, and the zh search panel.
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { defaultKeymap, history, historyKeymap, indentWithTab, redo } from '@codemirror/commands'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language'
 import { search, searchKeymap } from '@codemirror/search'
@@ -213,6 +213,15 @@ export const SOURCE_EXT_DEFAULTS: Required<SourceExtensionsOptions> = {
   softWrap: true,
 }
 
+// Ctrl+Shift+Z redo. CodeMirror's own `historyKeymap` binds that chord only
+// under its `linux` platform flag, so on Windows — where Ctrl+Shift+Z is what
+// every other editor uses — redo silently did nothing while Ctrl+Z undone-work
+// could not be restored. Binding it here (ahead of the bundled history keymap)
+// makes redo work everywhere; Mod-y from that keymap still applies.
+const redoKeymap = [
+  { key: 'Ctrl-Shift-z', mac: 'Cmd-Shift-z', run: redo, preventDefault: true },
+]
+
 export function sourceExtensions(opts: SourceExtensionsOptions = {}): Extension[] {
   const { lineNumbers, softWrap } = { ...SOURCE_EXT_DEFAULTS, ...opts }
   return [
@@ -225,7 +234,7 @@ export function sourceExtensions(opts: SourceExtensionsOptions = {}): Extension[
     highlightActiveLine(),
     ...(softWrap ? [EditorView.lineWrapping] : []),
     search({ top: true, createPanel: createZhSearchPanel }),
-    keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
+    keymap.of([...redoKeymap, ...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
     sourceTheme,
   ]
 }

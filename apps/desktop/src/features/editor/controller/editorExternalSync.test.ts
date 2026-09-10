@@ -234,4 +234,37 @@ describe('editorExternalSync', () => {
     expect(editor.open).toHaveBeenLastCalledWith('# Unknown\n')
     expect(session.lastLocalMarkdown).toBe('# Recovered Canonical\n')
   })
+
+  it('ignores source-pane edits while the rendered pane is hidden', async () => {
+    const editor = makeEditor({ save: '# Canonical\n' })
+    session.editor = editor
+    const { sync } = makeSync(session)
+    // The user switched to source mode: the source pane now owns the text.
+    view.setMode('source')
+    tabs.activeTab!.content = '# Raw Markdown\n'
+
+    sync.onContentChanged('# Raw Markdown\n')
+    await flush()
+
+    // The hidden rendered pane must not open (and thereby re-serialize) the
+    // source text — doing so would echo a canonicalized copy back into the tab
+    // and reset the CodeMirror caret.
+    expect(editor.open).not.toHaveBeenCalled()
+    expect(tabs.activeTab?.content).toBe('# Raw Markdown\n')
+  })
+
+  it('re-syncs the editor when the user returns from source to rendered mode', async () => {
+    const editor = makeEditor({ save: '# Canonical\n' })
+    session.editor = editor
+    view.setMode('source')
+    tabs.activeTab!.content = '# Raw Markdown\n'
+    const { sync } = makeSync(session)
+
+    view.setMode('rendered')
+    sync.onModeChanged('rendered')
+    await flush()
+
+    expect(editor.open).toHaveBeenCalledWith('# Raw Markdown\n')
+    expect(session.lastLocalMarkdown).toBe('# Canonical\n')
+  })
 })
