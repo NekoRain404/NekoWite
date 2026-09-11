@@ -239,7 +239,7 @@ bash scripts/package-win.sh
 
 ## 构建产物
 
-- 免安装可执行文件：`release/nekowite_0.1.0_x64.exe`（未签名），SHA-256：`9d561487c55a6c3715e3870b5748cb426b9dc952a2bbf50e2fbcfc4e4bc3e108`（含行内容器 MDX 静默截断修复与标题锚点 id 一致性修复；打包后按记录的 PID 启动 exe 冒烟验证：标题 `NekoWite`、`Responding=True`、工作集 29.3 MB，随后精确结束该进程）。
+- 免安装可执行文件：`release/nekowite_0.1.0_x64.exe`（未签名），SHA-256：`a56446c9bb3b0cba0ebc4948d5c4b2c525f22e46a49b8baad6151e41b737959c`（含表格单元格内原始 HTML 的管道转义修复；打包后按记录的 PID 启动 exe 冒烟验证：标题 `NekoWite`、`Responding=True`、工作集 29.4 MB，随后精确结束该进程）。
 - Windows x64 NSIS 安装包：`release/nekowite_0.1.0_x64-setup.exe`（5.3 MB，未签名）。
 - 原生可执行文件：`apps/desktop/src-tauri/target/release/nekowite.exe`（17 MB）。
 - 当前产物未使用 Authenticode 签名；Windows SmartScreen 可能提示“未知发布者”。如需正式分发，应先配置代码签名再重新打包。
