@@ -163,6 +163,15 @@ git commit -m "feat(appearance): add crimson palette and four accents"
   - 测试方法上踩到的坑记录：`element.click()` 会触发 Playwright 的 scroll-into-view，第一次写这条用例时**是 Playwright 滚动的、不是被测代码**，导致用 slug 比较的错误实现也能通过。改为把链接放在文档开头（无需自动滚动）并用 `dispatchEvent` 直接派发后，回退实现才如预期失败（`Received: 0`）。
 - 验证：editor-core 370、desktop 单元 1069、`pnpm -r typecheck`/`lint`、`cargo clippy -D warnings`、`cargo test`、Playwright 91 全绿。
 
+### 2026-09-11（第七轮）
+
+- `chore: drop the unused fs plugin and stray runtime artifacts` — 处理上一轮扫描里两条未完成项：
+  - `tauri-plugin-fs` 被初始化、`fs:default` 被授权，但前端既无 `@tauri-apps/plugin-fs` 依赖也无任何调用点（文件操作全走自定义命令），是纯粹的 IPC 暴露面。移除插件初始化、权限授权与 Cargo 依赖后，生成的 ACL schema 减少约 7150 行。
+  - **运行期验证（关键）**：E2E 跑在浏览器里，抓不到 Tauri 运行时回归，所以打包后实际启动了 exe 做冒烟测试——进程存活、窗口标题 `NekoWite`、`Responding=True`、工作集 29.4 MB，随后仅按记录的 PID 精确结束进程。这一步是本次改动唯一有意义的验证方式。
+  - `daily/2026-09-08.md` 是应用在「把仓库根当 vault」时自动生成的空日记，与已忽略的 `.nekowite/` 同类，在基线提交里被误纳入版本控制；取消跟踪并加入 `.gitignore`（磁盘文件保留，未删除）。
+  - 删除 `.oxlintrc.json`（内容为空的 `{"rules": {}}`，oxlint 既非依赖也不在 CI 中运行，其存在会让人误以为有一道 lint 关卡）。
+  - 澄清文档：代码格式目前只是约定（prettier 配置存在但未安装、CI 无格式门禁）。
+
 ## 验证与交付
 
 ```bash
@@ -178,7 +187,7 @@ bash scripts/package-win.sh
 
 ## 构建产物
 
-- 免安装可执行文件：`release/nekowite_0.1.0_x64.exe`（未签名），SHA-256：`a9ab7f611d37d61dddc37cf7a4797f02183b931156c8f3046c3231ae56a25263`（含标题深链三消费方 id 统一与笔记路径归一化）。
+- 免安装可执行文件：`release/nekowite_0.1.0_x64.exe`（未签名），SHA-256：`cd3a1f5e35f20e4661eb784d9da61074e382cdab6c492a55cd8694a824d28333`（含移除未使用的 `tauri-plugin-fs` 与仓库运行期产物清理；_注：打包时会把 `sha256` 输出在控制台_）。
 - Windows x64 NSIS 安装包：`release/nekowite_0.1.0_x64-setup.exe`（5.3 MB，未签名）。
 - 原生可执行文件：`apps/desktop/src-tauri/target/release/nekowite.exe`（17 MB）。
 - 当前产物未使用 Authenticode 签名；Windows SmartScreen 可能提示“未知发布者”。如需正式分发，应先配置代码签名再重新打包。
