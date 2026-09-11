@@ -143,6 +143,7 @@ const processor = unified()
     // renders, so the export disagreed with the editor it came from.
     highlightMdast(t)
     wikilinkMdast(t, file)
+    stripEmptyLineMarkers(t)
     resolveReferences(t)
     imageDimMdast(t)
   })
@@ -228,6 +229,42 @@ export function formatReference(ref: ExportRef): string {
  *  Definitions are collected globally first (they may follow their uses);
  *  unresolvable references degrade to plain text / nothing. Component bodies
  *  stay opaque (re-parsed at render time, where definitions resolve locally). */
+/** The `<br>` spellings `visitEmptyLine` in @milkdown/preset-commonmark treats
+ *  as an empty-paragraph marker. */
+const EMPTY_LINE_MARKERS = new Set(['<br />', '<br>', '<br >', '<br/>'])
+
+function isEmptyLineMarker(node: TransformNode): boolean {
+  return node.type === 'html' && EMPTY_LINE_MARKERS.has((node.value ?? '').trim())
+}
+
+/**
+ * Drop the empty-paragraph markers the editor writes to disk.
+ *
+ * Milkdown serializes an empty paragraph as a standalone `<br />` so an
+ * intentional blank line survives a reopen, and removes it again while parsing
+ * (`visitEmptyLine`) — so the editor never shows it. The export parses the raw
+ * file without that step, so the marker reached the renderer as an ordinary
+ * `html` node and was escaped into visible text: `&lt;br /&gt;`. Empty table
+ * cells showed it most, because a cell's empty content is exactly what the
+ * serializer writes a marker for.
+ *
+ * A marker is block-level when it is NOT a child of a paragraph — that is the
+ * shape remark produces for a marker standing on its own line (a direct child of
+ * `root`, a table cell, a blockquote, …). Inside a paragraph the same `<br>`
+ * written next to text is the author's inline HTML, which keeps the `html`
+ * case's escaping like any other raw HTML; a paragraph whose only child is the
+ * marker is an empty paragraph and is emptied rather than printed.
+ */
+function stripEmptyLineMarkers(node: TransformNode): void {
+  if (!Array.isArray(node.children)) return
+  const children = node.children
+  const blockLevel = node.type !== 'paragraph'
+  node.children = children.filter(
+    (child) => !isEmptyLineMarker(child) || (!blockLevel && !children.every(isEmptyLineMarker)),
+  )
+  for (const child of node.children) stripEmptyLineMarkers(child)
+}
+
 function resolveReferences(node: TransformNode): void {
   const children = Array.isArray(node.children) ? node.children : []
   const defs = new Map<string, { url: string; title?: string }>()

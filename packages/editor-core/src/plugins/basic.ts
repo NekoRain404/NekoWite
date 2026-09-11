@@ -30,6 +30,7 @@ import {
   mathInlineNodeView,
   mathRemark,
 } from '../math'
+import { linkOrderSchema } from '../link'
 import { mdxComponent, mdxComponentNodeView, mdxJsxRemark } from '../mdx'
 import { tableAutoRowKeymap, tableClipboardKeymap } from '../table/keymap'
 import { tableFeaturePlugin } from '../table/plugin'
@@ -46,6 +47,9 @@ export const basicPlugins: MilkdownPlugin[] = [
   ...mdxJsxRemark,
   mdxComponentNodeView,
   ...commonmark,
+  // Must come after `commonmark` (which declares the base `link` mark) so this
+  // later registration wins; see `linkOrderSchema` for why the priority matters.
+  ...linkOrderSchema,
   ...imageDimSchema,
   ...imageDimRemark,
   imageNodeView,

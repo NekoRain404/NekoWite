@@ -127,3 +127,48 @@ describe('export keeps structured markdown features', () => {
     expect(out).not.toContain('[[')
   })
 })
+
+/**
+ * Milkdown writes a standalone `<br />` where the document has an empty
+ * paragraph, so that an intentional blank line survives a reopen, and removes
+ * the marker again while parsing (`visitEmptyLine`). The editor therefore never
+ * shows it. The export parses the raw file, so without the same step the marker
+ * is escaped and printed as the literal text `<br />` — most visibly inside
+ * every empty table cell, which is where the marker is written most often.
+ */
+describe('export hides the empty-paragraph marker', () => {
+  it('drops a marker standing in for an empty paragraph', () => {
+    const out = text('a\n\n<br />\n\nb\n')
+    expect(out).toContain('<p>a</p>')
+    expect(out).toContain('<p>b</p>')
+    expect(out).not.toContain('br')
+  })
+
+  it('renders an empty table cell as empty instead of printing the marker', () => {
+    const out = text('| a | b |\n| - | - |\n| <br /> | 2 |\n')
+    expect(out).toContain('<td></td>')
+    expect(out).not.toContain('br')
+  })
+
+  it('accepts every marker spelling milkdown strips', () => {
+    for (const marker of ['<br />', '<br>', '<br >', '<br/>']) {
+      expect(text(`a\n\n${marker}\n\nb\n`), marker).not.toContain('br')
+    }
+  })
+
+  it('strips a marker nested in a block container', () => {
+    // Exactly the bytes the editor writes for a blockquote holding an empty
+    // paragraph between two filled ones.
+    const out = text('> a\n>\n> <br />\n>\n> b\n')
+    expect(out).not.toContain('br')
+    expect(out).toContain('<blockquote>')
+  })
+
+  it('keeps a <br> the author wrote inline', () => {
+    // Only a block-level marker stands in for an empty paragraph. A `<br>` next
+    // to text is the author's inline HTML, which the export escapes like any
+    // other raw HTML.
+    const out = text('line one<br>line two\n')
+    expect(out).toContain('&lt;br&gt;')
+  })
+})
