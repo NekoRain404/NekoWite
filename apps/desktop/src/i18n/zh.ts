@@ -428,6 +428,7 @@ export const zh = {
     dotDotForbidden: '文件名不能包含连续的 .',
     dotForbidden: '文件名不能以 . 开头',
     extensionRequired: '请保留扩展名，如 .png',
+    extensionUnsupported: '只支持图片文件：{list}',
   },
   searchPanel: {
     find: '查找',

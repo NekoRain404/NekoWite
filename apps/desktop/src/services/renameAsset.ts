@@ -1,4 +1,9 @@
-import { relativePathFromNoteVault, suggestedPasteFileName } from './attachments'
+import {
+  ATTACHMENT_EXTENSIONS,
+  extensionFromFileName,
+  relativePathFromNoteVault,
+  suggestedPasteFileName,
+} from './attachments'
 import { t } from '../i18n'
 
 export interface AssetMove {
@@ -22,6 +27,13 @@ export function validateRenameName(name: string): string | null {
   if (trimmed.includes('..')) return t('renameDialog.dotDotForbidden')
   if (trimmed.startsWith('.')) return t('renameDialog.dotForbidden')
   if (!trimmed.includes('.')) return t('renameDialog.extensionRequired')
+  // The paste path stores images, so the extension has to be one the backend
+  // accepts. Checking here turns a rejected save into a clear message.
+  if (extensionFromFileName(trimmed) === null) {
+    return t('renameDialog.extensionUnsupported', {
+      list: ATTACHMENT_EXTENSIONS.join(', '),
+    })
+  }
   return null
 }
 

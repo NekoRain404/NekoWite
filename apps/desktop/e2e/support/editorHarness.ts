@@ -37,6 +37,9 @@ export interface HarnessOptions {
   /** Artificial latency (ms) on `resolve_media_path`, to observe the
    *  pre-resolution state of an image. */
   resolveDelayMs?: number
+  /** Reject the first N `resolve_media_path` calls, modelling an attachment
+   *  that is not resolvable yet (e.g. the vault is still being authorized). */
+  resolveFailsTimes?: number
 }
 
 interface InitPayload extends HarnessOptions {
@@ -55,7 +58,8 @@ export async function openNote(page: Page, options: HarnessOptions = {}): Promis
   const noteName = NOTE_NAME
   await page.addInitScript((payload: InitPayload) => {
     const { vault, noteName: name, doc, autosave, appearance, files } = payload
-    const { importFails, pickFails, attachments, resolveDelayMs } = payload
+    const { importFails, pickFails, attachments, resolveDelayMs, resolveFailsTimes } = payload
+    let resolveAttempts = 0
     // Mutable at runtime so a spec can seed bytes after the app has loaded
     // (used to prove Retry re-resolves instead of replaying a failure).
     ;(window as unknown as { __NEKO_ATTACHMENTS__?: Record<string, string> }).__NEKO_ATTACHMENTS__ = {
@@ -122,6 +126,10 @@ export async function openNote(page: Page, options: HarnessOptions = {}): Promis
           // convertFileSrc below is the identity) — that is what lets these
           // specs assert that an image actually renders.
           const relPath = String(args.rel_path ?? '')
+          resolveAttempts += 1
+          if (resolveFailsTimes !== undefined && resolveAttempts <= resolveFailsTimes) {
+            throw new Error(`attachment not ready yet: ${relPath}`)
+          }
           if (resolveDelayMs) {
             await new Promise((resolve) => setTimeout(resolve, resolveDelayMs))
           }

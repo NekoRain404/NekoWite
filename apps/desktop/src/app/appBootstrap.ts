@@ -11,6 +11,7 @@ import { setupWindowTracking, type WindowTracking } from './windowState'
 import { createTmpRecovery, requestUntitledVaultSwitch } from './recoveryClosedLoop'
 import { setActiveEditor } from '@nekowite/plugin-host'
 import { editorBridge } from '../services/editorBridge'
+import { invalidateImageResolution } from '@nekowite/editor-core'
 import { editorSessionManager } from '../features/editor/sessionManager'
 
 const VAULT_LS_KEY = 'nekowite.vault'
@@ -153,6 +154,11 @@ export function createDesktopRuntime(): DesktopRuntime {
     // would route every save to "path escapes vault" errors. Start fresh.
     tabs.closeAll()
     tabs.setVault(path)
+    // The vault is now committed (and authorized with the backend), so every
+    // attachment path finally resolves. Drop any resolution that ran before
+    // this point — the editor panel can mount and render before the vault is
+    // ready, and a failure recorded then would otherwise stick forever.
+    invalidateImageResolution()
 
     // Dispose the previous vault's resources now that the new vault is committed:
     // its active plugin instances/hooks, its index coordinator (which detaches

@@ -19,6 +19,7 @@ import {
   markdownImageBlock,
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS_PER_BATCH,
+  MAX_ATTACHMENTS_PER_BATCH_BYTES,
   MAX_ATTACHMENTS_PER_SESSION,
   MAX_ATTACHMENTS_PER_VAULT_BYTES,
   MIN_ATTACHMENT_FREE_DISK_BYTES,
@@ -353,18 +354,22 @@ describe('createImageSrcResolver', () => {
     expect(resolveMediaPath).toHaveBeenCalledWith('vault', 'attachments/2026-09/a.png')
   })
 
-  it('returns the raw src when no vault is open or resolution fails', async () => {
-    const resolve = createImageSrcResolver(
+  it('rejects instead of passing the src through when it cannot resolve', async () => {
+    // Rejecting (rather than "resolving" to the raw src) is what keeps a
+    // transient failure out of the resolution cache: a pass-through looks like
+    // a success, so the unloadable document path was memoized and every image
+    // stayed broken even after the vault arrived.
+    const noVault = createImageSrcResolver(
       { resolveMediaPath: async () => 'x' },
       { getVault: () => null, getNotePath: () => null },
     )
-    await expect(resolve('attachments/a.png')).resolves.toBe('attachments/a.png')
+    await expect(noVault('attachments/a.png')).rejects.toThrow(/no vault/i)
 
     const failing = createImageSrcResolver(
       { resolveMediaPath: async () => { throw new Error('nope') } },
       { getVault: () => 'vault', getNotePath: () => 'a.md' },
     )
-    await expect(failing('attachments/a.png')).resolves.toBe('attachments/a.png')
+    await expect(failing('attachments/a.png')).rejects.toThrow('nope')
   })
 })
 
@@ -480,5 +485,49 @@ describe('streaming / file-path import policy (P1.4)', () => {
     expect(shouldStreamImport(fileOfSize('a.png', STREAM_IMPORT_MIN_BYTES))).toBe(true)
     expect(shouldStreamImport(fileOfSize('a.png', STREAM_IMPORT_MIN_BYTES - 1))).toBe(false)
     expect(formatAttachmentBytes(MAX_ATTACHMENT_BYTES)).toBe(`${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB`)
+  })
+})
+
+describe('classifyAttachmentFiles batch byte budget', () => {
+  // The worst batch the count and per-file caps allow is exactly the byte
+  // budget (10 x 10 MiB == 100 MiB), so today the byte check never binds. It is
+  // enforced anyway so that changing any one of these constants cannot silently
+  // turn a "10 images" prompt into a 133 MB base64 spike. This test pins the
+  // relationship the check relies on.
+  it('permits exactly the worst batch the other caps allow', () => {
+    const atLimit = (name: string) =>
+      ({ name, size: MAX_ATTACHMENT_BYTES, type: 'image/png', lastModified: 1 }) as File
+    const files = Array.from({ length: MAX_ATTACHMENTS_PER_BATCH }, (_v, i) =>
+      atLimit(`big-${i}.png`),
+    )
+
+    const { accepted, rejected } = classifyAttachmentFiles(files)
+
+    expect(accepted).toHaveLength(MAX_ATTACHMENTS_PER_BATCH)
+    expect(rejected).toHaveLength(0)
+    expect(MAX_ATTACHMENTS_PER_BATCH * MAX_ATTACHMENT_BYTES).toBeLessThanOrEqual(
+      MAX_ATTACHMENTS_PER_BATCH_BYTES,
+    )
+  })
+
+  it('accepts a normal batch and explains anything it drops', () => {
+    const small = (name: string) =>
+      ({ name, size: 1024, type: 'image/png', lastModified: 1 }) as File
+    const files = Array.from({ length: 3 }, (_v, i) => small(`s-${i}.png`))
+    const { accepted, rejected } = classifyAttachmentFiles(files)
+    expect(accepted).toHaveLength(3)
+    expect(rejected).toHaveLength(0)
+  })
+
+  it('rejects an over-size file before anything else', () => {
+    const huge = {
+      name: 'huge.png',
+      size: MAX_ATTACHMENT_BYTES + 1,
+      type: 'image/png',
+      lastModified: 1,
+    } as File
+    const { accepted, rejected } = classifyAttachmentFiles([huge])
+    expect(accepted).toHaveLength(0)
+    expect(rejected[0]?.reason).toBe('too-large')
   })
 })

@@ -184,13 +184,13 @@ describe('renderDocumentAsync', () => {
   })
 
   it('leaves absolute http(s)/data srcs untouched and keeps alt text', async () => {
-    const resolve = vi.fn(async (src: string) => `resolved:${src}`)
+    const resolve = vi.fn(async (src: string) => `asset://localhost/${src}`)
     const html = await renderDocumentAsync(
       '![one](https://x.dev/a.png) ![two](attachments/a.png)\n',
       { resolveImage: resolve },
     )
     expect(html).toContain('src="https://x.dev/a.png"')
-    expect(html).toContain('src="resolved:attachments/a.png"')
+    expect(html).toContain('src="asset://localhost/attachments/a.png"')
     expect(html).toContain('alt="one"')
     expect(resolve).toHaveBeenCalledTimes(1)
   })

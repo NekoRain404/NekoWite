@@ -37,30 +37,28 @@ export const MAX_ATTACHMENTS_PER_BATCH_BYTES = 100 * 1024 * 1024 // 100 MB
 export const MIN_ATTACHMENT_FREE_DISK_BYTES = 25 * 1024 * 1024 // 25 MB
 
 /** Files at or above this size take the streaming/file-path route (write the
- *  bytes out via the backend) instead of base64-over-IPC, so a large file never
- *  spills a full base64 copy into JS memory. Smaller files keep the existing
- *  low-copy base64 path. */
+ *  a pasted image would prefer a path-based import over base64.
+ *
+ *  NOT enforced today: only the image PICKER has real filesystem paths, and it
+ *  already uses `import_attachment` at every size. A pasted clipboard image has
+ *  no path, so the paste path always base64-encodes. See
+ *  {@link STREAM_IMPORT_BACKEND_COMMAND}. */
 export const STREAM_IMPORT_MIN_BYTES = 8 * 1024 * 1024 // 8 MiB
 
 /**
- * The exact backend command a true zero-base64 streaming/file-path import would
- * call.
- *
- * The current {@link FsPort} (`platform/gateways/contracts`) only exposes
- * `saveAttachment(vault, fileName, base64, dir)`, which ships bytes as base64
- * over IPC (≈4/3x the byte size plus a Rust decode). A genuine streaming
- * file-path import would instead copy from the OS path to the vault attachment
- * dir without a JS hop:
+ * The backend command that copies a file the user picked, with no base64 hop:
  *
  *   import_attachment(vault: string, src_abs_path: string, dir?: string)
  *     -> Promise<string>   // the vault-relative path written
  *
- * That command is OUT OF SCOPE here (no backend command exists and `src-tauri`
- * is off-limits), so the frontend implements the reject-before-write policy —
- * per-file, per-batch, per-vault-total and disk-free-space guards — and degrades
- * cleanly: small files keep the base64 path; large files are accepted (when the
- * policy permits) and routed to the streaming route, which would call the
- * not-yet-implemented command and falls back to base64 when it is unavailable.
+ * It IS implemented (`storage::file_store::import_attachment` plus the
+ * `import_attachment` command) and is what the image picker uses, so a
+ * file-picked image never becomes base64 in JS at all.
+ *
+ * The PASTE path still goes through `saveAttachment` (base64 over IPC): the
+ * clipboard hands the webview `File` objects, not filesystem paths, so there is
+ * no path for a path-based command to read. The constants below only describe
+ * that paste path.
  */
 export const STREAM_IMPORT_BACKEND_COMMAND =
   'import_attachment(vault, src_abs_path, dir?) → Promise<string>'
@@ -331,6 +329,11 @@ export function formatAttachmentBytes(bytes: number): string {
 export function classifyAttachmentFiles(files: File[]): AttachmentLimitResult {
   const accepted: File[] = []
   const rejected: AttachmentRejection[] = []
+  // The batch byte cap needs nothing but the file sizes, so it is enforced here
+  // rather than only in the context-aware policy. Without it a drop of ten
+  // near-limit images passes the count check and then base64-encodes ~133 MB
+  // into JS memory at once.
+  let acceptedBytes = 0
   for (const file of files) {
     if (file.size > MAX_ATTACHMENT_BYTES) {
       rejected.push({ file, reason: 'too-large' })
@@ -344,7 +347,12 @@ export function classifyAttachmentFiles(files: File[]): AttachmentLimitResult {
       rejected.push({ file, reason: 'session-full' })
       continue
     }
+    if (acceptedBytes + file.size > MAX_ATTACHMENTS_PER_BATCH_BYTES) {
+      rejected.push({ file, reason: 'batch-total' })
+      continue
+    }
     accepted.push(file)
+    acceptedBytes += file.size
   }
   attachmentSessionUsed += accepted.length
   return { accepted, rejected }
@@ -393,9 +401,12 @@ function describeAttachmentRejections(rejected: AttachmentRejection[]): string {
  * on the accepted files while the user is told why the rest were dropped
  * (rather than silently discarding or risking a memory blowup).
  *
- * When `context` is supplied the full streaming policy is applied (per-batch /
- * per-vault byte caps + free-disk guard); otherwise the count-based limits
- * remain (back-compat for callers that cannot gather the disk context).
+ * The paste path calls this WITHOUT a context (a clipboard image has no
+ * filesystem path, so there is nothing to stat), so the guarantees there are:
+ * per-file size, per-batch count, per-batch BYTES and the per-session count.
+ * The per-vault total and the free-disk guard need backend data and are only
+ * applied by `planAttachmentImport` when a context is supplied — no production
+ * caller does that today, so treat those two as unenforced.
  */
 export function applyAttachmentLimits(files: File[], context?: AttachmentImportContext): File[] {
   if (context) {
@@ -638,20 +649,20 @@ export interface ImageSrcResolverContext {
 }
 
 /** Build the display-URL resolver handed to the editor / export pipeline.
- * Returns the raw src untouched when no vault is open or resolution fails,
- * so a broken pipeline degrades to today's behavior instead of hiding images. */
+ *
+ * Throws when the src cannot be turned into a display URL. That is deliberate:
+ * returning the src unchanged would look like a successful resolution to the
+ * caller, so a "no vault open yet" pass-through used to be memoized as if it
+ * were the answer and the image stayed broken even after the vault arrived.
+ * Failing lets the caller keep its own fallback and retry later. */
 export function createImageSrcResolver(
   fs: Pick<FsGateway, 'resolveMediaPath'>,
   ctx: ImageSrcResolverContext,
 ): (src: string) => Promise<string> {
   return async (src) => {
     const vault = ctx.getVault()
-    if (!vault) return src
-    try {
-      const rel = vaultRelativeFromNoteVault(ctx.getNotePath() ?? '', vault, src)
-      return await fs.resolveMediaPath(vault, rel)
-    } catch {
-      return src
-    }
+    if (!vault) throw new Error('no vault open, cannot resolve an attachment path')
+    const rel = vaultRelativeFromNoteVault(ctx.getNotePath() ?? '', vault, src)
+    return await fs.resolveMediaPath(vault, rel)
   }
 }

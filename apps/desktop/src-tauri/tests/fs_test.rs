@@ -1324,3 +1324,51 @@ fn is_importable_image_is_case_insensitive_and_extension_only() {
     assert!(!is_importable_image(Path::new("/tmp/a")));
     assert!(!is_importable_image(Path::new("/tmp/png")));
 }
+
+/// `save_attachment` is reachable from more than the paste UI (plugins, the
+/// chat panel, any future caller), so the backend enforces the same policy as
+/// the picker rather than trusting the frontend's checks.
+#[test]
+fn save_attachment_enforces_the_size_cap() {
+    let vault = temp_vault("attach-size-cap");
+    let root = vault.to_str().unwrap().to_string();
+
+    let oversize = vec![0u8; MAX_IMPORT_BYTES as usize + 1];
+    let err = save_attachment(&root, "big.png", &b64(&oversize), "").unwrap_err();
+    assert!(err.contains("limit"), "got {err}");
+    assert!(!vault.join("attachments").exists(), "nothing was written");
+
+    // The encoded-length check must reject without decoding an oversized
+    // payload into memory.
+    let encoded = "A".repeat((MAX_IMPORT_BYTES as usize).div_ceil(3) * 4 + 8);
+    assert!(save_attachment(&root, "big.png", &encoded, "").is_err());
+
+    // A payload at the limit is still accepted.
+    let exactly = vec![0u8; MAX_IMPORT_BYTES as usize];
+    assert!(save_attachment(&root, "at-limit.png", &b64(&exactly), "").is_ok());
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// The paste path shares the picker's extension allowlist: `sanitize_attachment_name`
+/// only constrains the name's shape, so without this a rename to `notes.html`
+/// would drop an executable/rendered file type into the vault.
+#[test]
+fn save_attachment_rejects_non_image_extensions() {
+    let vault = temp_vault("attach-ext");
+    let root = vault.to_str().unwrap().to_string();
+
+    for bad in ["notes.html", "payload.exe", "run.ps1", "archive.zip", "data.json", "noext"] {
+        assert!(
+            save_attachment(&root, bad, &b64(b"x"), "").is_err(),
+            "{bad} must be rejected"
+        );
+    }
+    assert!(!vault.join("attachments").exists(), "nothing was written");
+
+    // Case-insensitive, like the picker's check.
+    assert!(save_attachment(&root, "SHOT.PNG", &b64(b"x"), "assets").is_ok());
+    assert!(save_attachment(&root, "pic.webp", &b64(b"x"), "assets").is_ok());
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}

@@ -128,5 +128,7 @@ export default definePlugin({
 
 ```bash
 bash scripts/package-win.sh
-# 产物：release/nekowite_<version>_x64-setup.exe
+# 产物：release/nekowite_<version>_x64.exe（免安装，直接双击运行）
+# 需要 NSIS 安装包时：PORTABLE=0 bash scripts/package-win.sh
+#                         -> release/nekowite_<version>_x64-setup.exe
 ```
