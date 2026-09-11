@@ -192,6 +192,16 @@ git commit -m "feat(appearance): add crimson palette and four accents"
 - `fix(export): do not print the empty-paragraph marker` — 第二个真缺陷横跨两个功能：空段落被 milkdown 序列化成独占一行的 `<br />`，解析时由 `visitEmptyLine` 删除，所以编辑器里看不到；导出直接读磁盘原文，于是把标记转义成**可见文字** `&lt;br /&gt;`，空表格单元格里最明显。修法是导出侧复刻删除，但**只删块级标记**（父节点不是 `paragraph`，或该 `paragraph` 只有这一个孩子）：写在文字旁的 `<br>` 是作者的内联 HTML，继续走原有的转义策略。定位过程中先按「有相邻行内节点就保留」的启发式写过一版，被 `> a\n>\n> <br />\n> b` 这个**我自己编错的**输入证伪（remark 把懒续行并进了 html 块，值变成 `"<br />\nb"`），改用「父节点类型」这一确定判据，并改用编辑器真实产出的字节做用例。
 - 验证：editor-core 492、desktop 单元 1069、`pnpm -r typecheck`/`lint`、Playwright 91 全绿。
 
+### 2026-09-11（第十轮）
+
+承接上一轮的思路：把「同一份文本在编辑器与导出里必须得到同一结果」写成**差分断言**，而不是靠人肉比对。这一轮抓到本次最严重的一个缺陷。
+
+- `fix(mdx): never let a component in an inline container truncate the document` — 差分断言的副产物：`# Title <Callout />` 的标题 id 在编辑器与导出里对不上，追下去发现编辑器**根本没解析成功**。根因是 `mdxJsxMdast` 的 `TEXT_BLOCK` 只列了 `paragraph/listItem/tableCell/tableHeader`：在这些容器里 JSX 保留为原始 `html` 节点，其它容器一律提升为块级 `mdxComponent`。而 `heading`、`emphasis`、`strong`、`delete`、`link`、`nekoHighlight` 的内容都是行内内容——块原子放不进去，ProseMirror 抛 `createNodeInParserFail`，**milkdown 把异常吞掉**：`open()` 正常 resolve，文档只剩解析到一半的部分，于是 Ctrl+S 就把残缺内容覆盖回文件。
+  - 实测四种输入保存后是**空文件**：`alpha *em <Callout />* bravo`、`**st <Callout />**`、`~~dl <Callout />~~`、`[lk <Callout />](url) bravo`；`# Title <Callout />` 丢掉同文件其它所有块；`- a` + `# head <Callout />` + `- b` 只剩第一项。修法是把这六种行内容器并入 `TEXT_BLOCK`（沿用表格单元格那套既有的处理），JSX 以行内源码保留、原样写回。
+  - 复核方式：先写「JSX 放进每一种容器，标记词一个都不能少」的数据丢失网（19 条，改前 7 条失败），修完再补 17 条**逐字节**往返断言；`# alpha <Callout />` 等 10 种形式现在输入输出完全相同，唯一不同的是表格单元格的列宽补齐。
+- `fix(export): derive the heading id from text nodes only` — 同一批差分断言里的另一类不一致：导出用 `plainText` 拼标题文本时把原子的 `value` 也算进去了，而锚点按钮用的是 ProseMirror `Node.textContent`（只拼接文本节点，原子不贡献文字）。`# Claim [@smith2020]` 因此是编辑器 `#claim` / 导出 `claim-smith2020`，`# Formula $a^2$` 同理。现导出跳过 `inlineMath`/`math`/`nekoCite`/`html`/`mdxJsxFlowElement` 的 `value`，差分用例覆盖 16 种标题内容（含重复标题、CJK、混合原子）。
+- 验证：editor-core 496、desktop 单元 1069、`pnpm -r typecheck`/`lint`、Playwright 91 全绿。
+
 ## 验证与交付
 
 ```bash
