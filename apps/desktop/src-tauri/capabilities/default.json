@@ -11,7 +11,6 @@
     "core:window:allow-is-maximized",
     "core:window:allow-close",
     "core:window:allow-destroy",
-    "core:window:allow-start-dragging",
-    "fs:default"
+    "core:window:allow-start-dragging"
   ]
 }

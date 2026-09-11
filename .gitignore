@@ -8,6 +8,10 @@ node_modules/
 .nekowite/
 .nekowite-trash/
 
+# Daily notes the app writes when this repo is opened as a vault (it happened
+# once and a stray empty note got committed): runtime output, not source.
+/daily/
+
 # build output
 dist/
 target/
