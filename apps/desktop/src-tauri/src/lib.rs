@@ -37,7 +37,6 @@ pub fn run() {
                 }
             }),
         )
-        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(state::WatcherState::default())
         .manage(state::VaultRegistry::default())
