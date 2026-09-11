@@ -94,7 +94,11 @@ describe('save state indicator', () => {
     await s.openTab('/vault/a.md')
     const tab = s.tabs[0]
     const pending = s.saveActive()
+    // The dirty flag flips synchronously, before any await.
     expect(s.saveStateOf(tab.id)).toBe('saving')
+    // The write is dispatched after the editor flush, so release it only once
+    // the call has actually been made.
+    await vi.waitFor(() => expect(writeMock).toHaveBeenCalled())
     resolveWrite()
     await pending
     expect(s.saveStateOf(tab.id)).toBe('saved')
@@ -599,6 +603,9 @@ describe('closeAll cleanup', () => {
     expect(s.isSelfWrite('/vault/a.md')).toBe(false)
     expect(s.tabs).toHaveLength(0)
     expect(s.activeId).toBeNull()
+    // Release the write once it has actually been dispatched (it follows the
+    // editor flush), then let the save settle.
+    await vi.waitFor(() => expect(writeMock).toHaveBeenCalled())
     resolveWrite()
     await pending
   })

@@ -14,7 +14,7 @@
  */
 
 import { useViewStore } from '../stores/view'
-import { sourceViewHasFocus } from './sourceView'
+import { sourceViewHasFocus, flushSourceEdits } from './sourceView'
 
 /** The active view mode, or null when there is no Pinia instance. Callers
  *  outside the app (a plugin, a unit test) then get the rendered behaviour,
@@ -113,4 +113,40 @@ export function clearSourceAuthored(): void {
  */
 export function isSourceAuthored(content: string | null | undefined): boolean {
   return content != null && sourceAuthored !== null && content === sourceAuthored
+}
+
+/**
+ * Publish the rendered pane's pending serialization.
+ *
+ * Registered by the rendered pane (the same way the source pane registers its
+ * handle) so a service can flush without holding a component reference.
+ */
+type RenderedFlush = () => Promise<void>
+
+let renderedFlush: RenderedFlush | null = null
+
+export function setRenderedFlush(fn: RenderedFlush | null): void {
+  renderedFlush = fn
+}
+
+/** Flush the rendered pane, or resolve immediately when it is not mounted. */
+export async function flushRenderedEdits(): Promise<void> {
+  try {
+    await renderedFlush?.()
+  } catch {
+    // A torn-down editor must not break the save/export that called us.
+  }
+}
+
+/**
+ * Flush both editors, so `tab.content` is the live document.
+ *
+ * Call this before any one-shot read of the document: saving, exporting,
+ * sending it to the model. Each pane publishes through its own debounce, so
+ * without this the tab can be a full debounce window behind whichever pane the
+ * user is typing in.
+ */
+export async function flushEdits(): Promise<void> {
+  flushSourceEdits()
+  await flushRenderedEdits()
 }

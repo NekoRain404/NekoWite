@@ -19,6 +19,7 @@ import { createEditorScrollSync } from '../features/editor/controller/editorScro
 import { createEditorSearchOverlay } from '../features/editor/controller/editorSearchOverlay'
 import { createEditorSelection } from '../features/editor/controller/editorSelection'
 import { useEditorFocus } from '../features/editor/composables/useEditorFocus'
+import { setRenderedFlush } from '../services/editorOwnership'
 
 const tabs = useTabsStore()
 const view = useViewStore()
@@ -172,6 +173,9 @@ onMounted(async () => {
 
   unlistenChange = persistence.attachChangeListener()
   unlistenOverlayRefresh = searchOverlay.attachChangeListener()
+  // Published so a one-shot document read (save, export, sending the note to
+  // the model) can publish this pane's pending serialization first.
+  setRenderedFlush(() => persistence.flush())
 
   // Spell check is a reactive setting: sync the live toggle (default true) so
   // the renderSearch overlay honors it on open, and re-apply on change.
@@ -193,6 +197,7 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  setRenderedFlush(null)
   persistence.cancel()
   searchOverlay.cancelRefresh()
   cancelFocusRaf()

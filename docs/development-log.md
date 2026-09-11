@@ -110,6 +110,23 @@ git commit -m "feat(appearance): add crimson palette and four accents"
   - 另发现：`set_master_password` / `unlock_vault` 两条 Rust 命令已实现并有测试，但前端没有任何调用点（vault 主密码解锁没有 UI）。属于未完成功能而非回归，本轮未改动。
 - 验证：desktop 单元测试 1063 通过、editor-core 290 通过；`pnpm -r typecheck`、`pnpm -r lint`、`cargo clippy -D warnings` 通过；Playwright 全量 73 项通过（其中 mode-routing 与 console-clean 连跑 3 轮 36 项稳定）。
 
+### 2026-09-11（第三轮）
+
+- `fix(editor): flush the rendered pane before saving` — **数据丢失级修复**：
+  - 渲染面板的序列化同样是防抖的（120ms），但 `saveTab` 只冲刷了源码面板。在防抖窗口内按 Ctrl+S 会写入上一版文本，随后 `editorExternalSync` 又把这份过期文本套回模型，刚敲的按键被彻底丢弃（实测：立刻保存 → 模型与磁盘都没有该文本；等待 200ms 后保存 → 正常）。
+  - 现 `editorPersistence` 暴露可等待的 `flush()`，由 `RenderedPane` 注册到 `editorOwnership`；`flushEdits()` 一次冲刷两个面板，`saveTab`／导出／聊天上下文在读取文档前统一调用。
+- `fix(editor-core): keep U+00A0 out of saved files` — 在渲染面板于一段文字末尾输入空格时，浏览器插入 U+00A0；该字符此前会原样写进 Markdown 文件，导致纯文本搜索/对比失配、其他工具显示异常。现于 `normalizeNbsp()` 在序列化与解析两侧归一化；实测 `END`/`MID`/`DOUBLE` 三种输入位置都已输出普通空格（0x20），`insertText` 与源码面板本就不受影响。
+- `fix(i18n): add the four missing chat session keys` — `chat.newSession`/`chat.sessions`/`chat.untitled`/`chat.deleteSession` 在中英文里都不存在，界面直接显示原始键名（控制台伴随 `[intlify] Not found` 警告）。根因是既有的对等测试只比较 zh↔en，两边同时缺失时无法发现；新增「源码用到的字面量键必须存在」用例填补该盲区。
+- `test(e2e): add save round-trip coverage` — 新增 `e2e/save-roundtrip.spec.ts`（8 项）与夹具 `diskFiles()`（读取内存 vault 的真实落盘内容），逐字节校验源码模式、渲染模式、对照模式、frontmatter 面板的保存结果，并覆盖「立即保存」「末尾空格」「已有 U+00A0 的文件」三类回归。
+- `test(e2e): extend the console-clean sweep` — 覆盖范围扩到标签栏（开/切/关）、信息栏全部 6 个分区、模板选择器、文件树右键菜单、附件与图谱视图（新增 1 项，共 5 项）。
+- `test: harden load-sensitive waits` — `GraphPanel.test.ts` 中三处「固定次数 flush()」改为 `vi.waitFor` 轮询（读 N 个笔记是 N 层 await，负载下两次宏任务不足以完成），消除全量跑批时的偶发失败。连续 3 轮全量通过（103 文件 / 1064 用例）。
+- `test(rust): make fs_test platform-correct` — 修复 4 个仅 Windows 失败的既有用例（此前后端测试在 Windows 上恒有 4 项红）：
+  - `/etc/passwd` 在 Windows 上不是绝对路径（无盘符），守卫会把它当作 vault 相对目录而放行，断言因此为别的原因失败；改用 `outside_absolute_dir()` 返回平台对应的绝对路径，并补上「未写到 vault 之外」这一真正要守的不变量。
+  - `restore_from_trash` 返回绝对路径，Windows 下用 `\`，`ends_with("docs/a.md")` 恒为假；改用 `rel()` 归一化分隔符后比较。
+  - 现在 `cargo test` 在 Windows 上全绿：7 + 37 + 50 + 6 + 3。
+- 验证：desktop 单元测试 1064 通过（连续 3 轮）、editor-core 297 通过、`pnpm -r typecheck`/`lint`、`cargo clippy -D warnings`、`cargo test` 全绿、Playwright 全量 82 项通过。
+- 排查方法记录：本轮先用「控制台洁净度巡检」把界面点一遍定位到 i18n 缺失，再用「磁盘快照比对」定位到保存丢失与 U+00A0 —— 两者都是单元测试结构上看不到的（前者是运行期渲染，后者是浏览器输入行为）。
+
 ## 验证与交付
 
 ```bash

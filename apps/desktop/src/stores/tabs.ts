@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { emitLifecycle, getActiveEditor } from '@nekowite/plugin-host'
 import { armSuppressReapply } from '../services/suppressReapply'
 import { fsService } from '../platform/gateways/fs'
-import { flushSourceEdits } from '../services/sourceView'
+import { flushEdits } from '../services/editorOwnership'
 import { persistence } from '../services/persistence'
 import type { HistoryEntry } from '../platform/gateways/contracts'
 import { notifyError, notifyRecovery } from '../services/errors'
@@ -346,12 +346,16 @@ export const useTabsStore = defineStore('tabs', () => {
       path = picked
     }
     markSaving(t.id)
-    // The source pane coalesces keystrokes before publishing them to the tab,
-    // so flush before ANYTHING reads t.content below. This has to precede the
+    // Both panes coalesce keystrokes before publishing them to the tab, so
+    // flush before ANYTHING reads t.content below. This has to precede the
     // asset relocation, not just the write: relocation is a whole-document
     // read-modify-write, so running it against a stale snapshot would both
     // rewire the wrong text and clobber the keystrokes still in flight.
-    flushSourceEdits()
+    //
+    // The rendered pane needs the same treatment as the source pane. Saving
+    // within its debounce window used to persist the previous text and then
+    // re-apply it to the model, losing the keystrokes outright.
+    await flushEdits()
     if (t.pendingAssetPaths.length > 0) {
       await relocatePendingAssets(t, vault.value, path)
     }
