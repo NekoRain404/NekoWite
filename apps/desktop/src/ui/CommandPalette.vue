@@ -36,12 +36,19 @@ const tabs = useTabsStore()
 
 const open = ref(false)
 const visible = ref(false)
+/** True from the moment a close begins until the fade-out finishes. */
+const closing = ref(false)
 const query = ref('')
 const activeIndex = ref(0)
 const inputRef = ref<HTMLInputElement | null>(null)
 const listRef = ref<HTMLElement | null>(null)
 const files = ref<string[]>([])
 let hideTimer: ReturnType<typeof setTimeout> | null = null
+// The deferred paint that turns the fade-in on. It has to be cancellable: a
+// close that lands inside those two frames would otherwise let the stale paint
+// re-set `visible` after `hide()` cleared it, leaving the palette flagged as
+// on-screen while closed.
+let paintRaf = 0
 let prevFocus: HTMLElement | null = null
 let fsUnlisten: Promise<() => void> | null = null
 
@@ -143,25 +150,43 @@ function show(): void {
     hideTimer = null
   }
   open.value = true
+  closing.value = false
   query.value = ''
   activeIndex.value = 0
   registryRevision.value += 1
   prevFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
   void loadFiles()
   const paint = (): void => {
+    paintRaf = 0
     visible.value = true
   }
+  cancelPaint()
   if (prefersReducedMotion()) paint()
-  else requestAnimationFrame(() => requestAnimationFrame(paint))
+  else {
+    // Two frames: the overlay must be laid out at opacity 0 for the CSS
+    // transition to have a starting value to animate from.
+    paintRaf = requestAnimationFrame(() => {
+      paintRaf = requestAnimationFrame(paint)
+    })
+  }
   void nextTick(() => inputRef.value?.focus())
+}
+
+function cancelPaint(): void {
+  if (paintRaf === 0) return
+  cancelAnimationFrame(paintRaf)
+  paintRaf = 0
 }
 
 function hide(): void {
   if (!open.value) return
+  cancelPaint()
   visible.value = false
+  closing.value = true
   if (hideTimer) clearTimeout(hideTimer)
   hideTimer = setTimeout(() => {
     open.value = false
+    closing.value = false
     hideTimer = null
   }, MOTION_MS)
   const el = prevFocus
@@ -209,10 +234,19 @@ function onGlobalKeydown(e: KeyboardEvent): void {
   if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k') {
     e.preventDefault()
     e.stopPropagation()
-    if (open.value) hide()
+    // Gated on the logical state, not on `visible`: the fade-in is deferred by
+    // two frames, so just after opening `visible` is still false and keying off
+    // it would make the first Ctrl+K press open rather than close.
+    //
+    // A palette that is mid fade-out counts as closed here so the press
+    // revives it — otherwise a quick Escape-then-Ctrl+K would be swallowed by
+    // `hide()` and the palette would look like it refused to reopen.
+    if (open.value && !closing.value) hide()
     else show()
     return
   }
+  // `open` again: Escape must work the instant the palette appears, which is
+  // before the deferred fade-in has painted.
   if (open.value && e.key === 'Escape') {
     e.preventDefault()
     e.stopPropagation()
@@ -247,6 +281,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onGlobalKeydown, true)
   void fsUnlisten?.then((unlisten) => unlisten())
   if (hideTimer) clearTimeout(hideTimer)
+  cancelPaint()
 })
 </script>
 

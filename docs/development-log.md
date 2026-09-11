@@ -92,6 +92,24 @@ git commit -m "feat(appearance): add crimson palette and four accents"
   - 测试基建：`focusParagraph` 增加点击重试；新增基于模型定位光标的 `placeRenderedCaretInParagraph`，替换「点击 + 连按方向键」这种在负载下会丢按键的定位方式，消除两处固有 flaky。
   - 验证：desktop 单元测试 1052 通过（新增 `editorTextSelection`/`runEditorCommand`/`markdown 注册表`/`tabs 冲刷`/浮动框模式用例），editor-core 290 通过；`pnpm -r typecheck`、`pnpm -r lint`、`cargo clippy -D warnings` 通过；Playwright 全量 64 项通过，`editor-input` + `input-ime` 连跑 4 轮 144 项稳定。
 
+### 2026-09-11（第二轮）
+
+- `fix(layout): make the split divider follow the pointer` — 修复用户报告的「对照模式下分隔条只能拖到固定位置」：
+  - 根因：`LayoutResizeHandle` 把指针位移（像素）直接累加到取值上，而分隔条取值是 0.15–0.85 的比例，任何拖拽都会瞬间撞到上/下界。侧栏与右栏用的是像素宽度，因此该组件必须同时支持两种单位。
+  - 修复：新增 `deltaUnit`（`px` 默认 / `fraction`），比例型手柄按轨道宽度换算位移；分隔条声明 `delta-unit="fraction"`。
+  - 同时修复该组件丢失调用方 `class` 的问题（模板双根节点导致无法自动继承属性），`split-handle` 现正确生效。
+- `fix(ui): stop the command palette from keeping a stale open flag` — 排查过程中发现的两个真实缺陷：
+  - `show()` 用两帧 rAF 延后淡入而 `hide()` 不取消它，快速关闭时迟到的绘制会在 `hide()` 之后把「已显示」重新置真，造成逻辑已关闭但仍标记在屏的状态；现关闭与卸载都会取消待执行绘制帧。
+  - Esc 与 Ctrl+K 原先依据 `visible`（受上述延迟影响）判断，导致「刚打开时按 Esc 不生效」；现改为依据逻辑开启状态，并新增独立 `closing` 状态，使淡出过程中的 Ctrl+K 重新打开面板。
+- `fix(editor): flush the source pane before any whole-document read` — 修正上一轮修复中的顺序问题并补齐同类路径：
+  - `saveTab` 的冲刷原先排在附件迁移之后，而迁移是整档「读-改-写」，会基于过期快照改写并覆盖合并窗口内的按键；现提前到读取 `t.content` 之前。
+  - 侧栏移除标签、frontmatter 面板写回同样是整档读改写，此前未先冲刷。
+- `test(e2e): add a console-clean sweep` — 新增 `e2e/console-clean.spec.ts`：三种视图模式点遍全部工具栏按钮、走遍侧栏与右栏、多组关键词执行命令面板、逐项遍历设置面板全部配色与开关，任何 console error/warning 或抛错即失败。该巡检用于捕捉单元测试看不到的渲染期问题（Teleport 目标被移除后继续 patch、命令派发到已卸载编辑器等）。
+- `test(layout): cover both divider units` — 新增 `e2e/split-resize.spec.ts`（5 项，真实鼠标拖拽 + 上下界 + 双击复位 + 方向键步进）与 `LayoutResizeHandle` 单元用例（5 项）。已验证：移除修复后比例拖拽用例会失败。
+  - 排查方法记录：`e2e/support/editorHarness.ts` 的 `focusParagraph` 增加点击重试；需要精确光标位置的用例改用新增的 `placeRenderedCaretInParagraph`（经编辑器模型定位），替换「点击 + 连按方向键」这类在负载下会丢按键的写法。
+  - 另发现：`set_master_password` / `unlock_vault` 两条 Rust 命令已实现并有测试，但前端没有任何调用点（vault 主密码解锁没有 UI）。属于未完成功能而非回归，本轮未改动。
+- 验证：desktop 单元测试 1063 通过、editor-core 290 通过；`pnpm -r typecheck`、`pnpm -r lint`、`cargo clippy -D warnings` 通过；Playwright 全量 73 项通过（其中 mode-routing 与 console-clean 连跑 3 轮 36 项稳定）。
+
 ## 验证与交付
 
 ```bash
