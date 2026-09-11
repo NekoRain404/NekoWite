@@ -428,6 +428,7 @@ export const en = {
     dotDotForbidden: 'Filename cannot contain consecutive dots',
     dotForbidden: 'Filename cannot start with a dot',
     extensionRequired: 'Please keep the extension, e.g. .png',
+    extensionUnsupported: 'Only image files are supported: {list}',
   },
   searchPanel: {
     find: 'Find',

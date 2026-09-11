@@ -755,8 +755,38 @@ pub fn save_attachment(
     base64: &str,
     dir: &str,
 ) -> Result<String, String> {
+    // The frontend caps a paste at `MAX_ATTACHMENT_BYTES` before it ever
+    // encodes, but that is a single caller: a plugin, the chat panel or a
+    // future caller can reach this command directly, and the IPC boundary must
+    // not trust any of them. Checking the encoded length BEFORE decoding also
+    // means an oversized payload is rejected without allocating its bytes.
+    //
+    // Base64 is 4 characters per 3 bytes, so this bound is the decoded limit
+    // rounded up to a whole group — slightly permissive by design, and the
+    // exact check follows the decode.
+    let encoded_limit = (MAX_IMPORT_BYTES as usize).div_ceil(3) * 4;
+    if base64.len() > encoded_limit {
+        return Err(format!(
+            "attachment is larger than the {} MB limit",
+            MAX_IMPORT_BYTES / (1024 * 1024)
+        ));
+    }
     let bytes = decode_base64(base64)?;
+    if bytes.len() as u64 > MAX_IMPORT_BYTES {
+        return Err(format!(
+            "attachment is larger than the {} MB limit",
+            MAX_IMPORT_BYTES / (1024 * 1024)
+        ));
+    }
     let name = sanitize_attachment_name(file_name)?;
+    // `sanitize_attachment_name` only constrains the SHAPE of the name, so a
+    // rename to `notes.html` used to land an arbitrary file type in the vault.
+    // The paste path is for images, so it shares the picker's allowlist.
+    if !is_importable_image(Path::new(&name)) {
+        return Err(format!(
+            "attachment type is not an allowed image: {name}"
+        ));
+    }
     // Path-confinement guard: validates the vault base resolves inside the
     // vault; the binding is unused (the target dir is resolved below via dir_abs).
     let _root = resolve_within(vault_root, ".")?;

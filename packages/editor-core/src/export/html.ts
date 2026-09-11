@@ -10,6 +10,8 @@ import type { Root } from 'mdast'
 import { citeMdast } from '../cite'
 import { imageDimMdast } from '../image'
 import { mdxJsxMdast, parseMdxTag } from '../mdx'
+import { safeImageUrl, safeLinkUrl } from './url'
+import { slugify } from '../slugify'
 
 // KaTeX is only needed at export time (the editor preview renders math via
 // MathLive / the app's own renderer). Loading it lazily keeps the startup
@@ -107,6 +109,10 @@ interface RenderContext {
   // document with no math stays lean and sync/async output stays identical
   // (KaTeX CSS is only available after the lazy export-time load).
   hasMath?: boolean
+  /** Heading slug -> how many times it has been used, so duplicate titles get
+   *  distinct ids instead of sharing one (which would make the anchor point at
+   *  the first of them). */
+  headingSlugs: Map<string, number>
 }
 
 const processor = unified()
@@ -181,9 +187,17 @@ export function formatReference(ref: ExportRef): string {
   if (venue.length) segs.push(`${venue.join(' ')}.`)
   const doiHref = doiUrl(ref.doi)
   if (doiHref) {
-    segs.push(`<a href="${escapeHtml(doiHref)}">doi:${escapeHtml(ref.doi ?? '')}</a>`)
+    const doiUrl = safeLinkUrl(doiHref)
+    segs.push(
+      doiUrl === null
+        ? `doi:${escapeHtml(ref.doi ?? '')}`
+        : `<a href="${escapeHtml(doiUrl)}">doi:${escapeHtml(ref.doi ?? '')}</a>`,
+    )
   } else if (ref.url) {
-    segs.push(`<a href="${escapeHtml(ref.url)}">${escapeHtml(ref.url)}</a>`)
+    const refUrl = safeLinkUrl(ref.url)
+    segs.push(
+      refUrl === null ? escapeHtml(ref.url) : `<a href="${escapeHtml(refUrl)}">${escapeHtml(refUrl)}</a>`,
+    )
   } else if (ref.publisher) {
     segs.push(escapeHtml(ref.publisher))
   }
@@ -337,6 +351,12 @@ function renderTable(node: RenderNode, ctx: RenderContext): string {
   return `${html}</table>`
 }
 
+/** The concatenated text of a node, used to derive a heading's slug. */
+function plainText(node: RenderNode): string {
+  if (typeof node.value === 'string') return node.value
+  return (node.children ?? []).map((child) => plainText(child)).join('')
+}
+
 function renderNode(node: RenderNode, ctx: RenderContext): string {
   switch (node.type) {
     case 'text':
@@ -347,7 +367,16 @@ function renderNode(node: RenderNode, ctx: RenderContext): string {
       return `<p>${renderChildren((node.children ?? []) as RenderNode[], ctx)}</p>`
     case 'heading': {
       const level = Math.min(Math.max(node.depth ?? 1, 1), 6)
-      return `<h${level}>${renderChildren((node.children ?? []) as RenderNode[], ctx)}</h${level}>`
+      const body = renderChildren((node.children ?? []) as RenderNode[], ctx)
+      // Heading anchors copy `#slug` deep links, so the exported document has
+      // to expose the matching ids or every one of those links is dead. Ids are
+      // de-duplicated per document, mirroring the counter the editor uses when
+      // two headings share a title.
+      const base = slugify(plainText(node))
+      const seen = ctx.headingSlugs.get(base) ?? 0
+      ctx.headingSlugs.set(base, seen + 1)
+      const id = seen === 0 ? base : `${base}-${seen}`
+      return `<h${level} id="${escapeHtml(id)}">${body}</h${level}>`
     }
     case 'emphasis':
       return `<em>${renderChildren((node.children ?? []) as RenderNode[], ctx)}</em>`
@@ -363,8 +392,14 @@ function renderNode(node: RenderNode, ctx: RenderContext): string {
     }
     case 'blockquote':
       return `<blockquote>${renderChildren((node.children ?? []) as RenderNode[], ctx)}</blockquote>`
-    case 'link':
-      return `<a href="${escapeHtml(node.url ?? '')}">${renderChildren((node.children ?? []) as RenderNode[], ctx)}</a>`
+    case 'link': {
+      // A destination that fails the allowlist (javascript:, data:text/html,
+      // vbscript:, …) is dropped rather than emitted: the link text survives so
+      // nothing is silently lost, but the exported file cannot run it.
+      const href = safeLinkUrl(node.url)
+      const body = renderChildren((node.children ?? []) as RenderNode[], ctx)
+      return href === null ? body : `<a href="${escapeHtml(href)}">${body}</a>`
+    }
     case 'image': {
       const styles: string[] = []
       if (node.width != null && Number.isFinite(node.width)) styles.push(`width:${node.width}px`)
@@ -376,7 +411,12 @@ function renderNode(node: RenderNode, ctx: RenderContext): string {
         styles.push('float:right')
       }
       const style = styles.length ? ` style="${styles.join(';')}"` : ''
-      return `<img src="${escapeHtml(node.url ?? '')}" alt="${escapeHtml(node.alt ?? '')}"${style}>`
+      // Same allowlist as links, plus `data:image/*` for inlined pictures. A
+      // rejected src is omitted so the alt text shows instead of a broken image
+      // that would still have navigated on click.
+      const src = safeImageUrl(node.url)
+      const srcAttr = src === null ? '' : ` src="${escapeHtml(src)}"`
+      return `<img${srcAttr} alt="${escapeHtml(node.alt ?? '')}"${style}>`
     }
     case 'list':
       return renderList(node, ctx)
@@ -510,6 +550,7 @@ function renderFromChildren(children: RenderNode[], opts?: RenderDocumentOptions
     refs: opts?.refs,
     componentRenderers: opts?.componentRenderers,
     citeNumbers,
+    headingSlugs: new Map(),
   }
 
   const body = renderChildren(children, ctx)

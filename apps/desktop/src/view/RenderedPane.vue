@@ -8,6 +8,10 @@ import { useFloatStore } from '../stores/float'
 import { useAppearanceStore } from '../stores/appearance'
 import { resolveDirection } from '../services/rtl'
 import { t } from '../i18n'
+import { slugify } from '@nekowite/editor-core'
+import { resolveLinkPath } from '../features/vault/services/libraryQueries'
+import { useDocumentListStore } from '../stores/documentList'
+import { dirRelativeToVault } from '../services/noteMeta'
 import RenderSearchPanel from './RenderSearchPanel.vue'
 import ImagePanel from '../ui/ImagePanel.vue'
 import TableMenu from '../ui/TableMenu.vue'
@@ -24,6 +28,7 @@ import { setRenderedFlush } from '../services/editorOwnership'
 const tabs = useTabsStore()
 const view = useViewStore()
 const floatStore = useFloatStore()
+const documentList = useDocumentListStore()
 const appearance = useAppearanceStore()
 
 const scrollEl = ref<HTMLElement | null>(null)
@@ -107,13 +112,35 @@ function onContainerPointerDownCapture(e: PointerEvent): void {
 
 function onEditorClick(e: MouseEvent): void {
   const target = e.target as Element | null
-  // External links open in a new tab; internal/markdown links are left alone.
   const anchor = target?.closest?.('a') as HTMLAnchorElement | null
   const href = anchor?.getAttribute('href') ?? ''
-  if (anchor && /^https?:\/\//.test(href)) {
+  if (anchor && href) {
+    // Every in-document link is handled here, and the default is always
+    // prevented: letting the webview follow a relative href would try to
+    // navigate the app window itself.
+    if (/^https?:\/\//i.test(href)) {
+      e.preventDefault()
+      e.stopPropagation()
+      window.open(href, '_blank', 'noopener,noreferrer')
+      return
+    }
+    if (href.startsWith('#')) {
+      e.preventDefault()
+      e.stopPropagation()
+      scrollToHeadingAnchor(href.slice(1))
+      return
+    }
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(href)) {
+      // A same-vault reference (notes/other.md, ../a.md): open it as a tab.
+      e.preventDefault()
+      e.stopPropagation()
+      void openLinkedNote(href)
+      return
+    }
+    // Any other scheme (mailto:, asset:, a hand-written javascript:) is not
+    // this pane's business — but it must not navigate the app either.
     e.preventDefault()
     e.stopPropagation()
-    window.open(href, '_blank', 'noopener,noreferrer')
     return
   }
   const span = target?.closest?.('.nkw-spell') as HTMLElement | null
@@ -127,6 +154,45 @@ function onEditorClick(e: MouseEvent): void {
     const hit = target?.closest?.('.nw-spell-popup')
     if (!hit) spellPopup.value = null
   }
+}
+
+/**
+ * Scroll the rendered pane to the heading whose slug matches `slug`.
+ *
+ * The editor's own heading anchors copy `#slug` links, so following one has to
+ * land on the heading rather than fall through to the browser (which would try
+ * to navigate the app window).
+ */
+function scrollToHeadingAnchor(slug: string): void {
+  if (!slug) return
+  const headings = editorEl.value?.querySelectorAll('h1, h2, h3, h4, h5, h6')
+  if (!headings) return
+  for (const heading of Array.from(headings)) {
+    if (slugify(heading.textContent ?? '') === slug) {
+      heading.scrollIntoView({ block: 'start', behavior: 'auto' })
+      return
+    }
+  }
+}
+
+/** Open a same-vault markdown reference in a new tab. */
+async function openLinkedNote(href: string): Promise<void> {
+  const vault = tabs.vault
+  const notePath = tabs.activeTab?.path
+  if (!vault || !notePath) return
+  let decoded = href
+  try {
+    decoded = decodeURIComponent(href)
+  } catch {
+    // A malformed escape sequence: fall back to the raw href.
+  }
+  const resolved = resolveLinkPath(
+    documentList.notes,
+    vault,
+    dirRelativeToVault(notePath, vault),
+    decoded,
+  )
+  if (resolved) await tabs.openTab(resolved)
 }
 
 function onSpellSuggestion(text: string): void {

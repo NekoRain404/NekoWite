@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Node as ProseNode } from '@milkdown/prose/model'
 
-import { configureImageResolver } from './resolver'
+import { configureImageResolver, invalidateImageResolution } from './resolver'
 import { makeImageNodeView } from './nodeView'
 import { imageSelectionPlugin } from './selection'
 import { createEditor, basicPlugins } from '../editor'
@@ -33,7 +33,9 @@ function makeView(node: ProseNode): {
     update: (n: ProseNode) => boolean
     selectNode?: () => void
     deselectNode?: () => void
+    destroy?: () => void
   }
+  mountedViews.push(spec)
   return {
     dom: spec.dom,
     img: spec.dom.querySelector('img') as HTMLImageElement,
@@ -43,7 +45,13 @@ function makeView(node: ProseNode): {
   }
 }
 
+// Node views subscribe to resolution invalidation, so a test that does not
+// tear its view down leaves a listener behind that later invalidations wake —
+// which made counts bleed across cases.
+const mountedViews: Array<{ destroy?: () => void }> = []
+
 afterEach(() => {
+  for (const view of mountedViews.splice(0)) view.destroy?.()
   configureImageResolver(null)
 })
 
@@ -213,5 +221,82 @@ describe('image node view', () => {
     const imageSel = view.state.selection as unknown as { node: { type: { name: string } } }
     expect(imageSel.node.type.name).toBe('image')
     editor.destroy()
+  })
+})
+
+describe('image node view failure recovery', () => {
+  it('re-resolves when resolution is invalidated after a failure', async () => {
+    // The reported scenario: the panel renders before the vault is authorized,
+    // so the first resolution fails and the image shows its error overlay. When
+    // the vault becomes ready the app invalidates resolution, and the node view
+    // must pick the real URL up without a manual Retry.
+    let ready = false
+    configureImageResolver(async (src) => {
+      if (!ready) throw new Error('vault not ready')
+      return `data:image/png;base64,OK:${src}`
+    })
+    const { img, dom } = makeView(fakeNode({ src: 'welcome_assets/a.png', alt: '', title: '' }))
+    await flush()
+    img.dispatchEvent(new Event('error'))
+    expect(dom.getAttribute('data-failed')).toBe('true')
+
+    // The vault arrives.
+    ready = true
+    invalidateImageResolution()
+    await flush()
+
+    expect(img.getAttribute('src')).toBe('data:image/png;base64,OK:welcome_assets/a.png')
+  })
+
+  it('stops listening once destroyed', async () => {
+    let attempts = 0
+    configureImageResolver(async () => {
+      attempts += 1
+      throw new Error('nope')
+    })
+    const spec = (makeImageNodeView as (n: ProseNode) => unknown)(
+      fakeNode({ src: 'welcome_assets/a.png', alt: '', title: '' }),
+    ) as { dom: HTMLElement; destroy?: () => void }
+    mountedViews.push(spec)
+    await flush()
+    const img = spec.dom.querySelector('img') as HTMLImageElement
+    img.dispatchEvent(new Event('error'))
+    const before = attempts
+
+    spec.destroy?.()
+    invalidateImageResolution()
+    await flush()
+    // A torn-down node view must not keep re-resolving (or touch a dead DOM).
+    expect(attempts).toBe(before)
+  })
+
+  it('ignores a load event from a superseded src', async () => {
+    configureImageResolver(async () => 'data:image/png;base64,OK')
+    const node = fakeNode({ src: 'a.png', alt: '', title: '' })
+    const { img, dom, update } = makeView(node)
+    await flush()
+    // The node is re-rendered with a new src before the old one reports load.
+    update(fakeNode({ src: 'b.png', alt: '', title: '' }))
+    await flush()
+    img.dispatchEvent(new Event('error'))
+    expect(dom.getAttribute('data-failed')).toBe('true')
+
+    // A late `load` carrying the old src must not clear the current failure.
+    Object.defineProperty(img, 'getAttribute', {
+      value: (name: string) => (name === 'src' ? 'a.png' : null),
+      configurable: true,
+    })
+    img.dispatchEvent(new Event('load'))
+    expect(dom.getAttribute('data-failed')).toBe('true')
+  })
+
+  it('clears the failure state when the current src loads', async () => {
+    configureImageResolver(async () => 'data:image/png;base64,OK')
+    const { img, dom } = makeView(fakeNode({ src: 'a.png', alt: '', title: '' }))
+    await flush()
+    img.dispatchEvent(new Event('error'))
+    expect(dom.getAttribute('data-failed')).toBe('true')
+    img.dispatchEvent(new Event('load'))
+    expect(dom.getAttribute('data-failed')).toBe('false')
   })
 })

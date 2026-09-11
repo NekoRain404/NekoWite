@@ -139,6 +139,19 @@ git commit -m "feat(appearance): add crimson palette and four accents"
   - 另核查：`assetProtocol.scope` 静态配置仅 `attachments/**`，但 `register_vault` 会在运行时 `allow_directory(整个 vault, recursive)` 并 forbid 内部目录，因此 `*_assets/` 与 `.tmp/` 下的图片本就可通过 asset 协议访问——scope 不是本次故障的原因。
 - 验证：desktop 单元测试 1064、editor-core 301、`pnpm -r typecheck`/`lint`、`cargo clippy -D warnings`、`cargo test` 全绿、Playwright 全量 86 项通过。
 
+### 2026-09-11（第五轮：外部扫描结果复核）
+
+按独立扫描报告逐条**实证复核**后修复。报告里关于「工作区有未提交改动」的前提已过时（那批改动已在 `d362b7c` 提交）。
+
+- `fix(export): sanitise link and image destinations` — **P1，已实证**：`renderDocument` 对 `[x](javascript:alert(1))` 输出 `<a href="javascript:alert(1)">`，`![a](javascript:alert(1))` 同样进入 `src`；HTML 转义拦不住它（不含元字符）。同文件对原生 HTML 是故意转义的，链接却无同级防护。新增 `export/url.ts` 协议允许列表（http/https/mailto/tel/相对路径；图片额外 asset: 与 data:image/* 光栅），并接入链接、图片与 `.bib` 参考文献两条链接。附带发现并处理：`java\tscript:` 这类控制字符混淆、`data:text/html`、SVG data URL（作为文档打开可执行脚本）。
+- `fix(image): do not memoise a resolution failure` — **P1，已实证**：`resolveImageSrc` 把拒绝也写入缓存（`PROBE_SECOND` 显示第二次调用仍返回失败值且只尝试了 1 次），应用侧解析器无 vault 时返回原 src，使「vault 未就绪」被当作成功结果永久缓存。现失败不入缓存；新增 `invalidateImageResolution()` + 节点视图订阅，`appBootstrap` 在提交 vault 后调用，已挂载图片会重新解析。补充：模式往返**不会**重建节点视图（实测），所以恢复依赖失效通知而非重新渲染。
+- `fix(export): give headings the ids their anchors link to` — 导出标题不生成 `id`，编辑器锚点复制的 `#slug` 全是死链。现按编辑器同一 `slugify` 生成 `id` 并去重（`same`/`same-1`/`same-2`），slug 取标题纯文本而非标记。
+- `fix(editor): navigate local markdown links in-app` — `[文本](notes/other.md)` 此前无反应；`#slug` 滚动到标题；其它协议一律阻止默认行为。实测确认相对链接**不会**导航掉 webview（`URL_BEFORE == URL_AFTER`），因此这是体验缺口而非破坏性问题。
+- `fix(security): enforce the attachment size cap and image allowlist in Rust` — `save_attachment` 无上限、无白名单（仅 picker 用的 `import_attachment` 有）。现先按 base64 编码长度拒绝（不解码超大 payload）再按解码字节复核，并复用图片扩展名白名单；前端 `validateRenameName` 提前给出明确提示。
+- `test`: editor-core 新增 `export/url.test.ts`（39 项）、`export/headingIds.test.ts`（6 项）、`image/resolverCache.test.ts`（9 项）、nodeView 恢复用例（4 项）；Rust 新增大小上限与扩展名白名单用例。**每一项都先在未修复代码上验证会失败**（如失败缓存用例、可变宽路径用例）。
+- 文档与实现对齐：README 打包章节的产物改为免安装 exe（NSIS 降为可选）；`docs/dev.md` 中「切换 vault 时未命名 dirty 文档」等三项已完成的条目标注完成；`attachments.ts` 中声称 streaming 命令「尚未实现 / OUT OF SCOPE」的注释更正（`import_attachment` 早已实现并接线），并说明粘贴路径实际生效的限额（每文件 / 每批数量 / 每批字节 / 每会话），明确指出每 vault 总量与磁盘余量守卫**目前无生产调用方**。
+- 未修复（如实报告，非本轮范围）：`tauri-plugin-fs` 已初始化并授权但前端无调用方；`.oxlintrc.json` 为废配置；插件无真正隔离/签名治理；表格与图片的功能缺口；索引大规模与断电重建未做真机验证；M5 性能缺目标机基线。
+
 ## 验证与交付
 
 ```bash

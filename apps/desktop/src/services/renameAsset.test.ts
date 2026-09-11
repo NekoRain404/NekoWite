@@ -29,6 +29,23 @@ describe('validateRenameName', () => {
     expect(validateRenameName('my-photo.jpg')).toBeNull()
   })
 
+  it('accepts every extension the backend allowlists, case-insensitively', () => {
+    for (const ext of ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'avif', 'svg']) {
+      expect(validateRenameName(`pic.${ext}`), ext).toBeNull()
+      expect(validateRenameName(`pic.${ext.toUpperCase()}`), ext).toBeNull()
+    }
+  })
+
+  it('rejects an extension the backend would refuse', () => {
+    // The paste path stores images; without this the save fails at the IPC
+    // boundary with a backend error instead of a clear message.
+    for (const name of ['notes.html', 'payload.exe', 'run.ps1', 'archive.zip', 'data.json']) {
+      const error = validateRenameName(name)
+      expect(error, name).not.toBeNull()
+      expect(error).toContain('png')
+    }
+  })
+
   it('rejects empty and whitespace-only names', () => {
     expect(validateRenameName('')).not.toBeNull()
     expect(validateRenameName('   ')).not.toBeNull()

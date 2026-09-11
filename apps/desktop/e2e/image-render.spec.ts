@@ -120,3 +120,31 @@ test.describe('image rendering on open', () => {
     expect((await imageState(page)).errorVisible).toBe(false)
   })
 })
+
+test.describe('image resolution recovery', () => {
+  test('a transient failure is retried when resolution is invalidated', async ({ page }) => {
+    // The first attempt fails, as it does when the panel renders before an
+    // attachment is resolvable. The failure must not be memoized, and the
+    // app-level invalidation — fired once a vault is committed — must make the
+    // already-mounted node view resolve again, with no manual Retry.
+    await openNote(page, {
+      doc: DOC,
+      attachments: { [ATTACHMENT]: PNG_1X1 },
+      resolveFailsTimes: 1,
+    })
+    await showRendered(page)
+    await expect.poll(async () => (await imageState(page)).errorVisible, { timeout: 5000 }).toBe(true)
+
+    await page.evaluate(async () => {
+      const core = (await import(
+        '/@fs/C:/Users/Lenovo/Documents/ChatGPT/NekoWrite/packages/editor-core/src/image/resolver.ts'
+      )) as unknown as { invalidateImageResolution(): void }
+      core.invalidateImageResolution()
+    })
+
+    await expect
+      .poll(async () => (await imageState(page)).naturalWidth, { timeout: 5000 })
+      .toBeGreaterThan(0)
+    expect((await imageState(page)).errorVisible).toBe(false)
+  })
+})
