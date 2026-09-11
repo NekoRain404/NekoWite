@@ -21,6 +21,7 @@
 - **分隔条拖拽回归测试**（`e2e/split-resize.spec.ts`、`LayoutResizeHandle` 单元测试）：覆盖比例型与像素型两种取值单位。
 - **保存往返测试**（`e2e/save-roundtrip.spec.ts`）：Ctrl+S 后用测试夹具里的「磁盘快照」逐字节比对真实落盘内容，并重新打开验证；新增 `diskFiles()` 夹具读取内存 vault 的持久化结果。
 - **i18n 覆盖测试**：`i18n.test.ts` 新增「源码里用到的每个 t() 字面量键都必须在两个语言里存在」的用例（原有的 zh↔en 对等测试无法发现两个语言同时缺失的键）。
+- **统一的标题锚点 id**（`headingAnchorIds`）：标题深链的三个消费方（复制链接的锚点按钮、导出 HTML 的 `id`、跟随链接的滚动处理）现在共用同一份文档级 id 列表，同名标题按顺序获得 `-1`/`-2` 后缀。
 - **导出链接安全策略**（`export/url.ts`）：链接/图片目标改为协议允许列表，`javascript:`、`data:text/html`、`vbscript:`、`file:`、`blob:` 一律不写入 `href`/`src`（链接文字保留）。图片额外允许 `asset:`（应用自身解析出的 vault 媒体 URL）与 `data:image/*`（仅光栅格式，SVG 排除——它作为文档打开时可以执行脚本）。控制字符混淆（`java\tscript:`）会被识破。
 - **图片渲染测试**：`e2e/image-render.spec.ts`（4 项，夹具能把附件真正解码成 data URL，因此可断言 `naturalWidth`）；`image/nodeView.test.ts` 新增 5 项覆盖首帧、`load` 清错与 Retry 重解析。
 
@@ -73,6 +74,8 @@
 - **聊天面板会话相关的 4 个文案键缺失**（`chat.newSession`/`chat.sessions`/`chat.untitled`/`chat.deleteSession`），界面上直接显示原始键名。已补齐中英文，并新增覆盖测试防止同类问题再次逃逸。
 - **导出 HTML/PDF 存在 `javascript:` 型 XSS**：链接与图片的 `href`/`src` 只做了 HTML 转义，而 `javascript:alert(1)` 不含任何 HTML 元字符，会被原样写入导出文件——分享出去或用浏览器打开即可点击执行。同一文件对原生 HTML 是故意转义的（注释写明 XSS-safe default），链接却无同等级防护。现改为协议允许列表（见 Added）。
 - **图片解析失败被永久缓存**：失败结果也被 memoize（`.catch(() => src)` 把拒绝转成“成功”值），而应用侧解析器在没有 vault 时直接返回原 src，无法区分“vault 还没就绪”和“文件不存在”。于是首次解析“成功”地缓存了不可加载的相对路径，vault 就绪后也不再重试。现失败不入缓存，并新增 `invalidateImageResolution()`：vault 提交后由 `appBootstrap` 调用，已挂载的图片节点会重新解析。上一轮给 Retry 加 `refresh` 只是治标。
+- **每个同名标题都复制同一个锚点**：编辑器标题锚点只用 `slugify(文本)`，所以三个「Same」标题的锚点复制的都是 `#same`，后两个链接永远落在第一个标题上。现改为让锚点解析自己真正拥有的 id（点击时按文档顺序计算），与导出、滚动处理共用 `headingAnchorIds`。
+- **复制的标题链接里笔记路径出现两次**：链接构造是 `${vault}/${tab.path}`，而 `tab.path` 在部分流程里已经包含 vault 前缀（`list_dir` 返回的是解析后的完整路径），拼出来是 `vault/vault/note.md#slug`。新增共享助手 `notePathRelativeToVault` 先归一化再拼接。
 - **导出后的标题深链是死链**：编辑器标题锚点复制的是 `#slug`，但导出 HTML 的标题不生成 `id`。现导出为每个标题生成与编辑器 `slugify` 一致的 `id`，同名标题按出现顺序加 `-1`/`-2` 去重。
 - **应用内本地 Markdown 链接点击无反应**：`[文本](notes/other.md)` 此前不做任何处理。现按同 vault 路径解析并新开标签页；`#slug` 链接滚动到对应标题；其它协议一律 `preventDefault`，不再有让 webview 自行导航的余地。
 - **后端 `save_attachment` 没有大小上限和扩展名白名单**：picker 用的 `import_attachment` 两者都有，但 base64 粘贴路径没有——前端的 10 MB 检查是唯一防线，插件/聊天等其它调用方可绕过，且可把文件重命名成 `.html` 落盘。现在后端同样强制 10 MB 上限（先按编码长度拒绝，避免解码超大 payload）并复用 picker 的图片扩展名白名单；前端重命名对话框也给出明确提示而不是等后端报错。

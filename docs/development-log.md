@@ -152,6 +152,17 @@ git commit -m "feat(appearance): add crimson palette and four accents"
 - 文档与实现对齐：README 打包章节的产物改为免安装 exe（NSIS 降为可选）；`docs/dev.md` 中「切换 vault 时未命名 dirty 文档」等三项已完成的条目标注完成；`attachments.ts` 中声称 streaming 命令「尚未实现 / OUT OF SCOPE」的注释更正（`import_attachment` 早已实现并接线），并说明粘贴路径实际生效的限额（每文件 / 每批数量 / 每批字节 / 每会话），明确指出每 vault 总量与磁盘余量守卫**目前无生产调用方**。
 - 未修复（如实报告，非本轮范围）：`tauri-plugin-fs` 已初始化并授权但前端无调用方；`.oxlintrc.json` 为废配置；插件无真正隔离/签名治理；表格与图片的功能缺口；索引大规模与断电重建未做真机验证；M5 性能缺目标机基线。
 
+### 2026-09-11（第六轮）
+
+继续验证上一轮的标题深链修复，发现并修掉两个**我自己引入/遗漏**的缺陷：
+
+- `fix(heading): give every duplicate heading its own anchor` — 我上一轮只给**导出**加了同名标题去重，编辑器的锚点按钮仍用 `slugify(文本)`，所以三个「Same」标题复制的都是 `#same`：新导出的 `same-1`/`same-2` 反而无人引用，而复制出来的链接全都落在第一个标题上。现提取 `headingAnchorIds(texts)` 作为**唯一**定义，三个消费方（锚点按钮 / 导出 `id` / 滚动处理）共用；锚点在**点击时**按文档顺序解析自己的 id（渲染期零成本），滚动处理改为按**索引**匹配而非 slug 比较（否则 `#same-1` 会匹配到第一个标题）。
+  - 如实记录一处共享的固有歧义：标题「Same 1」的 slug 恰好是 `same-1`，与第二个「Same」的后缀相同（GitHub 同样如此）。解析按文档顺序定位，因此链接仍能落到产生它的标题上；已在代码注释与测试里把这个行为固化下来，而不是假装不存在。
+- `fix(editor): stop doubling the vault in a copied heading link` — 链接构造 `${vault}/${tab.path}` 未做归一化，而 `tab.path` 在部分流程里已含 vault 前缀（Rust `list_dir` 返回解析后的完整路径，链接索引返回 vault 相对路径），于是复制出的链接是 `vault/vault/note.md#slug`。新增共享助手 `notePathRelativeToVault`（`dirRelativeToVault` 也改为复用它）。
+- `test(e2e): heading-links.spec.ts`（4 项）— 覆盖「同名标题复制不同片段」「链接只出现一次笔记路径」「导出为每个片段提供 id」「跟随最后一个同名标题的链接滚动到该标题」。三项都验证过在未修复代码上失败。
+  - 测试方法上踩到的坑记录：`element.click()` 会触发 Playwright 的 scroll-into-view，第一次写这条用例时**是 Playwright 滚动的、不是被测代码**，导致用 slug 比较的错误实现也能通过。改为把链接放在文档开头（无需自动滚动）并用 `dispatchEvent` 直接派发后，回退实现才如预期失败（`Received: 0`）。
+- 验证：editor-core 370、desktop 单元 1069、`pnpm -r typecheck`/`lint`、`cargo clippy -D warnings`、`cargo test`、Playwright 91 全绿。
+
 ## 验证与交付
 
 ```bash

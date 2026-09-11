@@ -3,7 +3,7 @@ import { headingSchema } from '@milkdown/preset-commonmark'
 import type { NodeViewConstructor } from '@milkdown/prose/view'
 
 import { copyText } from '../clipboard'
-import { slugify } from '../slugify'
+import { headingAnchorIds } from '../slugify'
 
 // UI-only enhancement for the commonmark `heading` node: a trailing "#" anchor
 // that copies a deep-link fragment for the heading on click. The heading's
@@ -24,7 +24,7 @@ export function configureHeadingAnchorUrl(builder: HeadingAnchorUrlBuilder | nul
   buildUrl = builder ?? defaultUrl
 }
 
-export const makeHeadingAnchorNodeView: NodeViewConstructor = (node) => {
+export const makeHeadingAnchorNodeView: NodeViewConstructor = (node, view, getPos) => {
   const level = Number(node.attrs.level ?? 1)
   // A heading node view must keep ALL editable pixels inside ProseMirror's
   // content DOM. The anchor button is therefore an absolutely-positioned UI
@@ -47,12 +47,29 @@ export const makeHeadingAnchorNodeView: NodeViewConstructor = (node) => {
   anchor.setAttribute('aria-label', 'Copy link')
   wrapper.appendChild(anchor)
 
-  let slug = ''
-
-  const render = (): void => {
-    slug = slugify(node.textContent)
+  /**
+   * The id this heading owns, resolved at click time.
+   *
+   * Ids are a document-wide list (see `headingAnchorIds`), so a heading cannot
+   * know its own from its text alone: the second "Same" is `same-1`, not
+   * `same`. Computing it lazily keeps the cost off every render — a click is
+   * the only moment it matters — and makes the copied link resolve to THIS
+   * heading instead of the first one with the same title.
+   */
+  const idAt = (): string => {
+    const doc = view?.state.doc
+    const pos = typeof getPos === 'function' ? getPos() : undefined
+    if (!doc || pos === undefined) return headingAnchorIds([node.textContent])[0]
+    const texts: string[] = []
+    let mine = 0
+    doc.descendants((child, childPos) => {
+      if (child.type.name !== 'heading') return true
+      if (childPos === pos) mine = texts.length
+      texts.push(child.textContent)
+      return true
+    })
+    return headingAnchorIds(texts)[mine]
   }
-  render()
 
   anchor.addEventListener('pointerdown', (event) => {
     event.preventDefault()
@@ -61,7 +78,7 @@ export const makeHeadingAnchorNodeView: NodeViewConstructor = (node) => {
   anchor.addEventListener('click', (event) => {
     event.preventDefault()
     event.stopPropagation()
-    void copyText(buildUrl(slug))
+    void copyText(buildUrl(idAt()))
   })
 
   return {
@@ -77,7 +94,7 @@ export const makeHeadingAnchorNodeView: NodeViewConstructor = (node) => {
     update: (newNode) => {
       if (newNode.type !== node.type) return false
       node = newNode
-      render()
+      // The id is derived on demand, so an update only has to adopt the node.
       return true
     },
     destroy: () => undefined,

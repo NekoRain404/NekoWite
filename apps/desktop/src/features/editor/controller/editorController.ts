@@ -12,7 +12,7 @@ import { watch } from 'vue'
 import { editorSessionManager } from '../sessionManager'
 import { setCalloutView } from '../../../plugins/callout'
 import { createImageSrcResolver } from '../../../services/attachments'
-import { dirRelativeToVault } from '../../../services/noteMeta'
+import { dirRelativeToVault, notePathRelativeToVault } from '../../../services/noteMeta'
 import { getSharedGateways } from '../../../platform/runtime/gatewayRuntime'
 import { useTabsStore } from '../../../stores/tabs'
 import { useDocumentListStore } from '../../../stores/documentList'
@@ -92,7 +92,9 @@ export function createEditorController(deps: EditorControllerDeps): EditorContro
       const path = tabs.activeTab?.path
       const vault = tabs.vault
       if (!path || !vault) return `#${slug}`
-      return `${vault.replace(/\/+$/, '')}/${path}#${slug}`
+      // Normalise first: `path` may already include the vault prefix, and
+      // joining it as-is duplicated the vault in every copied link.
+      return `${vault.replace(/\/+$/, '')}/${notePathRelativeToVault(path, vault)}#${slug}`
     })
     // Ctrl/Cmd+click on a [[wikilink]] chip opens the target note. Resolve the
     // wiki target against the current note's vault-relative directory using the

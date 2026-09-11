@@ -8,7 +8,7 @@ import { useFloatStore } from '../stores/float'
 import { useAppearanceStore } from '../stores/appearance'
 import { resolveDirection } from '../services/rtl'
 import { t } from '../i18n'
-import { slugify } from '@nekowite/editor-core'
+import { headingAnchorIds } from '@nekowite/editor-core'
 import { resolveLinkPath } from '../features/vault/services/libraryQueries'
 import { useDocumentListStore } from '../stores/documentList'
 import { dirRelativeToVault } from '../services/noteMeta'
@@ -167,12 +167,13 @@ function scrollToHeadingAnchor(slug: string): void {
   if (!slug) return
   const headings = editorEl.value?.querySelectorAll('h1, h2, h3, h4, h5, h6')
   if (!headings) return
-  for (const heading of Array.from(headings)) {
-    if (slugify(heading.textContent ?? '') === slug) {
-      heading.scrollIntoView({ block: 'start', behavior: 'auto' })
-      return
-    }
-  }
+  const list = Array.from(headings)
+  // Build the same document-wide id list the anchors copy and the export
+  // emits, then pick the matching element by INDEX. Comparing slugs would send
+  // `#same-1` to the first "Same" instead of the second.
+  const ids = headingAnchorIds(list.map((heading) => heading.textContent ?? ''))
+  const index = ids.indexOf(slug)
+  if (index >= 0) list[index]?.scrollIntoView({ block: 'start', behavior: 'auto' })
 }
 
 /** Open a same-vault markdown reference in a new tab. */
