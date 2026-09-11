@@ -33,6 +33,7 @@ import {
 import { linkOrderSchema } from '../link'
 import { mdxComponent, mdxComponentNodeView, mdxJsxRemark } from '../mdx'
 import { tableAutoRowKeymap, tableClipboardKeymap } from '../table/keymap'
+import { tableCellHtmlEscapeStringify } from '../table/stringify'
 import { tableFeaturePlugin } from '../table/plugin'
 import { tableSelectionPlugin } from '../table/selection'
 import { suggestionPlugin } from '../suggest'
@@ -83,6 +84,7 @@ export const basicPlugins: MilkdownPlugin[] = [
   listener,
   mdxComponent,
   tableFeaturePlugin,
+  tableCellHtmlEscapeStringify,
   $prose(() => tableSelectionPlugin),
   $prose(() => suggestionPlugin),
 ]
