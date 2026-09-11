@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderDocument } from './html'
-import { slugify } from '../slugify'
+import { slugify, headingAnchorIds } from '../slugify'
+import { createEditor } from '../editor'
 
 describe('exported heading ids', () => {
   it('gives a heading the id its anchor link points at', () => {
@@ -39,5 +40,62 @@ describe('exported heading ids', () => {
   it('keeps working for a heading that slugs to the fallback', () => {
     const out = renderDocument('# !!!\n')
     expect(out).toContain('<h1 id="section">')
+  })
+})
+
+/**
+ * The anchor button and the exported `id` must be derived from the SAME heading
+ * text, or the link one produces does not resolve in the other. The editor
+ * reads `textContent` off its rendered heading (that is what the user sees and
+ * what the button's link is built from), so the export has to reproduce that
+ * text — which is not the same as concatenating the Markdown source, because
+ * some inline nodes are atoms that render without text and others carry their
+ * label in an attribute rather than in `value`.
+ */
+describe('exported ids agree with the editor anchors', () => {
+  const DOCS: Array<[string, string]> = [
+    ['plain', '# One\n\n## Two\n'],
+    ['duplicate titles', '# Same\n\n## Same\n\n### Same\n'],
+    ['strong and code', '# **Bold** and `code`\n'],
+    ['emphasis', '# *Em* text\n'],
+    ['strikethrough', '# Text ~~gone~~\n'],
+    ['highlight', '# ==marked== text\n'],
+    ['link', '# See [text](https://x.test)\n'],
+    ['wikilink aliased', '# Title [[Other Note|Alias]]\n'],
+    ['wikilink plain', '# Title [[Other Note]]\n'],
+    ['citation', '# Claim [@smith2020]\n'],
+    ['footnote', '# Note[^1]\n\n## Plain\n\n[^1]: def\n'],
+    ['inline math', '# Formula $a^2$\n'],
+    ['image', '# Title ![alt](https://x.test/a.png)\n'],
+    ['mdx component', '# Title <Callout type="info" />\n'],
+    ['cjk', '# 中文 标题\n'],
+    ['mixed atoms', '# A [[N|B]] C [@k] D $x$ E\n'],
+  ]
+
+  it('reports every divergent heading at once', async () => {
+    const mismatches: Array<{ label: string; editor: string[]; exported: string[] }> = []
+    for (const [label, md] of DOCS) {
+      const el = document.createElement('div')
+      document.body.appendChild(el)
+      const ed = createEditor(el)
+      try {
+        await ed.open(md)
+        const texts: string[] = []
+        ed.getView().state.doc.descendants((child) => {
+          if (child.type.name === 'heading') texts.push(child.textContent)
+          return true
+        })
+        const editor = headingAnchorIds(texts)
+        const html = renderDocument(md, { math: 'text' })
+        const exported = [...html.matchAll(/<h[1-6] id="([^"]*)"/g)].map((m) => m[1])
+        if (JSON.stringify(editor) !== JSON.stringify(exported)) {
+          mismatches.push({ label, editor, exported })
+        }
+      } finally {
+        ed.destroy()
+        el.remove()
+      }
+    }
+    expect(mismatches).toEqual([])
   })
 })

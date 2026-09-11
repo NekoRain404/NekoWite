@@ -422,9 +422,22 @@ function renderTable(node: RenderNode, ctx: RenderContext): string {
   return `${html}</table>`
 }
 
-/** The concatenated text of a node, used to derive a heading's slug. */
+/** Node types that carry a `value` in mdast yet contribute NO text to a
+ *  heading's slug.
+ *
+ *  The anchor button slugs ProseMirror's `Node.textContent`, which concatenates
+ *  TEXT nodes only — an atom is a leaf with no text content, so it contributes
+ *  nothing however it renders (a citation shows a number, math renders a
+ *  formula, JSX shows its source, and none of it reaches `textContent`).
+ *  Including these values here made the export disagree with every link the
+ *  anchors copy: `# Claim [@smith2020]` was `#claim` in the editor but
+ *  `#claim-smith2020` in the export, so the copied link was dead. */
+const TEXT_FREE_ATOMS = new Set(['inlineMath', 'math', 'nekoCite', 'html', 'mdxJsxFlowElement'])
+
+/** The text of a node as the editor's heading slug sees it, used to derive the
+ *  exported `id`. Must stay in step with ProseMirror's `textContent`. */
 function plainText(node: RenderNode): string {
-  if (typeof node.value === 'string') return node.value
+  if (typeof node.value === 'string' && !TEXT_FREE_ATOMS.has(node.type)) return node.value
   return (node.children ?? []).map((child) => plainText(child)).join('')
 }
 
