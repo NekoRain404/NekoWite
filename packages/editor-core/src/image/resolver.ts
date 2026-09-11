@@ -29,9 +29,23 @@ export function configureImageResolver(resolve: ImageSrcResolver | null): void {
   cache.clear()
 }
 
-/** Resolve `src` for display, with per-src memoization and error fallback. */
-export function resolveImageSrc(src: string): Promise<string> {
+/** True when a resolver is installed (i.e. a vault-backed display URL is
+ *  available and the document src is not directly loadable). */
+export function hasImageResolver(): boolean {
+  return resolver !== null
+}
+
+/**
+ * Resolve `src` for display, with per-src memoization and error fallback.
+ *
+ * `refresh` drops the memoized entry first. A failed resolution is memoized
+ * like a successful one, so without this a Retry would replay the same failure
+ * forever — which is what happened when the first attempt ran before the vault
+ * was authorized.
+ */
+export function resolveImageSrc(src: string, options: { refresh?: boolean } = {}): Promise<string> {
   if (!src || isSelfDisplayableSrc(src) || !resolver) return Promise.resolve(src)
+  if (options.refresh) cache.delete(src)
   let pending = cache.get(src)
   if (!pending) {
     const current = resolver

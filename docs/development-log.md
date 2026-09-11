@@ -127,6 +127,18 @@ git commit -m "feat(appearance): add crimson palette and four accents"
 - 验证：desktop 单元测试 1064 通过（连续 3 轮）、editor-core 297 通过、`pnpm -r typecheck`/`lint`、`cargo clippy -D warnings`、`cargo test` 全绿、Playwright 全量 82 项通过。
 - 排查方法记录：本轮先用「控制台洁净度巡检」把界面点一遍定位到 i18n 缺失，再用「磁盘快照比对」定位到保存丢失与 U+00A0 —— 两者都是单元测试结构上看不到的（前者是运行期渲染，后者是浏览器输入行为）。
 
+### 2026-09-11（第四轮）
+
+- `fix(image): stop showing a load failure for images that loaded` — 修复用户报告的「默认打开文件图片渲染失败，Retry 才会成功」：
+  - 根因（两处叠加）：图片节点视图先把文档里的相对路径写进 `<img src>` 再等异步解析替换；相对路径在应用源下必然 404，于是先触发 `error` 显示失败浮层；随后 `asset://` URL 加载成功，但节点视图**只监听 `error` 没有监听 `load`**，浮层因此无人清除。Retry 之所以看起来有效，是因为它在重试前先把状态重置为正常。此外解析失败的结果也会被 memoize，若首次解析早于 vault 授权，Retry 将永久无效。
+  - 修复：解析器可用时不再写入不可加载的原始路径（`http:`/`data:`/绝对路径这类本就可直接显示的仍立即写入，避免空白帧）；补上 `load` 监听在真正加载成功后清错；Retry 改为带 `refresh` 重新解析，仅在解析结果与原路径相同（无更优 URL）时才附加 `?retry=` 强制重新请求。
+  - `editor-core/image/resolver.ts` 新增 `hasImageResolver()`；`resolveImageSrc(src, { refresh })` 支持丢弃 memo。新增 5 项单元测试（首帧不得为不可加载路径、可直接显示的路径立即写入、`load` 清错、Retry 重新解析、Retry 缓存穿透）；已验证其中 2 项在未修复代码上失败。
+- `test(e2e): make images actually renderable in the harness` — E2E 夹具此前没有实现 `resolve_media_path`，`convertFileSrc` 也是 undefined，因此**任何图片相关行为都无法在浏览器里验证**。现在夹具实现 `resolve_media_path`（返回 data URL）、`convertFileSrc` 恒等、并新增 `attachments` / `resolveDelayMs` 选项，使图片真正被浏览器解码（可断言 `naturalWidth`）。
+  - 新增 `e2e/image-render.spec.ts` 4 项：首次打开即渲染且无失败浮层、解析期间元素绝不指向不可加载路径（用 `resolveDelayMs` 让中间态可观测）、附件缺失时显示可恢复浮层且 Retry 能清除、模式往返后仍渲染。
+  - 探测过程记录：`@tauri-apps/api` 的 `invoke` 在导入时即绑定，事后替换 `window.__TAURI_INTERNALS__.invoke` 无法拦截调用（这是最初 `CALLS []` 误判的原因）；`vaultRelativeFromNoteVault` 产生的 `resolve_media_path` 参数是 vault 相对路径，不含 vault 目录名。
+  - 另核查：`assetProtocol.scope` 静态配置仅 `attachments/**`，但 `register_vault` 会在运行时 `allow_directory(整个 vault, recursive)` 并 forbid 内部目录，因此 `*_assets/` 与 `.tmp/` 下的图片本就可通过 asset 协议访问——scope 不是本次故障的原因。
+- 验证：desktop 单元测试 1064、editor-core 301、`pnpm -r typecheck`/`lint`、`cargo clippy -D warnings`、`cargo test` 全绿、Playwright 全量 86 项通过。
+
 ## 验证与交付
 
 ```bash

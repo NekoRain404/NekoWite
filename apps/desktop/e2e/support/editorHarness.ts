@@ -29,6 +29,14 @@ export interface HarnessOptions {
   importFails?: boolean
   /** Make `pick_image_files` reject, as a broken native dialog would. */
   pickFails?: boolean
+  /**
+   * Attachment payloads, keyed by vault-relative path. `resolve_media_path`
+   * turns these into data URLs so an image genuinely loads in the browser.
+   */
+  attachments?: Record<string, string>
+  /** Artificial latency (ms) on `resolve_media_path`, to observe the
+   *  pre-resolution state of an image. */
+  resolveDelayMs?: number
 }
 
 interface InitPayload extends HarnessOptions {
@@ -47,7 +55,12 @@ export async function openNote(page: Page, options: HarnessOptions = {}): Promis
   const noteName = NOTE_NAME
   await page.addInitScript((payload: InitPayload) => {
     const { vault, noteName: name, doc, autosave, appearance, files } = payload
-    const { importFails, pickFails } = payload
+    const { importFails, pickFails, attachments, resolveDelayMs } = payload
+    // Mutable at runtime so a spec can seed bytes after the app has loaded
+    // (used to prove Retry re-resolves instead of replaying a failure).
+    ;(window as unknown as { __NEKO_ATTACHMENTS__?: Record<string, string> }).__NEKO_ATTACHMENTS__ = {
+      ...(attachments ?? {}),
+    }
     localStorage.setItem('nekowite.vault', vault)
     localStorage.setItem(
       'nekowite.settings.autosaveInterval',
@@ -102,6 +115,22 @@ export async function openNote(page: Page, options: HarnessOptions = {}): Promis
           return Object.fromEntries(disk)
         }
         if (cmd === 'stat_file') return { size: 1, mtime: 1 }
+        if (cmd === 'resolve_media_path') {
+          // The Rust command returns an absolute PATH, which the frontend turns
+          // into an asset URL via convertFileSrc. In the browser there is no
+          // asset protocol, so this stands in with a data URL (and
+          // convertFileSrc below is the identity) — that is what lets these
+          // specs assert that an image actually renders.
+          const relPath = String(args.rel_path ?? '')
+          if (resolveDelayMs) {
+            await new Promise((resolve) => setTimeout(resolve, resolveDelayMs))
+          }
+          const store = (window as { __NEKO_ATTACHMENTS__?: Record<string, string> })
+            .__NEKO_ATTACHMENTS__
+          const payload = store?.[relPath]
+          if (payload === undefined) throw new Error(`no such attachment: ${relPath}`)
+          return `data:image/png;base64,${payload}`
+        }
         if (cmd === 'write_file') {
           // Persist only real notes. Index/plugin writes must not clobber them.
           const path = typeof args.path === 'string' ? args.path : ''
@@ -133,6 +162,9 @@ export async function openNote(page: Page, options: HarnessOptions = {}): Promis
         if (cmd === 'plugin:event|listen') return ++n
         return undefined
       },
+      // Identity: the dev server has no asset protocol, and the stub above
+      // already returns a loadable data URL.
+      convertFileSrc: (filePath: string) => filePath,
       transformCallback: (cb: unknown) => {
         registry[++n] = cb
         return n

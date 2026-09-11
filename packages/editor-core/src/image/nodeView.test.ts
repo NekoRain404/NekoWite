@@ -60,11 +60,70 @@ describe('image node view', () => {
   it('swaps in the resolved display URL asynchronously, keeping attrs intact', async () => {
     configureImageResolver(async () => 'data:image/png;base64,XYZ')
     const { img } = makeView(fakeNode({ src: 'attachments/a.png', alt: 'A', title: 'T' }))
-    expect(img.getAttribute('src')).toBe('attachments/a.png')
+    // A vault-relative src is not loadable on its own, so the element must not
+    // be pointed at it: doing so fires an `error` the resolver's later success
+    // does not clear (the "images fail on open" report).
+    expect(img.hasAttribute('src')).toBe(false)
     await flush()
     expect(img.getAttribute('src')).toBe('data:image/png;base64,XYZ')
     expect(img.getAttribute('alt')).toBe('A')
     expect(img.getAttribute('title')).toBe('T')
+  })
+
+  it('paints a self-displayable src immediately, without waiting for the resolver', () => {
+    configureImageResolver(async () => 'data:image/png;base64,XYZ')
+    const { img } = makeView(fakeNode({ src: 'https://example.test/a.png', alt: '', title: '' }))
+    // Already loadable, so showing it at once avoids a blank frame.
+    expect(img.getAttribute('src')).toBe('https://example.test/a.png')
+  })
+
+  it('clears a failure state once the resolved image actually loads', async () => {
+    // The reported bug: opening a note showed the error overlay over an image
+    // that had in fact loaded, and only Retry cleared it. A `load` event now
+    // clears the latch, so the overlay cannot outlive the failure.
+    configureImageResolver(async () => 'data:image/png;base64,XYZ')
+    const { img, dom } = makeView(fakeNode({ src: 'attachments/a.png', alt: '', title: '' }))
+    await flush()
+    // Fail first (e.g. a transient error), then succeed.
+    img.dispatchEvent(new Event('error'))
+    expect(dom.getAttribute('data-failed')).toBe('true')
+    img.dispatchEvent(new Event('load'))
+    expect(dom.getAttribute('data-failed')).toBe('false')
+  })
+
+  it('retry re-resolves instead of replaying a memoized failure', async () => {
+    // The first resolution can run before the vault is authorized; memoizing
+    // that failure made Retry a no-op forever.
+    let attempt = 0
+    configureImageResolver(async (src) => {
+      attempt += 1
+      return attempt === 1 ? src : `data:image/png;base64,OK`
+    })
+    const { img, dom } = makeView(fakeNode({ src: 'attachments/a.png', alt: '', title: '' }))
+    await flush()
+    expect(img.getAttribute('src')).toBe('attachments/a.png')
+    img.dispatchEvent(new Event('error'))
+    expect(dom.getAttribute('data-failed')).toBe('true')
+
+    const retry = dom.querySelector('.neko-image-error-retry') as HTMLButtonElement
+    retry.click()
+    await flush()
+    expect(img.getAttribute('src')).toBe('data:image/png;base64,OK')
+    expect(dom.getAttribute('data-failed')).toBe('false')
+  })
+
+  it('retry busts the browser cache when resolution has nothing better to offer', async () => {
+    // No resolver improvement to make: the src is already the display URL, so
+    // the retry has to force a fresh request.
+    configureImageResolver(async (src) => src)
+    const { img, dom } = makeView(fakeNode({ src: 'attachments/a.png', alt: '', title: '' }))
+    await flush()
+    img.dispatchEvent(new Event('error'))
+
+    const retry = dom.querySelector('.neko-image-error-retry') as HTMLButtonElement
+    retry.click()
+    await flush()
+    expect(img.getAttribute('src')).toMatch(/^attachments\/a\.png\?retry=\d+$/)
   })
 
   it('applies a newer update and ignores the stale resolution result', async () => {
