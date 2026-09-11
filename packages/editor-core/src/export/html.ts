@@ -11,7 +11,7 @@ import { citeMdast } from '../cite'
 import { imageDimMdast } from '../image'
 import { mdxJsxMdast, parseMdxTag } from '../mdx'
 import { safeImageUrl, safeLinkUrl } from './url'
-import { slugify } from '../slugify'
+import { headingAnchorIds, slugify } from '../slugify'
 
 // KaTeX is only needed at export time (the editor preview renders math via
 // MathLive / the app's own renderer). Loading it lazily keeps the startup
@@ -109,10 +109,10 @@ interface RenderContext {
   // document with no math stays lean and sync/async output stays identical
   // (KaTeX CSS is only available after the lazy export-time load).
   hasMath?: boolean
-  /** Heading slug -> how many times it has been used, so duplicate titles get
-   *  distinct ids instead of sharing one (which would make the anchor point at
-   *  the first of them). */
-  headingSlugs: Map<string, number>
+  /** The remaining heading ids, in document order (see `headingAnchorIds`).
+   *  Consumed by `shift()` as headings are rendered, so the ids match what the
+   *  anchor buttons produce for the same document. */
+  headingIds: string[]
 }
 
 const processor = unified()
@@ -357,6 +357,26 @@ function plainText(node: RenderNode): string {
   return (node.children ?? []).map((child) => plainText(child)).join('')
 }
 
+/**
+ * The text of every heading in the tree, in document order.
+ *
+ * Computed up front (rather than tracked while rendering) so the ids handed to
+ * each heading are exactly the ones `headingAnchorIds` produced for the
+ * document — the anchor buttons and the scroll handler derive from the same
+ * list, which is what keeps a copied link resolvable.
+ */
+function collectHeadingTexts(nodes: RenderNode[]): string[] {
+  const out: string[] = []
+  const walk = (list: RenderNode[]): void => {
+    for (const node of list) {
+      if (node.type === 'heading') out.push(plainText(node))
+      if (node.children?.length) walk(node.children)
+    }
+  }
+  walk(nodes)
+  return out
+}
+
 function renderNode(node: RenderNode, ctx: RenderContext): string {
   switch (node.type) {
     case 'text':
@@ -368,14 +388,11 @@ function renderNode(node: RenderNode, ctx: RenderContext): string {
     case 'heading': {
       const level = Math.min(Math.max(node.depth ?? 1, 1), 6)
       const body = renderChildren((node.children ?? []) as RenderNode[], ctx)
-      // Heading anchors copy `#slug` deep links, so the exported document has
-      // to expose the matching ids or every one of those links is dead. Ids are
-      // de-duplicated per document, mirroring the counter the editor uses when
-      // two headings share a title.
-      const base = slugify(plainText(node))
-      const seen = ctx.headingSlugs.get(base) ?? 0
-      ctx.headingSlugs.set(base, seen + 1)
-      const id = seen === 0 ? base : `${base}-${seen}`
+      // Heading anchors copy a `#id` deep link, so the exported document has to
+      // expose the matching id or every one of those links is dead. The ids are
+      // the document-wide list computed up front by `headingAnchorIds`, which is
+      // also what the anchor buttons and the scroll handler use.
+      const id = ctx.headingIds.shift() ?? slugify(plainText(node))
       return `<h${level} id="${escapeHtml(id)}">${body}</h${level}>`
     }
     case 'emphasis':
@@ -550,7 +567,7 @@ function renderFromChildren(children: RenderNode[], opts?: RenderDocumentOptions
     refs: opts?.refs,
     componentRenderers: opts?.componentRenderers,
     citeNumbers,
-    headingSlugs: new Map(),
+    headingIds: headingAnchorIds(collectHeadingTexts(children)),
   }
 
   const body = renderChildren(children, ctx)

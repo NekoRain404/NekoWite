@@ -269,12 +269,27 @@ export function extractSummary(body: string, max = SUMMARY_CHARS): string {
 
 /** Directory of `path` relative to the vault. Absolute paths (Tauri) get the
  * vault prefix stripped; already-relative paths (demo gateway) are kept as-is. */
-export function dirRelativeToVault(path: string, vault: string): string {
-  const v = vault.replace(/\/+$/, '')
+/**
+ * A note path with the vault prefix removed, so it can be re-rooted at the
+ * vault.
+ *
+ * `tab.path` is vault-relative in some flows and an absolute (vault-prefixed)
+ * path in others — `list_dir` returns the resolved path, while the link index
+ * returns a vault-relative one — so anything that needs to JOIN the vault back
+ * onto a note path must strip whatever prefix is already there first. Joining
+ * without stripping is what produced a doubled path in copied heading links.
+ */
+export function notePathRelativeToVault(path: string, vault: string): string {
+  const v = (vault || '').replace(/\/+$/, '')
   let p = path
   if (v !== '' && (p === v || p.startsWith(`${v}/`))) {
-    p = p.slice(v.length).replace(/^\/+/, '')
+    p = p.slice(v.length)
   }
+  return p.replace(/^\/+/, '')
+}
+
+export function dirRelativeToVault(path: string, vault: string): string {
+  const p = notePathRelativeToVault(path, vault)
   const i = p.lastIndexOf('/')
   return i < 0 ? '' : p.slice(0, i)
 }

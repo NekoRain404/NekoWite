@@ -107,4 +107,39 @@ describe('heading anchor node view', () => {
     expect(await editor.save()).toBe(md)
     editor.destroy()
   })
+
+  it('gives each duplicate heading its own link, on a real document', async () => {
+    // Every "Same" used to copy `#same`, so the links from the second and third
+    // headings all landed on the first. Each heading now copies the id it
+    // actually owns, matching what the export emits.
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open('# Same\n\n# Same\n\n# Same\n')
+
+    const write = vi.fn().mockResolvedValue(undefined)
+    configureClipboardWriter(write)
+
+    const anchors = Array.from(el.querySelectorAll<HTMLButtonElement>('.nk-heading-anchor'))
+    expect(anchors).toHaveLength(3)
+    for (const anchor of anchors) {
+      anchor.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await flush()
+    }
+
+    expect(write.mock.calls.map((call) => call[0])).toEqual(['#same', '#same-1', '#same-2'])
+    editor.destroy()
+  })
+
+  it('falls back to the plain slug when it has no view to consult', async () => {
+    // The node view is also constructible without a view (unit harnesses), and
+    // must still produce a usable fragment rather than throwing.
+    const write = vi.fn().mockResolvedValue(undefined)
+    configureClipboardWriter(write)
+    const { dom } = makeView(fakeNode({ level: 1 }, 'Hello World'))
+    const anchor = dom.querySelector<HTMLButtonElement>('.nk-heading-anchor')!
+    anchor.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flush()
+    expect(write).toHaveBeenCalledWith('#hello-world')
+  })
 })
