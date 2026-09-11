@@ -42,6 +42,23 @@ export function roundTrip(md: string): string {
   return serializeMarkdown(parseMarkdown(md))
 }
 
+/**
+ * Replace non-breaking spaces with ordinary ones.
+ *
+ * A browser inserts U+00A0 for a space typed at the end of a text run, so the
+ * character ends up in the ProseMirror model — and, without this, in the saved
+ * Markdown. There it is a defect: plain-text search and diff for the phrase no
+ * longer match, and other Markdown tools render a stray character. The source
+ * pane never produces one (CodeMirror types a literal space), so normalising
+ * here also keeps the two panes writing the same bytes.
+ *
+ * Applied in both directions, so a file that already contains U+00A0 shows
+ * ordinary spaces and is repaired the next time it is saved.
+ */
+export function normalizeNbsp(text: string): string {
+  return text.includes('\u00a0') ? text.replace(/\u00a0/g, ' ') : text
+}
+
 export function escapeMdxText(text: string): string {
   // `&` first so the entities produced below are not double-encoded, then the
   // characters that would break the `<Tag prop="...">` scanner on re-parse.

@@ -468,6 +468,10 @@ export const en = {
     restored: 'Restored {n} tabs',
   },
   chat: {
+    newSession: 'New session',
+    sessions: 'Sessions',
+    untitled: 'Untitled session',
+    deleteSession: 'Delete this session',
     title: 'AI Assistant',
     clear: 'Clear chat',
     emptyTitle: 'Start with a question',

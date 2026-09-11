@@ -6,7 +6,7 @@ import { getMarkdown } from '@milkdown/utils'
 
 import { basicPlugins } from './plugins/basic'
 import { registerBuiltinCommands, setCommandViewProvider } from './commands'
-import { roundTrip } from './serialize'
+import { normalizeNbsp, roundTrip } from './serialize'
 import { setMathFeatureView } from './math/feature'
 import { setTableFeatureView } from './table/plugin'
 import {
@@ -123,7 +123,7 @@ export function createEditor(
       created.action((ctx) => {
         const v = ctx.get(editorViewCtx)
         const parser = ctx.get(parserCtx)
-        const node = parser(body)
+        const node = parser(normalizeNbsp(body))
         const tr = v.state.tr.replaceWith(0, v.state.doc.content.size, node)
         // A document load is not a user edit: keep it out of undo history so
         // Cmd+Z after switching documents cannot wipe the freshly opened doc.
@@ -134,7 +134,9 @@ export function createEditor(
     async save() {
       const created = await editor
       const md = created.action((ctx) => roundTrip(getMarkdown()(ctx)))
-      return frontmatter + md
+      // The model can hold U+00A0 for a space typed at the end of a text run;
+      // it must not reach the file (see normalizeNbsp).
+      return frontmatter + normalizeNbsp(md)
     },
     async insertMarkdownAtCursor(md: string): Promise<void> {
       await ready

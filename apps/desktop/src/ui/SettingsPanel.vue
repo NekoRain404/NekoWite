@@ -16,7 +16,7 @@ import { useRefsStore } from '../stores/refs'
 import { exportHtml, exportToPdf } from '../services/export'
 import { exportBaseName } from '../services/exportName'
 import { fsService } from '../platform/gateways/fs'
-import { flushSourceEdits } from '../services/sourceView'
+import { flushEdits } from '../services/editorOwnership'
 import { describeExportError, notifyError } from '../services/errors'
 import { isPathWithinVault } from '../services/attachments'
 import { useSettingsStore } from '../stores/settings'
@@ -210,7 +210,7 @@ async function onExportHtml(): Promise<void> {
   }
   try {
     // The tab lags the source pane by its debounce window; export the live text.
-    flushSourceEdits()
+    await flushEdits()
     await exportHtml(tab.content, vault ?? '', savePath, { title: exportBaseName(tab.path), refs: refsMap() })
   } catch (e) {
     // Belt-and-braces: if the backend still rejects (e.g. a symlink resolved
@@ -219,10 +219,11 @@ async function onExportHtml(): Promise<void> {
   }
 }
 
-function onExportPdf(): void {
+async function onExportPdf(): Promise<void> {
   const tab = tabs.activeTab
   if (!tab) return
-  flushSourceEdits()
+  // Persist the live text into the tab before handing it to the exporter.
+  await flushEdits()
   exportToPdf(tab.content, { title: exportBaseName(tab.path), refs: refsMap() })
 }
 </script>

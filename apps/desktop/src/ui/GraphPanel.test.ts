@@ -185,8 +185,9 @@ describe('GraphPanel', () => {
     const exposed = (instance?.exposed ?? {}) as { rebuild?: () => Promise<void> }
     expect(exposed.rebuild).toBeTypeOf('function')
     await exposed.rebuild!()
-    await flush()
-    expect(readMock.mock.calls.length).toBe(readsAfterMount + 2)
+    // A fixed number of macrotask ticks is not a reliable barrier for a chain
+    // of reads; wait for the count the rebuild is expected to produce.
+    await vi.waitFor(() => expect(readMock.mock.calls.length).toBe(readsAfterMount + 2))
   })
 
   it('truncates beyond the configured cap with a visible total', async () => {
@@ -196,15 +197,14 @@ describe('GraphPanel', () => {
     const tabs = useTabsStore()
     tabs.setVault('/vault-3')
     mountPanel({ maxNotes: 200 })
-    await flush()
-    await flush()
+    // Wait for the capped load to finish before asserting on its output.
+    await vi.waitFor(() => expect(readMock.mock.calls.length).toBe(200))
     // Non-silent: the notice names the cap AND the true total (not just "first N").
     // The capped read never loads more than the cap; a stale/leaked read would
     // over-read (or, under a partial load, under-count the header), so assert the
     // deterministic truncation signals rather than a transient exact count.
     expect(host!.textContent).toContain('仅展示前 200')
     expect(host!.textContent).toContain('201')
-    expect(readMock.mock.calls.length).toBe(200)
   })
 
   it('renders the full vault by default (no silent cap)', async () => {
@@ -214,10 +214,8 @@ describe('GraphPanel', () => {
     const tabs = useTabsStore()
     tabs.setVault('/vault-full')
     mountPanel()
-    await flush()
-    await flush()
     // Full vault default: every node is read and rendered, no truncation notice.
-    expect(readMock.mock.calls.length).toBe(210)
+    await vi.waitFor(() => expect(readMock.mock.calls.length).toBe(210))
     expect(host!.textContent).not.toContain('仅展示前')
     expect(host!.textContent).toContain('210 篇')
   })

@@ -1,4 +1,6 @@
 import { describe, expect, it, beforeEach } from 'vitest'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { messages, getLocale, setLocale, t } from './index'
 
 function flatten(obj: object, prefix = ''): string[] {
@@ -14,11 +16,54 @@ function flatten(obj: object, prefix = ''): string[] {
   return out
 }
 
+/**
+ * Every `t('…')` key used in source, mapped to the files that use it.
+ *
+ * Only literal keys are collected: a key built at runtime (a template string)
+ * cannot be checked here, so those call sites stay the author's responsibility.
+ */
+function collectUsedKeys(): Map<string, string[]> {
+  const used = new Map<string, string[]>()
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry)
+      if (statSync(full).isDirectory()) {
+        if (entry === 'i18n' || entry === 'node_modules') continue
+        walk(full)
+        continue
+      }
+      if (!/\.(ts|vue)$/.test(entry) || entry.includes('.test.')) continue
+      const text = readFileSync(full, 'utf8')
+      for (const m of text.matchAll(/\bt\(\s*['"]([A-Za-z0-9_.\-:[\]]+)['"]/g)) {
+        const list = used.get(m[1]) ?? []
+        list.push(full.replace(/.*[\\/]src[\\/]/, ''))
+        used.set(m[1], list)
+      }
+    }
+  }
+  walk(join(process.cwd(), 'src'))
+  return used
+}
+
 describe('i18n messages', () => {
   it('zh and en expose an identical set of message keys', () => {
     const zhKeys = flatten(messages.zh).sort()
     const enKeys = flatten(messages.en).sort()
     expect(zhKeys).toEqual(enKeys)
+  })
+
+  it('defines every key the source actually uses', () => {
+    // The parity check above only proves zh and en agree; a key missing from
+    // BOTH still renders as its raw id in the UI. This walks the source and
+    // fails on any literal t() key that neither locale defines.
+    const zhKeys = new Set(flatten(messages.zh))
+    const enKeys = new Set(flatten(messages.en))
+    const missing: string[] = []
+    for (const [key, files] of collectUsedKeys()) {
+      if (!zhKeys.has(key)) missing.push(`${key} (zh) <- ${[...new Set(files)].join(', ')}`)
+      if (!enKeys.has(key)) missing.push(`${key} (en) <- ${[...new Set(files)].join(', ')}`)
+    }
+    expect(missing).toEqual([])
   })
 
   it('covers the required namespaces', () => {

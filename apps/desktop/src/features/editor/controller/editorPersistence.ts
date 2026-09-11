@@ -15,6 +15,16 @@ export interface EditorPersistence {
   attachChangeListener(): () => void
   /** Defer a full-document serialization (runtime call, not instant). */
   scheduleSerialize(): void
+  /**
+   * Serialize NOW and publish the result to the tab.
+   *
+   * The normal path is debounced, so for ~120ms after a keystroke `tab.content`
+   * still holds the previous text. Anything that reads the document for a
+   * one-shot purpose (saving, exporting) has to flush first, or it persists the
+   * stale version — and the save then re-applies that stale text to the model,
+   * discarding the keystroke that was still in flight.
+   */
+  flush(): Promise<void>
   /** Cancel a pending serialization and the doc-change emit timer. */
   cancel(): void
 }
@@ -101,6 +111,11 @@ export function createEditorPersistence(deps: EditorPersistenceDeps): EditorPers
     markdownSync.run()
   }
 
+  async function flush(): Promise<void> {
+    markdownSync.cancel()
+    await persistMarkdown()
+  }
+
   function cancel(): void {
     markdownSync.cancel()
     if (deps.session.docChangeTimer) {
@@ -109,5 +124,5 @@ export function createEditorPersistence(deps: EditorPersistenceDeps): EditorPers
     }
   }
 
-  return { attachChangeListener, scheduleSerialize, cancel }
+  return { attachChangeListener, scheduleSerialize, flush, cancel }
 }

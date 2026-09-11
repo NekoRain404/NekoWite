@@ -16,7 +16,7 @@ import { startChatCompletion, aiService } from '../services/ai'
 import { notifyError } from '../services/errors'
 import { editorSessionManager } from '../features/editor/sessionManager'
 import { insertMarkdownAtCursor } from '../services/editorInsert'
-import { flushSourceEdits } from '../services/sourceView'
+import { flushEdits } from '../services/editorOwnership'
 import { collectClipboardImages, isImageFile } from '../services/attachments'
 import { useSettingsStore } from '../stores/settings'
 import { useTabsStore } from '../stores/tabs'
@@ -96,12 +96,12 @@ function activeSelection(): string {
 
 /** Build the context block for the active tab: title (frontmatter → filename),
  * selection in priority over body. Empty string when nothing is usable. */
-function buildActiveContext(): string {
+async function buildActiveContext(): Promise<string> {
   const tab = tabs.activeTab
   if (!tab) return ''
   // The note is sent to the model as context; flush so it is the live text
-  // rather than whatever the source pane had published a debounce window ago.
-  flushSourceEdits()
+  // rather than whatever a pane had published a debounce window ago.
+  await flushEdits()
   const title = frontmatterTitle(tab.content) || noteTitleFromPath(tab.path)
   return buildContextBlock({
     noteTitle: title,
@@ -264,7 +264,7 @@ async function send(): Promise<void> {
   const text = prompt.value.trim()
   if (!text && attachments.value.length === 0) return
 
-  const context = useCurrentDoc.value ? buildActiveContext() : ''
+  const context = useCurrentDoc.value ? await buildActiveContext() : ''
   if (useCurrentDoc.value && !context) {
     notifyError(t('chat.emptyDocHint'))
     return

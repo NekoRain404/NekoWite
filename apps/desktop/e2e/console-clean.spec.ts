@@ -187,3 +187,94 @@ test('the settings dialog survives a walk over every control', async ({ page }) 
   await page.waitForTimeout(150)
   expect(issues).toEqual([])
 })
+
+test('the tab bar, rail sections, templates and list views are clean', async ({ page }) => {
+  const issues = watchConsole(page)
+  // Extra notes so switching tabs has something to switch between.
+  await openNote(page, {
+    files: {
+      'test-fixtures/second.md': '# Second\n\nbody two\n',
+      'test-fixtures/third.md': '# Third\n\nbody three\n',
+    },
+  })
+
+  // --- tab bar: open, switch, close ---------------------------------------
+  for (const name of ['second.md', 'third.md']) {
+    await page.locator('.tree-name', { hasText: name }).first().click()
+    await page.waitForTimeout(150)
+  }
+  expect(await page.locator('.tab').count()).toBe(3)
+  const tabCount = await page.locator('.tab').count()
+  for (let i = 0; i < tabCount; i += 1) {
+    await page.locator('.tab').nth(i).click()
+    await page.waitForTimeout(120)
+    expect(issues, `tab ${i}`).toEqual([])
+  }
+  for (let i = tabCount; i > 0; i -= 1) {
+    const close = page.locator('.tab-close').first()
+    if (!(await close.count())) break
+    await close.click()
+    await page.waitForTimeout(200)
+    await page.keyboard.press('Escape')
+  }
+  expect(issues, 'closing every tab').toEqual([])
+
+  // --- every info-rail section --------------------------------------------
+  await openNote(page)
+  const expand = await label(page, 'rail.expand')
+  const collapse = await label(page, 'rail.collapse')
+  await page.locator(`.status-btn[title="${expand}"], .status-btn[title="${collapse}"]`).first().click()
+  await page.locator('.info-rail').waitFor({ state: 'visible', timeout: 3000 })
+
+  const railCount = await page.locator('.rail-tab').count()
+  expect(railCount, 'info rail sections').toBeGreaterThan(3)
+  for (let i = 0; i < railCount; i += 1) {
+    const tab = page.locator('.rail-tab').nth(i)
+    const name = (await tab.textContent())?.trim() ?? String(i)
+    await tab.click()
+    await page.waitForTimeout(150)
+    // A missing i18n key renders as its raw id and logs an [intlify] warning,
+    // so this also covers locale coverage for these panels.
+    expect(issues, `rail section ${name}`).toEqual([])
+  }
+
+  // --- template picker (browse only: choosing writes a file) --------------
+  const pickTitle = await label(page, 'template.pickTitle')
+  const templateButton = page.locator(`.nav-item[title="${pickTitle}"]`).first()
+  if (await templateButton.count()) {
+    await templateButton.click()
+    await page.locator('.template-dialog').waitFor({ state: 'visible', timeout: 3000 })
+    const options = await page.locator('.template-option').count()
+    expect(options, 'built-in templates').toBeGreaterThan(5)
+    for (let i = 0; i < options; i += 1) {
+      await page.locator('.template-option').nth(i).hover()
+      await page.waitForTimeout(20)
+    }
+    await page.locator('.template-close').click()
+    await page.waitForTimeout(150)
+    expect(issues, 'template picker').toEqual([])
+  }
+
+  // --- file-tree context menu --------------------------------------------
+  await page.locator('.tree-name', { hasText: 'welcome.md' }).first().click({ button: 'right' })
+  await page.waitForTimeout(200)
+  const menuItems = await page.locator('[role="menuitem"]').count()
+  expect(menuItems, 'file context menu').toBeGreaterThan(0)
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(120)
+  expect(issues, 'file tree context menu').toEqual([])
+
+  // --- list views ---------------------------------------------------------
+  for (const key of ['nav.attachments', 'nav.graph']) {
+    const name = await label(page, key)
+    const entry = page.locator('.nav-item').filter({ hasText: name }).first()
+    if (!(await entry.count())) continue
+    await entry.click()
+    await page.waitForTimeout(500)
+    expect(issues, `list view ${key}`).toEqual([])
+  }
+  const folders = await label(page, 'nav.folders')
+  await page.locator('.nav-item').filter({ hasText: folders }).first().click()
+  await page.waitForTimeout(200)
+  expect(issues).toEqual([])
+})

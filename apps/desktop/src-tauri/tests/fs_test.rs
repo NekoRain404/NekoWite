@@ -5,8 +5,8 @@ use nekowite_lib::domain::vault::{is_mdx_path, should_skip_entry};
 use nekowite_lib::storage::file_store::{
     atomic_write, cleanup_stale_tmp, create_dir, import_attachment, is_importable_image, list_dir,
     list_dir_entries, list_history, read_file, read_history, rename_entry, resolve_media_path,
-    restore_history, sanitize_attachment_name, save_attachment, search_notes, search_notes_with_max,
-    snapshot_history, stat_file, write_file, MAX_IMPORT_BYTES,
+    restore_history, sanitize_attachment_name, save_attachment, search_notes,
+    search_notes_with_max, snapshot_history, stat_file, write_file, MAX_IMPORT_BYTES,
 };
 use nekowite_lib::storage::trash_store::{
     clear_trash, delete_file, list_trash, restore_from_trash,
@@ -28,6 +28,27 @@ fn temp_vault(label: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
+}
+
+/// Normalise a path's separators so a test can assert on its trailing
+/// components regardless of platform: `restore_from_trash` returns an absolute
+/// path, which uses `\` on Windows.
+fn rel(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
+/// A directory that is absolute on the platform under test and outside any
+/// vault.
+///
+/// `/etc/passwd` is *not* absolute on Windows (it has no drive prefix), so the
+/// guard — which rejects absolute dirs — would treat it as a vault-relative
+/// name and the assertion would fail for the wrong reason.
+fn outside_absolute_dir() -> &'static str {
+    if cfg!(windows) {
+        "C:\\Windows\\System32"
+    } else {
+        "/etc/passwd"
+    }
 }
 
 /// File mtime granularity is kernel-jiffy coarse, so rapid successive writes
@@ -325,7 +346,7 @@ fn trash_delete_and_restore_roundtrip() {
     assert!(!names.contains(&".nekowite".into()));
 
     let restored = restore_from_trash(&root, &trash_path).unwrap();
-    assert!(restored.ends_with("docs/a.md"));
+    assert!(rel(&restored).ends_with("docs/a.md"));
     assert_eq!(read_file(&root, "docs/a.md").unwrap(), "hello");
     assert!(list_trash(&root).unwrap().is_empty());
 
@@ -414,7 +435,7 @@ fn trash_roundtrip_with_absolute_path() {
     assert_eq!(trash[0].trash_path, trash_path);
 
     let restored = restore_from_trash(&root, &trash_path).unwrap();
-    assert!(restored.ends_with("docs/nested/note.md"));
+    assert!(rel(&restored).ends_with("docs/nested/note.md"));
     assert_eq!(read_file(&root, "docs/nested/note.md").unwrap(), "payload");
     assert!(list_trash(&root).unwrap().is_empty());
 
@@ -473,7 +494,7 @@ fn legacy_trash_entry_still_restores() {
     assert_eq!(entries[0].original_path, "docs/legacy.md");
 
     let restored = restore_from_trash(&root, &entries[0].trash_path).unwrap();
-    assert!(restored.ends_with("docs/legacy.md"));
+    assert!(rel(&restored).ends_with("docs/legacy.md"));
     assert_eq!(read_file(&root, "docs/legacy.md").unwrap(), "old trash");
 
     std::fs::remove_dir_all(&vault).unwrap();
@@ -940,8 +961,12 @@ fn save_attachment_rejects_escaping_dir() {
 
     assert!(save_attachment(&root, "shot.png", &b64(b"v1"), "../evil").is_err());
     assert!(save_attachment(&root, "shot.png", &b64(b"v1"), "sub/../../evil").is_err());
-    assert!(save_attachment(&root, "shot.png", &b64(b"v1"), "/etc/passwd").is_err());
+    // An absolute directory is rejected outright, whichever platform's notion
+    // of "absolute" applies.
+    assert!(save_attachment(&root, "shot.png", &b64(b"v1"), outside_absolute_dir()).is_err());
+    // The invariant that actually matters: nothing landed outside the vault.
     assert!(!vault.join("evil.png").exists());
+    assert!(!vault.join("evil").exists());
 
     std::fs::remove_dir_all(&vault).unwrap();
 }

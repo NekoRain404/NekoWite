@@ -468,6 +468,10 @@ export const zh = {
     restored: '已恢复 {n} 个标签页',
   },
   chat: {
+    newSession: '新建会话',
+    sessions: '会话列表',
+    untitled: '未命名会话',
+    deleteSession: '删除当前会话',
     title: 'AI 助手',
     clear: '清空对话',
     emptyTitle: '从一个问题开始',

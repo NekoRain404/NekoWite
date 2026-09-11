@@ -96,6 +96,11 @@ export async function openNote(page: Page, options: HarnessOptions = {}): Promis
           const path = typeof args.path === 'string' ? args.path : ''
           return disk.get(path) ?? ''
         }
+        if (cmd === '__disk_dump') {
+          // Test-only: the whole in-memory vault, so a spec can assert on the
+          // bytes that were actually persisted rather than on the live editor.
+          return Object.fromEntries(disk)
+        }
         if (cmd === 'stat_file') return { size: 1, mtime: 1 }
         if (cmd === 'write_file') {
           // Persist only real notes. Index/plugin writes must not clobber them.
@@ -555,4 +560,20 @@ export async function pasteImage(page: Page, renameTo = 'clip.png'): Promise<voi
   await input.fill(renameTo)
   await page.locator('.rename-dialog .btn-primary').click()
   await expect(page.locator('.rename-dialog')).toHaveCount(0)
+}
+
+/**
+ * The whole in-memory vault as the app has persisted it.
+ *
+ * Reading the editor's own model only proves the model is consistent with
+ * itself; this is the text that would be on disk, which is what a save →
+ * reload round trip has to preserve.
+ */
+export function diskFiles(page: Page): Promise<Record<string, string>> {
+  return page.evaluate(async () => {
+    const invoke = (window as unknown as {
+      __TAURI_INTERNALS__: { invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> }
+    }).__TAURI_INTERNALS__.invoke
+    return (await invoke('__disk_dump')) as Record<string, string>
+  })
 }
