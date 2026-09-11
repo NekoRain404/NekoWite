@@ -180,6 +180,18 @@ git commit -m "feat(appearance): add crimson palette and four accents"
   - 任务列表与脚注则是渲染器直接漏了字段/节点类型：`listItem.checked` 被无视（`[x]` 字面量已被 remark-gfm 消费，无处可查），`footnoteReference` 是叶子、落进 `renderChildren` 得空串。
 - 验证：editor-core 377、desktop 单元 1069、`pnpm -r typecheck`/`lint` 全绿。
 
+### 2026-09-11（第九轮）
+
+方法：不再逐个找 bug，而是给「保存」这条最贵的路径建一张**属性网**——先只断言必然成立的不变量，再看谁失败。
+
+- `test: round-trip property suites`（三份新测试，editor-core 从 377 涨到 492）：
+  - `serializeFuzz.test.ts`：90 条语料断言 `roundTrip(roundTrip(x)) === roundTrip(x)`。**全部通过**——这是本次最有价值的正面结论：序列化层在一大批畸形/边界输入上不会二次漂移。同一份语料的「原文片段必须出现」检查报出 4 处差异，逐一核对后确认全是**有意的规范化**（表格分隔行重新排版、`&amp;`→`\&`、词内下划线转义），没有内容丢失；已把这三条规范化连同理由写进用例，而不是放宽断言。
+  - `editorRoundtripFuzz.test.ts`：同样语料走真实编辑器 `open → save`，断言「保存后再解析出的结构与原文一致」。这一层立刻抓到 5 处，其中 **2 处是真缺陷**（见下），3 处是 milkdown 自己的规范化（引用式链接被 `remark-inline-links` 内联、空单元格写 `<br />`），已改为显式断言 + 说明。
+  - `link/schema.test.ts`：链接与文字 mark 的嵌套，9 例中改前 6 例失败。
+- `fix(editor): keep the link outside the text marks` — 根因定位到 `@milkdown/transformer` 的 `SerializerState.#orderMarks`：按 `spec.priority` 升序，**先打开的在最外层**；所有文字 mark 默认 50，并列时保留 ProseMirror 的顺序，而 `strong` 排在 `link` 前。于是 `[**加粗** 链接](url)` 存成 `**[加粗](url)** [链接](url)`。修法是把 `link` 的优先级钉到 0（`inlineCode` 早用 100 做镜像）；`priority` 不在 milkdown 公开的 `MarkSpec` 类型里，故按自身类型断言回去并注明原因。
+- `fix(export): do not print the empty-paragraph marker` — 第二个真缺陷横跨两个功能：空段落被 milkdown 序列化成独占一行的 `<br />`，解析时由 `visitEmptyLine` 删除，所以编辑器里看不到；导出直接读磁盘原文，于是把标记转义成**可见文字** `&lt;br /&gt;`，空表格单元格里最明显。修法是导出侧复刻删除，但**只删块级标记**（父节点不是 `paragraph`，或该 `paragraph` 只有这一个孩子）：写在文字旁的 `<br>` 是作者的内联 HTML，继续走原有的转义策略。定位过程中先按「有相邻行内节点就保留」的启发式写过一版，被 `> a\n>\n> <br />\n> b` 这个**我自己编错的**输入证伪（remark 把懒续行并进了 html 块，值变成 `"<br />\nb"`），改用「父节点类型」这一确定判据，并改用编辑器真实产出的字节做用例。
+- 验证：editor-core 492、desktop 单元 1069、`pnpm -r typecheck`/`lint`、Playwright 91 全绿。
+
 ## 验证与交付
 
 ```bash
