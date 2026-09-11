@@ -224,6 +224,16 @@ git commit -m "feat(appearance): add crimson palette and four accents"
 - 验证：editor-core 553、desktop 单元 1069、`pnpm -r typecheck`/`lint`、Playwright 135、`cargo clippy -D warnings` + `cargo test`(105) 全绿。
   - 记录一次真实的**测试不稳定**：`GraphPanel > renders the full vault by default` 在并行跑 desktop 套件时偶发失败，单独跑该文件 14/14 通过；与本轮改动无关（本轮只动了 editor-core 的序列化与测试），重跑套件即全绿。没有为了让它变绿去改任何代码。
 
+### 2026-09-11（第十三轮）
+
+按自动循环里列的待办项走「搜索/索引在删除与重命名下的正确性」。
+
+- 先读实现而不是先改：`vaultIndexCoordinator.applyMdChange` 的 `remove` 分支确实会清 `notes`/缓存/`persistence.remove(path)`，而 `buildIndexIncremental` 也会丢弃已不在文件列表里的条目——**删除与重命名的主路径是对的**，没有发现问题，如实记录。
+- 但顺着这条线找到一处真实缺陷：`indexStateOf` 只单向校验。写测试确认（`indexStateOf(indexWithA, [])` 返回 `up-to-date`），再修成双向：缺条目的路径、以及「有条目但文件已不在」的路径都判 `stale`。
+  - 同时如实标注：**该函数目前没有生产调用方**（全仓只有测试引用它）。所以这是一处潜在契约缺陷，不是线上故障；我没有把它写成「修复了索引错误」这种夸大的说法。
+- `docs: correct the Rust index-store module doc` — `storage/index_store.rs` 的模块注释写着「今天没有磁盘索引可存」，而前端其实在 `.nekowite/index/` 里写分片 JSON 索引（校验和 + 原子替换）。这类「注释与实现相反」的说明比没有注释更危险，改为如实描述。
+- 验证：desktop 单元 1070、editor-core 553、`pnpm -r typecheck`/`lint`、`cargo clippy -D warnings`、`cargo test`(105) 全绿。
+
 ## 验证与交付
 
 ```bash
