@@ -202,6 +202,17 @@ git commit -m "feat(appearance): add crimson palette and four accents"
 - `fix(export): derive the heading id from text nodes only` — 同一批差分断言里的另一类不一致：导出用 `plainText` 拼标题文本时把原子的 `value` 也算进去了，而锚点按钮用的是 ProseMirror `Node.textContent`（只拼接文本节点，原子不贡献文字）。`# Claim [@smith2020]` 因此是编辑器 `#claim` / 导出 `claim-smith2020`，`# Formula $a^2$` 同理。现导出跳过 `inlineMath`/`math`/`nekoCite`/`html`/`mdxJsxFlowElement` 的 `value`，差分用例覆盖 16 种标题内容（含重复标题、CJK、混合原子）。
 - 验证：editor-core 496、desktop 单元 1069、`pnpm -r typecheck`/`lint`、Playwright 91 全绿。
 
+### 2026-09-11（第十一轮）
+
+把验证推到最外层：不只断言单元行为，而是在**真实应用**里断言「用户按一次 Ctrl+S，磁盘上的字节有没有变」。
+
+- `test(e2e): source-fidelity.spec.ts`（44 项）——打开笔记 → 切到源码模式 → 比对面板文本与文件字节 → 不做任何编辑直接 Ctrl+S → 再比对磁盘字节。第一版按「打开和保存都应当逐字节保真」写，跑出 17 项失败。逐条核对后分成两类：
+  - **18 类确实逐字节保真**（frontmatter、加粗链接、任务列表、脚注、标题/强调里的 JSX、数学、CJK/emoji、围栏代码、嵌套列表、引用、自动链接、图片、双链、高亮、引用文献…）。其中「加粗链接」「标题里的 JSX」正是前两轮修的缺陷，这一层等于在应用级别复核了它们。
+  - **9 类是规范化而非丢失**：行尾空格硬换行→反斜杠、多余空行折叠、缩进代码→围栏、`~~~`→```` ``` ````、setext→ATX、引用式链接内联、补末尾换行、空单元格写 `<br />` 标记、表格分隔行重排。逐条打印了规范化后的确切字节，确认内容都在、且「源码面板显示」与「保存写入」始终一致。这些改成**显式断言确切输出**——把契约钉住，而不是放宽断言糊过去。
+  - 结论要如实说：**渲染模型是文档文本的权威来源**，所以打开时标签页会采用模型的规范化形式，未编辑的 Ctrl+S 会把这个形式写回文件。这不是崩溃级缺陷，但确实会改动用户文件；「未编辑就完全不动原文件」需要在模型之外保留原文并为局部编辑定义规则，属于独立的大改动，本轮**未做**，只把它变成有测试、有文档的已知契约。
+- 顺带把「打开时会把内容换成规范形式」的成因定位清楚：`editorExternalSync.applyContent` 在渲染模式下有意把 `active.content` 换成 `editor.save()` 的结果（并保持 dirty=false），所以保存写的是规范形式。记录在案，未改动——这一段代码是为修「连按按键跳到开头 / 最后一个字符消失」而刻意设计的，没有充分理由不动它。
+- 验证：e2e 135（91 → 135）、editor-core 496、desktop 单元 1069、`pnpm -r typecheck`/`lint` 全绿。本批次只新增测试与文档，运行时代码未变，因此**没有重新打包**：上一批产物 `release/nekowite_0.1.0_x64.exe`（SHA-256 `9d561487…`）已包含全部修复。
+
 ## 验证与交付
 
 ```bash
