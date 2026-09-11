@@ -213,6 +213,17 @@ git commit -m "feat(appearance): add crimson palette and four accents"
 - 顺带把「打开时会把内容换成规范形式」的成因定位清楚：`editorExternalSync.applyContent` 在渲染模式下有意把 `active.content` 换成 `editor.save()` 的结果（并保持 dirty=false），所以保存写的是规范形式。记录在案，未改动——这一段代码是为修「连按按键跳到开头 / 最后一个字符消失」而刻意设计的，没有充分理由不动它。
 - 验证：e2e 135（91 → 135）、editor-core 496、desktop 单元 1069、`pnpm -r typecheck`/`lint` 全绿。本批次只新增测试与文档，运行时代码未变，因此**没有重新打包**：上一批产物 `release/nekowite_0.1.0_x64.exe`（SHA-256 `9d561487…`）已包含全部修复。
 
+### 2026-09-11（第十二轮）
+
+把上一轮的数据丢失网从「顶层 + 行内容器」推进到「**嵌套**」：内容不只是要出现，还要在表格单元格、脚注、列表项、引用里出现。
+
+- `test(export): exportComposition.test.ts`（36 例）——把标记词塞进各种嵌套位置。第一轮就抓到 1 处：**表格单元格里的双链被拆成两个单元格**。
+- `fix(table): escape unescaped pipes in raw HTML inside a table cell` — 追根因：GFM 用 `|` 分隔单元格，文本节点由表格构造的 `|` unsafe 模式自动转义，但**以原始 HTML 序列化的节点**（双链、组件、`<br />` 空行标记）走 `mdast-util-to-markdown` 的默认 `html` handler，而它只 `return node.value`。所以 `[[N\|alias]]` 存盘后成为 `| [[N | alias]] |`（多一格），重开时双链变成两段普通文字。
+  - 修法：注册自己的 `html` handler，仅当序列化栈位于 `tableCell` 内时补转义。定位这一步花了几轮实测：先按「父节点是 tableCell」判断——**不成立**，mdast 里单元格内容还包着一层 `paragraph`（探针打出 `stack=["table","tableRow","tableCell","phrasing","paragraph","phrasing"]` 才确定用 `state.stack` 判断）。
+  - 第二个坑同样靠实测发现：`<Comp a="x\|y" />` 里的原始 HTML **保留**作者写的 `\|`（remark-gfm 只对文本节点做反转义），若一律 `replace(/\|/g, '\\|')` 就得到 `\\|`——反斜杠成了字面量、管道重新变成分隔符，行照样被拆。故改为「只转义**未被转义**的管道」（按前置反斜杠的奇偶判断），并把这两种情形都写进测试。
+- 验证：editor-core 553、desktop 单元 1069、`pnpm -r typecheck`/`lint`、Playwright 135、`cargo clippy -D warnings` + `cargo test`(105) 全绿。
+  - 记录一次真实的**测试不稳定**：`GraphPanel > renders the full vault by default` 在并行跑 desktop 套件时偶发失败，单独跑该文件 14/14 通过；与本轮改动无关（本轮只动了 editor-core 的序列化与测试），重跑套件即全绿。没有为了让它变绿去改任何代码。
+
 ## 验证与交付
 
 ```bash
