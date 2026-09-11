@@ -394,11 +394,22 @@ export function queryIndex(index: StoredIndex, query: string): string[] {
 }
 
 /** Coarse index state from the stored blob and the current file list. Does not
- *  stat disks — the build step reconciles mtime/size and sets a finer state. */
+ *  stat disks — the build step reconciles mtime/size and sets a finer state.
+ *
+ *  Both directions count: a path with no entry means the index is missing
+ *  something, and an entry with no path means it still describes a note the
+ *  vault no longer has (a delete or rename leaves the entry behind until the
+ *  next build). Reporting 'up-to-date' for the latter let a caller skip the
+ *  reconcile that would drop it, so searches kept answering with a note that was
+ *  gone and the click on that result failed. */
 export function indexStateOf(index: StoredIndex | null, paths: string[]): IndexState {
   if (!index) return 'needs-rebuild'
+  const current = new Set(paths)
   for (const path of paths) {
     if (!index.notes[path]) return 'stale'
+  }
+  for (const path of Object.keys(index.notes)) {
+    if (!current.has(path)) return 'stale'
   }
   return 'up-to-date'
 }
