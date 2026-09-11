@@ -234,6 +234,14 @@ git commit -m "feat(appearance): add crimson palette and four accents"
 - `docs: correct the Rust index-store module doc` — `storage/index_store.rs` 的模块注释写着「今天没有磁盘索引可存」，而前端其实在 `.nekowite/index/` 里写分片 JSON 索引（校验和 + 原子替换）。这类「注释与实现相反」的说明比没有注释更危险，改为如实描述。
 - 验证：desktop 单元 1070、editor-core 553、`pnpm -r typecheck`/`lint`、`cargo clippy -D warnings`、`cargo test`(105) 全绿。
 
+### 2026-09-11（第十四轮）
+
+继续追「静默截断」这一类最严重的问题，把范围从 JSX 扩到所有**块级节点**：行间公式、表格、代码块、标题、列表、组件，分别放进列表项、引用、脚注定义、表格单元格，共 19 种组合，断言标记词一个都不丢。
+
+- 结果：**19 条全过，没有发现新缺陷**。如实记录这个「空手而归」——这一轮的价值是把这一类问题的防线铺开（上一轮的 JSX 版本抓到过 4 个「保存成空文件」的用例，这一轮说明其余块级节点的放置已经被现有实现正确处理），而不是为了显得有产出去改点无关紧要的东西。
+- 已核对的既有守卫：`buildIndexIncremental` 会丢弃不在文件列表里的条目、`applyMdChange` 的 remove 分支清缓存并写回索引（上一轮）。本轮没有任何代码改动，只新增测试，因此**不需要重新打包**：HEAD 的运行时代码与 `release/nekowite_0.1.0_x64.exe`（SHA-256 `702b1daa…`）一致。
+- 验证：editor-core 554、desktop 单元 1070、`pnpm -r typecheck`/`lint`、Playwright 135、`cargo clippy -D warnings` + `cargo test`(105) 全绿。
+
 ## 验证与交付
 
 ```bash
