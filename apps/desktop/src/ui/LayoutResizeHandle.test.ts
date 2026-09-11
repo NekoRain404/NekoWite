@@ -32,9 +32,14 @@ interface Harness {
   resizeEnds: number
 }
 
-function mountHandle(props: Record<string, unknown>): Harness {
+function mountHandle(props: Record<string, unknown>, trackWidth = 0): Harness {
   const host = document.createElement('div')
   document.body.appendChild(host)
+  // jsdom lays nothing out, so clientWidth is always 0. A fraction handle reads
+  // the track from its parent, so the width has to be stated explicitly.
+  if (trackWidth > 0) {
+    Object.defineProperty(host, 'clientWidth', { value: trackWidth, configurable: true })
+  }
   const changes: number[] = []
   let resizeEnds = 0
   const app = createApp(LayoutResizeHandle, {
@@ -155,6 +160,82 @@ describe('LayoutResizeHandle', () => {
     flushRaf()
     window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
     expect(h.changes).toEqual([400])
+    h.app.unmount()
+  })
+})
+
+describe('LayoutResizeHandle delta units', () => {
+  // A pixel-valued handle (the sidebar / rail widths) adds the pointer delta
+  // directly; this is what the component defaulted to before the unit existed.
+  it('adds a pixel pointer delta to a pixel value', () => {
+    stubRaf()
+    const h = mountHandle({ value: 232, min: 180, max: 400, defaultValue: 232 })
+    h.el.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 100, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 130, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    expect(h.changes).toEqual([262])
+    h.app.unmount()
+  })
+
+  // A ratio-valued handle (the split divider) has to scale the pointer delta by
+  // the track width. Adding pixels to a 0..1 value snapped every drag to a
+  // bound, which is the "the divider only moves to one position" report.
+  it('scales the pointer delta by the track width for a fraction value', () => {
+    stubRaf()
+    const h = mountHandle(
+      { value: 0.5, min: 0.15, max: 0.85, defaultValue: 0.5, step: 0.02, deltaUnit: 'fraction' },
+      1000,
+    )
+    h.el.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 100, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 300, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    // 200px of 1000px track = +0.2 ratio, not +200.
+    expect(h.changes).toEqual([0.7])
+    h.app.unmount()
+  })
+
+  it('tracks the pointer in both directions for a fraction value', () => {
+    stubRaf()
+    const h = mountHandle(
+      { value: 0.5, min: 0.15, max: 0.85, defaultValue: 0.5, deltaUnit: 'fraction' },
+      800,
+    )
+    h.el.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 400, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 200, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    // -200px of 800px = -0.25.
+    expect(h.changes).toEqual([0.25])
+    h.app.unmount()
+  })
+
+  it('clamps a fraction drag to the ratio bounds', () => {
+    stubRaf()
+    const h = mountHandle(
+      { value: 0.5, min: 0.15, max: 0.85, defaultValue: 0.5, deltaUnit: 'fraction' },
+      1000,
+    )
+    h.el.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 500, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 5000, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    expect(h.changes).toEqual([0.85])
+    h.app.unmount()
+  })
+
+  it('leaves the value alone when an unmeasurable track cannot be divided', () => {
+    stubRaf()
+    // No track width: dividing by zero would produce Infinity, and clamping
+    // that would slam the divider to a bound on the first pixel of movement.
+    const h = mountHandle({
+      value: 0.5,
+      min: 0.15,
+      max: 0.85,
+      defaultValue: 0.5,
+      deltaUnit: 'fraction',
+    })
+    h.el.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 100, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 400, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    expect(h.changes).toEqual([])
     h.app.unmount()
   })
 })

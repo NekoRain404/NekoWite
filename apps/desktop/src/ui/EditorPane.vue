@@ -318,6 +318,7 @@ onBeforeUnmount(() => {
           :value="view.splitRatio"
           :default-value="SPLIT_RATIO_DEFAULT"
           :step="0.02"
+          delta-unit="fraction"
           @resize-start="onSplitResizeStart"
           @change="onSplitResize"
           @resize-end="onSplitResizeEnd"

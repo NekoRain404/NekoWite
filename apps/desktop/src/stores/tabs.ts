@@ -346,13 +346,15 @@ export const useTabsStore = defineStore('tabs', () => {
       path = picked
     }
     markSaving(t.id)
+    // The source pane coalesces keystrokes before publishing them to the tab,
+    // so flush before ANYTHING reads t.content below. This has to precede the
+    // asset relocation, not just the write: relocation is a whole-document
+    // read-modify-write, so running it against a stale snapshot would both
+    // rewire the wrong text and clobber the keystrokes still in flight.
+    flushSourceEdits()
     if (t.pendingAssetPaths.length > 0) {
       await relocatePendingAssets(t, vault.value, path)
     }
-    // The source pane coalesces keystrokes before publishing them to the tab,
-    // so flush first: every save path (explicit, autosave, close) must persist
-    // the live document, not one that is a debounce window behind.
-    flushSourceEdits()
     const editor = getActiveEditor()
     const contentAtStart = t.content
     const next = emitLifecycle('onSave', editor, t.content)

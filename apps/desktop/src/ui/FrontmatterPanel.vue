@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { Hash, Plus, X } from 'lucide-vue-next'
 import { useTabsStore } from '../stores/tabs'
+import { flushSourceEdits } from '../services/sourceView'
 import { useDocumentListStore } from '../stores/documentList'
 import {
   emptyFrontmatterFields,
@@ -58,6 +59,10 @@ watch(
 function writeContent(fields: FrontmatterFields): void {
   const active = tab.value
   if (!active) return
+  // Whole-document read-modify-write: publish the source pane's pending
+  // keystrokes first so the edit applies to the live text (and the source pane
+  // is not then mirrored back to a stale version).
+  flushSourceEdits()
   const { content, changed } = replaceFrontmatter(active.content, fields)
   if (!changed) return
   active.content = content

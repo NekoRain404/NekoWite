@@ -29,6 +29,7 @@ import { fsService } from '../platform/gateways/fs'
 import type { TrashEntry } from '../platform/gateways/contracts'
 import { notifyError } from '../services/errors'
 import { useTabsStore } from '../stores/tabs'
+import { flushSourceEdits } from '../services/sourceView'
 import { useDocumentListStore } from '../stores/documentList'
 import { useFileTreeStore } from '../stores/fileTree'
 import { useAppearanceStore } from '../stores/appearance'
@@ -259,6 +260,10 @@ function removeCurrentTag(tag: string, e: MouseEvent): void {
   e.stopPropagation()
   const tab = tabs.activeTab
   if (!tab) return
+  // Whole-document read-modify-write: publish the source pane's pending
+  // keystrokes first, or this would transform (and then mirror back) text that
+  // is a debounce window out of date.
+  flushSourceEdits()
   const next = removeTagFromContent(tab.content, tag)
   if (next === tab.content) return
   tab.content = next
