@@ -32,6 +32,11 @@
 
 ### Fixed
 
+- **导出丢失行间公式 `$$…$$`**：`remark-math` 产出的节点类型是 `math`，而渲染器只匹配了并不存在的 `displayMath`；叶节点落进返回空串的 `renderChildren`，于是**每一次** HTML/PDF 导出都会静默丢掉行间公式（行内公式不受影响）。现两种类型名都接受，并补了「同一份完整文档里没有任何节点消失」的回归用例。
+- **导出与编辑器不一致的四类结构化内容**：导出渲染器只认识一部分节点，转换链也缺少编辑器扩展的识别步骤。其中两类会直接**丢失文字**：
+  - `==高亮==`、`[[双链|别名]]` 在 remark 里本就是普通文本，编辑器靠 `highlightRemark`/`wikilinkRemark` 识别；导出链没挂这两个 pass，于是把 `==`/`[[ ]]` 原样印进导出文件。更糟的是 `nekoWikiLink` 没有渲染分支（引用节点无子节点），一旦挂上 pass 会**整段消失**。现导出链补上 `highlightMdast`/`wikilinkMdast`，并新增 `nekoHighlight` → `<mark class="nk-highlight">`、`nekoWikiLink` → `<span class="wikilink" data-target="…">别名</span>`（导出文件是独立文件，双链没有可跳转目标，故保留目标属性供下游恢复，而不是伪造一个坏链接）。
+  - `- [x] 完成` 的勾选状态由 remark-gfm 记在 `listItem.checked` 上（`[x]` 字面量已被消费），渲染器无视该字段，任务列表导出后退化成普通列表。现输出 `<ul class="contains-task-list">` 与 `<input type="checkbox" disabled checked>`，并配套 CSS 去掉项目符号、对齐正文。
+  - GFM 脚注的 `footnoteReference`/`footnoteDefinition` 没有渲染分支：引用标记是叶子节点，被 `renderChildren` 吞掉；定义则同普通段落排在文末，读者分不清哪句是注释。现按首次出现顺序统一编号，引用渲染为 `<sup class="footnote-ref">` 锚点，定义渲染为带编号与 `↩` 回链的 `<div class="footnote">`。
 - **移除未使用的 `tauri-plugin-fs`**：该插件被初始化、`fs:default` 也被授权，但前端既没有 `@tauri-apps/plugin-fs` 依赖、也没有任何调用点（文件操作全部走自定义命令），属于纯粹的 IPC 攻击面。现移除插件初始化、`fs:default` 授权与 Cargo 依赖；随之生成的 ACL schema 减少约 7150 行（每个平台 3576 行）。
 - **清理仓库中的运行期产物**：`daily/2026-09-08.md` 是应用在「把仓库根目录当作 vault」时自动生成的空日记（与已忽略的 `.nekowite/` 同类），在基线提交里被误纳入版本控制；现取消跟踪并加入 `.gitignore`（文件保留在磁盘上，未删除）。同时删除 `.oxlintrc.json`——内容是空的 `{"rules": {}}`，oxlint 既不是依赖也不在 CI 中运行，它的存在会让人以为有一道并不存在的 lint 关卡。
 - **文档澄清**：`docs/dev.md` 中把「未命名 dirty 文档」等已实现项标记完成；并注明代码格式（prettier 配置）目前只是约定、CI 未做格式门禁（`prettier` 不在依赖与 lockfile 中）。

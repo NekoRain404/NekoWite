@@ -8,7 +8,9 @@ import remarkFrontmatter from 'remark-frontmatter'
 import remarkMath from 'remark-math'
 import type { Root } from 'mdast'
 import { citeMdast } from '../cite'
+import { highlightMdast } from '../highlight/remark'
 import { imageDimMdast } from '../image'
+import { wikilinkMdast } from '../wikilink/remark'
 import { mdxJsxMdast, parseMdxTag } from '../mdx'
 import { safeImageUrl, safeLinkUrl } from './url'
 import { headingAnchorIds, slugify } from '../slugify'
@@ -92,6 +94,14 @@ interface RenderNode extends TransformNode {
   width?: number
   imageAlign?: string
   identifier?: string
+  /** GFM task-list state on a `listItem`: true / false / null (not a task). */
+  checked?: boolean | null
+  /** Visible label of a GFM footnote (the text after `[^`). */
+  label?: string
+  /** `nekoWikiLink` target, i.e. the part before `|` in `[[target|alias]]`. */
+  target?: string
+  /** `nekoWikiLink` alias; empty when the wikilink has no `|` part. */
+  alias?: string
 }
 
 interface RenderContext {
@@ -113,6 +123,9 @@ interface RenderContext {
    *  Consumed by `shift()` as headings are rendered, so the ids match what the
    *  anchor buttons produce for the same document. */
   headingIds: string[]
+  /** Footnote numbers by identifier, in order of first appearance. Shared by
+   *  `footnoteReference` and `footnoteDefinition` so the pair always agrees. */
+  footnoteNumbers: Map<string, number>
 }
 
 const processor = unified()
@@ -124,6 +137,12 @@ const processor = unified()
     const t = tree as unknown as TransformNode & { children: TransformNode[] }
     mdxJsxMdast(t, file)
     citeMdast(t, file)
+    // `==highlight==` and `[[wikilink]]` are editor extensions, not markdown:
+    // remark-parse leaves them as literal text. Without these two passes the
+    // renderer received raw `==`/`[[ ]]` text instead of the node types it
+    // renders, so the export disagreed with the editor it came from.
+    highlightMdast(t)
+    wikilinkMdast(t, file)
     resolveReferences(t)
     imageDimMdast(t)
   })
@@ -330,10 +349,25 @@ function renderList(node: RenderNode, ctx: RenderContext): string {
   const start = node.ordered && typeof node.start === 'number' && node.start !== 1
     ? ` start="${node.start}"`
     : ''
-  const items = (node.children ?? [])
-    .map((item) => `<li>${renderChildren(item.children as RenderNode[] ?? [], ctx)}</li>`)
+  const items = (node.children ?? []) as RenderNode[]
+  // GFM marks a task item with `checked: true|false`; there is no other way to
+  // tell `- [x] a` from `- a` after parsing, so the state has to be carried
+  // into the markup or it is lost (the literal `[x]` is consumed by remark-gfm).
+  const hasTasks = items.some((item) => typeof item.checked === 'boolean')
+  const rendered = items
+    .map((item) => {
+      const inner = renderChildren((item.children ?? []) as RenderNode[], ctx)
+      if (typeof item.checked !== 'boolean') return `<li>${inner}</li>`
+      const checked = item.checked ? ' checked' : ''
+      return (
+        `<li class="task-list-item">` +
+        `<input type="checkbox" disabled${checked}>` +
+        `<span class="task-list-item-body">${inner}</span></li>`
+      )
+    })
     .join('')
-  return `<${tag}${start}>${items}</${tag}>`
+  const listClass = hasTasks ? ' class="contains-task-list"' : ''
+  return `<${tag}${start}${listClass}>${rendered}</${tag}>`
 }
 
 function renderTable(node: RenderNode, ctx: RenderContext): string {
@@ -451,6 +485,13 @@ function renderNode(node: RenderNode, ctx: RenderContext): string {
       return `<pre class="frontmatter">${escapeHtml(node.value ?? '')}</pre>`
     case 'inlineMath':
       return renderMath(node, ctx, false)
+    // remark-math emits `math` for display math (`$$…$$`), NOT `displayMath`.
+    // Matching only the latter meant display math fell through to
+    // `renderChildren`, which returns '' for a leaf — so every exported
+    // HTML/PDF silently dropped it. Both names are accepted because the editor's
+    // own remark plugin (`mdx`/`math` transforms) is not the only producer of
+    // the tree here.
+    case 'math':
     case 'displayMath':
       return renderMath(node, ctx, true)
     case 'nekoCite': {
@@ -460,6 +501,38 @@ function renderNode(node: RenderNode, ctx: RenderContext): string {
       const key = citeKey(node.value ?? '')
       const number = ctx.citeNumbers.get(key) ?? ctx.citeNumbers.size + 1
       return `<span class="cite">${number}</span>`
+    }
+    // `==highlight==` (`nekoHighlight` is produced by highlightMdast above).
+    case 'nekoHighlight':
+      return `<mark class="nk-highlight">${renderChildren((node.children ?? []) as RenderNode[], ctx)}</mark>`
+    case 'nekoWikiLink': {
+      // The export is a standalone file, so a vault-relative wikilink has no
+      // destination to navigate to. Keep the editor's DOM contract
+      // (`span[data-wikilink]`, label = alias || target) so the text survives
+      // instead of vanishing, and a downstream tool can still recover the
+      // target from the attribute.
+      const target = node.target ?? ''
+      const label = node.alias || target
+      return `<span class="wikilink" data-target="${escapeHtml(target)}">${escapeHtml(label)}</span>`
+    }
+    case 'footnoteReference': {
+      const id = node.identifier ?? ''
+      const n = ctx.footnoteNumbers.get(id) ?? ctx.footnoteNumbers.size + 1
+      return (
+        `<sup class="footnote-ref" id="fnref-${escapeHtml(id)}">` +
+        `<a href="#fn-${escapeHtml(id)}">${n}</a></sup>`
+      )
+    }
+    case 'footnoteDefinition': {
+      const id = node.identifier ?? ''
+      const n = ctx.footnoteNumbers.get(id)
+      const marker = n != null ? `<span class="footnote-marker">[${n}]</span>` : ''
+      const back = `<a class="footnote-backref" href="#fnref-${escapeHtml(id)}">↩</a>`
+      const body = renderChildren((node.children ?? []) as RenderNode[], ctx)
+      return (
+        `<div class="footnote" id="fn-${escapeHtml(id)}">${marker}` +
+        `<div class="footnote-body">${body}${back}</div></div>`
+      )
     }
     case 'mdxJsxFlowElement':
       return renderMdx(node, ctx)
@@ -507,6 +580,17 @@ h1, h2, h3, h4, h5, h6 { line-height: 1.25; }
 code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 pre { background: #f6f8fa; padding: 0.75rem 1rem; border-radius: 6px; overflow-x: auto; }
 blockquote { margin: 0; padding-left: 1rem; border-left: 4px solid #d0d7de; color: #57606a; }
+mark.nk-highlight { background: #fff3b0; padding: 0 0.1em; border-radius: 2px; }
+.wikilink { color: #0969da; border-bottom: 1px dashed currentColor; }
+.contains-task-list { list-style: none; padding-left: 0.25rem; }
+.task-list-item { display: flex; align-items: flex-start; gap: 0.5rem; }
+.task-list-item > input { margin: 0.4rem 0 0; flex: none; }
+.task-list-item-body > p { margin: 0; }
+.footnote-ref a { text-decoration: none; }
+.footnote { display: flex; gap: 0.4rem; margin: 0.5rem 0; color: #57606a; font-size: 0.925em; }
+.footnote-marker { flex: none; }
+.footnote-body > p { margin: 0; }
+.footnote-backref { margin-left: 0.35rem; text-decoration: none; }
 table { border-collapse: collapse; margin: 1rem 0; }
 th, td { border: 1px solid #d0d7de; padding: 0.4rem 0.7rem; }
 th { background: #f6f8fa; }
@@ -556,6 +640,21 @@ async function resolveImageNodes(
   }
 }
 
+/** Numbers every footnote in order of first appearance (reference first, then
+ *  any definition that was never referenced), mirroring GFM's numbering. */
+function collectFootnoteOrder(nodes: RenderNode[], numbers: Map<string, number>): void {
+  const walk = (list: RenderNode[]): void => {
+    for (const node of list) {
+      if (node.type === 'footnoteReference' || node.type === 'footnoteDefinition') {
+        const id = node.identifier ?? ''
+        if (id && !numbers.has(id)) numbers.set(id, numbers.size + 1)
+      }
+      if (node.children?.length) walk(node.children)
+    }
+  }
+  walk(nodes)
+}
+
 function renderFromChildren(children: RenderNode[], opts?: RenderDocumentOptions): string {
   const math = opts?.math ?? 'katex'
 
@@ -568,6 +667,11 @@ function renderFromChildren(children: RenderNode[], opts?: RenderDocumentOptions
     componentRenderers: opts?.componentRenderers,
     citeNumbers,
     headingIds: headingAnchorIds(collectHeadingTexts(children)),
+    footnoteNumbers: (() => {
+      const numbers = new Map<string, number>()
+      collectFootnoteOrder(children, numbers)
+      return numbers
+    })(),
   }
 
   const body = renderChildren(children, ctx)

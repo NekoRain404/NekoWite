@@ -172,6 +172,14 @@ git commit -m "feat(appearance): add crimson palette and four accents"
   - 删除 `.oxlintrc.json`（内容为空的 `{"rules": {}}`，oxlint 既非依赖也不在 CI 中运行，其存在会让人误以为有一道 lint 关卡）。
   - 澄清文档：代码格式目前只是约定（prettier 配置存在但未安装、CI 无格式门禁）。
 
+### 2026-09-11（第八轮）
+
+- `fix(export): render the node types the editor already understands` — 延续上一轮的导出节点覆盖普查（对每个 remark/milkdown 节点类型跑一遍导出，看有没有内容凭空消失）。除已修的 `math`/`displayMath` 外，又确认四处不一致，其中两处是**文字丢失**：
+  - 先写**区分性测试**再改代码：`renderNodes.test.ts` 新增 4 个用例（任务列表 / 脚注 / 高亮 / 双链）。改前 4 个全部失败，改后全绿——用例断言的是「不再出现 `[x]`、`==`、`[[` 字面量」这类**只有真的解析了**才成立的条件，而不是仅仅「文本还在」（双链的别名子串在原始 `[[Other Note|alias]]` 里本来就存在，用 `toContain('alias')` 会假通过）。
+  - 高亮/双链的根因是**转换链缺 pass**而非缺渲染分支：`==x==` 与 `[[a|b]]` 对 remark 只是文本。补 `highlightMdast`/`wikilinkMdast` 后必须同时补 `nekoWikiLink` 的渲染分支，否则引用型节点会从「显示字面量」变成「整段消失」——这是本次最容易踩反的一步，已在测试里固定。
+  - 任务列表与脚注则是渲染器直接漏了字段/节点类型：`listItem.checked` 被无视（`[x]` 字面量已被 remark-gfm 消费，无处可查），`footnoteReference` 是叶子、落进 `renderChildren` 得空串。
+- 验证：editor-core 377、desktop 单元 1069、`pnpm -r typecheck`/`lint` 全绿。
+
 ## 验证与交付
 
 ```bash
