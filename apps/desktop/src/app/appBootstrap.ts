@@ -235,8 +235,14 @@ export function createDesktopRuntime(): DesktopRuntime {
     const recovery = makeTmpRecovery(path, isStale)
     tmpRecovery = recovery
     void (async () => {
-      void recovery.gc(path)
-      void recovery.scan(path)
+      // Reclaim first, THEN look for what is left. Running them concurrently (as
+      // this did) meant scan listed the directory before gc deleted from it, so
+      // the prompt advertised files that were already gone by the time it
+      // appeared: the user clicked "restore" on an entry whose rename failed
+      // silently, and nothing happened at all.
+      await recovery.gc(path)
+      if (isStale()) return
+      await recovery.scan(path)
     })()
     // Index the new vault: `indexVault` is internally latest-wins (the new
     // coordinator detaches the stale one before subscribing). Plugins and refs

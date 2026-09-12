@@ -23,7 +23,7 @@
  */
 
 import { ATTACHMENTS_DIR, attachmentMonthDir } from '../services/attachments'
-import type { RecoveryPrompt } from '../services/errors'
+import { notifyError, type RecoveryPrompt } from '../services/errors'
 import { t as i18nT } from '../i18n'
 import type { FsPort } from '../platform/gateways/contracts'
 import { stripVaultPrefix } from '../services/paths'
@@ -57,6 +57,8 @@ export interface TmpRecoveryDeps {
   now?: () => number
   /** Translate a message key (defaults to the shared i18n `t`). */
   t?: (key: string, params?: Record<string, unknown>) => string
+  /** Surface a failed restore. Defaults to the app's error toast. */
+  notifyError?: (message: string) => void
 }
 
 export interface TmpRecoveryController {
@@ -80,6 +82,7 @@ export function createTmpRecovery(deps: TmpRecoveryDeps): TmpRecoveryController 
   const notify = deps.notify
   const now = deps.now ?? (() => Date.now())
   const t = deps.t ?? i18nT
+  const reportError = deps.notifyError ?? notifyError
 
   function cancel(): void {
     cancelled = true
@@ -150,12 +153,31 @@ export function createTmpRecovery(deps: TmpRecoveryDeps): TmpRecoveryController 
         message: t('recovery.tmpNotice', { count: orphans.length }),
         onRestore: () => {
           // Move the crashed srcs into the vault's attachment library so the
-          // image data survives as a recoverable asset (best-effort).
-          for (const o of orphans) {
-            void deps.fs
-              .renameEntry(vault, o.path, `${ATTACHMENTS_DIR}/${attachmentMonthDir()}/${o.name}`)
-              .catch(() => {})
-          }
+          // image data survives as a recoverable asset.
+          //
+          // Failures are REPORTED, not swallowed: this used to `.catch(() => {})`
+          // every rename, so if a file had already been removed (the GC ran
+          // between the scan and the click) the button did nothing at all — no
+          // file in attachments/, no message, nothing to act on.
+          void (async () => {
+            const failed: string[] = []
+            for (const o of orphans) {
+              try {
+                await deps.fs.renameEntry(
+                  vault,
+                  o.path,
+                  `${ATTACHMENTS_DIR}/${attachmentMonthDir()}/${o.name}`,
+                )
+              } catch {
+                failed.push(o.name)
+              }
+            }
+            if (failed.length > 0) {
+              reportError(
+                i18nT('recovery.restoreFailed', { count: failed.length, names: failed.join(', ') }),
+              )
+            }
+          })()
         },
         onDismiss: () => {
           // Leave the files for the age-threshold GC.
