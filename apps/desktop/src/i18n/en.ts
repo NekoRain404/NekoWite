@@ -557,6 +557,9 @@ export const en = {
     polish: 'Polish',
     translate: 'Translate',
     noSelection: 'Select some text first',
+    emptyAnswer: 'The model returned nothing. Nothing was changed — try again.',
+    selectionMoved:
+      'The document changed while the model was working, so the answer was not applied. Select the text again and retry.',
     running: 'AI working…',
   },
   aiSettings: {

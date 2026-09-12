@@ -43,7 +43,11 @@ export function getTextSelection(): TextSelection | null {
  * the pane that produced them — this re-resolves the pane rather than trusting
  * a caller-held view, and reports false when it cannot apply.
  */
-export function replaceTextSelection(text: string): boolean {
+export function replaceTextSelection(
+  text: string,
+  expected?: { from: number; to: number; text: string } | null,
+): boolean {
+  if (expected) return replaceCapturedRange(text, expected)
   if (sourcePaneOwnsInput()) {
     const view = getSourceView()
     if (!view) return false
@@ -54,6 +58,52 @@ export function replaceTextSelection(text: string): boolean {
   if (!view) return false
   const { from, to } = view.state.selection
   view.dispatch(view.state.tr.insertText(text, from, to))
+  view.focus()
+  return true
+}
+
+/**
+ * The verification half of a CAPTURED replacement.
+ *
+ * An AI rewrite is decided seconds (or, with a reasoning model, tens of seconds)
+ * after the user selected the text, and re-reading the LIVE selection at that
+ * point is wrong in three ways that all end with the wrong document being
+ * edited: clicking elsewhere collapses the selection to a caret, so the answer
+ * is INSERTED at the new spot while the original text stays (a duplicated,
+ * misplaced paragraph); switching notes makes the live selection belong to a
+ * DIFFERENT note, so one note answer is written into another; and any edit that
+ * shifts the document moves the offsets, so the answer overwrites whatever now
+ * sits there. None of those produced an error — `replaceTextSelection` returned
+ * true.
+ *
+ * So the pane must still be the same one, the range must still exist, and the
+ * text in it must be exactly what was sent. Otherwise the caller is told and the
+ * answer is discarded rather than written somewhere the user did not ask for.
+ */
+function replaceCapturedRange(
+  text: string,
+  expected: { from: number; to: number; text: string },
+): boolean {
+  if (sourcePaneOwnsInput()) {
+    const view = getSourceView()
+    if (!view) return false
+    const size = view.state.doc.length
+    if (expected.to > size || expected.from >= expected.to) return false
+    if (view.state.sliceDoc(expected.from, expected.to) !== expected.text) return false
+    view.dispatch({
+      changes: { from: expected.from, to: expected.to, insert: text },
+      selection: { anchor: expected.from + text.length },
+    })
+    return true
+  }
+  const view = editorSessionManager.getView()
+  if (!view) return false
+  const size = view.state.doc.content.size
+  if (expected.to > size || expected.from >= expected.to) return false
+  if (view.state.doc.textBetween(expected.from, expected.to, '\n', ' ') !== expected.text) {
+    return false
+  }
+  view.dispatch(view.state.tr.insertText(text, expected.from, expected.to))
   view.focus()
   return true
 }

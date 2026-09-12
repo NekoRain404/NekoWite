@@ -557,6 +557,8 @@ export const zh = {
     polish: '润色',
     translate: '翻译',
     noSelection: '请先选中要处理的文字',
+    emptyAnswer: '模型没有返回内容。文档未被改动，请重试。',
+    selectionMoved: '模型工作期间文档已发生变化，因此没有写入结果。请重新选择后重试。',
     running: 'AI 处理中…',
   },
   aiSettings: {
