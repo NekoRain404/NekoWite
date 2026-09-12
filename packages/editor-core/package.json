@@ -18,6 +18,7 @@
     "@milkdown/preset-commonmark": "^7",
     "@milkdown/preset-gfm": "^7",
     "@milkdown/prose": "7.22.1",
+    "@milkdown/transformer": "7.22.1",
     "@milkdown/utils": "^7",
     "@milkdown/vue": "^7",
     "katex": "^0.16",

@@ -1,10 +1,16 @@
 import type { MilkdownPlugin } from '@milkdown/ctx'
+import type { Node as ProseNode } from '@milkdown/prose/model'
+import type { Parser } from '@milkdown/transformer'
 import { Editor, editorViewCtx, parserCtx, rootCtx } from '@milkdown/core'
+import { EditorState } from '@milkdown/prose/state'
 import { listenerCtx } from '@milkdown/plugin-listener'
 import type { EditorView } from '@milkdown/prose/view'
 import { getMarkdown } from '@milkdown/utils'
 
 import { basicPlugins } from './plugins/basic'
+import { createInlineBreakParser } from './plugins/remark'
+import { insertMarkdownInCell, isInTableCell } from './table/context'
+import { invalidateTableClipboard } from './table/clipboard'
 import { registerBuiltinCommands, setCommandViewProvider } from './commands'
 import { normalizeNbsp, roundTrip } from './serialize'
 import { setMathFeatureView } from './math/feature'
@@ -50,14 +56,52 @@ export function createEditor(
   options: { plugins?: MilkdownPlugin[] } = {}
 ): NekoEditor {
   const plugins = options.plugins ?? basicPlugins
+  // The table clipboard buffer is module-level so a copy+paste within one session
+  // works without the async clipboard API. A NEW editor means a different note (or
+  // a re-opened one), and an old buffer must never be pasted into it.
+  invalidateTableClipboard()
   const changeHandlers = new Set<() => void>()
   const suggestionHandlers = new Set<(status: SuggestionStatus) => void>()
   let view: EditorView | null = null
+  // `open()` and `insertMarkdownAtCursor` parse through this wrapper, which keeps
+  // the author's inline `<br>` (see plugins/remark.ts). It falls back to the stock
+  // parser until the editor is ready.
+  let parse: Parser | null = null
   let destroyed = false
   // YAML frontmatter is not representable in the Milkdown model (it would be
   // parsed as a thematic break + setext heading and rewritten on save), so it
   // is extracted before the body enters the editor and re-prepended on save.
   let frontmatter = ''
+
+  /**
+   * Load `doc` as a brand-new editor state.
+   *
+   * The load is applied to an EMPTY document first, purely to let ProseMirror
+   * place the caret: `replaceWith` maps the selection to the end of the inserted
+   * content, so the caret ends up where a normal "open a note" leaves it (after
+   * the last character of the first line for a one-line note) without this code
+   * having to reason about node sizes. The resulting state is then rebuilt from
+   * scratch, which is the point: dispatching the replace with
+   * `addToHistory: false` kept the PREVIOUS note's edits on the undo stack, so the
+   * first Cmd+Z after switching notes consumed one of those stale events —
+   * `undoDepth` went from 1 to 0 while the new note did not change, which reads as
+   * "undo is broken". `EditorState.create` starts with an empty history.
+   */
+  const openState = (prev: EditorState, doc: ProseNode): EditorState => {
+    const seed = EditorState.create({ doc: prev.schema.topNodeType.createAndFill() ?? doc, plugins: prev.plugins })
+    const seeded = seed.tr.replaceWith(0, seed.doc.content.size, doc)
+    const selection = seeded.selection
+    return EditorState.create({
+      doc,
+      selection,
+      storedMarks: seed.storedMarks ?? undefined,
+      plugins: prev.plugins,
+    })
+  }
+
+  /** The inline-break-repairing parser, or the stock one before the editor is ready. */
+  const parserFor = (ctx: { get: (slice: typeof parserCtx) => Parser }): Parser =>
+    parse ?? ctx.get(parserCtx)
 
   const notifySuggestion = (status: SuggestionStatus): void => {
     suggestionHandlers.forEach((handler) => handler(status))
@@ -77,6 +121,12 @@ export function createEditor(
 
   const ready = editor.then((created) => {
     view = created.action((ctx) => ctx.get(editorViewCtx))
+    // The commonmark preset's empty-line transformer deletes EVERY `<br>` spelling
+    // it sees, which also removed the author's INLINE line break and lost it for
+    // good on the next save. That transformer cannot be replaced (a duplicate
+    // remark plugin name replaces the whole entry), so the parser repairs the tree
+    // it produced. See plugins/remark.ts.
+    parse = created.action((ctx) => createInlineBreakParser(ctx))
     // Toolbar commands resolve the view lazily; point them at this editor and
     // make sure the global registry has fresh handlers for this schema. The
     // math/table dialog commands capture the view eagerly — keep them in
@@ -122,13 +172,16 @@ export function createEditor(
       const created = await editor
       created.action((ctx) => {
         const v = ctx.get(editorViewCtx)
-        const parser = ctx.get(parserCtx)
-        const node = parser(normalizeNbsp(body))
-        const tr = v.state.tr.replaceWith(0, v.state.doc.content.size, node)
-        // A document load is not a user edit: keep it out of undo history so
-        // Cmd+Z after switching documents cannot wipe the freshly opened doc.
-        tr.setMeta('addToHistory', false)
-        v.dispatch(tr)
+        const node = parserFor(ctx)(normalizeNbsp(body))
+        // Rebuilding the state (rather than dispatching a replace transaction)
+        // gives the freshly opened note its own, EMPTY history. Dispatching with
+        // `addToHistory: false` kept the load out of the stack but left the
+        // previous note's edits on it, so the first Cmd+Z after switching notes
+        // consumed one of those stale events — `undoDepth` went from 1 to 0 while
+        // the new note did not change, which reads as "undo is broken". The
+        // plugins are carried over unchanged, so nothing else about the state (or
+        // the view) is affected.
+        v.updateState(openState(v.state, node))
       })
     },
     async save() {
@@ -143,9 +196,19 @@ export function createEditor(
       const created = await editor
       created.action((ctx) => {
         const v = ctx.get(editorViewCtx)
-        const parser = ctx.get(parserCtx)
-        const parsed = parser(md)
+        const parsed = parserFor(ctx)(md)
         if (!parsed) return
+        // Inside a table cell only the first paragraph's INLINE content can be
+        // inserted: the cell holds one paragraph, so replacing its content with
+        // a block would make the fitter lift the block out and split the table in
+        // two. Markdown is what the image intake and the AI insert send, so a
+        // snippet whose first block is a paragraph still lands (image, inline
+        // math, text); a snippet that starts with a block (an hr, a table) has
+        // nowhere legal to go and the cell is left untouched.
+        if (isInTableCell(v.state)) {
+          insertMarkdownInCell(v, parsed)
+          return
+        }
         // The parser yields a doc node; insert each top-level child at the
         // caret so block images split the surrounding paragraph naturally.
         parsed.forEach((child) => {

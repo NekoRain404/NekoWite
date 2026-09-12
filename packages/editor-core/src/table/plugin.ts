@@ -4,6 +4,7 @@ import type { Node, Schema } from '@milkdown/prose/model'
 import type { EditorView } from '@milkdown/prose/view'
 
 import { registerCommand, registerMarkdownCommand, registerToolbar } from '../registry'
+import { isInTableCell } from './context'
 import { openTableDialog } from './dialog'
 
 export const TABLE_COMMAND_ID = 'table.insert'
@@ -43,9 +44,19 @@ export function createTableNode(schema: Schema, rows: number, cols: number): Nod
   return ns.table.create(null, rowNodes)
 }
 
-export function insertTable(view: EditorView, rows: number, cols: number): void {
+/**
+ * Insert a table at the selection. Returns false (and changes nothing) inside a
+ * table cell.
+ *
+ * A table is a block node and a cell holds one paragraph, so the fitter would
+ * lift the new table out and split the host table in two — the command has no
+ * sensible meaning there, and refusing keeps the document intact.
+ */
+export function insertTable(view: EditorView, rows: number, cols: number): boolean {
+  if (isInTableCell(view.state)) return false
   const node = createTableNode(view.state.schema, rows, cols)
   view.dispatch(view.state.tr.replaceSelectionWith(node))
+  return true
 }
 
 function insertTableAtCursor(): void {
