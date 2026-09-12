@@ -12,7 +12,7 @@ import {
   setMaxInFlightActivations,
   setPluginSessionQuota,
 } from './runtime'
-import { emitLifecycle } from './lifecycle'
+import { emitLifecycle, onLifecycleError } from './lifecycle'
 import { onPluginEvent, getAuditLog } from './governance'
 import { getCommand, getComponent, getToolbar, registerCommand, unregisterCommand, unregisterComponent, unregisterToolbar } from '@nekowite/editor-core'
 import type { PluginDefinition, PluginMeta } from './types'
@@ -47,14 +47,106 @@ beforeEach(() => {
 
 describe('activatePlugin', () => {
   it('registers commands and components', async () => {
-    const run = () => {}
+    // The host registers a WRAPPER (see the isolation cases below), so identity
+    // with the plugin's own function is not what is being asserted any more:
+    // calling the registered command must reach the plugin's function.
+    const cmdRun = vi.fn()
+    const toolbarRun = vi.fn()
     const res = await activatePlugin(
-      ok('p1', { components: { Callout: {} as never }, commands: [{ id: 'p1.cmd', run }], toolbar: [{ id: 'p1.toolbar', label: 'T', run }] }),
+      ok('p1', { components: { Callout: {} as never }, commands: [{ id: 'p1.cmd', run: cmdRun }], toolbar: [{ id: 'p1.toolbar', label: 'T', run: toolbarRun }] }),
     )
     expect(res.ok).toBe(true)
-    expect(getCommand('p1.cmd')?.run).toBe(run)
+    getCommand('p1.cmd')?.run()
+    expect(cmdRun).toHaveBeenCalledTimes(1)
     expect(getComponent('Callout')).toBeDefined()
-    expect(getToolbar().some((t) => t.id === 'p1.toolbar')).toBe(true)
+    getToolbar().find((t) => t.id === 'p1.toolbar')?.run()
+    expect(toolbarRun).toHaveBeenCalledTimes(1)
+  })
+
+  it('isolates a throwing command and reports it through the error channel', async () => {
+    // This callback runs from a click, outside the activation try/catch and
+    // outside emitLifecycle's isolation. Before this, a throwing plugin command
+    // propagated out of the DOM handler: an unhandled error, no plugin name,
+    // and the palette left holding a stuck running flag.
+    const failures: Array<{ pluginId: string; event: string; code?: string }> = []
+    const off = onLifecycleError((e) => failures.push({ pluginId: e.pluginId, event: e.event, code: e.error.code }))
+    try {
+      await activatePlugin(
+        ok('crasher', {
+          commands: [
+            {
+              id: 'crasher.cmd',
+              run: () => {
+                throw new Error('bad command')
+              },
+            },
+          ],
+        }),
+      )
+      expect(() => getCommand('crasher.cmd')?.run()).not.toThrow()
+      expect(failures).toEqual([
+        { pluginId: 'crasher', event: 'command:crasher.cmd', code: 'PLUGIN_CALLBACK_ERROR' },
+      ])
+    } finally {
+      off()
+      deactivatePlugin('crasher')
+    }
+  })
+
+  it('isolates a throwing toolbar button the same way', async () => {
+    const failures: string[] = []
+    const off = onLifecycleError((e) => failures.push(`${e.pluginId}:${e.event}`))
+    try {
+      await activatePlugin(
+        ok('crasher', {
+          toolbar: [
+            {
+              id: 'crasher.btn',
+              label: 'B',
+              run: () => {
+                throw new Error('bad button')
+              },
+            },
+          ],
+        }),
+      )
+      expect(() => getToolbar().find((t) => t.id === 'crasher.btn')?.run()).not.toThrow()
+      expect(failures).toEqual(['crasher:toolbar:crasher.btn'])
+    } finally {
+      off()
+      deactivatePlugin('crasher')
+    }
+  })
+
+  it('reports a broken callback once per session, and keeps logging after that', async () => {
+    // A button that throws on every click must not turn into a wall of
+    // identical toasts - but the failure must stay visible in the log.
+    const failures: string[] = []
+    const off = onLifecycleError((e) => failures.push(e.event))
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      await activatePlugin(
+        ok('crasher', {
+          commands: [
+            {
+              id: 'crasher.cmd',
+              run: () => {
+                throw new Error('again')
+              },
+            },
+          ],
+        }),
+      )
+      getCommand('crasher.cmd')?.run()
+      getCommand('crasher.cmd')?.run()
+      getCommand('crasher.cmd')?.run()
+      expect(failures).toHaveLength(1)
+      expect(errorLog.mock.calls.length).toBeGreaterThanOrEqual(3)
+    } finally {
+      errorLog.mockRestore()
+      off()
+      deactivatePlugin('crasher')
+    }
   })
 
   it('returns ok:false for a failed LoadResult', async () => {

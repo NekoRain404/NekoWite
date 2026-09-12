@@ -1017,12 +1017,17 @@ async function runBounded<T>(tasks: Array<() => Promise<T>>, limit: number): Pro
 
 let lifecycleErrorOff: (() => void) | null = null
 
-/** Route plugin lifecycle hook errors (a throwing hook, still isolated by the
- *  host) into the app error channel so a failure is observable and actionable. */
+/**
+ * Route plugin failures into the app error channel so they are observable and
+ * actionable. The host isolates both a throwing lifecycle hook and a throwing
+ * toolbar button / command (see `activatePlugin`), and both report through this
+ * one channel - so every plugin failure reaches the user with the plugin's name
+ * on it instead of an unhandled exception in a click handler.
+ */
 function ensureLifecycleErrorRouter(): void {
   if (lifecycleErrorOff) return
   lifecycleErrorOff = onLifecycleError((ev) => {
-    console.error(`[NekoWite] plugin lifecycle hook failed plugin="${ev.pluginId}" event="${ev.event}"`, ev.error)
+    console.error(`[NekoWite] plugin failed plugin="${ev.pluginId}" origin="${ev.event}"`, ev.error)
     notifyError(describePluginError(ev.error))
   })
 }

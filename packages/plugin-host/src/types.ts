@@ -58,6 +58,7 @@ export type PluginErrorCode =
   | 'PLUGIN_LOAD_FAILED'
   | 'PLUGIN_ACTIVATE_FAILED'
   | 'PLUGIN_HOOK_ERROR'
+  | 'PLUGIN_CALLBACK_ERROR'
   | 'PLUGIN_PERMISSION_DENIED'
   | 'PLUGIN_NOT_FOUND'
   | 'PLUGIN_MANIFEST_INVALID'
@@ -77,6 +78,7 @@ const DEFAULT_PLUGIN_ERROR_MESSAGE: Record<PluginErrorCode, string> = {
   PLUGIN_LOAD_FAILED: 'The plugin failed to load.',
   PLUGIN_ACTIVATE_FAILED: 'The plugin failed to activate.',
   PLUGIN_HOOK_ERROR: 'A lifecycle hook of the plugin threw an error.',
+  PLUGIN_CALLBACK_ERROR: 'A plugin button or command threw an error.',
   PLUGIN_PERMISSION_DENIED: 'The plugin was denied a required permission.',
   PLUGIN_NOT_FOUND: 'The plugin could not be found.',
   PLUGIN_MANIFEST_INVALID: 'The plugin manifest (package.json) is invalid.',
@@ -97,6 +99,7 @@ const DEFAULT_PLUGIN_ERROR_RECOVERY: Record<PluginErrorCode, string> = {
   PLUGIN_LOAD_FAILED: 'Reinstall the plugin or check its entry file.',
   PLUGIN_ACTIVATE_FAILED: 'Disable and re-enable the plugin, or reinstall it.',
   PLUGIN_HOOK_ERROR: 'Disable the plugin or check its logs.',
+  PLUGIN_CALLBACK_ERROR: 'Disable the plugin or check its logs.',
   PLUGIN_PERMISSION_DENIED: 'Grant the requested permission in the plugin settings.',
   PLUGIN_NOT_FOUND: 'Reinstall the plugin.',
   PLUGIN_MANIFEST_INVALID: 'Fix or reinstall the plugin manifest.',

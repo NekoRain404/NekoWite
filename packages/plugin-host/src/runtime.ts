@@ -1,6 +1,6 @@
 import { registerCommand, registerComponent, registerToolbar, getComponent, unregisterCommand, unregisterComponent, unregisterToolbar } from '@nekowite/editor-core'
 import type { LoadResult } from './loader'
-import { registerLifecycleHook } from './lifecycle'
+import { registerLifecycleHook, reportPluginCallbackError } from './lifecycle'
 import type { LifecycleEvent } from './lifecycle'
 import type { PluginContext, PluginDefinition, PluginErrorCode } from './types'
 import { PluginError } from './types'
@@ -225,6 +225,36 @@ export async function activatePlugin(
   const registeredCommands: string[] = []
   const registeredToolbar: string[] = []
   const hookUnregisters: Array<() => void> = []
+
+  /**
+   * Wrap a callback the plugin handed us so its failure cannot escape into the
+   * host's UI. These run from a click (a toolbar button, a command in the
+   * palette), OUTSIDE the activation try/catch and outside `emitLifecycle`'s
+   * isolation, so before this a throwing plugin callback propagated out of the
+   * DOM event handler: the app logged an unhandled error, the user got no
+   * message and no plugin name, and the palette's own bookkeeping (a running
+   * flag, a spinner) was left stuck.
+   *
+   * The notice is raised once per callback per session - a broken button that
+   * is clicked repeatedly must not turn into a wall of identical toasts - while
+   * every failure is still logged.
+   */
+  const reportedCallbacks = new Set<string>()
+  function isolate(label: string, origin: `toolbar:${string}` | `command:${string}`, run: () => void): () => void {
+    return () => {
+      try {
+        run()
+      } catch (err) {
+        if (reportedCallbacks.has(label)) {
+          console.error(`[NekoWite:plugin-host] callback failed again plugin="${id}" origin="${origin}"`, err)
+          return
+        }
+        reportedCallbacks.add(label)
+        recordPluginEvent(id, 'crash', `callback "${label}" threw: ${err instanceof Error ? err.message : String(err)}`)
+        reportPluginCallbackError(id, origin, err)
+      }
+    }
+  }
   const timeoutMs = options?.timeoutMs ?? DEFAULT_PLUGIN_ACTIVATION_TIMEOUT_MS
   const startedAt = Date.now()
   try {
@@ -234,11 +264,11 @@ export async function activatePlugin(
       registeredComponents.push(name)
     }
     for (const cmd of definition.commands ?? []) {
-      registerCommand(cmd)
+      registerCommand({ ...cmd, run: isolate(cmd.id, `command:${cmd.id}`, cmd.run) })
       registeredCommands.push(cmd.id)
     }
     for (const item of definition.toolbar ?? []) {
-      registerToolbar(item)
+      registerToolbar({ ...item, run: isolate(item.id, `toolbar:${item.id}`, item.run) })
       registeredToolbar.push(item.id)
     }
     const ctx: PluginContext = {
