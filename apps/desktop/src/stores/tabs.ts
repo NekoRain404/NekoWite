@@ -10,6 +10,8 @@ import { notifyError, notifyRecovery } from '../services/errors'
 import { announce } from '../services/announcer'
 import { t as i18nT } from '../i18n'
 import { assetsDirForNote, moveAttachments, rewireTempRefsInContent } from '../services/renameAsset'
+import { rewriteNoteRefs } from '../services/noteMove'
+import type { NoteMoveResult } from '../services/noteMove'
 import { useSettingsStore } from './settings'
 import { parseSession, SESSION_KEY, serializeSession } from '../services/session'
 
@@ -279,13 +281,34 @@ export const useTabsStore = defineStore('tabs', () => {
     if (tabs.value.some((t) => t.id === id)) activeId.value = id
   }
 
-  /** Rewrites tab paths after a file/directory rename on disk. Content is
-   * untouched; tabs keep their dirty state and autosave timers. */
-  function renamePathInTabs(from: string, to: string): void {
+  /** Adopt the reference rewrite a note move already wrote to disk. A tab that
+   *  is keeping up with disk takes the exact text (the `reloadFromDisk`
+   *  pattern); a dirty tab's newer text goes through the same pure rewrite
+   *  instead of being clobbered — otherwise its next save would resurrect the
+   *  references the move just fixed. */
+  function applyMovedContent(t: OpenTab, from: string, to: string, moved: NoteMoveResult): void {
+    const v = vault.value
+    if (t.dirty && v) {
+      t.content = rewriteNoteRefs(t.content, { vault: v, from, to })
+      t.savedContent = rewriteNoteRefs(t.savedContent, { vault: v, from, to })
+      return
+    }
+    if (moved.content !== null) {
+      t.content = moved.content
+      t.savedContent = moved.content
+    }
+  }
+
+  /** Rewrites tab paths after a file/directory rename on disk. Content is left
+   *  alone unless `moved` says the move also rewrote the note's file-relative
+   *  references (see `services/noteMove.ts`); tabs keep their dirty state and
+   *  autosave timers. */
+  function renamePathInTabs(from: string, to: string, moved?: NoteMoveResult): void {
     for (const t of tabs.value) {
       if (!t.path) continue
       if (t.path === from) {
         t.path = to
+        if (moved) applyMovedContent(t, from, to, moved)
         noteSelfWrite(to)
       } else if (t.path.startsWith(from + '/')) {
         t.path = to + t.path.slice(from.length)
