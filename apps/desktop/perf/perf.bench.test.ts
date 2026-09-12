@@ -89,9 +89,15 @@ describe('M5 performance harness', () => {
       { stat, read },
       null,
     )
-    record('index-build-10k', now() - buildStart)
+    const buildMs = now() - buildStart
+    record('index-build-10k', buildMs)
     expect(built.built).toBe(N)
     expect(built.skipped).toBe(0)
+    // The cold-start proxy has a documented budget (§9: 2s) like every other row
+    // in docs/PERF.md, but it was only RECORDED, never asserted — so a
+    // ten-times regression would have shown up as a bigger number in the table
+    // and nothing else. Enforce it.
+    expect(buildMs).toBeLessThanOrEqual(2000)
 
     // Indexed search: §9 target P95 ≤ 300ms.
     const latencies: number[] = []

@@ -39,6 +39,13 @@
 > 数值在开发机上重复运行会有波动（本例记录一次整链 `pnpm perf` 输出，上界断言是强门禁，
 > 不会受 ±50% 噪声影响）。
 
+> **补记（2026-09-13）**：`index-build-10k` 一行的上界此前只是**记录**、没有断言——表里写着
+> ≤2000 但代码里没有对应的 `expect`，也就是说冷启动代理退十倍也只会让表格里的数字变大。
+> 现在补上断言（≤2000ms，与 §9 的 2s 一致）。同一轮实测（较慢的开发机）：
+> index-build-10k 1010.3、search-query-p95-10k 6.6、change-to-index-10k 8.5、graph-build-10k 504.0、
+> graph-layout-2k 676.2、image-insert-10mb 33.9、open-doc-1mb 2.5、table-500x30-edit 0.6、
+> first-input-match-x100 0.0——全部在预算内。
+
 图例：
 - **冷启动 / 打开文档 / 首次输入** 是 WebView 层指标，无法在无头 JS 中精确复现；分别用
   “10k 笔记首建索引”“1MB 文档 parseNoteMeta+buildSearchText”“单次 match/snippet 匹配”
