@@ -99,3 +99,51 @@ describe('exported ids agree with the editor anchors', () => {
     expect(mismatches).toEqual([])
   })
 })
+
+/**
+ * A heading inside an mdx component body is NOT a heading of the document: the
+ * editor holds the component as an atom whose body is opaque source, so the
+ * anchor buttons never enumerate it. The export rendered that body through the
+ * same id list, so each heading in it consumed an id meant for a real document
+ * heading — shifting every later id and duplicating the last one.
+ */
+describe('headings inside an mdx component body', () => {
+  const renderers = {
+    Box: (_props: Record<string, string>, children: string) =>
+      `<section class="box">${children}</section>`,
+  }
+
+  it('does not consume a document anchor id', () => {
+    const md = [
+      '# Aaa',
+      '',
+      '# Bbb',
+      '',
+      '<Box>',
+      '',
+      '## Inside',
+      '',
+      '</Box>',
+      '',
+      '# Ccc',
+      '',
+    ].join('\n')
+    const out = renderDocument(md, { componentRenderers: renderers, math: 'text' })
+    // The real document headings keep the ids their own anchors point at.
+    expect(out).toContain('<h1 id="aaa">Aaa</h1>')
+    expect(out).toContain('<h1 id="bbb">Bbb</h1>')
+    expect(out).toContain('<h1 id="ccc">Ccc</h1>')
+    // The component body's heading is rendered, but carries no document anchor:
+    // the editor offers no anchor button for it, so an id here would be a link
+    // target nothing can ever produce.
+    expect(out).toContain('<h2>Inside</h2>')
+  })
+
+  it('never emits the same document id twice', () => {
+    const md = ['# Ccc', '', '<Box>', '', '## Unique', '', '</Box>', '', '# Ddd', ''].join('\n')
+    const out = renderDocument(md, { componentRenderers: renderers, math: 'text' })
+    const ids = [...out.matchAll(/<h[1-6] id="([^"]*)"/g)].map((m) => m[1])
+    expect(ids).toEqual([...new Set(ids)])
+    expect(ids).toEqual(['ccc', 'ddd'])
+  })
+})

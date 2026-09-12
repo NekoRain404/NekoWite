@@ -17,7 +17,23 @@ export function isSelfDisplayableSrc(src: string): boolean {
   return SELF_DISPLAYABLE_RE.test(src) || src.startsWith('/')
 }
 
+export interface ImageResolverOptions {
+  /**
+   * Token for the context a resolution depends on, beyond the src itself —
+   * typically the vault plus the note the src is relative to.
+   *
+   * The app resolver turns a relative src into a display URL using the CURRENT
+   * note, so `pic.png` means a different file in every directory. Keying the
+   * memo on the src alone therefore served the previous note's picture in the
+   * next one. When this token changes the memo is dropped, so an entry is never
+   * reused across contexts.
+   */
+  scope?: () => string
+}
+
 let resolver: ImageSrcResolver | null = null
+let scopeOf: (() => string) | null = null
+let lastScope: string | null = null
 const cache = new Map<string, Promise<string>>()
 
 /**
@@ -34,8 +50,15 @@ const listeners = new Set<() => void>()
  * Install (or clear) the async src resolver. Re-configuring drops the cache
  * so a vault switch can never serve URLs resolved against the old vault.
  */
-export function configureImageResolver(resolve: ImageSrcResolver | null): void {
+export function configureImageResolver(
+  resolve: ImageSrcResolver | null,
+  options: ImageResolverOptions = {},
+): void {
   resolver = resolve
+  scopeOf = options.scope ?? null
+  // Force the next resolution to start from a clean memo: the scope is part of
+  // what a memoized entry is valid for.
+  lastScope = null
   invalidateImageResolution()
 }
 
@@ -49,6 +72,12 @@ export function configureImageResolver(resolve: ImageSrcResolver | null): void {
  */
 export function invalidateImageResolution(): void {
   cache.clear()
+  notifyListeners()
+}
+
+/** Ask every subscribed consumer to resolve again. A torn-down node view must
+ *  not abort the others, so each call is isolated. */
+function notifyListeners(): void {
   for (const listener of [...listeners]) {
     try {
       listener()
@@ -75,10 +104,9 @@ export function hasImageResolver(): boolean {
 /**
  * Resolve `src` for display, with per-src memoization and error fallback.
  *
- * `refresh` drops the memoized entry first. A failed resolution is memoized
- * like a successful one, so without this a Retry would replay the same failure
- * forever — which is what happened when the first attempt ran before the vault
- * was authorized.
+ * A SUCCESS is memoized (per `scope`, when one is configured); a failure is
+ * not, so the next attempt re-runs it. `refresh` additionally drops the
+ * memoized entry first, which is what a Retry uses to re-run even a success.
  */
 export function resolveImageSrc(src: string, options: { refresh?: boolean } = {}): Promise<string> {
   if (!src) return Promise.resolve(src)
@@ -86,6 +114,23 @@ export function resolveImageSrc(src: string, options: { refresh?: boolean } = {}
   // and never memoize it — caching a pass-through would outlive the reason for
   // it (e.g. no vault yet) and block every later resolution.
   if (isSelfDisplayableSrc(src) || !resolver) return Promise.resolve(src)
+  // A memo is only valid for the context that produced it.
+  if (scopeOf) {
+    const scope = scopeOf()
+    if (scope !== lastScope) {
+      // The first observation commits a scope; nothing is mounted against a
+      // previous one yet, so only a real CHANGE has to wake consumers up.
+      const changed = lastScope !== null
+      lastScope = scope
+      cache.clear()
+      // Mounted node views still hold the previous scope's display URL, and the
+      // model is not necessarily re-opened when the scope changes (two notes can
+      // hold byte-identical text, which the editor treats as "already applied").
+      // Ask them to resolve again rather than relying on a re-render. The token
+      // is committed above, so the re-entrant resolve does not recurse.
+      if (changed) notifyListeners()
+    }
+  }
   if (options.refresh) cache.delete(src)
   let pending = cache.get(src)
   if (!pending) {

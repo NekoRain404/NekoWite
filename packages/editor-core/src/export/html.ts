@@ -114,6 +114,13 @@ interface RenderContext {
   // as an atom whose children are opaque — cites inside a component body are
   // never numbered nor registered in the reference list.
   literalCites?: boolean
+  // When true, headings render WITHOUT a document anchor id. In the editor an
+  // mdx component is an atom whose body is opaque source, so a heading inside
+  // that body is not part of the document's anchor list. Emitting an id for it
+  // consumed an entry meant for a real heading: every later id shifted by one
+  // and the last was duplicated, so an exported anchor link pointed at the
+  // wrong heading (or at a heading inside a callout).
+  literalHeadingIds?: boolean
   // Set during render when at least one math node is actually emitted. The
   // exported <style> only injects the KaTeX CSS when math is present, so a
   // document with no math stays lean and sync/async output stays identical
@@ -373,9 +380,15 @@ function renderMdx(node: RenderNode, ctx: RenderContext): string {
   const { name, props, children } = parseMdxTag(raw)
   const renderer = ctx.componentRenderers?.[name]
   if (renderer) {
-    // Aligned with the editor: a component body is opaque, so its cites stay
-    // literal (literalCites) instead of being numbered.
-    const childrenHtml = renderChildren(parseFragment(children), { ...ctx, literalCites: true })
+    // Aligned with the editor: a component body is opaque source. Its cites
+    // stay literal (literalCites) instead of being numbered, and its headings
+    // take no document anchor (literalHeadingIds) so they cannot steal an id
+    // from a real heading.
+    const childrenHtml = renderChildren(parseFragment(children), {
+      ...ctx,
+      literalCites: true,
+      literalHeadingIds: true,
+    })
     return renderer(props, childrenHtml)
   }
   return `<div class="mdx-fallback">${escapeHtml(raw)}</div>`
@@ -409,17 +422,25 @@ function renderList(node: RenderNode, ctx: RenderContext): string {
 
 function renderTable(node: RenderNode, ctx: RenderContext): string {
   const rows = (node.children ?? []) as RenderNode[]
-  let html = '<table>'
-  rows.forEach((row, i) => {
+  const renderRow = (row: RenderNode, tag: 'th' | 'td'): string => {
     const cells = (row.children ?? []) as RenderNode[]
-    const tag = i === 0 ? 'th' : 'td'
     const cellHtml = cells
       .map((cell) => `<${tag}>${renderChildren((cell.children ?? []) as RenderNode[], ctx)}</${tag}>`)
       .join('')
+    return `<tr>${cellHtml}</tr>`
+  }
+  // One <thead> and ONE <tbody> holding every data row. Emitting a <tbody> per
+  // row was accidental (the wrapper was chosen inside the per-row loop), so a
+  // 100-row table produced 99 row groups — which is what `tbody + tbody` CSS,
+  // copy/paste and DOM tooling see, none of which matches the Markdown table
+  // the author wrote.
+  let out = '<table>'
+  rows.forEach((row, i) => {
+    const tag = i === 0 ? 'th' : 'td'
     const wrapper = i === 0 ? 'thead' : 'tbody'
-    html += `<${wrapper}><tr>${cellHtml}</tr></${wrapper}>`
+    out += `<${wrapper}>${renderRow(row, tag as 'th' | 'td')}</${wrapper}>`
   })
-  return `${html}</table>`
+  return `${out}</table>`
 }
 
 /** Node types that carry a `value` in mdast yet contribute NO text to a
@@ -472,6 +493,9 @@ function renderNode(node: RenderNode, ctx: RenderContext): string {
     case 'heading': {
       const level = Math.min(Math.max(node.depth ?? 1, 1), 6)
       const body = renderChildren((node.children ?? []) as RenderNode[], ctx)
+      // An mdx component body is opaque: its headings are not document
+      // headings, so they render without an anchor (see `literalHeadingIds`).
+      if (ctx.literalHeadingIds) return `<h${level}>${body}</h${level}>`
       // Heading anchors copy a `#id` deep link, so the exported document has to
       // expose the matching id or every one of those links is dead. The ids are
       // the document-wide list computed up front by `headingAnchorIds`, which is
