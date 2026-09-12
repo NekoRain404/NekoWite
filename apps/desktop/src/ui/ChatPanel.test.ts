@@ -3,7 +3,7 @@ import { createApp, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import ChatPanel from './ChatPanel.vue'
 import { onNotify } from '../services/errors'
-import { formatAttachmentBytes, MAX_ATTACHMENT_BYTES } from '../services/attachments'
+import { formatAttachmentBytes, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE } from '../services/attachments'
 import { t } from '../i18n'
 import { aiService, startChatCompletion, type ChatStreamHandlers } from '../services/ai'
 import { CHAT_SESSIONS_KEY, useChatSessionStore } from '../stores/chatSession'
@@ -164,6 +164,85 @@ describe('ChatPanel image attachments', () => {
     expect(host.querySelectorAll('.chat-row')).toHaveLength(0)
     expect(textarea.value).toBe('hello')
     expect(host.querySelectorAll('.chat-attach')).toHaveLength(1)
+  })
+})
+
+describe('ChatPanel attachment and answer honesty', () => {
+  it('caps the number of images one message may carry', async () => {
+    // Each attachment is base64-encoded into the SAME request, so a user who
+    // adds images one at a time could otherwise send an arbitrarily large body
+    // (and blow up both processes on the way).
+    const host = mountPanel()
+    const many = Array.from({ length: MAX_ATTACHMENTS_PER_MESSAGE + 2 }, (_, i) =>
+      fileOfSize(`pic-${i}.png`, 512),
+    )
+    pickFiles(host, many)
+    await flush()
+
+    expect(host.querySelectorAll('.chat-attach')).toHaveLength(MAX_ATTACHMENTS_PER_MESSAGE)
+    expect(notifications).toEqual([
+      t('chat.tooManyImages', { max: MAX_ATTACHMENTS_PER_MESSAGE }),
+    ])
+    // The refusal is not a failure: what was accepted still sends.
+    typePrompt(host, 'look at these')
+    await flush()
+    expect(sendButton(host).disabled).toBe(false)
+  })
+
+  it('keeps a storage notice on the message it belongs to', async () => {
+    // The store explains why an image is missing ("too large", "removed by the
+    // storage limit"). The panel used to drop the notice on the floor, so the
+    // attachment simply vanished with no explanation.
+    const host = mountPanel()
+    const store = useChatSessionStore()
+    store.setMessages([
+      { role: 'user', content: 'see this', imageNotice: 'image too large' },
+    ])
+    const host2 = mountPanel()
+    await flush()
+    const texts = [...document.body.querySelectorAll('.chat-image-notice')].map(
+      (n) => n.textContent?.trim(),
+    )
+    expect(texts).toContain('image too large')
+    unmountPanel(host)
+    unmountPanel(host2)
+  })
+
+  it('marks a half-streamed answer as interrupted when the request fails', async () => {
+    // Half a paragraph presented as the finished reply is how a user quotes a
+    // sentence the model never completed.
+    const host = mountPanel()
+    let fail: ((msg: string) => void) | null = null
+    vi.mocked(startChatCompletion).mockImplementation((_c, _p, _i, handlers) => {
+      handlers.onChunk('The answer so far')
+      fail = handlers.onError
+      return Promise.resolve({ cancel: vi.fn() } as never)
+    })
+    typePrompt(host, 'question')
+    await flush()
+    sendButton(host).click()
+    await flush()
+
+    fail!('connection lost')
+    await flush()
+
+    expect(notifications.some((n) => n.includes('connection lost'))).toBe(true)
+    expect(useChatSessionStore().activeSession?.messages.at(-1)?.interrupted).toBe(true)
+  })
+
+  it('leaves a complete answer unmarked when nothing failed', async () => {
+    const host = mountPanel()
+    vi.mocked(startChatCompletion).mockImplementation((_c, _p, _i, handlers) => {
+      handlers.onChunk('done')
+      handlers.onDone('done')
+      return Promise.resolve({ cancel: vi.fn() } as never)
+    })
+    typePrompt(host, 'question')
+    await flush()
+    sendButton(host).click()
+    await flush()
+
+    expect(useChatSessionStore().activeSession?.messages.at(-1)?.interrupted).toBeUndefined()
   })
 })
 

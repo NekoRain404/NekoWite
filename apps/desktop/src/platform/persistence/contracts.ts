@@ -23,9 +23,18 @@ export interface PersistencePort {
   /** Read the value for `key`. Returns `fallback` (or null when omitted) when
    * the key is missing, unreadable, or the underlying storage threw. */
   get(key: string, fallback?: string): string | null
-  /** Write `value` for `key`. Never throws: a quota/unavailable storage warns
-   * and drops the write. */
-  set(key: string, value: string): void
+  /**
+   * Write `value` for `key`. Never throws: a quota/unavailable storage warns
+   * and drops the write.
+   *
+   * Returns whether the value actually landed. `false` is the ONLY signal a
+   * caller gets that its data is not on disk - the port cannot throw without
+   * taking the caller (often a reactive watcher) down with it - so a caller
+   * that owns user data must check it and decide what to shed: the chat store
+   * retries without images and tells the user, because a conversation that
+   * vanishes while the write reported success is the worst possible outcome.
+   */
+  set(key: string, value: string): boolean
   /** Delete `key`. Never throws. */
   remove(key: string): void
   /** Move a value from one key to another, dropping the source. Used by a domain
