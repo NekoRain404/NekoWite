@@ -34,8 +34,9 @@ export interface AiEditDeps {
   canWrite(req: { kind: 'replace-selection'; summary: string; target?: string }): Promise<boolean>
   /** The current text selection in whichever pane owns the document. */
   readSelection(): TextSelection | null
-  /** Replace that selection; false when it can no longer be applied. */
-  applySelection(text: string): boolean
+  /** Replace the selection CAPTURED for this request; false when the document
+   *  no longer holds that text where it was (the caller reports it). */
+  applySelection(text: string, expected?: TextSelection | null): boolean
   getConfig(): AIConfig
   notifyError(msg: string): void
   start: typeof startChatCompletion
@@ -132,7 +133,21 @@ export async function rewriteSelection(
   return d.start(d.getConfig(), prompt, [], {
     onChunk: () => undefined,
     onDone: (full) => {
-      if (!d.applySelection(full)) d.notifyError(d.translate('ai.noSelection'))
+      // An empty answer is not a successful rewrite. Applying it replaced the
+      // user's selection with nothing — the paragraph was DELETED, with no error
+      // and no way to tell it had happened. (The backend reports its own
+      // reasons for an empty stream, but a plain `content: ""` with
+      // `finish_reason: stop` reaches here as a normal completion.)
+      if (full.trim() === '') {
+        d.notifyError(d.translate('ai.emptyAnswer'))
+        return
+      }
+      // The captured selection, not the live one: the request took time and the
+      // user may have clicked elsewhere or switched notes meanwhile. Applying to
+      // whatever is selected NOW is how one note's answer ended up in another.
+      if (!d.applySelection(full, selection)) {
+        d.notifyError(d.translate('ai.selectionMoved'))
+      }
     },
     onError: (msg) => d.notifyError(msg),
   })

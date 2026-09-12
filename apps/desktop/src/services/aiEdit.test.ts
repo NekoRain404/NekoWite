@@ -197,7 +197,9 @@ describe('rewriteSelection', () => {
     deps.applySelection = apply
     await rewriteSelection('rewrite', deps)
     state.handlers!.onDone('rewritten')
-    expect(apply).toHaveBeenCalledWith('rewritten')
+    // The captured selection rides along, so the real accessor can verify the
+    // document still holds that text where it was before overwriting anything.
+    expect(apply).toHaveBeenCalledWith('rewritten', { from: 3, to: 10, text: 'hello world' })
   })
 
   it('notifies when the selection can no longer be applied', async () => {
@@ -206,7 +208,9 @@ describe('rewriteSelection', () => {
     const notify = deps.notifyError as ReturnType<typeof vi.fn>
     await rewriteSelection('rewrite', deps)
     state.handlers!.onDone('rewritten')
-    expect(notify).toHaveBeenCalledWith('ai.noSelection')
+    // A refusal at apply time means the document moved under the answer, which
+    // reads differently from "you never selected anything".
+    expect(notify).toHaveBeenCalledWith('ai.selectionMoved')
   })
 
   it('treats a whitespace-only selection as empty', async () => {
@@ -216,5 +220,60 @@ describe('rewriteSelection', () => {
     await rewriteSelection('polish', deps)
     expect(notify).toHaveBeenCalledWith('ai.noSelection')
     expect(deps.start).not.toHaveBeenCalled()
+  })
+})
+
+describe('what happens between the request and the answer', () => {
+  it('does not apply an empty answer, which used to delete the selection', async () => {
+    // applySelection('') is a legal, "successful" replacement that removes the
+    // text. A model returning an empty string (plain content: "" with
+    // finish_reason stop, which the backend reports as a normal completion)
+    // silently DELETED the user's paragraph.
+    const { deps, state } = fakeDeps()
+    const applied = vi.fn(() => true)
+    deps.applySelection = applied
+    const notifyError = deps.notifyError as ReturnType<typeof vi.fn>
+
+    await rewriteSelection('polish', deps)
+    state.handlers!.onDone('')
+
+    expect(applied).not.toHaveBeenCalled()
+    expect(notifyError).toHaveBeenCalledWith('ai.emptyAnswer')
+  })
+
+  it('treats a whitespace-only answer the same way', async () => {
+    const { deps, state } = fakeDeps()
+    const applied = vi.fn(() => true)
+    deps.applySelection = applied
+    await rewriteSelection('polish', deps)
+    state.handlers!.onDone('   \n\n  ')
+    expect(applied).not.toHaveBeenCalled()
+  })
+  it('passes the captured selection to the apply step', async () => {
+    // The request takes seconds; the live selection at answer time may be a caret
+    // somewhere else, or belong to another note entirely. The apply step must
+    // receive what was SENT so it can verify the text is still there.
+    const { deps, state } = fakeDeps()
+    const applied = vi.fn(() => true)
+    deps.applySelection = applied
+
+    await rewriteSelection('polish', deps)
+    state.handlers!.onDone('POLISHED')
+
+    expect(applied).toHaveBeenCalledTimes(1)
+    const call = applied.mock.calls[0] as unknown as [string, { from: number; to: number; text: string }]
+    expect(call[1]).toEqual({ from: 3, to: 10, text: 'hello world' })
+  })
+
+  it('reports a moved selection instead of failing silently', async () => {
+    const { deps, state } = fakeDeps()
+    const applied = vi.fn(() => false)
+    deps.applySelection = applied
+    const notifyError = deps.notifyError as ReturnType<typeof vi.fn>
+
+    await rewriteSelection('polish', deps)
+    state.handlers!.onDone('POLISHED')
+
+    expect(notifyError).toHaveBeenCalledWith('ai.selectionMoved')
   })
 })

@@ -147,3 +147,41 @@ describe('markdown command registry', () => {
     expect(getMarkdownCommand('test.md')?.()).toBe('plain')
   })
 })
+
+describe('a captured selection is verified before it is overwritten', () => {
+  it('refuses to write into a document that moved under the answer', () => {
+    // The AI answer arrives seconds later. Clicking elsewhere collapses the
+    // selection, switching notes changes whose selection it is, and any edit
+    // shifts the offsets - all three used to end with the answer written
+    // somewhere the user did not ask for, and none of them reported anything.
+    const { view, doc } = makeSourceView('AAAA BBBB CCCC DDDD', 10, 14)
+    setSourceViewHandle({
+      getView: () => view,
+      flush: () => undefined,
+    } as never)
+    noteFocusedPane('source')
+    setActivePinia(createPinia())
+    useViewStore().setMode('source')
+
+    // The text at the captured range is no longer the text that was sent.
+    expect(replaceTextSelection('ANSWER', { from: 10, to: 14, text: 'XXXX' })).toBe(false)
+    expect(doc()).toBe('AAAA BBBB CCCC DDDD')
+
+    // And when it still matches, it applies at the CAPTURED range.
+    expect(replaceTextSelection('ANSWER', { from: 10, to: 14, text: 'CCCC' })).toBe(true)
+    expect(doc()).toBe('AAAA BBBB ANSWER DDDD')
+  })
+
+  it('does not throw when the document shrank past the captured range', () => {
+    const { view, doc } = makeSourceView('short', 0, 5)
+    setSourceViewHandle({ getView: () => view, flush: () => undefined } as never)
+    noteFocusedPane('source')
+    setActivePinia(createPinia())
+    useViewStore().setMode('source')
+
+    expect(() =>
+      replaceTextSelection('ANSWER', { from: 100, to: 120, text: 'gone' }),
+    ).not.toThrow()
+    expect(doc()).toBe('short')
+  })
+})
