@@ -37,6 +37,7 @@ import { tableCellHtmlEscapeStringify } from '../table/stringify'
 import { tableFeaturePlugin } from '../table/plugin'
 import { tableSelectionPlugin } from '../table/selection'
 import { suggestionPlugin } from '../suggest'
+import { taskCheckbox } from '../task/checkbox'
 import { wikilink, wikilinkNodeView, wikilinkRemark } from '../wikilink'
 
 export const basicPlugins: MilkdownPlugin[] = [
@@ -63,6 +64,8 @@ export const basicPlugins: MilkdownPlugin[] = [
   // (prosemirror-tables commits the colwidth on pointer-up as a single step).
   $prose(() => columnResizing({})),
   ...gfm.flat(),
+  // After the GFM preset: clicking a rendered task checkbox toggles `checked`.
+  taskCheckbox,
   footnoteReferenceNodeView,
   ...citeRemark,
   cite,
