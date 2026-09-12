@@ -75,6 +75,9 @@ function makeFakeFs(
 function makeRecovery(opts: {
   seed?: Record<string, number>
   referenced?: string[]
+  /** Overrides the sync `referenced` list to model the app's composed provider
+   *  (open tabs + vault-wide note scan), including its async/call-count shape. */
+  getReferencedTmp?: () => Set<string> | Promise<Set<string>>
   now?: number
   absolute?: boolean
 }): {
@@ -87,7 +90,7 @@ function makeRecovery(opts: {
   const referenced = new Set(opts.referenced ?? [])
   const deps: TmpRecoveryDeps = {
     fs,
-    getReferencedTmp: () => referenced,
+    getReferencedTmp: opts.getReferencedTmp ?? (() => referenced),
     notify: (p) => prompts.push(p),
     now: () => opts.now ?? 1000 * DAY * 30,
   }
@@ -132,8 +135,45 @@ describe('createTmpRecovery (orphaned .tmp scan + GC)', () => {
     expect(prompts).toHaveLength(1)
   })
 
+  it('treats a file referenced by a CLOSED note as referenced, while old litter is still collected', async () => {
+    const now = 1000 * DAY * 100
+    // Models the app's composed provider: the open-tab set knows nothing about
+    // `.tmp/closed-note.png`, while the vault-wide note scan does.
+    const getReferencedTmp = vi.fn(async () => new Set(['.tmp/closed-note.png']))
+    const { fs, controller, prompts } = makeRecovery({
+      seed: {
+        '.tmp/closed-note.png': now - 2 * TMP_GC_AGE_MS,
+        '.tmp/old-orphan.png': now - 2 * TMP_GC_AGE_MS,
+      },
+      getReferencedTmp,
+      now,
+    })
+
+    const orphans = await controller.scan('/vault')
+    expect(orphans.map((o) => o.path)).toEqual(['.tmp/old-orphan.png'])
+    expect(prompts).toHaveLength(1)
+
+    expect(await controller.gc('/vault')).toBe(1)
+    expect(fs.deleted).toEqual(['.tmp/old-orphan.png'])
+    // Both `scan` and `gc` awaited the async provider rather than reading the
+    // old synchronous set, so the two can never disagree.
+    expect(getReferencedTmp).toHaveBeenCalledTimes(2)
+  })
+
+  it('never consults the (async) provider when .tmp has no files', async () => {
+    const getReferencedTmp = vi.fn(async () => new Set<string>())
+    const { controller } = makeRecovery({ seed: {}, getReferencedTmp })
+
+    expect(await controller.scan('/vault')).toEqual([])
+    expect(await controller.gc('/vault')).toBe(0)
+    // Performance contract: the vault-wide half of the provider reads every note
+    // in the vault, so the common empty-`.tmp` vault must pay nothing for it.
+    expect(getReferencedTmp).not.toHaveBeenCalled()
+  })
+
   it('is a no-op (no notice) when the vault has no .tmp dir (list throws)', async () => {
     const { prompts } = makeRecovery({ seed: {} })
+    const getReferencedTmp = vi.fn(async () => new Set<string>())
     // Force list to reject like a missing directory.
     const c = createTmpRecovery({
       fs: {
@@ -144,11 +184,13 @@ describe('createTmpRecovery (orphaned .tmp scan + GC)', () => {
         deleteFile: async () => 'trash',
         renameEntry: async () => 'x',
       },
-      getReferencedTmp: () => new Set(),
+      getReferencedTmp,
       notify: (p) => prompts.push(p),
     })
     expect(await c.scan('/vault')).toEqual([])
     expect(prompts).toHaveLength(0)
+    // A missing `.tmp` dir is the same empty case: the provider is never asked.
+    expect(getReferencedTmp).not.toHaveBeenCalled()
   })
 
   it('GC removes only orphaned .tmp files older than the threshold', async () => {

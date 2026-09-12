@@ -46,9 +46,10 @@ export interface TmpFileRef {
 
 export interface TmpRecoveryDeps {
   fs: Pick<FsPort, 'list' | 'stat' | 'deleteFile' | 'renameEntry'>
-  /** Vault-relative `.tmp` paths still referenced by an open tab (pending
-   *  staged assets plus refs in the live note body). Never GC'd or surfaced. */
-  getReferencedTmp: () => Set<string>
+  /** Vault-relative `.tmp` paths still referenced by a note — the open tabs'
+   *  pending staged assets/body refs, or the app's composed promise that also
+   *  scans every note whose tab is closed. Never GC'd or surfaced. */
+  getReferencedTmp: () => Set<string> | Promise<Set<string>>
   /** Where a "recoverable versions" prompt is surfaced. Defaults to the app
    *  recovery toast via `notifyRecovery`. */
   notify?: (p: RecoveryPrompt) => void
@@ -59,8 +60,9 @@ export interface TmpRecoveryDeps {
 }
 
 export interface TmpRecoveryController {
-  /** Enumerate orphaned `.tmp` files (not referenced by any open tab). Surfaces
-   *  a "recoverable versions" notice when any exist. Non-blocking; honours
+  /** Enumerate orphaned `.tmp` files (not referenced by any note — the app's
+   *  provider unions the open tabs with a vault-wide scan). Surfaces a
+   *  "recoverable versions" notice when any exist. Non-blocking; honours
    *  {@link cancel}. */
   scan(vault: string): Promise<TmpFileRef[]>
   /** Remove orphaned `.tmp` files older than `thresholdMs`. Returns the count
@@ -96,8 +98,13 @@ export function createTmpRecovery(deps: TmpRecoveryDeps): TmpRecoveryController 
    *  `attachments/` while the note still referenced `.tmp/…`, and `gc` swept a
    *  still-referenced asset. `stripVaultPrefix` absorbs the separators and the
    *  `\\?\` verbatim prefix too, so both sides agree. */
-  function referencedPaths(vault: string): Set<string> {
-    return new Set([...deps.getReferencedTmp()].map((p) => stripVaultPrefix(p, vault)))
+  async function referencedPaths(vault: string): Promise<Set<string>> {
+    // The provider may be async: the app unions the open-tab set with a
+    // vault-wide scan that reads every note. Awaiting it here keeps `scan` and
+    // `gc` using the exact same set, so they can never disagree about what is
+    // still referenced.
+    const provided = await deps.getReferencedTmp()
+    return new Set([...provided].map((p) => stripVaultPrefix(p, vault)))
   }
 
   async function collect(vault: string): Promise<TmpFileRef[]> {
@@ -121,14 +128,23 @@ export function createTmpRecovery(deps: TmpRecoveryDeps): TmpRecoveryController 
     return out
   }
 
-  function orphaned(files: TmpFileRef[], vault: string): TmpFileRef[] {
-    const referenced = referencedPaths(vault)
+  function orphaned(files: TmpFileRef[], referenced: Set<string>): TmpFileRef[] {
     return files.filter((f) => !referenced.has(f.path))
   }
 
   async function scan(vault: string): Promise<TmpFileRef[]> {
     const files = await collect(vault)
-    const orphans = orphaned(files, vault)
+    // LAZY ordering: the listing is collected BEFORE the referenced set is
+    // looked up, and an empty `.tmp` returns right here. The app's provider now
+    // includes a vault-wide scan that reads every note, so the common vault (no
+    // `.tmp` dir, or nothing staged) must never pay for it. `gc` below is
+    // ordered the same way to keep both on one contract.
+    if (files.length === 0) return []
+    const referenced = await referencedPaths(vault)
+    // A cancel that landed while awaiting the (possibly async) provider must
+    // not surface a notice for a vault the user has already left.
+    if (cancelled) return []
+    const orphans = orphaned(files, referenced)
     if (orphans.length > 0 && notify) {
       notify({
         message: t('recovery.tmpNotice', { count: orphans.length }),
@@ -151,7 +167,10 @@ export function createTmpRecovery(deps: TmpRecoveryDeps): TmpRecoveryController 
 
   async function gc(vault: string, thresholdMs = TMP_GC_AGE_MS): Promise<number> {
     const files = await collect(vault)
-    const referenced = referencedPaths(vault)
+    // Same lazy ordering as `scan`: nothing collected means nothing can be
+    // swept, so the vault-wide referenced-set scan is never launched.
+    if (files.length === 0) return 0
+    const referenced = await referencedPaths(vault)
     const cutoff = now() - thresholdMs
     let removed = 0
     for (const file of files) {

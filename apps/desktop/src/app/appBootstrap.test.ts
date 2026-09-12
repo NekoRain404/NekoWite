@@ -43,7 +43,9 @@ const h = vi.hoisted(() => {
     refsMock,
     loadVaultPlugins: vi.fn(),
     deactivateVaultPlugins: vi.fn(),
+    vaultFileIndex: { get: vi.fn() },
     tmpRecovery: { scan: vi.fn(), gc: vi.fn(), cancel: vi.fn(), isCancelled: vi.fn() },
+    createTmpRecovery: vi.fn(),
     windowTracking: { restore: vi.fn(), start: vi.fn(), flush: vi.fn(), dispose: vi.fn() },
     requestUntitledVaultSwitch: vi.fn(),
     setActiveEditor: vi.fn(),
@@ -65,8 +67,12 @@ vi.mock('./windowState', () => ({
 }))
 
 vi.mock('./recoveryClosedLoop', () => ({
-  createTmpRecovery: () => h.tmpRecovery,
+  createTmpRecovery: h.createTmpRecovery,
   requestUntitledVaultSwitch: h.requestUntitledVaultSwitch,
+}))
+
+vi.mock('../services/vaultFiles', () => ({
+  vaultFileIndex: h.vaultFileIndex,
 }))
 
 vi.mock('../services/plugins', () => ({
@@ -137,6 +143,8 @@ describe('createDesktopRuntime', () => {
     h.windowTracking.start.mockResolvedValue(undefined)
     h.requestUntitledVaultSwitch.mockResolvedValue('save')
     h.editorSessionManager.destroyAll.mockImplementation(() => {})
+    h.createTmpRecovery.mockReturnValue(h.tmpRecovery)
+    h.vaultFileIndex.get.mockResolvedValue([])
   })
 
   describe('start (startup ordering)', () => {
@@ -237,6 +245,50 @@ describe('createDesktopRuntime', () => {
       // A clear, recoverable error is surfaced, and the bad path is NOT persisted.
       expect(h.notifyError).toHaveBeenCalledWith('could not open the vault (missing/permission): /bad')
       expect(localStorage.getItem(VAULT_LS_KEY)).toBe('/current')
+    })
+  })
+
+  describe('vault-wide tmp references (closed notes included)', () => {
+    it('unions the open-tab set with references from ALL notes on disk', async () => {
+      h.tabsMock.referencedTmpPaths.mockReturnValue(new Set(['.tmp/open-tab.png']))
+      h.vaultFileIndex.get.mockResolvedValue(['notes/closed.md', 'notes/unrelated.md'])
+      h.gateways.fs.read.mockImplementation(async (_vault: string, path: string) =>
+        path === 'notes/closed.md' ? '![p](.tmp/closed-note.png)' : 'nothing staged',
+      )
+
+      const runtime = createDesktopRuntime()
+      await runtime.applyVault('/vault')
+
+      const deps = h.createTmpRecovery.mock.calls[0]![0] as {
+        getReferencedTmp: () => Promise<Set<string>>
+      }
+      // The mocked controller never calls the provider, so drive it directly:
+      // the union must include the image owned by the note whose tab is CLOSED
+      // (the regression this fixes), not just the open-tab reference.
+      expect(await deps.getReferencedTmp()).toEqual(
+        new Set(['.tmp/open-tab.png', '.tmp/closed-note.png']),
+      )
+      expect(h.vaultFileIndex.get).toHaveBeenCalledWith('/vault')
+      expect(h.gateways.fs.read).toHaveBeenCalledWith('/vault', 'notes/closed.md')
+    })
+
+    it('skips the vault-wide scan once the switch is stale, falling back to open tabs', async () => {
+      h.tabsMock.referencedTmpPaths.mockReturnValue(new Set(['.tmp/open-tab.png']))
+      h.vaultFileIndex.get.mockResolvedValue(['notes/closed.md'])
+      h.gateways.fs.read.mockResolvedValue('![p](.tmp/closed-note.png)')
+
+      const runtime = createDesktopRuntime()
+      await runtime.applyVault('/vault')
+      const deps = h.createTmpRecovery.mock.calls[0]![0] as {
+        getReferencedTmp: () => Promise<Set<string>>
+      }
+      const indexCalls = h.vaultFileIndex.get.mock.calls.length
+
+      // Teardown makes the switch stale: the provider must not spend reads on a
+      // vault-wide scan the runtime no longer owns.
+      runtime.dispose()
+      expect(await deps.getReferencedTmp()).toEqual(new Set(['.tmp/open-tab.png']))
+      expect(h.vaultFileIndex.get.mock.calls.length).toBe(indexCalls)
     })
   })
 
