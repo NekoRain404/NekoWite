@@ -1144,8 +1144,21 @@ fn rename_entry_moves_and_guards() {
     // Windows, so `archive/b.md` -> `archive/B.md` hit the file itself and was
     // rejected with "target already exists: archive/B.md" — a message naming the
     // name the user just asked for, which reads as nonsense.
-    assert!(rename_entry(&root, "archive/b.md", "archive/B.md").is_ok());
+    let cased = rename_entry(&root, "archive/b.md", "archive/B.md").unwrap();
+    assert_eq!(cased, "archive/B.md", "the caller is told the new spelling");
     assert_eq!(std::fs::read_to_string(vault.join("archive/B.md")).unwrap(), "# hi");
+    // The on-disk NAME must carry the new casing, not just resolve to the file:
+    // a case-insensitive `exists()`/read passes either way, so this is the only
+    // assertion that catches a rename Windows silently ignored.
+    let on_disk: Vec<String> = std::fs::read_dir(vault.join("archive"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    assert!(
+        on_disk.iter().any(|n| n == "B.md"),
+        "the directory entry is B.md, got {on_disk:?}"
+    );
 
     std::fs::remove_dir_all(&vault).unwrap();
 }

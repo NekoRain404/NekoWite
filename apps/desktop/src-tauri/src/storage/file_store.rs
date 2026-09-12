@@ -933,14 +933,12 @@ pub fn rename_entry(vault_root: &str, from: &str, to: &str) -> Result<String, St
     let is_dir = resolved_from.is_dir();
     let (resolved_to, relative_to) = resolve_within_rel(vault_root, to)?;
     // `exists()` follows the filesystem's CASING rules, so on Windows a case-only
-    // rename (`note.md` -> `Note.md`) sees the file itself and was rejected with
-    // "target already exists: Note.md" — a message that names the very name the
-    // user asked for, so it read as nonsense. Normalising the comparison to a
-    // case-insensitive one when the two paths are otherwise identical lets the
-    // rename through: `fs::rename` supports the case change, and it is a common
-    // thing to want on a title-cased note.
-    // Compare the REQUESTED spellings, not the resolved paths: resolution
-    // canonicalizes, and on Windows canonicalization reports the ON-DISK casing,
+    // rename (`note.md` -> `Note.md`) hits the file itself and was rejected with
+    // "target already exists: Note.md" — a message naming the very name the user
+    // just asked for, which reads as nonsense.
+    //
+    // The comparison uses the REQUESTED spellings, not the resolved paths:
+    // resolution canonicalizes, and canonicalization reports the ON-DISK casing,
     // so a request for `archive/B.md` resolves to `archive/b.md` and would look
     // identical to its own source.
     let normalize = |s: &str| s.replace('\\', "/").to_lowercase();
@@ -951,7 +949,36 @@ pub fn rename_entry(vault_root: &str, from: &str, to: &str) -> Result<String, St
     if let Some(parent) = resolved_to.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    std::fs::rename(&resolved_from, &resolved_to).map_err(|e| e.to_string())?;
+    if case_only_rename {
+        // Two things have to be right here, and the first attempt got both wrong
+        // (measured: the rename reported success and the file kept its old name).
+        //
+        // 1. `resolved_to` is USELESS as the destination. Resolution canonicalizes
+        //    before the move, so for `keep.md` -> `KEEP.md` it holds the OLD
+        //    spelling — renaming to it is exactly what "does nothing". The
+        //    destination is therefore rebuilt from the requested name (that is
+        //    where the user's casing lives) on the resolved parent.
+        // 2. A direct rename will not change an existing entry's case, so it goes
+        //    through a temporary sibling name first. That name wears our staging
+        //    shape, so a process death between the two steps leaves something the
+        //    vault's temp sweeper recognises rather than an orphan — and the file
+        //    is put back under its original name if the second step fails.
+        let parent = resolved_to.parent().unwrap_or(Path::new("."));
+        let requested_name = to
+            .rsplit(['/', '\\'])
+            .next()
+            .filter(|n| !n.is_empty())
+            .unwrap_or("renamed");
+        let target = parent.join(requested_name);
+        let temp = parent.join(format!(".{requested_name}.{}.tmp", time_nonce()));
+        std::fs::rename(&resolved_from, &temp).map_err(|e| e.to_string())?;
+        if let Err(e) = std::fs::rename(&temp, &target) {
+            let _ = std::fs::rename(&temp, &resolved_from);
+            return Err(e.to_string());
+        }
+    } else {
+        std::fs::rename(&resolved_from, &resolved_to).map_err(|e| e.to_string())?;
+    }
     // The relative path was canonicalized BEFORE the move, so for a case-only
     // rename it still holds the old spelling. Re-resolve to report what is
     // actually on disk now: the caller stores this string as the tab's path and

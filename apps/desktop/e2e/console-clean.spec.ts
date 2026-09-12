@@ -43,21 +43,30 @@ function watchConsole(page: Page): Issue[] {
 }
 
 /**
- * Clear the overlays that commands open imperatively.
+ * Clear the overlays a previous click may have opened.
  *
- * Deliberately never removes `.palette-overlay`: it is a Vue Teleport target,
- * and deleting it out from under the renderer makes the next patch throw
- * "Cannot read properties of null (reading 'insertBefore')". That is a property
- * of the diagnostic, not a bug worth reporting.
+ * Only elements the app does NOT own may be deleted here. `.math-overlay` and
+ * `.table-overlay` are built by editor-core with `document.createElement`, so
+ * they are outside the renderer and removing them is the same as the user
+ * pressing Escape there. Everything Vue renders — `.dialog-overlay` (the
+ * template picker, rename, settings…) and the palette's Teleport target — is
+ * closed by pressing Escape and letting the app's own state machine do it:
+ * deleting a node the renderer still holds makes its next patch throw
+ * "Cannot read properties of null (reading 'insertBefore')", which says
+ * nothing about the product.
+ *
+ * Escape goes first for the same reason: it must reach a dialog that is still
+ * in the DOM.
  */
 async function clearOverlays(page: Page): Promise<void> {
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(30)
   await page.evaluate(() => {
-    for (const cls of ['table-overlay', 'math-overlay', 'dialog-overlay']) {
+    for (const cls of ['table-overlay', 'math-overlay']) {
       document.querySelectorAll(`.${cls}`).forEach((el) => el.remove())
     }
     document.body.classList.remove('is-layout-resizing')
   })
-  await page.keyboard.press('Escape')
   await page.waitForTimeout(30)
 }
 
