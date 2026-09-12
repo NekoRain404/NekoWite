@@ -64,6 +64,10 @@ describe('frontmatter serialization (panel + rewrite)', () => {
       created: '2026-01-01',
       updated: '',
       other: {},
+      rawSegments: [
+        { key: 'tags', lines: ['tags: [a, b]'] },
+        { key: 'created', lines: ['created: 2026-01-01'] },
+      ],
     })
     expect(parseFrontmatterForPanel('title: X\ntags: 数学, 物理')).toMatchObject({
       title: 'X',
@@ -88,6 +92,7 @@ describe('frontmatter serialization (panel + rewrite)', () => {
       created: '2026-01-01',
       updated: '',
       other: { author: 'nekora' },
+      rawSegments: [],
     })
     expect(inner).toContain('tags:')
     expect(inner).toContain('  - 数学')
@@ -107,6 +112,7 @@ describe('frontmatter serialization (panel + rewrite)', () => {
       created: '',
       updated: '',
       other: { note: 'x: y' },
+      rawSegments: [],
     }
     const reparsed = parseFrontmatterForPanel(serializeFrontmatter(fields))
     expect(reparsed.tags).toEqual(['a: b', 'c#d'])
@@ -121,7 +127,15 @@ describe('frontmatter serialization (panel + rewrite)', () => {
 
   it('replaceFrontmatter rewrites only the block, preserving the body byte-for-byte', () => {
     const md = '---\ntitle: old\ntags: [x]\n---\n\n# Hello\n\nBody'
-    const fields = { title: 'new', tags: ['a', 'b'], date: '2026-01-01', created: '', updated: '', other: { author: 'nekora' } }
+    const fields = {
+      title: 'new',
+      tags: ['a', 'b'],
+      date: '2026-01-01',
+      created: '',
+      updated: '',
+      other: { author: 'nekora' },
+      rawSegments: [],
+    }
     const { content, hadFront, changed } = replaceFrontmatter(md, fields)
     expect(hadFront).toBe(true)
     expect(changed).toBe(true)
@@ -131,9 +145,126 @@ describe('frontmatter serialization (panel + rewrite)', () => {
 
   it('prepends a fresh frontmatter block when the document has none', () => {
     const body = '# Welcome\n\nContent'
-    const { content, hadFront } = replaceFrontmatter(body, { title: 'Welcome', tags: [], date: '', created: '', updated: '', other: {} })
+    const { content, hadFront } = replaceFrontmatter(body, {
+      title: 'Welcome',
+      tags: [],
+      date: '',
+      created: '',
+      updated: '',
+      other: {},
+      rawSegments: [],
+    })
     expect(hadFront).toBe(false)
     expect(content).toBe('---\ntitle: Welcome\n---\n\n# Welcome\n\nContent')
+  })
+})
+
+describe('frontmatter raw-text preservation', () => {
+  // The audit's exact document: every unknown key must survive a panel write.
+  const auditBlock = [
+    'title: A',
+    'aliases:',
+    '  - one',
+    '  - two',
+    'cssclasses: [wide, dark]',
+    'meta:',
+    '  nested: 1',
+    'doi: 10.1/x',
+  ].join('\n')
+
+  it('re-emits an untouched block byte-for-byte', () => {
+    const fields = parseFrontmatterForPanel(auditBlock)
+    expect(fields.title).toBe('A')
+    expect(serializeFrontmatter(fields)).toBe(auditBlock)
+  })
+
+  it('keeps a block sequence, a flow sequence and a mapping when a field is edited', () => {
+    const fields = { ...parseFrontmatterForPanel(auditBlock), title: 'B' }
+    expect(serializeFrontmatter(fields)).toBe(auditBlock.replace('title: A', 'title: B'))
+  })
+
+  it('leaves replaceFrontmatter a no-op for an untouched block with unknown keys', () => {
+    const md = `---\n${auditBlock}\n---\n\n# Body`
+    const fields = parseFrontmatterForPanel(splitFrontmatterRaw(md).front)
+    expect(replaceFrontmatter(md, fields)).toEqual({ content: md, hadFront: true, changed: false })
+  })
+
+  it('keeps blank separator lines between keys untouched', () => {
+    const front = ['title: A', 'tags:', '  - 数学', '', 'author: ned', '', 'meta:', '  nested: 1'].join('\n')
+    expect(serializeFrontmatter(parseFrontmatterForPanel(front))).toBe(front)
+  })
+
+  it('still parses a block tag list across a blank line', () => {
+    const front = 'tags:\n\n  - a\n  - b'
+    const fields = parseFrontmatterForPanel(front)
+    expect(fields.tags).toEqual(['a', 'b'])
+    expect(serializeFrontmatter(fields)).toBe('tags:\n  - a\n  - b')
+  })
+
+  it('keeps a key with an empty value and no continuation empty', () => {
+    const front = 'title: A\ndraft:'
+    expect(parseFrontmatterForPanel(front).other).toEqual({ draft: '' })
+    expect(serializeFrontmatter(parseFrontmatterForPanel(front))).toBe(front)
+  })
+
+  it('keeps block scalars with their indented and blank lines', () => {
+    const front = ['title: A', 'summary: |', '  first line', '', '  second line', 'note: >', '  folded'].join('\n')
+    expect(serializeFrontmatter(parseFrontmatterForPanel(front))).toBe(front)
+  })
+
+  it('keeps a duplicated key twice, in its original order', () => {
+    const front = 'title: A\nref: one\nref: two'
+    const fields = parseFrontmatterForPanel(front)
+    expect(fields.rawSegments.map((segment) => segment.key)).toEqual(['title', 'ref', 'ref'])
+    // The display collapses duplicates, the raw text must not.
+    expect(fields.other).toEqual({ ref: 'two' })
+    expect(serializeFrontmatter(fields)).toBe(front)
+  })
+
+  it('keeps a leading comment above the block', () => {
+    const front = '# hand-written\ntitle: A\nauthor: ned'
+    expect(serializeFrontmatter(parseFrontmatterForPanel(front))).toBe(front)
+  })
+
+  it('never treats an indented key-like line as a top-level key', () => {
+    const front = 'title: A\nmeta:\n  title: nested\n\ttitle: tabbed\nauthor: ned'
+    const fields = parseFrontmatterForPanel(front)
+    expect(fields.title).toBe('A')
+    expect(serializeFrontmatter(fields)).toBe(front)
+  })
+
+  it('treats a tab-only indented line as a continuation, never a key', () => {
+    const front = 'meta:\n\tnested: 1'
+    const fields = parseFrontmatterForPanel(front)
+    expect(fields.other).toEqual({ meta: '' })
+    expect(serializeFrontmatter(fields)).toBe(front)
+  })
+
+  it('keeps a `---` inside a quoted value from splitting the block early', () => {
+    const md = '---\nsubtitle: "before --- after"\nquote: "line one\n  --- not a fence\n  line three"\n---\n\n# Body'
+    const { front, body } = splitFrontmatterRaw(md)
+    expect(front).toContain('--- not a fence')
+    const fields = parseFrontmatterForPanel(front)
+    const { content, changed } = replaceFrontmatter(md, fields)
+    expect(changed).toBe(false)
+    expect(content).toBe(md)
+    expect(body).toBe('# Body')
+  })
+
+  it('recognizes a non-ASCII key as a top-level key and keeps it raw', () => {
+    const front = '标题: 我的笔记\ntitle: A'
+    const fields = parseFrontmatterForPanel(front)
+    expect(fields.other['标题']).toBe('我的笔记')
+    expect(fields.rawSegments).toEqual([
+      { key: '标题', lines: ['标题: 我的笔记'] },
+      { key: 'title', lines: ['title: A'] },
+    ])
+    expect(serializeFrontmatter(fields)).toBe('title: A\n标题: 我的笔记')
+  })
+
+  it('keeps a non-indented line the key regex cannot express instead of merging it', () => {
+    const front = 'title: A\nmy key: x'
+    expect(serializeFrontmatter(parseFrontmatterForPanel(front))).toBe(front)
   })
 })
 
