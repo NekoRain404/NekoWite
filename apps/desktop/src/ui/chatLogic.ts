@@ -53,14 +53,33 @@ export function fileToDataURL(file: Blob & { type?: string; name?: string }): Pr
  * cannot see) and the fact is reported to the caller so the panel can tell the
  * user.
  */
-function truncateWithNotice(s: string, maxChars: number): { text: string; notice: string } {
-  const out = truncate(s, maxChars)
+function truncateWithNotice(
+  s: string,
+  maxChars: number,
+  /** Keep the END of the text too. True for a note body, false for a selection:
+   *  a selection is what the user pointed at, so its beginning is the point. */
+  keepTail = false,
+): { text: string; notice: string } {
+  if (maxChars <= 0) return { text: '', notice: '' }
+  if (s.length <= maxChars) return { text: s, notice: '' }
+  const omitted = s.length - maxChars
+  const notice = t('chat.contextTruncated', { omitted })
+  if (!keepTail) {
+    return { text: truncate(s, maxChars), notice }
+  }
+  // A note is not a prefix of itself. Sending only its opening (what this did)
+  // meant the model confidently discussed the introduction of a note whose
+  // actual subject was fifty pages further down, and the person writing the
+  // END of a long note - the usual case, you ask about what you are writing -
+  // was the one person whose text never reached the model. Split the budget
+  // between the opening (what the note is) and the ending (where the work is),
+  // and put the omission notice where the missing text was.
+  const headLen = Math.floor(maxChars * 0.5)
+  const tailLen = maxChars - headLen
   return {
-    text: out,
-    notice:
-      out.length < s.length
-        ? t('chat.contextTruncated', { omitted: s.length - out.length })
-        : '',
+    text: [s.slice(0, headLen), notice, s.slice(s.length - tailLen)].join('\n'),
+    // The notice is inside the text now, between the two halves it describes.
+    notice: '',
   }
 }
 
@@ -103,8 +122,8 @@ export function buildContextBlock(context: {
   const content = context.noteContent?.trim() ?? ''
   const lines: string[] = []
   const header = title ? t('chat.currentDocHeader', { title }) : ''
-  const pushBody = (body: string): void => {
-    const { text, notice } = truncateWithNotice(body, maxChars)
+  const pushBody = (body: string, keepTail = false): void => {
+    const { text, notice } = truncateWithNotice(body, maxChars, keepTail)
     lines.push(text)
     // The notice follows the text it describes: a reader (and the model) sees
     // what was included first, then learns that something was left out.
@@ -116,7 +135,7 @@ export function buildContextBlock(context: {
     pushBody(selection)
   } else if (content) {
     if (header) lines.push(header)
-    pushBody(content)
+    pushBody(content, true)
   }
   return lines.join('\n')
 }

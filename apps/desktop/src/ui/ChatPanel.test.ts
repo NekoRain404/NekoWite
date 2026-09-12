@@ -167,6 +167,87 @@ describe('ChatPanel image attachments', () => {
   })
 })
 
+describe('ChatPanel composer drafts', () => {
+  /** Drive the panel the way a user does - its own header buttons and the
+   *  session selector - so the code under test is the code that runs. */
+  function clickTool(host: HTMLElement, label: string): void {
+    const btn = [...host.querySelectorAll<HTMLButtonElement>('.chat-tool')].find(
+      (b) => b.getAttribute('title') === label,
+    )
+    expect(btn, `no tool button titled "${label}"`).toBeTruthy()
+    btn!.click()
+  }
+
+  function selectSession(host: HTMLElement, id: string): void {
+    const select = host.querySelector<HTMLSelectElement>('.chat-session-select')!
+    select.value = id
+    select.dispatchEvent(new Event('change'))
+  }
+
+  it('keeps a half-written question with the session it was written for', async () => {
+    // Switching to another conversation to check something used to wipe the
+    // composer: the question you were mid-way through - and the images you had
+    // attached - were simply gone.
+    const host = mountPanel()
+    await flush()
+    const store = useChatSessionStore()
+    const first = store.activeId!
+    typePrompt(host, 'draft one')
+    pickFiles(host, [fileOfSize('pic.png', 512)])
+    await flush()
+
+    clickTool(host, t('chat.newSession'))
+    await flush()
+    expect(host.querySelector<HTMLTextAreaElement>('.chat-textarea')!.value).toBe('')
+    expect(host.querySelectorAll('.chat-attach')).toHaveLength(0)
+
+    selectSession(host, first)
+    await flush()
+    expect(host.querySelector<HTMLTextAreaElement>('.chat-textarea')!.value).toBe('draft one')
+    expect(host.querySelectorAll('.chat-attach')).toHaveLength(1)
+  })
+
+  it('drops the draft with the session it belonged to', async () => {
+    // Restoring a dead session's question into a different conversation would
+    // attach a prompt to the wrong history.
+    const host = mountPanel()
+    await flush()
+    const store = useChatSessionStore()
+    const first = store.activeId!
+    clickTool(host, t('chat.newSession'))
+    await flush()
+    const second = store.activeId!
+    typePrompt(host, 'doomed draft')
+    await flush()
+
+    clickTool(host, t('chat.deleteSession'))
+    await flush()
+    expect(store.sessions.some((x) => x.id === second)).toBe(false)
+    expect(host.querySelector<HTMLTextAreaElement>('.chat-textarea')!.value).toBe('')
+    // ...and it does not come back with the session we return to.
+    selectSession(host, first)
+    await flush()
+    expect(host.querySelector<HTMLTextAreaElement>('.chat-textarea')!.value).toBe('')
+  })
+
+  it('forgets the draft once it has been sent', async () => {
+    const host = mountPanel()
+    await flush()
+    const store = useChatSessionStore()
+    const first = store.activeId!
+    typePrompt(host, 'sent already')
+    await flush()
+    sendButton(host).click()
+    await flush()
+
+    clickTool(host, t('chat.newSession'))
+    await flush()
+    selectSession(host, first)
+    await flush()
+    expect(host.querySelector<HTMLTextAreaElement>('.chat-textarea')!.value).toBe('')
+  })
+})
+
 describe('ChatPanel attachment and answer honesty', () => {
   it('caps the number of images one message may carry', async () => {
     // Each attachment is base64-encoded into the SAME request, so a user who
