@@ -149,6 +149,12 @@ export function createEditorSearchOverlay(deps: EditorSearchOverlayDeps): Editor
 
   function dispose(): void {
     stopCountAnnouncer()
+    // The pane is gone, so anything the change listener queued must not run
+    // against it: the deferred refresh fires one idle window + one animation
+    // frame later, and by then the editor it would scan can already be
+    // destroyed (it was: the stray frame ran after teardown and took the whole
+    // test process down with it).
+    cancelOverlayRefresh()
   }
 
   return {
