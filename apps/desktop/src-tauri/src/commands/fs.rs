@@ -55,8 +55,11 @@ pub async fn write_file(
     content: String,
     max_history: Option<u32>,
     state: tauri::State<'_, VaultRegistry>,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     require_opened_vault(&state, &vault_root)?;
+    // `Some(warning)` = the text was written, but something optional around it
+    // failed (currently: the history snapshot). The window shows it; it must not
+    // be mistaken for a failed save.
     file_store::write_file(&vault_root, &path, &content, max_history)
 }
 

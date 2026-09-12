@@ -28,7 +28,7 @@ export const tauriFsPort: FsPort = {
   read: (vault, path) => invoke<string>('read_file', { vault_root: vault, path }),
   stat: (vault, path) => invoke<FileStat>('stat_file', { vault_root: vault, path }),
   write: (vault, path, content, maxHistory) =>
-    invoke<void>('write_file', {
+    invoke<string | null>('write_file', {
       vault_root: vault,
       path,
       content,

@@ -1259,6 +1259,60 @@ fn rename_entry_moves_history_and_trash() {
     std::fs::remove_dir_all(&vault).unwrap();
 }
 
+/// A history-snapshot failure must never turn into "your note could not be
+/// saved" — the snapshot is the optional part, the write is the point.
+///
+/// The snapshot directory is made uncreatable here by placing a FILE where the
+/// history directory belongs, which is what a permissions problem, a full disk
+/// or a quota error ultimately look like to `create_dir_all`. Before this, the
+/// error propagated out of `write_file` and the note could not be edited at all
+/// (the on-disk text stayed at the old revision, with a bare OS error shown to
+/// the user) until an unrelated problem was fixed by hand.
+#[test]
+fn write_file_saves_even_when_history_cannot_be_written() {
+    let vault = temp_vault("write-history-blocked");
+    let root = vault.to_str().unwrap().to_string();
+    let path = "note.md";
+
+    write_file(&root, path, "v1", Some(10)).unwrap();
+
+    // Occupy the history directory's path with a file.
+    std::fs::create_dir_all(vault.join(".nekowite")).unwrap();
+    std::fs::write(vault.join(".nekowite").join("history"), "not a dir").unwrap();
+
+    let result = write_file(&root, path, "v2", Some(10));
+
+    let warning = result.expect("the save must succeed even when history cannot be written");
+    assert!(
+        warning.is_some(),
+        "a failed snapshot has to be reported, not swallowed"
+    );
+    let warning = warning.unwrap();
+    assert!(
+        warning.contains("Saved"),
+        "the message must make clear the text WAS saved: {warning}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(vault.join(path)).unwrap(),
+        "v2",
+        "the note body is the newest text"
+    );
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// The happy path reports nothing, so a warning always means something happened.
+#[test]
+fn write_file_reports_no_warning_on_a_normal_save() {
+    let vault = temp_vault("write-no-warning");
+    let root = vault.to_str().unwrap().to_string();
+    write_file(&root, "a.md", "v1", Some(10)).unwrap();
+    let warning = write_file(&root, "a.md", "v2", Some(10)).unwrap();
+    assert_eq!(warning, None);
+    assert!(!list_history(&root, "a.md").unwrap().is_empty(), "history was kept");
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
 /// Renaming one file must leave the trash entries of OTHER files alone.
 ///
 /// The key migration used to ask `name.strip_prefix(&from_key).unwrap_or("")`
