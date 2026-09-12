@@ -231,6 +231,13 @@ describe('ChatPanel composer drafts', () => {
   })
 
   it('forgets the draft once it has been sent', async () => {
+    // `startChatCompletion` is mocked at module level; a suite that actually
+    // SENDS must give it a shape `send()` can await, or the unhandled rejection
+    // surfaces as a run-level error rather than a test failure.
+    vi.mocked(startChatCompletion).mockImplementation((_c, _p, _i, handlers) => {
+      handlers.onDone('ok')
+      return Promise.resolve({ cancel: vi.fn() } as never)
+    })
     const host = mountPanel()
     await flush()
     const store = useChatSessionStore()
