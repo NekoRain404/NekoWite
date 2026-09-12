@@ -516,6 +516,8 @@ export const zh = {
     emptyMsg: '在编辑器光标处继续写作，或选中文字让 AI 讨论。',
     emptyImages: '粘贴或拖入图片，让模型看图作答。',
     stop: '中止',
+    interrupted: '已中断',
+    interruptedHint: '面板关闭时回答被中断，仅保留已生成的部分',
     insertToDoc: '插入到文档光标处',
     insertDoc: '插入文档',
     copyContent: '复制内容',

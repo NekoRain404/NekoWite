@@ -45,6 +45,13 @@ interface ChatAttachment {
   url: string
 }
 
+/** The panel's working copy of a turn: the shared chat type plus the marker for
+ * an answer that was cut off mid-stream (see `interruptStream`). The marker is
+ * part of the session model, so it round-trips through `toSessionMessage`. */
+interface PanelMessage extends ChatMessage {
+  interrupted?: boolean
+}
+
 const settings = useSettingsStore()
 const tabs = useTabsStore()
 const chatSessions = useChatSessionStore()
@@ -116,28 +123,34 @@ async function buildActiveContext(): Promise<string> {
   })
 }
 
-const messages = ref<ChatMessage[]>([])
+const messages = ref<PanelMessage[]>([])
 const attachments = ref<ChatAttachment[]>([])
 const prompt = ref('')
 const streaming = ref(false)
 const scrollEl = ref<HTMLElement | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 let cancelFn: (() => void) | null = null
+/** Set on unmount: a `send()` still encoding context/images must not start a
+ * request the destroyed panel could never show, cancel or persist. */
+let disposed = false
 
 const modelName = computed(() => settings.model)
 const canSend = computed(() => !streaming.value && (prompt.value.trim().length > 0 || attachments.value.length > 0))
 const hasMessages = computed(() => messages.value.length > 0)
 
-/** Strip transient `streaming` before persisting; keep images as-is. */
-function toSessionMessage(m: ChatMessage): ChatSessionMessage {
+/** Strip transient `streaming` before persisting; keep images and the
+ * interrupted marker as-is. */
+function toSessionMessage(m: PanelMessage): ChatSessionMessage {
   const stored: ChatSessionMessage = { role: m.role, content: m.content }
   if (m.images && m.images.length) stored.images = m.images
+  if (m.interrupted) stored.interrupted = true
   return stored
 }
 
-function fromSessionMessage(m: ChatSessionMessage): ChatMessage {
-  const msg: ChatMessage = { role: m.role, content: m.content }
+function fromSessionMessage(m: ChatSessionMessage): PanelMessage {
+  const msg: PanelMessage = { role: m.role, content: m.content }
   if (m.images && m.images.length) msg.images = m.images
+  if (m.interrupted) msg.interrupted = true
   return msg
 }
 
@@ -295,6 +308,11 @@ async function send(): Promise<void> {
     return
   }
 
+  // The rail can close while the context/images above were still encoding;
+  // starting now would leave a request running with no panel left to show or
+  // cancel it (onBeforeUnmount has already made its own pass).
+  if (disposed) return
+
   const userMessage: ChatMessage = { role: 'user', content: text, images: imageDataUrls }
   const history = [...messages.value, userMessage]
   messages.value = [...messages.value, userMessage]
@@ -335,11 +353,12 @@ async function send(): Promise<void> {
     .catch(() => undefined)
 }
 
-function finalize(index: number, retainEmpty: boolean): void {
+function finalize(index: number, retainEmpty: boolean, interrupted = false): void {
   const m = messages.value[index]
   if (m) {
     if (retainEmpty || m.content) {
       m.streaming = false
+      if (interrupted) m.interrupted = true
     } else {
       messages.value = messages.value.filter((_, i) => i !== index)
     }
@@ -349,17 +368,36 @@ function finalize(index: number, retainEmpty: boolean): void {
   syncSession()
 }
 
-function stop(): void {
+/** Cancel through both levels: this panel's own stream handle AND the app-level
+ * registry. The handle is null until the start promise settles, so the registry
+ * is what covers the "cancelled before it was cancellable" window. */
+function cancelCompletion(): void {
   const fn = cancelFn
   cancelFn = null
   fn?.()
   aiService.cancelStream()
+}
+
+function stop(): void {
+  cancelCompletion()
   finalize(messages.value.length - 1, false)
 }
 
+/** Unmount path. Closing the info rail destroys this panel, but the request is
+ * owned by the app-level AI service and would keep streaming — and keep being
+ * billed — into a component nobody can see. Cancel it and persist the turns
+ * received so far, flagging the answer so a reopened panel shows it as cut off
+ * instead of leaving the user's question looking unanswered. */
+function interruptStream(): void {
+  if (!streaming.value) return
+  cancelCompletion()
+  // Retain an empty placeholder too: a bubble that says "interrupted" is more
+  // honest than a question whose reply simply vanished.
+  finalize(messages.value.length - 1, true, true)
+}
+
 function clearAll(): void {
-  cancelFn = null
-  aiService.cancelStream()
+  cancelCompletion()
   streaming.value = false
   messages.value = []
   chatSessions.clearMessages()
@@ -399,6 +437,11 @@ async function copyMessage(msg: ChatMessage): Promise<void> {
 }
 
 onBeforeUnmount(() => {
+  // A stream can still be running when the rail closes (`v-if` in AppShell
+  // unmounts this panel): stop it and persist the partial answer before the
+  // working copy dies with the component.
+  disposed = true
+  interruptStream()
   clearAttachments()
 })
 </script>
@@ -520,6 +563,11 @@ onBeforeUnmount(() => {
           v-if="m.role === 'assistant'"
           class="chat-actions"
         >
+          <span
+            v-if="m.interrupted"
+            class="chat-interrupted"
+            :title="t('chat.interruptedHint')"
+          >{{ t('chat.interrupted') }}</span>
           <button
             v-if="m.streaming"
             class="chat-action chat-stop"
@@ -829,6 +877,20 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 2px;
+}
+.chat-interrupted {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  margin-right: 2px;
+  padding: 0 7px;
+  border: 1px dashed color-mix(in srgb, var(--app-muted) 55%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-elevated) 55%, transparent);
+  color: var(--app-muted);
+  font-size: 10.5px;
+  font-weight: 550;
+  letter-spacing: -0.01em;
 }
 .chat-action {
   display: inline-flex;

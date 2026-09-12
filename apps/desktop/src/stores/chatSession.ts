@@ -17,6 +17,10 @@ export interface ChatSessionMessage {
   /** Human-readable short status explaining images that were refused or
    * evicted by a storage cap (e.g. "image too large"). */
   imageNotice?: string
+  /** True when the answer was cut off mid-stream — the panel that owned the
+   * request was destroyed — instead of reaching a normal end. Lets a reopened
+   * panel show partial text as incomplete rather than as a finished answer. */
+  interrupted?: boolean
 }
 
 export interface ChatSession {
@@ -137,6 +141,9 @@ function sanitizeMessage(value: unknown): ChatSessionMessage | null {
     if (images.length) msg.images = images.slice(0, MAX_IMAGES_PER_MESSAGE)
   }
   if (typeof o.imageNotice === 'string') msg.imageNotice = o.imageNotice
+  // Only an exact boolean is trusted: any other truthy value from a hand-edited
+  // or foreign store would mark old answers as cut off.
+  if (o.interrupted === true) msg.interrupted = true
   return msg
 }
 
@@ -166,6 +173,7 @@ function toStoredMessage(message: ChatSessionMessage): ChatSessionMessage {
   const out: ChatSessionMessage = { role: message.role, content: message.content }
   if (message.images && message.images.length) out.images = message.images
   if (message.imageNotice) out.imageNotice = message.imageNotice
+  if (message.interrupted) out.interrupted = true
   return out
 }
 
