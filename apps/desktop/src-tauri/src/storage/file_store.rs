@@ -72,7 +72,7 @@ const STALE_TMP_MAX_AGE: Duration = Duration::from_secs(3600);
 
 pub fn read_file(vault_root: &str, path: &str) -> Result<String, String> {
     let resolved = resolve_within(vault_root, path)?;
-    std::fs::read_to_string(&resolved).map_err(|e| e.to_string())
+    std::fs::read_to_string(&resolved).map_err(|e| fs_error("read", &resolved, e))
 }
 
 /// Stat a vault-relative path: byte size plus modified time in unix
@@ -125,7 +125,7 @@ pub fn atomic_write_bytes(resolved: &Path, bytes: &[u8]) -> Result<(), String> {
             .map_err(|e| format!("cannot write temp file {}: {e}", tmp.display()))?;
         f.sync_all()
             .map_err(|e| format!("cannot sync temp file {}: {e}", tmp.display()))?;
-        std::fs::rename(&tmp, resolved).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, resolved).map_err(|e| fs_error("replace", resolved, e))?;
         sync_parent_dir(resolved)
     })();
     if result.is_err() {
@@ -188,7 +188,7 @@ pub fn snapshot_history(vault_root: &str, path: &str, old_content: &str, max: us
         .join(".nekowite")
         .join("history")
         .join(&encoded);
-    std::fs::create_dir_all(&history_dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&history_dir).map_err(|e| fs_error("create the history folder", &history_dir, e))?;
     let ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
@@ -456,7 +456,12 @@ pub fn list_history(vault_root: &str, path: &str) -> Result<Vec<HistoryEntry>, S
     let mut out = Vec::new();
     let rd = match std::fs::read_dir(&history_dir) {
         Ok(rd) => rd,
-        Err(_) => return Ok(out),
+        // `NotFound` is the ordinary "this note has no history yet" — an empty
+        // list is the truth. Any OTHER failure (permissions, a file where the
+        // directory should be) is a hole, and reporting it as "no history" tells
+        // the user their versions are gone when they are merely unreadable.
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(out),
+        Err(e) => return Err(format!("could not read the history folder for {path}: {e}")),
     };
     for entry in rd.flatten() {
         let p = entry.path();
@@ -613,16 +618,45 @@ pub fn search_notes_with_max(
     limit: usize,
     max_dirs: Option<usize>,
 ) -> Result<Vec<FileEntry>, String> {
+    Ok(search_notes_capped(vault_root, query, limit, max_dirs)?.items)
+}
+
+/// A search result plus whether it was cut short.
+///
+/// The count alone cannot say: exactly `limit` hits may be all there are, or the
+/// first `limit` of many. The walker knows which, so it reports it — a caller
+/// that shows a list has to be able to say "there are more", or the user loses
+/// matches without ever being told they are missing.
+#[derive(Serialize, Clone)]
+pub struct SearchResults {
+    pub items: Vec<FileEntry>,
+    pub truncated: bool,
+}
+
+/// Like [`search_notes_with_max`], but reports whether the result set was cut
+/// short by `limit`, by the directory budget or by an unreadable directory.
+pub fn search_notes_capped(
+    vault_root: &str,
+    query: &str,
+    limit: usize,
+    max_dirs: Option<usize>,
+) -> Result<SearchResults, String> {
     let root = resolve_within(vault_root, ".")?;
     let q = query.trim().to_lowercase();
     let mut out = Vec::new();
     if q.is_empty() {
-        return Ok(out);
+        return Ok(SearchResults {
+            items: out,
+            truncated: false,
+        });
     }
     let max = max_dirs.unwrap_or(SEARCH_MAX_DIRS);
     let mut visited = 0usize;
-    walk_search(&root, &q, &mut out, limit, &mut visited, 0, max);
-    Ok(out)
+    let truncated = walk_search(&root, &q, &mut out, limit, &mut visited, 0, max);
+    Ok(SearchResults {
+        items: out,
+        truncated,
+    })
 }
 
 // Search-bounds guard. Thresholds are set far above any realistic vault (a
@@ -632,6 +666,9 @@ pub fn search_notes_with_max(
 const SEARCH_MAX_DIRS: usize = 100_000;
 const SEARCH_MAX_DEPTH: usize = 64;
 
+/// Returns true when the search stopped before looking at the whole tree —
+/// it hit `limit`, the directory budget, the depth cap, or a directory it could
+/// not read.
 fn walk_search(
     dir: &Path,
     query: &str,
@@ -640,18 +677,19 @@ fn walk_search(
     visited: &mut usize,
     depth: usize,
     max_dirs: usize,
-) {
+) -> bool {
     if out.len() >= limit || *visited >= max_dirs || depth > SEARCH_MAX_DEPTH {
-        return;
+        return true;
     }
     *visited += 1;
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(_) => return,
+        // A directory we cannot read is a hole in the results, not an empty one.
+        Err(_) => return true,
     };
     for entry in entries.flatten() {
         if out.len() >= limit {
-            return;
+            return true;
         }
         let entry_path = entry.path();
         let name = entry_path
@@ -665,7 +703,11 @@ fn walk_search(
         }
         let path_str = crate::domain::path_policy::ipc_path(&entry_path);
         if entry_path.is_dir() {
-            walk_search(&entry_path, query, out, limit, visited, depth + 1, max_dirs);
+            // A truncated SUBTREE makes the whole search truncated, even when
+            // this directory finished normally.
+            if walk_search(&entry_path, query, out, limit, visited, depth + 1, max_dirs) {
+                return true;
+            }
             continue;
         }
         if !is_mdx_path(&path_str) {
@@ -680,6 +722,8 @@ fn walk_search(
             });
         }
     }
+    // The directory itself was read in full: nothing was skipped here.
+    false
 }
 
 /// Decode a standard-base64 attachment payload (frontend paste data).
@@ -687,6 +731,20 @@ pub fn decode_base64(data: &str) -> Result<Vec<u8>, String> {
     BASE64_STANDARD
         .decode(data.trim())
         .map_err(|e| format!("attachment data is not valid base64: {e}"))
+}
+
+/// A storage error the window can show without translation.
+///
+/// A bare `e.to_string()` produced sentences like "cannot create the file when
+/// it already exists (os error 183)" with no indication of WHICH file or WHICH
+/// operation — unusable for a user trying to fix something, and equally useless
+/// in a bug report. Every message names the operation and the vault-relative
+/// path, then the OS reason.
+pub fn fs_error(action: &str, path: &Path, e: io::Error) -> String {
+    format!(
+        "could not {action} {}: {e}",
+        crate::domain::path_policy::ipc_path(path)
+    )
 }
 
 /// Largest image the picker-based import accepts, mirroring the frontend's
@@ -763,7 +821,7 @@ pub fn import_attachment(vault_root: &str, source_path: &str, dir: &str) -> Resu
     } else {
         resolve_within_rel(vault_root, dir)?
     };
-    std::fs::create_dir_all(&dir_abs).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir_abs).map_err(|e| fs_error("create the folder", &dir_abs, e))?;
     let unique = unique_attachment_name(&name, &dir_abs);
     let relative = format!("{dir_rel}/{unique}");
     let target = resolve_within(vault_root, &relative)?;
@@ -886,7 +944,7 @@ pub fn save_attachment(
     } else {
         resolve_within_rel(vault_root, dir)?
     };
-    std::fs::create_dir_all(&dir_abs).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir_abs).map_err(|e| fs_error("create the folder", &dir_abs, e))?;
     let unique = unique_attachment_name(&name, &dir_abs);
     let relative = format!("{dir_rel}/{unique}");
     let target = resolve_within(vault_root, &relative)?;
@@ -912,7 +970,7 @@ pub fn create_dir(vault_root: &str, path: &str) -> Result<String, String> {
     if resolved.exists() {
         return Err(format!("already exists: {relative}"));
     }
-    std::fs::create_dir_all(&resolved).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&resolved).map_err(|e| fs_error("create the folder", &resolved, e))?;
     Ok(relative)
 }
 

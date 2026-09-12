@@ -327,10 +327,14 @@ export function createMemoryFsGateway(
     },
     searchNotes: async (_vault, query) => {
       const q = query.trim().toLowerCase()
-      if (q === '') return []
+      if (q === '') return { items: [], truncated: false }
       const out: FileEntry[] = []
+      let truncated = false
       for (const key of files.keys()) {
-        if (out.length >= 100) break
+        if (out.length >= 100) {
+          truncated = true
+          break
+        }
         if (isHiddenKey(key) || !/\.(md|mdx|markdown)$/i.test(key)) continue
         if (key.toLowerCase().includes(q)) {
           out.push({
@@ -341,7 +345,7 @@ export function createMemoryFsGateway(
           })
         }
       }
-      return out
+      return { items: out, truncated }
     },
     watch: async () => undefined,
     // Simulated native dialogs: the demo always "picks" the in-memory vault.
