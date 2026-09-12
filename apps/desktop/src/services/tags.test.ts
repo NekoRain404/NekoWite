@@ -36,4 +36,22 @@ describe('removeTagFromContent', () => {
     expect(removeTagFromContent(md, 'zzz')).toBe(md)
     expect(removeTagFromContent('# no frontmatter', 'a')).toBe('# no frontmatter')
   })
+  it('keeps unknown raw keys when removing a tag', () => {
+    const md = [
+      '---',
+      'title: t',
+      'tags:',
+      '  - a',
+      '  - b',
+      'aliases:',
+      '  - one',
+      '  - two',
+      '---',
+      '',
+      'Body',
+    ].join('\n')
+    expect(removeTagFromContent(md, 'a')).toBe(
+      '---\ntitle: t\ntags:\n  - b\naliases:\n  - one\n  - two\n---\n\nBody',
+    )
+  })
 })

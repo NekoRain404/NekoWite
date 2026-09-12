@@ -157,6 +157,59 @@ describe('FrontmatterPanel', () => {
     expect(s.activeTab?.content).not.toContain('title: old')
   })
 
+  it('keeps an untouched block with unknown nested keys byte-for-byte and stays clean', async () => {
+    const doc =
+      '---\ntitle: A\naliases:\n  - one\n  - two\ncssclasses: [wide, dark]\nmeta:\n  nested: 1\ndoi: 10.1/x\n---\n\n# Body\n'
+    await openDoc('/vault/a.md', doc)
+    const host = mountPanel()
+    await flush()
+
+    // serialize(form) === front, so Apply must look disabled on an untouched note.
+    const apply = host.querySelector<HTMLButtonElement>('.fm-apply')
+    expect(apply?.disabled).toBe(true)
+    expect(host.textContent).toContain('aliases')
+
+    const titleInput = host.querySelector<HTMLInputElement>('input.fm-input')
+    titleInput!.dispatchEvent(new Event('focus'))
+    titleInput!.dispatchEvent(new Event('blur'))
+    await flush()
+
+    const s = useTabsStore()
+    expect(s.activeTab?.content).toBe(doc)
+    expect(s.activeTab?.dirty).toBe(false)
+  })
+
+  it('keeps unknown keys raw when the title is edited', async () => {
+    const doc = '---\ntitle: A\naliases:\n  - one\n  - two\ncssclasses: [wide, dark]\n---\n\n# Body\n'
+    await openDoc('/vault/a.md', doc)
+    const host = mountPanel()
+    await flush()
+
+    const titleInput = host.querySelector<HTMLInputElement>('input.fm-input')
+    setInputValue(titleInput!, 'B')
+    titleInput!.dispatchEvent(new Event('blur'))
+    await flush()
+
+    const s = useTabsStore()
+    expect(s.activeTab?.content).toBe('---\ntitle: B\naliases:\n  - one\n  - two\ncssclasses: [wide, dark]\n---\n\n# Body\n')
+    expect(s.activeTab?.dirty).toBe(true)
+  })
+
+  it('keeps a non-ASCII key untouched and lists it', async () => {
+    const doc = '---\ntitle: A\n标题: 我的笔记\n---\n\nBody'
+    await openDoc('/vault/a.md', doc)
+    const host = mountPanel()
+    await flush()
+
+    expect(host.textContent).toContain('标题')
+
+    const titleInput = host.querySelector<HTMLInputElement>('input.fm-input')
+    titleInput!.dispatchEvent(new Event('blur'))
+    await flush()
+
+    expect(useTabsStore().activeTab?.content).toBe(doc)
+  })
+
   it('shows the no-document hint when no tab is active', async () => {
     const host = mountPanel()
     await flush()

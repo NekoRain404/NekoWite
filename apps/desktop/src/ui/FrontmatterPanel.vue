@@ -15,6 +15,7 @@ import {
 } from '../services/noteMeta'
 import { normalizeTag, normalizeTags } from '../services/tags'
 import { t } from '../i18n'
+import { baseName } from '../services/paths'
 
 const tabs = useTabsStore()
 const documentList = useDocumentListStore()
@@ -79,10 +80,10 @@ function commit(): void {
 function addProperties(): void {
   const active = tab.value
   if (!active) return
-  const name = active.path ? active.path.split('/').pop() ?? '' : ''
+  const name = active.path ? baseName(active.path) : ''
   const h1 = /^#\s+(.+?)\s*#*\s*$/m.exec(active.content)
   const title = fileNameTitle(name) || h1?.[1]?.trim() || ''
-  const next: FrontmatterFields = { title, tags: [], date: '', created: '', updated: '', other: {} }
+  const next: FrontmatterFields = { title, tags: [], date: '', created: '', updated: '', other: {}, rawSegments: [] }
   writeContent(next)
 }
 
