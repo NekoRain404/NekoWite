@@ -434,13 +434,10 @@ function renderTable(node: RenderNode, ctx: RenderContext): string {
   // 100-row table produced 99 row groups — which is what `tbody + tbody` CSS,
   // copy/paste and DOM tooling see, none of which matches the Markdown table
   // the author wrote.
-  let out = '<table>'
-  rows.forEach((row, i) => {
-    const tag = i === 0 ? 'th' : 'td'
-    const wrapper = i === 0 ? 'thead' : 'tbody'
-    out += `<${wrapper}>${renderRow(row, tag as 'th' | 'td')}</${wrapper}>`
-  })
-  return `${out}</table>`
+  const [head, ...body] = rows
+  const headHtml = head ? `<thead>${renderRow(head, 'th')}</thead>` : ''
+  const bodyHtml = body.length > 0 ? `<tbody>${body.map((r) => renderRow(r, 'td')).join('')}</tbody>` : ''
+  return `<table>${headHtml}${bodyHtml}</table>`
 }
 
 /** Node types that carry a `value` in mdast yet contribute NO text to a

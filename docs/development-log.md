@@ -13,6 +13,31 @@
 
 ## 提交记录
 
+### 2026-09-12（真机功能测试轮）
+
+以「实际使用」的方式驱动打包后的应用（WebView2 远程调试 + Playwright，真实 vault、真实磁盘）逐项走查，覆盖三种视图模式的编辑与保存、构造单元（表格/公式/图片/组件/脚注/任务列表/双链/引用/高亮）、无编辑保存的字节保真、工具栏与命令面板、表格对话框、模式切换、外部文件改动、搜索、分隔条拖拽、图谱、回收站与导出 HTML。
+
+- `fix(storage): keep the app's own bookkeeping out of the trash` — 回收站被索引临时文件灌满（见 CHANGELOG）；`.nekowite/**` 直接永久删除，`list_trash` 清理历史遗留条目；新增 2 条 Rust 回归用例。
+- `fix(table): always insert on confirm` — 有选区时确认插入表格是静默空操作；新增 2 条用例，并验证过「回退修复即失败」。
+- `fix(export): one tbody per table` — 每行一个 `<tbody>` 的导出结构；新增 2 条用例。
+- `fix(ui): localize the registry toolbar buttons` — 「Table」英文 tooltip；注册按钮加 `data-command-id`，E2E 定位器改为稳定 id。
+- `feat(image): honest copy for a blocked remote image` — 区分「远程图片被安全策略拦截」与「本地加载失败」，新增「在浏览器中打开」；图片节点文案可注入并接入中英文（此前写死英文）；重试路径补记期望 src。
+- 测试中确认**不是**缺陷的项（记录以免重复排查）：`_`/`*` 在保存时被转义成 `\_`/`\*` 属 CommonMark 合法行为；表格分隔行 `| --- |` 规范化为 `| - |`、`---` 规范化 `***`、脚注定义之间补空行，均为既有的有意规范化（`source-fidelity.spec.ts` 已逐一钉住）；点击表格列边框 5px 内不聚焦是 prosemirror-tables 的列宽拖拽热区（原生行为）。
+- 验证：editor-core 567、plugin-host 100、desktop 1073、typecheck、lint、`cargo test`（54+37+7+6+3）、`cargo clippy -D warnings`、Playwright 135 全绿。
+
+### 2026-09-12
+
+- `fix(export): stop a component body from stealing a document heading id` — 导出 HTML/PDF 的标题锚点错位与重复：
+  - 根因：`collectHeadingTexts` 只统计真正的文档标题（编辑器里 mdx 组件是原子，正文是不透明源码，其标题不在锚点列表里），但渲染时组件正文同样走 `headingIds.shift()`，于是正文里的每个标题都**消耗**了一个本该属于文档标题的 id —— 后续 id 全部前移，最后一个被重复使用。
+  - 实测（`<Box>` 正文含 `## Inside`，前后有 `# Aaa` / `# Bbb` / `# Ccc`）：修复前 `Ccc` 拿到 `ddd`、`Ddd` 也是 `ddd`；修复后三个文档标题分别是 `aaa`/`bbb`/`ccc`，正文标题不再带文档锚点（编辑器里也没有对应锚点按钮，给了 id 反而是永远不可达的链接目标）。
+  - 新增 `RenderContext.literalHeadingIds`，由 `renderMdx` 在渲染组件正文时打开；`export/headingIds.test.ts` 增加「正文标题不吃 id」「同一 id 绝不出现两次」两例。
+- `fix(image): scope the resolution memo to the note` — 切换笔记后显示上一页的图片：
+  - 根因：`resolveImageSrc` 的 memo 只以原始 src 为键，而应用层解析器在**调用时**读取当前笔记（`getNotePath: () => tabs.activeTab?.path`）把相对路径变成绝对显示 URL。同一个 `pic.png` 在不同目录下指向不同文件（图片存放于 `<basename>_assets/`），于是切换标签后第二篇笔记复用了第一篇的解析结果。
+  - 实测：`a/note.md` 与 `b/note.md` 都引用 `pic.png`，修复前第二次返回 `asset:///a/pic.png`，修复后为 `asset:///b/pic.png`。
+  - 新增 `ImageResolverOptions.scope`：token 变化即丢弃 memo（`editor-core/src/image/resolver.ts`）；`editorController` 挂载时传入 `JSON.stringify([vault, activeTab.path])`。同一笔记内仍然命中缓存。
+  - `image/resolverCache.test.ts` 增加三例（跨笔记失效、同笔记命中、未配置 scope 时保持原行为）；`editorController.test.ts` 增加接线用例，防止 scope 被误删。
+- 验证：editor-core 559、desktop 1071、typecheck、lint、`cargo test`、Playwright 135 全绿。
+
 ### 2026-09-08
 
 - `chore: initial project baseline` — 建立可版本化的项目基线，包含 Vue/Tauri 应用、编辑器核心、插件宿主、文档、演示内容与 CI。

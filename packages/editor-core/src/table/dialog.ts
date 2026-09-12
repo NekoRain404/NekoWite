@@ -30,9 +30,13 @@ export function openTableDialog(view: EditorView, opts: TableDialogOptions = {})
   }
 
   const onConfirm = (rows: number, cols: number): void => {
-    if (view.state.selection.from === view.state.selection.to) {
-      insertTable(view, clamp(rows, 2, 50), clamp(cols, 1, 30))
-    }
+    // Confirm must always do something visible. It used to require a COLLAPSED
+    // selection, so confirming with text selected silently inserted nothing —
+    // the dialog closed and the document was unchanged, with no explanation.
+    // `insertTable` replaces the selection, which is what "insert a table"
+    // means everywhere else (and matches the same command's behavior when the
+    // caret is merely collapsed).
+    insertTable(view, clamp(rows, 2, 50), clamp(cols, 1, 30))
     cleanup()
   }
 

@@ -627,6 +627,13 @@ export const en = {
     parseFailed: 'Document parse failed; switched to source view, check the document format',
     saveImageNoVault: 'No vault is open; cannot save the image',
   },
+  imageNode: {
+    retry: 'Retry',
+    missingSource: 'Missing image source',
+    loadFailed: 'Image failed to load',
+    remoteBlocked: 'Remote image not loaded (blocked by the security policy)',
+    openInBrowser: 'Open in browser',
+  },
   imagePanel: {
     aria: 'Image properties',
     title: 'Image',

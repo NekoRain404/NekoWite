@@ -1,0 +1,47 @@
+fix: repair four defects found by driving the packaged app
+
+Found by operating the built executable (WebView2 remote debugging + Playwright
+against a real vault and real disk) across the three view modes, every
+construct, the toolbar, the command palette, the table dialog, mode switching,
+external file changes, search, the graph, the trash and HTML export.
+
+- storage: the recycle bin filled up with the app's own bookkeeping. The
+  sharded search index is written atomically via `.nekowite/index/*.tmp` staging
+  files and each write removes its temp afterwards — through `delete_file`,
+  whose job is to move things INTO the trash. A freshly indexed vault already
+  showed four `%2Enekowite%2Findex%2Fshard-*.json.tmp` entries the user could
+  neither understand nor act on. Internal trees (`.nekowite`, `.nekowite-trash`,
+  both already hidden from the file tree) are now removed permanently, and
+  `list_trash` purges legacy entries so an affected vault self-heals. Deleting a
+  user note still goes to the trash and stays recoverable.
+
+- table: confirming the insert dialog with a NON-empty selection did nothing.
+  The handler required a collapsed selection, so selecting a line and pressing
+  确定 closed the dialog and left the document untouched, with no message; the
+  same command from the palette works. Confirm now always inserts (replacing the
+  selection), matching every other insert in the editor.
+
+- export: every table row was wrapped in its own `<tbody>`. The row-group tag
+  was chosen inside the per-row loop, so a 100-row table produced 99 row groups
+  that `tbody + tbody` CSS, copy/paste and DOM tooling all see. One `<thead>`
+  for the header row and ONE `<tbody>` for the data rows now.
+
+- ui: the "Table" toolbar button showed English text in an otherwise fully
+  localized toolbar, because editor-core (which registers it and has no i18n)
+  supplied the label. Reuse the command palette's id -> message-key map so
+  builtin buttons are localized while third-party plugin buttons keep their own
+  text, and expose `data-command-id` so E2E locators stop depending on a label
+  that changes with the language.
+
+- image: a remote picture said "Image failed to load" and offered Retry, which
+  can never succeed — the packaged CSP only allows `img-src 'self' asset: data:
+  blob:`. Blocked remote images now say so and offer "Open in browser"; local
+  failures keep the retry affordance. The node view's copy is injectable, so the
+  app installs its Chinese/English strings (previously hardcoded English). Retry
+  also records the expected src again, so a successful retry cannot leave the
+  failure overlay behind.
+
+Verified: editor-core 567, plugin-host 100, desktop 1073, cargo test
+(54+37+7+6+3), cargo clippy -D warnings, typecheck, lint and Playwright 135 all
+pass. The new tests were each checked to fail against the unfixed code, and
+every fix was re-verified on the packaged build.

@@ -23,6 +23,7 @@ import {
   Boxes,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
+import { COMMAND_KEYS } from '../ui/commandCatalog'
 import { rewriteSelection } from '../services/aiEdit'
 import type { EditAction } from '../services/aiEdit'
 import { t } from '../i18n'
@@ -77,6 +78,20 @@ const REGISTRY_ICONS: Record<string, Component> = {
   'table.insert': TableIcon,
   'callout.insert': MessageSquareQuote,
   'floatbox.insert': Boxes,
+}
+
+/**
+ * Tooltip / label for a registry (plugin or builtin) toolbar item.
+ *
+ * Registration happens in editor-core, which has no i18n, so the builtin
+ * "Table" button shipped an English tooltip in an otherwise localized toolbar.
+ * `COMMAND_KEYS` already maps the command ids to message keys for the command
+ * palette, so reuse it and fall back to the registered label for a
+ * third-party plugin (which brings its own text).
+ */
+function registryLabel(item: { id: string; label: string }): string {
+  const key = COMMAND_KEYS[item.id]
+  return key ? t(key) : item.label
 }
 
 function run(id: string): void {
@@ -345,8 +360,9 @@ function runRegistry(id: string): void {
         v-for="item in registryItems"
         :key="`reg-${item.id}`"
         class="toolbar-btn"
-        :title="item.label"
-        :aria-label="item.label"
+        :data-command-id="item.id"
+        :title="registryLabel(item)"
+        :aria-label="registryLabel(item)"
         @mousedown.prevent
         @click="runRegistry(item.id)"
       >
@@ -356,7 +372,7 @@ function runRegistry(id: string): void {
           :size="15"
           :stroke-width="1.8"
         />
-        <span v-else>{{ item.label }}</span>
+        <span v-else>{{ registryLabel(item) }}</span>
       </button>
     </template>
   </div>

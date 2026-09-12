@@ -325,6 +325,65 @@ fn history_snapshot_and_max_prune() {
 }
 
 #[test]
+fn deleting_internal_bookkeeping_skips_the_trash() {
+    // The index is written atomically through `.nekowite/index/*.tmp` staging
+    // files, and each write removes its temp afterwards. That removal goes
+    // through `delete_file`, so routing it to the trash deposited
+    // `%2Enekowite%2Findex%2Fshard-*.json.tmp` junk in the user's 回收站 on
+    // every rebuild — entries no user gesture could ever have created.
+    let vault = temp_vault("internal-trash");
+    let root = vault.to_str().unwrap().to_string();
+
+    std::fs::create_dir_all(vault.join(".nekowite/index")).unwrap();
+    std::fs::write(vault.join(".nekowite/index/shard-1.json.tmp"), "{}").unwrap();
+    std::fs::write(vault.join(".nekowite/index/manifest.json"), "{}").unwrap();
+
+    let returned = delete_file(&root, ".nekowite/index/shard-1.json.tmp").unwrap();
+    // Permanently gone, and nothing was moved into the trash.
+    assert!(!vault.join(".nekowite/index/shard-1.json.tmp").exists());
+    assert_eq!(returned, "");
+    assert!(list_trash(&root).unwrap().is_empty());
+    let trash_dir = vault.join(".nekowite-trash");
+    let depositted = if trash_dir.exists() {
+        std::fs::read_dir(&trash_dir).unwrap().count()
+    } else {
+        0
+    };
+    assert_eq!(depositted, 0, "internal delete must not populate the trash");
+
+    // A user note still goes to the trash (the recoverable path is unchanged).
+    write_file(&root, "note.md", "keep me", Some(10)).unwrap();
+    let trashed = delete_file(&root, "note.md").unwrap();
+    assert!(trashed.contains(".nekowite-trash"));
+    assert_eq!(list_trash(&root).unwrap().len(), 1);
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+#[test]
+fn list_trash_purges_legacy_internal_entries() {
+    // Vaults that already ran the leaking build carry those entries; listing
+    // must not keep offering them (they can never be a deleted note).
+    let vault = temp_vault("legacy-trash");
+    let root = vault.to_str().unwrap().to_string();
+    let trash_dir = vault.join(".nekowite-trash");
+    std::fs::create_dir_all(&trash_dir).unwrap();
+
+    let legacy = trash_dir.join("%2Enekowite%2Findex%2Fshard-3.json.tmp");
+    std::fs::write(&legacy, "{}").unwrap();
+    // A real deleted note stays listed.
+    write_file(&root, "keep.md", "content", Some(10)).unwrap();
+    let real = delete_file(&root, "keep.md").unwrap();
+
+    let listed = list_trash(&root).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert!(listed[0].trash_path == real);
+    assert!(!legacy.exists(), "legacy internal entry should be purged");
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+#[test]
 fn trash_delete_and_restore_roundtrip() {
     let vault = temp_vault("trash");
     let root = vault.to_str().unwrap().to_string();

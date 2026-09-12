@@ -2,6 +2,7 @@ import {
   basicPlugins,
   clearImageSelection,
   configureHeadingAnchorUrl,
+  configureImageNodeMessages,
   configureImageResolver,
   configureWikilinkHandler,
   createEditor,
@@ -18,6 +19,7 @@ import { useTabsStore } from '../../../stores/tabs'
 import { useDocumentListStore } from '../../../stores/documentList'
 import { useVaultSessionStore } from '../../../stores/vaultSession'
 import { resolveLinkPath as queryResolveLinkPath } from '../../vault/services/libraryQueries'
+import { t } from '../../../i18n'
 import type { DocumentSession } from '../model/documentSession'
 
 type EditorView = NonNullable<ReturnType<NekoEditor['getView']>>
@@ -91,6 +93,16 @@ export function createEditorController(deps: EditorControllerDeps): EditorContro
       // vault + note it was produced for.
       { scope: () => JSON.stringify([tabs.vault, tabs.activeTab?.path ?? null]) },
     )
+    // editor-core is i18n-free, so its image failure copy defaults to English.
+    // Install the app's strings (including the honest "blocked by the security
+    // policy" wording for a remote image the CSP refuses) at mount time.
+    configureImageNodeMessages({
+      retry: t('imageNode.retry'),
+      missingSource: t('imageNode.missingSource'),
+      loadFailed: t('imageNode.loadFailed'),
+      remoteBlocked: t('imageNode.remoteBlocked'),
+      openInBrowser: t('imageNode.openInBrowser'),
+    })
     // Heading anchors copy a deep-link fragment. Prefer the note's vault-relative
     // path so the link is resolvable from anywhere; fall back to a bare fragment
     // for unsaved docs. Reads live tab state at click time.
@@ -122,6 +134,7 @@ export function createEditorController(deps: EditorControllerDeps): EditorContro
     setCalloutView(null)
     clearImageSelection()
     configureImageResolver(null)
+    configureImageNodeMessages(null)
     configureHeadingAnchorUrl(null)
     configureWikilinkHandler(null)
     // Tear down this controller's session — `destroySession` is the single owner
