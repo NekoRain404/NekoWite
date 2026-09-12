@@ -516,6 +516,8 @@ export const en = {
     emptyMsg: 'Keep writing at the cursor, or select text for the AI to discuss.',
     emptyImages: 'Paste or drag images for the model to see.',
     stop: 'Stop',
+    interrupted: 'Interrupted',
+    interruptedHint: 'The answer was cut off when the panel closed; only the generated part is kept',
     insertToDoc: 'Insert at cursor',
     insertDoc: 'Insert',
     copyContent: 'Copy content',

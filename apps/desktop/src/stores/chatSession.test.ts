@@ -197,6 +197,77 @@ describe('chatSession store', () => {
     expect(JSON.parse(localStorage.getItem(CHAT_SESSIONS_KEY)!).sessions[0].title).toBe('改写这段摘要')
   })
 
+  it('keeps an interrupted answer through persist and reload', () => {
+    const store = sessionStore()
+    store.setMessages([
+      { role: 'user', content: '问题' },
+      { role: 'assistant', content: '答了一半', interrupted: true },
+    ])
+    expect(JSON.parse(localStorage.getItem(CHAT_SESSIONS_KEY)!).sessions[0].messages[1]).toEqual({
+      role: 'assistant',
+      content: '答了一半',
+      interrupted: true,
+    })
+
+    setActivePinia(createPinia())
+    const reloaded = sessionStore()
+    expect(reloaded.sessions[0].messages[1].interrupted).toBe(true)
+    // The marker belongs to one message only: the question is not interrupted.
+    expect(reloaded.sessions[0].messages[0].interrupted).toBeUndefined()
+  })
+
+  it('only trusts an exact boolean interrupted flag from storage', () => {
+    localStorage.setItem(
+      CHAT_SESSIONS_KEY,
+      JSON.stringify({
+        v: 1,
+        activeId: 'edited',
+        sessions: [
+          {
+            id: 'edited',
+            title: '手改过的存储',
+            created: 1,
+            updated: 2,
+            messages: [
+              { role: 'assistant', content: 'a', interrupted: 'yes' },
+              { role: 'assistant', content: 'b', interrupted: true },
+            ],
+          },
+        ],
+      }),
+    )
+    const store = sessionStore()
+    expect(store.sessions[0].messages[0].interrupted).toBeUndefined()
+    expect(store.sessions[0].messages[1].interrupted).toBe(true)
+  })
+
+  it('loads sessions written before the interrupted marker existed', () => {
+    localStorage.setItem(
+      CHAT_SESSIONS_KEY,
+      JSON.stringify({
+        v: 1,
+        activeId: 'legacy',
+        sessions: [
+          {
+            id: 'legacy',
+            title: '旧会话',
+            created: 1,
+            updated: 2,
+            messages: [
+              { role: 'user', content: '旧问题' },
+              { role: 'assistant', content: '旧回答' },
+            ],
+          },
+        ],
+      }),
+    )
+    const store = sessionStore()
+    expect(store.activeSession!.messages).toEqual([
+      { role: 'user', content: '旧问题' },
+      { role: 'assistant', content: '旧回答' },
+    ])
+  })
+
   it('clearMessages empties the session', () => {
     const store = sessionStore()
     store.appendMessage({ role: 'user', content: '内容' })
