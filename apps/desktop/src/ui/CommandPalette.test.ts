@@ -20,7 +20,12 @@ vi.mock('../services/vaultFiles', () => ({
   vaultFileIndex: { invalidate: vi.fn(), files: vi.fn(() => []) },
 }))
 
+const runEditorCommandMock = vi.hoisted(() => vi.fn(() => true))
+vi.mock('../services/runEditorCommand', () => ({ runEditorCommand: runEditorCommandMock }))
+
 import CommandPalette from './CommandPalette.vue'
+import { useTabsStore } from '../stores/tabs'
+import { t } from '../i18n'
 
 let pinia: Pinia
 let mounted: VueApp[] = []
@@ -80,32 +85,55 @@ function overlay(): Element | null {
   return document.body.querySelector('.palette-overlay')
 }
 
+function paletteItems(): HTMLElement[] {
+  return [...document.body.querySelectorAll<HTMLElement>('.palette-item')]
+}
+
+function itemLabels(): string[] {
+  return paletteItems().map((el) => (el.querySelector('.palette-item-label')?.textContent ?? '').trim())
+}
+
+function itemWithLabel(label: string): HTMLElement | null {
+  return paletteItems().find(
+    (el) => (el.querySelector('.palette-item-label')?.textContent ?? '').trim() === label,
+  ) ?? null
+}
+
+/** Type into the palette search box the way a user does (v-model listens for the
+ *  native `input` event). */
+function typeQuery(value: string): void {
+  const input = document.body.querySelector<HTMLInputElement>('.palette-input')
+  if (!input) throw new Error('palette input not rendered')
+  input.value = value
+  input.dispatchEvent(new Event('input'))
+}
+
 function painted(): boolean {
   return overlay()?.classList.contains('is-open') ?? false
 }
 
 const settle = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
+beforeEach(async () => {
+  pinia = createPinia()
+  setActivePinia(pinia)
+  document.body.innerHTML = ''
+  mounted = []
+  reducedMotion = true
+  stubRaf()
+  stubMotion()
+  mount()
+  await nextTick()
+})
+
+afterEach(() => {
+  mounted.forEach((app) => app.unmount())
+  mounted = []
+  document.body.innerHTML = ''
+  vi.unstubAllGlobals()
+})
+
 describe('CommandPalette toggle', () => {
-  beforeEach(async () => {
-    pinia = createPinia()
-    setActivePinia(pinia)
-    document.body.innerHTML = ''
-    mounted = []
-    reducedMotion = true
-    stubRaf()
-    stubMotion()
-    mount()
-    await nextTick()
-  })
-
-  afterEach(() => {
-    mounted.forEach((app) => app.unmount())
-    mounted = []
-    document.body.innerHTML = ''
-    vi.unstubAllGlobals()
-  })
-
   it('opens on Ctrl+K and closes on a second Ctrl+K', async () => {
     expect(overlay()).toBeNull()
 
@@ -201,5 +229,43 @@ describe('CommandPalette toggle', () => {
     await nextTick()
     await settle(20)
     expect(overlay()).toBeNull()
+  })
+})
+
+describe('CommandPalette commands without an open document', () => {
+  it('offers no editor command — and says why — while no document is open', async () => {
+    pressCtrlK()
+    await nextTick()
+
+    // Every palette command runs against the live editor model, so with no
+    // document open each one would be a silent no-op: `runEditorCommand` reports
+    // "nothing handled it" and the row did nothing at all. Nothing that cannot
+    // run is offered.
+    expect(itemLabels()).toEqual([])
+    // The empty list is explained instead of leaving a dead command list behind.
+    expect(document.body.textContent).toContain(t('chat.emptyDocHint'))
+
+    // A query that exactly matches a formatting command still offers nothing.
+    typeQuery(t('command.bold'))
+    await nextTick()
+    expect(itemLabels()).toEqual([])
+  })
+
+  it('offers the editor commands again once a document is open', async () => {
+    await useTabsStore().openTab(null)
+    pressCtrlK()
+    await nextTick()
+
+    const labels = itemLabels()
+    expect(labels).toContain(t('command.bold'))
+    expect(labels).toContain(t('command.heading:h1'))
+    // The builtin formatting set (20 commands) is offered again with a document.
+    expect(labels.length).toBeGreaterThanOrEqual(20)
+    expect(document.body.textContent).not.toContain(t('chat.emptyDocHint'))
+
+    // Executing a row dispatches through the shared, mode-aware runner.
+    itemWithLabel(t('command.bold'))?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await nextTick()
+    expect(runEditorCommandMock).toHaveBeenCalledWith('bold')
   })
 })

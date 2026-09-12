@@ -34,6 +34,11 @@ const LIST_ID = 'nekowite-command-palette-list'
 
 const tabs = useTabsStore()
 
+// Every command the palette offers is an editor command: it runs against the
+// live rendered/source model (see runEditorCommand). With no document open there
+// is no model, so nothing below can be offered honestly.
+const hasDocument = computed(() => tabs.activeTab !== null)
+
 const open = ref(false)
 const visible = ref(false)
 /** True from the moment a close begins until the fade-out finishes. */
@@ -58,6 +63,13 @@ const registryRevision = ref(0)
 
 const commandEntries = computed<PaletteEntry[]>(() => {
   void registryRevision.value
+  // The formatting/insert commands are ProseMirror commands (or plugin commands
+  // resolving the rendered view): with no document open `runEditorCommand`
+  // reports "nothing handled it" and the row would be a silent no-op — no toast,
+  // no disabled state, nothing. Rather than offering ~20 dead rows, offer none
+  // until a document exists (the Files group still opens one) and say why in the
+  // note above the list.
+  if (!hasDocument.value) return []
   const byId = new Map<string, PaletteEntry>()
   const add = (rawId: string, run: () => void, fallbackLabel?: string): void => {
     if (byId.has(rawId)) return
@@ -322,6 +334,12 @@ onBeforeUnmount(() => {
             @keydown="onInputKeydown"
           >
         </div>
+        <p
+          v-if="!hasDocument"
+          class="palette-note"
+        >
+          {{ t('chat.emptyDocHint') }}
+        </p>
         <div
           :id="LIST_ID"
           ref="listRef"
@@ -366,7 +384,7 @@ onBeforeUnmount(() => {
             </button>
           </template>
           <div
-            v-if="!flatRows.length"
+            v-if="!flatRows.length && hasDocument"
             class="palette-empty"
           >
             {{ t('palette.empty') }}
@@ -436,6 +454,14 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 .palette-input::placeholder {
+  color: var(--app-muted);
+}
+/* Why the command group is empty (no document open). The copy is the existing
+   "open a document first" hint (chat.emptyDocHint): a palette-specific key would
+   have to be added to both locales, which is outside this change. */
+.palette-note {
+  padding: 10px 14px 0;
+  font-size: 11px;
   color: var(--app-muted);
 }
 .palette-list {

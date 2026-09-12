@@ -1,6 +1,10 @@
 /* Print / PDF export of the live app.
    When the user prints the window (Cmd/Ctrl+P) we collapse all the app chrome
-   and flush the rendered note to a clean, full-width, light-only document.
+   and flush the note the user is looking at to a clean, full-width, light-only
+   document: the rendered preview in rendered/split mode, the raw Markdown
+   (CodeMirror) in source mode. A pane that is hidden stays hidden — see the
+   "print the pane the user is actually looking at" block below for why a forced
+   `display: block` on the rendered pane printed the wrong document.
 
    Coordination note: this file deliberately does NOT declare a `@page` rule.
    The PDF export path injects its own `@page{size;margin}` into the hidden
@@ -36,21 +40,31 @@
   .dialog-overlay,
   .toast-stack,
   .ghost-text,
-  .float-box,
-  .pane.source {
+  .float-box {
     display: none !important;
   }
 
-  /* Only the rendered (preview) pane survives, laid out as natural flow. */
+  /* ---------- Print the pane the user is actually looking at ----------
+     `v-show` decides visibility with an inline `display` (the rendered pane
+     carries `display: none` in source mode), so this file must NOT force a pane
+     back on. While the source pane owns the text the rendered model is
+     deliberately left stale (features/editor/controller/editorExternalSync.ts
+     skips re-applying it), so a forced `display: block` here printed the last
+     rendered-mode document — after switching notes in source mode, a DIFFERENT
+     note.
+
+     Printing the source pane instead is a complete print target, not a
+     truncated viewport: CodeMirror 6 drops its viewport limiting on
+     `beforeprint` and renders the whole document for printing. Split mode keeps
+     the rendered preview live on purpose (its model follows the source edits),
+     so the preview is what prints there — printing both panes would print the
+     note twice. */
   .shell,
   .shell-body,
   .main,
   .main-content,
   .editor-pane,
-  .panes,
-  .pane,
-  .pane.rendered,
-  .rendered-pane {
+  .panes {
     display: block !important;
     height: auto !important;
     min-height: 0 !important;
@@ -60,10 +74,28 @@
     box-shadow: none !important;
   }
 
+  /* Layout resets only: `display` is left alone so the inline `v-show` style
+     keeps deciding which pane reaches paper. */
+  .pane,
+  .rendered-pane {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: #fff !important;
+    box-shadow: none !important;
+  }
+
+  /* The split ratio is a screen affordance (inline widths): the surviving pane
+     gets the whole page. */
   .panes,
-  .pane.rendered,
+  .panes .pane,
   .rendered-pane {
     width: 100% !important;
+  }
+
+  .panes.split .pane.source {
+    display: none !important;
   }
 
   /* ---------- Content: full width, light palette, force backgrounds ---------- */
@@ -159,5 +191,52 @@
     color: #000 !important;
     text-decoration: line-through;
     text-decoration-color: #000 !important;
+  }
+
+  /* ---------- Source pane (CodeMirror) ---------- */
+  /* The on-screen highlighting is token-driven and follows the (possibly dark)
+     app theme, so on paper it would be light-on-white. One blunt descendant
+     override neutralises every token color and surface — including the
+     `cm-md-*` / `cm-code-*` classes owned by SourcePane.vue — so a highlight
+     added later cannot silently print in a theme color. */
+  .pane.source .cm-editor,
+  .pane.source .cm-editor * {
+    color: #000 !important;
+    background: transparent !important;
+    border-color: color-mix(in srgb, #000 45%, transparent) !important;
+    caret-color: transparent !important;
+    text-decoration-color: #000 !important;
+    box-shadow: none !important;
+  }
+
+  /* CodeMirror keeps its own fixed-height, scrolling box on screen; in print it
+     must flow across pages instead of clipping to one screenful. */
+  .pane.source .cm-editor,
+  .pane.source .cm-scroller {
+    height: auto !important;
+    overflow: visible !important;
+  }
+  .pane.source .cm-content {
+    padding: 0 !important;
+  }
+  .pane.source .cm-gutters {
+    background: transparent !important;
+    border-right: 1px solid color-mix(in srgb, #000 35%, transparent) !important;
+    color: color-mix(in srgb, #000 55%, transparent) !important;
+  }
+
+  /* Interactive affordances that must not reach paper. */
+  .pane.source .cm-cursor,
+  .pane.source .cm-dropCursor,
+  .pane.source .cm-panels,
+  .pane.source .cm-tooltip {
+    display: none !important;
+  }
+  .pane.source .cm-activeLine,
+  .pane.source .cm-activeLineGutter,
+  .pane.source .cm-selectionBackground,
+  .pane.source .cm-content ::selection,
+  .pane.source .cm-searchMatch {
+    background: transparent !important;
   }
 }
