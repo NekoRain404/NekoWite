@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { createApp, type App as VueApp } from 'vue'
+import { createApp, nextTick, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { useTabsStore } from '../stores/tabs'
 
@@ -29,6 +29,7 @@ vi.mock('../platform/gateways/fs', () => ({
 import RenderedPane from './RenderedPane.vue'
 import { editorBridge } from '../services/editorBridge'
 import { fsService } from '../platform/gateways/fs'
+import { useAppearanceStore } from '../stores/appearance'
 
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
 
@@ -75,5 +76,47 @@ describe('RenderedPane content injection', () => {
     expect(h1?.textContent).toBe('Welcome')
     const md = await editorBridge.getEditor()?.save()
     expect(md).toContain('# Welcome')
+  })
+
+  it('follows the task-list rendering setting without rebuilding the editor', async () => {
+    const appearance = useAppearanceStore()
+    appearance.setRenderTaskChecklist(true)
+    vi.mocked(fsService.read).mockResolvedValue('- [ ] todo\n- [x] done\n')
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const app = createApp(RenderedPane)
+    app.use(pinia)
+    app.mount(host)
+    mounted.push(app)
+    await flush()
+
+    await tabs.openTab('notes/tasks.md')
+    await flush()
+    await flush()
+
+    const items = (): HTMLElement[] => [
+      ...document.querySelectorAll<HTMLElement>('.rendered-pane li[data-item-type="task"]'),
+    ]
+    // The class is editor-core's TASK_PLAIN_CLASS; spelled out here so this case
+    // keeps failing for the right reason (no consumer) on an older editor-core.
+    const plain = (): HTMLElement[] => [
+      ...document.querySelectorAll<HTMLElement>('.rendered-pane li.neko-task-plain'),
+    ]
+    expect(items()).toHaveLength(2)
+    expect(plain()).toHaveLength(0)
+
+    // Off: the item keeps its markdown marker as text, the box is gone.
+    appearance.setRenderTaskChecklist(false)
+    await nextTick()
+    expect(plain()).toHaveLength(2)
+    expect(items()[0]!.getAttribute('data-neko-task-marker')).toBe('[ ]')
+    expect(items()[1]!.getAttribute('data-neko-task-marker')).toBe('[x]')
+
+    // ...and back on again, on the same editor instance.
+    appearance.setRenderTaskChecklist(true)
+    await nextTick()
+    expect(plain()).toHaveLength(0)
   })
 })

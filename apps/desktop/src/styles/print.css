@@ -192,6 +192,17 @@
     text-decoration: line-through;
     text-decoration-color: #000 !important;
   }
+  /* Same switch on paper: with the boxes off, the `[x]` marker (painted from
+     `data-neko-task-marker`) is the only thing that shows the state, so the
+     strikethrough goes too. The frame rules above must not come back either. */
+  .editor-container .ProseMirror li[data-item-type="task"].neko-task-plain::before {
+    background: none !important;
+    border: none !important;
+  }
+  .editor-container .ProseMirror li[data-item-type="task"].neko-task-plain[data-checked="true"] > * {
+    color: #000 !important;
+    text-decoration: none !important;
+  }
 
   /* ---------- Source pane (CodeMirror) ---------- */
   /* The on-screen highlighting is token-driven and follows the (possibly dark)

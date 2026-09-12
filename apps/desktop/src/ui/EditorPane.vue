@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
 import { setImageInsertHandler } from '@nekowite/editor-core'
 import { FileText } from 'lucide-vue-next'
+import { useAppearanceStore } from '../stores/appearance'
 import { useViewStore, SPLIT_RATIO_DEFAULT, SPLIT_RATIO_MAX, SPLIT_RATIO_MIN } from '../stores/view'
 import { useTabsStore } from '../stores/tabs'
 import type { EditorView } from '@codemirror/view'
@@ -37,6 +38,7 @@ const SourcePane = defineAsyncComponent(() => import('../view/SourcePane.vue'))
 
 const view = useViewStore()
 const tabs = useTabsStore()
+const appearance = useAppearanceStore()
 const floatStore = useFloatStore()
 
 const hasTab = computed(() => tabs.activeTab !== null)
@@ -83,10 +85,14 @@ function drive(dst: ScrollPane | null, src: ScrollPane | null): void {
   })
 }
 
+// These two watchers are the switch's only decision point: with "split scroll
+// sync" off the panes scroll independently. The one-shot alignment on entering
+// split mode and on finishing a divider drag (below) is still performed, because
+// that is layout, not following a scroll.
 watch(
   () => view.sourceScroll,
   () => {
-    if (view.mode !== 'split' || syncing || resizing) return
+    if (view.mode !== 'split' || syncing || resizing || !appearance.autoSyncScroll) return
     drive(renderedPane.value, sourcePane.value)
   },
 )
@@ -94,7 +100,7 @@ watch(
 watch(
   () => view.renderedScroll,
   () => {
-    if (view.mode !== 'split' || syncing || resizing) return
+    if (view.mode !== 'split' || syncing || resizing || !appearance.autoSyncScroll) return
     drive(sourcePane.value, renderedPane.value)
   },
 )
