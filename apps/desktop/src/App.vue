@@ -11,6 +11,8 @@ import { useDocumentListStore } from './stores/documentList'
 import { useAiPermissionStore } from './stores/aiPermission'
 import { createExternalDocSync } from './services/externalDocSync'
 import { fsService } from './platform/gateways/fs'
+import { notifyError } from './services/errors'
+import { t } from './i18n'
 
 const tabs = useTabsStore()
 const view = useViewStore()
@@ -79,6 +81,12 @@ const externalDocSync = createExternalDocSync({
   onFsChange: (cb) => fsService.onFsChange(cb),
   getVault: () => tabs.vault,
   getActiveTab: () => tabs.activeTab,
+  getOpenTabs: () => tabs.tabs.map((t) => ({ id: t.id, path: t.path })),
+  onMissing: (tabId, path) => {
+    // Detach first, then tell the user: the order matters because the detach is
+    // what stops the next save from silently recreating the vanished path.
+    if (tabs.detachMissingPath(tabId)) notifyError(t('tabs.missingOnDisk', { path }))
+  },
   isSelfWrite: (path) => tabs.isSelfWrite(path),
   reload: (tabId) => tabs.reloadFromDisk(tabId),
   onConflict,

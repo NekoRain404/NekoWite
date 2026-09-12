@@ -374,6 +374,7 @@ export const zh = {
     note: '以磁盘为准将加载磁盘内容并放弃本地修改；保留本地则维持当前内容并保持未保存状态。',
   },
   tabs: {
+    missingOnDisk: '{ path } 已被移动或删除（在应用之外）。它已从标签页分离，内容仍在这里——下次保存会询问新位置。',
     close: '关闭',
     closeOthers: '关闭其他',
     closeAll: '关闭全部',

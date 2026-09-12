@@ -374,6 +374,7 @@ export const en = {
     note: 'Using the disk loads disk content and discards local edits; keeping local keeps the current content unsaved.',
   },
   tabs: {
+    missingOnDisk: '{path} was moved or deleted outside the app. It has been detached from the note, your text is still here, and the next save will ask where to put it.',
     close: 'Close',
     closeOthers: 'Close others',
     closeAll: 'Close all',
