@@ -369,6 +369,7 @@ export const zh = {
     close: '关闭',
   },
   status: {
+    aiThinking: 'AI 思考中…',
     words: '{n} 词',
     chars: '{n} 字符',
     readMinutes: '约 {n} 分钟',

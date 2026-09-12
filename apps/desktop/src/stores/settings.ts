@@ -86,7 +86,7 @@ export const useSettingsStore = defineStore('settings', () => {
   // system prompt is empty by default so existing installs see no behaviour
   // change until they opt in.
   const temperature = ref<number>(readNumber(LS_TEMPERATURE, 0.7))
-  const maxTokens = ref<number>(readNumber(LS_MAX_TOKENS, 256))
+  const maxTokens = ref<number>(readNumber(LS_MAX_TOKENS, 1024))
   const systemPrompt = ref(readLs(LS_SYSTEM_PROMPT, ''))
   const systemPromptOn = ref(persistence.get(LS_SYSTEM_PROMPT_ON) === 'true')
   const allowPrivate = ref<boolean>(readBool(LS_ALLOW_PRIVATE, true))
@@ -132,8 +132,11 @@ export const useSettingsStore = defineStore('settings', () => {
 
   function config(): AIConfig {
     const cfg: AIConfig = { provider: provider.value, model: model.value }
-    if (provider.value === 'local' || provider.value === 'custom') {
-      cfg.base_url = baseUrl.value
+    if (provider.value === 'local' || provider.value === 'custom' || provider.value === 'deepseek') {
+      // `deepseek` is OpenAI-compatible and commonly fronted by a gateway, so
+      // an explicit Base URL must reach the backend; when the field is empty
+      // the backend falls back to api.deepseek.com.
+      if (baseUrl.value.trim()) cfg.base_url = baseUrl.value.trim()
     }
     if (apiKey.value) cfg.api_key = apiKey.value
     cfg.temperature = temperature.value

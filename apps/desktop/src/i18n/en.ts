@@ -369,6 +369,7 @@ export const en = {
     close: 'Close',
   },
   status: {
+    aiThinking: 'AI is thinking…',
     words: '{n} words',
     chars: '{n} chars',
     readMinutes: '~{n} min',

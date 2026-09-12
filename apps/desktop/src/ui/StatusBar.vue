@@ -5,6 +5,7 @@ import { useViewStore } from '../stores/view'
 import { useAppearanceStore } from '../stores/appearance'
 import { taskProgress } from '../services/editorBehaviors'
 import { t } from '../i18n'
+import { aiThinking } from '../services/ai'
 
 const tabs = useTabsStore()
 const view = useViewStore()
@@ -76,6 +77,15 @@ const modeLabel = computed(() => {
     </span>
     <span class="status-spacer" />
     <span
+      v-if="aiThinking"
+      class="status-ai-thinking"
+      role="status"
+      aria-live="polite"
+    >
+      <span class="status-ai-spinner" />
+      {{ t('status.aiThinking') }}
+    </span>
+    <span
       v-if="saveState"
       class="status-save"
       :data-state="saveState"
@@ -114,6 +124,23 @@ const modeLabel = computed(() => {
 .status-sep { opacity: 0.6; }
 .status-spacer { flex: 1; }
 .status-task.is-done { color: var(--app-accent); }
+.status-ai-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--app-accent);
+}
+.status-ai-spinner {
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid color-mix(in srgb, var(--app-accent) 35%, transparent);
+  border-top-color: var(--app-accent);
+  border-radius: 50%;
+  animation: status-ai-spin 0.8s linear infinite;
+}
+@keyframes status-ai-spin {
+  to { transform: rotate(360deg); }
+}
 .status-save {
   display: inline-flex;
   align-items: center;
