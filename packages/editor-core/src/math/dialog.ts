@@ -2,7 +2,7 @@ import { createApp, h, ref, type App, type ComponentPublicInstance } from 'vue'
 import type { EditorView } from '@milkdown/prose/view'
 import type { Schema } from '@milkdown/prose/model'
 
-import { createMathEditor, warmMathLive, type MathEditorHandle } from './atoms'
+import { createMathEditor, upgradeMathEditor, warmMathLive, type MathEditorHandle } from './atoms'
 import { insertMath } from './feature'
 
 export interface OpenMathOptions {
@@ -21,9 +21,44 @@ export function openMathDialog(view: EditorView, opts: OpenMathOptions): void {
   let mf: MathEditorHandle | null = null
   let resolved: 'inline' | 'display' = opts.mode
   let app: App | null = null
+  // Set once the dialog is closed, so an upgrade that resolves late does not
+  // attach a MathLive field to a host that is already detached.
+  let closed = false
   const isEditingExisting = opts.existingPos != null && opts.schema != null
 
+  /**
+   * Give the host a working editor immediately, then swap in MathLive once its
+   * (lazily imported) module arrives.
+   *
+   * `createMathEditor` degrades to a plain contenteditable box while MathLive is
+   * still loading — and on the FIRST open it always is, because the import only
+   * starts here. Without the upgrade the visual editor appeared only on some
+   * later open, so a user's first formula got a bare text field. Upgrading
+   * instead of blocking keeps the dialog usable at once, and the text already
+   * typed is carried across.
+   */
+  const attachEditor = (el: HTMLElement): void => {
+    const options = { value: opts.latex ?? '' }
+    mf = createMathEditor(el, options)
+    void upgradeMathEditor(el, () => mf?.getValue() ?? '').then((better) => {
+      if (!better) return
+      if (closed || !overlay.isConnected) {
+        better.dispose()
+        return
+      }
+      // Read, swap, then dispose: the confirm handler reads `mf` at any moment,
+      // and a window where it pointed at a disposed editor would drop the user's
+      // formula on confirm.
+      const typed = mf?.getValue() ?? ''
+      const previous = mf
+      better.setValue(typed)
+      mf = better
+      previous?.dispose()
+    })
+  }
+
   const cleanup = (): void => {
+    closed = true
     mf?.dispose()
     mf = null
     app?.unmount()
@@ -70,7 +105,9 @@ export function openMathDialog(view: EditorView, opts: OpenMathOptions): void {
           h('div', { class: 'math-dialog-title' }, '插入 / 编辑公式'),
           h('div', {
             ref: (el: Element | ComponentPublicInstance | null) => {
-              if (el) mf = createMathEditor(el as HTMLElement, { value: opts.latex ?? '' })
+              // Runs once when the host is created: attach the editor and queue
+              // the MathLive upgrade.
+              if (el && !mf) attachEditor(el as HTMLElement)
             },
             class: 'math-field-host',
           }),

@@ -57,6 +57,32 @@ export interface MathEditorHandle {
   dispose(): void
 }
 
+/**
+ * Swap the fallback editor inside `el` for a MathLive field, carrying the
+ * current value across.
+ *
+ * Returns the new handle, or null when MathLive could not be used (the caller
+ * then keeps the fallback, which is still a working editor).
+ */
+export async function upgradeMathEditor(
+  el: HTMLElement,
+  /** Read the CURRENT text at swap time, not at call time: the load is async,
+   *  and anything the user typed while it was in flight would otherwise be
+   *  replaced by the value captured before they typed it. */
+  currentValue: () => string,
+  onChange?: (latex: string) => void,
+): Promise<MathEditorHandle | null> {
+  const mod = await loadMathLive()
+  if (!mod || typeof mod.MathfieldElement !== 'function') return null
+  const current = currentValue()
+  // Drop everything the fallback left in the host (its text node and the
+  // contenteditable attribute) or the MathLive field would sit beside stale text.
+  el.textContent = ''
+  el.removeAttribute('contenteditable')
+  const handle = createMathEditor(el, { value: current, onChange })
+  return handle
+}
+
 export function renderLatexMarkup(latex: string): string {
   const { convertLatexToMarkup } = getMathLive() ?? {}
   if (typeof convertLatexToMarkup === 'function') {
@@ -71,6 +97,28 @@ export function renderLatexMarkup(latex: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
+}
+
+/**
+ * Create the BEST editor `el` can host, waiting for MathLive if it is still
+ * loading.
+ *
+ * `createMathEditor` degrades to a plain contenteditable box when MathLive has
+ * not finished its lazy import yet — which is exactly the state on the FIRST
+ * open of the dialog, so a user's first formula got a bare text field and the
+ * visual editor only appeared on some later open. Callers that can wait should
+ * await this instead; the sync version stays for the instant-but-degraded path.
+ *
+ * Resolves to `null` when MathLive is genuinely unavailable (offline, blocked),
+ * in which case the caller keeps whatever it already had.
+ */
+export async function createMathEditorWhenReady(
+  el: HTMLElement,
+  options: { value?: string; onChange?: (latex: string) => void } = {},
+): Promise<MathEditorHandle | null> {
+  const mod = await loadMathLive()
+  if (!mod || typeof mod.MathfieldElement !== 'function') return null
+  return createMathEditor(el, options)
 }
 
 export function createMathEditor(
