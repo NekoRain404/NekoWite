@@ -25,17 +25,56 @@ import {
   selectedRect,
 } from '@milkdown/prose/tables'
 
-/** Module-level clipboard buffer so copy+paste round-trips synchronously. */
-let clipboardBuffer = ''
+/**
+ * The in-session buffer a copy/cut writes, with the document it was copied from.
+ *
+ * `doc` is the ProseMirror document the copy saw. Documents are immutable and a
+ * new reference means the document changed, so a buffer whose `doc` is not the
+ * current one is STALE: pasting it would write text from an older state of the
+ * note (or from a different note entirely, since this buffer is module-level and
+ * outlives any single editor) over what the user is looking at. Stale buffers are
+ * never used — see `isTableClipboardValid`.
+ */
+let clipboardBuffer: string | null = null
+let clipboardDoc: unknown = null
 
-/** Overwrite the in-session table clipboard buffer. */
-export function setTableClipboard(text: string): void {
-  clipboardBuffer = text
+/**
+ * Overwrite the in-session table clipboard buffer.
+ *
+ * The optional `doc` binds the buffer to a document state; pass the live
+ * ProseMirror document to make it valid, or nothing to write a buffer that is
+ * deliberately invalid (which is what the tests' reset does).
+ */
+export function setTableClipboard(text: string, doc?: unknown): void {
+  clipboardBuffer = text === '' ? null : text
+  clipboardDoc = doc ?? null
 }
 
 /** Read the in-session table clipboard buffer (empty string when none). */
 export function getTableClipboard(): string {
-  return clipboardBuffer
+  return clipboardBuffer ?? ''
+}
+
+/**
+ * Drop the buffer.
+ *
+ * Called when a new editor instance is created: the buffer is module-level, so
+ * without this a copy in one note stayed live in the next one.
+ */
+export function invalidateTableClipboard(): void {
+  clipboardBuffer = null
+  clipboardDoc = null
+}
+
+/**
+ * True when the buffer belongs to the document the caller is editing.
+ *
+ * This is what makes a paste safe to intercept: the in-session buffer is only a
+ * substitute for the OS clipboard while it still describes the document on
+ * screen.
+ */
+export function isTableClipboardValid(view: EditorView): boolean {
+  return clipboardBuffer !== null && clipboardDoc === view.state.doc
 }
 
 /** Concatenate a cell's block text; multi-block cells become a single field. */
@@ -91,6 +130,7 @@ export function copyCells(view: EditorView): boolean {
   const tsv = cellSelectionToTsv(view)
   if (tsv === null) return false
   clipboardBuffer = tsv
+  clipboardDoc = view.state.doc
   try {
     void navigator.clipboard?.writeText(tsv)
   } catch {
@@ -108,6 +148,7 @@ export function cutCells(view: EditorView): boolean {
   const tsv = cellSelectionToTsv(view)
   if (tsv === null) return false
   clipboardBuffer = tsv
+  clipboardDoc = view.state.doc
   try {
     void navigator.clipboard?.writeText(tsv)
   } catch {

@@ -3,6 +3,7 @@ import type { MilkdownPlugin } from '@milkdown/ctx'
 import type { EditorView } from '@milkdown/prose/view'
 
 import { registerCommand, registerMarkdownCommand, registerToolbar } from '../registry'
+import { isInTableCell } from '../table/context'
 import { openMathDialog } from './dialog'
 import { mathToMarkdown } from './nodes'
 
@@ -19,12 +20,22 @@ export function setMathFeatureView(view: EditorView | null): void {
   activeView = view
 }
 
-export function insertMath(view: EditorView, latex: string, mode: 'inline' | 'display'): void {
+/**
+ * Insert a formula. Returns false when the insertion is not possible here.
+ *
+ * Inline math is an inline node and always fits. Display math is a BLOCK: inside a
+ * table cell it would be lifted out by the fitter and split the table in two, so
+ * it is refused — the caller reports that to the user instead of silently
+ * rewriting the table.
+ */
+export function insertMath(view: EditorView, latex: string, mode: 'inline' | 'display'): boolean {
   const { state } = view
   const type = mode === 'inline' ? state.schema.nodes.math_inline : state.schema.nodes.math_display
-  if (!type) return
+  if (!type) return false
+  if (mode === 'display' && isInTableCell(state)) return false
   const node = type.create({ latex })
   view.dispatch(state.tr.replaceSelectionWith(node))
+  return true
 }
 
 export function mathFeature(): void {
