@@ -450,12 +450,41 @@ function renderList(node: RenderNode, ctx: RenderContext): string {
   return `<${tag}${start}${listClass}>${rendered}</${tag}>`
 }
 
+/**
+ * A hard line break inside a paragraph.
+ *
+ * mdast models shift+Enter (and the trailing-backslash / two-space spellings) as
+ * a `break` node — a leaf with no children. The renderer had no case for it, so
+ * it fell through to the generic "render the children" branch, which for a
+ * childless node returns the empty string: the break vanished AND the two lines
+ * ran together, turning a two-line paragraph into one concatenated line in the
+ * exported HTML and PDF. The editor shows a real <br> for the same document, so
+ * the export also disagreed with what the user sees.
+ */
+function renderBreak(): string {
+  return '<br />'
+}
+
 function renderTable(node: RenderNode, ctx: RenderContext): string {
   const rows = (node.children ?? []) as RenderNode[]
+  // mdast carries GFM column alignment on the TABLE, one entry per column. It
+  // was declared on the node type and never read, so a right-aligned column of
+  // numbers exported left-aligned: the alignment the author set in the editor
+  // was simply not in the file they handed to someone else.
+  const align = Array.isArray(node.align) ? node.align : []
+  const alignStyle = (index: number): string => {
+    const value = align[index]
+    return value === 'left' || value === 'center' || value === 'right'
+      ? ` style="text-align: ${value}"`
+      : ''
+  }
   const renderRow = (row: RenderNode, tag: 'th' | 'td'): string => {
     const cells = (row.children ?? []) as RenderNode[]
     const cellHtml = cells
-      .map((cell) => `<${tag}>${renderChildren((cell.children ?? []) as RenderNode[], ctx)}</${tag}>`)
+      .map(
+        (cell, index) =>
+          `<${tag}${alignStyle(index)}>${renderChildren((cell.children ?? []) as RenderNode[], ctx)}</${tag}>`,
+      )
       .join('')
     return `<tr>${cellHtml}</tr>`
   }
@@ -642,6 +671,8 @@ function renderNode(node: RenderNode, ctx: RenderContext): string {
     }
     case 'mdxJsxFlowElement':
       return renderMdx(node, ctx)
+    case 'break':
+      return renderBreak()
     case 'html':
       // Intentional divergence from the editor: the editor renders inline
       // raw HTML (e.g. `<span style=...>`) as live markup, but the export

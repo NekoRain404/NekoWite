@@ -65,3 +65,32 @@ describe('export preserves nested content', () => {
     expect(missing).toEqual([])
   })
 })
+
+describe('hard breaks and column alignment survive export', () => {
+  it('keeps a shift+Enter line break instead of gluing the two lines together', async () => {
+    // mdast models the break as a childless `break` node. With no case for it the
+    // renderer emitted nothing at all, so the exported document read as one
+    // concatenated line — text the author never wrote, in a file handed to
+    // someone else.
+    const html = await renderDocument('line one\\\nline two\n')
+    expect(html).toContain('<br />')
+    expect(html).not.toContain('line oneline two')
+  })
+
+  it('keeps a two-space hard break too', async () => {
+    const html = await renderDocument('line one  \nline two\n')
+    expect(html).toContain('<br />')
+  })
+
+  it('writes the alignment GFM records on the table', async () => {
+    const html = await renderDocument('| left | center | right |\n| :-- | :-: | --: |\n| 1 | 2 | 3 |\n')
+    expect(html).toContain('text-align: left')
+    expect(html).toContain('text-align: center')
+    expect(html).toContain('text-align: right')
+  })
+
+  it('leaves a table without alignment markers untouched', async () => {
+    const html = await renderDocument('| a | b |\n| - | - |\n| 1 | 2 |\n')
+    expect(html).not.toContain('text-align')
+  })
+})

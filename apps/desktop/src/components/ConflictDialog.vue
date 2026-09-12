@@ -36,7 +36,9 @@ function onKeydown(e: KeyboardEvent): void {
 }
 
 async function reloadFromDisk(): Promise<void> {
-  await tabs.reloadFromDisk(props.tabId)
+  // Explicit: the user chose the disk version over their own edits, so this one
+  // wins even though the tab is dirty (the automatic reload must not).
+  await tabs.reloadFromDisk(props.tabId, { explicit: true })
   emit('close')
 }
 
