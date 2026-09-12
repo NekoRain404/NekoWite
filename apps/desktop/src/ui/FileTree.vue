@@ -10,6 +10,9 @@ import ContextMenu from './ContextMenu.vue'
 import type { ContextMenuItem } from './ContextMenu.vue'
 import { t } from '../i18n'
 import { dirName, joinPath } from '../services/paths'
+import { moveNote } from '../services/noteMove'
+import type { NoteMoveIo } from '../services/noteMove'
+import { flushEdits } from '../services/editorOwnership'
 
 interface TreeNode {
   name: string
@@ -25,6 +28,9 @@ interface TreeEdit {
   kind: 'file' | 'dir' | 'rename'
   parentPath: string
   nodePath?: string
+  /** For `rename`: whether the entry is a directory. Only a renamed note needs
+   *  the reference rewrite; a folder carries its contents with it. */
+  nodeIsDir?: boolean
 }
 
 const props = defineProps<{ vault: string }>()
@@ -46,6 +52,16 @@ const editInput = ref<HTMLInputElement | null>(null)
 const dragState = ref<{ path: string; isDir: boolean } | null>(null)
 const dropTargetPath = ref<string | null>(null)
 let confirming = false
+
+/** The four fs operations `moveNote` wants, bound to the shared gateway. The
+ *  service takes them as plain functions so it stays testable without Tauri
+ *  (the injection shape `externalDocSync` / `recoveryClosedLoop` use). */
+const noteMoveIo: NoteMoveIo = {
+  read: (vault, path) => fsService.read(vault, path),
+  write: (vault, path, content) => fsService.write(vault, path, content),
+  rename: (vault, from, to) => fsService.renameEntry(vault, from, to),
+  list: (vault, dir) => fsService.list(vault, dir),
+}
 
 const MENU_ICONS = {
   filePlus: markRaw(FilePlus2),
@@ -256,18 +272,48 @@ function onDrop(row: { node: TreeNode }, e: DragEvent): void {
     dragState.value = null
     return
   }
-  void performMove(result.from, result.to)
+  void performMove(result.from, result.to, drag.isDir)
 }
 
-async function performMove(from: string, to: string): Promise<void> {
-  try {
+/** Move a tree entry and keep everything that points at it in step: the note's
+ *  file-relative references and sibling `_assets` folder (via `moveNote`), the
+ *  open tab's path, and — when the service rewrote the body on disk — the
+ *  tab's text. */
+async function moveEntry(from: string, to: string, isDir: boolean): Promise<void> {
+  // Publish pending keystrokes first: the service is a read-modify-write of the
+  // file on disk, while each pane coalesces keystrokes before publishing them
+  // to the tab (the same reason `saveTab` flushes before it writes).
+  await flushEdits()
+  // Arm BOTH spellings before the first mutation. The open tab still points at
+  // `from` until `renamePathInTabs` runs, and the fs watcher reports our own
+  // rename/rewrite back to the app-level external-change service: without this
+  // a dirty tab would raise a bogus keep-or-reload prompt for a file we moved
+  // ourselves.
+  tabs.noteSelfWrite(from)
+  tabs.noteSelfWrite(to)
+  if (isDir) {
+    // A folder carries its contents, so each note's own `_assets` references
+    // still resolve and only the tab paths change. References OUT of the folder
+    // (the vault-level `attachments/` tree) would need every note inside to be
+    // rewritten; that subtree case is deliberately left as a plain rename.
     await fsService.renameEntry(props.vault, from, to)
     tabs.renamePathInTabs(from, to)
-    await refreshAncestors(from)
-    await refreshAncestors(to)
+    return
+  }
+  const moved = await moveNote(noteMoveIo, props.vault, from, to)
+  tabs.renamePathInTabs(from, to, moved)
+}
+
+async function performMove(from: string, to: string, isDir: boolean): Promise<void> {
+  try {
+    await moveEntry(from, to, isDir)
   } catch {
     notifyError(t('tree.moveFailed'))
   } finally {
+    // Refresh even after a failure: a move that landed the note but not its
+    // references must not leave stale rows on screen.
+    await refreshAncestors(from)
+    await refreshAncestors(to)
     dragState.value = null
     dropTargetPath.value = null
   }
@@ -306,7 +352,12 @@ async function startCreate(kind: 'file' | 'dir', parentPath: string): Promise<vo
 async function startRename(node: TreeNode): Promise<void> {
   const parent = await ensureDirNode(dirOf(node.path))
   if (!parent) return
-  pendingEdit.value = { kind: 'rename', parentPath: parent.path, nodePath: node.path }
+  pendingEdit.value = {
+    kind: 'rename',
+    parentPath: parent.path,
+    nodePath: node.path,
+    nodeIsDir: node.is_dir,
+  }
   editName.value = node.name
   editError.value = ''
 }
@@ -372,8 +423,7 @@ async function applyEdit(p: TreeEdit, name: string): Promise<void> {
       if (!from) return
       const to = joinPath(dirOf(from), name)
       if (to !== from) {
-        await fsService.renameEntry(props.vault, from, to)
-        tabs.renamePathInTabs(from, to)
+        await moveEntry(from, to, p.nodeIsDir === true)
         await refreshAncestors(from)
       }
     } else {
