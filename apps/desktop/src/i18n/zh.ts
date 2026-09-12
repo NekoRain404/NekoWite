@@ -636,6 +636,8 @@ export const zh = {
     wordGoalReached: '已达成字数目标：{goal} 字',
     wordGoalProgress: '已完成 {current} / {goal} 字',
     tmpNotice: '发现 {count} 个因会话中断遗留的可恢复临时文件。',
+    restoreFailed:
+      '有 {count} 个临时文件无法恢复：{names}',
   },
   plugin: {
     loadFailed: '插件加载失败：{id}（{error}）',

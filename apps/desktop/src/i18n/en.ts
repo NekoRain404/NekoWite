@@ -636,6 +636,8 @@ export const en = {
     wordGoalReached: 'Word goal reached: {goal} words',
     wordGoalProgress: '{current} of {goal} words',
     tmpNotice: 'Found {count} recoverable temporary file(s) left by an interrupted session.',
+    restoreFailed:
+      'Could not restore {count} temporary file(s): {names}',
   },
   plugin: {
     loadFailed: 'Plugin failed to load: {id} ({error})',
