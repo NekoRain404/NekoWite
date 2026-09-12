@@ -86,6 +86,18 @@ export interface VaultIndexCoordinatorDeps {
   onIndexState(state: IndexState, progress: { done: number; total: number } | null): void
   getFavorites(): string[]
   getRecents(): string[]
+  /**
+   * The fs-change subscription could not be established (`ok: false`) or was
+   * established again (`ok: true`).
+   *
+   * This is a DEGRADED mode with no visible symptom until the user notices
+   * their own file is missing from the list: without the subscription nothing
+   * tells the app that a file appeared, changed or vanished, so the note list,
+   * the attachment badge and the content index all keep showing what they saw
+   * at index time. Silently swallowing the failure (what this did) meant the
+   * app looked healthy while quietly ignoring every change made outside it.
+   */
+  onFsWatch?(ok: boolean, error?: unknown): void
 }
 
 export interface VaultIndexCoordinator {
@@ -378,6 +390,36 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
     }
   }
 
+  /** True while the fs subscription is missing, so nothing may assume the
+   *  index reflects what is on disk (see `onFsWatch`). */
+  let fsWatchDown = false
+
+  /**
+   * Try to establish the fs-change subscription for the current vault.
+   *
+   * Returns the unsubscribe when it worked. A failure is reported rather than
+   * swallowed, and remembered so `rebuildIndex` (the user's "refresh this
+   * list" button) can retry it: otherwise the only way back to a live list was
+   * to switch vaults and back, which nothing on screen suggests.
+   */
+  async function subscribeFs(v: string): Promise<(() => void) | null> {
+    try {
+      const listener = await deps.onFsChange(handleFsChange)
+      if (fsWatchDown) {
+        fsWatchDown = false
+        deps.onFsWatch?.(true)
+      }
+      return listener
+    } catch (err) {
+      console.error(`[NekoWite] vault "${v}" file-change subscription failed`, err)
+      if (!fsWatchDown) {
+        fsWatchDown = true
+        deps.onFsWatch?.(false, err)
+      }
+      return null
+    }
+  }
+
   async function indexVault(v: string): Promise<void> {
     detach()
     const mySeq = indexSeq
@@ -385,12 +427,7 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
     // Do not show the previous vault's notes while the new vault is indexing.
     deps.onNotes([])
     deps.onAttachmentCount(0)
-    let listener: (() => void) | null = null
-    try {
-      listener = await deps.onFsChange(handleFsChange)
-    } catch {
-      listener = null
-    }
+    const listener = await subscribeFs(v)
     if (mySeq !== indexSeq) {
       // Superseded by a newer vault switch while awaiting: detach our listener
       // and do not touch the vault-scoped state.
@@ -426,6 +463,17 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
   async function rebuildIndex(): Promise<void> {
     const vault = currentVault
     if (!vault) return
+    // A missing fs subscription is invisible in the index itself, so "refresh
+    // this list" is also the natural place to put it back: retry it before the
+    // rebuild, and tell the user when it comes back.
+    if (fsWatchDown) {
+      const mySeq = indexSeq
+      const listener = await subscribeFs(vault)
+      if (mySeq === indexSeq && listener) {
+        unlistenFs?.()
+        unlistenFs = listener
+      }
+    }
     try {
       await persistence.rebuild(vault, await deps.fileIndex.get(vault))
     } catch {
@@ -461,4 +509,7 @@ export interface VaultIndexCoordinatorCallbacks {
   onIndexState(state: IndexState, progress: { done: number; total: number } | null): void
   getFavorites(): string[]
   getRecents(): string[]
+  /** The fs-change subscription failed or came back (see
+   *  `VaultIndexCoordinatorDeps.onFsWatch`). */
+  onFsWatch(ok: boolean, error?: unknown): void
 }

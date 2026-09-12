@@ -31,6 +31,8 @@ interface CoState {
   indexState: string
   favorites: string[]
   recents: string[]
+  /** Every `onFsWatch` report, in order. */
+  watchReports: string[]
 }
 
 interface CoordinatorHarness {
@@ -45,6 +47,9 @@ function makeCoordinator(opts: {
   seed: Record<string, string>
   fileIndex: { get: (v: string) => Promise<string[]>; isTruncated: (v: string) => boolean; invalidate: (v: string) => void }
   holdFirstFsChange?: () => Promise<() => void>
+  /** Fail the first N subscription attempts (models a webview whose event
+   *  system is unavailable). */
+  failFsChangeTimes?: number
   /** Lets a test hold one vault's attachment-tree read, so a switch can happen
    *  while that vault's badge count is still being computed. */
   holdAttachmentList?: (vault: string, dir: string) => Promise<void>
@@ -64,6 +69,7 @@ function makeCoordinator(opts: {
     indexState: 'idle',
     favorites: [],
     recents: [],
+    watchReports: [],
   }
   const read = (v: string, p: string): Promise<string> => {
     reads += 1
@@ -78,6 +84,9 @@ function makeCoordinator(opts: {
     },
     onFsChange: (cb) => {
       fsCalls += 1
+      if (opts.failFsChangeTimes && fsCalls <= opts.failFsChangeTimes) {
+        return Promise.reject(new Error('events unavailable'))
+      }
       if (opts.holdFirstFsChange && fsCalls === 1) return opts.holdFirstFsChange()
       handlers.add(cb)
       return Promise.resolve(() => {
@@ -108,6 +117,9 @@ function makeCoordinator(opts: {
     },
     onIndexState: (s) => {
       state.indexState = s
+    },
+    onFsWatch: (ok, error) => {
+      state.watchReports.push(ok ? 'ok' : `fail:${(error as Error)?.message ?? ''}`)
     },
     getFavorites: () => state.favorites,
     getRecents: () => state.recents,
@@ -335,5 +347,57 @@ describe('structural folder changes', () => {
     h.emit({ path: '/v/attachments/2026-09/pic.png', kind: 'created' })
     await new Promise((r) => setTimeout(r, 400))
     expect(h.readCount()).toBe(before)
+  })
+})
+
+describe('fs-change subscription failure', () => {
+  /** A one-note vault: the shared SAME_FILES index names notes this seed does
+   *  not contain (they would simply not index). */
+  const ONE_FILE = {
+    get: (v: string) => Promise.resolve([`${v}/a.md`]),
+    isTruncated: () => false,
+    invalidate: () => {},
+  }
+
+  it('reports an fs-subscription failure instead of silently going deaf', async () => {
+    // Without the subscription nothing tells the app that a file appeared,
+    // changed or vanished: the note list, the attachment badge and the content
+    // index all keep showing what they saw at index time. Swallowing the
+    // failure (what this did) left the app looking healthy while quietly
+    // ignoring every change made outside it.
+    const h = makeCoordinator({
+      seed: { '/vault/a.md': '# A' },
+      fileIndex: ONE_FILE,
+      failFsChangeTimes: 1,
+    })
+    await h.coordinator.indexVault('/vault')
+
+    expect(h.state.watchReports).toEqual(['fail:events unavailable'])
+    // The index itself still built: the list works, it just will not follow the
+    // disk - which is exactly why the user has to be told.
+    expect(h.state.notes).toHaveLength(1)
+  })
+
+  it('retries the subscription when the index is rebuilt, and says when it is back', async () => {
+    // Rebuild is the only refresh affordance on screen, so it has to be the way
+    // back to a live list; otherwise the only fix was switching vaults and back,
+    // which nothing suggests.
+    const h = makeCoordinator({
+      seed: { '/vault/a.md': '# A' },
+      fileIndex: ONE_FILE,
+      failFsChangeTimes: 1,
+    })
+    await h.coordinator.indexVault('/vault')
+    expect(h.state.watchReports).toEqual(['fail:events unavailable'])
+
+    await h.coordinator.rebuildIndex()
+
+    expect(h.state.watchReports).toEqual(['fail:events unavailable', 'ok'])
+  })
+
+  it('reports nothing when the first subscription works', async () => {
+    const h = makeCoordinator({ seed: { '/vault/a.md': '# A' }, fileIndex: ONE_FILE })
+    await h.coordinator.indexVault('/vault')
+    expect(h.state.watchReports).toEqual([])
   })
 })
