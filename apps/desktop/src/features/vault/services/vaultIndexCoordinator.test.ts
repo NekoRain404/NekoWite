@@ -228,3 +228,46 @@ describe('createVaultIndexCoordinator (memory fs gateway, no Vue)', () => {
     expect(entry?.text).toContain('图论')
   })
 })
+
+describe('structural folder changes', () => {
+  it('re-reads the note list when a folder that held notes disappears', async () => {
+    // The event for a folder delete arrives for the FOLDER only — there is no
+    // per-child event to rely on — so without a re-index the note list kept
+    // listing notes that are gone and clicking one failed only later, at read
+    // time. The file list is mutable here so the test can prove the re-read.
+    const files = ['/v/notes/a.md', '/v/notes/b.md']
+    const h = makeCoordinator({
+      seed: { '/v/notes/a.md': '# A', '/v/notes/b.md': '# B' },
+      fileIndex: {
+        get: async () => [...files],
+        isTruncated: () => false,
+        invalidate: () => {},
+      },
+    })
+    await h.coordinator.indexVault('/v')
+    expect(h.state.notes.map((n) => n.path).sort()).toEqual(['/v/notes/a.md', '/v/notes/b.md'])
+
+    // The folder is deleted: the vault walk no longer returns its contents.
+    files.length = 0
+    h.emit({ path: '/v/notes', kind: 'removed' })
+    await vi.waitFor(() =>
+      expect(h.state.notes.map((n) => n.path)).toEqual([]),
+    )
+  })
+
+  it('does not re-read the vault for an attachment that no note references', async () => {
+    const h = makeCoordinator({
+      seed: { '/v/a.md': '# A' },
+      fileIndex: {
+        get: async () => ['/v/a.md'],
+        isTruncated: () => false,
+        invalidate: () => {},
+      },
+    })
+    await h.coordinator.indexVault('/v')
+    const before = h.readCount()
+    h.emit({ path: '/v/attachments/2026-09/pic.png', kind: 'created' })
+    await new Promise((r) => setTimeout(r, 400))
+    expect(h.readCount()).toBe(before)
+  })
+})

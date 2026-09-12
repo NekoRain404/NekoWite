@@ -19,7 +19,8 @@
 import { ATTACHMENTS_DIR, extensionFromFileName } from '../../../services/attachments'
 import type { ContentCache } from '../../../services/contentCache'
 import type { FileEntry, FileStat, FsChangeEvent } from '../../../platform/gateways/contracts'
-import { parseNoteMeta, type NoteSummary } from '../../../services/noteMeta'
+import { parseNoteMeta, relPathOf, type NoteSummary } from '../../../services/noteMeta'
+import { baseName, stripVaultPrefix } from '../../../services/paths'
 import type { IndexLookupResult } from '../../../services/contentSearch'
 import type { IndexState, StoredIndex } from '../../../services/searchIndex'
 import { createIndexPersistence, type IndexPersistence } from './indexPersistence'
@@ -199,11 +200,40 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
     }
   }
 
+  /** True when `path` is, or contains, a note the index currently lists.
+   *
+   *  The event for a folder rename or delete arrives for the FOLDER alone (there
+   *  is no per-child event to rely on), so a non-note change is only structural
+   *  for the note list when a listed note lives under it. Comparing against the
+   *  index keeps attachment churn — an image saved on every paste — from
+   *  triggering a full re-read of the vault. */
+  function affectsIndexedNotes(v: string, path: string): boolean {
+    const target = stripVaultPrefix(path, v).replace(/[/\\]+$/, '')
+    if (!target) return true
+    return notes.some((n) => {
+      const rel = relPathOf(n)
+      return rel === target || rel.startsWith(`${target}/`)
+    })
+  }
+
   function handleFsChange(e: FsChangeEvent): void {
     const v = currentVault
     if (!v) return
     if (!isMdPath(e.path)) {
       deps.fileIndex.invalidate(v)
+      // A folder that was created or removed may have taken notes with it; the
+      // note list would otherwise keep listing notes that are no longer there
+      // (and clicking one fails only later, at read time).
+      const structural = e.kind === 'created' || e.kind === 'removed'
+      const looksLikeAttachment = Boolean(extensionFromFileName(baseName(e.path)))
+      if (structural && (!looksLikeAttachment || affectsIndexedNotes(v, e.path))) {
+        if (reindexTimer) clearTimeout(reindexTimer)
+        reindexTimer = setTimeout(() => {
+          reindexTimer = null
+          if (currentVault !== v) return
+          void runIndex(v, indexSeq)
+        }, MD_CHANGE_DEBOUNCE_MS)
+      }
       if (attachmentRefreshTimer) clearTimeout(attachmentRefreshTimer)
       attachmentRefreshTimer = setTimeout(() => {
         attachmentRefreshTimer = null

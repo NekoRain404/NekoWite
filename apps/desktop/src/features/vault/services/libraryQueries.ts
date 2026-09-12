@@ -69,7 +69,14 @@ export function resolveLinkPath(
     if (candidates.includes(noteRel)) return note.path
   }
   for (const candidate of candidates) {
-    const hit = notes.find((n) => n.path.endsWith(`/${candidate}`))
+    // Suffix match against the VAULT-RELATIVE path, not the raw one: note paths
+    // are native (backslash-separated on Windows), so a '/'-prefixed suffix test
+    // never matched there and this whole fallback was dead on the platform the
+    // app ships to.
+    const hit = notes.find((n) => {
+      const noteRel = relPathOf(n)
+      return noteRel === candidate || noteRel.endsWith(`/${candidate}`)
+    })
     if (hit) return hit.path
   }
   return null

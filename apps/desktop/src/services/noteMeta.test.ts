@@ -407,3 +407,50 @@ describe('formatRelativeTime', () => {
     expect(formatRelativeTime(0, now)).toBe('—')
   })
 })
+
+describe('metadata for long frontmatter', () => {
+  // A block longer than the old 400-character snapshot never closed inside it,
+  // so `front` came back empty: the note lost its title and tags in the list,
+  // the tag filter and the search index, while the frontmatter panel (which
+  // reads the whole block) still showed them.
+  const longBlock = [
+    '---',
+    'title: A very long meta block',
+    'tags: [alpha, beta]',
+    'abstract: >-',
+    '  ' + 'filler '.repeat(120).trim(),
+    '---',
+    '',
+    '# Heading fallback',
+    '',
+    'Body text that should be the summary.',
+  ].join('\n')
+
+  it('finds the title and tags past the old 400-character limit', () => {
+    const meta = parseNoteMeta('/v/long.md', longBlock, { mtime: 0, size: longBlock.length, vault: '/v' })
+    expect(meta.title).toBe('A very long meta block')
+    expect(meta.tags).toEqual(['alpha', 'beta'])
+  })
+
+  it('takes the summary from the body, not from the YAML', () => {
+    const meta = parseNoteMeta('/v/long.md', longBlock, { mtime: 0, size: longBlock.length, vault: '/v' })
+    expect(meta.summary).toContain('Body text')
+    expect(meta.summary).not.toContain('filler')
+  })
+
+  it('still handles a note that opens with a fence but never closes it', () => {
+    // The scan is capped, so this must not walk the whole document; with no
+    // closing fence there is simply no frontmatter to read.
+    const broken = '---\n' + 'x'.repeat(20000) + '\n\n# Title\n'
+    const meta = parseNoteMeta('/v/broken.md', broken, { mtime: 0, size: broken.length, vault: '/v' })
+    expect(meta.title).toMatch(/broken|Title/)
+  })
+
+  it('keeps a plain short block working exactly as before', () => {
+    const short = '---\ntitle: Short\ntags: [one]\n---\n\n# H1\n\nsummary here\n'
+    const meta = parseNoteMeta('/v/short.md', short, { mtime: 0, size: short.length, vault: '/v' })
+    expect(meta.title).toBe('Short')
+    expect(meta.tags).toEqual(['one'])
+    expect(meta.summary).toContain('summary here')
+  })
+})
