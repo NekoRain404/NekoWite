@@ -7,9 +7,18 @@ import { formatAttachmentBytes, MAX_ATTACHMENT_BYTES } from '../services/attachm
 import { t } from '../i18n'
 import { aiService, startChatCompletion, type ChatStreamHandlers } from '../services/ai'
 import { CHAT_SESSIONS_KEY, useChatSessionStore } from '../stores/chatSession'
+import { useTabsStore } from '../stores/tabs'
 
 // The panel only needs the stream entry points here; the real module would
 // reach for gateways and an editor session this test does not exercise.
+const readMock = vi.hoisted(() => vi.fn())
+
+// `openTab` reads through the fs gateway. Only `read` is reachable from this
+// harness; the note it returns is empty on purpose (see the empty-note case).
+vi.mock('../platform/gateways/fs', () => ({
+  fsService: { read: readMock },
+}))
+
 vi.mock('../services/ai', () => ({
   startChatCompletion: vi.fn(),
   aiService: { cancelStream: vi.fn() },
@@ -322,5 +331,52 @@ describe('ChatPanel unmount during a stream', () => {
     finishEncode!()
     await flush()
     expect(vi.mocked(startChatCompletion)).not.toHaveBeenCalled()
+  })
+})
+
+describe('attaching the current note', () => {
+  it('sends the message when the note is empty, saying it carries no context', async () => {
+    // An empty note is not a MISSING document. Refusing to send blocked the
+    // very scenario the feature exists for - help me outline the note I just
+    // created - with a message claiming no document was open while one plainly
+    // was.
+    localStorage.setItem('nekowite.chat.attachContext', '1')
+    readMock.mockResolvedValue('')
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    await tabs.openTab('/vault/empty.md')
+    expect(tabs.activeTab?.content).toBe('')
+    const host = mountPanel()
+    await flush()
+
+    typePrompt(host, 'help me outline this')
+    await flush()
+    expect(sendButton(host).disabled).toBe(false)
+    sendButton(host).click()
+    await flush()
+
+    expect(vi.mocked(startChatCompletion)).toHaveBeenCalled()
+    // The user is told the note carried nothing - the message is not silently
+    // sent as if the note were attached, and the send is not blocked either.
+    expect(notifications).toEqual([t('chat.emptyDocSent')])
+    unmountPanel(host)
+  })
+
+  it('still refuses when no document is open at all', async () => {
+    // The complement of the case above: nothing open is a real error, and it
+    // must not be softened into a context-less send.
+    localStorage.setItem('nekowite.chat.attachContext', '1')
+    readMock.mockResolvedValue('')
+    const host = mountPanel()
+    await flush()
+
+    typePrompt(host, 'hello')
+    await flush()
+    sendButton(host).click()
+    await flush()
+
+    expect(vi.mocked(startChatCompletion)).not.toHaveBeenCalled()
+    expect(notifications).toEqual([t('chat.emptyDocHint')])
+    unmountPanel(host)
   })
 })

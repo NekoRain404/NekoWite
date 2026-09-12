@@ -545,6 +545,8 @@ export const zh = {
     attachContext: '引用当前文档',
     attachContextLabel: '发送时把当前文档 / 选区作为上下文',
     emptyDocHint: '请先打开一个文档',
+    emptyDocSent: '当前笔记为空，本条消息未附带文档内容。',
+    contextTruncated: '【笔记超出上下文预算，已省略 {omitted} 个字符】',
     user: '用户',
     assistant: '助手',
     currentDocHeader: '【当前文档：{title}】',
