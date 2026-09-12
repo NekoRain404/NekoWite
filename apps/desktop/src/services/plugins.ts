@@ -264,7 +264,18 @@ export function getVaultPluginAuditEvents(pluginId: string): PluginAuditEvent[] 
 
 /** Public governance wrappers (wired for a settings/status surface + tests). */
 
-/** Clear a plugin's unstable flag (user-mediated re-approval) so it can run again. */
+/**
+ * Clear a plugin's unstable flag (user-mediated re-approval) so it can run again,
+ * with a fresh session resource budget. `loadVaultPlugins` performs this for every
+ * plugin it finds in a vault, because that is the only reachable path: the host
+ * quarantines a plugin that crashed, timed out or exhausted its budget by tearing
+ * it out of its active map, and `deactivatePlugin` only clears the flag for
+ * plugins still in that map — so a quarantine used to survive every vault switch
+ * and the "re-approve it (reset), then reload the vault" refusal could never be
+ * carried out. Nothing becomes trusted by this: the reload still runs every gate
+ * (revocation, version policy, consent, trust, integrity) before the plugin is
+ * imported again.
+ */
 export function resetUnstableVaultPlugin(pluginId: string): void {
   resetUnstablePlugin(pluginId)
 }
@@ -328,8 +339,25 @@ export function isVaultPluginRevoked(pluginId: string, version: string): boolean
 // no-op, going back to A would never re-register the reloaded definition).
 const activeVaultPluginIds: string[] = []
 
-// Per-session permission verdicts, so a plugin the user already approved (or
-// denied) is not re-prompted on every vault switch.
+/** Composite storage key for every record scoped to a (vault, plugin id) pair:
+ *  vault + plugin id, NUL-separated so a vault path and an id that both contain
+ *  "/" can never collide. Two different vaults therefore never share a record for
+ *  the same plugin id — a trust/permission decision made in one vault can never
+ *  authorise the same-id plugin of another. */
+function vaultScopedKey(vault: string | null, id: string): string {
+  // NUL separator: a vault path and a plugin id can both contain "/", so a plain
+  // concatenation (or "/" join) could collide across vaults.
+  return `${vault ?? ''}\u0000${id}`
+}
+
+// Per-session permission verdicts, keyed by vault + plugin id (NOT by id alone:
+// approving a dangerous plugin in vault A must never silently authorise a
+// different plugin that happens to share the id in vault B). The verdict is
+// remembered for the session so a plugin is not re-prompted on every vault
+// switch — including a DENIAL, which is the safe verdict: re-asking for a plugin
+// the user already refused each time they switch vaults is nagging, and the
+// refusal message now names the recovery that actually works (a restart starts a
+// fresh session; reloading a vault cannot clear a session verdict).
 const permissionDecisions = new Map<string, boolean>()
 
 type PermissionDecider = (
@@ -363,16 +391,28 @@ export function getActiveVaultPluginIds(): string[] {
   return [...activeVaultPluginIds]
 }
 
-export async function askPluginPermission(meta: PluginMeta, definition: PluginDefinition): Promise<boolean> {
+/**
+ * Ask the user to grant a plugin's declared dangerous capabilities, caching the
+ * verdict for the session under the (vault, plugin id) key `vaultScopedKey`
+ * builds. Callers inside a vault scan pass that vault explicitly so the verdict
+ * is scoped to it; a call with no vault (e.g. a test, or a caller outside a
+ * scan) is cached under the empty vault, never merged with a real vault's slot.
+ */
+export async function askPluginPermission(
+  meta: PluginMeta,
+  definition: PluginDefinition,
+  vault: string | null = currentVault,
+): Promise<boolean> {
   // Merge manifest- and definition-declared permissions. Pure UI plugins declare
   // nothing and always pass; anything reaching the user is a dangerous one.
   const declared = collectPluginPermissions(meta, definition)
   if (!hasDangerousPermissions({ permissions: declared })) return true
-  const cached = permissionDecisions.get(meta.id)
+  const key = vaultScopedKey(vault, meta.id)
+  const cached = permissionDecisions.get(key)
   if (typeof cached === 'boolean') return cached
   // Safe default: without an installed decider, deny risky plugins.
   const decision = permissionDecider ? await permissionDecider(meta, declared) : false
-  permissionDecisions.set(meta.id, decision)
+  permissionDecisions.set(key, decision)
   return decision
 }
 
@@ -417,32 +457,23 @@ export function setPluginRecordedDigestForTest(
   version: string,
   digest: string,
 ): void {
-  memoryDigestMap.set(digestStorageKey(vault, id), { v: version, d: digest })
+  memoryDigestMap.set(vaultScopedKey(vault, id), { v: version, d: digest })
 }
 
 /** Test-only: read the recorded baseline digest for a (vault, id) pair. */
 export function getPluginRecordedDigestForTest(vault: string, id: string): string | undefined {
-  return memoryDigestMap.get(digestStorageKey(vault, id))?.d
-}
-
-/** Composite storage key for a plugin baseline: vault + plugin id, NUL-separated
- *  so a vault path and an id that both contain "/" can never collide. Two
- *  different vaults therefore never share an approval record for the same id. */
-function digestStorageKey(vault: string, id: string): string {
-  // NUL separator: a vault path and a plugin id can both contain "/", so a
-  // plain concatenation (or "/" join) could collide across vaults.
-  return `${vault}\u0000${id}`
+  return memoryDigestMap.get(vaultScopedKey(vault, id))?.d
 }
 
 /** The last-approved digest for a (vault, plugin id) pair, if any. */
 function getRecordedDigest(vault: string, id: string): string | undefined {
-  return readDigestMap()[digestStorageKey(vault, id)]?.d
+  return readDigestMap()[vaultScopedKey(vault, id)]?.d
 }
 
 /** Record (or re-approve) a plugin's digest as the new expected baseline. */
 function setRecordedDigest(vault: string, id: string, version: string, digest: string): void {
   const map = readDigestMap()
-  map[digestStorageKey(vault, id)] = { v: version, d: digest }
+  map[vaultScopedKey(vault, id)] = { v: version, d: digest }
   writeDigestMap(map)
 }
 
@@ -1208,6 +1239,20 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
   // Deterministic registration order for the UI, independent of IO timing.
   preloaded.sort((a, b) => (a.meta?.id ?? a.dirName).localeCompare(b.meta?.id ?? b.dirName))
 
+  // Re-approval for the host's quarantine ("crash-restart-on-unstable"). The host
+  // refuses to activate a plugin marked unstable until it is explicitly reset, and
+  // deactivating cannot do it: markPluginUnstable already removed the plugin from
+  // the host's active map, so `deactivatePlugin` (and therefore
+  // `deactivateVaultPlugins`) returns early and the flag used to survive a vault
+  // switch forever. Loading a vault IS the re-approval the refusal message asks
+  // for — a deliberate user action (open/switch a library, or reload on the
+  // message's advice) — and it only drops the stability quarantine: the plugin is
+  // imported and activated again only if it passes every gate below (revocation,
+  // version policy, consent, trust, integrity).
+  for (const p of preloaded) {
+    if (p.meta) resetUnstableVaultPlugin(p.meta.id)
+  }
+
   // Phase 2 — sequential permission confirmation (user dialog) + integrity
   // verification, THEN the gated import. Collect the consented plugins for
   // concurrent activation.
@@ -1262,7 +1307,7 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
     // declared in the manifest are known pre-import; those are the trust
     // contract. A denial here means the module is never imported.
     const preManifest = { permissions: meta.permissions } as PluginDefinition
-    if (!(await askPluginPermission(meta, preManifest))) {
+    if (!(await askPluginPermission(meta, preManifest, vault))) {
       const declared = collectPluginPermissions(meta, preManifest)
       recordPluginEvent(meta.id, 'permission-denied', `declared permissions: ${declared.join(', ') || 'none'}`, { version: meta.version })
       notifyError(
@@ -1273,7 +1318,10 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
               declared.length > 0
                 ? `Plugin "${meta.name}" requires permission(s): ${declared.join(', ')} but consent was not granted.`
                 : t('plugin.permissionSkipped', { name: meta.name }),
-            recovery: 'Grant the requested permission in the plugin settings, then reload the vault.',
+            // A denial is cached for the session (see permissionDecisions), so
+            // reloading the vault cannot re-ask — only a restart starts a session
+            // where the plugin is asked about again.
+            recovery: 'Restart NekoWrite to be asked again (a denial is remembered for this session), or remove the plugin.',
           }),
         ),
       )
@@ -1358,7 +1406,7 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
     // code that were not in the manifest. Re-verify the merged set so a
     // code-level declaration is still consent-gated. (Top-level has run by now,
     // but we refuse to register/activate the plugin and surface the denial.)
-    if (!(await askPluginPermission(meta, definition))) {
+    if (!(await askPluginPermission(meta, definition, vault))) {
       const declared = collectPluginPermissions(meta, definition)
       recordPluginEvent(meta.id, 'permission-denied', `declared permissions: ${declared.join(', ') || 'none'}`, { version: meta.version })
       notifyError(
@@ -1369,7 +1417,10 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
               declared.length > 0
                 ? `Plugin "${meta.name}" requires permission(s): ${declared.join(', ')} but consent was not granted.`
                 : t('plugin.permissionSkipped', { name: meta.name }),
-            recovery: 'Grant the requested permission in the plugin settings, then reload the vault.',
+            // A denial is cached for the session (see permissionDecisions), so
+            // reloading the vault cannot re-ask — only a restart starts a session
+            // where the plugin is asked about again.
+            recovery: 'Restart NekoWrite to be asked again (a denial is remembered for this session), or remove the plugin.',
           }),
         ),
       )
@@ -1448,13 +1499,13 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
               ? createPluginError('PLUGIN_UNSTABLE', {
                   pluginId: res.id,
                   message: `Plugin "${meta.name}" is in an unstable state and requires re-approval before it can run again.`,
-                  recovery: 'Re-approve the plugin (reset), then reload the vault.',
+                  recovery: 'Re-approve it by reloading the vault: a reload resets the quarantine and retries it.',
                 })
               : code === 'PLUGIN_QUOTA_EXCEEDED'
                 ? createPluginError('PLUGIN_QUOTA_EXCEEDED', {
                     pluginId: res.id,
                     message: `Plugin "${meta.name}" exceeded its session resource quota and was deactivated; re-approve it to run again.`,
-                    recovery: 'Re-approve the plugin to grant a fresh session budget.',
+                    recovery: 'Re-approve it by reloading the vault to grant a fresh session budget.',
                   })
                 : createPluginError('PLUGIN_ACTIVATE_FAILED', {
                     pluginId: res.id,

@@ -18,7 +18,14 @@ import {
   setPluginTrustedSource,
   setPluginTrustPolicy,
 } from './plugins'
-import { buildPluginSignaturePayload, computePluginDigest, createMacEnvelope, createPluginSignature } from '@nekowite/plugin-host'
+import {
+  buildPluginSignaturePayload,
+  computePluginDigest,
+  createMacEnvelope,
+  createPluginSignature,
+  isPluginUnstable,
+  markPluginUnstable,
+} from '@nekowite/plugin-host'
 import type { PluginMeta } from '@nekowite/plugin-host'
 
 const listMock = vi.hoisted(() => vi.fn())
@@ -200,6 +207,80 @@ describe('permission gate during loadVaultPlugins', () => {
     expect(activateMock).toHaveBeenCalledTimes(1)
     expect(getActiveVaultPluginIds()).toEqual(['@scope/q'])
   })
+
+  it('keys the permission verdict by vault so two vaults never share an approval', async () => {
+    readMock.mockResolvedValue(pkg(['fs']))
+    loadMock.mockResolvedValue({ ok: true, id: '@scope/q', meta: META(['fs']), definition: {} })
+    const decider = vi.fn(() => Promise.resolve(true))
+    setPluginPermissionDecider(decider)
+    await loadVaultPlugins('/vaultA')
+    // The first vault asks once (the pre-import gate caches the verdict for the
+    // post-import re-check).
+    expect(decider).toHaveBeenCalledTimes(1)
+    await loadVaultPlugins('/vaultB')
+    // Vault A's approval does NOT authorise the same-id plugin of vault B: the
+    // dangerous capability is asked about again instead of being granted
+    // silently from the other vault's verdict.
+    expect(decider).toHaveBeenCalledTimes(2)
+    expect(getActiveVaultPluginIds()).toEqual(['@scope/q'])
+  })
+
+  it('caches a denial for the session and points at a recovery that works', async () => {
+    readMock.mockResolvedValue(pkg(['fs']))
+    loadMock.mockResolvedValue({ ok: true, id: '@scope/q', meta: META(['fs']), definition: {} })
+    const decider = vi.fn(() => Promise.resolve(false))
+    setPluginPermissionDecider(decider)
+    await loadVaultPlugins('/vault')
+    expect(decider).toHaveBeenCalledTimes(1)
+    expect(activateMock).not.toHaveBeenCalled()
+    expect(getActiveVaultPluginIds()).toEqual([])
+    // A denial is remembered for the whole session (re-prompting on every vault
+    // switch would nag), so the refusal must not tell the user to reload the
+    // vault — that cannot clear a session verdict. A restart can, and does.
+    const msg = String(notifyErrorMock.mock.calls[0]?.[0])
+    expect(msg).toContain('Restart NekoWrite to be asked again')
+    expect(msg).not.toContain('reload the vault')
+
+    // Reloading reuses the cached denial: no silent activation, no re-prompt.
+    notifyErrorMock.mockClear()
+    await loadVaultPlugins('/vault')
+    expect(decider).toHaveBeenCalledTimes(1)
+    expect(getActiveVaultPluginIds()).toEqual([])
+  })
+})
+
+describe('quarantine reset on vault load (crash-restart-on-unstable)', () => {
+  it('re-approves a quarantined plugin when its vault is loaded again', async () => {
+    // The host quarantined the plugin after a hook timeout. `deactivatePlugin`
+    // cannot clear that flag (the plugin left the host's active map when it was
+    // quarantined), so nothing in the app could reset it and the refusal's
+    // "re-approve it, then reload the vault" instruction was impossible to follow.
+    markPluginUnstable('@scope/q', 'hook timeout')
+    expect(isPluginUnstable('@scope/q')).toBe(true)
+
+    await loadVaultPlugins('/vault')
+
+    // Loading the vault IS the user-mediated re-approval: the quarantine is gone
+    // and the plugin runs again.
+    expect(isPluginUnstable('@scope/q')).toBe(false)
+    expect(activateMock).toHaveBeenCalledTimes(1)
+    expect(getActiveVaultPluginIds()).toEqual(['@scope/q'])
+  })
+
+  it('does not let that reset bypass the consent gate', async () => {
+    readMock.mockResolvedValue(pkg(['fs']))
+    loadMock.mockResolvedValue({ ok: true, id: '@scope/q', meta: META(['fs']), definition: {} })
+    setPluginPermissionDecider(() => Promise.resolve(false))
+    markPluginUnstable('@scope/q', 'hook timeout')
+
+    await loadVaultPlugins('/vault')
+
+    // Only the stability flag is dropped: the plugin is still refused by the
+    // permission gate, never imported and never activated.
+    expect(loadMock).not.toHaveBeenCalled()
+    expect(activateMock).not.toHaveBeenCalled()
+    expect(getActiveVaultPluginIds()).toEqual([])
+  })
 })
 
 describe('parallel loading & isolation', () => {
@@ -301,7 +382,7 @@ describe('distinct plugin failure buckets', () => {
     const msg = String(notifyErrorMock.mock.calls[0]?.[0])
     expect(msg).toContain('@scope/q')
     expect(msg).toContain('permission(s)')
-    expect(msg).toContain('Grant the requested permission')
+    expect(msg).toContain('Restart NekoWrite to be asked again')
   })
 })
 
