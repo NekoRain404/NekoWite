@@ -1498,6 +1498,80 @@ fn cleanup_stale_tmp_removes() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// "There is no history" and "the history is unreadable" are different answers.
+///
+/// The list used to swallow every error in the read and return an empty list,
+/// which the panel renders as "no versions for this note" — telling the user
+/// their snapshots are gone when they are only unreadable (a permission change,
+/// a file where the directory should be).
+#[test]
+fn list_history_distinguishes_missing_from_unreadable() {
+    let vault = temp_vault("history-unreadable");
+    let root = vault.to_str().unwrap().to_string();
+    let path = "a.md";
+    write_file(&root, path, "v1", Some(10)).unwrap();
+
+    // No history directory yet: an empty list is the truth.
+    assert!(list_history(&root, path).unwrap().is_empty());
+
+    let encoded = encode_rel_path(path);
+    let history_dir = vault.join(".nekowite").join("history");
+    std::fs::create_dir_all(history_dir.join(&encoded)).unwrap();
+    snapshot_history(&root, path, "old", 10).unwrap();
+    assert!(!list_history(&root, path).unwrap().is_empty());
+
+    // Replace the per-note directory with a file of the same name.
+    std::fs::remove_dir_all(history_dir.join(&encoded)).unwrap();
+    std::fs::write(history_dir.join(&encoded), "not a directory").unwrap();
+
+    let result = list_history(&root, path);
+    assert!(result.is_err(), "unreadable history must not read as empty");
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// Clearing the trash reports what it could not delete instead of pretending
+/// the whole operation failed.
+#[test]
+fn clear_trash_reports_partial_success() {
+    let vault = temp_vault("trash-partial");
+    let root = vault.to_str().unwrap().to_string();
+    for name in ["a.md", "b.md"] {
+        write_file(&root, name, "x", Some(10)).unwrap();
+        delete_file(&root, name).unwrap();
+    }
+    assert_eq!(list_trash(&root).unwrap().len(), 2);
+
+    // Hold one entry open so it cannot be removed on Windows.
+    let trash_root = vault.join(".nekowite-trash");
+    let locked_name = std::fs::read_dir(&trash_root)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .find(|n| !n.is_empty())
+        .unwrap();
+    let handle = std::fs::File::open(trash_root.join(&locked_name)).unwrap();
+
+    let result = clear_trash(&root);
+
+    // Windows does not always block deletion of an open file, so accept either
+    // outcome — but never a silent one: the count and the failures are both
+    // reported.
+    match result {
+        Ok(removed) => {
+            assert_eq!(removed, 2, "everything was removed and reported");
+            assert!(list_trash(&root).unwrap().is_empty());
+        }
+        Err(message) => assert!(
+            message.contains("removed") && message.contains("could not be deleted"),
+            "a partial clear must say what was removed AND what failed: {message}"
+        ),
+    }
+    drop(handle);
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
 /// A `.tmp` file that is not OURS must survive the sweeper.
 ///
 /// The check used to be "does the name end in `.tmp`", which claimed every file

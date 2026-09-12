@@ -83,7 +83,10 @@ export interface FsPort {
    *  everything worked. A rejected promise always means nothing was written. */
   write(vault: string, path: string, content: string, maxHistory?: number): Promise<string | null>
   list(vault: string, dir: string): Promise<FileEntry[]>
-  searchNotes(vault: string, query: string): Promise<FileEntry[]>
+  /** Filename search. `truncated` is true when the backend stopped at its
+   *  result limit (or could not read part of the tree), so a caller can say so
+   *  instead of showing the first matches as if they were all of them. */
+  searchNotes(vault: string, query: string): Promise<{ items: FileEntry[]; truncated: boolean }>
   watch(vault: string): Promise<void>
   deleteFile(vault: string, path: string): Promise<string>
   listTrash(vault: string): Promise<TrashEntry[]>

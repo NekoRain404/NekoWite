@@ -140,7 +140,12 @@ pub fn list_trash(vault_root: &str) -> Result<Vec<TrashEntry>, String> {
     let mut out = Vec::new();
     let rd = match std::fs::read_dir(&trash_root) {
         Ok(rd) => rd,
-        Err(_) => return Ok(out),
+        // No trash directory means nothing was ever deleted — an empty list is
+        // the truth. A directory that exists but cannot be read is not the same
+        // thing: showing "the trash is empty" would tell the user their deleted
+        // notes are gone when they are only unreadable.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
+        Err(e) => return Err(format!("could not read the trash folder: {e}")),
     };
     for entry in rd.flatten() {
         let p = entry.path();
@@ -207,22 +212,39 @@ pub fn clear_trash(vault_root: &str) -> Result<usize, String> {
     if !trash_root.exists() {
         return Ok(0);
     }
-    let rd = std::fs::read_dir(&trash_root).map_err(|e| e.to_string())?;
+    let rd = std::fs::read_dir(&trash_root)
+        .map_err(|e| format!("could not read the trash directory: {e}"))?;
     let mut removed = 0usize;
+    let mut failures: Vec<String> = Vec::new();
     for entry in rd.flatten() {
         let p = entry.path();
         let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if name.is_empty() || name == "." || name == ".." {
             continue;
         }
-        if p.is_dir() {
-            std::fs::remove_dir_all(&p).map_err(|e| e.to_string())?;
+        // Keep going after a failure: one locked file (another program holding
+        // it, a permission problem) used to abort the whole clear and report a
+        // bare error — while everything already deleted stayed deleted, so the
+        // user saw "clear failed" over a half-empty trash with no way to tell
+        // which half.
+        let result = if p.is_dir() {
+            std::fs::remove_dir_all(&p)
         } else {
-            std::fs::remove_file(&p).map_err(|e| e.to_string())?;
+            std::fs::remove_file(&p)
+        };
+        match result {
+            Ok(()) => removed += 1,
+            Err(e) => failures.push(format!("{name}: {e}")),
         }
-        removed += 1;
     }
-    Ok(removed)
+    if failures.is_empty() {
+        return Ok(removed);
+    }
+    Err(format!(
+        "removed {removed} item(s); {} could not be deleted: {}",
+        failures.len(),
+        failures.join("; ")
+    ))
 }
 
 /// Move a trash entry back to its original vault path. If that path is now
