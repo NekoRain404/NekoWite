@@ -147,12 +147,12 @@ describe('createVaultIndexCoordinator (memory fs gateway, no Vue)', () => {
     await h.coordinator.indexVault('/vault')
     // Change file a.md on disk, then emit a modify event.
     await h.gateway.write('/vault', '/vault/a.md', '---\ntitle: 更新后\n---\nnew')
-    h.emit({ path: '/vault/a.md', kind: 'modify' })
+    h.emit({ path: '/vault/a.md', kind: 'modified' })
     await vi.waitFor(() => {
       expect(h.state.notes.find((n) => n.path === '/vault/a.md')?.title).toBe('更新后')
     })
     // Remove b.md on disk and emit remove.
-    h.emit({ path: '/vault/b.md', kind: 'remove' })
+    h.emit({ path: '/vault/b.md', kind: 'removed' })
     await vi.waitFor(() => {
       expect(h.state.notes.map((n) => n.path)).toEqual(['/vault/a.md'])
     })
@@ -166,9 +166,9 @@ describe('createVaultIndexCoordinator (memory fs gateway, no Vue)', () => {
     await h.coordinator.indexVault('/vault')
     const readsBefore = h.readCount()
     await h.gateway.write('/vault', '/vault/a.md', '---\ntitle: 第一版\n---\none')
-    h.emit({ path: '/vault/a.md', kind: 'modify' })
+    h.emit({ path: '/vault/a.md', kind: 'modified' })
     await h.gateway.write('/vault', '/vault/a.md', '---\ntitle: 最终版\n---\ntwo')
-    h.emit({ path: '/vault/a.md', kind: 'modify' })
+    h.emit({ path: '/vault/a.md', kind: 'modified' })
     await vi.waitFor(() => {
       expect(h.state.notes.find((n) => n.path === '/vault/a.md')?.title).toBe('最终版')
     })

@@ -132,6 +132,7 @@ describe('createDesktopRuntime', () => {
     h.loadVaultPlugins.mockResolvedValue(undefined)
     h.deactivateVaultPlugins.mockImplementation(() => {})
     h.gateways.fs.registerVault.mockResolvedValue(undefined)
+    h.gateways.fs.watch.mockResolvedValue(undefined)
     h.windowTracking.restore.mockResolvedValue(undefined)
     h.windowTracking.start.mockResolvedValue(undefined)
     h.requestUntitledVaultSwitch.mockResolvedValue('save')
@@ -157,6 +158,7 @@ describe('createDesktopRuntime', () => {
       await vi.waitFor(() => expect(h.tabsMock.restoreSession).toHaveBeenCalled())
 
       expect(h.tabsMock.setVault).toHaveBeenCalledWith('/vault')
+      expect(h.gateways.fs.watch).toHaveBeenCalledWith('/vault')
       expect(runtime.vaultPath.value).toBe('/vault')
       expect(h.windowTracking.start).toHaveBeenCalled()
     })
@@ -181,6 +183,9 @@ describe('createDesktopRuntime', () => {
       expect(runtime.vaultPath.value).toBe('/vault')
       expect(h.tabsMock.closeAll).toHaveBeenCalled()
       expect(h.tabsMock.setVault).toHaveBeenCalledWith('/vault')
+      // The watcher is armed by the runtime, not by a panel: external edits must
+      // be noticed even when only the Notes panel is mounted.
+      expect(h.gateways.fs.watch).toHaveBeenCalledWith('/vault')
       expect(h.vaultSessionMock.detachVault).toHaveBeenCalled()
       expect(h.deactivateVaultPlugins).toHaveBeenCalled()
       expect(h.vaultSessionMock.indexVault).toHaveBeenCalledWith('/vault')
@@ -224,6 +229,10 @@ describe('createDesktopRuntime', () => {
       expect(h.refsMock.loadVault).toHaveBeenCalledTimes(1)
       expect(h.tmpRecovery.gc).toHaveBeenCalledTimes(1)
       expect(h.tmpRecovery.scan).toHaveBeenCalledTimes(1)
+
+      // The watcher was never armed for the rejected vault.
+      expect(h.gateways.fs.watch).toHaveBeenCalledTimes(1)
+      expect(h.gateways.fs.watch).toHaveBeenCalledWith('/current')
 
       // A clear, recoverable error is surfaced, and the bad path is NOT persisted.
       expect(h.notifyError).toHaveBeenCalledWith('could not open the vault (missing/permission): /bad')

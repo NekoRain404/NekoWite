@@ -215,9 +215,12 @@ describe('GraphPanel', () => {
     tabs.setVault('/vault-full')
     mountPanel()
     // Full vault default: every node is read and rendered, no truncation notice.
-    await vi.waitFor(() => expect(readMock.mock.calls.length).toBe(210))
+    // The read count is satisfied when the last read is *issued*, which is one
+    // tick before `rebuild` clears its loading flag (it still has to relayout),
+    // so wait for the settled header instead of the call count.
+    await vi.waitFor(() => expect(host!.textContent).toContain('210 篇'), { timeout: 5000 })
+    expect(readMock.mock.calls.length).toBe(210)
     expect(host!.textContent).not.toContain('仅展示前')
-    expect(host!.textContent).toContain('210 篇')
   })
 
   it('honours vaultReady=false and skips loading', async () => {

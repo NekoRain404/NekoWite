@@ -20,9 +20,18 @@ export interface FileEntry {
   is_mdx: boolean
 }
 
+/**
+ * The watcher vocabulary, spelled exactly as the Rust `watch_folder` command
+ * emits it. This used to be a bare `string`, which let consumers test for
+ * `'remove'` while the backend sent `'removed'`: the branch never ran and a
+ * deleted note kept its cache and its persistent index entry. A union makes a
+ * mismatched literal a compile error instead of a silent no-op.
+ */
+export type FsChangeKind = 'created' | 'modified' | 'removed'
+
 export interface FsChangeEvent {
   path: string
-  kind: string
+  kind: FsChangeKind
 }
 
 export interface TrashEntry {

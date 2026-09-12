@@ -245,11 +245,11 @@ describe('memoryFsGateway event simulation', () => {
     const fs = createMemoryFsGateway({}, { events })
     const received: FsChangeEvent[] = []
     await fs.onFsChange((e) => received.push(e))
-    await events.emit('fs-change', { path: 'a.md', kind: 'create' })
-    await events.emit('fs-change', { path: 'b.md', kind: 'remove' })
+    await events.emit('fs-change', { path: 'a.md', kind: 'created' })
+    await events.emit('fs-change', { path: 'b.md', kind: 'removed' })
     expect(received).toEqual([
-      { path: 'a.md', kind: 'create' },
-      { path: 'b.md', kind: 'remove' },
+      { path: 'a.md', kind: 'created' },
+      { path: 'b.md', kind: 'removed' },
     ])
   })
 
@@ -260,9 +260,9 @@ describe('memoryFsGateway event simulation', () => {
     const off = await fs.onFsChange(() => {
       count++
     })
-    await events.emit('fs-change', { path: 'a.md', kind: 'create' })
+    await events.emit('fs-change', { path: 'a.md', kind: 'created' })
     off()
-    await events.emit('fs-change', { path: 'b.md', kind: 'remove' })
+    await events.emit('fs-change', { path: 'b.md', kind: 'removed' })
     expect(count).toBe(1)
   })
 })

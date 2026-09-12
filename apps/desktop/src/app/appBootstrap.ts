@@ -154,6 +154,17 @@ export function createDesktopRuntime(): DesktopRuntime {
     // would route every save to "path escapes vault" errors. Start fresh.
     tabs.closeAll()
     tabs.setVault(path)
+    // Arm the OS-level folder watcher HERE, at the app level. It used to be armed
+    // only by the file tree, which exists while the Folders panel is shown — so a
+    // vault opened through the default Notes panel was not watched at all: an
+    // external edit was never noticed and the next save silently overwrote it.
+    // The backend keeps exactly one managed watcher and replaces it on each call,
+    // so re-arming (e.g. from the tree) is idempotent rather than additive.
+    void fsPort.watch(path).catch((e) => {
+      // External-change detection silently stops working if this fails, so make
+      // the failure visible in the console instead of swallowing it.
+      console.error("[NekoWrite] could not watch the vault: external edits will not be detected", e)
+    })
     // The vault is now committed (and authorized with the backend), so every
     // attachment path finally resolves. Drop any resolution that ran before
     // this point — the editor panel can mount and render before the vault is

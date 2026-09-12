@@ -233,7 +233,7 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
     generation: number,
   ): Promise<void> {
     if (currentVault !== v || mdChangeSeq.get(path) !== generation) return
-    if (kind === 'remove') {
+    if (kind === 'removed') {
       notes = notes.filter((n) => n.path !== path)
       deps.cache.delete(path)
       noteStatCache.delete(path)
