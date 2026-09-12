@@ -325,6 +325,40 @@ git commit -m "feat(appearance): add crimson palette and four accents"
 - **验证**：desktop 单元 1224、editor-core 585、plugin-host 100、Rust 148、Playwright 137 全绿；`typecheck`/`lint`/`clippy -D warnings` 全绿；性能夹具全项在预算内。
 - **打包**：`bash scripts/package-win.sh` → `release/nekowite_0.1.0_x64.exe`，SHA-256 `8d3a7ecd05a07dfde3dad53901fbc4e263e9ab55ec3ff3cbdb958ca243b09c3c`。
 
+### 2026-09-13（第十九轮）
+
+第四批独立审计（四个互不重叠的范围）交回后，本轮把其中**已核实**的部分修完并逐条在真机上复验。审计共交回 40 余条，下面只列已修并有测试钉住的；未修的仍在待办里。
+
+**数据安全**
+
+- **重命名任何文件都会破坏回收站**（P0，Rust）：`move_trash_key` 用 `name.strip_prefix(&from_key).unwrap_or("")` 匹配，再判「后缀为空即精确匹配」——`strip_prefix` 在不匹配时返回 `None`，`unwrap_or("")` 把「与我无关」变成了「就是我」，于是回收站里**每一条**都会被改名成新 key；两条落在同一毫秒时 `fs::rename`（Windows 上会覆盖）会直接销毁其中一条的内容。实测：回收站放 a/b/c 三条，重命名 `keep.md` 后只剩两条同名的 `keep2.md*`，`CONTENT-b.md` 永久消失。现在按**解码后的路径**匹配（顺带让 legacy `__` 编码的条目第一次能跟随重命名），碰撞按 13 位时间戳递增而不是拼接（保持 `strip_collision_suffix` 能识别的时间戳形状，且不会落在已占用的名字上）。
+- **历史快照失败会连带让保存失败**（P1）：`write_file` 里的 `snapshot_history(...)?` 把可选部件当成前置条件——历史目录不可写（权限、占满、同名文件占位）时**已有笔记完全存不了盘**，而且前端只看到一句裸 OS 文案。快照改为尽力而为：`write_file` 现在返回 `Result<Option<String>, String>`，`Ok(Some(warning))` 表示「正文已写盘，另一件事没成」，窗口把它作为提示显示。同时给 `hard_link` 加了回退——FAT32/exFAT 卷根本不支持硬链接，那种盘上「新建能存、改已有必失败」的分裂现象现在没有了。
+- **`.tmp` 清扫器会删掉用户自己的 `.tmp` 文件**（P2）：判定用的是「名字以 `.tmp` 结尾」，于是笔记文件夹里的 `draft.tmp` 会被下一次保存**永久删除**（不进回收站、没有历史快照，无法恢复）。现在只回收本程序自己写的形状：`.<名字>.<纯数字 nonce>.tmp`。
+- **「关闭全部」不保存也不提示**（P1）：`closeAll` 直接循环 `removeTab`，未保存的编辑与未命名文档一次点击全没。现在与关闭单个标签同一套规则：先 flush 有路径的、再对未命名脏文档弹「保存/丢弃」，保存失败即中止；vault 切换走新的非交互 `removeAllTabs`（它已经 flush+提示过，再问一次是另一个 bug）。
+- **外部重命名文件夹后，标签页的未保存文字被标成"已保存"**（P1，我上一轮引入的）：`detachMissingPath` 无条件 `savedContent = content; dirty = false`，于是以 `dirty` 为准的每一道保护（关闭、切 vault、关窗口、自动保存）全部跳过它，而提示语还写着「内容仍在这里」。现在 detach 后仍有文字的标签保持 dirty（空标签保持干净，免得对着白纸弹窗），自然走「另存为」。
+- **源码模式跨文档撤销会把上一篇删掉的文字写进当前笔记**（P1）：`setText` 的 `addToHistory.of(false)` 只让整篇替换不进历史，CodeMirror 并不清空 undo 栈，旧文档的删除类事件被位置映射后仍可执行。实测「A 里删掉 `note ` → 切到 B → Ctrl+Z」得到 `BBB note B bodynote `，而 SourcePane 的 50ms debounce 会把它发布给 `tab.content` 并自动落盘。现在 `history()` 放进 `Compartment`，换文档时先移除再重新加入（实测这是唯一能真正清空的做法，直接 reconfigure 无效）。
+
+**外部改动检测**
+
+- **事件合并丢掉了突发里的最后一次修改**（P2）：判定是前沿触发——窗口内第一笔发出、后续丢弃且**不刷新时间戳**。两次相隔 50ms 的外部写入只会报第一笔，打开中的笔记 reload 到已经过时的内容，之后不再有事件纠正，用户接着保存就覆盖了更新的文本。现在被丢弃的事件会被**挂起**，突发安静后按尾沿重新发出，因此订阅者看到的永远是最后一笔。
+- **隐藏目录过滤作用在绝对路径上**（P2）：vault 自己放在点开头目录（`~/.notes`）时，每一个事件的绝对路径都含隐藏段，于是**全部被丢**——应用以为在监听，实际外部改动永远不出现。过滤改为相对于监听根。
+- **watcher 出错被静默丢弃**（P2）：notify 报错（队列溢出、句柄耗尽）意味着事件已经在丢，而前端毫无察觉。现在会发出 `kind: "resync"`，`externalDocSync` 收到后逐个复核打开中的标签页。
+
+**AI**
+
+- **流内错误帧被忽略**（P2）：服务商在 200 响应里发 `{"error":…}`（OpenAI 兼容）或 `{"type":"error",…}`（Anthropic）时，旧解析器返回 `None`——半截答案被当作完整回答接受，`ai-done` 照发。现在会报错并结束请求。
+- **`data: [DONE]` 不结束循环**（P2）：答案其实已经完整，但循环只认 EOF；服务端若在 `[DONE]` 后保持连接，用户要等到 120s 读超时，然后一个**已经成功**的请求被报成失败。现在 `[DONE]`即结束。
+- **`finish_reason` 从未读取**（P2）：`length`（预算耗尽）与 `content_filter` 与正常完成无法区分。现在会明确报出原因与要改的设置，而不是把截断的片段当完整答案。
+- **取消不能立刻生效**（P2）：取消只是摘掉集合里的 id，而循环只在两次 `stream.next()` 之间看它——推理模型沉默数十秒期间，被取消的请求仍占着连接、并发槽位并继续计费，连续取消几次就会撞上「AI 请求过多」。现在每个请求带一个 `CancellationToken`，读循环与它赛跑，取消立刻放下响应体。被取消的流也不再 flush 尾部、不再发 `ai-done`。
+- **主线程阻塞**（P2）：保存 API Key、设置/输入主密码都是同步 `#[tauri::command]`，跑在主线程——19 MiB 的 Argon2id 加 Stronghold 落盘期间窗口完全冻结。改为 `async`，与 `fs.rs` 一致。
+
+**存储与界面**
+
+- **只改大小写的重命名永远失败**（P2）：`note.md → Note.md` 被拒，提示还写着「target already exists: Note.md」——用户请求的名字被告知已存在。现在允许（Windows 需要经由临时名两步完成，实测直接 rename 会"成功"但磁盘上还是原名），并且返回**新的拼写**给调用方（解析发生在移动前，直接复用会拿到旧大小写）。
+- **插件的"安全策略"提示在每次启动时弹出**（P2）：即使 vault 里根本没有 `plugins/` 目录，也会显示一句英文安全提示（还会往每个 vault 写一条插件审计记录）。现在先列目录：没有插件就什么都不说——功能没被请求过，不是静默失败。提示文案也接进了 i18n（此前是硬编码英文）。
+
+**验证**：Rust 156、desktop 1313、editor-core 585、plugin-host 100、Playwright 全绿；`typecheck`/`lint`/`clippy -D warnings` 全绿。真机（CDP 驱动 dev 构建）7/7：回收站三条在无关重命名后名字与内容都完好、大小写重命名成功并回报新名字、用户 `.tmp` 在保存后仍在、历史被占位时保存成功且带回警告、正文确实落盘、无插件 vault 启动后没有任何提示。
+
 ## 验证与交付
 
 ```bash
