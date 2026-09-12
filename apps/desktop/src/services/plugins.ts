@@ -191,8 +191,16 @@ function setupAuditFilePersistence(vault: string): AuditLogFileSink | null {
       }
     },
     read: () => (fsService as { read: (v: string, p: string) => Promise<string> }).read(vault, rel),
+    // The audit sink writes its own file and has nothing to do with note
+    // history, so the warning channel (which exists for a failed history
+    // snapshot) is dropped here — with the cast saying so, rather than an
+    // incompatible signature pretending the two are the same call.
     write: (_p, content) =>
-      (fsService as { write: (v: string, p: string, c: string) => Promise<void> }).write(vault, rel, content),
+      (
+        fsService as { write: (v: string, p: string, c: string) => Promise<unknown> }
+      )
+        .write(vault, rel, content)
+        .then(() => undefined),
   }
   setAuditLogFileSink(sink)
   void loadAuditLogFromFile()

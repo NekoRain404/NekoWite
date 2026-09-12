@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createMemoryFsGateway } from '../../../platform/gateways/memory'
+import { ATTACHMENTS_DIR } from '../../../services/attachments'
 import { ContentCache } from '../../../services/contentCache'
 import { clearIndex, loadIndex, saveIndex, type AsyncIndexStorage } from '../../../services/searchIndex'
 import type { NoteSummary } from '../../../services/noteMeta'
@@ -24,6 +25,9 @@ interface CoState {
   indexing: boolean
   truncated: boolean
   attachmentCount: number
+  /** Every count the coordinator published, in order — the C7 test asserts that
+   *  nothing is written after the current vault's own count has landed. */
+  attachmentWrites: number[]
   indexState: string
   favorites: string[]
   recents: string[]
@@ -41,6 +45,9 @@ function makeCoordinator(opts: {
   seed: Record<string, string>
   fileIndex: { get: (v: string) => Promise<string[]>; isTruncated: (v: string) => boolean; invalidate: (v: string) => void }
   holdFirstFsChange?: () => Promise<() => void>
+  /** Lets a test hold one vault's attachment-tree read, so a switch can happen
+   *  while that vault's badge count is still being computed. */
+  holdAttachmentList?: (vault: string, dir: string) => Promise<void>
 }): CoordinatorHarness {
   const gateway = createMemoryFsGateway(opts.seed)
   const cache = new ContentCache()
@@ -53,6 +60,7 @@ function makeCoordinator(opts: {
     indexing: false,
     truncated: false,
     attachmentCount: 0,
+    attachmentWrites: [],
     indexState: 'idle',
     favorites: [],
     recents: [],
@@ -64,7 +72,10 @@ function makeCoordinator(opts: {
   const coordinator = createVaultIndexCoordinator({
     read,
     stat: (v, p) => gateway.stat(v, p),
-    list: (v, d) => gateway.list(v, d),
+    list: async (v, d) => {
+      if (opts.holdAttachmentList && d === ATTACHMENTS_DIR) await opts.holdAttachmentList(v, d)
+      return gateway.list(v, d)
+    },
     onFsChange: (cb) => {
       fsCalls += 1
       if (opts.holdFirstFsChange && fsCalls === 1) return opts.holdFirstFsChange()
@@ -89,6 +100,7 @@ function makeCoordinator(opts: {
     },
     onAttachmentCount: (n) => {
       state.attachmentCount = n
+      state.attachmentWrites.push(n)
     },
     onNotesPruned: (favs, recents) => {
       state.favorites = favs
@@ -226,6 +238,60 @@ describe('createVaultIndexCoordinator (memory fs gateway, no Vue)', () => {
     expect(h.coordinator.indexCandidatePaths('无关')).toEqual(['/vault/sub/b.md'])
     const entry = h.coordinator.indexEntryFor('/vault/a.md')
     expect(entry?.text).toContain('图论')
+  })
+})
+
+// C7: the badge refresh is debounced and then reads the whole attachment tree
+// (several awaits). A vault switch landing inside that window used to write the
+// PREVIOUS vault's count into the new vault's badge: the debounced call passed no
+// generation, and the "no generation" branch of the guard wrote unconditionally.
+describe('attachment badge', () => {
+  it('does not write a count computed for the previous vault after a switch', async () => {
+    let hold = false
+    let release: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const h = makeCoordinator({
+      seed: {
+        '/vaultA/a.md': '# A',
+        '/vaultB/b.md': '# B',
+        // The memory gateway keys listings by path, so the attachment tree is
+        // shared here; the assertion below counts WRITES, which is what the bug
+        // was about (a previous vault's count landing after the switch).
+        'attachments/one.png': 'x',
+      },
+      fileIndex: {
+        get: (v) => Promise.resolve(v === '/vaultB' ? ['/vaultB/b.md'] : ['/vaultA/a.md']),
+        isTruncated: () => false,
+        invalidate: () => {},
+      },
+      // Only the PREVIOUS vault's read is held: the new vault's own count must
+      // land normally so the assertion can prove nothing follows it.
+      holdAttachmentList: (v) => (hold && v === '/vaultA' ? held : Promise.resolve()),
+    })
+    const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 10))
+
+    await h.coordinator.indexVault('/vaultA')
+    await flush()
+
+    // A new image lands in A: the badge refresh is debounced (200ms) and then
+    // starts reading A's attachment tree.
+    hold = true
+    h.emit({ path: '/vaultA/attachments/three.png', kind: 'created' })
+    await new Promise((r) => setTimeout(r, 250))
+
+    // The vault switches while that count is still in flight, and the new vault
+    // publishes its own badge count.
+    await h.coordinator.indexVault('/vaultB')
+    await flush()
+    const writesBefore = h.state.attachmentWrites.length
+
+    // Only now does the previous vault's read resolve: its count belongs to the
+    // vault that was left, so it must not be published into the new one.
+    release()
+    await flush()
+    expect(h.state.attachmentWrites.slice(writesBefore)).toEqual([])
   })
 })
 

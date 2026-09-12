@@ -3,6 +3,21 @@ import { createPinia, setActivePinia } from 'pinia'
 import type { NoteSummary } from '../services/noteMeta'
 import { useDocumentListStore } from './documentList'
 
+/**
+ * Run `body` with `window.localStorage` replaced by `descriptor`, then put the
+ * original property back (the suite shares one Storage instance).
+ */
+function withStorageDescriptor(descriptor: PropertyDescriptor, body: () => void): void {
+  const original = Object.getOwnPropertyDescriptor(window, 'localStorage')
+  if (!original) throw new Error('the test setup did not install a localStorage')
+  Object.defineProperty(window, 'localStorage', descriptor)
+  try {
+    body()
+  } finally {
+    Object.defineProperty(window, 'localStorage', original)
+  }
+}
+
 function note(path: string, over: Partial<NoteSummary> = {}): NoteSummary {
   return {
     path,
@@ -71,16 +86,125 @@ describe('useDocumentListStore', () => {
 
   it('persists favorites/recents and prunes vanished files', () => {
     const store = useDocumentListStore()
+    store.resetForVault('/vault')
     store.toggleFavorite('/vault/a.md')
     store.touchRecent('/vault/b.md')
     expect(store.isFavorite('/vault/a.md')).toBe(true)
+    // Storage is bucketed per vault root, so one vault's list can never be
+    // mistaken for another's.
     const saved = JSON.parse(localStorage.getItem('nekowite.library') ?? '{}')
-    expect(saved.favorites).toEqual(['/vault/a.md'])
-    expect(saved.recents).toEqual(['/vault/b.md'])
+    expect(saved['/vault'].favorites).toEqual(['/vault/a.md'])
+    expect(saved['/vault'].recents).toEqual(['/vault/b.md'])
     // Prune a vanished file via the coordinator callback.
     store.setFavoritesRecents([], ['/vault/b.md'])
     expect(store.favorites).toEqual([])
-    expect(JSON.parse(localStorage.getItem('nekowite.library') ?? '{}').favorites).toEqual([])
+    expect(JSON.parse(localStorage.getItem('nekowite.library') ?? '{}')['/vault'].favorites).toEqual([])
+  })
+
+  // C2: favorites/recents used to share ONE persisted pair for the whole app
+  // while the "prune what is gone" callback pruned it against the CURRENT vault.
+  // Switching vaults therefore deleted the previous vault's favorites for good:
+  // its paths were not in the new vault's file list, so they were filtered out
+  // of the only copy that existed.
+  it('keeps every vault’s favorites/recents in its own bucket across a switch', () => {
+    const store = useDocumentListStore()
+    store.resetForVault('/vaultA')
+    store.toggleFavorite('/vaultA/a.md')
+    store.touchRecent('/vaultA/a.md')
+
+    // Switch to another vault: it starts from its own (empty) list.
+    store.resetForVault('/vaultB')
+    expect(store.favorites).toEqual([])
+    // The re-index of B finds none of its own files gone-and-favorited, and even
+    // an explicit prune of the current bucket must not touch A's entries.
+    store.setFavoritesRecents([], [])
+    expect(store.favorites).toEqual([])
+
+    // Back to A: its entries are still there.
+    store.resetForVault('/vaultA')
+    expect(store.favorites).toEqual(['/vaultA/a.md'])
+    expect(store.recents).toEqual(['/vaultA/a.md'])
+
+    // A relaunch (fresh store) reads the same buckets back.
+    setActivePinia(createPinia())
+    const reopened = useDocumentListStore()
+    reopened.resetForVault('/vaultA')
+    expect(reopened.favorites).toEqual(['/vaultA/a.md'])
+    expect(reopened.recents).toEqual(['/vaultA/a.md'])
+  })
+
+  // C2 migration: the pre-bucket format stored one `{ favorites, recents }` pair
+  // for the whole app. It must be moved into the vault it belongs to, not dropped.
+  it('migrates the legacy single-bucket favorites into the recorded vault', () => {
+    localStorage.setItem(
+      'nekowite.library',
+      JSON.stringify({ favorites: ['/vault/a.md'], recents: ['/vault/b.md'] }),
+    )
+    // The old build recorded the vault it had open (appBootstrap owns this key).
+    localStorage.setItem('nekowite.vault', '/vault')
+    const store = useDocumentListStore()
+    // Adopted on the first read, so the user's favorites are visible again.
+    expect(store.favorites).toEqual(['/vault/a.md'])
+    expect(store.recents).toEqual(['/vault/b.md'])
+    // ...and they survive another vault's re-index prune round-trip.
+    store.resetForVault('/other')
+    store.setFavoritesRecents([], [])
+    store.resetForVault('/vault')
+    expect(store.favorites).toEqual(['/vault/a.md'])
+    // The legacy blob is gone from storage: it was moved, not duplicated.
+    const saved = JSON.parse(localStorage.getItem('nekowite.library') ?? '{}')
+    expect(saved['/other']).toEqual({ favorites: [], recents: [] })
+    expect(saved.__adopted__).toBeUndefined()
+  })
+
+  it('adopts a legacy blob with no recorded vault into the first vault that opens', () => {
+    localStorage.setItem('nekowite.library', JSON.stringify({ favorites: ['/legacy/only.md'] }))
+    const store = useDocumentListStore()
+    expect(store.favorites).toEqual([])
+    store.resetForVault('/vaultA')
+    expect(store.favorites).toEqual(['/legacy/only.md'])
+    // Moved, not copied: a second vault must not inherit the first vault's list.
+    store.resetForVault('/vaultB')
+    expect(store.favorites).toEqual([])
+  })
+
+  // C3: the store is built while the shell mounts, so an unguarded storage access
+  // is not cosmetic — it aborts the render (white screen), and a quota error on
+  // the write surfaces at the click that toggled the favorite.
+  it('constructs and toggles favorites when the storage getter throws', () => {
+    withStorageDescriptor(
+      {
+        configurable: true,
+        get() {
+          throw new Error('storage disabled')
+        },
+      },
+      () => {
+        expect(() => useDocumentListStore()).not.toThrow()
+        const store = useDocumentListStore()
+        store.resetForVault('/vault')
+        expect(() => store.toggleFavorite('/vault/a.md')).not.toThrow()
+        expect(store.isFavorite('/vault/a.md')).toBe(true)
+        expect(() => store.touchRecent('/vault/b.md')).not.toThrow()
+        expect(store.recents).toEqual(['/vault/b.md'])
+      },
+    )
+  })
+
+  it('swallows a quota error from the write', () => {
+    const store = useDocumentListStore()
+    store.resetForVault('/vault')
+    const storage = window.localStorage
+    const originalSetItem = storage.setItem
+    storage.setItem = () => {
+      throw new Error('QuotaExceededError')
+    }
+    try {
+      expect(() => store.toggleFavorite('/vault/a.md')).not.toThrow()
+      expect(store.isFavorite('/vault/a.md')).toBe(true)
+    } finally {
+      storage.setItem = originalSetItem
+    }
   })
 
   it('setFilter resets listView/panelMode to notes; resetForVault clears the session', () => {

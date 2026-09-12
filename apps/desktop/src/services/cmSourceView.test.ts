@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { EditorState } from '@codemirror/state'
+import { history } from '@codemirror/commands'
 import { keymap } from '@codemirror/view'
 import { sourceExtensions } from './cmSourceView'
 
 type Binding = { key?: string; mac?: string; run?: (view: never) => boolean }
 
 function bindings(doc = 'alpha'): { state: EditorState; bindings: Binding[] } {
-  const state = EditorState.create({ doc, extensions: sourceExtensions() })
+  // sourceExtensions() no longer carries the history field: the host owns it in
+  // its own compartment (so a document swap can rebuild the stack). The undo/redo
+  // bindings below only work against a stack, so install one the way the host does.
+  const state = EditorState.create({ doc, extensions: [...sourceExtensions(), history()] })
   return { state, bindings: state.facet(keymap).flat() as unknown as Binding[] }
 }
 

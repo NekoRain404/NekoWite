@@ -10,6 +10,7 @@ import { findReferencedTmpPaths } from '../services/tmpReferences'
 import { vaultFileIndex } from '../services/vaultFiles'
 import { t } from '../i18n'
 import { setupWindowTracking, type WindowTracking } from './windowState'
+import { persistence } from '../services/persistence'
 import { createTmpRecovery, requestUntitledVaultSwitch } from './recoveryClosedLoop'
 import { setActiveEditor } from '@nekowite/plugin-host'
 import { editorBridge } from '../services/editorBridge'
@@ -189,7 +190,10 @@ export function createDesktopRuntime(): DesktopRuntime {
     // the chosen vault only now that the switch is actually committed, so a failed
     // open never leaves a bad path behind to retry on the next launch.
     vaultPath.value = path
-    localStorage.setItem(VAULT_LS_KEY, path)
+    // Through the persistence port: a disabled/quota-full storage throws on
+    // `localStorage.setItem` and would abort the switch AFTER the vault was
+    // registered and the tabs were closed — an unrecoverable half-switch.
+    persistence.set(VAULT_LS_KEY, path)
     // Open tabs keep absolute paths from the previous vault — leaving them open
     // would route every save to "path escapes vault" errors. Start fresh. This
     // uses the non-interactive variant on purpose: every dirty tab was flushed
@@ -284,7 +288,10 @@ export function createDesktopRuntime(): DesktopRuntime {
 
   async function runStartup(): Promise<void> {
     try {
-      const saved = localStorage.getItem(VAULT_LS_KEY)
+      // Through the persistence port: a webview with storage disabled throws on
+      // the GETTER here, and an unguarded read meant startup failed before the
+      // first render (no vault, no session, white screen).
+      const saved = persistence.get(VAULT_LS_KEY)
       // Apply the persisted vault BEFORE restoring the session. The switch is
       // awaited (not fire-and-forget) so restoreSession sees the correct vault and
       // the previous tab set is closed first — it can never restore into the wrong

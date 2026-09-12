@@ -208,6 +208,9 @@ export function createMemoryFsGateway(
       }
       files.set(path, content)
       modified.set(path, Date.now())
+      // The in-memory gateway has no separate history backend that could fail,
+      // so there is never a warning to report.
+      return null
     },
     stat: async (_vault, path) => {
       const content = files.get(path)

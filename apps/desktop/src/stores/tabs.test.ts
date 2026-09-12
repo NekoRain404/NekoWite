@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { registerLifecycleHook, setActiveEditor } from '@nekowite/plugin-host'
 import type { PluginContext } from '@nekowite/plugin-host'
-import { consumeSuppressReapply, shouldSuppressReapply } from '../services/suppressReapply'
+import { consumeSuppressReapply, pruneSuppressReapply, shouldSuppressReapply } from '../services/suppressReapply'
 import { onNotify, onRecovery } from '../services/errors'
 import type { RecoveryPrompt } from '../services/errors'
 import { useTabsStore } from './tabs'
@@ -138,7 +138,7 @@ describe('lifecycle broadcast from tabs store', () => {
   afterEach(() => {
     for (const un of unregister.splice(0)) un()
     setActiveEditor(null)
-    consumeSuppressReapply()
+    pruneSuppressReapply(null)
   })
 
   it('onSave rewrite changes what is written to disk', async () => {
@@ -204,9 +204,55 @@ describe('lifecycle broadcast from tabs store', () => {
     readMock.mockResolvedValue('abc')
     await s.openTab('/vault/a.md')
     await s.saveActive()
-    expect(shouldSuppressReapply()).toBe(true)
-    expect(consumeSuppressReapply()).toBe(true)
-    expect(shouldSuppressReapply()).toBe(false)
+    const tab = s.tabs[0]
+    expect(shouldSuppressReapply(tab.id)).toBe(true)
+    expect(consumeSuppressReapply(tab.id)).toBe(true)
+    expect(shouldSuppressReapply(tab.id)).toBe(false)
+  })
+
+  // C1: a background save (autosave timer / flushDirty / closing a tab) used to
+  // arm a module-wide flag that only the ACTIVE tab's next content change could
+  // consume, so it swallowed the switch-to-another-tab content change instead:
+  // the editor kept the previous note's text for the new note, and the next
+  // keystroke published that text into the new tab and autosaved it over the new
+  // note's file.
+  it('keeps the arm on the saved tab so a background save cannot swallow the active tab', async () => {
+    unregister.push(registerLifecycleHook('test', 'onSave', (_c, _e, content) => `${content}!`, ctx))
+    const s = useTabsStore()
+    s.setVault('/vault')
+    readMock.mockResolvedValue('aaa')
+    await s.openTab('/vault/a.md')
+    const tabA = s.tabs[0]
+    readMock.mockResolvedValue('bbb')
+    await s.openTab('/vault/b.md')
+    const tabB = s.tabs[1]
+    expect(s.activeId).toBe(tabB.id)
+
+    // The background tab A is saved (its autosave timer fired, or a vault switch
+    // flushed it) and the onSave plugin rewrote its text.
+    await s.saveTab(tabA.id)
+    expect(tabA.content).toBe('aaa!')
+    expect(shouldSuppressReapply(tabA.id)).toBe(true)
+    // B is the tab the user is looking at: its content change must still re-apply
+    // or the editor would keep showing A's text under B's tab.
+    expect(shouldSuppressReapply(tabB.id)).toBe(false)
+    expect(consumeSuppressReapply(tabB.id)).toBe(false)
+  })
+
+  it('drops an arm left behind by a tab the user switched away from', async () => {
+    unregister.push(registerLifecycleHook('test', 'onSave', (_c, _e, content) => `${content}!`, ctx))
+    const s = useTabsStore()
+    s.setVault('/vault')
+    readMock.mockResolvedValue('aaa')
+    await s.openTab('/vault/a.md')
+    const tabA = s.tabs[0]
+    await s.saveActive()
+    expect(shouldSuppressReapply(tabA.id)).toBe(true)
+    readMock.mockResolvedValue('bbb')
+    await s.openTab('/vault/b.md')
+    // Only the active tab's content watcher runs, so an arm left on A could never
+    // be consumed — it would just wait to swallow B's next content change.
+    expect(consumeSuppressReapply(tabA.id)).toBe(false)
   })
 
   it('does not emit onSaved when the write fails', async () => {

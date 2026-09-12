@@ -1,14 +1,19 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { emitLifecycle } from '@nekowite/plugin-host'
+import { persistence } from '../services/persistence'
 
 export type ViewMode = 'source' | 'rendered' | 'split'
 
 const VIEW_MODES: ViewMode[] = ['source', 'rendered', 'split']
 const LS_DEFAULT_MODE = 'nekowite.view.defaultMode'
 
+/** Read through the persistence port, never `localStorage` directly: a webview
+ *  with storage disabled throws on the GETTER, and a store built at mount time
+ *  would take the whole shell down with it (white screen). The port degrades to
+ *  its memory backend instead. */
 function readDefaultMode(): ViewMode {
-  const v = localStorage.getItem(LS_DEFAULT_MODE) ?? undefined
+  const v = persistence.get(LS_DEFAULT_MODE) ?? undefined
   return VIEW_MODES.includes(v as ViewMode) ? (v as ViewMode) : 'rendered'
 }
 
@@ -37,7 +42,9 @@ export const useViewStore = defineStore('view', () => {
   function setDefaultMode(m: ViewMode): void {
     if (!VIEW_MODES.includes(m)) return
     defaultMode.value = m
-    localStorage.setItem(LS_DEFAULT_MODE, m)
+    // Same reason as readDefaultMode: a full quota makes `setItem` throw, which
+    // would surface at the click that toggled the setting.
+    persistence.set(LS_DEFAULT_MODE, m)
   }
 
   /** Reset the live view to the stored default (used when a document opens). */
