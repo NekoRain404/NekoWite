@@ -304,7 +304,7 @@ bash scripts/package-win.sh
 
 ## 构建产物
 
-- 免安装可执行文件：`release/nekowite_0.1.0_x64.exe`（未签名）——本轮产物见下方「最新产物」一节。
+- 免安装可执行文件：`release/nekowite_0.1.0_x64.exe`（未签名），SHA-256：`7b5af0b57d4a8e88bd1bc697c458763bec857a5804c4d511cffecd9b43b864a5`（15.1 MB；包含本轮的 AI 思考深度、AI 写入权限与全部审计修复）。**打包产物本身**也做了真机验证（CDP 驱动 exe，而不是 dev 构建）：设置面板的 AI 分区存在且三个下拉框齐全（服务商 7 项、思考深度 7 档且正确回显已保存的 `none`、写入权限 3 档），改动经 UI 会落进 localStorage；给一个真实 vault 后打开笔记、在聊天面板问一句能得到线上模型的真实回答（`PACKAGED`），点「插入文档」会弹出权限提示并正确说明操作种类与两种授权方式，选「不允许」后提示关闭且不写入。共 7/7 通过。
 - Windows x64 NSIS 安装包：`release/nekowite_0.1.0_x64-setup.exe`（5.3 MB，未签名）。
 - 原生可执行文件：`apps/desktop/src-tauri/target/release/nekowite.exe`（17 MB）。
 - 当前产物未使用 Authenticode 签名；Windows SmartScreen 可能提示“未知发布者”。如需正式分发，应先配置代码签名再重新打包。
