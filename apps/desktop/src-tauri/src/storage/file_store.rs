@@ -22,6 +22,7 @@ use crate::domain::path_policy::{
     encode_rel_path, resolve_within, resolve_within_rel,
 };
 use crate::domain::vault::{is_mdx_path, should_skip_entry};
+use crate::errors::file_exists_error;
 use crate::storage::trash_store::move_trash_key;
 
 #[derive(Serialize, Clone)]
@@ -442,6 +443,70 @@ pub fn write_file(
     }
     atomic_write(&resolved, content)?;
     Ok(warning)
+}
+
+/// Creates `path` with `content`, refusing to replace anything already there.
+///
+/// The difference from [`write_file`] is the whole point: saving REPLACES the
+/// file it finds (that is what saving means), while a note born from a template
+/// or a daily note must never land on top of a file that appeared between "is
+/// this name free?" and "write it" - another instance of the app, a sync
+/// client, or the user in Explorer can all win that race, and the loser used to
+/// be whoever's file was already there.
+///
+/// The bytes are staged first and then published with a hard link, which either
+/// creates the name or fails with `AlreadyExists`: the check and the creation
+/// are one step, a reader never sees a half-written note, and the "taken" case
+/// is reported through [`crate::errors::ALREADY_EXISTS_PREFIX`] so the caller
+/// can try the next name instead of showing the user an OS error.
+pub fn create_new_file(vault_root: &str, path: &str, content: &str) -> Result<(), String> {
+    let _guard = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
+    let resolved = resolve_within(vault_root, path)?;
+    let parent = resolved
+        .parent()
+        .ok_or_else(|| format!("cannot create {path}: it has no parent folder"))?;
+    std::fs::create_dir_all(parent).map_err(|e| fs_error("create the folder", parent, e))?;
+    let _ = cleanup_stale_tmp(parent, STALE_TMP_MAX_AGE);
+
+    let name = resolved
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file");
+    let tmp = parent.join(format!(".{name}.{}.tmp", time_nonce()));
+    let staged = (|| {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .map_err(|e| format!("cannot create temp file {}: {e}", tmp.display()))?;
+        f.write_all(content.as_bytes())
+            .map_err(|e| format!("cannot write temp file {}: {e}", tmp.display()))?;
+        f.sync_all()
+            .map_err(|e| format!("cannot sync temp file {}: {e}", tmp.display()))
+    })();
+    if let Err(e) = staged {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+
+    let published = match std::fs::hard_link(&tmp, &resolved) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(file_exists_error(path)),
+        // Not every filesystem can hard-link: FAT32 and exFAT (USB sticks, SD
+        // cards) return ERROR_INVALID_FUNCTION. `copy_new` refuses an existing
+        // destination itself, so the exclusivity guarantee survives.
+        Err(e) if is_link_unsupported(&e) => copy_new(&tmp, &resolved).map_err(|e| {
+            if e.kind() == io::ErrorKind::AlreadyExists {
+                file_exists_error(path)
+            } else {
+                fs_error("create", &resolved, e)
+            }
+        }),
+        Err(e) => Err(fs_error("create", &resolved, e)),
+    };
+    let _ = std::fs::remove_file(&tmp);
+    published?;
+    sync_parent_dir(&resolved)
 }
 
 /// List the history snapshots for `path`, newest first.

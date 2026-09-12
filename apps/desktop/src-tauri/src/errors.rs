@@ -15,3 +15,17 @@ pub fn vault_root_unauthorized_error(root: &str) -> String {
          Open the vault with register_vault (or pick it again with the folder dialog) before using it."
     )
 }
+
+/// Prefix that marks "the destination already exists".
+///
+/// A create-only write (`create_new_file`) is racing another writer by
+/// definition: the file appearing between "is this name free?" and "write it"
+/// is an ordinary outcome the caller handles by picking the next name, not an
+/// error to show. The prefix lets the frontend tell the two apart without
+/// parsing an OS message, and is stripped before anything reaches the user.
+pub const ALREADY_EXISTS_PREFIX: &str = "EEXIST: ";
+
+/// The error returned when a create-only write found the name taken.
+pub fn file_exists_error(path: &str) -> String {
+    format!("{ALREADY_EXISTS_PREFIX}{path} already exists")
+}

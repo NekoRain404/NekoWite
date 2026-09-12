@@ -5,6 +5,11 @@ const statMock = vi.hoisted(() => vi.fn())
 const writeMock = vi.hoisted(() => vi.fn())
 const createDirMock = vi.hoisted(() => vi.fn())
 const readMock = vi.hoisted(() => vi.fn())
+const createNewFileMock = vi.hoisted(() => vi.fn())
+
+// The atomic create path (registry-free: it is the backend that refuses an
+// existing name, not the frontend).
+vi.mock('../platform/createNewFile', () => ({ createNewFile: createNewFileMock }))
 
 vi.mock('../platform/gateways/fs', () => ({
   fsService: {
@@ -38,6 +43,8 @@ describe('noteTemplates', () => {
     writeMock.mockReset()
     createDirMock.mockReset()
     readMock.mockReset()
+    createNewFileMock.mockReset()
+    createNewFileMock.mockResolvedValue('created')
     createDirMock.mockResolvedValue('daily')
     listMock.mockResolvedValue([])
     statMock.mockRejectedValue(new Error('missing'))
@@ -217,6 +224,30 @@ describe('noteTemplates', () => {
     })
   })
 
+  describe('DEFAULT_DAILY_TEMPLATE', () => {
+    // The template is written to disk verbatim, so a trailing space ends up as
+    // trailing whitespace in every new daily note: markdown linters flag it, and
+    // editors that trim on save make it look like the app rewrote the line.
+    it('has no trailing whitespace on any line', () => {
+      const lines = DEFAULT_DAILY_TEMPLATE.split('\n').map((line) => line.replace(/\r$/, ''))
+      const offenders = lines.filter((line) => /[ \t]+$/.test(line))
+      expect(offenders).toEqual([])
+    })
+
+    it('ends on an empty bullet without a trailing space', () => {
+      // The note is meant to open on a bullet ready to type into; `- ` and `-`
+      // render the same, but only the second one is clean on disk.
+      expect(DEFAULT_DAILY_TEMPLATE.endsWith('- ')).toBe(false)
+      expect(DEFAULT_DAILY_TEMPLATE.split(/\r?\n/).at(-1)).toBe('-')
+    })
+
+    it('renders a daily note whose last line is the clean bullet', () => {
+      const content = renderTemplate(DEFAULT_DAILY_TEMPLATE, buildDailyVars(new Date(2026, 0, 5)))
+      expect(/[ \t]+$/.test(content)).toBe(false)
+      expect(content.split(/\r?\n/).at(-1)).toBe('-')
+    })
+  })
+
   describe('ensureDailyNote', () => {
     it('returns created=false without writing when the note already exists', async () => {
       statMock.mockResolvedValue({ size: 10, mtime: 1 })
@@ -232,12 +263,36 @@ describe('noteTemplates', () => {
       expect(res.created).toBe(true)
       expect(res.path).toBe('/vault/daily/2026-01-05.md')
       expect(createDirMock).toHaveBeenCalledWith('/vault', 'daily')
-      expect(writeMock).toHaveBeenCalledTimes(1)
-      const [vault, path, content] = writeMock.mock.calls[0] as [string, string, string]
+      expect(createNewFileMock).toHaveBeenCalledTimes(1)
+      const [vault, path, content] = createNewFileMock.mock.calls[0] as [string, string, string]
       expect(vault).toBe('/vault')
       expect(path).toBe('/vault/daily/2026-01-05.md')
       expect(content).toContain('2026-01-05')
       expect(content).toBe(DEFAULT_DAILY_TEMPLATE.replaceAll('{{date}}', '2026-01-05'))
+      // The create-only call is the write; nothing may also go through the
+      // replacing write, or the guarantee would be undone by the second call.
+      expect(writeMock).not.toHaveBeenCalled()
+    })
+
+    it('leaves a daily note alone when the name is taken mid-flight', async () => {
+      // The stat above said "free", another writer took the name anyway, and the
+      // note that writer put there must survive: the old code wrote straight
+      // over it and returned "created: true" while destroying the text.
+      createNewFileMock.mockResolvedValue('exists')
+      const res = await ensureDailyNote('/vault', new Date(2026, 0, 5))
+      expect(res.created).toBe(false)
+      expect(res.path).toBe('/vault/daily/2026-01-05.md')
+      expect(writeMock).not.toHaveBeenCalled()
+    })
+
+    it('falls back to the historical write when the backend cannot create atomically', async () => {
+      // A browser build or a backend that predates the command: check-then-write
+      // is all that is available, and losing the new guarantee must not lose
+      // the note.
+      createNewFileMock.mockResolvedValue('unsupported')
+      const res = await ensureDailyNote('/vault', new Date(2026, 0, 5))
+      expect(res.created).toBe(true)
+      expect(writeMock).toHaveBeenCalledTimes(1)
     })
   })
 })

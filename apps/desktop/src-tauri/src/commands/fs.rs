@@ -64,6 +64,17 @@ pub async fn write_file(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn create_new_file(
+    vault_root: String,
+    path: String,
+    content: String,
+    state: tauri::State<'_, VaultRegistry>,
+) -> Result<(), String> {
+    require_opened_vault(&state, &vault_root)?;
+    file_store::create_new_file(&vault_root, &path, &content)
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn delete_file(
     vault_root: String,
     path: String,
