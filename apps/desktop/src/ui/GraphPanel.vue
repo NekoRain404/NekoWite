@@ -128,9 +128,14 @@ let scale = 1
 let offsetX = 0
 let offsetY = 0
 
-/** Directory (parent path) of a vault-relative node path, or '' for root. */
+/** Directory (parent path) of a node's path, or '' for root.
+ *
+ *  Separator-agnostic on purpose: node ids are the note paths the vault walk
+ *  returned, which are NATIVE (backslash-separated on Windows). Splitting on
+ *  `/` alone made every node's directory the empty string there, so the filter
+ *  dropdown offered only "root" and no directory could ever be selected. */
 function dirOf(path: string): string {
-  const i = path.lastIndexOf('/')
+  const i = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   return i < 0 ? '' : path.slice(0, i)
 }
 

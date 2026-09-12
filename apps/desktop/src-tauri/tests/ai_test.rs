@@ -869,3 +869,77 @@ fn gemini_omits_thinking_when_unset_or_unknown() {
     }
 }
 
+/// Anthropic rejects a request that carries BOTH extended thinking and a
+/// non-default temperature, and the app's own temperature default (0.7) is not
+/// the model's. Enabling thinking must therefore drop the field rather than
+/// force a value — the provider default is exactly what extended thinking
+/// requires.
+#[test]
+fn anthropic_drops_temperature_when_extended_thinking_is_enabled() {
+    let cfg = thinking_cfg("anthropic", Some("high"));
+    assert!(cfg.temperature.is_some(), "the fixture must set a temperature");
+    let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    assert!(
+        body.get("thinking").is_some(),
+        "this rung must enable extended thinking or the test proves nothing"
+    );
+    assert!(
+        body.get("temperature").is_none(),
+        "temperature must be omitted while thinking is enabled: {body}"
+    );
+}
+
+/// The flip side: with thinking OFF the user's temperature must still reach the
+/// provider, or the setting would silently stop working.
+#[test]
+fn anthropic_keeps_temperature_when_thinking_is_off() {
+    for raw in [None, Some("none")] {
+        let cfg = thinking_cfg("anthropic", raw);
+        let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+        assert!(body.get("thinking").is_none(), "{raw:?}");
+        assert_eq!(
+            body["temperature"].as_f64(),
+            cfg.temperature.map(f64::from),
+            "the configured temperature must survive when thinking is off ({raw:?})"
+        );
+    }
+}
+
+/// Gemini's thinking budget is carved out of the OUTPUT allowance, so a rung
+/// that asks for more thinking than the request has room for is clamped instead
+/// of being sent as an impossible pair. Anthropic documents the same rule; here
+/// it costs nothing when the two already agree, which the sibling test covers.
+#[test]
+fn gemini_clamps_the_thinking_budget_to_the_output_cap() {
+    let mut cfg = thinking_cfg("gemini", Some("xhigh"));
+    cfg.max_tokens = Some(2048);
+    let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    let budget = body
+        .pointer("/generationConfig/thinkingConfig/thinkingBudget")
+        .and_then(serde_json::Value::as_u64)
+        .expect("xhigh must still ask for thinking");
+    assert!(
+        budget < 2048,
+        "the budget must stay under maxOutputTokens (got {budget})"
+    );
+    // ...and the cap it was clamped against must not have been overwritten.
+    assert_eq!(
+        body.pointer("/generationConfig/maxOutputTokens")
+            .and_then(serde_json::Value::as_u64),
+        Some(2048)
+    );
+}
+
+/// `none` is an explicit `0` at Gemini, not an omission: the clamp must leave
+/// it alone or thinking would look enabled for a rung that turns it off.
+#[test]
+fn gemini_keeps_an_explicit_zero_budget() {
+    let mut cfg = thinking_cfg("gemini", Some("none"));
+    cfg.max_tokens = Some(1024);
+    let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    assert_eq!(
+        body.pointer("/generationConfig/thinkingConfig/thinkingBudget")
+            .and_then(serde_json::Value::as_u64),
+        Some(0)
+    );
+}

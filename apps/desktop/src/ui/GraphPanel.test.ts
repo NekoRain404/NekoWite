@@ -223,6 +223,30 @@ describe('GraphPanel', () => {
     expect(host!.textContent).not.toContain('仅展示前')
   })
 
+  it('lists directories from NATIVE (Windows) node paths', async () => {
+    // Node ids are the paths the vault walk returned, which are native. A
+    // '/'-only split made every directory the empty string on Windows, so the
+    // filter offered only "root" and no folder could be selected.
+    listMock.mockResolvedValue([
+      fileEntry('C:\\vault\\notes\\a.md'),
+      fileEntry('C:\\vault\\notes\\b.md'),
+      fileEntry('C:\\vault\\other\\c.md'),
+    ])
+    readMock.mockResolvedValue('no links')
+    const tabs = useTabsStore()
+    tabs.setVault('C:\\vault')
+    mountPanel()
+    await vi.waitFor(() => expect(readMock.mock.calls.length).toBe(3))
+    // The directory filter is offered through a select; a real directory
+    // must appear in it (and the empty string must not subsume them all).
+    const options = [...host!.querySelectorAll('select option')]
+      .map((o) => (o.textContent || '').trim())
+      .filter((v) => v !== '')
+    expect(options.length).toBeGreaterThanOrEqual(2)
+    expect(options.join('|')).toMatch(/notes/)
+    expect(options.join('|')).toMatch(/other/)
+  })
+
   it('honours vaultReady=false and skips loading', async () => {
     listMock.mockResolvedValue([fileEntry('a.md')])
     readMock.mockResolvedValue('')

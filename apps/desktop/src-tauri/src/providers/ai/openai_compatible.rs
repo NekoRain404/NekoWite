@@ -67,13 +67,21 @@ pub fn endpoint_anthropic(cfg: &AIConfig, prompt: &str, images: &[Value]) -> (St
     if let Some(sys) = system_prompt_of(cfg) {
         body["system"] = serde_json::Value::String(sys);
     }
-    if let Some(temp) = cfg.temperature {
-        body["temperature"] = serde_json::json!(temp);
-    }
     // Extended thinking does not use `reasoning_effort`: Anthropic wants an
     // explicit budget object, rejects `budget_tokens >= max_tokens`, and has
     // no "off" spelling other than omitting the field (what `none` does).
-    if let Some(budget) = thinking_budget(cfg.reasoning_effort.as_deref(), max_tokens) {
+    let thinking = thinking_budget(cfg.reasoning_effort.as_deref(), max_tokens);
+    // `temperature` and extended thinking are mutually exclusive at Anthropic:
+    // with thinking enabled the request is rejected unless the temperature is
+    // its default of 1 (and the app's own default is 0.7). The model's DEFAULT
+    // is what we want here, so the field is omitted rather than forced to 1 —
+    // sending nothing is the same thing without hard-coding a provider value.
+    if thinking.is_none() {
+        if let Some(temp) = cfg.temperature {
+            body["temperature"] = serde_json::json!(temp);
+        }
+    }
+    if let Some(budget) = thinking {
         body["thinking"] = serde_json::json!({ "type": "enabled", "budget_tokens": budget });
     }
     (format!("{}/v1/messages", base.trim_end_matches('/')), body)

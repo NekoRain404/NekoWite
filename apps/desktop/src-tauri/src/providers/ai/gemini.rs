@@ -74,6 +74,16 @@ pub fn endpoint(cfg: &AIConfig, prompt: &str, images: &[Value]) -> (String, Valu
     // replacing the object.
     if let Some(effort) = normalize_reasoning_effort(cfg.reasoning_effort.as_deref()) {
         let budget = thinking_budget(effort);
+        // The budget is a slice of the OUTPUT allowance, so a budget at or above
+        // it can only be rejected — the rung then advertises more thinking than
+        // the request has room for. Anthropic has the same rule and it is
+        // documented there; clamping here costs nothing when the two are already
+        // consistent and keeps the request valid when they are not. A rung of
+        // `none` (budget 0) is left alone: that is a deliberate "off".
+        let budget = match cfg.max_tokens {
+            Some(mt) if budget > 1 && budget >= mt => mt.saturating_sub(1).min(budget),
+            _ => budget,
+        };
         if let Some(gc) = body.get_mut("generationConfig") {
             gc["thinkingConfig"] = serde_json::json!({ "thinkingBudget": budget });
         } else {
