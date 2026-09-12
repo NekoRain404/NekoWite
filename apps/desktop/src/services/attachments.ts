@@ -1,7 +1,7 @@
 import type { ExportImageTarget } from '@nekowite/editor-core'
 import type { FsGateway } from '../platform/gateways/contracts'
 import { notifyError } from './errors'
-import { dirName } from './paths'
+import { dirName, stripVaultPrefix } from './paths'
 
 /**
  * Attachment pipeline helpers: MIME↔extension mapping for the supported
@@ -567,30 +567,45 @@ export function relativePathFromNote(notePath: string, targetPath: string): stri
   return [...Array.from({ length: up }, () => '..'), ...down].join('/') || '.'
 }
 
+/** Absolute, OS-native path spellings: `/…`, `C:\…`, `C:/…`, `\\?\C:\…`
+ * and `\\server\share\…`. Separator-agnostic on purpose: Windows paths cross
+ * IPC with backslashes while every derived value in the app uses `/`. */
+function isAbsoluteFsPath(p: string): boolean {
+  return p.startsWith('/') || /^[a-z]:[\\/]/i.test(p) || p.startsWith('\\\\')
+}
+
+/** True for a src/target addressed by a URL scheme (`https:`, `data:`,
+ * `memoir:`). A Windows drive letter matches the generic scheme pattern while
+ * being a filesystem path, so absolute paths are excluded explicitly. */
+function hasUrlScheme(p: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:/i.test(p) && !isAbsoluteFsPath(p)
+}
+
 /** Like {@link relativePathFromNote} but tolerant of an ABSOLUTE note path:
- * the note is first rebased onto the vault (via `dirRelativeToVault`), so the
+ * the note is first rebased onto the vault (via `stripVaultPrefix`), so the
  * computed reference is relative to the note's own directory rather than to
  * the absolute parent folders. Falls back to the plain relative form when
- * `notePath`/`vault` don't line up. */
+ * `notePath`/`vault` don't line up.
+ *
+ * A `targetPath` that is itself absolute-but-inside-the-vault is rebased too
+ * (that is what the note's assets-dir helper used to produce on Windows), so
+ * the returned reference is always vault-relative and never a `C:\…` string
+ * that only works on the machine that wrote it. */
 export function relativePathFromNoteVault(
   notePath: string,
   vault: string,
   targetPath: string,
 ): string {
-  if (/^[a-z][a-z0-9+.-]*:/i.test(targetPath) || targetPath.startsWith('/')) return targetPath
-  const v = (vault || '').replace(/\/+$/, '')
-  let p = notePath || ''
-  if (v !== '' && (p === v || p.startsWith(`${v}/`))) {
-    p = p.slice(v.length).replace(/^\/+/, '')
-  } else if (p.startsWith('/')) {
-    // An absolute path that isn't under the vault: keep only the trailing
-    // directories, which is the best approximation of the note's location.
-    p = p.replace(/^\/+/, '')
-  }
-  const fromDirectory = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : ''
+  if (hasUrlScheme(targetPath)) return targetPath
+  const target = isPathWithinVault(targetPath, vault) ? stripVaultPrefix(targetPath, vault) : targetPath
+  // Still absolute after rebasing means it is a local path outside the vault:
+  // not ours to rewrite, so pass it through (the old behaviour).
+  if (isAbsoluteFsPath(target)) return target
+  const p = stripVaultPrefix(notePath || '', vault)
+  const fromDirectory = noteDirectory(p)
   const fromParts = fromDirectory ? fromDirectory.split('/').filter(Boolean) : []
-  const targetParts = targetPath.split('/').filter(Boolean)
-  if (fromParts.length === 0) return targetPath
+  const targetParts = target.split('/').filter(Boolean)
+  if (fromParts.length === 0) return target
   let shared = 0
   while (
     shared < fromParts.length &&
@@ -616,19 +631,15 @@ export function vaultRelativeFromNote(notePath: string, src: string): string {
 }
 
 /** Vault-aware variant: rebase an absolute `notePath` onto the vault first,
- * so `../` bookkeeping is measured from the note's actual directory. */
+ * so `../` bookkeeping is measured from the note's actual directory. The vault
+ * prefix is stripped separator-agnostically (`stripVaultPrefix`): Windows note
+ * paths carry backslashes, and the `/`-only test this used to do left them
+ * looking unfiled, so `../` resolved against the vault root instead. */
 export function vaultRelativeFromNoteVault(notePath: string, vault: string, src: string): string {
-  if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('/')) return src
+  if (hasUrlScheme(src) || isAbsoluteFsPath(src)) return src
   if (!src.startsWith('..') && src.startsWith(`${ATTACHMENTS_DIR}/`)) return src
-  const v = (vault || '').replace(/\/+$/, '')
-  let p = notePath || ''
-  if (v !== '' && (p === v || p.startsWith(`${v}/`))) {
-    p = p.slice(v.length).replace(/^\/+/, '')
-  } else if (p.startsWith('/')) {
-    p = p.replace(/^\/+/, '')
-  }
-  const fromDir = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : ''
-  return resolveRelativePath(fromDir, src)
+  const p = stripVaultPrefix(notePath || '', vault)
+  return resolveRelativePath(noteDirectory(p), src)
 }
 
 /** True when `candidate` (an absolute OS-native path, e.g. one returned by the

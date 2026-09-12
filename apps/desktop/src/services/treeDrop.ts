@@ -77,7 +77,9 @@ export function resolveDropTarget(
   }
 
   // A directory must never be moved inside a location it already contains.
-  if (targetPath.startsWith(`${dragPath}/`)) {
+  // Either separator: row paths are native, so on Windows a '/' suffix test
+  // never matched and dropping a folder into its own descendant was allowed.
+  if (targetPath.startsWith(`${dragPath}/`) || targetPath.startsWith(`${dragPath}\\`)) {
     return { ok: false, reason: 'descendant', from, to: null }
   }
 

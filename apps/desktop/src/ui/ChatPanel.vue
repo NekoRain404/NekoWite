@@ -17,7 +17,12 @@ import { notifyError } from '../services/errors'
 import { editorSessionManager } from '../features/editor/sessionManager'
 import { insertMarkdownAtCursor } from '../services/editorInsert'
 import { flushEdits } from '../services/editorOwnership'
-import { collectClipboardImages, isImageFile } from '../services/attachments'
+import {
+  collectClipboardImages,
+  formatAttachmentBytes,
+  isImageFile,
+  MAX_ATTACHMENT_BYTES,
+} from '../services/attachments'
 import { useSettingsStore } from '../stores/settings'
 import { useTabsStore } from '../stores/tabs'
 import { useChatSessionStore } from '../stores/chatSession'
@@ -191,6 +196,14 @@ function addFiles(files: File[]): void {
   const seen = new Set(attachments.value.map((a) => `${a.name}:${a.file.size}:${a.file.type}`))
   for (const file of files) {
     if (!isImageFile(file)) continue
+    // Refuse an oversize image HERE, while the user can still act on it: the
+    // send path (`fileToBase64`) enforces the same cap, and a rejection from
+    // inside `send()` used to vanish — the draft and the thumbnail stayed,
+    // nothing was sent, and no error explained why.
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      notifyError(t('chat.imageTooLarge', { max: formatAttachmentBytes(MAX_ATTACHMENT_BYTES) }))
+      continue
+    }
     const key = `${file.name}:${file.size}:${file.type}`
     if (seen.has(key)) continue
     seen.add(key)
@@ -265,13 +278,23 @@ async function send(): Promise<void> {
   const text = prompt.value.trim()
   if (!text && attachments.value.length === 0) return
 
-  const context = useCurrentDoc.value ? await buildActiveContext() : ''
-  if (useCurrentDoc.value && !context) {
-    notifyError(t('chat.emptyDocHint'))
+  let context = ''
+  let imageDataUrls: ChatImage[]
+  try {
+    context = useCurrentDoc.value ? await buildActiveContext() : ''
+    if (useCurrentDoc.value && !context) {
+      notifyError(t('chat.emptyDocHint'))
+      return
+    }
+    imageDataUrls = await itemDataUrls(attachments.value)
+  } catch {
+    // Every caller is `void send()`, so a rejection here is an unhandled one:
+    // the button would look alive while nothing happened at all. State is
+    // untouched on this path, so the user can drop the image and retry.
+    notifyError(t('chat.sendFailed'))
     return
   }
 
-  const imageDataUrls = await itemDataUrls(attachments.value)
   const userMessage: ChatMessage = { role: 'user', content: text, images: imageDataUrls }
   const history = [...messages.value, userMessage]
   messages.value = [...messages.value, userMessage]

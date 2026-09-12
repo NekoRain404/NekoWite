@@ -16,7 +16,7 @@
  * subscriptions".
  */
 
-import { ATTACHMENTS_DIR } from '../../../services/attachments'
+import { ATTACHMENTS_DIR, extensionFromFileName } from '../../../services/attachments'
 import type { ContentCache } from '../../../services/contentCache'
 import type { FileEntry, FileStat, FsChangeEvent } from '../../../platform/gateways/contracts'
 import { parseNoteMeta, type NoteSummary } from '../../../services/noteMeta'
@@ -260,12 +260,32 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
   }
 
   async function refreshAttachmentCount(v: string, seq?: number): Promise<void> {
+    // Images live one level deeper than `attachments/` — in `attachments/<YYYY-MM>/`
+    // — so counting the top-level entries reported MONTH FOLDERS while the
+    // attachments panel listed IMAGES. The badge and the panel next to it
+    // disagreed by construction ("1" beside a panel showing 12 images). Count
+    // the images, recursively, the way the panel does.
+    const count = await countAttachmentImages(v)
+    if (seq === undefined || seq === indexSeq) deps.onAttachmentCount(count)
+  }
+
+  async function countAttachmentImages(v: string, dir = ATTACHMENTS_DIR): Promise<number> {
+    let entries: Awaited<ReturnType<typeof deps.list>>
     try {
-      const entries = await deps.list(v, ATTACHMENTS_DIR)
-      if (seq === undefined || seq === indexSeq) deps.onAttachmentCount(entries.length)
+      entries = await deps.list(v, dir)
     } catch {
-      if (seq === undefined || seq === indexSeq) deps.onAttachmentCount(0)
+      return 0
     }
+    let total = 0
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue
+      if (entry.is_dir) {
+        total += await countAttachmentImages(v, entry.path)
+      } else if (extensionFromFileName(entry.name)) {
+        total += 1
+      }
+    }
+    return total
   }
 
   async function noteContent(path: string): Promise<string | null> {
