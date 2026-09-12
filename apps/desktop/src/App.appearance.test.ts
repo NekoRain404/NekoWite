@@ -281,8 +281,12 @@ describe('App trash restore wiring', () => {
   it('restores a trash entry through the gateway and refreshes the trash list', async () => {
     const entry = {
       name: 'docs-enc-key',
+      // The label is decoded on the Rust side, so the mock carries it: the raw
+      // key is NOT what the user deleted and must never be shown as the name.
+      display_name: 'a.md',
       trash_path: 'docs-enc-key',
       original_path: 'docs/a.md',
+      is_dir: false,
     }
     const listTrashSpy = vi.spyOn(fsService, 'listTrash').mockResolvedValue([entry])
     const restoreSpy = vi.spyOn(fsService, 'restoreFromTrash').mockResolvedValue('docs/a.md')
@@ -296,7 +300,7 @@ describe('App trash restore wiring', () => {
     ;(trashHeader as HTMLButtonElement).click()
     await vi.waitFor(() => expect(document.querySelector('.trash-restore')).not.toBeNull())
     expect(listTrashSpy).toHaveBeenCalledWith('/seed/bravo')
-    expect(document.querySelector('.trash-name')?.textContent).toBe(entry.name)
+    expect(document.querySelector('.trash-name')?.textContent).toBe(entry.display_name)
 
     // The restore button routes through restoreFromTrash with the trash key and
     // then re-polls the list (so the restored entry disappears on a real backend).

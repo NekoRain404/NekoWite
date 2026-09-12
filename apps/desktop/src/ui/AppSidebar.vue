@@ -156,6 +156,14 @@ async function restore(entry: TrashEntry): Promise<void> {
   }
 }
 
+/** The trash key is the encoded on-disk name (`docs%2Fa.md`), and a second
+ *  deletion of the same path adds a timestamp — neither is what the user
+ *  deleted. The backend decodes both, so the label is read rather than
+ *  re-derived; the local fallbacks cover an older entry shape. */
+function trashLabel(entry: TrashEntry): string {
+  return entry.display_name || baseName(entry.original_path) || entry.name
+}
+
 /** Two-step clear: the first click arms "confirm", the second empties the
  * trash. No confirm is required when the trash is already empty. */
 async function clearTrash(): Promise<void> {
@@ -499,8 +507,8 @@ watch(
           >
             <span
               class="trash-name"
-              :title="entry.original_path"
-            >{{ entry.name }}</span>
+              :title="entry.original_path || entry.name"
+            >{{ trashLabel(entry) }}</span>
             <button
               class="trash-restore"
               :title="t('nav.restore')"

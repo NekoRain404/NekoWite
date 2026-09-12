@@ -226,12 +226,25 @@ export function createMemoryFsGateway(
       if (trash.has(name)) {
         name = `${name}-${Date.now()}`
       }
-      trash.set(name, { name, trash_path: name, original_path: path, content })
+      trash.set(name, {
+        name,
+        display_name: path.replace(/\\/g, '/').split('/').pop() || name,
+        trash_path: name,
+        original_path: path,
+        is_dir: false,
+        content,
+      })
       return name
     },
     listTrash: async () =>
       [...trash.values()]
-        .map(({ name, trash_path, original_path }) => ({ name, trash_path, original_path }))
+        .map(({ name, display_name, trash_path, original_path, is_dir }) => ({
+          name,
+          display_name,
+          trash_path,
+          original_path,
+          is_dir,
+        }))
         .sort((a, b) => a.name.localeCompare(b.name)),
     restoreFromTrash: async (_vault, trashPath) => {
       const entry = trash.get(trashPath)

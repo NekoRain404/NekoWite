@@ -18,22 +18,76 @@ use crate::domain::path_policy::{
 
 #[derive(Serialize, Clone)]
 pub struct TrashEntry {
+    /// The encoded trash key (the entry's on-disk name), kept verbatim for
+    /// callers that key off it — `docs%2Fa.md`, or `docs%2Fa.md-<ms>` after a
+    /// collision. `display_name` is what a user should see.
     pub name: String,
+    /// What the user deleted, named the way they saw it: the decoded path's
+    /// last segment, so `docs%2Fa.md` reads `a.md`. Falls back to the key when
+    /// the entry cannot be decoded.
+    pub display_name: String,
     pub trash_path: String,
     pub original_path: String,
+    /// A folder is trashed and restored exactly like a file; the flag only
+    /// lets the UI label it.
+    pub is_dir: bool,
 }
 
 /// Internal bookkeeping trees whose contents are never the user's documents.
 ///
-/// The vault's own metadata (`.nekowite/…`) and the trash itself are
-/// invisible to the file tree ([`crate::domain::vault::should_skip_entry`]
-/// hides dot-prefixed names), so a delete aimed at one of them can only come
-/// from the app's own housekeeping — never from a user gesture.
+/// The vault's own metadata (`.nekowite/…`), the trash itself and the `.tmp`
+/// staging area for paste/drop assets of unsaved tabs are all invisible to the
+/// file tree ([`crate::domain::vault::should_skip_entry`] hides dot-prefixed
+/// names), so a delete aimed at one of them can only come from the app's own
+/// housekeeping — never from a user gesture. Routing it through the trash
+/// deposited `%2Enekowite%2Findex%2F…` and `%2Etmp%2F…` entries nobody could
+/// act on, and made the recovery loop's GC move crash litter from one hidden
+/// directory into another without reclaiming the disk.
 fn is_internal_rel_path(relative: &str) -> bool {
     matches!(
         relative.split('/').next().unwrap_or(""),
-        ".nekowite" | ".nekowite-trash"
+        ".nekowite" | ".nekowite-trash" | ".tmp"
     )
+}
+
+/// Strip the `-<ms>` stamp [`delete_file`] appends when the trash already holds
+/// an entry for the same path.
+///
+/// The stamp disambiguates the KEY only. Decoding it as part of the name made
+/// the restored target `a.md-1757520000000`, whose `Path::extension()` reads
+/// `md-1757…` — no longer Markdown, so the restored note would not open. Only a
+/// full millisecond epoch stamp (13 digits) is stripped, so a file legitimately
+/// named `report-2024.md` keeps its name.
+fn strip_collision_suffix(name: &str) -> &str {
+    match name.rsplit_once('-') {
+        Some((head, tail)) if tail.len() == 13 && tail.bytes().all(|b| b.is_ascii_digit()) => head,
+        _ => name,
+    }
+}
+
+/// Decode a trash entry's on-disk key back to the vault-relative path it stands
+/// for, collision suffix included in the key but never in the path.
+fn decode_trash_key(name: &str) -> String {
+    decode_rel_path(strip_collision_suffix(name))
+}
+
+/// Best-effort removal of one trash entry, recursing for a deleted folder.
+fn purge_trash_entry(p: &Path, is_dir: bool) {
+    let _ = if is_dir {
+        std::fs::remove_dir_all(p)
+    } else {
+        std::fs::remove_file(p)
+    };
+}
+
+/// Insert `suffix` before the extension (`a.md` -> `a-restored-1.md`) so a
+/// name-collision restore keeps a recognised extension. Appending after it
+/// produced `a.md-restored-1`, which no note loader can open.
+fn name_with_suffix(name: &str, suffix: &str) -> String {
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => format!("{stem}{suffix}.{ext}"),
+        _ => format!("{name}{suffix}"),
+    }
 }
 
 /// Move `path` into `.nekowite-trash/<encode(path)>`, appending `-<ts>` if a
@@ -78,8 +132,9 @@ pub fn delete_file(vault_root: &str, path: &str) -> Result<String, String> {
     Ok(crate::domain::path_policy::ipc_path(&target))
 }
 
-/// List `.nekowite-trash/`, decoding each entry back to its original vault
-/// path where the encoding permits.
+/// List `.nekowite-trash/` — files and folders alike — decoding each entry back
+/// to its original vault path where the encoding permits, plus the display
+/// name and folder flag the UI shows.
 pub fn list_trash(vault_root: &str) -> Result<Vec<TrashEntry>, String> {
     let trash_root = Path::new(vault_root).join(".nekowite-trash");
     let mut out = Vec::new();
@@ -90,20 +145,21 @@ pub fn list_trash(vault_root: &str) -> Result<Vec<TrashEntry>, String> {
     for entry in rd.flatten() {
         let p = entry.path();
         let Ok(meta) = p.metadata() else { continue };
-        if !meta.is_file() {
-            continue;
-        }
+        // Folders are listed too. Deleting one moves the whole tree into the
+        // trash, and skipping anything that was not a file left a deleted
+        // folder invisible — no count, no way back.
+        let is_dir = meta.is_dir();
         let name = p
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("")
             .to_string();
-        let decoded = decode_rel_path(&name);
+        let decoded = decode_trash_key(&name);
         // Self-heal from the era when internal bookkeeping was trashed: an
         // entry that decodes back into an internal tree can never be a note
         // the user deleted, so drop it instead of listing junk forever.
         if is_internal_rel_path(&decoded) {
-            let _ = std::fs::remove_file(&p);
+            purge_trash_entry(&p, is_dir);
             continue;
         }
         // Only surface a path that is a sane vault-relative form AND that we
@@ -117,10 +173,22 @@ pub fn list_trash(vault_root: &str) -> Result<Vec<TrashEntry>, String> {
         } else {
             String::new()
         };
+        let display_name = if original_path.is_empty() {
+            // Undecodable entry: the key is all there is to show.
+            name.clone()
+        } else {
+            original_path
+                .rsplit('/')
+                .next()
+                .unwrap_or(&original_path)
+                .to_string()
+        };
         out.push(TrashEntry {
             name,
+            display_name,
             trash_path: crate::domain::path_policy::ipc_path(&p),
             original_path,
+            is_dir,
         });
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -158,7 +226,9 @@ pub fn clear_trash(vault_root: &str) -> Result<usize, String> {
 }
 
 /// Move a trash entry back to its original vault path. If that path is now
-/// occupied, append `-restored-<ts>` and return the new path.
+/// occupied, insert `-restored-<ts>` before the extension and return the new
+/// path. A missing parent folder (the original directory was deleted too) is
+/// created on the way.
 pub fn restore_from_trash(vault_root: &str, trash_path: &str) -> Result<String, String> {
     let resolved_trash = resolve_within(vault_root, trash_path)?;
     let trash_root = Path::new(vault_root).join(".nekowite-trash");
@@ -173,7 +243,7 @@ pub fn restore_from_trash(vault_root: &str, trash_path: &str) -> Result<String, 
         .and_then(|n| n.to_str())
         .unwrap_or("")
         .to_string();
-    let original_rel = decode_rel_path(&name);
+    let original_rel = decode_trash_key(&name);
     if !is_safe_rel(&original_rel) {
         return Err("cannot restore: invalid trash entry name".into());
     }
@@ -193,9 +263,26 @@ pub fn restore_from_trash(vault_root: &str, trash_path: &str) -> Result<String, 
             .and_then(|n| n.to_str())
             .unwrap_or("file")
             .to_string();
-        target = parent.join(format!("{fname}-restored-{ts}"));
+        target = parent.join(name_with_suffix(&fname, &format!("-restored-{ts}")));
     }
-    std::fs::rename(&resolved_trash, &target).map_err(|e| e.to_string())?;
+    if let Some(parent) = target.parent() {
+        // The original folder may itself be gone by restore time (`docs/` was
+        // deleted after `docs/a.md`). `rename` cannot create it — mirror
+        // `file_store::rename_entry`, which already does.
+        std::fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "cannot restore: the folder for {} could not be created ({e}); \
+                 remove whatever occupies that path and try again",
+                crate::domain::path_policy::ipc_path(&target)
+            )
+        })?;
+    }
+    std::fs::rename(&resolved_trash, &target).map_err(|e| {
+        format!(
+            "cannot restore to {}: {e}; check that the location is writable and try again",
+            crate::domain::path_policy::ipc_path(&target)
+        )
+    })?;
     Ok(crate::domain::path_policy::ipc_path(&target))
 }
 

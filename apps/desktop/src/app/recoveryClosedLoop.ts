@@ -26,6 +26,7 @@ import { ATTACHMENTS_DIR, attachmentMonthDir } from '../services/attachments'
 import type { RecoveryPrompt } from '../services/errors'
 import { t as i18nT } from '../i18n'
 import type { FsPort } from '../platform/gateways/contracts'
+import { stripVaultPrefix } from '../services/paths'
 
 /** Default age (ms) after which an *orphaned* `.tmp` file is GC'd. 7 days is
  *  generous enough that a real crash's staged assets stay reviewable, but flushes
@@ -33,7 +34,8 @@ import type { FsPort } from '../platform/gateways/contracts'
 export const TMP_GC_AGE_MS = 7 * 24 * 60 * 60 * 1000
 
 export interface TmpFileRef {
-  /** Vault-relative path, e.g. `.tmp/paste-20260904-123456.png`. */
+  /** Vault-relative path, e.g. `.tmp/paste-20260904-123456.png` (normalised
+   *  from whatever spelling `list` returned). */
   path: string
   /** Basename as listed by the fs. */
   name: string
@@ -85,6 +87,19 @@ export function createTmpRecovery(deps: TmpRecoveryDeps): TmpRecoveryController 
     return cancelled
   }
 
+  /** The referenced `.tmp` set normalised to one spelling.
+   *
+   *  `getReferencedTmp` is vault-relative by contract, but the fs port is not:
+   *  the real `list_dir` returns ABSOLUTE paths while a mock may list relative
+   *  ones. Comparing the raw strings made every staged asset in the Tauri app
+   *  look like crash litter — the prompt's "restore" then moved the file to
+   *  `attachments/` while the note still referenced `.tmp/…`, and `gc` swept a
+   *  still-referenced asset. `stripVaultPrefix` absorbs the separators and the
+   *  `\\?\` verbatim prefix too, so both sides agree. */
+  function referencedPaths(vault: string): Set<string> {
+    return new Set([...deps.getReferencedTmp()].map((p) => stripVaultPrefix(p, vault)))
+  }
+
   async function collect(vault: string): Promise<TmpFileRef[]> {
     // No `.tmp` dir yet (or a transient list error) is not a failure — there is
     // simply no crash-litter to reconcile.
@@ -94,19 +109,26 @@ export function createTmpRecovery(deps: TmpRecoveryDeps): TmpRecoveryController 
       if (cancelled) break
       if (entry.is_dir) continue
       const st = await deps.fs.stat(vault, entry.path).catch(() => null)
-      if (st) out.push({ path: entry.path, name: entry.name, mtime: st.mtime, size: st.size })
+      if (st) {
+        out.push({
+          path: stripVaultPrefix(entry.path, vault),
+          name: entry.name,
+          mtime: st.mtime,
+          size: st.size,
+        })
+      }
     }
     return out
   }
 
-  function orphaned(files: TmpFileRef[]): TmpFileRef[] {
-    const referenced = deps.getReferencedTmp()
+  function orphaned(files: TmpFileRef[], vault: string): TmpFileRef[] {
+    const referenced = referencedPaths(vault)
     return files.filter((f) => !referenced.has(f.path))
   }
 
   async function scan(vault: string): Promise<TmpFileRef[]> {
     const files = await collect(vault)
-    const orphans = orphaned(files)
+    const orphans = orphaned(files, vault)
     if (orphans.length > 0 && notify) {
       notify({
         message: t('recovery.tmpNotice', { count: orphans.length }),
@@ -129,7 +151,7 @@ export function createTmpRecovery(deps: TmpRecoveryDeps): TmpRecoveryController 
 
   async function gc(vault: string, thresholdMs = TMP_GC_AGE_MS): Promise<number> {
     const files = await collect(vault)
-    const referenced = deps.getReferencedTmp()
+    const referenced = referencedPaths(vault)
     const cutoff = now() - thresholdMs
     let removed = 0
     for (const file of files) {
