@@ -78,8 +78,8 @@ export const tauriDialogPort: DialogPort = {
 }
 
 export const tauriAiPort: AiPort = {
-  complete: (config, prompt, images) =>
-    invoke<void>('ai_complete', { config, prompt, images: images ?? [] }),
+  complete: (config, prompt, images, id) =>
+    invoke<void>('ai_complete', { config, prompt, images: images ?? [], id: id ?? null }),
   cancel: (id) => invoke<void>('ai_cancel', { id }),
   listModels: (config) => invoke<string[]>('ai_list_models', { config }),
 }

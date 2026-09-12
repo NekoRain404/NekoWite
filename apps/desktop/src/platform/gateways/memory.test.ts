@@ -276,21 +276,25 @@ describe('memoryGateways drive an AI stream', () => {
     const onChunk = vi.fn()
     const onDone = vi.fn()
     const onError = vi.fn()
+    // The frontend chooses the request id before the request goes out (see
+    // services/ai.ts), so the test drives the events under that same id.
+    const completeSpy = vi.spyOn(gw.ai, 'complete')
     const stream = await startChatCompletion(
       { provider: 'local', model: 'm' },
       'look',
       [],
       { onChunk, onDone, onError },
     )
-    // Stream adopts the first chunk's id; subsequent chunks accumulate.
-    await gw.events.emit('ai-chunk', { id: 'ai-1', text: 'Hello' })
-    await gw.events.emit('ai-chunk', { id: 'ai-1', text: ' world' })
+    const id = completeSpy.mock.calls[0]?.[3] as string
+    expect(id).toBeTruthy()
+    await gw.events.emit('ai-chunk', { id, text: 'Hello' })
+    await gw.events.emit('ai-chunk', { id, text: ' world' })
     expect(onChunk).toHaveBeenCalledWith('Hello world')
 
     // Cancel mid-stream: later events for the cancelled id must be ignored.
     stream.cancel()
-    await gw.events.emit('ai-chunk', { id: 'ai-1', text: ' ghost' })
-    await gw.events.emit('ai-done', { id: 'ai-1', full: 'Hello world ghost' })
+    await gw.events.emit('ai-chunk', { id, text: ' ghost' })
+    await gw.events.emit('ai-done', { id, full: 'Hello world ghost' })
     expect(onDone).not.toHaveBeenCalled()
     expect(onChunk).toHaveBeenCalledTimes(2)
   })

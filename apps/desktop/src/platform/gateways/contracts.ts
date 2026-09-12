@@ -114,7 +114,14 @@ export interface EventPort {
 }
 
 export interface AiPort {
-  complete(config: unknown, prompt: string, images?: string[]): Promise<void>
+  /**
+   * Start a streaming completion. `id` identifies the request for every event
+   * (`ai-chunk` / `ai-reasoning` / `ai-done` / `ai-error`) and for
+   * {@link cancel}: the CALLER picks it, because a reasoning model can stay
+   * silent for seconds and a backend-chosen id would leave nothing to cancel
+   * during that window.
+   */
+  complete(config: unknown, prompt: string, images?: string[], id?: string): Promise<void>
   cancel(id: string): Promise<void>
   listModels(config: unknown): Promise<string[]>
 }

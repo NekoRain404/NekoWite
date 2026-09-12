@@ -30,14 +30,38 @@ pub async fn ai_list_models(
     list_models(&config).await
 }
 
+/// Longest client-supplied request id accepted. Ids are opaque keys in the
+/// in-flight set and in every event payload, so a hostile/oversized string is
+/// rejected in favour of a generated one rather than stored.
+const MAX_REQUEST_ID_LEN: usize = 128;
+
+/// The id a completion runs under: the caller's when it sent a usable one
+/// (the frontend needs it BEFORE the first event so a cancel during the
+/// provider''s silent reasoning phase has something to target), otherwise a
+/// generated one. Blank/oversized ids fall back instead of failing the request.
+pub fn resolve_request_id(requested: Option<String>) -> String {
+    match requested {
+        Some(id) => {
+            let trimmed = id.trim();
+            if trimmed.is_empty() || trimmed.len() > MAX_REQUEST_ID_LEN || trimmed.len() != id.len() {
+                next_ai_id()
+            } else {
+                trimmed.to_string()
+            }
+        }
+        None => next_ai_id(),
+    }
+}
+
 #[tauri::command]
 pub async fn ai_complete(
     app: tauri::AppHandle,
     mut config: AIConfig,
     prompt: String,
     images: Vec<serde_json::Value>,
+    id: Option<String>,
 ) -> Result<(), String> {
-    let id = next_ai_id();
+    let id = resolve_request_id(id);
     {
         let state = app.state::<AiState>();
         let mut inflight = state.inflight.lock().map_err(|e| e.to_string())?;
@@ -73,4 +97,44 @@ pub async fn ai_complete(
         }
     }
     result
+}
+
+#[cfg(test)]
+mod request_id_tests {
+    use super::resolve_request_id;
+
+    #[test]
+    fn keeps_a_caller_supplied_id() {
+        assert_eq!(
+            resolve_request_id(Some("ai-abc-1".into())),
+            "ai-abc-1".to_string()
+        );
+    }
+
+    #[test]
+    fn generates_an_id_when_none_was_supplied() {
+        let generated = resolve_request_id(None);
+        assert!(generated.starts_with("ai-"));
+        assert_ne!(generated, resolve_request_id(None));
+    }
+
+    #[test]
+    fn falls_back_for_blank_padded_or_oversized_ids() {
+        for bad in [
+            "",
+            "   ",
+            " ai-padded ",
+            &"x".repeat(super::MAX_REQUEST_ID_LEN + 1),
+        ] {
+            let id = resolve_request_id(Some(bad.to_string()));
+            assert!(id.starts_with("ai-"), "{bad:?} produced {id:?}");
+            assert_ne!(id, bad.to_string());
+        }
+    }
+
+    #[test]
+    fn accepts_an_id_at_the_length_limit() {
+        let id = "y".repeat(super::MAX_REQUEST_ID_LEN);
+        assert_eq!(resolve_request_id(Some(id.clone())), id);
+    }
 }

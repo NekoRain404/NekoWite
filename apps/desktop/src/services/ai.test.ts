@@ -33,6 +33,20 @@ function captureListen(): { handlers: Handlers; offs: ReturnType<typeof vi.fn>[]
   return { handlers, offs }
 }
 
+/**
+ * The id the service attached to its most recent `ai_complete` call. The
+ * frontend now picks the request id before the request goes out (so Stop works
+ * during a reasoning model's silent phase), which means a test must play events
+ * under the id the service actually used instead of inventing one.
+ */
+function lastCompleteId(callIndex = -1): string {
+  const calls = invokeMock.mock.calls.filter(([cmd]) => cmd === "ai_complete")
+  const call = calls.at(callIndex)
+  const id = (call?.[1] as { id?: string } | undefined)?.id
+  if (typeof id !== "string" || !id) throw new Error("ai_complete was not called with an id")
+  return id
+}
+
 const makeEditor = () => ({
   acceptSuggestion: vi.fn(() => 'x'),
   rejectSuggestion: vi.fn(),
@@ -101,8 +115,8 @@ describe('aiService', () => {
       onSuggestionChange: vi.fn(() => () => {}),
     }
     await aiService.triggerSuggestion(editor as never, { provider: 'local', model: 'm' })
-    handlers['ai-chunk']({ payload: { id: 'ai-1', text: 'Hello' } })
-    handlers['ai-chunk']({ payload: { id: 'ai-1', text: ' world' } })
+    handlers['ai-chunk']({ payload: { id: lastCompleteId(), text: 'Hello' } })
+    handlers['ai-chunk']({ payload: { id: lastCompleteId(), text: ' world' } })
     expect(editor.setSuggestion).toHaveBeenLastCalledWith('Hello world')
   })
 
@@ -121,20 +135,60 @@ describe('aiService', () => {
       onSuggestionChange: vi.fn(() => () => {}),
     }
     await aiService.triggerSuggestion(editor as never, { provider: 'local', model: 'm' })
-    handlers['ai-chunk']({ payload: { id: 'ai-2', text: 'x' } })
+    handlers['ai-chunk']({ payload: { id: lastCompleteId(), text: 'x' } })
+    // Capture the id BEFORE clearing the invoke log: it is the id the service
+    // chose for the request, and cancelling must target exactly that one.
+    const requestId = lastCompleteId()
     invokeMock.mockClear()
     aiService.cancelStream()
-    expect(invokeMock).toHaveBeenCalledWith('ai_cancel', { id: 'ai-2' })
+    expect(invokeMock).toHaveBeenCalledWith('ai_cancel', { id: requestId })
+  })
+
+  it("cancels a request that has not emitted anything yet", async () => {
+    // A reasoning model can stay silent for seconds. Before the frontend owned
+    // the request id there was nothing to cancel during that window, so Stop did
+    // nothing at all and the abandoned answer later turned up under the next
+    // question.
+    const { handlers } = captureListen()
+    const editor = makeEditor()
+    await aiService.triggerSuggestion(editor as never, { provider: "deepseek", model: "deepseek-flash" })
+    const requestId = lastCompleteId()
+    expect(handlers["ai-chunk"]).toBeTypeOf("function")
+    invokeMock.mockClear()
+    aiService.cancelStream()
+    expect(invokeMock).toHaveBeenCalledWith("ai_cancel", { id: requestId })
+    // The abandoned stream must not reach the editor afterwards.
+    handlers["ai-chunk"]({ payload: { id: requestId, text: "late" } })
+    expect(editor.setSuggestion).not.toHaveBeenCalled()
+  })
+
+  it("ignores a cancelled request's late chunks once the next one is running", async () => {
+    const editor = makeEditor()
+    // The first stream is superseded by the second below; its listeners are
+    // captured so this test can play its late chunk at the live stream.
+    captureListen()
+    await aiService.triggerSuggestion(editor as never, { provider: "local", model: "m" })
+    const cancelledId = lastCompleteId()
+    const second = captureListen()
+    await aiService.triggerSuggestion(editor as never, { provider: "local", model: "m" })
+    const liveId = lastCompleteId()
+    expect(liveId).not.toBe(cancelledId)
+    // The cancelled request's answer arrives after the new request started: it
+    // must not be shown as the new request's answer.
+    second.handlers["ai-chunk"]({ payload: { id: cancelledId, text: "OLD ANSWER" } })
+    expect(editor.setSuggestion).not.toHaveBeenCalled()
+    second.handlers["ai-chunk"]({ payload: { id: liveId, text: "NEW" } })
+    expect(editor.setSuggestion).toHaveBeenLastCalledWith("NEW")
   })
 
   it('does not clean up listeners when ai-done carries a stale id', async () => {
     const { handlers, offs } = captureListen()
     const editor = makeEditor()
     await aiService.triggerSuggestion(editor as never, { provider: 'local', model: 'm' })
-    handlers['ai-chunk']({ payload: { id: 'ai-6', text: 'Hello' } })
-    handlers['ai-done']({ payload: { id: 'ai-61', full: 'Hello' } })
+    handlers['ai-chunk']({ payload: { id: lastCompleteId(), text: 'Hello' } })
+    handlers['ai-done']({ payload: { id: 'foreign-id', full: 'Hello' } })
     expect(offs.every((o) => o.mock.calls.length === 0)).toBe(true)
-    handlers['ai-done']({ payload: { id: 'ai-6', full: 'Hello' } })
+    handlers['ai-done']({ payload: { id: lastCompleteId(), full: 'Hello' } })
     expect(offs.every((o) => o.mock.calls.length > 0)).toBe(true)
   })
 
@@ -142,8 +196,8 @@ describe('aiService', () => {
     const { handlers, offs } = captureListen()
     const editor = makeEditor()
     await aiService.triggerSuggestion(editor as never, { provider: 'local', model: 'm' })
-    handlers['ai-chunk']({ payload: { id: 'ai-7', text: 'x' } })
-    handlers['ai-error']({ payload: { id: 'ai-71', message: 'boom' } })
+    handlers['ai-chunk']({ payload: { id: lastCompleteId(), text: 'x' } })
+    handlers['ai-error']({ payload: { id: 'foreign-id', message: 'boom' } })
     expect(notifyErrorMock).not.toHaveBeenCalled()
     expect(offs.every((o) => o.mock.calls.length === 0)).toBe(true)
   })
@@ -169,8 +223,8 @@ describe('aiService', () => {
     // hint about the cause.
     await vi.waitFor(() => expect(completionArmed).toBe(true))
     await vi.waitFor(() => expect(handlers['ai-error']).toBeTypeOf('function'))
-    handlers['ai-chunk']({ payload: { id: 'ai-8', text: 'x' } })
-    handlers['ai-error']({ payload: { id: 'ai-8', message: 'boom' } })
+    handlers['ai-chunk']({ payload: { id: lastCompleteId(), text: 'x' } })
+    handlers['ai-error']({ payload: { id: lastCompleteId(), message: 'boom' } })
     expect(notifyErrorMock).toHaveBeenCalledTimes(1)
     rejectInvoke(new Error('boom'))
     await pending
@@ -191,7 +245,7 @@ describe('aiService', () => {
     const editor = makeEditor()
     await aiService.triggerSuggestion(editor as never, { provider: 'local', model: 'm' })
     expect(offs.every((o) => o.mock.calls.length === 0)).toBe(true)
-    handlers['ai-done']({ payload: { id: 'ai-z3', full: '' } })
+    handlers['ai-done']({ payload: { id: lastCompleteId(), full: '' } })
     expect(offs.every((o) => o.mock.calls.length > 0)).toBe(true)
   })
 
@@ -199,12 +253,12 @@ describe('aiService', () => {
     const editor = makeEditor()
     const t1 = captureListen()
     await aiService.triggerSuggestion(editor as never, { provider: 'local', model: 'm' })
-    t1.handlers['ai-done']({ payload: { id: 'a-1', full: '' } })
+    t1.handlers['ai-done']({ payload: { id: lastCompleteId(0), full: '' } })
     const t2 = captureListen()
     await aiService.triggerSuggestion(editor as never, { provider: 'local', model: 'm' })
-    t2.handlers['ai-chunk']({ payload: { id: 'a-2', text: 'Hi' } })
+    t2.handlers['ai-chunk']({ payload: { id: lastCompleteId(-1), text: 'Hi' } })
     expect(editor.setSuggestion).toHaveBeenLastCalledWith('Hi')
-    t1.handlers['ai-chunk']({ payload: { id: 'a-1', text: 'Stale' } })
+    t1.handlers['ai-chunk']({ payload: { id: lastCompleteId(0), text: 'Stale' } })
     expect(editor.setSuggestion).toHaveBeenLastCalledWith('Hi')
   })
 
@@ -222,7 +276,7 @@ describe('aiService', () => {
     // toasted once and marked the error as notified.
     expect(notifyErrorMock).toHaveBeenCalledTimes(1)
     // A late ai-error event must not toast a second time.
-    handlers['ai-error']({ payload: { id: 'ai-z4', message: 'boom' } })
+    handlers['ai-error']({ payload: { id: lastCompleteId(), message: 'boom' } })
     expect(notifyErrorMock).toHaveBeenCalledTimes(1)
   })
 
@@ -230,14 +284,14 @@ describe('aiService', () => {
     const editor = makeEditor()
     const t1 = captureListen()
     await aiService.triggerSuggestion(editor as never, { provider: 'local', model: 'm' })
-    t1.handlers['ai-chunk']({ payload: { id: 'a-1', text: 'old' } })
+    t1.handlers['ai-chunk']({ payload: { id: lastCompleteId(0), text: 'old' } })
     const t2 = captureListen()
     await aiService.triggerSuggestion(editor as never, { provider: 'local', model: 'm' })
     // The cancelled old stream's late done arrives at the NEW stream's done
     // handler while activeId is still null; it must not be adopted.
-    t2.handlers['ai-done']({ payload: { id: 'a-1', full: 'old' } })
+    t2.handlers['ai-done']({ payload: { id: lastCompleteId(0), full: 'old' } })
     expect(t2.offs.every((o) => o.mock.calls.length === 0)).toBe(true)
-    t2.handlers['ai-chunk']({ payload: { id: 'a-2', text: 'new' } })
+    t2.handlers['ai-chunk']({ payload: { id: lastCompleteId(-1), text: 'new' } })
     expect(editor.setSuggestion).toHaveBeenLastCalledWith('new')
   })
 })
@@ -291,8 +345,8 @@ describe('startChatCompletion', () => {
     const { handlers } = captureStreamListen()
     const onChunk = vi.fn()
     await startChatCompletion({ ...cfg }, 'look', [], { ...noopHandlers, onChunk })
-    handlers['ai-chunk']({ payload: { id: 'ai-1', text: 'Hello' } })
-    handlers['ai-chunk']({ payload: { id: 'ai-1', text: ' world' } })
+    handlers['ai-chunk']({ payload: { id: lastCompleteId(), text: 'Hello' } })
+    handlers['ai-chunk']({ payload: { id: lastCompleteId(), text: ' world' } })
     expect(onChunk).toHaveBeenLastCalledWith('Hello world')
   })
 
@@ -300,8 +354,8 @@ describe('startChatCompletion', () => {
     const { handlers } = captureStreamListen()
     const onDone = vi.fn()
     await startChatCompletion({ ...cfg }, 'look', [], { ...noopHandlers, onDone })
-    handlers['ai-chunk']({ payload: { id: 'ai-2', text: 'Hi' } })
-    handlers['ai-done']({ payload: { id: 'ai-2', full: 'Hello world' } })
+    handlers['ai-chunk']({ payload: { id: lastCompleteId(-1), text: 'Hi' } })
+    handlers['ai-done']({ payload: { id: lastCompleteId(), full: 'Hello world' } })
     expect(onDone).toHaveBeenCalledWith('Hello world')
   })
 
@@ -309,8 +363,8 @@ describe('startChatCompletion', () => {
     const { handlers } = captureStreamListen()
     const onError = vi.fn()
     await startChatCompletion({ ...cfg }, 'look', [], { ...noopHandlers, onError })
-    handlers['ai-chunk']({ payload: { id: 'ai-3', text: 'Hi' } })
-    handlers['ai-error']({ payload: { id: 'ai-3', message: 'boom' } })
+    handlers['ai-chunk']({ payload: { id: lastCompleteId(-1), text: 'Hi' } })
+    handlers['ai-error']({ payload: { id: lastCompleteId(), message: 'boom' } })
     expect(onError).toHaveBeenCalledWith('boom')
   })
 
@@ -325,10 +379,23 @@ describe('startChatCompletion', () => {
   it('cancel() calls ai_cancel for the adopted stream', async () => {
     const { handlers } = captureStreamListen()
     const stream = await startChatCompletion({ ...cfg }, 'look', [], noopHandlers)
-    handlers['ai-chunk']({ payload: { id: 'ai-4', text: 'x' } })
+    handlers['ai-chunk']({ payload: { id: lastCompleteId(), text: 'x' } })
+    const requestId = lastCompleteId()
     invokeMock.mockClear()
     stream.cancel()
-    expect(invokeMock).toHaveBeenCalledWith('ai_cancel', { id: 'ai-4' })
+    expect(invokeMock).toHaveBeenCalledWith('ai_cancel', { id: requestId })
+  })
+
+  it("cancel() targets the request id chosen before any event arrived", async () => {
+    const { handlers } = captureStreamListen()
+    const onChunk = vi.fn()
+    const stream = await startChatCompletion({ ...cfg }, "look", [], { ...noopHandlers, onChunk })
+    const requestId = lastCompleteId()
+    invokeMock.mockClear()
+    stream.cancel()
+    expect(invokeMock).toHaveBeenCalledWith("ai_cancel", { id: requestId })
+    handlers["ai-chunk"]({ payload: { id: requestId, text: "late" } })
+    expect(onChunk).not.toHaveBeenCalled()
   })
 
   it('cancel() on a superseded stream does not cancel the newer stream', async () => {
@@ -344,7 +411,7 @@ describe('startChatCompletion', () => {
     const { handlers, offs } = captureStreamListen()
     const onDone = vi.fn()
     await startChatCompletion({ ...cfg }, 'look', [], { ...noopHandlers, onDone })
-    handlers['ai-done']({ payload: { id: 'ai-z1', full: 'final text' } })
+    handlers['ai-done']({ payload: { id: lastCompleteId(), full: 'final text' } })
     expect(onDone).toHaveBeenCalledTimes(1)
     expect(onDone).toHaveBeenCalledWith('final text')
     expect(offs.every((o) => o.mock.calls.length > 0)).toBe(true)
@@ -362,7 +429,7 @@ describe('startChatCompletion', () => {
     await startChatCompletion({ ...cfg }, 'look', [], { ...noopHandlers, onError })
     expect(onError).toHaveBeenCalledTimes(1)
     // A late ai-error event (already-marked) must not double-call onError.
-    handlers['ai-error']({ payload: { id: 'ai-z2', message: 'boom' } })
+    handlers['ai-error']({ payload: { id: lastCompleteId(), message: 'boom' } })
     expect(onError).toHaveBeenCalledTimes(1)
   })
 
@@ -370,9 +437,9 @@ describe('startChatCompletion', () => {
     const { handlers } = captureStreamListen()
     const onDone = vi.fn()
     const stream = await startChatCompletion({ ...cfg }, 'look', [], { ...noopHandlers, onDone })
-    handlers['ai-chunk']({ payload: { id: 'c-1', text: 'x' } })
+    handlers['ai-chunk']({ payload: { id: lastCompleteId(), text: 'x' } })
     stream.cancel()
-    handlers['ai-done']({ payload: { id: 'c-1', full: 'x' } })
+    handlers['ai-done']({ payload: { id: lastCompleteId(), full: 'x' } })
     expect(onDone).not.toHaveBeenCalled()
   })
 
@@ -384,10 +451,10 @@ describe('startChatCompletion', () => {
     const onDone2 = vi.fn()
     await startChatCompletion({ ...cfg }, 'b', [], { ...noopHandlers, onDone: onDone2 })
     // First (superseded) stream's zero-chunk done arrives late.
-    s1.handlers['ai-done']({ payload: { id: 's-1', full: 'a' } })
+    s1.handlers['ai-done']({ payload: { id: lastCompleteId(0), full: 'a' } })
     expect(onDone1).not.toHaveBeenCalled()
     // The newer stream still finalizes normally.
-    s2.handlers['ai-done']({ payload: { id: 's-2', full: 'b' } })
+    s2.handlers['ai-done']({ payload: { id: lastCompleteId(-1), full: 'b' } })
     expect(onDone2).toHaveBeenCalledWith('b')
   })
 })
@@ -412,15 +479,15 @@ describe('reasoning progress', () => {
     const pending = aiService.triggerSuggestion(editor as never, { provider: 'deepseek', model: 'deepseek-flash' })
     await vi.waitFor(() => expect(handlers['ai-reasoning']).toBeTypeOf('function'))
 
-    handlers['ai-reasoning']({ payload: { id: 'ai-9', text: 'We need' } })
+    handlers['ai-reasoning']({ payload: { id: lastCompleteId(), text: 'We need' } })
     expect(aiThinking.value).toBe(true)
     expect(editor.setSuggestion).not.toHaveBeenCalled()
 
-    handlers['ai-chunk']({ payload: { id: 'ai-9', text: 'Hello' } })
+    handlers['ai-chunk']({ payload: { id: lastCompleteId(), text: 'Hello' } })
     expect(aiThinking.value).toBe(false)
     expect(editor.setSuggestion).toHaveBeenCalledWith('Hello')
 
-    handlers['ai-done']({ payload: { id: 'ai-9', full: 'Hello' } })
+    handlers['ai-done']({ payload: { id: lastCompleteId(), full: 'Hello' } })
     expect(aiThinking.value).toBe(false)
     resolveInvoke()
     await pending
@@ -440,9 +507,9 @@ describe('reasoning progress', () => {
     await vi.waitFor(() => expect(armed).toBe(true))
     await vi.waitFor(() => expect(handlers['ai-error']).toBeTypeOf('function'))
 
-    handlers['ai-reasoning']({ payload: { id: 'ai-10', text: 'hmm' } })
+    handlers['ai-reasoning']({ payload: { id: lastCompleteId(), text: 'hmm' } })
     expect(aiThinking.value).toBe(true)
-    handlers['ai-error']({ payload: { id: 'ai-10', message: 'boom' } })
+    handlers['ai-error']({ payload: { id: lastCompleteId(), message: 'boom' } })
     expect(aiThinking.value).toBe(false)
 
     rejectInvoke(new Error('boom'))
@@ -465,15 +532,15 @@ describe('reasoning progress', () => {
     )
     await vi.waitFor(() => expect(handlers['ai-reasoning']).toBeTypeOf('function'))
 
-    handlers['ai-reasoning']({ payload: { id: 'ai-11', text: 'thinking' } })
+    handlers['ai-reasoning']({ payload: { id: lastCompleteId(), text: 'thinking' } })
     expect(onReasoning).toHaveBeenCalledWith('thinking')
     expect(onChunk).not.toHaveBeenCalled()
 
-    handlers['ai-chunk']({ payload: { id: 'ai-11', text: 'Answer' } })
+    handlers['ai-chunk']({ payload: { id: lastCompleteId(), text: 'Answer' } })
     expect(onChunk).toHaveBeenCalledWith('Answer')
     expect(onDone).not.toHaveBeenCalled()
 
-    handlers['ai-done']({ payload: { id: 'ai-11', full: 'Answer' } })
+    handlers['ai-done']({ payload: { id: lastCompleteId(), full: 'Answer' } })
     expect(onDone).toHaveBeenCalledWith('Answer')
     stream.cancel()
   })
