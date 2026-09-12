@@ -18,12 +18,20 @@ function harness(overrides: {
   savedContent?: string
   selfWrite?: boolean
   path?: string | null
-} = {}): Harness {
+  /** Extra tabs the sync should check when a folder disappears. */
+  openTabs?: Array<{ id: string; path: string | null }>
+  /** Paths whose read must fail, modelling a file that is gone. */
+  unreadable?: string[]
+} = {}): Harness & { onMissing: ReturnType<typeof vi.fn> } {
   let handler: ((e: FsChangeEvent) => void) | null = null
   const reload = vi.fn(async () => undefined)
   const onConflict = vi.fn()
   const onChange = vi.fn()
-  const read = vi.fn(async () => overrides.disk ?? 'disk text')
+  const onMissing = vi.fn()
+  const read = vi.fn(async (_vault: string, p?: string) => {
+    if (p && (overrides.unreadable ?? []).includes(p)) throw new Error('not found')
+    return overrides.disk ?? 'disk text'
+  })
   const sync = createExternalDocSync({
     read,
     onFsChange: async (cb) => {
@@ -41,8 +49,11 @@ function harness(overrides: {
     reload,
     onConflict,
     onChange,
+    getOpenTabs: () => overrides.openTabs ?? [],
+    onMissing,
   })
   return {
+    onMissing,
     emit: (e) => handler?.(e),
     reload,
     onConflict,
@@ -152,5 +163,64 @@ describe('external document sync', () => {
     await h.flush()
     expect(h.reload).toHaveBeenCalledWith('tab-1')
     h.sync.stop()
+  })
+})
+
+describe('folder-level disappearance', () => {
+  it('reports a tab whose file vanished with its folder', async () => {
+    // The event for a folder rename/delete names the FOLDER only, so a note
+    // inside it disappears with no event of its own. Left unnoticed, the next
+    // save would silently recreate the old path (the backend makes parents) and
+    // the user would end up with two copies of one note.
+    const h = harness({
+      openTabs: [
+        { id: 'tab-1', path: 'C:\\vault\\docs\\inside.md' },
+        { id: 'tab-2', path: 'C:\\vault\\elsewhere\\other.md' },
+      ],
+      unreadable: ['C:\\vault\\docs\\inside.md'],
+    })
+    await h.sync.start()
+    h.emit({ path: 'C:\\vault\\docs', kind: 'removed' })
+    await h.flush()
+    expect(h.onMissing).toHaveBeenCalledTimes(1)
+    expect(h.onMissing).toHaveBeenCalledWith('tab-1', 'C:\\vault\\docs\\inside.md')
+  })
+
+  it('leaves tabs outside the vanished folder alone', async () => {
+    const h = harness({
+      openTabs: [{ id: 'tab-2', path: 'C:\\vault\\elsewhere\\other.md' }],
+      unreadable: ['C:\\vault\\elsewhere\\other.md'],
+    })
+    await h.sync.start()
+    h.emit({ path: 'C:\\vault\\docs', kind: 'removed' })
+    await h.flush()
+    expect(h.onMissing).not.toHaveBeenCalled()
+  })
+
+  it('checks a MODIFIED folder too, because that is what a rename reports', async () => {
+    // Measured on Windows: renaming a folder emits `modified` for both the old
+    // and the new name, not `removed` + `created`. Gating on `removed` meant the
+    // common case was never noticed.
+    const h = harness({
+      openTabs: [{ id: 'tab-1', path: 'C:\\vault\\docs\\inside.md' }],
+      unreadable: ['C:\\vault\\docs\\inside.md'],
+    })
+    await h.sync.start()
+    h.emit({ path: 'C:\\vault\\docs', kind: 'modified' })
+    await h.flush()
+    expect(h.onMissing).toHaveBeenCalledWith('tab-1', 'C:\\vault\\docs\\inside.md')
+  })
+
+  it('leaves an unrelated file event alone without reading any tab', async () => {
+    const h = harness({
+      openTabs: [{ id: 'tab-1', path: 'C:\\vault\\docs\\inside.md' }],
+      unreadable: ['C:\\vault\\docs\\inside.md'],
+    })
+    await h.sync.start()
+    h.emit({ path: 'C:\\vault\\attachments\\2026-09\\pic.png', kind: 'created' })
+    await h.flush()
+    expect(h.onMissing).not.toHaveBeenCalled()
+    // A file path is not an ancestor of a note path, so no read was needed.
+    expect(h.read).not.toHaveBeenCalled()
   })
 })

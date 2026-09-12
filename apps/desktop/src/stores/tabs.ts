@@ -498,6 +498,31 @@ export const useTabsStore = defineStore('tabs', () => {
     }
   }
 
+  /**
+   * Detach a tab from a path that no longer exists.
+   *
+   * A note's folder can be renamed or deleted outside the app, and the backend
+   * recreates missing parent directories on write — so leaving the stale path in
+   * place meant the next save silently recreated the OLD location, leaving the
+   * user with two copies of one note holding different text. Clearing the path
+   * turns the tab into an untitled one: the content is kept, the next save asks
+   * for a destination (the existing Save-As flow), and the tab is visibly no
+   * longer attached to the vanished file. Returns the path it was detached from
+   * so the caller can tell the user which file is gone.
+   */
+  function detachMissingPath(id: string): string | null {
+    const t = tabs.value.find((x) => x.id === id)
+    if (!t || !t.path) return null
+    const gone = t.path
+    cancelAutosave(id)
+    t.path = null
+    // Keep savedContent == content so the tab counts as dirty only when the user
+    // actually has edits beyond what was on disk before it vanished.
+    t.savedContent = t.content
+    t.dirty = false
+    return gone
+  }
+
   async function reloadFromDisk(id: string): Promise<void> {
     const t = tabs.value.find((x) => x.id === id)
     if (!t || !t.path || !vault.value) return
@@ -557,5 +582,5 @@ export const useTabsStore = defineStore('tabs', () => {
     return referenced
   }
 
-  return { tabs, activeId, activeTab, vault, setVault, openTab, closeTab, closeAll, closeOthers, renamePathInTabs, removeTab, setActive, markDirty, markSaving, markSaved, saveStateOf, noteSelfWrite, isSelfWrite, saveActive, reloadFromDisk, scheduleAutosave, cancelAutosave, saveTab, deleteTabFile, restoreHistoryToActive, checkCrashRecovery, captureSession, restoreSession, hasUnsavedWork, flushDirty, untitledDirtyTabs, referencedTmpPaths }
+  return { tabs, activeId, activeTab, vault, setVault, openTab, closeTab, closeAll, closeOthers, renamePathInTabs, removeTab, setActive, markDirty, markSaving, markSaved, saveStateOf, noteSelfWrite, isSelfWrite, saveActive, reloadFromDisk, detachMissingPath, scheduleAutosave, cancelAutosave, saveTab, deleteTabFile, restoreHistoryToActive, checkCrashRecovery, captureSession, restoreSession, hasUnsavedWork, flushDirty, untitledDirtyTabs, referencedTmpPaths }
 })
