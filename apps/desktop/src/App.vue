@@ -8,6 +8,8 @@ import { activeTabSubtitle, activeTabTitle } from './app/tabMeta'
 import { useViewStore } from './stores/view'
 import { useTabsStore } from './stores/tabs'
 import { useDocumentListStore } from './stores/documentList'
+import { createExternalDocSync } from './services/externalDocSync'
+import { fsService } from './platform/gateways/fs'
 
 const tabs = useTabsStore()
 const view = useViewStore()
@@ -60,17 +62,35 @@ function onOpenFolder(path: string): void {
   runtime.onOpenFolder(path)
 }
 
+// Raised by the app-level external-change service below (and by nothing else
+// since the tree stopped forwarding conflicts).
 function onConflict(req: { tabId: string; path: string }): void {
   dialogs.showConflict(req.tabId, req.path)
 }
+
+// External-edit detection lives at the app level, NOT in the file tree: the
+// tree only exists while the Folders panel is shown, so a note opened from the
+// Notes panel (the default view) had nobody watching the disk. An external edit
+// then went unnoticed and the next save overwrote it.
+const externalDocSync = createExternalDocSync({
+  read: (vault, path) => fsService.read(vault, path),
+  onFsChange: (cb) => fsService.onFsChange(cb),
+  getVault: () => tabs.vault,
+  getActiveTab: () => tabs.activeTab,
+  isSelfWrite: (path) => tabs.isSelfWrite(path),
+  reload: (tabId) => tabs.reloadFromDisk(tabId),
+  onConflict,
+})
 
 onMounted(() => {
   runtime.start()
   lifecycle.mount()
   dialogs.installPluginDeciders()
+  void externalDocSync.start()
 })
 
 onBeforeUnmount(() => {
+  externalDocSync.stop()
   // Single app teardown: lifecycle.unmount() disposes the runtime AND removes the
   // window listeners, so nothing (vault switch, recovery scan, fs watcher, plugins,
   // editor session) outlives the app.
@@ -91,7 +111,6 @@ onBeforeUnmount(() => {
     :plugin-integrity="dialogState.kind === 'integrity' ? dialogState.request : null"
     @toggle-sidebar="sidebarVisible = !sidebarVisible"
     @open-folder="onOpenFolder"
-    @conflict="onConflict"
     @pick-folder="runtime.pickFolder"
     @open-settings="showSettings = true"
     @close-settings="showSettings = false"

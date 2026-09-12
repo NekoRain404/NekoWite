@@ -49,11 +49,11 @@ import {
 } from '../services/noteTemplates'
 import TemplatePicker from './TemplatePicker.vue'
 import { t } from '../i18n'
+import { baseName } from '../services/paths'
 
 const props = defineProps<{ vault: string }>()
 const emit = defineEmits<{
   (e: 'open-folder', path: string): void
-  (e: 'conflict', req: { tabId: string; path: string }): void
   (e: 'open-settings'): void
 }>()
 
@@ -72,8 +72,9 @@ const trashEntries = ref<TrashEntry[]>([])
 const clearingTrash = ref(false)
 
 const vaultName = computed(() => {
-  const p = props.vault.replace(/\/+$/, '')
-  return p.split('/').pop() || p
+  // Windows vault paths end with a backslash-separated folder name, so a
+  // `/`-split returned the whole path.
+  return baseName(props.vault) || props.vault
 })
 
 const theme = computed<'light' | 'dark'>(() => {

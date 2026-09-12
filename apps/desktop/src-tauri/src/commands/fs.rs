@@ -244,6 +244,27 @@ pub async fn import_attachment(
     file_store::import_attachment(&vault, &source_path, &dir)
 }
 
+/// How long two consecutive events for the same path count as one burst.
+const COALESCE_WINDOW: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// Whether a `fs-change` event should be forwarded, given the last event seen
+/// for the same path.
+///
+/// Only an *identical* kind inside the coalescing window is dropped: that is the
+/// duplicate this exists for. A different kind (a replacement arrives as
+/// `removed` then `created`), or the same kind after the window, is always
+/// forwarded, so a real edit is never swallowed.
+fn should_emit_change(
+    last: Option<&(String, std::time::Instant)>,
+    kind: &str,
+    now: std::time::Instant,
+) -> bool {
+    match last {
+        Some((last_kind, at)) => last_kind != kind || now.duration_since(*at) >= COALESCE_WINDOW,
+        None => true,
+    }
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub async fn watch_folder(
     app: tauri::AppHandle,
@@ -258,6 +279,17 @@ pub async fn watch_folder(
         Some(p) => resolve_within(&vault_root, &p)?,
         None => resolve_within(&vault_root, ".")?,
     };
+    // `notify` reports one logical write as a BURST of events: a plain write
+    // arrives as two identical `modified` events, and an atomic
+    // write-temp-then-rename arrives as `removed` + `created`/`modified` for the
+    // same path. Forwarding every one of them makes every subscriber redo its
+    // work (the open document re-reads and re-diffs the file, the index
+    // coordinator re-parses it), and a replacement could even be misread as a
+    // deletion. Collapse identical events for the same path inside a short
+    // window; a different kind, or the same kind later, still gets through, so
+    // no real change is hidden.
+    let mut recent: std::collections::HashMap<String, (String, std::time::Instant)> =
+        std::collections::HashMap::new();
     let mut new_watcher = notify::RecommendedWatcher::new(
         move |res: Result<notify::Event, notify::Error>| {
             if let Ok(event) = res {
@@ -268,21 +300,32 @@ pub async fn watch_folder(
                 } else if event.kind.is_remove() {
                     "removed"
                 } else {
-                    &format!("{:?}", event.kind).to_lowercase()
+                    return;
                 };
+                let now = std::time::Instant::now();
                 for path in event.paths {
                     // History/trash churn and our own snapshot temp writes
                     // happen under hidden directories; never surface them.
                     if has_hidden_component(&path) {
                         continue;
                     }
+                    // Same spelling as `list_dir` (see `ipc_path`); a
+                    // verbatim-prefixed path here never equaled the tab path, so
+                    // an external edit was silently ignored.
+                    let ipc = crate::domain::path_policy::ipc_path(&path);
+                    if !should_emit_change(recent.get(&ipc), kind, now) {
+                        continue;
+                    }
+                    recent.insert(ipc.clone(), (kind.to_string(), now));
                     let _ = app.emit(
                         "fs-change",
-                        serde_json::json!({
-                            "path": path.to_string_lossy(),
-                            "kind": kind,
-                        }),
+                        serde_json::json!({ "path": ipc, "kind": kind }),
                     );
+                }
+                // Bounded growth: a long session over a busy vault would
+                // otherwise keep one entry per touched path forever.
+                if recent.len() > 512 {
+                    recent.retain(|_, (_, at)| now.duration_since(*at) < COALESCE_WINDOW);
                 }
             }
         },
@@ -322,5 +365,57 @@ fn allow_vault_media(app: &tauri::AppHandle, vault_root: &str) {
     let _ = scope.allow_directory(&path, true);
     for hidden in [".nekowite", ".nekowite-trash", ".git"] {
         let _ = scope.forbid_directory(path.join(hidden), true);
+    }
+}
+
+#[cfg(test)]
+mod change_coalescing_tests {
+    use super::{should_emit_change, COALESCE_WINDOW};
+    use std::time::Instant;
+
+    fn last(kind: &str, at: Instant) -> (String, Instant) {
+        (kind.to_string(), at)
+    }
+
+    #[test]
+    fn first_event_for_a_path_is_always_forwarded() {
+        assert!(should_emit_change(None, "modified", Instant::now()));
+    }
+
+    #[test]
+    fn the_duplicate_notify_delivers_for_one_write_is_dropped() {
+        // Windows reports a single write as two identical `modified` events.
+        let t0 = Instant::now();
+        let previous = last("modified", t0);
+        assert!(!should_emit_change(
+            Some(&previous),
+            "modified",
+            t0 + std::time::Duration::from_millis(1)
+        ));
+    }
+
+    #[test]
+    fn a_replacement_burst_still_reaches_subscribers() {
+        // An atomic write is `removed` then `created`/`modified` for one path:
+        // different kinds, so both are forwarded and the file is never left
+        // looking deleted.
+        let t0 = Instant::now();
+        let removed = last("removed", t0);
+        assert!(should_emit_change(
+            Some(&removed),
+            "created",
+            t0 + std::time::Duration::from_millis(2)
+        ));
+    }
+
+    #[test]
+    fn the_same_kind_later_is_a_new_edit() {
+        let t0 = Instant::now();
+        let previous = last("modified", t0);
+        assert!(should_emit_change(
+            Some(&previous),
+            "modified",
+            t0 + COALESCE_WINDOW
+        ));
     }
 }

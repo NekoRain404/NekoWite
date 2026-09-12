@@ -55,7 +55,6 @@ defineProps<{
 const emit = defineEmits<{
   (e: 'toggle-sidebar'): void
   (e: 'open-folder', path: string): void
-  (e: 'conflict', req: { tabId: string; path: string }): void
   (e: 'pick-folder'): void
   (e: 'open-settings'): void
   (e: 'close-settings'): void
@@ -109,7 +108,6 @@ const shellStyle = computed<Record<string, string>>(() => ({
         v-if="vaultPath && sidebarVisible"
         :vault="vaultPath"
         @open-folder="(p: string) => emit('open-folder', p)"
-        @conflict="(req: { tabId: string; path: string }) => emit('conflict', req)"
         @open-settings="emit('open-settings')"
       />
       <LayoutResizeHandle

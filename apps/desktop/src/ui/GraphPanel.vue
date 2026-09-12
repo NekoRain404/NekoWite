@@ -276,7 +276,7 @@ async function rebuild(): Promise<void> {
 async function applyChange(path: string, kind: string): Promise<void> {
   const vault = tabs.vault
   if (!vault || !graph.value) return
-  if (kind === 'remove') {
+  if (kind === 'removed') {
     void rebuild()
     return
   }

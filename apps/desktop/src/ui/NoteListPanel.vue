@@ -15,7 +15,6 @@ import AttachmentsPanel from './AttachmentsPanel.vue'
 import FileTree from './FileTree.vue'
 import ContextMenu from './ContextMenu.vue'
 import type { ContextMenuItem } from './ContextMenu.vue'
-import ConflictDialog from '../components/ConflictDialog.vue'
 import { useDocumentListStore } from '../stores/documentList'
 import { useVaultSessionStore } from '../stores/vaultSession'
 import { useFileTreeStore } from '../stores/fileTree'
@@ -27,6 +26,7 @@ import { inlinksOf as queryInlinks, outlinksOf as queryOutlinks } from '../featu
 import { searchWithIndex } from '../services/contentSearch'
 import type { ContentMatch, ContentSearchCandidate } from '../services/contentSearch'
 import { t } from '../i18n'
+import { baseName } from '../services/paths'
 
 const documentList = useDocumentListStore()
 const vaultSession = useVaultSessionStore()
@@ -35,7 +35,6 @@ const tabs = useTabsStore()
 const view = useViewStore()
 
 const sortMenu = ref<{ x: number; y: number } | null>(null)
-const conflict = ref<{ tabId: string; path: string } | null>(null)
 
 const CONTENT_SEARCH_CONCURRENCY = 8
 const CONTENT_SEARCH_DEBOUNCE_MS = 200
@@ -194,7 +193,9 @@ const links = computed(() => {
 function relPath(path: string): string | null {
   if (!vaultSession.vault) return null
   const dir = dirRelativeToVault(path, vaultSession.vault)
-  const name = path.split('/').pop() ?? path
+  // The name must be derived with either separator in mind; on Windows this
+  // produced the full absolute path and the backlink highlight never matched.
+  const name = baseName(path)
   return dir ? `${dir}/${name}` : name
 }
 
@@ -289,7 +290,6 @@ function jumpOutline(line: number, index: number): void {
       <FileTree
         v-if="tabs.vault"
         :vault="tabs.vault"
-        @conflict="conflict = $event"
       />
       <p
         v-else
@@ -525,13 +525,6 @@ function jumpOutline(line: number, index: number): void {
       :items="sortMenuItems"
       @select="onSortSelect"
       @close="sortMenu = null"
-    />
-
-    <ConflictDialog
-      v-if="conflict"
-      :tab-id="conflict.tabId"
-      :path="conflict.path"
-      @close="conflict = null"
     />
   </section>
 </template>

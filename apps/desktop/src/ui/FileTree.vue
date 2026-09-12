@@ -4,11 +4,12 @@ import { ChevronRight, FilePlus2, FileText, Folder, FolderOpen, FolderPlus, Penc
 import { fsService } from '../platform/gateways/fs'
 import type { FileEntry, FsChangeEvent } from '../platform/gateways/fs'
 import { resolveDropTarget, type DropRow } from '../services/treeDrop'
-import { decideConflict, notifyError } from '../services/errors'
+import { notifyError } from '../services/errors'
 import { useTabsStore } from '../stores/tabs'
 import ContextMenu from './ContextMenu.vue'
 import type { ContextMenuItem } from './ContextMenu.vue'
 import { t } from '../i18n'
+import { dirName, joinPath } from '../services/paths'
 
 interface TreeNode {
   name: string
@@ -27,9 +28,9 @@ interface TreeEdit {
 }
 
 const props = defineProps<{ vault: string }>()
-const emit = defineEmits<{
-  (e: 'conflict', req: { tabId: string; path: string }): void
-}>()
+// The `conflict` emit is gone: the keep-or-reload question is raised by the
+// app-level external-change service, so this component no longer needs a
+// channel up to the shell for it.
 
 const tabs = useTabsStore()
 const root = ref<TreeNode | null>(null)
@@ -176,8 +177,11 @@ async function openFile(node: TreeNode): Promise<void> {
 }
 
 function dirOf(path: string): string {
-  const i = path.lastIndexOf('/')
-  return i <= 0 ? path : path.slice(0, i)
+  // Tree rows carry absolute paths in the platform's native spelling
+  // (`\\?\C:\...\note.md` on Windows). A `/`-only split returned the whole
+  // path, so the parent lookup never matched a directory node and RENAME
+  // silently did nothing at all.
+  return dirName(path)
 }
 
 async function refreshAncestors(path: string): Promise<void> {
@@ -366,7 +370,7 @@ async function applyEdit(p: TreeEdit, name: string): Promise<void> {
     if (p.kind === 'rename') {
       const from = p.nodePath
       if (!from) return
-      const to = `${dirOf(from)}/${name}`
+      const to = joinPath(dirOf(from), name)
       if (to !== from) {
         await fsService.renameEntry(props.vault, from, to)
         tabs.renamePathInTabs(from, to)
@@ -394,37 +398,11 @@ async function applyEdit(p: TreeEdit, name: string): Promise<void> {
 }
 
 async function handleFsChange(e: FsChangeEvent): Promise<void> {
-  // The watcher also reports the app's own writes; don't treat those as an
-  // external modification (they would produce spurious conflict dialogs).
-  // The time-window self-write marker is armed BEFORE the native write, but a
-  // watcher event can still race the JS/event queue. For a modified active
-  // tab, compare the bytes on disk with the live tab content: if they match,
-  // this is our own write (or a no-op touch) and must NOT reload the editor,
-  // because reloading replaces the live model and resets the caret/undo.
-  const active = tabs.activeTab
-  if (!tabs.isSelfWrite(e.path) && active && active.path === e.path && e.kind === 'modified') {
-    try {
-      // Compare against the content last persisted by us, not the live editor
-      // text: the serializer may canonicalize Markdown (whitespace, tables,
-      // YAML) as the user types, so `active.content` can differ from the file
-      // even though this event is only our own save echo.
-      const disk = await fsService.read(props.vault, active.path)
-      if (disk === active.savedContent) {
-        await refreshAncestors(e.path)
-        return
-      }
-    } catch {
-      // A read failure below should still surface as a normal fs event.
-    }
-  }
-  if (!tabs.isSelfWrite(e.path) && active && active.path === e.path) {
-    const decision = decideConflict({ dirty: active.dirty, hasDiskChange: true })
-    if (decision === 'reload') {
-      await tabs.reloadFromDisk(active.id)
-    } else if (decision === 'ask') {
-      emit('conflict', { tabId: active.id, path: e.path })
-    }
-  }
+  // Reloading the OPEN document is handled at the app level (see
+  // `services/externalDocSync`), because this component only exists while the
+  // Folders panel is shown — the Notes panel (the default view) had no watcher
+  // at all, so external edits went unnoticed. What is left here is the tree's
+  // own concern: refreshing the rows that changed.
   await refreshAncestors(e.path)
 }
 
@@ -443,7 +421,10 @@ function resetRoot(): void {
 onMounted(async () => {
   resetRoot()
   await listChildren(root.value!)
-  await fsService.watch(props.vault)
+  // The backend watcher itself is armed by the runtime when a vault is opened
+  // (appBootstrap), NOT here: this component only exists while the Folders panel
+  // is shown, so arming it here left the default Notes panel unwatched. What is
+  // left for this component is reacting to the events, to refresh its rows.
   unlisten.value = await fsService.onFsChange(handleFsChange)
 })
 
@@ -464,7 +445,6 @@ watch(
     selectedDirPath.value = null
     resetRoot()
     await listChildren(root.value!)
-    await fsService.watch(props.vault)
     unlisten.value = await fsService.onFsChange(handleFsChange)
   },
 )
