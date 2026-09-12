@@ -399,10 +399,20 @@ export function getActiveVaultPluginIds(): string[] {
 
 /**
  * Ask the user to grant a plugin's declared dangerous capabilities, caching the
- * verdict for the session under the (vault, plugin id) key `vaultScopedKey`
- * builds. Callers inside a vault scan pass that vault explicitly so the verdict
- * is scoped to it; a call with no vault (e.g. a test, or a caller outside a
- * scan) is cached under the empty vault, never merged with a real vault's slot.
+ * verdict for the session under (vault, plugin id, capabilities).
+ *
+ * The verdict is keyed by the CAPABILITY SET as well as the plugin, because a
+ * plugin declares permissions in two places: its manifest, and its code — and
+ * the code's declarations are only visible after the module is imported. Keying
+ * by (vault, id) alone meant a plugin the user approved for `fs` could later add
+ * `ai` (or `network`) inside its own code and be activated without any further
+ * prompt, while the "trusted but unsandboxed" notice cheerfully listed the new
+ * capability among those "already approved". Approving `fs` is not approving
+ * `network`; a new capability is a new question.
+ *
+ * Callers inside a vault scan pass the vault explicitly so the verdict is scoped
+ * to it; a call with no vault (a test, or a caller outside a scan) is cached
+ * under the empty vault and never merged with a real vault's slot.
  */
 export async function askPluginPermission(
   meta: PluginMeta,
@@ -413,7 +423,7 @@ export async function askPluginPermission(
   // nothing and always pass; anything reaching the user is a dangerous one.
   const declared = collectPluginPermissions(meta, definition)
   if (!hasDangerousPermissions({ permissions: declared })) return true
-  const key = vaultScopedKey(vault, meta.id)
+  const key = `${vaultScopedKey(vault, meta.id)}::${[...declared].sort().join(',')}`
   const cached = permissionDecisions.get(key)
   if (typeof cached === 'boolean') return cached
   // Safe default: without an installed decider, deny risky plugins.

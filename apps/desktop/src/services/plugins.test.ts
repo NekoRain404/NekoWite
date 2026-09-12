@@ -634,3 +634,34 @@ describe('governance trust-state file (MAC-protected, P1.8)', () => {
     expect(getPluginTrustedSourceIds()).toEqual(['@scope'])
   })
 })
+
+describe('consent covers the capabilities actually declared', () => {
+  it('asks again when the code declares a capability the manifest did not', async () => {
+    // A plugin declares permissions in its manifest AND in its code, and the
+    // code declarations are only visible after the module is imported. A
+    // (vault, id) cache let a plugin the user approved for fs later add ai and
+    // activate with no further prompt - while the trusted-but-unsandboxed
+    // notice listed the new capability among those already approved.
+    const asked: string[][] = []
+    const decider = vi.fn(async (_meta: PluginMeta, perms: string[]) => {
+      asked.push([...perms])
+      return true
+    })
+    setPluginPermissionDecider(decider)
+
+    await expect(askPluginPermission(META(['fs']), { permissions: ['fs'] })).resolves.toBe(true)
+    expect(asked).toEqual([['fs']])
+
+    await expect(
+      askPluginPermission(META(['fs']), { permissions: ['fs', 'ai'] }),
+    ).resolves.toBe(true)
+    expect(asked.length).toBe(2)
+    expect(asked[1]).toContain('ai')
+
+    // The same set again is still cached.
+    await expect(
+      askPluginPermission(META(['fs']), { permissions: ['fs', 'ai'] }),
+    ).resolves.toBe(true)
+    expect(asked.length).toBe(2)
+  })
+})
