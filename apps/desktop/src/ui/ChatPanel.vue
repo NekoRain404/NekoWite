@@ -21,6 +21,7 @@ import { collectClipboardImages, isImageFile } from '../services/attachments'
 import { useSettingsStore } from '../stores/settings'
 import { useTabsStore } from '../stores/tabs'
 import { useChatSessionStore } from '../stores/chatSession'
+import { useAiPermissionStore } from '../stores/aiPermission'
 import type { ChatSessionMessage } from '../stores/chatSession'
 import {
   buildChatPrompt,
@@ -344,6 +345,17 @@ function clearAll(): void {
 }
 
 async function insertIntoDocument(msg: ChatMessage): Promise<void> {
+  // Permission first: an insert the user declines must not touch the editor at
+  // all (and must not half-apply before the question is answered).
+  const approved = await useAiPermissionStore().ask({
+    kind: 'insert',
+    summary: t('aiperm.action.insert'),
+    target: msg.content.trim().slice(0, 120),
+  })
+  if (!approved) {
+    notifyError(t('aiperm.denied'))
+    return
+  }
   if (!tabs.activeTab) return
   try {
     // Mode-aware: in source mode the message has to land in the CodeMirror

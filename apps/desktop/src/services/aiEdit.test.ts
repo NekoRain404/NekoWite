@@ -43,6 +43,10 @@ function fakeDeps(
         return true
       },
       getConfig: () => ({ provider: 'local', model: 'm' }),
+      // The permission gate is injected here rather than reached through the
+      // store, so these tests stay independent of Pinia (as they were before the
+      // gate existed). The store"s own behaviour has its own suite.
+      canWrite: vi.fn(async () => true),
       notifyError: vi.fn(),
       start: vi.fn((_cfg, _prompt, _images, handlers) => {
         state.handlers = handlers
@@ -54,7 +58,48 @@ function fakeDeps(
   }
 }
 
-describe('buildEditPrompt', () => {
+describe("permission gate", () => {
+  it("does not send the request when the write is declined", async () => {
+    // A denied write must cost nothing: no request, no provider round trip, and
+    // no chance to apply a result the user refused.
+    const { deps, state } = fakeDeps()
+    const gate = vi.fn(async () => false)
+    deps.canWrite = gate
+    const notifyError = deps.notifyError as ReturnType<typeof vi.fn>
+    const start = deps.start as ReturnType<typeof vi.fn>
+
+    await rewriteSelection("polish", deps)
+
+    expect(gate).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "replace-selection" }),
+    )
+    expect(start).not.toHaveBeenCalled()
+    expect(state.handlers).toBeNull()
+    expect(notifyError).toHaveBeenCalledWith("aiperm.denied")
+  })
+
+  it("describes the action and the target to the prompt", async () => {
+    const { deps } = fakeDeps()
+    const gate = vi.fn(async () => true)
+    deps.canWrite = gate
+    await rewriteSelection("translate", deps)
+    expect(gate).toHaveBeenCalledWith({
+      kind: "replace-selection",
+      summary: "aiperm.action.translate",
+      target: "hello world",
+    })
+  })
+
+  it("sends the request once the write is approved", async () => {
+    const { deps, state } = fakeDeps()
+    const start = deps.start as ReturnType<typeof vi.fn>
+    await rewriteSelection("polish", deps)
+    expect(start).toHaveBeenCalled()
+    expect(state.handlers).not.toBeNull()
+  })
+})
+
+describe("buildEditPrompt", () => {
   it('builds a rewrite prompt around the selection', () => {
     const p = buildEditPrompt('rewrite', 'draft text')
     expect(p).toContain('Rewrite')

@@ -32,6 +32,15 @@ pub struct AIConfig {
     pub max_tokens: Option<u32>,
     /// Optional system prompt. `None`/empty adds no system message.
     pub system_prompt: Option<String>,
+    /// The user's thinking-depth choice: one of the lowercase rungs
+    /// `none|minimal|low|medium|high|xhigh`, case- and padding-insensitive.
+    /// Normalised by [`normalize_reasoning_effort`] before a provider ever sees
+    /// it. A value outside that ladder is dropped rather than forwarded: the
+    /// server answers an invalid rung with HTTP 400 (measured against
+    /// tokenflux's `deepseek-flash`: "ultra", "bogus-level" and even the
+    /// uppercase "HIGH" were all rejected), so an unrecognised value must
+    /// degrade to "send nothing" instead of failing the whole request.
+    pub reasoning_effort: Option<String>,
     /// Opt-in to allow private/loopback Base URLs (e.g. Ollama / LM Studio).
     /// Default `false`: a Base URL whose host is a literal private, loopback,
     /// link-local, CGNAT or unspecified IP (or `localhost`) is rejected. The
@@ -47,6 +56,23 @@ pub(crate) fn system_prompt_of(cfg: &AIConfig) -> Option<String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
+}
+
+/// The thinking-depth ladder every provider understands, lowest first. The
+/// server accepts this exact lowercase set and 400s on anything else, so
+/// normalisation may only ever return one of these six words or `None`.
+const REASONING_EFFORT_LADDER: [&str; 6] = ["none", "minimal", "low", "medium", "high", "xhigh"];
+
+/// Normalise the user's thinking-depth choice to its wire spelling: trimmed,
+/// lowercased, then matched against [`REASONING_EFFORT_LADDER`]. A blank or
+/// unknown value — or no choice at all — returns `None`, meaning "do not send
+/// the field", never a guessed rung: an invalid value is a hard 400 from the
+/// server, so dropping it is the only safe degradation.
+pub fn normalize_reasoning_effort(raw: Option<&str>) -> Option<&'static str> {
+    let value = raw?.trim().to_lowercase();
+    REASONING_EFFORT_LADDER
+        .into_iter()
+        .find(|level| *level == value.as_str())
 }
 
 #[derive(Serialize, Clone)]
@@ -792,6 +818,7 @@ mod tests {
             temperature: None,
             max_tokens: None,
             system_prompt: None,
+            reasoning_effort: None,
             allow_private: true,
         };
         assert!(validate_base_url(&cfg).is_ok());
@@ -807,6 +834,7 @@ mod tests {
             temperature: None,
             max_tokens: None,
             system_prompt: None,
+            reasoning_effort: None,
             allow_private: false,
         };
         assert!(validate_base_url(&cfg).is_ok());
@@ -822,6 +850,7 @@ mod tests {
             temperature: None,
             max_tokens: None,
             system_prompt: None,
+            reasoning_effort: None,
             allow_private: false,
         };
         let (url, _body) = resolve_endpoint(&cfg, "hi", &[]);

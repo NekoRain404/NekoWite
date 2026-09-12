@@ -8,12 +8,14 @@ import { activeTabSubtitle, activeTabTitle } from './app/tabMeta'
 import { useViewStore } from './stores/view'
 import { useTabsStore } from './stores/tabs'
 import { useDocumentListStore } from './stores/documentList'
+import { useAiPermissionStore } from './stores/aiPermission'
 import { createExternalDocSync } from './services/externalDocSync'
 import { fsService } from './platform/gateways/fs'
 
 const tabs = useTabsStore()
 const view = useViewStore()
 const documentList = useDocumentListStore()
+const aiPermission = useAiPermissionStore()
 
 // App shell is a thin orchestrator: it owns the app sub-objects (runtime,
 // dialogs, lifecycle) and the small local UI state, then lets <AppShell> render
@@ -109,12 +111,14 @@ onBeforeUnmount(() => {
     :conflict="dialogState.kind === 'conflict' ? { tabId: dialogState.tabId, path: dialogState.path } : null"
     :plugin-permission="dialogState.kind === 'permission' ? dialogState.request : null"
     :plugin-integrity="dialogState.kind === 'integrity' ? dialogState.request : null"
+    :ai-write="aiPermission.pending"
     @toggle-sidebar="sidebarVisible = !sidebarVisible"
     @open-folder="onOpenFolder"
     @pick-folder="runtime.pickFolder"
     @open-settings="showSettings = true"
     @close-settings="showSettings = false"
     @close-conflict="dialogs.close"
+    @respond-ai-write="(approved: boolean, remember: boolean) => aiPermission.respond(approved, remember)"
     @resolve-permission="dialogs.resolvePermission"
     @resolve-integrity="dialogs.resolveIntegrity"
     @toggle-rail="railOpen = !railOpen"
