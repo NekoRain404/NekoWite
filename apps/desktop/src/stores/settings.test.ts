@@ -127,28 +127,34 @@ describe('useSettingsStore', () => {
   it('defaults AI tuning knobs and carries them in config', () => {
     const s = useSettingsStore()
     expect(s.temperature).toBe(0.7)
-    expect(s.maxTokens).toBe(256)
+    // 1024, not 256: a reasoning model can spend the entire budget on its
+    // thinking and return no answer at all (measured against deepseek-flash),
+    // so the shipped default has to leave room for the actual text.
+    expect(s.maxTokens).toBe(1024)
     expect(s.systemPrompt).toBe('')
     const cfg = s.config()
     expect(cfg.temperature).toBe(0.7)
-    expect(cfg.max_tokens).toBe(256)
+    expect(cfg.max_tokens).toBe(1024)
     expect(cfg.system_prompt).toBeUndefined()
   })
 
   it('persists AI tuning knobs and includes them in config when set', async () => {
     const s = useSettingsStore()
     s.temperature = 1.2
-    s.maxTokens = 1024
+    // Deliberately NOT the default (1024): the point of this case is that a
+    // changed value is persisted, and a value equal to the default would not
+    // fire the store's watcher at all.
+    s.maxTokens = 2048
     s.systemPromptOn = true
     s.systemPrompt = 'Be concise.'
     await nextTick()
     expect(localStorage.getItem('nekowite.ai.temperature')).toBe('1.2')
-    expect(localStorage.getItem('nekowite.ai.maxTokens')).toBe('1024')
+    expect(localStorage.getItem('nekowite.ai.maxTokens')).toBe('2048')
     expect(localStorage.getItem('nekowite.ai.systemPrompt')).toBe('Be concise.')
     expect(localStorage.getItem('nekowite.ai.systemPromptOn')).toBe('true')
     const cfg = s.config()
     expect(cfg.temperature).toBe(1.2)
-    expect(cfg.max_tokens).toBe(1024)
+    expect(cfg.max_tokens).toBe(2048)
     expect(cfg.system_prompt).toBe('Be concise.')
   })
 

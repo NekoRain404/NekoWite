@@ -54,9 +54,17 @@ const dialogRef = ref<HTMLElement | null>(null)
 
 const vaultInput = ref(localStorage.getItem('nekowite.vault') ?? '')
 const hasActiveTab = computed(() => !!tabs.activeTab?.content)
-const showBaseUrl = computed(() => settings.provider === 'local' || settings.provider === 'custom')
+const showBaseUrl = computed(
+  () =>
+    settings.provider === 'local' ||
+    settings.provider === 'custom' ||
+    // DeepSeek speaks the OpenAI wire format and is routinely served through a
+    // gateway (tokenflux, OpenRouter, a company proxy), so the Base URL has to
+    // be editable rather than pinned to api.deepseek.com.
+    settings.provider === 'deepseek',
+)
 
-const AI_PROVIDERS = ['openai', 'anthropic', 'gemini', 'grok', 'local', 'custom']
+const AI_PROVIDERS = ['openai', 'anthropic', 'gemini', 'grok', 'deepseek', 'local', 'custom']
 
 const modelLoading = ref(false)
 const modelOptions = computed(() => {
@@ -888,7 +896,7 @@ async function onExportPdf(): Promise<void> {
                   min="128"
                   max="8192"
                   step="64"
-                  @change="settings.maxTokens = Math.min(8192, Math.max(128, Math.round(Number(($event.target as HTMLInputElement).value) || 256)))"
+                  @change="settings.maxTokens = Math.min(8192, Math.max(128, Math.round(Number(($event.target as HTMLInputElement).value) || 1024)))"
                 >
               </label>
             </section>

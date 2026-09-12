@@ -1,4 +1,5 @@
 use nekowite_lib::providers::ai::client::{
+    default_base_url, parse_sse_event,
     ai_id_for, build_prompt, http_error_message, next_ai_id, parse_model_ids, parse_sse_line,
     resolve_endpoint, AIConfig, SseBuffer,
 };
@@ -474,7 +475,7 @@ fn gemini_body_uses_system_instruction_and_generation_config() {
 }
 
 #[test]
-fn untuned_cfg_keeps_legacy_defaults() {
+fn untuned_cfg_uses_the_raised_defaults() {
     let cfg = AIConfig {
         provider: "openai".into(),
         model: "m".into(),
@@ -484,7 +485,10 @@ fn untuned_cfg_keeps_legacy_defaults() {
     };
     let (url, body) = resolve_endpoint(&cfg, "hello", &[]);
     assert!(url.ends_with("/chat/completions"));
-    assert_eq!(body["max_tokens"], 256, "default max_tokens stays 256");
+    // Raised from 256: a reasoning model can spend the entire budget on its
+    // thinking and return no answer at all (measured against deepseek-flash),
+    // so the default has to leave room for the actual text.
+    assert_eq!(body["max_tokens"], 1024, "default max_tokens is 1024");
     assert!(body.get("temperature").is_none(), "no temperature by default");
     assert_eq!(
         body["messages"].as_array().unwrap().len(),
@@ -511,3 +515,110 @@ fn blank_system_prompt_behaves_as_absent() {
         "whitespace-only system prompt must be dropped"
     );
 }
+
+
+#[test]
+fn default_base_url_is_per_provider() {
+    // Without a per-provider default, every OpenAI-compatible provider without
+    // an explicit Base URL was sent to api.openai.com — the wrong host, holding
+    // the user's key for a different vendor.
+    assert_eq!(default_base_url("grok"), "https://api.x.ai/v1");
+    assert_eq!(default_base_url("deepseek"), "https://api.deepseek.com/v1");
+    assert_eq!(default_base_url("openai"), "https://api.openai.com/v1");
+    // An unknown/custom provider keeps the OpenAI default rather than an
+    // invented host.
+    assert_eq!(default_base_url("whatever"), "https://api.openai.com/v1");
+}
+
+#[test]
+fn deepseek_and_grok_use_their_own_host_when_no_base_url_is_set() {
+    for (provider, expected) in [
+        ("deepseek", "https://api.deepseek.com/v1/chat/completions"),
+        ("grok", "https://api.x.ai/v1/chat/completions"),
+    ] {
+        let cfg = AIConfig {
+            provider: provider.into(),
+            model: "m".into(),
+            ..Default::default()
+        };
+        let (url, _) = resolve_endpoint(&cfg, "hi", &[]);
+        assert_eq!(url, expected, "{provider} endpoint");
+    }
+}
+
+#[test]
+fn an_explicit_base_url_still_wins() {
+    let cfg = AIConfig {
+        provider: "deepseek".into(),
+        model: "deepseek-flash".into(),
+        base_url: Some("https://tokenflux.dev/v1".into()),
+        ..Default::default()
+    };
+    let (url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    assert_eq!(url, "https://tokenflux.dev/v1/chat/completions");
+    assert_eq!(body["model"], "deepseek-flash");
+    assert_eq!(body["stream"], true);
+}
+
+#[test]
+fn reasoning_deltas_are_reported_separately_from_the_answer() {
+    // Measured against tokenflux's deepseek-flash: 27 `reasoning_content`
+    // deltas arrive (with `content: null`) before the first answer delta.
+    // Reasoning must never join the answer text — the ghost writer inserts
+    // whatever it streams straight into the document.
+    let mut acc = String::new();
+    let reasoning = r#"data: {"choices":[{"index":0,"delta":{"content":null,"reasoning_content":"We need"}}]}"#;
+    let delta = parse_sse_event(reasoning, "deepseek", &mut acc).expect("reasoning delta");
+    assert_eq!(delta.reasoning.as_deref(), Some("We need"));
+    assert_eq!(delta.text, None);
+    assert_eq!(acc, "", "reasoning must not reach the answer accumulator");
+
+    let answer = r#"data: {"choices":[{"index":0,"delta":{"content":"PONG","reasoning_content":null}}]}"#;
+    let delta = parse_sse_event(answer, "deepseek", &mut acc).expect("answer delta");
+    assert_eq!(delta.text.as_deref(), Some("PONG"));
+    assert_eq!(delta.reasoning, None);
+    assert_eq!(acc, "PONG");
+}
+
+#[test]
+fn a_role_only_opening_delta_is_not_reported_as_content() {
+    // The first SSE frame of a reasoning model carries
+    // `{"role":"assistant","content":null,"reasoning_content":""}`. It must not
+    // produce an empty chunk (nor an empty reasoning event).
+    let mut acc = String::new();
+    let opener = r#"data: {"choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":""}}]}"#;
+    assert_eq!(parse_sse_event(opener, "deepseek", &mut acc), None);
+    assert_eq!(acc, "");
+}
+
+#[test]
+fn the_reasoning_field_spelling_is_tolerated() {
+    // Some gateways name the field `reasoning` instead of `reasoning_content`.
+    let mut acc = String::new();
+    let line = r#"data: {"choices":[{"index":0,"delta":{"reasoning":"hmm"}}]}"#;
+    let delta = parse_sse_event(line, "deepseek", &mut acc).expect("delta");
+    assert_eq!(delta.reasoning.as_deref(), Some("hmm"));
+}
+
+#[test]
+fn parse_sse_line_still_returns_answer_text_only() {
+    // Back-compat wrapper: callers that only want document text keep working.
+    let mut acc = String::new();
+    let reasoning = r#"data: {"choices":[{"index":0,"delta":{"reasoning_content":"think"}}]}"#;
+    assert_eq!(parse_sse_line(reasoning, "deepseek", &mut acc), None);
+    let answer = r#"data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}"#;
+    assert_eq!(parse_sse_line(answer, "deepseek", &mut acc).as_deref(), Some("hi"));
+    assert_eq!(acc, "hi");
+}
+
+
+#[test]
+fn a_tuned_config_still_wins_over_the_raised_default() {
+    // The default rose from 256 to 1024 so a fresh install works with a
+    // reasoning model (which can spend the whole budget thinking). An explicit
+    // setting must still be honoured.
+    let cfg = tuned_cfg("deepseek");
+    let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    assert_eq!(body["max_tokens"], 512);
+}
+

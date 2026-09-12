@@ -267,6 +267,32 @@ impl SseBuffer {
     }
 }
 
+/// Default API base for a provider that speaks the OpenAI wire format, used
+/// when the caller supplies no explicit Base URL.
+///
+/// Without this the `_` arm of `endpoint_default` sent every such provider to
+/// api.openai.com: a Grok or DeepSeek request would reach OpenAI's host and be
+/// rejected there (with the user's key handed to the wrong origin). `local` is
+/// intentionally absent — a local model server always needs an explicit URL,
+/// and guessing one would be worse than surfacing the missing setting.
+pub fn default_base_url(provider: &str) -> &'static str {
+    match provider {
+        "grok" => "https://api.x.ai/v1",
+        "deepseek" => "https://api.deepseek.com/v1",
+        _ => "https://api.openai.com/v1",
+    }
+}
+
+/// One parsed SSE event: the visible answer text and, separately, any
+/// reasoning progress. They stay distinct because they go to different places —
+/// `text` is appended to the document, `reasoning` only drives a "thinking"
+/// indicator (see `extract_openai_reasoning`).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct SseDelta {
+    pub text: Option<String>,
+    pub reasoning: Option<String>,
+}
+
 pub fn build_prompt(cursor_prefix: &str) -> String {
     format!(
         "Continue writing the following text. Only output the continuation, no preamble.\n\n{}\n",
@@ -375,7 +401,7 @@ pub fn http_error_message(status: u16) -> String {
 /// Parse one SSE line for a provider and append any delta to `acc`.
 /// Returns the incremental text, or `None` for comments, blanks, `[DONE]`,
 /// and non-data lines. The accumulated `acc` is used for the final `full`.
-pub fn parse_sse_line(line: &str, provider: &str, acc: &mut String) -> Option<String> {
+pub fn parse_sse_event(line: &str, provider: &str, acc: &mut String) -> Option<SseDelta> {
     let line = line.trim();
     if !line.starts_with("data:") {
         return None;
@@ -396,7 +422,22 @@ pub fn parse_sse_line(line: &str, provider: &str, acc: &mut String) -> Option<St
     if let Some(t) = &text {
         acc.push_str(t);
     }
-    text
+    // Only the OpenAI-compatible family reports separate reasoning today; the
+    // other providers return their thinking inline or not at all.
+    let reasoning = match provider {
+        "anthropic" | "gemini" => None,
+        _ => openai_compatible::extract_openai_reasoning(&v),
+    };
+    if text.is_none() && reasoning.is_none() {
+        return None;
+    }
+    Some(SseDelta { text, reasoning })
+}
+
+/// Text-only view of one SSE line, for callers (and tests) that just want the
+/// document-visible delta. Reasoning progress is dropped.
+pub fn parse_sse_line(line: &str, provider: &str, acc: &mut String) -> Option<String> {
+    parse_sse_event(line, provider, acc).and_then(|d| d.text)
 }
 
 fn is_active(app: &tauri::AppHandle, id: &str) -> bool {
@@ -471,7 +512,7 @@ pub async fn list_models(config: &AIConfig) -> Result<Vec<String>, String> {
             let base = config
                 .base_url
                 .clone()
-                .unwrap_or_else(|| "https://api.openai.com/v1".into());
+                .unwrap_or_else(|| default_base_url(&config.provider).to_string());
             let url = format!("{}/models", base.trim_end_matches('/'));
             let headers = if let Some(key) = &config.api_key {
                 vec![("Authorization".to_string(), format!("Bearer {key}"))]
@@ -591,6 +632,12 @@ pub async fn stream_complete(
     let mut full = String::new();
     let mut buffer = SseBuffer::new();
     let mut stream_ended = false;
+    // Reasoning models can spend the ENTIRE token budget thinking and then
+    // return no answer at all. Measured against tokenflux's `deepseek-flash`
+    // with max_tokens=256: 256 reasoning tokens, zero content deltas and
+    // `finish_reason: "length"`. Without this flag that produced a silent
+    // no-op the user could not explain; with it we can say what happened.
+    let mut reasoning_seen = false;
     loop {
         if !is_active(app, id) {
             break;
@@ -601,12 +648,28 @@ pub async fn stream_complete(
                 // so a multi-byte UTF-8 character split at a chunk boundary
                 // stays intact (decoding per chunk would corrupt it to U+FFFD).
                 for line in buffer.feed(&chunk) {
-                    if let Some(delta) = parse_sse_line(&line, &config.provider, &mut full) {
+                    // A reasoning model streams its thinking BEFORE any answer
+                    // text, so without this the UI showed nothing at all for
+                    // that whole phase and looked hung. The reasoning is
+                    // emitted as progress only — never appended to `full`, or
+                    // the ghost writer would type the model's internal
+                    // monologue into the document.
+                    let Some(delta) = parse_sse_event(&line, &config.provider, &mut full) else {
+                        continue;
+                    };
+                    if let Some(reasoning) = delta.reasoning {
+                        reasoning_seen = true;
+                        let _ = app.emit(
+                            "ai-reasoning",
+                            serde_json::json!({ "id": id, "text": reasoning }),
+                        );
+                    }
+                    if let Some(text) = delta.text {
                         let _ = app.emit(
                             "ai-chunk",
                             AIChunk {
                                 id: id.to_string(),
-                                text: delta,
+                                text,
                             },
                         );
                     }
@@ -629,16 +692,30 @@ pub async fn stream_complete(
     // partial line if the server stopped mid-line, so its text is not dropped.
     if stream_ended {
         for line in buffer.flush() {
-            if let Some(delta) = parse_sse_line(&line, &config.provider, &mut full) {
+            let Some(delta) = parse_sse_event(&line, &config.provider, &mut full) else {
+                continue;
+            };
+            if let Some(text) = delta.text {
                 let _ = app.emit(
                     "ai-chunk",
                     AIChunk {
                         id: id.to_string(),
-                        text: delta,
+                        text,
                     },
                 );
             }
         }
+    }
+    // An answer-less completion that produced reasoning is not a normal result:
+    // the budget was consumed by the model's thinking, so tell the user what to
+    // change instead of finishing silently with nothing to show.
+    if full.is_empty() && reasoning_seen {
+        let message = "模型把本次最大输出 Tokens 全部用于推理，没有产出正文。                       请在设置里把“最大输出 Tokens”调大（推理模型建议 ≥ 1024）后重试。";
+        let _ = app.emit(
+            "ai-error",
+            serde_json::json!({ "id": id, "message": message }),
+        );
+        return Err(message.into());
     }
     let _ = app.emit("ai-done", serde_json::json!({ "id": id, "full": full }));
     Ok(())

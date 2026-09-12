@@ -13,7 +13,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }))
 vi.mock('./errors', () => ({ notifyError: notifyErrorMock }))
 
-import { aiService, buildAIPrompt, getCursorPrefix, startChatCompletion } from './ai'
+import { aiService, aiThinking, buildAIPrompt, getCursorPrefix, startChatCompletion } from './ai'
 
 interface Handlers {
   [event: string]: (e: { payload: { id: string; text?: string; full?: string; message?: string } }) => void
@@ -149,16 +149,26 @@ describe('aiService', () => {
   })
 
   it('notifies once when ai-error precedes the invoke rejection', async () => {
+    // Only hold the COMPLETION open; every other command (ai_cancel) settles,
+    // so nothing else can leave a promise dangling.
     let rejectInvoke: (e: Error) => void = () => undefined
-    invokeMock.mockImplementation(
-      () => new Promise<void>((_resolve, reject) => { rejectInvoke = reject }),
-    )
+    let completionArmed = false
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd !== 'ai_complete') return Promise.resolve(undefined)
+      completionArmed = true
+      return new Promise<void>((_resolve, reject) => { rejectInvoke = reject })
+    })
     const { handlers } = captureListen()
     const editor = makeEditor()
     const pending = aiService.triggerSuggestion(editor as never, { provider: 'local', model: 'm' })
-    await Promise.resolve()
-    await Promise.resolve()
-    await Promise.resolve()
+    // Wait for the request to be genuinely in flight. Counting microtask ticks
+    // was fragile two ways: the listener list grows whenever an event joins the
+    // protocol (ai-reasoning did), and rejecting before the completion was
+    // issued left `rejectInvoke` as its no-op default — the awaited promise then
+    // never settled and the failure surfaced as a bare "test timed out" with no
+    // hint about the cause.
+    await vi.waitFor(() => expect(completionArmed).toBe(true))
+    await vi.waitFor(() => expect(handlers['ai-error']).toBeTypeOf('function'))
     handlers['ai-chunk']({ payload: { id: 'ai-8', text: 'x' } })
     handlers['ai-error']({ payload: { id: 'ai-8', message: 'boom' } })
     expect(notifyErrorMock).toHaveBeenCalledTimes(1)
@@ -379,5 +389,92 @@ describe('startChatCompletion', () => {
     // The newer stream still finalizes normally.
     s2.handlers['ai-done']({ payload: { id: 's-2', full: 'b' } })
     expect(onDone2).toHaveBeenCalledWith('b')
+  })
+})
+
+
+describe('reasoning progress', () => {
+  beforeEach(() => {
+    aiThinking.value = false
+  })
+
+  it('flags thinking while a reasoning model streams, and keeps it out of the suggestion', async () => {
+    // Measured against the tokenflux `deepseek-flash` endpoint: 27 reasoning
+    // deltas (with `content: null`) arrive before the first answer delta. The
+    // monologue must never be shown as ghost text — it would be typed into the
+    // document — but the UI has to say something, or the editor looks frozen.
+    let resolveInvoke: () => void = () => undefined
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'ai_complete' ? new Promise<void>((resolve) => { resolveInvoke = resolve }) : Promise.resolve(undefined),
+    )
+    const { handlers } = captureListen()
+    const editor = makeEditor()
+    const pending = aiService.triggerSuggestion(editor as never, { provider: 'deepseek', model: 'deepseek-flash' })
+    await vi.waitFor(() => expect(handlers['ai-reasoning']).toBeTypeOf('function'))
+
+    handlers['ai-reasoning']({ payload: { id: 'ai-9', text: 'We need' } })
+    expect(aiThinking.value).toBe(true)
+    expect(editor.setSuggestion).not.toHaveBeenCalled()
+
+    handlers['ai-chunk']({ payload: { id: 'ai-9', text: 'Hello' } })
+    expect(aiThinking.value).toBe(false)
+    expect(editor.setSuggestion).toHaveBeenCalledWith('Hello')
+
+    handlers['ai-done']({ payload: { id: 'ai-9', full: 'Hello' } })
+    expect(aiThinking.value).toBe(false)
+    resolveInvoke()
+    await pending
+  })
+
+  it('clears the thinking flag when the request fails', async () => {
+    let rejectInvoke: (e: Error) => void = () => undefined
+    let armed = false
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd !== 'ai_complete') return Promise.resolve(undefined)
+      armed = true
+      return new Promise<void>((_r, reject) => { rejectInvoke = reject })
+    })
+    const { handlers } = captureListen()
+    const editor = makeEditor()
+    const pending = aiService.triggerSuggestion(editor as never, { provider: 'deepseek', model: 'deepseek-flash' })
+    await vi.waitFor(() => expect(armed).toBe(true))
+    await vi.waitFor(() => expect(handlers['ai-error']).toBeTypeOf('function'))
+
+    handlers['ai-reasoning']({ payload: { id: 'ai-10', text: 'hmm' } })
+    expect(aiThinking.value).toBe(true)
+    handlers['ai-error']({ payload: { id: 'ai-10', message: 'boom' } })
+    expect(aiThinking.value).toBe(false)
+
+    rejectInvoke(new Error('boom'))
+    await pending
+  })
+
+  it('routes reasoning to the chat handler without adding it to the answer', async () => {
+    // The completion settles; the listeners stay registered until a terminal
+    // event arrives, which is what the chat relies on.
+    invokeMock.mockResolvedValue(undefined)
+    const { handlers } = captureListen()
+    const onChunk = vi.fn()
+    const onDone = vi.fn()
+    const onReasoning = vi.fn()
+    const stream = await startChatCompletion(
+      { provider: 'deepseek', model: 'deepseek-flash' },
+      'hi',
+      [],
+      { onChunk, onDone, onError: vi.fn(), onReasoning },
+    )
+    await vi.waitFor(() => expect(handlers['ai-reasoning']).toBeTypeOf('function'))
+
+    handlers['ai-reasoning']({ payload: { id: 'ai-11', text: 'thinking' } })
+    expect(onReasoning).toHaveBeenCalledWith('thinking')
+    expect(onChunk).not.toHaveBeenCalled()
+
+    handlers['ai-chunk']({ payload: { id: 'ai-11', text: 'Answer' } })
+    expect(onChunk).toHaveBeenCalledWith('Answer')
+    expect(onDone).not.toHaveBeenCalled()
+
+    handlers['ai-done']({ payload: { id: 'ai-11', full: 'Answer' } })
+    expect(onDone).toHaveBeenCalledWith('Answer')
+    stream.cancel()
   })
 })

@@ -6,7 +6,7 @@
 
 use serde_json::Value;
 
-use super::client::{split_data_url, system_prompt_of, AIConfig};
+use super::client::{default_base_url, split_data_url, system_prompt_of, AIConfig};
 
 /// Build an Anthropic request `(url, body)`. Anthropic carries the system
 /// prompt as a top-level `system` field.
@@ -30,7 +30,7 @@ pub fn endpoint_anthropic(cfg: &AIConfig, prompt: &str, images: &[Value]) -> (St
     };
     let mut body = serde_json::json!({
         "model": cfg.model,
-        "max_tokens": cfg.max_tokens.unwrap_or(256),
+        "max_tokens": cfg.max_tokens.unwrap_or(1024),
         "stream": true,
         "messages": [ { "role": "user", "content": content } ]
     });
@@ -46,10 +46,13 @@ pub fn endpoint_anthropic(cfg: &AIConfig, prompt: &str, images: &[Value]) -> (St
 /// Build an OpenAI-compatible request `(url, body)`. The system prompt becomes
 /// `messages[0]` so any images still ride in `messages[1]`.
 pub fn endpoint_default(cfg: &AIConfig, prompt: &str, images: &[Value]) -> (String, Value) {
+    // Per-provider default: without one, every OpenAI-compatible provider
+    // that has no explicit Base URL (grok, deepseek, ...) would be sent to
+    // api.openai.com — reaching the wrong host with someone else's key.
     let base = cfg
         .base_url
         .clone()
-        .unwrap_or_else(|| "https://api.openai.com/v1".into());
+        .unwrap_or_else(|| default_base_url(&cfg.provider).to_string());
     let content = if !images.is_empty() {
         let mut parts = vec![serde_json::json!({ "type": "text", "text": prompt })];
         for img in images {
@@ -69,7 +72,7 @@ pub fn endpoint_default(cfg: &AIConfig, prompt: &str, images: &[Value]) -> (Stri
     messages.push(serde_json::json!({ "role": "user", "content": content }));
     let mut body = serde_json::json!({
         "model": cfg.model,
-        "max_tokens": cfg.max_tokens.unwrap_or(256),
+        "max_tokens": cfg.max_tokens.unwrap_or(1024),
         "stream": true,
         "messages": messages
     });
@@ -97,4 +100,23 @@ pub fn extract_openai_text(v: &Value) -> Option<String> {
         .as_str()
         .map(str::to_string)
         .or_else(|| v["choices"][0]["text"].as_str().map(str::to_string))
+}
+
+/// Extract the incremental REASONING text for one parsed SSE event body.
+///
+/// Reasoning models (DeepSeek-R1 and the `-reasoner`/`-flash` families, plus
+/// OpenAI's o-series behind compatible gateways) stream their thinking first in
+/// `delta.reasoning_content` with `content` set to `null`: measured against
+/// toneflux's `deepseek-flash`, 27 reasoning deltas arrived before the first
+/// content delta. The answer text must NOT include it — it is internal
+/// monologue, and the ghost-writer inserts what it streams straight into the
+/// document — so this is reported separately and only drives a progress
+/// indicator. Some gateways spell the field `reasoning` instead.
+pub fn extract_openai_reasoning(v: &Value) -> Option<String> {
+    let delta = &v["choices"][0]["delta"];
+    delta["reasoning_content"]
+        .as_str()
+        .or_else(|| delta["reasoning"].as_str())
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
 }

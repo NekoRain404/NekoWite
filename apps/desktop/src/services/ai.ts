@@ -1,3 +1,4 @@
+import { ref } from 'vue'
 import type { NekoEditor } from '@nekowite/editor-core'
 import { editorSessionManager } from '../features/editor/sessionManager'
 import { notifyError } from './errors'
@@ -31,6 +32,22 @@ type ListenerCleanup = () => void
 let activeId: string | null = null
 let cleanups: ListenerCleanup[] = []
 const cancelledIds = new Set<string>()
+
+/**
+ * True while the running completion has reported reasoning progress but no
+ * answer text yet.
+ *
+ * Reasoning models stream their thinking first — measured against the
+ * `deepseek-flash` endpoint, 27 reasoning deltas arrived before the first
+ * content delta — and the backend deliberately keeps that monologue out of the
+ * document text. Without a visible state the editor simply looked frozen for
+ * that whole phase, so the UI shows a "thinking" hint instead.
+ */
+export const aiThinking = ref(false)
+
+function markThinking(on: boolean): void {
+  aiThinking.value = on
+}
 // Incremented by every trigger/accept/reject; events and listener
 // registrations from a superseded trigger are ignored, so a stale stream can
 // never be adopted (its first chunk previously won the activeId race).
@@ -60,6 +77,7 @@ function cancelStream(): void {
   }
   cleanupListeners()
   activeId = null
+  markThinking(false)
 }
 
 function readPrefix(editor: NekoEditor): string {
@@ -96,6 +114,8 @@ async function triggerSuggestion(
       if (cancelledIds.has(e.id)) return
       if (activeId !== null && activeId !== e.id) return
       if (activeId === null) activeId = e.id
+      // The answer started, so the thinking phase is over.
+      markThinking(false)
       acc += e.text
       editor.setSuggestion(acc)
     })
@@ -128,6 +148,7 @@ async function triggerSuggestion(
       if (activeId !== id) return
       cleanupListeners()
       activeId = null
+      markThinking(false)
     })
     if (superseded()) {
       offChunk()
@@ -155,6 +176,7 @@ async function triggerSuggestion(
       }
       cleanupListeners()
       activeId = null
+      markThinking(false)
     })
     if (superseded()) {
       offChunk()
@@ -163,6 +185,21 @@ async function triggerSuggestion(
       return
     }
     cleanups.push(offError)
+    // Registered LAST on purpose: chunk/done/error are a stream's terminal
+    // events and must never be missed, while reasoning is progress-only
+    // (losing its first tick costs nothing, the next one shows it).
+    const offReasoning = await getSharedGateways().events.on<{ id: string; text: string }>('ai-reasoning', (e) => {
+      if (superseded()) return
+      if (cancelledIds.has(e.id)) return
+      if (activeId !== null && activeId !== e.id) return
+      if (activeId === null) activeId = e.id
+      markThinking(true)
+    })
+    if (superseded()) {
+      offReasoning()
+      return
+    }
+    cleanups.push(offReasoning)
   } catch (e) {
     cleanupListeners()
     activeId = null
@@ -213,6 +250,10 @@ export interface ChatStreamHandlers {
   onChunk(text: string): void
   onDone(full: string): void
   onError(msg: string): void
+  /** Reasoning progress from a reasoning model. Optional: the monologue is
+   *  never part of the answer, so a caller that does not display it can omit
+   *  the handler entirely. */
+  onReasoning?(text: string): void
 }
 
 export interface ChatStream {
@@ -243,6 +284,7 @@ export function startChatCompletion(
     }
     cleanupListeners()
     activeId = null
+    markThinking(false)
   }
 
   const setupListeners = async (): Promise<boolean> => {
@@ -252,6 +294,7 @@ export function startChatCompletion(
         if (cancelledIds.has(e.id)) return
         if (activeId !== null && activeId !== e.id) return
         if (activeId === null) activeId = e.id
+        markThinking(false)
         acc += e.text
         handlers.onChunk(acc)
       })
@@ -273,6 +316,7 @@ export function startChatCompletion(
         if (activeId !== id) return
         cleanupListeners()
         activeId = null
+        markThinking(false)
         handlers.onDone(e.full)
       })
       if (superseded()) {
@@ -307,6 +351,20 @@ export function startChatCompletion(
         return false
       }
       cleanups.push(offError)
+      // Same ordering rule as the ghost writer: progress last.
+      const offReasoning = await getSharedGateways().events.on<{ id: string; text: string }>('ai-reasoning', (e) => {
+        if (superseded()) return
+        if (cancelledIds.has(e.id)) return
+        if (activeId !== null && activeId !== e.id) return
+        if (activeId === null) activeId = e.id
+        markThinking(true)
+        handlers.onReasoning?.(e.text)
+      })
+      if (superseded()) {
+        offReasoning()
+        return false
+      }
+      cleanups.push(offReasoning)
       return true
     } catch (e) {
       cleanupListeners()
