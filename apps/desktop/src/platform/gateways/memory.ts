@@ -474,6 +474,8 @@ export interface MemoryAiOptions {
 
 export function createMemoryAiGateway(opts: MemoryAiOptions = {}): AiPort {
   return {
+    // The memory port answers immediately and emits no events; the id is part
+    // of the port contract for the real (streaming) gateways.
     complete: async () => {
       if (opts.delayMs) await sleep(opts.delayMs)
       const err = opts.fail
