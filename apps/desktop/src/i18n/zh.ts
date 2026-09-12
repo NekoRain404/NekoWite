@@ -627,6 +627,13 @@ export const zh = {
     parseFailed: '文档解析失败，已切换到源码视图，请检查文档格式',
     saveImageNoVault: '尚未打开 vault，无法保存图片',
   },
+  imageNode: {
+    retry: '重试',
+    missingSource: '缺少图片地址',
+    loadFailed: '图片加载失败',
+    remoteBlocked: '远程图片未加载（受安全策略限制）',
+    openInBrowser: '在浏览器中打开',
+  },
   imagePanel: {
     aria: '图片属性',
     title: '图片',

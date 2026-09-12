@@ -386,6 +386,19 @@
 .editor-container .ProseMirror .neko-image-error[hidden] {
   display: none;
 }
+.editor-container .ProseMirror .neko-image-error-open {
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, var(--app-border) 80%, transparent);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-elevated);
+  color: var(--app-text);
+  font-size: 11px;
+  cursor: pointer;
+}
+.editor-container .ProseMirror .neko-image-error-open:hover {
+  border-color: var(--app-accent);
+  color: var(--app-accent);
+}
 .editor-container .ProseMirror .neko-image-error-retry {
   padding: 3px 10px;
   border: 1px solid color-mix(in srgb, var(--app-border) 80%, transparent);

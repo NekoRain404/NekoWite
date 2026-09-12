@@ -7,6 +7,7 @@ import {
   onImageResolutionInvalidated,
   resolveImageSrc,
 } from './resolver'
+import { imageNodeMessages, isRemoteHttpSrc } from './messages'
 import { imageDimSchema } from './schema'
 import { nextWidth, proportionalSize } from './resize'
 import { advanceResizeDrag, beginResizeDrag, commitResizeDrag } from './drag'
@@ -43,9 +44,17 @@ export const makeImageNodeView: NodeViewConstructor = (node, view, getPos) => {
   const retryBtn = document.createElement('button')
   retryBtn.className = 'neko-image-error-retry'
   retryBtn.type = 'button'
-  retryBtn.textContent = 'Retry'
+  retryBtn.textContent = imageNodeMessages().retry
+  // A remote http(s) image is refused by the host's CSP, so Retry cannot ever
+  // succeed; the honest affordance there is opening it in the system browser.
+  const openBtn = document.createElement('button')
+  openBtn.className = 'neko-image-error-open'
+  openBtn.type = 'button'
+  openBtn.textContent = imageNodeMessages().openInBrowser
+  openBtn.setAttribute('hidden', '')
   errorBox.appendChild(errorMsg)
   errorBox.appendChild(retryBtn)
+  errorBox.appendChild(openBtn)
   errorBox.setAttribute('hidden', '')
 
   dom.appendChild(img)
@@ -93,6 +102,22 @@ export const makeImageNodeView: NodeViewConstructor = (node, view, getPos) => {
     }
   }
 
+  /** Show the failure overlay with the right message and action for `src`. */
+  const showFailure = (src: string): void => {
+    const text = imageNodeMessages()
+    const remote = isRemoteHttpSrc(src)
+    errorMsg.textContent = remote ? text.remoteBlocked : text.loadFailed
+    retryBtn.textContent = text.retry
+    openBtn.textContent = text.openInBrowser
+    if (remote) {
+      retryBtn.setAttribute('hidden', '')
+      openBtn.removeAttribute('hidden')
+    } else {
+      retryBtn.removeAttribute('hidden')
+      openBtn.setAttribute('hidden', '')
+    }
+  }
+
   const applyFailed = (failed: boolean): void => {
     if (failed) {
       dom.setAttribute('data-failed', 'true')
@@ -120,7 +145,7 @@ export const makeImageNodeView: NodeViewConstructor = (node, view, getPos) => {
     if (!src) {
       img.removeAttribute('src')
       applyFailed(true)
-      errorMsg.textContent = 'Missing image source'
+      errorMsg.textContent = imageNodeMessages().missingSource
       return
     }
     applyFailed(false)
@@ -150,8 +175,13 @@ export const makeImageNodeView: NodeViewConstructor = (node, view, getPos) => {
 
   img.addEventListener('error', () => {
     if (version === 0) return
+    const shown = img.getAttribute('src')
+    if (!shown) return
+    // Mirror the `load` guard: an error from a superseded src must not latch a
+    // failure onto the src this node is actually waiting for.
+    if (expectedSrc !== null && shown !== expectedSrc && !shown.startsWith(expectedSrc)) return
     applyFailed(true)
-    errorMsg.textContent = 'Image failed to load'
+    showFailure(failedSrc ?? shown)
   })
 
   // The counterpart to `error`: the display URL arrives asynchronously, so a
@@ -180,8 +210,20 @@ export const makeImageNodeView: NodeViewConstructor = (node, view, getPos) => {
       if (version !== mine) return
       // When resolution has nothing better to offer the src is already the
       // display URL, so bust the browser cache to force a real re-request.
-      img.setAttribute('src', display === failedSrc ? `${display}?retry=${Date.now()}` : display)
+      const next = display === failedSrc ? `${display}?retry=${Date.now()}` : display
+      // Adopt it as the expected src, or the `load` handler would treat the
+      // successfully retried image as a superseded one and keep the overlay.
+      expectedSrc = next
+      img.setAttribute('src', next)
     })
+  })
+
+  openBtn.addEventListener('pointerdown', (e) => e.stopPropagation())
+  openBtn.addEventListener('click', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!failedSrc) return
+    window.open(failedSrc, '_blank', 'noopener,noreferrer')
   })
 
   // The resize handle plus the bottom-right corner of the image both initiate

@@ -23,6 +23,19 @@ pub struct TrashEntry {
     pub original_path: String,
 }
 
+/// Internal bookkeeping trees whose contents are never the user's documents.
+///
+/// The vault's own metadata (`.nekowite/…`) and the trash itself are
+/// invisible to the file tree ([`crate::domain::vault::should_skip_entry`]
+/// hides dot-prefixed names), so a delete aimed at one of them can only come
+/// from the app's own housekeeping — never from a user gesture.
+fn is_internal_rel_path(relative: &str) -> bool {
+    matches!(
+        relative.split('/').next().unwrap_or(""),
+        ".nekowite" | ".nekowite-trash"
+    )
+}
+
 /// Move `path` into `.nekowite-trash/<encode(path)>`, appending `-<ts>` if a
 /// same-named entry already sits in the trash. Returns the trash path.
 ///
@@ -30,10 +43,25 @@ pub struct TrashEntry {
 /// as given: the frontend hands us absolute paths (as returned by
 /// `list_dir`), and encoding those directly produced keys
 /// [`decode_rel_path`] could never turn back into a usable vault path.
+///
+/// A path inside an internal tree is PERMANENTLY removed instead, and the
+/// returned string is empty. The trash exists so a user can recover a deleted
+/// note; routing the app's own bookkeeping through it filled the回收站 with
+/// junk — every atomic index write stages `.nekowite/index/*.tmp` and then
+/// removes it, so each rebuild deposited four+ `%2Enekowite%2Findex%2F…`
+/// entries that no user could act on.
 pub fn delete_file(vault_root: &str, path: &str) -> Result<String, String> {
     let (resolved, relative) = resolve_within_rel(vault_root, path)?;
     if relative.is_empty() {
         return Err("cannot delete the vault root".into());
+    }
+    if is_internal_rel_path(&relative) {
+        if resolved.is_dir() {
+            std::fs::remove_dir_all(&resolved).map_err(|e| e.to_string())?;
+        } else {
+            std::fs::remove_file(&resolved).map_err(|e| e.to_string())?;
+        }
+        return Ok(String::new());
     }
     let trash_root = Path::new(vault_root).join(".nekowite-trash");
     std::fs::create_dir_all(&trash_root).map_err(|e| e.to_string())?;
@@ -71,6 +99,13 @@ pub fn list_trash(vault_root: &str) -> Result<Vec<TrashEntry>, String> {
             .unwrap_or("")
             .to_string();
         let decoded = decode_rel_path(&name);
+        // Self-heal from the era when internal bookkeeping was trashed: an
+        // entry that decodes back into an internal tree can never be a note
+        // the user deleted, so drop it instead of listing junk forever.
+        if is_internal_rel_path(&decoded) {
+            let _ = std::fs::remove_file(&p);
+            continue;
+        }
         // Only surface a path that is a sane vault-relative form AND that we
         // could actually resolve inside the vault — the same rule
         // `restore_from_trash` applies, so the UI never offers a restore

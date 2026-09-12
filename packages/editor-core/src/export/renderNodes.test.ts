@@ -172,3 +172,26 @@ describe('export hides the empty-paragraph marker', () => {
     expect(out).toContain('&lt;br&gt;')
   })
 })
+
+
+describe('table structure', () => {
+  it('wraps every data row in ONE tbody', () => {
+    // A per-row tbody was accidental, so `tbody + tbody` CSS, copy/paste and
+    // DOM tooling all saw row groups the Markdown never defined.
+    const html = renderDocument('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n| 5 | 6 |\n', { math: 'text' })
+    expect(html.match(/<tbody>/g)?.length).toBe(1)
+    expect(html.match(/<\/tbody>/g)?.length).toBe(1)
+    expect(html.match(/<tr>/g)?.length).toBe(4) // one header row + three data rows
+    const thead = html.slice(html.indexOf('<thead>'), html.indexOf('</thead>'))
+    expect(thead).toContain('<th>A</th>')
+    const tbody = html.slice(html.indexOf('<tbody>'), html.indexOf('</tbody>'))
+    expect(tbody).toContain('<td>1</td>')
+    expect(tbody).toContain('<td>6</td>')
+  })
+
+  it('keeps a header-only table valid', () => {
+    const html = renderDocument('| A |\n| --- |\n', { math: 'text' })
+    expect(html).toContain('<thead><tr><th>A</th></tr></thead>')
+    expect(html).not.toContain('<tbody>')
+  })
+})

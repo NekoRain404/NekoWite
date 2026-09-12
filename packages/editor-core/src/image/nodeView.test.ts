@@ -3,6 +3,7 @@ import type { Node as ProseNode } from '@milkdown/prose/model'
 
 import { configureImageResolver, invalidateImageResolution } from './resolver'
 import { makeImageNodeView } from './nodeView'
+import { configureImageNodeMessages } from './messages'
 import { imageSelectionPlugin } from './selection'
 import { createEditor, basicPlugins } from '../editor'
 
@@ -298,5 +299,47 @@ describe('image node view failure recovery', () => {
     expect(dom.getAttribute('data-failed')).toBe('true')
     img.dispatchEvent(new Event('load'))
     expect(dom.getAttribute('data-failed')).toBe('false')
+  })
+})
+
+describe('remote image failures', () => {
+  it('explains the security policy instead of offering a useless Retry', () => {
+    // The packaged app's CSP refuses `img-src https:`, so a remote picture can
+    // never load. "Image failed to load" + Retry was misleading: Retry cannot
+    // succeed, and the user gets no way forward.
+    const { img, dom } = makeView(fakeNode({ src: 'https://example.test/a.png', alt: '', title: '' }))
+    img.dispatchEvent(new Event('error'))
+
+    const box = dom.querySelector('.neko-image-error') as HTMLElement
+    expect(box.hasAttribute('hidden')).toBe(false)
+    const msg = dom.querySelector('.neko-image-error-msg') as HTMLElement
+    expect(msg.textContent).toMatch(/security policy/i)
+
+    const retry = dom.querySelector('.neko-image-error-retry') as HTMLButtonElement
+    const open = dom.querySelector('.neko-image-error-open') as HTMLButtonElement
+    expect(retry.hasAttribute('hidden')).toBe(true)
+    expect(open.hasAttribute('hidden')).toBe(false)
+  })
+
+  it('keeps Retry for a local image that failed', () => {
+    const { img, dom } = makeView(fakeNode({ src: 'attachments/a.png', alt: '', title: '' }))
+    img.dispatchEvent(new Event('error'))
+
+    const msg = dom.querySelector('.neko-image-error-msg') as HTMLElement
+    expect(msg.textContent).toMatch(/failed to load/i)
+    expect((dom.querySelector('.neko-image-error-retry') as HTMLElement).hasAttribute('hidden')).toBe(false)
+    expect((dom.querySelector('.neko-image-error-open') as HTMLElement).hasAttribute('hidden')).toBe(true)
+  })
+
+  it('honours host-installed strings', () => {
+    configureImageNodeMessages({ loadFailed: '本地化失败文案', retry: '重试' })
+    try {
+      const { img, dom } = makeView(fakeNode({ src: 'attachments/a.png', alt: '', title: '' }))
+      img.dispatchEvent(new Event('error'))
+      expect((dom.querySelector('.neko-image-error-msg') as HTMLElement).textContent).toBe('本地化失败文案')
+      expect((dom.querySelector('.neko-image-error-retry') as HTMLElement).textContent).toBe('重试')
+    } finally {
+      configureImageNodeMessages(null)
+    }
   })
 })

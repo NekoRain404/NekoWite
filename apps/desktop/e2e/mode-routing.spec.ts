@@ -70,7 +70,7 @@ test.describe('plugin command routing', () => {
     await showSource(page)
     await page.locator('[data-testid="source-pane"] .cm-content').click()
 
-    await page.locator('.toolbar-btn[title="∑ f(x)"]').click()
+    await page.locator('.toolbar-btn[data-command-id="math.insert"]').click()
 
     await expect.poll(() => sourceDoc(page)).toContain('$$')
     // Rendered as a display-math block, not an inline pair.
@@ -82,7 +82,7 @@ test.describe('plugin command routing', () => {
     await showSource(page)
     await page.locator('[data-testid="source-pane"] .cm-content').click()
 
-    await page.locator('.toolbar-btn[title="Table"]').click()
+    await page.locator('.toolbar-btn[data-command-id="table.insert"]').click()
 
     await expect.poll(() => sourceDoc(page)).toContain('| a | b | c |')
     expect(await sourceDoc(page)).toContain('| - | - | - |')
@@ -113,7 +113,7 @@ test.describe('plugin command routing', () => {
     await openNote(page, { doc: 'body\n' })
     await showSource(page)
     await page.locator('[data-testid="source-pane"] .cm-content').click()
-    await page.locator('.toolbar-btn[title="Table"]').click()
+    await page.locator('.toolbar-btn[data-command-id="table.insert"]').click()
     await expect.poll(() => sourceDoc(page)).toContain('| a | b | c |')
 
     await showRendered(page)
