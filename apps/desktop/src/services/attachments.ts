@@ -1,3 +1,4 @@
+import type { ExportImageTarget } from '@nekowite/editor-core'
 import type { FsGateway } from '../platform/gateways/contracts'
 import { notifyError } from './errors'
 import { dirName } from './paths'
@@ -660,11 +661,24 @@ export interface ImageSrcResolverContext {
 export function createImageSrcResolver(
   fs: Pick<FsGateway, 'resolveMediaPath'>,
   ctx: ImageSrcResolverContext,
-): (src: string) => Promise<string> {
-  return async (src) => {
+): (src: string, target?: ExportImageTarget) => Promise<string> {
+  return async (src, target = 'display') => {
     const vault = ctx.getVault()
     if (!vault) throw new Error('no vault open, cannot resolve an attachment path')
     const rel = vaultRelativeFromNoteVault(ctx.getNotePath() ?? '', vault, src)
-    return await fs.resolveMediaPath(vault, rel)
+    const url = await fs.resolveMediaPath(vault, rel)
+    // `display` is the asset:// URL the app can render. A saved .html has to
+    // work when opened anywhere, so the bytes are inlined instead — the same
+    // reason the exported stylesheet inlines its fonts.
+    if (target !== 'data' || url.startsWith('data:')) return url
+    const response = await fetch(url)
+    if (!response.ok) throw new Error(`attachment could not be read for export (${response.status})`)
+    const blob = await response.blob()
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result))
+      reader.onerror = () => reject(reader.error ?? new Error('attachment could not be inlined'))
+      reader.readAsDataURL(blob)
+    })
   }
 }
