@@ -27,9 +27,15 @@ const FORCE_TYPE: Record<RefFormat, string> = {
 }
 
 export function detectFormat(filename: string): RefFormat | null {
-  if (filename.endsWith('.bib')) return 'bib'
-  if (filename.endsWith('.ris')) return 'ris'
-  if (filename.endsWith('.json')) return 'csl'
+  // Lowercased first: reference managers export `Library.BIB` and `Refs.RIS`
+  // routinely, and a case-sensitive suffix test made those files invisible — the
+  // panel showed every citation as missing and the export printed bare keys,
+  // while the user believed their library was loaded. Everything else in the app
+  // that matches an extension is already case-insensitive (`/\.(md|mdx)$/i`).
+  const name = filename.toLowerCase()
+  if (name.endsWith('.bib')) return 'bib'
+  if (name.endsWith('.ris')) return 'ris'
+  if (name.endsWith('.json')) return 'csl'
   return null
 }
 

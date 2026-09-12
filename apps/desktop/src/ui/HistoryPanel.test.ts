@@ -258,3 +258,32 @@ describe('HistoryPanel', () => {
     expect(notified).toContain('无法读取历史版本内容')
   })
 })
+
+describe('a comparison belongs to one note', () => {
+  it('drops the diff when the user switches notes', async () => {
+    // The diff shows one note's current text against ANOTHER document's old
+    // version, and the restore button underneath it acts on the note that is
+    // open - so leaving it up mixed two documents together and let a restore be
+    // aimed at the wrong note.
+    await openDoc('/vault/a.md')
+    listHistoryMock.mockResolvedValue([
+      { id: 'a1.md', size: 10, mtime: Date.now() },
+    ])
+    readHistoryMock.mockResolvedValue('OLD TEXT OF A')
+    const host = mountPanel()
+    await flush()
+
+    const compareBtn = [...host.querySelectorAll('button')].find((b) =>
+      (b.textContent ?? '').includes('对比'),
+    )
+    compareBtn?.click()
+    await flush()
+    expect(host.textContent).toContain('OLD TEXT OF A')
+
+    const tabs = useTabsStore()
+    await tabs.openTab('/vault/b.md')
+    await flush()
+
+    expect(host.textContent).not.toContain('OLD TEXT OF A')
+  })
+})
