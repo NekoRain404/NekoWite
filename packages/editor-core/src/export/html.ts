@@ -60,15 +60,35 @@ export type ComponentRenderer = (
   childrenHtml: string,
 ) => string
 
+/** What the exported document is for. It decides which src form the image
+ *  resolver has to return, because the two export paths do not accept the same
+ *  URLs:
+ *
+ *  - `'display'` (default): the HTML is rendered inside the app by the
+ *    print/PDF path, where the app's own `asset:` URL resolves.
+ *  - `'data'`: the HTML is written to disk and opened OUTSIDE the app — in a
+ *    browser, or on another machine. An app-internal URL is a dead link there,
+ *    so the resolver has to return a self-contained `data:` URL. That is the
+ *    same rule the KaTeX CSS and its fonts already follow (imported `?inline`),
+ *    which is what keeps the saved file portable.
+ */
+export type ExportImageTarget = 'display' | 'data'
+
 export interface RenderDocumentOptions {
   title?: string
   refs?: Map<string, ExportRef>
   componentRenderers?: Record<string, ComponentRenderer>
   math?: 'katex' | 'text'
   includeCss?: boolean
-  /** Async display-URL resolver for image srcs (e.g. vault-relative
-   * attachment paths). Only used by the async render entry point. */
-  resolveImage?: (src: string) => Promise<string>
+  /** Async src resolver for images (e.g. vault-relative attachment paths).
+   * Only used by the async render entry point. `target` is the form the caller
+   * can actually use (see {@link ExportImageTarget}): a resolver that returns a
+   * data URL for `'data'` keeps the exported file self-contained. */
+  resolveImage?: (src: string, target: ExportImageTarget) => Promise<string>
+  /** The src form {@link resolveImage} is asked for. Defaults to `'display'`,
+   * which is what the in-app print/PDF path needs; the HTML export that is
+   * saved to disk asks for `'data'`. */
+  imageSrcTarget?: ExportImageTarget
 }
 
 interface TransformNode {
@@ -108,6 +128,11 @@ interface RenderContext {
   math: 'katex' | 'text'
   refs?: Map<string, ExportRef>
   componentRenderers?: Record<string, ComponentRenderer>
+  /** Display URL by document src, filled by the async pre-pass. Component
+   *  bodies are raw source text that `renderMdx` parses again at render time,
+   *  so an image inside one cannot be rewritten in place by the pre-pass; it
+   *  looks its resolved URL up here instead (see `resolveImageNodes`). */
+  resolvedImages?: Map<string, string>
   citeNumbers: Map<string, number>
   // When true, nekoCite nodes render their literal `[@key]` source text
   // instead of a number. Mirrors the editor, which treats an mdx component
@@ -192,11 +217,16 @@ function formatAuthors(authors: string[], max = 3): string {
 export function formatReference(ref: ExportRef): string {
   const hasRich = ref.journal || ref.volume || ref.issue || ref.pages || ref.doi || ref.url || ref.publisher
   if (!hasRich) {
+    // `key`, `authors` and `year` come from the user's .bib/.ris file, and the
+    // exported HTML is opened OUTSIDE the app (so outside its CSP): escape them
+    // exactly like the rich branch escapes every field it prints.
     const meta: string[] = []
-    if (ref.authors?.length) meta.push(ref.authors.join(', '))
-    if (ref.year) meta.push(ref.year)
+    if (ref.authors?.length) meta.push(ref.authors.map((a) => escapeHtml(a)).join(', '))
+    if (ref.year) meta.push(escapeHtml(ref.year))
     const metaSuffix = meta.length ? ` (${meta.join(', ')})` : ''
-    return ref.title ? `${ref.key} — ${escapeHtml(ref.title)}${metaSuffix}` : `${ref.key}${metaSuffix}`
+    return ref.title
+      ? `${escapeHtml(ref.key)} — ${escapeHtml(ref.title)}${metaSuffix}`
+      : `${escapeHtml(ref.key)}${metaSuffix}`
   }
   const segs: string[] = []
   const author = formatAuthors(ref.authors ?? [])
@@ -533,10 +563,15 @@ function renderNode(node: RenderNode, ctx: RenderContext): string {
         styles.push('float:right')
       }
       const style = styles.length ? ` style="${styles.join(';')}"` : ''
+      // An image inside a component body is re-parsed from that body's raw
+      // source at render time, so it still carries the document src here: take
+      // the display URL the async pre-pass recorded for it. A top-level image
+      // was rewritten in place and misses this lookup.
+      const resolved = typeof node.url === 'string' ? ctx.resolvedImages?.get(node.url) : undefined
       // Same allowlist as links, plus `data:image/*` for inlined pictures. A
       // rejected src is omitted so the alt text shows instead of a broken image
       // that would still have navigated on click.
-      const src = safeImageUrl(node.url)
+      const src = safeImageUrl(resolved ?? node.url)
       const srcAttr = src === null ? '' : ` src="${escapeHtml(src)}"`
       return `<img${srcAttr} alt="${escapeHtml(node.alt ?? '')}"${style}>`
     }
@@ -684,30 +719,53 @@ function parseChildren(markdown: string): RenderNode[] {
 }
 
 /** Rewrite every resolvable image src in the parsed tree to a display URL.
- * Concurrent repeats of the same src share one resolver call. */
+ * Concurrent repeats of the same src share one resolver call.
+ *
+ * `resolved` maps a document src to the URL the resolver produced, so an image
+ * the rewrite cannot reach in place (a component body) is still resolvable at
+ * render time. */
 async function resolveImageNodes(
   nodes: RenderNode[],
-  resolve: (src: string) => Promise<string>,
+  resolve: (src: string, target: ExportImageTarget) => Promise<string>,
+  target: ExportImageTarget,
+  renderers: Record<string, ComponentRenderer> | undefined,
   cache: Map<string, Promise<void>>,
+  resolved: Map<string, string>,
 ): Promise<void> {
   for (const node of nodes) {
     if (node.type === 'image' && typeof node.url === 'string' && node.url && !/^(https?:|data:|asset:|blob:|mailto:)/i.test(node.url) && !node.url.startsWith('/')) {
-      let pending = cache.get(node.url)
+      const src = node.url
+      let pending = cache.get(src)
       if (!pending) {
-        pending = resolve(node.url)
+        pending = resolve(src, target)
           .then((display) => {
             node.url = display
+            resolved.set(src, display)
           })
           .catch(() => undefined)
-        cache.set(node.url, pending)
+        cache.set(src, pending)
       }
       await pending
       continue
     }
-    // Component bodies are opaque source text re-parsed at render time; their
-    // nested images are not rewritten here (same atom rule as the editor).
-    if (node.type === 'mdxJsxFlowElement') continue
-    if (node.children) await resolveImageNodes(node.children as RenderNode[], resolve, cache)
+    // A component body is opaque source text: cites and heading ids inside it
+    // stay suppressed (the render pass re-parses it with `literalCites` /
+    // `literalHeadingIds`), but an image src must still resolve. Skipping the
+    // body outright left `![pic](assets/a.png)` in a saved export pointing at
+    // whatever happened to sit beside it where the user saved the file. Walk a
+    // throwaway parse of the body so those srcs reach `resolved`.
+    if (node.type === 'mdxJsxFlowElement') {
+      // Only a body with a renderer is emitted as HTML; without one the raw
+      // source is escaped into a fallback box, so resolving its images (one
+      // file read per image when the target is `'data'`) would be work that
+      // nothing consumes.
+      const { name, children } = parseMdxTag(typeof node.value === 'string' ? node.value : '')
+      if (children && renderers?.[name]) {
+        await resolveImageNodes(parseFragment(children), resolve, target, renderers, cache, resolved)
+      }
+      continue
+    }
+    if (node.children) await resolveImageNodes(node.children as RenderNode[], resolve, target, renderers, cache, resolved)
   }
 }
 
@@ -726,7 +784,11 @@ function collectFootnoteOrder(nodes: RenderNode[], numbers: Map<string, number>)
   walk(nodes)
 }
 
-function renderFromChildren(children: RenderNode[], opts?: RenderDocumentOptions): string {
+function renderFromChildren(
+  children: RenderNode[],
+  opts?: RenderDocumentOptions,
+  resolvedImages?: Map<string, string>,
+): string {
   const math = opts?.math ?? 'katex'
 
   const citeNumbers = new Map<string, number>()
@@ -736,6 +798,7 @@ function renderFromChildren(children: RenderNode[], opts?: RenderDocumentOptions
     math,
     refs: opts?.refs,
     componentRenderers: opts?.componentRenderers,
+    resolvedImages,
     citeNumbers,
     headingIds: headingAnchorIds(collectHeadingTexts(children)),
     footnoteNumbers: (() => {
@@ -765,13 +828,22 @@ export function renderDocument(markdown: string, opts?: RenderDocumentOptions): 
   return renderFromChildren(parseChildren(markdown), opts)
 }
 
-/** Async variant of {@link renderDocument} that resolves image srcs to
- * display URLs before rendering, so exported HTML/PDF keep working images. */
+/** Async variant of {@link renderDocument} that resolves image srcs before
+ * rendering, so exported HTML/PDF keep working images. The src form the
+ * resolver is asked for comes from {@link RenderDocumentOptions.imageSrcTarget}. */
 export async function renderDocumentAsync(markdown: string, opts?: RenderDocumentOptions): Promise<string> {
   const children = parseChildren(markdown)
   await loadKatex()
+  const resolvedImages = new Map<string, string>()
   if (opts?.resolveImage) {
-    await resolveImageNodes(children, opts.resolveImage, new Map())
+    await resolveImageNodes(
+      children,
+      opts.resolveImage,
+      opts.imageSrcTarget ?? 'display',
+      opts.componentRenderers,
+      new Map(),
+      resolvedImages,
+    )
   }
-  return renderFromChildren(children, opts)
+  return renderFromChildren(children, opts, resolvedImages)
 }
