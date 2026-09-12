@@ -42,6 +42,28 @@ export function fileToDataURL(file: Blob & { type?: string; name?: string }): Pr
   return fileToBase64(file).then((base64) => `data:${pickImageMime(file)};base64,${base64}`)
 }
 
+/**
+ * Truncate, and SAY SO.
+ *
+ * A 100 000-character note sent under a 2 000-character budget gave the model
+ * the first 2% of the document, and nothing in the UI, the prompt or the answer
+ * hinted that anything was missing — so the reply confidently discussed the
+ * opening of a note whose actual subject was fifty pages further down. The
+ * omitted count goes into the context itself (the model can then say what it
+ * cannot see) and the fact is reported to the caller so the panel can tell the
+ * user.
+ */
+function truncateWithNotice(s: string, maxChars: number): { text: string; notice: string } {
+  const out = truncate(s, maxChars)
+  return {
+    text: out,
+    notice:
+      out.length < s.length
+        ? t('chat.contextTruncated', { omitted: s.length - out.length })
+        : '',
+  }
+}
+
 /** Truncate a string to at most `maxChars` and append an ellipsis when cut. */
 function truncate(s: string, maxChars: number): string {
   if (maxChars <= 0) return ''
@@ -81,13 +103,20 @@ export function buildContextBlock(context: {
   const content = context.noteContent?.trim() ?? ''
   const lines: string[] = []
   const header = title ? t('chat.currentDocHeader', { title }) : ''
+  const pushBody = (body: string): void => {
+    const { text, notice } = truncateWithNotice(body, maxChars)
+    lines.push(text)
+    // The notice follows the text it describes: a reader (and the model) sees
+    // what was included first, then learns that something was left out.
+    if (notice) lines.push(notice)
+  }
   if (selection) {
     if (header) lines.push(header)
     lines.push(t('chat.selectionHeader'))
-    lines.push(truncate(selection, maxChars))
+    pushBody(selection)
   } else if (content) {
     if (header) lines.push(header)
-    lines.push(truncate(content, maxChars))
+    pushBody(content)
   }
   return lines.join('\n')
 }

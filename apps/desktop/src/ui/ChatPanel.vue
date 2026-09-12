@@ -297,10 +297,20 @@ async function send(): Promise<void> {
   let context = ''
   let imageDataUrls: ChatImage[]
   try {
-    context = useCurrentDoc.value ? await buildActiveContext() : ''
-    if (useCurrentDoc.value && !context) {
-      notifyError(t('chat.emptyDocHint'))
-      return
+    if (useCurrentDoc.value) {
+      const tab = tabs.activeTab
+      if (!tab) {
+        // No document at all: naming that is right, because the switch is on.
+        notifyError(t('chat.emptyDocHint'))
+        return
+      }
+      context = await buildActiveContext()
+      // An EMPTY note is not a missing document. Refusing to send here blocked
+      // exactly the scenario the feature is for — "help me outline this" on a
+      // note you just created — with a message claiming no document was open
+      // while one plainly was. The message goes out without context, and the
+      // user is told why it carries nothing.
+      if (!context) notifyError(t('chat.emptyDocSent'))
     }
     imageDataUrls = await itemDataUrls(attachments.value)
   } catch {

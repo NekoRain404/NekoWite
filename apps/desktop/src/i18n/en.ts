@@ -545,6 +545,8 @@ export const en = {
     attachContext: 'Refer to current document',
     attachContextLabel: 'Send current document / selection as context',
     emptyDocHint: 'Open a document first',
+    emptyDocSent: 'The current note is empty, so this message was sent without it.',
+    contextTruncated: '[The note was longer than the context budget: {omitted} characters were left out.]',
     user: 'User',
     assistant: 'Assistant',
     currentDocHeader: '[Current document: {title}]',

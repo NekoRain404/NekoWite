@@ -82,10 +82,14 @@ describe('chatLogic', () => {
     })
 
     it('truncates an oversized body at maxChars', () => {
+      // The omission used to be invisible: the model saw the first 100
+      // characters of a 300-character note and answered as if it had read the
+      // whole thing, with nothing in the UI to suggest otherwise.
       const block = buildContextBlock({ noteTitle: 'T', noteContent: 'a'.repeat(300), maxChars: 100 })
-      expect(block.endsWith('...')).toBe(true)
-      // Header (8) + newline + the capped 100-char body only.
-      expect(block.length).toBe(8 + 1 + 100)
+      const parts = block.split('\n')
+      expect(parts[1].endsWith('...')).toBe(true)
+      expect(parts[1].length).toBe(100)
+      expect(parts.slice(2).join('\n')).toContain('200')
     })
 
     it('returns empty strings when nothing usable is present', () => {
