@@ -16,7 +16,7 @@ tags: [research, reading, citation]
 - DOI/链接：
 
 ## 研究问题
-- 
+-
 
 ## 方法
 - 数据：
@@ -24,7 +24,7 @@ tags: [research, reading, citation]
 - 主要指标：
 
 ## 主要发现
-1. 
+1.
 
 ## 质量评价
 - 优点：
@@ -36,4 +36,4 @@ tags: [research, reading, citation]
 - 待验证：
 
 ## 备注
-- 
+-

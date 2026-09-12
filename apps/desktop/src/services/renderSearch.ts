@@ -18,11 +18,7 @@
 import type { NekoEditor } from '@nekowite/editor-core'
 import { reactive } from 'vue'
 import type { EditorState } from '@milkdown/prose/state'
-import {
-  Decoration,
-  DecorationSet,
-  type DecorationSource,
-} from '@milkdown/prose/view'
+import { Decoration, DecorationSet } from '@milkdown/prose/view'
 import { findMisspelled, suggestions } from './spellcheck'
 import { editorSessionManager } from '../features/editor/sessionManager'
 import { debounce } from './timing'
@@ -235,29 +231,21 @@ function buildDecorationSet(state: EditorState, entries: WrapEntry[]): Decoratio
   return decos.length ? DecorationSet.create(state.doc, decos) : DecorationSet.empty
 }
 
-/** Flatten a decoration source (set or group) into its individual decor. */
-function flattenSource(source: DecorationSource): Decoration[] {
-  const out: Decoration[] = []
-  source.forEachSet((set) => out.push(...set.find()))
-  return out
-}
-
-/** Compute the overlay decorations for a state during the view's render pass.
- *  A top-level `decorations` editor prop shadows `props.decorations` from
- *  state plugins, so we merge our find/spell marks in on top of whatever the
- *  plugins contribute (e.g. the AI suggestion ghost widget). Reads the cached
- *  entries from the last coalesced `refreshOverlays` — cheap, no doc scan. */
+/**
+ * Our find/spell marks for the view's render pass, read from the entries the
+ * last coalesced `refreshOverlays` computed (cheap: no doc scan here).
+ *
+ * This deliberately does NOT fold in the plugins' own `props.decorations`.
+ * ProseMirror collects decorations from every source it can find -
+ * `viewDecorations()` runs `someProp('decorations', …)`, which visits the
+ * top-level prop AND each plugin's own prop - so a set that already contains
+ * the plugins' decorations gets counted twice. Inline marks survive that
+ * (painting a span twice looks like painting it once) but a WIDGET does not:
+ * the AI suggestion ghost was rendered as two identical spans, and the same
+ * merge made the task-checkbox marker appear twice.
+ */
 function decorationsProvider(state: EditorState): DecorationSet {
-  let combined = buildDecorationSet(state, cachedEntries)
-  for (const plugin of state.plugins) {
-    const deco = plugin.spec.props?.decorations
-    if (typeof deco !== 'function') continue
-    const source = deco.call(plugin, state)
-    if (source && source !== DecorationSet.empty) {
-      combined = combined.add(state.doc, flattenSource(source))
-    }
-  }
-  return combined
+  return buildDecorationSet(state, cachedEntries)
 }
 
 /** Re-apply find + spell overlays for the current state. Idempotent: this is
