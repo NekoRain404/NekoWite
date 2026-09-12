@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { baseName, dirName, joinPath, stripVaultPrefix, usesBackslash } from './paths'
+import {
+  baseName,
+  dirName,
+  joinPath,
+  samePath,
+  stripVaultPrefix,
+  usesBackslash,
+} from './paths'
 
 // The exact spelling the Rust layer returns on Windows: a verbatim prefix and
 // backslash separators. Every helper has to work on this AND on a POSIX path.
@@ -94,5 +101,28 @@ describe('usesBackslash', () => {
   it('detects the separator style', () => {
     expect(usesBackslash(WIN)).toBe(true)
     expect(usesBackslash(POSIX)).toBe(false)
+  })
+})
+
+describe('samePath', () => {
+  it('treats Windows spellings of one folder as the same vault', () => {
+    // The stored session and the open vault can differ in case or separators for
+    // the SAME folder (mapped drive, re-typed capitalisation). A raw `!==`
+    // dropped the whole restored tab set and then overwrote the session.
+    expect(samePath('C:\\Vault', 'c:\\vault')).toBe(true)
+    expect(samePath('C:\\Vault\\', 'C:\\Vault')).toBe(true)
+    expect(samePath('C:/Vault', 'C:\\Vault')).toBe(true)
+    expect(samePath('\\\\server\\share\\v', '\\\\SERVER\\SHARE\\V')).toBe(true)
+  })
+
+  it('keeps POSIX paths case-sensitive', () => {
+    // Folding case there would merge two genuinely different directories.
+    expect(samePath('/home/u/Vault', '/home/u/vault')).toBe(false)
+    expect(samePath('/home/u/vault', '/home/u/vault/')).toBe(true)
+  })
+
+  it('does not merge different folders', () => {
+    expect(samePath('C:\\Vault', 'C:\\Vault2')).toBe(false)
+    expect(samePath('/a/b', '/a/c')).toBe(false)
   })
 })

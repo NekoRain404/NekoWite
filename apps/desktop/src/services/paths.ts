@@ -60,3 +60,29 @@ export function stripVaultPrefix(path: string, vault: string): string {
   }
   return p.replace(/^\/+/, '')
 }
+
+/** Whether two paths name the same location on this platform.
+ *
+ *  Windows (and macOS) compare paths case-insensitively, and the same folder
+ *  reaches the app in several spellings: the folder picker, a stored session, a
+ *  mapped drive letter, or a user who re-typed the capitalisation. Comparing the
+ *  raw strings made those look like different vaults — which dropped the whole
+ *  restored tab set silently, because the session was "for another vault".
+ *  Separators are normalised too, since a path may arrive with either. */
+export function samePath(a: string, b: string): boolean {
+  const norm = (p: string): string => p.replace(/\\/g, '/').replace(/[/]+$/, '')
+  const left = norm(a)
+  const right = norm(b)
+  if (left === right) return true
+  // POSIX filesystems are case-sensitive, so folding there would merge two real
+  // directories. Only Windows gets the case-insensitive comparison.
+  if (!isWindowsPath(left) || !isWindowsPath(right)) return false
+  return left.toLowerCase() === right.toLowerCase()
+}
+
+/** A path that is (or looks like) a Windows absolute path. */
+function isWindowsPath(p: string): boolean {
+  const sep = String.fromCharCode(92)
+  if (p.startsWith('//') || p.startsWith(sep + sep)) return true
+  return p.length > 2 && p[1] === ':' && (p[2] === '/' || p[2] === sep)
+}

@@ -205,3 +205,14 @@ ER  -`
     expect(b[1].key).toBe(a[1].key)
   })
 })
+
+describe('reference file detection', () => {
+  it('accepts the uppercase extensions reference managers export', () => {
+    // Zotero writes `Library.BIB`; the case-sensitive test hid it entirely.
+    expect(detectFormat('Library.BIB')).toBe('bib')
+    expect(detectFormat('Refs.RIS')).toBe('ris')
+    expect(detectFormat('items.JSON')).toBe('csl')
+    expect(detectFormat('library.bib')).toBe('bib')
+    expect(detectFormat('notes.md')).toBeNull()
+  })
+})

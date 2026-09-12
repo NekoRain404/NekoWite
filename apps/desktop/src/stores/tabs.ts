@@ -11,6 +11,7 @@ import { requestUntitledVaultSwitch } from '../app/recoveryClosedLoop'
 import { announce } from '../services/announcer'
 import { t as i18nT } from '../i18n'
 import { assetsDirForNote, moveAttachments, rewireTempRefsInContent } from '../services/renameAsset'
+import { samePath } from '../services/paths'
 import { rewriteNoteRefs } from '../services/noteMove'
 import type { NoteMoveResult } from '../services/noteMove'
 import { useSettingsStore } from './settings'
@@ -158,7 +159,11 @@ export const useTabsStore = defineStore('tabs', () => {
    * session for the currently-open vault. */
   async function restoreSession(): Promise<void> {
     const session = parseSession(persistence.get(SESSION_KEY))
-    if (!session || session.vault !== vault.value) return
+    // `samePath`, not `!==`: the stored spelling and the open vault can differ
+    // in case or separators for the SAME folder (Windows), and a raw string
+    // comparison threw the whole session away — the tabs were silently not
+    // restored, and the next capture wrote the new spelling over them.
+    if (!session || !vault.value || !samePath(session.vault, vault.value)) return
     for (const path of session.paths) {
       await openTab(path)
     }

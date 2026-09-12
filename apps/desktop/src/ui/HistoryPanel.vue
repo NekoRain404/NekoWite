@@ -15,6 +15,17 @@ const entries = ref<HistoryEntry[]>([])
 const comparing = ref<HistoryEntry | null>(null)
 /** Historical text of `comparing`, loaded lazily on open. */
 const historyText = ref('')
+/**
+ * The note `comparing`/`historyText` belong to.
+ *
+ * The comparison is a snapshot of ONE note's old version and is not
+ * self-describing: without this, switching notes left the panel showing "this
+ * note's current text vs THAT note's old text" in one diff - two documents mixed
+ * together - and the restore button then asked the backend to restore the other
+ * note's version id onto this one (a confusing failure, or with a coincidentally
+ * equal id, the wrong version pasted into the wrong note).
+ */
+const comparingPath = ref<string | null>(null)
 
 function hasDoc(): boolean {
   return Boolean(tabs.vault && tabs.activeTab?.path)
@@ -22,6 +33,11 @@ function hasDoc(): boolean {
 
 async function load(): Promise<void> {
   const tab = tabs.activeTab
+  // The note changed: any open comparison describes a document that is no longer
+  // on screen, so drop it rather than render (and act on) a mixed diff.
+  if (comparingPath.value !== null && comparingPath.value !== (tab?.path ?? null)) {
+    closeCompare()
+  }
   if (!tab?.path || !tabs.vault) {
     entries.value = []
     return
@@ -56,9 +72,16 @@ async function restore(entry: HistoryEntry): Promise<void> {
 async function openCompare(entry: HistoryEntry): Promise<void> {
   const tab = tabs.activeTab
   if (!tab?.path || !tabs.vault) return
+  const path = tab.path
+  const vault = tabs.vault
   try {
-    historyText.value = await fsService.readHistory(tabs.vault, tab.path, entry.id)
+    const text = await fsService.readHistory(vault, path, entry.id)
+    // The read is asynchronous: if the user switched notes while it was in
+    // flight, this text belongs to the note that is no longer open.
+    if (tabs.activeTab?.path !== path || tabs.vault !== vault) return
+    historyText.value = text
     comparing.value = entry
+    comparingPath.value = path
   } catch {
     notifyError(t('history.readHistoryFailed'))
   }
@@ -67,10 +90,14 @@ async function openCompare(entry: HistoryEntry): Promise<void> {
 function closeCompare(): void {
   comparing.value = null
   historyText.value = ''
+  comparingPath.value = null
 }
 
 async function restoreFromDiff(): Promise<void> {
-  if (comparing.value) await restore(comparing.value)
+  // Only restore what the diff actually shows: the same note, still open.
+  if (comparing.value && comparingPath.value === tabs.activeTab?.path) {
+    await restore(comparing.value)
+  }
   closeCompare()
 }
 
