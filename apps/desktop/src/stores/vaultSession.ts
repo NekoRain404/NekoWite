@@ -52,11 +52,11 @@ export const useVaultSessionStore = defineStore('vaultSession', () => {
         // tracking the disk when this subscription is missing, and nothing on
         // screen would look different. Say so, and say what brings it back.
         if (ok) {
-          notifyError(t('vault.watchRestored'))
+          notifyError(t('tabs.watchRestored'))
           return
         }
         console.error('[NekoWite] vault watch failed', error)
-        notifyError(t('vault.watchFailed'))
+        notifyError(t('tabs.watchFailed'))
       },
     })
     coordinator = next
