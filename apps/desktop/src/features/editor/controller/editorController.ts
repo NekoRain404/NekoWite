@@ -84,6 +84,12 @@ export function createEditorController(deps: EditorControllerDeps): EditorContro
         getVault: () => tabs.vault,
         getNotePath: () => tabs.activeTab?.path ?? null,
       }),
+      // The resolver above turns a relative src into a display URL using the
+      // CURRENT note, so `pic.png` means a different file in every directory.
+      // Keying the resolution memo on the src alone served the previous note's
+      // picture after a tab switch; the scope token makes the memo follow the
+      // vault + note it was produced for.
+      { scope: () => JSON.stringify([tabs.vault, tabs.activeTab?.path ?? null]) },
     )
     // Heading anchors copy a deep-link fragment. Prefer the note's vault-relative
     // path so the link is resolvable from anywhere; fall back to a bare fragment

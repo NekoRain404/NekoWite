@@ -103,3 +103,58 @@ describe('invalidateImageResolution', () => {
     await expect(resolveImageSrc('a.png')).resolves.toBe('data:image/png;base64,NEW')
   })
 })
+
+describe('resolution scope', () => {
+  it('drops the memo when the scope changes, so one note cannot serve another note\'s image', async () => {
+    // The production resolver reads the CURRENT note at call time, and the same
+    // relative src (`pic.png`) means a different file in every directory. A memo
+    // keyed on the src alone therefore showed note A's picture in note B.
+    let note = 'a/note.md'
+    configureImageResolver(async (src) => `asset:///${note.slice(0, note.lastIndexOf('/'))}/${src}`, {
+      scope: () => note,
+    })
+    await expect(resolveImageSrc('pic.png')).resolves.toBe('asset:///a/pic.png')
+    note = 'b/note.md'
+    await expect(resolveImageSrc('pic.png')).resolves.toBe('asset:///b/pic.png')
+  })
+
+  it('notifies mounted consumers when the scope changes', async () => {
+    // A scope change must not depend on the editor re-opening the document:
+    // two notes with byte-identical text are "already applied", so their node
+    // views would keep the previous note's display URL without this.
+    let note = 'a/note.md'
+    configureImageResolver(async (src) => `${note}:${src}`, { scope: () => note })
+    // Subscribed AFTER configuring: installing a resolver notifies too, and
+    // that is not what this case is about.
+    const listener = vi.fn()
+    const off = onImageResolutionInvalidated(listener)
+
+    await resolveImageSrc('pic.png')
+    expect(listener).not.toHaveBeenCalled()
+
+    note = 'b/note.md'
+    await resolveImageSrc('pic.png')
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    // Re-resolving inside one scope stays quiet (no feedback loop).
+    await resolveImageSrc('pic.png')
+    expect(listener).toHaveBeenCalledTimes(1)
+    off()
+  })
+
+  it('still memoises within one scope', async () => {
+    const resolve = vi.fn(async () => 'data:image/png;base64,OK')
+    configureImageResolver(resolve, { scope: () => 'a/note.md' })
+    await resolveImageSrc('a.png')
+    await resolveImageSrc('a.png')
+    expect(resolve).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps memoising when no scope is configured', async () => {
+    const resolve = vi.fn(async () => 'data:image/png;base64,OK')
+    configureImageResolver(resolve)
+    await resolveImageSrc('a.png')
+    await resolveImageSrc('a.png')
+    expect(resolve).toHaveBeenCalledTimes(1)
+  })
+})
