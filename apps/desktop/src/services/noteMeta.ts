@@ -29,6 +29,22 @@ export interface MdLink {
 }
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---((?:\r?\n)+|$)/
+/**
+ * How much of a note the library scan reads for its metadata.
+ *
+ * The block used to be sliced to `SNAPSHOT_CHARS` BEFORE being split, so a
+ * frontmatter block longer than that slice never closed inside it: `front` came
+ * back empty and the note lost its title and tags in the list, in the tag
+ * filter, in the aggregate counts and in the search index — while the
+ * frontmatter panel (which reads the whole block) still showed them, so the two
+ * surfaces disagreed about the same note. The scan is bounded instead: the
+ * frontmatter is found first, and only the BODY after it is sampled.
+ *
+ * A note that opens with `---` and never closes it would otherwise make the
+ * lazy match scan the entire file, so the search for the closing fence is
+ * capped well above any realistic block.
+ */
+const FRONTMATTER_SCAN_CHARS = 8192
 const SNAPSHOT_CHARS = 400
 const SUMMARY_CHARS = 120
 
@@ -410,13 +426,28 @@ export function extractOutlinks(content: string): MdLink[] {
   return out
 }
 
+/**
+ * The metadata-relevant view of a note: its frontmatter block (found within the
+ * scan cap) and a sample of the BODY that follows it.
+ *
+ * Returning the body from AFTER the block matters as much as the block itself:
+ * sampling the first 400 characters meant a long frontmatter ate the sample
+ * too, so the summary and the H1 fallback were taken from YAML text.
+ */
+export function splitNoteForSummary(md: string): { front: string; body: string } {
+  const head = md.length > FRONTMATTER_SCAN_CHARS ? md.slice(0, FRONTMATTER_SCAN_CHARS) : md
+  const match = FRONTMATTER_RE.exec(head)
+  if (!match) return { front: '', body: md.slice(0, SNAPSHOT_CHARS) }
+  const bodyStart = match[0].length
+  return { front: match[1] ?? '', body: md.slice(bodyStart, bodyStart + SNAPSHOT_CHARS) }
+}
+
 export function parseNoteMeta(
   path: string,
   content: string,
   meta: { mtime: number; size: number; vault: string },
 ): NoteSummary {
-  const snapshot = content.slice(0, SNAPSHOT_CHARS)
-  const { front, body } = splitFrontmatterRaw(snapshot)
+  const { front, body } = splitNoteForSummary(content)
   const parsed = parseFrontmatterBlock(front)
   // Must be the basename: on Windows this used to be the whole absolute
   // path, which is what the note list rendered as every note's title.
