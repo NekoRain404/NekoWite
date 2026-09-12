@@ -1,7 +1,7 @@
 use nekowite_lib::providers::ai::client::{
     default_base_url, parse_sse_event,
     ai_id_for, build_prompt, http_error_message, next_ai_id, parse_model_ids, parse_sse_line,
-    resolve_endpoint, AIConfig, SseBuffer,
+    normalize_reasoning_effort, resolve_endpoint, AIConfig, SseBuffer,
 };
 
 #[test]
@@ -620,5 +620,252 @@ fn a_tuned_config_still_wins_over_the_raised_default() {
     let cfg = tuned_cfg("deepseek");
     let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
     assert_eq!(body["max_tokens"], 512);
+}
+
+// --- Thinking depth (`reasoning_effort`) ------------------------------------
+//
+// The server honours exactly the lowercase ladder `none|minimal|low|medium|
+// high|xhigh` and rejects anything else with HTTP 400 (measured against
+// tokenflux's `deepseek-flash`: "ultra", "bogus-level" and even the uppercase
+// "HIGH" were all 400). Normalisation therefore happens once, at the config
+// boundary, and every provider below pins the wire shape it produces.
+
+#[test]
+fn reasoning_effort_keeps_the_ladder_rungs() {
+    for level in ["none", "minimal", "low", "medium", "high", "xhigh"] {
+        assert_eq!(normalize_reasoning_effort(Some(level)), Some(level));
+    }
+}
+
+#[test]
+fn reasoning_effort_lowercases_and_trims_valid_values() {
+    for level in ["none", "minimal", "low", "medium", "high", "xhigh"] {
+        assert_eq!(
+            normalize_reasoning_effort(Some(&level.to_uppercase())),
+            Some(level),
+            "uppercase {level} must normalise"
+        );
+        assert_eq!(
+            normalize_reasoning_effort(Some(&format!("  {level}\t"))),
+            Some(level),
+            "padded {level} must normalise"
+        );
+    }
+}
+
+#[test]
+fn reasoning_effort_drops_missing_blank_and_unknown_values() {
+    for raw in [
+        None,
+        Some(""),
+        Some("   "),
+        Some("ultra"),
+        Some("bogus-level"),
+        Some("  bogus-level  "),
+        Some("highish"),
+    ] {
+        assert_eq!(
+            normalize_reasoning_effort(raw),
+            None,
+            "{raw:?} must be dropped"
+        );
+    }
+}
+
+/// A tuned config with room for the largest thinking budget, so the Anthropic
+/// clamp is never what an unrelated assertion trips over.
+fn thinking_cfg(provider: &str, effort: Option<&str>) -> AIConfig {
+    AIConfig {
+        max_tokens: Some(32_768),
+        reasoning_effort: effort.map(str::to_string),
+        ..tuned_cfg(provider)
+    }
+}
+
+#[test]
+fn unknown_effort_never_reaches_any_provider() {
+    // The whole point of dropping an invalid rung: no provider is handed a
+    // value the server would reject.
+    for provider in ["openai", "anthropic", "gemini"] {
+        let (_url, body) = resolve_endpoint(&thinking_cfg(provider, Some("ultra")), "hi", &[]);
+        assert!(body.get("reasoning_effort").is_none(), "{provider}");
+        assert!(body.get("thinking").is_none(), "{provider}");
+        assert!(
+            body.pointer("/generationConfig/thinkingConfig").is_none(),
+            "{provider}"
+        );
+    }
+}
+
+#[test]
+fn openai_body_pins_the_normalised_reasoning_effort() {
+    let (url, body) = resolve_endpoint(&thinking_cfg("openai", Some("  HIGH ")), "hello", &[]);
+    assert_eq!(url, "https://api.openai.com/v1/chat/completions");
+    assert_eq!(
+        body,
+        serde_json::json!({
+            "model": "m",
+            "max_tokens": 32_768,
+            "stream": true,
+            "messages": [
+                { "role": "system", "content": "You are a helpful editor assistant." },
+                { "role": "user", "content": "hello" }
+            ],
+            "temperature": 0.7_f32,
+            "reasoning_effort": "high"
+        }),
+        "padded uppercase input must go out trimmed and lowercased"
+    );
+}
+
+#[test]
+fn openai_body_omits_reasoning_effort_when_unset_or_unknown() {
+    for raw in [None, Some("ultra")] {
+        let (_url, body) = resolve_endpoint(&thinking_cfg("openai", raw), "hi", &[]);
+        assert!(
+            body.get("reasoning_effort").is_none(),
+            "{raw:?} must not be forwarded"
+        );
+    }
+}
+
+#[test]
+fn anthropic_maps_effort_to_extended_thinking_budgets() {
+    for (effort, budget) in [
+        ("minimal", 1024_u32),
+        ("low", 2048),
+        ("medium", 4096),
+        ("high", 8192),
+        ("xhigh", 16384),
+    ] {
+        let (_url, body) = resolve_endpoint(&thinking_cfg("anthropic", Some(effort)), "hi", &[]);
+        assert_eq!(
+            body["thinking"],
+            serde_json::json!({ "type": "enabled", "budget_tokens": budget }),
+            "effort {effort}"
+        );
+        assert!(
+            body.get("reasoning_effort").is_none(),
+            "Anthropic has no reasoning_effort field"
+        );
+    }
+}
+
+#[test]
+fn anthropic_none_omits_thinking_entirely() {
+    for raw in [None, Some("none")] {
+        let (_url, body) = resolve_endpoint(&thinking_cfg("anthropic", raw), "hi", &[]);
+        assert!(
+            body.get("thinking").is_none(),
+            "{raw:?} must not enable extended thinking"
+        );
+    }
+}
+
+#[test]
+fn anthropic_clamps_the_budget_below_max_tokens() {
+    // Anthropic rejects `budget_tokens >= max_tokens`, so a 2000-token cap
+    // cannot host the 16384 of `xhigh`: the budget comes down to 1999.
+    let cfg = AIConfig {
+        max_tokens: Some(2000),
+        reasoning_effort: Some("xhigh".into()),
+        ..tuned_cfg("anthropic")
+    };
+    let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    assert_eq!(
+        body["thinking"],
+        serde_json::json!({ "type": "enabled", "budget_tokens": 1999 })
+    );
+}
+
+#[test]
+fn anthropic_omits_thinking_when_max_tokens_is_too_small() {
+    // 1024 is both the default cap and the smallest budget, and the budget must
+    // stay strictly under the cap: no room means no extended thinking, rather
+    // than a request Anthropic would reject outright.
+    for max_tokens in [Some(1_u32), Some(512), Some(1024), None] {
+        let cfg = AIConfig {
+            max_tokens,
+            reasoning_effort: Some("high".into()),
+            ..tuned_cfg("anthropic")
+        };
+        let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+        assert!(
+            body.get("thinking").is_none(),
+            "max_tokens {max_tokens:?} must omit thinking"
+        );
+    }
+
+    // One token above the smallest budget is the first cap that fits it.
+    let cfg = AIConfig {
+        max_tokens: Some(1025),
+        reasoning_effort: Some("minimal".into()),
+        ..tuned_cfg("anthropic")
+    };
+    let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    assert_eq!(
+        body["thinking"],
+        serde_json::json!({ "type": "enabled", "budget_tokens": 1024 })
+    );
+}
+
+#[test]
+fn gemini_maps_effort_to_a_thinking_budget() {
+    for (effort, budget) in [
+        ("none", 0_u32),
+        ("minimal", 512),
+        ("low", 1024),
+        ("medium", 4096),
+        ("high", 8192),
+        ("xhigh", 16384),
+    ] {
+        let (_url, body) = resolve_endpoint(&thinking_cfg("gemini", Some(effort)), "hi", &[]);
+        assert_eq!(
+            body["generationConfig"]["thinkingConfig"],
+            serde_json::json!({ "thinkingBudget": budget }),
+            "effort {effort}"
+        );
+    }
+}
+
+#[test]
+fn gemini_keeps_generation_config_siblings_when_adding_thinking() {
+    let (_url, body) = resolve_endpoint(&thinking_cfg("gemini", Some("high")), "hello", &[]);
+    assert_eq!(
+        body["generationConfig"],
+        serde_json::json!({
+            "temperature": 0.7_f32,
+            "maxOutputTokens": 32_768,
+            "thinkingConfig": { "thinkingBudget": 8192 }
+        }),
+        "the thinking merge must not clobber temperature/maxOutputTokens"
+    );
+    assert_eq!(body["contents"][0]["parts"][0]["text"], "hello");
+}
+
+#[test]
+fn gemini_creates_generation_config_when_nothing_else_is_tuned() {
+    let cfg = AIConfig {
+        provider: "gemini".into(),
+        model: "gemini-2.5-pro".into(),
+        reasoning_effort: Some("medium".into()),
+        ..Default::default()
+    };
+    let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    assert_eq!(
+        body["generationConfig"],
+        serde_json::json!({ "thinkingConfig": { "thinkingBudget": 4096 } })
+    );
+}
+
+#[test]
+fn gemini_omits_thinking_when_unset_or_unknown() {
+    for raw in [None, Some("ultra")] {
+        let (_url, body) = resolve_endpoint(&thinking_cfg("gemini", raw), "hi", &[]);
+        assert!(
+            body.pointer("/generationConfig/thinkingConfig").is_none(),
+            "{raw:?} must not add a thinking config"
+        );
+    }
 }
 

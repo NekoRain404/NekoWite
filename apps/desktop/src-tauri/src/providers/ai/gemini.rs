@@ -6,7 +6,21 @@
 
 use serde_json::Value;
 
-use super::client::{split_data_url, system_prompt_of, AIConfig};
+use super::client::{normalize_reasoning_effort, split_data_url, system_prompt_of, AIConfig};
+
+/// Gemini's thinking budget in tokens for a normalised rung; `none` is an
+/// explicit `0` (thinking off), unlike Anthropic where it means "omit the
+/// field".
+fn thinking_budget(effort: &str) -> u32 {
+    match effort {
+        "minimal" => 512,
+        "low" => 1024,
+        "medium" => 4096,
+        "high" => 8192,
+        "xhigh" => 16384,
+        _ => 0, // "none"
+    }
+}
 
 /// Build the Gemini request `(url, body)` for a completion. The URL stays free
 /// of the API key so proxies/servers never log it; the credential rides in the
@@ -52,6 +66,19 @@ pub fn endpoint(cfg: &AIConfig, prompt: &str, images: &[Value]) -> (String, Valu
             gc["maxOutputTokens"] = serde_json::json!(mt);
         } else {
             body["generationConfig"] = serde_json::json!({ "maxOutputTokens": mt });
+        }
+    }
+    // Gemini controls thinking with a token budget nested inside
+    // `generationConfig` — an explicit 0 turns it off — so it is merged into
+    // whatever temperature/maxOutputTokens are already there instead of
+    // replacing the object.
+    if let Some(effort) = normalize_reasoning_effort(cfg.reasoning_effort.as_deref()) {
+        let budget = thinking_budget(effort);
+        if let Some(gc) = body.get_mut("generationConfig") {
+            gc["thinkingConfig"] = serde_json::json!({ "thinkingBudget": budget });
+        } else {
+            body["generationConfig"] =
+                serde_json::json!({ "thinkingConfig": { "thinkingBudget": budget } });
         }
     }
     (url, body)

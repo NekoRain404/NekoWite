@@ -1,0 +1,145 @@
+<script setup lang="ts">
+import { ref } from 'vue'
+import { useFocusTrap } from '../composables/useFocusTrap'
+import { t } from '../i18n'
+import type { PendingAiWrite } from '../stores/aiPermission'
+
+/**
+ * The "the AI wants to change your document" prompt.
+ *
+ * Rendered by the shell whenever a write is waiting for an answer. The AI's
+ * own summary is shown verbatim so the user judges the actual action rather
+ * than a generic warning, and "allow for this session" is a distinct button
+ * rather than a checkbox that is easy to accept by accident.
+ */
+const props = defineProps<{ pending: PendingAiWrite }>()
+const emit = defineEmits<{
+  (e: 'respond', approved: boolean, remember: boolean): void
+}>()
+
+const active = ref(true)
+const dialogEl = ref<HTMLElement | null>(null)
+useFocusTrap(dialogEl, active)
+
+function onKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    // Escape means "no": dismissing a permission prompt must never be read as
+    // approval.
+    emit('respond', false, false)
+  }
+}
+
+function kindLabel(): string {
+  return props.pending.request.kind === 'replace-selection'
+    ? t('aiperm.kind.replaceSelection')
+    : t('aiperm.kind.insert')
+}
+</script>
+
+<template>
+  <div
+    class="dialog-overlay"
+    @keydown="onKeydown"
+  >
+    <div
+      ref="dialogEl"
+      class="dialog ai-write-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="ai-write-title"
+    >
+      <div
+        id="ai-write-title"
+        class="ai-write-title"
+      >
+        {{ t('aiperm.title') }}
+      </div>
+      <div class="ai-write-body">
+        <span class="ai-write-kind">{{ kindLabel() }}</span>
+        <span class="ai-write-summary">{{ pending.request.summary }}</span>
+      </div>
+      <div
+        v-if="pending.request.target"
+        class="ai-write-target"
+      >
+        {{ pending.request.target }}
+      </div>
+      <div class="dialog-actions">
+        <button
+          class="btn btn-primary"
+          @click="emit('respond', true, false)"
+        >
+          {{ t('aiperm.allowOnce') }}
+        </button>
+        <button
+          class="btn btn-secondary"
+          @click="emit('respond', true, true)"
+        >
+          {{ t('aiperm.allowSession') }}
+        </button>
+        <button
+          class="btn btn-ghost"
+          @click="emit('respond', false, false)"
+        >
+          {{ t('aiperm.deny') }}
+        </button>
+      </div>
+      <div class="ai-write-note">
+        {{ t('aiperm.note') }}
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.ai-write-dialog {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(460px, 90vw);
+  padding: 14px 16px;
+  border-radius: var(--app-radius-xl);
+  box-shadow: var(--app-shadow-dialog);
+  font-size: 13px;
+  color: var(--app-text);
+}
+.ai-write-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--app-text);
+}
+.ai-write-body {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.ai-write-kind {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--app-accent) 18%, transparent);
+  color: var(--app-text);
+  font-size: 12px;
+}
+.ai-write-summary {
+  word-break: break-word;
+}
+.ai-write-target {
+  margin-top: 6px;
+  font-family: var(--app-mono-font, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--app-muted);
+  word-break: break-all;
+}
+.dialog-actions {
+  margin-top: 10px;
+}
+.ai-write-note {
+  margin-top: 8px;
+  color: var(--app-muted);
+  font-size: 12px;
+}
+</style>

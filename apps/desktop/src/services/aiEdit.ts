@@ -6,6 +6,7 @@ import { startChatCompletion } from './ai'
 import type { ChatStream } from './ai'
 import type { AIConfig } from '../stores/settings'
 import { useSettingsStore } from '../stores/settings'
+import { useAiPermissionStore } from '../stores/aiPermission'
 import { getLocale, t } from '../i18n'
 
 /** The edit operations offered by the AI selection commands. */
@@ -28,6 +29,9 @@ export interface EditView {
 
 export interface AiEditDeps {
   getView(): EditView | null
+  /** Whether the AI may replace the user's selection right now. Awaited before
+   *  the result is applied, so a policy of "ask" cannot be raced. */
+  canWrite(req: { kind: 'replace-selection'; summary: string; target?: string }): Promise<boolean>
   /** The current text selection in whichever pane owns the document. */
   readSelection(): TextSelection | null
   /** Replace that selection; false when it can no longer be applied. */
@@ -44,6 +48,9 @@ export const aiEditDeps: AiEditDeps = {
   readSelection: getTextSelection,
   applySelection: replaceTextSelection,
   getConfig: () => useSettingsStore().config(),
+  // The store owns the policy + session grants; asking it (rather than reading
+  // the setting here) is what makes the prompt's answer take effect.
+  canWrite: (req) => useAiPermissionStore().ask(req),
   notifyError,
   start: startChatCompletion,
   translate: (key, params) => t(key, params),
@@ -109,6 +116,18 @@ export async function rewriteSelection(
   }
   const target =
     action === 'translate' ? targetOfLocale(getLocale()) : undefined
+  // Ask BEFORE spending a request: a denied write must not send the user's text
+  // to the provider, and a prompt after the answer arrived would spend the
+  // tokens and then throw the result away.
+  const approved = await d.canWrite({
+    kind: 'replace-selection',
+    summary: d.translate(`aiperm.action.${action}`),
+    target: selection.text.trim().slice(0, 120),
+  })
+  if (!approved) {
+    d.notifyError(d.translate('aiperm.denied'))
+    return { cancel: () => undefined }
+  }
   const prompt = buildEditPrompt(action, selection.text, target)
   return d.start(d.getConfig(), prompt, [], {
     onChunk: () => undefined,

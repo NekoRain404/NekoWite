@@ -24,6 +24,8 @@ import { useAppearanceStore } from '../stores/appearance'
 import { COLOR_SCHEMES, COLOR_SCHEME_PREVIEW } from '../stores/appearance'
 import type { Accent, ColorScheme, ContentDirection, EditorFontId, MonoFontId, UiFontId } from '../stores/appearance'
 import { getLocale, setLocale, t } from '../i18n'
+import { useAiPermissionStore } from '../stores/aiPermission'
+import { AI_WRITE_POLICIES, describePolicy, type AiWritePolicy } from '../services/aiPermissions'
 import type { ExportRef } from '@nekowite/editor-core'
 
 const emit = defineEmits<{ (e: 'close'): void; (e: 'saved', path: string): void }>()
@@ -49,6 +51,7 @@ const SECTIONS = computed<Array<{ id: SectionId; label: string; icon: typeof Typ
   { id: 'ai', label: t('settings.section.ai'), icon: Sparkles },
 ])
 
+const aiPermission = useAiPermissionStore()
 const activeSection = ref<SectionId>('general')
 const dialogRef = ref<HTMLElement | null>(null)
 
@@ -65,6 +68,29 @@ const showBaseUrl = computed(
 )
 
 const AI_PROVIDERS = ['openai', 'anthropic', 'gemini', 'grok', 'deepseek', 'local', 'custom']
+
+/**
+ * Thinking-depth choices. `''` is "leave it to the provider": the field is then
+ * omitted from the request entirely. `effortLabelKey` maps a rung to its i18n
+ * key so the template never builds a key by concatenation.
+ */
+/**
+ * The AI write policies, in the order they are offered. `describePolicy` in the
+ * permission service owns the key mapping, so the wording only lives in i18n.
+ */
+const WRITE_POLICIES: { value: AiWritePolicy; labelKey: string }[] = AI_WRITE_POLICIES.map(
+  (value) => ({ value, labelKey: describePolicy(value) }),
+)
+
+const EFFORT_OPTIONS: { value: string; labelKey: string }[] = [
+  { value: '', labelKey: 'aiSettings.effortDefault' },
+  { value: 'none', labelKey: 'aiSettings.effortNone' },
+  { value: 'minimal', labelKey: 'aiSettings.effortMinimal' },
+  { value: 'low', labelKey: 'aiSettings.effortLow' },
+  { value: 'medium', labelKey: 'aiSettings.effortMedium' },
+  { value: 'high', labelKey: 'aiSettings.effortHigh' },
+  { value: 'xhigh', labelKey: 'aiSettings.effortXhigh' },
+]
 
 const modelLoading = ref(false)
 const modelOptions = computed(() => {
@@ -887,6 +913,55 @@ async function onExportPdf(): Promise<void> {
                   @change="settings.temperature = Math.min(2, Math.max(0, Number(($event.target as HTMLInputElement).value) || 0.7))"
                 >
               </label>
+              <label class="settings-field">
+                <span>{{ t('aiSettings.effort') }}</span>
+                <select
+                  class="input"
+                  :value="settings.reasoningEffort"
+                  @change="settings.reasoningEffort = ($event.target as HTMLSelectElement).value as typeof settings.reasoningEffort"
+                >
+                  <option
+                    v-for="opt in EFFORT_OPTIONS"
+                    :key="opt.value"
+                    :value="opt.value"
+                  >
+                    {{ t(opt.labelKey) }}
+                  </option>
+                </select>
+                <span class="settings-note">{{ t('aiSettings.effortHint') }}</span>
+              </label>
+              <label class="settings-field">
+                <span>{{ t('aiperm.policy') }}</span>
+                <select
+                  class="input"
+                  :value="aiPermission.policy"
+                  @change="aiPermission.setPolicy(($event.target as HTMLSelectElement).value as AiWritePolicy)"
+                >
+                  <option
+                    v-for="opt in WRITE_POLICIES"
+                    :key="opt.value"
+                    :value="opt.value"
+                  >
+                    {{ t(opt.labelKey) }}
+                  </option>
+                </select>
+                <span class="settings-note">{{ t('aiperm.policyHint') }}</span>
+              </label>
+              <div class="settings-field">
+                <span>{{ t('aiperm.grants') }}</span>
+                <span class="settings-note">
+                  {{ aiPermission.sessionGrants.size
+                    ? [...aiPermission.sessionGrants].join(', ')
+                    : t('aiperm.noGrants') }}
+                </span>
+                <button
+                  class="btn btn-secondary btn-sm"
+                  :disabled="aiPermission.sessionGrants.size === 0"
+                  @click="aiPermission.forgetGrants()"
+                >
+                  {{ t('aiperm.revoke') }}
+                </button>
+              </div>
               <label class="settings-field">
                 <span>{{ t('aiSettings.maxTokens') }}</span>
                 <input
