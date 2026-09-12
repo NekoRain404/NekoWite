@@ -267,6 +267,28 @@ git commit -m "feat(appearance): add crimson palette and four accents"
 - 已核对的既有守卫：`buildIndexIncremental` 会丢弃不在文件列表里的条目、`applyMdChange` 的 remove 分支清缓存并写回索引（上一轮）。本轮没有任何代码改动，只新增测试，因此**不需要重新打包**：HEAD 的运行时代码与 `release/nekowite_0.1.0_x64.exe`（SHA-256 `702b1daa…`）一致。
 - 验证：editor-core 554、desktop 单元 1070、`pnpm -r typecheck`/`lint`、Playwright 135、`cargo clippy -D warnings` + `cargo test`(105) 全绿。
 
+### 2026-09-13（第十五轮）
+
+按用户要求「接入 AI、并做全场景测试」，本轮把 AI 从「能连上」推到「可控」，同时用真实应用把一批只在真机上才暴露的缺陷挖出来。
+
+- **AI 接入（DeepSeek / 兼容网关）**：`default_base_url` 现在认识 grok 与 deepseek（此前没有默认值的服务商会把请求发到 api.openai.com）；流式解析新增 `reasoning_content`/`reasoning`，把推理过程作为 `ai-reasoning` 事件单独送出——推理模型在正文前会沉默数秒（实测约 27 个分片），此前界面看起来像卡死；状态栏新增「AI 思考中」指示。`max_tokens` 默认从 256 提到 1024，并在「推理吃光预算、正文为空」时给出明确错误而不是静默成功。
+- **思考深度**：先实测再设计——对着线上端点用同一道推理题逐档打表（无参数 152 / none 0 / minimal 68 / low 110 / medium 213 / high 157 / xhigh 182 字符），并确认 `ultra`、`bogus-level`、`HIGH` 都会 400。于是取值白名单化，并在本地丢弃未知档而不是转发；三个服务商各自映射到自己的形状（OpenAI 兼容 `reasoning_effort`、Anthropic `thinking.budget_tokens` 且受 `max_tokens` 约束、Gemini `thinkingConfig` 且与既有 `generationConfig` 合并）。
+- **AI 写入权限**：新增纯决策表 `services/aiPermissions.ts`（无依赖，34 例测试）与应用级 `stores/aiPermission.ts`（持久化策略 + 仅本次运行的授权 + 唯一的 `ask()` 入口）。两条写入路径接入：选区改写**在发请求之前**询问（被拒绝就不会把用户文字发给服务商），聊天面板的「插入文档」在改动编辑器之前询问。未知策略一律回落到询问。
+- **删除文件夹找不回来**（P1）：文件树对目录同样提供垃圾桶按钮，`delete_file` 也会把目录移入回收站，但 `list_trash` 跳过所有非文件条目——删掉文件夹后回收站显示为空、无计数、无找回入口。这与代码里「目录删除后要关闭其下所有标签页」的逻辑直接矛盾。修法：列出目录（`is_dir`）并支持连内容还原；Rust 侧原本断言「目录不列出」的测试改为断言真实契约。
+- **回收站显示编码键 + 碰撞还原出打不开的笔记**（P1）：`docs/a.md` 显示成 `docs%2Fa.md`；同一路径二次删除会在键上加时间戳，而解码把它并进文件名，还原出 `a.md-1757520000000`（扩展名不被识别 = 打不开）。两者都在 Rust 侧解码，重命名标记也插到扩展名之前。
+- **还原到已删除目录必然失败**（P1）：不会创建父目录，失败还被显示成「请重试」，而重试不可能成功。现在创建父目录（与 `rename_entry` 一致）。
+- **`.tmp` 恢复闭环的路径比较永远不成立**（P1）：`list_dir` 返回绝对路径，而被引用集合是 vault 相对路径，于是每张暂存图片都被当成崩溃残留。这一条上一轮已修（`stripVaultPrefix`），但真实应用里随即暴露出**更深的一层**：被引用集合只来自打开中的标签页，所以「磁盘上有笔记引用、但标签页没开」时仍然误判。实测确认（同一份 vault：笔记打开时提示为空，关掉标签页后立刻被计为可恢复），修法是「打开中标签页 ∪ 全库扫描」，并且全库扫描是惰性的（`.tmp` 为空就直接返回）。
+- **`fs-change` 词汇表不匹配**（P1）：类型是裸 `string`，索引协调器判断 `'remove'` 而后端发 `'removed'`——被删除的笔记一直留在缓存与持久化索引里，图谱也留着过期节点。类型收紧为联合类型后，写错字面量变成编译错误。顺带合并了 `notify` 对一次写入发出的重复/派生事件。
+- **外部改动检测挂在面板里**（P1）：整个能力（含 OS watcher 的挂载）都在 `FileTree.vue` 中，而它只在「文件夹」面板存在——默认的「笔记」面板下 vault 根本没被监听，外部编辑不被感知，下一次保存会静默覆盖别人的修改。现在监听在 vault 提交处挂载，判定与重载移入应用级服务。
+- **推理模型下「停止」停不住**（P1）：请求 id 由后端生成，首个事件到达前窗口侧无 id 可取消；被放弃的请求继续流淌，迟到的分片被下一个请求采纳（问算术题答出 600 字散文）。改为前端在发起前选定 id 并随请求下发，每条流只接受自己的 id。
+- **渲染视图的任务复选框点不动**（P1）：复选框是伪元素画的，背后没有 DOM 节点。新增点击插件（单事务、单步撤销、拒绝修饰键点击、只在左侧内边距生效）。
+- **打印印错文档**（P1）：`print.css` 用 `display: block !important` 强行显示渲染面板，盖过 `v-show` 的内联 `display: none`；而源码模式下渲染模型被刻意留旧，于是源码模式切换笔记后打印会印出**另一篇笔记**。改为「所见即所印」，并用 `emulateMedia('print')` 在真实应用里逐模式验证（渲染/源码/对照各自只有正确的面板在打印流中）。
+- **导出的 HTML 不含图片**（P2）：图片写成 `asset://localhost/...`，文件离开应用后全是坏图（同一文件里的字体却早已内联）。渲染器现在按目标形态请求：应用内打印/PDF 用显示 URL（输出逐字节不变），保存到磁盘的 HTML 内联为 data。组件体（Callout/FloatBox）内的图片此前完全不解析，规则已收窄；参考文献纯文本分支漏转义的 `key`/`authors`/`year` 已补上。
+- **命令面板列出无法执行的命令**（P2）：没有打开文档时仍列出约 22 个格式命令，点下去毫无反应。现在直接说明原因（新增 `palette.noDocument`）。
+- **插件授权跨 vault 泄漏 / 隔离无法解除**（P1，打包版因 CSP 门控暂不可达）：授权判决只以插件 id 为键且从不清理，A vault 的批准会授权 B vault 的同 id 插件；隔离提示让用户「重载 vault」，但重置函数无人调用、重载也清不掉标记。两者都已修正。
+- **验证**：desktop 单元 1161、editor-core 580、plugin-host 100、Rust 144、Playwright 137 全绿；`typecheck`/`lint`/`clippy -D warnings` 全绿。真机（CDP 驱动打包前的 dev 构建）逐项复验：AI 全流程 3/3、聊天 7/7、取消 4/4、权限 9/11（两处失败经核实是探针自身取错消息）、思考深度 5/5、外部改动 11/11、目录回收站 7/7、碰撞解码 6/6、`.tmp` 恢复 3/3、导出 6/6、打印 5/5、索引删除 4/4、模式与渲染 13/16（三处经核实是断言口径不符，非缺陷）。
+- 记录一条**测试自身的问题**：`GraphPanel > renders the full vault by default` 在并行跑套件时偶发失败——读盘计数满足时组件仍在 loading 态，断言抢在渲染前。改为等待表头文本稳定，并在并行套件里复跑通过。同类的还有 `App.appearance.test.ts` 的回收站断言，随 `display_name` 契约更新。
+
 ## 验证与交付
 
 ```bash
@@ -282,7 +304,7 @@ bash scripts/package-win.sh
 
 ## 构建产物
 
-- 免安装可执行文件：`release/nekowite_0.1.0_x64.exe`（未签名），SHA-256：`702b1daa05f01ae3e902bd2295a7c3d3a7d2c417a95083f96ecdee873b6ae4e6`（含索引状态双向判定修复与 Rust 索引模块文档更正；打包后按记录的 PID 启动 exe 冒烟验证：标题 `NekoWite`、`Responding=True`、工作集 29.2 MB，随后精确结束该进程）。
+- 免安装可执行文件：`release/nekowite_0.1.0_x64.exe`（未签名）——本轮产物见下方「最新产物」一节。
 - Windows x64 NSIS 安装包：`release/nekowite_0.1.0_x64-setup.exe`（5.3 MB，未签名）。
 - 原生可执行文件：`apps/desktop/src-tauri/target/release/nekowite.exe`（17 MB）。
 - 当前产物未使用 Authenticode 签名；Windows SmartScreen 可能提示“未知发布者”。如需正式分发，应先配置代码签名再重新打包。
