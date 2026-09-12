@@ -22,6 +22,8 @@ function harness(overrides: {
   openTabs?: Array<{ id: string; path: string | null }>
   /** Paths whose read must fail, modelling a file that is gone. */
   unreadable?: string[]
+  /** Paths the APP is renaming right now (see `beginMove`). */
+  pendingMove?: string[]
 } = {}): Harness & { onMissing: ReturnType<typeof vi.fn> } {
   let handler: ((e: FsChangeEvent) => void) | null = null
   const reload = vi.fn(async () => undefined)
@@ -46,6 +48,7 @@ function harness(overrides: {
       savedContent: overrides.savedContent ?? 'old text',
     }),
     isSelfWrite: () => overrides.selfWrite ?? false,
+    isPendingMove: (p) => (overrides.pendingMove ?? []).some((from) => p === from || p.startsWith(`${from}\\`)),
     reload,
     onConflict,
     onChange,
@@ -209,6 +212,54 @@ describe('folder-level disappearance', () => {
     h.emit({ path: 'C:\\vault\\docs', kind: 'modified' })
     await h.flush()
     expect(h.onMissing).toHaveBeenCalledWith('tab-1', 'C:\\vault\\docs\\inside.md')
+  })
+
+  it('does not detach a tab whose file the APP is renaming right now', async () => {
+    // Renaming a note from the file tree makes the watcher report its PARENT
+    // folder while the tab still points at the old name, and the old name stops
+    // existing the moment the rename lands - `renamePathInTabs` runs after the
+    // disk work. Reading it here found nothing, so the app announced that the
+    // user's own rename had happened "outside the app", detached the tab (it
+    // became "Untitled") and made the next Ctrl+S open a native save-as instead
+    // of saving to the note that had just been renamed.
+    const h = harness({
+      openTabs: [{ id: 'tab-1', path: 'C:\\vault\\docs\\note.md' }],
+      unreadable: ['C:\\vault\\docs\\note.md'],
+      pendingMove: ['C:\\vault\\docs\\note.md'],
+    })
+    await h.sync.start()
+    h.emit({ path: 'C:\\vault\\docs', kind: 'modified' })
+    await h.flush()
+    expect(h.onMissing).not.toHaveBeenCalled()
+  })
+
+  it('does not detach tabs inside a folder the APP is renaming', async () => {
+    // A folder rename carries its notes: every tab under the old folder name is
+    // missing on disk until the move finishes AND retargets them.
+    const h = harness({
+      openTabs: [{ id: 'tab-1', path: 'C:\\vault\\docs\\inside.md' }],
+      unreadable: ['C:\\vault\\docs\\inside.md'],
+      pendingMove: ['C:\\vault\\docs'],
+    })
+    await h.sync.start()
+    h.emit({ path: 'C:\\vault', kind: 'modified' })
+    await h.flush()
+    expect(h.onMissing).not.toHaveBeenCalled()
+  })
+
+  it('detaches again once the move is over and the file is really gone', async () => {
+    // The guard must be a window, not a permanent exemption: a file that stays
+    // missing after the app's move finished is exactly the case the detach
+    // exists for.
+    const h = harness({
+      openTabs: [{ id: 'tab-1', path: 'C:\\vault\\docs\\note.md' }],
+      unreadable: ['C:\\vault\\docs\\note.md'],
+      pendingMove: ['C:\\vault\\docs\\other.md'],
+    })
+    await h.sync.start()
+    h.emit({ path: 'C:\\vault\\docs', kind: 'modified' })
+    await h.flush()
+    expect(h.onMissing).toHaveBeenCalledWith('tab-1', 'C:\\vault\\docs\\note.md')
   })
 
   it('leaves an unrelated file event alone without reading any tab', async () => {

@@ -650,6 +650,37 @@ describe('closeAll cleanup', () => {
     expect(s.activeId).toBeNull()
   })
 
+  it('claims a path for an app-initiated move until the move ends', async () => {
+    // The external-change service asks this question while the watcher reports a
+    // rename: a tab whose file is momentarily absent because WE are moving it
+    // must not be read as "deleted behind the user's back". The claim covers the
+    // notes inside a folder being moved, too (a folder rename carries them).
+    const s = useTabsStore()
+    s.setVault('/vault')
+
+    expect(s.isPendingMove('/vault/docs/note.md')).toBe(false)
+
+    s.beginMove('/vault/docs')
+    expect(s.isPendingMove('/vault/docs')).toBe(true)
+    expect(s.isPendingMove('/vault/docs/note.md')).toBe(true)
+    expect(s.isPendingMove('/vault/other/note.md')).toBe(false)
+    // A sibling whose name merely starts with the same characters is NOT inside.
+    expect(s.isPendingMove('/vault/docs-archive/note.md')).toBe(false)
+
+    s.endMove('/vault/docs')
+    expect(s.isPendingMove('/vault/docs/note.md')).toBe(false)
+  })
+
+  it('accepts Windows separators in a claimed path', async () => {
+    // The claim comes from the file tree, which passes native paths, while the
+    // tabs hold whatever spelling the vault used.
+    const s = useTabsStore()
+    s.setVault('C:\\vault')
+    s.beginMove('C:\\vault\\docs')
+    expect(s.isPendingMove('C:\\vault\\docs\\note.md')).toBe(true)
+    s.endMove('C:\\vault\\docs')
+  })
+
   it('cancels the pending autosave timer, leaving the close-time flush as the only write', async () => {
     vi.useFakeTimers()
     readMock.mockResolvedValue('abc')

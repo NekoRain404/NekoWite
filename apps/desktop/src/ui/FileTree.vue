@@ -295,22 +295,73 @@ async function moveEntry(from: string, to: string, isDir: boolean): Promise<void
   // ourselves.
   tabs.noteSelfWrite(from)
   tabs.noteSelfWrite(to)
-  if (isDir) {
-    // A folder carries its contents, so each note's own `_assets` references
-    // still resolve and only the tab paths change. References OUT of the folder
-    // (the vault-level `attachments/` tree) would need every note inside to be
-    // rewritten; that subtree case is deliberately left as a plain rename.
-    await fsService.renameEntry(props.vault, from, to)
-    tabs.renamePathInTabs(from, to)
-    return
+  // Tell the app-level external-change service that THIS path is being moved by
+  // us. The watcher reports a rename as a change to the parent folder, so the
+  // service looks at every open tab inside it while the tab still points at the
+  // old name - which no longer exists once the rename has landed and
+  // `renamePathInTabs` has not run yet. Without the claim the tab would be
+  // detached as if the file had been moved behind the user's back.
+  tabs.beginMove(from)
+  try {
+    if (isDir) {
+      // A folder carries its contents, so each note's own `_assets` references
+      // still resolve and only the tab paths change. References OUT of the folder
+      // (the vault-level `attachments/` tree) would need every note inside to be
+      // rewritten; that subtree case is deliberately left as a plain rename.
+      await fsService.renameEntry(props.vault, from, to)
+      tabs.renamePathInTabs(from, to)
+      return
+    }
+    const moved = await moveNote(noteMoveIo, props.vault, from, to)
+    tabs.renamePathInTabs(from, to, moved)
+  } finally {
+    tabs.endMove(from)
   }
-  const moved = await moveNote(noteMoveIo, props.vault, from, to)
-  tabs.renamePathInTabs(from, to, moved)
+}
+
+/**
+ * A move can fail AFTER its rename landed: `moveNote` rewrites the body at the
+ * new path and its own rollback is best effort. When that happens the tab is
+ * left pointing at a name that no longer exists — the app would then report the
+ * user's own rename as an external deletion, detach the note and turn Ctrl+S
+ * into a native "save as". Point the tabs at whichever file really exists and
+ * let the editor adopt its bytes (a dirty tab keeps the user's text; see
+ * `reloadFromDisk`).
+ */
+async function retargetAfterFailedMove(from: string, to: string): Promise<void> {
+  const exists = async (path: string): Promise<boolean> => {
+    try {
+      await fsService.read(props.vault, path)
+      return true
+    } catch {
+      return false
+    }
+  }
+  if (await exists(from)) return
+  if (!(await exists(to))) return
+  tabs.renamePathInTabs(from, to)
+  for (const tab of tabs.tabs) {
+    if (tab.path === to) void tabs.reloadFromDisk(tab.id)
+  }
+}
+
+/**
+ * Both ways of moving a note - the inline rename and drag-and-drop - need the
+ * same repair, because both can fail after the rename itself landed. Throws the
+ * original error so the caller keeps wording its own message.
+ */
+async function moveOrRepair(from: string, to: string, isDir: boolean): Promise<void> {
+  try {
+    await moveEntry(from, to, isDir)
+  } catch (error) {
+    await retargetAfterFailedMove(from, to)
+    throw error
+  }
 }
 
 async function performMove(from: string, to: string, isDir: boolean): Promise<void> {
   try {
-    await moveEntry(from, to, isDir)
+    await moveOrRepair(from, to, isDir)
   } catch {
     notifyError(t('tree.moveFailed'))
   } finally {
@@ -442,7 +493,7 @@ async function applyEdit(p: TreeEdit, name: string): Promise<void> {
       if (!from) return
       const to = joinPath(dirOf(from), name)
       if (to !== from) {
-        await moveEntry(from, to, p.nodeIsDir === true)
+        await moveOrRepair(from, to, p.nodeIsDir === true)
         await refreshAncestors(from)
       }
     } else {
