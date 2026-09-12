@@ -22,6 +22,7 @@ import {
   formatAttachmentBytes,
   isImageFile,
   MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENTS_PER_MESSAGE,
 } from '../services/attachments'
 import { useSettingsStore } from '../stores/settings'
 import { useTabsStore } from '../stores/tabs'
@@ -51,6 +52,10 @@ interface ChatAttachment {
  * part of the session model, so it round-trips through `toSessionMessage`. */
 interface PanelMessage extends ChatMessage {
   interrupted?: boolean
+  /** Short status about this message's images (refused by the size cap, or
+   *  evicted by a storage budget). Shown under the bubble; without it the
+   *  attachment simply disappears between one launch and the next. */
+  imageNotice?: string
 }
 
 const settings = useSettingsStore()
@@ -136,6 +141,16 @@ let cancelFn: (() => void) | null = null
 let disposed = false
 
 const modelName = computed(() => settings.model)
+
+/** The store reports a write that could not store everything (see
+ *  `chatSession.storageWarning`). Without this banner the user only finds out
+ *  after a restart, when the images - or the whole conversation - are gone. */
+const storageWarningText = computed(() => {
+  const warning = chatSessions.storageWarning
+  if (warning === 'images-not-persisted') return t('chat.storageImagesDropped')
+  if (warning === 'history-not-persisted') return t('chat.storageFull')
+  return ''
+})
 const canSend = computed(() => !streaming.value && (prompt.value.trim().length > 0 || attachments.value.length > 0))
 const hasMessages = computed(() => messages.value.length > 0)
 
@@ -144,6 +159,7 @@ const hasMessages = computed(() => messages.value.length > 0)
 function toSessionMessage(m: PanelMessage): ChatSessionMessage {
   const stored: ChatSessionMessage = { role: m.role, content: m.content }
   if (m.images && m.images.length) stored.images = m.images
+  if (m.imageNotice) stored.imageNotice = m.imageNotice
   if (m.interrupted) stored.interrupted = true
   return stored
 }
@@ -151,6 +167,10 @@ function toSessionMessage(m: PanelMessage): ChatSessionMessage {
 function fromSessionMessage(m: ChatSessionMessage): PanelMessage {
   const msg: PanelMessage = { role: m.role, content: m.content }
   if (m.images && m.images.length) msg.images = m.images
+  // The store explains here why an image is missing ("too large", "removed,
+  // storage limit"). Dropping the notice - which this did - turned a refused
+  // attachment into a message that quietly sent without it.
+  if (m.imageNotice) msg.imageNotice = m.imageNotice
   if (m.interrupted) msg.interrupted = true
   return msg
 }
@@ -210,6 +230,12 @@ function addFiles(files: File[]): void {
   const seen = new Set(attachments.value.map((a) => `${a.name}:${a.file.size}:${a.file.type}`))
   for (const file of files) {
     if (!isImageFile(file)) continue
+    if (attachments.value.length >= MAX_ATTACHMENTS_PER_MESSAGE) {
+      // Every attachment is base64-encoded into one request: past this cap the
+      // send would spike memory on both processes and be refused by the model.
+      notifyError(t('chat.tooManyImages', { max: MAX_ATTACHMENTS_PER_MESSAGE }))
+      break
+    }
     // Refuse an oversize image HERE, while the user can still act on it: the
     // send path (`fileToBase64`) enforces the same cap, and a rejection from
     // inside `send()` used to vanish — the draft and the thumbnail stayed,
@@ -356,7 +382,13 @@ async function send(): Promise<void> {
       scrollToBottom()
     },
     onError: (msg) => {
-      finalize(index, false)
+      // An answer that already streamed text before the connection died is a
+      // PARTIAL answer, and must say so: presenting half a paragraph as the
+      // finished reply is how a user quotes a sentence the model never
+      // completed. (The panel-close path already marks this; the failure path
+      // did not.)
+      const partial = (messages.value[index]?.content ?? '').length > 0
+      finalize(index, partial, partial)
       notifyError(t('chat.genFailed', { msg }))
     },
   })
@@ -519,6 +551,14 @@ onBeforeUnmount(() => {
     </header>
 
     <div
+      v-if="storageWarningText"
+      class="chat-storage-warning"
+      role="status"
+    >
+      {{ storageWarningText }}
+    </div>
+
+    <div
       ref="scrollEl"
       class="chat-scroll"
       role="log"
@@ -562,6 +602,12 @@ onBeforeUnmount(() => {
               :alt="img.name"
               draggable="false"
             >
+          </div>
+          <div
+            v-if="m.imageNotice"
+            class="chat-image-notice"
+          >
+            {{ m.imageNotice }}
           </div>
           <div class="chat-content">
             {{ m.content }}
@@ -891,6 +937,23 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 2px;
 }
+.chat-storage-warning {
+  margin: 6px 10px 0;
+  padding: 6px 8px;
+  border-radius: var(--app-radius);
+  border: 1px solid color-mix(in srgb, var(--app-danger) 40%, transparent);
+  background: color-mix(in srgb, var(--app-danger) 10%, transparent);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.chat-image-notice {
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: var(--app-text-muted);
+  font-style: italic;
+}
+
 .chat-interrupted {
   display: inline-flex;
   align-items: center;

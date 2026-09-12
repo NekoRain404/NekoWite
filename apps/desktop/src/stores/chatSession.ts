@@ -61,6 +61,15 @@ export const IMAGE_TOO_LARGE = 'image too large'
  * budget. */
 export const IMAGE_EVICTED_NOTICE = 'image(s) removed (storage limit)'
 
+/** Storage warning shown when the session history had to be written without
+ * its images to fit the storage budget: the images are still in the open panel,
+ * but a reload will not bring them back. */
+export const STORAGE_WARNING_IMAGES = 'images-not-persisted'
+
+/** Storage warning shown when nothing could be written at all - the history on
+ * screen exists only in memory and will be gone after a reload. */
+export const STORAGE_WARNING_FULL = 'history-not-persisted'
+
 /** The three image budgets, split out so they can be overridden for tests or
  * tuned in one place. */
 export interface ImageLimits {
@@ -286,6 +295,9 @@ export function applyImageCaps(
 export const useChatSessionStore = defineStore('chatSession', () => {
   const sessions = ref<ChatSession[]>([])
   const activeId = ref<string | null>(null)
+  /** Set when the last persist could not store everything (see the constants
+   *  above). Cleared as soon as a write lands in full. */
+  const storageWarning = ref<string | null>(null)
 
   function loadAll(): void {
     let next: ChatSession[] = []
@@ -332,27 +344,38 @@ export const useChatSessionStore = defineStore('chatSession', () => {
         messages: s.messages.map(toStoredMessage),
       })),
     }
-    try {
-      persistence.set(CHAT_SESSIONS_KEY, JSON.stringify(payload))
-    } catch (err) {
-      // Quota exceeded because of image data-URLs: retry text-only, otherwise
-      // give up quietly — an in-memory session is better than a thrown error.
-      // (The persistence port swallows quota errors, so this branch is a safe
-      //  backstop for adapters that do surface a write failure.)
-      console.warn('[chatSession] persist failed, retrying without images', err)
-      const textOnly: StoredState = {
-        ...payload,
-        sessions: payload.sessions.map((s) => ({
-          ...s,
-          messages: s.messages.map((m) => ({ role: m.role, content: m.content })),
-        })),
-      }
-      try {
-        persistence.set(CHAT_SESSIONS_KEY, JSON.stringify(textOnly))
-      } catch (innerErr) {
-        console.warn('[chatSession] persist failed even without images', innerErr)
-      }
+    if (persistence.set(CHAT_SESSIONS_KEY, JSON.stringify(payload))) {
+      if (storageWarning.value !== null) storageWarning.value = null
+      return
     }
+    // The write did not land — almost always the localStorage quota, which the
+    // per-message and per-session image budgets failed to prevent (other apps
+    // on the same origin, or a big text history, can eat the budget too). Shed
+    // the images: the text of a conversation is what the user cannot retype.
+    console.warn('[chatSession] persist failed, retrying without images')
+    let droppedImages = 0
+    const textOnly: StoredState = {
+      ...payload,
+      sessions: payload.sessions.map((s) => ({
+        ...s,
+        messages: s.messages.map((m) => {
+          if (!m.images?.length) return { role: m.role, content: m.content }
+          droppedImages += m.images.length
+          return { role: m.role, content: m.content }
+        }),
+      })),
+    }
+    if (persistence.set(CHAT_SESSIONS_KEY, JSON.stringify(textOnly))) {
+      // The in-memory copy keeps its images so the open panel still shows them;
+      // the notice explains why a reopened panel will not.
+      storageWarning.value = STORAGE_WARNING_IMAGES
+      if (droppedImages > 0) console.warn(`[chatSession] dropped ${droppedImages} image(s) to fit storage`)
+      return
+    }
+    // Even the text does not fit. Say so: silently reporting success here is
+    // how a whole conversation disappears at the next launch.
+    storageWarning.value = STORAGE_WARNING_FULL
+    console.warn('[chatSession] persist failed even without images')
   }
 
   const activeSession = computed<ChatSession | null>(
@@ -450,6 +473,7 @@ export const useChatSessionStore = defineStore('chatSession', () => {
     sessions,
     activeId,
     activeSession,
+    storageWarning,
     newSession,
     switchSession,
     deleteSession,
