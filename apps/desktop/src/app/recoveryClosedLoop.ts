@@ -205,10 +205,14 @@ export type UntitledVaultChoice = 'save' | 'discard'
 export function requestUntitledVaultSwitch(deps: {
   count: number
   notify: (p: RecoveryPrompt) => void
+  /** Message key for the prompt. Defaults to the vault-switch wording; the
+   *  close-all path passes its own because "save before switching" would
+   *  describe an action the user is not taking. */
+  messageKey?: string
 }): Promise<UntitledVaultChoice> {
   return new Promise((resolve) => {
     deps.notify({
-      message: i18nT('tabs.untitledVaultSwitchMsg', { count: deps.count }),
+      message: i18nT(deps.messageKey ?? 'tabs.untitledVaultSwitchMsg', { count: deps.count }),
       onRestore: () => resolve('save'),
       onDismiss: () => resolve('discard'),
     })

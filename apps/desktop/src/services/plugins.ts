@@ -121,9 +121,7 @@ function signalPluginLoadingDisabledByCsp(): void {
   if (cspBlockedNotified) return
   cspBlockedNotified = true
   recordPluginEvent('*', 'import-refused', 'CSP blocks in-window plugin loading (no process/WebView isolation)')
-  notifyError(
-    'Vault plugins are disabled under the current security policy (CSP blocks in-window module loading). Expected until process/WebView isolation is implemented.',
-  )
+  notifyError(t('plugin.loadingDisabled'))
 }
 
 /* ------------------------------------------------------------------------- *
@@ -1202,6 +1200,22 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
   setupAuditRouter()
   setupAuditFilePersistence(vault)
 
+  const adapter = makeVaultPluginFsAdapter(vault)
+  let entries: PluginFsEntry[]
+  try {
+    entries = await adapter.readdir(joinPath(vault, 'plugins'))
+  } catch {
+    return
+  }
+  const pluginDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name)
+  // A vault with no `plugins/` directory has nothing that could be disabled, so
+  // there is nothing to report and nothing to gate: staying quiet here is the
+  // absence of a requested feature, not a silent failure. Telling every user on
+  // every launch that plugins are blocked — in a vault they never put a plugin
+  // in — turns a security implementation detail into permanent, alarming noise
+  // (and used to write a plugin audit record into every vault on open).
+  if (pluginDirs.length === 0) return
+
   // CSP gate: the production Tauri webview's strict CSP blocks the in-window
   // `import('blob:...')` that plugin loading relies on. Rather than attempting
   // (and failing) the import for every plugin, skip the scan entirely and surface
@@ -1209,6 +1223,9 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
   // becomes live the moment plugin loading moves behind real isolation. The gate
   // only triggers in the real Tauri webview — not in the unit-test DOM or the
   // browser Demo, where the existing integrity/permission scenarios still run.
+  // Listing the directory first is deliberate: it reads no plugin code and every
+  // vault open already lists directories, but it is what lets us tell "the user
+  // has plugins that cannot load" from "the user has no plugins at all".
   if (!isPluginImportAllowedByCsp()) {
     signalPluginLoadingDisabledByCsp()
     void flushAuditLogToFile()
@@ -1220,15 +1237,6 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
   // we're scoping to this vault — after the CSP gate so a CSP-blocked build does
   // not touch the file system. On a MAC failure this refuses the contained trust.
   await loadGovernanceFile(vault)
-
-  const adapter = makeVaultPluginFsAdapter(vault)
-  let entries: PluginFsEntry[]
-  try {
-    entries = await adapter.readdir(joinPath(vault, 'plugins'))
-  } catch {
-    return
-  }
-  const pluginDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name)
 
   // Phase 1 — parallel, independent per-plugin work (manifest + code + digest).
   // No import happens here; execution is deferred until after the gates below.

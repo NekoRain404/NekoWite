@@ -79,7 +79,7 @@ async function onMenuSelect(id: string): Promise<void> {
   if (!target) return
   if (id === 'close') await tabs.closeTab(target.tabId)
   else if (id === 'close-others') await tabs.closeOthers(target.tabId)
-  else if (id === 'close-all') tabs.closeAll()
+  else if (id === 'close-all') void tabs.closeAll()
 }
 </script>
 

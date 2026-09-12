@@ -124,19 +124,20 @@ describe('loadVaultPlugins', () => {
 })
 
 describe('CSP gate (production Tauri webview)', () => {
-  it('skips the whole scan and surfaces one per-session notice when the strict CSP blocks in-window blob imports', async () => {
+  it('skips the scan and surfaces one per-session notice when a vault HAS plugins and the strict CSP blocks in-window blob imports', async () => {
     // The production Tauri webview injects a strict CSP script-src (no blob:,
     // no 'unsafe-eval'). isPluginImportAllowedByCsp() detects that via the Tauri
     // runtime signal (__TAURI_INTERNALS__) and refuses to attempt the in-window
-    // import, returning early so no plugin code is read or executed. No silent
+    // import, returning early so no plugin CODE is read or executed. No silent
     // failure and no repeated per-plugin CSP error: exactly ONE user-visible
     // notice per session.
     ;(window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
     try {
       await loadVaultPlugins('/vault')
-      // The whole scan is skipped before any fs read or import — no plugin code
-      // is touched, so there is no path to top-level execution.
-      expect(listMock).not.toHaveBeenCalled()
+      // The directory listing happens first (that is how we tell "has plugins"
+      // from "has none"), but no plugin code is read, imported or executed — the
+      // security invariant the gate exists for.
+      expect(listMock).toHaveBeenCalledWith('/vault', 'plugins')
       expect(readMock).not.toHaveBeenCalled()
       expect(loadMock).not.toHaveBeenCalled()
       expect(activateMock).not.toHaveBeenCalled()
@@ -144,8 +145,9 @@ describe('CSP gate (production Tauri webview)', () => {
       // The gate is observable, not silent.
       expect(notifyErrorMock).toHaveBeenCalledTimes(1)
       const msg = String(notifyErrorMock.mock.calls[0]?.[0])
-      expect(msg).toContain('disabled')
-      expect(msg).toContain('CSP')
+      expect(msg.length).toBeGreaterThan(10)
+      // Localized, not a raw i18n key: the toast renders this string verbatim.
+      expect(msg).not.toContain('plugin.loadingDisabled')
 
       // Once per session: a second load does not repeat the notice.
       notifyErrorMock.mockClear()
@@ -153,6 +155,24 @@ describe('CSP gate (production Tauri webview)', () => {
       expect(notifyErrorMock).not.toHaveBeenCalled()
     } finally {
       // Restore the non-Tauri environment for the remaining tests in this file.
+      delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+    }
+  })
+
+  it('says nothing at all when the vault has no plugins to disable', async () => {
+    // A vault with no `plugins/` directory has nothing the policy could block.
+    // Announcing a security restriction to someone who never asked for the
+    // feature is not "observable instead of silent", it is a permanent alarm on
+    // every launch (and it used to write a plugin audit record into every vault).
+    ;(window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
+    try {
+      listMock.mockResolvedValue([])
+      await loadVaultPlugins('/vault')
+      expect(notifyErrorMock).not.toHaveBeenCalled()
+      expect(readMock).not.toHaveBeenCalled()
+      expect(loadMock).not.toHaveBeenCalled()
+      expect(activateMock).not.toHaveBeenCalled()
+    } finally {
       delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     }
   })

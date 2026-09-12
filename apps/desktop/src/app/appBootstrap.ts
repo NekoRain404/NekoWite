@@ -191,8 +191,11 @@ export function createDesktopRuntime(): DesktopRuntime {
     vaultPath.value = path
     localStorage.setItem(VAULT_LS_KEY, path)
     // Open tabs keep absolute paths from the previous vault — leaving them open
-    // would route every save to "path escapes vault" errors. Start fresh.
-    tabs.closeAll()
+    // would route every save to "path escapes vault" errors. Start fresh. This
+    // uses the non-interactive variant on purpose: every dirty tab was flushed
+    // and every untitled one was prompted for above, so `closeAll`'s own guard
+    // would only ask the user a second time for a decision they just made.
+    tabs.removeAllTabs()
     tabs.setVault(path)
     // Arm the OS-level folder watcher HERE, at the app level. It used to be armed
     // only by the file tree, which exists while the Folders panel is shown — so a

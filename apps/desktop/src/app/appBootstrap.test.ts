@@ -26,7 +26,7 @@ const h = vi.hoisted(() => {
     untitledDirtyTabs: vi.fn(),
     saveTab: vi.fn(),
     removeTab: vi.fn(),
-    closeAll: vi.fn(),
+    removeAllTabs: vi.fn(),
     setVault: vi.fn(),
     restoreSession: vi.fn(),
     captureSession: vi.fn(),
@@ -124,7 +124,7 @@ describe('createDesktopRuntime', () => {
     h.tabsMock.untitledDirtyTabs.mockReturnValue([])
     h.tabsMock.saveTab.mockResolvedValue(true)
     h.tabsMock.removeTab.mockImplementation(() => {})
-    h.tabsMock.closeAll.mockImplementation(() => {})
+    h.tabsMock.removeAllTabs.mockImplementation(() => {})
     h.tabsMock.setVault.mockImplementation(() => {})
     h.tabsMock.restoreSession.mockResolvedValue(undefined)
     h.tabsMock.captureSession.mockImplementation(() => {})
@@ -189,7 +189,7 @@ describe('createDesktopRuntime', () => {
       expect(h.tabsMock.flushDirty).toHaveBeenCalled()
       expect(h.gateways.fs.registerVault).toHaveBeenCalledWith('/vault')
       expect(runtime.vaultPath.value).toBe('/vault')
-      expect(h.tabsMock.closeAll).toHaveBeenCalled()
+      expect(h.tabsMock.removeAllTabs).toHaveBeenCalled()
       expect(h.tabsMock.setVault).toHaveBeenCalledWith('/vault')
       // The watcher is armed by the runtime, not by a panel: external edits must
       // be noticed even when only the Notes panel is mounted.
@@ -230,7 +230,7 @@ describe('createDesktopRuntime', () => {
       expect(runtime.vaultPath.value).toBe('/current')
       expect(h.gateways.fs.registerVault.mock.calls.length).toBe(registrationsAfterFirst + 1)
       expect(h.tabsMock.setVault).toHaveBeenLastCalledWith('/current')
-      expect(h.tabsMock.closeAll).toHaveBeenCalledTimes(1)
+      expect(h.tabsMock.removeAllTabs).toHaveBeenCalledTimes(1)
       expect(h.vaultSessionMock.indexVault).toHaveBeenCalledTimes(1)
       expect(h.vaultSessionMock.indexVault).toHaveBeenCalledWith('/current')
       expect(h.loadVaultPlugins).toHaveBeenCalledTimes(1)
