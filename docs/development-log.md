@@ -415,9 +415,10 @@ bash scripts/package-win.sh
 
 ## 构建产物
 
-- 免安装可执行文件（最新）：`release/nekowite_0.1.0_x64.exe`（未签名），SHA-256：`fcadcd7b77cde27ebb621ad182e7ece9d1b7144e02141f8af665ef4046ef8bf6`（含第十七轮的移动笔记引用修复、聊天中断保留、长 frontmatter 元数据、文件夹删除后的列表刷新、链接解析 Windows 修复）。打包产物真机验证（CDP 驱动 exe）：长 frontmatter 的标题/标签/摘要正确显示；文件树在重命名后正确更新。限制如实记录：生产包没有模块加载器，无法像 dev 构建那样 `import()` 源码模块直接调用服务，因此 `moveNote` 的完整链路（含引用重写）由 dev 构建真机验证（7/7）与单元测试覆盖。
-- 上一版产物（同一日早些时候）：SHA-256 `7b5af0b57d4a8e88bd1bc697c458763bec857a5804c4d511cffecd9b43b864a5`（15.1 MB；包含本轮的 AI 思考深度、AI 写入权限与全部审计修复）。**打包产物本身**也做了真机验证（CDP 驱动 exe，而不是 dev 构建）：设置面板的 AI 分区存在且三个下拉框齐全（服务商 7 项、思考深度 7 档且正确回显已保存的 `none`、写入权限 3 档），改动经 UI 会落进 localStorage；给一个真实 vault 后打开笔记、在聊天面板问一句能得到线上模型的真实回答（`PACKAGED`），点「插入文档」会弹出权限提示并正确说明操作种类与两种授权方式，选「不允许」后提示关闭且不写入。共 7/7 通过。
-- Windows x64 NSIS 安装包：`release/nekowite_0.1.0_x64-setup.exe`（5.3 MB，未签名）。
+- 免安装可执行文件（最新）：`release/nekowite_0.1.0_x64.exe`（未签名），SHA-256：`f74f8734f81f175c3ef537bd961fe67e072ea6cdc0c022db0abf77dc15826d4c`（含第二十轮的全部编辑器、界面、状态层修复与回收站 P0）。打包产物真机验证（CDP 驱动 exe）：`line1<br />line2` 打开后两半都还在、无编辑保存后 `<br />` 逐字节保留、单元格里的 `$\|x\|$` 打开后 LaTeX 是 `|x|`、只改大小写的重命名成功且目录项确实变成新拼写，共 5/5。限制如实记录：生产包没有模块加载器，无法像 dev 构建那样 `import()` 源码模块直接调用 store，因此涉及 store 的断言由 dev 构建真机验证与单元测试覆盖。
+- 上一版产物（同一日早些时候）：SHA-256 `8d3a7ecd05a07dfde3dad53901fbc4e263e9ab55ec3ff3cbdb958ca243b09c3c`（含第十八轮的公式首次打开修复与文件夹重命名守卫）。
+- 更早：SHA-256 `fcadcd7b77cde27ebb621ad182e7ece9d1b7144e02141f8af665ef4046ef8bf6`（第十七轮的移动笔记引用修复、聊天中断保留、长 frontmatter 元数据、文件夹删除后的列表刷新、链接解析 Windows 修复）。
+- Windows x64 NSIS 安装包：`release/nekowite_0.1.0_x64-setup.exe`（未签名）。
 - 原生可执行文件：`apps/desktop/src-tauri/target/release/nekowite.exe`（17 MB）。
 - 当前产物未使用 Authenticode 签名；Windows SmartScreen 可能提示“未知发布者”。如需正式分发，应先配置代码签名再重新打包。
 - `release/` 与 `target/` 均为本地构建产物，不纳入 Git；源码、测试与打包记录由 Git 管理。
