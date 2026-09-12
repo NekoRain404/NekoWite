@@ -397,11 +397,57 @@ describe('vault-aware relative paths', () => {
     expect(relativePathFromNoteVault('a.md', '/v', '/abs/a.png')).toBe('/abs/a.png')
   })
 
+  it('rebases a Windows note path onto the vault (backslashes)', () => {
+    // Native Windows spelling: a `/`-only vault test never matched, so the
+    // whole absolute path was treated as the note's own directory.
+    expect(
+      relativePathFromNoteVault(
+        'C:\\Users\\me\\vault\\notes\\a.md',
+        'C:\\Users\\me\\vault',
+        'notes/a_assets/pic.png',
+      ),
+    ).toBe('a_assets/pic.png')
+    expect(
+      relativePathFromNoteVault(
+        'C:\\Users\\me\\vault\\a.md',
+        'C:\\Users\\me\\vault',
+        'notes/a_assets/pic.png',
+      ),
+    ).toBe('notes/a_assets/pic.png')
+  })
+
+  it('rebases an absolute vault destination instead of keeping it absolute', () => {
+    // That is the `to` the old assets-dir helper produced on Windows; writing
+    // it into the note produced machine-specific Markdown.
+    expect(
+      relativePathFromNoteVault(
+        'C:\\vault\\notes\\a.md',
+        'C:\\vault',
+        'C:\\vault\\notes\\a_assets/pic.png',
+      ),
+    ).toBe('a_assets/pic.png')
+  })
+
+  it('still passes an absolute path outside the vault through', () => {
+    expect(relativePathFromNoteVault('C:\\vault\\a.md', 'C:\\vault', 'D:\\pics\\a.png')).toBe(
+      'D:\\pics\\a.png',
+    )
+  })
+
   it('vaultRelativeFromNoteVault resolves ../ back against the note dir', () => {
     expect(vaultRelativeFromNoteVault('/home/u/vault/docs/note.md', '/home/u/vault', '../attachments/2026-09/a.png')).toBe(
       'attachments/2026-09/a.png',
     )
     expect(vaultRelativeFromNoteVault('/home/u/vault/docs/note.md', '/home/u/vault', '../../x/a.png')).toBe('x/a.png')
+  })
+
+  it('resolves a Windows note path against its own directory for the display resolver', () => {
+    expect(
+      vaultRelativeFromNoteVault('C:\\vault\\notes\\a.md', 'C:\\vault', '../attachments/2026-09/a.png'),
+    ).toBe('attachments/2026-09/a.png')
+    expect(vaultRelativeFromNoteVault('C:\\vault\\notes\\a.md', 'C:\\vault', 'a_assets/pic.png')).toBe(
+      'notes/a_assets/pic.png',
+    )
   })
 })
 

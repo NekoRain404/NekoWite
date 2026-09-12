@@ -81,6 +81,22 @@ describe('assetsDirForNote', () => {
     expect(assetsDirForNote('notes/a.md', '/vault')).toBe('notes/a_assets')
     expect(assetsDirForNote('a.md', '/vault')).toBe('a_assets')
   })
+
+  it('rebases an absolute Windows note path onto the vault', () => {
+    // The exact spelling the Rust layer hands over on Windows: absolute, with
+    // backslashes. The old `/`-only prefix test returned the whole path, and
+    // the backend rejects an absolute `dir` ("attachment dir must be
+    // vault-relative") — so pasting into a saved note always failed.
+    expect(assetsDirForNote('C:\\Users\\me\\vault\\notes\\a.md', 'C:\\Users\\me\\vault')).toBe(
+      'notes/a_assets',
+    )
+    expect(assetsDirForNote('C:\\Users\\me\\vault\\a.md', 'C:\\Users\\me\\vault\\')).toBe('a_assets')
+    expect(assetsDirForNote('C:\\vault\\docs\\sub\\deep.md', 'C:\\vault')).toBe('docs/sub/deep_assets')
+  })
+
+  it('handles the verbatim Windows spelling', () => {
+    expect(assetsDirForNote('\\\\?\\C:\\vault\\notes\\a.md', '\\\\?\\C:\\vault')).toBe('notes/a_assets')
+  })
 })
 
 describe('moveAttachments', () => {
@@ -100,5 +116,22 @@ describe('rewireTempRefsInContent', () => {
     const out = rewireTempRefsInContent(content, moves, '/vault/notes/a.md', '/vault')
     expect(out).toContain('![pic](a_assets/pic.png)')
     expect(out).not.toContain('.tmp/pic.png')
+  })
+
+  it('writes a vault-relative reference when the note path is a Windows path', () => {
+    const moves = moveAttachments('.tmp', 'notes/a_assets', ['.tmp/pic.png'])
+    const out = rewireTempRefsInContent('![pic](.tmp/pic.png)\n', moves, 'C:\\vault\\notes\\a.md', 'C:\\vault')
+    expect(out).toContain('![pic](a_assets/pic.png)')
+    // The note must not record the machine-specific absolute spelling.
+    expect(out).not.toContain('C:')
+  })
+
+  it('rebases an absolute destination left over from the old assets-dir helper', () => {
+    // `assetsDirForNote` used to answer with `C:\vault\notes\a_assets` on
+    // Windows: the move itself worked, but the note body got that absolute
+    // path written into it.
+    const moves = [{ from: '.tmp/pic.png', to: 'C:\\vault\\notes\\a_assets/pic.png' }]
+    const out = rewireTempRefsInContent('![pic](.tmp/pic.png)\n', moves, 'C:\\vault\\notes\\a.md', 'C:\\vault')
+    expect(out).toBe('![pic](a_assets/pic.png)\n')
   })
 })
