@@ -6,7 +6,7 @@
 //! roots the user actually opened, and [`require_opened_vault`] is the guard
 //! every path-confined command calls before touching a file.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
@@ -94,6 +94,17 @@ impl Default for KeyVault {
 /// open many sockets, and stutter every stream).
 pub struct AiState {
     pub inflight: Mutex<HashSet<String>>,
+    /// A cancellation signal per in-flight id.
+    ///
+    /// Membership in `inflight` is only observable BETWEEN awaits: the stream
+    /// loop learns the id is gone after the current `stream.next()` resolves.
+    /// For a reasoning model that await can be silent for tens of seconds (or
+    /// until the 120 s read timeout), so cancelling left the connection open, the
+    /// provider generating — and billing — and the concurrency permit held,
+    /// which after a few cancels surfaced as "too many AI requests". A token can
+    /// be awaited alongside the socket, so cancel drops the response body
+    /// immediately.
+    pub cancels: Mutex<HashMap<String, tokio_util::sync::CancellationToken>>,
     /// Concurrency cap for streaming completions. The permit is held for the
     /// whole request, so a bounded number of connections are ever open.
     pub(crate) semaphore: Arc<tokio::sync::Semaphore>,
@@ -107,6 +118,7 @@ impl Default for AiState {
     fn default() -> Self {
         Self {
             inflight: Mutex::new(HashSet::new()),
+            cancels: Mutex::new(HashMap::new()),
             semaphore: Arc::new(tokio::sync::Semaphore::new(CONCURRENCY_LIMIT)),
             pending: AtomicUsize::new(0),
         }

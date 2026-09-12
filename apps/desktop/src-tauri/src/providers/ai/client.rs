@@ -317,7 +317,15 @@ pub fn default_base_url(provider: &str) -> &'static str {
 pub struct SseDelta {
     pub text: Option<String>,
     pub reasoning: Option<String>,
+    /// The provider said why it stopped: `length` (token budget exhausted),
+    /// `content_filter`, `stop`, … `None` when the frame did not report it.
+    pub finish_reason: Option<String>,
+    /// The server ended the event stream (`data: [DONE]`).
+    pub done: bool,
+    /// The server reported a failure INSIDE the stream (HTTP was 200).
+    pub error: Option<String>,
 }
+
 
 pub fn build_prompt(cursor_prefix: &str) -> String {
     format!(
@@ -434,12 +442,33 @@ pub fn parse_sse_event(line: &str, provider: &str, acc: &mut String) -> Option<S
     }
     let raw = line.trim_start_matches("data:").trim();
     if raw == "[DONE]" {
-        return None;
+        // The end of an OpenAI-compatible event stream. A server is allowed to
+        // keep the connection open afterwards (and some do), so the caller has to
+        // treat this as "the stream is finished" rather than waiting for EOF:
+        // the answer is already complete, but without this signal it would sit
+        // invisible until the connection closed or the read timeout fired — and
+        // a timeout would then be reported as a failure of a request that had
+        // actually succeeded.
+        return Some(SseDelta {
+            done: true,
+            ..SseDelta::default()
+        });
     }
     let v: serde_json::Value = match serde_json::from_str(raw) {
         Ok(v) => v,
         Err(_) => return None,
     };
+    // In-band errors arrive on a 200 response as a normal event:
+    // `{"error":{"message":"rate limit exceeded"}}` for the OpenAI-compatible
+    // family, `{"type":"error","error":{...}}` for Anthropic. Ignoring them made
+    // a truncated answer look like a complete one, so they are surfaced as an
+    // error event instead of being dropped.
+    if let Some(message) = extract_stream_error(&v) {
+        return Some(SseDelta {
+            error: Some(message),
+            ..SseDelta::default()
+        });
+    }
     let text = match provider {
         "anthropic" => openai_compatible::extract_anthropic_text(&v),
         "gemini" => gemini::extract_text(&v),
@@ -454,10 +483,66 @@ pub fn parse_sse_event(line: &str, provider: &str, acc: &mut String) -> Option<S
         "anthropic" | "gemini" => None,
         _ => openai_compatible::extract_openai_reasoning(&v),
     };
-    if text.is_none() && reasoning.is_none() {
+    // Why the provider stopped, when it says so: `length` means the answer was
+    // cut off by the token budget, `content_filter` means it was suppressed.
+    // Both used to be indistinguishable from a normal completion.
+    let finish_reason = [
+        // OpenAI-compatible: `choices[0].finish_reason`
+        v.get("choices")
+            .and_then(|c| c.get(0))
+            .and_then(|c| c.get("finish_reason")),
+        // Anthropic, top level (`message_delta` carries it inside `delta`)
+        v.get("stop_reason"),
+        v.get("delta").and_then(|d| d.get("stop_reason")),
+        // Gemini, `candidates[0].finishReason`
+        v.get("candidates")
+            .and_then(|c| c.get(0))
+            .and_then(|c| c.get("finishReason")),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|f| f.as_str())
+    .map(str::to_string);
+    if text.is_none() && reasoning.is_none() && finish_reason.is_none() {
         return None;
     }
-    Some(SseDelta { text, reasoning })
+    Some(SseDelta {
+        text,
+        reasoning,
+        finish_reason,
+        ..SseDelta::default()
+    })
+}
+
+/// Pull a human-readable message out of an in-band SSE error frame, for either
+/// dialect. Returns `None` when the frame is not an error at all.
+fn extract_stream_error(v: &serde_json::Value) -> Option<String> {
+    let is_anthropic_error = v.get("type").and_then(|t| t.as_str()) == Some("error");
+    let err = v.get("error");
+    if err.is_none() && !is_anthropic_error {
+        return None;
+    }
+    let message = err
+        .and_then(|e| {
+            e.get("message")
+                .and_then(|m| m.as_str())
+                .or_else(|| e.as_str())
+                .map(str::to_string)
+        })
+        .or_else(|| {
+            v.get("message")
+                .and_then(|m| m.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "服务端在流中返回了错误".to_string());
+    let kind = err
+        .and_then(|e| e.get("type").and_then(|t| t.as_str()))
+        .unwrap_or("");
+    Some(if kind.is_empty() {
+        message
+    } else {
+        format!("{message}（{kind}）")
+    })
 }
 
 /// Text-only view of one SSE line, for callers (and tests) that just want the
@@ -581,6 +666,7 @@ pub async fn stream_complete(
     prompt: &str,
     images: &[serde_json::Value],
     id: &str,
+    cancel: &tokio_util::sync::CancellationToken,
 ) -> Result<(), String> {
     // `resolve_endpoint` builds the content itself: with images it emits the
     // provider's multimodal array (text + image blocks), without images it
@@ -664,11 +750,27 @@ pub async fn stream_complete(
     // `finish_reason: "length"`. Without this flag that produced a silent
     // no-op the user could not explain; with it we can say what happened.
     let mut reasoning_seen = false;
+    // Why the provider says it stopped, when it says so (`length`,
+    // `content_filter`, …). Recorded here because the decision to warn about a
+    // truncated answer has to happen after the loop, not inside it.
+    let mut finish_reason: Option<String> = None;
     loop {
         if !is_active(app, id) {
             break;
         }
-        match stream.next().await {
+        // Race the socket against the cancel token. Checking a flag between
+        // chunks is not enough: the provider can be silent for a long time
+        // (reasoning models especially), and during that gap a cancelled request
+        // kept its connection, its concurrency permit and its billing alive
+        // until the next chunk arrived or the 120 s read timeout expired.
+        let next = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                break;
+            }
+            chunk = stream.next() => chunk,
+        };
+        match next {
             Some(Ok(chunk)) => {
                 // Feed the raw bytes; the buffer decodes only complete lines,
                 // so a multi-byte UTF-8 character split at a chunk boundary
@@ -683,6 +785,25 @@ pub async fn stream_complete(
                     let Some(delta) = parse_sse_event(&line, &config.provider, &mut full) else {
                         continue;
                     };
+                    // An error frame arrives on a 200 response, so it has to be
+                    // turned into a real error here or the truncated answer is
+                    // accepted as if it were complete.
+                    if let Some(message) = delta.error {
+                        let _ = app.emit(
+                            "ai-error",
+                            serde_json::json!({ "id": id, "message": message }),
+                        );
+                        return Err(message);
+                    }
+                    if delta.done {
+                        // `data: [DONE]` finishes the answer even if the server
+                        // keeps the connection open.
+                        stream_ended = true;
+                        break;
+                    }
+                    if let Some(reason) = delta.finish_reason {
+                        finish_reason = Some(reason);
+                    }
                     if let Some(reasoning) = delta.reasoning {
                         reasoning_seen = true;
                         let _ = app.emit(
@@ -700,6 +821,9 @@ pub async fn stream_complete(
                         );
                     }
                 }
+                if stream_ended {
+                    break;
+                }
             }
             Some(Err(e)) => {
                 let _ = app.emit(
@@ -716,11 +840,17 @@ pub async fn stream_complete(
     }
     // The stream ran to its end (as opposed to being cancelled): emit a final
     // partial line if the server stopped mid-line, so its text is not dropped.
+    // A cancelled stream must NOT flush: the user asked for the request to stop,
+    // and emitting the tail of an abandoned response is how a late chunk got
+    // adopted by the next request.
     if stream_ended {
         for line in buffer.flush() {
             let Some(delta) = parse_sse_event(&line, &config.provider, &mut full) else {
                 continue;
             };
+            if delta.done {
+                break;
+            }
             if let Some(text) = delta.text {
                 let _ = app.emit(
                     "ai-chunk",
@@ -731,6 +861,33 @@ pub async fn stream_complete(
                 );
             }
         }
+    }
+    // A cancellation is not a failure and not a completion: say nothing, emit
+    // nothing. The caller has already been told (and the frontend discards any
+    // late `ai-done` for a stream it cancelled — this is the belt to that
+    // braces, and it stops a cancelled request from counting as a success).
+    if !is_active(app, id) {
+        return Ok(());
+    }
+    // `length` means the provider ran out of output budget mid-answer. Saying so
+    // matters more than the answer itself: the text the user sees is a fragment,
+    // and silently accepting it as the whole reply is how a truncated document
+    // ends up inserted into a note.
+    if finish_reason.as_deref() == Some("length") && !full.is_empty() {
+        let message = "回答因达到最大输出 Tokens 被截断（finish_reason: length）。\n                  内容并不完整，请在设置里调大“最大输出 Tokens”后重试。";
+        let _ = app.emit(
+            "ai-error",
+            serde_json::json!({ "id": id, "message": message }),
+        );
+        return Err(message.into());
+    }
+    if finish_reason.as_deref() == Some("content_filter") {
+        let message = "服务端的内容过滤中断了这次回答（finish_reason: content_filter）。";
+        let _ = app.emit(
+            "ai-error",
+            serde_json::json!({ "id": id, "message": message }),
+        );
+        return Err(message.into());
     }
     // An answer-less completion that produced reasoning is not a normal result:
     // the budget was consumed by the model's thinking, so tell the user what to

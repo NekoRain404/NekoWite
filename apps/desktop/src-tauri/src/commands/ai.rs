@@ -16,8 +16,22 @@ use crate::state::AiState;
 #[tauri::command]
 pub async fn ai_cancel(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let state = app.state::<AiState>();
-    let mut inflight = state.inflight.lock().map_err(|e| e.to_string())?;
-    inflight.remove(&id);
+    {
+        let mut inflight = state.inflight.lock().map_err(|e| e.to_string())?;
+        inflight.remove(&id);
+    }
+    // Signal the token as well as dropping the id: removing the id is only
+    // visible to the stream loop between reads, and a reasoning model can be
+    // silent for a long time. The token is awaited alongside the socket, so this
+    // is what actually closes the connection and frees the concurrency permit
+    // now rather than after the next chunk or the read timeout.
+    let token = {
+        let mut cancels = state.cancels.lock().map_err(|e| e.to_string())?;
+        cancels.remove(&id)
+    };
+    if let Some(token) = token {
+        token.cancel();
+    }
     Ok(())
 }
 
@@ -62,10 +76,17 @@ pub async fn ai_complete(
     id: Option<String>,
 ) -> Result<(), String> {
     let id = resolve_request_id(id);
+    // The token is registered with the id so `ai_cancel` can interrupt the
+    // socket wait, not just flip a flag the stream loop only reads between
+    // chunks. Created here (before the request starts) so a cancel that arrives
+    // during the provider's silent reasoning phase still lands somewhere.
+    let cancel = tokio_util::sync::CancellationToken::new();
     {
         let state = app.state::<AiState>();
         let mut inflight = state.inflight.lock().map_err(|e| e.to_string())?;
         inflight.insert(id.clone());
+        let mut cancels = state.cancels.lock().map_err(|e| e.to_string())?;
+        cancels.insert(id.clone(), cancel.clone());
     }
     // Everything below, including the validation guard, runs inside a single
     // guarded block so every early-return path (invalid Base URL, saturated
@@ -88,12 +109,18 @@ pub async fn ai_complete(
         let _permit = acquire_slot(&state).await.inspect_err(|e| {
             emit_ai_error(&app, &id, e);
         })?;
-        stream_complete(&app, &config, &prompt, &images, &id).await
+        stream_complete(&app, &config, &prompt, &images, &id, &cancel).await
     }
     .await;
+    // Both registries are cleaned on every exit path (success, provider error,
+    // a saturated pool, cancellation) so a finished request leaves nothing
+    // behind — a stale token would make a REUSED id uncancellable.
     if let Some(state) = app.try_state::<AiState>() {
         if let Ok(mut inflight) = state.inflight.lock() {
             inflight.remove(&id);
+        }
+        if let Ok(mut cancels) = state.cancels.lock() {
+            cancels.remove(&id);
         }
     }
     result

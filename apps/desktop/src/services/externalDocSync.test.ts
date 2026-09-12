@@ -224,3 +224,53 @@ describe('folder-level disappearance', () => {
     expect(h.read).not.toHaveBeenCalled()
   })
 })
+
+describe('watcher resync', () => {
+  it('re-checks every open tab when the watcher reports it lost events', async () => {
+    // `resync` is not a change to one path: it means events may have been
+    // dropped entirely. Waiting for per-path events that will never arrive
+    // leaves the editor showing stale text, and the next save then overwrites
+    // the newer file with it.
+    const h = harness({
+      disk: 'newer text from another program',
+      savedContent: 'old text',
+      openTabs: [
+        { id: 'tab-1', path: 'C:\\vault\\a.md' },
+        { id: 'tab-2', path: 'C:\\vault\\b.md' },
+      ],
+    })
+    await h.sync.start()
+
+    h.emit({ path: 'C:\\vault', kind: 'resync' })
+    await h.flush()
+
+    expect(h.read).toHaveBeenCalledWith('C:\\vault', 'C:\\vault\\a.md')
+    expect(h.read).toHaveBeenCalledWith('C:\\vault', 'C:\\vault\\b.md')
+    expect(h.reload).toHaveBeenCalledWith('tab-1')
+  })
+
+  it('detaches a tab whose file is gone', async () => {
+    const h = harness({
+      unreadable: ['C:\\vault\\gone.md'],
+      path: 'C:\\vault\\gone.md',
+      openTabs: [{ id: 'tab-1', path: 'C:\\vault\\gone.md' }],
+    })
+    await h.sync.start()
+
+    h.emit({ path: 'C:\\vault', kind: 'resync' })
+    await h.flush()
+
+    expect(h.onMissing).toHaveBeenCalledWith('tab-1', 'C:\\vault\\gone.md')
+  })
+
+  it('leaves a tab alone when its bytes still match', async () => {
+    const h = harness({ disk: 'same text', savedContent: 'same text' })
+    await h.sync.start()
+
+    h.emit({ path: 'C:\\vault', kind: 'resync' })
+    await h.flush()
+
+    expect(h.reload).not.toHaveBeenCalled()
+    expect(h.onConflict).not.toHaveBeenCalled()
+  })
+})

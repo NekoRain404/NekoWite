@@ -1140,6 +1140,13 @@ fn rename_entry_moves_and_guards() {
     assert!(rename_entry(&root, "../outside", "inside.md").is_err());
     assert!(rename_entry(&root, "archive/b.md", "../outside.md").is_err());
 
+    // A case-only rename must go through. `exists()` is case-insensitive on
+    // Windows, so `archive/b.md` -> `archive/B.md` hit the file itself and was
+    // rejected with "target already exists: archive/B.md" — a message naming the
+    // name the user just asked for, which reads as nonsense.
+    assert!(rename_entry(&root, "archive/b.md", "archive/B.md").is_ok());
+    assert_eq!(std::fs::read_to_string(vault.join("archive/B.md")).unwrap(), "# hi");
+
     std::fs::remove_dir_all(&vault).unwrap();
 }
 
@@ -1257,6 +1264,31 @@ fn rename_entry_moves_history_and_trash() {
     assert_eq!(trash[0].original_path, "docs/b.md");
 
     std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// The hidden-component filter must be applied RELATIVE to the watcher root.
+///
+/// It used to run on the absolute event path, so a vault inside a dot-directory
+/// (`~/.notes`) had a hidden component in every event it would ever produce and
+/// every external change was discarded. The app then believed it was watching
+/// the vault while nothing ever arrived: an external edit was not noticed, and
+/// the next save overwrote it. Only the paths BELOW the vault can be hidden.
+#[test]
+fn watcher_filter_is_relative_to_the_vault_root() {
+    use std::path::Path;
+
+    let root = Path::new("/home/u/.notes");
+    let inside = Path::new("/home/u/.notes/note.md");
+    let hidden = Path::new("/home/u/.notes/.nekowite/index/a.bin");
+
+    let rel_inside = inside.strip_prefix(root).unwrap();
+    let rel_hidden = hidden.strip_prefix(root).unwrap();
+    assert!(!has_hidden_component(rel_inside), "an ordinary note is not hidden");
+    assert!(has_hidden_component(rel_hidden), "internal trees still are");
+
+    // The old behaviour, kept here as the counter-example: the absolute path
+    // carries the dot-directory and matches, hiding the whole vault.
+    assert!(has_hidden_component(inside));
 }
 
 /// A history-snapshot failure must never turn into "your note could not be
@@ -1449,6 +1481,39 @@ fn cleanup_stale_tmp_removes() {
     // A directory named `*.tmp` must never be deleted.
     std::fs::create_dir_all(dir.join(".a.tmp")).unwrap();
     assert_eq!(cleanup_stale_tmp(&dir, max_age).unwrap(), 0);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A `.tmp` file that is not OURS must survive the sweeper.
+///
+/// The check used to be "does the name end in `.tmp`", which claimed every file
+/// with that extension anywhere in the vault. A note's folder holding
+/// `draft.tmp` (the user's own scratch file, or another tool's) had it deleted
+/// by the next save in that folder — permanently: not to the trash, and with no
+/// history snapshot, so there was nothing to restore.
+#[test]
+fn cleanup_stale_tmp_leaves_other_tmp_style_files_alone() {
+    let dir = temp_vault("tmp-clean-foreign");
+    let max_age = std::time::Duration::from_millis(20);
+    // All old enough to be swept, none of them shaped like our staging files.
+    for name in ["draft.tmp", "notes.tmp", ".hidden.tmp", ".x.notanonce.tmp"] {
+        std::fs::write(dir.join(name), "user data").unwrap();
+    }
+    // Our own staging shape, written at the same time so it is equally stale:
+    // it IS swept, so crash litter still gets reclaimed.
+    std::fs::write(dir.join(".note.1757520000000000000.tmp"), "ours").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(80));
+
+    assert_eq!(
+        cleanup_stale_tmp(&dir, max_age).unwrap(),
+        1,
+        "only our own staging file is reclaimed"
+    );
+    assert!(!dir.join(".note.1757520000000000000.tmp").exists());
+    for name in ["draft.tmp", "notes.tmp", ".hidden.tmp", ".x.notanonce.tmp"] {
+        assert!(dir.join(name).exists(), "{name} must survive");
+    }
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

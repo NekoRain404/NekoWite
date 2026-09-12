@@ -18,7 +18,7 @@ use crate::storage::key_store::{
 /// already has a key, it is overwritten. The snapshot is committed after each
 /// write so the key survives restarts.
 #[tauri::command]
-pub fn store_ai_key(app: tauri::AppHandle, provider: String, key: String) -> Result<(), String> {
+pub async fn store_ai_key(app: tauri::AppHandle, provider: String, key: String) -> Result<(), String> {
     // Never store the masked "a key is configured" indicator as a real key —
     // the settings UI shows it as a placeholder and must not persist it over a
     // previously-saved credential.
@@ -43,7 +43,7 @@ pub fn store_ai_key(app: tauri::AppHandle, provider: String, key: String) -> Res
 /// it. Serializes as `string | null` on the JS side (`Some` is the masked
 /// indicator, never the real key) so the settings UI can signal "a key is set".
 #[tauri::command]
-pub fn load_ai_key(app: tauri::AppHandle, provider: String) -> Result<Option<String>, String> {
+pub async fn load_ai_key(app: tauri::AppHandle, provider: String) -> Result<Option<String>, String> {
     Ok(ai_key_presence(load_ai_key_internal(&app, &provider)?))
 }
 
@@ -59,7 +59,7 @@ pub fn load_ai_key(app: tauri::AppHandle, provider: String) -> Result<Option<Str
 /// first (call `unlock_vault` with the current password), then this command
 /// with the new one.
 #[tauri::command]
-pub fn set_master_password(app: tauri::AppHandle, password: String) -> Result<(), String> {
+pub async fn set_master_password(app: tauri::AppHandle, password: String) -> Result<(), String> {
     validate_password(&password)?;
     let snapshot_path = key_store::stronghold_path(&app)?;
     let key_path = key_store::master_key_path(&app)?;
@@ -140,7 +140,7 @@ pub fn set_master_password(app: tauri::AppHandle, password: String) -> Result<()
 /// through `set_master_password`), the `master.key.old` backup salt + verifier
 /// is tried before giving up, so the recovery path works with the old password.
 #[tauri::command]
-pub fn unlock_vault(app: tauri::AppHandle, password: String) -> Result<(), String> {
+pub async fn unlock_vault(app: tauri::AppHandle, password: String) -> Result<(), String> {
     validate_password(&password)?;
     let state = app.state::<KeyVault>();
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;

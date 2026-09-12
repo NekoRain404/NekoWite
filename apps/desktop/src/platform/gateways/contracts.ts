@@ -27,7 +27,16 @@ export interface FileEntry {
  * deleted note kept its cache and its persistent index entry. A union makes a
  * mismatched literal a compile error instead of a silent no-op.
  */
-export type FsChangeKind = 'created' | 'modified' | 'removed'
+/**
+ * What a filesystem event means.
+ *
+ * `resync` is not a change to one path — it is the watcher telling us it can no
+ * longer be trusted (`watch_folder` emits it when notify reports an error, e.g.
+ * an overflowing OS queue). The window then re-reads what it has open, because
+ * the alternative is believing it is watching a vault whose changes it is
+ * silently missing.
+ */
+export type FsChangeKind = 'created' | 'modified' | 'removed' | 'resync'
 
 export interface FsChangeEvent {
   path: string
