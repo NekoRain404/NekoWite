@@ -5,6 +5,7 @@ import { fsService } from '../platform/gateways/fs'
 import type { FileEntry, FsChangeEvent } from '../platform/gateways/fs'
 import { resolveDropTarget, type DropRow } from '../services/treeDrop'
 import { notifyError } from '../services/errors'
+import { useAppearanceStore } from '../stores/appearance'
 import { useTabsStore } from '../stores/tabs'
 import ContextMenu from './ContextMenu.vue'
 import type { ContextMenuItem } from './ContextMenu.vue'
@@ -40,6 +41,7 @@ const props = defineProps<{ vault: string }>()
 // channel up to the shell for it.
 
 const tabs = useTabsStore()
+const appearance = useAppearanceStore()
 const root = ref<TreeNode | null>(null)
 const unlisten = ref<(() => void) | null>(null)
 const confirmPath = ref<string | null>(null)
@@ -93,7 +95,31 @@ function cancelDelete(): void {
   confirmPath.value = null
 }
 
+/** Paths whose delete is already in flight. One deliberate activation deletes
+ *  once: a double-click on the trash icon (or a stray second click on the
+ *  confirm button) must not start a second delete of a path that is already
+ *  on its way out. */
+const deleting = new Set<string>()
+
+/**
+ * Ask for `path` to be deleted.
+ *
+ * Deleting is the one destructive action in the tree, so by default the trash
+ * icon only arms the row and the following confirm button performs the delete.
+ * With "confirm before deleting" switched off that button is the whole gesture:
+ * a single deliberate click on the icon, with no second question.
+ */
+function requestDelete(path: string): void {
+  if (!appearance.confirmBeforeDelete) {
+    void confirmDelete(path)
+    return
+  }
+  confirmPath.value = path
+}
+
 async function confirmDelete(path: string): Promise<void> {
+  if (deleting.has(path)) return
+  deleting.add(path)
   const tab = tabs.tabs.find((t) => t.path === path)
   try {
     if (tab) await tabs.deleteTabFile(tab.id)
@@ -106,6 +132,7 @@ async function confirmDelete(path: string): Promise<void> {
   } catch {
     notifyError(t('filetree.deleteFailed'))
   } finally {
+    deleting.delete(path)
     confirmPath.value = null
     await refreshAncestors(path)
   }
@@ -423,7 +450,7 @@ async function onMenuSelect(id: string): Promise<void> {
   if (id === 'new-file') await startCreate('file', parentPath)
   else if (id === 'new-dir') await startCreate('dir', parentPath)
   else if (id === 'rename' && target) await startRename(target)
-  else if (id === 'delete' && target) confirmPath.value = target.path
+  else if (id === 'delete' && target) requestDelete(target.path)
 }
 
 function setEditInput(el: unknown): void {
@@ -682,7 +709,7 @@ watch(
             v-if="row.node !== root && confirmPath !== row.node.path"
             class="tree-del"
             :title="t('filetree.trash')"
-            @click.stop="confirmPath = row.node.path"
+            @click.stop="requestDelete(row.node.path)"
           >
             <Trash2
               :size="12"

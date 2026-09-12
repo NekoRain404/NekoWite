@@ -8,7 +8,7 @@ import { useFloatStore } from '../stores/float'
 import { useAppearanceStore } from '../stores/appearance'
 import { resolveDirection } from '../services/rtl'
 import { t } from '../i18n'
-import { headingAnchorIds } from '@nekowite/editor-core'
+import { configureTaskChecklistRendering, headingAnchorIds } from '@nekowite/editor-core'
 import { resolveLinkPath } from '../features/vault/services/libraryQueries'
 import { useDocumentListStore } from '../stores/documentList'
 import { dirRelativeToVault } from '../services/noteMeta'
@@ -261,6 +261,16 @@ watch(
   (on) => {
     if (on) queueCenterCursor()
   },
+)
+
+// The task-list switch is a rendering choice of the live editor: the pane keeps
+// one editor per document, and rebuilding it to flip a decoration would throw
+// away the undo stack and the caret. editor-core re-decorates the open views
+// instead, so `immediate` also seeds the first editor with the stored value.
+watch(
+  () => appearance.renderTaskChecklist,
+  (enabled) => configureTaskChecklistRendering(enabled),
+  { immediate: true },
 )
 
 onBeforeUnmount(() => {

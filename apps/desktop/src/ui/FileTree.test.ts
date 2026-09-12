@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { createApp, nextTick, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import FileTree from './FileTree.vue'
+import { useAppearanceStore } from '../stores/appearance'
 import { useTabsStore } from '../stores/tabs'
 
 const readMock = vi.hoisted(() => vi.fn())
@@ -9,6 +10,7 @@ const listMock = vi.hoisted(() => vi.fn())
 const writeMock = vi.hoisted(() => vi.fn())
 const openFolderMock = vi.hoisted(() => vi.fn())
 const renameMock = vi.hoisted(() => vi.fn())
+const deleteFileMock = vi.hoisted(() => vi.fn())
 const onFsChangeMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../platform/gateways/fs', () => ({
@@ -28,7 +30,7 @@ vi.mock('../platform/gateways/fs', () => ({
     renameEntry: renameMock,
     listTrash: vi.fn(),
     restoreFromTrash: vi.fn(),
-    deleteFile: vi.fn(),
+    deleteFile: deleteFileMock,
     onFsChange: onFsChangeMock,
   },
 }))
@@ -243,5 +245,92 @@ describe('FileTree rename keeps the open tab attached', () => {
 
     expect(tabs.activeTab?.path).toBe('/vault/renamed.md')
     expect(tabs.isPendingMove('/vault/a.md')).toBe(false)
+  })
+})
+
+describe('FileTree delete confirmation', () => {
+  beforeEach(() => {
+    pinia = createPinia()
+    setActivePinia(pinia)
+    readMock.mockReset()
+    listMock.mockReset()
+    writeMock.mockReset()
+    renameMock.mockReset()
+    deleteFileMock.mockReset()
+    onFsChangeMock.mockReset()
+    readMock.mockResolvedValue('# note')
+    writeMock.mockResolvedValue(undefined)
+    renameMock.mockResolvedValue(undefined)
+    deleteFileMock.mockResolvedValue(undefined)
+    onFsChangeMock.mockResolvedValue(() => undefined)
+    listMock.mockResolvedValue([
+      { name: 'a.md', path: '/vault/a.md', is_dir: false, is_mdx: true },
+    ])
+    // The setting is persisted, so a case must never inherit the previous
+    // case's choice.
+    useAppearanceStore().setConfirmBeforeDelete(true)
+    document.body.innerHTML = ''
+    mounted = []
+  })
+
+  afterEach(() => {
+    mounted.forEach((app) => app.unmount())
+    mounted = []
+    useAppearanceStore().setConfirmBeforeDelete(true)
+    document.body.innerHTML = ''
+  })
+
+  function trashButton(): HTMLButtonElement {
+    const btn = document.querySelector<HTMLButtonElement>('.tree-del')
+    expect(btn).not.toBeNull()
+    return btn!
+  }
+
+  it('keeps the two-step confirm while the setting is on (default)', async () => {
+    const host = mountTree()
+    await flush()
+
+    trashButton().click()
+    await nextTick()
+
+    // The first click only arms the row: nothing has been deleted yet, and the
+    // confirm/cancel pair is offered.
+    expect(host.querySelector('.tree-del-confirm')).not.toBeNull()
+    expect(deleteFileMock).not.toHaveBeenCalled()
+
+    const confirm = [...host.querySelectorAll<HTMLButtonElement>('.tree-del-confirm button')][0]
+    confirm.click()
+    await flush()
+
+    expect(deleteFileMock).toHaveBeenCalledTimes(1)
+    expect(deleteFileMock).toHaveBeenCalledWith('/vault', '/vault/a.md')
+  })
+
+  it('deletes on the trash click once the setting is off', async () => {
+    useAppearanceStore().setConfirmBeforeDelete(false)
+    const host = mountTree()
+    await flush()
+
+    trashButton().click()
+    await nextTick()
+
+    // No confirmation row at all: the icon click was the decision.
+    expect(host.querySelector('.tree-del-confirm')).toBeNull()
+    await flush()
+    expect(deleteFileMock).toHaveBeenCalledTimes(1)
+    expect(deleteFileMock).toHaveBeenCalledWith('/vault', '/vault/a.md')
+  })
+
+  it('does not run the same delete twice from a double activation', async () => {
+    useAppearanceStore().setConfirmBeforeDelete(false)
+    mountTree()
+    await flush()
+
+    const btn = trashButton()
+    btn.click()
+    btn.click()
+    await flush()
+
+    expect(deleteFileMock).toHaveBeenCalledTimes(1)
   })
 })

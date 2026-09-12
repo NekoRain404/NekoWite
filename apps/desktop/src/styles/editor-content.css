@@ -167,6 +167,29 @@
 .editor-container .ProseMirror li[data-item-type="task"][data-checked="true"] > ul {
   text-decoration: none;
 }
+/* "Render task-list checkboxes" off. The item carries its markdown marker in
+   `data-neko-task-marker` (see editor-core's task plugin); here the box is
+   replaced by that marker painted as text, so the line reads as plain markdown
+   instead of showing a control that is no longer interactive. */
+.editor-container .ProseMirror li[data-item-type="task"].neko-task-plain {
+  padding-left: 0;
+}
+.editor-container .ProseMirror li[data-item-type="task"].neko-task-plain::before {
+  content: attr(data-neko-task-marker);
+  position: static;
+  width: auto;
+  height: auto;
+  border: none;
+  background: none;
+  border-radius: 0;
+}
+.editor-container .ProseMirror li[data-item-type="task"].neko-task-plain::after {
+  content: none;
+}
+.editor-container .ProseMirror li[data-item-type="task"].neko-task-plain[data-checked="true"] > * {
+  color: inherit;
+  text-decoration: none;
+}
 
 /* ---------- Code block ---------- */
 .editor-container .ProseMirror pre {

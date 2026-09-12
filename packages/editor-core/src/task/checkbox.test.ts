@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import { createEditor } from '../editor'
 import type { NekoEditor } from '../editor'
 import { basicPlugins } from '../plugins/basic'
+import { TASK_MARKER_ATTR, TASK_PLAIN_CLASS, configureTaskChecklistRendering } from './checkbox'
 
 async function setup(markdown: string): Promise<{ editor: NekoEditor; save: () => Promise<string> }> {
   const el = document.createElement('div')
@@ -70,5 +71,56 @@ describe('task checkbox click', () => {
     const { editor, save } = await setup('- [ ] one\n- [x] two\n- [ ] three\n')
     click(taskItems(editor)[1]!, 2)
     expect(await save()).toBe('- [ ] one\n- [ ] two\n- [ ] three')
+  })
+})
+
+describe('task-list rendering setting', () => {
+  // The switch is module state (see checkbox.ts), so every case must leave it
+  // where the rest of the file expects it.
+  afterEach(() => configureTaskChecklistRendering(true))
+
+  it('renders the markdown marker as text and does not toggle when the boxes are off', async () => {
+    configureTaskChecklistRendering(false)
+    const { editor, save } = await setup('- [ ] todo\n- [x] done\n')
+
+    const items = taskItems(editor)
+    expect(items).toHaveLength(2)
+    expect(items[0]!.classList.contains(TASK_PLAIN_CLASS)).toBe(true)
+    // The marker rides on the item as an attribute (the stylesheet paints it),
+    // so a checked item stays distinguishable from an unchecked one even though
+    // the box is gone.
+    expect(items[0]!.getAttribute(TASK_MARKER_ATTR)).toBe('[ ]')
+    expect(items[1]!.getAttribute(TASK_MARKER_ATTR)).toBe('[x]')
+    expect(items[0]!.textContent).toBe('todo')
+
+    click(items[0]!, 2)
+    expect(taskItems(editor)[0]!.getAttribute('data-checked')).toBe('false')
+    expect(await save()).toBe('- [ ] todo\n- [x] done')
+  })
+
+  it('keeps the interactive box while the setting is on (default)', async () => {
+    const { editor } = await setup('- [ ] todo\n')
+
+    expect(taskItems(editor)[0]!.classList.contains(TASK_PLAIN_CLASS)).toBe(false)
+    expect(taskItems(editor)[0]!.getAttribute(TASK_MARKER_ATTR)).toBeNull()
+    click(taskItems(editor)[0]!, 2)
+    expect(taskItems(editor)[0]!.getAttribute('data-checked')).toBe('true')
+  })
+
+  it('re-renders an editor that is already open when the setting flips', async () => {
+    const { editor, save } = await setup('- [ ] todo\n')
+
+    configureTaskChecklistRendering(false)
+    const li = taskItems(editor)[0]!
+    expect(li.classList.contains(TASK_PLAIN_CLASS)).toBe(true)
+    expect(li.getAttribute(TASK_MARKER_ATTR)).toBe('[ ]')
+    click(li, 2)
+    expect(await save()).toBe('- [ ] todo')
+
+    configureTaskChecklistRendering(true)
+    expect(taskItems(editor)[0]!.classList.contains(TASK_PLAIN_CLASS)).toBe(false)
+    expect(taskItems(editor)[0]!.getAttribute(TASK_MARKER_ATTR)).toBeNull()
+    click(taskItems(editor)[0]!, 2)
+    expect(await save()).toBe('- [x] todo')
   })
 })
