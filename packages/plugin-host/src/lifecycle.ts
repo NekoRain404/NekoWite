@@ -22,12 +22,23 @@ export interface LifecycleEventArgMap {
   onViewModeChange: [mode: unknown]
 }
 
-/** A hook failure surfaced through the lifecycle error channel. Carries a
- *  structured `PluginError` (code PLUGIN_HOOK_ERROR) so the host/UI can show an
- *  actionable message without breaking hook isolation. */
+/**
+ * Where a plugin failure came from. Lifecycle hooks report their event name; a
+ * toolbar button or a command reports `toolbar:<id>` / `command:<id>`.
+ *
+ * A callback that throws when the user clicks it is the same class of failure
+ * as a hook that throws when the host emits: the plugin is at fault, the app
+ * must survive, and the user must be able to tell WHICH button broke. Sharing
+ * the channel is what makes that possible; the label is what makes it useful.
+ */
+export type PluginFailureOrigin = LifecycleEvent | `toolbar:${string}` | `command:${string}`
+
+/** A plugin failure surfaced through the lifecycle error channel. Carries a
+ *  structured `PluginError` so the host/UI can show an actionable message
+ *  without breaking isolation. */
 export interface LifecycleErrorEvent {
   pluginId: string
-  event: LifecycleEvent
+  event: PluginFailureOrigin
   error: PluginError
 }
 
@@ -157,6 +168,35 @@ function handleAsyncHook(
       }
     },
   )
+}
+
+/**
+ * Report a plugin callback that threw (a toolbar button, a registered command).
+ *
+ * The callback itself is isolated by the host (`activatePlugin` wraps what a
+ * plugin registers), so this is the reporting half: it builds the structured
+ * error, logs it, and pushes it through the same channel as a failing hook, so
+ * the app's existing error router shows the user an actionable message instead
+ * of an unhandled exception with no plugin name on it.
+ */
+export function reportPluginCallbackError(
+  pluginId: string,
+  origin: PluginFailureOrigin,
+  err: unknown,
+): PluginError {
+  const cause = err instanceof Error ? err.message : String(err)
+  const pluginError = createPluginError('PLUGIN_CALLBACK_ERROR', {
+    pluginId,
+    message: `Plugin "${pluginId}" failed in "${origin}": ${cause}`,
+    recovery: 'Disable the plugin or check its logs.',
+    cause: err,
+  })
+  console.error(
+    `[NekoWite:plugin-host] callback failed plugin="${pluginId}" origin="${origin}"`,
+    pluginError,
+  )
+  emitLifecycleError({ pluginId, event: origin, error: pluginError })
+  return pluginError
 }
 
 export function emitLifecycle(event: LifecycleEvent, ...args: unknown[]): string | void {
