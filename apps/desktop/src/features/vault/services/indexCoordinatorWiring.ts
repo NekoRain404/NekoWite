@@ -67,5 +67,6 @@ export function createBoundVaultIndexCoordinator(
     onIndexState: callbacks.onIndexState,
     getFavorites: callbacks.getFavorites,
     getRecents: callbacks.getRecents,
+    onFsWatch: callbacks.onFsWatch,
   })
 }

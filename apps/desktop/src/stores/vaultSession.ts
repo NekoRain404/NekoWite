@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { createBoundVaultIndexCoordinator } from '../features/vault/services/indexCoordinatorWiring'
+import { notifyError } from '../services/errors'
+import { t } from '../i18n'
 import type { VaultIndexCoordinator } from '../features/vault/services/vaultIndexCoordinator'
 import type { IndexLookupResult } from '../services/contentSearch'
 import { useDocumentListStore } from './documentList'
@@ -45,6 +47,17 @@ export const useVaultSessionStore = defineStore('vaultSession', () => {
       onIndexState: (state, progress) => doc.setIndexState(state, progress),
       getFavorites: () => doc.favorites,
       getRecents: () => doc.recents,
+      onFsWatch: (ok, error) => {
+        // The list, the attachment badge and the content index all stop
+        // tracking the disk when this subscription is missing, and nothing on
+        // screen would look different. Say so, and say what brings it back.
+        if (ok) {
+          notifyError(t('vault.watchRestored'))
+          return
+        }
+        console.error('[NekoWite] vault watch failed', error)
+        notifyError(t('vault.watchFailed'))
+      },
     })
     coordinator = next
     return next.indexVault(path)
