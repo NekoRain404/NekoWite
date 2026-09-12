@@ -295,6 +295,7 @@ export const zh = {
     insertComponent: '插入 MDX 组件',
   },
   palette: {
+    noDocument: '打开一个文档后即可使用这些命令',
     aria: '命令面板',
     placeholder: '搜索命令或文件…',
     empty: '无匹配结果',

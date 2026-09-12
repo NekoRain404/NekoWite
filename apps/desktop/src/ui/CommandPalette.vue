@@ -338,7 +338,7 @@ onBeforeUnmount(() => {
           v-if="!hasDocument"
           class="palette-note"
         >
-          {{ t('chat.emptyDocHint') }}
+          {{ t('palette.noDocument') }}
         </p>
         <div
           :id="LIST_ID"
@@ -456,9 +456,8 @@ onBeforeUnmount(() => {
 .palette-input::placeholder {
   color: var(--app-muted);
 }
-/* Why the command group is empty (no document open). The copy is the existing
-   "open a document first" hint (chat.emptyDocHint): a palette-specific key would
-   have to be added to both locales, which is outside this change. */
+/* Why the command group is empty (no document open). The commands need an
+   editor, so the palette says so instead of listing actions that cannot run. */
 .palette-note {
   padding: 10px 14px 0;
   font-size: 11px;

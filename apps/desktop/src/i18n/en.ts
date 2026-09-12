@@ -295,6 +295,7 @@ export const en = {
     insertComponent: 'Insert MDX component',
   },
   palette: {
+    noDocument: 'Open a document to use these commands',
     aria: 'Command palette',
     placeholder: 'Search commands or files…',
     empty: 'No results',

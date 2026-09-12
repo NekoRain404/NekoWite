@@ -243,7 +243,7 @@ describe('CommandPalette commands without an open document', () => {
     // run is offered.
     expect(itemLabels()).toEqual([])
     // The empty list is explained instead of leaving a dead command list behind.
-    expect(document.body.textContent).toContain(t('chat.emptyDocHint'))
+    expect(document.body.textContent).toContain(t('palette.noDocument'))
 
     // A query that exactly matches a formatting command still offers nothing.
     typeQuery(t('command.bold'))
