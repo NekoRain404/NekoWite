@@ -1431,3 +1431,49 @@ fn save_attachment_rejects_non_image_extensions() {
 
     std::fs::remove_dir_all(&vault).unwrap();
 }
+
+#[test]
+fn list_dir_paths_are_not_verbatim_on_windows() {
+    // `list_dir` used to hand the frontend a verbatim (`\\?\C:\...`) path while
+    // the vault root came from the folder dialog WITHOUT that prefix. The two
+    // never compared equal, which broke the file tree's root lookup (renaming a
+    // top-level file did nothing) and the fs-change/tab comparison. Every path
+    // the frontend receives must use one spelling.
+    let vault = temp_vault("ipc-path");
+    let root = vault.to_str().unwrap().to_string();
+    write_file(&root, "note.md", "x", Some(10)).unwrap();
+    std::fs::create_dir_all(vault.join("sub")).unwrap();
+
+    let listing = list_dir(&root, Some(".")).unwrap();
+    for entry in &listing {
+        assert!(
+            !entry.path.starts_with(r"\\?\"),
+            "verbatim prefix leaked to the frontend: {}",
+            entry.path
+        );
+    }
+    let note = listing.iter().find(|e| e.name == "note.md").expect("note listed");
+    assert!(note.path.ends_with("note.md"));
+    // The path must still resolve when handed straight back to the backend.
+    assert_eq!(read_file(&root, &note.path).unwrap(), "x");
+
+    // Search results feed the same list and must agree.
+    let hits = search_notes_with_max(&root, "note.md", 100, None).unwrap();
+    for hit in &hits {
+        assert!(!hit.path.starts_with(r"\\?\"), "verbatim in search: {}", hit.path);
+    }
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+#[test]
+fn resolve_media_path_is_not_verbatim() {
+    let vault = temp_vault("media-path");
+    let root = vault.to_str().unwrap().to_string();
+    save_attachment(&root, "a.png", "aGVsbG8=", "attachments").unwrap();
+    let listing = list_dir(&root, Some("attachments")).unwrap();
+    let file = listing.iter().find(|e| e.name.ends_with(".png")).expect("attachment");
+    let resolved = resolve_media_path(&root, &file.path).unwrap();
+    assert!(!resolved.starts_with(r"\\?\"), "verbatim: {resolved}");
+    std::fs::remove_dir_all(&vault).unwrap();
+}

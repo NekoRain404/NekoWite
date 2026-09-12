@@ -485,7 +485,7 @@ pub fn list_dir_entries(dir: &Path) -> Result<Vec<FileEntry>, String> {
             continue;
         }
         let is_dir = entry_path.is_dir();
-        let path_str = entry_path.to_string_lossy().to_string();
+        let path_str = crate::domain::path_policy::ipc_path(&entry_path);
         let is_mdx = is_mdx_path(&path_str);
         // Every non-hidden file is listed: the references library
         // (`.bib`/`.ris`) is discovered from this listing, so non-markdown
@@ -580,7 +580,7 @@ fn walk_search(
         if should_skip_entry(&name, is_symlink) {
             continue;
         }
-        let path_str = entry_path.to_string_lossy().to_string();
+        let path_str = crate::domain::path_policy::ipc_path(&entry_path);
         if entry_path.is_dir() {
             walk_search(&entry_path, query, out, limit, visited, depth + 1, max_dirs);
             continue;
@@ -819,7 +819,7 @@ pub fn resolve_media_path(vault_root: &str, rel_path: &str) -> Result<String, St
     if !resolved.is_file() {
         return Err(format!("media file not found: {rel_path}"));
     }
-    Ok(resolved.to_string_lossy().to_string())
+    Ok(crate::domain::path_policy::ipc_path(&resolved))
 }
 
 /// Create a directory (and any missing parents) inside the vault. Returns the

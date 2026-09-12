@@ -159,6 +159,29 @@ fn canonicalize_loose(path: &Path) -> io::Result<PathBuf> {
     }
 }
 
+/// Render an absolute path for the FRONTEND.
+///
+/// Windows canonicalization yields a verbatim path (`\\?\C:\dir\file.md`), and
+/// the watcher reports the same spelling. The vault root the frontend holds
+/// comes from the native folder dialog and has NO such prefix, so the two were
+/// never equal: the file tree could not find the root node for a top-level
+/// entry (renaming a file at the vault root silently did nothing), and
+/// `fs-change` events never matched the open tab, so an external edit was not
+/// picked up. Stripping the prefix here gives every path the frontend sees one
+/// consistent spelling. It is display/IPC only — the real `PathBuf` keeps its
+/// canonical form for actual I/O, and Rust re-canonicalizes whatever comes back.
+pub fn ipc_path(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    // `\\?\UNC\server\share` is the verbatim form of `\\server\share`.
+    if let Some(rest) = raw.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    match raw.strip_prefix(r"\\?\") {
+        Some(rest) => rest.to_string(),
+        None => raw.into_owned(),
+    }
+}
+
 /// Canonicalize a vault root, rejecting relative paths the same way the fs
 /// layer does.
 pub fn canonicalize_vault_root(root: &str) -> Result<PathBuf, String> {

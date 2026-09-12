@@ -1,4 +1,5 @@
 import { t } from '../i18n'
+import { baseName, dirName, stripVaultPrefix } from './paths'
 
 export interface NoteSummary {
   path: string
@@ -280,18 +281,16 @@ export function extractSummary(body: string, max = SUMMARY_CHARS): string {
  * without stripping is what produced a doubled path in copied heading links.
  */
 export function notePathRelativeToVault(path: string, vault: string): string {
-  const v = (vault || '').replace(/\/+$/, '')
-  let p = path
-  if (v !== '' && (p === v || p.startsWith(`${v}/`))) {
-    p = p.slice(v.length)
-  }
-  return p.replace(/^\/+/, '')
+  // Separator-agnostic: both the note path and the vault arrive in the
+  // platform's native spelling (backslashes on Windows), so a `/`-only prefix
+  // test never matched and the absolute path was returned unchanged.
+  return stripVaultPrefix(path, vault)
 }
 
 export function dirRelativeToVault(path: string, vault: string): string {
   const p = notePathRelativeToVault(path, vault)
-  const i = p.lastIndexOf('/')
-  return i < 0 ? '' : p.slice(0, i)
+  const dir = dirName(p)
+  return dir === p ? '' : dir
 }
 
 export function relPathOf(note: Pick<NoteSummary, 'dir' | 'name'>): string {
@@ -334,7 +333,9 @@ export function parseNoteMeta(
   const snapshot = content.slice(0, SNAPSHOT_CHARS)
   const { front, body } = splitFrontmatterRaw(snapshot)
   const parsed = parseFrontmatterBlock(front)
-  const name = path.split('/').pop() ?? path
+  // Must be the basename: on Windows this used to be the whole absolute
+  // path, which is what the note list rendered as every note's title.
+  const name = baseName(path)
   const dir = dirRelativeToVault(path, meta.vault)
   const tags = [...new Set(parsed.tags.map((t) => t.replace(/^#/, '').trim()).filter(Boolean))]
   const fromDir = dir

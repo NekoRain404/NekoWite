@@ -1,5 +1,6 @@
 import type { FsGateway } from '../platform/gateways/contracts'
 import { notifyError } from './errors'
+import { dirName } from './paths'
 
 /**
  * Attachment pipeline helpers: MIME↔extension mapping for the supported
@@ -521,8 +522,9 @@ function uniqueFiles(files: File[]): File[] {
 }
 
 export function noteDirectory(notePath: string): string {
-  if (!notePath.includes('/')) return ''
-  return notePath.slice(0, notePath.lastIndexOf('/'))
+  // Either separator: note paths are absolute and native on Windows.
+  const dir = dirName(notePath)
+  return dir === notePath ? '' : dir
 }
 
 /** Resolve `rel` (`../attachments/…`, `attachments/…`) against `fromDir`,

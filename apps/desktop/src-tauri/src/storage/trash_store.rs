@@ -75,7 +75,7 @@ pub fn delete_file(vault_root: &str, path: &str) -> Result<String, String> {
         target = trash_root.join(format!("{encoded}-{ts}"));
     }
     std::fs::rename(&resolved, &target).map_err(|e| e.to_string())?;
-    Ok(target.to_string_lossy().to_string())
+    Ok(crate::domain::path_policy::ipc_path(&target))
 }
 
 /// List `.nekowite-trash/`, decoding each entry back to its original vault
@@ -119,7 +119,7 @@ pub fn list_trash(vault_root: &str) -> Result<Vec<TrashEntry>, String> {
         };
         out.push(TrashEntry {
             name,
-            trash_path: p.to_string_lossy().to_string(),
+            trash_path: crate::domain::path_policy::ipc_path(&p),
             original_path,
         });
     }
@@ -196,7 +196,7 @@ pub fn restore_from_trash(vault_root: &str, trash_path: &str) -> Result<String, 
         target = parent.join(format!("{fname}-restored-{ts}"));
     }
     std::fs::rename(&resolved_trash, &target).map_err(|e| e.to_string())?;
-    Ok(target.to_string_lossy().to_string())
+    Ok(crate::domain::path_policy::ipc_path(&target))
 }
 
 /// Migrate the trash entry for a renamed file from the key for `from_rel` to

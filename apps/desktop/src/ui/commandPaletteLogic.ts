@@ -1,4 +1,5 @@
 import { t } from '../i18n'
+import { baseName, dirName } from '../services/paths'
 
 export type PaletteKind = 'command' | 'file'
 
@@ -85,9 +86,9 @@ export interface PathParts {
 }
 
 export function splitPath(path: string): PathParts {
-  const cut = path.lastIndexOf('/')
-  if (cut < 0) return { name: path, dir: '' }
-  return { name: path.slice(cut + 1), dir: path.slice(0, cut) }
+  // Separator-agnostic: palette file entries carry the absolute native path.
+  const name = baseName(path)
+  return name === path ? { name, dir: '' } : { name, dir: dirName(path) }
 }
 
 /** Directory portion for display, with the vault prefix stripped so hints
