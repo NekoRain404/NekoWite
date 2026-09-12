@@ -1,5 +1,5 @@
 import { t } from '../i18n'
-import { baseName, dirName } from '../services/paths'
+import { baseName, dirName, stripVaultPrefix } from '../services/paths'
 
 export type PaletteKind = 'command' | 'file'
 
@@ -97,10 +97,13 @@ export function displayDir(path: string, vault: string | null): string {
   const { dir } = splitPath(path)
   if (!dir) return ''
   if (!vault) return dir
-  const root = vault.replace(/\/+$/, '')
-  if (dir === root) return ''
-  const prefix = root + '/'
-  return dir.startsWith(prefix) ? dir.slice(prefix.length) : dir
+  // Both sides go through the shared helpers: on Windows these are native
+  // backslash paths, so a literal '/' comparison never matched the vault root
+  // and the hint showed the whole absolute path instead of the relative one.
+  const root = stripVaultPrefix(vault, vault)
+  const rel = stripVaultPrefix(dir, vault)
+  if (rel === root || rel === dir) return rel === dir ? dir : ''
+  return rel
 }
 
 export function fileEntryOf(path: string, vault: string | null, run: () => void): PaletteEntry {
