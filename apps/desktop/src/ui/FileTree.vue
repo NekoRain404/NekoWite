@@ -13,6 +13,7 @@ import { dirName, joinPath } from '../services/paths'
 import { moveNote } from '../services/noteMove'
 import type { NoteMoveIo } from '../services/noteMove'
 import { flushEdits } from '../services/editorOwnership'
+import { isComposingKey } from '../services/keyGuard'
 
 interface TreeNode {
   name: string
@@ -58,7 +59,10 @@ let confirming = false
  *  (the injection shape `externalDocSync` / `recoveryClosedLoop` use). */
 const noteMoveIo: NoteMoveIo = {
   read: (vault, path) => fsService.read(vault, path),
-  write: (vault, path, content) => fsService.write(vault, path, content),
+  // `moveNote` writes the rewritten body and reports its own failures; the
+  // warning channel (a history snapshot that could not be kept) is not its to
+  // surface — the tab's save does that.
+  write: (vault, path, content) => fsService.write(vault, path, content).then(() => undefined),
   rename: (vault, from, to) => fsService.renameEntry(vault, from, to),
   list: (vault, dir) => fsService.list(vault, dir),
 }
@@ -386,6 +390,21 @@ function cancelEdit(): void {
   editError.value = ''
 }
 
+/** Enter commits and Escape cancels the inline create/rename input — but not
+ *  while an IME is composing: there Enter accepts the highlighted candidate and
+ *  Escape dismisses the candidate list, and treating those as app actions
+ *  renamed the note to the raw pinyin string or discarded the typing entirely. */
+function onEditKeydown(e: KeyboardEvent): void {
+  if (isComposingKey(e)) return
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    void confirmEdit()
+  } else if (e.key === 'Escape') {
+    e.preventDefault()
+    cancelEdit()
+  }
+}
+
 async function confirmEdit(): Promise<void> {
   const p = pendingEdit.value
   if (!p || confirming) return
@@ -553,6 +572,10 @@ watch(
             class="caret"
             :class="{ hidden: !row.node.is_dir }"
             :tabindex="row.node.is_dir ? 0 : -1"
+            :aria-label="row.node.is_dir
+              ? (row.node.expanded ? t('filetree.collapseFolder', { name: row.node.name }) : t('filetree.expandFolder', { name: row.node.name }))
+              : undefined"
+            :aria-expanded="row.node.is_dir ? row.node.expanded : undefined"
             @click.stop="row.node.is_dir ? toggle(row.node) : undefined"
           >
             <ChevronRight
@@ -591,20 +614,19 @@ watch(
             :class="{ invalid: !!editError }"
             type="text"
             @click.stop
-            @keydown.enter.prevent="confirmEdit"
-            @keydown.esc.prevent="cancelEdit"
-            @keydown.stop
+            @keydown.stop="onEditKeydown"
             @blur="cancelEdit"
           >
-          <span
+          <button
             v-else
+            type="button"
             class="tree-name"
             :class="{ dir: row.node.is_dir }"
             :title="row.node.path"
             @click="row.node.is_dir ? toggle(row.node) : openFile(row.node)"
           >
             {{ row.node.name }}
-          </span>
+          </button>
           <button
             v-if="row.node !== root && confirmPath !== row.node.path"
             class="tree-del"
@@ -667,9 +689,7 @@ watch(
             type="text"
             :placeholder="inlineEdit.kind === 'file' ? t('filetree.filePlaceholder') : t('filetree.folderPlaceholder')"
             @click.stop
-            @keydown.enter.prevent="confirmEdit"
-            @keydown.esc.prevent="cancelEdit"
-            @keydown.stop
+            @keydown.stop="onEditKeydown"
             @blur="cancelEdit"
           >
           <span
@@ -815,6 +835,19 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
   letter-spacing: -0.01em;
+  /* A real button (so Tab and Enter reach it) that still reads as a label. */
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.tree-name:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: -2px;
+  border-radius: var(--app-radius-sm);
 }
 .tree-name.dir { font-weight: 550; color: color-mix(in srgb, var(--app-text) 84%, var(--app-muted)); }
 .tree-inline-input {
@@ -861,6 +894,11 @@ watch(
               background var(--app-motion-fast) var(--app-ease);
 }
 .tree-row:hover .tree-del { opacity: 1; }
+/* Keyboard users never hover: without this the only control in a row is also
+   an invisible one, so a Tab stop cannot be seen before it is pressed. */
+.tree-del:focus-within,
+.tree-row:focus-within .tree-del,
+.tree-del:focus-visible { opacity: 1; }
 .tree-del:hover {
   color: var(--app-danger);
   background: color-mix(in srgb, var(--app-danger) 10%, transparent);

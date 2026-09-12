@@ -6,6 +6,7 @@ const acceptMock = vi.hoisted(() => vi.fn())
 const rejectMock = vi.hoisted(() => vi.fn())
 const getEditorMock = vi.hoisted(() => vi.fn())
 const getViewMock = vi.hoisted(() => vi.fn())
+const settingsMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../services/ai', () => ({
   aiService: {
@@ -17,8 +18,15 @@ vi.mock('../services/ai', () => ({
 vi.mock('../features/editor/sessionManager', () => ({
   editorSessionManager: { getActiveEditor: getEditorMock, getView: getViewMock },
 }))
+vi.mock('../stores/settings', () => ({ useSettingsStore: settingsMock }))
 
 import GhostWriter from './GhostWriter.vue'
+
+/** Minimal stand-in for the settings store: GhostWriter only asks whether the
+ *  AI is configured before it fires a completion request. */
+function setAiConfig(provider: string, baseUrl = 'http://localhost:1234/v1', apiKey = ''): void {
+  settingsMock.mockReturnValue({ provider, baseUrl, apiKey })
+}
 
 function setupEditor(hasSuggestion: boolean, focused: boolean): HTMLElement {
   const editorDom = document.createElement('div')
@@ -48,17 +56,24 @@ function sendKey(key: string): KeyboardEvent {
 
 function sendKeyInit(init: KeyboardEventInit): KeyboardEvent {
   const ev = new KeyboardEvent('keydown', { cancelable: true, ...init })
+  // happy-dom's KeyboardEvent constructor drops the `isComposing` init option,
+  // so stamp the (read-only) property to simulate a real IME event.
+  if (init.isComposing) {
+    Object.defineProperty(ev, 'isComposing', { value: true, configurable: true })
+  }
   document.dispatchEvent(ev)
   return ev
 }
 
-describe('GhostWriter keydown wiring (C1)', () => {
+describe('GhostWriter keydown wiring', () => {
   beforeEach(() => {
     triggerMock.mockReset()
     acceptMock.mockReset()
     rejectMock.mockReset()
     getEditorMock.mockReset()
     getViewMock.mockReset()
+    settingsMock.mockReset()
+    setAiConfig('local')
     document.body.innerHTML = ''
     mounted = []
   })
@@ -74,7 +89,7 @@ describe('GhostWriter keydown wiring (C1)', () => {
     mountGhost()
     const ev = sendKey('Tab')
     expect(triggerMock).toHaveBeenCalledTimes(1)
-    expect(ev.defaultPrevented).toBe(true)
+    expect(ev.defaultPrevented).toBe(false)
     expect(acceptMock).not.toHaveBeenCalled()
   })
 
@@ -135,6 +150,48 @@ describe('GhostWriter keydown wiring (C1)', () => {
     const ev = sendKeyInit({ key: 'Process' })
     expect(triggerMock).not.toHaveBeenCalled()
     expect(acceptMock).not.toHaveBeenCalled()
+    expect(ev.defaultPrevented).toBe(false)
+  })
+  it('does not re-handle a Tab that ProseMirror already consumed (table cell move)', () => {
+    // Inside a table ProseMirror handles Tab itself (next cell / insert row)
+    // and calls preventDefault. This handler sits on document, in the bubble
+    // phase, so without a defaultPrevented check the table both moved the
+    // cursor and fired an AI completion from the same keypress.
+    setupEditor(false, true)
+    mountGhost()
+    // Stand in for ProseMirror: it handles Tab while the event is still on its
+    // way down to the editor, i.e. in the capture phase, which is why its
+    // preventDefault is visible to the app-wide bubble listener.
+    const claim = (e: KeyboardEvent): void => e.preventDefault()
+    document.addEventListener('keydown', claim, true)
+    try {
+      sendKey('Tab')
+    } finally {
+      document.removeEventListener('keydown', claim, true)
+    }
+    expect(triggerMock).not.toHaveBeenCalled()
+    expect(acceptMock).not.toHaveBeenCalled()
+  })
+
+  it('leaves Tab alone when no suggestion is pending, so focus can leave the editor', () => {
+    // A keyboard-only user must be able to Tab out of the editor into the
+    // toolbar/tab bar. Swallowing every Tab trapped them in the document.
+    setupEditor(false, true)
+    mountGhost()
+    const ev = sendKey('Tab')
+    expect(triggerMock).toHaveBeenCalledTimes(1)
+    expect(ev.defaultPrevented).toBe(false)
+  })
+
+  it('stays silent on Tab when the AI is not configured', () => {
+    // Pressing Tab used to fire a request that failed with a toast even though
+    // the user never asked for AI; a fresh install showed "AI generation
+    // failed" on every Tab press.
+    setAiConfig('openai')
+    setupEditor(false, true)
+    mountGhost()
+    const ev = sendKey('Tab')
+    expect(triggerMock).not.toHaveBeenCalled()
     expect(ev.defaultPrevented).toBe(false)
   })
 })

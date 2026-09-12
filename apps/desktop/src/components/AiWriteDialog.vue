@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { nextTick, onBeforeUnmount, ref } from 'vue'
 import { useFocusTrap } from '../composables/useFocusTrap'
+import { modalStack } from '../services/modalStack'
 import { t } from '../i18n'
 import type { PendingAiWrite } from '../stores/aiPermission'
 
@@ -19,10 +20,23 @@ const emit = defineEmits<{
 
 const active = ref(true)
 const dialogEl = ref<HTMLElement | null>(null)
-useFocusTrap(dialogEl, active)
+// `initialFocus: false`: this is a permission gate, and the first focusable
+// control is "Allow once" — a stray Enter (often the tail of what the user was
+// typing when the prompt appeared) approved a write they never read. Focus
+// goes to the container so every answer is an explicit choice.
+useFocusTrap(dialogEl, active, { initialFocus: false })
+
+const modalToken = modalStack.claimModal('ai-write-dialog')
+
+nextTick(() => dialogEl.value?.focus())
+
+onBeforeUnmount(() => {
+  modalStack.releaseModal(modalToken)
+})
 
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') {
+    if (!modalStack.isTopModal(modalToken)) return
     e.preventDefault()
     // Escape means "no": dismissing a permission prompt must never be read as
     // approval.
@@ -48,6 +62,7 @@ function kindLabel(): string {
       role="dialog"
       aria-modal="true"
       aria-labelledby="ai-write-title"
+      tabindex="-1"
     >
       <div
         id="ai-write-title"

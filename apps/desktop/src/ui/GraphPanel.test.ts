@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createApp, type App as VueApp } from 'vue'
+import { createApp, nextTick, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import GraphPanel from './GraphPanel.vue'
 import { useTabsStore } from '../stores/tabs'
@@ -459,6 +459,69 @@ describe('GraphPanel', () => {
     expect(dashedStubCount()).toBe(dashesBeforeToggle)
     // Toggling only hides the marking: the node itself stays in the graph.
     expect(state().visibleGraph!.nodes.map((n) => n.id)).toContain('docs/a.md')
+    getContextSpy.mockRestore()
+  })
+
+  it('opens a note with the keyboard and announces each focused node', async () => {
+    // The canvas is the panel's main surface but used to be mouse-only: a
+    // keyboard user could filter and relayout but never open a note.
+    const ctx = {
+      setTransform: vi.fn(),
+      clearRect: vi.fn(),
+      save: vi.fn(),
+      restore: vi.fn(),
+      translate: vi.fn(),
+      scale: vi.fn(),
+      beginPath: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      stroke: vi.fn(),
+      arc: vi.fn(),
+      fill: vi.fn(),
+      setLineDash: vi.fn(),
+      lineWidth: 1,
+      strokeStyle: '',
+      fillStyle: '',
+      globalAlpha: 1,
+    }
+    const getContextSpy = vi
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue(ctx as unknown as CanvasRenderingContext2D)
+
+    mountFilterVault('/vault-graph-kb')
+    await flush()
+    await flush()
+    await vi.waitFor(() => expect(state().layout).toHaveLength(3))
+
+    const canvas = host!.querySelector<HTMLCanvasElement>('.graph-canvas')!
+    expect(canvas.getAttribute('tabindex')).toBe('0')
+    expect(canvas.getAttribute('aria-label')).toContain('方向键')
+
+    const press = (key: string): void => {
+      canvas.focus()
+      canvas.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+    }
+
+    // The first arrow key lands on a node, and the label names it.
+    press('ArrowRight')
+    await nextTick()
+    const label = canvas.getAttribute('aria-label') ?? ''
+    const focusedId = state().layout.map((p) => p.id).find((id) => label.includes(id.split('/').pop()!))
+    expect(focusedId).toBe('docs/a.md')
+
+    // Escape clears the selection again.
+    press('Escape')
+    await nextTick()
+    expect(canvas.getAttribute('aria-label')).not.toContain('a.md')
+
+    // Enter opens the focused note; the arrow press picks the first node again.
+    press('ArrowRight')
+    await nextTick()
+    expect(canvas.getAttribute('aria-label')).toContain('a.md')
+    press('Enter')
+    await flush()
+    expect(useTabsStore().activeTab?.path).toBe('docs/a.md')
+
     getContextSpy.mockRestore()
   })
 

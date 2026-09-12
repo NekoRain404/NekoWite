@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createApp, type App as VueApp } from 'vue'
+import { createApp, nextTick, type App as VueApp } from 'vue'
 import TemplatePicker from './TemplatePicker.vue'
 import type { TemplateEntry } from '../services/noteTemplates'
 import { t } from '../i18n'
@@ -90,6 +90,27 @@ describe('TemplatePicker', () => {
     try {
       const pathText = host.querySelector('.template-path')?.textContent?.trim()
       expect(pathText).toBe(t('template.builtin'))
+    } finally {
+      app.unmount()
+      host.remove()
+    }
+  })
+
+  it('takes focus on open so the first Escape reaches the dialog', async () => {
+    // `initialFocus: false` with nothing taking focus instead left focus on the
+    // sidebar button that opened the picker, and Escape was dispatched at that
+    // button -- never reaching the overlay handler.
+    const { host, app, received } = mountPi(TEMPLATES)
+    try {
+      await nextTick()
+      const dialog = host.querySelector<HTMLElement>('.template-dialog')!
+      expect(dialog.contains(document.activeElement)).toBe(true)
+
+      // Escape dispatched at the document body (i.e. not at the overlay) must
+      // still close: sibling dialogs listen at the document, and a modal that
+      // only works while focus is already inside is not modal.
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      expect(received.close).toBe(1)
     } finally {
       app.unmount()
       host.remove()

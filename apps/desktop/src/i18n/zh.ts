@@ -205,6 +205,8 @@ export const zh = {
     newFolder: '新建文件夹',
     rename: '重命名',
     delete: '删除',
+    collapseFolder: '折叠文件夹 {name}',
+    expandFolder: '展开文件夹 {name}',
     deleteFailed: '删除失败，请重试',
     listFailed: '无法读取目录：{path}',
     confirm: '确认',
@@ -252,6 +254,7 @@ export const zh = {
     reading: '正在读取笔记…',
     readFailed: '读取笔记失败',
     count: '{n} 篇 · {m} 条链接',
+    kbHint: '方向键在节点间移动，回车打开，Esc 取消选择',
     relayout: '重新布局',
     relayoutTitle: '重新随机布局节点位置',
     resetView: '重置视图',
@@ -367,7 +370,8 @@ export const zh = {
   },
   conflict: {
     title: '文件已在外部被修改',
-    body: '{path} 的磁盘内容已变化，而当前有未保存的本地修改。',
+    bodyPrefix: '文件',
+    bodySuffix: '的磁盘内容已变化，而当前有未保存的本地修改。',
     reloadDisk: '以磁盘为准（放弃本地）',
     keepLocal: '保留本地',
     later: '稍后再说',
@@ -421,6 +425,7 @@ export const zh = {
     split: '对照',
   },
   rail: {
+    bodyAria: '侧栏面板',
     ai: 'AI',
     outline: '大纲',
     refs: '引用',
@@ -433,6 +438,7 @@ export const zh = {
   frontmatter: {
     title: '文档属性',
     name: '标题',
+    addTag: '添加标签',
     tags: '标签',
     date: '日期',
     created: '创建于',
@@ -556,8 +562,8 @@ export const zh = {
   aiSettings: {
     provider: '服务商',
     model: '模型',
-    baseUrl: 'Base URL',
-    apiKey: 'API Key',
+    baseUrl: '接口地址（Base URL）',
+    apiKey: '密钥（API Key）',
     refreshModels: '刷新模型列表',
     getModelsFailed: '获取模型失败：{msg}',
     refresh: '刷新',

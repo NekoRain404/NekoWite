@@ -146,8 +146,11 @@ onMounted(() => {
         @restore="restoreFromDiff"
         @close="closeCompare"
       />
+      <!-- Chained to the LIST's condition, not to the DiffView's: the v-else
+           used to hang off the diff, so "no history yet" was printed under
+           every populated history list. -->
       <p
-        v-else
+        v-if="!entries.length && !(comparing && historyText)"
         class="rail-empty"
       >
         {{ t('history.empty') }}

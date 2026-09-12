@@ -45,7 +45,13 @@ function onPick(item: OutlineItem): void {
           </button>
         </li>
       </ul>
-      <p class="rail-empty">
+      <!-- Only when the list is empty: the hint used to sit outside the list's
+           v-if, so every document with headings had "no headings" printed
+           underneath its outline. -->
+      <p
+        v-if="!items.length"
+        class="rail-empty"
+      >
         {{ t('outline.empty') }}
       </p>
     </template>

@@ -205,6 +205,8 @@ export const en = {
     newFolder: 'New folder',
     rename: 'Rename',
     delete: 'Delete',
+    collapseFolder: 'Collapse folder {name}',
+    expandFolder: 'Expand folder {name}',
     deleteFailed: 'Delete failed, please retry',
     listFailed: 'Could not read directory: {path}',
     confirm: 'Confirm',
@@ -252,6 +254,7 @@ export const en = {
     reading: 'Reading notes…',
     readFailed: 'Failed to read notes',
     count: '{n} notes · {m} links',
+    kbHint: 'arrow keys move between notes, Enter opens, Escape clears',
     relayout: 'Relayout',
     relayoutTitle: 'Randomly relayout node positions',
     resetView: 'Reset view',
@@ -367,7 +370,8 @@ export const en = {
   },
   conflict: {
     title: 'File changed externally',
-    body: 'Disk content of {path} changed, but there are unsaved local edits.',
+    bodyPrefix: 'The file',
+    bodySuffix: 'changed on disk, but your local edits here are not saved yet.',
     reloadDisk: 'Use disk (discard local)',
     keepLocal: 'Keep local',
     later: 'Later',
@@ -421,6 +425,7 @@ export const en = {
     split: 'Split',
   },
   rail: {
+    bodyAria: 'Panels',
     ai: 'AI',
     outline: 'Outline',
     refs: 'References',
@@ -433,6 +438,7 @@ export const en = {
   frontmatter: {
     title: 'Document properties',
     name: 'Title',
+    addTag: 'Add tag',
     tags: 'Tags',
     date: 'Date',
     created: 'Created',

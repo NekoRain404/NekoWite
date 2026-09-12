@@ -37,6 +37,7 @@ import {
   type ChatMessage,
 } from './chatLogic'
 import { t } from '../i18n'
+import { isComposingKey } from '../services/keyGuard'
 
 interface ChatAttachment {
   id: string
@@ -271,7 +272,9 @@ function onDragOver(e: DragEvent): void {
 }
 
 function onComposerKeydown(e: KeyboardEvent): void {
-  if (e.isComposing || e.key === 'Process') return
+  // Enter accepts the IME candidate; sending the message there would fire a
+  // request with the half-composed text.
+  if (isComposingKey(e)) return
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     void send()
