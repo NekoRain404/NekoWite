@@ -420,16 +420,68 @@ pub fn parse_model_ids(body: &str, _provider: &str) -> Vec<String> {
 /// and surfaces a friendly hint (e.g. a bad API key hides a 401 as "无效") instead
 /// of a bare reqwest status string.
 pub fn http_error_message(status: u16) -> String {
+    http_error_message_with_detail(status, None)
+}
+
+/// The status hint, with the provider's own explanation appended when there is
+/// one.
+///
+/// The status alone routinely points at the wrong thing. Measured against a
+/// real gateway: an unknown MODEL NAME is answered with HTTP 403 and a body
+/// saying `The current group does not support the requested model …; available
+/// models: deepseek-flash` — so the user was told "your API key is invalid" and
+/// spent their time re-entering a key that worked perfectly, while the message
+/// that named the usable model sat in a response body nobody read. An image
+/// sent to a text-only model is a 400 ("unsupported image"), which read as
+/// "malformed request". A 402 is a billing problem, not a network one.
+///
+/// The detail is taken from the provider's JSON (`error.message`) when it
+/// parses, otherwise the raw text is used verbatim; it is capped so a provider
+/// cannot fill the toast with a wall of text.
+pub fn http_error_message_with_detail(status: u16, detail: Option<&str>) -> String {
     let hint = match status {
-        400 => "请求格式不正确",
+        400 => "请求格式不正确（模型可能不支持本次内容，例如图片）",
         401 => "API Key 无效，请检查设置",
-        403 => "API Key 无权限，请检查设置",
-        404 => "接口不存在，请检查 Base URL",
+        402 => "账户余额不足，请检查服务商账单",
+        403 => "没有权限：可能是 API Key 或模型名不被该服务商支持",
+        404 => "接口或模型不存在，请检查 Base URL 与模型名",
+        413 => "请求体过大（图片或附件太多）",
+        422 => "服务商无法处理本次请求",
         429 => "请求过于频繁，请稍后重试",
         500 | 502 | 503 | 504 => "服务端暂时不可用，请稍后重试",
-        _ => "网络请求失败",
+        _ => "请求失败",
     };
-    format!("AI 请求失败：HTTP {status}，{hint}")
+    match detail.map(str::trim).filter(|d| !d.is_empty()) {
+        Some(detail) => {
+            let mut shown = detail.to_string();
+            if shown.chars().count() > 300 {
+                shown = shown.chars().take(300).collect::<String>() + "…";
+            }
+            format!("AI 请求失败：HTTP {status}，{hint}。服务商说明：{shown}")
+        }
+        None => format!("AI 请求失败：HTTP {status}，{hint}"),
+    }
+}
+
+/// A human-readable message from a non-2xx response body, for the two JSON
+/// shapes the supported providers use. Falls back to the trimmed body text.
+pub fn error_detail_from_body(body: &str) -> Option<String> {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if let Some(message) = v
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .or_else(|| v.get("error").and_then(|e| e.as_str().map(|_| e)))
+            .or_else(|| v.get("message"))
+            .and_then(|m| m.as_str())
+        {
+            return Some(message.to_string());
+        }
+    }
+    Some(trimmed.to_string())
 }
 
 /// Parse one SSE line for a provider and append any delta to `acc`.
@@ -639,15 +691,20 @@ pub async fn list_models(config: &AIConfig) -> Result<Vec<String>, String> {
         request = request.header(k, v);
     }
 
-    let body = request
+    let response = request
         .send()
         .await
-        .map_err(|e| format!("请求模型列表失败：{e}"))?
-        .error_for_status()
-        .map_err(|e| format!("模型列表请求失败：{e}"))?
-        .text()
-        .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("请求模型列表失败：{e}"))?;
+    let status = response.status();
+    let body = response.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        // Same reasoning as the completion path: the body says WHY (wrong key,
+        // wrong base URL, unknown model), and that is what the user needs.
+        return Err(http_error_message_with_detail(
+            status.as_u16(),
+            error_detail_from_body(&body).as_deref(),
+        ));
+    }
 
     // A blank body is a legitimate "no models" signal; anything non-empty must
     // still parse as JSON, otherwise a 500 error page would silently surface as
@@ -731,14 +788,23 @@ pub async fn stream_complete(
     // hint to the user). Surfacing it here mirrors the `send` failure path above:
     // emit `ai-error` then return `Err`, so the frontend's `onError`/toast fires.
     // 2xx passes through to `bytes_stream()` unchanged.
-    let response = response.error_for_status().map_err(|e| {
-        let message = http_error_message(e.status().map(|s| s.as_u16()).unwrap_or(0));
+    let status = response.status();
+    if !status.is_success() {
+        // Read the provider's own explanation BEFORE reporting: the status code
+        // alone misdirects (an unknown model name arrives as 403, which reads as
+        // "your key is invalid"), while the body names the actual problem and,
+        // for a model error, the models that would work.
+        let detail = match response.text().await {
+            Ok(body) => error_detail_from_body(&body),
+            Err(_) => None,
+        };
+        let message = http_error_message_with_detail(status.as_u16(), detail.as_deref());
         let _ = app.emit(
             "ai-error",
             serde_json::json!({ "id": id, "message": message }),
         );
-        message
-    })?;
+        return Err(message);
+    }
 
     let mut stream = response.bytes_stream();
     let mut full = String::new();
