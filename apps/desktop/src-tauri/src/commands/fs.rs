@@ -247,16 +247,24 @@ pub async fn import_attachment(
     file_store::import_attachment(&vault, &source_path, &dir)
 }
 
-/// How long two consecutive events for the same path count as one burst.
+/// How long a quiet period must last before a burst is considered over.
 const COALESCE_WINDOW: std::time::Duration = std::time::Duration::from_millis(150);
 
-/// Whether a `fs-change` event should be forwarded, given the last event seen
-/// for the same path.
+/// Whether an event that already arrived for a pending burst should be
+/// forwarded, i.e. whether this path should be reported NOW.
 ///
-/// Only an *identical* kind inside the coalescing window is dropped: that is the
-/// duplicate this exists for. A different kind (a replacement arrives as
-/// `removed` then `created`), or the same kind after the window, is always
-/// forwarded, so a real edit is never swallowed.
+/// The previous version of this was leading-edge — it forwarded the first event
+/// and dropped everything for the same path and kind inside the window, without
+/// refreshing the timestamp. That silently discarded the *later* half of a burst,
+/// and the later half is the one that matters: two external writes 50 ms apart
+/// produced one event for the content in between, so an open note reloaded to a
+/// state that was already stale and then nothing ever arrived to correct it —
+/// until the user saved, overwriting the newer external text with the stale copy.
+///
+/// Now the first event is forwarded immediately (so a single edit is still
+/// instant) and any follow-up within the window is *held* — the caller re-emits
+/// it after the burst goes quiet, which means the last state always reaches
+/// subscribers.
 fn should_emit_change(
     last: Option<&(String, std::time::Instant)>,
     kind: &str,
@@ -266,6 +274,13 @@ fn should_emit_change(
         Some((last_kind, at)) => last_kind != kind || now.duration_since(*at) >= COALESCE_WINDOW,
         None => true,
     }
+}
+
+/// A burst awaiting its trailing edge: the event to re-emit once the burst goes
+/// quiet, and when that quiet period started.
+struct PendingBurst {
+    kind: String,
+    at: std::time::Instant,
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -293,43 +308,106 @@ pub async fn watch_folder(
     // no real change is hidden.
     let mut recent: std::collections::HashMap<String, (String, std::time::Instant)> =
         std::collections::HashMap::new();
+    // Events held for the trailing edge of a burst, keyed by path. A burst is
+    // reported once when it stops, so the LAST write of a rapid sequence is what
+    // subscribers see.
+    let mut pending: std::collections::HashMap<String, PendingBurst> =
+        std::collections::HashMap::new();
+    // The watcher root, canonical, so the hidden-component filter can be applied
+    // to the path RELATIVE to the vault. Applying it to the absolute path meant a
+    // vault living in a dot-directory (`~/.notes`) filtered out every event it
+    // would ever produce — the whole vault looked unmodified to the app, so
+    // external edits were never noticed and the next save overwrote them.
+    let watch_root = resolved.clone();
     let mut new_watcher = notify::RecommendedWatcher::new(
         move |res: Result<notify::Event, notify::Error>| {
-            if let Ok(event) = res {
-                let kind = if event.kind.is_create() {
-                    "created"
-                } else if event.kind.is_modify() {
-                    "modified"
-                } else if event.kind.is_remove() {
-                    "removed"
-                } else {
-                    return;
-                };
-                let now = std::time::Instant::now();
-                for path in event.paths {
-                    // History/trash churn and our own snapshot temp writes
-                    // happen under hidden directories; never surface them.
-                    if has_hidden_component(&path) {
-                        continue;
-                    }
-                    // Same spelling as `list_dir` (see `ipc_path`); a
-                    // verbatim-prefixed path here never equaled the tab path, so
-                    // an external edit was silently ignored.
-                    let ipc = crate::domain::path_policy::ipc_path(&path);
-                    if !should_emit_change(recent.get(&ipc), kind, now) {
-                        continue;
-                    }
-                    recent.insert(ipc.clone(), (kind.to_string(), now));
+            let event = match res {
+                Ok(event) => event,
+                Err(e) => {
+                    // A watcher error means events are being LOST — the handle
+                    // may be exhausted or the OS queue overflowed. Staying quiet
+                    // left the app believing it was watching while external
+                    // changes went unseen; ask the window to resynchronise by
+                    // re-reading what it has open.
                     let _ = app.emit(
                         "fs-change",
-                        serde_json::json!({ "path": ipc, "kind": kind }),
+                        serde_json::json!({
+                            "path": crate::domain::path_policy::ipc_path(&watch_root),
+                            "kind": "resync",
+                            "error": e.to_string(),
+                        }),
+                    );
+                    return;
+                }
+            };
+            let kind = if event.kind.is_create() {
+                "created"
+            } else if event.kind.is_modify() {
+                "modified"
+            } else if event.kind.is_remove() {
+                "removed"
+            } else {
+                return;
+            };
+            let now = std::time::Instant::now();
+            for path in event.paths {
+                // History/trash churn and our own snapshot temp writes
+                // happen under hidden directories; never surface them. The
+                // check is relative to the watch root so a dot-directory
+                // ANCESTOR of the vault is not mistaken for a hidden subtree.
+                let rel = path
+                    .strip_prefix(&watch_root)
+                    .map(|r| r.to_path_buf())
+                    .unwrap_or_else(|_| path.clone());
+                if has_hidden_component(&rel) {
+                    continue;
+                }
+                // Same spelling as `list_dir` (see `ipc_path`); a
+                // verbatim-prefixed path here never equaled the tab path, so
+                // an external edit was silently ignored.
+                let ipc = crate::domain::path_policy::ipc_path(&path);
+                if !should_emit_change(recent.get(&ipc), kind, now) {
+                    // Inside the window: hold it instead of dropping it. The
+                    // last write in a burst is the one whose content is on disk,
+                    // so this is the event subscribers actually need.
+                    pending.insert(
+                        ipc,
+                        PendingBurst {
+                            kind: kind.to_string(),
+                            at: now,
+                        },
+                    );
+                    continue;
+                }
+                recent.insert(ipc.clone(), (kind.to_string(), now));
+                let _ = app.emit(
+                    "fs-change",
+                    serde_json::json!({ "path": ipc, "kind": kind }),
+                );
+            }
+            // Trailing edge: a burst that has been quiet for the full window is
+            // over, so its final event goes out now. This is what makes a rapid
+            // pair of external writes end with an event for the FINAL content.
+            let settled: Vec<String> = pending
+                .iter()
+                .filter(|(_, p)| now.duration_since(p.at) >= COALESCE_WINDOW)
+                .map(|(k, _)| k.clone())
+                .collect();
+            for ipc in settled {
+                if let Some(p) = pending.remove(&ipc) {
+                    // Only the kind is re-emitted, so a held `removed` after a
+                    // `modified` still tells the window the file is gone.
+                    recent.insert(ipc.clone(), (p.kind.clone(), now));
+                    let _ = app.emit(
+                        "fs-change",
+                        serde_json::json!({ "path": ipc, "kind": p.kind }),
                     );
                 }
-                // Bounded growth: a long session over a busy vault would
-                // otherwise keep one entry per touched path forever.
-                if recent.len() > 512 {
-                    recent.retain(|_, (_, at)| now.duration_since(*at) < COALESCE_WINDOW);
-                }
+            }
+            // Bounded growth: a long session over a busy vault would otherwise
+            // keep one entry per touched path forever.
+            if recent.len() > 512 {
+                recent.retain(|_, (_, at)| now.duration_since(*at) < COALESCE_WINDOW);
             }
         },
         notify::Config::default(),

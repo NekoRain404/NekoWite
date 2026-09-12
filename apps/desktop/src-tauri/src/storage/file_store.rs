@@ -319,6 +319,28 @@ fn prune_history(dir: &Path, max: usize) -> Result<(), String> {
 /// sibling then rename it into place); on a crash the temp file survives.
 /// Cleaning is bounded to mtime so a temp file a live writer just created
 /// (fresh mtime, unique nonce name) is never deleted mid-write.
+/// Whether `name` matches the temp-file shape this crate writes:
+/// `.<original name>.<nanosecond nonce>.tmp`.
+///
+/// The leading dot keeps these out of the file tree and the numeric nonce
+/// distinguishes them from a file a user or another tool named `*.tmp`. Both
+/// parts matter: the dot alone would still claim `.gitignore.tmp`-style names
+/// that are not ours, and the suffix alone (what this used to check) claimed
+/// every `.tmp` file in the vault.
+fn is_our_temp_file(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix('.') else {
+        return false;
+    };
+    let Some(rest) = rest.strip_suffix(".tmp") else {
+        return false;
+    };
+    // `.<nonce>.tmp` (happens for a nameless source) or `.<name>.<nonce>.tmp`.
+    match rest.rsplit_once('.') {
+        Some((_, nonce)) => !nonce.is_empty() && nonce.bytes().all(|b| b.is_ascii_digit()),
+        None => !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()),
+    }
+}
+
 pub fn cleanup_stale_tmp(dir: &Path, max_age: Duration) -> Result<usize, String> {
     let now = SystemTime::now();
     let rd = std::fs::read_dir(dir).map_err(|e| e.to_string())?;
@@ -329,7 +351,16 @@ pub fn cleanup_stale_tmp(dir: &Path, max_age: Duration) -> Result<usize, String>
             continue;
         }
         let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if !name.ends_with(".tmp") {
+        // Only OUR temp files: `atomic_write` and `snapshot_history` stage
+        // `.<original>.<nanosecond-nonce>.tmp` — hidden, with a numeric nonce as
+        // the final stem segment. Matching any `.tmp` suffix instead deleted
+        // whatever the user (or another program) happened to leave in the vault
+        // with that extension: a `draft.tmp` in a note's folder was removed by
+        // the next save in that folder, permanently — not to the trash, and with
+        // no history snapshot to recover from. Vaults routinely hold project
+        // files (that is why `node_modules`/`dist` are skipped), so this is a
+        // real document, not litter.
+        if !is_our_temp_file(name) {
             continue;
         }
         let stale = p
@@ -901,13 +932,34 @@ pub fn rename_entry(vault_root: &str, from: &str, to: &str) -> Result<String, St
     }
     let is_dir = resolved_from.is_dir();
     let (resolved_to, relative_to) = resolve_within_rel(vault_root, to)?;
-    if resolved_to.exists() {
+    // `exists()` follows the filesystem's CASING rules, so on Windows a case-only
+    // rename (`note.md` -> `Note.md`) sees the file itself and was rejected with
+    // "target already exists: Note.md" — a message that names the very name the
+    // user asked for, so it read as nonsense. Normalising the comparison to a
+    // case-insensitive one when the two paths are otherwise identical lets the
+    // rename through: `fs::rename` supports the case change, and it is a common
+    // thing to want on a title-cased note.
+    // Compare the REQUESTED spellings, not the resolved paths: resolution
+    // canonicalizes, and on Windows canonicalization reports the ON-DISK casing,
+    // so a request for `archive/B.md` resolves to `archive/b.md` and would look
+    // identical to its own source.
+    let normalize = |s: &str| s.replace('\\', "/").to_lowercase();
+    let case_only_rename = from != to && normalize(from) == normalize(to);
+    if resolved_to.exists() && !case_only_rename {
         return Err(format!("target already exists: {relative_to}"));
     }
     if let Some(parent) = resolved_to.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     std::fs::rename(&resolved_from, &resolved_to).map_err(|e| e.to_string())?;
+    // The relative path was canonicalized BEFORE the move, so for a case-only
+    // rename it still holds the old spelling. Re-resolve to report what is
+    // actually on disk now: the caller stores this string as the tab's path and
+    // shows it as the note's name, so `archive/b.md` after a rename to
+    // `archive/B.md` would leave the title looking as if nothing happened.
+    let relative_to = resolve_within_rel(vault_root, to)
+        .map(|(_, rel)| rel)
+        .unwrap_or(relative_to);
     if !is_dir {
         move_history_key(vault_root, &relative_from, &relative_to);
         move_trash_key(vault_root, &relative_from, &relative_to);

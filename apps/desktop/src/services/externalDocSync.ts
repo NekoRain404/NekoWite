@@ -76,12 +76,38 @@ export function createExternalDocSync(deps: ExternalDocSyncDeps): ExternalDocSyn
     }
   }
 
+  /**
+   * The watcher lost events (see `FsChangeKind.resync`), so the per-path checks
+   * below cannot be trusted: a change to the open note may never have been
+   * reported. Re-check every open tab against the disk instead of waiting for an
+   * event that will not come — the cost is one read per open tab, and the
+   * alternative is a silent divergence that ends with the user's save
+   * overwriting someone else's edit.
+   */
+  async function resyncAll(vault: string): Promise<void> {
+    for (const tab of deps.getOpenTabs()) {
+      if (!tab.path) continue
+      try {
+        await deps.read(vault, tab.path)
+      } catch {
+        deps.onMissing(tab.id, tab.path)
+        continue
+      }
+      // A file that still exists may still have changed underneath us.
+      await handle({ path: tab.path, kind: 'modified' })
+    }
+  }
+
   async function handle(e: FsChangeEvent): Promise<void> {
     // Every visual surface reacts, whether or not a document is involved.
     deps.onChange?.(e)
 
     const vault = deps.getVault()
     if (!vault) return
+    if (e.kind === 'resync') {
+      await resyncAll(vault)
+      return
+    }
     // A folder change can take open notes with it and no event will name them
     // individually — and the kind is not a reliable signal: renaming a folder on
     // Windows reports `modified` for BOTH names, not `removed` + `created`
