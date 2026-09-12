@@ -186,32 +186,70 @@ function syncSession(): void {
   chatSessions.setMessages(messages.value.map(toSessionMessage))
 }
 
-function newSession(): void {
+/**
+ * Composer state per session: the half-written question and its attachments.
+ *
+ * Switching to another session to check something and coming back used to find
+ * the composer empty - the text you were mid-way through was simply gone, and
+ * with it the images you had attached. A draft belongs to the conversation it
+ * was written for, so it is parked under that session and restored with it.
+ */
+const drafts = new Map<string, { prompt: string; attachments: ChatAttachment[] }>()
+
+function stashDraft(): void {
+  const id = chatSessions.activeId
+  if (!id) return
+  if (!prompt.value && attachments.value.length === 0) {
+    drafts.delete(id)
+    return
+  }
+  drafts.set(id, { prompt: prompt.value, attachments: [...attachments.value] })
+}
+
+/** Drop a stashed draft and release the object URLs it holds. */
+function discardDraft(id: string): void {
+  const draft = drafts.get(id)
+  if (!draft) return
+  for (const a of draft.attachments) URL.revokeObjectURL(a.url)
+  drafts.delete(id)
+}
+
+function restoreDraft(): void {
+  const id = chatSessions.activeId
+  const draft = id ? drafts.get(id) : undefined
+  prompt.value = draft?.prompt ?? ''
+  attachments.value = draft ? [...draft.attachments] : []
+}
+
+function switchToSession(id: string | null): void {
   if (streaming.value) stop()
-  chatSessions.newSession()
+  stashDraft()
+  if (id === null) chatSessions.newSession()
+  else chatSessions.switchSession(id)
   loadActiveSession()
-  clearAttachments()
-  prompt.value = ''
+  restoreDraft()
   scrollToBottom()
+}
+
+function newSession(): void {
+  switchToSession(null)
 }
 
 function onSessionChange(e: Event): void {
   const id = (e.target as HTMLSelectElement).value || null
   if (id === chatSessions.activeId) return
-  if (streaming.value) stop()
-  chatSessions.switchSession(id)
-  loadActiveSession()
-  clearAttachments()
-  prompt.value = ''
-  scrollToBottom()
+  switchToSession(id)
 }
 
 function deleteActiveSession(): void {
+  const removed = chatSessions.activeId
   if (streaming.value) stop()
-  chatSessions.deleteSession(chatSessions.activeId ?? '')
+  // The draft goes with the conversation it belonged to: keeping it would
+  // attach a question to whatever session happens to be next.
+  if (removed) discardDraft(removed)
+  chatSessions.deleteSession(removed ?? '')
   loadActiveSession()
-  clearAttachments()
-  prompt.value = ''
+  restoreDraft()
   scrollToBottom()
 }
 
@@ -358,6 +396,8 @@ async function send(): Promise<void> {
   syncSession()
   prompt.value = ''
   clearAttachments()
+  const sentFrom = chatSessions.activeId
+  if (sentFrom) drafts.delete(sentFrom)
 
   const chatPrompt = buildChatPrompt(history.map((m) => ({ role: m.role, content: m.content })), { context })
   const assistant: ChatMessage = { role: 'assistant', content: '', streaming: true }
@@ -433,6 +473,12 @@ function stop(): void {
  * billed — into a component nobody can see. Cancel it and persist the turns
  * received so far, flagging the answer so a reopened panel shows it as cut off
  * instead of leaving the user's question looking unanswered. */
+/** Release the object URLs of every parked draft. Called on unmount: the
+ *  drafts live only as long as this panel, so nothing must survive it. */
+function releaseDrafts(): void {
+  for (const id of [...drafts.keys()]) discardDraft(id)
+}
+
 function interruptStream(): void {
   if (!streaming.value) return
   cancelCompletion()
@@ -448,6 +494,8 @@ function clearAll(): void {
   chatSessions.clearMessages()
   clearAttachments()
   prompt.value = ''
+  const id = chatSessions.activeId
+  if (id) drafts.delete(id)
 }
 
 async function insertIntoDocument(msg: ChatMessage): Promise<void> {
@@ -488,6 +536,7 @@ onBeforeUnmount(() => {
   disposed = true
   interruptStream()
   clearAttachments()
+  releaseDrafts()
 })
 </script>
 

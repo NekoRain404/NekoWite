@@ -81,15 +81,42 @@ describe('chatLogic', () => {
       expect(block).not.toContain('长正文')
     })
 
-    it('truncates an oversized body at maxChars', () => {
+    it('keeps the opening AND the ending of an oversized body', () => {
       // The omission used to be invisible: the model saw the first 100
       // characters of a 300-character note and answered as if it had read the
-      // whole thing, with nothing in the UI to suggest otherwise.
-      const block = buildContextBlock({ noteTitle: 'T', noteContent: 'a'.repeat(300), maxChars: 100 })
+      // whole thing, with nothing in the UI to suggest otherwise. Only-the-head
+      // was wrong for a second reason: the person writing the END of a long
+      // note - the usual case, you ask about what you are writing - was the one
+      // whose text never reached the model.
+      const head = 'H'.repeat(150)
+      const middle = 'M'.repeat(150)
+      const tail = 'T'.repeat(150)
+      const block = buildContextBlock({ noteTitle: 'T', noteContent: head + middle + tail, maxChars: 100 })
       const parts = block.split('\n')
-      expect(parts[1].endsWith('...')).toBe(true)
-      expect(parts[1].length).toBe(100)
-      expect(parts.slice(2).join('\n')).toContain('200')
+      // Header, the note's opening, the omission notice, then its ending.
+      expect(parts[0]).toContain('T')
+      expect(parts[1]).toBe('H'.repeat(50))
+      expect(parts[2]).toContain('350')
+      expect(parts[3]).toBe('T'.repeat(50))
+      // The middle is what was sacrificed, and the budget is respected.
+      expect(block).not.toContain('M')
+      expect(parts[1].length + parts[3].length).toBe(100)
+    })
+
+    it('truncates a long SELECTION from its start, not from both ends', () => {
+      // A selection is what the user pointed at, so its beginning is the point;
+      // splitting it would drop the part they chose to show.
+      const block = buildContextBlock({
+        noteTitle: 'T',
+        selection: 'S'.repeat(300),
+        noteContent: 'B'.repeat(300),
+        maxChars: 100,
+      })
+      const parts = block.split('\n')
+      expect(parts[0]).toContain('T')
+      expect(parts[2].endsWith('...')).toBe(true)
+      expect(parts[2].length).toBe(100)
+      expect(parts.slice(3).join('\n')).toContain('200')
     })
 
     it('returns empty strings when nothing usable is present', () => {
