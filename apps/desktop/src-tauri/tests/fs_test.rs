@@ -371,6 +371,9 @@ fn list_trash_purges_legacy_internal_entries() {
 
     let legacy = trash_dir.join("%2Enekowite%2Findex%2Fshard-3.json.tmp");
     std::fs::write(&legacy, "{}").unwrap();
+    // Same for the `.tmp` staging area: staged assets are not user notes.
+    let staged = trash_dir.join("%2Etmp%2Fpaste-2.png");
+    std::fs::write(&staged, "img").unwrap();
     // A real deleted note stays listed.
     write_file(&root, "keep.md", "content", Some(10)).unwrap();
     let real = delete_file(&root, "keep.md").unwrap();
@@ -379,6 +382,7 @@ fn list_trash_purges_legacy_internal_entries() {
     assert_eq!(listed.len(), 1);
     assert!(listed[0].trash_path == real);
     assert!(!legacy.exists(), "legacy internal entry should be purged");
+    assert!(!staged.exists(), "legacy .tmp entry should be purged");
 
     std::fs::remove_dir_all(&vault).unwrap();
 }
@@ -447,20 +451,167 @@ fn clear_trash_empties_the_trash() {
     std::fs::remove_dir_all(&vault).unwrap();
 }
 
-/// Trash may hold a *directory* (when a whole folder is deleted): `clear_trash`
-/// must remove it recursively and count it as a single entry.
+/// Deleting a folder moves the whole tree into the trash like a file: it must
+/// be LISTED (`is_dir: true`) so the UI offers it back, restore must put the
+/// contents back, and `clear_trash` must still remove it recursively as one
+/// entry. Previously the listing skipped every non-file entry, so a deleted
+/// folder showed as "trash empty" with no way to recover it.
 #[test]
-fn clear_trash_removes_directory_entries() {
-    let vault = temp_vault("clear-trash-dir");
+fn deleted_directory_is_listed_and_restored_with_contents() {
+    let vault = temp_vault("trash-dir");
     let root = vault.to_str().unwrap().to_string();
     std::fs::create_dir_all(vault.join("fld/sub")).unwrap();
     std::fs::write(vault.join("fld/sub/n.md"), "x").unwrap();
-    delete_file(&root, "fld").unwrap();
+    let trash_path = delete_file(&root, "fld").unwrap();
+    assert!(!vault.join("fld").exists());
 
-    assert!(list_trash(&root).unwrap().is_empty(), "dirs are not listed");
+    let listed = list_trash(&root).unwrap();
+    assert_eq!(listed.len(), 1, "a deleted folder must be listed");
+    assert!(listed[0].is_dir, "the folder entry reports is_dir");
+    assert_eq!(listed[0].original_path, "fld");
+    assert_eq!(listed[0].display_name, "fld");
+    assert_eq!(listed[0].trash_path, trash_path);
+
+    let restored = restore_from_trash(&root, &listed[0].trash_path).unwrap();
+    assert!(rel(&restored).ends_with("fld"));
+    assert_eq!(
+        std::fs::read_to_string(vault.join("fld/sub/n.md")).unwrap(),
+        "x",
+        "restoring a folder restores its contents"
+    );
+
+    delete_file(&root, "fld").unwrap();
     assert_eq!(clear_trash(&root).unwrap(), 1);
     let rd = std::fs::read_dir(vault.join(".nekowite-trash")).unwrap();
     assert_eq!(rd.flatten().count(), 0, "no leftover trash entries");
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// The list is keyed by the encoded on-disk name; that key must not be what
+/// the user reads. Deleting `docs/a.md` used to list `docs%2Fa.md`.
+#[test]
+fn trash_reports_the_deleted_file_name_not_the_key() {
+    let vault = temp_vault("trash-display");
+    let root = vault.to_str().unwrap().to_string();
+    write_file(&root, "docs/a.md", "hello", Some(10)).unwrap();
+    delete_file(&root, "docs/a.md").unwrap();
+
+    let listed = list_trash(&root).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].name, "docs%2Fa.md", "the key stays available");
+    assert_eq!(listed[0].display_name, "a.md");
+    assert_eq!(listed[0].original_path, "docs/a.md");
+    assert!(!listed[0].is_dir);
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// Trashing the same path twice appends `-<ms>` to the KEY (the first entry
+/// still holds the plain key). That stamp must never leak into the decoded
+/// target: `a.md-1757520000000` has extension `md-1757…`, so the restored note
+/// would not open.
+#[test]
+fn collided_trash_key_restores_the_original_name() {
+    let vault = temp_vault("trash-collision");
+    let root = vault.to_str().unwrap().to_string();
+
+    write_file(&root, "docs/a.md", "one", Some(10)).unwrap();
+    let first = delete_file(&root, "docs/a.md").unwrap();
+    write_file(&root, "docs/a.md", "two", Some(10)).unwrap();
+    let second = delete_file(&root, "docs/a.md").unwrap();
+    assert_ne!(first, second, "the second delete must not clobber the first");
+
+    let listed = list_trash(&root).unwrap();
+    assert_eq!(listed.len(), 2);
+    let plain = listed.iter().find(|e| e.trash_path == first).unwrap();
+    let collided = listed.iter().find(|e| e.trash_path == second).unwrap();
+    assert!(
+        collided.name.starts_with("docs%2Fa.md-"),
+        "only the key carries the collision stamp: {}",
+        collided.name
+    );
+    for entry in [plain, collided] {
+        assert_eq!(entry.original_path, "docs/a.md", "the stamp is key-only");
+        assert_eq!(entry.display_name, "a.md");
+    }
+
+    // The collided entry restores onto the ORIGINAL path, not `a.md-<ts>`.
+    let restored = restore_from_trash(&root, &collided.trash_path).unwrap();
+    assert!(rel(&restored).ends_with("docs/a.md"), "got {restored}");
+    assert_eq!(read_file(&root, "docs/a.md").unwrap(), "two");
+
+    // The occupied target gets a suffix that preserves the extension, so the
+    // restored note is still openable Markdown.
+    let restored2 = restore_from_trash(&root, &plain.trash_path).unwrap();
+    assert!(restored2.contains("-restored-"), "got {restored2}");
+    assert!(
+        restored2.ends_with(".md"),
+        "restored note stays markdown: {restored2}"
+    );
+    assert_eq!(read_file(&root, &restored2).unwrap(), "one");
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// The original folder can be gone by the time the user restores (`docs/` was
+/// deleted after `docs/a.md`). `rename` cannot create it, so restore must —
+/// mirroring `file_store::rename_entry`. The raw OS error it used to surface
+/// could only be answered with "retry", which could never work.
+#[test]
+fn restore_creates_a_missing_parent_folder() {
+    let vault = temp_vault("restore-missing-parent");
+    let root = vault.to_str().unwrap().to_string();
+    write_file(&root, "docs/a.md", "hello", Some(10)).unwrap();
+    let trash_path = delete_file(&root, "docs/a.md").unwrap();
+    std::fs::remove_dir_all(vault.join("docs")).unwrap();
+    assert!(!vault.join("docs").exists());
+
+    let restored = restore_from_trash(&root, &trash_path).unwrap();
+    assert!(rel(&restored).ends_with("docs/a.md"));
+    assert_eq!(read_file(&root, "docs/a.md").unwrap(), "hello");
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// When the target's folder cannot be created (here a file occupies `docs`),
+/// restore still fails — but with a message naming the target and the remedy
+/// instead of a bare OS error.
+#[test]
+fn restore_failure_is_actionable() {
+    let vault = temp_vault("restore-blocked-parent");
+    let root = vault.to_str().unwrap().to_string();
+    write_file(&root, "docs/a.md", "hello", Some(10)).unwrap();
+    let trash_path = delete_file(&root, "docs/a.md").unwrap();
+    std::fs::remove_dir_all(vault.join("docs")).unwrap();
+    std::fs::write(vault.join("docs"), "blocker").unwrap();
+
+    let err = restore_from_trash(&root, &trash_path).unwrap_err();
+    assert!(err.contains("restore"), "says what failed: {err}");
+    assert!(rel(&err).contains("docs/a.md"), "names the target: {err}");
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// The `.tmp` staging area (paste/drop assets of an unsaved tab) is hidden
+/// from the file tree like `.nekowite/`, so no user gesture can delete into it.
+/// The recovery loop's GC does delete through `delete_file`; trashing those
+/// files only moved crash litter into a second hidden directory without
+/// reclaiming the disk, and left `%2Etmp%2F…` keys in the trash.
+#[test]
+fn deleting_staged_tmp_assets_skips_the_trash() {
+    let vault = temp_vault("tmp-trash");
+    let root = vault.to_str().unwrap().to_string();
+    std::fs::create_dir_all(vault.join(".tmp/nested")).unwrap();
+    std::fs::write(vault.join(".tmp/paste-1.png"), "img").unwrap();
+    std::fs::write(vault.join(".tmp/nested/a.md"), "x").unwrap();
+
+    assert_eq!(delete_file(&root, ".tmp/paste-1.png").unwrap(), "");
+    assert!(!vault.join(".tmp/paste-1.png").exists());
+    // An internal DIRECTORY goes the same way, recursively.
+    assert_eq!(delete_file(&root, ".tmp/nested").unwrap(), "");
+    assert!(!vault.join(".tmp/nested").exists());
+    assert!(list_trash(&root).unwrap().is_empty());
 
     std::fs::remove_dir_all(&vault).unwrap();
 }

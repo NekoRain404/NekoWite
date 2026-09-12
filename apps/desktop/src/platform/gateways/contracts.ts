@@ -35,9 +35,19 @@ export interface FsChangeEvent {
 }
 
 export interface TrashEntry {
+  /** The on-disk key inside the trash (percent-encoded); what restore needs. */
   name: string
+  /**
+   * The file's own name, decoded from the key. The trash key is not what the
+   * user deleted (`docs%2Fa.md` for `docs/a.md`), and a collision key carries a
+   * timestamp that is not part of the name either, so the label is computed
+   * once on the Rust side rather than guessed per surface.
+   */
+  display_name: string
   trash_path: string
   original_path: string
+  /** A deleted folder is listed too, and restores with its contents. */
+  is_dir: boolean
 }
 
 export interface HistoryEntry {

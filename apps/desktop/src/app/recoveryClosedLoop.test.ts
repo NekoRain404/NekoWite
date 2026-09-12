@@ -20,7 +20,15 @@ interface FakeFs {
   renamed: Array<{ from: string; to: string }>
 }
 
-function makeFakeFs(seed: Record<string, number> = {}): FakeFs {
+/** `absolute` makes `list` answer with the spelling the real Tauri backend
+ *  uses (`list_dir` returns absolute paths). The default relative spelling is
+ *  kept for the older cases, but every new case below runs against the
+ *  ABSOLUTE one — the relative fake is exactly why the mismatch went
+ *  unnoticed. */
+function makeFakeFs(
+  seed: Record<string, number> = {},
+  opts: { absolute?: boolean } = {},
+): FakeFs {
   const files = new Map<string, { size: number; mtime: number }>(
     Object.entries(seed).map(([path, mtime]) => [path, { size: 1, mtime }]),
   )
@@ -32,8 +40,9 @@ function makeFakeFs(seed: Record<string, number> = {}): FakeFs {
     renamed,
     list: async (_vault, dir) => {
       if (dir !== '.tmp') return []
+      const prefix = opts.absolute ? '/vault/.tmp/' : '.tmp/'
       return [...files.entries()]
-        .filter(([path]) => path.startsWith('.tmp/'))
+        .filter(([path]) => path.startsWith(prefix))
         .map(([path]) => ({
           name: path.split('/').pop() ?? path,
           path,
@@ -67,12 +76,13 @@ function makeRecovery(opts: {
   seed?: Record<string, number>
   referenced?: string[]
   now?: number
+  absolute?: boolean
 }): {
   fs: FakeFs
   controller: ReturnType<typeof createTmpRecovery>
   prompts: RecoveryPrompt[]
 } {
-  const fs = makeFakeFs(opts.seed)
+  const fs = makeFakeFs(opts.seed, { absolute: opts.absolute })
   const prompts: RecoveryPrompt[] = []
   const referenced = new Set(opts.referenced ?? [])
   const deps: TmpRecoveryDeps = {
@@ -194,6 +204,63 @@ describe('createTmpRecovery (orphaned .tmp scan + GC)', () => {
     const removed = await pending
     // The loop breaks after the cancelled next iteration, so only one delete ran.
     expect(removed).toBe(0)
+  })
+})
+
+describe('createTmpRecovery against ABSOLUTE `.tmp` paths (the Tauri spelling)', () => {
+  it('does not report a referenced .tmp file as an orphan, but still reports litter', async () => {
+    const { controller, prompts } = makeRecovery({
+      absolute: true,
+      seed: {
+        '/vault/.tmp/pending.png': 1000 * DAY,
+        '/vault/.tmp/litter.png': 1000 * DAY,
+      },
+      // The referenced set is vault-relative, as `tabs.referencedTmpPaths()`
+      // produces it.
+      referenced: ['.tmp/pending.png'],
+    })
+    const orphans = await controller.scan('/vault')
+    expect(orphans.map((o) => o.path)).toEqual(['.tmp/litter.png'])
+    expect(prompts).toHaveLength(1)
+  })
+
+  it('does not collect a still-referenced .tmp file, only the old orphan', async () => {
+    const now = 1000 * DAY * 100
+    const { fs, controller } = makeRecovery({
+      absolute: true,
+      seed: {
+        '/vault/.tmp/old-referenced.png': now - 2 * TMP_GC_AGE_MS,
+        '/vault/.tmp/old-orphan.png': now - 2 * TMP_GC_AGE_MS,
+      },
+      referenced: ['.tmp/old-referenced.png'],
+      now,
+    })
+    const removed = await controller.gc('/vault')
+    expect(removed).toBe(1)
+    expect(fs.deleted).toEqual(['.tmp/old-orphan.png'])
+  })
+
+  it('recognises a reference spelled absolutely too', async () => {
+    const { controller, prompts } = makeRecovery({
+      absolute: true,
+      seed: { '/vault/.tmp/pending.png': 1000 * DAY },
+      referenced: ['/vault/.tmp/pending.png'],
+    })
+    expect(await controller.scan('/vault')).toEqual([])
+    expect(prompts).toHaveLength(0)
+  })
+
+  it('surfaces nothing when the only absolute .tmp file is referenced', async () => {
+    const now = 1000 * DAY * 100
+    const { fs, controller } = makeRecovery({
+      absolute: true,
+      seed: { '/vault/.tmp/pending.png': now - 2 * TMP_GC_AGE_MS },
+      referenced: ['.tmp/pending.png'],
+      now,
+    })
+    expect(await controller.scan('/vault')).toEqual([])
+    expect(await controller.gc('/vault')).toBe(0)
+    expect(fs.deleted).toEqual([])
   })
 })
 
