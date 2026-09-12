@@ -235,9 +235,14 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
         }, MD_CHANGE_DEBOUNCE_MS)
       }
       if (attachmentRefreshTimer) clearTimeout(attachmentRefreshTimer)
+      // Bind the pending refresh to the vault generation that is current NOW:
+      // reading the attachment tree takes several awaits, so a vault switch can
+      // land while the count is being computed, and the count then belongs to the
+      // vault that was left (see refreshAttachmentCount).
+      const attachmentSeq = indexSeq
       attachmentRefreshTimer = setTimeout(() => {
         attachmentRefreshTimer = null
-        void refreshAttachmentCount(v)
+        void refreshAttachmentCount(v, attachmentSeq)
       }, 200)
       return
     }
@@ -289,14 +294,17 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
     deps.onNotes(notes)
   }
 
-  async function refreshAttachmentCount(v: string, seq?: number): Promise<void> {
+  /** Publish the badge count for `v`, but only while `seq` is still the current
+   *  vault generation: the read spans several awaits, so a switch that lands
+   *  inside it must not write the previous vault's number into the new badge. */
+  async function refreshAttachmentCount(v: string, seq: number): Promise<void> {
     // Images live one level deeper than `attachments/` — in `attachments/<YYYY-MM>/`
     // — so counting the top-level entries reported MONTH FOLDERS while the
     // attachments panel listed IMAGES. The badge and the panel next to it
     // disagreed by construction ("1" beside a panel showing 12 images). Count
     // the images, recursively, the way the panel does.
     const count = await countAttachmentImages(v)
-    if (seq === undefined || seq === indexSeq) deps.onAttachmentCount(count)
+    if (seq === indexSeq) deps.onAttachmentCount(count)
   }
 
   async function countAttachmentImages(v: string, dir = ATTACHMENTS_DIR): Promise<number> {

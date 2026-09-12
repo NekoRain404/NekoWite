@@ -2,7 +2,7 @@
 // style whose classes mirror editor-content.css typography (all colors via
 // --app-* tokens, so dark/light follows data-theme), a fenced-code block
 // surface, line numbers/ruler, soft wrap, and the zh search panel.
-import { defaultKeymap, history, historyKeymap, indentWithTab, redo } from '@codemirror/commands'
+import { defaultKeymap, historyKeymap, indentWithTab, redo } from '@codemirror/commands'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language'
 import { search, searchKeymap } from '@codemirror/search'
@@ -225,7 +225,12 @@ const redoKeymap = [
 export function sourceExtensions(opts: SourceExtensionsOptions = {}): Extension[] {
   const { lineNumbers, softWrap } = { ...SOURCE_EXT_DEFAULTS, ...opts }
   return [
-    history(),
+    // NOTE: `history()` is deliberately NOT part of this set. The undo stack is
+    // owned by the CodeMirror host (services/codeMirrorHost.ts), which keeps it
+    // in its own compartment so that mirroring a different document into the same
+    // view can rebuild the stack instead of inheriting the previous note's
+    // deletable history. `historyKeymap` below still drives undo/redo; it just
+    // resolves against the stack the host installs.
     // GFM base so strikethrough / task lists / tables parse with proper tags.
     markdown({ base: markdownLanguage }),
     syntaxHighlighting(mdHighlight),

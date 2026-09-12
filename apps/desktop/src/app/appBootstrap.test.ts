@@ -171,6 +171,31 @@ describe('createDesktopRuntime', () => {
       expect(h.windowTracking.start).toHaveBeenCalled()
     })
 
+    it('starts and opens a vault even when every storage access throws', async () => {
+      // C3: a webview with storage disabled throws on the localStorage GETTER, so
+      // startup used to fail before the first render (white screen) and a vault
+      // switch aborted after the root was registered and the tabs were closed.
+      const original = Object.getOwnPropertyDescriptor(window, 'localStorage')
+      if (!original) throw new Error('the test setup did not install a localStorage')
+      Object.defineProperty(window, 'localStorage', {
+        configurable: true,
+        get() {
+          throw new Error('storage disabled')
+        },
+      })
+      try {
+        const runtime = createDesktopRuntime()
+        expect(() => runtime.start()).not.toThrow()
+        await vi.waitFor(() => expect(h.tabsMock.restoreSession).toHaveBeenCalled())
+
+        await expect(runtime.applyVault('/next')).resolves.toBeUndefined()
+        expect(runtime.vaultPath.value).toBe('/next')
+        expect(h.vaultSessionMock.indexVault).toHaveBeenCalledWith('/next')
+      } finally {
+        Object.defineProperty(window, 'localStorage', original)
+      }
+    })
+
     it('does not apply a vault when none was saved, but still restores the session', async () => {
       const runtime = createDesktopRuntime()
       runtime.start()

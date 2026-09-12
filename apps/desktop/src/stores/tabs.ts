@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import { emitLifecycle, getActiveEditor } from '@nekowite/plugin-host'
-import { armSuppressReapply } from '../services/suppressReapply'
+import { armSuppressReapply, pruneSuppressReapply } from '../services/suppressReapply'
 import { fsService } from '../platform/gateways/fs'
 import { flushEdits } from '../services/editorOwnership'
 import { persistence } from '../services/persistence'
@@ -119,6 +119,18 @@ export const useTabsStore = defineStore('tabs', () => {
     vault.value = v
   }
 
+  /**
+   * Make `id` the active tab and drop the suppress-reapply arms of every other
+   * tab (see services/suppressReapply): only the ACTIVE tab's content watcher
+   * runs, so an arm left behind by a tab the user switched away from could never
+   * be consumed — it would just sit there until it swallowed an unrelated content
+   * change (typically the one belonging to the tab that is now on screen).
+   */
+  function focusTab(id: string | null): void {
+    activeId.value = id
+    pruneSuppressReapply(id)
+  }
+
   /** Persist the current tab layout (paths only) to localStorage so a later
    * launch can restore them. Tabs with a null path (unsaved untitled docs)
    * cannot be restored by path and are skipped. When there are genuinely no
@@ -155,7 +167,7 @@ export const useTabsStore = defineStore('tabs', () => {
     // opened tab (already active) when it no longer exists.
     if (session.activeId) {
       const active = tabs.value.find((t) => t.path === session.activeId)
-      if (active) activeId.value = active.id
+      if (active) focusTab(active.id)
     }
     // Nothing could be restored (e.g. every file read failed) — surface a
     // hint. Only when the restore ran on a fresh, empty tab set.
@@ -177,7 +189,7 @@ export const useTabsStore = defineStore('tabs', () => {
       // tab after the pending read resolves.
       const existing = tabs.value.find((t) => t.path === path)
       if (existing) {
-        activeId.value = existing.id
+        focusTab(existing.id)
         return
       }
       const tab: OpenTab = {
@@ -189,7 +201,7 @@ export const useTabsStore = defineStore('tabs', () => {
         pendingAssetPaths: [],
       }
       tabs.value.push(tab)
-      activeId.value = tab.id
+      focusTab(tab.id)
       emitLifecycle('onOpenDocument', { id: tab.id, path: tab.path })
       try {
         const content = await fsService.read(vault.value!, path)
@@ -235,7 +247,7 @@ export const useTabsStore = defineStore('tabs', () => {
       pendingAssetPaths: [],
     }
     tabs.value.push(tab)
-    activeId.value = tab.id
+    focusTab(tab.id)
     emitLifecycle('onOpenDocument', { id: tab.id, path: tab.path })
     captureSession()
   }
@@ -249,7 +261,7 @@ export const useTabsStore = defineStore('tabs', () => {
     emitLifecycle('onCloseTab', { id, path: removing.path })
     tabs.value.splice(i, 1)
     if (activeId.value === id) {
-      activeId.value = tabs.value[i]?.id ?? tabs.value[i - 1]?.id ?? null
+      focusTab(tabs.value[i]?.id ?? tabs.value[i - 1]?.id ?? null)
     }
   }
 
@@ -275,7 +287,7 @@ export const useTabsStore = defineStore('tabs', () => {
     // be reset or a later open/switch would inherit the stale remnants.
     savingIds.value = new Set()
     selfWrites.clear()
-    activeId.value = null
+    focusTab(null)
   }
 
   /**
@@ -321,7 +333,7 @@ export const useTabsStore = defineStore('tabs', () => {
     for (const t of [...tabs.value]) {
       if (t.id !== id) await closeTab(t.id)
     }
-    if (tabs.value.some((t) => t.id === id)) activeId.value = id
+    if (tabs.value.some((t) => t.id === id)) focusTab(id)
   }
 
   /** Adopt the reference rewrite a note move already wrote to disk. A tab that
@@ -361,7 +373,7 @@ export const useTabsStore = defineStore('tabs', () => {
   }
 
   function setActive(id: string): void {
-    activeId.value = id
+    focusTab(id)
   }
 
   function markDirty(id: string): void {
@@ -438,15 +450,22 @@ export const useTabsStore = defineStore('tabs', () => {
       // symptom). The existing 2s expiration keeps normal external edits
       // observable.
       noteSelfWrite(path)
-      await fsService.write(vault.value, path, content, settings.maxHistory)
+      // A non-null result is a warning, not a failure: the text is on disk, but
+      // something optional around it was not. Most often "the previous version
+      // could not be kept in history" — which the user has to hear about, because
+      // the thing they trust for undo-after-the-fact is now missing.
+      const writeWarning = await fsService.write(vault.value, path, content, settings.maxHistory)
+      if (writeWarning) notifyError(writeWarning)
       // The write round-trip is a window in which the user can keep typing.
       // Never clobber newer editor content with the captured text.
       const userTyped = t.content !== contentAtStart
       const pluginRewrote = content !== contentAtStart
       if (!userTyped && pluginRewrote) {
         // Adopt the onSave rewrite; suppress the re-open its content change
-        // would trigger (the model syncs, the live text/caret stay put).
-        armSuppressReapply()
+        // would trigger (the model syncs, the live text/caret stay put). The arm
+        // carries THIS tab's id, so a background save cannot swallow the
+        // re-apply of the content change belonging to another (active) tab.
+        armSuppressReapply(t.id)
         t.content = content
         t.savedContent = content
         t.dirty = false

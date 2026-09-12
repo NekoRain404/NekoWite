@@ -30,7 +30,10 @@ export const useVaultSessionStore = defineStore('vaultSession', () => {
     // tasks and clear its fs subscription (latest-wins / no stale results).
     coordinator?.detach()
     coordinator = null
-    doc.resetForVault()
+    // `resetForVault` also activates THIS vault's favorites/recents bucket: the
+    // previous vault's entries stay in storage (they belong to it) and the new
+    // vault starts from its own list.
+    doc.resetForVault(path)
     tree.resetForVault()
     vault.value = path
     const next = createBoundVaultIndexCoordinator({
@@ -53,7 +56,7 @@ export const useVaultSessionStore = defineStore('vaultSession', () => {
     coordinator?.detach()
     coordinator = null
     vault.value = null
-    doc.resetForVault()
+    doc.resetForVault(null)
     tree.resetForVault()
   }
 

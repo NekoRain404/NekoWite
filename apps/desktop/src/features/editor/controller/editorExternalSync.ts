@@ -92,7 +92,17 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
         active.content === content
       ) {
         active.content = initial
-        if (!active.dirty) active.savedContent = initial
+        // `savedContent` is what this tab believes is ON DISK: App.vue hands the
+        // live tab straight to the external-change check, which compares that
+        // field against the bytes it reads back. The serializer's canonical text
+        // is what the NEXT save will write, not what is there now — for a file
+        // that gets canonicalized on open (CRLF → LF) storing it here made the
+        // comparison fail forever, so every later watcher event looked like a real
+        // modification: a clean tab was silently reloaded (reopening the model,
+        // dropping caret and scroll) and a dirty one got a conflict dialog for a
+        // change nobody made. Untitled tabs have no file to compare against, so
+        // they keep the previous "accepted text" meaning.
+        if (!active.dirty && !active.path) active.savedContent = initial
       }
       if (!deps.session.calloutViewSet) {
         try {
@@ -125,9 +135,12 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
 
   function onContentChanged(content: string | undefined): void {
     // I2: a save-time rewrite syncs the model but must not re-open the editor
-    // (that would replace the user's live text and reset caret/scroll). The
-    // flag is armed by tabs.saveActive and consumed once here.
-    if (consumeSuppressReapply()) return
+    // (that would replace the user's live text and reset caret/scroll). The arm
+    // belongs to the tab that was saved (tabs.saveTab) and is consumed once here,
+    // for the ACTIVE tab only — a background save must never swallow the re-apply
+    // of the document the user is actually looking at.
+    const activeTabId = tabs.activeTab?.id
+    if (activeTabId !== undefined && consumeSuppressReapply(activeTabId)) return
     if (content === undefined) return
     // While the rendered pane is hidden (source mode) the source pane is the
     // single source of truth. Applying its edits here would round-trip the
