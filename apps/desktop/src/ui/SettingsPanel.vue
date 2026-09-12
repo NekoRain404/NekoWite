@@ -24,6 +24,9 @@ import { useAppearanceStore } from '../stores/appearance'
 import { COLOR_SCHEMES, COLOR_SCHEME_PREVIEW } from '../stores/appearance'
 import type { Accent, ColorScheme, ContentDirection, EditorFontId, MonoFontId, UiFontId } from '../stores/appearance'
 import { getLocale, setLocale, t } from '../i18n'
+import { useFocusTrap } from '../composables/useFocusTrap'
+import { modalStack } from '../services/modalStack'
+import { isComposingKey } from '../services/keyGuard'
 import { useAiPermissionStore } from '../stores/aiPermission'
 import { AI_WRITE_POLICIES, describePolicy, type AiWritePolicy } from '../services/aiPermissions'
 import type { ExportRef } from '@nekowite/editor-core'
@@ -54,6 +57,17 @@ const SECTIONS = computed<Array<{ id: SectionId; label: string; icon: typeof Typ
 const aiPermission = useAiPermissionStore()
 const activeSection = ref<SectionId>('general')
 const dialogRef = ref<HTMLElement | null>(null)
+const panelActive = ref(true)
+// aria-modal has to mean something: without a trap, Tab walked out of the
+// dialog into the tab bar and editor it was covering. Focusing the container
+// (tabindex=-1) on open matches the other dialogs and keeps Enter from
+// activating whatever control happens to be first.
+useFocusTrap(dialogRef, panelActive, { initialFocus: false })
+// The settings panel and the command palette are both full-screen modals at
+// z-index 10000, and both listen for Escape on window in the capture phase.
+// Keydown listeners on the same target cannot stop each other, so each one asks
+// the stack whether it is the topmost modal before acting.
+const modalToken = modalStack.claimModal('settings-panel')
 
 const vaultInput = ref(localStorage.getItem('nekowite.vault') ?? '')
 const hasActiveTab = computed(() => !!tabs.activeTab?.content)
@@ -155,8 +169,12 @@ function onOverlayPointerDown(e: PointerEvent): void {
 }
 
 function onKeydown(e: KeyboardEvent): void {
-  if (e.isComposing) return
+  // Shared guard: the deprecated keyCode 229 / key="Process" signals matter on
+  // Windows IMEs, where `isComposing` alone is not always set.
+  if (isComposingKey(e)) return
   if (e.key === 'Escape') {
+    // Only the modal the user is looking at may answer Escape.
+    if (!modalStack.isTopModal(modalToken)) return
     e.preventDefault()
     emit('close')
   }
@@ -168,6 +186,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  modalStack.releaseModal(modalToken)
   window.removeEventListener('keydown', onKeydown, true)
 })
 
@@ -292,12 +311,19 @@ async function onExportPdf(): Promise<void> {
           </button>
         </div>
         <div class="dialog-body">
-          <aside class="dialog-nav">
+          <aside
+            class="dialog-nav"
+            role="tablist"
+            :aria-label="t('settings.dialogTitle')"
+          >
             <button
               v-for="s in SECTIONS"
               :key="s.id"
               class="nav-row"
               :class="{ active: activeSection === s.id }"
+              role="tab"
+              :aria-selected="activeSection === s.id"
+              :aria-current="activeSection === s.id ? 'true' : undefined"
               @click="activeSection = s.id"
             >
               <component
@@ -789,7 +815,7 @@ async function onExportPdf(): Promise<void> {
             >
               <span class="settings-label">{{ t('settings.section.ai') }}</span>
               <label class="settings-field">
-                <span>Provider</span>
+                <span>{{ t('aiSettings.provider') }}</span>
                 <select
                   v-model="settings.provider"
                   class="input"
@@ -804,7 +830,7 @@ async function onExportPdf(): Promise<void> {
                 </select>
               </label>
               <label class="settings-field">
-                <span>Model</span>
+                <span>{{ t('aiSettings.model') }}</span>
                 <div class="model-row">
                   <input
                     v-model="settings.model"
@@ -842,7 +868,7 @@ async function onExportPdf(): Promise<void> {
                 v-if="showBaseUrl"
                 class="settings-field"
               >
-                <span>Base URL</span>
+                <span>{{ t('aiSettings.baseUrl') }}</span>
                 <input
                   v-model="settings.baseUrl"
                   class="input"
@@ -866,7 +892,7 @@ async function onExportPdf(): Promise<void> {
                 class="settings-note"
               >{{ t('aiSettings.allowPrivateHint') }}</span>
               <label class="settings-field">
-                <span>API Key</span>
+                <span>{{ t('aiSettings.apiKey') }}</span>
                 <input
                   v-model="settings.apiKey"
                   class="input"

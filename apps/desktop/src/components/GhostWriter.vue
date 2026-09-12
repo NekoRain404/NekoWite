@@ -2,16 +2,32 @@
 import { onBeforeUnmount, onMounted } from 'vue'
 import { aiService } from '../services/ai'
 import { editorSessionManager } from '../features/editor/sessionManager'
+import { isComposingKey } from '../services/keyGuard'
+import { isAiConfigured } from '../services/aiReadiness'
+import { useSettingsStore } from '../stores/settings'
 
-// While an IME (e.g. Chinese Pinyin) is composing, the candidate-selection
-// keys (Tab/Esc) belong to the IME, not to the ghost writer. Swallowing them
-// here would break Chinese input, so hand the event back to the IME.
-function isComposing(e: KeyboardEvent): boolean {
-  return (
-    e.isComposing === true || // standard IME composition flag
-    e.keyCode === 229 || // legacy IME composing state for some browsers/IMEs
-    e.key === 'Process' // some IMEs report key="Process" while isComposing=false
-  )
+/** The AI settings, or null when there is no Pinia instance (a bare unit test,
+ *  a plugin). A null store means "cannot prove it is unconfigured", so the
+ *  shortcut keeps working rather than silently dying. */
+function aiSettings(): ReturnType<typeof useSettingsStore> | null {
+  try {
+    return useSettingsStore()
+  } catch {
+    return null
+  }
+}
+
+/** Whether pressing Tab would reach a usable model. Reading this costs nothing;
+ *  a request to a provider with no credential costs the user a scary toast. */
+function aiUsable(): boolean {
+  const s = aiSettings()
+  if (!s) return true
+  return isAiConfigured({
+    provider: s.provider,
+    baseUrl: s.baseUrl,
+    apiKey: s.apiKey,
+    keyConfigured: s.apiKey.trim().length > 0,
+  })
 }
 
 // Only handle Tab/Esc while the focus is actually inside the editor. A
@@ -25,7 +41,13 @@ function focusInsideEditor(): boolean {
 }
 
 function onKeydown(e: KeyboardEvent): void {
-  if (isComposing(e)) return
+  if (isComposingKey(e)) return
+  // This listener is on `document`, in the bubble phase, so a handler closer to
+  // the caret runs first. ProseMirror consumes Tab itself inside a table (move
+  // to the next cell, append a row on the last one) by calling preventDefault;
+  // without this check the same keypress also fired an AI completion, so one
+  // Tab moved the cursor *and* started generating text.
+  if (e.defaultPrevented) return
   if (!focusInsideEditor()) return
   const editor = editorSessionManager.getActiveEditor()
   if (!editor) return
@@ -37,18 +59,25 @@ function onKeydown(e: KeyboardEvent): void {
   }
   if (e.key !== 'Tab' && e.key !== 'Escape') return
   if (e.key === 'Escape' && !has) return
-  e.preventDefault()
-  if (e.key === 'Tab') {
-    if (has) {
-      // Second Tab accepts the live ghost text.
-      aiService.accept()
-    } else {
-      // First Tab with no pending suggestion triggers a new completion.
-      void aiService.triggerSuggestion()
-    }
-  } else {
+  if (e.key === 'Escape') {
+    e.preventDefault()
     aiService.reject()
+    return
   }
+  if (has) {
+    // Second Tab accepts the live ghost text; the default has to go, or the
+    // browser would also move focus to the next control as the text lands.
+    e.preventDefault()
+    aiService.accept()
+    return
+  }
+  // No pending suggestion. The default is left in place so Tab keeps its
+  // browser meaning and a keyboard-only user can leave the editor for the
+  // toolbar, the tab bar or the side panel — swallowing it here was a keyboard
+  // trap. The completion is still offered, but only when there is a model to
+  // offer it: pressing Tab on an unconfigured install used to raise an
+  // "AI generation failed" toast for a feature the user never asked for.
+  if (aiUsable()) void aiService.triggerSuggestion()
 }
 
 onMounted(() => {

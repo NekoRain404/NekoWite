@@ -15,6 +15,7 @@ import {
 } from '../services/noteMeta'
 import { normalizeTag, normalizeTags } from '../services/tags'
 import { t } from '../i18n'
+import { isComposingKey } from '../services/keyGuard'
 import { baseName } from '../services/paths'
 
 const tabs = useTabsStore()
@@ -104,6 +105,9 @@ function removeTag(tag: string): void {
 }
 
 function onTagKeydown(e: KeyboardEvent): void {
+  // Enter accepts the IME candidate, and Backspace edits the composing text —
+  // none of those may be read as "add this tag" / "delete the previous tag".
+  if (isComposingKey(e)) return
   if (e.key === 'Enter' || e.key === ',') {
     e.preventDefault()
     addTagRaw(tagInput.value)
@@ -116,6 +120,9 @@ function onTagKeydown(e: KeyboardEvent): void {
 }
 
 function onTitleKeydown(e: KeyboardEvent): void {
+  // Enter commits the title. While an IME candidate list is open it belongs to
+  // the IME instead, or the half-finished pinyin string is written to the file.
+  if (isComposingKey(e)) return
   if (e.key === 'Enter') {
     e.preventDefault()
     ;(e.target as HTMLInputElement).blur()
@@ -208,6 +215,8 @@ function onTitleKeydown(e: KeyboardEvent): void {
               v-if="tagInput"
               type="button"
               class="fm-tag-add"
+              :aria-label="t('frontmatter.addTag')"
+              :title="t('frontmatter.addTag')"
               @click="addTagRaw(tagInput)"
             >
               <Plus

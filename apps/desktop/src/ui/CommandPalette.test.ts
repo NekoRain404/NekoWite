@@ -232,6 +232,37 @@ describe('CommandPalette toggle', () => {
   })
 })
 
+/** The listbox may only own options (and presentational wrappers): anything
+ *  else inside it is announced as an option or dropped from the accessibility
+ *  tree inconsistently. */
+const ALLOWED_INSIDE_LISTBOX = new Set(['option', 'presentation', 'none', 'group'])
+
+describe('CommandPalette listbox composition', () => {
+  it('exposes only options and presentational wrappers inside role=listbox', async () => {
+    await useTabsStore().openTab(null)
+    pressCtrlK()
+    await nextTick()
+
+    const listbox = document.body.querySelector<HTMLElement>('[role="listbox"]')!
+    expect(listbox).toBeTruthy()
+    const offenders = [...listbox.querySelectorAll<HTMLElement>('[role]')]
+      .filter((el) => el !== listbox)
+      .map((el) => `${el.className}:${el.getAttribute('role')}`)
+      .filter((entry) => !ALLOWED_INSIDE_LISTBOX.has(entry.split(':')[1] ?? ''))
+
+    expect(offenders).toEqual([])
+
+    // Every listbox child that isn't an option must be hidden from the
+    // accessibility tree, so the option index stays truthful.
+    const wrappers = [...listbox.children].filter(
+      (child) => child.getAttribute('role') !== 'option',
+    )
+    for (const wrapper of wrappers) {
+      expect(['presentation', 'none']).toContain(wrapper.getAttribute('role'))
+    }
+  })
+})
+
 describe('CommandPalette commands without an open document', () => {
   it('offers no editor command — and says why — while no document is open', async () => {
     pressCtrlK()

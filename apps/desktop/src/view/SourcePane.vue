@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { EditorView } from '@codemirror/view'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
@@ -16,10 +16,19 @@ import {
   type SourceViewHandle,
 } from '../services/sourceView'
 import { markSourceAuthored } from '../services/editorOwnership'
+import { resolveDirection } from '../services/rtl'
 
 const tabs = useTabsStore()
 const view = useViewStore()
 const appearance = useAppearanceStore()
+
+/**
+ * The rendered pane already lays its content out from the correct edge; the
+ * source pane ignored the setting entirely, so split mode showed the same
+ * document LTR on one side and RTL on the other. Same resolver, so both panes
+ * agree on what the document's direction is.
+ */
+const sourceDir = computed(() => resolveDirection(appearance.contentDirection, tabs.activeTab?.content ?? ''))
 
 const container = ref<HTMLDivElement | null>(null)
 let host: CodeMirrorHostHandle | null = null
@@ -209,6 +218,7 @@ onBeforeUnmount(() => {
     ref="container"
     class="source-pane"
     data-testid="source-pane"
+    :dir="sourceDir"
   />
 </template>
 

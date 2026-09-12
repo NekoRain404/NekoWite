@@ -73,6 +73,32 @@ describe('HistoryPanel', () => {
     document.body.innerHTML = ''
   })
 
+  it('shows the "no history" hint only when there are no versions', async () => {
+    // The hint's v-else was chained to the DiffView, not to the list, so every
+    // populated history list had "No history yet" printed under it.
+    listHistoryMock.mockResolvedValue([])
+    await openDoc()
+    const host = mountPanel()
+    await flush()
+
+    expect(host.querySelectorAll('.history-item')).toHaveLength(0)
+    expect(host.querySelector('.rail-empty')?.textContent).toContain('暂无历史')
+  })
+
+  it('does not show the "no history" hint next to a populated list', async () => {
+    listHistoryMock.mockResolvedValue([
+      { id: 'ver-2', size: 2048, mtime: 200 },
+      { id: 'ver-1', size: 512, mtime: 100 },
+    ])
+    await openDoc()
+    const host = mountPanel()
+    await flush()
+
+    expect(host.querySelectorAll('.history-item')).toHaveLength(2)
+    const hints = Array.from(host.querySelectorAll('.rail-empty')).map((el) => el.textContent?.trim())
+    expect(hints.filter((t) => t?.includes('暂无历史'))).toEqual([])
+  })
+
   it('renders history rows newest-first with timestamps and sizes', async () => {
     listHistoryMock.mockResolvedValue([
       { id: 'ver-2', size: 2048, mtime: 200 },

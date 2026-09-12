@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useFocusTrap } from '../composables/useFocusTrap'
 import type { Component } from 'vue'
 import { BUILTIN_COMMAND_IDS, getToolbar, listCommands } from '@nekowite/editor-core'
 import { runEditorCommand } from '../services/runEditorCommand'
@@ -15,6 +16,8 @@ import {
   type PaletteEntry,
 } from './commandPaletteLogic'
 import { t } from '../i18n'
+import { isComposingKey } from '../services/keyGuard'
+import { modalStack } from '../services/modalStack'
 
 const MOTION_MS = 160
 const FILE_RESULT_LIMIT = 20
@@ -47,6 +50,10 @@ const query = ref('')
 const activeIndex = ref(0)
 const inputRef = ref<HTMLInputElement | null>(null)
 const listRef = ref<HTMLElement | null>(null)
+// The palette declares aria-modal, so Tab has to stay inside it; the search
+// input is focused explicitly by `show()`, so the trap only has to cycle.
+const paletteEl = ref<HTMLElement | null>(null)
+useFocusTrap(paletteEl, open, { initialFocus: false })
 const files = ref<string[]>([])
 let hideTimer: ReturnType<typeof setTimeout> | null = null
 // The deferred paint that turns the fade-in on. It has to be cancellable: a
@@ -156,11 +163,17 @@ async function loadFiles(): Promise<void> {
   files.value = await vaultFileIndex.get(vault)
 }
 
+// Claimed while the palette is open: the most recently raised modal is the one
+// Escape reaches. Claimed on open rather than in `onMounted` because the
+// component is always mounted (it renders nothing while closed).
+let modalToken: symbol | null = null
+
 function show(): void {
   if (hideTimer) {
     clearTimeout(hideTimer)
     hideTimer = null
   }
+  if (!modalToken) modalToken = modalStack.claimModal('command-palette')
   open.value = true
   closing.value = false
   query.value = ''
@@ -192,6 +205,8 @@ function cancelPaint(): void {
 
 function hide(): void {
   if (!open.value) return
+  modalStack.releaseModal(modalToken)
+  modalToken = null
   cancelPaint()
   visible.value = false
   closing.value = true
@@ -223,7 +238,8 @@ function scrollActiveIntoView(): void {
 }
 
 function onInputKeydown(e: KeyboardEvent): void {
-  if (e.isComposing || e.key === 'Process') return
+  // Arrow/Enter belong to the IME candidate list while it is open.
+  if (isComposingKey(e)) return
   if (e.key === 'ArrowDown') {
     e.preventDefault()
     move(1)
@@ -242,8 +258,11 @@ function onInputKeydown(e: KeyboardEvent): void {
 }
 
 function onGlobalKeydown(e: KeyboardEvent): void {
-  if (e.isComposing) return
+  if (isComposingKey(e)) return
   if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k') {
+    // The palette is a modal. Raising it over another open modal (the settings
+    // panel is also z-index 10000) put two dialogs on screen with no defined
+    // order, and one Escape then closed both.
     e.preventDefault()
     e.stopPropagation()
     // Gated on the logical state, not on `visible`: the fade-in is deferred by
@@ -260,6 +279,10 @@ function onGlobalKeydown(e: KeyboardEvent): void {
   // `open` again: Escape must work the instant the palette appears, which is
   // before the deferred fade-in has painted.
   if (open.value && e.key === 'Escape') {
+    // Several dialogs listen for Escape on window/document, and stopPropagation
+    // does not stop the listeners already queued on the same target: without
+    // this arbitration one Escape closed the palette AND the settings panel.
+    if (!modalStack.isTopModal(modalToken)) return
     e.preventDefault()
     e.stopPropagation()
     hide()
@@ -290,6 +313,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  modalStack.releaseModal(modalToken)
+  modalToken = null
   window.removeEventListener('keydown', onGlobalKeydown, true)
   void fsUnlisten?.then((unlisten) => unlisten())
   if (hideTimer) clearTimeout(hideTimer)
@@ -307,6 +332,7 @@ onBeforeUnmount(() => {
       @pointerdown.self="hide"
     >
       <div
+        ref="paletteEl"
         class="palette"
         role="dialog"
         aria-modal="true"
@@ -351,7 +377,12 @@ onBeforeUnmount(() => {
             v-for="group in rows"
             :key="group.key"
           >
-            <div class="palette-group-label">
+            <!-- role=presentation: a listbox may only own options, and a
+                 group heading in between is otherwise announced as one. -->
+            <div
+              class="palette-group-label"
+              role="presentation"
+            >
               {{ group.label }}
             </div>
             <button
@@ -386,6 +417,7 @@ onBeforeUnmount(() => {
           <div
             v-if="!flatRows.length && hasDocument"
             class="palette-empty"
+            role="presentation"
           >
             {{ t('palette.empty') }}
           </div>

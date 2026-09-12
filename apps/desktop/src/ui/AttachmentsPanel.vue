@@ -15,6 +15,7 @@ import { notifyError } from '../services/errors'
 import { useTabsStore } from '../stores/tabs'
 import ContextMenu from './ContextMenu.vue'
 import type { ContextMenuItem } from './ContextMenu.vue'
+import { isComposingKey } from '../services/keyGuard'
 import { t } from '../i18n'
 
 /**
@@ -69,6 +70,16 @@ async function reload(): Promise<void> {
       loaded.value = true
     }
   }
+}
+
+/** Enter/Space on a card insert the image. While an IME candidate list is open
+ *  those keys belong to the IME; the card is focusable during composition too,
+ *  so the composing Enter must not insert an unrelated attachment. */
+function onCardKeydown(e: KeyboardEvent, item: AttachmentItem): void {
+  if (isComposingKey(e)) return
+  if (e.key !== 'Enter' && e.key !== ' ') return
+  e.preventDefault()
+  void insertItem(item)
 }
 
 function markBroken(path: string): void {
@@ -260,8 +271,7 @@ defineExpose({ reload })
         :aria-label="t('attachments.insertImage', { name: item.name })"
         aria-haspopup="menu"
         @click="insertItem(item)"
-        @keydown.enter.prevent="insertItem(item)"
-        @keydown.space.prevent="insertItem(item)"
+        @keydown="onCardKeydown($event, item)"
         @contextmenu.stop.prevent="openMenu(item, $event)"
       >
         <div class="att-thumb">

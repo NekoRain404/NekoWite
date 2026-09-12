@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { validateRenameName } from '../services/renameAsset'
 import { useFocusTrap } from '../composables/useFocusTrap'
+import { isComposingKey } from '../services/keyGuard'
+import { modalStack } from '../services/modalStack'
 import { t } from '../i18n'
 
 const props = defineProps<{ initial: string }>()
@@ -30,8 +32,17 @@ function cancel(): void {
   emit('cancel')
 }
 
+// Only the dialog the user is looking at may answer Escape, or one press
+// closes this prompt together with whatever is stacked on top of it.
+const modalToken = modalStack.claimModal('rename-dialog')
+
 function onKeydown(e: KeyboardEvent): void {
+  // Enter/Escape belong to the IME while a candidate list is open: Enter picks
+  // the candidate (it must not commit the raw pinyin as the new name) and
+  // Escape dismisses the list (it must not throw the typed name away).
+  if (isComposingKey(e)) return
   if (e.key === 'Escape') {
+    if (!modalStack.isTopModal(modalToken)) return
     e.preventDefault()
     cancel()
   } else if (e.key === 'Enter') {
@@ -39,6 +50,10 @@ function onKeydown(e: KeyboardEvent): void {
     confirm()
   }
 }
+
+onBeforeUnmount(() => {
+  modalStack.releaseModal(modalToken)
+})
 
 onMounted(() => {
   nextTick(() => inputEl.value?.focus())

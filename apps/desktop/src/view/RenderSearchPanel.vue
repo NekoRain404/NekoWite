@@ -9,6 +9,7 @@ import {
   SpellCheck,
   X,
 } from 'lucide-vue-next'
+import { isComposingKey } from '../services/keyGuard'
 import { t } from '../i18n'
 import {
   closePanel,
@@ -47,6 +48,9 @@ watch(
 )
 
 function onKeydown(e: KeyboardEvent): void {
+  // The find/replace fields are text inputs: Enter and Escape belong to an open
+  // IME candidate list before they mean "next match" / "close".
+  if (isComposingKey(e)) return
   if (e.key === 'Escape') {
     e.preventDefault()
     emit('close')

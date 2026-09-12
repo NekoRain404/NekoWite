@@ -15,6 +15,7 @@ import { fsService, type FsChangeEvent } from '../platform/gateways/fs'
 import { vaultFileIndex } from '../services/vaultFiles'
 import { parseFrontmatterBlock, splitFrontmatterRaw } from '../services/noteMeta'
 import { useTabsStore } from '../stores/tabs'
+import { announce } from '../services/announcer'
 import { t } from '../i18n'
 
 /**
@@ -61,9 +62,78 @@ const filterLink = ref<'all' | 'wiki' | 'markdown'>('all')
 const showOrphans = ref(true)
 const showBroken = ref(true)
 
-const canvasAriaLabel = computed(() =>
-  t('graph.count', { n: noteCount.value, m: edgeCount.value }),
-)
+/**
+ * The canvas is the panel's primary surface, but a graph of positioned dots has
+ * no keyboard equivalent: the only way to open a note was to hit it with a
+ * mouse. The canvas is therefore focusable and walks the nodes with the arrow
+ * keys (Enter opens, Escape clears), bounded by a plain bounding-box scan — no
+ * spatial index is worth it at these sizes, and the layout is already in memory.
+ */
+const kbNodeId = ref<string | null>(null)
+
+const canvasAriaLabel = computed(() => {
+  const base = t('graph.count', { n: noteCount.value, m: edgeCount.value })
+  const focused = kbNodeId.value ? fileName(kbNodeId.value) : ''
+  return focused ? `${base} · ${focused} · ${t('graph.kbHint')}` : `${base} · ${t('graph.kbHint')}`
+})
+
+function focusNode(id: string): void {
+  kbNodeId.value = id
+  announce(fileName(id))
+}
+
+/** Nearest node in `direction` from the focused node, by bounding-box scan. */
+function neighbor(dx: number, dy: number): string | null {
+  const points = layout.value
+  if (!points.length) return null
+  const from = points.find((p) => p.id === kbNodeId.value)
+  if (!from) return points[0].id
+  let best: string | null = null
+  let bestDist = Infinity
+  for (const p of points) {
+    if (p.id === from.id) continue
+    const ox = p.x - from.x
+    const oy = p.y - from.y
+    // Projection onto the requested direction; nodes behind it are ignored.
+    const along = ox * dx + oy * dy
+    if (along <= 0) continue
+    const dist = Math.hypot(ox, oy)
+    if (dist < bestDist) {
+      bestDist = dist
+      best = p.id
+    }
+  }
+  return best
+}
+
+const KB_OFFSETS: Record<string, [number, number]> = {
+  ArrowRight: [1, 0],
+  ArrowLeft: [-1, 0],
+  ArrowDown: [0, 1],
+  ArrowUp: [0, -1],
+}
+
+function onCanvasKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape') {
+    if (kbNodeId.value === null) return
+    e.preventDefault()
+    kbNodeId.value = null
+    return
+  }
+  if (e.key === 'Enter' || e.key === ' ') {
+    const id = kbNodeId.value
+    if (!id) return
+    e.preventDefault()
+    void tabs.openTab(id)
+    return
+  }
+  const offset = KB_OFFSETS[e.key]
+  if (!offset) return
+  const next = neighbor(offset[0], offset[1])
+  if (!next) return
+  e.preventDefault()
+  focusNode(next)
+}
 
 const layout = ref<LayoutPoint[]>([])
 const hoverId = ref<string | null>(null)
@@ -764,12 +834,14 @@ defineExpose({ rebuild })
         ref="canvas"
         class="graph-canvas"
         role="img"
+        tabindex="0"
         :aria-label="canvasAriaLabel"
         @mousedown="onPointerDown"
         @mousemove="onPointerMove"
         @mouseup="onPointerUp"
         @mouseleave="onPointerLeave"
         @wheel="onWheel"
+        @keydown="onCanvasKeydown"
       />
       <div
         v-if="hoverId"

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { nextTick, onBeforeUnmount, ref } from 'vue'
 import { useTabsStore } from '../stores/tabs'
 import { useFocusTrap } from '../composables/useFocusTrap'
+import { modalStack } from '../services/modalStack'
 import { t } from '../i18n'
 
 const props = defineProps<{ tabId: string; path: string }>()
@@ -11,10 +12,24 @@ const tabs = useTabsStore()
 
 const active = ref(true)
 const dialogEl = ref<HTMLElement | null>(null)
-useFocusTrap(dialogEl, active)
+// `initialFocus: false`: the first focusable control in this dialog is "Use
+// disk (discard local)", and focusing it made the prompt appear with the
+// destructive action already armed — a stray Enter discarded the user's
+// unsaved edits. Focus goes to the container, so every answer (including the
+// safe ones) is a deliberate move.
+useFocusTrap(dialogEl, active, { initialFocus: false })
+
+const modalToken = modalStack.claimModal('conflict-dialog')
+
+nextTick(() => dialogEl.value?.focus())
+
+onBeforeUnmount(() => {
+  modalStack.releaseModal(modalToken)
+})
 
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') {
+    if (!modalStack.isTopModal(modalToken)) return
     e.preventDefault()
     emit('close')
   }
@@ -45,6 +60,7 @@ function later(): void {
       role="dialog"
       aria-modal="true"
       aria-labelledby="conflict-title"
+      tabindex="-1"
     >
       <div
         id="conflict-title"
@@ -53,10 +69,15 @@ function later(): void {
         {{ t('conflict.title') }}
       </div>
       <div class="conflict-body">
+        <!-- Split around the path on purpose: the path is its own emphasised
+             node, and interpolating {path} here produced a sentence with a hole
+             in it ("Disk content of  changed") because the placeholder was
+             filled with an empty string. -->
+        {{ t('conflict.bodyPrefix') }}
         <span class="conflict-path">
           {{ path }}
         </span>
-        {{ t('conflict.body', { path: '' }) }}
+        {{ t('conflict.bodySuffix') }}
       </div>
       <div class="dialog-actions">
         <button
