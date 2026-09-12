@@ -2,8 +2,10 @@ use nekowite_lib::domain::path_policy::{
     encode_rel_path, has_hidden_component, resolve_within, sanitize_path,
 };
 use nekowite_lib::domain::vault::{is_mdx_path, should_skip_entry};
+use nekowite_lib::errors::ALREADY_EXISTS_PREFIX;
 use nekowite_lib::storage::file_store::{
-    atomic_write, cleanup_stale_tmp, create_dir, import_attachment, is_importable_image, list_dir,
+    atomic_write, cleanup_stale_tmp, create_dir, create_new_file, import_attachment,
+    is_importable_image, list_dir,
     list_dir_entries, list_history, read_file, read_history, rename_entry, resolve_media_path,
     restore_history, sanitize_attachment_name, save_attachment, search_notes,
     search_notes_with_max, snapshot_history, stat_file, write_file, MAX_IMPORT_BYTES,
@@ -1901,5 +1903,51 @@ fn resolve_media_path_is_not_verbatim() {
     let file = listing.iter().find(|e| e.name.ends_with(".png")).expect("attachment");
     let resolved = resolve_media_path(&root, &file.path).unwrap();
     assert!(!resolved.starts_with(r"\\?\"), "verbatim: {resolved}");
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// Creating a note must never replace one that is already there.
+///
+/// `ensureDailyNote` checked the folder, picked a free name and then wrote, so a
+/// second writer (another instance of the app, a sync client, the user in
+/// Explorer) could slip a file in between: the write then landed on top of it
+/// and that file was gone. `create_new_file` makes the check and the creation one
+/// atomic step, and reports a taken name with a marker the caller can retry on
+/// instead of showing the user an OS error for something that is not one.
+#[test]
+fn create_new_file_never_replaces_an_existing_note() {
+    let vault = temp_vault("create-new-file");
+    let root = vault.to_str().unwrap().to_string();
+
+    // The folder does not exist yet: creating the note creates it.
+    create_new_file(&root, "daily/2026-01-05.md", "mine").unwrap();
+    assert_eq!(
+        std::fs::read(vault.join("daily").join("2026-01-05.md")).unwrap(),
+        b"mine",
+        "the template bytes land verbatim"
+    );
+
+    let err = create_new_file(&root, "daily/2026-01-05.md", "theirs").unwrap_err();
+    assert!(
+        err.starts_with(ALREADY_EXISTS_PREFIX),
+        "the caller has to tell 'taken' from 'broken': {err}"
+    );
+    assert_eq!(
+        read_file(&root, "daily/2026-01-05.md").unwrap(),
+        "mine",
+        "the existing note was left untouched"
+    );
+
+    // A free name is still created, and the refused attempt left no litter
+    // behind: a staging file next to the note would be a file the user sees.
+    create_new_file(&root, "daily/2026-01-06.md", "next").unwrap();
+    let leftovers: Vec<String> = std::fs::read_dir(vault.join("daily"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with('.'))
+        .collect();
+    assert!(leftovers.is_empty(), "staging litter left behind: {leftovers:?}");
+
     std::fs::remove_dir_all(&vault).unwrap();
 }

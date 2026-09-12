@@ -1,4 +1,5 @@
 import { fsService } from '../platform/gateways/fs'
+import { createNewFile } from '../platform/createNewFile'
 import type { FileEntry } from '../platform/gateways/contracts'
 
 import builtinDaily from '../templates/daily.md?raw'
@@ -53,7 +54,7 @@ title: "Daily {{date}}"
 
 # {{date}}
 
-- `
+-`
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
@@ -193,6 +194,16 @@ export async function ensureDailyNote(
       // The directory may already exist; writing is still safe.
     }
     const content = renderTemplate(DEFAULT_DAILY_TEMPLATE, buildDailyVars(date))
+    // Create-only: between the check above and this write another writer can
+    // put a daily note down. Writing over it would destroy text the user wrote
+    // there, so the backend is asked for the atomic version and "the name is
+    // taken" means someone else got there first - the note is theirs now.
+    const outcome = await createNewFile(vault, path, content)
+    if (outcome === 'created') return { path, created: true }
+    if (outcome === 'exists') return { path, created: false }
+    // No create-only command behind this build (browser, older backend): fall
+    // back to the historical write, which at worst replaces a note that
+    // appeared in the same instant.
     await fsService.write(vault, path, content)
     return { path, created: true }
   }
