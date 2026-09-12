@@ -191,9 +191,9 @@ describe('revokeAllGrants', () => {
 
 describe('describePolicy', () => {
   it.each([
-    ['ask', 'aiperm.policy.ask'],
-    ['auto', 'aiperm.policy.auto'],
-    ['readonly', 'aiperm.policy.readonly'],
+    ['ask', 'aiperm.policyAsk'],
+    ['auto', 'aiperm.policyAuto'],
+    ['readonly', 'aiperm.policyReadonly'],
   ] as Array<[AiWritePolicy, string]>)('returns the i18n key for %s', (policy, key) => {
     expect(describePolicy(policy)).toBe(key)
   })
@@ -201,7 +201,10 @@ describe('describePolicy', () => {
   it('returns keys rather than user-facing wording', () => {
     for (const policy of AI_WRITE_POLICIES) {
       const key = describePolicy(policy)
-      expect(key).toMatch(/^aiperm\.policy\./)
+      // A key, not user-facing wording. Deliberately not pinned to a nested
+      // shape: the locales define these as flat keys, and the point is that
+      // this module never returns prose.
+      expect(key).toMatch(/^aiperm\.policy/)
       expect(key).not.toMatch(/\s/)
     }
   })
@@ -212,6 +215,6 @@ describe('describePolicy', () => {
   })
 
   it('describes an unknown policy as ask, the decision it would produce', () => {
-    expect(describePolicy('agentic' as AiWritePolicy)).toBe('aiperm.policy.ask')
+    expect(describePolicy('agentic' as AiWritePolicy)).toBe('aiperm.policyAsk')
   })
 })

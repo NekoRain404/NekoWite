@@ -115,9 +115,9 @@ export const revokeAllGrants = (state: AiPermissionState): AiPermissionState => 
 })
 
 const POLICY_KEYS: Record<AiWritePolicy, string> = {
-  ask: 'aiperm.policy.ask',
-  auto: 'aiperm.policy.auto',
-  readonly: 'aiperm.policy.readonly',
+  ask: 'aiperm.policyAsk',
+  auto: 'aiperm.policyAuto',
+  readonly: 'aiperm.policyReadonly',
 }
 
 /**
@@ -126,6 +126,8 @@ const POLICY_KEYS: Record<AiWritePolicy, string> = {
  * The UI owns translations, and this module is reachable before i18n is
  * initialised (a persisted state is read at startup), so it hands back a key.
  * An unknown value describes as 'ask', matching the decision it produces.
+ * The keys are the flat ones the locales actually define — a nested spelling
+ * here silently rendered as a missing label.
  */
 export const describePolicy = (policy: AiWritePolicy): string => {
   return POLICY_KEYS[policy] ?? POLICY_KEYS.ask
