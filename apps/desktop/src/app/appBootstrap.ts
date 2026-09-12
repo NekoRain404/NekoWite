@@ -6,6 +6,8 @@ import { useRefsStore } from '../stores/refs'
 import { getSharedGateways } from '../platform/runtime/gatewayRuntime'
 import { loadVaultPlugins, deactivateVaultPlugins } from '../services/plugins'
 import { notifyError, notifyRecovery } from '../services/errors'
+import { findReferencedTmpPaths } from '../services/tmpReferences'
+import { vaultFileIndex } from '../services/vaultFiles'
 import { t } from '../i18n'
 import { setupWindowTracking, type WindowTracking } from './windowState'
 import { createTmpRecovery, requestUntitledVaultSwitch } from './recoveryClosedLoop'
@@ -63,12 +65,50 @@ export function createDesktopRuntime(): DesktopRuntime {
   // never write results into the new vault).
   let tmpRecovery: ReturnType<typeof createTmpRecovery> | null = null
 
-  function makeTmpRecovery() {
+  function makeTmpRecovery(vault: string, isStale: () => boolean) {
     return createTmpRecovery({
       fs: fsPort,
-      getReferencedTmp: () => tabs.referencedTmpPaths(),
+      // The referenced set must cover notes whose tab is CLOSED: `tabs` only
+      // knows the open documents, so a vault note on disk that still embeds
+      // `![p](.tmp/ok.png)` contributed nothing. The notice then offered to
+      // "restore" its image (renaming it to `attachments/…` while the note kept
+      // pointing at `.tmp/…`) and `gc` deleted it for good. Union the live set
+      // with the vault-wide scan so both halves agree on what is referenced.
+      getReferencedTmp: async () => {
+        const open = tabs.referencedTmpPaths()
+        const onDisk = await scanVaultTmpReferences(vault, isStale)
+        // A stale scan belongs to a vault that is no longer current; falling
+        // back to the open-tab set under-reports references, which at worst
+        // leaves litter for the next scan — it can never delete a live asset.
+        return onDisk ? new Set([...open, ...onDisk]) : open
+      },
       notify: notifyRecovery,
     })
+  }
+
+  /** Vault-wide `.tmp` references (`services/tmpReferences`), guarded by the
+   *  switch's `isStale` so a superseded switch or teardown never spends reads on
+   *  an abandoned vault. `null` means "fall back to the open-tab set". */
+  async function scanVaultTmpReferences(
+    vault: string,
+    isStale: () => boolean,
+  ): Promise<Set<string> | null> {
+    if (isStale()) return null
+    try {
+      const notes = await vaultFileIndex.get(vault)
+      if (isStale()) return null
+      const found = await findReferencedTmpPaths(vault, {
+        notes,
+        read: (v, p) => fsPort.read(v, p),
+        shouldAbort: isStale,
+      })
+      return isStale() ? null : found
+    } catch {
+      // The scan is a safety net for the recovery prompt, never a startup step:
+      // a failed index read falls back to the open-tab set instead of breaking
+      // the closed loop.
+      return null
+    }
   }
   let started = false
   let disposed = false
@@ -185,7 +225,7 @@ export function createDesktopRuntime(): DesktopRuntime {
     // old, confirmed-orphaned `.tmp` files), then scan surfaces a "recoverable
     // versions" notice for the fresh orphans left by an interrupted session.
     // Fire-and-forget (never blocks vault open) and cancellable.
-    const recovery = makeTmpRecovery()
+    const recovery = makeTmpRecovery(path, isStale)
     tmpRecovery = recovery
     void (async () => {
       void recovery.gc(path)
