@@ -1,0 +1,7 @@
+docs: record the move/chat/metadata fixes and the new portable build
+
+The packaged exe was driven again: long frontmatter keeps its title, tags and
+body-derived summary, and the file tree reflects a rename. The production bundle
+has no module loader, so the move service's full path is covered by the dev-build
+run and the unit tests instead — recorded as a limitation rather than glossed
+over.
