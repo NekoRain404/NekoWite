@@ -106,6 +106,38 @@ export const useTabsStore = defineStore('tabs', () => {
     selfWrites.set(path, Date.now())
   }
 
+  /**
+   * Paths whose rename/move the APP is running right now (see `beginMove`).
+   * Unlike the self-write window this is not a timer: it lasts exactly as long
+   * as the operation, which is what the external-change service needs to tell
+   * "the user renamed this note in the app" from "something deleted it behind
+   * our back". Both look identical on disk - the tab's path is momentarily
+   * absent - and guessing wrong costs the user the link between an open tab and
+   * its file.
+   */
+  const pendingMoves = new Set<string>()
+
+  function beginMove(from: string): void {
+    pendingMoves.add(from)
+  }
+
+  function endMove(from: string): void {
+    pendingMoves.delete(from)
+  }
+
+  /** True while `path` is being moved by the app, or lives under a folder that
+   *  is (a folder rename carries every note inside it). */
+  function isPendingMove(path: string): boolean {
+    if (pendingMoves.size === 0) return false
+    const norm = (s: string) => s.replace(/\\/g, '/').replace(/\/+$/, '')
+    const p = norm(path)
+    for (const from of pendingMoves) {
+      const f = norm(from)
+      if (p === f || p.startsWith(`${f}/`)) return true
+    }
+    return false
+  }
+
   function isSelfWrite(path: string): boolean {
     const ts = selfWrites.get(path)
     if (ts === undefined) return false
@@ -736,5 +768,5 @@ export const useTabsStore = defineStore('tabs', () => {
     return referenced
   }
 
-  return { tabs, activeId, activeTab, vault, setVault, openTab, closeTab, closeAll, removeAllTabs, closeOthers, renamePathInTabs, removeTab, setActive, markDirty, markSaving, markSaved, saveStateOf, noteSelfWrite, isSelfWrite, saveActive, reloadFromDisk, detachMissingPath, scheduleAutosave, cancelAutosave, saveTab, deleteTabFile, restoreHistoryToActive, checkCrashRecovery, captureSession, restoreSession, hasUnsavedWork, flushDirty, untitledDirtyTabs, referencedTmpPaths }
+  return { tabs, activeId, activeTab, vault, setVault, openTab, closeTab, closeAll, removeAllTabs, closeOthers, renamePathInTabs, removeTab, setActive, markDirty, markSaving, markSaved, saveStateOf, noteSelfWrite, isSelfWrite, beginMove, endMove, isPendingMove, saveActive, reloadFromDisk, detachMissingPath, scheduleAutosave, cancelAutosave, saveTab, deleteTabFile, restoreHistoryToActive, checkCrashRecovery, captureSession, restoreSession, hasUnsavedWork, flushDirty, untitledDirtyTabs, referencedTmpPaths }
 })

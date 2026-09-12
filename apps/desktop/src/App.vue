@@ -88,6 +88,7 @@ const externalDocSync = createExternalDocSync({
     if (tabs.detachMissingPath(tabId)) notifyError(t('tabs.missingOnDisk', { path }))
   },
   isSelfWrite: (path) => tabs.isSelfWrite(path),
+  isPendingMove: (path) => tabs.isPendingMove(path),
   reload: (tabId) => tabs.reloadFromDisk(tabId),
   onConflict,
 })

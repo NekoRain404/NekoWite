@@ -36,6 +36,8 @@ export interface ExternalDocSyncDeps {
   getActiveTab(): { id: string; path: string | null; dirty: boolean; savedContent: string } | null
   /** True while a path is inside the window where we treat a write as our own. */
   isSelfWrite(path: string): boolean
+  /** True while the APP is renaming/moving this path (or a folder above it). */
+  isPendingMove?(path: string): boolean
   /** Reload the tab's content from disk. */
   reload(tabId: string): Promise<void>
   /** Surface a keep-or-reload question (the tab has unsaved edits). */
@@ -68,6 +70,13 @@ export function createExternalDocSync(deps: ExternalDocSyncDeps): ExternalDocSyn
   async function checkTabsUnder(vault: string, folder: string): Promise<void> {
     for (const tab of deps.getOpenTabs()) {
       if (!tab.path || !isUnder(tab.path, folder)) continue
+      // A rename the app is running makes the tab's own path disappear for as
+      // long as the move takes - `renamePathInTabs` only runs once the disk work
+      // is done. Reading it here finds nothing and the tab gets detached as a
+      // file "moved outside the app": the tab turns into "Untitled" and the next
+      // Ctrl+S asks for a new location instead of saving to the note the user
+      // just renamed. The move itself owns the path until it finishes.
+      if (deps.isPendingMove?.(tab.path)) continue
       try {
         await deps.read(vault, tab.path)
       } catch {

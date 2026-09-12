@@ -2,11 +2,13 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { createApp, nextTick, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import FileTree from './FileTree.vue'
+import { useTabsStore } from '../stores/tabs'
 
 const readMock = vi.hoisted(() => vi.fn())
 const listMock = vi.hoisted(() => vi.fn())
 const writeMock = vi.hoisted(() => vi.fn())
 const openFolderMock = vi.hoisted(() => vi.fn())
+const renameMock = vi.hoisted(() => vi.fn())
 const onFsChangeMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../platform/gateways/fs', () => ({
@@ -23,7 +25,7 @@ vi.mock('../platform/gateways/fs', () => ({
     saveFileDialog: vi.fn(),
     saveAttachment: vi.fn(),
     createDir: vi.fn(),
-    renameEntry: vi.fn(),
+    renameEntry: renameMock,
     listTrash: vi.fn(),
     restoreFromTrash: vi.fn(),
     deleteFile: vi.fn(),
@@ -86,6 +88,8 @@ describe('FileTree inline rename (IME)', () => {
     listMock.mockReset()
     writeMock.mockReset()
     openFolderMock.mockReset()
+    renameMock.mockReset()
+    renameMock.mockResolvedValue(undefined)
     onFsChangeMock.mockReset()
     readMock.mockResolvedValue('# note')
     writeMock.mockResolvedValue(undefined)
@@ -153,5 +157,91 @@ describe('FileTree inline rename (IME)', () => {
     // tab-path update), so the note text is read before the file moves.
     expect(readMock).toHaveBeenCalledWith('/vault', '/vault/a.md')
     expect(host.querySelector('.tree-inline-input')).toBeNull()
+  })
+})
+
+describe('FileTree rename keeps the open tab attached', () => {
+  beforeEach(() => {
+    pinia = createPinia()
+    setActivePinia(pinia)
+    readMock.mockReset()
+    listMock.mockReset()
+    writeMock.mockReset()
+    renameMock.mockReset()
+    onFsChangeMock.mockReset()
+    readMock.mockResolvedValue('# note')
+    writeMock.mockResolvedValue(undefined)
+    renameMock.mockResolvedValue(undefined)
+    onFsChangeMock.mockResolvedValue(() => undefined)
+    listMock.mockResolvedValue([
+      { name: 'a.md', path: '/vault/a.md', is_dir: false, is_mdx: true },
+    ])
+    document.body.innerHTML = ''
+    mounted = []
+  })
+
+  afterEach(() => {
+    mounted.forEach((app) => app.unmount())
+    mounted = []
+    document.body.innerHTML = ''
+  })
+
+  async function renameTo(host: HTMLElement, name: string): Promise<void> {
+    const input = await openRenameInput(host)
+    typeInto(input, name)
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    await flush()
+    await flush()
+  }
+
+  it('claims the old path for the move before touching the disk', async () => {
+    // The claim has to be in place BEFORE the first fs call: the watcher can
+    // report the rename while the tab still points at the old name, and the
+    // app-level sync would otherwise read it, find nothing and detach the tab as
+    // if the file had been moved behind the user's back.
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    await tabs.openTab('/vault/a.md')
+    let claimDuringDiskWork: boolean | null = null
+    renameMock.mockImplementation(async () => {
+      claimDuringDiskWork = useTabsStore().isPendingMove('/vault/a.md')
+    })
+    const host = mountTree()
+    await flush()
+
+    await renameTo(host, 'renamed.md')
+
+    expect(claimDuringDiskWork).toBe(true)
+    // ...and released once the move is over, so a later real deletion is still
+    // noticed.
+    expect(tabs.isPendingMove('/vault/a.md')).toBe(false)
+    expect(tabs.activeTab?.path).toBe('/vault/renamed.md')
+  })
+
+  it('re-attaches the tab when a move failed after its rename landed', async () => {
+    // `moveNote` rewrites the body at the new path after renaming, and its own
+    // rollback is best effort. If the rewrite fails and the rollback does not
+    // land, the note really is at the new name: the tab must follow it instead
+    // of being left on a path that no longer exists (which would detach the note
+    // and turn the next Ctrl+S into a save-as).
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    await tabs.openTab('/vault/a.md')
+    readMock.mockImplementation(async (_vault: string, path: string) => {
+      if (path === '/vault/a.md') throw new Error('gone') // renamed away already
+      return '# note'
+    })
+    writeMock.mockRejectedValue(new Error('disk full'))
+    renameMock.mockImplementation(async (_v: string, from: string) => {
+      // The rollback rename (new -> old) is the one that fails here.
+      if (from === '/vault/renamed.md') throw new Error('locked')
+    })
+    const host = mountTree()
+    await flush()
+
+    await renameTo(host, 'renamed.md')
+
+    expect(tabs.activeTab?.path).toBe('/vault/renamed.md')
+    expect(tabs.isPendingMove('/vault/a.md')).toBe(false)
   })
 })
