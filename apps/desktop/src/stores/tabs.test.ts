@@ -3,7 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { registerLifecycleHook, setActiveEditor } from '@nekowite/plugin-host'
 import type { PluginContext } from '@nekowite/plugin-host'
 import { consumeSuppressReapply, shouldSuppressReapply } from '../services/suppressReapply'
-import { onRecovery } from '../services/errors'
+import { onNotify, onRecovery } from '../services/errors'
 import type { RecoveryPrompt } from '../services/errors'
 import { useTabsStore } from './tabs'
 import { useSettingsStore } from './settings'
@@ -583,34 +583,28 @@ describe('closeAll cleanup', () => {
   })
 
   it('clears the saving flag and self-write windows for closed tabs', async () => {
-    let resolveWrite: () => void = () => {}
-    writeMock.mockImplementation(() => new Promise<void>((r) => { resolveWrite = r }))
     readMock.mockResolvedValue('abc')
     const s = useTabsStore()
     s.setVault('/vault')
     await s.openTab('/vault/a.md')
     const tab = s.tabs[0]
-    s.markDirty(tab.id)
-    const pending = s.saveActive()
-    expect(s.saveStateOf(tab.id)).toBe('saving')
+    // The two remnants removeTab alone cannot clear: a save that reported
+    // "saving" and the self-write window of the file being written. Neither may
+    // outlive the tab, or a later open/switch inherits them.
+    s.markSaving(tab.id)
     s.noteSelfWrite('/vault/a.md')
+    expect(s.saveStateOf(tab.id)).toBe('saving')
     expect(s.isSelfWrite('/vault/a.md')).toBe(true)
 
-    s.closeAll()
+    await s.closeAll()
 
-    // The closed tab's save must not be reported as stuck "saving".
     expect(s.saveStateOf(tab.id)).toBe('saved')
     expect(s.isSelfWrite('/vault/a.md')).toBe(false)
     expect(s.tabs).toHaveLength(0)
     expect(s.activeId).toBeNull()
-    // Release the write once it has actually been dispatched (it follows the
-    // editor flush), then let the save settle.
-    await vi.waitFor(() => expect(writeMock).toHaveBeenCalled())
-    resolveWrite()
-    await pending
   })
 
-  it('cancels a pending autosave timer so nothing writes after closeAll', async () => {
+  it('cancels the pending autosave timer, leaving the close-time flush as the only write', async () => {
     vi.useFakeTimers()
     readMock.mockResolvedValue('abc')
     const s = useTabsStore()
@@ -620,9 +614,15 @@ describe('closeAll cleanup', () => {
     tab.content = 'changed'
     s.markDirty(tab.id)
     s.scheduleAutosave(tab.id)
-    s.closeAll()
+
+    await s.closeAll()
+
+    // Exactly one write — the flush that closing does on purpose. The timer armed
+    // before the close must not fire a second one afterwards.
+    expect(writeMock).toHaveBeenCalledTimes(1)
+    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'changed', expect.anything())
     await vi.advanceTimersByTimeAsync(30000)
-    expect(writeMock).not.toHaveBeenCalled()
+    expect(writeMock).toHaveBeenCalledTimes(1)
     vi.useRealTimers()
   })
 })
@@ -742,7 +742,7 @@ describe('session capture and restore', () => {
     resetFsMocks()
   })
 
-  it('captures the open tabs to localStorage and restores them after closeAll', async () => {
+  it('captures the open tabs to localStorage and restores them after they are removed', async () => {
     readMock.mockResolvedValue('content')
     const s = useTabsStore()
     s.setVault('/vault')
@@ -752,7 +752,8 @@ describe('session capture and restore', () => {
     // tab is referenced by path (ids are regenerated on restore).
     expect(JSON.parse(localStorage.getItem(SESSION_KEY) ?? '{}').activeId).toBe('/vault/b.md')
 
-    s.closeAll()
+    // The reset this test needs, not a user-facing close: no flush, no prompt.
+    s.removeAllTabs()
     expect(s.tabs).toHaveLength(0)
 
     await s.restoreSession()
@@ -767,7 +768,7 @@ describe('session capture and restore', () => {
     s.setVault('/vault')
     await s.openTab('/vault/a.md')
 
-    s.closeAll()
+    await s.closeAll()
     s.setVault('/other')
     await s.restoreSession()
     expect(s.tabs).toHaveLength(0)
@@ -875,5 +876,143 @@ describe('saveTab flushes the source pane first', () => {
 
     await expect(s.saveTab(s.activeId!)).resolves.toBe(true)
     expect(writeMock).toHaveBeenCalled()
+  })
+})
+
+describe('detachMissingPath keeps unsaved work protected', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    resetFsMocks()
+  })
+
+  it('leaves a detached tab holding text dirty, so no protection skips it', async () => {
+    // The tab detached because its file vanished outside the app. Its content now
+    // exists nowhere on disk, so `dirty` has to stay true: `hasUnsavedWork`,
+    // `flushDirty`, `untitledDirtyTabs` and `closeTab` all key off it, and a
+    // detached tab marked clean would be dropped without a prompt by every one of
+    // them.
+    readMock.mockResolvedValue('text that was never written')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    s.markDirty(s.activeId!)
+
+    expect(s.detachMissingPath(s.activeId!)).toBe('/vault/a.md')
+
+    expect(s.tabs[0].path).toBeNull()
+    expect(s.tabs[0].content).toBe('text that was never written')
+    expect(s.tabs[0].dirty).toBe(true)
+    expect(s.hasUnsavedWork()).toBe(true)
+    expect(s.untitledDirtyTabs().map((t) => t.id)).toEqual([s.tabs[0].id])
+  })
+
+  it('keeps the text reachable through closeTab, which must ask where to put it', async () => {
+    readMock.mockResolvedValue('only copy')
+    saveFileDialogMock.mockResolvedValue(null) // user cancels the Save-As dialog
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    s.markDirty(s.activeId!)
+    s.detachMissingPath(s.activeId!)
+
+    await s.closeTab(s.tabs[0].id)
+
+    // Cancelling means "do not close": dropping the tab here is how the text
+    // would disappear, and it never reached disk.
+    expect(writeMock).not.toHaveBeenCalled()
+    expect(s.tabs).toHaveLength(1)
+  })
+
+  it('leaves a detached empty tab clean so nothing prompts over a blank note', async () => {
+    readMock.mockResolvedValue('')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+
+    s.detachMissingPath(s.activeId!)
+
+    expect(s.tabs[0].dirty).toBe(false)
+    expect(s.hasUnsavedWork()).toBe(false)
+  })
+})
+
+describe('closeAll never silently discards unsaved work', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    resetFsMocks()
+  })
+
+  it('flushes dirty tabs with a path instead of dropping them', async () => {
+    readMock.mockResolvedValue('on disk')
+    writeMock.mockResolvedValue(undefined)
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    s.tabs[0].content = 'edited but never saved'
+    s.markDirty(s.tabs[0].id)
+
+    await expect(s.closeAll()).resolves.toBe(true)
+
+    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'edited but never saved', expect.anything())
+    expect(s.tabs).toHaveLength(0)
+  })
+
+  it('aborts the close when a flush fails, keeping the tab', async () => {
+    readMock.mockResolvedValue('on disk')
+    writeMock.mockRejectedValue(new Error('disk full'))
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    s.tabs[0].content = 'precious'
+    s.markDirty(s.tabs[0].id)
+    const seen: string[] = []
+    const off = onRecovery((p) => seen.push(p.message))
+    onNotify((m) => seen.push(m))
+
+    await expect(s.closeAll()).resolves.toBe(false)
+
+    expect(s.tabs).toHaveLength(1)
+    expect(s.tabs[0].content).toBe('precious')
+    expect(seen.length).toBeGreaterThan(0)
+    off()
+  })
+
+  it('asks about untitled dirty documents and saves them when the user says so', async () => {
+    saveFileDialogMock.mockResolvedValue('/vault/picked.md')
+    writeMock.mockResolvedValue(undefined)
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab(null, 'never named')
+    s.markDirty(s.activeId!)
+    let prompt: RecoveryPrompt | null = null
+    const off = onRecovery((p) => { prompt = p })
+    expect(s.untitledDirtyTabs()).toHaveLength(1)
+
+    const closing = s.closeAll()
+    await Promise.resolve()
+    expect(prompt).not.toBeNull()
+    prompt!.onRestore()
+    await expect(closing).resolves.toBe(true)
+
+    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/picked.md', 'never named', expect.anything())
+    expect(s.tabs).toHaveLength(0)
+    off()
+  })
+
+  it('discards untitled documents only after the user explicitly chooses to', async () => {
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab(null, 'throwaway')
+    s.markDirty(s.activeId!)
+    let prompt: RecoveryPrompt | null = null
+    const off = onRecovery((p) => { prompt = p })
+
+    const closing = s.closeAll()
+    await Promise.resolve()
+    prompt!.onDismiss()
+    await expect(closing).resolves.toBe(true)
+
+    expect(s.tabs).toHaveLength(0)
+    off()
   })
 })

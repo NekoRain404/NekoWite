@@ -295,33 +295,44 @@ pub fn move_trash_key(vault_root: &str, from_rel: &str, to_rel: &str) {
     if !trash_root.is_dir() {
         return;
     }
-    let from_key = encode_rel_path(from_rel);
     let to_key = encode_rel_path(to_rel);
     let Ok(rd) = std::fs::read_dir(&trash_root) else { return };
     for entry in rd.flatten() {
         let p = entry.path();
         let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        let suffix = name.strip_prefix(&from_key).unwrap_or("");
-        // Only the exact key or a `-<digits>` collision variant matches; a
-        // longer path that merely starts with the same text never does.
-        let matched = suffix.is_empty()
-            || (suffix.len() > 1
-                && suffix.starts_with('-')
-                && suffix[1..].chars().all(|c| c.is_ascii_digit()));
+        // Match on the DECODED path rather than on an encoded-key prefix.
+        //
+        // The previous prefix test read `name.strip_prefix(&from_key).unwrap_or("")`
+        // and then treated an empty suffix as a match. `strip_prefix` returns
+        // `None` when the prefix does not match at all, so `unwrap_or("")` turned
+        // "unrelated to this rename" into "exact match" — every entry in the trash
+        // matched every rename. Renaming one live file then rewrote the name of
+        // every unrelated trashed item to the new key, and two of them landing in
+        // the same millisecond made `fs::rename` overwrite one with the other:
+        // the contents of a deleted note were destroyed by renaming something
+        // else entirely. Decoding also makes legacy (`__`-encoded) entries follow
+        // a rename, which the encoded-prefix comparison could never do.
+        let matched = decode_trash_key(name) == from_rel;
         if !matched {
             continue;
         }
-        let new_name = if suffix.is_empty() {
-            to_key.clone()
-        } else {
-            format!("{to_key}{suffix}")
-        };
+        // Keep the original collision stamp, if this entry had one, so several
+        // trashed versions of the same path stay distinguishable and in order.
+        let stamp = &name[strip_collision_suffix(name).len()..];
+        let new_name = format!("{to_key}{stamp}");
         let mut target = trash_root.join(&new_name);
-        if target.exists() {
-            let ts = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or_default();
+        // A collision stamp has to stay exactly 13 digits — that shape is how
+        // `strip_collision_suffix` tells a disambiguating stamp from a name that
+        // legitimately ends in digits — so bump the stamp instead of appending to
+        // it. Bumping also guarantees a free name: `fs::rename` REPLACES an
+        // existing file on Windows, so reusing the first candidate would destroy
+        // the entry already sitting there.
+        let mut ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or_default();
+        while target.exists() {
+            ts = ts.saturating_add(1);
             target = trash_root.join(format!("{new_name}-{ts}"));
         }
         let _ = std::fs::rename(&p, &target);

@@ -395,6 +395,8 @@ export const zh = {
     unsavedWorkPrompt: '你有未保存的更改，仍要离开吗？',
     unsavedWorkBlocker: '部分文件无法保存，未切换 vault',
     untitledVaultSwitchMsg: '你有 {count} 个未命名的未保存文档。选择“恢复”在切换前保存；选择“忽略”则丢弃。',
+    untitledCloseAllMsg:
+      '你有 {count} 个未命名的未保存文档。选择“恢复”在关闭前保存；选择“忽略”则丢弃。',
     aria: '打开的文档',
   },
   titlebar: {
@@ -631,6 +633,8 @@ export const zh = {
   },
   plugin: {
     loadFailed: '插件加载失败：{id}（{error}）',
+    loadingDisabled:
+      '当前安全策略下不会加载库内插件（CSP 阻止在窗口内加载模块）。在实现进程/WebView 隔离前，这是预期行为。',
     permissionSkipped: '插件「{name}」请求敏感权限但未获授权，已跳过加载。',
     permissionTitle: '插件权限请求',
     permissionBody:

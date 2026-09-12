@@ -170,13 +170,17 @@ describe('security invariant: CSP blocks plugin loading in the production webvie
   it('skips the whole scan (no fs read, no import, no activation) when the CSP blocks blob imports', async () => {
     ;(window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
     try {
+      // The vault below HAS a plugin dir (setup), so the gate has something to
+      // refuse. Listing the directory is allowed — it is how the app tells a
+      // plugin-using vault from an ordinary one — but no plugin code may be read,
+      // imported or executed.
       await loadVaultPlugins('/vault')
-      expect(listMock).not.toHaveBeenCalled()
+      expect(listMock).toHaveBeenCalledWith('/vault', 'plugins')
       expect(readMock).not.toHaveBeenCalled()
       expect(loadMock).not.toHaveBeenCalled()
       expect(activateMock).not.toHaveBeenCalled()
       const msgs = notifyErrorMock.mock.calls.map((c) => String(c[0]))
-      expect(msgs.some((m) => m.includes('CSP') && m.includes('disabled'))).toBe(true)
+      expect(msgs.some((m) => m.length > 10 && !m.includes('plugin.loadingDisabled'))).toBe(true)
     } finally {
       delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     }

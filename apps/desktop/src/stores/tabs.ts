@@ -7,6 +7,7 @@ import { flushEdits } from '../services/editorOwnership'
 import { persistence } from '../services/persistence'
 import type { HistoryEntry } from '../platform/gateways/contracts'
 import { notifyError, notifyRecovery } from '../services/errors'
+import { requestUntitledVaultSwitch } from '../app/recoveryClosedLoop'
 import { announce } from '../services/announcer'
 import { t as i18nT } from '../i18n'
 import { assetsDirForNote, moveAttachments, rewireTempRefsInContent } from '../services/renameAsset'
@@ -264,7 +265,10 @@ export const useTabsStore = defineStore('tabs', () => {
     captureSession()
   }
 
-  function closeAll(): void {
+  /** Drop every tab WITHOUT touching the filesystem. Only for callers that have
+   *  already flushed the dirty tabs and prompted for the untitled ones — see
+   *  {@link closeAll} and the vault-switch path in `appBootstrap`. */
+  function removeAllTabs(): void {
     for (const t of [...tabs.value]) removeTab(t.id)
     // Leave no tab-scoped state behind: removeTab only cancels autosave
     // timers, but a closed tab's saving-flag and self-write window must also
@@ -272,6 +276,45 @@ export const useTabsStore = defineStore('tabs', () => {
     savingIds.value = new Set()
     selfWrites.clear()
     activeId.value = null
+  }
+
+  /**
+   * Close every tab the way the user means it, without losing work.
+   *
+   * "Close all" used to call `removeTab` in a loop: no flush, no prompt. Tabs
+   * with unsaved edits (autosave off, or inside the autosave window) and
+   * untitled tabs — which exist nowhere but memory — were destroyed by one menu
+   * click, on disk still holding the previous text or holding nothing at all.
+   * Closing now follows the same rule as closing a single tab: path-bearing tabs
+   * are flushed first, untitled dirty ones get the keep-or-discard prompt, and a
+   * failed save aborts the whole thing instead of dropping what it could not
+   * write. Returns false when the close did not happen.
+   */
+  async function closeAll(): Promise<boolean> {
+    if (tabs.value.length === 0) return true
+    if (!(await flushDirty())) {
+      notifyError(i18nT('tabs.unsavedWorkBlocker'))
+      return false
+    }
+    const untitled = untitledDirtyTabs()
+    if (untitled.length > 0) {
+      const choice = await requestUntitledVaultSwitch({
+        count: untitled.length,
+        notify: notifyRecovery,
+        messageKey: 'tabs.untitledCloseAllMsg',
+      })
+      if (choice === 'save') {
+        for (const tab of untitled) {
+          if (!(await saveTab(tab.id))) {
+            notifyError(i18nT('tabs.unsavedWorkBlocker'))
+            return false
+          }
+        }
+      }
+    }
+    removeAllTabs()
+    captureSession()
+    return true
   }
 
   async function closeOthers(id: string): Promise<void> {
@@ -516,10 +559,15 @@ export const useTabsStore = defineStore('tabs', () => {
     const gone = t.path
     cancelAutosave(id)
     t.path = null
-    // Keep savedContent == content so the tab counts as dirty only when the user
-    // actually has edits beyond what was on disk before it vanished.
-    t.savedContent = t.content
-    t.dirty = false
+    // The tab now holds text that exists at no path this app knows, so it counts
+    // as unsaved work — `content` is the only copy left. Marking it clean (what
+    // this did at first) silently disabled every protection that keys off
+    // `dirty`: closing the tab, switching vaults, closing the window and the
+    // autosave timer all skipped it, so text the user had typed and never
+    // written could vanish with no prompt at all. Empty tabs stay clean — there
+    // is nothing to protect and prompting over a blank note is pure noise.
+    t.dirty = t.content.length > 0
+    t.savedContent = t.dirty ? '' : t.content
     return gone
   }
 
@@ -582,5 +630,5 @@ export const useTabsStore = defineStore('tabs', () => {
     return referenced
   }
 
-  return { tabs, activeId, activeTab, vault, setVault, openTab, closeTab, closeAll, closeOthers, renamePathInTabs, removeTab, setActive, markDirty, markSaving, markSaved, saveStateOf, noteSelfWrite, isSelfWrite, saveActive, reloadFromDisk, detachMissingPath, scheduleAutosave, cancelAutosave, saveTab, deleteTabFile, restoreHistoryToActive, checkCrashRecovery, captureSession, restoreSession, hasUnsavedWork, flushDirty, untitledDirtyTabs, referencedTmpPaths }
+  return { tabs, activeId, activeTab, vault, setVault, openTab, closeTab, closeAll, removeAllTabs, closeOthers, renamePathInTabs, removeTab, setActive, markDirty, markSaving, markSaved, saveStateOf, noteSelfWrite, isSelfWrite, saveActive, reloadFromDisk, detachMissingPath, scheduleAutosave, cancelAutosave, saveTab, deleteTabFile, restoreHistoryToActive, checkCrashRecovery, captureSession, restoreSession, hasUnsavedWork, flushDirty, untitledDirtyTabs, referencedTmpPaths }
 })

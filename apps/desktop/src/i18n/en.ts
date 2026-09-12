@@ -395,6 +395,8 @@ export const en = {
     unsavedWorkPrompt: 'You have unsaved changes. Leave anyway?',
     unsavedWorkBlocker: 'Some files could not be saved; the vault was not switched.',
     untitledVaultSwitchMsg: 'You have {count} unsaved document(s) without a path. Restore to save them before switching; Dismiss to discard them.',
+    untitledCloseAllMsg:
+      'You have {count} untitled document(s) with unsaved changes. Choose Restore to save them before closing; choose Dismiss to discard them.',
     aria: 'Open documents',
   },
   titlebar: {
@@ -631,6 +633,8 @@ export const en = {
   },
   plugin: {
     loadFailed: 'Plugin failed to load: {id} ({error})',
+    loadingDisabled:
+      'Vault plugins are disabled under the current security policy (CSP blocks in-window module loading). Expected until process/WebView isolation is implemented.',
     permissionSkipped: 'Plugin “{name}” requested sensitive permissions but was not approved; skipped.',
     permissionTitle: 'Plugin permission request',
     permissionBody:

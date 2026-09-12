@@ -1259,6 +1259,75 @@ fn rename_entry_moves_history_and_trash() {
     std::fs::remove_dir_all(&vault).unwrap();
 }
 
+/// Renaming one file must leave the trash entries of OTHER files alone.
+///
+/// The key migration used to ask `name.strip_prefix(&from_key).unwrap_or("")`
+/// and then accept an empty suffix as "exact match". `strip_prefix` returns
+/// `None` for a key that does not start with `from_key`, so unrelated entries
+/// were treated as matches, renamed to the new key, and — when several landed in
+/// the same millisecond — overwritten by each other through `fs::rename`
+/// (which replaces an existing target on Windows). Renaming any file could
+/// therefore destroy the contents of an unrelated deleted note.
+#[test]
+fn rename_entry_leaves_unrelated_trash_entries_untouched() {
+    let vault = temp_vault("rename-trash-unrelated");
+    let root = vault.to_str().unwrap().to_string();
+
+    for name in ["a.md", "b.md", "c.md"] {
+        write_file(&root, name, &format!("CONTENT-{name}"), Some(10)).unwrap();
+        delete_file(&root, name).unwrap();
+    }
+    std::fs::write(vault.join("keep.md"), "keep").unwrap();
+    assert_eq!(list_trash(&root).unwrap().len(), 3, "three entries trashed");
+
+    rename_entry(&root, "keep.md", "keep2.md").unwrap();
+
+    let trash = list_trash(&root).unwrap();
+    let mut originals: Vec<String> = trash.iter().map(|t| t.original_path.clone()).collect();
+    originals.sort();
+    assert_eq!(
+        originals,
+        vec!["a.md", "b.md", "c.md"],
+        "unrelated trash entries keep their own paths"
+    );
+
+    // And the contents are all still there — an overwrite would have lost one.
+    let mut bodies: Vec<String> = trash
+        .iter()
+        .map(|t| std::fs::read_to_string(&t.trash_path).unwrap())
+        .collect();
+    bodies.sort();
+    assert_eq!(bodies, vec!["CONTENT-a.md", "CONTENT-b.md", "CONTENT-c.md"]);
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// A trash entry that DOES belong to the renamed path follows it, including the
+/// legacy `__`-encoded spelling the old encoder wrote, which the encoded-prefix
+/// comparison could never match.
+#[test]
+fn rename_entry_migrates_its_own_trash_entry_including_legacy_keys() {
+    let vault = temp_vault("rename-trash-legacy");
+    let root = vault.to_str().unwrap().to_string();
+    let trash_dir = vault.join(".nekowite-trash");
+    std::fs::create_dir_all(&trash_dir).unwrap();
+
+    // Hand-write a legacy (`__`-encoded) entry for docs/sub.md, plus the live
+    // file that is about to be renamed.
+    std::fs::create_dir_all(vault.join("docs")).unwrap();
+    std::fs::write(trash_dir.join("docs__sub.md"), "legacy body").unwrap();
+    std::fs::write(vault.join("docs").join("sub.md"), "live").unwrap();
+
+    rename_entry(&root, "docs/sub.md", "docs/renamed.md").unwrap();
+
+    let entries = list_trash(&root).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].original_path, "docs/renamed.md");
+    assert_eq!(std::fs::read_to_string(&entries[0].trash_path).unwrap(), "legacy body");
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
 /// Concurrent `write_file`s on the same vault never panic, leave no `.tmp`
 /// litter, and never corrupt the file: the read-old -> snapshot -> write
 /// sequence is serialized, and the final content is one written payload.
