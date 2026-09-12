@@ -250,3 +250,23 @@ describe('panel open/close lifecycle', () => {
     expect(renderSearchState.open).toBe(false)
   })
 })
+
+describe('overlay decorations do not duplicate the plugins own', () => {
+  it('renders the AI suggestion ghost exactly once', async () => {
+    // ProseMirror gathers decorations from EVERY source it can find:
+    // `viewDecorations()` runs `someProp('decorations', ...)`, which visits the
+    // view's top-level prop AND each plugin's own prop. The overlay provider
+    // also folded the plugins' decorations into its own set, so anything
+    // non-idempotent was painted twice - the ghost suggestion showed up as two
+    // identical spans, and so did the task-checkbox marker.
+    await mountEditor('hello world')
+    const editor = editorBridge.getEditor()!
+    openPanel()
+    setQuery('hello')
+
+    editor.setSuggestion(' and more')
+
+    expect(document.querySelectorAll('.ghost-text')).toHaveLength(1)
+    expect(document.querySelector('.ghost-text')?.textContent).toBe(' and more')
+  })
+})
