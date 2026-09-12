@@ -21,8 +21,8 @@ import { describeExportError, notifyError } from '../services/errors'
 import { isPathWithinVault } from '../services/attachments'
 import { useSettingsStore } from '../stores/settings'
 import { useAppearanceStore } from '../stores/appearance'
-import { COLOR_SCHEMES, COLOR_SCHEME_PREVIEW } from '../stores/appearance'
-import type { Accent, ColorScheme, ContentDirection, EditorFontId, MonoFontId, UiFontId } from '../stores/appearance'
+import { ACCENTS, ACCENT_COLORS, COLOR_SCHEMES, COLOR_SCHEME_PREVIEW } from '../stores/appearance'
+import type { ColorScheme, ContentDirection, EditorFontId, MonoFontId, UiFontId } from '../stores/appearance'
 import { getLocale, setLocale, t } from '../i18n'
 import { useFocusTrap } from '../composables/useFocusTrap'
 import { modalStack } from '../services/modalStack'
@@ -136,24 +136,15 @@ watch(
   },
 )
 
-const ACCENTS: Accent[] = ['ink', 'coral', 'blue', 'green', 'gold', 'violet', 'slate', 'teal', 'lime', 'rose', 'amber', 'orange', 'pink', 'cyan', 'cocoa']
-const ACCENT_COLORS: Record<Accent, string> = {
-  ink: '#343532',
-  coral: '#d65f4d',
-  blue: '#3f7edb',
-  green: '#3e9b73',
-  gold: '#b98b09',
-  violet: '#8a65d1',
-  slate: '#607287',
-  teal: '#2e9e8f',
-  lime: '#7aa816',
-  rose: '#e05c76',
-  amber: '#d98c1f',
-  orange: '#e9782e',
-  pink: '#e85c9e',
-  cyan: '#1e9cc4',
-  cocoa: '#8c5a3c',
-}
+/** The note under the accent checkbox has to say which of the two things
+ *  actually happened: the OS colour was read and mapped onto the palette, or it
+ *  could not be read and the accent is the theme-based pick. Claiming the system
+ *  colour was applied when it was not is the lie this replaces. */
+const followAccentNote = computed(() => {
+  if (appearance.systemAccentState === 'read') return t('settings.appearance.followAccentHintRead')
+  if (appearance.systemAccentState === 'unavailable') return t('settings.appearance.followAccentHintUnavailable')
+  return t('settings.appearance.followAccentHint')
+})
 
 const UI_FONT_OPTIONS: UiFontId[] = ['system', 'inter', 'serif', 'rounded']
 const EDITOR_FONT_OPTIONS: EditorFontId[] = ['system', 'serif', 'sans', 'reading']
@@ -465,7 +456,7 @@ async function onExportPdf(): Promise<void> {
               <span
                 v-if="appearance.followSystemAccent"
                 class="settings-note"
-              >{{ t('settings.appearance.followAccentHint') }}</span>
+              >{{ followAccentNote }}</span>
               <span class="settings-label">{{ t('settings.appearance.font') }}</span>
               <label class="settings-field">
                 <span>{{ t('settings.appearance.uiFont') }}</span>

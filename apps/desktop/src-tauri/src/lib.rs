@@ -47,6 +47,7 @@ pub fn run() {
             commands::fs::read_file,
             commands::fs::stat_file,
             commands::fs::write_file,
+            commands::fs::create_new_file,
             commands::fs::delete_file,
             commands::recovery::list_trash,
             commands::recovery::restore_from_trash,
@@ -72,7 +73,8 @@ pub fn run() {
             commands::keys::store_ai_key,
             commands::keys::load_ai_key,
             commands::keys::set_master_password,
-            commands::keys::unlock_vault
+            commands::keys::unlock_vault,
+            commands::system::system_accent_color,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
