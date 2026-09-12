@@ -281,6 +281,7 @@ export const useTabsStore = defineStore('tabs', () => {
    *  already flushed the dirty tabs and prompted for the untitled ones — see
    *  {@link closeAll} and the vault-switch path in `appBootstrap`. */
   function removeAllTabs(): void {
+    inFlightSaves.clear()
     for (const t of [...tabs.value]) removeTab(t.id)
     // Leave no tab-scoped state behind: removeTab only cancels autosave
     // timers, but a closed tab's saving-flag and self-write window must also
@@ -412,9 +413,60 @@ export const useTabsStore = defineStore('tabs', () => {
   }
 
   /** Returns true when the file is on disk with the intended content. */
+  /**
+   * Saves that have not settled yet, keyed by tab id.
+   *
+   * Saving was not serialized, and three things went wrong at once when two
+   * saves of one tab overlapped (Ctrl+S pressed twice, or the autosave timer
+   * firing while a manual save was still writing):
+   *
+   * - the file was written twice, which on the backend means two history
+   *   snapshots of the same edit;
+   * - `markSaved` is a set, so the first save to finish cleared the "saving"
+   *   state while the other was still in flight — the status line said "saved"
+   *   over an unfinished write;
+   * - the LAST one to finish won the state, not the last one started. A save
+   *   that began earlier but completed later wrote its older `savedContent`
+   *   and `dirty = false` over the newer one, so the tab looked saved while the
+   *   window's idea of the disk content was stale — and the next watcher event
+   *   (disk != savedContent) was then treated as an external edit.
+   *
+   * A second save now waits for the running one and only writes again if
+   * something new was typed in the meantime.
+   */
+  const inFlightSaves = new Map<string, Promise<boolean>>()
+
   async function saveTab(id: string): Promise<boolean> {
+    const running = inFlightSaves.get(id)
+    if (running) {
+      const ok = await running.catch(() => false)
+      const current = tabs.value.find((x) => x.id === id)
+      // Gone (closed/removed) or the running save failed: nothing more to do
+      // here, and reporting success would be a lie.
+      if (!current || !ok) return false
+      // The running save wrote the text as it was when it started. If the user
+      // has not typed since, that IS this save — writing identical bytes again
+      // would only add a history snapshot.
+      if (!current.dirty) return true
+    }
+    const run = runSaveTab(id).finally(() => {
+      if (inFlightSaves.get(id) === run) inFlightSaves.delete(id)
+    })
+    inFlightSaves.set(id, run)
+    return run
+  }
+
+  async function runSaveTab(id: string): Promise<boolean> {
     const t = tabs.value.find((x) => x.id === id)
     if (!t || !vault.value) return false
+    // The vault a save commits to is decided when the write happens, which is
+    // several awaits after the user pressed the key. A vault switch in that
+    // window (the switch flushes what it can, but an autosave or a window-blur
+    // save is not part of that flush) used to land the OLD vault's note in the
+    // NEW vault: the user would find a note they never created, with someone
+    // else's content. Every write checks the vault it started in is still the
+    // vault it is writing to.
+    const vaultAtStart = vault.value
     let path = t.path
     if (!path) {
       // Untitled tab: an explicit save means "save as", not a silent no-op.
@@ -437,6 +489,11 @@ export const useTabsStore = defineStore('tabs', () => {
     if (t.pendingAssetPaths.length > 0) {
       await relocatePendingAssets(t, vault.value, path)
     }
+    // The flush and the asset relocation are both awaits, so the world can have
+    // changed under us. Writing now would put this note into a vault it does not
+    // belong to; leaving the tab dirty is the honest outcome (the user can save
+    // it again in whichever vault is open).
+    if (vault.value !== vaultAtStart) return false
     const editor = getActiveEditor()
     const contentAtStart = t.content
     const next = emitLifecycle('onSave', editor, t.content)
@@ -454,7 +511,7 @@ export const useTabsStore = defineStore('tabs', () => {
       // something optional around it was not. Most often "the previous version
       // could not be kept in history" — which the user has to hear about, because
       // the thing they trust for undo-after-the-fact is now missing.
-      const writeWarning = await fsService.write(vault.value, path, content, settings.maxHistory)
+      const writeWarning = await fsService.write(vaultAtStart, path, content, settings.maxHistory)
       if (writeWarning) notifyError(writeWarning)
       // The write round-trip is a window in which the user can keep typing.
       // Never clobber newer editor content with the captured text.
@@ -476,6 +533,11 @@ export const useTabsStore = defineStore('tabs', () => {
         t.savedContent = content
         t.dirty = false
       }
+      // The write did land in the right vault (guarded above), but the tab set
+      // may have been replaced wholesale while it was in flight — a vault
+      // switch removes every tab. Touching a removed tab is harmless, touching
+      // a REUSED id would not be, so the lifecycle event is skipped too.
+      if (vault.value !== vaultAtStart) return true
       emitLifecycle('onSaved', editor, content)
       // Screen-reader status: a save round-trip landed (dirty → saved).
       announce(i18nT('recovery.saved'))
@@ -590,16 +652,36 @@ export const useTabsStore = defineStore('tabs', () => {
     return gone
   }
 
-  async function reloadFromDisk(id: string): Promise<void> {
+  /**
+   * Adopt the file's current bytes.
+   *
+   * `explicit` says WHO asked. The conflict prompt's "use the disk version" is a
+   * user decision to throw local edits away, so it must win over everything; the
+   * automatic reload that follows an external change must not, because the read
+   * takes time and the user may start typing during it — assigning the disk text
+   * unconditionally threw those keystrokes away and cleared `dirty`, so the
+   * autosave that had already been scheduled found nothing to save and the text
+   * was gone with no copy anywhere.
+   *
+   * The vault is checked in both cases: the read is asynchronous, and a vault
+   * switch in that window must not land another vault's bytes in this tab.
+   */
+  async function reloadFromDisk(id: string, opts: { explicit?: boolean } = {}): Promise<void> {
     const t = tabs.value.find((x) => x.id === id)
     if (!t || !t.path || !vault.value) return
     cancelAutosave(id)
+    const contentAtStart = t.content
+    const path = t.path
+    const vaultAtStart = vault.value
     try {
-      t.content = await fsService.read(vault.value, t.path)
-      t.savedContent = t.content
+      const disk = await fsService.read(vaultAtStart, path)
+      if (vault.value !== vaultAtStart || !tabs.value.includes(t)) return
+      if (!opts.explicit && (t.content !== contentAtStart || t.dirty)) return
+      t.content = disk
+      t.savedContent = disk
       t.dirty = false
     } catch {
-      notifyError(i18nT('tabs.reloadFailed', { path: t.path }))
+      notifyError(i18nT('tabs.reloadFailed', { path }))
     }
   }
 

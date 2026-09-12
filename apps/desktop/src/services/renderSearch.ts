@@ -74,7 +74,20 @@ function findRangesInterior(
   caseSensitive: boolean,
 ): FindRange[] {
   if (!query) return []
-  const re = new RegExp(escapeRegExp(query), caseSensitive ? 'g' : 'gi')
+  // A very long query makes V8 reject the pattern outright ("Regular expression
+  // too large"), and that SyntaxError escaped out of the input handler: the
+  // panel stopped updating, kept the PREVIOUS query's ranges, and "Replace all"
+  // then replaced matches of a search the user had already replaced. Escaping
+  // the metacharacters does not help — the limit is on the pattern's length.
+  // A plain scan is the honest fallback: no match can span a text node, so
+  // `indexOf` finds exactly what the regex would.
+  if (query.length > MAX_QUERY_LENGTH) return findRangesByScan(state, query, caseSensitive)
+  let re: RegExp
+  try {
+    re = new RegExp(escapeRegExp(query), caseSensitive ? 'g' : 'gi')
+  } catch {
+    return findRangesByScan(state, query, caseSensitive)
+  }
   const ranges: FindRange[] = []
   state.doc.descendants((node, pos) => {
     if (!node.isText || !node.text) return
@@ -85,6 +98,31 @@ function findRangesInterior(
       const to = from + match[0].length
       ranges.push({ from, to })
       if (match[0].length === 0) re.lastIndex += 1
+    }
+  })
+  return ranges
+}
+
+/** Longest query matched with a regex; longer ones are scanned literally.
+ *  Well above any realistic search term and far below V8's pattern limit. */
+const MAX_QUERY_LENGTH = 4096
+
+/** Literal substring scan with the same semantics as the regex path
+ *  (per text node, all occurrences, `caseSensitive` respected). */
+function findRangesByScan(
+  state: EditorState,
+  query: string,
+  caseSensitive: boolean,
+): FindRange[] {
+  const needle = caseSensitive ? query : query.toLowerCase()
+  const ranges: FindRange[] = []
+  state.doc.descendants((node, pos) => {
+    if (!node.isText || !node.text) return
+    const haystack = caseSensitive ? node.text : node.text.toLowerCase()
+    let index = haystack.indexOf(needle)
+    while (index !== -1) {
+      ranges.push({ from: pos + index, to: pos + index + needle.length })
+      index = haystack.indexOf(needle, index + needle.length)
     }
   })
   return ranges
@@ -310,12 +348,55 @@ export function moveActive(direction: 1 | -1): void {
   if (range) scrollRangeIntoView(view, range)
 }
 
+/**
+ * The ranges that still describe THIS document.
+ *
+ * `renderSearchState.ranges` is a cache refreshed on a debounce, and the
+ * document can be replaced wholesale in between (switching notes, an external
+ * reload). The replace actions trusted it: replacing in note B used note A's
+ * offsets, so unrelated text in the new note was overwritten — and the note was
+ * autosaved — and a shorter document threw an uncaught `RangeError` from
+ * `tr.insertText`, which looked like the button doing nothing.
+ *
+ * A range is kept only when it lies inside the document, still contains the
+ * queried text, and does not overlap a range already accepted (overlaps cannot
+ * come from a fresh scan, so they mean the cache is stale).
+ */
+function validRanges(view: EditorView, ranges: FindRange[], query: string): FindRange[] {
+  if (!query) return []
+  const size = view.state.doc.content.size
+  const kept: FindRange[] = []
+  for (const range of ranges) {
+    if (range.from < 0 || range.to > size || range.from >= range.to) continue
+    if (range.to > view.state.doc.content.size) continue
+    let text: string
+    try {
+      text = view.state.doc.textBetween(range.from, range.to)
+    } catch {
+      continue
+    }
+    if (text.toLowerCase() !== query.toLowerCase()) continue
+    if (kept.length > 0 && kept[kept.length - 1].to > range.from) continue
+    kept.push(range)
+  }
+  return kept
+}
+
 export function replaceCurrent(): void {
   const view = getView()
   if (!view) return
-  const { ranges, active, replace } = renderSearchState
-  const range = ranges[active]
-  if (!range) return
+  const { active, replace, query } = renderSearchState
+  const ranges = validRanges(view, renderSearchState.ranges, query)
+  if (ranges.length !== renderSearchState.ranges.length) {
+    // The cache did not describe this document: rescan rather than rewrite at
+    // positions that mean something else here.
+    renderSearchState.ranges = ranges
+  }
+  const range = ranges[Math.min(active, ranges.length - 1)]
+  if (!range) {
+    refreshOverlays()
+    return
+  }
   view.dispatch(view.state.tr.insertText(replace, range.from, range.to))
   refreshOverlays()
 }
@@ -323,8 +404,14 @@ export function replaceCurrent(): void {
 export function replaceAll(): void {
   const view = getView()
   if (!view) return
-  const { ranges, replace } = renderSearchState
-  if (!ranges.length) return
+  const { replace, query } = renderSearchState
+  const ranges = validRanges(view, renderSearchState.ranges, query)
+  if (!ranges.length) {
+    renderSearchState.ranges = []
+    renderSearchState.active = 0
+    refreshOverlays()
+    return
+  }
   const tr = view.state.tr
   // Apply back-to-front so earlier positions stay valid as the doc shifts.
   for (let i = ranges.length - 1; i >= 0; i--) {

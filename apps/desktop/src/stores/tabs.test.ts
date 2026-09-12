@@ -1062,3 +1062,131 @@ describe('closeAll never silently discards unsaved work', () => {
     off()
   })
 })
+
+describe('overlapping saves and vault switches', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    resetFsMocks()
+  })
+
+  it('writes once when the same tab is saved twice in a row', async () => {
+    // Ctrl+S twice (or autosave firing during a manual save) must be one write,
+    // not two: the second would add a history snapshot of an identical edit, and
+    // whichever finished LAST used to win the tab state — so a save that started
+    // earlier and finished later left savedContent pointing at older text while
+    // the tab showed "saved".
+    readMock.mockResolvedValue('start')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    s.markDirty(s.activeId!)
+    let release: () => void = () => {}
+    writeMock.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve
+        }),
+    )
+
+    const first = s.saveTab(s.activeId!)
+    const second = s.saveTab(s.activeId!)
+    await vi.waitFor(() => expect(writeMock).toHaveBeenCalledTimes(1))
+    release()
+    await expect(first).resolves.toBe(true)
+    await expect(second).resolves.toBe(true)
+
+    expect(writeMock).toHaveBeenCalledTimes(1)
+    expect(s.tabs[0].dirty).toBe(false)
+    expect(s.tabs[0].savedContent).toBe('start')
+  })
+
+  it('writes again when the user typed while the first save was in flight', async () => {
+    readMock.mockResolvedValue('start')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    s.markDirty(s.activeId!)
+    let releaseFirst: () => void = () => {}
+    writeMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseFirst = resolve
+        }),
+    )
+    writeMock.mockResolvedValue(undefined)
+
+    const first = s.saveTab(s.activeId!)
+    await vi.waitFor(() => expect(writeMock).toHaveBeenCalledTimes(1))
+    s.tabs[0].content = 'typed during the save'
+    s.markDirty(s.activeId!)
+    const second = s.saveTab(s.activeId!)
+    releaseFirst()
+    await first
+    await second
+
+    expect(writeMock).toHaveBeenCalledTimes(2)
+    expect(writeMock.mock.calls[1][2]).toBe('typed during the save')
+    expect(s.tabs[0].dirty).toBe(false)
+    expect(s.tabs[0].savedContent).toBe('typed during the save')
+  })
+
+  it('never writes the old vault content into the new vault', async () => {
+    // A save is several awaits long. Switching vaults mid-save used to land the
+    // old vault's note at the new vault's root: the user would find a note they
+    // never created, containing another vault's text.
+    readMock.mockResolvedValue('old vault text')
+    const s = useTabsStore()
+    s.setVault('/v1')
+    await s.openTab('/v1/notes/a.md')
+    s.markDirty(s.activeId!)
+    let releaseFlush: () => void = () => {}
+    setSourceViewHandle({
+      getView: () => null,
+      flush: () =>
+        new Promise<void>((resolve) => {
+          releaseFlush = resolve
+        }),
+    })
+    writeMock.mockResolvedValue(undefined)
+
+    const saving = s.saveTab(s.activeId!)
+    await vi.waitFor(() => expect(releaseFlush).toBeDefined())
+    // The switch: the same order applyVault uses.
+    s.removeAllTabs()
+    s.setVault('/v2')
+    releaseFlush()
+
+    await expect(saving).resolves.toBe(false)
+    expect(writeMock).not.toHaveBeenCalled()
+  })
+
+  it('does not throw away keystrokes typed while an external reload is reading', async () => {
+    readMock.mockResolvedValueOnce('start')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    // The read is started by hand so the sequence is explicit: the tab must NOT
+    // be dirty when it begins (that is the situation the reload is for — a clean
+    // tab whose file changed externally), and the typing happens mid-read.
+    let releaseRead: (text: string) => void = () => {}
+    let started: () => void = () => {}
+    const reading = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    readMock.mockImplementationOnce(async () => {
+      started()
+      return await new Promise<string>((resolve) => {
+        releaseRead = resolve
+      })
+    })
+    const reloading = s.reloadFromDisk(s.activeId!)
+    await reading
+    s.tabs[0].content = 'typed while the disk was being read'
+    s.markDirty(s.activeId!)
+    releaseRead('disk text from another program')
+    await reloading
+
+    expect(s.tabs[0].content).toBe('typed while the disk was being read')
+    expect(s.tabs[0].dirty).toBe(true)
+  })
+})
