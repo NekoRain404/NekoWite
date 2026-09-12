@@ -69,7 +69,10 @@ export interface FsPort {
   registerVault(vault: string): Promise<void>
   read(vault: string, path: string): Promise<string>
   stat(vault: string, path: string): Promise<FileStat>
-  write(vault: string, path: string, content: string, maxHistory?: number): Promise<void>
+  /** Resolves to a user-facing WARNING when the write itself succeeded but
+   *  something optional failed (e.g. the history snapshot) — `null` when
+   *  everything worked. A rejected promise always means nothing was written. */
+  write(vault: string, path: string, content: string, maxHistory?: number): Promise<string | null>
   list(vault: string, dir: string): Promise<FileEntry[]>
   searchNotes(vault: string, query: string): Promise<FileEntry[]>
   watch(vault: string): Promise<void>

@@ -218,6 +218,18 @@ pub fn snapshot_history(vault_root: &str, path: &str, old_content: &str, max: us
             match std::fs::hard_link(&tmp, &candidate) {
                 Ok(()) => return Ok(candidate),
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => n += 1,
+                // Not every filesystem can hard-link: FAT32 and exFAT (USB
+                // sticks, SD cards) return ERROR_INVALID_FUNCTION, and a vault on
+                // such a volume would otherwise never be able to save an existing
+                // note — the snapshot is what this link was for, not the write
+                // itself. Copy the staged bytes to the same name instead: the
+                // staging file already holds the complete snapshot, so the copy
+                // only needs to land atomically, which `create_new` gives us.
+                Err(e) if is_link_unsupported(&e) => match copy_new(&tmp, &candidate) {
+                    Ok(()) => return Ok(candidate),
+                    Err(e) if e.kind() == io::ErrorKind::AlreadyExists => n += 1,
+                    Err(e) => return Err(e.to_string()),
+                },
                 Err(e) => return Err(e.to_string()),
             }
         }
@@ -233,6 +245,29 @@ pub fn snapshot_history(vault_root: &str, path: &str, old_content: &str, max: us
             Err(e)
         }
     }
+}
+
+/// True when the error means "this filesystem cannot do that", the shape
+/// Windows reports for `CreateHardLinkW` on FAT/exFAT (`ERROR_INVALID_FUNCTION`)
+/// and the one Linux reports for filesystems that do not implement links.
+fn is_link_unsupported(e: &io::Error) -> bool {
+    matches!(
+        e.kind(),
+        io::ErrorKind::Unsupported | io::ErrorKind::InvalidInput
+    ) || e.raw_os_error() == Some(1) // EPERM on some network shares
+}
+
+/// Copy `from` to `to`, refusing an existing `to` and never exposing a partial
+/// file under the destination name.
+fn copy_new(from: &Path, to: &Path) -> io::Result<()> {
+    let mut src = std::fs::File::open(from)?;
+    let mut dst = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(to)?;
+    io::copy(&mut src, &mut dst)?;
+    dst.sync_all()?;
+    Ok(())
 }
 
 /// Keep only the `max` newest snapshot files (by modified time) in `dir`.
@@ -314,6 +349,10 @@ pub fn cleanup_stale_tmp(dir: &Path, max_age: Duration) -> Result<usize, String>
 /// Write `content` to `path` under the vault, snapshotting the previous
 /// content first (when it exists, differs, and is non-empty).
 ///
+/// Returns `Ok(None)` when everything succeeded and `Ok(Some(warning))` when the
+/// text was written but the history snapshot was not — never an error for a
+/// failure of the optional part.
+///
 /// `max_history` caps how many snapshots are kept (default 10 when `None`).
 /// `Option<u32>` keeps the command compatible with the current frontend, which
 /// invokes `write_file` with only `{ vault_root, path, content }`; Tauri maps a
@@ -328,7 +367,7 @@ pub fn write_file(
     path: &str,
     content: &str,
     max_history: Option<u32>,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     // Serialize the whole read-snapshot-write sequence. `write_file` does no
     // `.await`, so the guard never crosses a yield point and cannot deadlock
     // the async executor; it just windows two concurrent saves apart.
@@ -352,13 +391,26 @@ pub fn write_file(
     } else {
         None
     };
+    // The snapshot is best-effort: it is a convenience the user asked for
+    // implicitly, while the write is the thing they explicitly asked for. A
+    // history failure (unwritable history dir, full disk, quota) used to abort
+    // the save with a bare OS error, which meant an existing note could not be
+    // edited at all until the unrelated problem was fixed. Report it instead, and
+    // report it in a form the caller can show: `Ok(Some(warning))` means "your
+    // text was written, and this other thing failed".
+    let mut warning = None;
     if let Some(old_content) = old {
         if !old_content.is_empty() && old_content != content {
             let max = max_history.map_or(DEFAULT_MAX_HISTORY, |m| m as usize);
-            snapshot_history(vault_root, path, &old_content, max)?;
+            if let Err(e) = snapshot_history(vault_root, path, &old_content, max) {
+                warning = Some(format!(
+                    "Saved, but the previous version could not be kept in history: {e}"
+                ));
+            }
         }
     }
-    atomic_write(&resolved, content)
+    atomic_write(&resolved, content)?;
+    Ok(warning)
 }
 
 /// List the history snapshots for `path`, newest first.
