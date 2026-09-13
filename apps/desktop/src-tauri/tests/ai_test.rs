@@ -1,7 +1,10 @@
 use nekowite_lib::providers::ai::client::{
-    ai_id_for, build_prompt, default_base_url, error_detail_from_body, http_error_message,
-    http_error_message_with_detail, next_ai_id, normalize_reasoning_effort, parse_model_ids,
-    parse_sse_event, parse_sse_line, resolve_endpoint, AIConfig, SseBuffer,
+    ai_id_for, build_prompt, default_base_url, encode_request_body, error_detail_from_body,
+    http_error_message, http_error_message_with_detail, list_models, next_ai_id,
+    normalize_reasoning_effort, parse_model_ids, parse_sse_event, parse_sse_line, resolve_endpoint,
+    validate_base_url, validate_request_inputs, AIConfig, CompletionStream, SseBuffer, StreamEvent,
+    TokenUsage, MAX_ANSWER_BYTES, MAX_IMAGES_PER_REQUEST, MAX_IMAGE_DATA_URL_BYTES,
+    MAX_MODELS_RESPONSE_BYTES, MAX_PROMPT_BYTES, MAX_REQUEST_BODY_BYTES, MAX_SSE_LINE_BYTES,
 };
 
 #[test]
@@ -178,15 +181,19 @@ fn sse_reassembles_fragmented_chunk() {
     let mut acc = String::new();
 
     // network chunk 1 splits the data: line mid-JSON
-    let lines = buf.feed(r#"data: {"choices":[{"delta":{"content":"Hel"#.as_bytes());
+    let lines = buf
+        .feed(r#"data: {"choices":[{"delta":{"content":"Hel"#.as_bytes())
+        .expect("under the ceiling");
     assert!(lines.is_empty(), "partial line must stay buffered");
 
     // chunk 2 completes the JSON but not the newline
-    let lines = buf.feed(r#"lo"}}]}"#.as_bytes());
+    let lines = buf
+        .feed(r#"lo"}}]}"#.as_bytes())
+        .expect("under the ceiling");
     assert!(lines.is_empty(), "line incomplete until newline arrives");
 
     // chunk 3 terminates the line
-    let lines = buf.feed(b"\n");
+    let lines = buf.feed(b"\n").expect("under the ceiling");
     assert_eq!(lines.len(), 1);
     assert_eq!(
         lines[0],
@@ -202,11 +209,13 @@ fn sse_reassembles_fragmented_chunk() {
 fn sse_buffer_returns_multiple_complete_lines() {
     let mut buf = SseBuffer::new();
     let mut acc = String::new();
-    let lines = buf.feed(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\
+    let lines = buf
+        .feed(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\
          data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n"
-            .as_bytes(),
-    );
+                .as_bytes(),
+        )
+        .expect("under the ceiling");
     assert_eq!(lines.len(), 2);
     let mut out = String::new();
     for line in &lines {
@@ -240,10 +249,10 @@ fn sse_buffer_preserves_cjk_split_across_chunks() {
     let mut buf = SseBuffer::new();
     let mut acc = String::new();
 
-    let lines = buf.feed(head);
+    let lines = buf.feed(head).expect("under the ceiling");
     assert!(lines.is_empty(), "partial bytes must stay buffered");
 
-    let lines = buf.feed(tail);
+    let lines = buf.feed(tail).expect("under the ceiling");
     assert_eq!(lines.len(), 1);
     assert_eq!(lines[0], line, "reassembled line must be byte-identical");
 
@@ -258,7 +267,9 @@ fn sse_buffer_flush_drains_trailing_line_without_newline() {
     let mut acc = String::new();
 
     // A final event the server never terminates with a newline.
-    let lines = buf.feed(r#"data: {"choices":[{"delta":{"content":"end"}}]}"#.as_bytes());
+    let lines = buf
+        .feed(r#"data: {"choices":[{"delta":{"content":"end"}}]}"#.as_bytes())
+        .expect("under the ceiling");
     assert!(lines.is_empty(), "no newline yet, nothing complete");
 
     let lines = buf.flush();
@@ -1118,4 +1129,400 @@ fn http_error_includes_the_provider_detail() {
     // A wall of text is capped so it cannot fill the toast.
     let capped = http_error_message_with_detail(500, Some(&"x".repeat(5000)));
     assert!(capped.chars().count() < 700);
+}
+
+// --- P1 网络安全：HTTPS / localhost URL 策略 --------------------------------
+//
+// Roadmap rule: a Base URL that is not local must be HTTPS, so an API key can
+// never travel to a public endpoint in the clear. HTTP stays available for the
+// local-development addresses the product explicitly supports (Ollama / LM
+// Studio on localhost), and for a private/LAN endpoint the user deliberately
+// opted into with `allow_private`.
+
+fn base_cfg(base: &str, allow_private: bool) -> AIConfig {
+    AIConfig {
+        provider: "openai".into(),
+        model: "m".into(),
+        base_url: Some(base.into()),
+        api_key: Some("SECRET-SESSION-KEY".into()),
+        allow_private,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_plaintext_public_base_url_is_rejected() {
+    // Both spellings of "public" are refused: a literal address and a name.
+    // (The names here are never resolved - the scheme rule is decided first, so
+    // this test needs no DNS.)
+    for base in [
+        "http://203.0.113.9:8000/v1",
+        "http://api.openai.com/v1",
+        "http://tokenflux.dev/v1",
+        "http://8.8.8.8/v1",
+    ] {
+        let err = validate_base_url(&base_cfg(base, false))
+            .err()
+            .unwrap_or_else(|| panic!("{base} must be refused: plain HTTP to a public host"));
+        assert!(
+            err.contains("https://"),
+            "{base} must say what to use instead: {err}"
+        );
+    }
+}
+
+#[test]
+fn the_same_public_base_is_accepted_over_https() {
+    // The fix must not become "refuse everything public": the rule is HTTPS,
+    // not a ban. A literal address keeps this test off DNS.
+    assert!(validate_base_url(&base_cfg("https://203.0.113.9:8000/v1", false)).is_ok());
+}
+
+#[test]
+fn localhost_http_stays_usable_for_a_local_model() {
+    for base in [
+        "http://localhost:11434/v1",
+        "http://127.0.0.1:11434/v1",
+        "http://[::1]:8080/v1",
+    ] {
+        assert!(
+            validate_base_url(&base_cfg(base, true)).is_ok(),
+            "{base} must stay usable: that is what allow_private is for"
+        );
+    }
+}
+
+#[test]
+fn allow_private_does_not_opt_out_of_https_for_public_hosts() {
+    // `allow_private` exists to reach a local model server. It must not double
+    // as "send my key to any host in the clear": the flag is about REACHING a
+    // private address, not about dropping transport security on the public
+    // internet.
+    for base in ["http://example.com/v1", "http://api.openai.com/v1"] {
+        assert!(
+            validate_base_url(&base_cfg(base, true)).is_err(),
+            "{base} must still be refused with allow_private"
+        );
+    }
+    // HTTPS to a public host remains the user's own call under the opt-in.
+    assert!(validate_base_url(&base_cfg("https://example.com/v1", true)).is_ok());
+}
+
+#[test]
+fn a_lan_address_the_user_opted_into_may_still_use_http() {
+    // Ollama on another box on the home network is the documented use case for
+    // the setting, and that box speaks plain HTTP.
+    for base in ["http://192.168.1.5:11434", "http://10.0.0.5:8000/v1"] {
+        assert!(
+            validate_base_url(&base_cfg(base, true)).is_ok(),
+            "{base} is what 允许本地/内网地址 means"
+        );
+    }
+}
+
+#[test]
+fn allow_private_does_not_accept_a_garbage_scheme() {
+    // The opt-in skips the SSRF check, not the URL policy: a scheme the client
+    // cannot even speak must still be refused up front.
+    for base in ["file:///etc/passwd", "ftp://example.com", "not a url"] {
+        assert!(
+            validate_base_url(&base_cfg(base, true)).is_err(),
+            "{base} must be refused"
+        );
+    }
+}
+
+// --- P1 AI 输入输出限制：模型列表响应 ---------------------------------------
+//
+// One loopback server, one request: the response is the attacker's bytes, and
+// the read must stop at a ceiling instead of trusting `Content-Length` or
+// buffering whatever arrives.
+
+/// Serve `body` once on a loopback port and hand back the Base URL and the
+/// server task.
+///
+/// `content_length: Some(n)` sends an honest `Content-Length: n`; `None` sends
+/// the body with chunked transfer-encoding, so the client sees NO length up
+/// front and has to bound the read as it goes - the two paths the reader has to
+/// defend separately.
+async fn serve_once(
+    body: &str,
+    content_length: Option<usize>,
+) -> (String, tokio::task::JoinHandle<()>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind a loopback port");
+    let addr = listener.local_addr().expect("local addr");
+    let response = match content_length {
+        Some(len) => {
+            let mut out = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n"
+            );
+            out.push_str(body);
+            out.into_bytes()
+        }
+        None => {
+            let mut out = String::from(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+            );
+            for part in body.as_bytes().chunks(64 * 1024) {
+                out.push_str(&format!("{:x}\r\n", part.len()));
+                out.push_str(&String::from_utf8_lossy(part));
+                out.push_str("\r\n");
+            }
+            out.push_str("0\r\n\r\n");
+            out.into_bytes()
+        }
+    };
+    let server = tokio::spawn(async move {
+        while let Ok((mut sock, _)) = listener.accept().await {
+            let response = response.clone();
+            tokio::spawn(async move {
+                let mut buf = [0u8; 2048];
+                let _ = sock.read(&mut buf).await;
+                let _ = sock.write_all(&response).await;
+                let _ = sock.shutdown().await;
+            });
+        }
+    });
+    (format!("http://127.0.0.1:{}", addr.port()), server)
+}
+
+/// A models payload that exceeds `MAX_MODELS_RESPONSE_BYTES` while staying
+/// VALID JSON - so a reader without a ceiling parses it happily and hands the
+/// list back, and only a reader that bounds the read refuses it.
+fn oversized_models_body() -> String {
+    let filler = "x".repeat(MAX_MODELS_RESPONSE_BYTES + 1);
+    format!(r#"{{"data":[{{"id":"a"}}],"filler":"{filler}"}}"#)
+}
+
+#[tokio::test]
+async fn an_oversized_model_list_response_is_refused() {
+    let (base, server) = serve_once(&oversized_models_body(), None).await;
+    let cfg = base_cfg(&base, true);
+    let result = list_models(&cfg).await;
+    let err = result.err().unwrap_or_else(|| {
+        panic!("a response past the ceiling must be refused, not parsed");
+    });
+    assert!(
+        err.contains("过大"),
+        "the error must name the size limit, got: {err}"
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_declared_oversized_model_list_response_is_refused_without_reading_it() {
+    // A chunked response carries no length, but an honest one does: the reader
+    // must refuse it before buffering a byte rather than reading the body and
+    // checking afterwards.
+    let body = r#"{"data":[{"id":"a"}]}"#;
+    let (base, server) = serve_once(body, Some(MAX_MODELS_RESPONSE_BYTES + 1)).await;
+    let cfg = base_cfg(&base, true);
+    let err = list_models(&cfg).await.expect_err("oversized body");
+    assert!(err.contains("过大"), "got: {err}");
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_normal_model_list_response_still_works() {
+    // The ceiling must not break the happy path it is drawn around.
+    let (base, server) = serve_once(r#"{"data":[{"id":"b"},{"id":"a"}]}"#, None).await;
+    let cfg = base_cfg(&base, true);
+    let ids = list_models(&cfg).await.expect("a small list parses");
+    assert_eq!(ids, vec!["a", "b"]);
+    server.abort();
+}
+
+// --- P1 AI 输入输出限制：请求侧 ---------------------------------------------
+//
+// The ceilings are enforced at the Rust boundary because the renderer's own
+// checks are a courtesy: `ai_complete` is an IPC command, and anything that can
+// invoke it can send any prompt, any number of images and any image size.
+
+#[test]
+fn an_oversized_prompt_is_refused() {
+    // The limit itself is usable; one byte past it is not.
+    assert!(validate_request_inputs(&"a".repeat(MAX_PROMPT_BYTES), &[]).is_ok());
+    let err = validate_request_inputs(&"a".repeat(MAX_PROMPT_BYTES + 1), &[])
+        .expect_err("a prompt past the ceiling must be refused");
+    assert!(err.contains("过长"), "got: {err}");
+    assert!(
+        err.contains(&MAX_PROMPT_BYTES.to_string()),
+        "the error must name the ceiling: {err}"
+    );
+}
+
+#[test]
+fn the_prompt_ceiling_counts_bytes_not_characters() {
+    // A CJK prompt is 3 bytes per character, so a character count is not a size
+    // count: the note context the renderer measures in characters has to be
+    // measured in bytes where it arrives.
+    let cjk = "字".repeat(MAX_PROMPT_BYTES / 3 + 1);
+    assert!(cjk.chars().count() < MAX_PROMPT_BYTES, "chars would pass");
+    assert!(validate_request_inputs(&cjk, &[]).is_err());
+}
+
+#[test]
+fn too_many_images_are_refused() {
+    let img = || serde_json::json!("data:image/png;base64,AAA");
+    let at_limit: Vec<_> = (0..MAX_IMAGES_PER_REQUEST).map(|_| img()).collect();
+    assert!(validate_request_inputs("hi", &at_limit).is_ok());
+    let over: Vec<_> = (0..MAX_IMAGES_PER_REQUEST + 1).map(|_| img()).collect();
+    let err =
+        validate_request_inputs("hi", &over).expect_err("a count past the ceiling must be refused");
+    assert!(err.contains(&MAX_IMAGES_PER_REQUEST.to_string()), "{err}");
+}
+
+#[test]
+fn an_oversized_image_is_refused() {
+    let payload = |bytes: usize| {
+        serde_json::json!(format!(
+            "data:image/png;base64,{}",
+            "A".repeat(bytes.saturating_sub("data:image/png;base64,".len()))
+        ))
+    };
+    assert!(validate_request_inputs("hi", &[payload(MAX_IMAGE_DATA_URL_BYTES)]).is_ok());
+    let err = validate_request_inputs("hi", &[payload(MAX_IMAGE_DATA_URL_BYTES + 1)])
+        .expect_err("an image past the ceiling must be refused");
+    assert!(err.contains("图片"), "got: {err}");
+    assert!(err.contains(&MAX_IMAGE_DATA_URL_BYTES.to_string()), "{err}");
+}
+
+#[test]
+fn an_oversized_request_body_is_refused() {
+    let body = serde_json::json!({ "data": "x".repeat(MAX_REQUEST_BODY_BYTES + 1) });
+    let err = encode_request_body(&body).expect_err("a body past the ceiling must be refused");
+    assert!(err.contains("过大"), "got: {err}");
+    assert!(err.contains(&MAX_REQUEST_BODY_BYTES.to_string()), "{err}");
+
+    // ...and the largest body the app can legitimately build still fits, so the
+    // ceiling cannot be what refuses a real request.
+    let fit = serde_json::json!({ "data": "x".repeat(MAX_REQUEST_BODY_BYTES - 64) });
+    assert!(encode_request_body(&fit).is_ok());
+}
+
+// --- P1 AI 输入输出限制：流式响应侧 -----------------------------------------
+//
+// `CompletionStream` is the streaming loop without the socket and without the
+// Tauri emit, so the size policy on the RESPONSE side (frame reassembly, the
+// accumulated answer) is testable here instead of only being visible in code
+// that needs a running app.
+
+#[test]
+fn a_frame_past_the_reassembly_ceiling_is_refused() {
+    let mut stream = CompletionStream::new("openai");
+    // A peer that never sends a newline used to grow the reassembly buffer
+    // without bound: 1 MiB of unterminated "frame" is already far past any real
+    // event, and the error has to say so instead of buffering it.
+    let err = stream
+        .feed(&vec![b'x'; MAX_SSE_LINE_BYTES + 1])
+        .expect_err("an unterminated frame past the ceiling must be refused");
+    assert!(err.contains("过大"), "got: {err}");
+    assert!(err.contains(&MAX_SSE_LINE_BYTES.to_string()), "{err}");
+}
+
+#[test]
+fn a_frame_at_the_reassembly_ceiling_is_still_accepted() {
+    // The boundary: exactly the ceiling (newline included) is a legal frame, so
+    // the check cannot be off by one in the direction that breaks a provider.
+    let mut stream = CompletionStream::new("openai");
+    let mut frame = vec![b'x'; MAX_SSE_LINE_BYTES - 1];
+    frame.push(b'\n');
+    // Not a valid event, but it must not be refused for its SIZE.
+    assert!(stream.feed(&frame).is_ok());
+}
+
+#[test]
+fn an_over_long_answer_is_refused_instead_of_accumulating() {
+    let piece = "a".repeat(64 * 1024);
+    let frame = format!("data: {{\"choices\":[{{\"delta\":{{\"content\":\"{piece}\"}}}}]}}\n");
+    let mut stream = CompletionStream::new("openai");
+    let mut refusal = None;
+    for _ in 0..(MAX_ANSWER_BYTES / piece.len() + 2) {
+        if let Err(e) = stream.feed(frame.as_bytes()) {
+            refusal = Some(e);
+            break;
+        }
+    }
+    let err = refusal.expect("an answer past the ceiling must be refused");
+    assert!(err.contains("过长"), "got: {err}");
+    // Bounded overshoot: the ceiling is checked per frame, so the answer can
+    // only exceed it by the frame that crossed it - never without bound.
+    assert!(stream.answer().len() <= MAX_ANSWER_BYTES + piece.len() + 1024);
+}
+
+#[test]
+fn a_normal_stream_folds_text_reasoning_usage_and_done() {
+    let mut stream = CompletionStream::new("deepseek");
+    let events = stream.feed(
+        concat!(
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking\"}}]}\n",
+            "\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1,\"total_tokens\":4}}\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n",
+            "data: [DONE]\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"after done\"}}]}\n",
+        )
+        .as_bytes(),
+    )
+    .expect("no ceiling is crossed here");
+
+    assert_eq!(
+        events,
+        vec![
+            StreamEvent::Reasoning("thinking".into()),
+            StreamEvent::Text("Hi".into()),
+            StreamEvent::Done,
+        ],
+        "the frame after [DONE] must not be folded into the answer"
+    );
+    assert_eq!(
+        stream.answer(),
+        "Hi",
+        "reasoning is never part of the answer"
+    );
+    assert_eq!(stream.finish_reason(), Some("stop"));
+    assert!(stream.saw_reasoning());
+    assert_eq!(
+        stream.usage(),
+        Some(TokenUsage {
+            prompt_tokens: Some(3),
+            completion_tokens: Some(1),
+            total_tokens: Some(4),
+        })
+    );
+}
+
+#[test]
+fn an_in_band_error_frame_is_reported_as_an_event() {
+    // A 200 response that carries an error event: the caller has to see it and
+    // stop, or a truncated answer is accepted as a complete one.
+    let mut stream = CompletionStream::new("openai");
+    let events = stream
+        .feed(b"data: {\"error\":{\"message\":\"rate limit exceeded\"}}\n")
+        .expect("an in-band error is not a size violation");
+    assert_eq!(
+        events,
+        vec![StreamEvent::ProviderError(
+            "rate limit exceeded".to_string()
+        )]
+    );
+}
+
+#[test]
+fn a_trailing_frame_without_a_newline_is_flushed_at_the_end() {
+    let mut stream = CompletionStream::new("openai");
+    assert!(stream
+        .feed(b"data: {\"choices\":[{\"delta\":{\"content\":\"end\"}}]}")
+        .expect("no newline yet")
+        .is_empty());
+    assert_eq!(
+        stream.finish().expect("the tail is under the ceiling"),
+        vec![StreamEvent::Text("end".into())]
+    );
+    assert_eq!(stream.answer(), "end");
 }
