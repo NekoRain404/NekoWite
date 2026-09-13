@@ -2,114 +2,121 @@
 
 > 把 Markdown / MDX 的可控性，带回像 Word 一样自然的写作体验。
 
+A local-first desktop knowledge base: WYSIWYG writing, files that stay plain Markdown.
+
+本地优先的开源桌面知识库：在所见即所得里写作，文件仍是你自己的 Markdown。
+
+[![CI](https://github.com/NekoRain404/NekoWite/actions/workflows/ci.yml/badge.svg)](https://github.com/NekoRain404/NekoWite/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-1f6feb?logo=opensourceinitiative&logoColor=white)](LICENSE)
 [![Tauri v2](https://img.shields.io/badge/Tauri-v2-24c8db?logo=tauri&logoColor=white)](https://tauri.app/)
 [![Vue 3](https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white)](https://vuejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Status](https://img.shields.io/badge/status-active%20development-f59e0b)](#项目状态)
 
-NekoWite 是一个面向写作者、研究者和知识工作者的开源桌面编辑器。它让你在熟悉的所见即所得界面里写作，同时保留 Markdown、MDX、数学公式、引用和可扩展组件的长期可维护性。
-
-**[快速开始](#快速开始)** · **[核心能力](#核心能力)** · **[插件开发](#插件开发)** · **[安全边界](#安全边界)**
+**[功能](#核心能力)** · **[使用](#使用)** · **[从源码运行](#从源码运行)** · **[文档](#文档)** · **[贡献](#参与贡献)** · **[许可证](#许可证)**
 
 ![NekoWite 编辑器界面](docs/assets/nekowite-editor.png)
 
 ## 为什么是 NekoWite
 
-- **写作时专注内容**：默认使用所见即所得编辑，源码、渲染和对照视图随时切换。
-- **文件始终可控**：文档落在自己的 vault 中，保留 YAML frontmatter，并支持外部编辑热重载。
-- **复杂内容也能顺手写**：表格、数学公式、引用和 MDX 组件都可以在同一份文档里协作。
-- **从编辑到发布**：支持 PDF / HTML 导出，也可以用 AI 辅助起草、改写和延展内容。
+- **写作时看成稿**：默认所见即所得，随时切到源码或左右对照。
+- **文件始终是你的**：知识库就是一个普通文件夹，带 YAML frontmatter，可被 Git 和其它编辑器使用；外部改动会热重载。
+- **复杂内容不必绕路**：表格、数学公式、参考文献和 MDX 组件写在同一份文档里。
+- **写完就能发出去**：导出渲染后的 PDF / HTML；需要时用自己的 API Key 接 AI 起草、改写和续写。
 
 ## 核心能力
 
 | 场景 | 你可以做什么 |
 | --- | --- |
-| **专注写作** | 多标签、文件树、搜索、三态视图、状态栏，以及接近桌面文字处理器的编辑体验 |
-| **结构化内容** | Markdown / MDX 往返保真、YAML frontmatter、表格网格编辑、自定义 JSX / MDX 节点 |
-| **研究与引用** | 导入 `.bib`、`.ris`、CSL 数据，在侧栏管理 `@citekey` 并自动编号 |
-| **公式与发布** | MathLive 可视化公式编辑，支持 `$…$` / `$$…$$`，导出渲染后的 PDF 与 HTML |
-| **AI 辅助** | BYOK 连接 OpenAI、Claude、Gemini、Grok、DeepSeek，或本地 LM Studio / Ollama 等 OpenAI 兼容端点，使用 ghost-writer 快速生成草稿 |
-| **个人工作流** | 文档信息、历史版本、回收站、浮动图片 / 文本框 / 贴纸，以及主题设置 |
+| **专注写作** | 多标签、文件树、全文搜索、三态视图、命令面板 |
+| **结构化内容** | Markdown / MDX 往返保真、YAML frontmatter、表格网格、Callout / FloatBox |
+| **研究与引用** | 导入 `.bib`、`.ris`、CSL，侧栏管理 `@citekey` 并自动编号 |
+| **公式与发布** | MathLive 可视化编辑 `$…$` / `$$…$$`，导出 HTML 与 PDF |
+| **AI 辅助** | 自备密钥；续写（Tab）、侧栏聊天、选区改写 / 润色 / 翻译。可接 OpenAI、Claude、Gemini、Grok、DeepSeek，或本地 LM Studio / Ollama |
+| **个人工作流** | 每日笔记、模板、维基链接、知识图谱、历史版本、回收站、主题 |
 
 ## 适合谁
 
-**长文作者**：在一个 vault 里维护章节、设定和素材，随时在源码与成稿之间切换。
+**长文作者**：在一个知识库里维护章节、设定和素材，随时在源码与成稿之间切换。
 
-**研究与知识工作者**：把公式、参考文献、表格和说明文字放在同一份可版本化的文档中。
+**研究与知识工作者**：把公式、参考文献、表格和说明放在同一份可版本化的文档中。
 
-**喜欢折腾的开发者**：通过内置插件（Callout / FloatBox / 文档状态）扩展写作流；自带插件的加载器已经就绪，但在隔离沙箱完成前**发行版不加载**用户插件（见「插件开发」）。
+**喜欢扩展的人**：内置 Callout、FloatBox、文档状态随应用提供。用户插件的加载器已经写好，但发行版出于隔离尚未完成，**不会加载** vault 里的第三方插件。
 
-## 快速开始
+## 使用
 
-环境要求：Node.js 22、pnpm 11。桌面开发还需要 Rust stable 和 Tauri v2 的系统依赖。
+1. 启动后选择一个文件夹，它就成为你的**知识库**（空文件夹也可以）。
+2. 直接在中间编辑区写作；`Ctrl+S` 保存，默认还会自动保存。
+3. 用底部状态栏在「渲染 / 源码 / 对照」之间切换。
+4. 需要 AI 时：设置 → AI，填写服务商、模型和密钥（密钥加密存在本机，界面只显示已配置）。
+
+侧栏里的「云同步」是占位，目前**不会**把知识库传到网上。
+
+更完整的界面说明见 [用户指南](docs/USER-GUIDE.md)，隐私边界见 [PRIVACY.md](docs/PRIVACY.md)。
+
+## 从源码运行
+
+环境：Node.js 22、pnpm 11。跑桌面应用还需要 Rust stable 和 [Tauri v2 系统依赖](https://v2.tauri.app/start/prerequisites/)。
 
 ```bash
 git clone https://github.com/NekoRain404/NekoWite.git
 cd NekoWite
 pnpm install
 
-# 浏览器开发模式
+# 浏览器里预览前端
 pnpm dev
 
-# 完整 Tauri 桌面应用
+# 完整桌面应用
 pnpm tauri dev
 ```
 
+### 打包成单个可执行文件
+
+```bash
+# Linux（本机构建，产物为 ELF）
+pnpm --filter @nekowite/desktop exec tauri build --no-bundle
+# 二进制：apps/desktop/src-tauri/target/release/nekowite
+# 可复制为：release/nekowite_<version>_x64
+
+# Windows 便携版（在 Windows 上、Git Bash 中执行；免安装，双击运行）
+bash scripts/package-win.sh
+# 产物：release/nekowite_<version>_x64.exe
+```
+
+Linux 二进制依赖系统里的 GTK / WebKitGTK。Windows 便携版不需要安装器。
+
 ## 项目状态
 
-当前工作区版本号为 1.0.0（`package.json`、`apps/desktop/package.json`、`apps/desktop/src-tauri/tauri.conf.json` 与 `Cargo.toml` 一致），正在做 1.0 公开发布的最后准备。
+当前版本 **1.0.0**。面向写作者的核心能力（编辑、知识库、公式、引用、导出、AI）已经能用。还没有官方 GitHub Release 渠道、没有自动更新；Windows 便携 exe 是主要用户交付物，Linux 可从源码打出单个二进制。插件沙箱仍在路线图上。
 
-NekoWite 目前处于持续开发阶段。核心编辑、文件管理、公式、引用、导出与 AI 能力已经在代码库中实现并在发行版中可用；跨平台打包和更完整的发布流程仍在完善。
-
-**插件：明确说明当前边界。** 内置插件（Callout / FloatBox / 文档状态）随应用运行。用户放在 vault `plugins/` 目录里的插件，其加载器、权限确认、完整性校验与治理（吊销、版本策略、审计日志）都已实现并有测试覆盖，但**发行版默认不加载用户插件**：当前 CSP 不允许窗口内 `import(blob:)`，而插件与主窗口共享同一运行环境时无法做到真正的隔离。这样处理是刻意的——不为了让插件“看起来能用”而降低 CSP。判定与原因写在 `docs/SECURITY.md`，加载被跳过时应用会给出一条明确提示（不是静默失败）。
-
-项目使用 GitHub Actions 持续检查类型、代码风格、单元测试、E2E、构建和 Rust 工程。由于功能仍在快速迭代，建议在升级依赖或提交重要文档前运行本地检查。
-
-## 开发者入口
+## 开发
 
 ```bash
 pnpm typecheck       # 全仓库类型检查
 pnpm lint            # ESLint
-pnpm test            # Vitest 单元测试
-pnpm test:e2e        # Playwright 关键路径
-pnpm build           # 桌面前端构建
+pnpm test            # Vitest
+pnpm test:e2e        # Playwright
+pnpm build           # 桌面前端
 
-# Rust 命令层
 cd apps/desktop/src-tauri
 cargo test
 ```
 
-主要目录：
-
 ```text
-apps/desktop/              Vue 应用与 Tauri 壳
-packages/editor-core/      Markdown / MDX 编辑与序列化
-packages/plugin-host/      插件加载、注册与权限确认
-docs/                      设计文档与项目资料
+apps/desktop/              Vue 界面与 Tauri 壳
+packages/editor-core/      Markdown / MDX 解析、编辑与序列化
+packages/plugin-host/      插件加载、权限与生命周期
+docs/                      用户指南与设计文档
 ```
 
-## 文档
+约定见 [docs/dev.md](docs/dev.md)，测试范围见 [docs/test-plan.md](docs/test-plan.md)。
 
-面向用户：
+## 插件
 
-- [docs/USER-GUIDE.md](docs/USER-GUIDE.md)：从打开知识库、编辑与搜索，到引用、导出和配置 AI 的完整上手流程
-- [docs/PRIVACY.md](docs/PRIVACY.md)：哪些数据会离开本机、本机存了什么、AI 权限如何工作
-- [docs/RELEASING.md](docs/RELEASING.md)：1.0 的版本号位置、门禁命令、打包与签名现状
+内置插件始终可用。用户放在知识库 `plugins/` 里的插件，加载器、权限确认和完整性校验都已实现，但**打包版不会执行它们**：当前 CSP 不允许窗口内 `import(blob:)`，插件又与主窗口共用运行环境，做不到真正隔离。设置里会写明这一点，而不是假装开关有效。
 
-面向开发者：
+原因见 [docs/PLUGIN_ISOLATION.md](docs/PLUGIN_ISOLATION.md)，API 见 [docs/PLUGIN_SDK.md](docs/PLUGIN_SDK.md)。
 
-- [docs/SECURITY.md](docs/SECURITY.md)：安全模型里「已强制 / 未实现」的逐项清单
-- [docs/RECOVERY.md](docs/RECOVERY.md)：版本历史、回收站、外部冲突与崩溃恢复
-- [docs/PLUGIN_SDK.md](docs/PLUGIN_SDK.md)：插件 API 与治理；[docs/PLUGIN_ISOLATION.md](docs/PLUGIN_ISOLATION.md)：发行版为何不加载插件
-- [docs/PERF.md](docs/PERF.md) 与 [docs/A11Y.md](docs/A11Y.md)：性能与无障碍基线
-- [docs/dev.md](docs/dev.md)：开发环境与架构约定；[docs/test-plan.md](docs/test-plan.md)：测试范围
-- [CHANGELOG.md](CHANGELOG.md)：逐条变更记录
-
-## 插件开发
-
-> **当前状态**：内置插件随应用运行；用户插件在发行版中**尚不可用**（隔离沙箱未完成，加载被 CSP 门控跳过，应用会给出提示）。下面的 SDK 与加载管线都已实现并有测试，可在浏览器开发模式与测试环境中运行；把它当作「即将开放的能力」而不是今天就能装进发行版的东西。
-
-插件可以注册自定义 MDX 组件、工具栏按钮和命令。最小形态如下：
+最小形态（仅开发 / 测试环境）：
 
 ```ts
 import { definePlugin } from '@nekowite/plugin-host'
@@ -124,34 +131,37 @@ export default definePlugin({
 })
 ```
 
-插件由 `@nekowite/plugin-host` 负责加载、激活、生命周期管理和失败回滚。更完整的 API 以仓库中的类型定义和实现为准。
+插件可声明 `ai`、`fs`、`network`、`clipboard` 权限；未声明的敏感能力默认拒绝。在发行版开放加载之前，请只在你信任的环境里试验本地插件。
 
-## 安全边界
+## 文档
 
-当前插件运行在主窗口的同一 JavaScript 上下文中，**还不是 webview / worker 隔离沙箱**。插件与主应用共享运行环境，理论上可能触达应用注册表和 Tauri IPC；因此请只安装你信任的本地插件。
+面向使用者：
 
-插件可以在 manifest 或 `definePlugin` 中声明 `ai`、`fs`、`network`、`clipboard` 权限。声明敏感能力的插件会在激活前请求确认；未声明权限的插件按纯 UI 插件处理，敏感能力默认拒绝。真正的沙箱隔离仍在路线图中。
+- [docs/USER-GUIDE.md](docs/USER-GUIDE.md) — 打开知识库、编辑、搜索、引用、导出、配置 AI
+- [docs/PRIVACY.md](docs/PRIVACY.md) — 哪些数据会离开本机、本机存了什么
+
+面向开发与发布：
+
+- [docs/SECURITY.md](docs/SECURITY.md) — 安全模型里已强制 / 未实现的项
+- [docs/RECOVERY.md](docs/RECOVERY.md) — 历史、回收站、冲突与崩溃恢复
+- [docs/RELEASING.md](docs/RELEASING.md) — 维护者：版本号、门禁与打包
+- [docs/PERF.md](docs/PERF.md) · [docs/A11Y.md](docs/A11Y.md)
+- [CHANGELOG.md](CHANGELOG.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md) · [.github/SECURITY.md](.github/SECURITY.md)
 
 ## 路线图
 
 - 更完整的跨平台打包与发布渠道
 - webview / worker 级别的插件沙箱
-- 更丰富的主题、模板和协作能力
-- 更稳定的 E2E 覆盖与插件生态文档
+- 更丰富的主题、模板
+- 更稳定的 E2E 与插件文档
 
 ## 参与贡献
 
-欢迎提交 Issue、改进文档或发起 Pull Request。涉及编辑器行为、文件读写和插件权限的改动，请同时补充对应测试，并在 PR 中说明兼容性影响。
+欢迎 Issue、文档改进和 Pull Request。流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。改动编辑器行为、文件读写或插件权限时，请补上对应测试，并在 PR 里说明兼容性影响。
+
+发现安全问题请走 [私有漏洞报告](.github/SECURITY.md)，不要开公开 Issue。
 
 ## 许可证
 
-工作区里已有一份 MIT 的 [LICENSE](LICENSE)（尚未提交），`package.json` 与 `apps/desktop/package.json` 也加入了 `"license": "MIT"`；正式发布前请以维护者最终确认的许可说明为准（发布检查清单见 [docs/RELEASING.md](docs/RELEASING.md)）。
-
-## 构建与打包
-
-```bash
-bash scripts/package-win.sh
-# 产物：release/nekowite_<version>_x64.exe（免安装，直接双击运行）
-# 需要 NSIS 安装包时：PORTABLE=0 bash scripts/package-win.sh
-#                         -> release/nekowite_<version>_x64-setup.exe
-```
+[MIT](LICENSE) © 2026 NekoWrite contributors
