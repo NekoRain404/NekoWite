@@ -7,7 +7,7 @@
 //! the pre-split layout.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -16,7 +16,7 @@ use notify::Watcher;
 use tauri::Emitter;
 
 use crate::domain::path_policy::{has_hidden_component, ipc_path, resolve_within};
-use crate::state::{require_opened_vault, VaultRegistry, WatcherState};
+use crate::state::{require_opened_vault, MediaScope, VaultRegistry, WatcherState};
 use crate::storage::file_store::{self, FileEntry, FileStat};
 use crate::storage::trash_store;
 
@@ -530,9 +530,142 @@ fn allow_vault_media(app: &tauri::AppHandle, vault_root: &str) {
     let path = Path::new(vault_root).to_path_buf();
     let path = path.canonicalize().unwrap_or(path);
     let scope = app.asset_protocol_scope();
+
+    // Close the vault we are leaving FIRST. The scope is append-only — tauri
+    // exposes `allow_directory` and `forbid_directory` but nothing that removes
+    // an allowance — so forbidding it is the only revocation available, and
+    // `forbid_directory` taking precedence over `allow_directory` is what makes
+    // that revocation real. Without this, every vault the user has ever opened
+    // stays readable through `asset://` for the rest of the session.
+    if let Some(state) = app.try_state::<MediaScope>() {
+        if let Some(previous) = state.open(&path) {
+            // A vault opened INSIDE the previous one must keep working, so only
+            // a genuinely different tree is closed.
+            if previous != path && !path.starts_with(&previous) {
+                let _ = scope.forbid_directory(&previous, true);
+            }
+        }
+    }
+
     let _ = scope.allow_directory(&path, true);
-    for hidden in [".nekowite", ".nekowite-trash", ".git"] {
+    for hidden in FORBIDDEN_METADATA_DIRS {
         let _ = scope.forbid_directory(path.join(hidden), true);
+    }
+    // A vault opened inside this vault keeps its OWN `.nekowite`/`.git` at its
+    // own root, which the three forbids above (all rooted at the vault root) do
+    // not cover.
+    for nested in nested_metadata_dirs(&path) {
+        let _ = scope.forbid_directory(nested, true);
+    }
+}
+
+/// Directory names that must never be readable through `asset://`: history
+/// snapshots, the trash, and any repository the vault happens to contain.
+const FORBIDDEN_METADATA_DIRS: [&str; 3] = [".nekowite", ".nekowite-trash", ".git"];
+
+/// How many directory entries [`nested_metadata_dirs`] will look at before it
+/// stops. This runs on every vault open, and a vault is user data of unbounded
+/// size, so it must not be able to stall the switch.
+const NESTED_METADATA_SCAN_LIMIT: usize = 20_000;
+
+/// Every metadata directory at or below `root`.
+///
+/// This includes `root`'s own, which the caller also forbids by name — the
+/// scope stores forbidden patterns in a set, so the overlap costs nothing and
+/// keeps this function a plain "find them all" rather than one that has to know
+/// which level the caller already handled.
+///
+/// Depth-first and bounded. It never descends into a directory it already
+/// recognises as metadata, and `DirEntry::file_type` does not follow symlinks,
+/// so a symlinked tree is neither walked nor able to loop.
+fn nested_metadata_dirs(root: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    let mut visited = 0usize;
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            visited += 1;
+            if visited > NESTED_METADATA_SCAN_LIMIT {
+                return found;
+            }
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if !file_type.is_dir() {
+                continue;
+            }
+            if FORBIDDEN_METADATA_DIRS.contains(&entry.file_name().to_string_lossy().as_ref()) {
+                found.push(entry.path());
+                continue;
+            }
+            stack.push(entry.path());
+        }
+    }
+    found
+}
+
+#[cfg(test)]
+mod nested_metadata_tests {
+    use super::nested_metadata_dirs;
+    use std::path::PathBuf;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "nekowite-media-{}-{}-{tag}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn names(root: &std::path::Path) -> Vec<String> {
+        nested_metadata_dirs(root)
+            .iter()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .collect()
+    }
+
+    #[test]
+    fn finds_a_metadata_dir_nested_anywhere_in_the_vault() {
+        let root = temp_dir("nested");
+        std::fs::create_dir_all(root.join(".nekowite").join("history")).unwrap();
+        std::fs::create_dir_all(root.join("notes").join("sub").join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("notes").join("plain")).unwrap();
+
+        let found = names(&root);
+        assert!(
+            found.iter().any(|n| n.ends_with("notes/sub/.git")),
+            "a nested .git must be found: {found:?}"
+        );
+        assert!(
+            found.iter().any(|n| n.ends_with("/.nekowite")),
+            "the root's own is included too (forbidding twice is free): {found:?}"
+        );
+        assert!(
+            !found.iter().any(|n| n.ends_with("notes/plain")),
+            "an ordinary directory must not be reported: {found:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn does_not_walk_into_a_metadata_tree_it_already_found() {
+        let root = temp_dir("prune");
+        std::fs::create_dir_all(root.join("a").join(".git").join("modules").join(".git")).unwrap();
+        let found = names(&root);
+        assert_eq!(
+            found.len(),
+            1,
+            "only the outermost metadata dir, not the one inside it: {found:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 

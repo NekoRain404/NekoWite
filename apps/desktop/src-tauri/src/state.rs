@@ -7,7 +7,7 @@
 //! every path-confined command calls before touching a file.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::{Arc, Mutex};
 
@@ -69,6 +69,64 @@ impl VaultRegistry {
 /// recovery hint. Called at the top of every path-confined command.
 pub fn require_opened_vault(registry: &VaultRegistry, root: &str) -> Result<(), String> {
     registry.authorize(root).map(|_| ())
+}
+
+// ---------------------------------------------------------------------------
+// Asset-scope state
+// ---------------------------------------------------------------------------
+
+/// The vault root whose `asset://` media scope is currently open.
+///
+/// The fs scope is append-only — `tauri`'s `Scope` exposes `allow_directory`
+/// and `forbid_directory` but nothing that removes an allowance — so the only
+/// way to close a vault the user has left is to *forbid* it. Remembering which
+/// root is open is what makes that possible: without it a vault that was once
+/// opened keeps serving `asset://` reads for the rest of the session, across
+/// every later vault switch.
+#[derive(Default)]
+pub struct MediaScope(Mutex<Option<PathBuf>>);
+
+impl MediaScope {
+    /// Record `root` as the open media root, returning the root it replaced.
+    ///
+    /// Returning the replaced root is the whole point: the caller forbids it,
+    /// and it must be read and replaced under one lock so two concurrent opens
+    /// cannot both miss (or both revoke) the same predecessor.
+    pub fn open(&self, root: &Path) -> Option<PathBuf> {
+        let mut guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = guard.clone();
+        *guard = Some(root.to_path_buf());
+        previous
+    }
+}
+
+#[cfg(test)]
+mod media_scope_tests {
+    use super::MediaScope;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn the_first_open_replaces_nothing() {
+        let scope = MediaScope::default();
+        assert_eq!(scope.open(Path::new("/vault/a")), None);
+    }
+
+    #[test]
+    fn a_later_open_hands_back_the_root_it_replaced() {
+        let scope = MediaScope::default();
+        scope.open(Path::new("/vault/a"));
+        assert_eq!(
+            scope.open(Path::new("/vault/b")),
+            Some(PathBuf::from("/vault/a"))
+        );
+        // Re-opening the same root reports it as replaced, which the caller
+        // filters with an equality check — revoking then re-allowing would
+        // forbid the vault that is staying open.
+        assert_eq!(
+            scope.open(Path::new("/vault/b")),
+            Some(PathBuf::from("/vault/b"))
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

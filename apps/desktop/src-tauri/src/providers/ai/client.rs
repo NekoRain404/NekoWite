@@ -9,7 +9,7 @@
 
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use std::net::{IpAddr, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tauri::{Emitter, Manager};
@@ -202,25 +202,46 @@ pub fn ai_done_payload(id: &str, full: &str, usage: Option<TokenUsage>) -> serde
 /// (for legitimate local models such as Ollama / LM Studio). The default
 /// provider endpoints (api.anthropic.com, api.openai.com, ...) are public and
 /// never rejected.
-pub fn validate_base_url(cfg: &AIConfig) -> Result<(), String> {
+pub fn validate_base_url(cfg: &AIConfig) -> Result<Option<VettedHost>, String> {
     if cfg.allow_private {
-        return Ok(());
+        return Ok(None);
     }
-    if let Some(base) = cfg.base_url.as_deref() {
-        validate_public_url(base)?;
-    }
-    Ok(())
+    cfg.base_url.as_deref().map(validate_public_url).transpose()
 }
 
-fn validate_public_url(base: &str) -> Result<(), String> {
-    validate_public_url_with(base, resolve_host_ips)
+/// The addresses that were vetted for a user-supplied Base URL.
+///
+/// The HTTP client is pinned to exactly these, so the address reqwest dials is
+/// the address this check approved. Without the pin the name is resolved
+/// twice — once here, once inside reqwest — and a TTL-0 record can answer
+/// `127.0.0.1` to the second lookup after answering a public address to the
+/// first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VettedHost {
+    /// The bare hostname (no IPv6 brackets) the addresses belong to.
+    pub host: String,
+    /// Empty for a literal-IP Base URL: there is no name to pin.
+    pub addrs: Vec<SocketAddr>,
 }
 
-fn resolve_host_ips(host: &str) -> Result<Vec<IpAddr>, ()> {
+fn validate_public_url(base: &str) -> Result<VettedHost, String> {
+    validate_public_url_with(base, resolve_host_addrs)
+}
+
+/// Resolve `host` to the socket addresses a connection could go to.
+///
+/// A resolution failure is surfaced, never swallowed: an unresolvable name
+/// cannot be shown to be public, and treating that as "public" let the request
+/// through completely unchecked.
+fn resolve_host_addrs(host: &str) -> Result<Vec<SocketAddr>, String> {
     (host, 0u16)
         .to_socket_addrs()
-        .map(|addrs| addrs.map(|a| a.ip()).collect())
-        .map_err(|_| ())
+        .map(|addrs| addrs.collect())
+        .map_err(|_| {
+            format!(
+                "AI Base URL 的主机名无法解析：{host}。请检查网络连接、DNS 设置，或改用其他地址。"
+            )
+        })
 }
 
 fn private_url_error(host: &str) -> String {
@@ -232,8 +253,8 @@ fn private_url_error(host: &str) -> String {
 
 fn validate_public_url_with(
     base: &str,
-    resolve: impl Fn(&str) -> Result<Vec<IpAddr>, ()>,
-) -> Result<(), String> {
+    resolve: impl Fn(&str) -> Result<Vec<SocketAddr>, String>,
+) -> Result<VettedHost, String> {
     let url = reqwest::Url::parse(base)
         .map_err(|_| format!("AI Base URL 无效：{base}（应为 http:// 或 https:// 格式）"))?;
     if url.scheme() != "http" && url.scheme() != "https" {
@@ -245,17 +266,33 @@ fn validate_public_url_with(
     if is_private_or_loopback_host(host) {
         return Err(private_url_error(host));
     }
-    // Literal IPs are already covered. A hostname must not be allowed to
-    // bypass the check by resolving to a loopback or RFC1918 address.
-    if host.parse::<IpAddr>().is_ok() {
-        return Ok(());
+    // `host_str()` keeps the brackets around an IPv6 literal; they are neither
+    // part of the address nor of the name reqwest resolves.
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    // A literal IP was fully decided by the check above: there is no name to
+    // pin, and "resolving" it would just hand back the same address.
+    if bare.parse::<IpAddr>().is_ok() {
+        return Ok(VettedHost {
+            host: bare.to_string(),
+            addrs: Vec::new(),
+        });
     }
-    match resolve(host) {
-        Ok(ips) if ips.iter().copied().any(is_private_or_loopback_ip) => {
-            Err(private_url_error(host))
-        }
-        Ok(_) | Err(_) => Ok(()),
+    // A hostname must not be allowed to bypass the check by resolving to a
+    // loopback or RFC1918 address — and a name that does not resolve at all
+    // must be refused rather than waved through.
+    let addrs = resolve(bare)?;
+    if addrs.is_empty() {
+        return Err(format!(
+            "AI Base URL 的主机名没有解析到任何地址：{bare}。请检查 DNS 设置或改用其他地址。"
+        ));
     }
+    if addrs.iter().any(|a| is_private_or_loopback_ip(a.ip())) {
+        return Err(private_url_error(host));
+    }
+    Ok(VettedHost {
+        host: bare.to_string(),
+        addrs,
+    })
 }
 
 fn is_private_or_loopback_host(host: &str) -> bool {
@@ -745,18 +782,49 @@ pub fn hydrate_stored_key(app: &tauri::AppHandle, config: &mut AIConfig) -> Resu
     Ok(())
 }
 
+/// Build the HTTP client used for every AI request.
+///
+/// Two things here are security-relevant, not style:
+///
+///   * **Redirects are refused.** Following one means the request can land on
+///     an origin the SSRF check never saw — a `302` to `http://127.0.0.1:11434/`
+///     or to an attacker's host. `reqwest` strips `Authorization` on a
+///     cross-origin redirect but does NOT touch the custom headers the non-OpenAI
+///     providers authenticate with (`x-api-key`, `x-goog-api-key`), so a followed
+///     redirect would hand over the user's key. The AI providers do not need
+///     redirects; a redirect here is an error, not a hop to follow.
+///   * **The vetted addresses are pinned** via `resolve_to_addrs`, so the name
+///     cannot resolve to a different address between the check and the connect.
+fn ai_http_client(
+    connect_timeout: Duration,
+    read_timeout: Duration,
+    pin: Option<&VettedHost>,
+) -> Result<reqwest::Client, reqwest::Error> {
+    let mut builder = reqwest::Client::builder()
+        .connect_timeout(connect_timeout)
+        .read_timeout(read_timeout)
+        .redirect(reqwest::redirect::Policy::none());
+    if let Some(pin) = pin {
+        if !pin.addrs.is_empty() {
+            builder = builder.resolve_to_addrs(&pin.host, &pin.addrs);
+        }
+    }
+    builder.build()
+}
+
 /// Resolve the provider's `GET {endpoint}` for listing models, matching the
 /// base/credential conventions of `resolve_endpoint` so the dropdown pulls from
 /// the same origin a completion would use.
 pub async fn list_models(config: &AIConfig) -> Result<Vec<String>, String> {
     // Reject a private/loopback Base URL unless the user opts in (see
     // `validate_base_url`); a model dropdown must never phone an internal host.
-    validate_base_url(config)?;
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(15))
-        .read_timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let pin = validate_base_url(config)?;
+    let client = ai_http_client(
+        Duration::from_secs(15),
+        Duration::from_secs(15),
+        pin.as_ref(),
+    )
+    .map_err(|e| e.to_string())?;
 
     let (url, headers): (String, Vec<(String, String)>) = match config.provider.as_str() {
         "anthropic" => {
@@ -839,6 +907,7 @@ pub async fn stream_complete(
     images: &[serde_json::Value],
     id: &str,
     cancel: &tokio_util::sync::CancellationToken,
+    pin: Option<&VettedHost>,
 ) -> Result<(), String> {
     // `resolve_endpoint` builds the content itself: with images it emits the
     // provider's multimodal array (text + image blocks), without images it
@@ -855,11 +924,8 @@ pub async fn stream_complete(
     // runs to its natural end. The timeout error surfaces through
     // `request.send()` / `bytes_stream()` and produces the same `ai-error` +
     // `Err` path as a transport failure.
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(15))
-        .read_timeout(Duration::from_secs(120))
-        .build()
-        .map_err(|e| {
+    let client =
+        ai_http_client(Duration::from_secs(15), Duration::from_secs(120), pin).map_err(|e| {
             let _ = app.emit(
                 "ai-error",
                 serde_json::json!({ "id": id, "message": e.to_string() }),
@@ -1146,8 +1212,17 @@ mod tests {
         }
     }
 
+    /// A vetted address for the injected resolvers below. Port is irrelevant
+    /// to the policy under test.
+    fn sa(ip: &str) -> SocketAddr {
+        SocketAddr::new(ip.parse().unwrap(), 443)
+    }
+
     #[test]
     fn accepts_public_http_and_https_bases() {
+        // The resolver is injected so this test asserts the scheme/host policy
+        // and never touches the network or depends on real DNS.
+        let public = |_host: &str| Ok(vec![sa("203.0.113.9")]);
         for base in [
             "https://api.openai.com/v1",
             "https://generativelanguage.googleapis.com",
@@ -1155,7 +1230,10 @@ mod tests {
             "http://203.0.113.9:8000/v1",
             "https://llm.internal.example.com",
         ] {
-            assert!(validate_public_url(base).is_ok(), "should accept {base}");
+            assert!(
+                validate_public_url_with(base, public).is_ok(),
+                "should accept {base}"
+            );
         }
     }
 
@@ -1171,9 +1249,9 @@ mod tests {
     fn hostname_resolving_to_loopback_is_rejected() {
         let resolve = |host: &str| {
             if host == "evil.example.com" {
-                Ok(vec!["127.0.0.1".parse().unwrap()])
+                Ok(vec![sa("127.0.0.1")])
             } else {
-                Ok(vec!["203.0.113.9".parse().unwrap()])
+                Ok(vec![sa("203.0.113.9")])
             }
         };
         assert!(
@@ -1188,19 +1266,109 @@ mod tests {
 
     #[test]
     fn mixed_public_and_private_resolved_ips_are_rejected() {
-        let resolve = |_host: &str| {
-            Ok(vec![
-                "203.0.113.9".parse().unwrap(),
-                "10.0.0.1".parse().unwrap(),
-            ])
-        };
+        let resolve = |_host: &str| Ok(vec![sa("203.0.113.9"), sa("10.0.0.1")]);
         assert!(validate_public_url_with("https://dual.example.com", resolve).is_err());
     }
 
     #[test]
-    fn unresolved_hostname_is_left_to_the_request() {
-        let resolve = |_host: &str| Err(());
-        assert!(validate_public_url_with("https://no-such.example.invalid", resolve).is_ok());
+    fn unresolved_hostname_is_rejected() {
+        // A name that does not resolve cannot be shown to be public. Treating
+        // this as "public" let the request through with no check at all.
+        let resolve = |_host: &str| Err("resolution failed".to_string());
+        assert!(validate_public_url_with("https://no-such.example.invalid", resolve).is_err());
+    }
+
+    #[test]
+    fn a_hostname_resolving_to_nothing_is_rejected() {
+        let resolve = |_host: &str| Ok(Vec::new());
+        assert!(validate_public_url_with("https://empty.example.com", resolve).is_err());
+    }
+
+    #[test]
+    fn a_vetted_hostname_hands_back_the_addresses_to_pin() {
+        // The pin is what closes the DNS-rebinding window: the client may only
+        // connect to the addresses this check saw.
+        let resolve = |_host: &str| Ok(vec![sa("203.0.113.9"), sa("203.0.113.10")]);
+        let vetted =
+            validate_public_url_with("https://ok.example.com/v1", resolve).expect("public host");
+        assert_eq!(vetted.host, "ok.example.com");
+        assert_eq!(vetted.addrs.len(), 2);
+    }
+
+    #[test]
+    fn a_literal_ip_base_has_nothing_to_pin_and_is_not_resolved() {
+        let resolve = |_host: &str| panic!("a literal IP must never be resolved");
+        let vetted = validate_public_url_with("http://203.0.113.9:8000/v1", resolve)
+            .expect("public literal ip");
+        assert!(vetted.addrs.is_empty());
+    }
+
+    #[test]
+    fn an_ipv6_literal_is_stripped_of_its_brackets_for_the_vetted_host() {
+        let vetted = validate_public_url("https://[2606:4700:4700::1111]/v1").expect("public ipv6");
+        assert_eq!(vetted.host, "2606:4700:4700::1111");
+        assert!(vetted.addrs.is_empty());
+    }
+
+    /// A followed redirect can leave the vetted origin, and the custom auth
+    /// headers the non-OpenAI providers use (`x-api-key`, `x-goog-api-key`) are
+    /// NOT stripped by reqwest the way `Authorization` is — so the key would go
+    /// to whatever host the redirect names. This drives a real 302 to prove the
+    /// client surfaces it instead of following.
+    #[tokio::test]
+    async fn the_ai_client_does_not_follow_a_redirect() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind a loopback port");
+        let addr = listener.local_addr().expect("local addr");
+        let target_hit = Arc::new(AtomicBool::new(false));
+        let hit_by_server = target_hit.clone();
+        let server = tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let hit = hit_by_server.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    let _ = sock.read(&mut buf).await;
+                    let req = String::from_utf8_lossy(&buf).to_string();
+                    let response = if req.starts_with("GET /target") {
+                        hit.store(true, Ordering::SeqCst);
+                        "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nhit!!!"
+                            .to_string()
+                    } else {
+                        format!(
+                            "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{}/target\r\n\
+                             Content-Length: 0\r\nConnection: close\r\n\r\n",
+                            addr.port()
+                        )
+                    };
+                    let _ = sock.write_all(response.as_bytes()).await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+
+        let client = ai_http_client(Duration::from_secs(5), Duration::from_secs(5), None)
+            .expect("client builds");
+        let response = client
+            .get(format!("http://127.0.0.1:{}/start", addr.port()))
+            .send()
+            .await
+            .expect("the 302 itself is a valid response");
+
+        assert_eq!(
+            response.status().as_u16(),
+            302,
+            "the redirect must be surfaced as the response, not followed"
+        );
+        assert!(
+            !target_hit.load(Ordering::SeqCst),
+            "the redirect target must never be requested"
+        );
+        server.abort();
     }
 
     #[test]
