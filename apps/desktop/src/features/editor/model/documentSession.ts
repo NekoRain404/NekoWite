@@ -28,8 +28,6 @@ export interface DocumentSession {
   parseFailed: boolean
   /** Content that arrived while an `applyContent` was in flight. */
   pendingExternal: string | null
-  /** Armed by `setRatio`/`setScrollToLine` to swallow the async scroll echo. */
-  suppressScroll: boolean
   /** Whether the callout plugin's editor view was already installed. */
   calloutViewSet: boolean
   /** Pending `onDocChange` emit timer. */
@@ -47,7 +45,6 @@ export function createDocumentSession(): DocumentSession {
     applyingExternal: false,
     parseFailed: false,
     pendingExternal: null,
-    suppressScroll: false,
     calloutViewSet: false,
     docChangeTimer: null,
     lastDoc: '',

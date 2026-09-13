@@ -60,11 +60,15 @@ const externalSync = createEditorExternalSync({
   scheduleOverlayRefresh: () => searchOverlay.scheduleRefresh(),
 })
 const scrollSync = createEditorScrollSync({
-  session,
   getScrollEl: () => scrollEl.value,
   getEditorEl: () => editorEl.value,
 })
 const selection = createEditorSelection({ getEditor: () => session.editor })
+
+// Reported to the pane's parent (the editor pane), which owns the split-view
+// scroll coordinator. Only the user's own scrolls are reported: the echo of a
+// programmatic write is consumed inside the scroll controller.
+const emit = defineEmits<{ 'user-scroll': [] }>()
 
 const { searchOpen, spellPopup } = searchOverlay
 
@@ -87,23 +91,27 @@ let unlistenChange: (() => void) | null = null
 let unlistenOverlayRefresh: (() => void) | null = null
 
 function onScroll(): void {
-  scrollSync.onScroll()
+  if (scrollSync.onScroll()) emit('user-scroll')
 }
 
-function getRatio(): number {
-  return scrollSync.getRatio()
+function getScrollTop(): number {
+  return scrollSync.getScrollTop()
 }
 
-function setRatio(r: number): void {
-  scrollSync.setRatio(r)
+function getScrollRange(): number {
+  return scrollSync.getScrollRange()
 }
 
-function getHeadingEls(): HTMLElement[] {
-  return scrollSync.getHeadingEls()
+function setScrollTop(top: number, token: number): void {
+  scrollSync.setScrollTop(top, token)
 }
 
-function setScrollToLine(line: number): void {
-  scrollSync.setScrollToLine(line)
+function getHeadingTops(): number[] {
+  return scrollSync.getHeadingTops()
+}
+
+function setScrollToLine(line: number, token: number): void {
+  scrollSync.setScrollToLine(line, token)
 }
 
 function onContainerPointerDownCapture(e: PointerEvent): void {
@@ -221,7 +229,13 @@ function onKeydown(e: KeyboardEvent): void {
   }
 }
 
-defineExpose({ getRatio, setRatio, getHeadingEls, setScrollToLine })
+defineExpose({
+  getScrollTop,
+  getScrollRange,
+  setScrollTop,
+  getHeadingTops,
+  setScrollToLine,
+})
 
 onMounted(async () => {
   if (!editorEl.value) return

@@ -22,6 +22,11 @@ const tabs = useTabsStore()
 const view = useViewStore()
 const appearance = useAppearanceStore()
 
+// Reported to the pane's parent (the editor pane), which owns the split-view
+// scroll coordinator. Only the user's own scrolls are reported: a programmatic
+// write is this pane's own echo and is consumed below.
+const emit = defineEmits<{ 'user-scroll': [] }>()
+
 /**
  * The rendered pane already lays its content out from the correct edge; the
  * source pane ignored the setting entirely, so split mode showed the same
@@ -39,11 +44,14 @@ let mirroredTabId: string | null = null
 // Our own entry in the source-pane registry, so teardown can withdraw it
 // without clobbering a newer pane that mounted first during a hot swap.
 let sourceHandle: SourceViewHandle | null = null
-// Set by setRatio() so the next scroll event (the async echo of a programmatic
-// scroll) is swallowed, breaking the split-mode sync feedback loop.
-let suppressScroll = false
+// The last programmatic write: the token that caused it and the offset it
+// landed on. Its scroll event arrives later and is indistinguishable by shape
+// from a user's, so the record is what lets onScroll tell them apart — matching
+// the offset is what makes a write that never fired an event harmless instead
+// of swallowing the user's next scroll.
+let programWrite: { token: number; top: number } | null = null
 // rAF throttle for scroll → store writes: coalesce burst scroll events into one
-// syncScroll per frame instead of driving the editor chain on every event.
+// store write per frame instead of driving it on every event.
 let scrollRaf = 0
 
 function emitChange(text: string): void {
@@ -140,13 +148,16 @@ watch(
 )
 
 function onScroll(): void {
-  // A programmatic scroll (setRatio) fires its scroll event asynchronously;
-  // swallow exactly that one event so it cannot write back to the store and
-  // re-enter the split-mode sync loop (which fights the mouse wheel).
-  if (suppressScroll) {
-    suppressScroll = false
-    return
-  }
+  const el = host?.getView()?.scrollDOM
+  if (!el) return
+  // A programmatic scroll fires its scroll event asynchronously, and that event
+  // is this pane's own echo — not a scroll the user made, so it must not become
+  // a new sync request. The record holds the offset the engine kept, so its echo
+  // matches exactly; anything else is the user, however close it lands.
+  const written = programWrite
+  programWrite = null
+  if (written && el.scrollTop === written.top) return
+  emit('user-scroll')
   if (scrollRaf !== 0) return
   scrollRaf = requestAnimationFrame(() => {
     scrollRaf = 0
@@ -154,30 +165,48 @@ function onScroll(): void {
   })
 }
 
-function getRatio(): number {
-  return scrollRatio()
+function getScrollTop(): number {
+  return host?.getView()?.scrollDOM.scrollTop ?? 0
 }
 
-function setRatio(r: number): void {
+/** The pane's scrollable extent: 0 when the whole document fits. */
+function getScrollRange(): number {
+  return scrollRange()
+}
+
+/** Write an offset from outside, tagged with the sync token that caused it. The
+ *  pane keeps the tag so its own scroll event can be recognised as an echo. */
+function setScrollTop(top: number, token: number): void {
+  const el = host?.getView()?.scrollDOM
+  if (!el) return
+  const clamped = Number.isFinite(top) ? Math.max(0, Math.min(top, scrollRange())) : 0
+  el.scrollTop = clamped
+  // Record what the engine ACCEPTED, not what was asked for: it snaps a scroll
+  // offset to its own quantum (and clamps it to the range), so the requested
+  // value can sit up to half a pixel from the one the write's scroll event will
+  // report — a whole pixel on an engine that truncates. Reading the offset back
+  // closes that gap, which is what lets onScroll compare exactly below.
+  programWrite = { token, top: el.scrollTop }
+}
+
+/** The offset that puts the top of `line` (1-based) at the top of the viewport. */
+function scrollTopForLine(line: number): number {
   const cm = host?.getView()
-  if (!cm) return
-  const el = cm.scrollDOM
-  const range = el.scrollHeight - el.clientHeight
-  if (range <= 0) return
-  const target = r * range
-  // Only arm the suppression when the position actually changes — a no-op
-  // assignment fires no scroll event, so the flag must not leak.
-  if (Math.abs(el.scrollTop - target) < 0.5) return
-  suppressScroll = true
-  el.scrollTop = target
+  if (!cm) return 0
+  const doc = cm.state.doc
+  const clamped = Math.max(1, Math.min(Math.floor(line), doc.lines))
+  return Math.max(0, cm.lineBlockAt(doc.line(clamped).from).top)
+}
+
+function scrollRange(): number {
+  const el = host?.getView()?.scrollDOM
+  if (!el) return 0
+  return Math.max(0, el.scrollHeight - el.clientHeight)
 }
 
 function scrollRatio(): number {
-  const cm = host?.getView()
-  if (!cm) return 0
-  const el = cm.scrollDOM
-  const range = el.scrollHeight - el.clientHeight
-  return range > 0 ? el.scrollTop / range : 0
+  const range = scrollRange()
+  return range > 0 ? getScrollTop() / range : 0
 }
 
 function focus(): void {
@@ -192,11 +221,14 @@ function getSourceView(): EditorView | null {
   return host?.getView() ?? null
 }
 
-/** The 1-based line number of the first content line currently visible. */
+/** The 1-based line number of the first content line currently visible, i.e.
+ *  the one occupying the viewport's first pixel. The read is taken one pixel
+ *  in because CodeMirror resolves a height landing exactly on a line's top to
+ *  the line above it — which would report the line just scrolled past. */
 function getVisibleUnit(): number | null {
   const cm = host?.getView()
   if (!cm) return null
-  const block = cm.lineBlockAtHeight(Math.max(0, cm.scrollDOM.scrollTop))
+  const block = cm.lineBlockAtHeight(Math.max(0, cm.scrollDOM.scrollTop + 1))
   if (!block) return null
   return cm.state.doc.lineAt(block.from).number
 }
@@ -213,7 +245,17 @@ function setMeasureSuppressed(suppressed: boolean): void {
   if (!suppressed) host?.getView()?.requestMeasure()
 }
 
-defineExpose({ getRatio, setRatio, focus, getText, getSourceView, getVisibleUnit, setMeasureSuppressed })
+defineExpose({
+  setScrollTop,
+  getScrollTop,
+  getScrollRange,
+  scrollTopForLine,
+  focus,
+  getText,
+  getSourceView,
+  getVisibleUnit,
+  setMeasureSuppressed,
+})
 
 onBeforeUnmount(() => {
   if (scrollRaf !== 0) cancelAnimationFrame(scrollRaf)

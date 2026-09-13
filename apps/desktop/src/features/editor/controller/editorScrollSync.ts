@@ -6,69 +6,86 @@ import {
   countDocumentLines,
   lineRatio,
 } from '../../../services/scrollSyncAnchors'
-import type { DocumentSession } from '../model/documentSession'
 
 export interface EditorScrollSyncDeps {
-  session: DocumentSession
   getScrollEl: () => HTMLElement | null
   getEditorEl: () => HTMLElement | null
 }
 
 export interface EditorScrollSync {
-  /** Scroll handler: swallow the programmatic echo, else sync to the store. */
-  onScroll(): void
-  getRatio(): number
-  setRatio(r: number): void
-  getHeadingEls(): HTMLElement[]
+  /** Scroll handler. Returns whether the user made this scroll: a programmatic
+   *  write's own echo reports it, so it is not one. */
+  onScroll(): boolean
+  getScrollTop(): number
+  /** The pane's scrollable extent: 0 when the whole document fits. */
+  getScrollRange(): number
+  /** Write an offset from outside, tagged with the sync token that caused it. */
+  setScrollTop(top: number, token: number): void
+  /** Content-space top offsets of the rendered headings, in document order. */
+  getHeadingTops(): number[]
   /** Scroll so the block containing the given 1-based source line is top-most,
    *  anchored on the nearest heading; falls back to a line-proportional ratio. */
-  setScrollToLine(line: number): void
-  /** Drop any pending suppression (used on teardown). */
+  setScrollToLine(line: number, token: number): void
+  /** Drop any pending write record (used on teardown). */
   cancel(): void
 }
 
 /**
  * Source/rendered scroll synchronization.
  *
- * Keeps the split-mode ratio and the source-line → heading → DOM scroll mapping
- * in one place. Programmatic scrolls set `suppressScroll` so the browser's
- * asynchronous scroll echo cannot write back to the store and re-enter the sync
- * loop (which fights the mouse wheel).
+ * Keeps the source-line → heading → DOM scroll mapping in one place. A
+ * programmatic write records what it wrote, and the scroll event the browser
+ * delivers for it later is swallowed on that record: a write that never fired
+ * an event (a no-op, a clamped-away offset, a hidden pane) leaves a record the
+ * next event cannot match, so the user's next scroll is still their own. An
+ * unconditional "swallow the next event" flag cannot do that — it eats whatever
+ * arrives next, which is how a pane gets stuck.
  */
 export function createEditorScrollSync(deps: EditorScrollSyncDeps): EditorScrollSync {
   const view = useViewStore()
   const tabs = useTabsStore()
 
-  function onScroll(): void {
-    // A programmatic scroll (setRatio) fires its scroll event asynchronously;
-    // swallow exactly that one event so it cannot write back to the store and
-    // re-enter the split-mode sync loop (which fights the mouse wheel).
-    if (deps.session.suppressScroll) {
-      deps.session.suppressScroll = false
-      return
-    }
-    const el = deps.getScrollEl()
-    if (el) view.syncScroll('rendered', el.scrollTop)
-  }
+  // The last programmatic write: the token that caused it and the offset it
+  // landed on. Its scroll event arrives asynchronously and looks exactly like a
+  // user's, so the record is the only thing that tells the two apart.
+  let programWrite: { token: number; top: number } | null = null
 
-  function getRatio(): number {
+  function scrollRange(): number {
     const el = deps.getScrollEl()
     if (!el) return 0
-    const range = el.scrollHeight - el.clientHeight
-    return range > 0 ? el.scrollTop / range : 0
+    return Math.max(0, el.scrollHeight - el.clientHeight)
   }
 
-  function setRatio(r: number): void {
+  function onScroll(): boolean {
+    const el = deps.getScrollEl()
+    if (!el) return false
+    const written = programWrite
+    programWrite = null
+    // The record holds the engine's own value, so its echo matches exactly.
+    // Anything else is a scroll the user made, however close it lands: a
+    // tolerance here is what swallows a fractional scroll next to a write.
+    if (written && el.scrollTop === written.top) return false
+    view.syncScroll('rendered', el.scrollTop)
+    return true
+  }
+
+  function getScrollTop(): number {
+    return deps.getScrollEl()?.scrollTop ?? 0
+  }
+
+  function write(top: number, token: number): void {
     const el = deps.getScrollEl()
     if (!el) return
-    const range = el.scrollHeight - el.clientHeight
-    if (range <= 0) return
-    const target = r * range
-    // Only arm the suppression when the position actually changes — a no-op
-    // assignment fires no scroll event, so the flag must not leak.
-    if (Math.abs(el.scrollTop - target) < 0.5) return
-    deps.session.suppressScroll = true
-    el.scrollTop = target
+    const clamped = Number.isFinite(top) ? Math.max(0, Math.min(top, scrollRange())) : 0
+    el.scrollTop = clamped
+    // Record what the engine ACCEPTED, not what was asked for. An engine snaps
+    // a scroll offset to its own quantum (and clamps it to the range), so the
+    // requested value can sit up to half a pixel from the one the write's scroll
+    // event will report — a whole pixel on an engine that truncates instead of
+    // rounding, where the tolerance this used to need would have missed most
+    // frames of an ease. Reading the offset back closes the gap, which is what
+    // lets `onScroll` compare exactly below.
+    programWrite = { token, top: el.scrollTop }
   }
 
   function getHeadingEls(): HTMLElement[] {
@@ -77,36 +94,45 @@ export function createEditorScrollSync(deps: EditorScrollSyncDeps): EditorScroll
     return Array.from(root.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'))
   }
 
-  function setScrollToLine(line: number): void {
+  /** Content-space top of every rendered heading. Read live: an image that
+   *  finishes loading moves every heading below it. */
+  function getHeadingTops(): number[] {
+    const el = deps.getScrollEl()
+    const root = deps.getEditorEl()
+    if (!el || !root) return []
+    const origin = el.getBoundingClientRect().top - el.scrollTop
+    return getHeadingEls().map((heading) => heading.getBoundingClientRect().top - origin)
+  }
+
+  function setScrollToLine(line: number, token: number): void {
     const el = deps.getScrollEl()
     if (!el) return
     const content = tabs.activeTab?.content ?? ''
     const items = parseOutline(content)
     const index = anchorHeadingIndex(items, line)
-    if (index === null) {
-      setRatio(lineRatio(line, countDocumentLines(content)))
-      return
-    }
-    const target = getHeadingEls()[index]
+    const target = index === null ? null : getHeadingEls()[index]
     if (!target) {
-      setRatio(lineRatio(line, countDocumentLines(content)))
+      write(lineRatio(line, countDocumentLines(content)) * scrollRange(), token)
       return
     }
-    const range = el.scrollHeight - el.clientHeight
-    if (range <= 0) return
     // Content-space top of the heading, minus the same 16px scroll-margin-top
     // the editor styles use, so the heading sits just inside the viewport.
     const pos =
       target.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop - 16
-    const clamped = Math.max(0, Math.min(pos, range))
-    if (Math.abs(el.scrollTop - clamped) < 0.5) return
-    deps.session.suppressScroll = true
-    el.scrollTop = clamped
+    write(pos, token)
   }
 
   function cancel(): void {
-    deps.session.suppressScroll = false
+    programWrite = null
   }
 
-  return { onScroll, getRatio, setRatio, getHeadingEls, setScrollToLine, cancel }
+  return {
+    onScroll,
+    getScrollTop,
+    getScrollRange: scrollRange,
+    setScrollTop: write,
+    getHeadingTops,
+    setScrollToLine,
+    cancel,
+  }
 }
