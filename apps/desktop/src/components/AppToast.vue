@@ -161,9 +161,15 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 6px;
 }
-.toast-enter-active,
+.toast-enter-active {
+  transition: opacity var(--app-motion) var(--app-ease),
+              transform var(--app-motion) var(--app-ease);
+}
+/* Leaving steps down one rung on the ladder and accelerates away: a toast that
+   takes as long to go as it took to arrive reads as lag on the next action. */
 .toast-leave-active {
-  transition: opacity 0.2s, transform 0.2s;
+  transition: opacity var(--app-motion-fast) var(--app-ease-exit),
+              transform var(--app-motion-fast) var(--app-ease-exit);
 }
 .toast-enter-from,
 .toast-leave-to {

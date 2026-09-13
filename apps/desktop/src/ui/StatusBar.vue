@@ -148,7 +148,7 @@ const modeLabel = computed(() => {
   border: 1.5px solid color-mix(in srgb, var(--app-accent) 35%, transparent);
   border-top-color: var(--app-accent);
   border-radius: 50%;
-  animation: status-ai-spin 0.8s linear infinite;
+  animation: status-ai-spin var(--app-motion-spin) linear infinite;
 }
 @keyframes status-ai-spin {
   to { transform: rotate(360deg); }

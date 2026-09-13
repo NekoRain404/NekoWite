@@ -1017,7 +1017,7 @@ onBeforeUnmount(() => {
   margin-left: 2px;
   vertical-align: text-bottom;
   background: var(--app-accent);
-  animation: chat-caret-blink 1s steps(2, start) infinite;
+  animation: chat-caret-blink var(--app-motion-blink) steps(2, start) infinite;
 }
 @keyframes chat-caret-blink {
   0%, 50% { opacity: 1; }

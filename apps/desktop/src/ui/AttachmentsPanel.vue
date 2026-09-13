@@ -378,7 +378,7 @@ defineExpose({ reload })
   opacity: 0.6;
 }
 .att-refresh-icon.spin {
-  animation: att-spin 0.9s linear infinite;
+  animation: att-spin var(--app-motion-spin) linear infinite;
 }
 @keyframes att-spin {
   to { transform: rotate(360deg); }

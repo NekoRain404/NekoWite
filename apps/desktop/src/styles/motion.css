@@ -1,0 +1,92 @@
+/* The motion layer. This file owns two things and nothing else:
+     1. the shared entrance for surfaces that several components render, and
+     2. the single global switch that turns motion off for a user who asks.
+   It is imported last (see main.ts) so it governs every component's scoped
+   styles rather than being one more opinion in the pile.
+   The values themselves live in tokens.css — nothing here invents a duration. */
+
+/* ---- Shared surface entrance -------------------------------------------
+   These dialogs mount with `v-if`, and an inserted element cannot be
+   transitioned: it is already at its final state on the first frame, so
+   there is no state change to animate from. An animation runs on insertion
+   instead, which is why this is keyframes rather than a transition.
+
+   Only the entrance animates. A removed element leaves the tree immediately;
+   holding it for a fade would delay the action the user just took, which is
+   always worse than the polish it buys.
+
+   `scale` is written as its own property and never inside `transform`. Every
+   one of these dialogs already spends `transform` on centring itself, and an
+   animation that overwrote it would throw the dialog off-screen on arrival.
+   The individual property composes with `transform` instead of replacing it.
+
+   No fill mode: the resting look belongs to the base rule, so a user whose
+   animations are neutralised lands on the final state rather than a frame
+   of the animation. */
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes surface-in {
+  from { opacity: 0; scale: 0.96; }
+  to   { opacity: 1; scale: 1; }
+}
+
+.dialog-overlay {
+  animation: overlay-in var(--app-motion-slow) var(--app-ease);
+}
+.dialog {
+  animation: surface-in var(--app-motion-slow) var(--app-ease);
+}
+
+/* ---- Press feedback -----------------------------------------------------
+   The one interaction that must not wait on a curve. A press has to land
+   under the finger, so while the pointer is down these controls drop to the
+   fastest rung; hover keeps the slower one, which is what makes a press read
+   as crisper than a hover rather than identical to it.
+   Written as `transition-duration` so each control keeps its own property
+   list — this changes how fast its feedback is, not what feedback it has. */
+:is(.btn, .toolbar-btn, .switch-option, .accent-swatch, .status-btn, .ctx-menu-item):active {
+  transition-duration: var(--app-motion-micro);
+}
+
+/* ---- Reveal for a region that mounts whole ------------------------------
+   The right rail is added and removed with `v-if`, so like the dialogs it
+   needs an animation rather than a transition. Fading only: the rail takes
+   part in the flex layout, so sliding it would fight the reflow that already
+   happened the instant it mounted. */
+@keyframes rail-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.info-rail {
+  animation: rail-in var(--app-motion-slow) var(--app-ease);
+}
+
+/* ---- Reduced motion -----------------------------------------------------
+   Motion is a preference, not a decoration. A user who asks for less gets the
+   final state immediately and everywhere — including components written after
+   this file, which is why the selector is universal rather than a list of the
+   transitions that happen to exist today.
+
+   `!important` is load-bearing: every Vue scoped style carries an extra
+   attribute selector and outranks `*`, so without it a single component could
+   quietly opt itself back into motion.
+
+   Deliberately not 0ms: a zero duration still runs animationstart/animationend
+   and leaves an element in its keyframe state for a frame, which flickers.
+   0.01ms completes within the first frame and falls straight back to the base
+   style. Steady indicators (spinners, the streaming caret) lose their cycle
+   and hold their resting look — which is exactly the readable state the user
+   asked for. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}
