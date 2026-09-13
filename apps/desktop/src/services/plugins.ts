@@ -288,6 +288,178 @@ export function resetUnstableVaultPlugin(pluginId: string): void {
   resetUnstablePlugin(pluginId)
 }
 
+/**
+ * Read the disabled set straight from a vault's governance file.
+ *
+ * The loader normally applies it, but the loader is not always reached: the
+ * strict-CSP build skips plugin loading entirely, so the settings panel - whose
+ * job is to show and change this switch - has to be able to read it on its own.
+ * A missing or unverifiable file reads as "nothing disabled": this must never
+ * invent a policy, and never be the reason a panel fails to render.
+ */
+async function loadDisabledPlugins(vault: string): Promise<void> {
+  try {
+    const raw = await fsService.read(vault, PLUGIN_GOVERNANCE_FILE)
+    const framed = JSON.parse(raw) as { payload?: unknown; mac?: unknown }
+    if (typeof framed?.payload !== 'string' || typeof framed?.mac !== 'string') return
+    const secret = await loadGovernanceMacSecret(vault)
+    if (!(await verifyMacEnvelope(framed, secret))) return
+    const payload = JSON.parse(framed.payload) as GovernanceFilePayload
+    disabledPlugins.clear()
+    for (const id of Array.isArray(payload.disabled) ? payload.disabled : []) {
+      if (typeof id === 'string' && id) disabledPlugins.add(id)
+    }
+  } catch {
+    /* no governance file yet */
+  }
+}
+/**
+ * Persist the disabled set for `vault`, READ-MODIFY-WRITE.
+ *
+ * Reading first is the point: this file also holds trust anchors, revocations
+ * and digests, and the CSP-blocked build never loaded them into memory. Writing
+ * a fresh payload built from empty in-memory records would silently erase a
+ * user's revocations, so the file's own contents are the base whenever they are
+ * readable and their MAC verifies. An unverifiable file is left untouched:
+ * overwriting a tampered file is how the attacker's version becomes the trusted
+ * one on the next read.
+ */
+async function saveDisabledPlugins(vault: string): Promise<void> {
+  try {
+    const secret = await loadGovernanceMacSecret(vault)
+    let payload: GovernanceFilePayload | null = null
+    try {
+      const raw = await fsService.read(vault, PLUGIN_GOVERNANCE_FILE)
+      const framed = JSON.parse(raw) as { payload?: unknown; mac?: unknown }
+      if (typeof framed?.payload === 'string' && typeof framed?.mac === 'string') {
+        if (!(await verifyMacEnvelope(framed, secret))) return
+        payload = JSON.parse(framed.payload) as GovernanceFilePayload
+      }
+    } catch {
+      /* first save for this vault */
+    }
+    const base: GovernanceFilePayload = payload ?? buildGovernancePayload()
+    const next: GovernanceFilePayload = { ...base, disabled: [...disabledPlugins] }
+    const envelope = await createMacEnvelope(JSON.stringify(next), secret)
+    await fsService.write(vault, PLUGIN_GOVERNANCE_FILE, JSON.stringify(envelope))
+  } catch {
+    /* best-effort, exactly like the other governance writer */
+  }
+}
+/** Plugin ids switched off in the current vault. */
+export function getVaultDisabledPluginIds(): string[] {
+  return [...disabledPlugins]
+}
+
+/** Whether a plugin is switched off in the current vault. */
+export function isVaultPluginDisabled(pluginId: string): boolean {
+  return disabledPlugins.has(pluginId)
+}
+
+/**
+ * Switch a plugin off (or back on) for this vault.
+ *
+ * Switching OFF takes effect immediately: the plugin is deactivated in the host
+ * (its components, commands, toolbar buttons and lifecycle hooks are
+ * unregistered, and `onUnload` runs) and every future load skips it BEFORE the
+ * consent/trust/integrity gates - a plugin the user switched off must not be
+ * re-asked about or have its code read, let alone run. The decision is
+ * persisted, so it survives a restart and a vault switch.
+ *
+ * Switching back ON has to re-run the gates (revocation, version policy,
+ * consent, trust, integrity) because none of them stopped being relevant while
+ * it was off: it happens through a fresh vault load, which is exactly that
+ * sequence. `reload` is injectable so tests can observe the reload without
+ * building a whole vault.
+ */
+export interface SetVaultPluginDisabledOptions {
+  /** The vault this decision belongs to. Supplied by the settings panel, which
+   *  knows it; without it the decision could only be saved when a plugin load
+   *  had already set the module's current vault - and the strict-CSP build never
+   *  reaches that point, so the switch would look like it worked and be gone
+   *  after a restart (measured on the device). */
+  vault?: string
+  /** How to re-run the gates when a plugin is switched back on. Injectable so
+   *  tests can observe the reload without building a vault. */
+  reload?: (vault: string) => Promise<void>
+}
+
+export function setVaultPluginDisabled(
+  pluginId: string,
+  disabled: boolean,
+  opts: SetVaultPluginDisabledOptions = {},
+): void {
+  if (!pluginId) return
+  if (disabled) {
+    disabledPlugins.add(pluginId)
+    deactivatePlugin(pluginId)
+    const at = activeVaultPluginIds.indexOf(pluginId)
+    if (at >= 0) activeVaultPluginIds.splice(at, 1)
+    recordPluginEvent(pluginId, 'deactivate', 'disabled by the user')
+  } else {
+    disabledPlugins.delete(pluginId)
+  }
+  // Persist against the vault the user is looking at. The read-modify-write
+  // keeps this file's other records (trust, revocations, digests) intact.
+  if (opts.vault) void saveDisabledPlugins(opts.vault)
+  else scheduleGovernanceSave()
+  const reload = opts.reload ?? loadVaultPlugins
+  const vault = opts.vault ?? currentVault ?? undefined
+  // Enabling has to re-run every gate, and the reload is the one path that does
+  // it in order. Disabling needs no reload: the plugin is already out.
+  if (!disabled && vault) void reload(vault).catch(() => undefined)
+}
+export interface VaultPluginSummary {
+  id: string
+  name: string
+  version: string
+  disabled: boolean
+  active: boolean
+  unstable: boolean
+}
+
+/**
+ * List the plugins in a vault for the settings surface: manifests are read, but
+ * nothing is imported or executed (`preloadVaultPlugin` only reads files). The
+ * flags come from the live state, so a row always describes what is actually
+ * loaded rather than what the last load happened to do.
+ */
+export async function listVaultPlugins(vault: string): Promise<VaultPluginSummary[]> {
+  // The switch is stored in the vault's governance file, which the strict-CSP
+  // build never loads through the plugin path; read it here so the rows show
+  // what is actually configured.
+  await loadDisabledPlugins(vault)
+  const adapter = makeVaultPluginFsAdapter(vault)
+  let entries: PluginFsEntry[]
+  try {
+    entries = await adapter.readdir(joinPath(vault, 'plugins'))
+  } catch {
+    return []
+  }
+  // Same shape the loader uses: only directories are candidate plugins.
+  const dirs = entries.filter((e) => e.isDirectory()).map((e) => e.name)
+  const preloaded = await runBounded(
+    dirs.map((name) => () => preloadVaultPlugin(adapter, vault, name)),
+    MAX_PARALLEL_PLUGIN_LOADS,
+  )
+  const active = new Set(activeVaultPluginIds)
+  const out: VaultPluginSummary[] = []
+  for (const p of preloaded) {
+    const meta = p.meta
+    if (!meta) continue
+    out.push({
+      id: meta.id,
+      name: meta.name,
+      version: meta.version,
+      disabled: disabledPlugins.has(meta.id),
+      active: active.has(meta.id),
+      unstable: isPluginUnstable(meta.id),
+    })
+  }
+  out.sort((a, b) => a.id.localeCompare(b.id))
+  return out
+}
+
 /** True when a vault plugin is currently quarantined as unstable. */
 export function isVaultPluginUnstable(pluginId: string): boolean {
   return isPluginUnstable(pluginId)
@@ -346,6 +518,10 @@ export function isVaultPluginRevoked(pluginId: string, version: string): boolean
 // registered in vault B (and because re-activating the same id is a silent
 // no-op, going back to A would never re-register the reloaded definition).
 const activeVaultPluginIds: string[] = []
+
+/** Plugin ids the user switched off for the current vault (see the payload
+ *  field). Authoritative copy in memory, mirrored to the governance file. */
+const disabledPlugins = new Set<string>()
 
 /** Composite storage key for every record scoped to a (vault, plugin id) pair:
  *  vault + plugin id, NUL-separated so a vault path and an id that both contain
@@ -651,6 +827,12 @@ interface GovernanceFilePayload {
   trustedKey: string
   trustedSources: string[]
   digests: DigestMap
+  /** Plugin ids the user switched OFF in this vault. Persisted here rather than
+   *  in localStorage because it is security-relevant policy (it decides whether
+   *  a plugin's code runs at all) and this is the file the app already protects
+   *  and treats as authoritative. A build from before the switch existed simply
+   *  has no field, which reads as "nothing disabled". */
+  disabled?: string[]
 }
 
 /** Reset the in-memory trust records (never trust a tampered file). */
@@ -712,6 +894,7 @@ function buildGovernancePayload(): GovernanceFilePayload {
     trustedKey: memoryTrustedKey,
     trustedSources: [...memoryTrustedSources],
     digests: readDigestMap(),
+    disabled: [...disabledPlugins],
   }
 }
 
@@ -783,6 +966,10 @@ async function loadGovernanceFile(vault: string): Promise<void> {
     for (const id of Array.isArray(payload.trustedSources) ? payload.trustedSources : []) memoryTrustedSources.add(id)
     memoryDigestMap.clear()
     for (const [k, v] of Object.entries(payload.digests ?? {})) memoryDigestMap.set(k, v)
+    disabledPlugins.clear()
+    for (const id of Array.isArray(payload.disabled) ? payload.disabled : []) {
+      if (typeof id === 'string' && id) disabledPlugins.add(id)
+    }
     if (typeof payload.governance === 'string') loadGovernance(payload.governance)
   } catch {
     resetTrustRecordsForTamper()
@@ -1169,6 +1356,9 @@ export function resetVaultPluginStateForTests(): void {
   unsignedNotified.clear()
   memoryDigestMap.clear()
   cspBlockedNotified = false
+  // The disabled set is vault state too: a test that switches a plugin off
+  // must not leave the next test's plugin switched off.
+  disabledPlugins.clear()
   currentVault = null
   macSecretCache.clear()
   if (governanceSaveTimer) {
@@ -1304,6 +1494,11 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
     const meta = p.meta
     const source = p.source
     if (!meta || !source) continue
+
+    // GATE -1 — the user switched this plugin off. Checked before consent,
+    // trust and integrity so a disabled plugin is not asked about, not read
+    // and certainly not run; that is what "off" has to mean.
+    if (disabledPlugins.has(meta.id)) continue
 
     // GATE 0 — revocation, BEFORE any execution. A revoked plugin (id or version
     // /range) is refused here with the recorded reason, so its module is never
