@@ -40,20 +40,35 @@ export interface TmpReferenceScanDeps {
   /** Optional abort check consulted before each read, so a vault switch
    *  mid-scan stops issuing reads into the abandoned vault. */
   shouldAbort?: () => boolean
+  /** Whether the note list itself is complete — a walk that hit its directory
+   *  cap or a listing that failed cannot tell us about the notes it never saw. */
+  isComplete?: () => boolean
+}
+
+export interface TmpReferenceScan {
+  paths: Set<string>
+  /** False when the answer is KNOWN to be partial (a note could not be read, or
+   *  the note list was truncated). The recovery loop deletes `.tmp` files and
+   *  moves them into `attachments/` on the strength of this set, so a caller
+   *  must treat an incomplete scan as "possibly referenced", never as
+   *  "unreferenced". */
+  complete: boolean
 }
 
 /** Every `.tmp/…` path referenced by ANY note in `vault`, normalised to the
- *  vault-relative spelling the recovery loop compares `.tmp` listings against. */
-export async function findReferencedTmpPaths(
+ *  vault-relative spelling the recovery loop compares `.tmp` listings against,
+ *  plus whether that answer is complete. */
+export async function scanTmpReferences(
   vault: string,
   deps: TmpReferenceScanDeps,
-): Promise<Set<string>> {
+): Promise<TmpReferenceScan> {
   // A directory path can carry a `.md` name (`notes/topic.md/`), so drop the
   // trailing-separator spellings before the extension test.
   const notes = deps.notes.filter(
     (p) => !p.endsWith('/') && !p.endsWith('\\') && NOTE_RE.test(p),
   )
   const referenced = new Set<string>()
+  let complete = true
   let cursor = 0
   const workers = Array.from({ length: Math.min(READ_CONCURRENCY, notes.length) }, async () => {
     while (cursor < notes.length) {
@@ -66,11 +81,21 @@ export async function findReferencedTmpPaths(
         }
       } catch {
         // One unreadable note (deleted mid-scan, permission, not text) must not
-        // fail the whole scan: the prompt is a safety net, and a partial
-        // referenced set still protects every note that could be read.
+        // fail the whole scan — but it must not be reported as "nothing here
+        // references anything" either: the caller acts on this set.
+        complete = false
       }
     }
   })
   await Promise.all(workers)
-  return referenced
+  if (deps.isComplete?.() === false) complete = false
+  return { paths: referenced, complete }
+}
+
+/** The referenced `.tmp` paths only (see {@link scanTmpReferences}). */
+export async function findReferencedTmpPaths(
+  vault: string,
+  deps: TmpReferenceScanDeps,
+): Promise<Set<string>> {
+  return (await scanTmpReferences(vault, deps)).paths
 }
