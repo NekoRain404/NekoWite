@@ -453,7 +453,15 @@ onBeforeUnmount(() => {
           :style="renderedStyle"
           @user-scroll="onUserScroll('rendered')"
         />
-        <FloatToolbar />
+        <!-- The toolbar is presentational: this pane owns the float store, so
+             it feeds the selection down and routes the three actions back into
+             the store (whose actions edit the rendered model). -->
+        <FloatToolbar
+          :selected-id="floatStore.selectedId"
+          @bring-forward="floatStore.bringForward()"
+          @send-backward="floatStore.sendBackward()"
+          @remove="floatStore.removeSelected()"
+        />
       </div>
       <RenameDialog
         v-if="renamePrompt"
