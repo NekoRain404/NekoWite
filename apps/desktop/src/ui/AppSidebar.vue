@@ -4,54 +4,26 @@ import {
   Calendar,
   ChevronDown,
   ChevronRight,
-  Clock,
-  Cloud,
-  Database,
-  FileText,
   FolderOpen,
-  FolderTree,
   Hash,
-  Inbox,
   LayoutTemplate,
   Library,
   Moon,
-  Network,
-  Paperclip,
   RotateCcw,
   Settings,
-  Star,
   Sun,
   Tag as TagIcon,
   Trash2,
   X,
 } from 'lucide-vue-next'
-import { fsService } from '../platform/gateways/fs'
-import type { TrashEntry } from '../platform/gateways/contracts'
-import { announce } from '../services/announcer'
-import { notifyError } from '../services/errors'
-import { useTabsStore } from '../stores/tabs'
-import { flushSourceEdits } from '../services/sourceView'
-import { useDocumentListStore } from '../stores/documentList'
-import { useFileTreeStore } from '../stores/fileTree'
-import { useAppearanceStore } from '../stores/appearance'
-import { insertCiteAtCursor } from '../services/editorBridge'
-import { useRefsStore } from '../stores/refs'
-import { parseFrontmatterForPanel, splitFrontmatterRaw } from '../services/noteMeta'
-import { removeTagFromContent } from '../services/tags'
 import {
-  buildDailyVars,
-  ensureDailyNote,
-  listTemplates,
-  readTemplate,
-  renderTemplate,
-  templateFileBase,
-  type TemplateEntry,
-} from '../services/noteTemplates'
-import {
-  MAX_CREATE_ATTEMPTS,
-  createNoteWithFreeName,
-  type CreatedNote,
-} from '../services/noteCreation'
+  useSidebarNavigation,
+  useSidebarReferences,
+  useSidebarTags,
+  useSidebarTemplates,
+  useSidebarTheme,
+  useSidebarTrash,
+} from '../features/sidebar'
 import TemplatePicker from './TemplatePicker.vue'
 import { t } from '../i18n'
 import { baseName } from '../services/paths'
@@ -62,26 +34,30 @@ const emit = defineEmits<{
   (e: 'open-settings'): void
 }>()
 
-const documentList = useDocumentListStore()
-const fileTree = useFileTreeStore()
-const refs = useRefsStore()
-const appearance = useAppearanceStore()
-const tabs = useTabsStore()
+const { navEntries, pickVaultFolder } = useSidebarNavigation()
+const { tagCounts, activeTag, selectTag, activeDocTags, removeCurrentTag } = useSidebarTags()
+const { refQuery, refCount, refResults, insertRef } = useSidebarReferences()
+const { theme, toggleTheme } = useSidebarTheme()
+const {
+  trashEntries,
+  trashUnreadable,
+  clearingTrash,
+  refreshTrash,
+  restore,
+  trashLabel,
+  clearTrash,
+} = useSidebarTrash({ vault: () => props.vault })
+const {
+  templatePickerOpen,
+  templateTemplates,
+  createDailyNote,
+  openTemplatePicker,
+  closeTemplatePicker,
+  createFromTemplate,
+} = useSidebarTemplates({ vault: () => props.vault })
 
 const refsOpen = ref(false)
-const refQuery = ref('')
-const refResults = computed(() => refs.search(refQuery.value).slice(0, 30))
-
 const trashOpen = ref(false)
-const trashEntries = ref<TrashEntry[]>([])
-/**
- * Set when the last read of the trash FAILED. "The trash is empty" and "the
- * trash could not be read" must never render the same: the second one is the
- * answer a user gets when a permission problem hides their deleted notes, and
- * calling it empty says those notes are gone.
- */
-const trashUnreadable = ref(false)
-const clearingTrash = ref(false)
 
 const vaultName = computed(() => {
   // Windows vault paths end with a backslash-separated folder name, so a
@@ -89,245 +65,20 @@ const vaultName = computed(() => {
   return baseName(props.vault) || props.vault
 })
 
-const theme = computed<'light' | 'dark'>(() => {
-  void appearance.systemRevision
-  return appearance.effectiveTheme()
-})
-
-function toggleTheme(): void {
-  appearance.setTheme(theme.value === 'dark' ? 'light' : 'dark')
-}
-
-interface NavEntry {
-  id: string
-  label: string
-  icon: typeof FileText
-  count?: number
-  active: boolean
-  onClick: () => void
-}
-
-const navEntries = computed<NavEntry[]>(() => {
-  const counts = documentList.counts
-  const inNotes = documentList.listView === 'notes'
-  const isFilter = (f: string): boolean => inNotes && documentList.filter === f
-  return [
-    {
-      id: 'folders', label: t('nav.folders'), icon: FolderTree,
-      active: documentList.listView === 'folders', onClick: () => documentList.setListView('folders'),
-    },
-    {
-      id: 'all', label: t('nav.all'), icon: FileText, count: counts.all,
-      active: isFilter('all'), onClick: () => documentList.setFilter('all'),
-    },
-    {
-      id: 'recent', label: t('nav.recent'), icon: Clock, count: counts.recent,
-      active: isFilter('recent'), onClick: () => documentList.setFilter('recent'),
-    },
-    {
-      id: 'favorites', label: t('nav.favorites'), icon: Star, count: counts.favorites,
-      active: isFilter('favorites'), onClick: () => documentList.setFilter('favorites'),
-    },
-    {
-      id: 'uncategorized', label: t('nav.uncategorized'), icon: Inbox, count: counts.uncategorized,
-      active: isFilter('uncategorized'), onClick: () => documentList.setFilter('uncategorized'),
-    },
-    {
-      id: 'graph', label: t('nav.graph'), icon: Network,
-      active: documentList.listView === 'graph', onClick: () => documentList.setListView('graph'),
-    },
-    {
-      id: 'attachments', label: t('nav.attachments'), icon: Paperclip, count: fileTree.attachmentCount,
-      active: documentList.listView === 'attachments', onClick: () => documentList.setListView('attachments'),
-    },
-    {
-      id: 'index', label: t('nav.index'), icon: Database,
-      active: documentList.listView === 'index', onClick: () => documentList.setListView('index'),
-    },
-    {
-      id: 'cloud', label: t('nav.cloud'), icon: Cloud,
-      active: documentList.listView === 'cloud', onClick: () => documentList.setListView('cloud'),
-    },
-  ]
-})
-
-async function refreshTrash(): Promise<void> {
-  try {
-    trashEntries.value = await fsService.listTrash(props.vault)
-    trashUnreadable.value = false
-  } catch (e) {
-    // The list is unknown, not empty. Keep the flag so the panel asks the
-    // user to fix the read instead of claiming there is nothing to recover,
-    // and surface the backend reason (which folder, what the OS said).
-    trashEntries.value = []
-    trashUnreadable.value = true
-    notifyError(e instanceof Error ? e.message : String(e))
-  }
-}
-
-async function restore(entry: TrashEntry): Promise<void> {
-  try {
-    await fsService.restoreFromTrash(props.vault, entry.trash_path)
-    await refreshTrash()
-  } catch {
-    notifyError(t('nav.restoreFailed'))
-  }
-}
-
-/** The trash key is the encoded on-disk name (`docs%2Fa.md`), and a second
- *  deletion of the same path adds a timestamp — neither is what the user
- *  deleted. The backend decodes both, so the label is read rather than
- *  re-derived; the local fallbacks cover an older entry shape. */
-function trashLabel(entry: TrashEntry): string {
-  return entry.display_name || baseName(entry.original_path) || entry.name
-}
-
-/** Two-step clear: the first click arms "confirm", the second empties the
- * trash. No confirm is required when the trash is already empty. */
-async function clearTrash(): Promise<void> {
-  if (!clearingTrash.value) {
-    clearingTrash.value = true
-    return
-  }
-  clearingTrash.value = false
-  try {
-    const report = await fsService.clearTrash(props.vault)
-    await refreshTrash()
-    if (report.failed.length === 0) {
-      announce(t('trash.cleared', { n: report.removed }))
-    } else {
-      // Partial (or total) failure: say what actually happened. "Failed"
-      // over a half-emptied trash hides the removals that DID happen and the
-      // entries that are still there to retry.
-      const names = report.failed.slice(0, 5).map((f) => f.name).join(', ')
-      const extra = report.failed.length > 5 ? ` +${report.failed.length - 5}` : ''
-      notifyError(
-        t('trash.clearPartial', {
-          removed: report.removed,
-          failed: report.failed.length,
-          names: names + extra,
-        }),
-      )
-    }
-  } catch {
-    notifyError(t('trash.clearFailed'))
-  }
+async function pickFolder(): Promise<void> {
+  const picked = await pickVaultFolder()
+  if (picked) emit('open-folder', picked)
 }
 
 watch(trashOpen, (open) => {
   if (open) void refreshTrash()
 })
 
-async function pickFolder(): Promise<void> {
-  const picked = await fsService.openFolderDialog()
-  if (picked) emit('open-folder', picked)
-}
-
-function insertRef(key: string): void {
-  insertCiteAtCursor(key)
-  refQuery.value = ''
-}
-
-const templatePickerOpen = ref(false)
-const templateTemplates = ref<TemplateEntry[]>([])
-
-/** Open (or create) today's daily note, rendering the default template on
- *  first use. Existing notes are opened without a write. */
-async function createDailyNote(): Promise<void> {
-  try {
-    const { path } = await ensureDailyNote(props.vault)
-    await tabs.openTab(path)
-  } catch {
-    notifyError(t('daily.createFailed'))
-  }
-}
-
-async function openTemplatePicker(): Promise<void> {
-  let templates: TemplateEntry[] = []
-  try {
-    templates = await listTemplates(props.vault)
-  } catch {
-    templates = []
-  }
-  templateTemplates.value = templates
-  templatePickerOpen.value = true
-}
-
-function closeTemplatePicker(): void {
-  templatePickerOpen.value = false
-}
-
-/** Collects the vault-root filenames so a new note can avoid a collision. */
-async function rootNoteNames(): Promise<Set<string>> {
-  try {
-    const entries = await fsService.list(props.vault, '.')
-    return new Set(entries.filter((e) => !e.is_dir).map((e) => e.name))
-  } catch {
-    return new Set()
-  }
-}
-
-async function createFromTemplate(entry: TemplateEntry): Promise<void> {
-  let body: string
-  try {
-    body = await readTemplate(props.vault, entry)
-  } catch {
-    notifyError(t('template.readFailed'))
-    return
-  }
-  const existing = await rootNoteNames()
-  const base = templateFileBase(entry)
-  const content = renderTemplate(body, buildDailyVars(new Date(), { title: base }))
-  let created: CreatedNote | null
-  try {
-    created = await createNoteWithFreeName(props.vault, base, content, existing)
-  } catch {
-    notifyError(t('template.createFailed'))
-    return
-  }
-  if (!created) {
-    // Every candidate name was claimed by another writer while we were choosing
-    // one. Report that instead of falling back to a write that would land on
-    // top of the file that took the name.
-    notifyError(t('template.nameTaken', { count: MAX_CREATE_ATTEMPTS, base }))
-    return
-  }
-  templatePickerOpen.value = false
-  await tabs.openTab(created.path)
-}
-
-const activeDocTags = computed(() => {
-  const tab = tabs.activeTab
-  if (!tab) return new Set<string>()
-  const { front } = splitFrontmatterRaw(tab.content)
-  return new Set(parseFrontmatterForPanel(front).tags)
-})
-
-/** Remove `tag` from the CURRENTLY OPEN document's frontmatter. The library
- * wide rename/remove is intentionally out of scope: it would need to rewrite
- * every note's file (riskier, deferred). The index refreshes after the save. */
-function removeCurrentTag(tag: string, e: MouseEvent): void {
-  e.stopPropagation()
-  const tab = tabs.activeTab
-  if (!tab) return
-  // Whole-document read-modify-write: publish the source pane's pending
-  // keystrokes first, or this would transform (and then mirror back) text that
-  // is a debounce window out of date.
-  flushSourceEdits()
-  const next = removeTagFromContent(tab.content, tag)
-  if (next === tab.content) return
-  tab.content = next
-  tabs.markDirty(tab.id)
-  tabs.scheduleAutosave(tab.id)
-}
-
-
 watch(
   () => props.vault,
   () => {
     refsOpen.value = false
     trashOpen.value = false
-    clearingTrash.value = false
   },
 )
 </script>
@@ -404,7 +155,7 @@ watch(
       </nav>
 
       <section
-        v-if="documentList.tagCounts.length"
+        v-if="tagCounts.length"
         class="sidebar-section"
       >
         <div class="section-title">
@@ -416,15 +167,15 @@ watch(
         </div>
         <div class="tag-list">
           <div
-            v-for="tc in documentList.tagCounts"
+            v-for="tc in tagCounts"
             :key="tc.tag"
             class="tag-row"
           >
             <button
               class="nav-item tag-item"
-              :class="{ active: documentList.filter === `tag:${tc.tag}` }"
+              :class="{ active: activeTag === tc.tag }"
               :title="t('nav.noteCount', { n: tc.count })"
-              @click="documentList.setFilter(`tag:${tc.tag}`)"
+              @click="selectTag(tc.tag)"
             >
               <Hash
                 class="nav-icon"
@@ -468,9 +219,9 @@ watch(
           />
           <span class="group-title">{{ t('nav.references') }}</span>
           <span
-            v-if="refs.refs.size"
+            v-if="refCount"
             class="group-count"
-          >{{ refs.refs.size }}</span>
+          >{{ refCount }}</span>
         </button>
         <div
           v-if="refsOpen"
