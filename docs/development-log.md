@@ -475,6 +475,8 @@ git commit -m "feat(appearance): add crimson palette and four accents"
 - **笔记上下文长度改为设置项**（默认 6000，范围 1000–32000）：此前写死 2000，长文档下用户无法让模型看到自己正在写的部分。
 - **`CONTENT_SEARCH_CONCURRENCY` 去掉重复声明**，收敛到唯一来源。
 
+**查证后确认「不是 bug」的一项**：插入空表格后，磁盘上每个单元格写成 `<br />`（`| <br /> | <br /> | <br /> |`）。真机复现（`apps/desktop/ai-lab/292-table-empty.cjs`）确认这是**有意为之**：单元格在 schema 里必须持有段落，而 Milkdown 对「没有内容的段落」统一写 `<br />` 标记，这样重新打开时单元格不会塌掉（remark 对真正空的单元格的解析会让段落消失，进而可能丢列）。我按「空单元格就该写成空」改了一版，结果 editor-core 里三条把该约定钉住的用例立刻失败（其中一条就叫「keeps the empty-cell marker round-tripping」），并且我的改动还会误删用户自己写在单元格里的真实换行（`<br />` 是同一种拼写）。结论：**按约定保留**，改动退回；`table/stringify.ts` 与 `tableBlockInsert.test.ts` 回到原状（`git checkout`）。这条记在这里，是为了下一个人不要把它当 bug 再改一遍——要改的话，得先让解析端能在不写标记的情况下保住空单元格。
+
 **本轮结束时仍未处理**（下一轮候选）：`search_notes` 全链路与其一次性内容搜索辅助函数目前无 UI 消费者（属死代码，建议删除或接入命令面板）；`packages/plugin-host` 的 `PluginContext` 仍不提供 `ctx.ai`（声明 `ai` 的插件目前拿不到 AI 能力，只是写入被策略约束）；插件治理文件以外的插件持久化「停用」开关仍不存在。
 
 ## 验证与交付
