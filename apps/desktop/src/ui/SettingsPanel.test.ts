@@ -8,6 +8,11 @@ import { COLOR_SCHEMES } from '../stores/appearance'
 const invokeMock = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 
+/** The packaged version is what Settings must show; the build-time value is
+ *  only the fallback used outside Tauri (the browser demo). */
+const getVersionMock = vi.hoisted(() => vi.fn(async () => '9.9.9'))
+vi.mock('@tauri-apps/api/app', () => ({ getVersion: getVersionMock }))
+
 const matchMediaMock = vi.fn(() => ({
   matches: false,
   media: '(prefers-color-scheme: dark)',
@@ -79,5 +84,30 @@ describe('SettingsPanel color scheme picker', () => {
 
     expect(appearance.colorScheme).toBe('ocean')
     expect(ocean?.getAttribute('aria-checked')).toBe('true')
+  })
+})
+
+describe('SettingsPanel version row', () => {
+  it('shows the version of the build, so a bug report can name it', async () => {
+    mountPanel()
+    await nextTick()
+    // The read is async; give its microtask a turn before looking.
+    await new Promise((r) => setTimeout(r, 0))
+    await nextTick()
+    const row = document.querySelector('[data-test="app-version"]')
+    expect(row).toBeTruthy()
+    expect(row!.textContent).toContain('9.9.9')
+  })
+
+  it('shows nothing rather than a wrong number when no version is available', async () => {
+    // Outside Tauri there is no app to ask and no injected value in a unit
+    // test, so the honest answer is an absent row, not a fabricated one.
+    getVersionMock.mockRejectedValueOnce(new Error('no tauri'))
+    mountPanel()
+    await nextTick()
+    await new Promise((r) => setTimeout(r, 0))
+    await nextTick()
+    const text = document.querySelector('[data-test="app-version"]')?.textContent ?? ''
+    expect(/undefined|NaN/.test(text)).toBe(false)
   })
 })
