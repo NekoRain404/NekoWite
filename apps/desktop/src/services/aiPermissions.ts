@@ -30,12 +30,19 @@ export type AiWritePolicy = 'ask' | 'auto' | 'readonly'
  *  insert, and granting one must never grant the other. */
 export type AiWriteKind = 'insert' | 'replace-selection' | 'replace-document'
 
+/** Where a write came from. Used by the audit trail to say WHO asked - the
+ *  user's own Tab press, the chat rail, a selection edit, or a plugin - since
+ *  "the AI wrote to my note" is not an answer anyone can act on. */
+export type AiWriteSource = 'ghost' | 'chat' | 'edit' | 'dialog' | 'plugin'
+
 /** One pending write. `summary` and `target` describe it to the user in the
- *  prompt; they never take part in the decision. */
+ *  prompt; they never take part in the decision. `source` never takes part in
+ *  the decision either - it is recorded, not judged. */
 export interface AiWriteRequest {
   kind: AiWriteKind
   summary: string
   target?: string
+  source?: AiWriteSource
 }
 
 export type AiWriteDecision = 'allow' | 'ask' | 'deny'

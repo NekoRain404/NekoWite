@@ -11,11 +11,24 @@ import {
   type AiWriteRequest,
 } from '../services/aiPermissions'
 import { persistence } from '../services/persistence'
+import {
+  clearAiAuditLog as clearAudit,
+  getAiAuditLog,
+  loadAiAuditLog,
+  onAiAudit,
+  recordAiAudit,
+  serializeAiAuditLog,
+  summarizeAiAudit,
+  type AiAuditEvent,
+  type AiAuditOutcome,
+} from '../services/aiAudit'
 
 const LS_AI_WRITE_POLICY = 'nekowite.ai.writePolicy'
 /** The master switch. Stored as '0'/'1'; anything else (including no value at
  *  all) means on, so an install that predates the switch keeps its AI. */
 const LS_AI_ENABLED = 'nekowite.ai.enabled'
+/** The mirrored AI action log (see services/aiAudit). */
+const LS_AI_AUDIT = 'nekowite.ai.audit'
 
 /**
  * The write-permission state for AI edits, plus the pending-approval queue the
@@ -59,9 +72,22 @@ function readPolicy(): AiWritePolicy {
 export const useAiPermissionStore = defineStore('aiPermission', () => {
   const policy = ref<AiWritePolicy>(readPolicy())
   const enabled = ref<boolean>(readEnabled())
+
+  // Restore whatever the last session recorded, then mirror every new entry.
+  // Loading is idempotent (de-duplicated by seq), so a store rebuilt in a test
+  // or after a vault switch does not double-count.
+  loadAiAuditLog(persistence.get(LS_AI_AUDIT))
+  const auditLog = ref<AiAuditEvent[]>(getAiAuditLog())
+  onAiAudit(() => {
+    auditLog.value = getAiAuditLog()
+    persistence.set(LS_AI_AUDIT, serializeAiAuditLog())
+  })
   // Session-only: rebuilt empty on every launch (see the module comment).
   const sessionGrants = ref<ReadonlySet<string>>(new Set())
   const pending = ref<PendingAiWrite | null>(null)
+
+  /** Counts per outcome, recomputed from the live ring. */
+  const auditSummary = computed(() => summarizeAiAudit(auditLog.value))
 
   const state = computed<AiPermissionState>(() => ({
     policy: policy.value,
@@ -69,8 +95,25 @@ export const useAiPermissionStore = defineStore('aiPermission', () => {
     enabled: enabled.value,
   }))
 
-  /** True when an approval question is on screen (the shell renders it). */
-  const awaitingApproval = computed<boolean>(() => pending.value !== null)
+  /** Record one AI decision. Best-effort by design: the trail must never be
+   *  the reason a write fails, so nothing here can throw into a caller. */
+  function audit(
+    source: AiWriteRequest['source'],
+    outcome: AiAuditOutcome,
+    request?: AiWriteRequest,
+    detail?: string,
+  ): void {
+    try {
+      recordAiAudit({
+        source: source ?? 'dialog',
+        outcome,
+        ...(request ? { kind: request.kind } : {}),
+        ...(detail ? { detail } : {}),
+      })
+    } catch {
+      // never let bookkeeping break the feature it observes
+    }
+  }
 
   function setPolicy(next: AiWritePolicy): void {
     if (!(AI_WRITE_POLICIES as readonly string[]).includes(next)) return
@@ -92,8 +135,20 @@ export const useAiPermissionStore = defineStore('aiPermission', () => {
     sessionGrants.value = revokeAllGrants(state.value).sessionGrants
   }
 
+  /** Drop the recorded history. The log is the user's, so the user clears it. */
+  function forgetAudit(): void {
+    try {
+      clearAudit()
+      auditLog.value = getAiAuditLog()
+      persistence.set(LS_AI_AUDIT, serializeAiAuditLog())
+    } catch {
+      // see audit(): bookkeeping never breaks the caller
+    }
+  }
+
   function grant(request: AiWriteRequest): void {
     sessionGrants.value = grantForSession(state.value, request).sessionGrants
+    audit(request.source, 'granted', request, 'remembered for this session')
   }
 
   /** Answer the on-screen question. A no-op when nothing is pending, so a
@@ -103,6 +158,12 @@ export const useAiPermissionStore = defineStore('aiPermission', () => {
     if (!current) return
     pending.value = null
     if (approved && rememberForSession) grant(current.request)
+    audit(
+      current.request.source,
+      approved ? 'allowed' : 'denied',
+      current.request,
+      approved ? (rememberForSession ? 'allowed for this session' : 'allowed once') : 'refused by the user',
+    )
     current.resolve(approved)
   }
 
@@ -112,16 +173,33 @@ export const useAiPermissionStore = defineStore('aiPermission', () => {
    */
   function ask(request: AiWriteRequest): Promise<boolean> {
     const decision = decideAiWrite(state.value, request)
-    if (decision === 'allow') return Promise.resolve(true)
-    if (decision === 'deny') return Promise.resolve(false)
+    if (decision === 'allow') {
+      // A standing permission that lets a write through without asking is
+      // exactly what a user checking later wants to see, so it is recorded.
+      audit(request.source, 'allowed', request, 'allowed by the current permission')
+      return Promise.resolve(true)
+    }
+    if (decision === 'deny') {
+      // Which of the two refusals it was matters: "you switched AI off" and
+      // "the policy forbids writes" call for different fixes.
+      audit(
+        request.source,
+        'blocked',
+        request,
+        !enabled.value ? 'AI features are switched off' : 'the write permission forbids this',
+      )
+      return Promise.resolve(false)
+    }
     return new Promise<boolean>((resolve) => {
       // A second question while one is on screen would leave the first promise
       // pending forever (nothing can answer it), which would hang the write it
       // gates. Deny the newcomer instead: the user is asked one thing at a time.
       if (pending.value) {
+        audit(request.source, 'denied', request, 'another question was already waiting')
         resolve(false)
         return
       }
+      audit(request.source, 'asked', request)
       pending.value = { request, resolve }
     })
   }
@@ -135,10 +213,12 @@ export const useAiPermissionStore = defineStore('aiPermission', () => {
      *  synchronously (the plugin editor guard's un-awaitable writes) use the
      *  same pure table as `ask()` instead of a second copy of the rules. */
     state,
-    awaitingApproval,
+    auditLog,
+    auditSummary,
     setPolicy,
     setEnabled,
     forgetGrants,
+    forgetAudit,
     respond,
     ask,
   }
