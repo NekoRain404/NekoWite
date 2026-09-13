@@ -46,6 +46,25 @@ describe('registry', () => {
     expect(items[0].label).toBe('B')
     expect(items[0].run).toBe(second)
   })
+  it('registerToolbar re-registers an id IN PLACE, keeping toolbar order', () => {
+    // The features re-run per editor (tableFeature/mathFeature) and plugins
+    // re-register on activation, so the same id is registered repeatedly. The
+    // update must overwrite the existing entry rather than remove-and-append:
+    // a button that drifted to the end of the toolbar on every reload is a
+    // visible regression, and it is what made the features' own
+    // `unregisterToolbar` call (before re-registering) a bug worth removing.
+    registerToolbar({ id: 't-order-a', label: 'A', run: () => {} })
+    registerToolbar({ id: 't-order-b', label: 'B', run: () => {} })
+    registerToolbar({ id: 't-order-c', label: 'C', run: () => {} })
+    const before = getToolbar().map((t) => t.id)
+    const at = before.indexOf('t-order-b')
+    expect(at).toBeGreaterThanOrEqual(0)
+
+    registerToolbar({ id: 't-order-b', label: 'B2', run: () => {} })
+
+    expect(getToolbar().map((t) => t.id)).toEqual(before)
+    expect(getToolbar().find((t) => t.id === 't-order-b')?.label).toBe('B2')
+  })
   it('registerAll registers batch', () => {
     const run = () => {}
     registerAll({ commands: [{ id: 'c2', run }], toolbar: [{ id: 't2', label: 'T2', run }] })
