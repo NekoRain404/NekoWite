@@ -27,11 +27,7 @@ coverage/
 
 # real-device probe harness + the throwaway vaults its runs create
 apps/desktop/ai-lab/
-/probe-vault/
-/probe-vault-*/
-/probe-journey-*/
-/probe-empty-*/
-/probe-ui-*/
+/probe-*/
 .DS_Store
 Thumbs.db
 

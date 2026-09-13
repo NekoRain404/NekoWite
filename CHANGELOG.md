@@ -296,7 +296,7 @@
   5. 故意用不存在的模型名：返回 403，并且**带上服务商自己的说明**（`The current group does not support the requested model ... Available models: deepseek-flash`），而不是一句无从下手的「请求失败」；
   6. 中途取消：`ai_cancel` 后 **3 ms** 内返回，不再等读超时。
 - 测试门禁：desktop **1445**、editor-core **648**、plugin-host **103**、Rust **170**、Playwright **137**；`typecheck` / `lint` / `clippy -D warnings` 全绿。
-- **最终便携版**：`release/nekowite_0.1.0_x64.exe`（未签名），SHA-256 `32b7981f897a9e8de0872b9815ecade12b3a446101233cb3bcc638d79b9c034f`。同一轮里真机探针对它复跑全部通过：`270-round22-acceptance.cjs` **10/10**、`283-delete-assets.cjs` **6/6**、`286-live-ai.cjs` **6/6**（对真实端点的发包，含思考深度开关的对照）、`240-editor-fixes.cjs` 前 5 项（第 6 项依赖 dev 构建的模块加载器，打包版无此能力）、`200-packaged-smoke.cjs` 6/8（后两项是探针自身的旧选择器问题）。
+- **最终便携版**：`release/nekowite_0.1.0_x64.exe`（未签名），SHA-256 `a379b3910742f945ff8f230fc336253a9f723ad0b37f274ace573825f2e5b048`。同一轮里真机探针对它复跑全部通过：`270-round22-acceptance.cjs` **10/10**、`283-delete-assets.cjs` **6/6**、`286-live-ai.cjs` **6/6**（对真实端点的发包，含思考深度开关的对照）、`240-editor-fixes.cjs` 前 5 项（第 6 项依赖 dev 构建的模块加载器，打包版无此能力）、`200-packaged-smoke.cjs` 6/8（后两项是探针自身的旧选择器问题）。
 - **设置面板实机确认**（`apps/desktop/ai-lab/287-ai-settings.cjs`，打包版，AI 分区）：**思考深度**（不思考/极简/低/中/高/极高/跟随服务商默认）、**写入权限**（每次询问/直接写入/禁止）、**笔记上下文长度** 三项控件都在，且与前面 6/6 的真实发包结果相互印证（「高」确实产生推理增量，「不思考」确实为 0）。
 - **首启路径**（`apps/desktop/ai-lab/293-first-run.cjs`，打包版，**4/4**）：没有记录过 vault 时显示欢迎页且不渲染主界面；空 vault 能打开且列表是「空的」而不是坏的（索引状态「已是最新」）；由 **Node 直接写入**（模拟别的程序建文件）的笔记在 **1 秒内**出现在列表里；点开后有可编辑面板、标签名正确。
 - **界面面板实机复核**（`apps/desktop/ai-lab/294-ui-surfaces.cjs`，打包版，**6/6**）：对照模式两个面板都在；滚动同步**开**时另一侧跟随（0 → 3491），**关**时纹丝不动（0 → 0）——这一对正是本轮修好的那个「死开关」；命令面板能打开并列出 25 条；图谱面板渲染出「2 篇 · 1 条链接」；回收站面板列出刚删除的 `two.md`（含清空入口）。
