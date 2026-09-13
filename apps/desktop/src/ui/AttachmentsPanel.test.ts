@@ -20,7 +20,6 @@ vi.mock('../platform/gateways/fs', () => ({
     deleteFile: deleteFileMock,
     resolveMediaPath: resolveMediaPathMock,
     watch: vi.fn(),
-    searchNotes: vi.fn(),
     openFolderDialog: vi.fn(),
     saveFileDialog: vi.fn(),
     onFsChange: vi.fn(),

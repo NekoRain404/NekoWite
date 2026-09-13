@@ -56,7 +56,6 @@ pub fn run() {
             commands::recovery::read_history,
             commands::recovery::restore_history,
             commands::fs::list_dir,
-            commands::fs::search_notes,
             commands::fs::save_attachment,
             commands::fs::resolve_media_path,
             commands::fs::create_dir,

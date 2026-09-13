@@ -7,8 +7,8 @@ use nekowite_lib::storage::file_store::{
     atomic_write, cleanup_stale_tmp, create_dir, create_new_file, import_attachment,
     is_importable_image, list_dir,
     list_dir_entries, list_history, read_file, read_history, rename_entry, resolve_media_path,
-    restore_history, sanitize_attachment_name, save_attachment, search_notes,
-    search_notes_with_max, snapshot_history, stat_file, write_file, MAX_IMPORT_BYTES,
+    restore_history, sanitize_attachment_name, save_attachment,
+    snapshot_history, stat_file, write_file, MAX_IMPORT_BYTES,
 };
 use nekowite_lib::storage::trash_store::{
     clear_trash, delete_file, list_trash, restore_from_trash,
@@ -1607,42 +1607,6 @@ fn cleanup_stale_tmp_leaves_other_tmp_style_files_alone() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-#[test]
-fn search_notes_finds_deep_matches_without_the_old_dir_cap() {
-    // The old bounds (512 dirs / depth 24) could silently drop a match buried in
-    // a deeply nested tree. The default bound is generous (100k dirs / depth 64),
-    // so a note 32 levels deep is still found.
-    let vault = temp_vault("search-deep");
-    let mut dir = vault.clone();
-    for i in 0..32 {
-        dir = dir.join(format!("d{i}"));
-    }
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("needle.md"), "x").unwrap();
-    let hits = search_notes(vault.to_str().unwrap(), "needle", 100).unwrap();
-    assert_eq!(hits.len(), 1, "deep match must not be silently truncated");
-    assert!(hits[0].path.contains("needle.md"));
-    let _ = std::fs::remove_dir_all(&vault);
-}
-
-#[test]
-fn search_notes_default_bound_is_generous_and_can_be_overridden() {
-    let vault = temp_vault("search-bound");
-    for i in 0..3 {
-        let d = vault.join(format!("dir{i}"));
-        std::fs::create_dir_all(&d).unwrap();
-        std::fs::write(d.join(format!("match-{i}.md")), "x").unwrap();
-    }
-    let root = vault.to_str().unwrap();
-    // Default (None) → generous bound: every match is returned.
-    let all = search_notes_with_max(root, "match", 100, None).unwrap();
-    assert_eq!(all.len(), 3);
-    // An explicit small override still succeeds and is configurable, not silent.
-    let capped = search_notes_with_max(root, "match", 100, Some(0)).unwrap();
-    assert!(capped.is_empty(), "an explicit 0-dir bound yields no matches");
-    let _ = std::fs::remove_dir_all(&vault);
-}
-
 // ---------------------------------------------------------------------------
 // import_attachment (picker-based import)
 // ---------------------------------------------------------------------------
@@ -1884,12 +1848,6 @@ fn list_dir_paths_are_not_verbatim_on_windows() {
     assert!(note.path.ends_with("note.md"));
     // The path must still resolve when handed straight back to the backend.
     assert_eq!(read_file(&root, &note.path).unwrap(), "x");
-
-    // Search results feed the same list and must agree.
-    let hits = search_notes_with_max(&root, "note.md", 100, None).unwrap();
-    for hit in &hits {
-        assert!(!hit.path.starts_with(r"\\?\"), "verbatim in search: {}", hit.path);
-    }
 
     std::fs::remove_dir_all(&vault).unwrap();
 }

@@ -35,11 +35,6 @@ export const tauriFsPort: FsPort = {
       max_history: maxHistory ?? null,
     }),
   list: (vault, dir) => invoke<FileEntry[]>('list_dir', { vault_root: vault, path: dir }),
-  searchNotes: (vault, query) =>
-    invoke<{ items: FileEntry[]; truncated: boolean }>('search_notes', {
-      vault_root: vault,
-      query,
-    }),
   watch: (vault) => invoke<void>('watch_folder', { vault_root: vault, path: null }),
   deleteFile: (vault, path) =>
     invoke<string>('delete_file', { vault_root: vault, path }),

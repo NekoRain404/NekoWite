@@ -95,27 +95,6 @@ pub async fn list_dir(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn search_notes(
-    vault_root: String,
-    query: String,
-    max_dirs: Option<usize>,
-    state: tauri::State<'_, VaultRegistry>,
-) -> Result<file_store::SearchResults, String> {
-    require_opened_vault(&state, &vault_root)?;
-    // The frontend does not send `max_dirs`, so it defaults to the generous
-    // SEARCH_MAX_DIRS — the walker itself does not cap a large vault. The
-    // response carries `truncated`, so a caller can TELL when a result set was
-    // cut short instead of presenting the first matches as all of them.
-    // The optional arg is the explicit guard for a future client that wants to
-    // bound an unusually deep/hostile tree.
-    file_store::search_notes_capped(&vault_root, &query, SEARCH_RESULT_LIMIT, max_dirs)
-}
-
-/// How many matches one search returns — a page size, not a limit on what the
-/// walker examines. `truncated` in the response says whether more existed.
-const SEARCH_RESULT_LIMIT: usize = 100;
-
-#[tauri::command(rename_all = "snake_case")]
 pub async fn save_attachment(
     vault: String,
     file_name: String,
