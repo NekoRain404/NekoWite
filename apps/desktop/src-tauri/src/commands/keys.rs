@@ -4,10 +4,12 @@
 //! These drive the key store and the crash-safe recovery module. Command names,
 //! DTOs and error strings are unchanged from the pre-split layout.
 
+use std::path::Path;
+
 use tauri::Manager;
 use tauri_plugin_stronghold::stronghold::Stronghold;
 
-use crate::domain::recovery::{open_snapshot, reencrypt_vault};
+use crate::domain::recovery::{backup_key_paths, open_snapshot, reencrypt_vault};
 use crate::state::KeyVault;
 use crate::storage::key_store::{
     self, ai_key_presence, derive_master_key, encode_keyfile_password, load_ai_key_internal,
@@ -146,9 +148,9 @@ pub async fn set_master_password(app: tauri::AppHandle, password: String) -> Res
 /// stronghold so subsequent commands (`store_ai_key`, AI requests, …) can use
 /// it. A no-op when the vault is already unlocked.
 ///
-/// If the snapshot still decrypts under the previous password (a crash midway
-/// through `set_master_password`), the `master.key.old` backup salt + verifier
-/// is tried before giving up, so the recovery path works with the old password.
+/// The password is tried against every key file that may open the snapshot, not
+/// just `master.key` (see [`unlock_snapshot`]), so an interrupted password
+/// change is still recoverable with the password that actually decrypts it.
 #[tauri::command]
 pub async fn unlock_vault(app: tauri::AppHandle, password: String) -> Result<(), String> {
     validate_password(&password)?;
@@ -159,23 +161,80 @@ pub async fn unlock_vault(app: tauri::AppHandle, password: String) -> Result<(),
     }
     let snapshot_path = key_store::stronghold_path(&app)?;
     let key_path = key_store::master_key_path(&app)?;
+    *guard = Some(unlock_snapshot(&snapshot_path, &key_path, &password)?);
+    Ok(())
+}
 
-    // Collect the candidate (salt, verifier) pairs: the current key file, and
-    // the `.old` backup if it is a password-protected one (crash recovery).
-    let mut candidates: Vec<(std::path::PathBuf, [u8; 32], [u8; 32])> = Vec::new();
-    if let VaultKeyState::Locked { salt, verifier } = read_vault_key_state(&key_path)? {
-        candidates.push((snapshot_path.clone(), salt, verifier));
-    } else {
+/// One key file a password may be derived against: the KDF salt it stores and
+/// the one-way verifier that says whether the derived key is the right one.
+pub type PasswordCandidate = ([u8; 32], [u8; 32]);
+
+/// The candidates `password` may be derived against, in the order
+/// [`unlock_snapshot`] tries them: the current `master.key` first, then every
+/// backup beside it ([`backup_key_paths`]: the canonical `master.key.old` slot,
+/// then the backups a swap rotated out of it, newest first).
+///
+/// Those are exactly the files the load-time recovery searches, and keeping the
+/// two in step is what this function is for. `displace_current_key` rotates an
+/// occupied backup aside instead of deleting it because it can be the only key
+/// that opens the live snapshot; for a password-protected vault that key file
+/// also carries the only password that still opens it. Recovery cannot use such
+/// a file — a password-protected backup has no key to hand it, the key has to be
+/// derived from the password, so `open_snapshot` skips it — which makes unlock
+/// the ONLY path that can open that vault. It read `.old` alone, leaving the
+/// rotated name unread.
+///
+/// Two files are deliberately not candidates: a passwordless backup, whose key
+/// is usable as-is and so would let any string typed into the unlock dialog open
+/// a vault whose `master.key` claims a password protects it; and
+/// `master.key.new`, whose key belongs to a swap that has not been committed.
+///
+/// Only files that exist are read. `read_vault_key_state` CREATES a missing key
+/// file (a fresh passwordless one), so probing a path that is not there forged a
+/// `master.key.old` that opens nothing on every failed unlock — a backup the
+/// recovery path would then try and a later swap would rotate into the user's
+/// key-file history.
+pub fn password_candidates(key_path: &Path) -> Result<Vec<PasswordCandidate>, String> {
+    let VaultKeyState::Locked { salt, verifier } = read_vault_key_state(key_path)? else {
         return Err("no master password is set".into());
+    };
+    let mut candidates = vec![(salt, verifier)];
+    for backup in backup_key_paths(key_path) {
+        // `backup_key_paths` offers existing files, but a backup that vanished
+        // between that listing and this read must not be resurrected as a
+        // passwordless one (see the doc comment).
+        if !backup.exists() {
+            continue;
+        }
+        // Unreadable, malformed or passwordless backups are skipped: one bad
+        // backup must not stop the unlock, and a passwordless one has no
+        // password to check.
+        if let Ok(VaultKeyState::Locked { salt, verifier }) = read_vault_key_state(&backup) {
+            candidates.push((salt, verifier));
+        }
     }
-    let backup_path = key_store::sibling_suffixed(&key_path, "old");
-    if let Ok(VaultKeyState::Locked { salt, verifier }) = read_vault_key_state(&backup_path) {
-        candidates.push((snapshot_path.clone(), salt, verifier));
-    }
+    Ok(candidates)
+}
 
+/// Unlock the vault at `snapshot_path` with `password`: derive the master key
+/// from each candidate key file in turn and open the snapshot with the first
+/// one whose verifier accepts the password.
+///
+/// A derived key that matches the verifier is not proof it opens the snapshot:
+/// after an interrupted swap the live snapshot can still be encrypted under an
+/// earlier password, so a rejected open falls through to the next candidate
+/// instead of reporting the password as wrong.
+///
+/// Pure and `AppHandle`-free so the unlock sequence is testable directly (see
+/// `tests/recovery_test.rs`), the same way [`open_snapshot`] is.
+pub fn unlock_snapshot(
+    snapshot_path: &Path,
+    key_path: &Path,
+    password: &str,
+) -> Result<Stronghold, String> {
     let mut last_err = "incorrect master password".to_string();
-    for (snapshot, salt, verifier) in candidates {
-        let derived = match derive_master_key(&password, &salt) {
+    for (salt, verifier) in password_candidates(key_path)? {
+        let derived = match derive_master_key(password, &salt) {
             Ok(k) => k,
             Err(e) => {
                 last_err = e;
@@ -185,12 +244,11 @@ pub async fn unlock_vault(app: tauri::AppHandle, password: String) -> Result<(),
         if verifier_of(&derived) != verifier {
             continue;
         }
-        if let Ok(stronghold) = Stronghold::new(snapshot, derived.to_vec()) {
-            *guard = Some(stronghold);
-            return Ok(());
+        if let Ok(stronghold) = Stronghold::new(snapshot_path, derived.to_vec()) {
+            return Ok(stronghold);
         }
         // The derived key matched the verifier but the snapshot refused it;
-        // fall through and let the next candidate (the `.old` backup) try.
+        // fall through and let the next candidate (a backup key file) try.
     }
     Err(last_err)
 }
