@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 import { useAppearanceStore } from '../stores/appearance'
-import { taskProgress } from '../services/editorBehaviors'
+import { useDocDerivedStore } from '../stores/docDerived'
 import { t } from '../i18n'
 import { aiThinking } from '../services/ai'
 import { readAppVersion } from '../platform/appVersion'
@@ -11,6 +12,14 @@ import { readAppVersion } from '../platform/appVersion'
 const tabs = useTabsStore()
 const view = useViewStore()
 const appearance = useAppearanceStore()
+/**
+ * The bar renders the readings, it does not compute them. Words, characters,
+ * read time and tasks all come from the shared derivation, which scans the
+ * document once per published text and is shared with the panels in the rail.
+ * This bar used to scan that text twice over (a word count of its own, then a
+ * task count), and the word-goal widget scanned it again.
+ */
+const { stats } = storeToRefs(useDocDerivedStore())
 
 /** The version shown in the status bar. Read from the build (see
  *  platform/appVersion.ts) rather than written here: a hardcoded string is a
@@ -21,24 +30,6 @@ const version = ref<string | null>(null)
 void readAppVersion().then((v) => {
   version.value = v
 }).catch(() => undefined)
-
-// CJK unified ideographs + kana + Hangul syllables: no whitespace between words.
-const CJK_RE = /[一-鿿぀-ヿ가-힯]/g
-
-function countWords(text: string): number {
-  // CJK text has no whitespace between words — count each character as one
-  // word, and count whitespace-separated runs in the remainder as words.
-  const cjk = text.match(CJK_RE)?.length ?? 0
-  const rest = text.replace(CJK_RE, ' ').trim()
-  const latinWords = rest ? rest.split(/\s+/).filter(Boolean).length : 0
-  return cjk + latinWords
-}
-
-const content = computed(() => tabs.activeTab?.content ?? '')
-const wordCount = computed(() => countWords(content.value))
-const charCount = computed(() => content.value.length)
-const readMinutes = computed(() => (wordCount.value === 0 ? 0 : Math.max(1, Math.ceil(wordCount.value / 300))))
-const taskInfo = computed(() => taskProgress(content.value))
 
 const saveState = computed(() => {
   const tab = tabs.activeTab
@@ -71,18 +62,18 @@ const modeLabel = computed(() => {
     role="status"
   >
     <template v-if="appearance.statusBarWords">
-      <span class="status-item">{{ t('status.words', { n: wordCount }) }}</span>
+      <span class="status-item">{{ t('status.words', { n: stats.words }) }}</span>
       <span class="status-sep">·</span>
-      <span class="status-item">{{ t('status.chars', { n: charCount }) }}</span>
+      <span class="status-item">{{ t('status.chars', { n: stats.chars }) }}</span>
       <span class="status-sep">·</span>
-      <span class="status-item">{{ t('status.readMinutes', { n: readMinutes }) }}</span>
+      <span class="status-item">{{ t('status.readMinutes', { n: stats.readMinutes }) }}</span>
     </template>
     <span
-      v-if="taskInfo.total > 0"
+      v-if="stats.taskTotal > 0"
       class="status-item status-task"
-      :class="{ 'is-done': taskInfo.done === taskInfo.total }"
+      :class="{ 'is-done': stats.taskDone === stats.taskTotal }"
     >
-      {{ t('status.tasks', { done: taskInfo.done, total: taskInfo.total }) }}
+      {{ t('status.tasks', { done: stats.taskDone, total: stats.taskTotal }) }}
     </span>
     <span class="status-spacer" />
     <span

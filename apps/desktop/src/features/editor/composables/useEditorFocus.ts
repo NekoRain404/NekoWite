@@ -1,9 +1,9 @@
 import { computed, watch } from 'vue'
 import type { NekoEditor } from '@nekowite/editor-core'
+import { storeToRefs } from 'pinia'
 import { useAppearanceStore } from '../../../stores/appearance'
-import { useTabsStore } from '../../../stores/tabs'
+import { useDocDerivedStore } from '../../../stores/docDerived'
 import {
-  countWords,
   isWordGoalMet,
   shouldCenterScroll,
   wordProgress,
@@ -23,9 +23,10 @@ export interface UseEditorFocusOptions {
  * focus / typewriter center-cursor behavior.
  *
  * - Word goal: a slim top progress reading is shown while `wordGoal > 0`,
- *   flipping to the accent color once the goal is reached. Count is derived
- *   from the live tab content with the same CJK/latin algorithm the status bar
- *   uses.
+ *   flipping to the accent color once the goal is reached. Count comes from the
+ *   shared document reading (`stores/docDerived.ts`), so it is the same number
+ *   the status bar shows and it is scanned once per published text instead of
+ *   once per consumer.
  * - Typewriter mode: keep the cursor block vertically centered while it drifts,
  *   scrolling only the viewport (never the document). Driven by a rAF so we
  *   re-frame after ProseMirror has synced the DOM for this interaction.
@@ -35,7 +36,7 @@ export interface UseEditorFocusOptions {
  */
 export function useEditorFocus(options: UseEditorFocusOptions) {
   const appearance = useAppearanceStore()
-  const tabs = useTabsStore()
+  const { stats } = storeToRefs(useDocDerivedStore())
 
   let focusRaf = 0
 
@@ -83,7 +84,17 @@ export function useEditorFocus(options: UseEditorFocusOptions) {
     }
   }
 
-  const wordCount = computed(() => countWords(tabs.activeTab?.content ?? ''))
+  /**
+   * Zero while no goal is set, and not merely "unused": the live-region watch
+   * below reads this computed on every edit, so counting unconditionally made
+   * every typing pause scan the whole document for a widget that is not on
+   * screen (the goal is off by default). The goal is read first, so `stats` is
+   * not touched at all — and turning a goal on re-reads it, since the goal is
+   * reactive. Nothing renders this value while the goal is 0 (the progress
+   * reading is behind `v-if="appearance.wordGoal > 0"`), and `isWordGoalMet` /
+   * `wordProgress` both already answer 0/false for a goal of 0.
+   */
+  const wordCount = computed(() => (appearance.wordGoal > 0 ? stats.value.words : 0))
   const wordGoalMet = computed(() => isWordGoalMet(wordCount.value, appearance.wordGoal))
   const wordProgressPct = computed(() =>
     Math.round(wordProgress(wordCount.value, appearance.wordGoal) * 100),
