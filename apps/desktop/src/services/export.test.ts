@@ -47,20 +47,31 @@ describe('exportToPdf', () => {
   interface FakeIframe {
     style: Record<string, string>
     srcdoc: string
-    contentWindow: { print: () => void; focus: () => void } | null
+    contentWindow: {
+      print: () => void
+      focus: () => void
+      addEventListener: (type: string, cb: () => void) => void
+    } | null
     remove: ReturnType<typeof vi.fn>
     onload: (() => void) | null
     fireLoad: () => void
+    fireAfterPrint: () => void
   }
 
   function makeIframe(print: () => void): FakeIframe {
+    const listeners = new Map<string, () => void>()
     const iframe: FakeIframe = {
       style: {},
       srcdoc: '',
-      contentWindow: { print, focus: vi.fn() },
+      contentWindow: {
+        print,
+        focus: vi.fn(),
+        addEventListener: (type, cb) => listeners.set(type, cb),
+      },
       remove: vi.fn(),
       onload: null,
       fireLoad: () => iframe.onload?.call(iframe),
+      fireAfterPrint: () => listeners.get('afterprint')?.(),
     }
     return iframe
   }
@@ -70,7 +81,10 @@ describe('exportToPdf', () => {
     vi.spyOn(document.body, 'appendChild').mockReturnValue(iframe as unknown as HTMLElement)
   }
 
-  it('removes the iframe once and cancels the fallback timer on successful print', async () => {
+  it('keeps the frame attached after print() and removes it on afterprint', async () => {
+    // `window.print()` returns immediately and the preview renders afterwards,
+    // so the frame must outlive the call. Removing it here is what made Export
+    // PDF silently do nothing.
     const iframe = makeIframe(() => undefined)
     stubDom(iframe)
     // Rendering (and with it the iframe setup) is async since the export
@@ -78,8 +92,22 @@ describe('exportToPdf', () => {
     await exportToPdf('# T\n', { title: 'Doc' })
     expect(iframe.onload).not.toBeNull()
     iframe.fireLoad()
+    expect(iframe.remove).not.toHaveBeenCalled()
+    iframe.fireAfterPrint()
     expect(iframe.remove).toHaveBeenCalledTimes(1)
-    vi.advanceTimersByTime(60001)
+    // afterprint also cancels the backstop, so nothing double-removes.
+    vi.advanceTimersByTime(300_001)
+    expect(iframe.remove).toHaveBeenCalledTimes(1)
+  })
+
+  it('sweeps the frame up if afterprint never arrives', async () => {
+    const iframe = makeIframe(() => undefined)
+    stubDom(iframe)
+    await exportToPdf('# T\n', {})
+    iframe.fireLoad()
+    vi.advanceTimersByTime(299_999)
+    expect(iframe.remove).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
     expect(iframe.remove).toHaveBeenCalledTimes(1)
   })
 
