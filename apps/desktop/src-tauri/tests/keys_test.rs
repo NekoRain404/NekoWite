@@ -354,3 +354,61 @@ fn keyfile_roundtrips_and_rejects_garbage() {
     // Wrong length for the declared mode.
     assert!(decode_keyfile(&encode_keyfile_passwordless(&key)[..33]).is_err());
 }
+
+/// A key file written before the versioned envelope existed holds the bare
+/// 32-byte key. Rejecting it as a bad length locked a working vault out of its
+/// own key — the user saw "master key file has invalid length 32 (expected 34
+/// or 66)" when saving an AI key, and no AI key could ever be stored again.
+#[test]
+fn a_legacy_bare_key_file_is_accepted_and_upgraded_in_place() {
+    let dir = temp_dir("legacy-key");
+    let path = dir.join("master.key");
+    let key: Vec<u8> = (0u8..32).collect();
+    fs::write(&path, &key).unwrap();
+
+    let state = read_vault_key_state(&path).expect("a legacy key must still open the vault");
+    assert_eq!(
+        state,
+        VaultKeyState::Auto(key.clone().try_into().unwrap()),
+        "the bare bytes ARE the key, carried over verbatim"
+    );
+
+    let upgraded = fs::read(&path).unwrap();
+    assert_eq!(upgraded.len(), 34, "rewritten in the versioned envelope");
+    assert_eq!(
+        decode_keyfile(&upgraded).unwrap(),
+        state,
+        "the upgrade must not change the key"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn upgrading_a_legacy_key_is_idempotent() {
+    let dir = temp_dir("legacy-key-twice");
+    let path = dir.join("master.key");
+    let key: Vec<u8> = (0u8..32).collect();
+    fs::write(&path, &key).unwrap();
+
+    let first = read_vault_key_state(&path).unwrap();
+    let second = read_vault_key_state(&path).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(fs::read(&path).unwrap().len(), 34);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn only_the_bare_key_length_is_treated_as_legacy() {
+    // Everything else that is not 34/66 is still a corrupt file: accepting it
+    // would mean inventing key material.
+    let dir = temp_dir("legacy-key-other");
+    for len in [0usize, 16, 31, 33, 65, 67] {
+        let path = dir.join(format!("master-{len}.key"));
+        fs::write(&path, vec![0u8; len]).unwrap();
+        assert!(
+            read_vault_key_state(&path).is_err(),
+            "a {len}-byte key file must still be rejected"
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
