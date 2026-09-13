@@ -15,28 +15,39 @@ const files = [
   'notes/mdx-syntax.md',
 ]
 
+/**
+ * Each case builds a real editor, opens a real document, saves it and renders
+ * the whole thing to standalone HTML with KaTeX — far more work than a unit
+ * test, and it has been observed exceeding vitest's 5 s default on a loaded
+ * machine. The budget is stated rather than left implicit, so the number
+ * reflects what the case does instead of how fast the machine happened to be.
+ */
+const PER_DOCUMENT_TIMEOUT_MS = 30_000
+
 describe('MDX demo validation', () => {
   for (const relative of files) {
-    it(`${relative}: opens, round-trips and renders`, async () => {
-      const source = readFileSync(resolve(root, relative), 'utf8')
-      const el = document.createElement('div')
-      document.body.appendChild(el)
-      const editor = createEditor(el)
-      try {
-        await editor.open(source)
-        const saved = await editor.save()
-        expect(saved.length).toBeGreaterThan(0)
-        expect(saved.length).toBeGreaterThan(50)
-        const html = await renderDocumentAsync(source, {
-          componentRenderers: {},
-          math: 'text',
-        })
-        expect(html).toContain('<html')
-      } finally {
-        editor.destroy()
-      }
-    })
+    it(
+      `${relative}: opens, round-trips and renders`,
+      async () => {
+        const source = readFileSync(resolve(root, relative), 'utf8')
+        const el = document.createElement('div')
+        document.body.appendChild(el)
+        const editor = createEditor(el)
+        try {
+          await editor.open(source)
+          const saved = await editor.save()
+          expect(saved.length).toBeGreaterThan(0)
+          expect(saved.length).toBeGreaterThan(50)
+          const html = await renderDocumentAsync(source, {
+            componentRenderers: {},
+            math: 'text',
+          })
+          expect(html).toContain('<html')
+        } finally {
+          editor.destroy()
+        }
+      },
+      PER_DOCUMENT_TIMEOUT_MS,
+    )
   }
 })
-
-
