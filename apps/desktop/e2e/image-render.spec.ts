@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { openNote, showRendered } from './support/editorHarness'
+import { repoFsUrl } from './support/repoFs'
 
 /** A real 1x1 PNG, so `naturalWidth` proves the browser decoded it. */
 const PNG_1X1 =
@@ -135,12 +136,13 @@ test.describe('image resolution recovery', () => {
     await showRendered(page)
     await expect.poll(async () => (await imageState(page)).errorVisible, { timeout: 5000 }).toBe(true)
 
-    await page.evaluate(async () => {
+    const resolverModule = repoFsUrl('packages', 'editor-core', 'src', 'image', 'resolver.ts')
+    await page.evaluate(async (moduleUrl) => {
       const core = (await import(
-        '/@fs/C:/Users/Lenovo/Documents/ChatGPT/NekoWrite/packages/editor-core/src/image/resolver.ts'
+        moduleUrl
       )) as unknown as { invalidateImageResolution(): void }
       core.invalidateImageResolution()
-    })
+    }, resolverModule)
 
     await expect
       .poll(async () => (await imageState(page)).naturalWidth, { timeout: 5000 })
