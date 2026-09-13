@@ -325,28 +325,6 @@ export function createMemoryFsGateway(
         return a.name.localeCompare(b.name)
       })
     },
-    searchNotes: async (_vault, query) => {
-      const q = query.trim().toLowerCase()
-      if (q === '') return { items: [], truncated: false }
-      const out: FileEntry[] = []
-      let truncated = false
-      for (const key of files.keys()) {
-        if (out.length >= 100) {
-          truncated = true
-          break
-        }
-        if (isHiddenKey(key) || !/\.(md|mdx|markdown)$/i.test(key)) continue
-        if (key.toLowerCase().includes(q)) {
-          out.push({
-            name: key.split('/').pop() ?? key,
-            path: key,
-            is_dir: false,
-            is_mdx: true,
-          })
-        }
-      }
-      return { items: out, truncated }
-    },
     watch: async () => undefined,
     // Simulated native dialogs: the demo always "picks" the in-memory vault.
     openFolderDialog: async () => 'memoir://demo',

@@ -63,7 +63,6 @@ test('real usage: table + image doc — image panel, table row/col insert, cell 
           // for every path would make the crash-recovery prompt appear and
           // overlay the editor (a real vault with no `.tmp` dir returns []/err).
           if (cmd === 'list_dir') return String(args['path']) === '.tmp' ? [] : fixtures
-          if (cmd === 'search_notes') return fixtures
           if (cmd === 'read_file') return String(args['path']).endsWith('image-table.md') ? doc : ''
           if (cmd === 'stat_file') return { size: 1, mtime: 1 }
           if (cmd === 'write_file') {

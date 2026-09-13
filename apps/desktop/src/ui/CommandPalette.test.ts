@@ -7,7 +7,6 @@ vi.mock('../platform/gateways/fs', () => ({
     read: vi.fn().mockResolvedValue(''),
     write: vi.fn(),
     list: vi.fn().mockResolvedValue([]),
-    searchNotes: vi.fn().mockResolvedValue([]),
     watch: vi.fn(),
     stat: vi.fn(),
     onFsChange: vi.fn().mockResolvedValue(() => undefined),

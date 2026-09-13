@@ -8,7 +8,6 @@
 //! incrementally (mtime/size tokens, per-shard checksums, atomic temp+swap).
 //!
 //! This module is the reserved home for a future RUST-side index. Nothing here
-//! reads or writes those files today, and `search_notes` in `storage::file_store`
-//! still walks the tree at request time, so a Rust index would be an addition
+//! reads or writes those files today, so a Rust index would be an addition
 //! rather than a replacement. A future index should be keyed by vault root and
 //! stay confined to it.
