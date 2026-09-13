@@ -17,18 +17,13 @@ import { useFloatStore } from '../stores/float'
 import { getSourceView } from '../services/sourceView'
 import { noteFocusedPane, resetFocusedPane } from '../services/editorOwnership'
 import { parseOutline, type OutlineItem } from '../services/outline'
+import { createSplitScrollCoordinator } from '../services/splitScrollCoordinator'
+import { countDocumentLines } from '../services/scrollSyncAnchors'
 import {
-  createSplitScrollCoordinator,
-  SPLIT_SCROLL_SETTLE_PX,
-} from '../services/splitScrollCoordinator'
-import {
-  anchorHeadingIndex,
-  clampLine,
-  clampRatio,
-  countDocumentLines,
-  lineRatio,
-  nearestHeadingIndex,
-} from '../services/scrollSyncAnchors'
+  planPaneSync,
+  type PaneGeometry,
+  type PaneSyncPlan,
+} from '../features/editor/controller/paneScrollMapping'
 import { t } from '../i18n'
 
 // The source (CodeMirror) pane is loaded only when the user actually needs it.
@@ -95,14 +90,6 @@ const {
 
 type PaneId = 'source' | 'rendered'
 
-/** Where the destination pane has to be scrolled for both panes to show the
- *  same part of the document, and whether that position is the document's own
- *  end (which is written immediately: an ease there only adds latency). */
-interface ScrollPlan {
-  top: number
-  atEdge: boolean
-}
-
 /** The pane the coordinator is currently moving. A user scroll switches it: the
  *  pane being scrolled becomes the origin and stops being driven, which is what
  *  makes a leg in flight interruptible. */
@@ -152,125 +139,30 @@ function outlineForSync(): { items: OutlineItem[]; totalLines: number } {
   return { items: outlineItems, totalLines: outlineLines }
 }
 
-/** The rendered headings' offsets, or null when they and the parsed outline are
- *  out of step (a heading mid-render). The offsets come from the DOM and the
- *  outline from the source text; a mismatch would anchor the mapping on a
- *  heading that is not the one the line refers to, so both directions fall back
- *  to the ratio instead — the same refusal `nearestHeadingIndex` makes. */
-function headingTops(items: OutlineItem[]): number[] | null {
-  if (items.length === 0) return null
-  const tops = renderedPane.value?.getHeadingTops() ?? []
-  return tops.length === items.length ? tops : null
-}
-
-/** Where `value` sits between `from` and `to`, carried onto the other pair.
- *  A degenerate range starts at its own beginning. */
-function between(value: number, from: number, to: number, fromOut: number, toOut: number): number {
-  if (to === from) return fromOut
-  const progress = Math.max(0, Math.min((value - from) / (to - from), 1))
-  return fromOut + progress * (toOut - fromOut)
-}
-
-/** The rendered offset that puts `line` at the top of the rendered pane.
- *
- *  Headings are the anchors in both directions: the source line and the heading
- *  index map to each other, and the offset is interpolated inside the heading's
- *  own block. Snapping to the heading instead would park the rendered pane on a
- *  section's first heading for as long as the source is anywhere inside that
- *  section — a whole section of the two panes showing different text. The last
- *  block is stretched onto the pane's end so a document whose panes are laid out
- *  at different heights still lines up when it runs out. */
-function renderedTopFor(
-  line: number,
-  items: OutlineItem[],
-  tops: number[] | null,
-  totalLines: number,
-  range: number,
-): number {
-  if (!tops) return clampRatio(lineRatio(line, totalLines)) * range
-  const firstLine = items[0].line + 1
-  if (line < firstLine) return between(line, 1, firstLine, 0, tops[0])
-  const index = anchorHeadingIndex(items, line) ?? 0
-  const startLine = items[index].line + 1
-  const next = items[index + 1]
-  if (!next) return between(line, startLine, totalLines + 1, tops[index], range)
-  return between(line, startLine, next.line + 1, tops[index], tops[index + 1])
-}
-
-/** The source offset for a (possibly fractional) 1-based line. One past the
- *  last line is the document's end, which is where the pane runs out. */
-function sourceOffsetForLine(line: number, totalLines: number, range: number): number {
-  const pane = sourcePane.value
-  if (!pane) return 0
-  if (line >= totalLines + 1) return range
-  const start = clampLine(line, totalLines)
-  const progress = Math.max(0, Math.min(line - start, 1))
-  const startTop = pane.scrollTopForLine(start)
-  const nextTop = start < totalLines ? pane.scrollTopForLine(start + 1) : range
-  return Math.max(0, Math.min(startTop + progress * (nextTop - startTop), range))
-}
-
-/** The inverse of `renderedTopFor`: the source offset that puts, at the top of
- *  the source pane, the text the rendered pane has at `offset`. */
-function sourceTopFor(
-  offset: number,
-  items: OutlineItem[],
-  tops: number[] | null,
-  totalLines: number,
-  range: number,
-): number {
-  const sourceRange = paneScrollRange('source')
-  const index = tops ? nearestHeadingIndex(tops, offset, items) : null
-  if (index === null || !tops) {
-    // No headings to anchor on: the panes' positions correspond by proportion.
-    return clampRatio(range > 0 ? offset / range : 0) * sourceRange
-  }
-  const startTop = tops[index]
-  // Above the first heading the block runs from the document's own top to that
-  // heading — `nearestHeadingIndex` clamps onto the heading, but the text above
-  // it is not the heading.
-  if (index === 0 && offset < startTop) {
-    const preamble = between(offset, 0, startTop, 1, items[0].line + 1)
-    return sourceOffsetForLine(preamble, totalLines, sourceRange)
-  }
-  const next = items[index + 1]
-  const line = between(
-    offset,
-    startTop,
-    next ? tops[index + 1] : range,
-    items[index].line + 1,
-    next ? next.line + 1 : totalLines + 1,
-  )
-  return sourceOffsetForLine(line, totalLines, sourceRange)
-}
-
-/** Where the counterpart pane has to be to show what `from` is showing. */
-function planSync(from: PaneId, to: PaneId): ScrollPlan | null {
-  const source = sourcePane.value
-  const rendered = renderedPane.value
-  if (!source || !rendered) return null
-
-  const fromTop = paneScrollTop(from)
-  const fromRange = paneScrollRange(from)
-  const toRange = paneScrollRange(to)
-  // A pane at the end of its own range is at the end of the document, and that
-  // is the one position the anchors cannot express: the last block's text stops
-  // where the pane does. Landing on it exactly is what makes the document's
-  // ends reachable from either pane.
-  if (fromTop <= SPLIT_SCROLL_SETTLE_PX) return { top: 0, atEdge: true }
-  if (fromRange > SPLIT_SCROLL_SETTLE_PX && fromTop >= fromRange - SPLIT_SCROLL_SETTLE_PX) {
-    return { top: toRange, atEdge: true }
-  }
-
+/** The geometry the mapping works from: the panes' live offsets. The rendered
+ *  headings' offsets collapse to null when they and the parsed outline are out
+ *  of step (a heading mid-render), and the source pane's own line offsets come
+ *  from the pane, which is the only thing that can measure them. */
+function paneGeometry(from: PaneId, to: PaneId): PaneGeometry {
   const { items, totalLines } = outlineForSync()
-  const tops = headingTops(items)
-  const top =
-    from === 'source'
-      ? renderedTopFor(source.getVisibleUnit() ?? 1, items, tops, totalLines, toRange)
-      : sourceTopFor(fromTop, items, tops, totalLines, fromRange)
-  // A pane with nothing to scroll cannot follow in a visible way; treating it
-  // as an edge keeps the write immediate rather than easing nowhere.
-  return { top, atEdge: fromRange <= SPLIT_SCROLL_SETTLE_PX }
+  const tops = renderedPane.value?.getHeadingTops() ?? []
+  return {
+    fromTop: paneScrollTop(from),
+    fromRange: paneScrollRange(from),
+    toRange: paneScrollRange(to),
+    totalLines,
+    items,
+    tops: items.length > 0 && tops.length === items.length ? tops : null,
+    sourceTopOfLine: (line) => sourcePane.value?.scrollTopForLine(line) ?? 0,
+  }
+}
+
+/** Where the counterpart pane has to be to show what `from` is showing, or null
+ *  while either pane is missing (the source pane is an async component). */
+function planSync(from: PaneId, to: PaneId): PaneSyncPlan | null {
+  const source = sourcePane.value
+  if (!source || !renderedPane.value) return null
+  return planPaneSync(from, paneGeometry(from, to), source.getVisibleUnit() ?? 1)
 }
 
 /** The OS-level "reduce motion" preference — the same check the command palette
