@@ -14,21 +14,45 @@
 // published that stale text into the new tab and autosaved it over the new note's
 // file. Only the saved tab can consume its own arm, and switching documents drops
 // the arms of every other tab (see `pruneSuppressReapply`).
-const armed = new Set<string>()
+/**
+ * How long an arm stays valid (ms).
+ *
+ * The arm is consumed by the very next content change, which arrives within the
+ * same tick — the save syncs `tab.content` right after arming. An arm that
+ * survives much longer than that has lost its partner: the content change it was
+ * waiting for never came, so whatever changes content NEXT gets swallowed
+ * instead. That is a real edit — an external program rewriting the file, a
+ * conflict resolution reloading it — and swallowing it leaves the editor showing
+ * text that is no longer on disk, which the next autosave then writes back over
+ * the newer version. A short window keeps the guard's promise (the save's own
+ * echo is never re-applied) without letting it eat an unrelated reload.
+ */
+export const SUPPRESS_REAPPLY_TTL_MS = 2000
+
+const armed = new Map<string, number>()
 
 /** Arm the guard for `tabId`, the tab whose save-time rewrite was just synced. */
 export function armSuppressReapply(tabId: string): void {
-  armed.add(tabId)
+  armed.set(tabId, Date.now())
 }
 
-/** True while `tabId` has an unconsumed arm. */
+/** True while `tabId` has an unconsumed, still-valid arm. */
 export function shouldSuppressReapply(tabId: string): boolean {
-  return armed.has(tabId)
+  const at = armed.get(tabId)
+  if (at === undefined) return false
+  if (Date.now() - at > SUPPRESS_REAPPLY_TTL_MS) {
+    armed.delete(tabId)
+    return false
+  }
+  return true
 }
 
-/** Consume `tabId`'s arm; true when it was armed. */
+/** Consume `tabId`'s arm; true when it was armed and still valid. */
 export function consumeSuppressReapply(tabId: string): boolean {
-  return armed.delete(tabId)
+  const at = armed.get(tabId)
+  if (at === undefined) return false
+  armed.delete(tabId)
+  return Date.now() - at <= SUPPRESS_REAPPLY_TTL_MS
 }
 
 /**
@@ -39,7 +63,7 @@ export function consumeSuppressReapply(tabId: string): boolean {
  * there until it swallowed a later, unrelated content change.
  */
 export function pruneSuppressReapply(activeTabId: string | null): void {
-  for (const id of [...armed]) {
+  for (const id of [...armed.keys()]) {
     if (id !== activeTabId) armed.delete(id)
   }
 }
