@@ -56,3 +56,8 @@ Thumbs.db
 # gitlink to a commit this repository cannot resolve. Keep the working copy
 # locally, but never add it.
 /NekoWite_win/
+
+# Linked worktrees (`git worktree add`). Each is a full checkout of another
+# branch, so git sees the directory as untracked and would happily commit a
+# nested repository. They are scratch: the commits live on their own branches.
+/.worktrees/
