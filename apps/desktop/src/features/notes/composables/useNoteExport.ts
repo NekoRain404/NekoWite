@@ -10,7 +10,7 @@
 
 import { fsService } from '../../../platform/gateways/fs'
 import { t } from '../../../i18n'
-import { isPathWithinVault } from '../../../services/attachments'
+import { isPathWithinVault } from '../../attachments'
 import { describeExportError, notifyError } from '../../../services/errors'
 import { exportHtml, exportToPdf, type ExportUiOptions } from '../../../services/export'
 import { exportBaseName } from '../../../services/exportName'

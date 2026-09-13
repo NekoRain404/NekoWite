@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createMemoryFsGateway } from '../platform/gateways/memory'
-import type { FileEntry, FsGateway } from '../platform/gateways/contracts'
+import { createMemoryFsGateway } from '../../../platform/gateways/memory'
+import type { FileEntry, FsGateway } from '../../../platform/gateways/contracts'
+import { MAX_ATTACHMENT_BYTES } from './attachment-import'
 import {
+  createImageSrcResolver,
   deleteAttachment,
+  fileToBase64,
   formatBytes,
   formatRelativeTime,
   loadAttachmentLibrary,
-} from './attachmentLibrary'
+  LOW_COPY_ENCODE_MIN_BYTES,
+} from './attachment-library'
 
 const DAY = 24 * 60 * 60 * 1000
 
@@ -152,6 +156,84 @@ describe('deleteAttachment', () => {
     await expect(fs.read('vault', 'attachments/a.png')).rejects.toThrow()
     const trash = await fs.listTrash('vault')
     expect(trash.some((t) => t.original_path === 'attachments/a.png')).toBe(true)
+  })
+})
+
+describe('fileToBase64', () => {
+  // Give a File a synthetic size without allocating `size` bytes (used to build
+  // an oversize image cheaply).
+  function fileOfSize(name: string, size: number): File {
+    const file = new File(['x'], name, { type: 'image/png' })
+    Object.defineProperty(file, 'size', { value: size, configurable: true })
+    return file
+  }
+
+  it('encodes file bytes as base64', async () => {
+    const file = new File([new Uint8Array([104, 105])], 'x.png', { type: 'image/png' })
+    await expect(fileToBase64(file)).resolves.toBe(btoa('hi'))
+  })
+
+  it('rejects an oversize image BEFORE any encode (never reads bytes)', async () => {
+    const big = fileOfSize('big.png', MAX_ATTACHMENT_BYTES + 1)
+    // If the encode path read the file, FileReader.readAsDataURL would be called.
+    const spy = vi.spyOn(FileReader.prototype, 'readAsDataURL')
+    await expect(fileToBase64(big)).rejects.toThrow(/exceeds/)
+    expect(spy).not.toHaveBeenCalled()
+    spy.mockRestore()
+  })
+
+  it('uses the native FileReader low-copy path for large-but-allowed images', async () => {
+    const file = new File([new Uint8Array([104, 105])], 'x.png', { type: 'image/png' })
+    // Override the reported size to route it onto the low-copy (FileReader) path
+    // without allocating the bytes; the content itself is still just 'hi'.
+    Object.defineProperty(file, 'size', {
+      value: LOW_COPY_ENCODE_MIN_BYTES + 1,
+      configurable: true,
+    })
+    const spy = vi.spyOn(FileReader.prototype, 'readAsDataURL')
+    await expect(fileToBase64(file)).resolves.toBe(btoa('hi'))
+    expect(spy).toHaveBeenCalledTimes(1)
+    spy.mockRestore()
+  })
+
+  it('keeps small images on the fast arrayBuffer path (no FileReader)', async () => {
+    const file = new File([new Uint8Array([104, 105])], 'x.png', { type: 'image/png' })
+    const spy = vi.spyOn(FileReader.prototype, 'readAsDataURL')
+    await expect(fileToBase64(file)).resolves.toBe(btoa('hi'))
+    expect(spy).not.toHaveBeenCalled()
+    spy.mockRestore()
+  })
+})
+
+describe('createImageSrcResolver', () => {
+  it('delegates to fs.resolveMediaPath with the vault-relative path', async () => {
+    const resolveMediaPath = vi.fn(async (_v: string, rel: string) => `data:image/png;base64,${rel}`)
+    const resolve = createImageSrcResolver({ resolveMediaPath }, {
+      getVault: () => 'vault',
+      getNotePath: () => 'notes/a.md',
+    })
+    await expect(resolve('../attachments/2026-09/a.png')).resolves.toBe(
+      'data:image/png;base64,attachments/2026-09/a.png',
+    )
+    expect(resolveMediaPath).toHaveBeenCalledWith('vault', 'attachments/2026-09/a.png')
+  })
+
+  it('rejects instead of passing the src through when it cannot resolve', async () => {
+    // Rejecting (rather than "resolving" to the raw src) is what keeps a
+    // transient failure out of the resolution cache: a pass-through looks like
+    // a success, so the unloadable document path was memoized and every image
+    // stayed broken even after the vault arrived.
+    const noVault = createImageSrcResolver(
+      { resolveMediaPath: async () => 'x' },
+      { getVault: () => null, getNotePath: () => null },
+    )
+    await expect(noVault('attachments/a.png')).rejects.toThrow(/no vault/i)
+
+    const failing = createImageSrcResolver(
+      { resolveMediaPath: async () => { throw new Error('nope') } },
+      { getVault: () => 'vault', getNotePath: () => 'a.md' },
+    )
+    await expect(failing('attachments/a.png')).rejects.toThrow('nope')
   })
 })
 

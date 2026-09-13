@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createMemoryFsGateway } from '../../../platform/gateways/memory'
-import { ATTACHMENTS_DIR } from '../../../services/attachments'
+import { ATTACHMENTS_DIR } from '../../attachments'
 import { ContentCache } from '../../../services/contentCache'
 import { clearIndex, loadIndex, saveIndex, type AsyncIndexStorage } from '../../../services/searchIndex'
 import { searchWithIndex } from '../../../services/contentSearch'
