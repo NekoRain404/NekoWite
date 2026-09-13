@@ -68,6 +68,15 @@ describe('EditorPane split scroll sync', () => {
     await tabs.openTab('notes/a.md')
     const host = document.createElement('div')
     document.body.appendChild(host)
+    // Pre-warm the lazily-imported source pane. vitest's module runner does not
+    // settle a dynamic import that is FIRST triggered from inside a component
+    // render: the promise stays pending for the rest of the test, so the async
+    // SourcePane never mounts and `.pane.source` is missing. Importing it here
+    // (where a dynamic import does settle) leaves it in the module cache, and
+    // the component's own import() then resolves immediately. The real browser
+    // path is covered end-to-end by e2e/app.spec.ts, which mounts the same
+    // async component through the split view.
+    await import('../view/SourcePane.vue')
     const app = createApp(EditorPane)
     app.use(pinia)
     app.mount(host)
