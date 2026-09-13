@@ -273,6 +273,15 @@
   8. 新建每日笔记的磁盘末字节为 `...09-13\n\n-`（无行尾空格）。
 - 测试门禁：desktop 1388、editor-core 643、plugin-host 103、Rust 170、Playwright 137；`typecheck` / `lint` / `clippy -D warnings` 全绿。
 
+## 验证与交付（第二轮，2026-09-13）
+
+- 便携版：`release/nekowite_0.1.0_x64.exe`（未签名），SHA-256 `19e7a82bf1d91711f00a7f7197763d60e595f588813313ee92b996db9799f40b`
+- 真机验收（CDP 驱动**打包版本体**，控制台零错误）：
+  - `apps/desktop/ai-lab/270-round22-acceptance.cjs` **10/10**：笔记列表渲染、应用内重命名后标签跟随、随后 Ctrl+S 写回改名后的文件且不产生副本、任务列表纯文本渲染、关闭二次确认后单击即删、`system_accent_color` 返回本机真实系统色、无重复 ghost、每日笔记无行尾空格。
+  - `apps/desktop/ai-lab/283-delete-assets.cjs` **6/6**：删除笔记后 `notes/doomed.md` **与** `notes/doomed_assets/` 都离开 vault 并出现在回收站（`notes%2Fdoomed.md`、`notes%2Fdoomed%5Fassets`），无关笔记不受影响。
+  - `apps/desktop/ai-lab/285-vault-open.cjs`：三种 vault（无 .bib / 正常 .bib / 含一条坏条目的 .bib）都能正常打开；坏条目那一份的引用计数为 **1**（好条目照常载入），并弹出「refs.bib 中有 1 条记录无法解析，已跳过」。
+- 测试门禁：desktop **1434**、editor-core **648**、plugin-host **103**、Rust **170**、Playwright **137**；`typecheck` / `lint` / `clippy -D warnings` 全绿。
+
 ## [1.0.0] - 2026-08-29
 
 这是 NekoWite 的首个完整发布，涵盖 v1.0–v1.6 全部计划功能。
