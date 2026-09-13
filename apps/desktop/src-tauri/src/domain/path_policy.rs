@@ -195,6 +195,91 @@ pub fn canonicalize_vault_root(root: &str) -> Result<PathBuf, String> {
         .map_err(|e| fs_error("open the vault root", p, e))
 }
 
+/// Resolve a directory inside the vault's own metadata tree
+/// (`.nekowite/...`, `.nekowite-trash/...`), creating missing levels, and
+/// refuse to follow a symlink out of the vault.
+///
+/// History and trash directories are reached by a direct `join` rather than
+/// through [`resolve_within`] — they are the app's own bookkeeping, not a path
+/// the user asked for. That left a hole: a symlinked `.nekowite` or
+/// `.nekowite-trash` (a vault unpacked from a hostile archive that preserved
+/// symlinks, or one a plugin created) silently redirected every snapshot
+/// write, history read and retention delete to an arbitrary path outside the
+/// vault.
+///
+/// Levels are created one at a time, each checked with `symlink_metadata`
+/// first, so a symlink is refused *before* anything is created or written
+/// beneath it.
+///
+/// This closes the realistic case: a symlink that is already there. It is not
+/// a defence against an attacker who can swap one in between this check and
+/// the caller's next syscall — that needs `openat`/`O_NOFOLLOW`, which is out
+/// of scope for a directory tree the user already trusts enough to open.
+///
+/// Returns `Ok(None)` when a level is missing and `create` is false, so a
+/// reader can tell "nothing there yet" from "unreadable" without creating
+/// anything as a side effect of merely looking.
+pub fn resolve_vault_metadata_dir(
+    vault_root: &str,
+    parts: &[&str],
+    create: bool,
+) -> Result<Option<PathBuf>, String> {
+    let mut current = canonicalize_vault_root(vault_root)?;
+    for part in parts {
+        // Each component is one plain name by construction (`encode_rel_path`
+        // guarantees it for history keys), so anything else is a programming
+        // error or an attempt to smuggle a traversal in.
+        if part.is_empty()
+            || *part == "."
+            || *part == ".."
+            || part.contains('/')
+            || part.contains('\\')
+        {
+            return Err(format!("invalid vault metadata component: {part}"));
+        }
+        current.push(part);
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(format!(
+                    "vault metadata path is a symlink, refusing to use it: {}",
+                    current.display()
+                ));
+            }
+            Ok(meta) if !meta.is_dir() => {
+                return Err(format!(
+                    "vault metadata path is not a directory: {}",
+                    current.display()
+                ));
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                if !create {
+                    return Ok(None);
+                }
+                std::fs::create_dir(&current)
+                    .map_err(|e| fs_error("create the vault metadata folder", &current, e))?;
+            }
+            Err(e) => return Err(fs_error("inspect the vault metadata folder", &current, e)),
+        }
+    }
+    Ok(Some(current))
+}
+
+/// [`resolve_vault_metadata_dir`] for a writer: the directory is created when
+/// missing and always returned.
+pub fn create_vault_metadata_dir(vault_root: &str, parts: &[&str]) -> Result<PathBuf, String> {
+    resolve_vault_metadata_dir(vault_root, parts, true)?
+        .ok_or_else(|| "the vault metadata folder could not be created".to_string())
+}
+
+/// [`resolve_vault_metadata_dir`] for a reader: `None` means "not there yet".
+pub fn find_vault_metadata_dir(
+    vault_root: &str,
+    parts: &[&str],
+) -> Result<Option<PathBuf>, String> {
+    resolve_vault_metadata_dir(vault_root, parts, false)
+}
+
 /// Encode a vault-relative path into a single safe file name for use under
 /// `.nekowite/history/` and `.nekowite-trash/`.
 ///
@@ -277,4 +362,119 @@ pub fn has_hidden_component(p: &Path) -> bool {
         Component::Normal(s) => s.to_str().map(|s| s.starts_with('.')).unwrap_or(false),
         _ => false,
     })
+}
+
+#[cfg(test)]
+mod metadata_dir_tests {
+    use super::{create_vault_metadata_dir, find_vault_metadata_dir, resolve_vault_metadata_dir};
+    use std::path::{Path, PathBuf};
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "nekowite-policy-{}-{}-{tag}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn root(vault: &Path) -> String {
+        vault.to_string_lossy().to_string()
+    }
+
+    #[test]
+    fn creates_each_missing_level_under_the_vault() {
+        let vault = temp_dir("create");
+        let dir = create_vault_metadata_dir(&root(&vault), &[".nekowite", "history", "a%2Fb.md"])
+            .expect("creates the whole chain");
+        assert!(dir.is_dir());
+        assert!(dir.starts_with(vault.canonicalize().unwrap()));
+        let _ = std::fs::remove_dir_all(&vault);
+    }
+
+    #[test]
+    fn a_missing_level_is_none_for_a_reader_and_creates_nothing() {
+        let vault = temp_dir("find");
+        let found = find_vault_metadata_dir(&root(&vault), &[".nekowite", "history"]).unwrap();
+        assert!(found.is_none());
+        assert!(
+            !vault.join(".nekowite").exists(),
+            "merely looking must not create the metadata tree"
+        );
+        let _ = std::fs::remove_dir_all(&vault);
+    }
+
+    #[test]
+    fn an_existing_directory_is_returned_to_a_reader() {
+        let vault = temp_dir("found");
+        create_vault_metadata_dir(&root(&vault), &[".nekowite", "history"]).unwrap();
+        let found = find_vault_metadata_dir(&root(&vault), &[".nekowite", "history"])
+            .unwrap()
+            .expect("it exists");
+        assert!(found.is_dir());
+        let _ = std::fs::remove_dir_all(&vault);
+    }
+
+    #[test]
+    fn traversal_and_empty_components_are_refused() {
+        let vault = temp_dir("traversal");
+        for bad in [
+            &["..", "escape"][..],
+            &["", "x"][..],
+            &["."][..],
+            &["a/b"][..],
+        ] {
+            assert!(
+                resolve_vault_metadata_dir(&root(&vault), bad, true).is_err(),
+                "must refuse {bad:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&vault);
+    }
+
+    /// The reason this function exists: a metadata tree that has been replaced
+    /// by a symlink must be refused, never followed. Unix-only, because
+    /// creating a symlink is not a portable operation (and Windows needs a
+    /// privilege for it).
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_metadata_directory_is_refused_and_nothing_is_written_through_it() {
+        let vault = temp_dir("symlink");
+        let outside = temp_dir("symlink-outside");
+        std::os::unix::fs::symlink(&outside, vault.join(".nekowite")).unwrap();
+
+        assert!(
+            create_vault_metadata_dir(&root(&vault), &[".nekowite", "history"]).is_err(),
+            "a symlinked .nekowite must be refused, not followed"
+        );
+        assert!(
+            !outside.join("history").exists(),
+            "nothing may be created through the symlink"
+        );
+        // A reader refuses it too, rather than reporting an empty history.
+        assert!(find_vault_metadata_dir(&root(&vault), &[".nekowite", "history"]).is_err());
+
+        let _ = std::fs::remove_dir_all(&vault);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_deeper_in_the_metadata_tree_is_refused_too() {
+        let vault = temp_dir("deep-symlink");
+        let outside = temp_dir("deep-symlink-outside");
+        std::fs::create_dir_all(vault.join(".nekowite")).unwrap();
+        std::os::unix::fs::symlink(&outside, vault.join(".nekowite").join("history")).unwrap();
+
+        assert!(
+            create_vault_metadata_dir(&root(&vault), &[".nekowite", "history", "key"]).is_err()
+        );
+        assert!(!outside.join("key").exists());
+        let _ = std::fs::remove_dir_all(&vault);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
 }

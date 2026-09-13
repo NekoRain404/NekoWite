@@ -13,7 +13,8 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::domain::path_policy::{
-    decode_rel_path, encode_rel_path, is_safe_rel, resolve_within, resolve_within_rel,
+    create_vault_metadata_dir, decode_rel_path, encode_rel_path, find_vault_metadata_dir,
+    is_safe_rel, resolve_within, resolve_within_rel,
 };
 use crate::errors::fs_error;
 
@@ -118,9 +119,7 @@ pub fn delete_file(vault_root: &str, path: &str) -> Result<String, String> {
         }
         return Ok(String::new());
     }
-    let trash_root = Path::new(vault_root).join(".nekowite-trash");
-    std::fs::create_dir_all(&trash_root)
-        .map_err(|e| fs_error("create the trash folder", &trash_root, e))?;
+    let trash_root = create_vault_metadata_dir(vault_root, &[".nekowite-trash"])?;
     let encoded = encode_rel_path(&relative);
     let mut target = trash_root.join(&encoded);
     if target.exists() {
@@ -138,17 +137,17 @@ pub fn delete_file(vault_root: &str, path: &str) -> Result<String, String> {
 /// to its original vault path where the encoding permits, plus the display
 /// name and folder flag the UI shows.
 pub fn list_trash(vault_root: &str) -> Result<Vec<TrashEntry>, String> {
-    let trash_root = Path::new(vault_root).join(".nekowite-trash");
-    let mut out = Vec::new();
-    let rd = match std::fs::read_dir(&trash_root) {
-        Ok(rd) => rd,
-        // No trash directory means nothing was ever deleted — an empty list is
-        // the truth. A directory that exists but cannot be read is not the same
-        // thing: showing "the trash is empty" would tell the user their deleted
-        // notes are gone when they are only unreadable.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
-        Err(e) => return Err(fs_error("read the trash folder", &trash_root, e)),
+    // No trash directory means nothing was ever deleted — an empty list is the
+    // truth, and merely looking must not create one. A directory that exists
+    // but cannot be read (or one that has been replaced by a symlink) is not
+    // the same thing: showing "the trash is empty" would tell the user their
+    // deleted notes are gone when they are only unreadable.
+    let Some(trash_root) = find_vault_metadata_dir(vault_root, &[".nekowite-trash"])? else {
+        return Ok(Vec::new());
     };
+    let mut out = Vec::new();
+    let rd = std::fs::read_dir(&trash_root)
+        .map_err(|e| fs_error("read the trash folder", &trash_root, e))?;
     for entry in rd {
         // Same rule as the history listing: an entry we cannot read is not
         // "no entry". Skipping it used to make a partially readable trash look
@@ -241,13 +240,12 @@ pub struct ClearTrashReport {
 /// the defensive `.`/`..`/empty-name guard is belt and braces rather than a
 /// requirement.
 pub fn clear_trash(vault_root: &str) -> Result<ClearTrashReport, String> {
-    let trash_root = Path::new(vault_root).join(".nekowite-trash");
-    if !trash_root.exists() {
+    let Some(trash_root) = find_vault_metadata_dir(vault_root, &[".nekowite-trash"])? else {
         return Ok(ClearTrashReport {
             removed: 0,
             failed: Vec::new(),
         });
-    }
+    };
     let rd = std::fs::read_dir(&trash_root)
         .map_err(|e| fs_error("read the trash folder", &trash_root, e))?;
     let mut removed = 0usize;
@@ -293,7 +291,11 @@ pub fn clear_trash(vault_root: &str) -> Result<ClearTrashReport, String> {
 /// created on the way.
 pub fn restore_from_trash(vault_root: &str, trash_path: &str) -> Result<String, String> {
     let resolved_trash = resolve_within(vault_root, trash_path)?;
-    let trash_root = Path::new(vault_root).join(".nekowite-trash");
+    // The containment check below can only mean something if the trash root
+    // itself is known to be inside the vault: a symlinked `.nekowite-trash`
+    // would put both paths outside it, where they would agree with each other.
+    let trash_root = find_vault_metadata_dir(vault_root, &[".nekowite-trash"])?
+        .ok_or_else(|| "there is nothing to restore: the trash is empty".to_string())?;
     let canonical_trash = trash_root
         .canonicalize()
         .map_err(|e| fs_error("open the trash folder", &trash_root, e))?;
@@ -350,10 +352,9 @@ pub fn restore_from_trash(vault_root: &str, trash_path: &str) -> Result<String, 
 /// any `-<ts>` collision-suffixed variants. Best-effort, like
 /// `move_history_key`.
 pub fn move_trash_key(vault_root: &str, from_rel: &str, to_rel: &str) {
-    let trash_root = Path::new(vault_root).join(".nekowite-trash");
-    if !trash_root.is_dir() {
+    let Ok(Some(trash_root)) = find_vault_metadata_dir(vault_root, &[".nekowite-trash"]) else {
         return;
-    }
+    };
     let to_key = encode_rel_path(to_rel);
     let Ok(rd) = std::fs::read_dir(&trash_root) else {
         return;
