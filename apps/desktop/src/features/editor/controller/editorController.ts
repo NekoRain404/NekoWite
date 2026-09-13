@@ -9,6 +9,7 @@ import {
 } from '@nekowite/editor-core'
 import type { NekoEditor } from '@nekowite/editor-core'
 import { setActiveEditor } from '@nekowite/plugin-host'
+import { guardEditorForPlugins } from '../../../services/pluginEditorGuard'
 import { watch } from 'vue'
 import { editorSessionManager } from '../sessionManager'
 import { setCalloutView } from '../../../plugins/callout'
@@ -80,7 +81,12 @@ export function createEditorController(deps: EditorControllerDeps): EditorContro
     const tabId = tabs.activeId ?? PLACEHOLDER_TAB
     registeredTabId = tabId
     editorSessionManager.createSession(tabId, () => editor)
-    setActiveEditor(editor)
+    // Plugins get the guarded handle, never the raw editor: a plugin that
+    // declares nothing must not be able to rewrite the document behind the
+    // write policy the user chose (see services/pluginEditorGuard).
+    // The handle is shared by every plugin, so the prompt cannot name which one
+    // is writing - it says "a plugin" rather than inventing a name.
+    setActiveEditor(guardEditorForPlugins(editor, { pluginName: t('plugin.genericName') }))
     configureImageResolver(
       createImageSrcResolver(getSharedGateways().fs, {
         getVault: () => tabs.vault,
