@@ -85,9 +85,12 @@ describe('editorScrollSync', () => {
     scrollSync.setScrollTop(400, 7)
     expect(el.scrollTop).toBe(400)
     // The write's scroll event reports the position it wrote: the program's own
-    // echo, so it is not a user scroll and the store is left alone.
+    // echo, so it is not a user scroll (no sync request either way). It IS where
+    // the pane is, though, and that is what the store's memory records — a mode
+    // switch has to put the pane back where it ended up, not where the user last
+    // left it.
     expect(scrollSync.onScroll()).toBe(false)
-    expect(view.renderedScroll).toBe(0)
+    expect(view.renderedScroll.top).toBe(400)
   })
 
   it('mirrors a scroll the program did not write into the store', () => {
@@ -100,7 +103,7 @@ describe('editorScrollSync', () => {
     scrollSync.setScrollTop(400, 1)
     el.scrollTop = 120 // the user grabbed the pane before the echo arrived
     expect(scrollSync.onScroll()).toBe(true)
-    expect(view.renderedScroll).toBe(120)
+    expect(view.renderedScroll.top).toBe(120)
   })
 
   it('does not let a write that never moved the pane swallow the next user scroll', () => {
@@ -116,7 +119,7 @@ describe('editorScrollSync', () => {
     scrollSync.setScrollTop(400, 1)
     el.scrollTop = 500
     expect(scrollSync.onScroll()).toBe(true)
-    expect(view.renderedScroll).toBe(500)
+    expect(view.renderedScroll.top).toBe(500)
   })
 
   it('consumes the echo of a write the engine snapped to another offset', () => {
@@ -133,7 +136,7 @@ describe('editorScrollSync', () => {
     scrollSync.setScrollTop(500.5, 1)
     expect(el.scrollTop).toBe(501)
     expect(scrollSync.onScroll()).toBe(false)
-    expect(view.renderedScroll).toBe(0)
+    expect(view.renderedScroll.top).toBe(501)
   })
 
   it('does not swallow a user scroll that lands beside a recorded write', () => {
@@ -148,7 +151,7 @@ describe('editorScrollSync', () => {
     // being near the record is not the same as being the record.
     userScrollTo(500.4)
     expect(scrollSync.onScroll()).toBe(true)
-    expect(view.renderedScroll).toBe(500.4)
+    expect(view.renderedScroll.top).toBe(500.4)
   })
 
   it('clamps a programmatic write into the pane’s range', () => {
@@ -200,6 +203,25 @@ describe('editorScrollSync', () => {
     // Line 3 of 3: the end of the range.
     scrollSync.setScrollToLine(3, 1)
     expect(el.scrollTop).toBe(800)
+  })
+
+  it('follows a heading anchor to the heading it names, by index', () => {
+    const root = makeEditorEl([100, 700])
+    const scrolled: Element[] = []
+    root.querySelectorAll('h2').forEach((heading) => {
+      heading.scrollIntoView = () => scrolled.push(heading)
+    })
+    const headings = root.querySelectorAll('h2')
+    headings[1]!.textContent = 'Two'
+    const scrollSync = createEditorScrollSync({
+      getScrollEl: () => makeScrollEl() as unknown as HTMLElement,
+      getEditorEl: () => root,
+    })
+
+    scrollSync.scrollToHeading('two')
+    // The second heading, not the first: slugs are rebuilt document-wide and
+    // matched by position, so a duplicated name cannot collapse onto one entry.
+    expect(scrolled).toEqual([headings[1]!])
   })
 
   it('cancel() drops a pending write record without scrolling', () => {

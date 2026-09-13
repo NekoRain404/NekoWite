@@ -1,3 +1,4 @@
+import { headingAnchorIds } from '@nekowite/editor-core'
 import { useTabsStore } from '../../../stores/tabs'
 import { useViewStore } from '../../../stores/view'
 import { parseOutline } from '../../../services/outline'
@@ -26,6 +27,8 @@ export interface EditorScrollSync {
   /** Scroll so the block containing the given 1-based source line is top-most,
    *  anchored on the nearest heading; falls back to a line-proportional ratio. */
   setScrollToLine(line: number, token: number): void
+  /** Scroll the heading whose anchor slug is `slug` into view. */
+  scrollToHeading(slug: string): void
   /** Drop any pending write record (used on teardown). */
   cancel(): void
 }
@@ -59,13 +62,18 @@ export function createEditorScrollSync(deps: EditorScrollSyncDeps): EditorScroll
   function onScroll(): boolean {
     const el = deps.getScrollEl()
     if (!el) return false
+    // Where this pane is, recorded whoever moved it: a mode switch reads the
+    // memory to put the pane back, and a programmatic write moved it just as
+    // much as a wheel did. Written before the echo check below, which decides
+    // only whether this scroll is the USER's (a sync request) — not whether it
+    // counts as position.
+    view.syncScroll('rendered', el.scrollTop, scrollRange())
     const written = programWrite
     programWrite = null
     // The record holds the engine's own value, so its echo matches exactly.
     // Anything else is a scroll the user made, however close it lands: a
     // tolerance here is what swallows a fractional scroll next to a write.
     if (written && el.scrollTop === written.top) return false
-    view.syncScroll('rendered', el.scrollTop)
     return true
   }
 
@@ -122,6 +130,25 @@ export function createEditorScrollSync(deps: EditorScrollSyncDeps): EditorScroll
     write(pos, token)
   }
 
+  /**
+   * Follow a heading anchor (`#slug`) to the heading it names.
+   *
+   * The editor's own heading anchors copy these links, so following one has to
+   * land on the heading rather than fall through to the browser (which would try
+   * to navigate the app window). The document-wide id list is rebuilt here the
+   * same way the anchors and the export build it, and the heading is picked by
+   * INDEX: comparing slugs would send `#same-1` to the first "Same" instead of
+   * the second.
+   */
+  function scrollToHeading(slug: string): void {
+    if (!slug) return
+    const headings = getHeadingEls()
+    if (headings.length === 0) return
+    const ids = headingAnchorIds(headings.map((heading) => heading.textContent ?? ''))
+    const index = ids.indexOf(slug)
+    if (index >= 0) headings[index]?.scrollIntoView({ block: 'start', behavior: 'auto' })
+  }
+
   function cancel(): void {
     programWrite = null
   }
@@ -133,6 +160,7 @@ export function createEditorScrollSync(deps: EditorScrollSyncDeps): EditorScroll
     setScrollTop: write,
     getHeadingTops,
     setScrollToLine,
+    scrollToHeading,
     cancel,
   }
 }

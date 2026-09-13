@@ -19,8 +19,13 @@ const modes = computed<ModeItem[]>(() => [
 </script>
 
 <template>
+  <!-- `data-view-switch` marks the control that hands the keyboard to the pane
+       it opens (the pane handoff looks for it by this hook): the click leaves
+       the focus on the button, so without that the first keystrokes after a
+       mode switch go nowhere. -->
   <div
     class="view-switch"
+    data-view-switch
     role="tablist"
     :aria-label="t('viewswitch.aria')"
   >

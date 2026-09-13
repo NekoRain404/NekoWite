@@ -176,17 +176,36 @@ export interface SourceMapping {
   sourceTopOfLine: (line: number) => number
 }
 
-/** The inverse of `renderedTopFor`: the source offset that puts, at the top of
- *  the source pane, the text the rendered pane has at `offset`. */
-export function sourceTopFor(offset: number, geometry: SourceMapping): number {
-  const { items, tops, totalLines, renderedRange, sourceRange, sourceTopOfLine } = geometry
-  // No headings to anchor on — or offsets and outline out of step — means the
-  // panes' positions correspond by proportion: `offset`'s fraction of the pane
-  // it is in, carried onto the pane the result is for.
+/** What the rendered-offset → source-line mapping needs: where the rendered
+ *  pane's headings are, in the space the offset is measured in. */
+export interface RenderedPosition {
+  items: OutlineItem[]
+  tops: number[] | null
+  totalLines: number
+  /** Scrollable extent of the rendered pane — the space `offset` is in. */
+  renderedRange: number
+}
+
+/**
+ * The 1-based source line (fractional) whose text the rendered pane has at the
+ * top of its viewport, or null when the document has no headings to anchor on
+ * (or the offsets and the outline are out of step, which the caller signals
+ * with a null `tops`).
+ *
+ * The inverse of `renderedTopFor`, and the half of `sourceTopFor` that does not
+ * depend on the source pane's own measurements. A caller that only needs to
+ * know WHERE in the document the rendered pane is — the mode handoff, which has
+ * to name a position that survives the switch while the rendered pane is
+ * hidden and unmeasurable — must not have to mount a source pane to find out.
+ *
+ * Both directions go through this one function so the pane a mode switch
+ * restores to is the same one the split sync would have scrolled to: a second
+ * copy of the anchor arithmetic is exactly where the two drift apart.
+ */
+export function renderedLineFor(offset: number, geometry: RenderedPosition): number | null {
+  const { items, tops, totalLines, renderedRange } = geometry
   const index = items.length > 0 && tops ? nearestHeadingIndex(tops, offset) : null
-  if (index === null || !tops) {
-    return clampRatio(renderedRange > 0 ? offset / renderedRange : 0) * sourceRange
-  }
+  if (index === null || !tops) return null
   // Above the first heading the block runs from the document's own top to that
   // heading — `nearestHeadingIndex` clamps onto the heading, but the text above
   // it is not the heading. That is a *different* span from the block the
@@ -195,18 +214,28 @@ export function sourceTopFor(offset: number, geometry: SourceMapping): number {
   // has no such lines: its first block's origin is the document's own top, and
   // this is the same span either way.
   const startTop = blockTop(items, tops, index)
-  if (index === 0 && offset < startTop) {
-    const preamble = between(offset, 0, startTop, 1, items[0].line + 1)
-    return sourceOffsetForLine(preamble, totalLines, sourceRange, sourceTopOfLine)
-  }
+  if (index === 0 && offset < startTop) return between(offset, 0, startTop, 1, items[0].line + 1)
   const next = items[index + 1]
-  const line = between(
+  return between(
     offset,
     startTop,
     next ? tops[index + 1] : renderedRange,
     items[index].line + 1,
     next ? next.line + 1 : totalLines + 1,
   )
+}
+
+/** The inverse of `renderedTopFor`: the source offset that puts, at the top of
+ *  the source pane, the text the rendered pane has at `offset`. */
+export function sourceTopFor(offset: number, geometry: SourceMapping): number {
+  const { totalLines, renderedRange, sourceRange, sourceTopOfLine } = geometry
+  const line = renderedLineFor(offset, geometry)
+  // No headings to anchor on — or offsets and outline out of step — means the
+  // panes' positions correspond by proportion: `offset`'s fraction of the pane
+  // it is in, carried onto the pane the result is for.
+  if (line === null) {
+    return clampRatio(renderedRange > 0 ? offset / renderedRange : 0) * sourceRange
+  }
   return sourceOffsetForLine(line, totalLines, sourceRange, sourceTopOfLine)
 }
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { EditorView } from '@codemirror/view'
+import { Transaction } from '@codemirror/state'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 import { useAppearanceStore } from '../stores/appearance'
@@ -50,9 +51,6 @@ let sourceHandle: SourceViewHandle | null = null
 // the offset is what makes a write that never fired an event harmless instead
 // of swallowing the user's next scroll.
 let programWrite: { token: number; top: number } | null = null
-// rAF throttle for scroll → store writes: coalesce burst scroll events into one
-// store write per frame instead of driving it on every event.
-let scrollRaf = 0
 
 function emitChange(text: string): void {
   const tab = mirroredTabId ? tabs.tabs.find((t) => t.id === mirroredTabId) : null
@@ -150,6 +148,12 @@ watch(
 function onScroll(): void {
   const el = host?.getView()?.scrollDOM
   if (!el) return
+  // Where this pane is, recorded whoever moved it: a mode switch reads the
+  // memory to put the pane back, and a programmatic write moved it just as much
+  // as a wheel did. Written before the echo check below, which decides only
+  // whether this scroll is the USER's (a sync request) — not whether it counts
+  // as position.
+  view.syncScroll('source', el.scrollTop, scrollRange())
   // A programmatic scroll fires its scroll event asynchronously, and that event
   // is this pane's own echo — not a scroll the user made, so it must not become
   // a new sync request. The record holds the offset the engine kept, so its echo
@@ -158,11 +162,6 @@ function onScroll(): void {
   programWrite = null
   if (written && el.scrollTop === written.top) return
   emit('user-scroll')
-  if (scrollRaf !== 0) return
-  scrollRaf = requestAnimationFrame(() => {
-    scrollRaf = 0
-    view.syncScroll('source', scrollRatio())
-  })
 }
 
 function getScrollTop(): number {
@@ -189,24 +188,27 @@ function setScrollTop(top: number, token: number): void {
   programWrite = { token, top: el.scrollTop }
 }
 
-/** The offset that puts the top of `line` (1-based) at the top of the viewport. */
+/** The offset that puts the top of `line` (1-based, possibly fractional: 12.5 is
+ *  halfway down the twelfth line's block) at the top of the viewport.
+ *
+ *  An integer line lands exactly where it always did — the fraction only ever
+ *  subdivides the line's own block, and CodeMirror measures a wrapped line's
+ *  block as one unit (see `lineBlockAt`), so the subdivision stays inside the
+ *  line as drawn. */
 function scrollTopForLine(line: number): number {
   const cm = host?.getView()
   if (!cm) return 0
   const doc = cm.state.doc
-  const clamped = Math.max(1, Math.min(Math.floor(line), doc.lines))
-  return Math.max(0, cm.lineBlockAt(doc.line(clamped).from).top)
+  const clamped = Math.max(1, Math.min(line, doc.lines))
+  const start = Math.floor(clamped)
+  const block = cm.lineBlockAt(doc.line(start).from)
+  return Math.max(0, block.top + (clamped - start) * block.height)
 }
 
 function scrollRange(): number {
   const el = host?.getView()?.scrollDOM
   if (!el) return 0
   return Math.max(0, el.scrollHeight - el.clientHeight)
-}
-
-function scrollRatio(): number {
-  const range = scrollRange()
-  return range > 0 ? getScrollTop() / range : 0
 }
 
 function focus(): void {
@@ -234,6 +236,48 @@ function getVisibleUnit(): number | null {
 }
 
 /**
+ * The 1-based line at the top of the viewport, with how far into it the
+ * viewport starts as a fraction — the document position this pane is showing,
+ * in the only unit that means the same thing in the other pane.
+ *
+ * A mode switch has to name a position that survives the move: a pixel offset
+ * is measured against this pane's layout and means nothing in a pane that lays
+ * the same document out differently, while a source line is in the document's
+ * own space. The fraction is what keeps a switch from jumping up to a whole
+ * line — a wrapped paragraph occupies many pixel rows of one line, and rounding
+ * there moves the user's place by however tall that line is.
+ */
+function getVisibleLine(): number {
+  const cm = host?.getView()
+  if (!cm) return 1
+  // One pixel in, for the same reason as `getVisibleUnit`: CodeMirror resolves a
+  // height landing exactly on a line's top to the line above it.
+  const top = Math.max(0, cm.scrollDOM.scrollTop + 1)
+  const block = cm.lineBlockAtHeight(top)
+  if (!block) return 1
+  const start = cm.state.doc.lineAt(block.from).number
+  if (!(block.height > 0)) return start
+  return start + Math.max(0, Math.min((top - block.top) / block.height, 1))
+}
+
+/** Put the caret at the start of `line` (1-based, floored) without moving the
+ *  viewport: the pane a mode switch restores has its scroll written separately,
+ *  and letting this one scroll too would fight it. */
+function setCaretLine(line: number): void {
+  const cm = host?.getView()
+  if (!cm) return
+  const doc = cm.state.doc
+  const clamped = Math.max(1, Math.min(Math.floor(line), doc.lines))
+  cm.dispatch({
+    selection: { anchor: doc.line(clamped).from },
+    scrollIntoView: false,
+    // Placing the caret is not an edit: it must not become an undo step the
+    // user has to press Ctrl+Z through.
+    annotations: Transaction.addToHistory.of(false),
+  })
+}
+
+/**
  * Toggle the split-drag measure suppression. While dragging, CodeMirror's
  * decoration plugin holds its stale set (see cmSourceView's measure gate) so
  * per-frame resize does not re-traverse visibleRanges + the syntax tree. When
@@ -254,11 +298,12 @@ defineExpose({
   getText,
   getSourceView,
   getVisibleUnit,
+  getVisibleLine,
+  setCaretLine,
   setMeasureSuppressed,
 })
 
 onBeforeUnmount(() => {
-  if (scrollRaf !== 0) cancelAnimationFrame(scrollRaf)
   host?.getView()?.scrollDOM.removeEventListener('scroll', onScroll)
   if (sourceHandle) releaseSourceViewHandle(sourceHandle)
   sourceHandle = null

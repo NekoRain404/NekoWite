@@ -14,10 +14,11 @@ import RenameDialog from '../components/RenameDialog.vue'
 import { useImageIntake } from '../features/editor/composables/useImageIntake'
 import { runEditorCommand } from '../services/runEditorCommand'
 import { useFloatStore } from '../stores/float'
-import { getSourceView } from '../services/sourceView'
-import { noteFocusedPane, resetFocusedPane } from '../services/editorOwnership'
+import { resetFocusedPane } from '../services/editorOwnership'
+import { usePaneInput } from '../features/editor/composables/usePaneInput'
 import { parseOutline, type OutlineItem } from '../services/outline'
 import { createSplitScrollCoordinator } from '../services/splitScrollCoordinator'
+import { usePaneHandoff } from '../features/editor/composables/usePaneHandoff'
 import { countDocumentLines } from '../services/scrollSyncAnchors'
 import {
   planPaneSync,
@@ -41,6 +42,8 @@ type SourcePaneExpose = {
   getText(): string
   getSourceView(): EditorView | null
   getVisibleUnit(): number | null
+  getVisibleLine(): number
+  setCaretLine(line: number): void
   setMeasureSuppressed(suppressed: boolean): void
 }
 
@@ -114,6 +117,16 @@ function paneScrollRange(id: PaneId): number {
   if (id === 'source') return sourcePane.value?.getScrollRange() ?? 0
   return renderedPane.value?.getScrollRange() ?? 0
 }
+
+// Switching modes changes the surface, not the document: the keyboard follows
+// into the pane now shown, and the place the user was reading is carried across
+// as a source line (a pixel offset from one pane means nothing in the other).
+usePaneHandoff({
+  getSourcePane: () => sourcePane.value,
+  getRenderedPane: () => renderedPane.value,
+  getPanesEl: () => panesEl.value,
+  nextToken,
+})
 
 function writeDestination(top: number): void {
   const token = nextToken()
@@ -351,51 +364,8 @@ function onKeydown(e: KeyboardEvent): void {
   }
 }
 
-/**
- * Remember which editor pane the user is working in, so a command invoked from
- * a surface that takes focus itself (the command palette, a toolbar button)
- * still targets the right pane.
- */
-function onFocusIn(e: FocusEvent): void {
-  const target = e.target as Node | null
-  if (!target) return
-  const sourceDom = getSourceView()?.dom
-  if (sourceDom && sourceDom.contains(target)) {
-    noteFocusedPane('source')
-    return
-  }
-  const renderedEl = panesEl.value?.querySelector('.pane.rendered')
-  if (renderedEl && renderedEl.contains(target)) noteFocusedPane('rendered')
-}
-
-/**
- * Paste/drop listeners are attached to the pane container, which is created
- * together with the first tab, so they follow the element rather than
- * mount order (an empty app has no `.panes` to attach to yet).
- */
-let listenersOn: HTMLElement | null = null
-function attachPaneListeners(el: HTMLElement | null): void {
-  if (listenersOn === el) return
-  if (listenersOn) {
-    listenersOn.removeEventListener('paste', onPaste, true)
-    listenersOn.removeEventListener('drop', onDrop, true)
-    listenersOn.removeEventListener('dragover', onDragOver)
-    listenersOn.removeEventListener('dragenter', onDragOver)
-    listenersOn.removeEventListener('focusin', onFocusIn)
-  }
-  listenersOn = el
-  if (!el) return
-  // Capture phase, on an ancestor of both panes: this must run before
-  // ProseMirror's and CodeMirror's own at-target handlers, or an image paste
-  // would already have been consumed as HTML / a file path.
-  el.addEventListener('paste', onPaste, true)
-  el.addEventListener('drop', onDrop, true)
-  el.addEventListener('dragover', onDragOver)
-  el.addEventListener('dragenter', onDragOver)
-  el.addEventListener('focusin', onFocusIn)
-}
-
-watch(panesEl, (el) => attachPaneListeners(el))
+// Paste / drop / focus plumbing for the pane container both editors live in.
+const paneInput = usePaneInput(() => panesEl.value, { onPaste, onDrop, onDragOver })
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
@@ -406,7 +376,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  attachPaneListeners(null)
+  paneInput.attach(null)
   setImageInsertHandler(null)
   resetFocusedPane()
   scrollCoordinator.dispose()

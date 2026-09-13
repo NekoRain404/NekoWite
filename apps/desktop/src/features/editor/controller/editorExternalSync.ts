@@ -3,7 +3,9 @@ import { useViewStore } from '../../../stores/view'
 import { useFloatStore } from '../../../stores/float'
 import { setCalloutView } from '../../../plugins/callout'
 import { notifyError } from '../../../services/errors'
+import { isSourceAuthored } from '../../../services/editorOwnership'
 import { consumeSuppressReapply } from '../../../services/suppressReapply'
+import { debounce } from '../../../services/timing'
 import { t } from '../../../i18n'
 import type { DocumentSession } from '../model/documentSession'
 
@@ -22,7 +24,30 @@ export interface EditorExternalSync {
   onContentChanged(content: string | undefined): void
   /** Recover from a failed parse when the user switches back to rendered. */
   onModeChanged(mode: string): void
+  /** Apply a deferred preview re-sync now, if one is waiting. */
+  flushPendingSync(): void
 }
+
+/**
+ * How long the preview waits for the source pane to stop typing before the
+ * model is rebuilt from its text (split mode only).
+ *
+ * The source pane publishes through its own 50 ms debounce, so at normal typing
+ * speed every pause arrives here as a whole-document re-parse — `open()` builds
+ * a new ProseMirror state for the entire document — followed by a
+ * whole-document re-serialization. Measured on a 44k-character note in split
+ * view: ~570 ms of parse and ~220 ms of serialize per typing pause, i.e. the
+ * app pays a full document round trip for every keystroke the user takes. The
+ * preview is allowed to lag the keystroke that caused it; it is not allowed to
+ * lag the sentence.
+ *
+ * 300 ms is the settle window, not a deadline: a burst of any length costs one
+ * re-parse, and text that stops arriving is rendered ~300 ms after the last
+ * keystroke. A write from anywhere else (disk reload, history restore, another
+ * document) never waits — only text the source pane authored does, and only
+ * while the mode keeps both panes live.
+ */
+export const PREVIEW_RESYNC_DEBOUNCE_MS = 300
 
 /**
  * Detect and apply externally-originated document writes (a fresh open, a
@@ -51,7 +76,40 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
     return view.mode !== 'source'
   }
 
+  /**
+   * Reconcile the model with `content` right now.
+   *
+   * Every path that is not the source pane's own typing goes through here (and
+   * so does the debounced path once it fires), because the guards are the same
+   * either way: a serialization in flight is superseded rather than raced, and
+   * text that arrived mid-apply is queued instead of dropped.
+   */
+  function applyExternal(content: string): void {
+    if (deps.session.applyingExternal) {
+      deps.session.pendingExternal = content
+      return
+    }
+    // The echo of an editor-originated update: content was set from the
+    // editor's own serialization, so re-opening would re-parse the whole
+    // document (wiping undo history and stored positions) for no change.
+    if (content === deps.session.lastLocalMarkdown) return
+    if (deps.session.parseFailed) return
+    // Supersede any in-flight applyContent: bump gen so its stale serialization
+    // (captured before the await) cannot overwrite this newer content.
+    deps.session.gen++
+    void applyContent(content)
+  }
+
+  /** Text the source pane authored, waiting for the typing to settle (split
+   *  mode only — see {@link PREVIEW_RESYNC_DEBOUNCE_MS}). */
+  const pendingPreviewResync = debounce(applyExternal, PREVIEW_RESYNC_DEBOUNCE_MS)
+
   async function applyContent(content: string): Promise<void> {
+    // An immediate apply supersedes a deferred one: the deferred text describes
+    // a document that is no longer the one being loaded (the user switched
+    // notes, a disk reload arrived), and landing it afterwards would replace
+    // the newer model with the older text.
+    pendingPreviewResync.cancel()
     const editor = deps.getEditor()
     if (!editor) return
     // Idempotence guard: the editor already holds this exact canonical text.
@@ -152,6 +210,14 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
     // belongs to the tab that was saved (tabs.saveTab) and is consumed once here,
     // for the ACTIVE tab only — a background save must never swallow the re-apply
     // of the document the user is actually looking at.
+    // A deferred re-sync is only valid while the tab still holds the text it
+    // describes. Every exit below — a suppressed re-apply, no tab at all, a
+    // pane that does not own the text — means the document moved on without
+    // this text being reconciled, so the pending one is dropped here, before
+    // any of them can return: a closed note reports `undefined`, and re-opening
+    // the model with its text 300 ms later would leave the editor holding a
+    // document no tab is showing.
+    pendingPreviewResync.cancel()
     const activeTabId = tabs.activeTab?.id
     if (activeTabId !== undefined && consumeSuppressReapply(activeTabId)) return
     if (content === undefined) return
@@ -161,22 +227,24 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
     // into the tab, replacing the live source document and moving its caret.
     // The model is re-synced when the pane becomes visible again (onModeChanged).
     if (!renderedPaneOwnsText()) return
-    if (deps.session.applyingExternal) {
-      deps.session.pendingExternal = content
+    // Split mode: text the source pane authored is the user mid-keystroke, and
+    // re-parsing per keystroke is what makes the preview hitch (and its
+    // heading anchors drift out from under the source). Wait for the typing to
+    // settle — the marker says the model is behind this text, which is exactly
+    // the case a deferral is safe in: nothing else has edited the document, so
+    // there is no state to race.
+    if (view.mode === 'split' && isSourceAuthored(content)) {
+      pendingPreviewResync.run(content)
       return
     }
-    // The echo of an editor-originated update: content was set from the
-    // editor's own serialization, so re-opening would re-parse the whole
-    // document (wiping undo history and stored positions) for no change.
-    if (content === deps.session.lastLocalMarkdown) return
-    if (deps.session.parseFailed) return
-    // Supersede any in-flight applyContent: bump gen so its stale serialization
-    // (captured before the await) cannot overwrite this newer content.
-    deps.session.gen++
-    void applyContent(content)
+    applyExternal(content)
   }
 
   function onModeChanged(mode: string): void {
+    // A pending re-sync belongs to the mode being left. Source mode does not
+    // re-sync the model at all, and on the way into a visible pane the apply
+    // below reads the tab again anyway.
+    pendingPreviewResync.cancel()
     // Switching back to a visible rendered pane must re-read the tab content:
     // edits made in source mode were intentionally skipped above, so the live
     // model can be stale. The idempotence guard inside applyContent keeps this
@@ -189,5 +257,15 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
     void applyContent(content)
   }
 
-  return { applyContent, onContentChanged, onModeChanged }
+  /** Apply a deferred preview re-sync now, if one is waiting.
+   *
+   *  Narrowing the deferral to zero is all a flush can do: the apply itself is
+   *  a whole-document model rebuild, and a keystroke that lands while it runs
+   *  is the same pre-existing race every `applyContent` has (a disk reload, a
+   *  history restore) — not something a flush can close. */
+  function flushPendingSync(): void {
+    pendingPreviewResync.flush()
+  }
+
+  return { applyContent, onContentChanged, onModeChanged, flushPendingSync }
 }
