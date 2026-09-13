@@ -63,6 +63,11 @@ const KEYFILE_VERSION: u8 = 1;
 const MODE_PASSWORDLESS: u8 = 0;
 const MODE_PASSWORD: u8 = 1;
 
+/// Length of a legacy key file: the bare 32-byte key, with no version/mode
+/// header. Accepted on read and rewritten in the current format (see
+/// [`read_vault_key_state`]).
+const LEGACY_KEYFILE_LEN: usize = 32;
+
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
@@ -142,6 +147,16 @@ pub fn encode_keyfile_password(salt: &[u8; 32], verifier: &[u8; 32]) -> Vec<u8> 
 /// Decode a master key file into its state. Rejects wrong lengths, wrong
 /// version, or unknown modes so a corrupt/partial key is never silently used.
 pub fn decode_keyfile(bytes: &[u8]) -> Result<VaultKeyState, String> {
+    // A bare key with no envelope, as written by builds that predate the
+    // versioned format. The 32 bytes ARE the Stronghold key, so reading it is
+    // not a guess — and rejecting it (what the length check below did) locked a
+    // perfectly good vault out of its own key with "invalid length 32".
+    // `read_vault_key_state` rewrites such a file in the current format.
+    if bytes.len() == LEGACY_KEYFILE_LEN {
+        let mut key = [0u8; 32];
+        key.copy_from_slice(bytes);
+        return Ok(VaultKeyState::Auto(key));
+    }
     let invalid = || {
         format!(
             "master key file has invalid length {} (expected 34 or 66)",
@@ -210,9 +225,25 @@ pub fn verifier_of(master_key: &[u8; 32]) -> [u8; 32] {
 /// persisted (mode `0600`). Any other read error is propagated so a damaged key
 /// is never silently overwritten; wrong lengths/modes are rejected by
 /// [`decode_keyfile`].
+///
+/// A legacy bare-key file is upgraded to the versioned envelope on first read.
+/// The 32 key bytes are carried over verbatim, so the Stronghold key is
+/// unchanged and the rewrite cannot lose anything even if the snapshot later
+/// turns out not to decrypt — which is what makes upgrading on read safe, and
+/// what keeps the user from having to recreate the file by hand.
 pub fn read_vault_key_state(path: &Path) -> Result<VaultKeyState, String> {
     match fs::read(path) {
-        Ok(bytes) => decode_keyfile(&bytes),
+        Ok(bytes) => {
+            let state = decode_keyfile(&bytes)?;
+            if bytes.len() == LEGACY_KEYFILE_LEN {
+                if let VaultKeyState::Auto(key) = &state {
+                    // Best effort: a read-only key file must not stop the vault
+                    // from opening, and the next read simply tries again.
+                    let _ = write_keyfile(path, &encode_keyfile_passwordless(key));
+                }
+            }
+            Ok(state)
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)
