@@ -97,6 +97,23 @@ function readBool(key: string, fallback: boolean): boolean {
 export const REASONING_EFFORTS = ['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number]
 
+/**
+ * The same ladder with the i18n key for each rung.
+ *
+ * Shared by the settings panel and the chat panel's quick control, so the two
+ * cannot drift apart - the labels live here as keys only, because the store must
+ * not depend on the translation layer.
+ */
+export const EFFORT_OPTIONS: readonly { value: ReasoningEffort; labelKey: string }[] = [
+  { value: '', labelKey: 'aiSettings.effortDefault' },
+  { value: 'none', labelKey: 'aiSettings.effortNone' },
+  { value: 'minimal', labelKey: 'aiSettings.effortMinimal' },
+  { value: 'low', labelKey: 'aiSettings.effortLow' },
+  { value: 'medium', labelKey: 'aiSettings.effortMedium' },
+  { value: 'high', labelKey: 'aiSettings.effortHigh' },
+  { value: 'xhigh', labelKey: 'aiSettings.effortXhigh' },
+]
+
 function readEnum<T extends string>(key: string, values: readonly T[], fallback: T): T {
   const v = persistence.get(key)
   return typeof v === 'string' && (values as readonly string[]).includes(v) ? (v as T) : fallback
