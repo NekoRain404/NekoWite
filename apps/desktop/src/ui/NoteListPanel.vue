@@ -23,8 +23,12 @@ import { useViewStore } from '../stores/view'
 import { parseOutline } from '../services/outline'
 import { dirRelativeToVault } from '../services/noteMeta'
 import { inlinksOf as queryInlinks, outlinksOf as queryOutlinks } from '../features/vault/services/libraryQueries'
-import { searchWithIndex } from '../services/contentSearch'
-import type { ContentMatch, ContentSearchCandidate } from '../services/contentSearch'
+import {
+  CONTENT_SEARCH_CONCURRENCY,
+  searchWithIndex,
+  type ContentMatch,
+  type ContentSearchCandidate,
+} from '../services/contentSearch'
 import { t } from '../i18n'
 import { baseName } from '../services/paths'
 
@@ -36,7 +40,6 @@ const view = useViewStore()
 
 const sortMenu = ref<{ x: number; y: number } | null>(null)
 
-const CONTENT_SEARCH_CONCURRENCY = 8
 const CONTENT_SEARCH_DEBOUNCE_MS = 200
 
 const contentEnabled = ref(false)

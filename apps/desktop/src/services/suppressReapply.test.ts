@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  SUPPRESS_REAPPLY_TTL_MS,
   armSuppressReapply,
   consumeSuppressReapply,
   pruneSuppressReapply,
@@ -52,5 +53,40 @@ describe('suppressReapply guard', () => {
     armSuppressReapply('tab-1')
     pruneSuppressReapply(null)
     expect(shouldSuppressReapply('tab-1')).toBe(false)
+  })
+
+  it('stops honouring an arm whose content change never arrived', () => {
+    // The arm is consumed by the content change the save is about to make. If
+    // that change never comes, the arm is left waiting - and the NEXT content
+    // change (an external program rewriting the file, a conflict resolution
+    // reloading it) gets swallowed instead: the editor keeps text that is no
+    // longer on disk and the next autosave writes it back over the newer
+    // version. An arm that outlives its partner must not be honoured.
+    vi.useFakeTimers()
+    try {
+      armSuppressReapply('tab-1')
+      expect(shouldSuppressReapply('tab-1')).toBe(true)
+
+      vi.advanceTimersByTime(SUPPRESS_REAPPLY_TTL_MS + 1)
+
+      expect(shouldSuppressReapply('tab-1')).toBe(false)
+      // ...and a stale arm cannot be consumed as if it were still valid.
+      armSuppressReapply('tab-1')
+      vi.advanceTimersByTime(SUPPRESS_REAPPLY_TTL_MS + 1)
+      expect(consumeSuppressReapply('tab-1')).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('honours an arm consumed inside the window', () => {
+    vi.useFakeTimers()
+    try {
+      armSuppressReapply('tab-1')
+      vi.advanceTimersByTime(SUPPRESS_REAPPLY_TTL_MS - 1)
+      expect(consumeSuppressReapply('tab-1')).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
