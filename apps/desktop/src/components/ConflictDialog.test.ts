@@ -1,48 +1,33 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, type App as VueApp } from 'vue'
-import { createPinia, setActivePinia, type Pinia } from 'pinia'
+
 import ConflictDialog from './ConflictDialog.vue'
-import { useTabsStore } from '../stores/tabs'
 import { setLocale, t } from '../i18n'
 
-const readMock = vi.hoisted(() => vi.fn())
-const writeMock = vi.hoisted(() => vi.fn())
-const statMock = vi.hoisted(() => vi.fn())
-const listHistoryMock = vi.hoisted(() => vi.fn())
-
-vi.mock('../platform/gateways/fs', () => ({
-  fsService: {
-    read: readMock,
-    write: writeMock,
-    list: vi.fn(),
-    watch: vi.fn(),
-    deleteFile: vi.fn(),
-    stat: statMock,
-    listHistory: listHistoryMock,
-    readHistory: vi.fn(),
-    restoreHistory: vi.fn(),
-    listTrash: vi.fn(),
-    restoreFromTrash: vi.fn(),
-  },
-}))
-
-const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
-
-let pinia: Pinia
 let mounted: VueApp[] = []
 
-function mountDialog(tabId: string, onClose: () => void): HTMLElement {
+interface Handlers {
+  onClose: () => void
+  onReloadDisk: () => void
+}
+
+function mountDialog(tabId: string, handlers: Handlers): HTMLElement {
   const host = document.createElement('div')
   document.body.appendChild(host)
   const app = createApp(ConflictDialog, {
     tabId,
     path: '/vault/a.md',
-    onClose,
+    ...handlers,
   } as never)
-  app.use(pinia)
   app.mount(host)
   mounted.push(app)
   return host
+}
+
+function handlers(): Handlers & { close: ReturnType<typeof vi.fn>; reloadDisk: ReturnType<typeof vi.fn> } {
+  const close = vi.fn()
+  const reloadDisk = vi.fn()
+  return { close, reloadDisk, onClose: close, onReloadDisk: reloadDisk }
 }
 
 // "Use disk" is the destructive answer and carries the danger styling; the
@@ -58,18 +43,6 @@ function dialogEl(): HTMLElement {
 }
 
 describe('ConflictDialog', () => {
-  beforeEach(() => {
-    pinia = createPinia()
-    setActivePinia(pinia)
-    readMock.mockReset()
-    writeMock.mockReset()
-    statMock.mockReset()
-    listHistoryMock.mockReset()
-    document.body.innerHTML = ''
-    mounted = []
-    readMock.mockResolvedValue('# disk version')
-  })
-
   afterEach(() => {
     mounted.forEach((app) => app.unmount())
     mounted = []
@@ -77,7 +50,7 @@ describe('ConflictDialog', () => {
   })
 
   it('is a labelled, modal dialog', () => {
-    mountDialog('tab-1', () => {})
+    mountDialog('tab-1', handlers())
     const dialog = document.body.querySelector<HTMLElement>('.conflict-dialog')!
     expect(dialog.getAttribute('role')).toBe('dialog')
     expect(dialog.getAttribute('aria-modal')).toBe('true')
@@ -94,8 +67,8 @@ describe('ConflictDialog', () => {
     // safe ones -- is an explicit, deliberate move. The container is focused
     // rather than "Later" on purpose: focusing a button makes Enter trigger
     // that button, and the safe default should be *no* answer at all.
-    mountDialog('tab-1', () => {})
-    await flush()
+    mountDialog('tab-1', handlers())
+    await new Promise((r) => setTimeout(r, 0))
     expect(document.activeElement).toBe(dialogEl())
     expect(document.activeElement).not.toBe(reloadBtn())
     expect(document.activeElement).not.toBe(keepLocalBtn())
@@ -107,7 +80,7 @@ describe('ConflictDialog', () => {
     // — so the action that discards the user's unsaved edits is not allowed to
     // live there. It sits leftmost, styled as danger, and the confirm slot
     // holds "Keep local".
-    mountDialog('tab-1', () => {})
+    mountDialog('tab-1', handlers())
     const row = [...document.body.querySelectorAll<HTMLButtonElement>('.conflict-dialog .dialog-actions .btn')]
     expect(row.map((b) => b.classList.contains('btn-primary'))).toEqual([false, false, true])
     expect(row[0].classList.contains('btn-danger')).toBe(true)
@@ -139,7 +112,7 @@ describe('ConflictDialog', () => {
     const path = '/vault/a.md'
     setLocale('en')
     try {
-      mountDialog('tab-1', () => {})
+      mountDialog('tab-1', handlers())
       const text = document.body.querySelector('.conflict-body')!.textContent!.replace(/\s+/g, ' ').trim()
       expect(text).toBe(`${t('conflict.bodyPrefix')} ${path} ${t('conflict.bodySuffix')}`)
       expect(text).not.toMatch(/\s{2}/)
@@ -148,58 +121,36 @@ describe('ConflictDialog', () => {
     }
   })
 
-  it('reloadDisk resolves by reloading the tab from disk and closes', async () => {
-    const close = vi.fn()
-    const s = useTabsStore()
-    s.setVault('/vault')
-    await s.openTab('/vault/a.md')
-    const tab = s.tabs[0]
-    tab.content = 'unsaved local'
-    s.markDirty(tab.id)
-    readMock.mockClear()
-    mountDialog(tab.id, close)
+  it('asks the caller for the disk reload instead of performing it', () => {
+    // §10.2: the prompt displays and forwards events. Reloading the tab is a
+    // store command, so it belongs to the caller — and this answer must NOT
+    // close the prompt itself, because the caller closes it once the reload it
+    // asked for has finished.
+    const h = handlers()
+    mountDialog('tab-1', h)
 
     reloadBtn().click()
-    await flush()
 
-    expect(readMock).toHaveBeenCalledTimes(1)
-    expect(readMock).toHaveBeenCalledWith('/vault', '/vault/a.md')
-    // reloadFromDisk adopts the disk content and clears dirty.
-    expect(tab.content).toBe('# disk version')
-    expect(tab.savedContent).toBe('# disk version')
-    expect(tab.dirty).toBe(false)
-    expect(close).toHaveBeenCalled()
+    expect(h.reloadDisk).toHaveBeenCalledTimes(1)
+    expect(h.close).not.toHaveBeenCalled()
   })
 
-  it('keepLocal keeps the local content and closes without reloading', async () => {
-    const close = vi.fn()
-    const s = useTabsStore()
-    s.setVault('/vault')
-    await s.openTab('/vault/a.md')
-    const tab = s.tabs[0]
-    tab.content = 'unsaved local'
-    s.markDirty(tab.id)
-    readMock.mockClear()
-    mountDialog(tab.id, close)
+  it('keepLocal closes without asking for a reload', () => {
+    const h = handlers()
+    mountDialog('tab-1', h)
 
     keepLocalBtn().click()
-    await flush()
 
-    expect(readMock).not.toHaveBeenCalled()
-    expect(tab.dirty).toBe(true)
-    expect(tab.content).toBe('unsaved local')
-    expect(close).toHaveBeenCalled()
+    expect(h.close).toHaveBeenCalledTimes(1)
+    expect(h.reloadDisk).not.toHaveBeenCalled()
   })
 
-  it('closes on Escape without reloading', () => {
-    mountDialog('tab-1', () => {})
-    const close = vi.fn()
-    document.body.innerHTML = ''
-    mounted.forEach((app) => app.unmount())
-    mounted = []
-    mountDialog('tab-1', close)
+  it('closes on Escape without asking for a reload', () => {
+    const h = handlers()
+    mountDialog('tab-1', h)
     const overlay = document.body.querySelector('.dialog-overlay') as HTMLElement
     overlay.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-    expect(close).toHaveBeenCalled()
+    expect(h.close).toHaveBeenCalled()
+    expect(h.reloadDisk).not.toHaveBeenCalled()
   })
 })

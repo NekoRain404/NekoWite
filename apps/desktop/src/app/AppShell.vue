@@ -63,6 +63,7 @@ const emit = defineEmits<{
   (e: 'open-settings'): void
   (e: 'close-settings'): void
   (e: 'close-conflict'): void
+  (e: 'reload-conflict-disk', tabId: string): void
   (e: 'respond-ai-write', approved: boolean, remember: boolean): void
   (e: 'resolve-permission', allowed: boolean): void
   (e: 'resolve-integrity', reapprove: boolean): void
@@ -236,6 +237,7 @@ const shellStyle = computed<Record<string, string>>(() => ({
       :tab-id="conflict.tabId"
       :path="conflict.path"
       @close="emit('close-conflict')"
+      @reload-disk="emit('reload-conflict-disk', conflict.tabId)"
     />
     <PermissionDialog
       v-if="pluginPermission"

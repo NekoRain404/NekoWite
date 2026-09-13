@@ -72,6 +72,17 @@ function onConflict(req: { tabId: string; path: string }): void {
   dialogs.showConflict(req.tabId, req.path)
 }
 
+// The conflict prompt asks for the reload instead of performing it (§10.2), so
+// the command lives here, next to the tab store it commands.
+async function onReloadConflictFromDisk(tabId: string): Promise<void> {
+  // Explicit: the user chose the disk version over their own edits, so this one
+  // wins even though the tab is dirty. The automatic reload after an external
+  // change must not, because its read takes time and the user may start typing
+  // during it.
+  await tabs.reloadFromDisk(tabId, { explicit: true })
+  dialogs.close()
+}
+
 // External-edit detection lives at the app level, NOT in the file tree: the
 // tree only exists while the Folders panel is shown, so a note opened from the
 // Notes panel (the default view) had nobody watching the disk. An external edit
@@ -127,6 +138,7 @@ onBeforeUnmount(() => {
     @open-settings="showSettings = true"
     @close-settings="showSettings = false"
     @close-conflict="dialogs.close"
+    @reload-conflict-disk="onReloadConflictFromDisk"
     @respond-ai-write="(approved: boolean, remember: boolean) => aiPermission.respond(approved, remember)"
     @resolve-permission="dialogs.resolvePermission"
     @resolve-integrity="dialogs.resolveIntegrity"
