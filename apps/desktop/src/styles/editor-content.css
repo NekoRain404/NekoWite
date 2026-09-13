@@ -435,3 +435,17 @@
   border-color: var(--app-accent);
   color: var(--app-accent);
 }
+
+/* Cite chips were class-only (no rule anywhere), so a citation rendered as bare
+   text and a key with no library entry was indistinguishable from a resolved
+   one. The missing state is the one the reader must be able to see. */
+.rendered-pane .editor-container .ProseMirror .cite-chip {
+  font-variant-numeric: tabular-nums;
+  color: var(--app-accent);
+  cursor: default;
+}
+.rendered-pane .editor-container .ProseMirror .cite-chip.cite-chip-missing {
+  color: var(--app-danger);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
