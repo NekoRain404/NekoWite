@@ -29,6 +29,7 @@ coverage/
 apps/desktop/ai-lab/
 /probe-vault/
 /probe-vault-*/
+/probe-journey-*/
 .DS_Store
 Thumbs.db
 
