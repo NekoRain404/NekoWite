@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { createApp, nextTick, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import FileTree from './FileTree.vue'
+import { onNotify } from '../services/errors'
+import { t } from '../i18n'
 import { useAppearanceStore } from '../stores/appearance'
 import { useTabsStore } from '../stores/tabs'
 
@@ -10,6 +12,10 @@ const listMock = vi.hoisted(() => vi.fn())
 const writeMock = vi.hoisted(() => vi.fn())
 const openFolderMock = vi.hoisted(() => vi.fn())
 const renameMock = vi.hoisted(() => vi.fn())
+const statMock = vi.hoisted(() => vi.fn())
+
+let notifications: string[] = []
+let offNotify: (() => void) | null = null
 const deleteFileMock = vi.hoisted(() => vi.fn())
 const onFsChangeMock = vi.hoisted(() => vi.fn())
 
@@ -19,7 +25,10 @@ vi.mock('../platform/gateways/fs', () => ({
     list: listMock,
     write: writeMock,
     watch: vi.fn(),
-    stat: vi.fn(),
+    // Nothing exists unless a case says so: `stat` is the existence probe the
+    // note pair-delete uses to decide whether a `<name>_assets` folder has to
+    // go to the trash with its note.
+    stat: statMock,
     readHistory: vi.fn(),
     listHistory: vi.fn().mockResolvedValue([]),
     restoreHistory: vi.fn(),
@@ -92,6 +101,8 @@ describe('FileTree inline rename (IME)', () => {
     openFolderMock.mockReset()
     renameMock.mockReset()
     renameMock.mockResolvedValue(undefined)
+    statMock.mockReset()
+    statMock.mockRejectedValue(new Error('no such file'))
     onFsChangeMock.mockReset()
     readMock.mockResolvedValue('# note')
     writeMock.mockResolvedValue(undefined)
@@ -102,9 +113,14 @@ describe('FileTree inline rename (IME)', () => {
     ])
     document.body.innerHTML = ''
     mounted = []
+    notifications = []
+    offNotify?.()
+    offNotify = onNotify((m) => notifications.push(m))
   })
 
   afterEach(() => {
+    offNotify?.()
+    offNotify = null
     mounted.forEach((app) => app.unmount())
     mounted = []
     document.body.innerHTML = ''
@@ -258,6 +274,14 @@ describe('FileTree delete confirmation', () => {
     renameMock.mockReset()
     deleteFileMock.mockReset()
     onFsChangeMock.mockReset()
+    // Nothing exists unless a case says so: `stat` is the existence probe the
+    // note pair-delete uses to decide whether a `<name>_assets` folder has to
+    // go to the trash with its note.
+    statMock.mockReset()
+    statMock.mockRejectedValue(new Error('no such file'))
+    notifications = []
+    offNotify?.()
+    offNotify = onNotify((m) => notifications.push(m))
     readMock.mockResolvedValue('# note')
     writeMock.mockResolvedValue(undefined)
     renameMock.mockResolvedValue(undefined)
@@ -274,6 +298,8 @@ describe('FileTree delete confirmation', () => {
   })
 
   afterEach(() => {
+    offNotify?.()
+    offNotify = null
     mounted.forEach((app) => app.unmount())
     mounted = []
     useAppearanceStore().setConfirmBeforeDelete(true)
@@ -319,6 +345,66 @@ describe('FileTree delete confirmation', () => {
     await flush()
     expect(deleteFileMock).toHaveBeenCalledTimes(1)
     expect(deleteFileMock).toHaveBeenCalledWith('/vault', '/vault/a.md')
+  })
+
+  it('takes the note\'s own image folder to the trash with it', async () => {
+    // Deleting a note used to move only the .md file, leaving `<name>_assets/`
+    // on disk forever: the Attachments panel only walks the vault-level tree,
+    // so nothing could list those files and the space was never reclaimed.
+    statMock.mockImplementation(async (_v: string, p: string) => {
+      if (p === '/vault/a_assets') return { size: 0, mtime: 0 }
+      throw new Error('no such file')
+    })
+    useAppearanceStore().setConfirmBeforeDelete(false)
+    mountTree()
+    await flush()
+
+    trashButton().click()
+    await flush()
+
+    expect(deleteFileMock).toHaveBeenCalledTimes(2)
+    expect(deleteFileMock).toHaveBeenNthCalledWith(1, '/vault', '/vault/a.md')
+    expect(deleteFileMock).toHaveBeenNthCalledWith(2, '/vault', '/vault/a_assets')
+  })
+
+  it('does not aim the pair-delete at a folder\'s lookalike', async () => {
+    // The trash icon is offered on folder rows too. A folder named `docs` must
+    // not take a sibling `docs_assets` with it: a folder delete already carries
+    // its whole subtree, and that sibling could belong to anything.
+    statMock.mockResolvedValue({ size: 0, mtime: 0 })
+    listMock.mockResolvedValue([
+      { name: 'docs', path: '/vault/docs', is_dir: true, is_mdx: false },
+    ])
+    useAppearanceStore().setConfirmBeforeDelete(false)
+    mountTree()
+    await flush()
+
+    const btn = document.querySelector<HTMLButtonElement>('.tree-del')!
+    btn.click()
+    await flush()
+
+    expect(deleteFileMock).toHaveBeenCalledTimes(1)
+    expect(deleteFileMock).toHaveBeenCalledWith('/vault', '/vault/docs')
+  })
+
+  it('still deletes the note when the asset folder cannot be moved', async () => {
+    // The note is what the user asked to delete. A failure on the folder is
+    // reported, not turned into "the delete failed" - which would invite a
+    // second attempt and a second trash entry for the note.
+    statMock.mockResolvedValue({ size: 0, mtime: 0 })
+    deleteFileMock.mockImplementation(async (_v: string, p: string) => {
+      if (p.endsWith('_assets')) throw new Error('locked')
+      return p
+    })
+    useAppearanceStore().setConfirmBeforeDelete(false)
+    const host = mountTree()
+    await flush()
+
+    trashButton().click()
+    await flush()
+
+    expect(notifications).toContain(t('filetree.deleteAssetsFailed'))
+    expect(host.querySelector('.tree-del-confirm')).toBeNull()
   })
 
   it('does not run the same delete twice from a double activation', async () => {

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import { emitLifecycle, getActiveEditor } from '@nekowite/plugin-host'
+import type { NoteDeleteResult } from '../services/noteDelete'
 import { armSuppressReapply, pruneSuppressReapply } from '../services/suppressReapply'
 import { fsService } from '../platform/gateways/fs'
 import { flushEdits } from '../services/editorOwnership'
@@ -11,6 +12,7 @@ import { requestUntitledVaultSwitch } from '../app/recoveryClosedLoop'
 import { announce } from '../services/announcer'
 import { t as i18nT } from '../i18n'
 import { assetsDirForNote, moveAttachments, rewireTempRefsInContent } from '../services/renameAsset'
+import { deleteNoteWithAssets } from '../services/noteDelete'
 import { samePath } from '../services/paths'
 import { rewriteNoteRefs } from '../services/noteMove'
 import type { NoteMoveResult } from '../services/noteMove'
@@ -596,15 +598,32 @@ export const useTabsStore = defineStore('tabs', () => {
     const t = tabs.value.find((x) => x.id === id)
     if (!t || !t.path || !vault.value) return
     const path = t.path
+    let result: NoteDeleteResult
     try {
       // Suppress the delete's own fs-change so the tab is not reloaded from a
-      // missing file before deleteTabFile closes it.
+      // missing file before deleteTabFile closes it. The note's own
+      // `_assets` folder goes to the trash with it: leaving it behind kept the
+      // images forever while nothing in the app could list or reclaim them
+      // (see services/noteDelete).
       noteSelfWrite(path)
-      await fsService.deleteFile(vault.value, path)
+      result = await deleteNoteWithAssets(
+        {
+          deleteFile: (v, p) => fsService.deleteFile(v, p),
+          exists: async (v, p) => {
+            await fsService.stat(v, p)
+            return true
+          },
+        },
+        vault.value,
+        path,
+      )
     } catch {
       notifyError(i18nT('tabs.deleteFailed'))
       return
     }
+    // The note is in the trash; its images are not. Say so rather than report a
+    // clean delete - the user has to be able to find them if they want them.
+    if (result.assetsFailed) notifyError(i18nT('tabs.deleteAssetsFailed'))
     // Close every tab on that path: autosave from a leftover tab would
     // resurrect the deleted file from stale content.
     for (const tab of [...tabs.value]) {

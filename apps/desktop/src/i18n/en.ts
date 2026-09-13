@@ -210,6 +210,7 @@ export const en = {
     collapseFolder: 'Collapse folder {name}',
     expandFolder: 'Expand folder {name}',
     deleteFailed: 'Delete failed, please retry',
+    deleteAssetsFailed: 'The note was deleted, but its image folder could not be moved to the trash.',
     listFailed: 'Could not read directory: {path}',
     confirm: 'Confirm',
     cancel: 'Cancel',
@@ -396,6 +397,7 @@ export const en = {
     saveAttachmentFailed: 'Failed to save attachment; the image remains in the temp folder',
     saveFailed: 'Save failed; content is kept in the editor, please retry',
     deleteFailed: 'Delete failed',
+    deleteAssetsFailed: 'The note was deleted, but its image folder could not be moved to the trash.',
     watchFailed: 'External file changes cannot be tracked right now, so this list may not follow what happens outside the app. Rebuilding the index retries it.',
     watchRestored: 'External file changes are tracked again.',
     restoreHistoryFailed: 'Failed to restore the historical version',
@@ -539,6 +541,8 @@ export const en = {
     addImage: 'Add image',
     imageTooLarge: 'Image is too large to attach (max {max})',
     tooManyImages: 'At most {max} images per message',
+    attachmentsTotalTooLarge:
+      'The images in one message exceed the {max} total size limit. Remove or shrink one first.',
     storageImagesDropped: 'The chat history was too large to store: images from earlier messages were saved without them.',
     storageFull: 'Chat history could not be saved (storage is full). This conversation exists only in this window - copy anything you need to keep.',
     placeholder: 'Follow up, ask, or keep writing…',
@@ -753,6 +757,8 @@ export const en = {
     builtin: 'Built-in template',
     empty: 'No templates available. Built-in templates are always available.',
     createFailed: 'Failed to create a note from the template, please retry',
+    nameTaken:
+      'Could not create the note: all {count} candidate names (including "{base}") are taken. Rename or delete the existing notes first.',
     readFailed: 'Failed to read the template, please retry',
   },
 }

@@ -4,6 +4,7 @@ import { ChevronRight, FilePlus2, FileText, Folder, FolderOpen, FolderPlus, Penc
 import { fsService } from '../platform/gateways/fs'
 import type { FileEntry, FsChangeEvent } from '../platform/gateways/fs'
 import { resolveDropTarget, type DropRow } from '../services/treeDrop'
+import { deleteNoteWithAssets } from '../services/noteDelete'
 import { notifyError } from '../services/errors'
 import { useAppearanceStore } from '../stores/appearance'
 import { useTabsStore } from '../stores/tabs'
@@ -117,14 +118,43 @@ function requestDelete(path: string): void {
   confirmPath.value = path
 }
 
+/** True when the tree row at `path` is a folder. The trash icon is offered on
+ *  every row, and a folder must NOT go through the note pair-delete: a folder
+ *  delete already carries its whole subtree (so a nested `_assets` folder needs
+ *  no special handling), and treating its name as a note's would aim a second
+ *  delete at an unrelated `<foldername>_assets` sibling. */
+function isDirPath(path: string): boolean {
+  if (root.value?.path === path) return true
+  return flat.value.some((row) => row.node.path === path && row.node.is_dir)
+}
+
 async function confirmDelete(path: string): Promise<void> {
   if (deleting.has(path)) return
   deleting.add(path)
   const tab = tabs.tabs.find((t) => t.path === path)
   try {
     if (tab) await tabs.deleteTabFile(tab.id)
-    else {
+    else if (isDirPath(path)) {
       await fsService.deleteFile(props.vault, path)
+      for (const t of [...tabs.tabs]) {
+        if (t.path && (t.path === path || t.path.startsWith(path + '/'))) tabs.removeTab(t.id)
+      }
+    } else {
+      // The same pair-delete the store performs for an open note: a note with
+      // no tab still owns a `<basename>_assets` folder, and leaving that behind
+      // kept its images invisible and unreclaimable forever.
+      const del = await deleteNoteWithAssets(
+        {
+          deleteFile: (v, p) => fsService.deleteFile(v, p),
+          exists: async (v, p) => {
+            await fsService.stat(v, p)
+            return true
+          },
+        },
+        props.vault,
+        path,
+      )
+      if (del.assetsFailed) notifyError(t('filetree.deleteAssetsFailed'))
       for (const t of [...tabs.tabs]) {
         if (t.path && (t.path === path || t.path.startsWith(path + '/'))) tabs.removeTab(t.id)
       }
