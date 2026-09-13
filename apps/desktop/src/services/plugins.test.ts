@@ -33,9 +33,10 @@ const readMock = vi.hoisted(() => vi.fn())
 const loadMock = vi.hoisted(() => vi.fn())
 const activateMock = vi.hoisted(() => vi.fn())
 const deactivateMock = vi.hoisted(() => vi.fn())
+const writeMock = vi.hoisted(() => vi.fn())
 const notifyErrorMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../platform/gateways/fs', () => ({ fsService: { list: listMock, read: readMock } }))
+vi.mock('../platform/gateways/fs', () => ({ fsService: { list: listMock, read: readMock, write: writeMock } }))
 vi.mock('./errors', () => ({
   notifyError: notifyErrorMock,
   describePluginError: (e: { message?: string; recovery?: string }) =>
@@ -115,6 +116,36 @@ describe('loadVaultPlugins', () => {
     expect(deactivateMock).toHaveBeenCalledWith('@scope/q')
   })
 
+  it('skips a disabled plugin before consent, trust and import', async () => {
+    const { setVaultPluginDisabled } = await import('./plugins')
+    setVaultPluginDisabled('@scope/q', true)
+    await loadVaultPlugins('/vault')
+    expect(loadMock).not.toHaveBeenCalled()
+    expect(activateMock).not.toHaveBeenCalled()
+    expect(getActiveVaultPluginIds()).toEqual([])
+    setVaultPluginDisabled('@scope/q', false, { reload: async () => undefined })
+  })
+
+  it('deactivates a running plugin the moment it is switched off', async () => {
+    const { setVaultPluginDisabled } = await import('./plugins')
+    await loadVaultPlugins('/vault')
+    expect(getActiveVaultPluginIds()).toEqual(['@scope/q'])
+    deactivateMock.mockClear()
+    setVaultPluginDisabled('@scope/q', true)
+    expect(deactivateMock).toHaveBeenCalledWith('@scope/q')
+    expect(getActiveVaultPluginIds()).toEqual([])
+  })
+
+  it('reports the switch state for the settings list', async () => {
+    const { listVaultPlugins, setVaultPluginDisabled } = await import('./plugins')
+    await loadVaultPlugins('/vault')
+    const before = await listVaultPlugins('/vault')
+    expect(before).toHaveLength(1)
+    expect(before[0]).toMatchObject({ id: '@scope/q', disabled: false, active: true })
+    setVaultPluginDisabled('@scope/q', true)
+    const after = await listVaultPlugins('/vault')
+    expect(after[0]).toMatchObject({ disabled: true, active: false })
+  })
   it('never activates a plugin whose load failed', async () => {
     loadMock.mockResolvedValue({ ok: false, id: '@scope/q', error: 'boom' })
     await loadVaultPlugins('/vault')
@@ -568,6 +599,51 @@ describe('audit log path (vault-relative, never collides with notes)', () => {
     expect(p.endsWith('.markdown')).toBe(false)
   })
 
+  it('persists the switch against a named vault without clobbering trust data', async () => {
+    // Found on the device: the switch only reached the governance file when a
+    // plugin load had set the module's current vault, and the strict-CSP build
+    // never gets that far - so the toggle looked saved and was gone after a
+    // restart. The panel names the vault instead.
+    const key = 'c'.repeat(64)
+    const existing = JSON.stringify({
+      governance: '{}',
+      trustedKey: 'KEEP-ME',
+      trustedSources: ['@scope'],
+      digests: { '@scope/q': 'deadbeef' },
+    })
+    const env = await createMacEnvelope(existing, key)
+    readMock.mockImplementation((_vault, rel) => {
+      if (rel.endsWith(PLUGIN_GOVERNANCE_FILE)) return Promise.resolve(JSON.stringify(env))
+      if (rel.endsWith('.mackey')) return Promise.resolve(key)
+      return Promise.resolve(pkg())
+    })
+    writeMock.mockResolvedValue(undefined)
+
+    const { setVaultPluginDisabled } = await import('./plugins')
+    setVaultPluginDisabled('@scope/q', true, { vault: '/vault' })
+    for (let i = 0; i < 8 && writeMock.mock.calls.length === 0; i += 1) {
+      await new Promise((r) => setTimeout(r, 0))
+    }
+
+    const call = writeMock.mock.calls.find((c) => String(c[1]).endsWith(PLUGIN_GOVERNANCE_FILE))
+    expect(call ? 'written' : 'missing').toBe('written')
+    if (!call) throw new Error('unreachable: the assertion above fails first')
+    const framed = JSON.parse(String(call[2])) as { payload: string; mac: string }
+    const { verifyMacEnvelope } = await import('@nekowite/plugin-host')
+    const ok = await verifyMacEnvelope(framed, key)
+    expect(ok).toBe(true)
+
+    const written = JSON.parse(framed.payload) as {
+      disabled?: string[]
+      trustedKey?: string
+      trustedSources?: string[]
+      digests?: Record<string, string>
+    }
+    expect(written.disabled).toEqual(['@scope/q'])
+    expect(written.trustedKey).toBe('KEEP-ME')
+    expect(written.trustedSources).toEqual(['@scope'])
+    expect(written.digests).toEqual({ '@scope/q': 'deadbeef' })
+  })
   it('keeps the audit log distinct from the governance trust-state file', () => {
     expect(getVaultPluginAuditLogPath('/vault')).not.toMatch(/governance/)
   })
