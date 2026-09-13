@@ -71,15 +71,15 @@ describe('memoryFsGateway', () => {
     expect(await fs.listTrash('memoir://demo')).toHaveLength(0)
   })
 
-  it('clearTrash removes every entry and returns the count', async () => {
+  it('clearTrash removes every entry and reports the count and failures', async () => {
     const fs = createMemoryFsGateway({ 'a.md': 'a', 'b.md': 'b', 'c.md': 'c' })
     await fs.deleteFile('memoir://demo', 'a.md')
     await fs.deleteFile('memoir://demo', 'b.md')
     expect(await fs.listTrash('memoir://demo')).toHaveLength(2)
-    expect(await fs.clearTrash('memoir://demo')).toBe(2)
+    expect(await fs.clearTrash('memoir://demo')).toEqual({ removed: 2, failed: [] })
     expect(await fs.listTrash('memoir://demo')).toHaveLength(0)
     // Clearing an already-empty trash is a no-op.
-    expect(await fs.clearTrash('memoir://demo')).toBe(0)
+    expect(await fs.clearTrash('memoir://demo')).toEqual({ removed: 0, failed: [] })
   })
 
   it('prunes history to maxHistory keeping the newest snapshots first', async () => {

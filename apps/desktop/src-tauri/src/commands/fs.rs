@@ -11,7 +11,7 @@ use std::path::Path;
 use notify::Watcher;
 use tauri::Emitter;
 
-use crate::domain::path_policy::{has_hidden_component, resolve_within};
+use crate::domain::path_policy::{has_hidden_component, ipc_path, resolve_within};
 use crate::state::{require_opened_vault, VaultRegistry, WatcherState};
 use crate::storage::file_store::{self, FileEntry, FileStat};
 use crate::storage::trash_store;
@@ -188,10 +188,7 @@ pub async fn save_file_dialog(
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     use tauri_plugin_dialog::FilePath;
-    let mut builder = app
-        .dialog()
-        .file()
-        .set_file_name(&default_name);
+    let mut builder = app.dialog().file().set_file_name(&default_name);
     if let Some(dir) = start_dir {
         builder = builder.set_directory(dir);
     }
@@ -408,10 +405,10 @@ pub async fn watch_folder(
         },
         notify::Config::default(),
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| format!("could not start watching {}: {e}", ipc_path(&resolved)))?;
     new_watcher
         .watch(&resolved, notify::RecursiveMode::Recursive)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("could not watch {}: {e}", ipc_path(&resolved)))?;
     // Replacing the managed watcher drops the previous one, so a vault
     // switch stops the abandoned watcher instead of stacking a new thread.
     // A poisoned lock must not panic — return the error instead so the stale

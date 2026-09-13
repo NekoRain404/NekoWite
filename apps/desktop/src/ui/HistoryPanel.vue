@@ -10,6 +10,12 @@ import { t } from '../i18n'
 
 const tabs = useTabsStore()
 const entries = ref<HistoryEntry[]>([])
+/**
+ * Set when the last read of the history FAILED. The panel must not print "no
+ * history yet" underneath an error toast: that sentence says the versions are
+ * gone, while the truth is that they could not be read.
+ */
+const loadFailed = ref(false)
 
 /** The entry being compared against the current content, or null to close. */
 const comparing = ref<HistoryEntry | null>(null)
@@ -40,13 +46,18 @@ async function load(): Promise<void> {
   }
   if (!tab?.path || !tabs.vault) {
     entries.value = []
+    loadFailed.value = false
     return
   }
   try {
     entries.value = await fsService.listHistory(tabs.vault, tab.path)
-  } catch {
-    notifyError(t('history.readFailed'))
+    loadFailed.value = false
+  } catch (e) {
+    // The toast carries the backend reason (which folder, what the OS said);
+    // the inline hint below stops the panel from claiming there is no history.
+    notifyError(t('history.readFailed', { msg: e instanceof Error ? e.message : String(e) }))
     entries.value = []
+    loadFailed.value = true
   }
 }
 
@@ -180,7 +191,7 @@ onMounted(() => {
         v-if="!entries.length && !(comparing && historyText)"
         class="rail-empty"
       >
-        {{ t('history.empty') }}
+        {{ loadFailed ? t('history.unreadable') : t('history.empty') }}
       </p>
     </template>
     <p

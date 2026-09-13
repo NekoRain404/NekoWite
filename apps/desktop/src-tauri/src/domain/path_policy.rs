@@ -11,6 +11,8 @@
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
+use crate::errors::fs_error;
+
 /// Resolve `requested` against the vault `base` and prove the result stays
 /// inside the vault.
 ///
@@ -52,7 +54,7 @@ pub fn resolve_within_rel(base: &str, requested: &str) -> Result<(PathBuf, Strin
     }
     let canonical_base = base_path
         .canonicalize()
-        .map_err(|e| format!("vault root not accessible: {e}"))?;
+        .map_err(|e| fs_error("open the vault root", base_path, e))?;
 
     let requested_path = Path::new(requested);
     let combined = if requested_path.is_absolute() {
@@ -64,21 +66,21 @@ pub fn resolve_within_rel(base: &str, requested: &str) -> Result<(PathBuf, Strin
     let mut normalized = PathBuf::new();
     for component in combined.components() {
         match component {
-            Component::ParentDir => return Err("path escapes vault".into()),
+            Component::ParentDir => return Err(format!("path escapes vault: {requested}")),
             Component::CurDir => {}
             other => normalized.push(other.as_os_str()),
         }
     }
 
-    let canonical = canonicalize_loose(&normalized)
-        .map_err(|e| format!("cannot resolve path: {e}"))?;
+    let canonical =
+        canonicalize_loose(&normalized).map_err(|e| fs_error("resolve", &normalized, e))?;
     if !canonical.starts_with(&canonical_base) {
-        return Err("path escapes vault".into());
+        return Err(format!("path escapes vault: {requested}"));
     }
     reject_symlink_components(&canonical_base, &canonical)?;
     let relative = canonical
         .strip_prefix(&canonical_base)
-        .map_err(|_| "path escapes vault".to_string())?
+        .map_err(|_| format!("path escapes vault: {requested}"))?
         .to_string_lossy()
         .to_string();
     // The relative half is the *vault-relative* form, not an OS path: every
@@ -190,7 +192,7 @@ pub fn canonicalize_vault_root(root: &str) -> Result<PathBuf, String> {
         return Err("vault root must be an absolute path".into());
     }
     p.canonicalize()
-        .map_err(|e| format!("vault root not accessible: {e}"))
+        .map_err(|e| fs_error("open the vault root", p, e))
 }
 
 /// Encode a vault-relative path into a single safe file name for use under
@@ -252,12 +254,7 @@ pub fn decode_rel_path(encoded: &str) -> String {
 /// replaced last so an escaped `%` is never re-expanded into a fake escape
 /// (e.g. the key `%252F` is a literal `%2F`, not a `/`).
 fn percent_decode(encoded: &str) -> String {
-    const ESCAPES: [(&str, &str); 4] = [
-        ("%2F", "/"),
-        ("%5F", "_"),
-        ("%2E", "."),
-        ("%25", "%"),
-    ];
+    const ESCAPES: [(&str, &str); 4] = [("%2F", "/"), ("%5F", "_"), ("%2E", "."), ("%25", "%")];
     let mut out = encoded.to_string();
     for (from, to) in ESCAPES {
         out = out.replace(from, to);
@@ -268,9 +265,7 @@ fn percent_decode(encoded: &str) -> String {
 /// A decoded relative path is usable only if it is non-empty, not absolute,
 /// and has no `.`/`..` components (which the encoding must never produce).
 pub fn is_safe_rel(p: &str) -> bool {
-    !p.is_empty()
-        && !p.starts_with('/')
-        && !p.split('/').any(|c| c == "." || c == "..")
+    !p.is_empty() && !p.starts_with('/') && !p.split('/').any(|c| c == "." || c == "..")
 }
 
 /// True when any path component starts with `.`, i.e. the path is a hidden
@@ -279,9 +274,7 @@ pub fn is_safe_rel(p: &str) -> bool {
 /// spellings and the root separator do not trip the filter.
 pub fn has_hidden_component(p: &Path) -> bool {
     p.components().any(|c| match c {
-        Component::Normal(s) => {
-            s.to_str().map(|s| s.starts_with('.')).unwrap_or(false)
-        }
+        Component::Normal(s) => s.to_str().map(|s| s.starts_with('.')).unwrap_or(false),
         _ => false,
     })
 }

@@ -262,9 +262,11 @@ export function createMemoryFsGateway(
       return entry.original_path
     },
     clearTrash: async () => {
-      const count = trash.size
+      // The in-memory fs never has a locked file, so a pass is always total;
+      // the report shape is still the port contract.
+      const removed = trash.size
       trash.clear()
-      return count
+      return { removed, failed: [] }
     },
     listHistory: async (_vault, path) =>
       [...(history.get(path) ?? [])]

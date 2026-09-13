@@ -14,6 +14,7 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import type {
   AiPort,
+  ClearTrashReport,
   DialogPort,
   FileEntry,
   FileStat,
@@ -41,7 +42,7 @@ export const tauriFsPort: FsPort = {
   listTrash: (vault) => invoke<TrashEntry[]>('list_trash', { vault_root: vault }),
   restoreFromTrash: (vault, trashPath) =>
     invoke<string>('restore_from_trash', { vault_root: vault, trash_path: trashPath }),
-  clearTrash: (vault) => invoke<number>('clear_trash', { vault }),
+  clearTrash: (vault) => invoke<ClearTrashReport>('clear_trash', { vault }),
   listHistory: (vault, path) =>
     invoke<HistoryEntry[]>('list_history', { vault_root: vault, path }),
   readHistory: (vault, path, id) =>

@@ -65,6 +65,28 @@ export interface HistoryEntry {
   mtime: number
 }
 
+/**
+ * One trash entry `clearTrash` could not remove. `name` is the on-disk key the
+ * trash lists (what `restoreFromTrash` takes) and `error` is the user-facing
+ * reason from the backend, so the UI can name what is still there instead of
+ * reporting the whole pass as failed.
+ */
+export interface ClearTrashFailure {
+  name: string
+  error: string
+}
+
+/**
+ * What one emptying pass actually did. A partial pass is an ordinary outcome
+ * (one file still held open by another program): `removed` is always the truth
+ * and `failed` names what is left, so "emptied 3, 1 stuck" can be reported
+ * honestly instead of a bare failure.
+ */
+export interface ClearTrashReport {
+  removed: number
+  failed: ClearTrashFailure[]
+}
+
 export interface FileStat {
   size: number
   mtime: number
@@ -87,8 +109,9 @@ export interface FsPort {
   deleteFile(vault: string, path: string): Promise<string>
   listTrash(vault: string): Promise<TrashEntry[]>
   restoreFromTrash(vault: string, trashPath: string): Promise<string>
-  /** Permanently delete every entry in the trash; returns how many were removed. */
-  clearTrash(vault: string): Promise<number>
+  /** Permanently delete every entry in the trash, reporting how many were
+   * removed and which ones could not be. */
+  clearTrash(vault: string): Promise<ClearTrashReport>
   listHistory(vault: string, path: string): Promise<HistoryEntry[]>
   readHistory(vault: string, path: string, id: string): Promise<string>
   restoreHistory(vault: string, path: string, id: string): Promise<string>

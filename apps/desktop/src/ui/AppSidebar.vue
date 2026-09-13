@@ -27,6 +27,7 @@ import {
 } from 'lucide-vue-next'
 import { fsService } from '../platform/gateways/fs'
 import type { TrashEntry } from '../platform/gateways/contracts'
+import { announce } from '../services/announcer'
 import { notifyError } from '../services/errors'
 import { useTabsStore } from '../stores/tabs'
 import { flushSourceEdits } from '../services/sourceView'
@@ -73,6 +74,13 @@ const refResults = computed(() => refs.search(refQuery.value).slice(0, 30))
 
 const trashOpen = ref(false)
 const trashEntries = ref<TrashEntry[]>([])
+/**
+ * Set when the last read of the trash FAILED. "The trash is empty" and "the
+ * trash could not be read" must never render the same: the second one is the
+ * answer a user gets when a permission problem hides their deleted notes, and
+ * calling it empty says those notes are gone.
+ */
+const trashUnreadable = ref(false)
 const clearingTrash = ref(false)
 
 const vaultName = computed(() => {
@@ -146,8 +154,14 @@ const navEntries = computed<NavEntry[]>(() => {
 async function refreshTrash(): Promise<void> {
   try {
     trashEntries.value = await fsService.listTrash(props.vault)
-  } catch {
+    trashUnreadable.value = false
+  } catch (e) {
+    // The list is unknown, not empty. Keep the flag so the panel asks the
+    // user to fix the read instead of claiming there is nothing to recover,
+    // and surface the backend reason (which folder, what the OS said).
     trashEntries.value = []
+    trashUnreadable.value = true
+    notifyError(e instanceof Error ? e.message : String(e))
   }
 }
 
@@ -177,8 +191,24 @@ async function clearTrash(): Promise<void> {
   }
   clearingTrash.value = false
   try {
-    await fsService.clearTrash(props.vault)
+    const report = await fsService.clearTrash(props.vault)
     await refreshTrash()
+    if (report.failed.length === 0) {
+      announce(t('trash.cleared', { n: report.removed }))
+    } else {
+      // Partial (or total) failure: say what actually happened. "Failed"
+      // over a half-emptied trash hides the removals that DID happen and the
+      // entries that are still there to retry.
+      const names = report.failed.slice(0, 5).map((f) => f.name).join(', ')
+      const extra = report.failed.length > 5 ? ` +${report.failed.length - 5}` : ''
+      notifyError(
+        t('trash.clearPartial', {
+          removed: report.removed,
+          failed: report.failed.length,
+          names: names + extra,
+        }),
+      )
+    }
   } catch {
     notifyError(t('trash.clearFailed'))
   }
@@ -535,7 +565,7 @@ watch(
             v-if="trashEntries.length === 0"
             class="group-empty"
           >
-            {{ t('nav.trashEmpty') }}
+            {{ trashUnreadable ? t('nav.trashUnreadable') : t('nav.trashEmpty') }}
           </p>
         </div>
       </section>
