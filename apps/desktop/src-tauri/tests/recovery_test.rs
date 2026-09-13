@@ -10,6 +10,8 @@
 
 use nekowite_lib::commands::keys::{password_candidates, unlock_snapshot};
 use nekowite_lib::domain::recovery::{backup_key_paths, open_snapshot, reencrypt_vault};
+#[cfg(unix)]
+use nekowite_lib::storage::key_file_io::DiskKeyFiles;
 use nekowite_lib::storage::key_store::{
     derive_master_key, encode_keyfile_password, encode_keyfile_passwordless, sibling_suffixed,
     verifier_of,
@@ -260,10 +262,12 @@ fn a_failed_swap_keeps_the_backup_that_opens_the_snapshot() {
     fs::write(snapshot_path.join("occupied"), "x").unwrap();
 
     let err = reencrypt_vault(
+        &DiskKeyFiles,
         &snapshot_path,
         &key_path,
         &new_key,
         &encode_keyfile_passwordless(&new_key),
+        CLIENT,
         &[],
     )
     .unwrap_err();
@@ -299,7 +303,7 @@ fn a_failed_swap_keeps_the_backup_that_opens_the_snapshot() {
     // And the load-time recovery really can still get in: the primary key is
     // the one that does not decrypt the snapshot, so this succeeds only through
     // the backup.
-    let stronghold = open_snapshot(&live, &key_path, stale_key.to_vec())
+    let stronghold = open_snapshot(&DiskKeyFiles, &live, &key_path, stale_key.to_vec())
         .expect("recovery must still find a key that opens the snapshot");
     let client = stronghold.inner().load_client(CLIENT).unwrap();
     let got = client

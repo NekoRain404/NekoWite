@@ -3,19 +3,17 @@
 //! These are the pure, path-level functions behind a master-password change
 //! and the load-time fallback on the `master.key.old` backup. They run without
 //! an `AppHandle`, so the load-time recovery path is testable directly (see
-//! `tests/keys_test.rs`). The key-file format and KDF live in
-//! [`crate::storage::key_store`]; this module owns the *recovery* sequence.
+//! `tests/keys_test.rs`). The key-file format and KDF live behind
+//! [`KeyFileIo`], implemented by the storage layer and handed in by the caller;
+//! this module owns the *recovery* sequence, not the files it moves.
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tauri_plugin_stronghold::stronghold::Stronghold;
 
+use super::key_files::{sibling_suffixed, stronghold_tmp_path, KeyFileIo, VaultKeyState};
 use crate::errors::fs_error;
-use crate::storage::key_store::{
-    fsync_file, read_vault_key_state, sibling_suffixed, stronghold_tmp_path,
-    tighten_snapshot_perms, write_key_file_at, VaultKeyState, VAULT_CLIENT_ID,
-};
 
 /// Suffix of the canonical backup slot: `master.key.old`.
 const BACKUP_SUFFIX: &str = "old";
@@ -81,8 +79,12 @@ pub fn backup_key_paths(key_path: &Path) -> Vec<PathBuf> {
 /// valid for a **passwordless** key file; a password-protected file returns an
 /// error (its key must be derived from the password). Used by the load-time
 /// recovery in [`open_snapshot`] against the `master.key.old` backup.
-fn read_unlockable_keyfile(path: &Path) -> Result<Vec<u8>, String> {
-    match read_vault_key_state(path)? {
+///
+/// The file is read through `io` rather than a concrete key store: what a key
+/// file holds is the format's business, while which backups recovery tries and
+/// in what order is this module's.
+fn read_unlockable_keyfile(io: &dyn KeyFileIo, path: &Path) -> Result<Vec<u8>, String> {
+    match io.read_key_state(path)? {
         VaultKeyState::Auto(key) => Ok(key.to_vec()),
         VaultKeyState::Locked { .. } => Err("backup master key is password-protected".to_string()),
     }
@@ -100,8 +102,11 @@ fn read_unlockable_keyfile(path: &Path) -> Result<Vec<u8>, String> {
 /// A failed open never writes to disk, so the retry cannot make things worse.
 ///
 /// Pure and `AppHandle`-free so the recovery path is testable in
-/// `tests/keys_test.rs`/`tests/recovery_test.rs`.
+/// `tests/keys_test.rs`/`tests/recovery_test.rs`; the backup keys are read
+/// through the caller's `io` ([`KeyFileIo`]), so a test can drive the retry
+/// without a real key store.
 pub fn open_snapshot(
+    io: &dyn KeyFileIo,
     snapshot_path: &Path,
     key_path: &Path,
     master_key: Vec<u8>,
@@ -114,7 +119,7 @@ pub fn open_snapshot(
                 // (its key has to be derived from the password), so it is
                 // skipped rather than ending the retry — a later candidate may
                 // still be the passwordless key that opens this snapshot.
-                let Ok(backup_key) = read_unlockable_keyfile(&backup) else {
+                let Ok(backup_key) = read_unlockable_keyfile(io, &backup) else {
                     continue;
                 };
                 if let Ok(stronghold) = Stronghold::new(snapshot_path, backup_key) {
@@ -210,8 +215,12 @@ fn restore_displaced_key(key_path: &Path, displaced: &DisplacedKey) {
 /// Re-encrypt the snapshot at `snapshot_path` with `new_key`, migrating
 /// `records` over, and swap the new master key file in at `key_path`. `keyfile`
 /// is the serialized key blob to persist (`master.key` = salt+verifier for a
-/// password-protected vault, or a passwordless raw key). Pure path-level
-/// function, testable without an `AppHandle`.
+/// password-protected vault, or a passwordless raw key). `client_id` is the
+/// snapshot's single client slot: the caller passes the one its `records` were
+/// read from, so the rebuilt snapshot keeps that slot without this module
+/// knowing anything about where a vault stores its clients. Pure path-level
+/// function, testable without an `AppHandle`, and the only thing it asks of
+/// storage is the files it writes and flushes through `io` ([`KeyFileIo`]).
 ///
 /// Crash-safe two-phase swap. Every step leaves the on-disk key files and the
 /// snapshot mutually recoverable, so a crash at ANY point loses no stored key
@@ -243,10 +252,12 @@ fn restore_displaced_key(key_path: &Path, displaced: &DisplacedKey) {
 /// If a rename fails mid-sequence, the key files are moved back so the disk is
 /// left consistent with the (still old) snapshot.
 pub fn reencrypt_vault(
+    io: &dyn KeyFileIo,
     snapshot_path: &Path,
     key_path: &Path,
     new_key: &[u8],
     keyfile: &[u8],
+    client_id: [u8; 32],
     records: &[(Vec<u8>, Vec<u8>)],
 ) -> Result<(), String> {
     let new_key_staging = sibling_suffixed(key_path, "new");
@@ -256,7 +267,7 @@ pub fn reencrypt_vault(
     // 1. Durable new key material at the staging path. Clear any stale staging
     //    file from a previously interrupted run first.
     let _ = std::fs::remove_file(&new_key_staging);
-    write_key_file_at(&new_key_staging, keyfile)?;
+    io.write_key_file(&new_key_staging, keyfile)?;
 
     // 2. Rebuild under the new key at a temp path. Clear any stale temp file
     //    first, or `Stronghold::new` would try to load it with the new key and
@@ -266,7 +277,7 @@ pub fn reencrypt_vault(
         Stronghold::new(tmp_snapshot.clone(), new_key.to_vec()).map_err(|e| e.to_string())?;
     let client = new_stronghold
         .inner()
-        .create_client(VAULT_CLIENT_ID)
+        .create_client(client_id)
         .map_err(|e| e.to_string())?;
     for (k, v) in records {
         client
@@ -275,7 +286,7 @@ pub fn reencrypt_vault(
             .map_err(|e| e.to_string())?;
     }
     new_stronghold.save().map_err(|e| e.to_string())?;
-    fsync_file(&tmp_snapshot)?;
+    io.fsync_file(&tmp_snapshot)?;
     // Tighten the STAGED file, before the swap rather than after it. `rename`
     // does not change the mode, so this is what gives the live snapshot its
     // permissions — and it keeps the failure ahead of the commit point, where
@@ -284,7 +295,7 @@ pub fn reencrypt_vault(
     // re-encrypted, and would leave the in-memory handle dropped by the caller
     // for no reason. (It also means a temp snapshot left behind by a later
     // failure is not world-readable.)
-    tighten_snapshot_perms(&tmp_snapshot)?;
+    io.tighten_perms(&tmp_snapshot)?;
 
     // 3. Move the old key aside BEFORE the new key takes its name, so step 4
     //    does not have to rename over an existing file.
