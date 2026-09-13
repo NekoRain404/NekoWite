@@ -187,8 +187,14 @@ export function createDesktopRuntime(): DesktopRuntime {
     }
     // Authorize the vault root with the backend BEFORE any path-confined command:
     // the Rust commands now reject any root the user did not open this session.
-    // A fresh folder pick is already auto-authorized by open_folder_dialog, but the
-    // localStorage-restore path needs this explicit call. Must run before indexVault.
+    // This is the ONLY registration point, for a fresh pick and a localStorage
+    // restore alike. Must run before indexVault.
+    //
+    // It must also stay AFTER the `flushDirty()` above: `registerVault` REPLACES
+    // the authorized root, so registering (or letting the folder dialog register,
+    // as it once did) before the outgoing vault's dirty tabs are saved makes that
+    // save fail with "vault root not opened" — which aborts the switch and leaves
+    // the UI on a vault the backend now refuses.
     //
     // Registration success is a PRECONDITION to committing the switch. If the vault
     // is stale (deleted / permission lost), committing it would take over the UI and
