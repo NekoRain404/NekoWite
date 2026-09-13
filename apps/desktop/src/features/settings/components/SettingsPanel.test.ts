@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import SettingsPanel from './SettingsPanel.vue'
-import { useAppearanceStore } from '../stores/appearance'
-import { COLOR_SCHEMES } from '../stores/appearance'
+import { useAppearanceStore } from '../../../stores/appearance'
+import { COLOR_SCHEMES } from '../../../stores/appearance'
 
 const invokeMock = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))

@@ -1,0 +1,158 @@
+import { computed, ref, watch, type ComputedRef, type WritableComputedRef } from 'vue'
+import { t } from '../../../i18n'
+import { notifyError } from '../../../services/errors'
+import {
+  CONTEXT_CHARS_MAX,
+  CONTEXT_CHARS_MIN,
+  DEFAULT_CONTEXT_CHARS,
+  EFFORT_OPTIONS,
+  useSettingsStore,
+} from '../../../stores/settings'
+import type { ReasoningEffort } from '../../../stores/settings'
+
+export interface AiSettingsModel {
+  providers: readonly string[]
+  showBaseUrl: ComputedRef<boolean>
+  provider: WritableComputedRef<string>
+  model: WritableComputedRef<string>
+  baseUrl: WritableComputedRef<string>
+  apiKey: WritableComputedRef<string>
+  allowPrivate: WritableComputedRef<boolean>
+  systemPromptOn: WritableComputedRef<boolean>
+  systemPrompt: WritableComputedRef<string>
+  temperature: WritableComputedRef<number>
+  maxTokens: WritableComputedRef<number>
+  reasoningEffort: WritableComputedRef<ReasoningEffort>
+  effortOptions: typeof EFFORT_OPTIONS
+  contextChars: WritableComputedRef<number>
+  contextCharsMin: number
+  contextCharsMax: number
+  contextCharsDefault: number
+  modelOptions: ComputedRef<string[]>
+  modelLoading: ComputedRef<boolean>
+  refreshModels: () => Promise<void>
+  saveAiKey: () => Promise<void>
+}
+
+const AI_PROVIDERS = ['openai', 'anthropic', 'gemini', 'grok', 'deepseek', 'local', 'custom']
+
+/**
+ * State and commands for the AI section's provider configuration.
+ *
+ * The permission policy and the audit trail are a separate capability with its
+ * own composable (`useAiPermissionSettings`); this one is only the endpoint the
+ * app talks to and the shape of the request it sends.
+ */
+export function useAiSettings(): AiSettingsModel {
+  const settings = useSettingsStore()
+  const modelLoading = ref(false)
+
+  const showBaseUrl = computed(
+    () =>
+      settings.provider === 'local' ||
+      settings.provider === 'custom' ||
+      // DeepSeek speaks the OpenAI wire format and is routinely served through a
+      // gateway (tokenflux, OpenRouter, a company proxy), so the Base URL has to
+      // be editable rather than pinned to api.deepseek.com.
+      settings.provider === 'deepseek',
+  )
+
+  const modelOptions = computed(() => {
+    const list = settings.modelsCache
+    const current = settings.model
+    if (!current || list.includes(current)) return list
+    return [current, ...list]
+  })
+
+  async function refreshModels(): Promise<void> {
+    if (modelLoading.value) return
+    modelLoading.value = true
+    try {
+      await settings.listModels()
+    } catch (e) {
+      notifyError(t('aiSettings.getModelsFailed', { msg: e instanceof Error ? e.message : String(e) }))
+    } finally {
+      modelLoading.value = false
+    }
+  }
+
+  // Each provider has its own endpoint and credentials, so refetch (and clear the
+  // stale cache) whenever the provider changes.
+  watch(
+    () => settings.provider,
+    () => {
+      settings.clearModelsCache()
+      void refreshModels()
+    },
+  )
+
+  async function saveAiKey(): Promise<void> {
+    try {
+      await settings.saveKey()
+    } catch (e) {
+      notifyError(t('settings.general.saveKeyFailed', { msg: e instanceof Error ? e.message : String(e) }))
+    }
+  }
+
+  return {
+    providers: AI_PROVIDERS,
+    showBaseUrl,
+    provider: computed({
+      get: () => settings.provider,
+      set: (v) => { settings.provider = v },
+    }),
+    model: computed({
+      get: () => settings.model,
+      set: (v) => { settings.model = v },
+    }),
+    baseUrl: computed({
+      get: () => settings.baseUrl,
+      set: (v) => { settings.baseUrl = v },
+    }),
+    apiKey: computed({
+      get: () => settings.apiKey,
+      set: (v) => { settings.apiKey = v },
+    }),
+    allowPrivate: computed({
+      get: () => settings.allowPrivate,
+      set: (v) => { settings.allowPrivate = v },
+    }),
+    systemPromptOn: computed({
+      get: () => settings.systemPromptOn,
+      set: (v) => { settings.systemPromptOn = v },
+    }),
+    systemPrompt: computed({
+      get: () => settings.systemPrompt,
+      set: (v) => { settings.systemPrompt = v },
+    }),
+    temperature: computed({
+      get: () => settings.temperature,
+      set: (v) => { settings.temperature = v },
+    }),
+    maxTokens: computed({
+      get: () => settings.maxTokens,
+      set: (v) => { settings.maxTokens = v },
+    }),
+    reasoningEffort: computed({
+      get: () => settings.reasoningEffort,
+      set: (v) => { settings.reasoningEffort = v },
+    }),
+    /**
+     * Thinking-depth choices. `''` is "leave it to the provider": the field is then
+     * omitted from the request entirely. `effortLabelKey` maps a rung to its i18n
+     * key so the template never builds a key by concatenation.
+     */
+    effortOptions: EFFORT_OPTIONS,
+    contextChars: computed({
+      get: () => settings.contextChars,
+      set: (v) => { settings.contextChars = v },
+    }),
+    contextCharsMin: CONTEXT_CHARS_MIN,
+    contextCharsMax: CONTEXT_CHARS_MAX,
+    contextCharsDefault: DEFAULT_CONTEXT_CHARS,
+    modelOptions,
+    modelLoading: computed(() => modelLoading.value),
+    refreshModels,
+    saveAiKey,
+  }
+}

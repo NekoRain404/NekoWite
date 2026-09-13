@@ -24,7 +24,7 @@ vi.mock('../services/vaultFiles', () => ({
 
 vi.mock('../services/runEditorCommand', () => ({ runEditorCommand: vi.fn(() => true) }))
 
-import SettingsPanel from './SettingsPanel.vue'
+import { SettingsPanel } from '../features/settings'
 import CommandPalette from './CommandPalette.vue'
 import { modalStack } from '../services/modalStack'
 import { setLocale } from '../i18n'
