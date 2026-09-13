@@ -1,14 +1,15 @@
 //! Gemini provider: request URL/body construction and SSE text extraction.
 //!
-//! Provider-specific knowledge lives here; the shared HTTP client, streaming
-//! loop, concurrency limiter and SSRF guard live in [`super::client`], which
-//! delegates to this module for anything Gemini-shaped.
+//! Provider-specific knowledge lives here; everything shared is reached through
+//! the sibling modules - request helpers from [`super::request`], usage parsing
+//! from [`super::response`] - and [`super::client`] delegates to this module for
+//! anything Gemini-shaped. This module imports none of `client`/`sse`, so the
+//! provider side stays a leaf the dispatch can call into.
 
 use serde_json::Value;
 
-use super::client::{
-    normalize_reasoning_effort, split_data_url, system_prompt_of, token_count, AIConfig, TokenUsage,
-};
+use super::request::{normalize_reasoning_effort, split_data_url, system_prompt_of, AIConfig};
+use super::response::{token_count, TokenUsage};
 
 /// Gemini's thinking budget in tokens for a normalised rung; `none` is an
 /// explicit `0` (thinking off), unlike Anthropic where it means "omit the

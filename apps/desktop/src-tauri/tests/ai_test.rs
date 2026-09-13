@@ -1,10 +1,11 @@
 use nekowite_lib::providers::ai::client::{
-    ai_id_for, build_prompt, default_base_url, encode_request_body, error_detail_from_body,
-    http_error_message, http_error_message_with_detail, list_models, next_ai_id,
-    normalize_reasoning_effort, parse_model_ids, parse_sse_event, parse_sse_line, resolve_endpoint,
-    validate_base_url, validate_request_inputs, AIConfig, CompletionStream, SseBuffer, StreamEvent,
-    TokenUsage, MAX_ANSWER_BYTES, MAX_IMAGES_PER_REQUEST, MAX_IMAGE_DATA_URL_BYTES,
-    MAX_MODELS_RESPONSE_BYTES, MAX_PROMPT_BYTES, MAX_REQUEST_BODY_BYTES, MAX_SSE_LINE_BYTES,
+    accumulate_usage, ai_done_payload, ai_id_for, build_prompt, default_base_url,
+    encode_request_body, error_detail_from_body, http_error_message,
+    http_error_message_with_detail, list_models, next_ai_id, normalize_reasoning_effort,
+    parse_model_ids, parse_sse_event, parse_sse_line, resolve_endpoint, validate_base_url,
+    validate_request_inputs, AIConfig, CompletionStream, SseBuffer, StreamEvent, TokenUsage,
+    MAX_ANSWER_BYTES, MAX_IMAGES_PER_REQUEST, MAX_IMAGE_DATA_URL_BYTES, MAX_MODELS_RESPONSE_BYTES,
+    MAX_PROMPT_BYTES, MAX_REQUEST_BODY_BYTES, MAX_SSE_LINE_BYTES,
 };
 
 #[test]
@@ -1525,4 +1526,59 @@ fn a_trailing_frame_without_a_newline_is_flushed_at_the_end() {
         vec![StreamEvent::Text("end".into())]
     );
     assert_eq!(stream.answer(), "end");
+}
+
+// --- Usage accounting on the folded stream -----------------------------------
+//
+// These two came from the unit-test module inside `providers::ai::client` when
+// that file was split: both drive only the public surface (`parse_sse_event`,
+// `accumulate_usage`, `ai_done_payload`, `resolve_endpoint`), so they belong
+// with the rest of the provider-facing behaviour tests. The private-policy
+// tests (URL/SSRF rules, redirect refusal) stayed next to the code they cover.
+
+#[test]
+fn a_stream_that_reports_no_usage_ends_with_null_and_invents_nothing() {
+    let mut acc = String::new();
+    let mut usage: Option<TokenUsage> = None;
+    for line in [
+        r#"data: {"choices":[{"delta":{"content":"hi"}}]}"#,
+        "data: [DONE]",
+    ] {
+        if let Some(delta) = parse_sse_event(line, "openai", &mut acc) {
+            accumulate_usage(&mut usage, &delta);
+        }
+    }
+    assert_eq!(usage, None);
+    let payload = ai_done_payload("ai-1", "hi", usage);
+    assert_eq!(payload["id"], "ai-1");
+    assert_eq!(payload["full"], "hi");
+    assert_eq!(payload["usage"], serde_json::Value::Null);
+    // An all-empty usage object is the same "not reported", not a 0-token
+    // completion.
+    let empty = ai_done_payload("ai-1", "hi", Some(TokenUsage::default()));
+    assert_eq!(empty["usage"], serde_json::Value::Null);
+}
+
+#[test]
+fn gemini_url_has_no_key_embedded() {
+    let cfg = AIConfig {
+        provider: "gemini".into(),
+        model: "gemini-2.5-pro".into(),
+        base_url: None,
+        api_key: Some("SECRET-KEY".into()),
+        temperature: None,
+        max_tokens: None,
+        system_prompt: None,
+        reasoning_effort: None,
+        allow_private: false,
+    };
+    let (url, _body) = resolve_endpoint(&cfg, "hi", &[]);
+    assert!(
+        !url.contains("SECRET-KEY"),
+        "key must not appear in URL: {url}"
+    );
+    assert!(
+        !url.contains("key="),
+        "url must not carry a key query param: {url}"
+    );
 }
