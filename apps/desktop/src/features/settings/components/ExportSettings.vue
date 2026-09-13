@@ -16,9 +16,15 @@ defineProps<{
   hasActiveTab: boolean
 }>()
 
-defineModel<boolean>('frontmatter', { required: true })
-defineModel<ExportPdfPageSize>('pageSize', { required: true })
-defineModel<ExportPdfOrientation>('orientation', { required: true })
+// The bindings are assigned, not left as bare calls: `defineModel` registers the
+// model *name* as a props binding, so a bare `defineModel('frontmatter')` makes
+// the template compile `frontmatter = $event` into a write to `$props.frontmatter`
+// — a props mutation Vue refuses in dev and drops in production, which left the
+// checkbox flipping nowhere. Named, the compiler binds the model ref and the
+// write becomes `frontmatter.value = $event`, which emits `update:frontmatter`.
+const frontmatter = defineModel<boolean>('frontmatter', { required: true })
+const pageSize = defineModel<ExportPdfPageSize>('pageSize', { required: true })
+const orientation = defineModel<ExportPdfOrientation>('orientation', { required: true })
 
 const emit = defineEmits<{
   (e: 'export-html'): void
