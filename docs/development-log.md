@@ -516,6 +516,18 @@ git commit -m "feat(appearance): add crimson palette and four accents"
 - **门禁**：desktop **1485**（129 个文件）、editor-core **648**、plugin-host **105**、Rust **68** + lib 测试全绿，`typecheck` / `lint` / `clippy -D warnings` 全绿。
 - **真机（打包版）**：`apps/desktop/ai-lab/320-audit-and-plugins.cjs` **13/13**——A1 / A1b / A1c / A1d（AI 活动区块存在、总开关可达、设置对话框可关、信息栏可开）、A2 / A3（真实被阻止的请求成为一行：`13:32:00 聊天 已阻止`）、A4（清空后为空）、B1–B3（插件列表列出该插件、初始启用、关掉立即反映）、B4（写进治理文件）、C1（重载后仍是关的）、D1（再打开被接受）。便携版 exe 已重新打包（SHA-256 随后还会变，本批不记）。
 
+**第九批（本人，1.0 收口）：版本号归一、搜索假阴性、用量采集、Rust 健壮性与发布就绪**
+
+本轮把「1.0.0 到底是不是 1.0.0」从口号变成可核对的数字：打包产物的名字、状态栏、设置面板三处必须说同一个版本；同时收口此前审计留下的候选清单（Token 用量、错误文案、列表读取、清空回收站、写锁），并补齐发布所需材料。以下数字全部由本轮实测（含对打包版 `nekowite_1.0.0_x64.exe` 的 8 个探针逐条复跑）。
+
+- **版本号曾有三处、其中两处是错的**：`apps/desktop/src-tauri/tauri.conf.json` 与 `apps/desktop/src-tauri/Cargo.toml` 停在 0.1.0，而根与 `apps/desktop` 的 `package.json`（以及 CHANGELOG 的 `[1.0.0]` 一节）早已是 1.0.0——于是 1.0.0 的产品打包出来的文件叫 `nekowite_0.1.0_x64.exe`。更隐蔽的是 `StatusBar.vue` 里写死的 `const VERSION = 'v0.1.0'`：它不参与打包命名，却是用户唯一会读到的版本号。修法：两份清单改 1.0.0；新增 `apps/desktop/src/platform/appVersion.ts`（打包版问 Tauri 的 `getVersion()`，浏览器与单测回落到 vite `define` 注入的 `__APP_VERSION__`，声明在 `src/env.d.ts`），状态栏与新增的设置「版本」行（`data-test="app-version"`）共用同一个来源。
+- **一次真实的搜索假阴性（本轮最重要的一条）**：监听降级时，内容索引用「与建索引时同一份陈旧 stat 快照」做新旧判断，外部改过的笔记被判 `upToDate: true`，搜索跳过读取正文——结果里少一条，界面没有任何提示。修复分两层：`indexPersistence.ts` 降级期间状态报 `stale` 且**拒绝用陈旧快照过滤候选**；`vaultIndexCoordinator.ts` 接住 watch 结果、降级时绕过内容缓存、`rebuildIndex` 真的重新列目录。已知限制如实记录：降级期间**新建**的文件要靠「重建索引」。
+- **用量采集**：三个 provider 按方言解析用量（OpenAI 兼容 `stream_options.include_usage`、Anthropic 在 `message_start` / `message_delta` 取最新值、Gemini 读 `usageMetadata`），SSE 守卫放宽以保留「只有 usage」的收尾帧；`ai-done` 载 `{ usage }`；TS 新增 `AiTokenUsage` 与 `usageTotal()`；聊天面板显示「本次消耗 N tokens」并随消息持久化。服务商没报就是 `null`，不伪造 0。
+- **Rust 健壮性四件**：① `errors.rs` 新增共享 `fs_error`（可读首句 + 人话原因 + 保留 `(os error N)` 供排查），路径策略 / 文件 / 回收站 / 密钥库 / 恢复接入；② `list_history` / `list_trash` 的单条读取失败改为报告（此前静默缩短列表，把「读不全」装成「就这么多」），界面文案改为「无法读取」；③ `clear_trash` 返回 `ClearTrashReport { removed, failed }`，部分成功如实上报两个数；④ 进程级写锁**有意保留**：注释写清真实范围（只覆盖 `write_file` / `create_new_file`，其余路径不受保护），`the_write_lock_is_process_wide_across_vaults` 钉住，收窄必须是有意识的改动。
+- **发布就绪**：新增 `LICENSE`（MIT）与两份 `package.json` 的 license 字段；新增 `docs/USER-GUIDE.md` / `docs/PRIVACY.md` / `docs/RELEASING.md` / `docs/PLUGIN_ISOLATION.md`（三路线 + iframe/RPC 蓝图）；README 增加「文档」入口；设置 → 插件区加 `data-test="plugins-blocked"` 明示（此前它列出一份带开关的插件清单，而这个构建根本不会运行任何一个）；清理过期 `release/*.exe` 与 36 个探针 vault。
+- **门禁**：desktop **1502**（129 个文件）、editor-core **648**、plugin-host **105**、Rust **193**（42 lib + 66 ai + 76 fs + 6 keys + 3 vault_auth），`typecheck` / `lint` / `clippy -D warnings` 全绿。
+- **真机（打包版，本轮逐条复跑）**：`330-release-check.cjs` **4/4**（状态栏 1.0.0、设置 `版本 1.0.0`、插件区明示不加载插件、启动干净）、`270` **10/10**、`294` **6/6**（首次串行跑为 5/6——上一探针留下的滚动位置，单独复跑 6/6）、`301` **7/7**、`302` **6/6**、`303` PASS、`310` **15/15**、`320` **13/13**；Playwright 首次全量 136/137（`input-ime` 一条在并发下失败），单独复跑 6/6，随后全量复跑 137/137。
+
 ## 验证与交付
 
 ```bash

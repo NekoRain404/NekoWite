@@ -45,3 +45,6 @@ jobs:
       - name: cargo clippy
         working-directory: apps/desktop/src-tauri
         run: cargo clippy --all-targets --locked
+      - name: cargo fmt
+        working-directory: apps/desktop/src-tauri
+        run: cargo fmt --all --check

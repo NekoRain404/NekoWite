@@ -6,6 +6,10 @@
 
 ### Added
 
+- **AI 用量开始采集：每条回答下面写「本次消耗 N tokens」**：此前 `ai-done` 只带正文，三个服务商的用量字段在解析层被各自丢掉——用户看不到一次请求花了多少，而应用其实拿得到。现在 Rust 侧按方言解析：OpenAI 兼容端点声明 `stream_options.include_usage` 并从收尾帧读 `usage`，Anthropic 合并 `message_start` 与 `message_delta`（后者只带输出，按字段取最新值），Gemini 读 `usageMetadata`；SSE 帧守卫同步放宽——「`choices` 为空、只剩 `usage`」的收尾帧此前会被当成空帧丢掉，而它正是用量唯一的落点。`ai-done` 事件带上 `{ usage }`，服务商没报就是 `null`（绝不伪造 0）；TS 侧新增 `AiTokenUsage` 与 `usageTotal()`（缺总量时用输入 + 输出相加）；聊天面板在回答下方显示「本次消耗 N tokens」，并随消息一起持久化。
+- **设置 → 通用新增「版本」行（`data-test="app-version"`）**：支持工单第一个要问的就是「哪个构建」，而这个数字此前没有任何一处界面能给出。值来自新增的 `apps/desktop/src/platform/appVersion.ts`：打包版问 Tauri 的 `getVersion()`（exe 自己的版本才是权威），浏览器演示与单测回落到 vite 注入的 `__APP_VERSION__`（声明在 `apps/desktop/src/env.d.ts`）；两者都拿不到就显示空，而不是一个错的数字。
+- **发布材料补齐**：新增 `LICENSE`（MIT），根与 `apps/desktop` 两份 `package.json` 补上 `"license": "MIT"`；新增 `docs/USER-GUIDE.md`、`docs/PRIVACY.md`、`docs/RELEASING.md`，以及决策文档 `docs/PLUGIN_ISOLATION.md`（发行版为何不加载插件、三条可选路线、iframe + RPC 蓝图）；README 增加「文档」入口。
+- **设置 → 插件不再展示一份跑不起来的清单**：这个构建因 CSP 门控**不会加载** vault 插件，而插件区此前照常列出插件与开关——用户拨来拨去才发现它从未被执行过。现在区块明确写明「当前版本不加载插件」（`data-test="plugins-blocked"`），目录继续列出但只作为内容展示；判定与原因见 `docs/PLUGIN_ISOLATION.md`。
 - **AI 操作审计：每次 AI 写入与每次拒绝都会留下一条可查记录**：权限模型此前只能回答「这次准不准」，回答不了「昨天这个应用拿我的 Key 做了什么」。现在每次 AI 写入、每次拒绝、每次被总开关拦下都是一条记录：时间、来源（`ghost` / `chat` / `edit` / `dialog` / `plugin`）、写入种类、结果（`asked` / `allowed` / `denied` / `blocked` / `granted`，`blocked` 另记原因），`detail` 复用插件宿主那一个 `sanitizeAuditDetail` 脱敏而不是另写一份（第二份实现就是第二次泄露 Key 的机会），并且**不记录正文**。记录是容量 200（`MAX_AI_AUDIT_EVENTS`）的环形缓冲，经 `persistence` 端口写在 `nekowite.ai.audit` 键下；`loadAiAuditLog` 按 `seq` 去重、接着已恢复的最大编号继续编号，存储损坏读作「没有历史」而不是让启动失败——一条能把它所观察的功能弄挂的审计记录，比没有审计更糟，所以每个入口都是尽力而为、不向调用方抛错。设置 → AI 新增「最近的 AI 活动」：最新 8 行（时间 / 来源 / 种类 / 结果 / 详情）+ 一行计数（允许 / 拒绝 / 阻止）+ 清空按钮，键在 `aiperm.audit.*` 下。组件用 `AUDIT_OUTCOME_KEYS` / `AUDIT_SOURCE_KEYS` / `AUDIT_KIND_KEYS` 三张**字面量**键表：仓库的 i18n 齐备性测试扫描源码里的真实键字面量，动态拼出来的键没人能检查——第一版正是被这条测试抓到。**为什么放在 localStorage 而不是 vault 文件**：拒绝大多发生在没有打开知识库的时候（全新安装、AI 本来关着），而记录必须跨重启存活，`persistence` 端口本来就是为这件事准备的。
 - **插件可以按知识库关闭（持久化开关）**：此前只有一个选择——装不装；装上就一直在跑。现在 `.nekowite/plugin-governance.json` 里的 `GovernanceFilePayload` 增加 `disabled?: string[]`（仍受 MAC 保护；旧版本写出的文件没有这个字段，读作「什么都没关」），设置里新增「插件」分区（`SectionId` 为 `plugins`，图标 `Puzzle`，键在 `settings.plugins.*` 下）列出当前知识库的插件：每行一个复选框与一行状态（关闭 / 未运行 / 运行中 / 隔离）。**关掉立即生效**：宿主 `deactivatePlugin`、该 id 从 `activeVaultPluginIds` 移除、并记一条 `deactivate / disabled by the user` 审计事件；**重新打开会重跑完整的闸门序列**（撤销 → 版本策略 → 同意 → 信任 → 完整性），因为关着的那段时间并没有让它们变得不相关——这正是重新加载一次知识库做的事情。加载循环在 **GATE 0 之前**就跳过已关闭的插件，所以被关掉的插件**不会被询问、不会被读取、也不会被执行**。新 API：`getVaultDisabledPluginIds`、`isVaultPluginDisabled`、`setVaultPluginDisabled(pluginId, disabled, { vault?, reload? })`、`listVaultPlugins(vault)`。
 
@@ -43,6 +47,9 @@
 
 ### Changed
 
+- **Rust 存储层错误文案统一走 `fs_error`**：裸 OS 文案（如 `Access is denied. (os error 5)`）说不出是哪个文件、哪个操作。新增共享映射 `apps/desktop/src-tauri/src/errors.rs` 的 `fs_error(action, path, e)`：可读首句 + 人话原因，并保留 `(os error N)` 供排查；路径策略、文件 / 回收站 / 密钥库 / 恢复全线接入。
+- **进程级写锁有意保留，范围写清楚并用测试钉住**：`WRITE_LOCK` 是进程级而非按 vault，跨 vault 的保存会互相等待。收窄成 per-vault 映射需要规范化大小写与分隔符拼写，写错会丢快照链顺序（静默数据丢失），而跨 vault 的等待不可观测（保存由用户节奏驱动、临界区只有几次文件操作）。真实范围写进注释（只覆盖 `write_file` / `create_new_file`，`restore_history` / `rename_entry` / 直接 `snapshot_history` 不受保护），并由 `the_write_lock_is_process_wide_across_vaults` 钉住——收窄必须是一次有意识的改动。
+- **仓库清理**：过期的 `release/*.exe` 与 36 个探针 vault 移除，`release/` 只保留当前产物。
 - **只改大小写的重命名现在真的会生效**：上一轮虽然放行了 `note.md → Note.md`，但目标路径在移动前已被规范化成旧拼写，重命名「成功」而文件名没变（实测）。现在目标由请求的名字重建、经临时名两步完成，并把新拼写回报给调用方。
 - **没有插件的笔记库不再弹插件提示**：列一次插件目录，没有就什么都不说——功能没被请求过，不是静默失败。
 
@@ -67,6 +74,9 @@
 
 ### Fixed
 
+- **文件监听降级期间的一次真实搜索假阴性**：监听建立失败后应用进入降级模式，内容索引却仍拿「与建索引时同一份 stat 快照」比对——外部改过的笔记被判 `upToDate: true`，搜索于是跳过读取正文，结果里**少一条**且毫无提示。现在 `indexPersistence.ts` 在降级期间把状态报成 `stale`，并**拒绝用陈旧快照过滤候选**（预过滤是一次排除，降级镜像没有资格做排除）；`vaultIndexCoordinator.ts` 把 watch 结果接进来，降级时绕过内容缓存；`rebuildIndex` 现在真的重新列目录（此前复用缓存列表，监听缺席期间新建的笔记永远进不来）。已知限制如实记录：降级期间**新建**的文件要靠「重建索引」。
+- **版本号三处不一致，打包出来的名字跟着错**：`apps/desktop/src-tauri/tauri.conf.json` 与 `apps/desktop/src-tauri/Cargo.toml` 停在 0.1.0，而两份 `package.json`（以及本文件的 `[1.0.0]` 一节）早已是 1.0.0——1.0.0 的产品产出的文件叫 `nekowite_0.1.0_x64.exe`。同时 `apps/desktop/src/ui/StatusBar.vue` 里还有一处写死的 `v0.1.0`：第二份事实来源，而且恰好是用户唯一会读到的那份。现在两份清单统一为 1.0.0，状态栏与设置都读构建值，产物为 `release/nekowite_1.0.0_x64.exe`。
+- **列表读取失败不再伪装成「没有内容」**：`list_history` / `list_trash` 遇到读不出来的单条记录会**默默跳过**，部分可读的历史或回收站显示成更短的清单——用户看到的「就这么多」其实是「读不全」。现在单条失败如实报告，界面从「空的」改为「无法读取」（`history.unreadable` / `trash.trashUnreadable`）；`clear_trash` 部分失败不再整单报错，改为返回 `ClearTrashReport { removed, failed }`，界面同时报出「清掉几条、还剩几条」。
 - **插件停用开关在打包版上「保存成功」，重载后却回到打开（真机发现）**：第一版把开关交给既有的 `scheduleGovernanceSave()` 持久化，而它读的是模块自己的 `currentVault`——这个字段只在 `loadGovernanceFile()` 里赋值，而严格 CSP 的打包版**根本走不到那里**（CSP 门控在它之前就提前返回了）。真机上的表现因此是：开关看上去保存了、显示「已关闭」，重新加载窗口后又变成打开的。修复：开关按面板明确指出的那个知识库写入（`{ vault }`），并改成**读-改-写**（`loadDisabledPlugins` / `saveDisabledPlugins`）——保留文件里原有的其它记录（信任锚、撤销、摘要），并且 **MAC 校验不通过的文件一律不覆盖**（覆盖一个被篡改的文件，等于让攻击者的版本在下次读取时成为可信版本）。回归测试断言写出的 payload 能用知识库密钥验签通过，并且仍然带着 `trustedKey` / `trustedSources` / `digests`。
 - **删掉不再被调用的死代码链**：后端 `search_notes` 只匹配文件**路径**，应用早已改用前端索引 + 全正文内容搜索（`services/contentSearch.ts` 的 `searchWithIndex`），而且没有任何调用方——严格更弱的重复不是后备，而是第二件要维护的事。整条链路删除：Rust 命令与注册、`storage::file_store` 的 `search_notes` / `search_notes_with_max` / `search_notes_capped` / `walk_search` 与 `SEARCH_MAX_DIRS` / `SEARCH_MAX_DEPTH` / `SearchResults`、`FsPort.searchNotes` 契约、两个适配器（tauri + memory）、e2e 夹具里的那一行，以及只覆盖它的 Rust 测试（`fs_test` 在 Windows 上实际运行的用例数 **70 → 68**）。`contentSearch.ts` 去掉只被测试使用的导出（**242 → 140 行**：`ContentCandidate` / `SNIPPET_RADIUS` / `matchContent` / `buildSnippet` / `contentMatchOf` / `metaHaystack` / `contentMetaMatch` / `mapWithConcurrency` / `searchContentMatches` 移除，现役搜索用到的 `snippetAt` / `mapWithConcurrency` 转为私有），测试文件围绕真正入口重写（9 条），深正文命中、摘要省略号、并发上界与 abort 仍被断言；`stores/aiPermission.awaitingApproval`（零消费者）删除；`NoteListPanel.vue` 里那份内联的 `CONTENT_SEARCH_CONCURRENCY` 改用导入的共享常量，不再有两个可能各自漂移的副本。
 
@@ -291,6 +301,16 @@
 - **Retry 可能永久无效**：解析失败的结果也会被 memoize，若首次解析发生在 vault 授权之前，之后每次 Retry 都只是重放同一个失败。现在 Retry 会带 `refresh` 重新解析；当解析结果与原路径相同（无更优 URL）时才附加 `?retry=` 时间戳强制浏览器重新请求。
 - **Windows 下附件相对路径使用反斜杠**：`resolve_within_rel` 返回的是面向前端的 vault 相对路径（要拼进 Markdown 图片 URL、与文件树路径比较、编码进历史/回收站键），在 Windows 上却返回 `\`，导致插入的图片引用无法显示。现在该函数统一输出 `/`，同时修复了此前 3 个在该平台失败的附件测试。
 - 其他：切 vault 不关闭旧标签导致保存失败、同文件重复标签页、删除文件后残留标签自动保存复活文件、关闭脏标签静默丢失内容、自动保存关闭后残留定时器、未命名文档 Ctrl+S 无响应、应用自身写入触发伪冲突弹窗、引用库文件（.bib 等）在真实后端不可见
+
+## 验证与交付（第九批，2026-09-13）
+
+- 便携版：`release/nekowite_1.0.0_x64.exe`（未签名），SHA-256 `2a47d5ace43929fa206bdec2767046c66e4342d4cb842a6dc8817a27b30d4c1c`；产物自身回报的版本为 1.0.0（状态栏与设置两处）。
+- 测试门禁：desktop **1502**（129 个文件）、editor-core **648**、plugin-host **105**、Rust **193**（42 lib + 66 ai + 76 fs + 6 keys + 3 vault_auth）、Playwright **137**；`typecheck` / `lint` / `clippy -D warnings` 全绿。
+- 真机验收（CDP 驱动**打包版本体**，本轮逐条复跑，控制台零错误）：
+  - `apps/desktop/ai-lab/330-release-check.cjs` **4/4**：① 打开知识库后正常启动、无欢迎页；② 状态栏报告 `1.0.0`；③ 设置 → 通用显示 `版本 1.0.0`；④ 插件区明示「当前版本不加载插件」。
+  - `270-round22-acceptance.cjs` **10/10**、`301-frontmatter.cjs` **7/7**、`302-wikilinks.cjs` **6/6**、`303-linkpanel.cjs` PASS（入链列出 `[[wikilink]]` 的来源）、`310-ai-gates.cjs` **15/15**、`320-audit-and-plugins.cjs` **13/13**。
+  - `294-ui-surfaces.cjs` **6/6**：滚动同步**开**时另一侧 0 → 3491，**关**时纹丝不动。如实记录：本轮首次串行复跑时该项 5/6（受上一个探针留下的滚动位置影响），单独复跑即 6/6。
+- Playwright 如实记录一次并发下的偶发：首次全量 136/137（`input-ime` 的「重复提交累积」一条失败），单独复跑该文件 6/6，随后全量复跑 137/137。
 
 ## 验证与交付（第八批后续，2026-09-13）
 
