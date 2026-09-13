@@ -595,6 +595,8 @@ export const zh = {
     effortMedium: '中',
     effortHigh: '高',
     effortXhigh: '极高（最慢）',
+    contextChars: '笔记上下文长度（字符）',
+    contextCharsHint: '聊天要附加当前笔记时，最多发送多少字符（{min}–{max}）。长笔记会保留开头与结尾两段，中间省略的部分会在上下文里注明。',
     maxTokens: '最大输出 Tokens',
     systemPrompt: '系统提示词',
     systemPromptHint: '作为 system 消息随每次请求发送',

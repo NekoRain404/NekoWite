@@ -598,6 +598,8 @@ export const en = {
     effortMedium: 'Medium',
     effortHigh: 'High',
     effortXhigh: 'Extra high (slowest)',
+    contextChars: 'Note context size (characters)',
+    contextCharsHint: 'How much of the active note the chat may attach ({min}–{max}). A long note keeps its opening AND its ending, with the omitted part marked in the context.',
     maxTokens: 'Max output tokens',
     systemPrompt: 'System prompt',
     systemPromptHint: 'Sent as a system message with every request',
