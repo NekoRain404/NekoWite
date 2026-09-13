@@ -319,13 +319,17 @@ describe('EditorPane split scroll sync', () => {
   it('keeps the body of a section in step instead of pulling back to its heading', async () => {
     const { rendered, sourceScroller } = await mountHeaded()
 
-    // Line 15 sits 14 lines into the first section: heading one is at line 1
-    // (rendered offset 100) and heading two at line 22 (rendered offset 700).
+    // Line 15 sits 14 lines into the first section. That section's block spans
+    // source lines 1..22 and rendered offsets 0..700: the document opens with
+    // its heading, so the block runs from the document's own top, not from the
+    // heading's offset of 100.
     userScroll(sourceScroller, sourceTopOfLine(15))
     await driveToRest()
 
-    // 100 + (14 / 21) * (700 - 100)
-    expect(rendered.scrollTop).toBeCloseTo(500, 3)
+    // (14 / 21) * 700 — well past the 100 the first heading sits at, which is
+    // what "in step instead of pulling back to its heading" means.
+    expect(rendered.scrollTop).toBeCloseTo((14 / 21) * 700, 3)
+    expect(rendered.scrollTop).toBeGreaterThan(HEADING_TOPS[0] + 300)
   })
 
   it('measures the text above a document’s first heading from the document’s top', async () => {
@@ -333,18 +337,28 @@ describe('EditorPane split scroll sync', () => {
     fakeHeadingTops(rendered, [200])
 
     // Scrolled just under its own top, the rendered pane is still above the
-    // heading: the source belongs at its top too, not on the heading's line.
+    // heading, and the source belongs inside its own preamble rather than on
+    // the heading's line: 60 of the heading's 200px is 0.3 of the way from
+    // line 1 to line 4, which is line 2 (42px down the source pane).
     userScroll(rendered, 60)
     await driveToRest()
-    expect(topLineOf(sourceScroller)).toBe(1)
-    // 0.3 of the way from line 1 to line 4, carried onto the lines themselves.
+    // 42px is 6.4% short of CodeMirror's next line boundary, so the pane still
+    // resolves line 1 at the top while carrying a position inside it.
     expect(sourceScroller.scrollTop).toBeCloseTo(12.6, 3)
+    expect(topLineOf(sourceScroller)).toBe(1)
 
     // And from the other side: line 2 is still above the heading, so the
-    // rendered pane stays in its own preamble — a third of the way to it.
+    // rendered pane stays in its own preamble — 1 of the 3 lines to the
+    // heading, and not on the heading itself at 200.
     userScroll(sourceScroller, LINE_PX)
     await driveToRest()
     expect(rendered.scrollTop).toBeCloseTo(200 / 3, 3)
+
+    // The two directions agree on that position, so a scroll out and back
+    // lands where it started instead of drifting.
+    userScroll(sourceScroller, 0)
+    await driveToRest()
+    expect(rendered.scrollTop).toBe(0)
   })
 
   it('brings both panes back to scrollTop 0 from the bottom', async () => {
@@ -383,14 +397,16 @@ describe('EditorPane split scroll sync', () => {
 
     expect(sourceScroller.scrollTop).toBe(200)
     expect(topLineOf(sourceScroller)).toBe(15)
-    expect(rendered.scrollTop).toBeCloseTo(500, 3)
+    // Line 15 of the first section, on that block's own scale (see the
+    // section-body case above): 14/21 of the way to the second heading.
+    expect(rendered.scrollTop).toBeCloseTo((14 / 21) * HEADING_TOPS[1], 3)
 
     // The browser's echo of the program's own write arrives after the fact. It
     // reports a position the program wrote, so it is not a user scroll and must
     // not send the sync back the other way.
     rendered.dispatchEvent(new Event('scroll'))
     await driveToRest()
-    expect(rendered.scrollTop).toBeCloseTo(500, 3)
+    expect(rendered.scrollTop).toBeCloseTo((14 / 21) * HEADING_TOPS[1], 3)
     expect(sourceScroller.scrollTop).toBe(200)
 
     // Now the other direction, which is where a stuck pane shows up: the

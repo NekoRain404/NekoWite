@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
-  SPLIT_SCROLL_DURATION_MS,
+  SPLIT_SCROLL_MAX_DURATION_MS,
+  SPLIT_SCROLL_MIN_DURATION_MS,
   SPLIT_SCROLL_SETTLE_PX,
   createSplitScrollCoordinator,
+  legDurationMs,
   type SplitScrollCoordinatorDeps,
 } from './splitScrollCoordinator'
 
@@ -23,6 +25,8 @@ interface Harness {
   frame(time: number): void
   /** Run frames every 16ms until the coordinator stops asking for more. */
   settle(time: number): number
+  /** Frames a leg of this distance takes from a standing start, at 60Hz. */
+  framesToSettle(distance: number): number
 }
 
 /**
@@ -87,6 +91,19 @@ function makeHarness(max = 1000): Harness {
     position: () => scroll,
     frame,
     settle,
+    framesToSettle(distance: number): number {
+      scroll = 0
+      writes.length = 0
+      const coordinator = createSplitScrollCoordinator(deps)
+      coordinator.schedule(distance, true)
+      let frames = 0
+      while (scheduled.size > 0) {
+        if (frames > 200) throw new Error('the leg never settled')
+        frame(frames * FRAME_MS)
+        frames += 1
+      }
+      return frames
+    },
   }
 }
 
@@ -145,18 +162,21 @@ describe('coalescing', () => {
     const h = makeHarness()
     const coordinator = createSplitScrollCoordinator(h.deps)
 
-    coordinator.schedule(100, true)
-    coordinator.schedule(300, true)
+    coordinator.schedule(150, true)
+    coordinator.schedule(400, true)
+    coordinator.schedule(900, true)
     h.frame(0)
     h.frame(FRAME_MS)
 
-    // A tenth of the way to 300 is 48px and the whole of 100 is 100px, so a
-    // first write above 100px can only come from the coalesced target.
-    expect(h.writes[0]).toBeGreaterThan(100)
-    expect(h.writes[0]).toBeLessThan(300)
+    // One frame in, a leg aimed at the first of those targets cannot have
+    // passed it, so a write beyond 150px can only come from the coalesced end
+    // of the burst. A leg that had been cancelled and restarted per event, or
+    // one that kept the first target, both land below it.
+    expect(h.writes[0]).toBeGreaterThan(150)
+    expect(h.writes[0]).toBeLessThan(900)
 
     h.settle(2 * FRAME_MS)
-    expect(h.position()).toBe(300)
+    expect(h.position()).toBe(900)
   })
 
   it('keeps one frame when a write lands straight back in schedule', () => {
@@ -222,10 +242,12 @@ describe('easing', () => {
 
     coordinator.schedule(500, true)
     h.frame(0)
-    h.frame(SPLIT_SCROLL_DURATION_MS / 2)
+    h.frame(legDurationMs(500) / 2)
 
     expect(h.writes.length).toBe(1)
-    expect(h.writes[0]).toBeGreaterThan(300) // 60% of the way at the halfway mark
+    // The curve is 96% of the way across by its halfway mark, which is what
+    // makes the pane read as arriving rather than as being dragged.
+    expect(h.writes[0]).toBeGreaterThan(480)
     expect(h.writes[0]).toBeLessThan(500)
   })
 
@@ -249,10 +271,26 @@ describe('easing', () => {
 
     coordinator.schedule(500, true)
     h.frame(0)
-    h.frame(SPLIT_SCROLL_DURATION_MS + FRAME_MS)
+    h.frame(legDurationMs(500) + FRAME_MS)
 
     expect(h.position()).toBe(500)
     expect(h.pending()).toBe(0)
+  })
+
+  it('scales the window with the distance, so a nudge is not a page jump', () => {
+    // The one property that separates a scaled ease from its single-duration
+    // predecessor: a leg's frame count grows with the distance it covers. A
+    // fixed window settles every distance in the same number of frames, which
+    // is what makes a one-line nudge feel as heavy as a page.
+    const h = makeHarness()
+    const near = h.framesToSettle(50)
+    const far = h.framesToSettle(500)
+    const page = h.framesToSettle(1600)
+
+    expect(near).toBeLessThan(far)
+    expect(far).toBeLessThan(page)
+    // And the far leg is genuinely longer than any fixed window could be.
+    expect((page - 1) * FRAME_MS).toBeGreaterThan(200)
   })
 
   it('treats a target within the settle tolerance as already arrived', () => {
@@ -293,6 +331,28 @@ describe('re-targeting mid-flight', () => {
 
     h.settle(3 * FRAME_MS)
     expect(h.position()).toBe(100)
+  })
+
+  it('restarts the window and continues forward when the target interrupts the leg', () => {
+    // A wheel burst re-targets every few milliseconds. The pane must never step
+    // backwards or stand still: the interrupted leg hands over from where the
+    // pane is, moving on the new target, at the new distance's own duration.
+    const h = makeHarness()
+    const coordinator = createSplitScrollCoordinator(h.deps)
+
+    coordinator.schedule(700, true)
+    h.frame(0)
+    h.frame(FRAME_MS)
+    h.frame(2 * FRAME_MS)
+    const interrupted = h.position()
+
+    coordinator.schedule(730, true)
+    h.frame(3 * FRAME_MS)
+
+    expect(h.position()).toBeGreaterThan(interrupted)
+    expect(h.position()).toBeLessThan(730)
+    h.settle(4 * FRAME_MS)
+    expect(h.position()).toBe(730)
   })
 })
 
@@ -464,10 +524,42 @@ describe('framework independence', () => {
 })
 
 describe('constants', () => {
-  it('animates inside the 80-120ms window, deliberately shorter than the design token', () => {
-    expect(SPLIT_SCROLL_DURATION_MS).toBeGreaterThanOrEqual(80)
-    expect(SPLIT_SCROLL_DURATION_MS).toBeLessThanOrEqual(120)
-    expect(SPLIT_SCROLL_SETTLE_PX).toBeLessThan(1)
-    expect(SPLIT_SCROLL_SETTLE_PX).toBeGreaterThan(0)
+  it('pins the arrival tolerance the loop actually lands on', () => {
+    // Pinned, not bounded: a range assertion passes for any value below 1 and
+    // says nothing about where the ease stops. This is the offset the loop
+    // gives up at, and half a pixel of it is visible as a final creep.
+    expect(SPLIT_SCROLL_SETTLE_PX).toBe(0.25)
+  })
+
+  it('spans the --app-motion to --app-motion-slow rungs of the token ladder', () => {
+    // Pinned against the values in `styles/tokens.css`: a scroll sync that
+    // drifts off the ladder eases on a different beat from every dialog.
+    expect(SPLIT_SCROLL_MIN_DURATION_MS).toBe(180)
+    expect(SPLIT_SCROLL_MAX_DURATION_MS).toBe(260)
+
+    // Both ends are real: the shortest leg is exactly the floor, and the
+    // ceiling is an asymptote the curve approaches without a hard knee.
+    expect(legDurationMs(0)).toBe(SPLIT_SCROLL_MIN_DURATION_MS)
+    expect(legDurationMs(50)).toBeGreaterThan(SPLIT_SCROLL_MIN_DURATION_MS)
+    expect(legDurationMs(50)).toBeLessThan(200)
+    // A wheel notch stays near the floor; a page jump is most of the way up.
+    // 120px is 31% of the 80ms span, 700px is 61%.
+    expect(legDurationMs(120)).toBeLessThan(205)
+    expect(legDurationMs(120)).toBeGreaterThan(SPLIT_SCROLL_MIN_DURATION_MS)
+    expect(legDurationMs(700)).toBeGreaterThan(228)
+    expect(legDurationMs(500)).toBeLessThan(SPLIT_SCROLL_MAX_DURATION_MS)
+    expect(legDurationMs(1_000_000)).toBeLessThanOrEqual(SPLIT_SCROLL_MAX_DURATION_MS)
+
+    // Monotone in distance, so a longer travel can never finish sooner.
+    let previous = legDurationMs(0)
+    for (const distance of [10, 40, 120, 300, 700, 1500, 4000]) {
+      const next = legDurationMs(distance)
+      expect(next).toBeGreaterThanOrEqual(previous)
+      previous = next
+    }
+
+    // A negative distance is a re-target behind the pane, which is as long a
+    // travel as its mirror image.
+    expect(legDurationMs(-400)).toBe(legDurationMs(400))
   })
 })
