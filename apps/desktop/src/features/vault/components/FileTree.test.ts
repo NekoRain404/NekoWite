@@ -2,10 +2,10 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { createApp, nextTick, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import FileTree from './FileTree.vue'
-import { onNotify } from '../services/errors'
-import { t } from '../i18n'
-import { useAppearanceStore } from '../stores/appearance'
-import { useTabsStore } from '../stores/tabs'
+import { onNotify } from '../../../services/errors'
+import { t } from '../../../i18n'
+import { useAppearanceStore } from '../../../stores/appearance'
+import { useTabsStore } from '../../../stores/tabs'
 
 const readMock = vi.hoisted(() => vi.fn())
 const listMock = vi.hoisted(() => vi.fn())
@@ -19,7 +19,7 @@ let offNotify: (() => void) | null = null
 const deleteFileMock = vi.hoisted(() => vi.fn())
 const onFsChangeMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../platform/gateways/fs', () => ({
+vi.mock('../../../platform/gateways/fs', () => ({
   fsService: {
     read: readMock,
     list: listMock,

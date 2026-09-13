@@ -4,13 +4,13 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import FileTree from './FileTree.vue'
-import { useTabsStore } from '../stores/tabs'
+import { useTabsStore } from '../../../stores/tabs'
 
 const readMock = vi.hoisted(() => vi.fn())
 const listMock = vi.hoisted(() => vi.fn())
 const onFsChangeMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../platform/gateways/fs', () => ({
+vi.mock('../../../platform/gateways/fs', () => ({
   fsService: {
     read: readMock,
     list: listMock,
@@ -125,7 +125,7 @@ describe('FileTree keyboard access', () => {
     // `.tree-del` was opacity:0 until :hover, so the only control a keyboard
     // user could reach in a row was also invisible. The rule cannot be observed
     // through happy-dom, so the component's own stylesheet is checked.
-    const sfc = readFileSync(join(process.cwd(), 'src', 'ui', 'FileTree.vue'), 'utf8')
+    const sfc = readFileSync(join(process.cwd(), 'src', 'features', 'vault', 'components', 'FileTreeRow.vue'), 'utf8')
     expect(sfc).toContain('.tree-del:focus-within')
     expect(sfc).toContain('.tree-del:focus-visible')
   })
