@@ -7,38 +7,90 @@
 //! every path-confined command calls before touching a file.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::{Arc, Mutex};
 
+use tauri::Manager;
 use tauri_plugin_stronghold::stronghold::Stronghold;
 
-use crate::domain::path_policy::canonicalize_vault_root;
+use crate::domain::path_policy::{canonicalize_vault_root, ipc_path};
 use crate::errors::vault_root_unauthorized_error;
 
 // ---------------------------------------------------------------------------
 // Vault registry
 // ---------------------------------------------------------------------------
 
-/// Server-side record of the vault root(s) the user actually opened this
-/// session. The frontend registers a vault (via `register_vault`, or
-/// implicitly when the native folder dialog returns a pick) and every
-/// path-confined command then refuses a `vault_root` that is NOT in this set —
+/// Server-side record of the vault root the user actually opened this session.
+/// Every path-confined command refuses a `vault_root` that is NOT in this set —
 /// closing the hole where window code could pass an arbitrary absolute path
 /// (e.g. `/home/user/.ssh`) as the "vault root" to read/write outside any
 /// vault the user opened.
 #[derive(Default)]
-pub struct VaultRegistry(Mutex<HashSet<PathBuf>>);
+pub struct VaultRegistry {
+    /// The root path-confined commands may be pointed at. The UI is
+    /// single-vault, so registering replaces whatever was there: a closed vault
+    /// must not keep answering commands for the rest of the session.
+    opened: Mutex<HashSet<PathBuf>>,
+    /// Roots the user chose in the native folder dialog this session.
+    ///
+    /// This is the only evidence the backend has that a path came from a
+    /// person. `register_vault` is an IPC command, so "the window asked for it"
+    /// is worth nothing on its own: a compromised renderer can ask for `/etc`
+    /// exactly as easily as for the user's notes. A folder the user pointed at
+    /// in the OS dialog is a fact the renderer cannot manufacture.
+    chosen: Mutex<HashSet<PathBuf>>,
+}
 
 impl VaultRegistry {
+    /// Record that the user picked `root` in the native folder dialog, without
+    /// registering anything.
+    ///
+    /// Registering here would de-authorize the vault still on screen
+    /// (`register` replaces it), and the frontend flushes the outgoing vault's
+    /// dirty tabs before it commits to a new one — those writes would then be
+    /// refused and the switch would abort, leaving the UI on a vault the
+    /// backend no longer serves. The pick is remembered; `register` is called
+    /// once the switch is actually committed.
+    pub fn approve_pick(&self, root: &str) -> Result<PathBuf, String> {
+        let canonical = canonicalize_vault_root(root)?;
+        if !canonical.is_dir() {
+            return Err(format!(
+                "{} is not a folder and cannot be opened as a vault",
+                ipc_path(&canonical)
+            ));
+        }
+        let mut chosen = self.chosen.lock().map_err(|e| e.to_string())?;
+        chosen.insert(canonical.clone());
+        Ok(canonical)
+    }
+
     /// Record `root` (canonicalized) as the opened vault.
     ///
-    /// The UI is single-vault: registering a new root replaces any previously
-    /// authorized one so a closed vault cannot keep answering path-confined
-    /// commands for the rest of the session.
-    pub fn register(&self, root: &str) -> Result<PathBuf, String> {
+    /// `remembered` is the root the BACKEND itself recorded the last time a
+    /// vault was opened ([`remembered_vault`]). Passing it is what lets a
+    /// session start on the vault the user was working in yesterday without a
+    /// fresh dialog; it is not something the window can invent, because that
+    /// record is only ever written here, from a root that got through this
+    /// function.
+    pub fn register(&self, root: &str, remembered: Option<&Path>) -> Result<PathBuf, String> {
         let canonical = canonicalize_vault_root(root)?;
-        let mut set = self.0.lock().map_err(|e| e.to_string())?;
+        if !canonical.is_dir() {
+            return Err(format!("cannot open {root} as a vault: it is not a folder"));
+        }
+        if let Some(refusal) = vault_root_structural_refusal(&canonical) {
+            return Err(refusal);
+        }
+        let chosen = self
+            .chosen
+            .lock()
+            .map_err(|e| e.to_string())?
+            .contains(&canonical);
+        let recalled = remembered.is_some_and(|record| same_folder(record, &canonical));
+        if !chosen && !recalled {
+            return Err(unvouched_vault_root_error(root));
+        }
+        let mut set = self.opened.lock().map_err(|e| e.to_string())?;
         set.clear();
         set.insert(canonical.clone());
         Ok(canonical)
@@ -47,7 +99,7 @@ impl VaultRegistry {
     /// Drop authorization for `root`. Unknown roots are a no-op.
     pub fn unregister(&self, root: &str) -> Result<(), String> {
         let canonical = canonicalize_vault_root(root)?;
-        let mut set = self.0.lock().map_err(|e| e.to_string())?;
+        let mut set = self.opened.lock().map_err(|e| e.to_string())?;
         set.remove(&canonical);
         Ok(())
     }
@@ -56,7 +108,7 @@ impl VaultRegistry {
     /// an error with a recovery hint when the root was never authorized.
     pub fn authorize(&self, root: &str) -> Result<PathBuf, String> {
         let canonical = canonicalize_vault_root(root)?;
-        let set = self.0.lock().map_err(|e| e.to_string())?;
+        let set = self.opened.lock().map_err(|e| e.to_string())?;
         if set.contains(&canonical) {
             Ok(canonical)
         } else {
@@ -71,12 +123,136 @@ pub fn require_opened_vault(registry: &VaultRegistry, root: &str) -> Result<(), 
     registry.authorize(root).map(|_| ())
 }
 
-// NOTE: there is deliberately no "media scope" state here. Revoking a vault's
-// `asset://` allowance was attempted with one and reverted: tauri's scope keeps
-// allowed and forbidden patterns in two disjoint sets and `is_allowed` consults
-// the forbidden set first, so `forbid_directory` is permanent — switching A → B
-// → A left A forbidden and every image in it broken for the session. See the
-// comment in `commands::fs::allow_vault_media`.
+/// The error for a root that nothing vouches for. It names the two things that
+/// do vouch for one, because the caller is a user whose vault did not open.
+fn unvouched_vault_root_error(root: &str) -> String {
+    format!(
+        "refusing to open a vault the user did not choose: {root}. \
+         The backend only serves a folder the user picked in the folder dialog, \
+         or the vault it opened last. Use \"Open folder\" to choose it."
+    )
+}
+
+/// A folder that is structurally incapable of being a vault, however it was
+/// chosen.
+///
+/// `register` is the one place that decides this, so it stays a policy about
+/// vaults rather than a list of names: `/` and the user's home are exactly the
+/// two folders whose children are "everything on the machine" and "everything
+/// of mine". Neither can hold a note collection of its own, and serving one
+/// would hand every path-confined command the run of the filesystem — not
+/// because a rule failed, but because there would be no boundary left to
+/// enforce. Everything else stays a matter of the user having chosen it.
+fn vault_root_structural_refusal(path: &Path) -> Option<String> {
+    let shown = ipc_path(path);
+    // `/` on unix, `C:\` on windows: the only paths without a parent.
+    if path.parent().is_none() {
+        return Some(format!(
+            "refusing to open {shown} as a vault: it is the filesystem root, \
+             which would put every file on the machine inside the vault. \
+             Choose the folder that holds your notes."
+        ));
+    }
+    if let Some(home) = home_dir().and_then(|home| home.canonicalize().ok()) {
+        if path == home {
+            return Some(format!(
+                "refusing to open {shown} as a vault: it is your home directory, \
+                 which holds your keys, configuration and browser data. \
+                 Choose a folder inside it, such as ~/Documents/notes."
+            ));
+        }
+        // `starts_with` also covers equality, but the case above has its own
+        // message: "you picked home itself" and "you picked a folder that
+        // contains home" are different mistakes.
+        if home.starts_with(path) {
+            return Some(format!(
+                "refusing to open {shown} as a vault: it contains your home directory. \
+                 Choose a folder inside your home directory."
+            ));
+        }
+    }
+    None
+}
+
+/// The user's home directory: the folder whose children are the user's private
+/// data on every platform this app ships for.
+#[cfg(unix)]
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
+#[cfg(windows)]
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("USERPROFILE").map(PathBuf::from)
+}
+
+/// Whether two paths name the same folder. Canonicalizes when it can, so a
+/// record written through one spelling (a symlinked home, a `/tmp` that is a
+/// link) still matches the other, and falls back to the literal comparison when
+/// the folder is gone.
+fn same_folder(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The root the backend remembers
+// ---------------------------------------------------------------------------
+
+/// File under the app's config directory holding the vault root that was opened
+/// last. It exists so a restart can reopen that vault without asking the user
+/// to pick it again, while still refusing a root the window announces on its
+/// own: nothing but a successful `register` writes this file, and the renderer
+/// has no IPC path to the config directory.
+const REMEMBERED_VAULT_FILE: &str = "last-vault";
+
+/// Read the recorded root. A missing, unreadable or unusable record simply
+/// vouches for nothing — the user picks the vault again.
+pub fn read_remembered_vault(file: &Path) -> Option<PathBuf> {
+    let raw = std::fs::read_to_string(file).ok()?;
+    let path = PathBuf::from(raw.trim());
+    // A relative or empty record is not a vault: the same check the registry
+    // applies to a root it is handed, so a truncated or hand-edited file cannot
+    // authorize something the normal path never could.
+    if path.as_os_str().is_empty() || !path.is_absolute() {
+        return None;
+    }
+    Some(path)
+}
+
+/// Write the recorded root. One line, no structure: the file is a note to the
+/// next launch, not a database.
+pub fn write_remembered_vault(file: &Path, root: &Path) -> std::io::Result<()> {
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(file, format!("{}\n", root.display()))
+}
+
+fn remembered_vault_file(app: &tauri::AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|dir| dir.join(REMEMBERED_VAULT_FILE))
+}
+
+/// The vault root the backend recorded last, if any.
+pub fn remembered_vault(app: &tauri::AppHandle) -> Option<PathBuf> {
+    read_remembered_vault(&remembered_vault_file(app)?)
+}
+
+/// Record `root` as the vault to reopen next launch.
+///
+/// Best-effort on purpose: a config directory that cannot be written costs the
+/// next launch a folder pick, which is not a reason to fail the open the user
+/// is in the middle of.
+pub fn remember_vault(app: &tauri::AppHandle, root: &Path) {
+    if let Some(file) = remembered_vault_file(app) {
+        let _ = write_remembered_vault(&file, root);
+    }
+}
 
 #[cfg(test)]
 mod ai_state_tests {

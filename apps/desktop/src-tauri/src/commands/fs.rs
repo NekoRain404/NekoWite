@@ -13,10 +13,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use notify::Watcher;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
-use crate::domain::path_policy::{has_hidden_component, ipc_path, resolve_within};
-use crate::state::{require_opened_vault, VaultRegistry, WatcherState};
+use crate::domain::path_policy::{
+    has_hidden_component, ipc_path, resolve_within, resolve_within_rel,
+};
+use crate::state::{
+    remember_vault, remembered_vault, require_opened_vault, VaultRegistry, WatcherState,
+};
 use crate::storage::file_store::{self, FileEntry, FileStat};
 use crate::storage::trash_store;
 
@@ -110,14 +114,25 @@ pub async fn save_attachment(
     file_store::save_attachment(&vault, &file_name, &base64, &dir)
 }
 
+/// Resolve a media reference to the absolute path the frontend turns into an
+/// `asset://` URL.
+///
+/// This command is also the only thing that ever extends the asset scope: the
+/// file it is about to hand out is the one file the protocol is allowed to
+/// serve (see [`allow_media_file`]). Because of that it must be at least as
+/// strict as the protocol itself, which is why the vault is proven first, then
+/// the path, the extension and the hidden-component rules are applied here —
+/// and why a file that is not a media file is refused rather than resolved.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn resolve_media_path(
     vault: String,
     rel_path: String,
     state: tauri::State<'_, VaultRegistry>,
+    app: tauri::AppHandle,
 ) -> Result<String, String> {
-    require_opened_vault(&state, &vault)?;
-    file_store::resolve_media_path(&vault, &rel_path)
+    let granted = authorized_media_grant(&state, &vault, &rel_path)?;
+    allow_media_file(&app, &granted);
+    Ok(ipc_path(&granted))
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -146,26 +161,32 @@ pub async fn rename_entry(
 /// path-confined command, so the backend will serve it. This is the authority
 /// that lets path-confined commands distinguish "a vault the user opened" from
 /// arbitrary absolute paths.
+///
+/// The authority is not the call itself. A path arrives here from the window,
+/// so the window could ask for `/etc` as easily as for the user's notes; what
+/// makes a root servable is that the USER chose it — in the native folder
+/// dialog this session, or as the vault the backend recorded last time
+/// ([`remembered_vault`]). A root that is neither is refused, and the root that
+/// gets through is recorded for the next launch.
 #[tauri::command(rename_all = "snake_case")]
 pub fn register_vault(
     vault_root: String,
     state: tauri::State<'_, VaultRegistry>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    state.register(&vault_root)?;
-    // Registering a vault is the authoritative "the user opened this path" event
-    // and fires on EVERY open path (folder dialog + localStorage restore). Extend
-    // the asset protocol scope to the whole vault here so pasted/unstaged images —
-    // which live under `.tmp/` or a per-note `<name>_assets/` directory, NOT
-    // `attachments/` — are servable via asset:// immediately. Previously this
-    // only happened from watch_folder, so a vault opened by restore had a stale
-    // scope and those images 404'd (imported but never displayed).
-    allow_vault_media(&app, &vault_root);
+    let remembered = remembered_vault(&app);
+    let canonical = state.register(&vault_root, remembered.as_deref())?;
+    // Only a root that got through `register` is written down, so the record
+    // can never vouch for a root this function refused.
+    remember_vault(&app, &canonical);
     Ok(())
 }
 
 #[tauri::command]
-pub async fn open_folder_dialog(app: tauri::AppHandle) -> Result<Option<String>, String> {
+pub async fn open_folder_dialog(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, VaultRegistry>,
+) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     let picked = app
         .dialog()
@@ -173,6 +194,13 @@ pub async fn open_folder_dialog(app: tauri::AppHandle) -> Result<Option<String>,
         .blocking_pick_folder()
         .and_then(|f| f.into_path().ok())
         .map(|p| p.to_string_lossy().to_string());
+    if let Some(path) = &picked {
+        // The user pointed at this folder in the OS dialog: that is the gesture
+        // `register_vault` needs. A pick the policy cannot use (a folder that
+        // does not canonicalize) is simply not recorded, and `register` will
+        // refuse it with a message that says why.
+        let _ = state.approve_pick(path);
+    }
     // Registration deliberately does NOT happen here, even though the native
     // dialog is a genuine user gesture.
     //
@@ -359,7 +387,6 @@ pub async fn watch_folder(
     path: Option<String>,
 ) -> Result<(), String> {
     require_opened_vault(&vault_registry, &vault_root)?;
-    allow_vault_media(&app, &vault_root);
     let resolved = match path {
         Some(p) => resolve_within(&vault_root, &p)?,
         None => resolve_within(&vault_root, ".")?,
@@ -512,162 +539,92 @@ pub async fn watch_folder(
     Ok(())
 }
 
-/// Allow the asset protocol to serve files from the vault (and its
-/// attachments tree) no matter where the vault lives on disk. The static
-/// `assetScope` in tauri.conf.json only covers relative patterns, so vaults
-/// opened from arbitrary locations need this runtime grant.
+/// Directory the app stages images in while the note that pasted them has no
+/// path yet. It is the ONE hidden name the asset scope may reach through; see
+/// [`asset_media_grant`].
+const MEDIA_STAGING_DIR: &str = ".tmp";
+
+/// The single file the asset protocol may serve for one media reference, or the
+/// reason it may not.
 ///
-/// The whole vault is allowed so images referenced by notes always resolve:
-/// attachments live under `attachments/`, but pasted images may be staged under
-/// `.tmp` (an unsaved tab) or written to per-note `<name>_assets/` directories
-/// anywhere in the tree. The app's internal metadata trees are explicitly
-/// FORBIDDEN so a content-injection attack cannot read history snapshots, trash,
-/// or `.git` through `asset://` — `forbid_directory` takes precedence over
-/// `allow_directory`, and this also covers platforms where the scope's dotfile
-/// glob matching is off (a transitive path could otherwise reach `.nekowite`).
-fn allow_vault_media(app: &tauri::AppHandle, vault_root: &str) {
-    use tauri::Manager;
-    let path = Path::new(vault_root).to_path_buf();
-    let path = path.canonicalize().unwrap_or(path);
-    let scope = app.asset_protocol_scope();
-
-    // The vault being LEFT is deliberately NOT revoked, and this is the second
-    // attempt at that idea — the first one was reverted for breaking the app.
-    //
-    // tauri's scope keeps `allowed_patterns` and `forbidden_patterns` in two
-    // disjoint sets, and `is_allowed` consults the forbidden set FIRST and
-    // returns false regardless of any allowance: its own documentation says a
-    // forbidden path "gets denied always". So forbidding the previous root is
-    // not a revocation that a later `allow_directory` can undo — after A → B → A
-    // the forbid on A is still in force, and every image in A 403s for the rest
-    // of the session. The scope exposes no way to remove a pattern, so there is
-    // no reversible revocation to build with this API.
-    //
-    // The cost of leaving it: a vault the user has left stays readable through
-    // `asset://` until the app exits. That is a same-user, same-session exposure
-    // that needs something already running in the webview to exploit, and it is
-    // strictly better than silently breaking every image in a vault the user
-    // re-opens.
-    let _ = scope.allow_directory(&path, true);
-    for hidden in FORBIDDEN_METADATA_DIRS {
-        let _ = scope.forbid_directory(path.join(hidden), true);
-    }
-    // A vault opened inside this vault keeps its OWN `.nekowite`/`.git` at its
-    // own root, which the three forbids above (all rooted at the vault root) do
-    // not cover.
-    for nested in nested_metadata_dirs(&path) {
-        let _ = scope.forbid_directory(nested, true);
-    }
-}
-
-/// Directory names that must never be readable through `asset://`: history
-/// snapshots, the trash, and any repository the vault happens to contain.
-const FORBIDDEN_METADATA_DIRS: [&str; 3] = [".nekowite", ".nekowite-trash", ".git"];
-
-/// How many directory entries [`nested_metadata_dirs`] will look at before it
-/// stops. This runs on every vault open, and a vault is user data of unbounded
-/// size, so it must not be able to stall the switch.
-const NESTED_METADATA_SCAN_LIMIT: usize = 20_000;
-
-/// Every metadata directory at or below `root`.
+/// This is the whole allow-set. `asset://` has no IPC guard in front of it —
+/// whatever the scope allows, the webview reads — so the scope is never
+/// extended by a directory, a tree or a glob: one `allow_file` per resolved
+/// reference, and a note can therefore only ever pull the pictures it actually
+/// names. That also makes revocation unnecessary, which matters because this
+/// scope cannot revoke: `allow_file`/`allow_directory` only ever append, and
+/// `forbid_*` is a permanent denial that a later allow cannot undo (a previous
+/// attempt that forbade the vault being left broke every image in it for the
+/// rest of the session after A → B → A). Granting one file at a time leaves
+/// nothing that needs taking back — a vault the user leaves stops being
+/// extended, and no tree-wide grant exists to outlive it.
 ///
-/// This includes `root`'s own, which the caller also forbids by name — the
-/// scope stores forbidden patterns in a set, so the overlap costs nothing and
-/// keeps this function a plain "find them all" rather than one that has to know
-/// which level the caller already handled.
-///
-/// Depth-first and bounded. It never descends into a directory it already
-/// recognises as metadata, and `DirEntry::file_type` does not follow symlinks,
-/// so a symlinked tree is neither walked nor able to loop.
-fn nested_metadata_dirs(root: &Path) -> Vec<PathBuf> {
-    let mut found = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-    let mut visited = 0usize;
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            visited += 1;
-            if visited > NESTED_METADATA_SCAN_LIMIT {
-                return found;
+/// What is refused, and why it is refused here rather than by the scope: the
+/// vault's own bookkeeping (`.nekowite`, `.nekowite-trash`, `.git`), the user's
+/// dotfiles (`.env`, `.ssh`), ordinary notes and configuration — none of them
+/// is a media file, and the protocol must not become a second, unguarded read
+/// path for content that `read_file` guards. Path traversal, symlinks out of
+/// the vault and a vault that is not the one open are already rejected by
+/// [`resolve_within_rel`].
+pub fn asset_media_grant(vault_root: &str, rel_path: &str) -> Result<PathBuf, String> {
+    let (absolute, relative) = resolve_within_rel(vault_root, rel_path)?;
+    // Hidden names first, so the answer for `.nekowite/history/x.png` is about
+    // the folder it lives in rather than about its extension. The file's own
+    // name is never allowed to be hidden (`.env` and `.gitignore` are not
+    // pictures), and the ONLY hidden folder that may be traversed is the app's
+    // own staging directory, at the top level, where a paste waits for the note
+    // that pasted it to get a path.
+    let parts: Vec<&str> = relative.split('/').collect();
+    if let Some((name, folders)) = parts.split_last() {
+        if name.starts_with('.') {
+            return Err(format!(
+                "refusing to serve a hidden file through asset://: {relative}"
+            ));
+        }
+        for (depth, folder) in folders.iter().enumerate() {
+            if folder.starts_with('.') && !(depth == 0 && *folder == MEDIA_STAGING_DIR) {
+                return Err(format!(
+                    "refusing to serve a file inside {folder}/ through asset://: {relative}"
+                ));
             }
-            let Ok(file_type) = entry.file_type() else {
-                continue;
-            };
-            if !file_type.is_dir() {
-                continue;
-            }
-            if FORBIDDEN_METADATA_DIRS.contains(&entry.file_name().to_string_lossy().as_ref()) {
-                found.push(entry.path());
-                continue;
-            }
-            stack.push(entry.path());
         }
     }
-    found
+    // The extension decides: the app's own image allowlist is the set of files
+    // the importer will put in a vault and the editor will display, so it is
+    // also the set worth serving. Notes, configuration and metadata are not on
+    // it and are therefore not reachable this way at all.
+    if !file_store::is_importable_image(Path::new(&relative)) {
+        return Err(format!(
+            "refusing to serve {relative}: asset:// only serves media files"
+        ));
+    }
+    if !absolute.is_file() {
+        return Err(format!("media file not found: {relative}"));
+    }
+    Ok(absolute)
 }
 
-#[cfg(test)]
-mod nested_metadata_tests {
-    use super::nested_metadata_dirs;
-    use std::path::PathBuf;
+/// The IPC-boundary guard for `resolve_media_path`: the vault must be one the
+/// user opened, and the reference must be a media file inside it.
+pub fn authorized_media_grant(
+    registry: &VaultRegistry,
+    vault_root: &str,
+    rel_path: &str,
+) -> Result<PathBuf, String> {
+    require_opened_vault(registry, vault_root)?;
+    asset_media_grant(vault_root, rel_path)
+}
 
-    fn temp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "nekowite-media-{}-{}-{tag}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    fn names(root: &std::path::Path) -> Vec<String> {
-        nested_metadata_dirs(root)
-            .iter()
-            .map(|p| p.to_string_lossy().replace('\\', "/"))
-            .collect()
-    }
-
-    #[test]
-    fn finds_a_metadata_dir_nested_anywhere_in_the_vault() {
-        let root = temp_dir("nested");
-        std::fs::create_dir_all(root.join(".nekowite").join("history")).unwrap();
-        std::fs::create_dir_all(root.join("notes").join("sub").join(".git")).unwrap();
-        std::fs::create_dir_all(root.join("notes").join("plain")).unwrap();
-
-        let found = names(&root);
-        assert!(
-            found.iter().any(|n| n.ends_with("notes/sub/.git")),
-            "a nested .git must be found: {found:?}"
-        );
-        assert!(
-            found.iter().any(|n| n.ends_with("/.nekowite")),
-            "the root's own is included too (forbidding twice is free): {found:?}"
-        );
-        assert!(
-            !found.iter().any(|n| n.ends_with("notes/plain")),
-            "an ordinary directory must not be reported: {found:?}"
-        );
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn does_not_walk_into_a_metadata_tree_it_already_found() {
-        let root = temp_dir("prune");
-        std::fs::create_dir_all(root.join("a").join(".git").join("modules").join(".git")).unwrap();
-        let found = names(&root);
-        assert_eq!(
-            found.len(),
-            1,
-            "only the outermost metadata dir, not the one inside it: {found:?}"
-        );
-        let _ = std::fs::remove_dir_all(&root);
-    }
+/// Extend the asset protocol by exactly this file.
+///
+/// A scope that cannot be narrowed is only safe if it is never widened: the
+/// grant is the file the app just resolved, never the folder holding it, so
+/// there is no tree grant to revoke when the vault changes. The residue is the
+/// resolved files themselves, which stay servable for the session — the same
+/// files the user was already looking at, and nothing that a scope-level
+/// revocation could have taken back anyway (see [`asset_media_grant`]).
+fn allow_media_file(app: &tauri::AppHandle, path: &Path) {
+    let _ = app.asset_protocol_scope().allow_file(path);
 }
 
 #[cfg(test)]
