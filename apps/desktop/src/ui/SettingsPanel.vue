@@ -146,7 +146,6 @@ useFocusTrap(dialogRef, panelActive, { initialFocus: false })
 // the stack whether it is the topmost modal before acting.
 const modalToken = modalStack.claimModal('settings-panel')
 
-const vaultInput = ref(localStorage.getItem('nekowite.vault') ?? '')
 const hasActiveTab = computed(() => !!tabs.activeTab?.content)
 const showBaseUrl = computed(
   () =>
@@ -281,19 +280,23 @@ async function saveAiKey(): Promise<void> {
   }
 }
 
-async function saveVault(): Promise<void> {
-  const path = vaultInput.value.trim()
-  if (!path) return
-  localStorage.setItem('nekowite.vault', path)
-  emit('saved', path)
-}
-
+/**
+ * Open the native folder picker and hand the chosen folder to the runtime,
+ * which owns the switch (flush → register → commit).
+ *
+ * This is the ONLY way the vault changes from this panel. The backend refuses
+ * any root the user did not choose in the native dialog this session (or the
+ * one it recorded last time), so a typed path could only ever end in a
+ * refusal — the field above shows the vault that is actually open instead of
+ * collecting one. Persisting the path is likewise the runtime's job: it writes
+ * it once `register_vault` has committed, so a refused path is never stored
+ * for the next launch to retry.
+ */
 async function browseVault(): Promise<void> {
   try {
     const picked = await fsService.openFolderDialog()
     if (!picked) return
-    vaultInput.value = picked
-    await saveVault()
+    emit('saved', picked)
   } catch (e) {
     notifyError(t('settings.general.vaultBrowseFailed', { msg: e instanceof Error ? e.message : String(e) }))
   }
@@ -422,12 +425,18 @@ async function onExportPdf(): Promise<void> {
               </div>
               <span class="settings-label">{{ t('settings.general.vault') }}</span>
               <div class="vault-row">
+                <!-- Read-only on purpose: the backend only serves a root the
+                     user picked in the native dialog (or the one it recorded
+                     last time), so an editable field could only collect a path
+                     that is refused on save. Selectable, so it can still be
+                     read or copied. -->
                 <input
-                  v-model="vaultInput"
-                  class="input"
+                  class="input vault-path"
                   type="text"
-                  :placeholder="t('settings.general.vaultPlaceholder')"
-                  @keyup.enter="saveVault"
+                  :value="vaultPath"
+                  readonly
+                  data-test="vault-path"
+                  :title="vaultPath"
                 >
                 <button
                   class="btn btn-secondary btn-sm vault-browse"
@@ -437,12 +446,6 @@ async function onExportPdf(): Promise<void> {
                   {{ t('common.browse') }}
                 </button>
               </div>
-              <button
-                class="btn btn-secondary settings-save"
-                @click="saveVault"
-              >
-                {{ t('common.saveAndSwitch') }}
-              </button>
               <span class="settings-note">{{ t('settings.general.vaultNote') }}</span>
 
               <span class="settings-label">{{ t('settings.general.language') }}</span>
@@ -1404,6 +1407,12 @@ async function onExportPdf(): Promise<void> {
 .settings-save { align-self: flex-start; }
 .vault-row { display: flex; gap: 6px; }
 .vault-row .input { flex: 1; min-width: 0; }
+/* Display, not an editor: without a visual difference the field reads as
+ * "type the vault path here", which is the gesture the backend now refuses. */
+.vault-path {
+  cursor: default;
+  background: color-mix(in srgb, var(--app-canvas) 70%, var(--app-panel));
+}
 .vault-browse { flex: none; }
 .model-row { display: flex; gap: 6px; }
 .model-row .input { flex: 1; min-width: 0; }
