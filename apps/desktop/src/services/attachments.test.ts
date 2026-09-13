@@ -1,3 +1,4 @@
+import { MAX_IMAGES_PER_MESSAGE } from '../stores/chatSession'
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 
 import {
@@ -36,6 +37,7 @@ import {
   suggestedPasteFileName,
   vaultRelativeFromNote,
   vaultRelativeFromNoteVault,
+  MAX_ATTACHMENTS_PER_MESSAGE,
 } from './attachments'
 
 function fileFrom(name: string, type: string): File {
@@ -575,5 +577,14 @@ describe('classifyAttachmentFiles batch byte budget', () => {
     const { accepted, rejected } = classifyAttachmentFiles([huge])
     expect(accepted).toHaveLength(0)
     expect(rejected[0]?.reason).toBe('too-large')
+  })
+})
+
+describe('the chat attachment limit', () => {
+  it('never lets the composer hold more images than the session can keep', () => {
+    // Two constants used to disagree (6 vs 4): the composer accepted six, the
+    // store persisted four, and the two extra vanished from the conversation at
+    // send time without telling the user which ones they were.
+    expect(MAX_ATTACHMENTS_PER_MESSAGE).toBe(MAX_IMAGES_PER_MESSAGE)
   })
 })
