@@ -29,6 +29,14 @@ export const MAX_ATTACHMENTS_PER_BATCH = 10 // images accepted per single paste/
  *  cap alone is not enough: a user can add images one at a time and reach any
  *  count. This is the ceiling for what one message may carry. */
 export const MAX_ATTACHMENTS_PER_MESSAGE = 6
+
+/** Total bytes one chat message may carry. The count cap is not a size cap:
+ *  images are added one at a time, so six of them can each sit just under
+ *  {@link MAX_ATTACHMENT_BYTES} - 60 MiB raw, which the send path base64-encodes
+ *  (~4/3 the size) into ONE IPC request whose text is held by both processes.
+ *  20 MiB raw is already ~27 MB of JSON per turn; past that the request is
+ *  refused by the provider, and the renderer pays for the encode first. */
+export const MAX_ATTACHMENTS_PER_MESSAGE_BYTES = 20 * 1024 * 1024 // 20 MiB
 export const MAX_ATTACHMENTS_PER_SESSION = 50 // running total per app session
 
 /** Per-vault attachment total cap (bytes). A vault accumulating an unbounded

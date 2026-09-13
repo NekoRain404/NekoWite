@@ -23,6 +23,7 @@ import {
   isImageFile,
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS_PER_MESSAGE,
+  MAX_ATTACHMENTS_PER_MESSAGE_BYTES,
 } from '../services/attachments'
 import { useSettingsStore } from '../stores/settings'
 import { useTabsStore } from '../stores/tabs'
@@ -266,6 +267,9 @@ function scrollToBottom(): void {
 
 function addFiles(files: File[]): void {
   const seen = new Set(attachments.value.map((a) => `${a.name}:${a.file.size}:${a.file.type}`))
+  // The running total for this message, not for this call: the size budget has
+  // to hold across separate picks, which is how the count cap gets evaded.
+  let totalBytes = attachments.value.reduce((sum, a) => sum + a.file.size, 0)
   for (const file of files) {
     if (!isImageFile(file)) continue
     if (attachments.value.length >= MAX_ATTACHMENTS_PER_MESSAGE) {
@@ -282,9 +286,21 @@ function addFiles(files: File[]): void {
       notifyError(t('chat.imageTooLarge', { max: formatAttachmentBytes(MAX_ATTACHMENT_BYTES) }))
       continue
     }
+    // Refused per image, like the two caps above: the images that already fit
+    // stay put and only this one is left out, so the user can drop one file
+    // instead of starting the message over.
+    if (totalBytes + file.size > MAX_ATTACHMENTS_PER_MESSAGE_BYTES) {
+      notifyError(
+        t('chat.attachmentsTotalTooLarge', {
+          max: formatAttachmentBytes(MAX_ATTACHMENTS_PER_MESSAGE_BYTES),
+        }),
+      )
+      continue
+    }
     const key = `${file.name}:${file.size}:${file.type}`
     if (seen.has(key)) continue
     seen.add(key)
+    totalBytes += file.size
     attachments.value.push({
       id: nextImageId(),
       name: file.name,

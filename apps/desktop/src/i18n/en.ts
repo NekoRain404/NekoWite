@@ -462,6 +462,9 @@ export const en = {
   references: {
     title: 'References',
     missing: 'Not found in the reference library',
+    noTitle: '(this entry has no title)',
+    skippedEntries:
+      '{count} entries in {file} could not be parsed and were skipped (check the file format).',
     empty: 'This document has no citations yet.',
   },
   outline: {

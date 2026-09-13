@@ -41,12 +41,16 @@ import {
   buildDailyVars,
   ensureDailyNote,
   listTemplates,
-  nextAvailableName,
   readTemplate,
   renderTemplate,
   templateFileBase,
   type TemplateEntry,
 } from '../services/noteTemplates'
+import {
+  MAX_CREATE_ATTEMPTS,
+  createNoteWithFreeName,
+  type CreatedNote,
+} from '../services/noteCreation'
 import TemplatePicker from './TemplatePicker.vue'
 import { t } from '../i18n'
 import { baseName } from '../services/paths'
@@ -242,17 +246,24 @@ async function createFromTemplate(entry: TemplateEntry): Promise<void> {
     return
   }
   const existing = await rootNoteNames()
-  const fileName = nextAvailableName(templateFileBase(entry), existing)
-  const path = `${props.vault.replace(/\/+$/, '')}/${fileName}`
-  const content = renderTemplate(body, buildDailyVars(new Date(), { title: templateFileBase(entry) }))
+  const base = templateFileBase(entry)
+  const content = renderTemplate(body, buildDailyVars(new Date(), { title: base }))
+  let created: CreatedNote | null
   try {
-    await fsService.write(props.vault, path, content)
+    created = await createNoteWithFreeName(props.vault, base, content, existing)
   } catch {
     notifyError(t('template.createFailed'))
     return
   }
+  if (!created) {
+    // Every candidate name was claimed by another writer while we were choosing
+    // one. Report that instead of falling back to a write that would land on
+    // top of the file that took the name.
+    notifyError(t('template.nameTaken', { count: MAX_CREATE_ATTEMPTS, base }))
+    return
+  }
   templatePickerOpen.value = false
-  await tabs.openTab(path)
+  await tabs.openTab(created.path)
 }
 
 const activeDocTags = computed(() => {
