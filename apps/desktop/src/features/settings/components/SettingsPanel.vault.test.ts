@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import SettingsPanel from './SettingsPanel.vue'
-import { setLocale } from '../i18n'
-import { fsService } from '../platform/gateways/fs'
-import { onNotify } from '../services/errors'
-import { useVaultSessionStore } from '../stores/vaultSession'
+import { setLocale } from '../../../i18n'
+import { fsService } from '../../../platform/gateways/fs'
+import { onNotify } from '../../../services/errors'
+import { useVaultSessionStore } from '../../../stores/vaultSession'
 
 /**
  * The vault field is a read-only display of the vault that is open.
