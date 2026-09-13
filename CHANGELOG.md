@@ -293,7 +293,8 @@
   4. **思考深度设为「不思考」**：推理增量为 **0**（同题同模型）——设置面板上的这一档确实作用到了请求上；
   5. 故意用不存在的模型名：返回 403，并且**带上服务商自己的说明**（`The current group does not support the requested model ... Available models: deepseek-flash`），而不是一句无从下手的「请求失败」；
   6. 中途取消：`ai_cancel` 后 **3 ms** 内返回，不再等读超时。
-- 测试门禁：desktop **1436**、editor-core **648**、plugin-host **103**、Rust **170**、Playwright **137**；`typecheck` / `lint` / `clippy -D warnings` 全绿。
+- 测试门禁：desktop **1445**、editor-core **648**、plugin-host **103**、Rust **170**、Playwright **137**；`typecheck` / `lint` / `clippy -D warnings` 全绿。
+- **最终便携版**：`release/nekowite_0.1.0_x64.exe`（未签名），SHA-256 `fa64a5a05a71de4bcae6ea4371501e941566731c0b7d94334d07f55a0b1fb276`。同一轮里三套真机探针对它复跑全部通过：`270-round22-acceptance.cjs` **10/10**、`283-delete-assets.cjs` **6/6**、`286-live-ai.cjs` **6/6**（后者是对真实端点的发包，含思考深度开关的对照）。
 
 ## [1.0.0] - 2026-08-29
 
