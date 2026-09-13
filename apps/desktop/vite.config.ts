@@ -1,5 +1,9 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import { readFileSync } from 'node:fs'
+
+/** This package's manifest, for the version the UI displays. */
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string }
 
 // Group the large, rarely-changing vendor libs into their own chunks so the
 // initial HTML/graph stays small and each vendor chunk can be cached and
@@ -89,7 +93,11 @@ function manualChunks(id: string): string | undefined {
 }
 
 export default defineConfig({
-  plugins: [vue()],
+  // The version a user sees in Settings has to be the BUILD's version: a bug
+  // report that cannot name its build costs a round trip. Injected at build
+  // time because the renderer has no filesystem, and read from Tauri at
+  // runtime when the app is packaged (see src/platform/appVersion.ts).
+  define: { __APP_VERSION__: JSON.stringify(pkg.version) },  plugins: [vue()],
   clearScreen: false,
   server: { port: 1420, strictPort: true, watch: { ignored: ['**/src-tauri/target/**'] } },
   // The off-main-thread graph layout uses `new Worker(new URL(..., import.meta.url),

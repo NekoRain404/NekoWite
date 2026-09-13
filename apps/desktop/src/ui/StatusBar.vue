@@ -1,17 +1,26 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 import { useAppearanceStore } from '../stores/appearance'
 import { taskProgress } from '../services/editorBehaviors'
 import { t } from '../i18n'
 import { aiThinking } from '../services/ai'
+import { readAppVersion } from '../platform/appVersion'
 
 const tabs = useTabsStore()
 const view = useViewStore()
 const appearance = useAppearanceStore()
 
-const VERSION = 'v0.1.0'
+/** The version shown in the status bar. Read from the build (see
+ *  platform/appVersion.ts) rather than written here: a hardcoded string is a
+ *  second source of truth, and this one still claimed v0.1.0 on a 1.0.0
+ *  build. Empty until it resolves, so the bar shows nothing instead of a
+ *  number that is wrong. */
+const version = ref<string | null>(null)
+void readAppVersion().then((v) => {
+  version.value = v
+}).catch(() => undefined)
 
 // CJK unified ideographs + kana + Hangul syllables: no whitespace between words.
 const CJK_RE = /[一-鿿぀-ヿ가-힯]/g
@@ -100,7 +109,10 @@ const modeLabel = computed(() => {
     <span class="status-sep">·</span>
     <span class="status-item">{{ modeLabel }}</span>
     <span class="status-sep">·</span>
-    <span class="status-item">NekoWite {{ VERSION }}</span>
+    <span
+      v-if="version"
+      class="status-item"
+    >NekoWite v{{ version }}</span>
     <slot name="actions" />
   </footer>
 </template>

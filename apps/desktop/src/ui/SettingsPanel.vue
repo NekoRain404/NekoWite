@@ -18,7 +18,8 @@ import { exportHtml, exportToPdf } from '../services/export'
 import { exportBaseName } from '../services/exportName'
 import { fsService } from '../platform/gateways/fs'
 import { flushEdits } from '../services/editorOwnership'
-import { listVaultPlugins, setVaultPluginDisabled } from '../services/plugins'
+import { isPluginImportAllowedByCsp, listVaultPlugins, setVaultPluginDisabled } from '../services/plugins'
+import { readAppVersion } from '../platform/appVersion'
 import type { VaultPluginSummary } from '../services/plugins'
 import type { AiWriteKind, AiWriteSource } from '../services/aiPermissions'
 import type { AiAuditOutcome } from '../services/aiAudit'
@@ -96,6 +97,11 @@ const AUDIT_KIND_KEYS: Record<AiWriteKind, string> = {
 const vaultSession = useVaultSessionStore()
 const vaultPath = computed(() => (vaultSession.vault ?? '').trim())
 const pluginRows = ref<VaultPluginSummary[]>([])
+/** Whether THIS build can run plugin code at all. The list below reads the
+ *  plugins folder either way, so a released build would otherwise show a tidy
+ *  list of plugins with working-looking switches and never run one. */
+const pluginsRunnable = isPluginImportAllowedByCsp()
+
 const pluginsLoading = ref(false)
 
 /** Read the plugins folder for the vault that is open right now. Only
@@ -168,6 +174,13 @@ const WRITE_POLICIES: { value: AiWritePolicy; labelKey: string }[] = AI_WRITE_PO
 )
 
 const modelLoading = ref(false)
+
+/** The build a bug report should name. Null until it resolves, and null
+ *  when nothing can answer - showing nothing beats showing a guess. */
+const appVersion = ref<string | null>(null)
+void readAppVersion().then((v) => {
+  appVersion.value = v
+}).catch(() => undefined)
 
 /** How many entries the panel shows. The log keeps more than this (see
  *  services/aiAudit); the panel is a window onto it, not the whole file. */
@@ -406,6 +419,14 @@ async function onExportPdf(): Promise<void> {
               v-if="activeSection === 'general'"
               class="settings-section"
             >
+              <div
+                v-if="appVersion"
+                class="settings-field version-row"
+                data-test="app-version"
+              >
+                <span>{{ t('settings.general.version') }}</span>
+                <span class="settings-note">{{ appVersion }}</span>
+              </div>
               <span class="settings-label">{{ t('settings.general.vault') }}</span>
               <div class="vault-row">
                 <input
@@ -882,6 +903,11 @@ async function onExportPdf(): Promise<void> {
               <span class="settings-label">{{ t('settings.section.plugins') }}</span>
               <span class="settings-note">{{ t('settings.plugins.hint') }}</span>
               <span
+                v-if="!pluginsRunnable"
+                class="settings-note plugin-blocked"
+                data-test="plugins-blocked"
+              >{{ t('settings.plugins.blocked') }}</span>
+              <span
                 v-if="pluginsLoading"
                 class="settings-note"
               >{{ t('settings.plugins.loading') }}</span>
@@ -1319,6 +1345,14 @@ async function onExportPdf(): Promise<void> {
 .settings-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--app-text); }
 .settings-field > span { color: var(--app-muted); font-size: 11px; }
 .settings-note { font-size: 11px; line-height: 1.5; color: var(--app-muted); }
+
+/* A build that cannot run plugins must say so where the switches are, not
+ * only in a toast once per session. */
+.plugin-blocked {
+  color: var(--app-muted);
+  border-left: 2px solid var(--app-warn, #b7791f);
+  padding-left: 8px;
+}
 
 /* The AI activity list: one line per event, newest first. Outcomes are
  * colour-coded rather than icon-coded, because the whole list is read at a
