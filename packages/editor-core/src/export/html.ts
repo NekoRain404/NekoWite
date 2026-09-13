@@ -112,6 +112,12 @@ interface RenderNode extends TransformNode {
   name?: string
   title?: string
   width?: number
+  /** Stored height, set by a shift-resize or written by hand as `{height=N}`.
+   *  It was missing from this type, which is exactly why the renderer ignored
+   *  it: the editor applies both dimensions (nodeView's `applyDims`) and the
+   *  export applied only the width, so a sized image came out at the wrong
+   *  proportions. */
+  height?: number
   imageAlign?: string
   identifier?: string
   /** GFM task-list state on a `listItem`: true / false / null (not a task). */
@@ -584,6 +590,11 @@ function renderNode(node: RenderNode, ctx: RenderContext): string {
     case 'image': {
       const styles: string[] = []
       if (node.width != null && Number.isFinite(node.width)) styles.push(`width:${node.width}px`)
+      // The editor applies a stored height too (nodeView's applyDims sets both
+      // inline), so dropping it here made an image with `{width=300 height=150}`
+      // export at its intrinsic ratio instead of the ratio the user chose — the
+      // exported picture was a different shape from the one on screen.
+      if (node.height != null && Number.isFinite(node.height)) styles.push(`height:${node.height}px`)
       if (node.imageAlign === 'center') {
         styles.push('display:block', 'margin-left:auto', 'margin-right:auto')
       } else if (node.imageAlign === 'left') {
@@ -713,6 +724,14 @@ function renderReferences(order: string[], ctx: RenderContext): string {
 
 const printCss = `
 body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; max-width: 50rem; margin: 0 auto; padding: 2rem; color: #222; position: relative; }
+/* Mirrors the editor's own image rule (.neko-image img in editor-content.css:
+   max-width + height:auto + the 3px radius). Without it an image carrying an
+   explicit {width=N} was emitted at N device pixels with nothing to bound it,
+   so a photo sized for the editor's narrow column overflowed the printed page
+   and the exported image did not match what the app showed. height:auto is the
+   no-stored-height case only — an explicit height is inline, exactly as in the
+   editor, where the inline style also wins over this rule. */
+img { max-width: 100%; height: auto; border-radius: 3px; }
 h1, h2, h3, h4, h5, h6 { line-height: 1.25; }
 code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 pre { background: #f6f8fa; padding: 0.75rem 1rem; border-radius: 6px; overflow-x: auto; }
