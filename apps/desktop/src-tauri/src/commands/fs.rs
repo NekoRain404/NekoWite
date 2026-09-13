@@ -16,7 +16,7 @@ use notify::Watcher;
 use tauri::Emitter;
 
 use crate::domain::path_policy::{has_hidden_component, ipc_path, resolve_within};
-use crate::state::{require_opened_vault, MediaScope, VaultRegistry, WatcherState};
+use crate::state::{require_opened_vault, VaultRegistry, WatcherState};
 use crate::storage::file_store::{self, FileEntry, FileStat};
 use crate::storage::trash_store;
 
@@ -531,22 +531,23 @@ fn allow_vault_media(app: &tauri::AppHandle, vault_root: &str) {
     let path = path.canonicalize().unwrap_or(path);
     let scope = app.asset_protocol_scope();
 
-    // Close the vault we are leaving FIRST. The scope is append-only — tauri
-    // exposes `allow_directory` and `forbid_directory` but nothing that removes
-    // an allowance — so forbidding it is the only revocation available, and
-    // `forbid_directory` taking precedence over `allow_directory` is what makes
-    // that revocation real. Without this, every vault the user has ever opened
-    // stays readable through `asset://` for the rest of the session.
-    if let Some(state) = app.try_state::<MediaScope>() {
-        if let Some(previous) = state.open(&path) {
-            // A vault opened INSIDE the previous one must keep working, so only
-            // a genuinely different tree is closed.
-            if previous != path && !path.starts_with(&previous) {
-                let _ = scope.forbid_directory(&previous, true);
-            }
-        }
-    }
-
+    // The vault being LEFT is deliberately NOT revoked, and this is the second
+    // attempt at that idea — the first one was reverted for breaking the app.
+    //
+    // tauri's scope keeps `allowed_patterns` and `forbidden_patterns` in two
+    // disjoint sets, and `is_allowed` consults the forbidden set FIRST and
+    // returns false regardless of any allowance: its own documentation says a
+    // forbidden path "gets denied always". So forbidding the previous root is
+    // not a revocation that a later `allow_directory` can undo — after A → B → A
+    // the forbid on A is still in force, and every image in A 403s for the rest
+    // of the session. The scope exposes no way to remove a pattern, so there is
+    // no reversible revocation to build with this API.
+    //
+    // The cost of leaving it: a vault the user has left stays readable through
+    // `asset://` until the app exits. That is a same-user, same-session exposure
+    // that needs something already running in the webview to exploit, and it is
+    // strictly better than silently breaking every image in a vault the user
+    // re-opens.
     let _ = scope.allow_directory(&path, true);
     for hidden in FORBIDDEN_METADATA_DIRS {
         let _ = scope.forbid_directory(path.join(hidden), true);
