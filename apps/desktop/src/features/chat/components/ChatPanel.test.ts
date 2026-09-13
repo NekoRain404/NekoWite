@@ -2,14 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import ChatPanel from './ChatPanel.vue'
-import { onNotify } from '../services/errors'
-import { formatAttachmentBytes, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE } from '../services/attachments'
-import { t } from '../i18n'
-import { aiService, startChatCompletion, type ChatStreamHandlers } from '../services/ai'
-import { CHAT_SESSIONS_KEY, useChatSessionStore } from '../stores/chatSession'
-import { useTabsStore } from '../stores/tabs'
-import { useSettingsStore } from '../stores/settings'
-import { persistence } from '../services/persistence'
+import { onNotify } from '../../../services/errors'
+import { formatAttachmentBytes, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE } from '../../../services/attachments'
+import { t } from '../../../i18n'
+import { aiService, startChatCompletion, type ChatStreamHandlers } from '../../../services/ai'
+import { CHAT_SESSIONS_KEY, useChatSessionStore } from '../../../stores/chatSession'
+import { useTabsStore } from '../../../stores/tabs'
+import { useSettingsStore } from '../../../stores/settings'
+import { persistence } from '../../../services/persistence'
 
 // The panel only needs the stream entry points here; the real module would
 // reach for gateways and an editor session this test does not exercise.
@@ -17,14 +17,14 @@ const readMock = vi.hoisted(() => vi.fn())
 
 // `openTab` reads through the fs gateway. Only `read` is reachable from this
 // harness; the note it returns is empty on purpose (see the empty-note case).
-vi.mock('../platform/gateways/fs', () => ({
+vi.mock('../../../platform/gateways/fs', () => ({
   fsService: { read: readMock },
 }))
 
-vi.mock('../services/ai', async (importOriginal) => ({
+vi.mock('../../../services/ai', async (importOriginal) => ({
   // The panel also renders the token count, so the real helper is kept: a
   // stub here would make the display path untested.
-  ...(await importOriginal<typeof import('../services/ai')>()),
+  ...(await importOriginal<typeof import('../../../services/ai')>()),
   startChatCompletion: vi.fn(),
   aiService: { cancelStream: vi.fn() },
 }))

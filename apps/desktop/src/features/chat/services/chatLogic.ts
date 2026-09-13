@@ -1,5 +1,5 @@
-import { extensionFromFileName, fileToBase64, mimeFromExtension } from '../services/attachments'
-import { t } from '../i18n'
+import { extensionFromFileName, fileToBase64, mimeFromExtension } from '../../../services/attachments'
+import { t } from '../../../i18n'
 
 export type ChatRole = 'user' | 'assistant'
 
