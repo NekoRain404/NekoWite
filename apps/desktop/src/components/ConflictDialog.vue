@@ -81,24 +81,29 @@ function later(): void {
         </span>
         {{ t('conflict.bodySuffix') }}
       </div>
+      <!-- Shared action-row convention (see .dialog-actions in
+           styles/components.css): the confirm slot is the rightmost button, the
+           one a hand reaches for without reading, so it holds the answer that
+           keeps the user's edits. Discarding them is the one action that must
+           not sit there; it goes first, styled as the danger it is. -->
       <div class="dialog-actions">
         <button
-          class="btn btn-primary"
+          class="btn btn-danger"
           @click="reloadFromDisk"
         >
           {{ t('conflict.reloadDisk') }}
-        </button>
-        <button
-          class="btn btn-secondary"
-          @click="keepLocal"
-        >
-          {{ t('conflict.keepLocal') }}
         </button>
         <button
           class="btn btn-ghost"
           @click="later"
         >
           {{ t('conflict.later') }}
+        </button>
+        <button
+          class="btn btn-primary"
+          @click="keepLocal"
+        >
+          {{ t('conflict.keepLocal') }}
         </button>
       </div>
       <div class="conflict-note">
@@ -116,8 +121,6 @@ function later(): void {
   transform: translateX(-50%);
   width: min(440px, 90vw);
   padding: 14px 16px;
-  border-radius: var(--app-radius-xl);
-  box-shadow: var(--app-shadow-dialog);
   font-size: 13px;
   color: var(--app-text);
 }

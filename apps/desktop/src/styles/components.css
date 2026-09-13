@@ -238,17 +238,35 @@
   background: color-mix(in srgb, var(--app-canvas) 55%, transparent);
   z-index: 10000;
 }
+/* Every dialog surface — the shared class, the editor-core passthroughs
+   (.math-dialog/.table-dialog) and anything added later — takes the same
+   radius rung and the same elevation token. A dialog that restates either one
+   locally is a second visual language for the same object: this class used to
+   carry an 8px corner and a hand-written shadow (plus a [data-theme=dark]
+   override of it), which made a dialog built on .dialog read a step cheaper
+   than the prompts that had already moved to "dialog 14". The elevation token
+   already resolves per theme, palette and contrast level, so there is nothing
+   left for a per-theme override to do. */
 .dialog {
   background: var(--app-elevated);
   border: 1px solid var(--app-border);
-  border-radius: var(--app-radius);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 16%);
+  border-radius: var(--app-radius-xl);
+  box-shadow: var(--app-shadow-dialog);
   transition: background var(--app-motion-fast) var(--app-ease),
               box-shadow var(--app-motion-fast) var(--app-ease);
 }
-[data-theme="dark"] .dialog {
-  box-shadow: 0 16px 40px rgb(0 0 0 / 45%);
-}
+/* Action-row convention for EVERY dialog in the app — the AI/plugin prompts,
+   RenameDialog, ConflictDialog and the editor-core dialogs all read the same
+   way, left to right:
+       [destructive]   [dismissive / neutral]   [affirmative]
+   The rightmost slot is the one a hand heads for without reading the labels —
+   muscle memory from every other confirm button on the platform. So the
+   affirmative action owns it, and a destructive action never may: it is
+   styled .btn-danger and sits leftmost, furthest from that slot. The dismissive
+   control (Cancel / Deny / Later) is also what Escape means, so the safest
+   answer is the one the keyboard already reaches.
+   A new dialog inherits this by putting its buttons in that DOM order and
+   letting justify-content: flex-end place them. */
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
@@ -357,11 +375,8 @@
 .math-dialog {
   background: var(--app-elevated);
   border: 1px solid var(--app-border);
-  border-radius: var(--app-radius);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 16%);
-}
-[data-theme="dark"] .math-dialog {
-  box-shadow: 0 16px 40px rgb(0 0 0 / 45%);
+  border-radius: var(--app-radius-xl);
+  box-shadow: var(--app-shadow-dialog);
 }
 
 /* ============ Table insert dialog passthrough ============ */
@@ -382,11 +397,8 @@
   padding: 16px 18px;
   background: var(--app-elevated);
   border: 1px solid var(--app-border);
-  border-radius: var(--app-radius);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 16%);
-}
-[data-theme="dark"] .table-dialog {
-  box-shadow: 0 16px 40px rgb(0 0 0 / 45%);
+  border-radius: var(--app-radius-xl);
+  box-shadow: var(--app-shadow-dialog);
 }
 .table-dialog-title {
   margin-bottom: 12px;

@@ -45,11 +45,13 @@ function mountDialog(tabId: string, onClose: () => void): HTMLElement {
   return host
 }
 
+// "Use disk" is the destructive answer and carries the danger styling; the
+// affirmative that keeps the user's edits owns the primary/confirm slot.
 function reloadBtn(): HTMLButtonElement {
-  return document.body.querySelector<HTMLButtonElement>('.conflict-dialog .btn-primary')!
+  return document.body.querySelector<HTMLButtonElement>('.conflict-dialog .btn-danger')!
 }
 function keepLocalBtn(): HTMLButtonElement {
-  return document.body.querySelector<HTMLButtonElement>('.conflict-dialog .btn-secondary')!
+  return document.body.querySelector<HTMLButtonElement>('.conflict-dialog .btn-primary')!
 }
 function dialogEl(): HTMLElement {
   return document.body.querySelector<HTMLElement>('.conflict-dialog')!
@@ -97,6 +99,19 @@ describe('ConflictDialog', () => {
     expect(document.activeElement).toBe(dialogEl())
     expect(document.activeElement).not.toBe(reloadBtn())
     expect(document.activeElement).not.toBe(keepLocalBtn())
+  })
+
+  it('keeps the confirm slot for the safe answer, not the destructive one', () => {
+    // The shared convention (see .dialog-actions in styles/components.css) puts
+    // the affirmative in the rightmost slot — the one muscle memory reaches for
+    // — so the action that discards the user's unsaved edits is not allowed to
+    // live there. It sits leftmost, styled as danger, and the confirm slot
+    // holds "Keep local".
+    mountDialog('tab-1', () => {})
+    const row = [...document.body.querySelectorAll<HTMLButtonElement>('.conflict-dialog .dialog-actions .btn')]
+    expect(row.map((b) => b.classList.contains('btn-primary'))).toEqual([false, false, true])
+    expect(row[0].classList.contains('btn-danger')).toBe(true)
+    expect(row[row.length - 1]).toBe(keepLocalBtn())
   })
 
   it('reads as one sentence with no empty {path} hole', () => {

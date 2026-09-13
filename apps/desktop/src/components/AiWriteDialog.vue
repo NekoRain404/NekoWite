@@ -21,10 +21,11 @@ const emit = defineEmits<{
 
 const active = ref(true)
 const dialogEl = ref<HTMLElement | null>(null)
-// `initialFocus: false`: this is a permission gate, and the first focusable
-// control is "Allow once" — a stray Enter (often the tail of what the user was
-// typing when the prompt appeared) approved a write they never read. Focus
-// goes to the container so every answer is an explicit choice.
+// `initialFocus: false`: this is a permission gate, and focusing a control that
+// approves would let a stray Enter (often the tail of what the user was typing
+// when the prompt appeared) approve a write they never read — the affirmative
+// used to be the first button in the row. Focus goes to the container so every
+// answer is an explicit choice, whichever slot the button sits in.
 useFocusTrap(dialogEl, active, { initialFocus: false })
 
 const modalToken = modalStack.claimModal('ai-write-dialog')
@@ -88,12 +89,16 @@ function kindLabel(): string {
       >
         {{ pending.request.target }}
       </div>
+      <!-- Shared action-row convention (styles/components.css, .dialog-actions):
+           refusals and neutral choices on the left, the affirmative in the
+           rightmost/confirm slot. Deny is also what Escape means, so the key
+           that dismisses lands on the same answer as the leftmost button. -->
       <div class="dialog-actions">
         <button
-          class="btn btn-primary"
-          @click="emit('respond', true, false)"
+          class="btn btn-ghost"
+          @click="emit('respond', false, false)"
         >
-          {{ t('aiperm.allowOnce') }}
+          {{ t('aiperm.deny') }}
         </button>
         <button
           class="btn btn-secondary"
@@ -102,10 +107,10 @@ function kindLabel(): string {
           {{ t('aiperm.allowSession') }}
         </button>
         <button
-          class="btn btn-ghost"
-          @click="emit('respond', false, false)"
+          class="btn btn-primary"
+          @click="emit('respond', true, false)"
         >
-          {{ t('aiperm.deny') }}
+          {{ t('aiperm.allowOnce') }}
         </button>
       </div>
       <div class="ai-write-note">
@@ -123,8 +128,6 @@ function kindLabel(): string {
   transform: translateX(-50%);
   width: min(460px, 90vw);
   padding: 14px 16px;
-  border-radius: var(--app-radius-xl);
-  box-shadow: var(--app-shadow-dialog);
   font-size: 13px;
   color: var(--app-text);
 }
