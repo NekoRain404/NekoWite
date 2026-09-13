@@ -5,6 +5,8 @@ import { editorSessionManager } from '../features/editor/sessionManager'
 import { isComposingKey } from '../services/keyGuard'
 import { isAiConfigured } from '../services/aiReadiness'
 import { useSettingsStore } from '../stores/settings'
+import { useAiPermissionStore } from '../stores/aiPermission'
+import { decideAiWrite } from '../services/aiPermissions'
 
 /** The AI settings, or null when there is no Pinia instance (a bare unit test,
  *  a plugin). A null store means "cannot prove it is unconfigured", so the
@@ -30,6 +32,22 @@ function aiUsable(): boolean {
   })
 }
 
+/** Whether the user's AI permission settings leave anything to offer. The
+ *  suggestion only exists to be accepted into the document, and asking for one
+ *  also sends the text around the cursor to the provider: with AI switched off,
+ *  or writes forbidden outright, Tab keeps its browser meaning and nothing is
+ *  requested. Same quiet treatment as an unconfigured install, because a toast
+ *  on every Tab press explains a setting the user chose deliberately. */
+function aiPermitted(): boolean {
+  try {
+    const permissions = useAiPermissionStore()
+    if (!permissions.enabled) return false
+    return decideAiWrite(permissions.state, { kind: 'insert', summary: '' }) !== 'deny'
+  } catch {
+    return true
+  }
+}
+
 // Only handle Tab/Esc while the focus is actually inside the editor. A
 // window-wide handler would otherwise swallow Tab/Esc in dialogs or the
 // settings panel while a suggestion is active.
@@ -38,6 +56,40 @@ function focusInsideEditor(): boolean {
   if (!view) return false
   const active = document.activeElement
   return !!active && view.dom.contains(active)
+}
+
+/** Whether a suggestion is on screen right now. `hasSuggestion` is a plugin
+ *  read and must never take the shortcut handler down with it. */
+function hasLiveSuggestion(): boolean {
+  try {
+    return editorSessionManager.getActiveEditor()?.hasSuggestion() ?? false
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Escape, handled in the CAPTURE phase.
+ *
+ * The bubble-phase handler below never saw a real Escape press. Measured on the
+ * packaged build: the editor's own keymap eats Escape first (ProseMirror's base
+ * keymap binds it to selectParentNode) and calls preventDefault, and the
+ * handler deliberately ignores keys that were already handled - so "Escape
+ * discards the suggestion" did nothing at all, and the only ways out of ghost
+ * text were typing over it or accepting it. Capture runs before the editor's
+ * handlers, and only when a suggestion is actually on screen, so Escape keeps
+ * every other meaning it has in the app.
+ */
+function onKeydownCapture(e: KeyboardEvent): void {
+  if (e.key !== 'Escape') return
+  if (isComposingKey(e)) return
+  if (!focusInsideEditor()) return
+  if (!hasLiveSuggestion()) return
+  // The suggestion is the newest transient thing on screen, and the user just
+  // asked for it to go away; the editor may still see the key (we do not stop
+  // propagation) but the text is discarded either way.
+  e.preventDefault()
+  aiService.reject()
 }
 
 function onKeydown(e: KeyboardEvent): void {
@@ -49,14 +101,8 @@ function onKeydown(e: KeyboardEvent): void {
   // Tab moved the cursor *and* started generating text.
   if (e.defaultPrevented) return
   if (!focusInsideEditor()) return
-  const editor = editorSessionManager.getActiveEditor()
-  if (!editor) return
-  let has = false
-  try {
-    has = editor.hasSuggestion()
-  } catch {
-    has = false
-  }
+  if (!editorSessionManager.getActiveEditor()) return
+  const has = hasLiveSuggestion()
   if (e.key !== 'Tab' && e.key !== 'Escape') return
   if (e.key === 'Escape' && !has) return
   if (e.key === 'Escape') {
@@ -77,14 +123,16 @@ function onKeydown(e: KeyboardEvent): void {
   // trap. The completion is still offered, but only when there is a model to
   // offer it: pressing Tab on an unconfigured install used to raise an
   // "AI generation failed" toast for a feature the user never asked for.
-  if (aiUsable()) void aiService.triggerSuggestion()
+  if (aiUsable() && aiPermitted()) void aiService.triggerSuggestion()
 }
 
 onMounted(() => {
   document.addEventListener('keydown', onKeydown)
+  document.addEventListener('keydown', onKeydownCapture, true)
 })
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKeydown)
+  document.removeEventListener('keydown', onKeydownCapture, true)
 })
 </script>
 

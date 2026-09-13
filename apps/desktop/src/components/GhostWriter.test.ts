@@ -110,6 +110,26 @@ describe('GhostWriter keydown wiring', () => {
     expect(ev.defaultPrevented).toBe(true)
   })
 
+  it('rejects on Escape even when the editor already consumed the key', () => {
+    // Measured on the packaged build: a native Escape never reached the
+    // bubble-phase handler, because ProseMirror's own keymap binds Escape and
+    // calls preventDefault first. Escape therefore has to be handled in the
+    // capture phase, or the documented "Escape discards the suggestion" is dead
+    // code and ghost text can only be escaped by typing over it.
+    setupEditor(true, true)
+    mountGhost()
+    // Stand in for the editor keymap: claims the key on the way down.
+    const claim = (e: KeyboardEvent): void => e.preventDefault()
+    document.addEventListener('keydown', claim, true)
+    const ev = sendKey('Escape')
+    try {
+      expect(rejectMock).toHaveBeenCalledTimes(1)
+      expect(ev.defaultPrevented).toBe(true)
+    } finally {
+      document.removeEventListener('keydown', claim, true)
+    }
+  })
+
   it('does nothing when focus is outside the editor (M9)', () => {
     setupEditor(true, false)
     mountGhost()
