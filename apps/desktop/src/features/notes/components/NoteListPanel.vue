@@ -241,7 +241,7 @@ const {
 .empty-hint {
   margin: 0;
   font-size: 12px;
-  color: color-mix(in srgb, var(--app-muted) 85%, transparent);
+  color: var(--app-muted);
 }
 
 @media (max-width: 920px) {

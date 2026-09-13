@@ -157,7 +157,7 @@ onBeforeUnmount(() => {
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+  color: var(--app-muted);
 }
 .rail-section-count {
   font-weight: 400;

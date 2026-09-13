@@ -76,7 +76,7 @@ function onPick(item: OutlineItem): void {
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+  color: var(--app-muted);
 }
 .rail-section-count {
   font-weight: 400;
@@ -122,7 +122,7 @@ function onPick(item: OutlineItem): void {
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.02em;
-  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+  color: var(--app-muted);
   font-variant-numeric: tabular-nums;
 }
 .outline-text {

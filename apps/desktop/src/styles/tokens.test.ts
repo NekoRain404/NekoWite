@@ -41,9 +41,95 @@ function pxIn(block: string, token: string): number {
   return Number(value.replace('px', ''))
 }
 
+/** 这次对比度修复没有授权的文件：两个分栏滚动文件和一个拼 CSS 字符串的 service。
+   它们里面的 muted 淡化仍然低于 AA（浅色下 2.78-3.87:1），作为已知例外记录在案，
+   而不是被当成正确——名单写死在这里，想加一个进来必须改这行测试。 */
+const OUT_OF_FOOTPRINT = ['view/SourcePane.vue', 'ui/EditorPane.vue', 'services/cmSourceView.ts']
+
 const ACCENTS = ['ink', 'coral', 'blue', 'green', 'gold', 'violet', 'slate', 'teal', 'lime', 'rose', 'amber', 'orange', 'pink', 'cyan', 'cocoa']
 
 const COLOR_SCHEMES = ['default', 'sunset', 'forest', 'ocean', 'sakura', 'mist', 'graphite', 'midnight', 'lavender', 'desert', 'mint', 'coffee', 'plum', 'dusk', 'crimson']
+
+/* ---------- WCAG contrast, recomputed from the token values ----------
+   颜色不是口味问题，是可以算的：给了背景色和前景色，比值就是确定的数字。
+   这两条断言存在，是因为 --app-muted 曾在浅色面板上只有 3.15:1、十五个主题色
+   里只有 ink/slate/cocoa 的白字够 4.5:1（琥珀 2.72:1），而当时的测试全绿——
+   对比度没有任何检查在看。这里把性质钉住：改调色板或改主题色，数字掉下 AA 就红。 */
+
+/** sRGB 通道 -> 线性光（WCAG 2.x 相对亮度）。 */
+function toLinear(channel: number): number {
+  const s = channel / 255
+  return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+}
+
+function luminance(color: string): number {
+  const h = color.replace('#', '')
+  const wide = h.length === 3 ? h.replace(/./g, (c) => c + c) : h
+  const [r, g, b] = [0, 2, 4].map((i) => toLinear(parseInt(wide.slice(i, i + 2), 16)))
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+/** WCAG 2.x 对比度，1..21。4.5:1 是正文 AA；这些 token 都用在 10-13px 上，
+   够不着“大号文字 3:1”的豁免，所以一律按 4.5 要求。 */
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+/** AppShell 恒定的四个属性：theme 是生效后的 light/dark，color-scheme 恒有值，
+    contrast 是 high/normal。一个组合就是一次真实的渲染场景。 */
+interface Scenario {
+  theme: 'light' | 'dark'
+  scheme: string
+  accent: string
+  highContrast: boolean
+}
+
+/** 去掉注释再切规则：注释块紧挨着选择器，不剥掉的话会被当成选择器的一部分。 */
+const CLEAN = css.replace(/\/\*[\s\S]*?\*\//g, '')
+const RULES = [...CLEAN.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
+  selector: m[1].trim(),
+  body: m[2],
+}))
+
+function matchesSelector(selector: string, s: Scenario): boolean {
+  // 全文件唯一的 :not() 规则只声明 --app-accent-soft，没有断言读它。
+  if (selector.includes(':not(')) return false
+  if (selector === ':root') return true
+  const attrs = selector.match(/\[[^\]]+\]/g)
+  if (!attrs || attrs.join('') !== selector) return false
+  return attrs.every((attr) => {
+    const m = /^\[data-([a-z-]+)(?:="([^"]*)")?\]$/.exec(attr)
+    if (!m) return false
+    const present =
+      m[1] === 'theme' ? s.theme
+      : m[1] === 'color-scheme' ? s.scheme
+      : m[1] === 'accent' ? s.accent
+      : m[1] === 'contrast' ? (s.highContrast ? 'high' : 'normal')
+      : undefined
+    return m[2] === undefined ? present !== undefined : present === m[2]
+  })
+}
+
+/** 和浏览器同款的取值顺序：选择器更具体的赢，一样具体则后写的赢。 */
+function specificity(selector: string): number {
+  return selector === ':root' ? 1 : (selector.match(/\[/g) ?? []).length
+}
+
+function resolveToken(s: Scenario, name: string): string {
+  let best: { spec: number; order: number; value: string } | undefined
+  RULES.forEach((rule, order) => {
+    if (!matchesSelector(rule.selector, s)) return
+    const value = rawToken(rule.body, name)
+    if (value === undefined) return
+    const spec = specificity(rule.selector)
+    if (!best || spec > best.spec || (spec === best.spec && order > best.order)) {
+      best = { spec, order, value }
+    }
+  })
+  if (!best) throw new Error(`${name} is not declared for ${JSON.stringify(s)}`)
+  return best.value
+}
 
 describe('tokens.css', () => {
   it('defines all semantic tokens in light (:root) and dark ([data-theme=dark])', () => {
@@ -104,6 +190,22 @@ describe('tokens.css', () => {
       .map((r) => `${r.token} — ${r.file}`)
     expect(unresolved, 'tokens read with neither a definition nor a fallback').toEqual([])
   })
+  it('never fades --app-muted where it is text', () => {
+    // --app-muted 已经把 AA 用满，再和透明混一次，合成出来的颜色就掉回 2.5:1
+    // 上下。这不是 token 能兜住的：要让浅色面板上 82% 的它够到 4.5:1，它本身得
+    // 深到 7:1，那种深灰已经不是次级文字了。所以规则落在声明上——muted 只能整条
+    // 用；允许往 muted 里混（它在少数派），不允许从它往外混。
+    const offenders: string[] = []
+    for (const file of styleSources(SRC_DIR)) {
+      const name = file.slice(SRC_DIR.length + 1)
+      if (OUT_OF_FOOTPRINT.includes(name)) continue
+      const dimmedMuted = /(?<![-\w])color:\s*color-mix\(\s*in srgb,\s*var\(--app-muted\)/g
+      for (const m of readFileSync(file, 'utf8').matchAll(dimmedMuted)) {
+        offenders.push(`${name}: ${m[0]}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
   it('keeps --app-radius-md as the middle rung of the radius ladder', () => {
     // 阶梯见 tokens.css 的注释：window 16 > dialog 14 > menu/card 10 >
     // button/input 8 > segmented 6 > inline-code 5。md 就是其中的 8，浮层读它
@@ -128,6 +230,44 @@ describe('tokens.css', () => {
     expect(aliases[0][2]).toMatch(/--app-text-muted:\s*var\(--app-muted\)/)
     expect(LIGHT_BLOCK, ':root would freeze the alias to the light value').not.toContain('--app-text-muted')
     expect(DARK_BLOCK, 'the dark block would freeze it again').not.toContain('--app-text-muted')
+  })
+  it('keeps --app-muted at WCAG AA on every surface it is drawn on', () => {
+    // 次级文字（分区标题、时间戳、提示、占位符）全部读这个 token，所以它自己
+    // 必须在最差的那块背景上也过 4.5:1。任何组件再用 color-mix 把它调淡一点，
+    // 就是在把这条保证退回去——那条规则由 components 侧的“只读原文”检查守着。
+    const SURFACES = ['--app-canvas', '--app-panel', '--app-elevated']
+    for (const theme of ['light', 'dark'] as const) {
+      for (const scheme of COLOR_SCHEMES) {
+        for (const highContrast of [false, true]) {
+          const s: Scenario = { theme, scheme, accent: 'ink', highContrast }
+          const where = `${theme}/${scheme}${highContrast ? '/high-contrast' : ''}`
+          const muted = resolveToken(s, '--app-muted')
+          for (const surface of SURFACES) {
+            expect(
+              contrast(muted, resolveToken(s, surface)),
+              `--app-muted on ${surface} (${where})`,
+            ).toBeGreaterThanOrEqual(4.5)
+          }
+        }
+      }
+    }
+  })
+  it('pairs every accent with a foreground that reaches WCAG AA', () => {
+    // 主题色本身是用户选的，不能为了白字好看去动它——能动的是配它的那个前景色。
+    // 浅色主题色都是中间调，所以多数主题色配墨黑、少数深主题色（ink/slate/cocoa）
+    // 配白，每个主题色各自定，而不是统一一个白字。
+    for (const theme of ['light', 'dark'] as const) {
+      for (const accent of ACCENTS) {
+        for (const highContrast of [false, true]) {
+          const s: Scenario = { theme, scheme: 'default', accent, highContrast }
+          const where = `${accent} (${theme}${highContrast ? '/high-contrast' : ''})`
+          expect(
+            contrast(resolveToken(s, '--app-accent-contrast'), resolveToken(s, '--app-accent')),
+            `--app-accent-contrast on --app-accent for ${where}`,
+          ).toBeGreaterThanOrEqual(4.5)
+        }
+      }
+    }
   })
   it('sets color-scheme per theme so native controls follow', () => {
     expect(LIGHT_BLOCK).toContain('color-scheme: light')

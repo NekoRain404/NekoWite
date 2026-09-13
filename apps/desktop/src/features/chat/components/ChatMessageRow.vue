@@ -234,7 +234,7 @@ defineEmits<{
 .chat-usage {
   margin-top: 2px;
   font-size: 10px;
-  color: color-mix(in srgb, var(--app-muted) 78%, transparent);
+  color: var(--app-muted);
   font-variant-numeric: tabular-nums;
 }
 </style>

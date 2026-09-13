@@ -250,7 +250,7 @@ const timeLabel = computed(() => formatRelativeTime(props.note.mtime))
   font-size: 10px;
   font-weight: 500;
   letter-spacing: 0;
-  color: color-mix(in srgb, var(--app-muted) 92%, var(--app-text));
+  color: var(--app-muted);
   background: color-mix(in srgb, var(--app-elevated) 62%, var(--app-panel));
   border: 1px solid color-mix(in srgb, var(--app-border) 62%, transparent);
 }
@@ -260,7 +260,7 @@ const timeLabel = computed(() => formatRelativeTime(props.note.mtime))
 .card-time {
   flex: none;
   font-size: 10px;
-  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+  color: var(--app-muted);
   font-variant-numeric: tabular-nums;
 }
 </style>

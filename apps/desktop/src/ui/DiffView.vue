@@ -114,7 +114,7 @@ const identical = computed(() => stats.value.added === 0 && stats.value.removed 
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+  color: var(--app-muted);
 }
 .diff-close {
   display: inline-flex;
@@ -149,7 +149,7 @@ const identical = computed(() => stats.value.added === 0 && stats.value.removed 
   color: var(--app-muted);
 }
 .diff-meta-sep {
-  color: color-mix(in srgb, var(--app-muted) 55%, transparent);
+  color: var(--app-muted);
 }
 .diff-toolbar {
   display: flex;
@@ -212,13 +212,13 @@ const identical = computed(() => stats.value.added === 0 && stats.value.removed 
   padding: 0 6px;
   text-align: right;
   white-space: nowrap;
-  color: color-mix(in srgb, var(--app-muted) 55%, transparent);
+  color: var(--app-muted);
   user-select: none;
   font-variant-numeric: tabular-nums;
 }
 .diff-gutter:not(:empty)::after {
   content: '·';
-  color: color-mix(in srgb, var(--app-muted) 30%, transparent);
+  color: var(--app-muted);
 }
 .diff-text {
   padding: 0 8px;

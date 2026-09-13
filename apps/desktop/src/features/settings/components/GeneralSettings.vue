@@ -92,7 +92,7 @@ async function onBrowse(): Promise<void> {
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+  color: var(--app-muted);
 }
 .settings-section .settings-label:first-child { margin-top: 0; }
 

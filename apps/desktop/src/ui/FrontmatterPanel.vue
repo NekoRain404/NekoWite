@@ -307,7 +307,7 @@ function onTitleKeydown(e: KeyboardEvent): void {
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+  color: var(--app-muted);
 }
 .rail-empty {
   margin: 0;
@@ -350,7 +350,7 @@ function onTitleKeydown(e: KeyboardEvent): void {
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.03em;
-  color: color-mix(in srgb, var(--app-muted) 78%, transparent);
+  color: var(--app-muted);
 }
 .fm-input {
   width: 100%;
@@ -369,7 +369,7 @@ function onTitleKeydown(e: KeyboardEvent): void {
               background var(--app-motion-fast) var(--app-ease),
               box-shadow var(--app-motion-fast) var(--app-ease);
 }
-.fm-input::placeholder { color: color-mix(in srgb, var(--app-muted) 74%, transparent); }
+.fm-input::placeholder { color: var(--app-muted); }
 .fm-input:focus {
   border-color: color-mix(in srgb, var(--app-accent) 55%, var(--app-border));
   background: color-mix(in srgb, var(--app-elevated) 72%, var(--app-panel));
@@ -419,7 +419,7 @@ function onTitleKeydown(e: KeyboardEvent): void {
   border: none;
   border-radius: 3px;
   background: transparent;
-  color: color-mix(in srgb, var(--app-muted) 66%, transparent);
+  color: var(--app-muted);
   cursor: pointer;
   transition: background var(--app-motion-fast) var(--app-ease),
               color var(--app-motion-fast) var(--app-ease);
@@ -439,7 +439,7 @@ function onTitleKeydown(e: KeyboardEvent): void {
   font-size: 11px;
   outline: none;
 }
-.fm-tag-input::placeholder { color: color-mix(in srgb, var(--app-muted) 74%, transparent); }
+.fm-tag-input::placeholder { color: var(--app-muted); }
 .fm-tag-add {
   display: inline-flex;
   align-items: center;
@@ -467,7 +467,7 @@ function onTitleKeydown(e: KeyboardEvent): void {
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.03em;
-  color: color-mix(in srgb, var(--app-muted) 80%, transparent);
+  color: var(--app-muted);
   cursor: pointer;
 }
 .fm-other-row {

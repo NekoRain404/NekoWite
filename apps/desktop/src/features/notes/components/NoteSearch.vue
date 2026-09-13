@@ -83,7 +83,7 @@ const emit = defineEmits<{
               background var(--app-motion-fast) var(--app-ease),
               box-shadow var(--app-motion-fast) var(--app-ease);
 }
-.nl-search-input::placeholder { color: color-mix(in srgb, var(--app-muted) 82%, transparent); }
+.nl-search-input::placeholder { color: var(--app-muted); }
 .nl-search-input:hover {
   border-color: color-mix(in srgb, var(--app-border) 88%, transparent);
 }
