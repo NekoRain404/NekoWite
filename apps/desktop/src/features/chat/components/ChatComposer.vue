@@ -274,7 +274,7 @@ function onFileChange(e: Event): void {
               box-shadow var(--app-motion-fast) var(--app-ease);
 }
 .chat-textarea::placeholder {
-  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+  color: var(--app-muted);
 }
 .chat-textarea:focus {
   border-color: color-mix(in srgb, var(--app-accent) 55%, var(--app-border));
@@ -312,7 +312,7 @@ function onFileChange(e: Event): void {
   align-items: center;
   justify-content: space-between;
   font-size: 10px;
-  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+  color: var(--app-muted);
 }
 .chat-hint {
   font-variant-numeric: tabular-nums;

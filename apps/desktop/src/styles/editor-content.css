@@ -343,7 +343,7 @@
 /* Placeholder for empty paragraphs created by ProseMirror */
 .editor-container .ProseMirror p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
-  color: color-mix(in srgb, var(--app-muted) 70%, transparent);
+  color: var(--app-muted);
   pointer-events: none;
   float: left;
   height: 0;

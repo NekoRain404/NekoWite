@@ -717,7 +717,7 @@ watch(
 .nav-count {
   font-size: 10px;
   font-weight: 400;
-  color: color-mix(in srgb, var(--app-muted) 78%, transparent);
+  color: var(--app-muted);
   font-variant-numeric: tabular-nums;
 }
 .nav-item.active .nav-count {
@@ -738,7 +738,7 @@ watch(
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+  color: var(--app-muted);
 }
 
 .tag-list {
@@ -805,7 +805,7 @@ watch(
   border: none;
   border-radius: var(--app-radius-sm);
   background: transparent;
-  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+  color: var(--app-muted);
   font-family: var(--app-font);
   font-size: 10px;
   font-weight: 600;
@@ -823,7 +823,7 @@ watch(
 .group-count {
   font-size: 10px;
   font-weight: 400;
-  color: color-mix(in srgb, var(--app-muted) 78%, transparent);
+  color: var(--app-muted);
   font-variant-numeric: tabular-nums;
 }
 .group-body {
@@ -844,7 +844,7 @@ watch(
   border-radius: var(--app-radius-lg);
   outline: none;
 }
-.ref-search::placeholder { color: color-mix(in srgb, var(--app-muted) 82%, transparent); }
+.ref-search::placeholder { color: var(--app-muted); }
 .ref-search:focus {
   border-color: color-mix(in srgb, var(--app-accent) 55%, var(--app-border));
 }
@@ -954,7 +954,7 @@ watch(
   padding: 6px 8px;
   font-size: 10.5px;
   line-height: 1.5;
-  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+  color: var(--app-muted);
 }
 
 .sidebar-footer {

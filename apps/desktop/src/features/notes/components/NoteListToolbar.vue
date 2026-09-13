@@ -252,7 +252,7 @@ function onSortSelect(id: string): void {
 .nl-count {
   font-size: 11px;
   font-weight: 500;
-  color: color-mix(in srgb, var(--app-muted) 88%, transparent);
+  color: var(--app-muted);
   font-variant-numeric: tabular-nums;
 }
 .nl-index {

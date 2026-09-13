@@ -58,7 +58,7 @@ const emit = defineEmits<{
   padding: 10px 6px;
   font-size: 11.5px;
   line-height: 1.6;
-  color: color-mix(in srgb, var(--app-muted) 85%, transparent);
+  color: var(--app-muted);
   text-align: center;
 }
 

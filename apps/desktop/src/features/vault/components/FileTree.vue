@@ -229,7 +229,7 @@ function entryRow(row: FileTreeFlatRow): FileTreeRowView {
   white-space: nowrap;
   font-size: 10px;
   letter-spacing: 0.02em;
-  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+  color: var(--app-muted);
   text-align: right;
 }
 .tree-body {

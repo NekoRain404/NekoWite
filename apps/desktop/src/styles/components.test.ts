@@ -54,6 +54,15 @@ describe('components.css', () => {
     expect(css).not.toContain('[data-theme="dark"] .dialog {')
     expect(css).not.toMatch(/\.dialog[a-z-]*\s*\{[^}]*box-shadow:(?!\s*var\()/)
   })
+  it('pairs the primary label with the on-accent token instead of a fixed white', () => {
+    // 主题色是*背景*，不是文字色：按钮文字必须读 --app-accent-contrast——那是每个
+    // 主题色各自算过对比度、单独选出来的那一个前景色。写死 white 的话，只有默认的
+    // ink 还能看（12.3:1），换成琥珀就掉到 2.72:1，而这恰恰是默认主题掩盖掉的 bug。
+    // 配对本身由 tokens.test.ts 的对比度断言保证，这里保证按钮用的就是这个配对。
+    const primary = ruleBody('.btn-primary')
+    expect(primary).toContain('background: var(--app-accent)')
+    expect(primary).toContain('color: var(--app-accent-contrast)')
+  })
   it('aligns the shared action row to the right, so the last button is the confirm slot', () => {
     expect(ruleBody('.dialog-actions')).toContain('justify-content: flex-end')
   })

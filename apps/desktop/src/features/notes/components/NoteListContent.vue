@@ -245,7 +245,7 @@ function setRenameInput(el: unknown): void {
   padding: 10px 6px;
   font-size: 11.5px;
   line-height: 1.6;
-  color: color-mix(in srgb, var(--app-muted) 85%, transparent);
+  color: var(--app-muted);
   text-align: center;
 }
 
@@ -254,7 +254,7 @@ function setRenameInput(el: unknown): void {
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+  color: var(--app-muted);
 }
 .nl-group-label:first-child {
   margin-top: 2px;
@@ -297,6 +297,6 @@ function setRenameInput(el: unknown): void {
   text-overflow: ellipsis;
   font-size: 10.5px;
   line-height: 1.5;
-  color: color-mix(in srgb, var(--app-muted) 88%, transparent);
+  color: var(--app-muted);
 }
 </style>
