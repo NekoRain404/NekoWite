@@ -1,4 +1,5 @@
 import type { ExportImageTarget } from '@nekowite/editor-core'
+import { MAX_IMAGES_PER_MESSAGE } from '../stores/chatSession'
 import type { FsGateway } from '../platform/gateways/contracts'
 import { notifyError } from './errors'
 import { dirName, stripVaultPrefix } from './paths'
@@ -24,11 +25,17 @@ export const ATTACHMENTS_DIR = 'attachments'
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024 // 10 MiB per image
 export const MAX_ATTACHMENTS_PER_BATCH = 10 // images accepted per single paste/drop
 
-/** Images allowed in ONE chat message. The chat panel keeps its attachments in
- *  memory and base64-encodes all of them into a single request, so the batch
- *  cap alone is not enough: a user can add images one at a time and reach any
- *  count. This is the ceiling for what one message may carry. */
-export const MAX_ATTACHMENTS_PER_MESSAGE = 6
+/** Images allowed in ONE chat message.
+ *
+ *  The chat panel keeps its attachments in memory and base64-encodes all of
+ *  them into a single request, so the batch cap alone is not enough: a user can
+ *  add images one at a time and reach any count.
+ *
+ *  This is the SESSION's limit, not a second opinion: a message may carry only
+ *  as many images as the store will keep for it. Letting the composer accept
+ *  more meant the extra ones vanished from the conversation at send time (the
+ *  store trims the list) with nothing on screen to say which. */
+export const MAX_ATTACHMENTS_PER_MESSAGE = MAX_IMAGES_PER_MESSAGE
 
 /** Total bytes one chat message may carry. The count cap is not a size cap:
  *  images are added one at a time, so six of them can each sit just under

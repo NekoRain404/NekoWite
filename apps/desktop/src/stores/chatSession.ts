@@ -33,9 +33,16 @@ export interface ChatSession {
 
 export const CHAT_SESSIONS_KEY = 'nekowite.chat.sessions'
 export const TITLE_MAX_LENGTH = 20
-/** Cap images saved per message so a data-URL heavy chat cannot blow the
- * localStorage quota on its own. */
-const MAX_IMAGES_PER_MESSAGE = 4
+/**
+ * Cap images saved per message so a data-URL heavy chat cannot blow the
+ * localStorage quota on its own.
+ *
+ * Exported, and used by the chat composer as its own attachment limit: a panel
+ * that let the user attach more than the session can keep would show an
+ * attachment that disappears from the conversation the moment it is sent - the
+ * store would trim it and the user would never know which one they lost.
+ */
+export const MAX_IMAGES_PER_MESSAGE = 4
 
 /** Max base64 length (≈ bytes on disk) of a single image Data URL. Images
  * larger than this are refused: the image is not stored and the message is
