@@ -58,7 +58,20 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
     // Re-opening it now would replace the live model, wiping undo history,
     // stored caret/scroll and interrupting typing. A failed parse stays
     // eligible so switching back to rendered mode can retry.
-    if (content === deps.session.appliedContent && !deps.session.parseFailed) return
+    //
+    // `appliedContent` alone is not enough to say the editor HOLDS it: it is the
+    // text the editor was last OPENED with, and any typing since then replaced
+    // the live document. Restoring a version that happens to equal that text -
+    // the common case, "undo my last edit by restoring the previous version" -
+    // was therefore skipped as already-applied: the file went back and the SCREEN
+    // did not, so the user saw no change, and their next keystroke published the
+    // discarded text and saved it over the restore. The pair of fields is what
+    // distinguishes the two states: they are equal only while nothing has been
+    // typed (editorPersistence updates `lastLocalMarkdown` on every edit).
+    const editorStillHoldsApplied = deps.session.lastLocalMarkdown === deps.session.appliedContent
+    if (content === deps.session.appliedContent && editorStillHoldsApplied && !deps.session.parseFailed) {
+      return
+    }
     deps.session.applyingExternal = true
     try {
       await editor.open(content)
