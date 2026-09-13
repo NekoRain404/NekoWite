@@ -100,7 +100,9 @@ pub async fn ai_complete(
         hydrate_stored_key(&app, &mut config).inspect_err(|e| {
             emit_ai_error(&app, &id, e);
         })?;
-        validate_base_url(&config).inspect_err(|e| {
+        // Vets the Base URL and hands back the addresses it approved, so the
+        // request is pinned to exactly those (see `VettedHost`).
+        let pin = validate_base_url(&config).inspect_err(|e| {
             emit_ai_error(&app, &id, e);
         })?;
         // Bound concurrency: acquire a slot before opening a connection. A
@@ -110,7 +112,7 @@ pub async fn ai_complete(
         let _permit = acquire_slot(&state).await.inspect_err(|e| {
             emit_ai_error(&app, &id, e);
         })?;
-        stream_complete(&app, &config, &prompt, &images, &id, &cancel).await
+        stream_complete(&app, &config, &prompt, &images, &id, &cancel, pin.as_ref()).await
     }
     .await;
     // Both registries are cleaned on every exit path (success, provider error,
