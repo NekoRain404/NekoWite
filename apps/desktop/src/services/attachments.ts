@@ -1,5 +1,8 @@
+import type { ExportImageTarget } from '@nekowite/editor-core'
+import { MAX_IMAGES_PER_MESSAGE } from '../stores/chatSession'
 import type { FsGateway } from '../platform/gateways/contracts'
 import { notifyError } from './errors'
+import { dirName, stripVaultPrefix } from './paths'
 
 /**
  * Attachment pipeline helpers: MIME↔extension mapping for the supported
@@ -21,6 +24,26 @@ export const ATTACHMENTS_DIR = 'attachments'
  */
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024 // 10 MiB per image
 export const MAX_ATTACHMENTS_PER_BATCH = 10 // images accepted per single paste/drop
+
+/** Images allowed in ONE chat message.
+ *
+ *  The chat panel keeps its attachments in memory and base64-encodes all of
+ *  them into a single request, so the batch cap alone is not enough: a user can
+ *  add images one at a time and reach any count.
+ *
+ *  This is the SESSION's limit, not a second opinion: a message may carry only
+ *  as many images as the store will keep for it. Letting the composer accept
+ *  more meant the extra ones vanished from the conversation at send time (the
+ *  store trims the list) with nothing on screen to say which. */
+export const MAX_ATTACHMENTS_PER_MESSAGE = MAX_IMAGES_PER_MESSAGE
+
+/** Total bytes one chat message may carry. The count cap is not a size cap:
+ *  images are added one at a time, so six of them can each sit just under
+ *  {@link MAX_ATTACHMENT_BYTES} - 60 MiB raw, which the send path base64-encodes
+ *  (~4/3 the size) into ONE IPC request whose text is held by both processes.
+ *  20 MiB raw is already ~27 MB of JSON per turn; past that the request is
+ *  refused by the provider, and the renderer pays for the encode first. */
+export const MAX_ATTACHMENTS_PER_MESSAGE_BYTES = 20 * 1024 * 1024 // 20 MiB
 export const MAX_ATTACHMENTS_PER_SESSION = 50 // running total per app session
 
 /** Per-vault attachment total cap (bytes). A vault accumulating an unbounded
@@ -37,30 +60,28 @@ export const MAX_ATTACHMENTS_PER_BATCH_BYTES = 100 * 1024 * 1024 // 100 MB
 export const MIN_ATTACHMENT_FREE_DISK_BYTES = 25 * 1024 * 1024 // 25 MB
 
 /** Files at or above this size take the streaming/file-path route (write the
- *  bytes out via the backend) instead of base64-over-IPC, so a large file never
- *  spills a full base64 copy into JS memory. Smaller files keep the existing
- *  low-copy base64 path. */
+ *  a pasted image would prefer a path-based import over base64.
+ *
+ *  NOT enforced today: only the image PICKER has real filesystem paths, and it
+ *  already uses `import_attachment` at every size. A pasted clipboard image has
+ *  no path, so the paste path always base64-encodes. See
+ *  {@link STREAM_IMPORT_BACKEND_COMMAND}. */
 export const STREAM_IMPORT_MIN_BYTES = 8 * 1024 * 1024 // 8 MiB
 
 /**
- * The exact backend command a true zero-base64 streaming/file-path import would
- * call.
- *
- * The current {@link FsPort} (`platform/gateways/contracts`) only exposes
- * `saveAttachment(vault, fileName, base64, dir)`, which ships bytes as base64
- * over IPC (≈4/3x the byte size plus a Rust decode). A genuine streaming
- * file-path import would instead copy from the OS path to the vault attachment
- * dir without a JS hop:
+ * The backend command that copies a file the user picked, with no base64 hop:
  *
  *   import_attachment(vault: string, src_abs_path: string, dir?: string)
  *     -> Promise<string>   // the vault-relative path written
  *
- * That command is OUT OF SCOPE here (no backend command exists and `src-tauri`
- * is off-limits), so the frontend implements the reject-before-write policy —
- * per-file, per-batch, per-vault-total and disk-free-space guards — and degrades
- * cleanly: small files keep the base64 path; large files are accepted (when the
- * policy permits) and routed to the streaming route, which would call the
- * not-yet-implemented command and falls back to base64 when it is unavailable.
+ * It IS implemented (`storage::file_store::import_attachment` plus the
+ * `import_attachment` command) and is what the image picker uses, so a
+ * file-picked image never becomes base64 in JS at all.
+ *
+ * The PASTE path still goes through `saveAttachment` (base64 over IPC): the
+ * clipboard hands the webview `File` objects, not filesystem paths, so there is
+ * no path for a path-based command to read. The constants below only describe
+ * that paste path.
  */
 export const STREAM_IMPORT_BACKEND_COMMAND =
   'import_attachment(vault, src_abs_path, dir?) → Promise<string>'
@@ -331,6 +352,11 @@ export function formatAttachmentBytes(bytes: number): string {
 export function classifyAttachmentFiles(files: File[]): AttachmentLimitResult {
   const accepted: File[] = []
   const rejected: AttachmentRejection[] = []
+  // The batch byte cap needs nothing but the file sizes, so it is enforced here
+  // rather than only in the context-aware policy. Without it a drop of ten
+  // near-limit images passes the count check and then base64-encodes ~133 MB
+  // into JS memory at once.
+  let acceptedBytes = 0
   for (const file of files) {
     if (file.size > MAX_ATTACHMENT_BYTES) {
       rejected.push({ file, reason: 'too-large' })
@@ -344,7 +370,12 @@ export function classifyAttachmentFiles(files: File[]): AttachmentLimitResult {
       rejected.push({ file, reason: 'session-full' })
       continue
     }
+    if (acceptedBytes + file.size > MAX_ATTACHMENTS_PER_BATCH_BYTES) {
+      rejected.push({ file, reason: 'batch-total' })
+      continue
+    }
     accepted.push(file)
+    acceptedBytes += file.size
   }
   attachmentSessionUsed += accepted.length
   return { accepted, rejected }
@@ -393,9 +424,12 @@ function describeAttachmentRejections(rejected: AttachmentRejection[]): string {
  * on the accepted files while the user is told why the rest were dropped
  * (rather than silently discarding or risking a memory blowup).
  *
- * When `context` is supplied the full streaming policy is applied (per-batch /
- * per-vault byte caps + free-disk guard); otherwise the count-based limits
- * remain (back-compat for callers that cannot gather the disk context).
+ * The paste path calls this WITHOUT a context (a clipboard image has no
+ * filesystem path, so there is nothing to stat), so the guarantees there are:
+ * per-file size, per-batch count, per-batch BYTES and the per-session count.
+ * The per-vault total and the free-disk guard need backend data and are only
+ * applied by `planAttachmentImport` when a context is supplied — no production
+ * caller does that today, so treat those two as unenforced.
  */
 export function applyAttachmentLimits(files: File[], context?: AttachmentImportContext): File[] {
   if (context) {
@@ -510,8 +544,9 @@ function uniqueFiles(files: File[]): File[] {
 }
 
 export function noteDirectory(notePath: string): string {
-  if (!notePath.includes('/')) return ''
-  return notePath.slice(0, notePath.lastIndexOf('/'))
+  // Either separator: note paths are absolute and native on Windows.
+  const dir = dirName(notePath)
+  return dir === notePath ? '' : dir
 }
 
 /** Resolve `rel` (`../attachments/…`, `attachments/…`) against `fromDir`,
@@ -553,30 +588,45 @@ export function relativePathFromNote(notePath: string, targetPath: string): stri
   return [...Array.from({ length: up }, () => '..'), ...down].join('/') || '.'
 }
 
+/** Absolute, OS-native path spellings: `/…`, `C:\…`, `C:/…`, `\\?\C:\…`
+ * and `\\server\share\…`. Separator-agnostic on purpose: Windows paths cross
+ * IPC with backslashes while every derived value in the app uses `/`. */
+function isAbsoluteFsPath(p: string): boolean {
+  return p.startsWith('/') || /^[a-z]:[\\/]/i.test(p) || p.startsWith('\\\\')
+}
+
+/** True for a src/target addressed by a URL scheme (`https:`, `data:`,
+ * `memoir:`). A Windows drive letter matches the generic scheme pattern while
+ * being a filesystem path, so absolute paths are excluded explicitly. */
+function hasUrlScheme(p: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:/i.test(p) && !isAbsoluteFsPath(p)
+}
+
 /** Like {@link relativePathFromNote} but tolerant of an ABSOLUTE note path:
- * the note is first rebased onto the vault (via `dirRelativeToVault`), so the
+ * the note is first rebased onto the vault (via `stripVaultPrefix`), so the
  * computed reference is relative to the note's own directory rather than to
  * the absolute parent folders. Falls back to the plain relative form when
- * `notePath`/`vault` don't line up. */
+ * `notePath`/`vault` don't line up.
+ *
+ * A `targetPath` that is itself absolute-but-inside-the-vault is rebased too
+ * (that is what the note's assets-dir helper used to produce on Windows), so
+ * the returned reference is always vault-relative and never a `C:\…` string
+ * that only works on the machine that wrote it. */
 export function relativePathFromNoteVault(
   notePath: string,
   vault: string,
   targetPath: string,
 ): string {
-  if (/^[a-z][a-z0-9+.-]*:/i.test(targetPath) || targetPath.startsWith('/')) return targetPath
-  const v = (vault || '').replace(/\/+$/, '')
-  let p = notePath || ''
-  if (v !== '' && (p === v || p.startsWith(`${v}/`))) {
-    p = p.slice(v.length).replace(/^\/+/, '')
-  } else if (p.startsWith('/')) {
-    // An absolute path that isn't under the vault: keep only the trailing
-    // directories, which is the best approximation of the note's location.
-    p = p.replace(/^\/+/, '')
-  }
-  const fromDirectory = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : ''
+  if (hasUrlScheme(targetPath)) return targetPath
+  const target = isPathWithinVault(targetPath, vault) ? stripVaultPrefix(targetPath, vault) : targetPath
+  // Still absolute after rebasing means it is a local path outside the vault:
+  // not ours to rewrite, so pass it through (the old behaviour).
+  if (isAbsoluteFsPath(target)) return target
+  const p = stripVaultPrefix(notePath || '', vault)
+  const fromDirectory = noteDirectory(p)
   const fromParts = fromDirectory ? fromDirectory.split('/').filter(Boolean) : []
-  const targetParts = targetPath.split('/').filter(Boolean)
-  if (fromParts.length === 0) return targetPath
+  const targetParts = target.split('/').filter(Boolean)
+  if (fromParts.length === 0) return target
   let shared = 0
   while (
     shared < fromParts.length &&
@@ -602,19 +652,15 @@ export function vaultRelativeFromNote(notePath: string, src: string): string {
 }
 
 /** Vault-aware variant: rebase an absolute `notePath` onto the vault first,
- * so `../` bookkeeping is measured from the note's actual directory. */
+ * so `../` bookkeeping is measured from the note's actual directory. The vault
+ * prefix is stripped separator-agnostically (`stripVaultPrefix`): Windows note
+ * paths carry backslashes, and the `/`-only test this used to do left them
+ * looking unfiled, so `../` resolved against the vault root instead. */
 export function vaultRelativeFromNoteVault(notePath: string, vault: string, src: string): string {
-  if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('/')) return src
+  if (hasUrlScheme(src) || isAbsoluteFsPath(src)) return src
   if (!src.startsWith('..') && src.startsWith(`${ATTACHMENTS_DIR}/`)) return src
-  const v = (vault || '').replace(/\/+$/, '')
-  let p = notePath || ''
-  if (v !== '' && (p === v || p.startsWith(`${v}/`))) {
-    p = p.slice(v.length).replace(/^\/+/, '')
-  } else if (p.startsWith('/')) {
-    p = p.replace(/^\/+/, '')
-  }
-  const fromDir = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : ''
-  return resolveRelativePath(fromDir, src)
+  const p = stripVaultPrefix(notePath || '', vault)
+  return resolveRelativePath(noteDirectory(p), src)
 }
 
 /** True when `candidate` (an absolute OS-native path, e.g. one returned by the
@@ -638,20 +684,33 @@ export interface ImageSrcResolverContext {
 }
 
 /** Build the display-URL resolver handed to the editor / export pipeline.
- * Returns the raw src untouched when no vault is open or resolution fails,
- * so a broken pipeline degrades to today's behavior instead of hiding images. */
+ *
+ * Throws when the src cannot be turned into a display URL. That is deliberate:
+ * returning the src unchanged would look like a successful resolution to the
+ * caller, so a "no vault open yet" pass-through used to be memoized as if it
+ * were the answer and the image stayed broken even after the vault arrived.
+ * Failing lets the caller keep its own fallback and retry later. */
 export function createImageSrcResolver(
   fs: Pick<FsGateway, 'resolveMediaPath'>,
   ctx: ImageSrcResolverContext,
-): (src: string) => Promise<string> {
-  return async (src) => {
+): (src: string, target?: ExportImageTarget) => Promise<string> {
+  return async (src, target = 'display') => {
     const vault = ctx.getVault()
-    if (!vault) return src
-    try {
-      const rel = vaultRelativeFromNoteVault(ctx.getNotePath() ?? '', vault, src)
-      return await fs.resolveMediaPath(vault, rel)
-    } catch {
-      return src
-    }
+    if (!vault) throw new Error('no vault open, cannot resolve an attachment path')
+    const rel = vaultRelativeFromNoteVault(ctx.getNotePath() ?? '', vault, src)
+    const url = await fs.resolveMediaPath(vault, rel)
+    // `display` is the asset:// URL the app can render. A saved .html has to
+    // work when opened anywhere, so the bytes are inlined instead — the same
+    // reason the exported stylesheet inlines its fonts.
+    if (target !== 'data' || url.startsWith('data:')) return url
+    const response = await fetch(url)
+    if (!response.ok) throw new Error(`attachment could not be read for export (${response.status})`)
+    const blob = await response.blob()
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result))
+      reader.onerror = () => reject(reader.error ?? new Error('attachment could not be inlined'))
+      reader.readAsDataURL(blob)
+    })
   }
 }

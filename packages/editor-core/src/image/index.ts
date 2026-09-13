@@ -1,4 +1,5 @@
 export * from './resolver'
+export * from './messages'
 export * from './schema'
 export * from './remark'
 export * from './resize'

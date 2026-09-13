@@ -37,6 +37,98 @@ describe('titleFromText', () => {
   })
 })
 
+describe('chatSession persistence honesty', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+  })
+
+  /**
+   * Run `body` with a Storage that always refuses the write (or only the
+   * image-carrying one), then put the real `localStorage` back through its own
+   * property descriptor - the port resolves `globalThis.localStorage` per call,
+   * so replacing the property is what the adapter actually sees.
+   */
+  function withFailingStorage(
+    body: () => void,
+    opts: { onlyImageWrites?: boolean } = {},
+  ): ReturnType<typeof vi.fn> {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+    const real = globalThis.localStorage
+    const setItem = vi.fn((key: string, value: string) => {
+      if (opts.onlyImageWrites && !value.includes('data:image/png')) {
+        real.setItem(key, value)
+        return
+      }
+      throw new DOMException('QuotaExceededError', 'QuotaExceededError')
+    })
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      get: () => ({
+        setItem,
+        getItem: (k: string) => real.getItem(k),
+        removeItem: (k: string) => real.removeItem(k),
+        clear: () => real.clear(),
+        key: (i: number) => real.key(i),
+        get length() {
+          return real.length
+        },
+      }),
+    })
+    try {
+      body()
+    } finally {
+      if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor)
+      else Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: real })
+    }
+    return setItem
+  }
+
+  it('reports nothing when the write lands', () => {
+    const store = sessionStore()
+    store.setMessages([{ role: 'user', content: 'hello' }])
+    expect(store.storageWarning).toBeNull()
+  })
+
+  it('retries without images and says the images were not stored', () => {
+    // The port swallows the quota error and (with the fix) reports it, so this
+    // is what the user gets instead of a conversation that silently loses
+    // everything between launches: the text is written, the images are not, and
+    // the store carries a warning the panel renders.
+    const store = sessionStore()
+    const image = { id: 'i1', name: 'cat.png', dataUrl: dataUrl(64) }
+    const setItem = withFailingStorage(() => {
+      store.setMessages([{ role: 'user', content: 'look', images: [image] }])
+    }, { onlyImageWrites: true })
+
+    expect(store.storageWarning).toBe('images-not-persisted')
+    expect(setItem).toHaveBeenCalledTimes(2)
+    // The text really is on disk - that is the whole point of the retry.
+    expect(localStorage.getItem(CHAT_SESSIONS_KEY)).toContain('look')
+    // The in-memory copy keeps the image so the open panel still shows it.
+    expect(store.activeSession?.messages[0].images).toHaveLength(1)
+  })
+
+  it('warns that nothing was stored when even the text does not fit', () => {
+    const store = sessionStore()
+    withFailingStorage(() => {
+      store.setMessages([{ role: 'user', content: 'important' }])
+    })
+    expect(store.storageWarning).toBe('history-not-persisted')
+  })
+
+  it('clears the warning once a later write fits', () => {
+    const store = sessionStore()
+    withFailingStorage(() => {
+      store.setMessages([{ role: 'user', content: 'a' }])
+    })
+    expect(store.storageWarning).toBe('history-not-persisted')
+
+    store.setMessages([{ role: 'user', content: 'b' }])
+    expect(store.storageWarning).toBeNull()
+  })
+})
+
 describe('chatSession store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -195,6 +287,77 @@ describe('chatSession store', () => {
     store.setMessages([{ role: 'user', content: '改写这段摘要' }])
     expect(store.sessions[0].title).toBe('改写这段摘要')
     expect(JSON.parse(localStorage.getItem(CHAT_SESSIONS_KEY)!).sessions[0].title).toBe('改写这段摘要')
+  })
+
+  it('keeps an interrupted answer through persist and reload', () => {
+    const store = sessionStore()
+    store.setMessages([
+      { role: 'user', content: '问题' },
+      { role: 'assistant', content: '答了一半', interrupted: true },
+    ])
+    expect(JSON.parse(localStorage.getItem(CHAT_SESSIONS_KEY)!).sessions[0].messages[1]).toEqual({
+      role: 'assistant',
+      content: '答了一半',
+      interrupted: true,
+    })
+
+    setActivePinia(createPinia())
+    const reloaded = sessionStore()
+    expect(reloaded.sessions[0].messages[1].interrupted).toBe(true)
+    // The marker belongs to one message only: the question is not interrupted.
+    expect(reloaded.sessions[0].messages[0].interrupted).toBeUndefined()
+  })
+
+  it('only trusts an exact boolean interrupted flag from storage', () => {
+    localStorage.setItem(
+      CHAT_SESSIONS_KEY,
+      JSON.stringify({
+        v: 1,
+        activeId: 'edited',
+        sessions: [
+          {
+            id: 'edited',
+            title: '手改过的存储',
+            created: 1,
+            updated: 2,
+            messages: [
+              { role: 'assistant', content: 'a', interrupted: 'yes' },
+              { role: 'assistant', content: 'b', interrupted: true },
+            ],
+          },
+        ],
+      }),
+    )
+    const store = sessionStore()
+    expect(store.sessions[0].messages[0].interrupted).toBeUndefined()
+    expect(store.sessions[0].messages[1].interrupted).toBe(true)
+  })
+
+  it('loads sessions written before the interrupted marker existed', () => {
+    localStorage.setItem(
+      CHAT_SESSIONS_KEY,
+      JSON.stringify({
+        v: 1,
+        activeId: 'legacy',
+        sessions: [
+          {
+            id: 'legacy',
+            title: '旧会话',
+            created: 1,
+            updated: 2,
+            messages: [
+              { role: 'user', content: '旧问题' },
+              { role: 'assistant', content: '旧回答' },
+            ],
+          },
+        ],
+      }),
+    )
+    const store = sessionStore()
+    expect(store.activeSession!.messages).toEqual([
+      { role: 'user', content: '旧问题' },
+      { role: 'assistant', content: '旧回答' },
+    ])
   })
 
   it('clearMessages empties the session', () => {

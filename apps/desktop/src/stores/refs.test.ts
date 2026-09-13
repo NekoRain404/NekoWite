@@ -3,6 +3,9 @@ import { computed, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useRefsStore } from './refs'
 
+const notifyMock = vi.hoisted(() => vi.fn())
+vi.mock('../services/errors', () => ({ notifyError: notifyMock }))
+
 const listMock = vi.hoisted(() => vi.fn())
 const readMock = vi.hoisted(() => vi.fn())
 vi.mock('../platform/gateways/fs', () => ({
@@ -124,5 +127,49 @@ describe('useRefsStore', () => {
     expect(results.value.length).toBe(0)
     query.value = ''
     expect(results.value.length).toBe(2)
+  })
+
+  it('keeps the entries it can parse when one entry in the file is broken, and reports it', async () => {
+    const BROKEN_BIB = `@article{good1,
+  title = {Good One},
+  author = {Smith, John},
+  year = {2020},
+}
+
+@article{,
+  title = {No key here},
+}
+
+@article{good2,
+  title = {Good Two},
+  author = {Doe, Jane},
+  year = {2021},
+}`
+    listMock.mockResolvedValue([
+      { name: 'refs.bib', path: '/vault/refs.bib', is_dir: false, is_mdx: false },
+    ])
+    readMock.mockResolvedValue(BROKEN_BIB)
+    notifyMock.mockClear()
+    const s = useRefsStore()
+    await s.loadVault('/vault')
+    // One malformed entry used to empty the whole library with no message: the
+    // panel showed "put a .bib in the vault" and every citation said missing.
+    expect([...s.refs.keys()]).toEqual(['good1', 'good2'])
+    expect(s.refFiles).toEqual(['refs.bib'])
+    expect(notifyMock).toHaveBeenCalledTimes(1)
+    expect(String(notifyMock.mock.calls[0]?.[0])).toContain('refs.bib')
+  })
+
+  it('does not read a JSON data file as a reference library', async () => {
+    listMock.mockResolvedValue([
+      { name: 'package.json', path: '/vault/package.json', is_dir: false, is_mdx: false },
+    ])
+    readMock.mockResolvedValue('{"name":"myapp","version":"1.0.0"}')
+    notifyMock.mockClear()
+    const s = useRefsStore()
+    await s.loadVault('/vault')
+    expect(s.refs.size).toBe(0)
+    expect(s.refFiles).toEqual([])
+    expect(notifyMock).not.toHaveBeenCalled()
   })
 })

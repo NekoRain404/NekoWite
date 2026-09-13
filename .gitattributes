@@ -1,0 +1,58 @@
+# Line-ending and text policy.
+#
+# Without this, every checkout re-normalises files and `git status` reports
+# whole-file diffs on a machine whose autocrlf setting differs from the one
+# that committed the file - which is what the repeated
+# "LF will be replaced by CRLF" warnings were telling us.
+#
+# `text=auto` lets git store LF in the repository and hand the working tree
+# whatever its native convention is (CRLF on Windows, LF elsewhere). The
+# per-type rules below are the cases where that default is wrong.
+
+* text=auto eol=lf
+
+# Shell and Python: a CRLF here breaks the shebang and the interpreter on any
+# POSIX machine, and on Windows Git Bash refuses a script with CRLF.
+*.sh text eol=lf
+*.py text eol=lf
+
+# Windows-only launchers must stay CRLF: cmd.exe and PowerShell mangle a
+# batch file whose lines end in LF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Rust, TypeScript, Vue and the rest are handled by `text=auto eol=lf`;
+# they are listed only to document that the choice is deliberate.
+*.rs text eol=lf
+*.ts text eol=lf
+*.vue text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+
+# Binaries: never touch their bytes or git will report them as modified on
+# every checkout and `git diff` will try to render them.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.bin binary
+*.exe binary
+*.dll binary
+
+# Lockfiles are generated: keep them out of diffs and merge summaries.
+pnpm-lock.yaml -diff
+apps/desktop/src-tauri/Cargo.lock -diff
+
+# Test and build output are not part of the code a reviewer reads.
+playwright-report/** linguist-generated
+test-results/** linguist-generated
+

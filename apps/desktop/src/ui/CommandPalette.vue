@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useFocusTrap } from '../composables/useFocusTrap'
 import type { Component } from 'vue'
-import { BUILTIN_COMMAND_IDS, getCommand, getToolbar, listCommands } from '@nekowite/editor-core'
+import { BUILTIN_COMMAND_IDS, getToolbar, listCommands } from '@nekowite/editor-core'
+import { runEditorCommand } from '../services/runEditorCommand'
 import { FileText, Search } from 'lucide-vue-next'
 import { useTabsStore } from '../stores/tabs'
 import { fsService } from '../platform/gateways/fs'
@@ -14,6 +16,8 @@ import {
   type PaletteEntry,
 } from './commandPaletteLogic'
 import { t } from '../i18n'
+import { isComposingKey } from '../services/keyGuard'
+import { modalStack } from '../services/modalStack'
 
 const MOTION_MS = 160
 const FILE_RESULT_LIMIT = 20
@@ -33,14 +37,30 @@ const LIST_ID = 'nekowite-command-palette-list'
 
 const tabs = useTabsStore()
 
+// Every command the palette offers is an editor command: it runs against the
+// live rendered/source model (see runEditorCommand). With no document open there
+// is no model, so nothing below can be offered honestly.
+const hasDocument = computed(() => tabs.activeTab !== null)
+
 const open = ref(false)
 const visible = ref(false)
+/** True from the moment a close begins until the fade-out finishes. */
+const closing = ref(false)
 const query = ref('')
 const activeIndex = ref(0)
 const inputRef = ref<HTMLInputElement | null>(null)
 const listRef = ref<HTMLElement | null>(null)
+// The palette declares aria-modal, so Tab has to stay inside it; the search
+// input is focused explicitly by `show()`, so the trap only has to cycle.
+const paletteEl = ref<HTMLElement | null>(null)
+useFocusTrap(paletteEl, open, { initialFocus: false })
 const files = ref<string[]>([])
 let hideTimer: ReturnType<typeof setTimeout> | null = null
+// The deferred paint that turns the fade-in on. It has to be cancellable: a
+// close that lands inside those two frames would otherwise let the stale paint
+// re-set `visible` after `hide()` cleared it, leaving the palette flagged as
+// on-screen while closed.
+let paintRaf = 0
 let prevFocus: HTMLElement | null = null
 let fsUnlisten: Promise<() => void> | null = null
 
@@ -50,6 +70,13 @@ const registryRevision = ref(0)
 
 const commandEntries = computed<PaletteEntry[]>(() => {
   void registryRevision.value
+  // The formatting/insert commands are ProseMirror commands (or plugin commands
+  // resolving the rendered view): with no document open `runEditorCommand`
+  // reports "nothing handled it" and the row would be a silent no-op — no toast,
+  // no disabled state, nothing. Rather than offering ~20 dead rows, offer none
+  // until a document exists (the Files group still opens one) and say why in the
+  // note above the list.
+  if (!hasDocument.value) return []
   const byId = new Map<string, PaletteEntry>()
   const add = (rawId: string, run: () => void, fallbackLabel?: string): void => {
     if (byId.has(rawId)) return
@@ -62,9 +89,12 @@ const commandEntries = computed<PaletteEntry[]>(() => {
       run,
     })
   }
-  for (const id of BUILTIN_COMMAND_IDS) add(id, () => getCommand(id)?.run())
-  for (const cmd of listCommands()) add(cmd.id, () => getCommand(cmd.id)?.run())
-  for (const item of getToolbar()) add(item.id, item.run, item.label)
+  // Every command goes through the mode-aware runner: these are ProseMirror
+  // commands (or plugin commands resolving the rendered view), so in source
+  // mode they would otherwise edit the hidden model and appear to do nothing.
+  for (const id of BUILTIN_COMMAND_IDS) add(id, () => runEditorCommand(id))
+  for (const cmd of listCommands()) add(cmd.id, () => runEditorCommand(cmd.id))
+  for (const item of getToolbar()) add(item.id, () => runEditorCommand(item.id), item.label)
   return [...byId.values()]
 })
 
@@ -133,31 +163,57 @@ async function loadFiles(): Promise<void> {
   files.value = await vaultFileIndex.get(vault)
 }
 
+// Claimed while the palette is open: the most recently raised modal is the one
+// Escape reaches. Claimed on open rather than in `onMounted` because the
+// component is always mounted (it renders nothing while closed).
+let modalToken: symbol | null = null
+
 function show(): void {
   if (hideTimer) {
     clearTimeout(hideTimer)
     hideTimer = null
   }
+  if (!modalToken) modalToken = modalStack.claimModal('command-palette')
   open.value = true
+  closing.value = false
   query.value = ''
   activeIndex.value = 0
   registryRevision.value += 1
   prevFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
   void loadFiles()
   const paint = (): void => {
+    paintRaf = 0
     visible.value = true
   }
+  cancelPaint()
   if (prefersReducedMotion()) paint()
-  else requestAnimationFrame(() => requestAnimationFrame(paint))
+  else {
+    // Two frames: the overlay must be laid out at opacity 0 for the CSS
+    // transition to have a starting value to animate from.
+    paintRaf = requestAnimationFrame(() => {
+      paintRaf = requestAnimationFrame(paint)
+    })
+  }
   void nextTick(() => inputRef.value?.focus())
+}
+
+function cancelPaint(): void {
+  if (paintRaf === 0) return
+  cancelAnimationFrame(paintRaf)
+  paintRaf = 0
 }
 
 function hide(): void {
   if (!open.value) return
+  modalStack.releaseModal(modalToken)
+  modalToken = null
+  cancelPaint()
   visible.value = false
+  closing.value = true
   if (hideTimer) clearTimeout(hideTimer)
   hideTimer = setTimeout(() => {
     open.value = false
+    closing.value = false
     hideTimer = null
   }, MOTION_MS)
   const el = prevFocus
@@ -182,7 +238,8 @@ function scrollActiveIntoView(): void {
 }
 
 function onInputKeydown(e: KeyboardEvent): void {
-  if (e.isComposing || e.key === 'Process') return
+  // Arrow/Enter belong to the IME candidate list while it is open.
+  if (isComposingKey(e)) return
   if (e.key === 'ArrowDown') {
     e.preventDefault()
     move(1)
@@ -201,15 +258,31 @@ function onInputKeydown(e: KeyboardEvent): void {
 }
 
 function onGlobalKeydown(e: KeyboardEvent): void {
-  if (e.isComposing) return
+  if (isComposingKey(e)) return
   if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k') {
+    // The palette is a modal. Raising it over another open modal (the settings
+    // panel is also z-index 10000) put two dialogs on screen with no defined
+    // order, and one Escape then closed both.
     e.preventDefault()
     e.stopPropagation()
-    if (open.value) hide()
+    // Gated on the logical state, not on `visible`: the fade-in is deferred by
+    // two frames, so just after opening `visible` is still false and keying off
+    // it would make the first Ctrl+K press open rather than close.
+    //
+    // A palette that is mid fade-out counts as closed here so the press
+    // revives it — otherwise a quick Escape-then-Ctrl+K would be swallowed by
+    // `hide()` and the palette would look like it refused to reopen.
+    if (open.value && !closing.value) hide()
     else show()
     return
   }
+  // `open` again: Escape must work the instant the palette appears, which is
+  // before the deferred fade-in has painted.
   if (open.value && e.key === 'Escape') {
+    // Several dialogs listen for Escape on window/document, and stopPropagation
+    // does not stop the listeners already queued on the same target: without
+    // this arbitration one Escape closed the palette AND the settings panel.
+    if (!modalStack.isTopModal(modalToken)) return
     e.preventDefault()
     e.stopPropagation()
     hide()
@@ -240,9 +313,12 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  modalStack.releaseModal(modalToken)
+  modalToken = null
   window.removeEventListener('keydown', onGlobalKeydown, true)
   void fsUnlisten?.then((unlisten) => unlisten())
   if (hideTimer) clearTimeout(hideTimer)
+  cancelPaint()
 })
 </script>
 
@@ -256,6 +332,7 @@ onBeforeUnmount(() => {
       @pointerdown.self="hide"
     >
       <div
+        ref="paletteEl"
         class="palette"
         role="dialog"
         aria-modal="true"
@@ -283,6 +360,12 @@ onBeforeUnmount(() => {
             @keydown="onInputKeydown"
           >
         </div>
+        <p
+          v-if="!hasDocument"
+          class="palette-note"
+        >
+          {{ t('palette.noDocument') }}
+        </p>
         <div
           :id="LIST_ID"
           ref="listRef"
@@ -294,7 +377,12 @@ onBeforeUnmount(() => {
             v-for="group in rows"
             :key="group.key"
           >
-            <div class="palette-group-label">
+            <!-- role=presentation: a listbox may only own options, and a
+                 group heading in between is otherwise announced as one. -->
+            <div
+              class="palette-group-label"
+              role="presentation"
+            >
               {{ group.label }}
             </div>
             <button
@@ -327,8 +415,9 @@ onBeforeUnmount(() => {
             </button>
           </template>
           <div
-            v-if="!flatRows.length"
+            v-if="!flatRows.length && hasDocument"
             class="palette-empty"
+            role="presentation"
           >
             {{ t('palette.empty') }}
           </div>
@@ -397,6 +486,13 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 .palette-input::placeholder {
+  color: var(--app-muted);
+}
+/* Why the command group is empty (no document open). The commands need an
+   editor, so the palette says so instead of listing actions that cannot run. */
+.palette-note {
+  padding: 10px 14px 0;
+  font-size: 11px;
   color: var(--app-muted);
 }
 .palette-list {

@@ -3,6 +3,7 @@ import { createApp, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import DocStatsPanel from './DocStatsPanel.vue'
 import { useTabsStore, type OpenTab } from '../stores/tabs'
+import { t } from '../i18n'
 
 let pinia: Pinia
 let mounted: VueApp[] = []
@@ -56,7 +57,9 @@ describe('DocStatsPanel', () => {
   it('shows zeroed stats when no document is open', () => {
     const host = mountPanel()
     expect(findStat(host, '0')).not.toBeNull()
-    expect(host.textContent).toContain('No tasks in this document.')
+    // Assert through the active locale rather than the English copy: the panel
+    // is localized, so a hardcoded string would pin the test to one language.
+    expect(host.textContent).toContain(t('docstats.noTasks'))
   })
 
   it('renders live stats for the active document content', () => {

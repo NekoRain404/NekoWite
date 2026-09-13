@@ -8,6 +8,20 @@ export interface TableDialogOptions {
   cols?: number
 }
 
+/**
+ * The sizes a GFM table can actually have.
+ *
+ * A table always has a header row plus at least one data row, so 2 is the real
+ * floor for rows — and it has to be the floor of the STEPPER too. It used to be 1
+ * there while `onConfirm` clamped to 2, so a user who asked for 1 row got a
+ * 2-row table: the number on screen was silently not the number in the document.
+ * The column floor stays 1 (a single-column table is valid GFM).
+ */
+export const TABLE_MIN_ROWS = 2
+export const TABLE_MAX_ROWS = 50
+export const TABLE_MIN_COLS = 1
+export const TABLE_MAX_COLS = 30
+
 const clamp = (v: number, min: number, max: number): number =>
   Math.max(min, Math.min(Math.round(Number.isFinite(v) ? v : min), max))
 
@@ -30,21 +44,32 @@ export function openTableDialog(view: EditorView, opts: TableDialogOptions = {})
   }
 
   const onConfirm = (rows: number, cols: number): void => {
-    if (view.state.selection.from === view.state.selection.to) {
-      insertTable(view, clamp(rows, 2, 50), clamp(cols, 1, 30))
-    }
+    // Confirm must always do something visible. It used to require a COLLAPSED
+    // selection, so confirming with text selected silently inserted nothing —
+    // the dialog closed and the document was unchanged, with no explanation.
+    // `insertTable` replaces the selection, which is what "insert a table"
+    // means everywhere else (and matches the same command's behavior when the
+    // caret is merely collapsed).
+    insertTable(
+      view,
+      clamp(rows, TABLE_MIN_ROWS, TABLE_MAX_ROWS),
+      clamp(cols, TABLE_MIN_COLS, TABLE_MAX_COLS),
+    )
     cleanup()
   }
 
   app = createApp({
     setup() {
-      const rows = ref<number>(opts.rows ?? 3)
-      const cols = ref<number>(opts.cols ?? 3)
+      // The initial values go through the same clamp as the steppers, so the
+      // dialog shows a legal size even when the caller passes an impossible one.
+      const rows = ref<number>(clamp(opts.rows ?? 3, TABLE_MIN_ROWS, TABLE_MAX_ROWS))
+      const cols = ref<number>(clamp(opts.cols ?? 3, TABLE_MIN_COLS, TABLE_MAX_COLS))
       const inc = (target: 'rows' | 'cols', delta: number): void => {
-        const cur = target === 'rows' ? rows.value : cols.value
-        const next = clamp(cur + delta, 1, 50)
-        if (target === 'rows') rows.value = next
-        else cols.value = next
+        if (target === 'rows') {
+          rows.value = clamp(rows.value + delta, TABLE_MIN_ROWS, TABLE_MAX_ROWS)
+        } else {
+          cols.value = clamp(cols.value + delta, TABLE_MIN_COLS, TABLE_MAX_COLS)
+        }
       }
       return () =>
         h('div', { class: 'table-dialog', onClick: (e: MouseEvent) => e.stopPropagation() }, [

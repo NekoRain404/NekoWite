@@ -1,7 +1,11 @@
 import { defineComponent, h, onBeforeUnmount, onMounted, ref } from 'vue'
 import { definePlugin } from '@nekowite/plugin-host'
 import type { NekoEditor } from '@nekowite/editor-core'
-import { insertMdxComponent } from '@nekowite/editor-core'
+import {
+  insertMdxComponent,
+  mdxComponentToMarkdown,
+  registerMarkdownCommand,
+} from '@nekowite/editor-core'
 import { editorSessionManager } from '../features/editor/sessionManager'
 import { useFloatStore } from '../stores/float'
 import { t } from '../i18n'
@@ -325,8 +329,19 @@ export function insertFloatBox(): void {
   insertMdxComponent(view, { name: 'FloatBox', props: {}, children: t('plugin.floatboxChildren') })
 }
 
+const FLOATBOX_ID = 'floatbox.insert'
+
 export const floatboxPlugin = definePlugin({
   name: 'FloatBox',
   components: { FloatBox },
-  toolbar: [{ id: 'floatbox.insert', label: t('command.floatbox.insert'), run: insertFloatBox }],
+  toolbar: [{ id: FLOATBOX_ID, label: t('command.floatbox.insert'), run: insertFloatBox }],
 })
+
+// Source mode writes the component as JSX instead of inserting an MDX node;
+// the body comes from the same string the rendered insert uses.
+registerMarkdownCommand(FLOATBOX_ID, () => {
+  const children = t('plugin.floatboxChildren')
+  const text = mdxComponentToMarkdown({ name: 'FloatBox', props: {}, children })
+  return { text, caret: text.indexOf(children) }
+})
+

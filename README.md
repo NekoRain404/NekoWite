@@ -28,7 +28,7 @@ NekoWite 是一个面向写作者、研究者和知识工作者的开源桌面�
 | **结构化内容** | Markdown / MDX 往返保真、YAML frontmatter、表格网格编辑、自定义 JSX / MDX 节点 |
 | **研究与引用** | 导入 `.bib`、`.ris`、CSL 数据，在侧栏管理 `@citekey` 并自动编号 |
 | **公式与发布** | MathLive 可视化公式编辑，支持 `$…$` / `$$…$$`，导出渲染后的 PDF 与 HTML |
-| **AI 辅助** | BYOK 连接 OpenAI、Claude、Gemini、Grok、LM Studio 或 Ollama，使用 ghost-writer 快速生成草稿 |
+| **AI 辅助** | BYOK 连接 OpenAI、Claude、Gemini、Grok、DeepSeek，或本地 LM Studio / Ollama 等 OpenAI 兼容端点，使用 ghost-writer 快速生成草稿 |
 | **个人工作流** | 文档信息、历史版本、回收站、浮动图片 / 文本框 / 贴纸，以及主题设置 |
 
 ## 适合谁
@@ -37,7 +37,7 @@ NekoWite 是一个面向写作者、研究者和知识工作者的开源桌面�
 
 **研究与知识工作者**：把公式、参考文献、表格和说明文字放在同一份可版本化的文档中。
 
-**喜欢折腾的开发者**：通过插件注册 MDX 组件、工具栏按钮和命令，把自己的工作流接进编辑器。
+**喜欢折腾的开发者**：通过内置插件（Callout / FloatBox / 文档状态）扩展写作流；自带插件的加载器已经就绪，但在隔离沙箱完成前**发行版不加载**用户插件（见「插件开发」）。
 
 ## 快速开始
 
@@ -57,7 +57,11 @@ pnpm tauri dev
 
 ## 项目状态
 
-NekoWite 目前处于持续开发阶段。核心编辑、文件管理、公式、引用、导出、AI 和插件能力已经在代码库中实现；跨平台打包、插件沙箱和更完整的发布流程仍在完善。
+当前工作区版本号为 1.0.0（`package.json`、`apps/desktop/package.json`、`apps/desktop/src-tauri/tauri.conf.json` 与 `Cargo.toml` 一致），正在做 1.0 公开发布的最后准备。
+
+NekoWite 目前处于持续开发阶段。核心编辑、文件管理、公式、引用、导出与 AI 能力已经在代码库中实现并在发行版中可用；跨平台打包和更完整的发布流程仍在完善。
+
+**插件：明确说明当前边界。** 内置插件（Callout / FloatBox / 文档状态）随应用运行。用户放在 vault `plugins/` 目录里的插件，其加载器、权限确认、完整性校验与治理（吊销、版本策略、审计日志）都已实现并有测试覆盖，但**发行版默认不加载用户插件**：当前 CSP 不允许窗口内 `import(blob:)`，而插件与主窗口共享同一运行环境时无法做到真正的隔离。这样处理是刻意的——不为了让插件“看起来能用”而降低 CSP。判定与原因写在 `docs/SECURITY.md`，加载被跳过时应用会给出一条明确提示（不是静默失败）。
 
 项目使用 GitHub Actions 持续检查类型、代码风格、单元测试、E2E、构建和 Rust 工程。由于功能仍在快速迭代，建议在升级依赖或提交重要文档前运行本地检查。
 
@@ -84,7 +88,26 @@ packages/plugin-host/      插件加载、注册与权限确认
 docs/                      设计文档与项目资料
 ```
 
+## 文档
+
+面向用户：
+
+- [docs/USER-GUIDE.md](docs/USER-GUIDE.md)：从打开知识库、编辑与搜索，到引用、导出和配置 AI 的完整上手流程
+- [docs/PRIVACY.md](docs/PRIVACY.md)：哪些数据会离开本机、本机存了什么、AI 权限如何工作
+- [docs/RELEASING.md](docs/RELEASING.md)：1.0 的版本号位置、门禁命令、打包与签名现状
+
+面向开发者：
+
+- [docs/SECURITY.md](docs/SECURITY.md)：安全模型里「已强制 / 未实现」的逐项清单
+- [docs/RECOVERY.md](docs/RECOVERY.md)：版本历史、回收站、外部冲突与崩溃恢复
+- [docs/PLUGIN_SDK.md](docs/PLUGIN_SDK.md)：插件 API 与治理；[docs/PLUGIN_ISOLATION.md](docs/PLUGIN_ISOLATION.md)：发行版为何不加载插件
+- [docs/PERF.md](docs/PERF.md) 与 [docs/A11Y.md](docs/A11Y.md)：性能与无障碍基线
+- [docs/dev.md](docs/dev.md)：开发环境与架构约定；[docs/test-plan.md](docs/test-plan.md)：测试范围
+- [CHANGELOG.md](CHANGELOG.md)：逐条变更记录
+
 ## 插件开发
+
+> **当前状态**：内置插件随应用运行；用户插件在发行版中**尚不可用**（隔离沙箱未完成，加载被 CSP 门控跳过，应用会给出提示）。下面的 SDK 与加载管线都已实现并有测试，可在浏览器开发模式与测试环境中运行；把它当作「即将开放的能力」而不是今天就能装进发行版的东西。
 
 插件可以注册自定义 MDX 组件、工具栏按钮和命令。最小形态如下：
 
@@ -122,4 +145,13 @@ export default definePlugin({
 
 ## 许可证
 
-仓库当前未附带独立的 LICENSE 文件。代码使用前请先确认项目维护者发布的许可说明。
+工作区里已有一份 MIT 的 [LICENSE](LICENSE)（尚未提交），`package.json` 与 `apps/desktop/package.json` 也加入了 `"license": "MIT"`；正式发布前请以维护者最终确认的许可说明为准（发布检查清单见 [docs/RELEASING.md](docs/RELEASING.md)）。
+
+## 构建与打包
+
+```bash
+bash scripts/package-win.sh
+# 产物：release/nekowite_<version>_x64.exe（免安装，直接双击运行）
+# 需要 NSIS 安装包时：PORTABLE=0 bash scripts/package-win.sh
+#                         -> release/nekowite_<version>_x64-setup.exe
+```

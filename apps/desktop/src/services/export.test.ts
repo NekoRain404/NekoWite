@@ -150,7 +150,7 @@ describe('export applies settings-store params', () => {
     writeMock.mockResolvedValue(undefined)
     await exportHtml('---\ntitle: Secret\n---\n# H\n', 'vault', 'out.html', { title: 'Doc' })
     const html = writeMock.mock.calls[0][2] as string
-    expect(html).toContain('<h1>H</h1>')
+    expect(html).toContain('<h1 id="h">H</h1>')
     expect(html).not.toContain('title: Secret')
   })
 

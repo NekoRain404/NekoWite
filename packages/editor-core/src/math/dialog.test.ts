@@ -6,6 +6,14 @@ import { openMathDialog } from './dialog'
 
 vi.mock('mathlive', () => ({ MathfieldElement: undefined, convertLatexToMarkup: undefined }))
 
+const { MFE } = vi.hoisted(() => {
+  class MockMFE extends HTMLElement {
+    value = ''
+  }
+  customElements.define('math-field-first-open', MockMFE)
+  return { MFE: MockMFE }
+})
+
 describe('insertMath', () => {
   it('inserts inline math that round-trips', async () => {
     const el = document.createElement('div')
@@ -167,4 +175,34 @@ describe('openMathDialog', () => {
     expect(host?.getAttribute('contenteditable')).toBeNull()
     editor.destroy()
   })
+})
+
+describe('openMathDialog with MathLive available', () => {
+  it('puts a real MathLive field in the FIRST dialog it opens', async () => {
+    // Regression: the dialog used to attach whatever editor was possible at that
+    // instant, and on the first open MathLive had not finished its lazy import —
+    // so the first formula a user wrote got a bare contenteditable box and the
+    // visual editor only showed up on some later open.
+    vi.resetModules()
+    vi.doMock('mathlive', () => ({ MathfieldElement: MFE, convertLatexToMarkup: undefined }))
+    const { openMathDialog: open } = await import('./dialog')
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open('')
+    const view = editor.getView()
+
+    open(view, { mode: 'inline' })
+    // The upgrade is asynchronous: it lands after the lazy import resolves.
+    await vi.waitFor(() => {
+      expect(document.querySelector('.math-overlay math-field-first-open')).not.toBeNull()
+    })
+    const host = document.querySelector('.math-field-host')
+    expect(host?.getAttribute('contenteditable')).toBeNull()
+    document.querySelector('.math-overlay button:last-child')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    vi.doUnmock('mathlive')
+    vi.resetModules()
+    editor.destroy()
+  })
+
 })

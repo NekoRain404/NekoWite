@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import type { LibraryCounts, LibraryFilter, NoteSummary, SortBy } from '../services/noteMeta'
 import type { IndexState } from '../services/searchIndex'
 import { queryCounts, queryTagCounts, queryVisibleNotes } from '../features/vault/services/libraryQueries'
+import { persistence } from '../services/persistence'
 
 /** 列表栏整体视图：notes 模式下列表内容 = filter + query（notes/outline/links 子模式）。 */
 export type ListView = 'notes' | 'graph' | 'attachments' | 'index' | 'cloud' | 'folders'
@@ -13,21 +14,75 @@ export type PanelMode = 'notes' | 'outline' | 'links'
 const LS_KEY = 'nekowite.library'
 const RECENTS_MAX = 20
 
-interface PersistedLibrary {
+/** Parking bucket for the pre-C2 single-bucket blob: it belongs to exactly one
+ *  vault, but which one is only knowable once a vault opens (see `activateBucket`). */
+const ADOPTED_BUCKET = '__adopted__'
+
+/** The vault root recorded at startup (owned by app/appBootstrap.ts). Read here
+ *  only to attribute a legacy blob — or a mutation made before the index reports —
+ *  to the vault the user actually had open. */
+const VAULT_LS_KEY = 'nekowite.vault'
+
+interface VaultLibrary {
+  favorites: string[]
+  recents: string[]
+}
+
+/** Vault root → that vault's favorites/recents. */
+type LibraryBuckets = Record<string, VaultLibrary>
+
+interface LegacyLibrary {
   favorites?: unknown
   recents?: unknown
 }
 
-function readPersisted(): { favorites: string[]; recents: string[] } {
-  const raw = localStorage.getItem(LS_KEY)
-  if (!raw) return { favorites: [], recents: [] }
+function stringsOf(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((x): x is string => typeof x === 'string') : []
+}
+
+function emptyBucket(bucket: VaultLibrary | undefined): boolean {
+  return !bucket || (bucket.favorites.length === 0 && bucket.recents.length === 0)
+}
+
+/**
+ * Read every vault's bucket, migrating the pre-C2 single-bucket blob.
+ *
+ * Older builds kept ONE `{ favorites, recents }` pair for the whole app. Those
+ * entries cannot be attributed to a vault at read time (the store is built before
+ * the index runs), so they are parked under {@link ADOPTED_BUCKET} and moved into
+ * the vault that owns them the moment one becomes active — the user's existing
+ * favorites are never dropped, and they are never copied into every vault either.
+ */
+function readPersisted(): LibraryBuckets {
+  const raw = persistence.get(LS_KEY)
+  if (!raw) return {}
   try {
-    const parsed = JSON.parse(raw) as PersistedLibrary
-    const valid = (v: unknown): string[] =>
-      Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
-    return { favorites: valid(parsed.favorites), recents: valid(parsed.recents) }
+    const parsed = JSON.parse(raw) as unknown
+    // A bare array was never written by this store, but it is a plausible legacy
+    // shape and costs nothing to accept.
+    if (Array.isArray(parsed)) {
+      return { [ADOPTED_BUCKET]: { favorites: stringsOf(parsed), recents: [] } }
+    }
+    if (!parsed || typeof parsed !== 'object') return {}
+    const record = parsed as Record<string, unknown>
+    // Legacy single-bucket shape: the top-level keys are the fields themselves
+    // rather than vault roots.
+    if ('favorites' in record || 'recents' in record) {
+      const legacy = record as LegacyLibrary
+      return {
+        [ADOPTED_BUCKET]: { favorites: stringsOf(legacy.favorites), recents: stringsOf(legacy.recents) },
+      }
+    }
+    const buckets: LibraryBuckets = {}
+    for (const [vault, value] of Object.entries(record)) {
+      if (!value || typeof value !== 'object') continue
+      const bucket = value as LegacyLibrary
+      buckets[vault] = { favorites: stringsOf(bucket.favorites), recents: stringsOf(bucket.recents) }
+    }
+    return buckets
   } catch {
-    return { favorites: [], recents: [] }
+    // Corrupt JSON is not an error: start empty rather than failing to boot.
+    return {}
   }
 }
 
@@ -35,16 +90,25 @@ function readPersisted(): { favorites: string[]; recents: string[] } {
  * Note-list state and actions: the visible note summaries, the library filters /
  * search query / sort, the tag + nav counts, and the persisted favorites/recents.
  *
+ * Favorites/recents are stored PER VAULT (bucket per vault root). One shared pair
+ * used to be pruned against whichever vault was current, so switching vaults
+ * deleted the previous vault's entries for good: the new index reported the old
+ * paths as vanished files and the "prune what is gone" callback — correct within a
+ * vault — dropped them from the only copy there was. Pruning now edits the active
+ * bucket alone and a switch just activates another one.
+ *
  * The note summaries are produced by the vault index coordinator (an application
  * service) and mirrored here via the internal `_setNotes`/`_setIndexing` setters;
  * this store never reads a file itself. Selecting (`visibleNotes`, `tagCounts`,
  * `counts`) is delegated to the pure `libraryQueries` module.
  */
 export const useDocumentListStore = defineStore('documentList', () => {
-  const persisted = readPersisted()
+  const buckets = readPersisted()
+  let activeBucket: string | null = null
+
   const notes = ref<NoteSummary[]>([])
-  const favorites = ref<string[]>(persisted.favorites)
-  const recents = ref<string[]>(persisted.recents)
+  const favorites = ref<string[]>([])
+  const recents = ref<string[]>([])
   const filter = ref<LibraryFilter>('all')
   const query = ref('')
   const sortBy = ref<SortBy>('mtime')
@@ -57,8 +121,46 @@ export const useDocumentListStore = defineStore('documentList', () => {
   const indexProgress = ref<{ done: number; total: number } | null>(null)
 
   function persist(): void {
-    localStorage.setItem(LS_KEY, JSON.stringify({ favorites: favorites.value, recents: recents.value }))
+    // A mutation can land before the index reported (the sidebar renders first);
+    // it still belongs to the vault recorded at startup, and only falls back to
+    // the adoption bucket when no vault was ever recorded.
+    if (activeBucket === null) activeBucket = persistence.get(VAULT_LS_KEY) ?? ADOPTED_BUCKET
+    buckets[activeBucket] = { favorites: [...favorites.value], recents: [...recents.value] }
+    persistence.set(LS_KEY, JSON.stringify(buckets))
   }
+
+  /**
+   * Show `vault`'s own favorites/recents (null = no vault open, so show none).
+   *
+   * The previous vault's bucket is left untouched in storage — it is not this
+   * vault's to prune — and the pre-C2 blob is adopted ONLY by the vault that owns
+   * it (the one recorded at startup), or by the first vault to open when no vault
+   * was recorded.
+   */
+  function activateBucket(vault: string | null): void {
+    if (vault === null) {
+      activeBucket = null
+      favorites.value = []
+      recents.value = []
+      return
+    }
+    const legacy = buckets[ADOPTED_BUCKET]
+    if (legacy) {
+      const recorded = persistence.get(VAULT_LS_KEY)
+      if ((recorded === null || recorded === vault) && emptyBucket(buckets[vault])) {
+        buckets[vault] = legacy
+        delete buckets[ADOPTED_BUCKET]
+        persistence.set(LS_KEY, JSON.stringify(buckets))
+      }
+    }
+    activeBucket = vault
+    favorites.value = [...(buckets[vault]?.favorites ?? [])]
+    recents.value = [...(buckets[vault]?.recents ?? [])]
+  }
+
+  // The vault recorded at startup is enough to show its entries before the index
+  // coordinator reports; `resetForVault` re-activates the real one.
+  activateBucket(persistence.get(VAULT_LS_KEY))
 
   const visibleNotes = computed(() =>
     queryVisibleNotes(notes.value, {
@@ -114,8 +216,8 @@ export const useDocumentListStore = defineStore('documentList', () => {
     query.value = q
   }
 
-  function setSortBy(s: SortBy): void {
-    sortBy.value = s
+  function setSortBy(v: SortBy): void {
+    sortBy.value = v
   }
 
   // --- Internal setters mirrored from the vault index coordinator ---
@@ -133,15 +235,18 @@ export const useDocumentListStore = defineStore('documentList', () => {
     indexProgress.value = progress
   }
 
-  /** Replace favorites/recents after a re-index prunes vanished files. */
+  /** Replace favorites/recents after a re-index prunes vanished files. Only the
+   *  ACTIVE vault's bucket is edited: a path missing from this vault says nothing
+   *  about another vault's entries. */
   function setFavoritesRecents(favs: string[], recentsNext: string[]): void {
     favorites.value = favs
     recents.value = recentsNext
     persist()
   }
 
-  /** Reset the per-vault view/list state on a vault switch. */
-  function resetForVault(): void {
+  /** Reset the per-vault view/list state on a vault switch and activate `vault`'s
+   *  favorites/recents bucket (null when no vault is open). */
+  function resetForVault(vault: string | null = null): void {
     notes.value = []
     filter.value = 'all'
     query.value = ''
@@ -150,6 +255,7 @@ export const useDocumentListStore = defineStore('documentList', () => {
     indexing.value = false
     indexState.value = 'idle'
     indexProgress.value = null
+    activateBucket(vault)
   }
 
   return {

@@ -18,6 +18,7 @@ import {
   copyCells,
   cutCells,
   getTableClipboard,
+  isTableClipboardValid,
   pasteCells,
 } from './clipboard'
 
@@ -58,16 +59,21 @@ export const tableAutoRowKeymap = new Plugin({
 /**
  * Cell copy / cut / paste keyboard bindings.
  *
- * Mod/Cmd+C / X / V ONLY intercept when there is an active cell selection (or,
- * for paste, when the caret is inside a table). Outside a table every keystroke
- * returns false so the normal text copy/cut/paste path is left untouched.
+ * Mod/Cmd+C / X / V only intercept when the gesture genuinely belongs to the
+ * table clipboard. Outside a table every keystroke returns false so the normal
+ * text copy/cut/paste path is left untouched.
  *
  * Copy/cut write the cell selection to a tab-separated fragment. Cut then
- * clears the selected cells in a single transaction (one undo step). Paste
- * reads the in-session buffer (set by our own copy/cut); when it is empty it
- * returns false so the browser's native paste event — which prosemirror-tables
- * `handlePaste` already processes for cell selections — lands external
- * TSV/table content in the grid.
+ * clears the selected cells in a single transaction (one undo step).
+ *
+ * Paste intercepts ONLY when a `CellSelection` is active AND the in-session
+ * buffer still belongs to the current document state. Anything else falls through
+ * to the browser: the caret case used to be intercepted whenever the caret was
+ * anywhere in ANY table, which pasted a stale buffer over the user's real
+ * clipboard content — and its `preventDefault()` suppressed the native paste
+ * event, so pasting an IMAGE into a cell stopped working entirely. It also
+ * dropped every pasted field but the first, because the slice was sized from the
+ * caret's 1x1 rect instead of the copied block.
  */
 export const tableClipboardKeymap = new Plugin({
   key: new PluginKey(TABLE_CLIPBOARD_PLUGIN_KEY),
@@ -92,12 +98,14 @@ export const tableClipboardKeymap = new Plugin({
       }
 
       if (key === 'v') {
-        if (!inCellSelection && !isInTable(view.state)) return false
+        // A caret inside a table is NOT enough: without a cell selection the
+        // native paste must run, so the user's own clipboard (text, images,
+        // files) wins over a copy from earlier in the session.
+        if (!inCellSelection) return false
+        // A buffer from before the last document change (or from another editor)
+        // describes text that is no longer on screen.
+        if (!isTableClipboardValid(view)) return false
         const text = getTableClipboard()
-        // Only intercept when we have an in-session copy (copy/cut wrote the
-        // buffer). Otherwise fall through to the native paste event, which
-        // prosemirror-tables' `handlePaste` already processes for cell
-        // selections — so external TSV/table content still lands in the grid.
         if (!text) return false
         event.preventDefault()
         pasteCells(view, text)

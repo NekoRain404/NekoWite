@@ -34,6 +34,7 @@ const REQUIRED_RUNTIME_EXPORTS = [
   'hasLifecycleListeners',
   'onLifecycleError',
   'emitLifecycle',
+  'reportPluginCallbackError',
   // permissions.ts
   'DANGEROUS_PERMISSIONS',
   'hasDangerousPermissions',

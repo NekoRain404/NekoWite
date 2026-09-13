@@ -10,11 +10,12 @@ import {
   type AttachmentItem,
 } from '../services/attachmentLibrary'
 import { markdownImageBlock, relativePathFromNoteVault } from '../services/attachments'
-import { editorSessionManager } from '../features/editor/sessionManager'
+import { insertMarkdownAtCursor } from '../services/editorInsert'
 import { notifyError } from '../services/errors'
 import { useTabsStore } from '../stores/tabs'
 import ContextMenu from './ContextMenu.vue'
 import type { ContextMenuItem } from './ContextMenu.vue'
+import { isComposingKey } from '../services/keyGuard'
 import { t } from '../i18n'
 
 /**
@@ -33,7 +34,7 @@ const loaded = ref(false)
 
 let runSeq = 0
 
-async function resolveSrcs(vault: string, list: AttachmentItem[]): Promise<void> {
+async function resolveSrcs(vault: string, list: AttachmentItem[], run: number): Promise<void> {
   const next: Record<string, string> = {}
   await Promise.all(
     list.map(async (item) => {
@@ -44,6 +45,12 @@ async function resolveSrcs(vault: string, list: AttachmentItem[]): Promise<void>
       }
     }),
   )
+  // Resolution is async and a vault switch reloads this panel: by the time the
+  // first path comes back, `run` can already be stale. Committing here would
+  // overwrite the new vault's thumbnails with the old vault's URLs and wipe the
+  // broken marks the newer run just set - the reason `reload` checks its own
+  // sequence before touching `items`.
+  if (run !== runSeq) return
   srcs.value = next
   broken.value = {}
 }
@@ -61,7 +68,7 @@ async function reload(): Promise<void> {
       const list = await loadAttachmentLibrary(vault)
       if (run !== runSeq) return
       items.value = list
-      await resolveSrcs(vault, list)
+      await resolveSrcs(vault, list, run)
     }
   } finally {
     if (run === runSeq) {
@@ -69,6 +76,16 @@ async function reload(): Promise<void> {
       loaded.value = true
     }
   }
+}
+
+/** Enter/Space on a card insert the image. While an IME candidate list is open
+ *  those keys belong to the IME; the card is focusable during composition too,
+ *  so the composing Enter must not insert an unrelated attachment. */
+function onCardKeydown(e: KeyboardEvent, item: AttachmentItem): void {
+  if (isComposingKey(e)) return
+  if (e.key !== 'Enter' && e.key !== ' ') return
+  e.preventDefault()
+  void insertItem(item)
 }
 
 function markBroken(path: string): void {
@@ -86,14 +103,12 @@ async function insertItem(item: AttachmentItem): Promise<void> {
     notifyError(t('attachments.openDocFirst'))
     return
   }
-  const editor = editorSessionManager.getActiveEditor()
-  if (!editor) {
-    notifyError(t('attachments.editorNotReady'))
-    return
-  }
   const alt = item.name.replace(/\.[^.]+$/, '') || 'image'
   try {
-    await editor.insertMarkdownAtCursor(markdownImageBlock(alt, referencePathFor(item)))
+    // Routed by view mode: in source mode the image has to land in the
+    // CodeMirror text, not in the hidden rendered model.
+    const inserted = await insertMarkdownAtCursor(markdownImageBlock(alt, referencePathFor(item)))
+    if (inserted === false) notifyError(t('attachments.editorNotReady'))
   } catch {
     notifyError(t('attachments.insertFailed'))
   }
@@ -262,8 +277,7 @@ defineExpose({ reload })
         :aria-label="t('attachments.insertImage', { name: item.name })"
         aria-haspopup="menu"
         @click="insertItem(item)"
-        @keydown.enter.prevent="insertItem(item)"
-        @keydown.space.prevent="insertItem(item)"
+        @keydown="onCardKeydown($event, item)"
         @contextmenu.stop.prevent="openMenu(item, $event)"
       >
         <div class="att-thumb">

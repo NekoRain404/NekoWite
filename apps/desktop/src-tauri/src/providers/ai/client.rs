@@ -32,6 +32,15 @@ pub struct AIConfig {
     pub max_tokens: Option<u32>,
     /// Optional system prompt. `None`/empty adds no system message.
     pub system_prompt: Option<String>,
+    /// The user's thinking-depth choice: one of the lowercase rungs
+    /// `none|minimal|low|medium|high|xhigh`, case- and padding-insensitive.
+    /// Normalised by [`normalize_reasoning_effort`] before a provider ever sees
+    /// it. A value outside that ladder is dropped rather than forwarded: the
+    /// server answers an invalid rung with HTTP 400 (measured against
+    /// tokenflux's `deepseek-flash`: "ultra", "bogus-level" and even the
+    /// uppercase "HIGH" were all rejected), so an unrecognised value must
+    /// degrade to "send nothing" instead of failing the whole request.
+    pub reasoning_effort: Option<String>,
     /// Opt-in to allow private/loopback Base URLs (e.g. Ollama / LM Studio).
     /// Default `false`: a Base URL whose host is a literal private, loopback,
     /// link-local, CGNAT or unspecified IP (or `localhost`) is rejected. The
@@ -49,10 +58,78 @@ pub(crate) fn system_prompt_of(cfg: &AIConfig) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Read a token count the provider actually sent: only a non-negative integer
+/// counts. A string, a float, a negative number or an object is not a
+/// measurement, so it is ignored instead of coerced (see [`TokenUsage`]).
+pub(crate) fn token_count(raw: Option<&serde_json::Value>) -> Option<u64> {
+    raw.and_then(serde_json::Value::as_u64)
+}
+
+/// The thinking-depth ladder every provider understands, lowest first. The
+/// server accepts this exact lowercase set and 400s on anything else, so
+/// normalisation may only ever return one of these six words or `None`.
+const REASONING_EFFORT_LADDER: [&str; 6] = ["none", "minimal", "low", "medium", "high", "xhigh"];
+
+/// Normalise the user's thinking-depth choice to its wire spelling: trimmed,
+/// lowercased, then matched against [`REASONING_EFFORT_LADDER`]. A blank or
+/// unknown value — or no choice at all — returns `None`, meaning "do not send
+/// the field", never a guessed rung: an invalid value is a hard 400 from the
+/// server, so dropping it is the only safe degradation.
+pub fn normalize_reasoning_effort(raw: Option<&str>) -> Option<&'static str> {
+    let value = raw?.trim().to_lowercase();
+    REASONING_EFFORT_LADDER
+        .into_iter()
+        .find(|level| *level == value.as_str())
+}
+
 #[derive(Serialize, Clone)]
 pub struct AIChunk {
     pub id: String,
     pub text: String,
+}
+
+/// Token accounting for one completion, as the provider itself reported it.
+///
+/// Every count is optional on purpose: the dialects differ (Anthropic never
+/// sends a total; OpenAI-compatible endpoints only put `usage` on the last
+/// chunk of a stream, and only when asked to; Gemini sends all three), and a
+/// number nobody measured must stay absent rather than be estimated from the
+/// text. A provider that omits usage entirely yields no `TokenUsage` at all
+/// (see [`ai_done_payload`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct TokenUsage {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_tokens: Option<u64>,
+}
+
+impl TokenUsage {
+    /// Fold a later frame's counts into this one. Providers split their
+    /// accounting across frames — Anthropic sends a partial `output_tokens` on
+    /// `message_start` and the final value on `message_delta`, Gemini repeats
+    /// `usageMetadata` on several chunks — so the newest value wins per field
+    /// and a frame that omits a field never erases one already seen.
+    pub fn merge(&mut self, other: TokenUsage) {
+        if other.prompt_tokens.is_some() {
+            self.prompt_tokens = other.prompt_tokens;
+        }
+        if other.completion_tokens.is_some() {
+            self.completion_tokens = other.completion_tokens;
+        }
+        if other.total_tokens.is_some() {
+            self.total_tokens = other.total_tokens;
+        }
+    }
+
+    /// True when the provider reported at least one count.
+    pub fn has_any(&self) -> bool {
+        self.prompt_tokens.is_some()
+            || self.completion_tokens.is_some()
+            || self.total_tokens.is_some()
+    }
 }
 
 /// RAII guard that decrements the pending counter on drop, so a task aborted
@@ -93,6 +170,28 @@ pub fn emit_ai_error(app: &tauri::AppHandle, id: &str, message: &str) {
         "ai-error",
         serde_json::json!({ "id": id, "message": message }),
     );
+}
+
+/// Fold one parsed frame's usage into a stream's running total.
+pub fn accumulate_usage(total: &mut Option<TokenUsage>, delta: &SseDelta) {
+    if let Some(found) = delta.usage {
+        total.get_or_insert_with(TokenUsage::default).merge(found);
+    }
+}
+
+/// Payload of the terminal `ai-done` event: the answer plus the provider's
+/// token accounting [when it reported any](TokenUsage).
+///
+/// `usage` is `null` - never a zeroed or estimated object - when nothing was
+/// reported, so a caller can tell "this cost nothing to measure" from "this
+/// cost zero tokens". An empty usage object is normalised to `null` here so the
+/// frontend has one spelling of "not reported".
+pub fn ai_done_payload(id: &str, full: &str, usage: Option<TokenUsage>) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "full": full,
+        "usage": usage.filter(TokenUsage::has_any),
+    })
 }
 
 /// Guard against SSRF / internal-endpoint abuse via a user-supplied `base_url`.
@@ -154,7 +253,7 @@ fn is_private_or_loopback_ip(ip: std::net::IpAddr) -> bool {
                 || (o[0] == 100 && (16..=127).contains(&o[1])) // 100.64.0.0/10 CGNAT
                 || (o[0] == 169 && o[1] == 254)               // 169.254.0.0/16 link-local
                 || (o[0] == 172 && (16..=31).contains(&o[1])) // 172.16.0.0/12 private
-                || (o[0] == 192 && o[1] == 168)               // 192.168.0.0/16 private
+                || (o[0] == 192 && o[1] == 168) // 192.168.0.0/16 private
         }
         std::net::IpAddr::V6(v6) => {
             let seg = v6.segments();
@@ -267,6 +366,42 @@ impl SseBuffer {
     }
 }
 
+/// Default API base for a provider that speaks the OpenAI wire format, used
+/// when the caller supplies no explicit Base URL.
+///
+/// Without this the `_` arm of `endpoint_default` sent every such provider to
+/// api.openai.com: a Grok or DeepSeek request would reach OpenAI's host and be
+/// rejected there (with the user's key handed to the wrong origin). `local` is
+/// intentionally absent — a local model server always needs an explicit URL,
+/// and guessing one would be worse than surfacing the missing setting.
+pub fn default_base_url(provider: &str) -> &'static str {
+    match provider {
+        "grok" => "https://api.x.ai/v1",
+        "deepseek" => "https://api.deepseek.com/v1",
+        _ => "https://api.openai.com/v1",
+    }
+}
+
+/// One parsed SSE event: the visible answer text and, separately, any
+/// reasoning progress. They stay distinct because they go to different places —
+/// `text` is appended to the document, `reasoning` only drives a "thinking"
+/// indicator (see `extract_openai_reasoning`).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct SseDelta {
+    pub text: Option<String>,
+    pub reasoning: Option<String>,
+    /// The provider said why it stopped: `length` (token budget exhausted),
+    /// `content_filter`, `stop`, … `None` when the frame did not report it.
+    pub finish_reason: Option<String>,
+    /// The server ended the event stream (`data: [DONE]`).
+    pub done: bool,
+    /// The server reported a failure INSIDE the stream (HTTP was 200).
+    pub error: Option<String>,
+    /// Token counts the frame carried, when it carried any. `None` on every
+    /// frame of a provider (or endpoint) that reports no usage.
+    pub usage: Option<TokenUsage>,
+}
+
 pub fn build_prompt(cursor_prefix: &str) -> String {
     format!(
         "Continue writing the following text. Only output the continuation, no preamble.\n\n{}\n",
@@ -360,34 +495,107 @@ pub fn parse_model_ids(body: &str, _provider: &str) -> Vec<String> {
 /// and surfaces a friendly hint (e.g. a bad API key hides a 401 as "无效") instead
 /// of a bare reqwest status string.
 pub fn http_error_message(status: u16) -> String {
+    http_error_message_with_detail(status, None)
+}
+
+/// The status hint, with the provider's own explanation appended when there is
+/// one.
+///
+/// The status alone routinely points at the wrong thing. Measured against a
+/// real gateway: an unknown MODEL NAME is answered with HTTP 403 and a body
+/// saying `The current group does not support the requested model …; available
+/// models: deepseek-flash` — so the user was told "your API key is invalid" and
+/// spent their time re-entering a key that worked perfectly, while the message
+/// that named the usable model sat in a response body nobody read. An image
+/// sent to a text-only model is a 400 ("unsupported image"), which read as
+/// "malformed request". A 402 is a billing problem, not a network one.
+///
+/// The detail is taken from the provider's JSON (`error.message`) when it
+/// parses, otherwise the raw text is used verbatim; it is capped so a provider
+/// cannot fill the toast with a wall of text.
+pub fn http_error_message_with_detail(status: u16, detail: Option<&str>) -> String {
     let hint = match status {
-        400 => "请求格式不正确",
+        400 => "请求格式不正确（模型可能不支持本次内容，例如图片）",
         401 => "API Key 无效，请检查设置",
-        403 => "API Key 无权限，请检查设置",
-        404 => "接口不存在，请检查 Base URL",
+        402 => "账户余额不足，请检查服务商账单",
+        403 => "没有权限：可能是 API Key 或模型名不被该服务商支持",
+        404 => "接口或模型不存在，请检查 Base URL 与模型名",
+        413 => "请求体过大（图片或附件太多）",
+        422 => "服务商无法处理本次请求",
         429 => "请求过于频繁，请稍后重试",
         500 | 502 | 503 | 504 => "服务端暂时不可用，请稍后重试",
-        _ => "网络请求失败",
+        _ => "请求失败",
     };
-    format!("AI 请求失败：HTTP {status}，{hint}")
+    match detail.map(str::trim).filter(|d| !d.is_empty()) {
+        Some(detail) => {
+            let mut shown = detail.to_string();
+            if shown.chars().count() > 300 {
+                shown = shown.chars().take(300).collect::<String>() + "…";
+            }
+            format!("AI 请求失败：HTTP {status}，{hint}。服务商说明：{shown}")
+        }
+        None => format!("AI 请求失败：HTTP {status}，{hint}"),
+    }
+}
+
+/// A human-readable message from a non-2xx response body, for the two JSON
+/// shapes the supported providers use. Falls back to the trimmed body text.
+pub fn error_detail_from_body(body: &str) -> Option<String> {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if let Some(message) = v
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .or_else(|| v.get("error").and_then(|e| e.as_str().map(|_| e)))
+            .or_else(|| v.get("message"))
+            .and_then(|m| m.as_str())
+        {
+            return Some(message.to_string());
+        }
+    }
+    Some(trimmed.to_string())
 }
 
 /// Parse one SSE line for a provider and append any delta to `acc`.
 /// Returns the incremental text, or `None` for comments, blanks, `[DONE]`,
 /// and non-data lines. The accumulated `acc` is used for the final `full`.
-pub fn parse_sse_line(line: &str, provider: &str, acc: &mut String) -> Option<String> {
+pub fn parse_sse_event(line: &str, provider: &str, acc: &mut String) -> Option<SseDelta> {
     let line = line.trim();
     if !line.starts_with("data:") {
         return None;
     }
     let raw = line.trim_start_matches("data:").trim();
     if raw == "[DONE]" {
-        return None;
+        // The end of an OpenAI-compatible event stream. A server is allowed to
+        // keep the connection open afterwards (and some do), so the caller has to
+        // treat this as "the stream is finished" rather than waiting for EOF:
+        // the answer is already complete, but without this signal it would sit
+        // invisible until the connection closed or the read timeout fired — and
+        // a timeout would then be reported as a failure of a request that had
+        // actually succeeded.
+        return Some(SseDelta {
+            done: true,
+            ..SseDelta::default()
+        });
     }
     let v: serde_json::Value = match serde_json::from_str(raw) {
         Ok(v) => v,
         Err(_) => return None,
     };
+    // In-band errors arrive on a 200 response as a normal event:
+    // `{"error":{"message":"rate limit exceeded"}}` for the OpenAI-compatible
+    // family, `{"type":"error","error":{...}}` for Anthropic. Ignoring them made
+    // a truncated answer look like a complete one, so they are surfaced as an
+    // error event instead of being dropped.
+    if let Some(message) = extract_stream_error(&v) {
+        return Some(SseDelta {
+            error: Some(message),
+            ..SseDelta::default()
+        });
+    }
     let text = match provider {
         "anthropic" => openai_compatible::extract_anthropic_text(&v),
         "gemini" => gemini::extract_text(&v),
@@ -396,7 +604,89 @@ pub fn parse_sse_line(line: &str, provider: &str, acc: &mut String) -> Option<St
     if let Some(t) = &text {
         acc.push_str(t);
     }
-    text
+    // Only the OpenAI-compatible family reports separate reasoning today; the
+    // other providers return their thinking inline or not at all.
+    let reasoning = match provider {
+        "anthropic" | "gemini" => None,
+        _ => openai_compatible::extract_openai_reasoning(&v),
+    };
+    // Why the provider stopped, when it says so: `length` means the answer was
+    // cut off by the token budget, `content_filter` means it was suppressed.
+    // Both used to be indistinguishable from a normal completion.
+    let finish_reason = [
+        // OpenAI-compatible: `choices[0].finish_reason`
+        v.get("choices")
+            .and_then(|c| c.get(0))
+            .and_then(|c| c.get("finish_reason")),
+        // Anthropic, top level (`message_delta` carries it inside `delta`)
+        v.get("stop_reason"),
+        v.get("delta").and_then(|d| d.get("stop_reason")),
+        // Gemini, `candidates[0].finishReason`
+        v.get("candidates")
+            .and_then(|c| c.get(0))
+            .and_then(|c| c.get("finishReason")),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|f| f.as_str())
+    .map(str::to_string);
+    // Token accounting, where each dialect puts it. A usage-only frame is a
+    // real frame: OpenAI-compatible endpoints answer an
+    // `stream_options.include_usage` request with a last chunk that has an empty
+    // `choices` array and nothing but `usage`, and Gemini attaches
+    // `usageMetadata` to chunks that carry no text at all.
+    let usage = match provider {
+        "anthropic" => openai_compatible::extract_anthropic_usage(&v),
+        "gemini" => gemini::extract_usage(&v),
+        _ => openai_compatible::extract_openai_usage(&v),
+    };
+    if text.is_none() && reasoning.is_none() && finish_reason.is_none() && usage.is_none() {
+        return None;
+    }
+    Some(SseDelta {
+        text,
+        reasoning,
+        finish_reason,
+        usage,
+        ..SseDelta::default()
+    })
+}
+
+/// Pull a human-readable message out of an in-band SSE error frame, for either
+/// dialect. Returns `None` when the frame is not an error at all.
+fn extract_stream_error(v: &serde_json::Value) -> Option<String> {
+    let is_anthropic_error = v.get("type").and_then(|t| t.as_str()) == Some("error");
+    let err = v.get("error");
+    if err.is_none() && !is_anthropic_error {
+        return None;
+    }
+    let message = err
+        .and_then(|e| {
+            e.get("message")
+                .and_then(|m| m.as_str())
+                .or_else(|| e.as_str())
+                .map(str::to_string)
+        })
+        .or_else(|| {
+            v.get("message")
+                .and_then(|m| m.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "服务端在流中返回了错误".to_string());
+    let kind = err
+        .and_then(|e| e.get("type").and_then(|t| t.as_str()))
+        .unwrap_or("");
+    Some(if kind.is_empty() {
+        message
+    } else {
+        format!("{message}（{kind}）")
+    })
+}
+
+/// Text-only view of one SSE line, for callers (and tests) that just want the
+/// document-visible delta. Reasoning progress is dropped.
+pub fn parse_sse_line(line: &str, provider: &str, acc: &mut String) -> Option<String> {
+    parse_sse_event(line, provider, acc).and_then(|d| d.text)
 }
 
 fn is_active(app: &tauri::AppHandle, id: &str) -> bool {
@@ -471,7 +761,7 @@ pub async fn list_models(config: &AIConfig) -> Result<Vec<String>, String> {
             let base = config
                 .base_url
                 .clone()
-                .unwrap_or_else(|| "https://api.openai.com/v1".into());
+                .unwrap_or_else(|| default_base_url(&config.provider).to_string());
             let url = format!("{}/models", base.trim_end_matches('/'));
             let headers = if let Some(key) = &config.api_key {
                 vec![("Authorization".to_string(), format!("Bearer {key}"))]
@@ -487,15 +777,20 @@ pub async fn list_models(config: &AIConfig) -> Result<Vec<String>, String> {
         request = request.header(k, v);
     }
 
-    let body = request
+    let response = request
         .send()
         .await
-        .map_err(|e| format!("请求模型列表失败：{e}"))?
-        .error_for_status()
-        .map_err(|e| format!("模型列表请求失败：{e}"))?
-        .text()
-        .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("请求模型列表失败：{e}"))?;
+    let status = response.status();
+    let body = response.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        // Same reasoning as the completion path: the body says WHY (wrong key,
+        // wrong base URL, unknown model), and that is what the user needs.
+        return Err(http_error_message_with_detail(
+            status.as_u16(),
+            error_detail_from_body(&body).as_deref(),
+        ));
+    }
 
     // A blank body is a legitimate "no models" signal; anything non-empty must
     // still parse as JSON, otherwise a 500 error page would silently surface as
@@ -514,6 +809,7 @@ pub async fn stream_complete(
     prompt: &str,
     images: &[serde_json::Value],
     id: &str,
+    cancel: &tokio_util::sync::CancellationToken,
 ) -> Result<(), String> {
     // `resolve_endpoint` builds the content itself: with images it emits the
     // provider's multimodal array (text + image blocks), without images it
@@ -578,38 +874,111 @@ pub async fn stream_complete(
     // hint to the user). Surfacing it here mirrors the `send` failure path above:
     // emit `ai-error` then return `Err`, so the frontend's `onError`/toast fires.
     // 2xx passes through to `bytes_stream()` unchanged.
-    let response = response.error_for_status().map_err(|e| {
-        let message = http_error_message(e.status().map(|s| s.as_u16()).unwrap_or(0));
+    let status = response.status();
+    if !status.is_success() {
+        // Read the provider's own explanation BEFORE reporting: the status code
+        // alone misdirects (an unknown model name arrives as 403, which reads as
+        // "your key is invalid"), while the body names the actual problem and,
+        // for a model error, the models that would work.
+        let detail = match response.text().await {
+            Ok(body) => error_detail_from_body(&body),
+            Err(_) => None,
+        };
+        let message = http_error_message_with_detail(status.as_u16(), detail.as_deref());
         let _ = app.emit(
             "ai-error",
             serde_json::json!({ "id": id, "message": message }),
         );
-        message
-    })?;
+        return Err(message);
+    }
 
     let mut stream = response.bytes_stream();
     let mut full = String::new();
+    // Provider-reported token counts, merged across the frames that carry them
+    // (see `TokenUsage::merge`); stays `None` when the provider reports none.
+    let mut usage: Option<TokenUsage> = None;
     let mut buffer = SseBuffer::new();
     let mut stream_ended = false;
+    // Reasoning models can spend the ENTIRE token budget thinking and then
+    // return no answer at all. Measured against tokenflux's `deepseek-flash`
+    // with max_tokens=256: 256 reasoning tokens, zero content deltas and
+    // `finish_reason: "length"`. Without this flag that produced a silent
+    // no-op the user could not explain; with it we can say what happened.
+    let mut reasoning_seen = false;
+    // Why the provider says it stopped, when it says so (`length`,
+    // `content_filter`, …). Recorded here because the decision to warn about a
+    // truncated answer has to happen after the loop, not inside it.
+    let mut finish_reason: Option<String> = None;
     loop {
         if !is_active(app, id) {
             break;
         }
-        match stream.next().await {
+        // Race the socket against the cancel token. Checking a flag between
+        // chunks is not enough: the provider can be silent for a long time
+        // (reasoning models especially), and during that gap a cancelled request
+        // kept its connection, its concurrency permit and its billing alive
+        // until the next chunk arrived or the 120 s read timeout expired.
+        let next = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                break;
+            }
+            chunk = stream.next() => chunk,
+        };
+        match next {
             Some(Ok(chunk)) => {
                 // Feed the raw bytes; the buffer decodes only complete lines,
                 // so a multi-byte UTF-8 character split at a chunk boundary
                 // stays intact (decoding per chunk would corrupt it to U+FFFD).
                 for line in buffer.feed(&chunk) {
-                    if let Some(delta) = parse_sse_line(&line, &config.provider, &mut full) {
+                    // A reasoning model streams its thinking BEFORE any answer
+                    // text, so without this the UI showed nothing at all for
+                    // that whole phase and looked hung. The reasoning is
+                    // emitted as progress only — never appended to `full`, or
+                    // the ghost writer would type the model's internal
+                    // monologue into the document.
+                    let Some(delta) = parse_sse_event(&line, &config.provider, &mut full) else {
+                        continue;
+                    };
+                    accumulate_usage(&mut usage, &delta);
+                    // An error frame arrives on a 200 response, so it has to be
+                    // turned into a real error here or the truncated answer is
+                    // accepted as if it were complete.
+                    if let Some(message) = delta.error {
+                        let _ = app.emit(
+                            "ai-error",
+                            serde_json::json!({ "id": id, "message": message }),
+                        );
+                        return Err(message);
+                    }
+                    if delta.done {
+                        // `data: [DONE]` finishes the answer even if the server
+                        // keeps the connection open.
+                        stream_ended = true;
+                        break;
+                    }
+                    if let Some(reason) = delta.finish_reason {
+                        finish_reason = Some(reason);
+                    }
+                    if let Some(reasoning) = delta.reasoning {
+                        reasoning_seen = true;
+                        let _ = app.emit(
+                            "ai-reasoning",
+                            serde_json::json!({ "id": id, "text": reasoning }),
+                        );
+                    }
+                    if let Some(text) = delta.text {
                         let _ = app.emit(
                             "ai-chunk",
                             AIChunk {
                                 id: id.to_string(),
-                                text: delta,
+                                text,
                             },
                         );
                     }
+                }
+                if stream_ended {
+                    break;
                 }
             }
             Some(Err(e)) => {
@@ -627,20 +996,68 @@ pub async fn stream_complete(
     }
     // The stream ran to its end (as opposed to being cancelled): emit a final
     // partial line if the server stopped mid-line, so its text is not dropped.
+    // A cancelled stream must NOT flush: the user asked for the request to stop,
+    // and emitting the tail of an abandoned response is how a late chunk got
+    // adopted by the next request.
     if stream_ended {
         for line in buffer.flush() {
-            if let Some(delta) = parse_sse_line(&line, &config.provider, &mut full) {
+            let Some(delta) = parse_sse_event(&line, &config.provider, &mut full) else {
+                continue;
+            };
+            accumulate_usage(&mut usage, &delta);
+            if delta.done {
+                break;
+            }
+            if let Some(text) = delta.text {
                 let _ = app.emit(
                     "ai-chunk",
                     AIChunk {
                         id: id.to_string(),
-                        text: delta,
+                        text,
                     },
                 );
             }
         }
     }
-    let _ = app.emit("ai-done", serde_json::json!({ "id": id, "full": full }));
+    // A cancellation is not a failure and not a completion: say nothing, emit
+    // nothing. The caller has already been told (and the frontend discards any
+    // late `ai-done` for a stream it cancelled — this is the belt to that
+    // braces, and it stops a cancelled request from counting as a success).
+    if !is_active(app, id) {
+        return Ok(());
+    }
+    // `length` means the provider ran out of output budget mid-answer. Saying so
+    // matters more than the answer itself: the text the user sees is a fragment,
+    // and silently accepting it as the whole reply is how a truncated document
+    // ends up inserted into a note.
+    if finish_reason.as_deref() == Some("length") && !full.is_empty() {
+        let message = "回答因达到最大输出 Tokens 被截断（finish_reason: length）。\n                  内容并不完整，请在设置里调大“最大输出 Tokens”后重试。";
+        let _ = app.emit(
+            "ai-error",
+            serde_json::json!({ "id": id, "message": message }),
+        );
+        return Err(message.into());
+    }
+    if finish_reason.as_deref() == Some("content_filter") {
+        let message = "服务端的内容过滤中断了这次回答（finish_reason: content_filter）。";
+        let _ = app.emit(
+            "ai-error",
+            serde_json::json!({ "id": id, "message": message }),
+        );
+        return Err(message.into());
+    }
+    // An answer-less completion that produced reasoning is not a normal result:
+    // the budget was consumed by the model's thinking, so tell the user what to
+    // change instead of finishing silently with nothing to show.
+    if full.is_empty() && reasoning_seen {
+        let message = "模型把本次最大输出 Tokens 全部用于推理，没有产出正文。                       请在设置里把“最大输出 Tokens”调大（推理模型建议 ≥ 1024）后重试。";
+        let _ = app.emit(
+            "ai-error",
+            serde_json::json!({ "id": id, "message": message }),
+        );
+        return Err(message.into());
+    }
+    let _ = app.emit("ai-done", ai_done_payload(id, &full, usage));
     Ok(())
 }
 
@@ -673,13 +1090,29 @@ mod tests {
     #[test]
     fn helper_flags_private_loopback_and_mapped_ips() {
         for host in [
-            "127.0.0.1", "10.0.0.5", "172.16.0.1", "192.168.1.1", "169.254.169.254",
-            "100.64.0.1", "0.0.0.0", "::1", "::", "fc00::1", "fe80::1",
-            "::ffff:127.0.0.1", "::ffff:192.168.0.5", "localhost",
+            "127.0.0.1",
+            "10.0.0.5",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "::1",
+            "::",
+            "fc00::1",
+            "fe80::1",
+            "::ffff:127.0.0.1",
+            "::ffff:192.168.0.5",
+            "localhost",
         ] {
             assert!(is_private_or_loopback_host(host), "should flag {host}");
         }
-        for host in ["8.8.8.8", "203.0.113.9", "2606:4700:4700::1111", "api.openai.com"] {
+        for host in [
+            "8.8.8.8",
+            "203.0.113.9",
+            "2606:4700:4700::1111",
+            "api.openai.com",
+        ] {
             assert!(!is_private_or_loopback_host(host), "should allow {host}");
         }
     }
@@ -715,6 +1148,7 @@ mod tests {
             temperature: None,
             max_tokens: None,
             system_prompt: None,
+            reasoning_effort: None,
             allow_private: true,
         };
         assert!(validate_base_url(&cfg).is_ok());
@@ -730,9 +1164,134 @@ mod tests {
             temperature: None,
             max_tokens: None,
             system_prompt: None,
+            reasoning_effort: None,
             allow_private: false,
         };
         assert!(validate_base_url(&cfg).is_ok());
+    }
+
+    #[test]
+    fn openai_usage_is_read_from_the_final_chunk() {
+        let mut acc = String::new();
+        let line = r#"data: {"id":"1","choices":[],"usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15}}"#;
+        let delta = parse_sse_event(line, "openai", &mut acc).expect("usage frame");
+        assert_eq!(delta.text, None, "a usage frame carries no answer text");
+        assert_eq!(
+            delta.usage,
+            Some(TokenUsage {
+                prompt_tokens: Some(12),
+                completion_tokens: Some(3),
+                total_tokens: Some(15),
+            })
+        );
+    }
+
+    #[test]
+    fn anthropic_usage_is_merged_across_message_start_and_delta() {
+        let mut acc = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        for line in [
+            r#"data: {"type":"message_start","message":{"usage":{"input_tokens":40,"output_tokens":1}}}"#,
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":17}}"#,
+        ] {
+            let delta = parse_sse_event(line, "anthropic", &mut acc).expect("anthropic frame");
+            accumulate_usage(&mut usage, &delta);
+        }
+        assert_eq!(
+            usage,
+            Some(TokenUsage {
+                prompt_tokens: Some(40),
+                completion_tokens: Some(17),
+                total_tokens: None,
+            }),
+            "the final output_tokens must replace the partial one message_start sent"
+        );
+    }
+
+    #[test]
+    fn a_stream_that_reports_no_usage_ends_with_null_and_invents_nothing() {
+        let mut acc = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        for line in [
+            r#"data: {"choices":[{"delta":{"content":"hi"}}]}"#,
+            "data: [DONE]",
+        ] {
+            if let Some(delta) = parse_sse_event(line, "openai", &mut acc) {
+                accumulate_usage(&mut usage, &delta);
+            }
+        }
+        assert_eq!(usage, None);
+        let payload = ai_done_payload("ai-1", "hi", usage);
+        assert_eq!(payload["id"], "ai-1");
+        assert_eq!(payload["full"], "hi");
+        assert_eq!(payload["usage"], serde_json::Value::Null);
+        // An all-empty usage object is the same "not reported", not a 0-token
+        // completion.
+        let empty = ai_done_payload("ai-1", "hi", Some(TokenUsage::default()));
+        assert_eq!(empty["usage"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn malformed_usage_fields_are_ignored_not_converted_to_numbers() {
+        // A count that is not a non-negative integer was not measured: it must
+        // stay absent instead of being cast into a number nobody sent.
+        let mut acc = String::new();
+        for (line, provider) in [
+            (
+                r#"data: {"choices":[{"delta":{"content":"hi"}}],"usage":"lots"}"#,
+                "openai",
+            ),
+            (
+                r#"data: {"choices":[{"delta":{"content":"hi"}}],"usage":{"prompt_tokens":"12","completion_tokens":-3,"total_tokens":1.5}}"#,
+                "openai",
+            ),
+            (
+                r#"data: {"choices":[{"delta":{"content":"hi"}}],"usage":{}}"#,
+                "openai",
+            ),
+            (
+                r#"data: {"type":"message_delta","delta":{"text":"hi"},"usage":{"output_tokens":{}}}"#,
+                "anthropic",
+            ),
+            (
+                r#"data: {"candidates":[{"content":{"parts":[{"text":"hi"}]}}],"usageMetadata":{"promptTokenCount":"9"}}"#,
+                "gemini",
+            ),
+        ] {
+            let delta = parse_sse_event(line, provider, &mut acc)
+                .unwrap_or_else(|| panic!("frame was dropped: {line}"));
+            assert_eq!(delta.usage, None, "must not convert {line}");
+        }
+    }
+
+    #[test]
+    fn ai_done_payload_carries_the_reported_usage() {
+        let usage = TokenUsage {
+            prompt_tokens: Some(40),
+            completion_tokens: Some(17),
+            total_tokens: None,
+        };
+        let payload = ai_done_payload("ai-1", "answer", Some(usage));
+        assert_eq!(payload["usage"]["prompt_tokens"], 40);
+        assert_eq!(payload["usage"]["completion_tokens"], 17);
+        // Anthropic reports no total, so there is no total key at all - the
+        // frontend must not be handed a sum the provider never sent.
+        assert!(payload["usage"].get("total_tokens").is_none());
+    }
+
+    #[test]
+    fn a_usage_only_final_chunk_is_not_dropped() {
+        // OpenAI-compatible endpoints answer a `stream_options.include_usage`
+        // request with a LAST chunk that has an empty `choices` array and only
+        // `usage`. A frame with no text, no reasoning and no finish_reason used
+        // to be dropped by the parser, so the counts never reached the stream
+        // loop (nor the `ai-done` payload) at all.
+        let mut acc = String::new();
+        let line = r#"data: {"id":"1","choices":[],"usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15}}"#;
+        assert!(
+            parse_sse_event(line, "openai", &mut acc).is_some(),
+            "a usage-only frame must not be dropped"
+        );
     }
 
     #[test]
@@ -745,10 +1304,17 @@ mod tests {
             temperature: None,
             max_tokens: None,
             system_prompt: None,
+            reasoning_effort: None,
             allow_private: false,
         };
         let (url, _body) = resolve_endpoint(&cfg, "hi", &[]);
-        assert!(!url.contains("SECRET-KEY"), "key must not appear in URL: {url}");
-        assert!(!url.contains("key="), "url must not carry a key query param: {url}");
+        assert!(
+            !url.contains("SECRET-KEY"),
+            "key must not appear in URL: {url}"
+        );
+        assert!(
+            !url.contains("key="),
+            "url must not carry a key query param: {url}"
+        );
     }
 }

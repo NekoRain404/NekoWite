@@ -17,7 +17,10 @@ export function memoryPersistencePort(): PersistencePort {
     },
 
     set(key, value) {
+      // A Map cannot fail, but the storage-budget semantics are the same: the
+      // adapter reports whether the write landed (see `PersistencePort.set`).
       store.set(key, String(value))
+      return true
     },
 
     remove(key) {

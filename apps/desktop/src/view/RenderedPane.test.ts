@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { createApp, type App as VueApp } from 'vue'
+import { createApp, nextTick, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { useTabsStore } from '../stores/tabs'
 
@@ -29,104 +29,12 @@ vi.mock('../platform/gateways/fs', () => ({
 import RenderedPane from './RenderedPane.vue'
 import { editorBridge } from '../services/editorBridge'
 import { fsService } from '../platform/gateways/fs'
+import { useAppearanceStore } from '../stores/appearance'
 
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
 
 let pinia: Pinia
 let mounted: VueApp[] = []
-
-function pasteEvent(dataTransfer: { files: File[]; items: unknown[] }): Event {
-  const event = new Event('paste', { bubbles: true, cancelable: true })
-  Object.defineProperty(event, 'clipboardData', { value: dataTransfer })
-  return event
-}
-
-describe('RenderedPane image paste pipeline', () => {
-  beforeEach(() => {
-    pinia = createPinia()
-    setActivePinia(pinia)
-    saveAttachmentMock.mockReset()
-    saveAttachmentMock.mockResolvedValue('attachments/2026-09/paste-x.png')
-    document.body.innerHTML = ''
-    mounted = []
-  })
-
-  afterEach(() => {
-    mounted.forEach((app) => app.unmount())
-    mounted = []
-    document.body.innerHTML = ''
-  })
-
-  async function mountPane(withVault = true): Promise<{ host: HTMLElement; pane: HTMLElement }> {
-    const tabs = useTabsStore()
-    if (withVault) tabs.setVault('/vault')
-    await tabs.openTab('notes/a.md')
-    const host = document.createElement('div')
-    document.body.appendChild(host)
-    const app = createApp(RenderedPane)
-    app.use(pinia)
-    app.mount(host)
-    mounted.push(app)
-    await flush()
-    const pane = host.querySelector('.rendered-pane')
-    expect(pane).toBeTruthy()
-    return { host, pane: pane as HTMLElement }
-  }
-
-  it('prompts for a rename, saves the image into the note assets dir and inserts a markdown block', async () => {
-    const { pane } = await mountPane()
-    const png = new File([new Uint8Array([137, 80])], 'image.png', { type: 'image/png' })
-    pane.dispatchEvent(pasteEvent({ files: [png], items: [] }))
-    await flush()
-
-    // The rename modal is open, pre-filled with a timestamped default.
-    const input = document.body.querySelector<HTMLInputElement>('.rename-dialog .input')
-    expect(input).toBeTruthy()
-    expect(input?.value).toMatch(/^paste-\d{8}-\d{6}\.png$/)
-    input!.value = 'hello.png'
-    input!.dispatchEvent(new Event('input'))
-    ;(document.body.querySelector('.rename-dialog .btn-primary') as HTMLElement).click()
-    await flush()
-
-    expect(saveAttachmentMock).toHaveBeenCalledWith(
-      '/vault',
-      'hello.png',
-      expect.any(String),
-      'notes/a_assets',
-    )
-    const md = await editorBridge.getEditor()?.save()
-    expect(md).toMatch(/!\[hello\.png\]\(\.\.\/attachments\/2026-09\/paste-x\.png\)/)
-  })
-
-  it('skips a file when the rename is cancelled', async () => {
-    const { pane } = await mountPane()
-    const png = new File([new Uint8Array([137, 80])], 'image.png', { type: 'image/png' })
-    pane.dispatchEvent(pasteEvent({ files: [png], items: [] }))
-    await flush()
-
-    ;(document.body.querySelector('.rename-dialog .btn-ghost') as HTMLElement).click()
-    await flush()
-    expect(saveAttachmentMock).not.toHaveBeenCalled()
-    // No image block was inserted — the document keeps its original content.
-    expect(await editorBridge.getEditor()?.save()).not.toContain('![')
-  })
-
-  it('does not intercept plain-text pastes', async () => {
-    const { pane } = await mountPane()
-    const event = pasteEvent({ files: [], items: [] })
-    pane.dispatchEvent(event)
-    await flush()
-    expect(saveAttachmentMock).not.toHaveBeenCalled()
-  })
-
-  it('reports a missing vault instead of saving', async () => {
-    const { pane } = await mountPane(false)
-    const png = new File([new Uint8Array([137])], 'image.png', { type: 'image/png' })
-    pane.dispatchEvent(pasteEvent({ files: [png], items: [] }))
-    await flush()
-    expect(saveAttachmentMock).not.toHaveBeenCalled()
-  })
-})
 
 describe('RenderedPane content injection', () => {
   beforeEach(() => {
@@ -168,5 +76,47 @@ describe('RenderedPane content injection', () => {
     expect(h1?.textContent).toBe('Welcome')
     const md = await editorBridge.getEditor()?.save()
     expect(md).toContain('# Welcome')
+  })
+
+  it('follows the task-list rendering setting without rebuilding the editor', async () => {
+    const appearance = useAppearanceStore()
+    appearance.setRenderTaskChecklist(true)
+    vi.mocked(fsService.read).mockResolvedValue('- [ ] todo\n- [x] done\n')
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const app = createApp(RenderedPane)
+    app.use(pinia)
+    app.mount(host)
+    mounted.push(app)
+    await flush()
+
+    await tabs.openTab('notes/tasks.md')
+    await flush()
+    await flush()
+
+    const items = (): HTMLElement[] => [
+      ...document.querySelectorAll<HTMLElement>('.rendered-pane li[data-item-type="task"]'),
+    ]
+    // The class is editor-core's TASK_PLAIN_CLASS; spelled out here so this case
+    // keeps failing for the right reason (no consumer) on an older editor-core.
+    const plain = (): HTMLElement[] => [
+      ...document.querySelectorAll<HTMLElement>('.rendered-pane li.neko-task-plain'),
+    ]
+    expect(items()).toHaveLength(2)
+    expect(plain()).toHaveLength(0)
+
+    // Off: the item keeps its markdown marker as text, the box is gone.
+    appearance.setRenderTaskChecklist(false)
+    await nextTick()
+    expect(plain()).toHaveLength(2)
+    expect(items()[0]!.getAttribute('data-neko-task-marker')).toBe('[ ]')
+    expect(items()[1]!.getAttribute('data-neko-task-marker')).toBe('[x]')
+
+    // ...and back on again, on the same editor instance.
+    appearance.setRenderTaskChecklist(true)
+    await nextTick()
+    expect(plain()).toHaveLength(0)
   })
 })

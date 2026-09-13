@@ -1,4 +1,5 @@
 import { t } from '../i18n'
+import { baseName, dirName, stripVaultPrefix } from '../services/paths'
 
 export type PaletteKind = 'command' | 'file'
 
@@ -85,9 +86,9 @@ export interface PathParts {
 }
 
 export function splitPath(path: string): PathParts {
-  const cut = path.lastIndexOf('/')
-  if (cut < 0) return { name: path, dir: '' }
-  return { name: path.slice(cut + 1), dir: path.slice(0, cut) }
+  // Separator-agnostic: palette file entries carry the absolute native path.
+  const name = baseName(path)
+  return name === path ? { name, dir: '' } : { name, dir: dirName(path) }
 }
 
 /** Directory portion for display, with the vault prefix stripped so hints
@@ -96,10 +97,13 @@ export function displayDir(path: string, vault: string | null): string {
   const { dir } = splitPath(path)
   if (!dir) return ''
   if (!vault) return dir
-  const root = vault.replace(/\/+$/, '')
-  if (dir === root) return ''
-  const prefix = root + '/'
-  return dir.startsWith(prefix) ? dir.slice(prefix.length) : dir
+  // Both sides go through the shared helpers: on Windows these are native
+  // backslash paths, so a literal '/' comparison never matched the vault root
+  // and the hint showed the whole absolute path instead of the relative one.
+  const root = stripVaultPrefix(vault, vault)
+  const rel = stripVaultPrefix(dir, vault)
+  if (rel === root || rel === dir) return rel === dir ? dir : ''
+  return rel
 }
 
 export function fileEntryOf(path: string, vault: string | null, run: () => void): PaletteEntry {

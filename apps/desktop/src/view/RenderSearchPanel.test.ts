@@ -36,6 +36,7 @@ import {
   replaceCurrent,
   renderSearchState,
   setQuery,
+  setRenderSearchState,
   suggestionsFromAttr,
 } from '../services/renderSearch'
 
@@ -160,6 +161,66 @@ describe('replace via ProseMirror model', () => {
   })
 })
 
+describe('stale ranges never rewrite the wrong text', () => {
+  it('does not replace at offsets left over from another document', async () => {
+    // renderSearchState.ranges is refreshed on a debounce, and the document can
+    // be replaced wholesale in between (switching notes, an external reload).
+    // The replace actions used the cached ranges unconditionally, so replacing in
+    // note B used note A's offsets: unrelated text in B was overwritten and then
+    // autosaved, with nothing on screen to explain it.
+    await mountEditor('1234567890123456789012345')
+    setQuery('123')
+    setRenderSearchState({ open: true, replace: 'XX' })
+    // The offsets as they were computed for note A.
+    const rangesForA = findRangesInDoc(editorBridge.getView()!, '123', false)
+    expect(rangesForA.length).toBeGreaterThan(0)
+
+    const beforeB = 'abcdefghijklmnopqrstuvwxyz'
+    await mountEditor(beforeB)
+    // The overlay refresh runs on a debounce, so a replace issued inside that
+    // window sees exactly this: the previous document's offsets. Assign them
+    // directly to model the cache the user's click would find.
+    renderSearchState.ranges = rangesForA
+
+    replaceAll()
+    expect(editorBridge.getView()!.state.doc.textContent).toBe(beforeB)
+  })
+
+  it('does not throw when the new document is shorter than the cached offsets', async () => {
+    // The uncaught RangeError from tr.insertText looked like the button doing
+    // nothing at all, with an error only in the console.
+    await mountEditor('1234567890123456789012345')
+    setQuery('123')
+    setRenderSearchState({ open: true, replace: 'XX' })
+    const rangesForA = findRangesInDoc(editorBridge.getView()!, '123', false)
+
+    await mountEditor('short')
+    renderSearchState.ranges = rangesForA
+
+    expect(() => replaceAll()).not.toThrow()
+    expect(() => replaceCurrent()).not.toThrow()
+    expect(editorBridge.getView()!.state.doc.textContent).toBe('short')
+  })
+
+  it('matches a very long query instead of throwing', async () => {
+    // A long query makes V8 reject the compiled regex ("Regular expression too
+    // large"). Escaping metacharacters does not help — the limit is the pattern
+    // length — so the panel threw on every keystroke and kept the PREVIOUS
+    // query's ranges; "Replace all" then replaced matches of a search the user
+    // had already moved on from.
+    const long = 'z'.repeat(50000)
+    await mountEditor('before ' + long + ' after')
+    expect(() => findRangesInDoc(editorBridge.getView()!, long, false)).not.toThrow()
+    setQuery(long)
+    setRenderSearchState({ open: true, replace: 'Q' })
+    renderSearchState.ranges = findRangesInDoc(editorBridge.getView()!, long, false)
+
+    replaceAll()
+
+    expect(editorBridge.getView()!.state.doc.textContent).toBe('before Q after')
+  })
+})
+
 describe('spell replacement', () => {
   it('replaces a clicked misspelling via the model', async () => {
     await mountEditor('helo world')
@@ -187,5 +248,25 @@ describe('panel open/close lifecycle', () => {
     closePanel()
     expect(renderSearchState.ranges).toEqual([])
     expect(renderSearchState.open).toBe(false)
+  })
+})
+
+describe('overlay decorations do not duplicate the plugins own', () => {
+  it('renders the AI suggestion ghost exactly once', async () => {
+    // ProseMirror gathers decorations from EVERY source it can find:
+    // `viewDecorations()` runs `someProp('decorations', ...)`, which visits the
+    // view's top-level prop AND each plugin's own prop. The overlay provider
+    // also folded the plugins' decorations into its own set, so anything
+    // non-idempotent was painted twice - the ghost suggestion showed up as two
+    // identical spans, and so did the task-checkbox marker.
+    await mountEditor('hello world')
+    const editor = editorBridge.getEditor()!
+    openPanel()
+    setQuery('hello')
+
+    editor.setSuggestion(' and more')
+
+    expect(document.querySelectorAll('.ghost-text')).toHaveLength(1)
+    expect(document.querySelector('.ghost-text')?.textContent).toBe(' and more')
   })
 })

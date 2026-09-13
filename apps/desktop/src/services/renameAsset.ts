@@ -1,4 +1,10 @@
-import { relativePathFromNoteVault, suggestedPasteFileName } from './attachments'
+import {
+  ATTACHMENT_EXTENSIONS,
+  extensionFromFileName,
+  relativePathFromNoteVault,
+  suggestedPasteFileName,
+} from './attachments'
+import { baseName, dirName, stripVaultPrefix } from './paths'
 import { t } from '../i18n'
 
 export interface AssetMove {
@@ -22,27 +28,38 @@ export function validateRenameName(name: string): string | null {
   if (trimmed.includes('..')) return t('renameDialog.dotDotForbidden')
   if (trimmed.startsWith('.')) return t('renameDialog.dotForbidden')
   if (!trimmed.includes('.')) return t('renameDialog.extensionRequired')
+  // The paste path stores images, so the extension has to be one the backend
+  // accepts. Checking here turns a rejected save into a clear message.
+  if (extensionFromFileName(trimmed) === null) {
+    return t('renameDialog.extensionUnsupported', {
+      list: ATTACHMENT_EXTENSIONS.join(', '),
+    })
+  }
   return null
 }
 
 /** The vault-relative directory that owns a note's resources. A saved note
  * gets `<noteDir>/<basename>_assets`; a `null` or empty `notePath` (unsaved
- * tab) stages into `.tmp` at the vault root instead. */
+ * tab) stages into `.tmp` at the vault root instead.
+ *
+ * `notePath` arrives in the platform's native spelling (absolute, with
+ * backslashes on Windows), so the vault prefix has to be stripped with the
+ * separator-agnostic helper from `./paths`. The `/`-only test that used to live
+ * here left the whole absolute path in place on Windows, and the backend
+ * rejects an absolute `dir` ("attachment dir must be vault-relative") — which
+ * made every paste into a saved note fail, with no way to retry successfully. */
 export function assetsDirForNote(notePath: string | null, vault: string): string | null {
   if (!notePath) return '.tmp'
-  const v = (vault || '').replace(/\/+$/, '')
-  let p = notePath
-  if (v !== '' && (p === v || p.startsWith(`${v}/`))) {
-    p = p.slice(v.length).replace(/^\/+/, '')
-  } else if (p.startsWith('/')) {
-    p = p.replace(/^\/+/, '')
-  }
-  const name = p.split('/').pop() ?? p
+  // `stripVaultPrefix` also normalizes the remainder to `/`, which is the
+  // spelling the backend and every stored markdown reference use.
+  const p = stripVaultPrefix(notePath, vault)
+  const name = baseName(p)
   const dot = name.lastIndexOf('.')
   const base = dot > 0 ? name.slice(0, dot) : name
   if (!base) return null
-  const dir = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : ''
-  return dir ? `${dir}/${base}_assets` : `${base}_assets`
+  const dir = dirName(p)
+  const relDir = dir === p ? '' : dir
+  return relDir ? `${relDir}/${base}_assets` : `${base}_assets`
 }
 
 /** Build the rename (move) operations for a set of vault-relative asset paths

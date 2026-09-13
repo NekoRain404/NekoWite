@@ -38,12 +38,48 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
   const view = useViewStore()
   const floatStore = useFloatStore()
 
+  /** The rendered pane only edits the document while it is actually visible.
+   *  In source mode it stays mounted (v-show) but is hidden, and the source
+   *  pane owns the text — feeding its edits through the Markdown serializer
+   *  here would write the canonicalized result back into the tab and replace
+   *  the document the user is typing in.
+   *
+   *  Split mode keeps the preview live on purpose: the model follows source
+   *  edits, and `editorPersistence` is what stops the serializer's output from
+   *  being pushed back over the raw Markdown (see `isSourceAuthored`). */
+  function renderedPaneOwnsText(): boolean {
+    return view.mode !== 'source'
+  }
+
   async function applyContent(content: string): Promise<void> {
     const editor = deps.getEditor()
     if (!editor) return
+    // Idempotence guard: the editor already holds this exact canonical text.
+    // Re-opening it now would replace the live model, wiping undo history,
+    // stored caret/scroll and interrupting typing. A failed parse stays
+    // eligible so switching back to rendered mode can retry.
+    //
+    // `appliedContent` alone is not enough to say the editor HOLDS it: it is the
+    // text the editor was last OPENED with, and any typing since then replaced
+    // the live document. Restoring a version that happens to equal that text -
+    // the common case, "undo my last edit by restoring the previous version" -
+    // was therefore skipped as already-applied: the file went back and the SCREEN
+    // did not, so the user saw no change, and their next keystroke published the
+    // discarded text and saved it over the restore. The pair of fields is what
+    // distinguishes the two states: they are equal only while nothing has been
+    // typed (editorPersistence updates `lastLocalMarkdown` on every edit).
+    const editorStillHoldsApplied = deps.session.lastLocalMarkdown === deps.session.appliedContent
+    if (content === deps.session.appliedContent && editorStillHoldsApplied && !deps.session.parseFailed) {
+      return
+    }
     deps.session.applyingExternal = true
     try {
       await editor.open(content)
+      // Mark the exact content as applied immediately after open() succeeds.
+      // Later canonicalization (save()) can change the tab's text, but the
+      // editor model is now loaded; another open of this same source must be
+      // skipped or it would reset the user's selection/undo/scroll.
+      deps.session.appliedContent = content
       floatStore.select(null)
       // Capture the editor's canonical serialization immediately. The
       // debounced markdownUpdated emit would otherwise arrive later and — for
@@ -58,9 +94,28 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
       // placeholder tab). Overwriting that here would drop the real document and
       // leave the editor permanently empty; respecting the newer content lets the
       // content watcher re-open with it instead.
-      if (active && active.content !== initial && active.content === content) {
+      // Adopt the serializer's canonical form only when the rendered pane owns
+      // the text (rendered mode). In split mode the source pane is the author:
+      // writing the canonicalized text back would replace the raw Markdown —
+      // and reset the caret — under the user's hands.
+      if (
+        view.mode === 'rendered' &&
+        active &&
+        active.content !== initial &&
+        active.content === content
+      ) {
         active.content = initial
-        if (!active.dirty) active.savedContent = initial
+        // `savedContent` is what this tab believes is ON DISK: App.vue hands the
+        // live tab straight to the external-change check, which compares that
+        // field against the bytes it reads back. The serializer's canonical text
+        // is what the NEXT save will write, not what is there now — for a file
+        // that gets canonicalized on open (CRLF → LF) storing it here made the
+        // comparison fail forever, so every later watcher event looked like a real
+        // modification: a clean tab was silently reloaded (reopening the model,
+        // dropping caret and scroll) and a dirty one got a conflict dialog for a
+        // change nobody made. Untitled tabs have no file to compare against, so
+        // they keep the previous "accepted text" meaning.
+        if (!active.dirty && !active.path) active.savedContent = initial
       }
       if (!deps.session.calloutViewSet) {
         try {
@@ -93,10 +148,19 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
 
   function onContentChanged(content: string | undefined): void {
     // I2: a save-time rewrite syncs the model but must not re-open the editor
-    // (that would replace the user's live text and reset caret/scroll). The
-    // flag is armed by tabs.saveActive and consumed once here.
-    if (consumeSuppressReapply()) return
+    // (that would replace the user's live text and reset caret/scroll). The arm
+    // belongs to the tab that was saved (tabs.saveTab) and is consumed once here,
+    // for the ACTIVE tab only — a background save must never swallow the re-apply
+    // of the document the user is actually looking at.
+    const activeTabId = tabs.activeTab?.id
+    if (activeTabId !== undefined && consumeSuppressReapply(activeTabId)) return
     if (content === undefined) return
+    // While the rendered pane is hidden (source mode) the source pane is the
+    // single source of truth. Applying its edits here would round-trip the
+    // Markdown through the serializer and push the canonicalized text back
+    // into the tab, replacing the live source document and moving its caret.
+    // The model is re-synced when the pane becomes visible again (onModeChanged).
+    if (!renderedPaneOwnsText()) return
     if (deps.session.applyingExternal) {
       deps.session.pendingExternal = content
       return
@@ -113,9 +177,12 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
   }
 
   function onModeChanged(mode: string): void {
-    if (!deps.session.parseFailed) return
+    // Switching back to a visible rendered pane must re-read the tab content:
+    // edits made in source mode were intentionally skipped above, so the live
+    // model can be stale. The idempotence guard inside applyContent keeps this
+    // a no-op when the editor already holds the current text.
     if (mode === 'source') return
-    deps.session.parseFailed = false
+    if (deps.session.parseFailed) deps.session.parseFailed = false
     const content = tabs.activeTab?.content
     if (content === undefined) return
     deps.session.gen++

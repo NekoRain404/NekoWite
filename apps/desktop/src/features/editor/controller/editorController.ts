@@ -2,22 +2,25 @@ import {
   basicPlugins,
   clearImageSelection,
   configureHeadingAnchorUrl,
+  configureImageNodeMessages,
   configureImageResolver,
   configureWikilinkHandler,
   createEditor,
 } from '@nekowite/editor-core'
 import type { NekoEditor } from '@nekowite/editor-core'
 import { setActiveEditor } from '@nekowite/plugin-host'
+import { guardEditorForPlugins } from '../../../services/pluginEditorGuard'
 import { watch } from 'vue'
 import { editorSessionManager } from '../sessionManager'
 import { setCalloutView } from '../../../plugins/callout'
 import { createImageSrcResolver } from '../../../services/attachments'
-import { dirRelativeToVault } from '../../../services/noteMeta'
+import { dirRelativeToVault, notePathRelativeToVault } from '../../../services/noteMeta'
 import { getSharedGateways } from '../../../platform/runtime/gatewayRuntime'
 import { useTabsStore } from '../../../stores/tabs'
 import { useDocumentListStore } from '../../../stores/documentList'
 import { useVaultSessionStore } from '../../../stores/vaultSession'
 import { resolveLinkPath as queryResolveLinkPath } from '../../vault/services/libraryQueries'
+import { t } from '../../../i18n'
 import type { DocumentSession } from '../model/documentSession'
 
 type EditorView = NonNullable<ReturnType<NekoEditor['getView']>>
@@ -78,13 +81,34 @@ export function createEditorController(deps: EditorControllerDeps): EditorContro
     const tabId = tabs.activeId ?? PLACEHOLDER_TAB
     registeredTabId = tabId
     editorSessionManager.createSession(tabId, () => editor)
-    setActiveEditor(editor)
+    // Plugins get the guarded handle, never the raw editor: a plugin that
+    // declares nothing must not be able to rewrite the document behind the
+    // write policy the user chose (see services/pluginEditorGuard).
+    // The handle is shared by every plugin, so the prompt cannot name which one
+    // is writing - it says "a plugin" rather than inventing a name.
+    setActiveEditor(guardEditorForPlugins(editor, { pluginName: t('plugin.genericName') }))
     configureImageResolver(
       createImageSrcResolver(getSharedGateways().fs, {
         getVault: () => tabs.vault,
         getNotePath: () => tabs.activeTab?.path ?? null,
       }),
+      // The resolver above turns a relative src into a display URL using the
+      // CURRENT note, so `pic.png` means a different file in every directory.
+      // Keying the resolution memo on the src alone served the previous note's
+      // picture after a tab switch; the scope token makes the memo follow the
+      // vault + note it was produced for.
+      { scope: () => JSON.stringify([tabs.vault, tabs.activeTab?.path ?? null]) },
     )
+    // editor-core is i18n-free, so its image failure copy defaults to English.
+    // Install the app's strings (including the honest "blocked by the security
+    // policy" wording for a remote image the CSP refuses) at mount time.
+    configureImageNodeMessages({
+      retry: t('imageNode.retry'),
+      missingSource: t('imageNode.missingSource'),
+      loadFailed: t('imageNode.loadFailed'),
+      remoteBlocked: t('imageNode.remoteBlocked'),
+      openInBrowser: t('imageNode.openInBrowser'),
+    })
     // Heading anchors copy a deep-link fragment. Prefer the note's vault-relative
     // path so the link is resolvable from anywhere; fall back to a bare fragment
     // for unsaved docs. Reads live tab state at click time.
@@ -92,7 +116,9 @@ export function createEditorController(deps: EditorControllerDeps): EditorContro
       const path = tabs.activeTab?.path
       const vault = tabs.vault
       if (!path || !vault) return `#${slug}`
-      return `${vault.replace(/\/+$/, '')}/${path}#${slug}`
+      // Normalise first: `path` may already include the vault prefix, and
+      // joining it as-is duplicated the vault in every copied link.
+      return `${vault.replace(/\/+$/, '')}/${notePathRelativeToVault(path, vault)}#${slug}`
     })
     // Ctrl/Cmd+click on a [[wikilink]] chip opens the target note. Resolve the
     // wiki target against the current note's vault-relative directory using the
@@ -114,6 +140,7 @@ export function createEditorController(deps: EditorControllerDeps): EditorContro
     setCalloutView(null)
     clearImageSelection()
     configureImageResolver(null)
+    configureImageNodeMessages(null)
     configureHeadingAnchorUrl(null)
     configureWikilinkHandler(null)
     // Tear down this controller's session — `destroySession` is the single owner

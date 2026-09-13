@@ -42,6 +42,47 @@ export function fileToDataURL(file: Blob & { type?: string; name?: string }): Pr
   return fileToBase64(file).then((base64) => `data:${pickImageMime(file)};base64,${base64}`)
 }
 
+/**
+ * Truncate, and SAY SO.
+ *
+ * A 100 000-character note sent under a 2 000-character budget gave the model
+ * the first 2% of the document, and nothing in the UI, the prompt or the answer
+ * hinted that anything was missing — so the reply confidently discussed the
+ * opening of a note whose actual subject was fifty pages further down. The
+ * omitted count goes into the context itself (the model can then say what it
+ * cannot see) and the fact is reported to the caller so the panel can tell the
+ * user.
+ */
+function truncateWithNotice(
+  s: string,
+  maxChars: number,
+  /** Keep the END of the text too. True for a note body, false for a selection:
+   *  a selection is what the user pointed at, so its beginning is the point. */
+  keepTail = false,
+): { text: string; notice: string } {
+  if (maxChars <= 0) return { text: '', notice: '' }
+  if (s.length <= maxChars) return { text: s, notice: '' }
+  const omitted = s.length - maxChars
+  const notice = t('chat.contextTruncated', { omitted })
+  if (!keepTail) {
+    return { text: truncate(s, maxChars), notice }
+  }
+  // A note is not a prefix of itself. Sending only its opening (what this did)
+  // meant the model confidently discussed the introduction of a note whose
+  // actual subject was fifty pages further down, and the person writing the
+  // END of a long note - the usual case, you ask about what you are writing -
+  // was the one person whose text never reached the model. Split the budget
+  // between the opening (what the note is) and the ending (where the work is),
+  // and put the omission notice where the missing text was.
+  const headLen = Math.floor(maxChars * 0.5)
+  const tailLen = maxChars - headLen
+  return {
+    text: [s.slice(0, headLen), notice, s.slice(s.length - tailLen)].join('\n'),
+    // The notice is inside the text now, between the two halves it describes.
+    notice: '',
+  }
+}
+
 /** Truncate a string to at most `maxChars` and append an ellipsis when cut. */
 function truncate(s: string, maxChars: number): string {
   if (maxChars <= 0) return ''
@@ -81,13 +122,20 @@ export function buildContextBlock(context: {
   const content = context.noteContent?.trim() ?? ''
   const lines: string[] = []
   const header = title ? t('chat.currentDocHeader', { title }) : ''
+  const pushBody = (body: string, keepTail = false): void => {
+    const { text, notice } = truncateWithNotice(body, maxChars, keepTail)
+    lines.push(text)
+    // The notice follows the text it describes: a reader (and the model) sees
+    // what was included first, then learns that something was left out.
+    if (notice) lines.push(notice)
+  }
   if (selection) {
     if (header) lines.push(header)
     lines.push(t('chat.selectionHeader'))
-    lines.push(truncate(selection, maxChars))
+    pushBody(selection)
   } else if (content) {
     if (header) lines.push(header)
-    lines.push(truncate(content, maxChars))
+    pushBody(content, true)
   }
   return lines.join('\n')
 }

@@ -49,7 +49,7 @@ fires exactly once per session.)*
 ### 3. IPC is bound to the vault the user actually opened
 
 Path-confined Rust commands (`read_file`, `write_file`, `stat_file`, `list_dir`,
-`search_notes`, history/trash/attachment commands, `rename_entry`, `watch_folder`, …)
+history/trash/attachment commands, `rename_entry`, `watch_folder`, …)
 call `require_opened_vault` and reject any `vault_root` that was **not registered this
 session**. The only way to authorize a root is `register_vault` (or a fresh native
 folder pick, which auto-registers). Every vault-open path in the app — native folder

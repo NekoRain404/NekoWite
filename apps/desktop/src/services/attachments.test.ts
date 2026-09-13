@@ -1,3 +1,4 @@
+import { MAX_IMAGES_PER_MESSAGE } from '../stores/chatSession'
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 
 import {
@@ -19,6 +20,7 @@ import {
   markdownImageBlock,
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS_PER_BATCH,
+  MAX_ATTACHMENTS_PER_BATCH_BYTES,
   MAX_ATTACHMENTS_PER_SESSION,
   MAX_ATTACHMENTS_PER_VAULT_BYTES,
   MIN_ATTACHMENT_FREE_DISK_BYTES,
@@ -35,6 +37,7 @@ import {
   suggestedPasteFileName,
   vaultRelativeFromNote,
   vaultRelativeFromNoteVault,
+  MAX_ATTACHMENTS_PER_MESSAGE,
 } from './attachments'
 
 function fileFrom(name: string, type: string): File {
@@ -353,18 +356,22 @@ describe('createImageSrcResolver', () => {
     expect(resolveMediaPath).toHaveBeenCalledWith('vault', 'attachments/2026-09/a.png')
   })
 
-  it('returns the raw src when no vault is open or resolution fails', async () => {
-    const resolve = createImageSrcResolver(
+  it('rejects instead of passing the src through when it cannot resolve', async () => {
+    // Rejecting (rather than "resolving" to the raw src) is what keeps a
+    // transient failure out of the resolution cache: a pass-through looks like
+    // a success, so the unloadable document path was memoized and every image
+    // stayed broken even after the vault arrived.
+    const noVault = createImageSrcResolver(
       { resolveMediaPath: async () => 'x' },
       { getVault: () => null, getNotePath: () => null },
     )
-    await expect(resolve('attachments/a.png')).resolves.toBe('attachments/a.png')
+    await expect(noVault('attachments/a.png')).rejects.toThrow(/no vault/i)
 
     const failing = createImageSrcResolver(
       { resolveMediaPath: async () => { throw new Error('nope') } },
       { getVault: () => 'vault', getNotePath: () => 'a.md' },
     )
-    await expect(failing('attachments/a.png')).resolves.toBe('attachments/a.png')
+    await expect(failing('attachments/a.png')).rejects.toThrow('nope')
   })
 })
 
@@ -392,11 +399,57 @@ describe('vault-aware relative paths', () => {
     expect(relativePathFromNoteVault('a.md', '/v', '/abs/a.png')).toBe('/abs/a.png')
   })
 
+  it('rebases a Windows note path onto the vault (backslashes)', () => {
+    // Native Windows spelling: a `/`-only vault test never matched, so the
+    // whole absolute path was treated as the note's own directory.
+    expect(
+      relativePathFromNoteVault(
+        'C:\\Users\\me\\vault\\notes\\a.md',
+        'C:\\Users\\me\\vault',
+        'notes/a_assets/pic.png',
+      ),
+    ).toBe('a_assets/pic.png')
+    expect(
+      relativePathFromNoteVault(
+        'C:\\Users\\me\\vault\\a.md',
+        'C:\\Users\\me\\vault',
+        'notes/a_assets/pic.png',
+      ),
+    ).toBe('notes/a_assets/pic.png')
+  })
+
+  it('rebases an absolute vault destination instead of keeping it absolute', () => {
+    // That is the `to` the old assets-dir helper produced on Windows; writing
+    // it into the note produced machine-specific Markdown.
+    expect(
+      relativePathFromNoteVault(
+        'C:\\vault\\notes\\a.md',
+        'C:\\vault',
+        'C:\\vault\\notes\\a_assets/pic.png',
+      ),
+    ).toBe('a_assets/pic.png')
+  })
+
+  it('still passes an absolute path outside the vault through', () => {
+    expect(relativePathFromNoteVault('C:\\vault\\a.md', 'C:\\vault', 'D:\\pics\\a.png')).toBe(
+      'D:\\pics\\a.png',
+    )
+  })
+
   it('vaultRelativeFromNoteVault resolves ../ back against the note dir', () => {
     expect(vaultRelativeFromNoteVault('/home/u/vault/docs/note.md', '/home/u/vault', '../attachments/2026-09/a.png')).toBe(
       'attachments/2026-09/a.png',
     )
     expect(vaultRelativeFromNoteVault('/home/u/vault/docs/note.md', '/home/u/vault', '../../x/a.png')).toBe('x/a.png')
+  })
+
+  it('resolves a Windows note path against its own directory for the display resolver', () => {
+    expect(
+      vaultRelativeFromNoteVault('C:\\vault\\notes\\a.md', 'C:\\vault', '../attachments/2026-09/a.png'),
+    ).toBe('attachments/2026-09/a.png')
+    expect(vaultRelativeFromNoteVault('C:\\vault\\notes\\a.md', 'C:\\vault', 'a_assets/pic.png')).toBe(
+      'notes/a_assets/pic.png',
+    )
   })
 })
 
@@ -480,5 +533,58 @@ describe('streaming / file-path import policy (P1.4)', () => {
     expect(shouldStreamImport(fileOfSize('a.png', STREAM_IMPORT_MIN_BYTES))).toBe(true)
     expect(shouldStreamImport(fileOfSize('a.png', STREAM_IMPORT_MIN_BYTES - 1))).toBe(false)
     expect(formatAttachmentBytes(MAX_ATTACHMENT_BYTES)).toBe(`${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB`)
+  })
+})
+
+describe('classifyAttachmentFiles batch byte budget', () => {
+  // The worst batch the count and per-file caps allow is exactly the byte
+  // budget (10 x 10 MiB == 100 MiB), so today the byte check never binds. It is
+  // enforced anyway so that changing any one of these constants cannot silently
+  // turn a "10 images" prompt into a 133 MB base64 spike. This test pins the
+  // relationship the check relies on.
+  it('permits exactly the worst batch the other caps allow', () => {
+    const atLimit = (name: string) =>
+      ({ name, size: MAX_ATTACHMENT_BYTES, type: 'image/png', lastModified: 1 }) as File
+    const files = Array.from({ length: MAX_ATTACHMENTS_PER_BATCH }, (_v, i) =>
+      atLimit(`big-${i}.png`),
+    )
+
+    const { accepted, rejected } = classifyAttachmentFiles(files)
+
+    expect(accepted).toHaveLength(MAX_ATTACHMENTS_PER_BATCH)
+    expect(rejected).toHaveLength(0)
+    expect(MAX_ATTACHMENTS_PER_BATCH * MAX_ATTACHMENT_BYTES).toBeLessThanOrEqual(
+      MAX_ATTACHMENTS_PER_BATCH_BYTES,
+    )
+  })
+
+  it('accepts a normal batch and explains anything it drops', () => {
+    const small = (name: string) =>
+      ({ name, size: 1024, type: 'image/png', lastModified: 1 }) as File
+    const files = Array.from({ length: 3 }, (_v, i) => small(`s-${i}.png`))
+    const { accepted, rejected } = classifyAttachmentFiles(files)
+    expect(accepted).toHaveLength(3)
+    expect(rejected).toHaveLength(0)
+  })
+
+  it('rejects an over-size file before anything else', () => {
+    const huge = {
+      name: 'huge.png',
+      size: MAX_ATTACHMENT_BYTES + 1,
+      type: 'image/png',
+      lastModified: 1,
+    } as File
+    const { accepted, rejected } = classifyAttachmentFiles([huge])
+    expect(accepted).toHaveLength(0)
+    expect(rejected[0]?.reason).toBe('too-large')
+  })
+})
+
+describe('the chat attachment limit', () => {
+  it('never lets the composer hold more images than the session can keep', () => {
+    // Two constants used to disagree (6 vs 4): the composer accepted six, the
+    // store persisted four, and the two extra vanished from the conversation at
+    // send time without telling the user which ones they were.
+    expect(MAX_ATTACHMENTS_PER_MESSAGE).toBe(MAX_IMAGES_PER_MESSAGE)
   })
 })

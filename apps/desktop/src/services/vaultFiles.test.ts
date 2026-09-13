@@ -193,4 +193,46 @@ describe('VaultFileIndex', () => {
     expect(await index.get('vault')).toEqual(['vault/new.md'])
     expect(list).toHaveBeenCalledTimes(2)
   })
+
+describe('walkVault completeness', () => {
+  it('flags an unlistable directory as incomplete while keeping what it did list', async () => {
+    const list = async (_vault: string, dir: string) => {
+      if (dir === '/vault/locked') throw new Error('EACCES: permission denied')
+      if (dir === '/vault') {
+        return [
+          { name: 'locked', path: '/vault/locked', is_dir: true, is_mdx: false },
+          { name: 'a.md', path: '/vault/a.md', is_dir: false, is_mdx: true },
+        ]
+      }
+      return []
+    }
+    const result = await walkVault('/vault', list)
+    expect(result.files).toEqual(['/vault/a.md'])
+    expect(result.truncated).toBe(false)
+    // A caller that deletes `.tmp` litter on the strength of "no note
+    // references it" must not trust a walk that could not read every folder.
+    expect(result.incomplete).toBe(true)
+  })
+
+  it('is complete when every directory was listed', async () => {
+    const list = async (_vault: string, dir: string) =>
+      dir === '/vault'
+        ? [{ name: 'a.md', path: '/vault/a.md', is_dir: false, is_mdx: true }]
+        : []
+    expect((await walkVault('/vault', list)).incomplete).toBe(false)
+  })
+
+  it('exposes the incompleteness through VaultFileIndex', async () => {
+    const list = async (_vault: string, dir: string) => {
+      if (dir === '/vault/locked') throw new Error('gone')
+      if (dir === '/vault') return [{ name: 'locked', path: '/vault/locked', is_dir: true, is_mdx: false }]
+      return []
+    }
+    const index = new VaultFileIndex(list)
+    await index.get('/vault')
+    expect(index.isIncomplete('/vault')).toBe(true)
+    index.invalidate('/vault')
+    expect(index.isIncomplete('/vault')).toBe(false)
+  })
+})
 })

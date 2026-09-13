@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { createMathEditor, renderLatexMarkup, warmMathLive } from './atoms'
+import { createMathEditor, createMathEditorWhenReady, renderLatexMarkup, upgradeMathEditor, warmMathLive } from './atoms'
 
 const { MFE, instances } = vi.hoisted(() => {
   type MockMathfield = HTMLElement & { value: string }
@@ -72,5 +72,71 @@ describe('createMathEditor', () => {
     expect(editor.getValue()).toBe('c^2')
     editor.dispose()
     expect(el.getAttribute('contenteditable')).toBeNull()
+  })
+})
+
+describe('upgradeMathEditor', () => {
+  beforeEach(() => {
+    instances.length = 0
+  })
+
+  it('replaces the fallback with a MathLive field and carries the value over', async () => {
+    // The fallback is what `createMathEditor` produces while MathLive is still
+    // loading — always the case on the first open of the dialog. Without the
+    // upgrade the user's first formula got a bare text box.
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    // Simulate the fallback state: contenteditable plus a text node.
+    el.setAttribute('contenteditable', 'true')
+    el.textContent = 'x+1'
+
+    const upgraded = await upgradeMathEditor(el, () => 'x+1')
+
+    expect(upgraded).not.toBeNull()
+    expect(el.getAttribute('contenteditable')).toBeNull()
+    expect(el.textContent).toBe('')                    // fallback text removed
+    expect(el.querySelector('math-field-mock')).not.toBeNull()
+    expect(upgraded!.getValue()).toBe('x+1')           // value carried over
+  })
+
+  it('reads the value at SWAP time, not when the upgrade was requested', async () => {
+    // The load is async, so anything typed while it is in flight must survive:
+    // capturing the value at call time replaced the user's typing with whatever
+    // was there before ('' on a freshly opened dialog).
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    let typed = 'early'
+    const pending = upgradeMathEditor(el, () => typed)
+    typed = 'late'
+    const upgraded = await pending
+    expect(upgraded!.getValue()).toBe('late')
+  })
+
+  it('leaves the host untouched when MathLive is unavailable', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    el.setAttribute('contenteditable', 'true')
+    el.textContent = 'y'
+    vi.resetModules()
+    vi.doMock('mathlive', () => ({ MathfieldElement: undefined, convertLatexToMarkup: undefined }))
+    const mod = await import('./atoms')
+    const upgraded = await mod.upgradeMathEditor(el, () => 'y')
+    expect(upgraded).toBeNull()
+    expect(el.getAttribute('contenteditable')).toBe('true')
+    expect(el.textContent).toBe('y')
+    vi.doUnmock('mathlive')
+    vi.resetModules()
+  })
+})
+
+describe('createMathEditorWhenReady', () => {
+  it('produces a real MathLive field on the first call', async () => {
+    instances.length = 0
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = await createMathEditorWhenReady(el, { value: 'a^2' })
+    expect(editor).not.toBeNull()
+    expect(el.querySelector('math-field-mock')).not.toBeNull()
+    expect(editor!.getValue()).toBe('a^2')
   })
 })

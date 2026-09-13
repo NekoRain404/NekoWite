@@ -2,6 +2,12 @@
   "name": "nekowite",
   "private": true,
   "version": "1.0.0",
+  "license": "MIT",
+  "packageManager": "pnpm@11.1.1",
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=11"
+  },
   "scripts": {
     "dev": "pnpm --filter @nekowite/desktop dev",
     "build": "pnpm --filter @nekowite/desktop build",
@@ -10,7 +16,8 @@
     "lint": "pnpm -r lint",
     "test:e2e": "pnpm --filter @nekowite/desktop exec playwright test",
     "perf": "pnpm --filter @nekowite/desktop perf",
-    "tauri": "pnpm --filter @nekowite/desktop tauri"
+    "tauri": "pnpm --filter @nekowite/desktop tauri",
+    "package:win": "bash scripts/package-win.sh"
   },
   "devDependencies": {
     "@eslint/js": "^9",

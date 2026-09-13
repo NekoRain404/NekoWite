@@ -1,0 +1,42 @@
+---
+title: MDX 高级往返 DEMO
+tags: [demo, mdx]
+---
+
+import A from './a'
+import B from './b'
+export const meta = { version: 1 }
+
+# MDX 高级往返 DEMO
+
+## JSX 属性表达式
+
+<Card foo={1} bar="hello" disabled>属性表达式</Card>
+
+## 布尔属性
+
+<Component disabled>布尔属性</Component>
+
+## 嵌套 JSX
+
+<Outer>
+
+<Inner>deep</Inner>
+
+</Outer>
+
+## 未知组件（应显示源码占位）
+
+<UnknownComponent foo={1}>未知组件</UnknownComponent>
+
+## 不完整标签（应优雅降级）
+
+<Callout>
+
+unclosed
+
+## 代码块中的 JSX（不应被解析）
+
+```jsx
+<Component>这在代码块中</Component>
+```

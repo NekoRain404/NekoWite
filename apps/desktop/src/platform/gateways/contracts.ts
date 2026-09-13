@@ -20,21 +20,71 @@ export interface FileEntry {
   is_mdx: boolean
 }
 
+/**
+ * The watcher vocabulary, spelled exactly as the Rust `watch_folder` command
+ * emits it. This used to be a bare `string`, which let consumers test for
+ * `'remove'` while the backend sent `'removed'`: the branch never ran and a
+ * deleted note kept its cache and its persistent index entry. A union makes a
+ * mismatched literal a compile error instead of a silent no-op.
+ */
+/**
+ * What a filesystem event means.
+ *
+ * `resync` is not a change to one path — it is the watcher telling us it can no
+ * longer be trusted (`watch_folder` emits it when notify reports an error, e.g.
+ * an overflowing OS queue). The window then re-reads what it has open, because
+ * the alternative is believing it is watching a vault whose changes it is
+ * silently missing.
+ */
+export type FsChangeKind = 'created' | 'modified' | 'removed' | 'resync'
+
 export interface FsChangeEvent {
   path: string
-  kind: string
+  kind: FsChangeKind
 }
 
 export interface TrashEntry {
+  /** The on-disk key inside the trash (percent-encoded); what restore needs. */
   name: string
+  /**
+   * The file's own name, decoded from the key. The trash key is not what the
+   * user deleted (`docs%2Fa.md` for `docs/a.md`), and a collision key carries a
+   * timestamp that is not part of the name either, so the label is computed
+   * once on the Rust side rather than guessed per surface.
+   */
+  display_name: string
   trash_path: string
   original_path: string
+  /** A deleted folder is listed too, and restores with its contents. */
+  is_dir: boolean
 }
 
 export interface HistoryEntry {
   id: string
   size: number
   mtime: number
+}
+
+/**
+ * One trash entry `clearTrash` could not remove. `name` is the on-disk key the
+ * trash lists (what `restoreFromTrash` takes) and `error` is the user-facing
+ * reason from the backend, so the UI can name what is still there instead of
+ * reporting the whole pass as failed.
+ */
+export interface ClearTrashFailure {
+  name: string
+  error: string
+}
+
+/**
+ * What one emptying pass actually did. A partial pass is an ordinary outcome
+ * (one file still held open by another program): `removed` is always the truth
+ * and `failed` names what is left, so "emptied 3, 1 stuck" can be reported
+ * honestly instead of a bare failure.
+ */
+export interface ClearTrashReport {
+  removed: number
+  failed: ClearTrashFailure[]
 }
 
 export interface FileStat {
@@ -50,15 +100,18 @@ export interface FsPort {
   registerVault(vault: string): Promise<void>
   read(vault: string, path: string): Promise<string>
   stat(vault: string, path: string): Promise<FileStat>
-  write(vault: string, path: string, content: string, maxHistory?: number): Promise<void>
+  /** Resolves to a user-facing WARNING when the write itself succeeded but
+   *  something optional failed (e.g. the history snapshot) — `null` when
+   *  everything worked. A rejected promise always means nothing was written. */
+  write(vault: string, path: string, content: string, maxHistory?: number): Promise<string | null>
   list(vault: string, dir: string): Promise<FileEntry[]>
-  searchNotes(vault: string, query: string): Promise<FileEntry[]>
   watch(vault: string): Promise<void>
   deleteFile(vault: string, path: string): Promise<string>
   listTrash(vault: string): Promise<TrashEntry[]>
   restoreFromTrash(vault: string, trashPath: string): Promise<string>
-  /** Permanently delete every entry in the trash; returns how many were removed. */
-  clearTrash(vault: string): Promise<number>
+  /** Permanently delete every entry in the trash, reporting how many were
+   * removed and which ones could not be. */
+  clearTrash(vault: string): Promise<ClearTrashReport>
   listHistory(vault: string, path: string): Promise<HistoryEntry[]>
   readHistory(vault: string, path: string, id: string): Promise<string>
   restoreHistory(vault: string, path: string, id: string): Promise<string>
@@ -67,6 +120,11 @@ export interface FsPort {
    * `notes/foo_assets` or `.tmp`); when omitted the legacy
    * `attachments/{YYYY-MM}` layout is used. */
   saveAttachment(vault: string, fileName: string, base64: string, dir?: string): Promise<string>
+  /** Copy an image the user picked from disk into the vault, returning its
+   * vault-relative path. `sourcePath` is an absolute path returned by
+   * {@link DialogPort.pickImageFiles}; the bytes never cross the IPC boundary.
+   * `dir` is the optional vault-relative target directory. */
+  importAttachment(vault: string, sourcePath: string, dir?: string): Promise<string>
   /** Turn a vault-relative attachment path into a URL usable as <img src>. */
   resolveMediaPath(vault: string, relPath: string): Promise<string>
   /** Create a directory (with parents) inside the vault; returns its
@@ -81,6 +139,9 @@ export interface FsPort {
 export interface DialogPort {
   openFolderDialog(): Promise<string | null>
   saveFileDialog(defaultName: string, startDir?: string): Promise<string | null>
+  /** Native multi-select image picker. Returns the absolute paths chosen, or an
+   * empty array when the dialog was cancelled. */
+  pickImageFiles(): Promise<string[]>
 }
 
 /**
@@ -97,7 +158,14 @@ export interface EventPort {
 }
 
 export interface AiPort {
-  complete(config: unknown, prompt: string, images?: string[]): Promise<void>
+  /**
+   * Start a streaming completion. `id` identifies the request for every event
+   * (`ai-chunk` / `ai-reasoning` / `ai-done` / `ai-error`) and for
+   * {@link cancel}: the CALLER picks it, because a reasoning model can stay
+   * silent for seconds and a backend-chosen id would leave nothing to cancel
+   * during that window.
+   */
+  complete(config: unknown, prompt: string, images?: string[], id?: string): Promise<void>
   cancel(id: string): Promise<void>
   listModels(config: unknown): Promise<string[]>
 }

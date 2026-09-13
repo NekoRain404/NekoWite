@@ -34,13 +34,16 @@ export function localStoragePersistencePort(storage?: Storage): PersistencePort 
 
     set(key, value) {
       const ls = resolveStorage()
-      if (!ls) return
+      if (!ls) return false
       try {
         ls.setItem(key, value)
+        return true
       } catch (err) {
         // QuotaExceeded (large chat blobs, image data-URLs) or a disabled
-        // storage: drop the write instead of throwing into the caller.
+        // storage: drop the write instead of throwing into the caller, and
+        // report it so the owner can shed data rather than lose it all.
         console.warn(`[persistence] set failed for "${key}"`, err)
+        return false
       }
     },
 

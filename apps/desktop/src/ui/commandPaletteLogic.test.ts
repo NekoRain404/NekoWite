@@ -106,6 +106,16 @@ describe('path helpers', () => {
     expect(displayDir('/home/u/vault/a.md', '/home/u/vault')).toBe('')
     expect(displayDir('notes/sub/b.md', null)).toBe('notes/sub')
   })
+  it('strips a NATIVE Windows vault prefix too', () => {
+    // The palette receives absolute native paths, so on Windows the prefix
+    // test never matched a '/'-built root and the hint showed the whole path.
+    const vault = 'C:\\Users\\me\\vault'
+    expect(displayDir(`${vault}\\notes\\a.md`, vault)).toBe('notes')
+    expect(displayDir(`${vault}\\a.md`, vault)).toBe('')
+    // A path outside the vault keeps its directory rather than losing it.
+    expect(displayDir('D:\\other\\b.md', vault)).toBe('D:/other')
+  })
+
   it('builds file entries with path keywords and vault-relative hints', () => {
     const entry = fileEntryOf('/v/notes/idea.md', '/v', () => {})
     expect(entry.kind).toBe('file')

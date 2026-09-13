@@ -12,6 +12,7 @@ import {
 import type { NekoEditor, ImageSelectionState } from '@nekowite/editor-core'
 import { useFocusTrap } from '../composables/useFocusTrap'
 import { t } from '../i18n'
+import { isComposingKey } from '../services/keyGuard'
 
 const props = defineProps<{ editor: NekoEditor | null }>()
 
@@ -35,6 +36,8 @@ const panelEl = ref<HTMLElement | null>(null)
 useFocusTrap(panelEl, visible)
 
 function onKeydown(e: KeyboardEvent): void {
+  // Escape dismisses the IME candidate list first; the panel has inputs.
+  if (isComposingKey(e)) return
   if (e.key === 'Escape') {
     e.preventDefault()
     e.stopPropagation()

@@ -5,6 +5,7 @@ import {
   basicPlugins,
   clearImageSelection,
   configureHeadingAnchorUrl,
+  configureImageNodeMessages,
   configureImageResolver,
   configureWikilinkHandler,
   createEditor,
@@ -28,6 +29,7 @@ vi.mock('@nekowite/editor-core', () => {
     createEditor: vi.fn(() => makeEditor()),
     basicPlugins: [],
     configureImageResolver: vi.fn(),
+    configureImageNodeMessages: vi.fn(),
     configureHeadingAnchorUrl: vi.fn(),
     configureWikilinkHandler: vi.fn(),
     clearImageSelection: vi.fn(),
@@ -50,6 +52,7 @@ describe('editorController', () => {
     editorSessionManager.destroyAll()
     vi.mocked(createEditor).mockClear()
     vi.mocked(configureImageResolver).mockClear()
+    vi.mocked(configureImageNodeMessages).mockClear()
     vi.mocked(configureHeadingAnchorUrl).mockClear()
     vi.mocked(configureWikilinkHandler).mockClear()
     vi.mocked(clearImageSelection).mockClear()
@@ -68,6 +71,9 @@ describe('editorController', () => {
     expect(editorSessionManager.getSession('tab-1')).toBe(session.editor)
     expect(editorSessionManager.getActiveEditor()).toBe(session.editor)
     expect(configureImageResolver).toHaveBeenCalled()
+    // The image node view's failure copy is installed here, so the toolbar and
+    // the editor speak the same language.
+    expect(configureImageNodeMessages).toHaveBeenCalled()
     expect(configureHeadingAnchorUrl).toHaveBeenCalled()
     expect(configureWikilinkHandler).toHaveBeenCalled()
   })
@@ -81,6 +87,7 @@ describe('editorController', () => {
     expect(setCalloutView).toHaveBeenCalledWith(null)
     expect(clearImageSelection).toHaveBeenCalled()
     expect(configureImageResolver).toHaveBeenLastCalledWith(null)
+    expect(configureImageNodeMessages).toHaveBeenLastCalledWith(null)
     expect(configureHeadingAnchorUrl).toHaveBeenLastCalledWith(null)
     expect(configureWikilinkHandler).toHaveBeenLastCalledWith(null)
     expect(session.editor).toBeNull()
@@ -90,5 +97,41 @@ describe('editorController', () => {
     // The session manager is the single owner of the editor's destroy — the
     // controller never destroys the same instance a second time.
     expect(editor.destroy).toHaveBeenCalledTimes(1)
+  })
+
+  it('keys the image-resolution memo on the vault and the active note', () => {
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    const tab = (id: string, path: string) => ({
+      id,
+      path,
+      content: '',
+      savedContent: '',
+      dirty: false,
+      pendingAssetPaths: [],
+    })
+    tabs.tabs.push(tab('tab-1', '/vault/a/note.md'))
+    tabs.setActive('tab-1')
+
+    const host = document.createElement('div')
+    const controller = createEditorController({ session, getEditorEl: () => host })
+    controller.mount()
+
+    // The resolver reads the CURRENT note, so the memo has to be scoped to it:
+    // keyed on the src alone, the same relative `pic.png` kept resolving to the
+    // previous note's file after a tab switch.
+    const options = vi.mocked(configureImageResolver).mock.calls[0]?.[1] as
+      | { scope?: () => string }
+      | undefined
+    expect(typeof options?.scope).toBe('function')
+
+    const scopeA = options!.scope!()
+    tabs.tabs.push(tab('tab-2', '/vault/b/note.md'))
+    tabs.setActive('tab-2')
+    const scopeB = options!.scope!()
+    expect(scopeA).not.toBe(scopeB)
+
+    // Within one note the token is stable, so the memo still hits.
+    expect(options!.scope!()).toBe(scopeB)
   })
 })

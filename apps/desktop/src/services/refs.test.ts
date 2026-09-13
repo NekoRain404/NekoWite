@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { detectFormat, parseRefs } from './refs'
+import { detectFormat, parseRefs, scanRefs } from './refs'
 
 const BIB = `@article{smith2020,
   title = {A Great Paper},
@@ -203,5 +203,145 @@ ER  -`
     expect(a[0].key).not.toBe(a[1].key)
     expect(b[0].key).toBe(a[0].key)
     expect(b[1].key).toBe(a[1].key)
+  })
+})
+
+describe('non-ASCII reference data', () => {
+  it('keeps accented and CJK author names and titles intact (UTF-8 bibtex)', () => {
+    const BIB = `@article{mueller2019,
+  title = {Über die Prüfung der Moleküle},
+  author = {Müller, Jörg and 张伟 and Ó Súilleabháin, Seán},
+  year = {2019},
+}`
+    const refs = parseRefs(BIB, 'bib')
+    expect(refs).toHaveLength(1)
+    expect(refs[0]?.title).toContain('Über die Prüfung der Moleküle')
+    expect(refs[0]?.authors.join(' | ')).toContain('Jörg Müller')
+    expect(refs[0]?.authors.join(' | ')).toContain('张伟')
+    expect(refs[0]?.authors.join(' | ')).toContain('Seán Ó Súilleabháin')
+  })
+
+  it('reads a CRLF (Windows-exported) bibtex file like an LF one', () => {
+    const LF = `@article{smith2020,
+  title = {A Great Paper},
+  author = {Smith, John},
+  year = {2020},
+}`
+    const crlf = parseRefs(LF.replace(/\n/g, '\r\n'), 'bib')
+    expect(crlf.map((r) => r.key)).toEqual(parseRefs(LF, 'bib').map((r) => r.key))
+    expect(crlf[0]?.title).toBe('A Great Paper')
+    expect(crlf[0]?.authors).toEqual(['John Smith'])
+  })
+})
+
+describe('scanRefs (a broken entry must not empty the library)', () => {
+  it('keeps the good entries of a bibtex file containing one entry with no key', () => {
+    const BIB = `@article{good1,
+  title = {Good One},
+  author = {Smith, John},
+  year = {2020},
+}
+
+@article{,
+  title = {Anonymous Entry},
+  author = {Nobody},
+}
+
+@article{good2,
+  title = {Good Two},
+  author = {Doe, Jane},
+  year = {2021},
+}`
+    const out = scanRefs(BIB, 'bib')
+    // citation-js rejects the file as a whole, so before the salvage this was
+    // `[]` and every citation in the vault rendered as missing.
+    expect(out.refs.map((r) => r.key)).toEqual(['good1', 'good2'])
+    expect(out.skipped).toBe(1)
+  })
+
+  it('keeps the good entries of a bibtex file whose last entry is truncated', () => {
+    const BIB = `@article{good1,
+  title = {Good One},
+  year = {2020},
+}
+
+@article{broken,
+  title = {Unclosed`
+    const out = scanRefs(BIB, 'bib')
+    expect(out.refs.map((r) => r.key)).toContain('good1')
+  })
+
+  it('expands @string macros in salvaged entries the way the whole-file parse would', () => {
+    const BIB = `@string{jtest = {Journal of Testing}}
+
+@article{macro1,
+  title = {Macro Paper},
+  author = {Smith, John},
+  journal = jtest,
+  year = {2020},
+}
+
+@article{,
+  title = {No Key},
+}`
+    const out = scanRefs(BIB, 'bib')
+    expect(out.refs.map((r) => r.key)).toEqual(['macro1'])
+    expect(out.refs[0]?.journal).toBe('Journal of Testing')
+  })
+
+  it('reports how many entries it could not recover', () => {
+    const out = scanRefs('@article{,\n  title = {No Key},\n}', 'bib')
+    expect(out).toEqual({ refs: [], skipped: 1 })
+  })
+
+  it('still parses a healthy file without reporting anything skipped', () => {
+    const out = scanRefs(BIB, 'bib')
+    expect(out.refs).toHaveLength(1)
+    expect(out.skipped).toBe(0)
+  })
+
+  it('keeps every RIS record when one record is malformed', () => {
+    const RIS = `TY  - JOUR
+AU  - Smith, John
+TI  - First
+PY  - 2020
+ER  -
+TY  - JOUR
+TI  - Second
+PY  - 2021
+ER  -`
+    const out = scanRefs(RIS, 'ris')
+    expect(out.refs).toHaveLength(2)
+    expect(out.skipped).toBe(0)
+  })
+})
+
+describe('non-library JSON files', () => {
+  it('does not treat a vault object JSON (package.json) as a CSL library', () => {
+    const out = scanRefs('{"name":"myapp","version":"1.0.0"}', 'csl')
+    expect(out).toEqual({ refs: [], skipped: 0 })
+    expect(parseRefs('{"name":"myapp","version":"1.0.0"}', 'csl')).toEqual([])
+  })
+
+  it('does not treat an array of unrelated objects as a CSL library', () => {
+    expect(scanRefs('[{"foo":"bar"},{"baz":1}]', 'csl').refs).toEqual([])
+  })
+
+  it('still parses a real CSL array', () => {
+    const CSL = `[{"id":"doe2019","title":"The JSON Paper","author":[{"family":"Doe","given":"Jane"}]}]`
+    const out = scanRefs(CSL, 'csl')
+    expect(out.refs.map((r) => r.key)).toEqual(['doe2019'])
+    expect(out.skipped).toBe(0)
+  })
+})
+
+describe('reference file detection', () => {
+  it('accepts the uppercase extensions reference managers export', () => {
+    // Zotero writes `Library.BIB`; the case-sensitive test hid it entirely.
+    expect(detectFormat('Library.BIB')).toBe('bib')
+    expect(detectFormat('Refs.RIS')).toBe('ris')
+    expect(detectFormat('items.JSON')).toBe('csl')
+    expect(detectFormat('library.bib')).toBe('bib')
+    expect(detectFormat('notes.md')).toBeNull()
   })
 })

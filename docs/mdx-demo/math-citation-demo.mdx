@@ -1,0 +1,47 @@
+---
+title: 公式与引用 DEMO
+tags: [demo, math, citation]
+---
+
+# 公式与引用 DEMO
+
+## 行内公式
+
+质能方程 $E=mc^2$，波动方程 $\psi(x,t)=Ae^{i(kx-\omega t)}$，欧拉公式 $e^{i\pi}+1=0$。
+
+## 块级公式
+
+$$
+\int_0^\infty \frac{x^{3}}{e^{x}-1}\,dx = \frac{\pi^4}{15}
+$$
+
+$$
+\mathbf{F} = m\mathbf{a}, \quad \nabla \cdot \mathbf{B} = 0
+$$
+
+## 引用
+
+正文引用 [@smith2020] 和 [@doe2021]。
+
+再次强调 [@smith2020] 是同一篇。
+
+## 表格
+
+| 类型 | 说明 | 示例 |
+| --- | --- | --- |
+| 行内公式 | 与其他文本混排 | $a+b$ |
+| 块级公式 | 单独成行 | $$\nabla^2\phi=0$$ |
+| 引用 | Pandoc 风格 | [@smith2020] |
+
+## 代码
+
+```ts
+interface Demo {
+  name: string
+  enabled: boolean
+}
+```
+
+```bash
+echo "hello from NekoWite"
+```

@@ -26,12 +26,18 @@ const TABS = computed(() => [
 <template>
   <aside class="info-rail">
     <div class="rail-header">
-      <div class="rail-tabs">
+      <div
+        class="rail-tabs"
+        role="tablist"
+        :aria-label="t('rail.bodyAria')"
+      >
         <button
           v-for="tab in TABS"
           :key="tab.id"
           class="rail-tab"
+          role="tab"
           :class="{ 'is-active': activeTab === tab.id }"
+          :aria-selected="activeTab === tab.id"
           @click="activeTab = tab.id"
         >
           {{ tab.label }}

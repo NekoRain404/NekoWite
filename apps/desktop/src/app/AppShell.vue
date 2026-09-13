@@ -13,6 +13,8 @@ import LayoutResizeHandle from '../ui/LayoutResizeHandle.vue'
 import ViewSwitch from '../view/ViewSwitch.vue'
 import Toast from '../components/AppToast.vue'
 import ConflictDialog from '../components/ConflictDialog.vue'
+import AiWriteDialog from '../components/AiWriteDialog.vue'
+import type { PendingAiWrite } from '../stores/aiPermission'
 import PermissionDialog from '../components/PermissionDialog.vue'
 import PluginIntegrityDialog from '../components/PluginIntegrityDialog.vue'
 import GhostWriter from '../components/GhostWriter.vue'
@@ -50,16 +52,18 @@ defineProps<{
   conflict: { tabId: string; path: string } | null
   pluginPermission: PluginPermissionRequest | null
   pluginIntegrity: PluginIntegrityRequest | null
+  /** A write the AI is waiting to be allowed to perform. */
+  aiWrite: PendingAiWrite | null
 }>()
 
 const emit = defineEmits<{
   (e: 'toggle-sidebar'): void
   (e: 'open-folder', path: string): void
-  (e: 'conflict', req: { tabId: string; path: string }): void
   (e: 'pick-folder'): void
   (e: 'open-settings'): void
   (e: 'close-settings'): void
   (e: 'close-conflict'): void
+  (e: 'respond-ai-write', approved: boolean, remember: boolean): void
   (e: 'resolve-permission', allowed: boolean): void
   (e: 'resolve-integrity', reapprove: boolean): void
   (e: 'toggle-rail'): void
@@ -73,6 +77,7 @@ const theme = computed<string>(() => {
   return appearance.effectiveTheme()
 })
 const accent = computed<string>(() => appearance.effectiveAccent())
+const colorScheme = computed<string>(() => appearance.colorScheme)
 const locale = computed<string>(() => getLocale())
 const shellStyle = computed<Record<string, string>>(() => ({
   '--app-sidebar-width': `${appearance.sidebarWidth}px`,
@@ -91,6 +96,7 @@ const shellStyle = computed<Record<string, string>>(() => ({
     class="shell"
     :style="shellStyle"
     :data-theme="theme"
+    :data-color-scheme="colorScheme"
     :data-accent="accent"
     :data-contrast="appearance.highContrast ? 'high' : 'normal'"
     :data-locale="locale"
@@ -107,7 +113,6 @@ const shellStyle = computed<Record<string, string>>(() => ({
         v-if="vaultPath && sidebarVisible"
         :vault="vaultPath"
         @open-folder="(p: string) => emit('open-folder', p)"
-        @conflict="(req: { tabId: string; path: string }) => emit('conflict', req)"
         @open-settings="emit('open-settings')"
       />
       <LayoutResizeHandle
@@ -221,6 +226,11 @@ const shellStyle = computed<Record<string, string>>(() => ({
       @saved="(p: string) => emit('open-folder', p)"
     />
     <Toast />
+    <AiWriteDialog
+      v-if="aiWrite"
+      :pending="aiWrite"
+      @respond="(approved: boolean, remember: boolean) => emit('respond-ai-write', approved, remember)"
+    />
     <ConflictDialog
       v-if="conflict"
       :tab-id="conflict.tabId"
@@ -349,3 +359,4 @@ html, body, #app { margin: 0; padding: 0; height: 100%; width: 100%; }
   color: var(--app-muted);
 }
 </style>
+

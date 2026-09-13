@@ -7,6 +7,8 @@
  * path. Everything here is path arithmetic — no filesystem I/O — so it can be
  * unit-tested without a gateway.
  */
+import { baseName, dirName, joinPath as joinPathOf } from './paths'
+
 
 export type DropReason = 'ok' | 'self' | 'descendant' | 'conflict' | 'invalid'
 
@@ -27,21 +29,21 @@ export interface DropResult {
 /** Last `/`-separated segment of a path (the entry name). Tolerates a trailing
  * slash and bare names without a separator. */
 export function basename(path: string): string {
-  const trimmed = path.replace(/\/+$/, '')
-  const i = trimmed.lastIndexOf('/')
-  return i < 0 ? trimmed : trimmed.slice(i + 1)
+  // Tree rows carry absolute paths in the platform's native spelling, so a
+  // `/`-only split returned the whole path on Windows.
+  return baseName(path)
 }
 
 /** Everything before the last `/`-separated segment (the containing dir). */
 export function dirname(path: string): string {
-  const trimmed = path.replace(/\/+$/, '')
-  const i = trimmed.lastIndexOf('/')
-  return i <= 0 ? path : trimmed.slice(0, i)
+  return dirName(path)
 }
 
 /** Join a directory and a name with exactly one `/`. */
 export function joinPath(dir: string, name: string): string {
-  return dir.endsWith('/') ? `${dir}${name}` : `${dir}/${name}`
+  // Match the separator style already present in `dir`, so a Windows tree
+  // path is never rewritten into a mixed spelling.
+  return joinPathOf(dir, name)
 }
 
 /**
@@ -75,7 +77,9 @@ export function resolveDropTarget(
   }
 
   // A directory must never be moved inside a location it already contains.
-  if (targetPath.startsWith(`${dragPath}/`)) {
+  // Either separator: row paths are native, so on Windows a '/' suffix test
+  // never matched and dropping a folder into its own descendant was allowed.
+  if (targetPath.startsWith(`${dragPath}/`) || targetPath.startsWith(`${dragPath}\\`)) {
     return { ok: false, reason: 'descendant', from, to: null }
   }
 

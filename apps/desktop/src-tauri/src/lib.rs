@@ -21,12 +21,20 @@ pub mod storage;
 // Re-exported at the crate root for convenience/back-compat: the vault
 // registry is the authority that path-confined commands consult (and it is what
 // `tests/vault_auth_test.rs` exercises).
+use tauri::Manager;
+
 pub use state::VaultRegistry;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .manage(state::WatcherState::default())
         .manage(state::VaultRegistry::default())
@@ -37,6 +45,7 @@ pub fn run() {
             commands::fs::read_file,
             commands::fs::stat_file,
             commands::fs::write_file,
+            commands::fs::create_new_file,
             commands::fs::delete_file,
             commands::recovery::list_trash,
             commands::recovery::restore_from_trash,
@@ -45,7 +54,6 @@ pub fn run() {
             commands::recovery::read_history,
             commands::recovery::restore_history,
             commands::fs::list_dir,
-            commands::fs::search_notes,
             commands::fs::save_attachment,
             commands::fs::resolve_media_path,
             commands::fs::create_dir,
@@ -53,6 +61,8 @@ pub fn run() {
             commands::fs::register_vault,
             commands::fs::open_folder_dialog,
             commands::fs::save_file_dialog,
+            commands::fs::pick_image_files,
+            commands::fs::import_attachment,
             commands::fs::watch_folder,
             commands::ai::ai_complete,
             commands::ai::ai_cancel,
@@ -60,7 +70,8 @@ pub fn run() {
             commands::keys::store_ai_key,
             commands::keys::load_ai_key,
             commands::keys::set_master_password,
-            commands::keys::unlock_vault
+            commands::keys::unlock_vault,
+            commands::system::system_accent_color,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

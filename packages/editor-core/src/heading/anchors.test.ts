@@ -35,9 +35,25 @@ afterEach(() => {
 describe('heading anchor node view', () => {
   it('renders the heading tag matching its level with an anchor button', () => {
     const { dom } = makeView(fakeNode({ level: 2 }, 'Getting Started'))
-    expect(dom.tagName).toBe('H2')
     expect(dom.classList.contains('nk-heading')).toBe(true)
+    // The wrapper carries the deep-link anchor; the actual heading element is
+    // the editable content DOM.
+    expect(dom.querySelector<HTMLElement>('.nk-heading-content')?.tagName).toBe('H2')
     expect(dom.querySelector('.nk-heading-anchor')).toBeTruthy()
+  })
+
+  it('keeps the anchor button outside the editable content DOM', () => {
+    const { dom, contentDOM } = makeView(fakeNode({ level: 1 }, 'Hello'))
+    // The editable heading text lives in the heading element; the "#" anchor is
+    // an absolutely-positioned UI element in the wrapper, never inside
+    // contentDOM. This keeps every editable pixel inside contentDOM so the
+    // browser cannot place the caret in a non-content boundary.
+    expect(contentDOM).not.toBe(dom)
+    expect(contentDOM.tagName).toBe('H1')
+    expect(contentDOM.classList.contains('nk-heading-content')).toBe(true)
+    expect(contentDOM.parentElement).toBe(dom)
+    expect(dom.querySelector('.nk-heading-anchor')?.parentElement).toBe(dom)
+    expect(dom.querySelector('.nk-heading-anchor')).not.toContain(contentDOM)
   })
 
   it('copies the default `#slug` fragment on click', async () => {
@@ -79,7 +95,9 @@ describe('heading anchor node view', () => {
 
     const anchor = el.querySelector<HTMLButtonElement>('.nk-heading-anchor')
     expect(anchor).toBeTruthy()
-    // The heading text must render into the content DOM (editable).
+    // The heading element is the editable content DOM; the anchor button sits in
+    // the wrapper outside it, so it is never parsed as document content.
+    expect(el.querySelector('.nk-heading .nk-heading-content')?.tagName).toBe('H1')
     expect(el.querySelector('h1')?.textContent).toContain('Hello World')
 
     anchor!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -88,5 +106,40 @@ describe('heading anchor node view', () => {
 
     expect(await editor.save()).toBe(md)
     editor.destroy()
+  })
+
+  it('gives each duplicate heading its own link, on a real document', async () => {
+    // Every "Same" used to copy `#same`, so the links from the second and third
+    // headings all landed on the first. Each heading now copies the id it
+    // actually owns, matching what the export emits.
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open('# Same\n\n# Same\n\n# Same\n')
+
+    const write = vi.fn().mockResolvedValue(undefined)
+    configureClipboardWriter(write)
+
+    const anchors = Array.from(el.querySelectorAll<HTMLButtonElement>('.nk-heading-anchor'))
+    expect(anchors).toHaveLength(3)
+    for (const anchor of anchors) {
+      anchor.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await flush()
+    }
+
+    expect(write.mock.calls.map((call) => call[0])).toEqual(['#same', '#same-1', '#same-2'])
+    editor.destroy()
+  })
+
+  it('falls back to the plain slug when it has no view to consult', async () => {
+    // The node view is also constructible without a view (unit harnesses), and
+    // must still produce a usable fragment rather than throwing.
+    const write = vi.fn().mockResolvedValue(undefined)
+    configureClipboardWriter(write)
+    const { dom } = makeView(fakeNode({ level: 1 }, 'Hello World'))
+    const anchor = dom.querySelector<HTMLButtonElement>('.nk-heading-anchor')!
+    anchor.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flush()
+    expect(write).toHaveBeenCalledWith('#hello-world')
   })
 })

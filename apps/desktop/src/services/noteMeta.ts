@@ -1,4 +1,5 @@
 import { t } from '../i18n'
+import { baseName, dirName, stripVaultPrefix } from './paths'
 
 export interface NoteSummary {
   path: string
@@ -28,6 +29,22 @@ export interface MdLink {
 }
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---((?:\r?\n)+|$)/
+/**
+ * How much of a note the library scan reads for its metadata.
+ *
+ * The block used to be sliced to `SNAPSHOT_CHARS` BEFORE being split, so a
+ * frontmatter block longer than that slice never closed inside it: `front` came
+ * back empty and the note lost its title and tags in the list, in the tag
+ * filter, in the aggregate counts and in the search index — while the
+ * frontmatter panel (which reads the whole block) still showed them, so the two
+ * surfaces disagreed about the same note. The scan is bounded instead: the
+ * frontmatter is found first, and only the BODY after it is sampled.
+ *
+ * A note that opens with `---` and never closes it would otherwise make the
+ * lazy match scan the entire file, so the search for the closing fence is
+ * capped well above any realistic block.
+ */
+const FRONTMATTER_SCAN_CHARS = 8192
 const SNAPSHOT_CHARS = 400
 const SUMMARY_CHARS = 120
 
@@ -87,8 +104,21 @@ export function parseFrontmatterBlock(front: string): { title: string; tags: str
   return { title, tags }
 }
 
-/** Editable fields surfaced by the frontmatter property panel. `other` holds
- * every unrecognized YAML key verbatim (read-only display, not edited). */
+/** One top-level frontmatter key together with the original text of its value.
+ * A segment opens on a non-indented `key:` line and takes the indented lines
+ * that follow (blank lines inside the value included), so nested mappings,
+ * sequences, block scalars and comments travel with their key and are never
+ * re-quoted. */
+export interface FrontmatterSegment {
+  /** Original key text; `''` for keyless text (a comment above the first key,
+   * a blank separator line). */
+  key: string
+  lines: string[]
+}
+
+/** Editable fields surfaced by the frontmatter property panel. `other` is a
+ * read-only display view of unknown keys; `rawSegments` keeps the block text
+ * per segment so serialization can write it back byte-for-byte. */
 export interface FrontmatterFields {
   title: string
   tags: string[]
@@ -96,13 +126,86 @@ export interface FrontmatterFields {
   created: string
   updated: string
   other: Record<string, string>
+  rawSegments: FrontmatterSegment[]
 }
 
-const FRONTMATTER_KEY_RE = /^([A-Za-z0-9_-]+)\s*:\s*(.*)$/
+// A top-level key starts at column 0 and is made of letters/digits (Unicode
+// included, so `标题:` is recognized) plus `_`/`-`; an indented line never
+// matches, so a nested `  title: x` stays inside its parent segment.
+const FRONTMATTER_KEY_RE = /^([\p{L}\p{N}_-]+)\s*:\s*(.*)$/u
 const KNOWN_FRONTMATTER_KEYS = new Set(['title', 'tags', 'date', 'created', 'updated'])
 
-/** Parse the inner frontmatter text (between the `---` fences) into editable
- * fields plus every other key as a raw scalar. */
+function isKnownFrontmatterKey(key: string): boolean {
+  return KNOWN_FRONTMATTER_KEYS.has(key.toLowerCase())
+}
+
+/** Split inner frontmatter text into top-level key segments at the text level,
+ * interpreting no values. YAML scopes a top-level key to column 0, so a blank
+ * or indented line inside a value continues the segment above; a non-indented
+ * line that is not a recognizable key becomes its own keyless segment instead
+ * of being guessed as a continuation — otherwise a key this regex cannot
+ * express could be swallowed by (and lost with) a known key the panel
+ * rewrites. */
+function splitFrontmatterSegments(front: string): FrontmatterSegment[] {
+  if (front === '') return []
+  const segments: FrontmatterSegment[] = []
+  let current: FrontmatterSegment | null = null
+  // Blank lines are held back: inside a value they continue the key above, but
+  // above a new top-level key they belong to the text between keys, so a known
+  // key cannot swallow (and drop) them when serialization replaces its text.
+  let blanks: string[] = []
+  for (const line of front.split(/\r?\n/)) {
+    if (line.trim() === '') {
+      blanks.push(line)
+      continue
+    }
+    if (/^[ \t]/.test(line)) {
+      // Indented: continue the segment above, taking any blank lines that sat
+      // inside the value with it.
+      if (current === null) {
+        current = { key: '', lines: [] }
+        segments.push(current)
+      }
+      current.lines.push(...blanks, line)
+      blanks = []
+      continue
+    }
+    if (blanks.length > 0) {
+      segments.push({ key: '', lines: blanks })
+      blanks = []
+    }
+    const key = FRONTMATTER_KEY_RE.exec(line)
+    current = { key: key ? key[1] : '', lines: [line] }
+    segments.push(current)
+  }
+  if (blanks.length > 0) segments.push({ key: '', lines: blanks })
+  return segments
+}
+
+/** Tags from a `tags:` segment: inline `[a, b]` / `a, b` on the key line, or
+ * the `- item` lines that follow it. */
+function parseTagValues(inline: string, lines: string[]): string[] {
+  if (inline !== '') {
+    const cleaned = inline.replace(/^\[/, '').replace(/\]$/, '')
+    return cleaned.split(',').map((p) => stripQuotes(p)).filter(Boolean)
+  }
+  const tags: string[] = []
+  for (const line of lines.slice(1)) {
+    const item = /^\s+-\s*(.+?)\s*$/.exec(line)
+    if (item) {
+      const tag = stripQuotes(item[1])
+      if (tag) tags.push(tag)
+      continue
+    }
+    if (line.trim() === '') continue
+    break
+  }
+  return tags
+}
+
+/** Parse the inner frontmatter text (between the `---` fences) into the fields
+ * the panel edits, a display-only view of every other key, and the raw segments
+ * `serializeFrontmatter` re-emits as-is. */
 export function parseFrontmatterForPanel(front: string): FrontmatterFields {
   const fields: FrontmatterFields = {
     title: '',
@@ -111,48 +214,25 @@ export function parseFrontmatterForPanel(front: string): FrontmatterFields {
     created: '',
     updated: '',
     other: {},
+    rawSegments: [],
   }
-  let collectingTags = false
-  for (const line of front.split(/\r?\n/)) {
-    if (collectingTags) {
-      const item = /^\s+-\s*(.+?)\s*$/.exec(line)
-      if (item) {
-        const tag = stripQuotes(item[1])
-        if (tag) fields.tags.push(tag)
-        continue
-      }
-      if (line.trim() === '') continue
-      collectingTags = false
-    }
-    const pair = FRONTMATTER_KEY_RE.exec(line)
-    if (!pair) continue
-    const key = pair[1]
-    const value = pair[2].trim()
-    const lower = key.toLowerCase()
-    if (lower === 'title') {
-      fields.title = stripQuotes(value)
-      collectingTags = false
-    } else if (lower === 'tags') {
-      fields.tags = []
-      if (value === '') {
-        collectingTags = true
-      } else {
-        const cleaned = value.replace(/^\[/, '').replace(/\]$/, '')
-        fields.tags = cleaned.split(',').map((p) => stripQuotes(p)).filter(Boolean)
-      }
-    } else if (lower === 'date') {
-      fields.date = stripQuotes(value)
-      collectingTags = false
-    } else if (lower === 'created') {
-      fields.created = stripQuotes(value)
-      collectingTags = false
-    } else if (lower === 'updated') {
-      fields.updated = stripQuotes(value)
-      collectingTags = false
-    } else if (!KNOWN_FRONTMATTER_KEYS.has(lower)) {
-      // Preserve the original key casing for unknown keys.
-      fields.other[key] = stripQuotes(value)
-      collectingTags = false
+  for (const segment of splitFrontmatterSegments(front)) {
+    // Every segment is kept, known keys included: serialization needs the
+    // original positions to know which text sat above the first key.
+    fields.rawSegments.push(segment)
+    if (segment.key === '') continue
+    const value = (FRONTMATTER_KEY_RE.exec(segment.lines[0])?.[2] ?? '').trim()
+    const lower = segment.key.toLowerCase()
+    if (lower === 'title') fields.title = stripQuotes(value)
+    else if (lower === 'tags') fields.tags = parseTagValues(value, segment.lines)
+    else if (lower === 'date') fields.date = stripQuotes(value)
+    else if (lower === 'created') fields.created = stripQuotes(value)
+    else if (lower === 'updated') fields.updated = stripQuotes(value)
+    else {
+      // Display only. The bytes written back always come from rawSegments, so
+      // a value this one-line view cannot show (list, mapping, block scalar)
+      // is rendered roughly but never stored as a scalar.
+      fields.other[segment.key] = stripQuotes(value)
     }
   }
   return fields
@@ -184,10 +264,20 @@ function yamlScalar(value: string): string {
 }
 
 /** Serialize editable fields back to inner frontmatter text (no `---` fences).
- * Known keys are emitted first (title, tags, date, created, updated), then any
- * preserved `other` keys in their original insertion order. */
+ * Known keys are emitted first (title, tags, date, created, updated); every
+ * other key then follows as its ORIGINAL text, byte-for-byte and in document
+ * order, so values the panel does not understand (sequences, mappings, block
+ * scalars, duplicate keys) survive a round trip even when a field is edited. */
 export function serializeFrontmatter(fields: FrontmatterFields): string {
   const lines: string[] = []
+  const segments = fields.rawSegments ?? []
+  // Keyless lines that sat above the first key (a leading comment, a blank
+  // line) keep that position, so an untouched block re-serializes unchanged.
+  let next = 0
+  while (next < segments.length && segments[next].key === '') {
+    lines.push(...segments[next].lines)
+    next += 1
+  }
   if (fields.title !== '') lines.push(`title: ${yamlScalar(fields.title)}`)
   const tags = [...new Set(fields.tags)]
   if (tags.length > 0) {
@@ -197,7 +287,19 @@ export function serializeFrontmatter(fields: FrontmatterFields): string {
   if (fields.date !== '') lines.push(`date: ${yamlScalar(fields.date)}`)
   if (fields.created !== '') lines.push(`created: ${yamlScalar(fields.created)}`)
   if (fields.updated !== '') lines.push(`updated: ${yamlScalar(fields.updated)}`)
+  const preserved = new Set<string>()
+  for (; next < segments.length; next += 1) {
+    const segment = segments[next]
+    // Known keys were re-emitted above; repeating their original text as well
+    // would duplicate them.
+    if (segment.key !== '' && isKnownFrontmatterKey(segment.key)) continue
+    preserved.add(segment.key)
+    lines.push(...segment.lines)
+  }
+  // Field sets built by hand carry no raw text, so their `other` values still
+  // need the scalar path; parsed keys always have a raw segment above.
   for (const [key, value] of Object.entries(fields.other)) {
+    if (preserved.has(key)) continue
     lines.push(`${key}: ${yamlScalar(value)}`)
   }
   return lines.join('\n')
@@ -215,7 +317,7 @@ export function hasFrontmatter(md: string): boolean {
 }
 
 export function emptyFrontmatterFields(): FrontmatterFields {
-  return { title: '', tags: [], date: '', created: '', updated: '', other: {} }
+  return { title: '', tags: [], date: '', created: '', updated: '', other: {}, rawSegments: [] }
 }
 
 /** Rebuild a document's frontmatter block from `fields`, preserving the body
@@ -269,14 +371,27 @@ export function extractSummary(body: string, max = SUMMARY_CHARS): string {
 
 /** Directory of `path` relative to the vault. Absolute paths (Tauri) get the
  * vault prefix stripped; already-relative paths (demo gateway) are kept as-is. */
+/**
+ * A note path with the vault prefix removed, so it can be re-rooted at the
+ * vault.
+ *
+ * `tab.path` is vault-relative in some flows and an absolute (vault-prefixed)
+ * path in others — `list_dir` returns the resolved path, while the link index
+ * returns a vault-relative one — so anything that needs to JOIN the vault back
+ * onto a note path must strip whatever prefix is already there first. Joining
+ * without stripping is what produced a doubled path in copied heading links.
+ */
+export function notePathRelativeToVault(path: string, vault: string): string {
+  // Separator-agnostic: both the note path and the vault arrive in the
+  // platform's native spelling (backslashes on Windows), so a `/`-only prefix
+  // test never matched and the absolute path was returned unchanged.
+  return stripVaultPrefix(path, vault)
+}
+
 export function dirRelativeToVault(path: string, vault: string): string {
-  const v = vault.replace(/\/+$/, '')
-  let p = path
-  if (v !== '' && (p === v || p.startsWith(`${v}/`))) {
-    p = p.slice(v.length).replace(/^\/+/, '')
-  }
-  const i = p.lastIndexOf('/')
-  return i < 0 ? '' : p.slice(0, i)
+  const p = notePathRelativeToVault(path, vault)
+  const dir = dirName(p)
+  return dir === p ? '' : dir
 }
 
 export function relPathOf(note: Pick<NoteSummary, 'dir' | 'name'>): string {
@@ -297,7 +412,28 @@ export function resolveLinkTarget(fromRelDir: string, target: string): string {
 }
 
 const LINK_RE = /\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g
+/** `[[target]]` / `[[target|alias]]` — the app's own wiki syntax. */
+const WIKILINK_RE = /\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g
 const EXTERNAL_RE = /^(https?:|mailto:|#|data:)/i
+
+/**
+ * A wiki target names a NOTE, so `[[other]]` and `[[other.md]]` are the same
+ * reference. The editor accepts both when you Ctrl+click, and the index has to
+ * key them the same way or a backlink can never match: `inlinksOf` compares the
+ * stored links against a `<name>.md` path, so an extension-less target would sit
+ * in the list invisibly. A `#fragment` rides along untouched — the resolvers
+ * strip it.
+ */
+function withNoteExtension(target: string): string {
+  // Split the fragment OFF before touching the extension: appending to the whole
+  // string turned `[[target#section]]` into `target#section.md`, whose path
+  // resolves to nothing (the fragment is not part of the file name).
+  const hash = target.indexOf('#')
+  const path = (hash < 0 ? target : target.slice(0, hash)).trim()
+  if (!path) return ''
+  const fragment = hash < 0 ? '' : target.slice(hash)
+  return /\.(md|mdx)$/i.test(path) ? `${path}${fragment}` : `${path}.md${fragment}`
+}
 
 export function extractOutlinks(content: string): MdLink[] {
   const out: MdLink[] = []
@@ -308,7 +444,37 @@ export function extractOutlinks(content: string): MdLink[] {
     if (!/\.(md|mdx)$/i.test(path)) continue
     out.push({ text: match[1].trim(), target })
   }
+  // Wikilinks too. They render as chips and Ctrl+click navigates, but the link
+  // EXTRACTOR only knew `[text](target)` — so a note referenced with the app's
+  // own wiki syntax never appeared in the backlinks list or in the graph, and
+  // the panel said "no note references this document" while one plainly did.
+  for (const match of content.matchAll(WIKILINK_RE)) {
+    // An escaped bracket is literal text, not a link (the editor's parser draws
+    // the same line).
+    if (match.index > 0 && content[match.index - 1] === '\\') continue
+    const raw = match[1].trim()
+    if (!raw || EXTERNAL_RE.test(raw)) continue
+    const target = withNoteExtension(raw)
+    if (!target) continue
+    out.push({ text: (match[2] ?? '').trim() || raw, target })
+  }
   return out
+}
+
+/**
+ * The metadata-relevant view of a note: its frontmatter block (found within the
+ * scan cap) and a sample of the BODY that follows it.
+ *
+ * Returning the body from AFTER the block matters as much as the block itself:
+ * sampling the first 400 characters meant a long frontmatter ate the sample
+ * too, so the summary and the H1 fallback were taken from YAML text.
+ */
+export function splitNoteForSummary(md: string): { front: string; body: string } {
+  const head = md.length > FRONTMATTER_SCAN_CHARS ? md.slice(0, FRONTMATTER_SCAN_CHARS) : md
+  const match = FRONTMATTER_RE.exec(head)
+  if (!match) return { front: '', body: md.slice(0, SNAPSHOT_CHARS) }
+  const bodyStart = match[0].length
+  return { front: match[1] ?? '', body: md.slice(bodyStart, bodyStart + SNAPSHOT_CHARS) }
 }
 
 export function parseNoteMeta(
@@ -316,10 +482,11 @@ export function parseNoteMeta(
   content: string,
   meta: { mtime: number; size: number; vault: string },
 ): NoteSummary {
-  const snapshot = content.slice(0, SNAPSHOT_CHARS)
-  const { front, body } = splitFrontmatterRaw(snapshot)
+  const { front, body } = splitNoteForSummary(content)
   const parsed = parseFrontmatterBlock(front)
-  const name = path.split('/').pop() ?? path
+  // Must be the basename: on Windows this used to be the whole absolute
+  // path, which is what the note list rendered as every note's title.
+  const name = baseName(path)
   const dir = dirRelativeToVault(path, meta.vault)
   const tags = [...new Set(parsed.tags.map((t) => t.replace(/^#/, '').trim()).filter(Boolean))]
   const fromDir = dir

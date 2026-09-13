@@ -20,7 +20,6 @@ vi.mock('../platform/gateways/fs', () => ({
     deleteFile: deleteFileMock,
     resolveMediaPath: resolveMediaPathMock,
     watch: vi.fn(),
-    searchNotes: vi.fn(),
     openFolderDialog: vi.fn(),
     saveFileDialog: vi.fn(),
     onFsChange: vi.fn(),
@@ -77,6 +76,16 @@ async function openDoc(path = 'notes/a.md', vault = '/vault'): Promise<void> {
 
 function menuItems(): HTMLButtonElement[] {
   return [...document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+}
+
+/** A promise the test resolves by hand, for holding one async run open while a
+ *  newer one finishes. */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((r) => {
+    resolve = r
+  })
+  return { promise, resolve }
 }
 
 describe('AttachmentsPanel', () => {
@@ -173,6 +182,56 @@ describe('AttachmentsPanel', () => {
     await flush()
     expect(document.body.querySelector('.att-thumb img')).toBeNull()
     expect(document.body.querySelector('.att-thumb svg')).toBeTruthy()
+  })
+
+  /** Mount on /vault, hold its thumbnail resolution open, switch to /vault-b
+   *  (which resolves at once) and hand back the resolver of the stale run. */
+  async function switchVaultWithStaleResolve(): Promise<{
+    resolve: (value: string) => void
+  }> {
+    mockAttachmentTree()
+    const stale = deferred<string>()
+    resolveMediaPathMock.mockImplementation((vault: string) =>
+      vault === '/vault' ? stale.promise : Promise.resolve('data:image/png;base64,BB=='),
+    )
+    await openDoc('notes/a.md', '/vault')
+    mountPanel()
+    await flush()
+    useTabsStore().setVault('/vault-b')
+    await flush()
+    return { resolve: stale.resolve }
+  }
+
+  it('does not let a stale vault resolve overwrite the new vault thumbnails', async () => {
+    const stale = await switchVaultWithStaleResolve()
+    expect(document.body.querySelector<HTMLImageElement>('.att-thumb img')?.getAttribute('src')).toBe(
+      'data:image/png;base64,BB==',
+    )
+
+    stale.resolve('data:image/png;base64,AA==')
+    await flush()
+
+    // Still the new vault's thumbnail: the late answer from the old vault owns
+    // nothing any more.
+    expect(document.body.querySelector<HTMLImageElement>('.att-thumb img')?.getAttribute('src')).toBe(
+      'data:image/png;base64,BB==',
+    )
+  })
+
+  it('does not let a stale vault resolve clear the new vault broken marks', async () => {
+    const stale = await switchVaultWithStaleResolve()
+    const img = document.body.querySelector<HTMLImageElement>('.att-thumb img')!
+    expect(img).toBeTruthy()
+    img.dispatchEvent(new Event('error'))
+    await flush()
+    expect(document.body.querySelector('.att-thumb img')).toBeNull()
+
+    stale.resolve('data:image/png;base64,AA==')
+    await flush()
+
+    // The placeholder stays: a stale run may not resurrect the thumbnail with
+    // the previous vault's URL.
+    expect(document.body.querySelector('.att-thumb img')).toBeNull()
   })
 
   it('deletes through the two-stage context menu confirm', async () => {

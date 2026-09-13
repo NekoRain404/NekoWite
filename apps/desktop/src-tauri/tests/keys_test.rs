@@ -1,18 +1,18 @@
+#[cfg(unix)]
+use nekowite_lib::domain::recovery::{open_snapshot, reencrypt_vault};
 use nekowite_lib::storage::key_store::{
     ai_key_presence, decode_keyfile, derive_master_key, encode_keyfile_password,
     encode_keyfile_passwordless, ensure_keyfile, read_vault_key_state, validate_password,
     verifier_of, VaultKeyState, AI_KEY_MASKED,
 };
-#[cfg(unix)]
-use nekowite_lib::domain::recovery::{open_snapshot, reencrypt_vault};
 use std::fs;
 #[cfg(unix)]
 use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-use std::path::PathBuf;
 #[cfg(unix)]
 use std::path::Path;
+use std::path::PathBuf;
 #[cfg(unix)]
 use tauri_plugin_stronghold::stronghold::Stronghold;
 
@@ -43,7 +43,10 @@ fn master_key_created_and_reused() {
     let p: PathBuf = dir.join("master.key");
     let a = ensure_keyfile(&p).unwrap();
     let b = ensure_keyfile(&p).unwrap();
-    assert_eq!(a, b, "re-reading an existing key file must return the same bytes");
+    assert_eq!(
+        a, b,
+        "re-reading an existing key file must return the same bytes"
+    );
     assert_eq!(a.len(), 32, "master key must be 32 bytes");
     let perm = fs::metadata(&p).unwrap().permissions().mode();
     assert_eq!(perm & 0o777, 0o600, "master key file must be mode 0600");
@@ -60,10 +63,13 @@ fn ensure_keyfile_errors_on_non_notfound() {
     fs::create_dir_all(&p).unwrap();
     let err = ensure_keyfile(&p).unwrap_err();
     assert!(
-        err.contains("cannot read master key file"),
-        "expected read error to propagate, got: {err}"
+        err.contains("could not read the master key file") && err.contains("master.key"),
+        "expected read error to propagate with the file named, got: {err}"
     );
-    assert!(p.is_dir(), "non-NotFound error must not be treated as missing");
+    assert!(
+        p.is_dir(),
+        "non-NotFound error must not be treated as missing"
+    );
     fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -116,7 +122,10 @@ fn derived_key_is_not_plain_sha256() {
     // different key, and re-deriving with the same salt is stable.
     let salt2 = [8u8; 32];
     let derived2 = derive_master_key(password, &salt2).unwrap();
-    assert_ne!(derived, derived2, "different salt must give a different key");
+    assert_ne!(
+        derived, derived2,
+        "different salt must give a different key"
+    );
     assert_eq!(
         derive_master_key(password, &salt).unwrap(),
         derived,
@@ -141,7 +150,10 @@ fn disk_keyfile_cannot_unlock_without_password() {
 
     // The file decodes to a Locked state, never a raw Auto key.
     match read_vault_key_state(&key_path).unwrap() {
-        VaultKeyState::Locked { salt: s, verifier: v } => {
+        VaultKeyState::Locked {
+            salt: s,
+            verifier: v,
+        } => {
             assert_eq!(s, salt);
             assert_eq!(v, verifier);
         }
@@ -149,8 +161,16 @@ fn disk_keyfile_cannot_unlock_without_password() {
     }
 
     // The file content cannot be the raw key, and the verifier is not the key.
-    assert_ne!(bytes.as_slice(), master.as_slice(), "keyfile must not contain the raw key");
-    assert_ne!(verifier.as_slice(), master.as_slice(), "verifier must differ from the key");
+    assert_ne!(
+        bytes.as_slice(),
+        master.as_slice(),
+        "keyfile must not contain the raw key"
+    );
+    assert_ne!(
+        verifier.as_slice(),
+        master.as_slice(),
+        "verifier must differ from the key"
+    );
     // `ensure_keyfile` refuses to hand back a raw key from a locked file.
     assert!(ensure_keyfile(&key_path).is_err());
 
@@ -163,8 +183,14 @@ fn disk_keyfile_cannot_unlock_without_password() {
 fn ai_key_presence_never_discloses_the_key() {
     assert_eq!(ai_key_presence(None), None, "no key stays None");
     let disclosed = ai_key_presence(Some("sk-super-secret".to_string())).unwrap();
-    assert_eq!(disclosed, AI_KEY_MASKED, "presence reports the masked indicator");
-    assert_ne!(disclosed, "sk-super-secret", "the real key must not be returned");
+    assert_eq!(
+        disclosed, AI_KEY_MASKED,
+        "presence reports the masked indicator"
+    );
+    assert_ne!(
+        disclosed, "sk-super-secret",
+        "the real key must not be returned"
+    );
     // The masked indicator is a fixed literal, not derived from the secret.
     assert_eq!(AI_KEY_MASKED, "••••••••");
 }
@@ -273,7 +299,10 @@ fn open_snapshot_recovers_with_master_key_old_backup() {
     // Simulate the interrupted-swap state: master.key holds the NEW key (which
     // cannot decrypt the old snapshot yet), the OLD key survives in the backup.
     write_key_file(&key_path, &encode_keyfile_passwordless(&new_key));
-    write_key_file(&dir.join("master.key.old"), &encode_keyfile_passwordless(&old_key));
+    write_key_file(
+        &dir.join("master.key.old"),
+        &encode_keyfile_passwordless(&old_key),
+    );
 
     // The new key alone would fail; the `master.key.old` fallback recovers.
     let stronghold = open_snapshot(&snapshot, &key_path, new_key.to_vec()).unwrap();

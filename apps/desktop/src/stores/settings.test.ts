@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
 
 vi.hoisted(() => {
   const g = globalThis as { window?: { __TAURI_INTERNALS__?: unknown } }
@@ -12,6 +12,7 @@ const invokeMock = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 
 import { useSettingsStore } from './settings'
+import { DEFAULT_CONTEXT_CHARS } from './settings'
 
 function clearLs(): void {
   localStorage.removeItem('nekowite.ai.provider')
@@ -127,28 +128,34 @@ describe('useSettingsStore', () => {
   it('defaults AI tuning knobs and carries them in config', () => {
     const s = useSettingsStore()
     expect(s.temperature).toBe(0.7)
-    expect(s.maxTokens).toBe(256)
+    // 1024, not 256: a reasoning model can spend the entire budget on its
+    // thinking and return no answer at all (measured against deepseek-flash),
+    // so the shipped default has to leave room for the actual text.
+    expect(s.maxTokens).toBe(1024)
     expect(s.systemPrompt).toBe('')
     const cfg = s.config()
     expect(cfg.temperature).toBe(0.7)
-    expect(cfg.max_tokens).toBe(256)
+    expect(cfg.max_tokens).toBe(1024)
     expect(cfg.system_prompt).toBeUndefined()
   })
 
   it('persists AI tuning knobs and includes them in config when set', async () => {
     const s = useSettingsStore()
     s.temperature = 1.2
-    s.maxTokens = 1024
+    // Deliberately NOT the default (1024): the point of this case is that a
+    // changed value is persisted, and a value equal to the default would not
+    // fire the store's watcher at all.
+    s.maxTokens = 2048
     s.systemPromptOn = true
     s.systemPrompt = 'Be concise.'
     await nextTick()
     expect(localStorage.getItem('nekowite.ai.temperature')).toBe('1.2')
-    expect(localStorage.getItem('nekowite.ai.maxTokens')).toBe('1024')
+    expect(localStorage.getItem('nekowite.ai.maxTokens')).toBe('2048')
     expect(localStorage.getItem('nekowite.ai.systemPrompt')).toBe('Be concise.')
     expect(localStorage.getItem('nekowite.ai.systemPromptOn')).toBe('true')
     const cfg = s.config()
     expect(cfg.temperature).toBe(1.2)
-    expect(cfg.max_tokens).toBe(1024)
+    expect(cfg.max_tokens).toBe(2048)
     expect(cfg.system_prompt).toBe('Be concise.')
   })
 
@@ -230,5 +237,31 @@ describe('useSettingsStore', () => {
     expect(s.exportIncludeFrontmatter).toBe(true)
     expect(s.exportPdfPageSize).toBe('A4')
     expect(s.exportPdfOrientation).toBe('portrait')
+  })
+})
+
+describe('chat context budget', () => {
+  it('defaults to a budget that fits a real section of a long note', () => {
+    // It used to be a hardcoded 2000 with no way to change it: on a long note
+    // the model saw the opening pages and answered confidently about the wrong
+    // part of the document, and the user had no lever to fix it.
+    setActivePinia(createPinia())
+    localStorage.clear()
+    const settings = useSettingsStore()
+    expect(settings.contextChars).toBe(DEFAULT_CONTEXT_CHARS)
+    expect(DEFAULT_CONTEXT_CHARS).toBeGreaterThan(2000)
+  })
+
+  it('persists a changed budget and reads it back', async () => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+    const first = useSettingsStore()
+    first.contextChars = 9000
+    // The store persists through a watcher, which Vue flushes on the next tick.
+    await nextTick()
+
+    setActivePinia(createPinia())
+    const second = useSettingsStore()
+    expect(second.contextChars).toBe(9000)
   })
 })

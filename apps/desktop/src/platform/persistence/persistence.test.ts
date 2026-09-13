@@ -63,6 +63,24 @@ describe('localStoragePersistencePort', () => {
     warn.mockRestore()
   })
 
+  it('reports whether the write landed, so an owner can shed data', () => {
+    // The port cannot throw (a reactive watcher would die with it), so the
+    // return value is the only way a caller learns its data is not stored. The
+    // chat store relies on it to retry without images instead of losing a
+    // conversation.
+    const ls = localStoragePersistencePort()
+    expect(ls.set('nekowite.test.ok', 'value')).toBe(true)
+
+    const throwing = {
+      getItem: () => null,
+      setItem: () => {
+        throw new DOMException('QuotaExceededError', 'QuotaExceededError')
+      },
+      removeItem: () => undefined,
+    } as unknown as Storage
+    expect(localStoragePersistencePort(throwing).set('nekowite.test.full', 'x')).toBe(false)
+  })
+
   it('migrate renames a key and carries its value', () => {
     const storage = new MapBackedStorage()
     const port = localStoragePersistencePort(storage as unknown as Storage)
@@ -74,6 +92,10 @@ describe('localStoragePersistencePort', () => {
 })
 
 describe('memoryPersistencePort', () => {
+  it('reports a successful write like every other adapter', () => {
+    expect(memoryPersistencePort().set('a', 'b')).toBe(true)
+  })
+
   it('get/set/remove round-trips', () => {
     const port = memoryPersistencePort()
     expect(port.get('k')).toBeNull()

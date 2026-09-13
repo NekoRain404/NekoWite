@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { Hash, Plus, X } from 'lucide-vue-next'
 import { useTabsStore } from '../stores/tabs'
+import { flushSourceEdits } from '../services/sourceView'
 import { useDocumentListStore } from '../stores/documentList'
 import {
   emptyFrontmatterFields,
@@ -14,6 +15,8 @@ import {
 } from '../services/noteMeta'
 import { normalizeTag, normalizeTags } from '../services/tags'
 import { t } from '../i18n'
+import { isComposingKey } from '../services/keyGuard'
+import { baseName } from '../services/paths'
 
 const tabs = useTabsStore()
 const documentList = useDocumentListStore()
@@ -58,6 +61,10 @@ watch(
 function writeContent(fields: FrontmatterFields): void {
   const active = tab.value
   if (!active) return
+  // Whole-document read-modify-write: publish the source pane's pending
+  // keystrokes first so the edit applies to the live text (and the source pane
+  // is not then mirrored back to a stale version).
+  flushSourceEdits()
   const { content, changed } = replaceFrontmatter(active.content, fields)
   if (!changed) return
   active.content = content
@@ -74,10 +81,10 @@ function commit(): void {
 function addProperties(): void {
   const active = tab.value
   if (!active) return
-  const name = active.path ? active.path.split('/').pop() ?? '' : ''
+  const name = active.path ? baseName(active.path) : ''
   const h1 = /^#\s+(.+?)\s*#*\s*$/m.exec(active.content)
   const title = fileNameTitle(name) || h1?.[1]?.trim() || ''
-  const next: FrontmatterFields = { title, tags: [], date: '', created: '', updated: '', other: {} }
+  const next: FrontmatterFields = { title, tags: [], date: '', created: '', updated: '', other: {}, rawSegments: [] }
   writeContent(next)
 }
 
@@ -98,6 +105,9 @@ function removeTag(tag: string): void {
 }
 
 function onTagKeydown(e: KeyboardEvent): void {
+  // Enter accepts the IME candidate, and Backspace edits the composing text —
+  // none of those may be read as "add this tag" / "delete the previous tag".
+  if (isComposingKey(e)) return
   if (e.key === 'Enter' || e.key === ',') {
     e.preventDefault()
     addTagRaw(tagInput.value)
@@ -110,6 +120,9 @@ function onTagKeydown(e: KeyboardEvent): void {
 }
 
 function onTitleKeydown(e: KeyboardEvent): void {
+  // Enter commits the title. While an IME candidate list is open it belongs to
+  // the IME instead, or the half-finished pinyin string is written to the file.
+  if (isComposingKey(e)) return
   if (e.key === 'Enter') {
     e.preventDefault()
     ;(e.target as HTMLInputElement).blur()
@@ -202,6 +215,8 @@ function onTitleKeydown(e: KeyboardEvent): void {
               v-if="tagInput"
               type="button"
               class="fm-tag-add"
+              :aria-label="t('frontmatter.addTag')"
+              :title="t('frontmatter.addTag')"
               @click="addTagRaw(tagInput)"
             >
               <Plus

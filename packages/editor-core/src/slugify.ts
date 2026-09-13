@@ -15,3 +15,30 @@ export function slugify(text: string): string {
     .replace(/^-|-$/g, '')
   return slug || 'section'
 }
+
+/**
+ * The anchor ids for a document's headings, in document order.
+ *
+ * Two headings with the same text slug to the same fragment, so the second and
+ * later occurrences get a `-<n>` suffix (the scheme GitHub uses). This is the
+ * single definition shared by three consumers that must agree, or the links one
+ * produces do not resolve in the other:
+ *
+ *  - the heading anchors that COPY a deep link,
+ *  - the exported HTML that has to expose the matching `id`, and
+ *  - the handler that scrolls to an anchor.
+ *
+ * Note the inherent ambiguity, also present on GitHub: a heading literally
+ * titled "Same 1" slugs to `same-1`, which is also what a second "Same" gets.
+ * Resolution is positional (first match in document order wins), so a link
+ * always lands on the heading that produced it.
+ */
+export function headingAnchorIds(texts: readonly string[]): string[] {
+  const seen = new Map<string, number>()
+  return texts.map((text) => {
+    const base = slugify(text)
+    const count = seen.get(base) ?? 0
+    seen.set(base, count + 1)
+    return count === 0 ? base : `${base}-${count}`
+  })
+}

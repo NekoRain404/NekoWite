@@ -18,6 +18,19 @@ export interface PluginMeta {
   signature?: string
 }
 
+/** The AI capability a plugin gets when the host has one to offer.
+ *
+ *  `permissions: ['ai']` used to buy nothing: the host had no AI surface at all,
+ *  so a plugin could only reach a model by going around the app. The provider is
+ *  injected (see `setPluginAiProvider`) because the model belongs to the APPL
+ *  - its settings, its key, its cost - not to the plugin host, and the app is
+ *  what must apply the user's write policy to whatever comes back. */
+export interface PluginAiApi {
+  /** One completion. The provider applies the app's own settings; a plugin can
+   *  shape the prompt but not the endpoint, the key or the token budget. */
+  complete(prompt: string): Promise<string>
+}
+
 export interface PluginContext {
   id: string
   name: string
@@ -26,6 +39,10 @@ export interface PluginContext {
   // emitLifecycle from getActiveEditor(); hooks that need the editor should
   // prefer the editor ARG (threaded into onEditorReady/onSave/onSaved).
   editor?: unknown
+  /** Present only when the plugin declared the `ai` permission AND the app
+   *  installed a provider. Its absence is the honest answer to "can I call a
+   *  model?": no capability, rather than a call that fails at the wire. */
+  ai?: PluginAiApi
 }
 
 export interface PluginDefinition extends RegistrationBatch {
@@ -58,6 +75,7 @@ export type PluginErrorCode =
   | 'PLUGIN_LOAD_FAILED'
   | 'PLUGIN_ACTIVATE_FAILED'
   | 'PLUGIN_HOOK_ERROR'
+  | 'PLUGIN_CALLBACK_ERROR'
   | 'PLUGIN_PERMISSION_DENIED'
   | 'PLUGIN_NOT_FOUND'
   | 'PLUGIN_MANIFEST_INVALID'
@@ -77,6 +95,7 @@ const DEFAULT_PLUGIN_ERROR_MESSAGE: Record<PluginErrorCode, string> = {
   PLUGIN_LOAD_FAILED: 'The plugin failed to load.',
   PLUGIN_ACTIVATE_FAILED: 'The plugin failed to activate.',
   PLUGIN_HOOK_ERROR: 'A lifecycle hook of the plugin threw an error.',
+  PLUGIN_CALLBACK_ERROR: 'A plugin button or command threw an error.',
   PLUGIN_PERMISSION_DENIED: 'The plugin was denied a required permission.',
   PLUGIN_NOT_FOUND: 'The plugin could not be found.',
   PLUGIN_MANIFEST_INVALID: 'The plugin manifest (package.json) is invalid.',
@@ -97,6 +116,7 @@ const DEFAULT_PLUGIN_ERROR_RECOVERY: Record<PluginErrorCode, string> = {
   PLUGIN_LOAD_FAILED: 'Reinstall the plugin or check its entry file.',
   PLUGIN_ACTIVATE_FAILED: 'Disable and re-enable the plugin, or reinstall it.',
   PLUGIN_HOOK_ERROR: 'Disable the plugin or check its logs.',
+  PLUGIN_CALLBACK_ERROR: 'Disable the plugin or check its logs.',
   PLUGIN_PERMISSION_DENIED: 'Grant the requested permission in the plugin settings.',
   PLUGIN_NOT_FOUND: 'Reinstall the plugin.',
   PLUGIN_MANIFEST_INVALID: 'Fix or reinstall the plugin manifest.',

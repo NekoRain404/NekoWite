@@ -20,7 +20,15 @@ interface FakeFs {
   renamed: Array<{ from: string; to: string }>
 }
 
-function makeFakeFs(seed: Record<string, number> = {}): FakeFs {
+/** `absolute` makes `list` answer with the spelling the real Tauri backend
+ *  uses (`list_dir` returns absolute paths). The default relative spelling is
+ *  kept for the older cases, but every new case below runs against the
+ *  ABSOLUTE one — the relative fake is exactly why the mismatch went
+ *  unnoticed. */
+function makeFakeFs(
+  seed: Record<string, number> = {},
+  opts: { absolute?: boolean } = {},
+): FakeFs {
   const files = new Map<string, { size: number; mtime: number }>(
     Object.entries(seed).map(([path, mtime]) => [path, { size: 1, mtime }]),
   )
@@ -32,8 +40,9 @@ function makeFakeFs(seed: Record<string, number> = {}): FakeFs {
     renamed,
     list: async (_vault, dir) => {
       if (dir !== '.tmp') return []
+      const prefix = opts.absolute ? '/vault/.tmp/' : '.tmp/'
       return [...files.entries()]
-        .filter(([path]) => path.startsWith('.tmp/'))
+        .filter(([path]) => path.startsWith(prefix))
         .map(([path]) => ({
           name: path.split('/').pop() ?? path,
           path,
@@ -66,18 +75,25 @@ function makeFakeFs(seed: Record<string, number> = {}): FakeFs {
 function makeRecovery(opts: {
   seed?: Record<string, number>
   referenced?: string[]
+  /** Overrides the sync `referenced` list to model the app's composed provider
+   *  (open tabs + vault-wide note scan), including its async/call-count shape. */
+  getReferencedTmp?: () =>
+    | Set<string>
+    | { paths: Set<string>; complete: boolean }
+    | Promise<Set<string> | { paths: Set<string>; complete: boolean }>
   now?: number
+  absolute?: boolean
 }): {
   fs: FakeFs
   controller: ReturnType<typeof createTmpRecovery>
   prompts: RecoveryPrompt[]
 } {
-  const fs = makeFakeFs(opts.seed)
+  const fs = makeFakeFs(opts.seed, { absolute: opts.absolute })
   const prompts: RecoveryPrompt[] = []
   const referenced = new Set(opts.referenced ?? [])
   const deps: TmpRecoveryDeps = {
     fs,
-    getReferencedTmp: () => referenced,
+    getReferencedTmp: opts.getReferencedTmp ?? (() => referenced),
     notify: (p) => prompts.push(p),
     now: () => opts.now ?? 1000 * DAY * 30,
   }
@@ -122,8 +138,95 @@ describe('createTmpRecovery (orphaned .tmp scan + GC)', () => {
     expect(prompts).toHaveLength(1)
   })
 
+  it('treats a file referenced by a CLOSED note as referenced, while old litter is still collected', async () => {
+    const now = 1000 * DAY * 100
+    // Models the app's composed provider: the open-tab set knows nothing about
+    // `.tmp/closed-note.png`, while the vault-wide note scan does.
+    const getReferencedTmp = vi.fn(async () => new Set(['.tmp/closed-note.png']))
+    const { fs, controller, prompts } = makeRecovery({
+      seed: {
+        '.tmp/closed-note.png': now - 2 * TMP_GC_AGE_MS,
+        '.tmp/old-orphan.png': now - 2 * TMP_GC_AGE_MS,
+      },
+      getReferencedTmp,
+      now,
+    })
+
+    const orphans = await controller.scan('/vault')
+    expect(orphans.map((o) => o.path)).toEqual(['.tmp/old-orphan.png'])
+    expect(prompts).toHaveLength(1)
+
+    expect(await controller.gc('/vault')).toBe(1)
+    expect(fs.deleted).toEqual(['.tmp/old-orphan.png'])
+    // Both `scan` and `gc` awaited the async provider rather than reading the
+    // old synchronous set, so the two can never disagree.
+    expect(getReferencedTmp).toHaveBeenCalledTimes(2)
+  })
+
+  it('withholds the restore offer when the reference scan is incomplete', async () => {
+    // "We could not read every note" is not "nothing references this file". The
+    // restore MOVES the file into `attachments/`, so acting on a partial answer
+    // would break the `.tmp/...` reference a note still holds.
+    const getReferencedTmp = vi.fn(async () => ({ paths: new Set<string>(), complete: false }))
+    const { fs, controller, prompts } = makeRecovery({
+      seed: { '.tmp/maybe-live.png': 1000 * DAY * 1 },
+      getReferencedTmp,
+    })
+
+    const orphans = await controller.scan('/vault')
+    expect(orphans.map((o) => o.path)).toEqual(['.tmp/maybe-live.png'])
+    expect(prompts).toHaveLength(0)
+    expect(fs.renamed).toHaveLength(0)
+  })
+
+  it('deletes nothing when the reference scan is incomplete', async () => {
+    // Deleting is worse than moving: litter we keep is recoverable, litter we
+    // delete while a note still points at it is gone for good.
+    const now = 1000 * DAY * 100
+    const getReferencedTmp = vi.fn(async () => ({ paths: new Set<string>(), complete: false }))
+    const { fs, controller } = makeRecovery({
+      seed: { '.tmp/ancient.png': now - 2 * TMP_GC_AGE_MS },
+      getReferencedTmp,
+      now,
+    })
+
+    expect(await controller.gc('/vault')).toBe(0)
+    expect(fs.deleted).toEqual([])
+  })
+
+  it('still restores and sweeps when the provider reports a complete scan', async () => {
+    const now = 1000 * DAY * 100
+    const getReferencedTmp = vi.fn(async () => ({ paths: new Set<string>(), complete: true }))
+    const { fs, controller, prompts } = makeRecovery({
+      seed: {
+        '.tmp/recent.png': now - 1 * DAY,
+        '.tmp/ancient.png': now - 2 * TMP_GC_AGE_MS,
+      },
+      getReferencedTmp,
+      now,
+    })
+
+    const orphans = await controller.scan('/vault')
+    expect(orphans.map((o) => o.path)).toEqual(['.tmp/recent.png', '.tmp/ancient.png'])
+    expect(prompts).toHaveLength(1)
+    expect(await controller.gc('/vault')).toBe(1)
+    expect(fs.deleted).toEqual(['.tmp/ancient.png'])
+  })
+
+  it('never consults the (async) provider when .tmp has no files', async () => {
+    const getReferencedTmp = vi.fn(async () => new Set<string>())
+    const { controller } = makeRecovery({ seed: {}, getReferencedTmp })
+
+    expect(await controller.scan('/vault')).toEqual([])
+    expect(await controller.gc('/vault')).toBe(0)
+    // Performance contract: the vault-wide half of the provider reads every note
+    // in the vault, so the common empty-`.tmp` vault must pay nothing for it.
+    expect(getReferencedTmp).not.toHaveBeenCalled()
+  })
+
   it('is a no-op (no notice) when the vault has no .tmp dir (list throws)', async () => {
     const { prompts } = makeRecovery({ seed: {} })
+    const getReferencedTmp = vi.fn(async () => new Set<string>())
     // Force list to reject like a missing directory.
     const c = createTmpRecovery({
       fs: {
@@ -134,11 +237,13 @@ describe('createTmpRecovery (orphaned .tmp scan + GC)', () => {
         deleteFile: async () => 'trash',
         renameEntry: async () => 'x',
       },
-      getReferencedTmp: () => new Set(),
+      getReferencedTmp,
       notify: (p) => prompts.push(p),
     })
     expect(await c.scan('/vault')).toEqual([])
     expect(prompts).toHaveLength(0)
+    // A missing `.tmp` dir is the same empty case: the provider is never asked.
+    expect(getReferencedTmp).not.toHaveBeenCalled()
   })
 
   it('GC removes only orphaned .tmp files older than the threshold', async () => {
@@ -194,6 +299,63 @@ describe('createTmpRecovery (orphaned .tmp scan + GC)', () => {
     const removed = await pending
     // The loop breaks after the cancelled next iteration, so only one delete ran.
     expect(removed).toBe(0)
+  })
+})
+
+describe('createTmpRecovery against ABSOLUTE `.tmp` paths (the Tauri spelling)', () => {
+  it('does not report a referenced .tmp file as an orphan, but still reports litter', async () => {
+    const { controller, prompts } = makeRecovery({
+      absolute: true,
+      seed: {
+        '/vault/.tmp/pending.png': 1000 * DAY,
+        '/vault/.tmp/litter.png': 1000 * DAY,
+      },
+      // The referenced set is vault-relative, as `tabs.referencedTmpPaths()`
+      // produces it.
+      referenced: ['.tmp/pending.png'],
+    })
+    const orphans = await controller.scan('/vault')
+    expect(orphans.map((o) => o.path)).toEqual(['.tmp/litter.png'])
+    expect(prompts).toHaveLength(1)
+  })
+
+  it('does not collect a still-referenced .tmp file, only the old orphan', async () => {
+    const now = 1000 * DAY * 100
+    const { fs, controller } = makeRecovery({
+      absolute: true,
+      seed: {
+        '/vault/.tmp/old-referenced.png': now - 2 * TMP_GC_AGE_MS,
+        '/vault/.tmp/old-orphan.png': now - 2 * TMP_GC_AGE_MS,
+      },
+      referenced: ['.tmp/old-referenced.png'],
+      now,
+    })
+    const removed = await controller.gc('/vault')
+    expect(removed).toBe(1)
+    expect(fs.deleted).toEqual(['.tmp/old-orphan.png'])
+  })
+
+  it('recognises a reference spelled absolutely too', async () => {
+    const { controller, prompts } = makeRecovery({
+      absolute: true,
+      seed: { '/vault/.tmp/pending.png': 1000 * DAY },
+      referenced: ['/vault/.tmp/pending.png'],
+    })
+    expect(await controller.scan('/vault')).toEqual([])
+    expect(prompts).toHaveLength(0)
+  })
+
+  it('surfaces nothing when the only absolute .tmp file is referenced', async () => {
+    const now = 1000 * DAY * 100
+    const { fs, controller } = makeRecovery({
+      absolute: true,
+      seed: { '/vault/.tmp/pending.png': now - 2 * TMP_GC_AGE_MS },
+      referenced: ['.tmp/pending.png'],
+      now,
+    })
+    expect(await controller.scan('/vault')).toEqual([])
+    expect(await controller.gc('/vault')).toBe(0)
+    expect(fs.deleted).toEqual([])
   })
 })
 
