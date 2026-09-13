@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { FolderOpen, PanelRightClose, PanelRightOpen, Settings } from 'lucide-vue-next'
 import TitleBar from '../ui/TitleBar.vue'
-import Sidebar from '../ui/AppSidebar.vue'
+import { AppSidebar } from '../features/sidebar'
 import { NoteListPanel } from '../features/notes'
 import InfoRail from '../ui/InfoRail.vue'
 import TabBar from '../ui/TabBar.vue'
@@ -110,7 +110,7 @@ const shellStyle = computed<Record<string, string>>(() => ({
     />
 
     <div class="shell-body">
-      <Sidebar
+      <AppSidebar
         v-if="vaultPath && sidebarVisible"
         :vault="vaultPath"
         @open-folder="(p: string) => emit('open-folder', p)"
