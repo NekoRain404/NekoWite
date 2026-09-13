@@ -2,15 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import GraphPanel from './GraphPanel.vue'
-import { useTabsStore } from '../stores/tabs'
-import { resetVaultFileIndex } from '../services/vaultFiles'
+import { useTabsStore } from '../../../stores/tabs'
+import { resetVaultFileIndex } from '../../../services/vaultFiles'
 
 const readMock = vi.hoisted(() => vi.fn())
 const listMock = vi.hoisted(() => vi.fn())
 const fsOnChangeMock = vi.hoisted(() => vi.fn())
 const fsUnlistenMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../platform/gateways/fs', () => ({
+vi.mock('../../../platform/gateways/fs', () => ({
   fsService: {
     read: readMock,
     list: listMock,
@@ -69,18 +69,27 @@ interface PanelState {
   orphanCount: number
   brokenCount: number
   brokenSources: Set<string>
-  layout: Array<{ id: string; x: number; y: number }>
   visibleGraph: {
     nodes: Array<{ id: string; degree: number }>
     edges: Array<{ from: string; to: string; kind: string }>
   } | null
   rebuildTimer: number | null
+  /** The canvas composable's handle (`useGraphCanvas`), which owns the layout
+   *  points the panel draws and this suite asserts on. */
+  canvasView: { layout: { value: LayoutPointState[] } }
 }
+
+type LayoutPointState = { id: string; x: number; y: number }
 
 function state(): PanelState {
   const inst = (mounted[0] as unknown as { _instance?: { setupState?: PanelState } })._instance
   if (!inst?.setupState) throw new Error('component setupState is not available')
   return inst.setupState
+}
+
+/** The current layout, read where it lives: the canvas composable. */
+function layout(): LayoutPointState[] {
+  return state().canvasView.layout.value
 }
 
 function selectFilter(ariaLabel: string, value: string): void {
@@ -358,12 +367,12 @@ describe('GraphPanel', () => {
 
     selectFilter('目录', 'docs')
 
-    await vi.waitFor(() => expect(state().layout).toHaveLength(2))
+    await vi.waitFor(() => expect(layout()).toHaveLength(2))
     expect(state().visibleGraph!.nodes.map((n) => n.id).sort()).toEqual([
       'docs/a.md',
       'docs/b.md',
     ])
-    expect(state().layout.map((p) => p.id).sort()).toEqual(['docs/a.md', 'docs/b.md'])
+    expect(layout().map((p) => p.id).sort()).toEqual(['docs/a.md', 'docs/b.md'])
     // Filtering hides nodes from the visible graph/layout, but the full-graph
     // count stays intact (nothing is dropped or truncated).
     expect(state().noteCount).toBe(3)
@@ -376,7 +385,7 @@ describe('GraphPanel', () => {
 
     selectFilter('标签', 'beta')
 
-    await vi.waitFor(() => expect(state().layout).toHaveLength(1))
+    await vi.waitFor(() => expect(layout()).toHaveLength(1))
     expect(state().visibleGraph!.nodes.map((n) => n.id)).toEqual(['docs/b.md'])
     // Edges must survive on both endpoints: the tag filter removed docs/a.md
     // so no edge passes through.
@@ -396,7 +405,7 @@ describe('GraphPanel', () => {
       ]),
     )
     // Link-kind only filters edges; all nodes stay visible.
-    expect(state().layout).toHaveLength(3)
+    expect(layout()).toHaveLength(3)
 
     selectFilter('链接类型', 'markdown')
 
@@ -441,7 +450,7 @@ describe('GraphPanel', () => {
     mountFilterVault()
     await flush()
     await flush()
-    await vi.waitFor(() => expect(state().layout).toHaveLength(3))
+    await vi.waitFor(() => expect(layout()).toHaveLength(3))
 
     // doc/a.md links `[[missing]]` (unresolvable): the source is marked.
     expect(state().brokenCount).toBe(1)
@@ -491,7 +500,7 @@ describe('GraphPanel', () => {
     mountFilterVault('/vault-graph-kb')
     await flush()
     await flush()
-    await vi.waitFor(() => expect(state().layout).toHaveLength(3))
+    await vi.waitFor(() => expect(layout()).toHaveLength(3))
 
     const canvas = host!.querySelector<HTMLCanvasElement>('.graph-canvas')!
     expect(canvas.getAttribute('tabindex')).toBe('0')
@@ -506,7 +515,7 @@ describe('GraphPanel', () => {
     press('ArrowRight')
     await nextTick()
     const label = canvas.getAttribute('aria-label') ?? ''
-    const focusedId = state().layout.map((p) => p.id).find((id) => label.includes(id.split('/').pop()!))
+    const focusedId = layout().map((p) => p.id).find((id) => label.includes(id.split('/').pop()!))
     expect(focusedId).toBe('docs/a.md')
 
     // Escape clears the selection again.
@@ -536,7 +545,7 @@ describe('GraphPanel', () => {
     toggleCheckbox('孤立节点')
     expect(state().showOrphans).toBe(false)
 
-    await vi.waitFor(() => expect(state().layout).toHaveLength(2))
+    await vi.waitFor(() => expect(layout()).toHaveLength(2))
     expect(state().visibleGraph!.nodes.map((n) => n.id).sort()).toEqual([
       'docs/a.md',
       'docs/b.md',
