@@ -22,6 +22,14 @@ export type { EditTarget, TreeEdit, UseFileTreeRenameOptions } from './composabl
 export { useFileTreeDrag } from './composables/useFileTreeDrag'
 export type { UseFileTreeDragOptions } from './composables/useFileTreeDrag'
 
+/**
+ * The link queries over the indexed notes. The notes panel resolves its links
+ * mode with them (§13.11), which is why they are exported here rather than
+ * reached for by path: the index that answers them belongs to this feature, and
+ * its internals stay this feature's business.
+ */
+export { inlinksOf, outlinksOf } from './services/libraryQueries'
+
 export { createVaultFileActions, validateEntryName } from './services/vault-file-actions'
 export type {
   VaultActionFailure,

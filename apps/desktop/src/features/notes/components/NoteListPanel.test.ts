@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import NoteListPanel from './NoteListPanel.vue'
-import FileTree from './FileTree.vue'
-import { useFileTreeStore } from '../stores/fileTree'
-import { useDocumentListStore } from '../stores/documentList'
-import { useTabsStore } from '../stores/tabs'
+import { FileTree } from '../../vault'
+import { useFileTreeStore } from '../../../stores/fileTree'
+import { useDocumentListStore } from '../../../stores/documentList'
+import { useTabsStore } from '../../../stores/tabs'
 
 const fsMocks = vi.hoisted(() => ({
   read: vi.fn(),
@@ -29,7 +29,7 @@ const fsMocks = vi.hoisted(() => ({
   resolveMediaPath: vi.fn(),
 }))
 
-vi.mock('../platform/gateways/fs', () => ({ fsService: fsMocks }))
+vi.mock('../../../platform/gateways/fs', () => ({ fsService: fsMocks }))
 
 let pinia: Pinia
 let host: HTMLElement | null = null

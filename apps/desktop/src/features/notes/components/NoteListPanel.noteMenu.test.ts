@@ -12,14 +12,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import NoteListPanel from './NoteListPanel.vue'
-import { useAppearanceStore } from '../stores/appearance'
-import { useDocumentListStore } from '../stores/documentList'
-import { useRefsStore } from '../stores/refs'
-import { useTabsStore } from '../stores/tabs'
-import { useVaultSessionStore } from '../stores/vaultSession'
-import { setRenderedFlush } from '../services/editorOwnership'
-import { onNotify } from '../services/errors'
-import type { NoteSummary } from '../services/noteMeta'
+import { useAppearanceStore } from '../../../stores/appearance'
+import { useDocumentListStore } from '../../../stores/documentList'
+import { useRefsStore } from '../../../stores/refs'
+import { useTabsStore } from '../../../stores/tabs'
+import { useVaultSessionStore } from '../../../stores/vaultSession'
+import { setRenderedFlush } from '../../../services/editorOwnership'
+import { onNotify } from '../../../services/errors'
+import type { NoteSummary } from '../../../services/noteMeta'
 
 const fsMocks = vi.hoisted(() => ({
   read: vi.fn(),
@@ -43,7 +43,7 @@ const fsMocks = vi.hoisted(() => ({
   resolveMediaPath: vi.fn(),
 }))
 
-vi.mock('../platform/gateways/fs', () => ({ fsService: fsMocks }))
+vi.mock('../../../platform/gateways/fs', () => ({ fsService: fsMocks }))
 
 /**
  * The export service, stubbed.
@@ -55,7 +55,7 @@ vi.mock('../platform/gateways/fs', () => ({ fsService: fsMocks }))
  * covered by `services/export.test.ts`.
  */
 const exportMocks = vi.hoisted(() => ({ exportHtml: vi.fn(), exportToPdf: vi.fn() }))
-vi.mock('../services/export', () => ({
+vi.mock('../../../services/export', () => ({
   exportHtml: exportMocks.exportHtml,
   exportToPdf: exportMocks.exportToPdf,
 }))
