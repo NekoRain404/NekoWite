@@ -11,6 +11,7 @@ use tauri_plugin_stronghold::stronghold::Stronghold;
 
 use crate::domain::recovery::{backup_key_paths, open_snapshot, reencrypt_vault};
 use crate::state::KeyVault;
+use crate::storage::key_file_io::DiskKeyFiles;
 use crate::storage::key_store::{
     self, ai_key_presence, derive_master_key, encode_keyfile_password, load_ai_key_internal,
     read_vault_key_state, validate_password, validate_stored_api_key, verifier_of, VaultKeyState,
@@ -101,7 +102,12 @@ pub async fn set_master_password(app: tauri::AppHandle, password: String) -> Res
                 )
             }
         };
-        *guard = Some(open_snapshot(&snapshot, &key_file, master_key.to_vec())?);
+        *guard = Some(open_snapshot(
+            &DiskKeyFiles,
+            &snapshot,
+            &key_file,
+            master_key.to_vec(),
+        )?);
     }
 
     // Collect existing records from the currently open (old-key) vault.
@@ -120,7 +126,15 @@ pub async fn set_master_password(app: tauri::AppHandle, password: String) -> Res
     }
 
     // Two-phase swap of the key + snapshot on disk.
-    if let Err(e) = reencrypt_vault(&snapshot_path, &key_path, &new_key, &keyfile, &records) {
+    if let Err(e) = reencrypt_vault(
+        &DiskKeyFiles,
+        &snapshot_path,
+        &key_path,
+        &new_key,
+        &keyfile,
+        key_store::VAULT_CLIENT_ID,
+        &records,
+    ) {
         // The disk may or may not have been swapped by the time the error
         // surfaced, so drop the in-memory handle: the next command re-opens
         // from disk (recovering via `master.key.old` if needed) instead of

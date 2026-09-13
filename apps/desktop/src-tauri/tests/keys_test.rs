@@ -1,5 +1,7 @@
 #[cfg(unix)]
 use nekowite_lib::domain::recovery::{open_snapshot, reencrypt_vault};
+#[cfg(unix)]
+use nekowite_lib::storage::key_file_io::DiskKeyFiles;
 use nekowite_lib::storage::key_store::{
     ai_key_presence, decode_keyfile, derive_master_key, encode_keyfile_password,
     encode_keyfile_passwordless, ensure_keyfile, read_vault_key_state, validate_password,
@@ -244,10 +246,12 @@ fn reencrypt_vault_migrates_records_to_new_key() {
 
     let records = vec![(b"openai".to_vec(), b"sk-old".to_vec())];
     reencrypt_vault(
+        &DiskKeyFiles,
         &snapshot,
         &key_path,
         &new_key,
         &encode_keyfile_passwordless(&new_key),
+        CLIENT,
         &records,
     )
     .unwrap();
@@ -319,7 +323,7 @@ fn open_snapshot_recovers_with_master_key_old_backup() {
     );
 
     // The new key alone would fail; the `master.key.old` fallback recovers.
-    let stronghold = open_snapshot(&snapshot, &key_path, new_key.to_vec()).unwrap();
+    let stronghold = open_snapshot(&DiskKeyFiles, &snapshot, &key_path, new_key.to_vec()).unwrap();
     let client = stronghold.inner().load_client(CLIENT).unwrap();
     let got = client
         .store()
@@ -330,7 +334,7 @@ fn open_snapshot_recovers_with_master_key_old_backup() {
 
     // Without the backup the same open must fail (primary error surfaced).
     fs::remove_file(dir.join("master.key.old")).unwrap();
-    assert!(open_snapshot(&snapshot, &key_path, new_key.to_vec()).is_err());
+    assert!(open_snapshot(&DiskKeyFiles, &snapshot, &key_path, new_key.to_vec()).is_err());
 
     fs::remove_dir_all(&dir).unwrap();
 }

@@ -21,11 +21,17 @@
 //! reference instead of being declared per module: separate locks would each
 //! look correct on their own and still let two writers snapshot each other's
 //! predecessor.
+//!
+//! [`key_file_io::DiskKeyFiles`] adapts the key files for the port
+//! `domain::recovery` declares. That direction is the point: the crash-safe
+//! swap is domain policy, so the domain takes the trait and storage supplies
+//! the implementation, never the other way round.
 
 pub mod atomic_write;
 pub mod attachment_store;
 pub mod file_store;
 pub mod index_store;
+pub mod key_file_io;
 pub mod key_store;
 pub mod metadata_store;
 pub mod rename_store;

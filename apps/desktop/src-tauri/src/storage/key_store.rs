@@ -19,6 +19,14 @@ use tauri_plugin_stronghold::stronghold::Stronghold;
 use crate::domain::recovery::open_snapshot;
 use crate::errors::fs_error;
 use crate::state::KeyVault;
+use crate::storage::key_file_io::DiskKeyFiles;
+
+// The key-file *names* and the state a key file decodes to are what the
+// crash-safe swap reasons about, so they are domain policy and live in
+// `crate::domain::key_files`. Re-exported here for this stage so callers and
+// tests that import them from the key store keep resolving (roadmap §10.1
+// rule 5); the format itself, which is persistence, stays in this module.
+pub use crate::domain::key_files::{sibling_suffixed, stronghold_tmp_path, VaultKeyState};
 
 /// Client id used for the single provider-key client inside the vault.
 pub(crate) const VAULT_CLIENT_ID: [u8; 32] = [1u8; 32];
@@ -40,21 +48,6 @@ pub fn validate_stored_api_key(key: &str) -> Result<(), String> {
         return Err("this is the masked placeholder, not an API key: re-enter the key".into());
     }
     Ok(())
-}
-
-/// What the on-disk `master.key` actually holds. It NEVER holds a raw
-/// decryption key when a master password is set — only a verifier derived from
-/// the password via a proper KDF, so the file alone cannot unlock the vault.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum VaultKeyState {
-    /// No master password set (legacy/auto-generated): a random 32-byte key is
-    /// stored so the vault auto-unlocks on launch. There is no secret password
-    /// to protect here; the file permissions (0600) are the boundary.
-    Auto([u8; 32]),
-    /// A master password is set: the file carries the KDF salt and a one-way
-    /// verifier. The Stronghold key is only recoverable by deriving it from the
-    /// password; the file alone cannot decrypt the snapshot.
-    Locked { salt: [u8; 32], verifier: [u8; 32] },
 }
 
 /// Key-file format version byte.
@@ -84,18 +77,6 @@ pub fn stronghold_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(data_dir(app)?.join(".nekowite").join("stronghold.bin"))
 }
 
-/// Scratch path used while re-encrypting the snapshot (see
-/// [`open_snapshot`]/re-encryption).
-pub fn stronghold_tmp_path(snapshot: &Path) -> PathBuf {
-    let mut p = snapshot.to_path_buf();
-    let name = p
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "stronghold.bin".to_string());
-    p.set_file_name(format!(".{name}.tmp"));
-    p
-}
-
 /// Path to the master key file: `{app_data_dir}/.nekowite/master.key`.
 pub fn master_key_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(data_dir(app)?.join(".nekowite").join("master.key"))
@@ -109,19 +90,6 @@ fn sibling_tmp(path: &Path) -> PathBuf {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
     p.set_file_name(format!(".{name}.tmp"));
-    p
-}
-
-/// `{parent}/{name}.{suffix}` sibling of `path`: the `master.key.new` staging
-/// file and `master.key.old` recovery backup used by the crash-safe swap in
-/// `reencrypt_vault` (and consulted by `open_snapshot` on load).
-pub fn sibling_suffixed(path: &Path, suffix: &str) -> PathBuf {
-    let mut p = path.to_path_buf();
-    let name = p
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    p.set_file_name(format!("{name}.{suffix}"));
     p
 }
 
@@ -382,6 +350,7 @@ pub fn open_vault<R>(
             }
         };
         *guard = Some(open_snapshot(
+            &DiskKeyFiles,
             &snapshot_path,
             &key_path,
             master_key.to_vec(),
