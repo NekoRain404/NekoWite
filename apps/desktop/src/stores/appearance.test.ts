@@ -439,125 +439,125 @@ describe('useAppearanceStore', () => {
     }
   })
 })
-
-describe('accentFromSystemColor (nearest palette colour in Lab)', () => {
-  function rgbOf(hex: string): { r: number; g: number; b: number } {
-    return {
-      r: Number.parseInt(hex.slice(1, 3), 16),
-      g: Number.parseInt(hex.slice(3, 5), 16),
-      b: Number.parseInt(hex.slice(5, 7), 16),
-    }
-  }
-
-  it('keeps a colour that is exactly a palette swatch', () => {
-    // The whole promise of the feature is "the closest colour the app
-    // already has"; a distance of zero has to win over every neighbour.
-    for (const accent of ACCENTS) {
-      expect(accentFromSystemColor(rgbOf(ACCENT_COLORS[accent])), accent).toBe(accent)
-    }
-  })
-
-  it('maps the default Windows blue onto the palette blue', () => {
-    // #0078d4 is what a stock Windows 11 install reports (and what this
-    // machine reports from HKCU\\...\\DWM\\ColorizationColor).
-    expect(accentFromSystemColor({ r: 0x00, g: 0x78, b: 0xd4 })).toBe('blue')
-  })
-
-  it('maps the Windows accent palette onto the matching swatches', () => {
-    expect(accentFromSystemColor({ r: 0xd1, g: 0x34, b: 0x38 }), 'red').toBe('coral')
-    expect(accentFromSystemColor({ r: 0x8e, g: 0x44, b: 0xad }), 'purple').toBe('violet')
-    expect(accentFromSystemColor({ r: 0x00, g: 0xb7, b: 0xc3 }), 'teal').toBe('teal')
-    expect(accentFromSystemColor({ r: 0xe3, g: 0x00, b: 0x8c }), 'magenta').toBe('pink')
-    expect(accentFromSystemColor({ r: 0xff, g: 0x8c, b: 0x00 }), 'orange').toBe('orange')
-    // Windows' vivid green has no vivid green to land on: the palette's
-    // `green` is a muted sea green, so the nearest colour is `lime`. Pinned
-    // here so that adding a truer green to the palette shows up as a diff.
-    expect(accentFromSystemColor({ r: 0x10, g: 0x7c, b: 0x10 }), 'green').toBe('lime')
-  })
-
-  it('maps greyscale accents onto the palette neutrals', () => {
-    // Windows lets the user pick black and grey accents; the palette has two
-    // near-neutrals, so dark goes to `ink` and mid grey to `slate`.
-    expect(accentFromSystemColor({ r: 0x00, g: 0x00, b: 0x00 })).toBe('ink')
-    expect(accentFromSystemColor({ r: 0x4c, g: 0x4a, b: 0x48 })).toBe('ink')
-    expect(accentFromSystemColor({ r: 0x76, g: 0x76, b: 0x76 })).toBe('slate')
-  })
-
-  it('never answers with a colour outside the palette', () => {
-    for (let value = 0; value <= 0xff; value += 17) {
-      const answer = accentFromSystemColor({ r: value, g: 0xff - value, b: (value * 7) % 256 })
-      expect(ACCENTS, `rgb(${value}, ${0xff - value}, ${(value * 7) % 256})`).toContain(answer)
-    }
-  })
-})
-
-describe('follow system accent', () => {
-  beforeEach(() => {
-    setActivePinia(createPinia())
-    localStorage.clear()
-    globalThis.matchMedia = matchMediaMock as never
-    readSystemAccentColorMock.mockReset()
-    readSystemAccentColorMock.mockResolvedValue(null)
-  })
-
-  it('leaves the OS alone while the option is off', () => {
-    const s = useAppearanceStore()
-    expect(s.effectiveAccent()).toBe('ink')
-    expect(readSystemAccentColorMock).not.toHaveBeenCalled()
-  })
-
-  it('uses the OS colour, not the stored pick, once the option is on', async () => {
-    readSystemAccentColorMock.mockResolvedValue({ r: 0, g: 120, b: 212, source: 'explorer-accent-menu' })
-    const s = useAppearanceStore()
-    s.setAccent('teal')
-    s.setFollowSystemAccent(true)
-    await flush()
-    expect(readSystemAccentColorMock).toHaveBeenCalledTimes(1)
-    expect(s.systemAccentState).toBe('read')
-    expect(s.effectiveAccent()).toBe('blue')
-  })
-
-  it('re-reads the OS colour at startup when the option was left on', async () => {
-    // Without this, a restart would keep the theme fallback while the
-    // checkbox still claimed to follow the system accent.
-    localStorage.setItem('nekowite.appearance', JSON.stringify({ followSystemAccent: true, accent: 'teal' }))
-    readSystemAccentColorMock.mockResolvedValue({ r: 214, g: 95, b: 77, source: 'dwm-colorization' })
-    const s = useAppearanceStore()
-    await flush()
-    expect(s.followSystemAccent).toBe(true)
-    expect(s.systemAccentState).toBe('read')
-    expect(s.effectiveAccent()).toBe('coral')
-  })
-
-  it('falls back to the theme pick and reports it when the OS has no answer', async () => {
-    readSystemAccentColorMock.mockResolvedValue(null)
-    const s = useAppearanceStore()
-    s.setFollowSystemAccent(true)
-    await flush()
-    expect(s.systemAccentState).toBe('unavailable')
-    expect(s.effectiveAccent()).toBe('coral')
-    expect(s.accent).toBe('ink')
-  })
-
-  it('survives an adapter that throws instead of answering', async () => {
-    // The adapter answers null for every failure it knows about, so a throw
-    // is a defect - but it must not become an unhandled rejection either.
-    readSystemAccentColorMock.mockRejectedValue(new Error('ipc exploded'))
-    const s = useAppearanceStore()
-    s.setFollowSystemAccent(true)
-    await flush()
-    expect(s.systemAccentState).toBe('unavailable')
-    expect(s.effectiveAccent()).toBe('coral')
-  })
-
-  it('goes back to the stored pick when the option is switched off', async () => {
-    readSystemAccentColorMock.mockResolvedValue({ r: 0, g: 120, b: 212, source: 'x' })
-    const s = useAppearanceStore()
-    s.setAccent('violet')
-    s.setFollowSystemAccent(true)
-    await flush()
-    expect(s.effectiveAccent()).toBe('blue')
-    s.setFollowSystemAccent(false)
-    expect(s.effectiveAccent()).toBe('violet')
-  })
-})
+
+describe('accentFromSystemColor (nearest palette colour in Lab)', () => {
+  function rgbOf(hex: string): { r: number; g: number; b: number } {
+    return {
+      r: Number.parseInt(hex.slice(1, 3), 16),
+      g: Number.parseInt(hex.slice(3, 5), 16),
+      b: Number.parseInt(hex.slice(5, 7), 16),
+    }
+  }
+
+  it('keeps a colour that is exactly a palette swatch', () => {
+    // The whole promise of the feature is "the closest colour the app
+    // already has"; a distance of zero has to win over every neighbour.
+    for (const accent of ACCENTS) {
+      expect(accentFromSystemColor(rgbOf(ACCENT_COLORS[accent])), accent).toBe(accent)
+    }
+  })
+
+  it('maps the default Windows blue onto the palette blue', () => {
+    // #0078d4 is what a stock Windows 11 install reports (and what this
+    // machine reports from HKCU\\...\\DWM\\ColorizationColor).
+    expect(accentFromSystemColor({ r: 0x00, g: 0x78, b: 0xd4 })).toBe('blue')
+  })
+
+  it('maps the Windows accent palette onto the matching swatches', () => {
+    expect(accentFromSystemColor({ r: 0xd1, g: 0x34, b: 0x38 }), 'red').toBe('coral')
+    expect(accentFromSystemColor({ r: 0x8e, g: 0x44, b: 0xad }), 'purple').toBe('violet')
+    expect(accentFromSystemColor({ r: 0x00, g: 0xb7, b: 0xc3 }), 'teal').toBe('teal')
+    expect(accentFromSystemColor({ r: 0xe3, g: 0x00, b: 0x8c }), 'magenta').toBe('pink')
+    expect(accentFromSystemColor({ r: 0xff, g: 0x8c, b: 0x00 }), 'orange').toBe('orange')
+    // Windows' vivid green has no vivid green to land on: the palette's
+    // `green` is a muted sea green, so the nearest colour is `lime`. Pinned
+    // here so that adding a truer green to the palette shows up as a diff.
+    expect(accentFromSystemColor({ r: 0x10, g: 0x7c, b: 0x10 }), 'green').toBe('lime')
+  })
+
+  it('maps greyscale accents onto the palette neutrals', () => {
+    // Windows lets the user pick black and grey accents; the palette has two
+    // near-neutrals, so dark goes to `ink` and mid grey to `slate`.
+    expect(accentFromSystemColor({ r: 0x00, g: 0x00, b: 0x00 })).toBe('ink')
+    expect(accentFromSystemColor({ r: 0x4c, g: 0x4a, b: 0x48 })).toBe('ink')
+    expect(accentFromSystemColor({ r: 0x76, g: 0x76, b: 0x76 })).toBe('slate')
+  })
+
+  it('never answers with a colour outside the palette', () => {
+    for (let value = 0; value <= 0xff; value += 17) {
+      const answer = accentFromSystemColor({ r: value, g: 0xff - value, b: (value * 7) % 256 })
+      expect(ACCENTS, `rgb(${value}, ${0xff - value}, ${(value * 7) % 256})`).toContain(answer)
+    }
+  })
+})
+
+describe('follow system accent', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+    globalThis.matchMedia = matchMediaMock as never
+    readSystemAccentColorMock.mockReset()
+    readSystemAccentColorMock.mockResolvedValue(null)
+  })
+
+  it('leaves the OS alone while the option is off', () => {
+    const s = useAppearanceStore()
+    expect(s.effectiveAccent()).toBe('ink')
+    expect(readSystemAccentColorMock).not.toHaveBeenCalled()
+  })
+
+  it('uses the OS colour, not the stored pick, once the option is on', async () => {
+    readSystemAccentColorMock.mockResolvedValue({ r: 0, g: 120, b: 212, source: 'explorer-accent-menu' })
+    const s = useAppearanceStore()
+    s.setAccent('teal')
+    s.setFollowSystemAccent(true)
+    await flush()
+    expect(readSystemAccentColorMock).toHaveBeenCalledTimes(1)
+    expect(s.systemAccentState).toBe('read')
+    expect(s.effectiveAccent()).toBe('blue')
+  })
+
+  it('re-reads the OS colour at startup when the option was left on', async () => {
+    // Without this, a restart would keep the theme fallback while the
+    // checkbox still claimed to follow the system accent.
+    localStorage.setItem('nekowite.appearance', JSON.stringify({ followSystemAccent: true, accent: 'teal' }))
+    readSystemAccentColorMock.mockResolvedValue({ r: 214, g: 95, b: 77, source: 'dwm-colorization' })
+    const s = useAppearanceStore()
+    await flush()
+    expect(s.followSystemAccent).toBe(true)
+    expect(s.systemAccentState).toBe('read')
+    expect(s.effectiveAccent()).toBe('coral')
+  })
+
+  it('falls back to the theme pick and reports it when the OS has no answer', async () => {
+    readSystemAccentColorMock.mockResolvedValue(null)
+    const s = useAppearanceStore()
+    s.setFollowSystemAccent(true)
+    await flush()
+    expect(s.systemAccentState).toBe('unavailable')
+    expect(s.effectiveAccent()).toBe('coral')
+    expect(s.accent).toBe('ink')
+  })
+
+  it('survives an adapter that throws instead of answering', async () => {
+    // The adapter answers null for every failure it knows about, so a throw
+    // is a defect - but it must not become an unhandled rejection either.
+    readSystemAccentColorMock.mockRejectedValue(new Error('ipc exploded'))
+    const s = useAppearanceStore()
+    s.setFollowSystemAccent(true)
+    await flush()
+    expect(s.systemAccentState).toBe('unavailable')
+    expect(s.effectiveAccent()).toBe('coral')
+  })
+
+  it('goes back to the stored pick when the option is switched off', async () => {
+    readSystemAccentColorMock.mockResolvedValue({ r: 0, g: 120, b: 212, source: 'x' })
+    const s = useAppearanceStore()
+    s.setAccent('violet')
+    s.setFollowSystemAccent(true)
+    await flush()
+    expect(s.effectiveAccent()).toBe('blue')
+    s.setFollowSystemAccent(false)
+    expect(s.effectiveAccent()).toBe('violet')
+  })
+})
