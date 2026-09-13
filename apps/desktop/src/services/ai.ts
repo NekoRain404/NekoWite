@@ -5,6 +5,8 @@ import { notifyError } from './errors'
 import { getSharedGateways } from '../platform/runtime/gatewayRuntime'
 import { useSettingsStore } from '../stores/settings'
 import type { AIConfig } from '../stores/settings'
+import { useAiPermissionStore } from '../stores/aiPermission'
+import { decideAiWrite, isAiEnabled, type AiPermissionState } from './aiPermissions'
 import { t } from '../i18n'
 
 interface PrefixView {
@@ -67,6 +69,48 @@ export const aiThinking = ref(false)
 function markThinking(on: boolean): void {
   aiThinking.value = on
 }
+
+/**
+ * The permission state, or null when there is no Pinia instance (a bare unit
+ * test, a plugin host). Same rule the ghost writer's settings lookup uses: a
+ * state we cannot read is not evidence that AI is switched off, so the feature
+ * keeps working rather than dying silently.
+ */
+function permissionState(): AiPermissionState | null {
+  try {
+    return useAiPermissionStore().state
+  } catch {
+    return null
+  }
+}
+
+/** True when the user switched AI off outright: no request may leave the app,
+ *  which is the only thing that also stops the document being sent away. */
+function aiDisabled(): boolean {
+  const state = permissionState()
+  return state !== null && !isAiEnabled(state)
+}
+
+/** True when the user forbade AI writes. The ghost writer is a write path — the
+ *  suggestion exists only to be accepted into the document — and it ships the
+ *  text around the cursor to a provider, so under this policy there is nothing
+ *  to offer and the request is not made at all. */
+function aiWritesForbidden(): boolean {
+  const state = permissionState()
+  if (state === null) return false
+  return decideAiWrite(state, { kind: 'insert', summary: '' }) === 'deny'
+}
+
+/** Reasons already reported to the user in this window. A blocked feature is
+ *  worth explaining once; a toast on every Tab press is noise. */
+const announcedBlocks = new Set<string>()
+
+function announceBlock(reason: string, messageKey?: string): void {
+  if (announcedBlocks.has(reason)) return
+  announcedBlocks.add(reason)
+  const key = messageKey ?? (reason === 'disabled' ? 'aiperm.blockedDisabled' : 'aiperm.blockedReadonly')
+  notifyError(t(key))
+}
 // Incremented by every trigger/accept/reject; events and listener
 // registrations from a superseded trigger are ignored, so a stale stream can
 // never write into the current one.
@@ -109,6 +153,17 @@ async function triggerSuggestion(
   editorArg?: NekoEditor | null,
   configArg?: AIConfig,
 ): Promise<void> {
+  // Checked before anything is torn down or sent: the UI already declines to
+  // call this (see GhostWriter.vue), and the service refuses on its own so a
+  // caller that goes around the UI cannot turn "AI off" into a request.
+  if (aiDisabled()) {
+    announceBlock('disabled')
+    return
+  }
+  if (aiWritesForbidden()) {
+    announceBlock('readonly')
+    return
+  }
   cancelStream()
   streamSeq++
   const mySeq = streamSeq
@@ -220,7 +275,20 @@ function accept(): void {
   // Bump the generation so a trigger that is still awaiting listener
   // registration cannot attach after the suggestion was accepted/rejected.
   streamSeq++
-  editorSessionManager.getActiveEditor()?.acceptSuggestion()
+  const editor = editorSessionManager.getActiveEditor()
+  // Accepting inserts text into the document, so it is a write like any other.
+  // The second Tab is the user's own approval, which is why a prompting policy
+  // does not ask again - but a policy that forbids writes outright, or the
+  // master switch, must not be undone by a keystroke. Found on a real run: a
+  // suggestion fetched before the switch was turned off could still be accepted
+  // (and autosaved) afterwards. The text is discarded instead.
+  if (aiDisabled() || aiWritesForbidden()) {
+    announceBlock('accept-blocked', 'aiperm.acceptBlocked')
+    editor?.rejectSuggestion()
+    cancelStream()
+    return
+  }
+  editor?.acceptSuggestion()
   cancelStream()
 }
 
@@ -257,6 +325,14 @@ export function startChatCompletion(
   images: string[],
   handlers: ChatStreamHandlers,
 ): Promise<ChatStream> {
+  // The one path every chat-shaped feature shares (chat rail, selection edits,
+  // the plugin AI adapter), so the master switch is enforced here once. The
+  // caller is told through its own error handler: a silent no-op would look
+  // like a model that never answers.
+  if (aiDisabled()) {
+    handlers.onError(t('aiperm.blockedDisabled'))
+    return Promise.resolve({ cancel: () => undefined })
+  }
   cancelStream()
   streamSeq++
   const mySeq = streamSeq

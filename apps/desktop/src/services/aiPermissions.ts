@@ -24,8 +24,11 @@
  *  without prompting, and 'readonly' never writes. */
 export type AiWritePolicy = 'ask' | 'auto' | 'readonly'
 
-/** The document mutations the AI can perform. */
-export type AiWriteKind = 'insert' | 'replace-selection'
+/** The document mutations the AI can perform. `replace-document` is the
+ *  whole-buffer rewrite a plugin's `editor.open()` performs: it destroys more
+ *  than a selection replacement, so it is its own kind rather than another
+ *  insert, and granting one must never grant the other. */
+export type AiWriteKind = 'insert' | 'replace-selection' | 'replace-document'
 
 /** One pending write. `summary` and `target` describe it to the user in the
  *  prompt; they never take part in the decision. */
@@ -37,22 +40,39 @@ export interface AiWriteRequest {
 
 export type AiWriteDecision = 'allow' | 'ask' | 'deny'
 
-/** `sessionGrants` holds {@link grantKey} values rather than requests, since
- *  the request text is different every time and could never match twice. */
+/**
+ * `sessionGrants` holds {@link grantKey} values rather than requests, since
+ * the request text is different every time and could never match twice.
+ *
+ * `enabled` is the master switch: with it off NOTHING an AI feature asks for is
+ * granted, and the features that would send the document to a provider do not
+ * run at all. It is optional, and only `false` switches AI off: a state read
+ * back from a build that predates the switch carries no field, and that user
+ * had a working AI — treating the missing field as "off" would break their
+ * setup, while treating it as "on" preserves exactly the previous behaviour.
+ */
 export interface AiPermissionState {
   policy: AiWritePolicy
   sessionGrants: ReadonlySet<string>
+  enabled?: boolean
 }
 
 /** Every policy, in the order the settings UI lists them (default first). */
 export const AI_WRITE_POLICIES: readonly AiWritePolicy[] = ['ask', 'auto', 'readonly']
 
 /** Nothing granted and the cautious policy: the app asks before the AI's
- *  first write, so trust is given deliberately rather than assumed. */
+ *  first write, so trust is given deliberately rather than assumed. AI itself
+ *  starts switched on, because turning a feature off that the user may already
+ *  rely on is not a default anyone asked for. */
 export const DEFAULT_AI_PERMISSION: AiPermissionState = {
   policy: 'ask',
   sessionGrants: new Set(),
+  enabled: true,
 }
+
+/** Whether AI features are switched on. An absent flag reads as on (see
+ *  {@link AiPermissionState}); only an explicit `false` disables them. */
+export const isAiEnabled = (state: AiPermissionState): boolean => state.enabled !== false
 
 /** Stand-in for the grant set of a state that predates the field (a blob
  *  written by an older build), so an absent set reads as "no grants" instead
@@ -82,6 +102,10 @@ export const decideAiWrite = (
   state: AiPermissionState,
   req: AiWriteRequest,
 ): AiWriteDecision => {
+  // The master switch short-circuits the whole table: with AI off there is no
+  // policy under which a write may proceed, and no grant the user gave earlier
+  // in the session may survive it.
+  if (!isAiEnabled(state)) return 'deny'
   if (state.policy === 'auto') return 'allow'
   if (state.policy === 'readonly') return 'deny'
   // The unknown-policy case deliberately does not consult the grants: a state

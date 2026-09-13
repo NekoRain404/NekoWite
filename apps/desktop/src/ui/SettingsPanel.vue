@@ -965,6 +965,16 @@ async function onExportPdf(): Promise<void> {
                 >
                 <span class="settings-note">{{ t('aiSettings.contextCharsHint', { min: CONTEXT_CHARS_MIN, max: CONTEXT_CHARS_MAX }) }}</span>
               </label>
+              <label class="settings-field settings-toggle">
+                <span>{{ t('aiperm.enabled') }}</span>
+                <input
+                  :checked="aiPermission.enabled"
+                  type="checkbox"
+                  class="checkbox"
+                  @change="aiPermission.setEnabled(($event.target as HTMLInputElement).checked)"
+                >
+              </label>
+              <span class="settings-note">{{ t('aiperm.enabledHint') }}</span>
               <label class="settings-field">
                 <span>{{ t('aiperm.policy') }}</span>
                 <select

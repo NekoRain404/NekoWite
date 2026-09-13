@@ -349,7 +349,11 @@ export const en = {
   },
   aiperm: {
     title: 'The AI wants to change this document',
-    kind: { insert: 'Insert at the cursor', replaceSelection: 'Replace the selected text' },
+    kind: {
+      insert: 'Insert at the cursor',
+      replaceSelection: 'Replace the selected text',
+      replaceDocument: 'Replace the whole document',
+    },
     allowOnce: 'Allow once',
     allowSession: 'Always allow for this session',
     deny: 'Don\'t allow',
@@ -359,6 +363,11 @@ export const en = {
     policyAsk: 'Ask every time (recommended)',
     policyAuto: 'Write without asking',
     policyReadonly: 'Never let the AI write',
+    enabled: 'Turn AI features on',
+    enabledHint: 'With this off, nothing in the document is sent to a provider and every AI write is refused, whatever the permission above says. The setting is kept, so switching AI back on restores exactly what you had.',
+    blockedDisabled: 'AI features are switched off in Settings → AI, so nothing was sent.',
+    blockedReadonly: 'The AI write permission is set to “never write”, so no suggestion was requested.',
+    acceptBlocked: 'AI writes are switched off, so the suggestion was discarded instead of inserted.',
     grants: 'Granted for this session:',
     noGrants: 'Nothing yet (you will be asked)',
     action: {
@@ -667,6 +676,8 @@ export const en = {
     genericName: 'a plugin',
     writeSummary: 'Plugin “{name}” wants to insert content at the cursor',
     writeDenied: 'The write from plugin “{name}” was refused (the AI write permission may be set to “never write”).',
+    openSummary: 'Plugin “{name}” wants to replace the whole document',
+    syncWriteDenied: 'Plugin “{name}” used a write that cannot ask for permission, and nothing is granted yet: have it use the insert API, or set the AI write permission to “write without asking”.',
     aiEmptyPrompt: 'A plugin asked the AI with an empty prompt.',
     aiTimedOut: 'A plugin\'s AI call timed out (60 seconds).',
     aiEmpty: 'The AI call from plugin \u201c{name}\u201d returned nothing.',

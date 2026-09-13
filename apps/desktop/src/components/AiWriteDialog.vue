@@ -4,6 +4,7 @@ import { useFocusTrap } from '../composables/useFocusTrap'
 import { modalStack } from '../services/modalStack'
 import { t } from '../i18n'
 import type { PendingAiWrite } from '../stores/aiPermission'
+import type { AiWriteKind } from '../services/aiPermissions'
 
 /**
  * The "the AI wants to change your document" prompt.
@@ -44,10 +45,17 @@ function onKeydown(e: KeyboardEvent): void {
   }
 }
 
+/** Label for the kind of write being asked about. A table rather than a
+ *  two-branch ternary: a new kind used to fall through to “insert”, which
+ *  understated what was about to happen to the document. */
+const KIND_KEYS: Record<AiWriteKind, string> = {
+  insert: 'aiperm.kind.insert',
+  'replace-selection': 'aiperm.kind.replaceSelection',
+  'replace-document': 'aiperm.kind.replaceDocument',
+}
+
 function kindLabel(): string {
-  return props.pending.request.kind === 'replace-selection'
-    ? t('aiperm.kind.replaceSelection')
-    : t('aiperm.kind.insert')
+  return t(KIND_KEYS[props.pending.request.kind])
 }
 </script>
 
