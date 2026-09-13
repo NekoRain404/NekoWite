@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
-import { NoteTargetError, noteActionTarget, readTargetContent } from './noteActions'
+import {
+  NoteTargetError,
+  isCaseOnlyRename,
+  noteActionTarget,
+  noteRenameNameError,
+  noteRenameTargetPath,
+  readTargetContent,
+} from './noteActions'
 import type { NoteActionDeps, NoteActionTarget, NoteActionTab } from './noteActions'
 
 /** The four injected dependencies, with every call recorded. Nothing here
@@ -198,5 +205,61 @@ describe('readTargetContent', () => {
     await expect(readTargetContent(deps, '/vault', { path: '  ' })).rejects.toThrow(NoteTargetError)
     expect(findTab).not.toHaveBeenCalled()
     expect(read).not.toHaveBeenCalled()
+  })
+})
+
+describe('noteRenameNameError', () => {
+  it('refuses a blank name instead of moving the note next to its folder', () => {
+    // `joinPath(dir, '')` returns the folder itself, so an empty name would aim
+    // the move at the directory the note lives in.
+    expect(noteRenameNameError('')).toBe('filetree.nameRequired')
+    expect(noteRenameNameError('   ')).toBe('filetree.nameRequired')
+  })
+
+  it('refuses a name carrying a path separator, in either flavour', () => {
+    // The name becomes the last segment of the target path; a separator inside
+    // it silently turns the rename into a move into another folder (or, on
+    // Windows, a mixed-separator path the backend rejects).
+    expect(noteRenameNameError('a/b.md')).toBe('filetree.nameSlash')
+    expect(noteRenameNameError('a\\b.md')).toBe('filetree.nameSlash')
+  })
+
+  it('refuses a hidden name', () => {
+    // Same rule the tree's inline rename applies: hidden files are not notes the
+    // app lists, so allowing it hides the note from the list it was renamed in.
+    expect(noteRenameNameError('.hidden.md')).toBe('filetree.nameDot')
+  })
+
+  it('accepts an ordinary note name', () => {
+    expect(noteRenameNameError('chapter-2.md')).toBeNull()
+    expect(noteRenameNameError('  spaced .md  ')).toBeNull()
+  })
+})
+
+describe('noteRenameTargetPath', () => {
+  it('keeps the note in its own folder', () => {
+    expect(noteRenameTargetPath('/vault/notes/a.md', 'b.md')).toBe('/vault/notes/b.md')
+  })
+
+  it('matches the separator style of the path it derives from', () => {
+    // Windows hands back native spellings; a `/` joined onto a `\` path is a
+    // string the backend rejects, which made renames fail only on Windows.
+    expect(noteRenameTargetPath('C:\\vault\\notes\\a.md', 'b.md')).toBe('C:\\vault\\notes\\b.md')
+  })
+})
+
+describe('isCaseOnlyRename', () => {
+  it('is true when only the spelling of the case changed', () => {
+    // The backend runs this one happily (`rename_entry` special-cases it), so a
+    // pre-flight "does the target exist?" check must not refuse it.
+    expect(isCaseOnlyRename('/vault/a.md', '/vault/A.md')).toBe(true)
+    expect(isCaseOnlyRename('C:\\vault\\a.md', 'c:/vault/A.md')).toBe(true)
+  })
+
+  it('is false for a rename that changes anything else', () => {
+    expect(isCaseOnlyRename('/vault/a.md', '/vault/b.md')).toBe(false)
+    expect(isCaseOnlyRename('/vault/sub/a.md', '/vault/A.md')).toBe(false)
+    // The same path is not a rename at all.
+    expect(isCaseOnlyRename('/vault/a.md', '/vault/a.md')).toBe(false)
   })
 })

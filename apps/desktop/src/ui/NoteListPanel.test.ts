@@ -3,9 +3,13 @@ import { createApp, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import NoteListPanel from './NoteListPanel.vue'
 import FileTree from './FileTree.vue'
+import { useAppearanceStore } from '../stores/appearance'
 import { useFileTreeStore } from '../stores/fileTree'
 import { useDocumentListStore } from '../stores/documentList'
 import { useTabsStore } from '../stores/tabs'
+import { useVaultSessionStore } from '../stores/vaultSession'
+import { setRenderedFlush } from '../services/editorOwnership'
+import { onNotify } from '../services/errors'
 import type { NoteSummary } from '../services/noteMeta'
 
 const fsMocks = vi.hoisted(() => ({
@@ -283,6 +287,17 @@ describe('Note card context menu', () => {
     fsMocks.listHistory.mockResolvedValue([])
     fsMocks.stat.mockReset()
     fsMocks.stat.mockResolvedValue({ size: 1, mtime: 1 })
+    // The move/delete flows reach the gateway for real: a note move lists the
+    // note's folder (its `_assets` sibling) and renames through `renameEntry`,
+    // a note delete trashes the note and then its images folder.
+    fsMocks.list.mockReset()
+    fsMocks.list.mockResolvedValue([])
+    fsMocks.renameEntry.mockReset()
+    fsMocks.renameEntry.mockResolvedValue('ok')
+    fsMocks.write.mockReset()
+    fsMocks.write.mockResolvedValue(undefined)
+    fsMocks.deleteFile.mockReset()
+    fsMocks.deleteFile.mockResolvedValue('trash-key')
 
     useDocumentListStore().setNotes(NOTES)
     const tabs = useTabsStore()
@@ -301,6 +316,9 @@ describe('Note card context menu', () => {
     host?.remove()
     host = null
     document.body.innerHTML = ''
+    // `flushEdits` asks whatever pane registered itself; a flusher left behind
+    // by one test would be called by the next one's rename.
+    setRenderedFlush(null)
   })
 
   function cardFor(title: string): HTMLElement {
@@ -413,5 +431,246 @@ describe('Note card context menu', () => {
     expect(documentList.favorites).toEqual(['/vault/gamma.md'])
     expect(menuItems()).toHaveLength(0)
     openSpy.mockRestore()
+  })
+
+  /** Right-click `title`'s card and pick 重命名, which opens the inline editor. */
+  async function openRename(title: string): Promise<void> {
+    await rightClick(cardFor(title))
+    clickMenuLabel('重命名')
+    await flush()
+    expect(host!.querySelector('.nl-rename-input')).not.toBeNull()
+  }
+
+  /** Type `name` into the open rename editor and press Enter. */
+  async function submitRename(name: string): Promise<void> {
+    const input = host!.querySelector<HTMLInputElement>('.nl-rename-input')
+    expect(input).not.toBeNull()
+    input!.value = name
+    input!.dispatchEvent(new Event('input', { bubbles: true }))
+    await flush()
+    input!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await flush()
+    await flush()
+  }
+
+  function renameError(): string {
+    return host!.querySelector('.nl-rename-error')?.textContent?.trim() ?? ''
+  }
+
+  describe('rename', () => {
+    it('flushes pending edits first, moves the right-clicked note, and retargets its open tab', async () => {
+      const tabs = useTabsStore()
+      // Beta is OPEN but NOT active: the note the user right-clicked is the one
+      // that must move, and the active note's tab must not be touched.
+      await tabs.openTab('/vault/beta.md')
+      tabs.setActive(tabs.tabs.find((t) => t.path === '/vault/alpha.md')!.id)
+      expect(tabs.activeTab?.path).toBe('/vault/alpha.md')
+
+      // The real `flushEdits` mechanism: the pane registers its flusher, which
+      // is what publishes keystrokes still inside the editor's debounce.
+      const order: string[] = []
+      setRenderedFlush(async () => {
+        order.push('flush')
+      })
+      fsMocks.read.mockImplementation(async () => {
+        order.push('read')
+        return '# beta'
+      })
+      fsMocks.renameEntry.mockImplementation(async () => {
+        order.push('rename')
+        return 'ok'
+      })
+      fsMocks.stat.mockRejectedValue(new Error('not found'))
+
+      await openRename('Beta')
+      expect(host!.querySelector<HTMLInputElement>('.nl-rename-input')!.value).toBe('beta.md')
+      await submitRename('beta-renamed.md')
+
+      // Without the flush the move is a read-modify-write of a file the editor
+      // is still ahead of, and the debounced keystrokes overwrite the move.
+      expect(order[0]).toBe('flush')
+      expect(order.indexOf('flush')).toBeLessThan(order.indexOf('rename'))
+      expect(fsMocks.renameEntry).toHaveBeenCalledWith('/vault', '/vault/beta.md', '/vault/beta-renamed.md')
+      expect(tabs.tabs.map((t) => t.path)).toEqual(['/vault/alpha.md', '/vault/beta-renamed.md'])
+      expect(tabs.activeTab?.path).toBe('/vault/alpha.md')
+      expect(host!.querySelector('.nl-rename-input')).toBeNull()
+    })
+
+    it('refuses a blank name, a path separator and a taken name without moving anything', async () => {
+      fsMocks.stat.mockResolvedValue({ size: 1, mtime: 1 })
+      await openRename('Beta')
+
+      await submitRename('   ')
+      expect(renameError()).toContain('名称不能为空')
+
+      await submitRename('a/b.md')
+      expect(renameError()).toContain('名称不能包含 /')
+
+      await submitRename('gamma.md')
+      expect(renameError()).toContain('目标位置已存在')
+
+      expect(fsMocks.renameEntry).not.toHaveBeenCalled()
+      // The editor stays open on the note it is renaming, so the user can fix
+      // the name instead of re-opening the menu.
+      expect(host!.querySelector('.nl-rename-input')).not.toBeNull()
+    })
+
+    it('allows a rename that only changes the case, though the target "exists"', async () => {
+      // On Windows the target of a case-only rename IS the source file; the
+      // backend runs it through a temporary name. A naive existence check would
+      // refuse the very rename the user asked for.
+      fsMocks.stat.mockResolvedValue({ size: 1, mtime: 1 })
+      await openRename('Beta')
+      await submitRename('Beta.md')
+
+      expect(fsMocks.renameEntry).toHaveBeenCalledWith('/vault', '/vault/beta.md', '/vault/Beta.md')
+      expect(renameError()).toBe('')
+    })
+
+    it('reports a backend failure with the existing message and keeps the editor open', async () => {
+      fsMocks.stat.mockRejectedValue(new Error('not found'))
+      fsMocks.renameEntry.mockRejectedValue(new Error('disk full'))
+      const seen: string[] = []
+      const off = onNotify((msg) => seen.push(msg))
+      try {
+        await openRename('Beta')
+        await submitRename('beta-renamed.md')
+      } finally {
+        off()
+      }
+
+      expect(seen).toContain('重命名失败，请重试')
+      expect(host!.querySelector('.nl-rename-input')).not.toBeNull()
+    })
+  })
+
+  describe('delete', () => {
+    /** Right-click `title`'s card, pick 删除 and press the confirm button. */
+    async function deleteWithConfirm(title: string): Promise<void> {
+      await rightClick(cardFor(title))
+      clickMenuLabel('删除')
+      await flush()
+      const yes = host!.querySelector<HTMLButtonElement>('.nl-del-confirm .nl-del-yes')
+      expect(yes).not.toBeNull()
+      yes!.click()
+      await flush()
+      await flush()
+    }
+
+    it('asks first, then deletes the note together with its images folder', async () => {
+      const rebuild = vi.spyOn(useVaultSessionStore(), 'rebuildIndex')
+      // gamma.md has a sibling images folder (the existence probe answers).
+      fsMocks.stat.mockResolvedValue({ size: 1, mtime: 1 })
+
+      await rightClick(cardFor('Gamma'))
+      clickMenuLabel('删除')
+      await flush()
+
+      // "Confirm before deleting" defaults to on: the menu selection only asks.
+      expect(fsMocks.deleteFile).not.toHaveBeenCalled()
+      const strip = host!.querySelector<HTMLElement>('.nl-del-confirm')
+      expect(strip).not.toBeNull()
+      expect(strip!.textContent).toContain('gamma.md')
+
+      ;(strip!.querySelector('.nl-del-yes') as HTMLButtonElement).click()
+      await flush()
+      await flush()
+
+      expect(fsMocks.deleteFile).toHaveBeenCalledWith('/vault', '/vault/gamma.md')
+      // The images folder goes with it: leaving it behind kept the images on
+      // disk while nothing in the app could list or reclaim them.
+      expect(fsMocks.deleteFile).toHaveBeenCalledWith('/vault', '/vault/gamma_assets')
+      expect(rebuild).toHaveBeenCalled()
+      expect(host!.querySelector('.nl-del-confirm')).toBeNull()
+    })
+
+    it('deletes straight away when "confirm before deleting" is off', async () => {
+      useAppearanceStore().setConfirmBeforeDelete(false)
+      fsMocks.stat.mockRejectedValue(new Error('no images folder'))
+
+      await rightClick(cardFor('Gamma'))
+      clickMenuLabel('删除')
+      await flush()
+      await flush()
+
+      expect(fsMocks.deleteFile).toHaveBeenCalledWith('/vault', '/vault/gamma.md')
+      expect(host!.querySelector('.nl-del-confirm')).toBeNull()
+    })
+
+    it('sends an open note through the tabs store, which closes its tab and takes the images', async () => {
+      const tabs = useTabsStore()
+      fsMocks.stat.mockResolvedValue({ size: 1, mtime: 1 })
+      await tabs.openTab('/vault/beta.md')
+      const tabId = tabs.tabs.find((t) => t.path === '/vault/beta.md')!.id
+      const del = vi.spyOn(tabs, 'deleteTabFile')
+
+      await deleteWithConfirm('Beta')
+
+      expect(del).toHaveBeenCalledWith(tabId)
+      expect(tabs.tabs.some((t) => t.path === '/vault/beta.md')).toBe(false)
+      expect(fsMocks.deleteFile).toHaveBeenCalledWith('/vault', '/vault/beta.md')
+      expect(fsMocks.deleteFile).toHaveBeenCalledWith('/vault', '/vault/beta_assets')
+    })
+
+    it('a second activation while the first delete is still running does not delete twice', async () => {
+      useAppearanceStore().setConfirmBeforeDelete(false)
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      // Park the first delete inside the gateway, then ask again: the guard is
+      // per path, so the second activation must not start a second trash entry.
+      fsMocks.stat.mockImplementation(async () => {
+        await gate
+        throw new Error('no images folder')
+      })
+      fsMocks.deleteFile.mockImplementation(async () => {
+        await gate
+        return 'trash-key'
+      })
+
+      await rightClick(cardFor('Gamma'))
+      clickMenuLabel('删除')
+      await flush()
+      await rightClick(cardFor('Gamma'))
+      clickMenuLabel('删除')
+      await flush()
+      release()
+      await flush()
+      await flush()
+
+      const gammaDeletes = fsMocks.deleteFile.mock.calls.filter((c) => c[1] === '/vault/gamma.md')
+      expect(gammaDeletes).toHaveLength(1)
+    })
+
+    it('a repeat click on the confirm button deletes once', async () => {
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      fsMocks.stat.mockImplementation(async () => {
+        await gate
+        throw new Error('no images folder')
+      })
+      fsMocks.deleteFile.mockImplementation(async () => {
+        await gate
+        return 'trash-key'
+      })
+
+      await rightClick(cardFor('Gamma'))
+      clickMenuLabel('删除')
+      await flush()
+      const yes = host!.querySelector<HTMLButtonElement>('.nl-del-confirm .nl-del-yes')!
+      yes.click()
+      await flush()
+      yes.click()
+      await flush()
+      release()
+      await flush()
+      await flush()
+
+      const gammaDeletes = fsMocks.deleteFile.mock.calls.filter((c) => c[1] === '/vault/gamma.md')
+      expect(gammaDeletes).toHaveLength(1)
+    })
   })
 })

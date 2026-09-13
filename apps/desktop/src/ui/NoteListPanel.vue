@@ -23,11 +23,13 @@ import AttachmentsPanel from './AttachmentsPanel.vue'
 import FileTree from './FileTree.vue'
 import ContextMenu from './ContextMenu.vue'
 import type { ContextMenuItem } from './ContextMenu.vue'
+import { useAppearanceStore } from '../stores/appearance'
 import { useDocumentListStore } from '../stores/documentList'
 import { useVaultSessionStore } from '../stores/vaultSession'
 import { useFileTreeStore } from '../stores/fileTree'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
+import { fsService } from '../platform/gateways/fs'
 import { parseOutline } from '../services/outline'
 import { dirRelativeToVault } from '../services/noteMeta'
 import { inlinksOf as queryInlinks, outlinksOf as queryOutlinks } from '../features/vault/services/libraryQueries'
@@ -39,7 +41,13 @@ import {
 } from '../services/contentSearch'
 import { t } from '../i18n'
 import { baseName } from '../services/paths'
+import { isCaseOnlyRename, noteRenameNameError, noteRenameTargetPath } from '../services/noteActions'
+import { moveOrRepair } from '../services/noteMoveFlow'
+import { deleteNoteWithAssets } from '../services/noteDelete'
+import { notifyError } from '../services/errors'
+import { isComposingKey } from '../services/keyGuard'
 
+const appearance = useAppearanceStore()
 const documentList = useDocumentListStore()
 const vaultSession = useVaultSessionStore()
 const fileTree = useFileTreeStore()
@@ -149,6 +157,12 @@ async function runContentSearch(): Promise<void> {
 watch(() => vaultSession.vault, () => {
   contentEnabled.value = false
   clearContentResults()
+  // A half-finished rename or delete question belongs to the vault that is
+  // being left: the paths it holds are absolute, and the delete would be aimed
+  // at a path of the OLD vault while the new one is current.
+  renameTarget.value = null
+  renameError.value = ''
+  deleteConfirmPath.value = null
 })
 
 watch(() => documentList.notes, () => {
@@ -296,14 +310,221 @@ function onNoteMenuSelect(id: string): void {
     case 'toggle-favorite':
       documentList.toggleFavorite(target.path)
       break
-    // rename / export-html / export-pdf / delete are added by the tasks that
-    // own those flows; they read the same `noteMenu.value.path`.
+    case 'rename':
+      startNoteRename(target.path)
+      break
+    case 'delete':
+      requestNoteDelete(target.path)
+      break
+    // export-html / export-pdf are added by the task that owns the export flow;
+    // they read the same `noteMenu.value.path`.
   }
 }
 
 function openNote(path: string | null): void {
   if (!path) return
   void tabs.openTab(path)
+}
+
+/**
+ * Re-run the vault index after a note moved or went to the trash. The note list
+ * is a mirror of that index, so this is what makes the renamed note appear under
+ * its new name (and the deleted one disappear) without waiting for the fs
+ * watcher — and the index run is also what prunes favorites/recents pointing at
+ * paths that no longer exist (see `vaultIndexCoordinator` →
+ * `documentList.setFavoritesRecents`).
+ */
+async function refreshNoteIndex(): Promise<void> {
+  try {
+    await vaultSession.rebuildIndex()
+  } catch {
+    // The rename/delete itself already happened; the refresh is fire-and-forget
+    // and must not surface as an unhandled rejection for an action that
+    // succeeded. The fs watcher and the index-state chip stay the way back to a
+    // fresh list.
+  }
+}
+
+// --- rename -----------------------------------------------------------------
+
+/**
+ * The note whose name is being edited in place, and what has been typed.
+ *
+ * Bound by PATH, never by the active tab: the editor is opened from the card the
+ * user right-clicked, which is usually a note that is not open at all.
+ */
+const renameTarget = ref<{ path: string; name: string } | null>(null)
+const renameName = ref('')
+const renameError = ref('')
+let renameInFlight = false
+
+/** Focus and pre-select the name as soon as the input renders, so a rename is
+ *  type-then-Enter (the tree's inline rename behaves the same way). */
+function setRenameInput(el: unknown): void {
+  const input = el instanceof HTMLInputElement ? el : null
+  if (!input) return
+  input.focus()
+  input.select()
+}
+
+function startNoteRename(path: string): void {
+  const name = baseName(path)
+  renameTarget.value = { path, name }
+  renameName.value = name
+  renameError.value = ''
+}
+
+function cancelNoteRename(): void {
+  // A rename already on its way may not be torn down from under itself; its own
+  // completion clears the editor.
+  if (renameInFlight) return
+  renameTarget.value = null
+  renameError.value = ''
+}
+
+/** Enter commits and Escape cancels — but not while an IME is composing: there
+ *  Enter accepts the highlighted candidate and Escape dismisses the candidate
+ *  list, and treating those as app actions renames the note to raw pinyin or
+ *  throws the typed name away. */
+function onRenameKeydown(e: KeyboardEvent): void {
+  if (isComposingKey(e)) return
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    void confirmNoteRename()
+  } else if (e.key === 'Escape') {
+    e.preventDefault()
+    cancelNoteRename()
+  }
+}
+
+/** True when `path` already exists. A rejection is the answer "no": the gateway
+ *  reports a missing path by failing (`stat`), which is how the delete flow
+ *  probes for a note's `_assets` folder too. */
+async function notePathExists(vault: string, path: string): Promise<boolean> {
+  try {
+    await fsService.stat(vault, path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function confirmNoteRename(): Promise<void> {
+  const target = renameTarget.value
+  if (!target || renameInFlight) return
+  const invalid = noteRenameNameError(renameName.value)
+  if (invalid) {
+    renameError.value = t(invalid)
+    return
+  }
+  const to = noteRenameTargetPath(target.path, renameName.value)
+  // The same path is not a move. This must stay a plain comparison: a case-only
+  // rename (`note.md` → `Note.md`) IS a real rename the backend runs, and
+  // `samePath` would fold it away as "no change".
+  if (to === target.path) {
+    cancelNoteRename()
+    return
+  }
+  const vault = tabs.vault
+  if (!vault) return
+  renameInFlight = true
+  try {
+    // A name that is already taken is refused before anything moves, so a clash
+    // cannot leave the note half-renamed — EXCEPT for a case-only rename, whose
+    // target IS the source file on a case-insensitive filesystem.
+    if (!isCaseOnlyRename(target.path, to) && (await notePathExists(vault, to))) {
+      renameError.value = t('tree.conflict')
+      return
+    }
+    // The shared move: flush pending edits, arm the self-write/move claims,
+    // carry `<basename>_assets` and the note-relative references, retarget the
+    // open tabs, and repair them if the move fails after its rename landed.
+    await moveOrRepair(vault, target.path, to, false)
+  } catch {
+    notifyError(t('filetree.renameFailed'))
+    // The editor stays open on the note it failed to rename: the name is a
+    // correction away from working, and closing it would hide which note failed.
+    return
+  } finally {
+    renameInFlight = false
+  }
+  renameTarget.value = null
+  renameError.value = ''
+  await refreshNoteIndex()
+}
+
+// --- delete -----------------------------------------------------------------
+
+/**
+ * Paths whose delete is already in flight. One deliberate activation deletes
+ * once: a second pick from the menu while the first delete is still running, or
+ * a second press on the confirm button, must not aim a second trash entry at a
+ * path that is already on its way out. The same guard the file tree keeps.
+ */
+const deleting = new Set<string>()
+
+/** The note the confirmation step is waiting on (never set while the gate is
+ *  off — then the menu pick is the whole gesture). */
+const deleteConfirmPath = ref<string | null>(null)
+
+/**
+ * Ask for `path` to be deleted.
+ *
+ * Deleting is destructive, so by default the menu item only arms the card and
+ * the following confirm button performs the delete; with "confirm before
+ * deleting" switched off that button is the whole gesture, exactly as in the
+ * file tree.
+ */
+function requestNoteDelete(path: string): void {
+  if (deleting.has(path)) return
+  if (!appearance.confirmBeforeDelete) {
+    void performNoteDelete(path)
+    return
+  }
+  deleteConfirmPath.value = path
+}
+
+function cancelNoteDelete(): void {
+  deleteConfirmPath.value = null
+}
+
+async function performNoteDelete(path: string): Promise<void> {
+  if (deleting.has(path)) return
+  deleting.add(path)
+  const vault = tabs.vault
+  try {
+    if (!vault) return
+    const tab = tabs.tabs.find((t) => t.path === path)
+    if (tab) {
+      // The tabs store deletes the note WITH its `_assets` folder and closes
+      // every tab on that path, so the open-note branch owns the whole gesture.
+      await tabs.deleteTabFile(tab.id)
+    } else {
+      // A note with no tab still owns a `<basename>_assets` folder; leaving it
+      // behind kept its images on disk while nothing in the app could list or
+      // reclaim them.
+      const result = await deleteNoteWithAssets(
+        {
+          deleteFile: (v, p) => fsService.deleteFile(v, p),
+          exists: async (v, p) => {
+            await fsService.stat(v, p)
+            return true
+          },
+        },
+        vault,
+        path,
+      )
+      // The note is gone, its images are not: say so rather than report a clean
+      // delete — the user has to be able to find them if they want them.
+      if (result.assetsFailed) notifyError(t('filetree.deleteAssetsFailed'))
+    }
+  } catch {
+    notifyError(t('filetree.deleteFailed'))
+  } finally {
+    deleting.delete(path)
+    deleteConfirmPath.value = null
+    await refreshNoteIndex()
+  }
 }
 
 function jumpOutline(line: number, index: number): void {
@@ -494,16 +715,68 @@ function jumpOutline(line: number, index: number): void {
           </p>
         </template>
         <template v-else>
-          <NoteCard
+          <template
             v-for="note in documentList.visibleNotes"
             :key="note.path"
-            :note="note"
-            :active="note.path === activePath"
-            :favorite="documentList.isFavorite(note.path)"
-            @open="openNote(note.path)"
-            @toggle-favorite="documentList.toggleFavorite(note.path)"
-            @contextmenu="openNoteMenu"
-          />
+          >
+            <!-- The rename editor takes the card's place: the note being
+                 renamed is the card the user right-clicked, so the input sits
+                 where they were looking instead of at the top of the list. -->
+            <div
+              v-if="renameTarget?.path === note.path"
+              class="nl-rename-row"
+            >
+              <input
+                :ref="setRenameInput"
+                v-model="renameName"
+                class="nl-rename-input"
+                :class="{ invalid: !!renameError }"
+                type="text"
+                :aria-label="t('filetree.rename')"
+                @click.stop
+                @keydown.stop="onRenameKeydown"
+                @blur="cancelNoteRename"
+              >
+              <span
+                v-if="renameError"
+                class="nl-rename-error"
+              >{{ renameError }}</span>
+            </div>
+            <!-- Same place for the delete question, and the name is shown so
+                 the note under it is never in doubt. -->
+            <div
+              v-else-if="deleteConfirmPath === note.path"
+              class="nl-del-confirm"
+            >
+              <span
+                class="nl-del-name"
+                :title="note.path"
+              >{{ note.name }}</span>
+              <button
+                type="button"
+                class="btn btn-secondary btn-sm nl-del-yes"
+                @click.stop="performNoteDelete(note.path)"
+              >
+                {{ t('filetree.confirm') }}
+              </button>
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm nl-del-no"
+                @click.stop="cancelNoteDelete"
+              >
+                {{ t('filetree.cancel') }}
+              </button>
+            </div>
+            <NoteCard
+              v-else
+              :note="note"
+              :active="note.path === activePath"
+              :favorite="documentList.isFavorite(note.path)"
+              @open="openNote(note.path)"
+              @toggle-favorite="documentList.toggleFavorite(note.path)"
+              @contextmenu="openNoteMenu"
+            />
+          </template>
           <p
             v-if="!documentList.indexing && documentList.visibleNotes.length === 0"
             class="nl-empty-hint"
@@ -855,6 +1128,65 @@ function jumpOutline(line: number, index: number): void {
   gap: 2px;
   padding: 0 8px 12px;
 }
+
+/* Inline rename: the card's own place in the list, so the note being edited
+   stays where the user right-clicked it. */
+.nl-rename-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 6px;
+}
+.nl-rename-input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  font-family: var(--app-font);
+  font-size: 12px;
+  letter-spacing: -0.01em;
+  color: var(--app-text);
+  background: var(--app-canvas);
+  border: 1px solid var(--app-accent);
+  border-radius: var(--app-radius-sm);
+  outline: none;
+}
+.nl-rename-input.invalid { border-color: var(--app-danger); }
+.nl-rename-error {
+  flex: none;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--app-danger);
+}
+
+/* Delete question: the card's place, framed in the danger colour so it is not
+   mistaken for the card itself. */
+.nl-del-confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--app-danger) 42%, transparent);
+  border-radius: var(--app-radius-sm);
+  background: color-mix(in srgb, var(--app-danger) 10%, transparent);
+}
+.nl-del-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 550;
+  letter-spacing: -0.01em;
+  color: var(--app-text);
+}
+.nl-del-confirm .btn { flex: none; }
 
 .nl-body {
   flex: 1;

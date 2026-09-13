@@ -1,5 +1,6 @@
 /**
- * Which note an action is about, and its latest text.
+ * Which note an action is about, its latest text, and the pure rules a rename
+ * is judged by.
  *
  * The note list lets the user right-click a card and act on THAT note. Every
  * action behind that menu — open, favourite, rename, export, delete — has to be
@@ -7,13 +8,18 @@
  * be active. A wrong fallback is not a visible glitch: it exports or deletes a
  * DIFFERENT note than the one under the cursor, silently.
  *
- * So this module answers exactly two questions and nothing else:
+ * So this module answers exactly three questions and nothing else:
  *
  *   1. what is the target? — {@link NoteActionTarget}, a path plus an optional
  *      tab handle, built from the card the user acted on;
  *   2. what is its latest content? — {@link readTargetContent}, which prefers
  *      the target's own open tab (flushing pending keystrokes first) and falls
- *      back to reading the target's file.
+ *      back to reading the target's file;
+ *   3. what would a rename of that target mean? — {@link noteRenameNameError},
+ *      {@link noteRenameTargetPath} and {@link isCaseOnlyRename}, the pure part
+ *      of the rename (the move itself is `noteMoveFlow`). They live here so the
+ *      note list judges a name by the same rules the file tree's inline rename
+ *      does, instead of a second, drifting copy of them.
  *
  * The stores are injected rather than imported. That keeps the rule testable
  * without mounting a component or a Pinia app, and it is what makes "the active
@@ -23,7 +29,7 @@
  * tabs store and the fs gateway, the export path passes the same deps in).
  */
 
-import { samePath } from './paths'
+import { dirName, joinPath, samePath } from './paths'
 
 /**
  * The note the user acted on. Exactly these fields, on purpose: `path` is the
@@ -144,4 +150,58 @@ export async function readTargetContent(
     // keep the backend error as the cause.
     throw new NoteTargetError(path, `could not read the note: ${path}`, { cause })
   }
+}
+
+/** The keys a rejected rename name can carry. They are the SAME keys the file
+ *  tree's inline rename shows, so one wrong name reads the same in both lists
+ *  and no second set of messages has to be kept in step. */
+export type NoteRenameNameErrorKey = 'filetree.nameRequired' | 'filetree.nameSlash' | 'filetree.nameDot'
+
+/**
+ * Why `name` cannot be the renamed note's file name, or null when it can.
+ *
+ * Only the rules that hold for a name ANYWHERE are here; whether the name is
+ * already taken is a question about the disk and is answered by the caller
+ * before the move (see `isCaseOnlyRename` for the one case that must not be
+ * answered by "does it exist"). The extension is deliberately not policed:
+ * the tree's rename does not police it either, and a user who renames a note to
+ * `notes/chapter` gets exactly what they typed.
+ */
+export function noteRenameNameError(name: string): NoteRenameNameErrorKey | null {
+  const trimmed = name.trim()
+  if (!trimmed) return 'filetree.nameRequired'
+  // Either separator, not just `/`: the name becomes the last segment of the
+  // target path, so a separator inside it turns the rename into a move into
+  // another folder (and on Windows builds a path the backend rejects).
+  if (trimmed.includes('/') || trimmed.includes('\\')) return 'filetree.nameSlash'
+  if (trimmed.startsWith('.')) return 'filetree.nameDot'
+  return null
+}
+
+/**
+ * The path a rename of `from` to `name` moves the note to: the SAME folder, so
+ * the note's sibling `_assets` folder and its note-relative references stay
+ * relative to it.
+ *
+ * `joinPath` keeps the separator style of `from`, so a Windows path stays
+ * native instead of gaining a `/` the backend refuses.
+ */
+export function noteRenameTargetPath(from: string, name: string): string {
+  return joinPath(dirName(assertUsablePath(from)), name.trim())
+}
+
+/**
+ * True when the move only re-spells the case of the same path
+ * (`note.md` → `Note.md`).
+ *
+ * Existence checks have to treat this one specially: on a case-insensitive
+ * filesystem the target of a case-only rename IS the source file, so "the
+ * target already exists" would refuse the very rename the user asked for —
+ * and which the backend runs happily, through a temporary name. This mirrors
+ * `rename_entry`'s own `case_only_rename` rule.
+ */
+export function isCaseOnlyRename(from: string, to: string): boolean {
+  if (from === to) return false
+  const norm = (p: string): string => p.replace(/\\/g, '/').toLowerCase()
+  return norm(from) === norm(to)
 }
