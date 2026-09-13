@@ -48,7 +48,7 @@ const MOTION_SURFACE = [
   '../components/WordToolbar.vue',
   '../ui/AttachmentsPanel.vue',
   '../ui/AppSidebar.vue',
-  '../ui/ChatPanel.vue',
+  '../features/chat/components/ChatPanel.vue',
   '../ui/CommandPalette.vue',
   '../ui/ContextMenu.vue',
   '../ui/InfoRail.vue',
