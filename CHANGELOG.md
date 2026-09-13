@@ -302,6 +302,22 @@
 - **Windows 下附件相对路径使用反斜杠**：`resolve_within_rel` 返回的是面向前端的 vault 相对路径（要拼进 Markdown 图片 URL、与文件树路径比较、编码进历史/回收站键），在 Windows 上却返回 `\`，导致插入的图片引用无法显示。现在该函数统一输出 `/`，同时修复了此前 3 个在该平台失败的附件测试。
 - 其他：切 vault 不关闭旧标签导致保存失败、同文件重复标签页、删除文件后残留标签自动保存复活文件、关闭脏标签静默丢失内容、自动保存关闭后残留定时器、未命名文档 Ctrl+S 无响应、应用自身写入触发伪冲突弹窗、引用库文件（.bib 等）在真实后端不可见
 
+## 验证与交付（第十批：打包版对抗性验证清扫，2026-09-13）
+
+- 便携版：`release/nekowite_1.0.0_x64.exe`（未签名），SHA-256 `5e5b41e9d2982801443b544dccd544647940f2531728817210840b5093c07e97`。本轮没有应用代码改动、未重新打包，产物与第九批是同一个文件（哈希未变）。
+- 本轮对**已发布产物**做对抗性复验：CDP 驱动 `release/nekowite_1.0.0_x64.exe` 跑约 50 个功能探针，结果是**没有发现新的应用缺陷**；三条具体怀疑全部被对照实验**证伪**——本轮的价值正在于把「测量坏了」和「东西坏了」分开：
+  1. 「空表格单元格被写成 `<br />` 是 bug」——这是**有意为之的契约**（不写这个标记，单元格会塌成单竖线、解析回去不再是表格），由 `packages/editor-core/src/inlineBreak.test.ts` 的「keeps the empty-cell marker round-tripping」钉住；`292-table-empty.cjs` 旧版断言的是**相反**的方向，现在断言真实契约，**5/5**。
+  2. 「`.bib` 里有一条坏条目时引用库丢条目」——证伪：以**全有效 `.bib` 为 CONTROL**，与「2 条好 + 1 条无键」的混合库各跑一遍，两次切换 vault 后徽标都显示 `引用文献 2`，控制台零错误；新探针 `352-refs-salvage.cjs` **3/3**（没有 CONTROL，「组是空的」说明不了抢救路径的任何事）。
+  3. 「图片不解码」——证伪：图片经 `http://asset.localhost/...` 解码成功（`naturalWidth: 2`）；第一版探针的 fixture PNG **IHDR CRC 是坏的**，浏览器拒绝它才是对的。新探针 `351-images.cjs` **5/5**：断言解码本身，并带一张已知可解码的 CONTROL。
+  - 另有两条**重新归类**（不记入缺陷清单）：某次运行里的 `SyntaxError` 在「两次切换 vault + 完整错误捕获」的序列里没有复现；「应用丢了侧栏」只在探针连续操作后出现，而侧栏可见性是 `App.vue` 里的 `ref(true)`，刷新即恢复。
+- **此前从未有过的覆盖**（全部在打包版上）：
+  - `apps/desktop/ai-lab/340-export.cjs` **14/14**：HTML 导出写出**真实文件**（1.46 MB、独立文档、公式是 KaTeX 渲染的、表格 / 任务列表 / 引用块都在、引用不再是裸 `[@smith2020]` 而是 `<span class="cite">1</span>` 与 `section.references` 参考文献区、frontmatter 不泄漏进正文）；PDF 路径构建出可打印文档、带上所选纸张的 `@page` 规则、走到打印步骤。旧导出探针 `import('/src/services/export.ts')`——只有 DEV 构建做得到——所以**导出从未在交付产物上验证过**。
+  - `apps/desktop/ai-lab/350-paths-and-scale.cjs` **8/8**：路径含空格与中文的 vault 能打开、列出、编辑、保存，且只落成**恰好一个文件**；300 篇笔记的 vault 约 **3.1 s** 打开、索引跑完，内容搜索命中唯一匹配的那篇。
+  - `apps/desktop/ai-lab/351-images.cjs` **5/5**、`352-refs-salvage.cjs` **3/3**、`330-release-check.cjs` **4/4**（版本、状态栏、插件区明示不加载插件、启动干净）；**单实例守卫**已实机验证：第二次启动 exe 会退出新进程、只剩一个（实现见 `apps/desktop/src-tauri/src/lib.rs` 的 `tauri_plugin_single_instance`）。
+- **本轮真正的产出是探针质量，而不是应用缺陷**：多数「没有 SUMMARY」的探针是**过期**，不是功能坏了。失败模式记录在这里以免重踩：打包版**不能** `import('/src/...')`；有的探针把 CDP 端口写死成 `9224` 而不读 `NEKO_CDP_PORT`；`button[title*="引用"]` 也会匹配侧栏的 `.ref-item`（「插入引用 <key>」），而轨道开关打开后标题变成「收起文档信息」，于是探针要么把引用插进笔记、要么把自己刚打开的轨道又关掉；引用分组默认折叠（`refsOpen = ref(false)`），不展开就没有 `.ref-item`；应用在 bundle 初始化时就捕获了 IPC 入口，而 Tauri 的 `__TAURI_INTERNALS__` 是 **NON-CONFIGURABLE**，页面里装的 IPC stub 拦不到任何东西、只会让一个正常的按钮看起来是死的（本轮最早两个导出探针正是如此）；fixture PNG 的 CRC 必须是好的，否则浏览器拒绝它，探针会把自己的坏图算到应用头上。七个过期探针已翻新并通过：`240` **7/7**、`292-table-empty` **5/5**、`297-history-panel` **4/4**、`113-math` **6/6**、`114-math-dom` **5/5**、`110-images-tables` **8/8**、`130-session` **4/4**。
+- **如实记录仍未覆盖的**：约 10 个探针尚未翻新（`250-races`、`131`–`134`，以及需要 fixture / 端口修复的依赖型探针），这些领域目前只靠单元 / e2e 覆盖，**没有跑过真机**；macOS / Linux 完全未验证；试过的最大 vault 是 300 篇；插件执行路径按设计保持关闭（见 `docs/PLUGIN_ISOLATION.md`）。
+- 测试门禁：desktop **1502**、editor-core **648**、plugin-host **105**、Rust **193**（42 lib + 66 ai + 76 fs + 6 keys + 3 vault_auth）；`typecheck` / `lint` / `clippy -D warnings` / `fmt --check` 全绿。数字与第九批相同——本轮没有应用代码改动。
+
 ## 验证与交付（第九批，2026-09-13）
 
 - 便携版：`release/nekowite_1.0.0_x64.exe`（未签名），SHA-256 `5e5b41e9d2982801443b544dccd544647940f2531728817210840b5093c07e97`；产物自身回报的版本为 1.0.0（状态栏与设置两处）。
