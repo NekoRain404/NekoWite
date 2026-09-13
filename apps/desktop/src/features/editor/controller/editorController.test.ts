@@ -36,7 +36,7 @@ vi.mock('@nekowite/editor-core', () => {
   }
 })
 
-vi.mock('../../../services/attachments', () => ({
+vi.mock('../../attachments', () => ({
   createImageSrcResolver: vi.fn(() => vi.fn()),
 }))
 vi.mock('../../../plugins/callout', () => ({ setCalloutView: vi.fn() }))

@@ -12,7 +12,7 @@ import {
   fileToBase64,
   markdownImageBlock,
   relativePathFromNoteVault,
-} from '../../../services/attachments'
+} from '../../attachments'
 
 interface RenamePrompt {
   initial: string

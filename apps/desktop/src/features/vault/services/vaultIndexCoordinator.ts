@@ -16,7 +16,7 @@
  * subscriptions".
  */
 
-import { ATTACHMENTS_DIR, extensionFromFileName } from '../../../services/attachments'
+import { ATTACHMENTS_DIR, extensionFromFileName } from '../../attachments'
 import type { ContentCache } from '../../../services/contentCache'
 import type { FileEntry, FileStat, FsChangeEvent } from '../../../platform/gateways/contracts'
 import { parseNoteMeta, relPathOf, type NoteSummary } from '../../../services/noteMeta'
