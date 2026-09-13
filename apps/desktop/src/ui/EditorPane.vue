@@ -16,6 +16,19 @@ import { runEditorCommand } from '../services/runEditorCommand'
 import { useFloatStore } from '../stores/float'
 import { getSourceView } from '../services/sourceView'
 import { noteFocusedPane, resetFocusedPane } from '../services/editorOwnership'
+import { parseOutline, type OutlineItem } from '../services/outline'
+import {
+  createSplitScrollCoordinator,
+  SPLIT_SCROLL_SETTLE_PX,
+} from '../services/splitScrollCoordinator'
+import {
+  anchorHeadingIndex,
+  clampLine,
+  clampRatio,
+  countDocumentLines,
+  lineRatio,
+  nearestHeadingIndex,
+} from '../services/scrollSyncAnchors'
 import { t } from '../i18n'
 
 // The source (CodeMirror) pane is loaded only when the user actually needs it.
@@ -25,8 +38,10 @@ import { t } from '../i18n'
 // off the eager path and lets the pane be torn down (v-if, not v-show) so it is
 // not kept resident while the rendered editor is displayed.
 type SourcePaneExpose = {
-  getRatio(): number
-  setRatio(r: number): void
+  setScrollTop(top: number, token: number): void
+  getScrollTop(): number
+  getScrollRange(): number
+  scrollTopForLine(line: number): number
   focus(): void
   getText(): string
   getSourceView(): EditorView | null
@@ -46,7 +61,6 @@ const hasTab = computed(() => tabs.activeTab !== null)
 const sourcePane = ref<SourcePaneExpose | null>(null)
 const renderedPane = ref<InstanceType<typeof RenderedPane> | null>(null)
 const panesEl = ref<HTMLElement | null>(null)
-let syncing = false
 
 // Image intake (paste / drop / file picker) is shared by both panes, so it is
 // registered on the common ancestor rather than inside the rendered pane: the
@@ -62,48 +76,248 @@ const {
   insertImagesFromPicker,
 } = useImageIntake()
 
-interface ScrollPane {
-  getRatio(): number
-  setRatio(r: number): void
-  getVisibleUnit?(): number | null
-  setScrollToLine?(line: number): void
+// ---------------------------------------------------------------------------
+// Split-view scroll sync
+//
+// Both panes report the user's own scrolls here; everything else is the
+// coordinator below. It keeps one pending destination per tick and eases toward
+// the newest target, re-anchoring where the pane actually is, so a wheel burst
+// stays responsive instead of queueing one sync per event.
+//
+// The panes' exposed positions are still mirrored into the view store as the
+// current scroll state, but the store is no longer the transport: it used to
+// carry a programmatic write into the other pane, where the resulting scroll
+// event came back as a fresh user-originated sync request and the two panes
+// fought. Instead each pane reports only the scrolls the user made (see its
+// `user-scroll` event) and swallows the echo of a programmatic write, which
+// carries the sync token that caused it.
+// ---------------------------------------------------------------------------
+
+type PaneId = 'source' | 'rendered'
+
+/** Where the destination pane has to be scrolled for both panes to show the
+ *  same part of the document, and whether that position is the document's own
+ *  end (which is written immediately: an ease there only adds latency). */
+interface ScrollPlan {
+  top: number
+  atEdge: boolean
 }
 
-function drive(dst: ScrollPane | null, src: ScrollPane | null): void {
-  if (!dst || !src) return
-  const fromSourceToRendered = dst === renderedPane.value && src === sourcePane.value
-  syncing = true
-  if (fromSourceToRendered && src.getVisibleUnit && dst.setScrollToLine) {
-    const unit = src.getVisibleUnit()
-    if (unit !== null) dst.setScrollToLine(unit)
-    else dst.setRatio(src.getRatio())
-  } else {
-    dst.setRatio(src.getRatio())
+/** The pane the coordinator is currently moving. A user scroll switches it: the
+ *  pane being scrolled becomes the origin and stops being driven, which is what
+ *  makes a leg in flight interruptible. */
+let destination: PaneId = 'rendered'
+/** Identifies each programmatic write, and handed to the pane that receives it:
+ *  a program's scroll event arrives later with nothing else to say where it came
+ *  from, so the write carries its token and the pane keeps it (see the panes'
+ *  `setScrollTop`). */
+let syncToken = 0
+
+function nextToken(): number {
+  syncToken += 1
+  return syncToken
+}
+
+function paneScrollTop(id: PaneId): number {
+  if (id === 'source') return sourcePane.value?.getScrollTop() ?? 0
+  return renderedPane.value?.getScrollTop() ?? 0
+}
+
+function paneScrollRange(id: PaneId): number {
+  if (id === 'source') return sourcePane.value?.getScrollRange() ?? 0
+  return renderedPane.value?.getScrollRange() ?? 0
+}
+
+function writeDestination(top: number): void {
+  const token = nextToken()
+  if (destination === 'source') sourcePane.value?.setScrollTop(top, token)
+  else renderedPane.value?.setScrollTop(top, token)
+}
+
+/** Parsed outline and line count of the document on screen. Every scroll event
+ *  maps through these, so they are kept for the content string they were parsed
+ *  from: re-parsing the whole document per wheel event would be O(document) per
+ *  frame of a burst. */
+let outlineSource = ''
+let outlineItems: OutlineItem[] = []
+let outlineLines = 1
+
+function outlineForSync(): { items: OutlineItem[]; totalLines: number } {
+  const content = tabs.activeTab?.content ?? ''
+  if (content !== outlineSource) {
+    outlineSource = content
+    outlineItems = parseOutline(content)
+    outlineLines = countDocumentLines(content)
   }
-  void nextTick(() => {
-    syncing = false
-  })
+  return { items: outlineItems, totalLines: outlineLines }
 }
 
-// These two watchers are the switch's only decision point: with "split scroll
-// sync" off the panes scroll independently. The one-shot alignment on entering
-// split mode and on finishing a divider drag (below) is still performed, because
-// that is layout, not following a scroll.
-watch(
-  () => view.sourceScroll,
-  () => {
-    if (view.mode !== 'split' || syncing || resizing || !appearance.autoSyncScroll) return
-    drive(renderedPane.value, sourcePane.value)
-  },
-)
+/** The rendered headings' offsets, or null when they and the parsed outline are
+ *  out of step (a heading mid-render). The offsets come from the DOM and the
+ *  outline from the source text; a mismatch would anchor the mapping on a
+ *  heading that is not the one the line refers to, so both directions fall back
+ *  to the ratio instead — the same refusal `nearestHeadingIndex` makes. */
+function headingTops(items: OutlineItem[]): number[] | null {
+  if (items.length === 0) return null
+  const tops = renderedPane.value?.getHeadingTops() ?? []
+  return tops.length === items.length ? tops : null
+}
 
-watch(
-  () => view.renderedScroll,
-  () => {
-    if (view.mode !== 'split' || syncing || resizing || !appearance.autoSyncScroll) return
-    drive(sourcePane.value, renderedPane.value)
+/** Where `value` sits between `from` and `to`, carried onto the other pair.
+ *  A degenerate range starts at its own beginning. */
+function between(value: number, from: number, to: number, fromOut: number, toOut: number): number {
+  if (to === from) return fromOut
+  const progress = Math.max(0, Math.min((value - from) / (to - from), 1))
+  return fromOut + progress * (toOut - fromOut)
+}
+
+/** The rendered offset that puts `line` at the top of the rendered pane.
+ *
+ *  Headings are the anchors in both directions: the source line and the heading
+ *  index map to each other, and the offset is interpolated inside the heading's
+ *  own block. Snapping to the heading instead would park the rendered pane on a
+ *  section's first heading for as long as the source is anywhere inside that
+ *  section — a whole section of the two panes showing different text. The last
+ *  block is stretched onto the pane's end so a document whose panes are laid out
+ *  at different heights still lines up when it runs out. */
+function renderedTopFor(
+  line: number,
+  items: OutlineItem[],
+  tops: number[] | null,
+  totalLines: number,
+  range: number,
+): number {
+  if (!tops) return clampRatio(lineRatio(line, totalLines)) * range
+  const firstLine = items[0].line + 1
+  if (line < firstLine) return between(line, 1, firstLine, 0, tops[0])
+  const index = anchorHeadingIndex(items, line) ?? 0
+  const startLine = items[index].line + 1
+  const next = items[index + 1]
+  if (!next) return between(line, startLine, totalLines + 1, tops[index], range)
+  return between(line, startLine, next.line + 1, tops[index], tops[index + 1])
+}
+
+/** The source offset for a (possibly fractional) 1-based line. One past the
+ *  last line is the document's end, which is where the pane runs out. */
+function sourceOffsetForLine(line: number, totalLines: number, range: number): number {
+  const pane = sourcePane.value
+  if (!pane) return 0
+  if (line >= totalLines + 1) return range
+  const start = clampLine(line, totalLines)
+  const progress = Math.max(0, Math.min(line - start, 1))
+  const startTop = pane.scrollTopForLine(start)
+  const nextTop = start < totalLines ? pane.scrollTopForLine(start + 1) : range
+  return Math.max(0, Math.min(startTop + progress * (nextTop - startTop), range))
+}
+
+/** The inverse of `renderedTopFor`: the source offset that puts, at the top of
+ *  the source pane, the text the rendered pane has at `offset`. */
+function sourceTopFor(
+  offset: number,
+  items: OutlineItem[],
+  tops: number[] | null,
+  totalLines: number,
+  range: number,
+): number {
+  const sourceRange = paneScrollRange('source')
+  const index = tops ? nearestHeadingIndex(tops, offset, items) : null
+  if (index === null || !tops) {
+    // No headings to anchor on: the panes' positions correspond by proportion.
+    return clampRatio(range > 0 ? offset / range : 0) * sourceRange
+  }
+  const startTop = tops[index]
+  // Above the first heading the block runs from the document's own top to that
+  // heading — `nearestHeadingIndex` clamps onto the heading, but the text above
+  // it is not the heading.
+  if (index === 0 && offset < startTop) {
+    const preamble = between(offset, 0, startTop, 1, items[0].line + 1)
+    return sourceOffsetForLine(preamble, totalLines, sourceRange)
+  }
+  const next = items[index + 1]
+  const line = between(
+    offset,
+    startTop,
+    next ? tops[index + 1] : range,
+    items[index].line + 1,
+    next ? next.line + 1 : totalLines + 1,
+  )
+  return sourceOffsetForLine(line, totalLines, sourceRange)
+}
+
+/** Where the counterpart pane has to be to show what `from` is showing. */
+function planSync(from: PaneId, to: PaneId): ScrollPlan | null {
+  const source = sourcePane.value
+  const rendered = renderedPane.value
+  if (!source || !rendered) return null
+
+  const fromTop = paneScrollTop(from)
+  const fromRange = paneScrollRange(from)
+  const toRange = paneScrollRange(to)
+  // A pane at the end of its own range is at the end of the document, and that
+  // is the one position the anchors cannot express: the last block's text stops
+  // where the pane does. Landing on it exactly is what makes the document's
+  // ends reachable from either pane.
+  if (fromTop <= SPLIT_SCROLL_SETTLE_PX) return { top: 0, atEdge: true }
+  if (fromRange > SPLIT_SCROLL_SETTLE_PX && fromTop >= fromRange - SPLIT_SCROLL_SETTLE_PX) {
+    return { top: toRange, atEdge: true }
+  }
+
+  const { items, totalLines } = outlineForSync()
+  const tops = headingTops(items)
+  const top =
+    from === 'source'
+      ? renderedTopFor(source.getVisibleUnit() ?? 1, items, tops, totalLines, toRange)
+      : sourceTopFor(fromTop, items, tops, totalLines, fromRange)
+  // A pane with nothing to scroll cannot follow in a visible way; treating it
+  // as an edge keeps the write immediate rather than easing nowhere.
+  return { top, atEdge: fromRange <= SPLIT_SCROLL_SETTLE_PX }
+}
+
+/** The OS-level "reduce motion" preference — the same check the command palette
+ *  makes. Scroll sync has to land immediately when the user asked for that. */
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  )
+}
+
+const scrollCoordinator = createSplitScrollCoordinator({
+  // requestAnimationFrame is already shaped the way the coordinator wants it.
+  requestFrame: (callback) => window.requestAnimationFrame(callback),
+  cancelFrame: (handle) => window.cancelAnimationFrame(handle),
+  readScroll: () => paneScrollTop(destination),
+  writeScroll: (top) => writeDestination(top),
+  clampScroll: (top) => {
+    const range = paneScrollRange(destination)
+    if (!Number.isFinite(top)) return top > 0 ? range : 0
+    return Math.max(0, Math.min(top, range))
   },
-)
+})
+
+/**
+ * Bring the counterpart of `from` onto the position `from` is showing.
+ *
+ * `animated` is the caller's answer to "may this glide?": user scrolling does,
+ * the discrete moves (entering split, the end of a divider drag, an outline
+ * jump) do not, and a document end never does — the ease would spend its last
+ * frames creeping up on a position the user has already reached.
+ */
+function align(from: PaneId, animated: boolean): void {
+  const to: PaneId = from === 'source' ? 'rendered' : 'source'
+  const plan = planSync(from, to)
+  if (!plan) return
+  // The destination has to be selected before the coordinator is asked to move:
+  // it reads and writes through the adapter, which follows this.
+  destination = to
+  scrollCoordinator.schedule(plan.top, animated && !plan.atEdge && !prefersReducedMotion())
+}
+
+/** A scroll the user made in one of the panes. */
+function onUserScroll(from: PaneId): void {
+  if (view.mode !== 'split' || resizing || !appearance.autoSyncScroll) return
+  align(from, true)
+}
 
 // The source pane is loaded on demand (CodeMirror is async). Entering split
 // mode from the rendered view can happen before that chunk has resolved, so we
@@ -114,20 +328,19 @@ watch(
 let pendingSplitAlignFrom: 'source' | 'rendered' | null = null
 
 function alignSplitPanes(prev: 'source' | 'rendered'): void {
-  if (prev === 'rendered') {
-    drive(sourcePane.value, renderedPane.value)
-  } else {
-    drive(renderedPane.value, sourcePane.value)
-  }
+  // A layout move, not a scroll: the panes are put where they belong at once.
+  align(prev, false)
 }
 
 watch(
   () => view.mode,
   (mode, prev) => {
-    if (mode !== 'split' || prev === 'split' || syncing) return
+    // Whatever the coordinator was moving belongs to the layout being left.
+    scrollCoordinator.cancel()
+    if (mode !== 'split' || prev === 'split') return
     pendingSplitAlignFrom = prev
     void nextTick(() => {
-      if (view.mode !== 'split' || syncing) return
+      if (view.mode !== 'split') return
       // The source pane may still be resolving its async chunk — the ref
       // watcher below retries once it mounts.
       if (!sourcePane.value || !renderedPane.value) return
@@ -140,7 +353,7 @@ watch(
 watch(
   () => sourcePane.value,
   () => {
-    if (view.mode !== 'split' || syncing) return
+    if (view.mode !== 'split') return
     if (!pendingSplitAlignFrom || !sourcePane.value || !renderedPane.value) return
     const prev = pendingSplitAlignFrom
     pendingSplitAlignFrom = null
@@ -163,6 +376,9 @@ let resizing = false
 
 function onSplitResizeStart(): void {
   resizing = true
+  // The panes are being resized under the animation: stop it where it is and
+  // re-align once the drag is over.
+  scrollCoordinator.cancel()
   sourcePane.value?.setMeasureSuppressed(true)
 }
 
@@ -180,10 +396,10 @@ function onSplitResizeEnd(): void {
   if (!resizing) return
   clearResizing()
   if (view.mode !== 'split') return
-  // Widths changed under both panes, so their scroll ratios are stale:
+  // Widths changed under both panes, so their scroll offsets are stale:
   // re-align once from the source pane (document flow reference), then let
   // normal scroll sync take over.
-  drive(renderedPane.value, sourcePane.value)
+  align('source', false)
 }
 
 const sourceStyle = computed((): Record<string, string> => {
@@ -206,23 +422,22 @@ function scrollToLine(line: number): void {
   cm.scrollDOM.scrollTop = Math.max(0, info.top - cm.scrollDOM.clientHeight / 3)
 }
 
-function scrollToHeadingIndex(index: number): void {
-  const pane = renderedPane.value
-  if (!pane) return
-  const el = pane.getHeadingEls()[index]
-  if (el) el.scrollIntoView({ block: 'start', behavior: 'auto' })
-}
-
 watch(
   () => view.pendingOutlineTarget,
   async (target) => {
     if (!target) return
     view.consumeOutlineTarget()
     await nextTick()
-    // In split mode the programmatic scroll triggers the normal ratio sync,
-    // which brings the counterpart pane along — no extra alignment needed.
-    if (view.mode === 'source') scrollToLine(target.line)
-    else scrollToHeadingIndex(target.index)
+    if (view.mode === 'source') {
+      scrollToLine(target.line)
+      return
+    }
+    // A jump is discrete: the rendered pane snaps onto the block that holds the
+    // line and the source follows it without easing. Both writes are the
+    // program's, so neither comes back as a user scroll.
+    destination = 'rendered'
+    renderedPane.value?.setScrollToLine(target.line, nextToken())
+    if (view.mode === 'split') align('rendered', false)
   },
 )
 
@@ -302,6 +517,7 @@ onBeforeUnmount(() => {
   attachPaneListeners(null)
   setImageInsertHandler(null)
   resetFocusedPane()
+  scrollCoordinator.dispose()
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('blur', clearResizing)
   clearResizing()
@@ -322,6 +538,7 @@ onBeforeUnmount(() => {
           ref="sourcePane"
           class="pane source"
           :style="sourceStyle"
+          @user-scroll="onUserScroll('source')"
         />
         <LayoutResizeHandle
           v-if="view.mode === 'split'"
@@ -342,6 +559,7 @@ onBeforeUnmount(() => {
           ref="renderedPane"
           class="pane rendered"
           :style="renderedStyle"
+          @user-scroll="onUserScroll('rendered')"
         />
         <FloatToolbar />
       </div>
