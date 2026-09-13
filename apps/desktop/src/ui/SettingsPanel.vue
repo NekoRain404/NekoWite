@@ -16,6 +16,7 @@ import { useTabsStore } from '../stores/tabs'
 import { useRefsStore } from '../stores/refs'
 import { exportHtml, exportToPdf } from '../services/export'
 import { exportBaseName } from '../services/exportName'
+import { toExportRefs } from '../services/exportRefs'
 import { fsService } from '../platform/gateways/fs'
 import { flushEdits } from '../services/editorOwnership'
 import { isPluginImportAllowedByCsp, listVaultPlugins, setVaultPluginDisabled } from '../services/plugins'
@@ -42,7 +43,6 @@ import { isComposingKey } from '../services/keyGuard'
 import { useAiPermissionStore } from '../stores/aiPermission'
 import { useVaultSessionStore } from '../stores/vaultSession'
 import { AI_WRITE_POLICIES, describePolicy, type AiWritePolicy } from '../services/aiPermissions'
-import type { ExportRef } from '@nekowite/editor-core'
 
 const emit = defineEmits<{ (e: 'close'): void; (e: 'saved', path: string): void }>()
 
@@ -303,26 +303,6 @@ function setMode(m: ViewMode): void {
   view.setMode(m)
 }
 
-function refsMap(): Map<string, ExportRef> {
-  const m = new Map<string, ExportRef>()
-  for (const r of refs.refs.values()) {
-    m.set(r.key, {
-      key: r.key,
-      title: r.title,
-      authors: r.authors,
-      year: r.year,
-      doi: r.doi,
-      journal: r.journal,
-      volume: r.volume,
-      issue: r.issue,
-      pages: r.pages,
-      publisher: r.publisher,
-      url: r.url,
-    })
-  }
-  return m
-}
-
 async function onExportHtml(): Promise<void> {
   const tab = tabs.activeTab
   if (!tab) return
@@ -343,7 +323,10 @@ async function onExportHtml(): Promise<void> {
   try {
     // The tab lags the source pane by its debounce window; export the live text.
     await flushEdits()
-    await exportHtml(tab.content, vault ?? '', savePath, { title: exportBaseName(tab.path), refs: refsMap() })
+    await exportHtml(tab.content, vault ?? '', savePath, {
+      title: exportBaseName(tab.path),
+      refs: toExportRefs(refs.refs.values()),
+    })
   } catch (e) {
     // Belt-and-braces: if the backend still rejects (e.g. a symlink resolved
     // outside, or no vault open) describeExportError maps it to a clear hint.
@@ -360,7 +343,10 @@ async function onExportPdf(): Promise<void> {
     // Awaited, and reported on failure: this used to be a bare call whose
     // rejection went nowhere, so a render error or a missing vault looked
     // exactly like the button doing nothing at all.
-    await exportToPdf(tab.content, { title: exportBaseName(tab.path), refs: refsMap() })
+    await exportToPdf(tab.content, {
+      title: exportBaseName(tab.path),
+      refs: toExportRefs(refs.refs.values()),
+    })
   } catch (e) {
     notifyError(describeExportError(e))
   }

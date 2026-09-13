@@ -397,6 +397,49 @@ fn upgrading_a_legacy_key_is_idempotent() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A *versioned* file cut short to 32 bytes is NOT a legacy key.
+///
+/// `[01, 01, salt[0..30]]` has the same length as a bare key, and the upgrade
+/// path would rewrite the file — destroying the salt and verifier it still
+/// held and leaving the snapshot undecryptable for good (`reencrypt_vault`
+/// deletes `master.key.old`, so the load-time fallback cannot rescue it).
+/// Rejecting keeps the old behaviour: a clear error, file untouched.
+#[test]
+fn a_truncated_versioned_keyfile_is_rejected_and_left_intact() {
+    let dir = temp_dir("legacy-truncated");
+    let key = [9u8; 32];
+    let cases: [(&str, Vec<u8>); 2] = [
+        (
+            "password (66 -> 32)",
+            encode_keyfile_password(&[6u8; 32], &[7u8; 32])[..32].to_vec(),
+        ),
+        (
+            "passwordless (34 -> 32)",
+            encode_keyfile_passwordless(&key)[..32].to_vec(),
+        ),
+    ];
+    for (label, truncated) in cases {
+        assert_eq!(truncated.len(), 32, "{label} should be 32 bytes");
+        let path = dir.join(format!(
+            "{}.key",
+            label.replace([' ', '(', ')', '-', '>'], "_")
+        ));
+        fs::write(&path, &truncated).unwrap();
+
+        let read = read_vault_key_state(&path);
+        assert!(
+            read.is_err(),
+            "{label}: a truncated versioned file must be refused, not adopted"
+        );
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            truncated,
+            "{label}: the refused file must be left byte-for-byte intact"
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn only_the_bare_key_length_is_treated_as_legacy() {
     // Everything else that is not 34/66 is still a corrupt file: accepting it
