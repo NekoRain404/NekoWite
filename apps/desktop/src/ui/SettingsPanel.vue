@@ -354,9 +354,16 @@ async function onExportHtml(): Promise<void> {
 async function onExportPdf(): Promise<void> {
   const tab = tabs.activeTab
   if (!tab) return
-  // Persist the live text into the tab before handing it to the exporter.
-  await flushEdits()
-  exportToPdf(tab.content, { title: exportBaseName(tab.path), refs: refsMap() })
+  try {
+    // Persist the live text into the tab before handing it to the exporter.
+    await flushEdits()
+    // Awaited, and reported on failure: this used to be a bare call whose
+    // rejection went nowhere, so a render error or a missing vault looked
+    // exactly like the button doing nothing at all.
+    await exportToPdf(tab.content, { title: exportBaseName(tab.path), refs: refsMap() })
+  } catch (e) {
+    notifyError(describeExportError(e))
+  }
 }
 </script>
 

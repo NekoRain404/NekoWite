@@ -117,6 +117,15 @@ export async function exportHtml(source: string, vault: string, savePath: string
   await fsService.write(vault, savePath, html)
 }
 
+/// How long to wait for the export frame's `srcdoc` to load before giving up
+/// on it. Only reached when `onload` never fires.
+const LOAD_SAFETY_MS = 60_000
+
+/// How long the export frame may outlive a print that never reported
+/// `afterprint`. Generous on purpose: the user may leave the print dialog open,
+/// and removing the frame underneath it cancels their print.
+const PRINT_BACKSTOP_MS = 300_000
+
 export async function exportToPdf(source: string, opts: ExportUiOptions): Promise<void> {
   if (typeof document === 'undefined') return
   const { includeFrontmatter, pageSize, orientation } = exportSettings()
@@ -135,21 +144,34 @@ export async function exportToPdf(source: string, opts: ExportUiOptions): Promis
     iframe.remove()
   }
 
-  // Safety net: never leave a hidden export iframe attached longer than this,
-  // even if onload never fires (e.g. srcdoc failed to load).
-  cleanupTimer = setTimeout(cleanup, 60000)
+  // Safety net for the case onload never fires at all (a srcdoc that failed to
+  // load): never leave a hidden export iframe attached forever.
+  cleanupTimer = setTimeout(cleanup, LOAD_SAFETY_MS)
 
   iframe.onload = () => {
-    iframe.contentWindow?.focus()
-    try {
-      iframe.contentWindow?.print()
-    } catch {
-      // print failures are not actionable; cleanup below still runs.
-    } finally {
-      // window.print() blocks while the print dialog is open in the target
-      // desktop webviews, so this point is only reached once the print flow
-      // has finished; remove the iframe promptly and cancel the fallback.
+    const win = iframe.contentWindow
+    if (!win) {
       cleanup()
+      return
     }
+    // `window.print()` does NOT block — measured: it returns in ~0 ms and the
+    // preview is rendered afterwards. Removing the frame on the next line (what
+    // this used to do) therefore detached the document the preview was still
+    // reading, and the export silently did nothing. `afterprint` is the real
+    // "the user is finished" signal; until it arrives the frame has to stay.
+    win.addEventListener('afterprint', cleanup, { once: true })
+    win.focus()
+    try {
+      win.print()
+    } catch {
+      // A webview that refuses to print at all: there is nothing to wait for.
+      cleanup()
+      return
+    }
+    // Backstop for a webview that never fires `afterprint`. It replaces the
+    // load-safety timer rather than adding to it, because the user may sit in
+    // the print dialog for as long as they like.
+    if (cleanupTimer !== undefined) clearTimeout(cleanupTimer)
+    cleanupTimer = setTimeout(cleanup, PRINT_BACKSTOP_MS)
   }
 }
