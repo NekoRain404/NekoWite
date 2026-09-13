@@ -18,7 +18,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::domain::path_policy::{encode_rel_path, resolve_within, resolve_within_rel};
+use crate::domain::path_policy::{
+    create_vault_metadata_dir, encode_rel_path, find_vault_metadata_dir,
+    resolve_vault_metadata_dir, resolve_within, resolve_within_rel,
+};
 use crate::domain::vault::{is_mdx_path, should_skip_entry};
 use crate::errors::{file_exists_error, fs_error};
 use crate::storage::trash_store::move_trash_key;
@@ -210,12 +213,7 @@ pub fn snapshot_history(
         return Err("path is the vault root".into());
     }
     let encoded = encode_rel_path(&relative);
-    let history_dir = Path::new(vault_root)
-        .join(".nekowite")
-        .join("history")
-        .join(&encoded);
-    std::fs::create_dir_all(&history_dir)
-        .map_err(|e| fs_error("create the history folder", &history_dir, e))?;
+    let history_dir = create_vault_metadata_dir(vault_root, &[".nekowite", "history", &encoded])?;
     let ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
@@ -538,20 +536,19 @@ pub fn list_history(vault_root: &str, path: &str) -> Result<Vec<HistoryEntry>, S
     // Validate the path resolves inside the vault (C-round sandbox) before we
     // trust it as a history key.
     let encoded = encoded_history_key(vault_root, path)?;
-    let history_dir = Path::new(vault_root)
-        .join(".nekowite")
-        .join("history")
-        .join(&encoded);
-    let mut out = Vec::new();
-    let rd = match std::fs::read_dir(&history_dir) {
-        Ok(rd) => rd,
-        // `NotFound` is the ordinary "this note has no history yet" — an empty
-        // list is the truth. Any OTHER failure (permissions, a file where the
-        // directory should be) is a hole, and reporting it as "no history" tells
-        // the user their versions are gone when they are merely unreadable.
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(out),
-        Err(e) => return Err(fs_error("read the history of", Path::new(path), e)),
+    // `None` is the ordinary "this note has no history yet" — an empty list is
+    // the truth, and merely looking must not create anything. Any OTHER failure
+    // (permissions, a symlinked metadata tree, a file where the directory
+    // should be) is a hole, and reporting it as "no history" tells the user
+    // their versions are gone when they are merely unreadable.
+    let Some(history_dir) =
+        find_vault_metadata_dir(vault_root, &[".nekowite", "history", &encoded])?
+    else {
+        return Ok(Vec::new());
     };
+    let mut out = Vec::new();
+    let rd = std::fs::read_dir(&history_dir)
+        .map_err(|e| fs_error("read the history of", Path::new(path), e))?;
     for entry in rd {
         // A single unreadable entry is a hole too: skipping it silently turned
         // a partially readable history into a shorter list, which the panel
@@ -603,10 +600,12 @@ pub fn read_history(vault_root: &str, path: &str, id: &str) -> Result<String, St
     if !valid_id {
         return Err("invalid history id".into());
     }
-    let history_dir = Path::new(vault_root)
-        .join(".nekowite")
-        .join("history")
-        .join(&encoded);
+    // Resolved through the metadata walk, which refuses a symlinked
+    // `.nekowite`/`history`/key: without it the containment check below would
+    // still pass for a history tree that had been redirected outside the vault
+    // (both paths would agree — on the outside).
+    let history_dir = find_vault_metadata_dir(vault_root, &[".nekowite", "history", &encoded])?
+        .ok_or_else(|| "history is not available for this note".to_string())?;
     let snapshot = history_dir.join(id);
     // Belt and braces: even if the lexical checks above missed something, the
     // resolved snapshot path must stay inside this history directory.
@@ -1029,12 +1028,28 @@ pub fn rename_entry(vault_root: &str, from: &str, to: &str) -> Result<String, St
 /// already holds snapshots (a file of that relative path was previously saved),
 /// the two directories are merged file-by-file instead of clobbering.
 fn move_history_key(vault_root: &str, from_rel: &str, to_rel: &str) {
-    let history_root = Path::new(vault_root).join(".nekowite").join("history");
-    let from_dir = history_root.join(encode_rel_path(from_rel));
-    let to_dir = history_root.join(encode_rel_path(to_rel));
-    if !from_dir.exists() {
+    let from_name = encode_rel_path(from_rel);
+    let to_name = encode_rel_path(to_rel);
+    // A missing source is the ordinary "the old name had no history"; a
+    // symlinked metadata tree is a refusal. This function reports every failure
+    // by doing nothing.
+    let Ok(Some(from_dir)) =
+        find_vault_metadata_dir(vault_root, &[".nekowite", "history", &from_name])
+    else {
         return;
-    }
+    };
+    // Resolve the target WITHOUT creating it: the single-rename path below
+    // needs it absent, and `None` is exactly "the name is free". Either way the
+    // result stays under the parent the walk already validated.
+    let to_dir =
+        match resolve_vault_metadata_dir(vault_root, &[".nekowite", "history", &to_name], false) {
+            Ok(Some(dir)) => dir,
+            Ok(None) => match from_dir.parent() {
+                Some(parent) => parent.join(&to_name),
+                None => return,
+            },
+            Err(_) => return,
+        };
     if !to_dir.exists() {
         let _ = std::fs::rename(&from_dir, &to_dir);
         return;
