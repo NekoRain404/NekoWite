@@ -5,8 +5,41 @@ import type { NodeViewConstructor } from '@milkdown/prose/view'
 import { cite } from './node'
 import { citeToMarkdown } from './node'
 
+/** How the app answers "does the library hold this cite key?".
+ *
+ *  editor-core owns the document, not the reference library, so the host
+ *  publishes its lookup here. Without it a citation whose key is NOT in the
+ *  library rendered exactly like a resolved one — `[3]`, in the same numbering
+ *  sequence — so neither the writer nor a reader could tell that the number
+ *  pointed at nothing. */
+let citeKeyResolver: ((key: string) => boolean) | null = null
+
+/** `0` marks a key the resolver rejected: the chip and the panel show `[?]`,
+ *  and the numbered sequence counts only references that resolve, so a citation
+ *  number never points at a missing entry. */
+export const CITE_UNRESOLVED = 0
+
+/** The class a missing-key chip carries, so the host's stylesheet can call it
+ *  out without editor-core owning the wording. */
+export const CITE_MISSING_CLASS = 'cite-chip-missing'
+
+export function setCiteKeyResolver(resolver: ((key: string) => boolean) | null): void {
+  citeKeyResolver = resolver
+  // Numbering depends on the resolver, so a library that just changed must not
+  // be answered from the previous document's cached order.
+  cachedDoc = null
+  chipRenderers.forEach((render) => render())
+}
+
+/** Re-render every live chip (and the numbering the references panel reads)
+ *  after the library changed while the document did not. */
+export function refreshCiteChips(): void {
+  cachedDoc = null
+  chipRenderers.forEach((render) => render())
+}
+
 export function computeCiteOrder(view: EditorView): Map<string, number> {
-  return orderForDoc(view.state.doc)
+  return citeOrderFor(view)
 }
 
 function orderForDoc(doc: EditorView['state']['doc']): Map<string, number> {
@@ -15,7 +48,11 @@ function orderForDoc(doc: EditorView['state']['doc']): Map<string, number> {
   doc.descendants((node) => {
     if (node.type.name === 'cite') {
       const key = String(node.attrs.key ?? '')
-      if (!order.has(key)) order.set(key, ++n)
+      if (!order.has(key)) {
+        const resolves = citeKeyResolver ? citeKeyResolver(key) : true
+        if (resolves) n += 1
+        order.set(key, resolves ? n : CITE_UNRESOLVED)
+      }
     }
     return true
   })
@@ -98,7 +135,11 @@ const makeCiteNodeView: NodeViewConstructor = (node, view, getPos) => {
       const order = citeOrderFor(view)
       number = String(order.get(String(node.attrs.key ?? '')) ?? '?')
     }
-    dom.textContent = `[${number}]`
+    const unresolved = number === String(CITE_UNRESOLVED)
+    dom.textContent = `[${unresolved ? '?' : number}]`
+    dom.classList.toggle(CITE_MISSING_CLASS, unresolved)
+    if (unresolved) dom.setAttribute('data-cite-missing', 'true')
+    else dom.removeAttribute('data-cite-missing')
     dom.title = citeToMarkdown(String(node.attrs.key ?? ''))
   }
   render()

@@ -1,7 +1,9 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { fsService } from '../platform/gateways/fs'
-import { detectFormat, parseRefs, type Reference } from '../services/refs'
+import { detectFormat, scanRefs, type Reference } from '../services/refs'
+import { notifyError } from '../services/errors'
+import { t } from '../i18n'
 
 export const useRefsStore = defineStore('refs', () => {
   const refs = ref<Map<string, Reference>>(new Map())
@@ -24,9 +26,16 @@ export const useRefsStore = defineStore('refs', () => {
       try {
         const text = await fsService.read(vault, entry.path)
         if (opts?.signal?.aborted) return
-        const parsed = parseRefs(text, format)
+        const parsed = scanRefs(text, format)
+        // A file the parser could only partially recover is still a library the
+        // user believes in, so say what was dropped. Silently offering the
+        // salvaged subset is how a broken entry became "my citations are gone".
+        if (parsed.skipped > 0) {
+          notifyError(t('references.skippedEntries', { file: entry.name, count: parsed.skipped }))
+        }
+        if (parsed.refs.length === 0) continue
         refFiles.value.push(entry.name)
-        for (const r of parsed) {
+        for (const r of parsed.refs) {
           if (r.key) refs.value.set(r.key, r)
         }
       } catch {
