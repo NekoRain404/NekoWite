@@ -12,7 +12,7 @@ import {
   Trash2,
   X,
 } from 'lucide-vue-next'
-import { startChatCompletion, aiService } from '../services/ai'
+import { startChatCompletion, aiService, usageTotal } from '../services/ai'
 import { EFFORT_OPTIONS } from '../stores/settings'
 import { notifyError } from '../services/errors'
 import { editorSessionManager } from '../features/editor/sessionManager'
@@ -58,6 +58,12 @@ interface PanelMessage extends ChatMessage {
    *  evicted by a storage budget). Shown under the bubble; without it the
    *  attachment simply disappears between one launch and the next. */
   imageNotice?: string
+  /** Token total the provider reported for this answer (see AiTokenUsage).
+   *  Shown under the bubble so the cost of a request is visible without a
+   *  trip to the provider dashboard - and so an unexpectedly large one is
+   *  noticed while it is still relevant. Omitted when the provider reported
+   *  nothing, rather than shown as zero. */
+  usageTotal?: number
 }
 
 const settings = useSettingsStore()
@@ -166,6 +172,7 @@ function toSessionMessage(m: PanelMessage): ChatSessionMessage {
   const stored: ChatSessionMessage = { role: m.role, content: m.content }
   if (m.images && m.images.length) stored.images = m.images
   if (m.imageNotice) stored.imageNotice = m.imageNotice
+  if (m.usageTotal) stored.usageTotal = m.usageTotal
   if (m.interrupted) stored.interrupted = true
   return stored
 }
@@ -177,6 +184,7 @@ function fromSessionMessage(m: ChatSessionMessage): PanelMessage {
   // storage limit"). Dropping the notice - which this did - turned a refused
   // attachment into a message that quietly sent without it.
   if (m.imageNotice) msg.imageNotice = m.imageNotice
+  if (m.usageTotal) msg.usageTotal = m.usageTotal
   if (m.interrupted) msg.interrupted = true
   return msg
 }
@@ -436,8 +444,12 @@ async function send(): Promise<void> {
       if (m) m.content = chunk
       scrollToBottom()
     },
-    onDone: (full) => {
+    onDone: (full, usage) => {
       const m = messages.value[index]
+      if (m) {
+        const total = usageTotal(usage)
+        if (total !== null) m.usageTotal = total
+      }
       if (m) m.content = full || m.content
       finalize(index, true)
       scrollToBottom()
@@ -678,6 +690,12 @@ onBeforeUnmount(() => {
             class="chat-image-notice"
           >
             {{ m.imageNotice }}
+          </div>
+          <div
+            v-if="m.usageTotal"
+            class="chat-usage"
+          >
+            {{ t('chat.usage', { count: m.usageTotal }) }}
           </div>
           <div class="chat-content">
             {{ m.content }}
@@ -1237,6 +1255,12 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   font-size: 10px;
   color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+}
+.chat-usage {
+  margin-top: 2px;
+  font-size: 10px;
+  color: color-mix(in srgb, var(--app-muted) 78%, transparent);
+  font-variant-numeric: tabular-nums;
 }
 .chat-hint {
   font-variant-numeric: tabular-nums;
