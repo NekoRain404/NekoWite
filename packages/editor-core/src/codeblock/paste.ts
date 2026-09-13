@@ -52,7 +52,7 @@ function nodeAtPos(state: EditorView['state'], pos: number): ProseNode | null {
     node.forEach((child, offset) => {
       if (next) return
       const from = start + offset
-      if (pos >= from && pos <= from + child.nodeSize) {
+      if (pos >= from && pos < from + child.nodeSize) {
         next = child
         nextStart = from
       }

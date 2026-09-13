@@ -36,6 +36,16 @@ describe('registry', () => {
     registerToolbar({ id: 't1', label: 'T1', run: () => {} })
     expect(getToolbar().some((t) => t.id === 't1')).toBe(true)
   })
+  it('registerToolbar replaces an existing id instead of duplicating', () => {
+    const first = () => {}
+    const second = () => {}
+    registerToolbar({ id: 't-upsert', label: 'A', run: first })
+    registerToolbar({ id: 't-upsert', label: 'B', run: second })
+    const items = getToolbar().filter((t) => t.id === 't-upsert')
+    expect(items).toHaveLength(1)
+    expect(items[0].label).toBe('B')
+    expect(items[0].run).toBe(second)
+  })
   it('registerAll registers batch', () => {
     const run = () => {}
     registerAll({ commands: [{ id: 'c2', run }], toolbar: [{ id: 't2', label: 'T2', run }] })

@@ -87,6 +87,10 @@ describe('safeImageUrl', () => {
     expect(safeImageUrl('data:image/gif;base64,AA')).toBe('data:image/gif;base64,AA')
   })
 
+  it('rejects a MIME type that only shares a prefix with a safe raster type', () => {
+    expect(safeImageUrl('data:image/pngx;base64,AA')).toBeNull()
+  })
+
   it.each(['javascript:alert(1)', 'vbscript:x', 'file:///etc/passwd'])('rejects %s', (url) => {
     expect(safeImageUrl(url)).toBeNull()
   })

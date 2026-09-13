@@ -54,6 +54,15 @@ const SAFE_INLINE_IMAGE_TYPES = [
 
 const SCHEME_RE = /^([a-z][a-z0-9+.-]*):/i
 
+/** True when `normalized` is exactly `type` followed by the data-URL separator
+ *  (`;` parameters or `,` payload). A prefix such as `data:image/pngx` must not
+ *  inherit the allow-list entry for `data:image/png`. */
+function isExactDataMime(normalized: string, type: string): boolean {
+  if (!normalized.startsWith(type)) return false
+  const next = normalized.charAt(type.length)
+  return next === '' || next === ';' || next === ','
+}
+
 /**
  * Strip the characters a browser ignores inside a scheme.
  *
@@ -103,7 +112,7 @@ export function safeImageUrl(url: string | null | undefined): string | null {
   // `data:` is only acceptable for a raster image payload.
   if (scheme === 'data:') {
     const normalized = forSchemeCheck(raw)
-    if (!SAFE_INLINE_IMAGE_TYPES.some((type) => normalized.startsWith(type))) return null
+    if (!SAFE_INLINE_IMAGE_TYPES.some((type) => isExactDataMime(normalized, type))) return null
   }
   return raw
 }

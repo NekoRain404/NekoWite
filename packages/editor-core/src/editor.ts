@@ -43,7 +43,7 @@ export interface NekoEditor {
 /** YAML frontmatter block at the very start of a document, if any. The
  * trailing line breaks (including blank separator lines) are part of the
  * block so a save() re-prepends the source byte-faithfully. */
-const FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---((?:\r?\n)+|$)/
+const FRONTMATTER_RE = /^---\r?\n(?:[\s\S]*?\r?\n)?---((?:\r?\n)+|$)/
 
 export function splitFrontmatter(md: string): { front: string; body: string } {
   const match = FRONTMATTER_RE.exec(md)

@@ -11,6 +11,7 @@ import {
   type AiWriteRequest,
 } from '../services/aiPermissions'
 import { persistence } from '../services/persistence'
+import { resetAiBlockAnnouncements } from '../services/aiBlockAnnounce'
 import {
   clearAiAuditLog as clearAudit,
   getAiAuditLog,
@@ -119,6 +120,7 @@ export const useAiPermissionStore = defineStore('aiPermission', () => {
     if (!(AI_WRITE_POLICIES as readonly string[]).includes(next)) return
     policy.value = next
     persistence.set(LS_AI_WRITE_POLICY, next)
+    resetAiBlockAnnouncements()
   }
 
   /** Switch every AI feature on or off. Effects the policy itself cannot
@@ -127,6 +129,7 @@ export const useAiPermissionStore = defineStore('aiPermission', () => {
   function setEnabled(next: boolean): void {
     enabled.value = next
     persistence.set(LS_AI_ENABLED, next ? '1' : '0')
+    resetAiBlockAnnouncements()
   }
 
   /** Drop the session grants without touching the policy: the user's

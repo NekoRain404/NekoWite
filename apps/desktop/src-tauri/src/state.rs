@@ -8,7 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::{Arc, Mutex};
 
 use tauri_plugin_stronghold::stronghold::Stronghold;
@@ -31,12 +31,25 @@ use crate::errors::vault_root_unauthorized_error;
 pub struct VaultRegistry(Mutex<HashSet<PathBuf>>);
 
 impl VaultRegistry {
-    /// Record `root` (canonicalized) as an opened vault.
+    /// Record `root` (canonicalized) as the opened vault.
+    ///
+    /// The UI is single-vault: registering a new root replaces any previously
+    /// authorized one so a closed vault cannot keep answering path-confined
+    /// commands for the rest of the session.
     pub fn register(&self, root: &str) -> Result<PathBuf, String> {
         let canonical = canonicalize_vault_root(root)?;
         let mut set = self.0.lock().map_err(|e| e.to_string())?;
+        set.clear();
         set.insert(canonical.clone());
         Ok(canonical)
+    }
+
+    /// Drop authorization for `root`. Unknown roots are a no-op.
+    pub fn unregister(&self, root: &str) -> Result<(), String> {
+        let canonical = canonicalize_vault_root(root)?;
+        let mut set = self.0.lock().map_err(|e| e.to_string())?;
+        set.remove(&canonical);
+        Ok(())
     }
 
     /// Prove `root` was opened by the user. Returns the canonicalized root or
@@ -62,8 +75,21 @@ pub fn require_opened_vault(registry: &VaultRegistry, root: &str) -> Result<(), 
 // Watcher state
 // ---------------------------------------------------------------------------
 
-#[derive(Default)]
-pub struct WatcherState(pub Mutex<Option<notify::RecommendedWatcher>>);
+pub struct WatcherState {
+    pub watcher: Mutex<Option<notify::RecommendedWatcher>>,
+    /// Bumped every time `watch_folder` installs a new watcher so trailing-edge
+    /// flush tasks from the previous vault stop emitting.
+    pub generation: Arc<AtomicU64>,
+}
+
+impl Default for WatcherState {
+    fn default() -> Self {
+        Self {
+            watcher: Mutex::new(None),
+            generation: Arc::new(AtomicU64::new(0)),
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Key vault state

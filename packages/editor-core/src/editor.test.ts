@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { basicPlugins, createEditor } from './editor'
+import { basicPlugins, createEditor, splitFrontmatter } from './editor'
 
 describe('createEditor', () => {
   it('exposes open/save API', async () => {
@@ -10,6 +10,13 @@ describe('createEditor', () => {
     await editor.open('# Hello')
     const md = await editor.save()
     expect(md).toContain('# Hello')
+  })
+
+  it('recognises an empty frontmatter block', () => {
+    const md = '---\n---\n\n# Body\n'
+    const { front, body } = splitFrontmatter(md)
+    expect(front).toBe('---\n---\n\n')
+    expect(body).toBe('# Body\n')
   })
 
   it('preserves yaml frontmatter across open/save', async () => {

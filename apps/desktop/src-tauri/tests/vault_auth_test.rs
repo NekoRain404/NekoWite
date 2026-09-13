@@ -49,6 +49,37 @@ fn registered_vault_is_authorized_and_others_refused() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Registering a second vault replaces the first: the UI is single-vault, and
+/// a closed root must not stay authorized for the rest of the session.
+#[test]
+fn registering_a_new_vault_unauthorizes_the_previous() {
+    let reg = VaultRegistry::default();
+    let first = temp_vault("first");
+    let second = temp_vault("second");
+    reg.register(first.to_str().unwrap()).unwrap();
+    assert!(reg.authorize(first.to_str().unwrap()).is_ok());
+    reg.register(second.to_str().unwrap()).unwrap();
+    assert!(reg.authorize(second.to_str().unwrap()).is_ok());
+    assert!(
+        reg.authorize(first.to_str().unwrap()).is_err(),
+        "the previous vault must not stay authorized after a switch"
+    );
+    std::fs::remove_dir_all(&first).unwrap();
+    std::fs::remove_dir_all(&second).unwrap();
+}
+
+#[test]
+fn unregister_drops_authorization() {
+    let reg = VaultRegistry::default();
+    let dir = temp_vault("unreg");
+    let root = dir.to_str().unwrap();
+    reg.register(root).unwrap();
+    assert!(reg.authorize(root).is_ok());
+    reg.unregister(root).unwrap();
+    assert!(reg.authorize(root).is_err());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// [A] Registration and authorization agree even when the caller spells the
 /// vault through a symlink: both canonicalize, so the same vault is recognized
 /// under either spelling.

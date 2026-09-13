@@ -109,6 +109,17 @@ describe('useSettingsStore', () => {
     expect(invokeMock).toHaveBeenCalledWith('store_ai_key', { provider: 'local', key: 'sk-1' })
   })
 
+  it('saves a long provider key in full, without truncating', async () => {
+    invokeMock.mockResolvedValue(undefined)
+    const s = useSettingsStore()
+    const longKey = `sk-proj-${'a'.repeat(4096)}`
+    s.apiKey = longKey
+    await s.saveKey()
+    expect(invokeMock).toHaveBeenCalledWith('store_ai_key', { provider: 'local', key: longKey })
+    expect(s.config().api_key).toBe(longKey)
+    expect(s.config().api_key?.length).toBe(longKey.length)
+  })
+
   it('includes base_url only for local/custom in config', () => {
     const s = useSettingsStore()
     s.provider = 'openai'

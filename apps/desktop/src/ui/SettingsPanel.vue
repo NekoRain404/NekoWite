@@ -1031,6 +1031,8 @@ async function onExportPdf(): Promise<void> {
                   v-model="settings.apiKey"
                   class="input"
                   type="password"
+                  autocomplete="off"
+                  spellcheck="false"
                   placeholder="sk-..."
                 >
               </label>

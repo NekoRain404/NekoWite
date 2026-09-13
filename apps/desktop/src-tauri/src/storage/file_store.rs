@@ -73,7 +73,7 @@ const DEFAULT_MAX_HISTORY: usize = 10;
 ///     ordering - a silent data-loss failure - while cross-vault waiting is
 ///     unobservable (saves are user-paced and the critical section is a few
 ///     file operations).
-///   * It covers ONLY `write_file`/`create_new_file`. `restore_history`,
+///   * It covers `write_file`/`create_new_file`/`restore_history`.
 ///     `rename_entry` and direct `snapshot_history` calls do not hold it, so
 ///     the snapshot chain is not protected against those paths; do not read
 ///     this as more than it is.
@@ -629,6 +629,7 @@ pub fn read_history(vault_root: &str, path: &str, id: &str) -> Result<String, St
 /// from the history panel.
 pub fn restore_history(vault_root: &str, path: &str, id: &str) -> Result<String, String> {
     let content = read_history(vault_root, path, id)?;
+    let _guard = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
     let resolved = resolve_within(vault_root, path)?;
     if resolved.exists() {
         match std::fs::read_to_string(&resolved) {
@@ -834,7 +835,23 @@ fn unique_attachment_name(preferred: &str, dir: &Path) -> String {
             return candidate;
         }
     }
-    format!("{stem}-overflow.{ext}")
+    for n in 0..1000u32 {
+        let candidate = if n == 0 {
+            format!("{stem}-overflow.{ext}")
+        } else {
+            format!("{stem}-overflow-{n}.{ext}")
+        };
+        if !dir.join(&candidate).exists() {
+            return candidate;
+        }
+    }
+    format!(
+        "{stem}-overflow-{}.{ext}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    )
 }
 
 /// Decode and save a base64 image attachment, deduplicating name collisions
@@ -1095,5 +1112,65 @@ mod write_lock_scope_tests {
         handle.join().unwrap();
         let _ = std::fs::remove_dir_all(&vault_a);
         let _ = std::fs::remove_dir_all(&vault_b);
+    }
+
+    #[test]
+    fn restore_history_waits_on_the_write_lock() {
+        let vault = temp_root("restore-lock");
+        let root = vault.to_str().unwrap().to_string();
+        std::fs::write(vault.join("note.md"), "v1").unwrap();
+        write_file(&root, "note.md", "v2", Some(5)).unwrap();
+        let id = list_history(&root, "note.md").unwrap()[0].id.clone();
+
+        let guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (tx, rx) = mpsc::channel();
+        let root_clone = root.clone();
+        let handle = std::thread::spawn(move || {
+            let ok = restore_history(&root_clone, "note.md", &id).is_ok();
+            let _ = tx.send(ok);
+        });
+
+        assert!(
+            rx.recv_timeout(Duration::from_millis(250)).is_err(),
+            "restore_history ran while the write lock was held"
+        );
+        drop(guard);
+        assert!(
+            rx.recv_timeout(Duration::from_secs(10)).unwrap(),
+            "restore_history must finish once the lock is released"
+        );
+        handle.join().unwrap();
+        let _ = std::fs::remove_dir_all(&vault);
+    }
+}
+
+#[cfg(test)]
+mod unique_attachment_name_tests {
+    use super::*;
+
+    #[test]
+    fn overflow_name_is_skipped_when_it_already_exists() {
+        let dir = std::env::temp_dir().join(format!(
+            "nekowite-attach-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        for n in 0..1000u32 {
+            let name = if n == 0 {
+                "pic.png".to_string()
+            } else {
+                format!("pic-{n}.png")
+            };
+            std::fs::write(dir.join(&name), b"x").unwrap();
+        }
+        std::fs::write(dir.join("pic-overflow.png"), b"x").unwrap();
+        let unique = unique_attachment_name("pic.png", &dir);
+        assert_eq!(unique, "pic-overflow-1.png");
+        assert!(!dir.join(&unique).exists() || unique != "pic-overflow.png");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

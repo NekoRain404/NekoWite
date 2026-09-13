@@ -60,9 +60,8 @@ function emitChange(text: string): void {
 
 onMounted(() => {
   if (!container.value) return
-  mirroredTabId = tabs.activeId
   host = createCodeMirrorHost({
-    doc: tabs.activeTab?.content ?? '',
+    doc: '',
     extensions: sourceExtensions({ lineNumbers: appearance.lineNumbers, softWrap: appearance.softWrap }),
     onChange: emitChange,
     onCreateEditor: (editorView) => {
@@ -70,6 +69,11 @@ onMounted(() => {
     },
   })
   host.mount(container.value)
+  // Read the live tab AFTER the host exists so a tab switch between setup and
+  // mount (or during host construction) cannot be overwritten by a stale
+  // snapshot captured before the watchers could apply.
+  mirroredTabId = tabs.activeId
+  host.setText(tabs.activeTab?.content ?? '')
   // Published for the mode-aware insert / toolbar routing and for the rendered
   // pane's "flush before you serialize" handshake: those run from services and
   // composables, which cannot reach a component ref.

@@ -135,6 +135,21 @@ describe('builtin toolbar commands', () => {
     expect(await save()).toContain('- Hello')
   })
 
+  it('creating a task list is a single undo step', async () => {
+    const { editor, save } = await setup('Hello')
+    const view = editor.getView()
+    selectAll(editor)
+    let dispatches = 0
+    const orig = view.dispatch.bind(view)
+    view.dispatch = (tr) => {
+      dispatches += 1
+      orig(tr)
+    }
+    runBuiltinCommandOn('list-task', view)
+    expect(await save()).toContain('- [ ] Hello')
+    expect(dispatches).toBe(1)
+  })
+
   it('code block converts the paragraph and back', async () => {
     const { editor, save } = await setup('Hello')
     selectAll(editor)

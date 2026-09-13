@@ -3,7 +3,7 @@ import { defineComponent, h } from 'vue'
 import type { Node } from '@milkdown/prose/model'
 import { createEditor } from '../editor'
 import { registerComponent, unregisterComponent } from '../registry'
-import { insertMdxComponent, mdxComponentToMarkdown } from './node'
+import { insertMdxComponent, mdxComponentToMarkdown, parseMdxTag } from './node'
 
 const DummyCallout = defineComponent({
   props: { type: { type: String, default: 'info' }, children: { type: String, default: '' } },
@@ -21,6 +21,25 @@ function findMdxComponent(doc: Node): Node | null {
   })
   return found
 }
+
+describe('parseMdxTag', () => {
+  it('keeps attributes after a comparison inside a JSX expression', () => {
+    const attrs = parseMdxTag('<Tag value={count > 0 ? "yes" : "no"} other="keep" />')
+    expect(attrs.name).toBe('Tag')
+    expect(attrs.props.other).toBe('keep')
+  })
+
+  it('does not treat a > inside nested braces as the tag closer', () => {
+    const attrs = parseMdxTag('<Tag value={{ a: n > 1 }} other="keep" />')
+    expect(attrs.props.other).toBe('keep')
+  })
+
+  it('still respects a > inside a quoted attribute value', () => {
+    const attrs = parseMdxTag('<Tag title="a > b" other="keep" />')
+    expect(attrs.props.title).toBe('a > b')
+    expect(attrs.props.other).toBe('keep')
+  })
+})
 
 describe('mdxComponentToMarkdown', () => {
   it('renders self-closing component', () => {

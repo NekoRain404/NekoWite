@@ -254,6 +254,9 @@ export async function activatePlugin(
     }
   }
   inFlightActivations++
+  const releaseInFlight = (): void => {
+    if (inFlightActivations > 0) inFlightActivations--
+  }
 
   const registeredComponents: string[] = []
   const registeredCommands: string[] = []
@@ -371,7 +374,6 @@ export async function activatePlugin(
     // registered, so markPluginUnstable tears it down) and require re-approval.
     const total = addSessionUsage(id, startedAt)
     if (total >= sessionQuotaMs) {
-      inFlightActivations--
       markPluginUnstable(id, `session resource quota exceeded (${total}ms >= ${sessionQuotaMs}ms)`, 'quota-exceeded')
       return {
         ok: false,
@@ -380,7 +382,6 @@ export async function activatePlugin(
         error: `Plugin "${definition.name ?? id}" exceeded its session resource quota and was deactivated; re-approve it to run again.`,
       }
     }
-    inFlightActivations--
     return { ok: true, id }
   } catch (err) {
     // Isolation + safe state: roll back everything we registered, then mark the
@@ -401,7 +402,6 @@ export async function activatePlugin(
     const eventType: PluginAuditEventType =
       code === 'PLUGIN_HOOK_TIMEOUT' ? 'timeout' : code === 'PLUGIN_ABORTED' ? 'cancel' : 'crash'
     addSessionUsage(id, startedAt)
-    inFlightActivations--
     markPluginUnstable(id, code ?? undefined, eventType)
     return {
       ok: false,
@@ -409,6 +409,8 @@ export async function activatePlugin(
       error: err instanceof Error ? err.message : String(err),
       ...(code ? { code } : {}),
     }
+  } finally {
+    releaseInFlight()
   }
 }
 

@@ -1,5 +1,5 @@
 import { createApp } from 'vue'
-import { createPinia } from 'pinia'
+import { createPinia, setActivePinia } from 'pinia'
 import { activatePlugin, loadPlugin } from '@nekowite/plugin-host'
 import type { PluginMeta } from '@nekowite/plugin-host'
 import App from './App.vue'
@@ -41,6 +41,8 @@ async function activateBuiltins(): Promise<void> {
   }
 }
 
+const pinia = createPinia()
+setActivePinia(pinia)
 void activateBuiltins().then(() => {
-  createApp(App).use(createPinia()).use(i18n).mount('#app')
+  createApp(App).use(pinia).use(i18n).mount('#app')
 })

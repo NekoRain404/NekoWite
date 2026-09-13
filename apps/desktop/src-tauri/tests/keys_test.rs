@@ -3,7 +3,7 @@ use nekowite_lib::domain::recovery::{open_snapshot, reencrypt_vault};
 use nekowite_lib::storage::key_store::{
     ai_key_presence, decode_keyfile, derive_master_key, encode_keyfile_password,
     encode_keyfile_passwordless, ensure_keyfile, read_vault_key_state, validate_password,
-    verifier_of, VaultKeyState, AI_KEY_MASKED,
+    validate_stored_api_key, verifier_of, VaultKeyState, AI_KEY_MASKED,
 };
 use std::fs;
 #[cfg(unix)]
@@ -193,6 +193,20 @@ fn ai_key_presence_never_discloses_the_key() {
     );
     // The masked indicator is a fixed literal, not derived from the secret.
     assert_eq!(AI_KEY_MASKED, "••••••••");
+}
+
+/// Provider keys have no maximum length. A JWT-shaped or `sk-proj-` credential
+/// is several hundred characters and must not be rejected at the IPC gate.
+#[test]
+fn stored_api_key_has_no_maximum_length() {
+    assert!(validate_stored_api_key(AI_KEY_MASKED).is_err());
+    assert!(validate_stored_api_key("sk-short").is_ok());
+    let long = format!("sk-proj-{}", "a".repeat(4096));
+    assert!(
+        validate_stored_api_key(&long).is_ok(),
+        "a {}-byte key must be accepted",
+        long.len()
+    );
 }
 
 /// Full re-encrypt round-trip through REAL stronghold (no AppHandle needed —

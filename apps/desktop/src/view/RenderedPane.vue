@@ -274,21 +274,28 @@ watch(
 )
 
 onBeforeUnmount(() => {
-  setRenderedFlush(null)
-  persistence.cancel()
-  searchOverlay.cancelRefresh()
-  cancelFocusRaf()
-  if (tabs.activeId) tabs.cancelAutosave(tabs.activeId)
-  editorForPanel.value = null
-  editorEl.value?.removeEventListener('pointerdown', onContainerPointerDownCapture, true)
-  editorEl.value?.removeEventListener('click', onEditorClick)
-  editorEl.value?.removeEventListener('keydown', onFocusKeydown)
-  editorEl.value?.removeEventListener('pointerdown', onFocusPointerdown)
-  window.removeEventListener('keydown', onKeydown)
-  unlistenChange?.()
-  unlistenOverlayRefresh?.()
-  scrollSync.cancel()
-  editorController.destroy()
+  try {
+    setRenderedFlush(null)
+    persistence.cancel()
+    searchOverlay.cancelRefresh()
+    cancelFocusRaf()
+    if (tabs.activeId) tabs.cancelAutosave(tabs.activeId)
+    editorForPanel.value = null
+    editorEl.value?.removeEventListener('pointerdown', onContainerPointerDownCapture, true)
+    editorEl.value?.removeEventListener('click', onEditorClick)
+    editorEl.value?.removeEventListener('keydown', onFocusKeydown)
+    editorEl.value?.removeEventListener('pointerdown', onFocusPointerdown)
+    window.removeEventListener('keydown', onKeydown)
+    unlistenChange?.()
+    unlistenOverlayRefresh?.()
+    scrollSync.cancel()
+    editorController.destroy()
+  } finally {
+    if (session.docChangeTimer) {
+      clearTimeout(session.docChangeTimer)
+      session.docChangeTimer = null
+    }
+  }
 })
 
 watch(

@@ -153,18 +153,16 @@ function runToggleTaskList(view: EditorView): void {
     view.dispatch(tr)
     return
   }
-  wrapInList(bullet)(view.state, (next) => {
-    view.dispatch(next)
-    const markTr = view.state.tr
-    const { from, to } = view.state.selection
-    view.state.doc.nodesBetween(from, to, (node, pos) => {
+  wrapInList(bullet)(view.state, (tr) => {
+    const { from, to } = tr.selection
+    tr.doc.nodesBetween(from, to, (node, pos) => {
       if (node.type === itemType) {
-        markTr.setNodeMarkup(pos, undefined, { ...node.attrs, checked: false })
+        tr.setNodeMarkup(pos, undefined, { ...node.attrs, checked: false })
         return false
       }
       return true
     })
-    view.dispatch(markTr)
+    view.dispatch(tr)
   })
 }
 
