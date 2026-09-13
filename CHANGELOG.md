@@ -280,7 +280,14 @@
   - `apps/desktop/ai-lab/270-round22-acceptance.cjs` **10/10**：笔记列表渲染、应用内重命名后标签跟随、随后 Ctrl+S 写回改名后的文件且不产生副本、任务列表纯文本渲染、关闭二次确认后单击即删、`system_accent_color` 返回本机真实系统色、无重复 ghost、每日笔记无行尾空格。
   - `apps/desktop/ai-lab/283-delete-assets.cjs` **6/6**：删除笔记后 `notes/doomed.md` **与** `notes/doomed_assets/` 都离开 vault 并出现在回收站（`notes%2Fdoomed.md`、`notes%2Fdoomed%5Fassets`），无关笔记不受影响。
   - `apps/desktop/ai-lab/285-vault-open.cjs`：三种 vault（无 .bib / 正常 .bib / 含一条坏条目的 .bib）都能正常打开；坏条目那一份的引用计数为 **1**（好条目照常载入），并弹出「refs.bib 中有 1 条记录无法解析，已跳过」。
-- 测试门禁：desktop **1434**、editor-core **648**、plugin-host **103**、Rust **170**、Playwright **137**；`typecheck` / `lint` / `clippy -D warnings` 全绿。
+- 真实 AI 端到端（`apps/desktop/ai-lab/286-live-ai.cjs`，对 `https://tokenflux.dev/v1` 的 `deepseek-flash` 实打实发请求，**6/6**，控制台零错误）：
+  1. 普通补全流式返回（3 个分片 → `LIVE`）；
+  2. `ai-done` 带完整正文，无错误帧；
+  3. **思考深度开到「高」**：165 个推理增量，耗时 1863 ms；
+  4. **思考深度设为「不思考」**：推理增量为 **0**（同题同模型）——设置面板上的这一档确实作用到了请求上；
+  5. 故意用不存在的模型名：返回 403，并且**带上服务商自己的说明**（`The current group does not support the requested model ... Available models: deepseek-flash`），而不是一句无从下手的「请求失败」；
+  6. 中途取消：`ai_cancel` 后 **3 ms** 内返回，不再等读超时。
+- 测试门禁：desktop **1436**、editor-core **648**、plugin-host **103**、Rust **170**、Playwright **137**；`typecheck` / `lint` / `clippy -D warnings` 全绿。
 
 ## [1.0.0] - 2026-08-29
 
