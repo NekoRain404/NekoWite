@@ -667,6 +667,19 @@ describe('AI permission settings stop the requests themselves', () => {
     expect(notifyErrorMock).toHaveBeenCalled()
   })
 
+  it('re-announces a block after the user changes the AI switch', async () => {
+    const permissions = useAiPermissionStore()
+    const editor = makeEditor()
+    permissions.setEnabled(false)
+    await aiService.triggerSuggestion(editor as never, { provider: 'local', model: 'm' })
+    await aiService.triggerSuggestion(editor as never, { provider: 'local', model: 'm' })
+    expect(notifyErrorMock).toHaveBeenCalledTimes(1)
+    permissions.setEnabled(true)
+    permissions.setEnabled(false)
+    await aiService.triggerSuggestion(editor as never, { provider: 'local', model: 'm' })
+    expect(notifyErrorMock).toHaveBeenCalledTimes(2)
+  })
+
   it('does not fetch a suggestion the policy would forbid writing', async () => {
     // The suggestion exists only to be accepted into the document, and asking
     // for one ships the text around the cursor to the provider. Under "never

@@ -104,7 +104,14 @@ export const useTabsStore = defineStore('tabs', () => {
     return 'saved'
   }
 
+  function pruneSelfWrites(now = Date.now()): void {
+    for (const [path, ts] of selfWrites) {
+      if (now - ts > SELF_WRITE_MS) selfWrites.delete(path)
+    }
+  }
+
   function noteSelfWrite(path: string): void {
+    pruneSelfWrites()
     selfWrites.set(path, Date.now())
   }
 
@@ -141,13 +148,10 @@ export const useTabsStore = defineStore('tabs', () => {
   }
 
   function isSelfWrite(path: string): boolean {
+    pruneSelfWrites()
     const ts = selfWrites.get(path)
     if (ts === undefined) return false
-    if (Date.now() - ts > SELF_WRITE_MS) {
-      selfWrites.delete(path)
-      return false
-    }
-    return true
+    return Date.now() - ts <= SELF_WRITE_MS
   }
 
   function setVault(v: string): void {

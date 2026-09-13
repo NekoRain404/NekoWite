@@ -170,10 +170,15 @@ function onSplitResize(value: number): void {
   view.setSplitRatio(value)
 }
 
-function onSplitResizeEnd(): void {
+function clearResizing(): void {
   if (!resizing) return
   resizing = false
   sourcePane.value?.setMeasureSuppressed(false)
+}
+
+function onSplitResizeEnd(): void {
+  if (!resizing) return
+  clearResizing()
   if (view.mode !== 'split') return
   // Widths changed under both panes, so their scroll ratios are stale:
   // re-align once from the source pane (document flow reference), then let
@@ -287,6 +292,7 @@ watch(panesEl, (el) => attachPaneListeners(el))
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
+  window.addEventListener('blur', clearResizing)
   // The `image` toolbar / palette command has no way to reach the clipboard or
   // the file picker from editor-core; this is the host side of that hook.
   setImageInsertHandler(() => void insertImagesFromPicker())
@@ -297,6 +303,8 @@ onBeforeUnmount(() => {
   setImageInsertHandler(null)
   resetFocusedPane()
   window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('blur', clearResizing)
+  clearResizing()
 })
 </script>
 

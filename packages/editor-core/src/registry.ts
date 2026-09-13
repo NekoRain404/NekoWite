@@ -32,7 +32,9 @@ export function getComponent(name: string): Component | undefined {
   return components.get(name)
 }
 export function registerToolbar(item: ToolbarItem): void {
-  toolbar.push(item)
+  const index = toolbar.findIndex((entry) => entry.id === item.id)
+  if (index >= 0) toolbar[index] = item
+  else toolbar.push(item)
 }
 export function getToolbar(): ToolbarItem[] {
   return [...toolbar]

@@ -27,6 +27,23 @@ pub(crate) const VAULT_CLIENT_ID: [u8; 32] = [1u8; 32];
 /// real API key — only a "a key is configured" marker the settings UI can show.
 pub const AI_KEY_MASKED: &str = "••••••••";
 
+/// Decide whether `key` may be written to the provider-key store.
+///
+/// There is **no maximum length**. Vault `write_secret` records are historically
+/// capped at 255 bytes, which is why this path uses the Stronghold *client
+/// store* (an unbounded byte map) instead. Provider credentials routinely
+/// exceed 256 characters (`sk-proj-…`, JWT-shaped keys from OpenAI-compatible
+/// gateways). The only value we refuse is the masked placeholder the settings
+/// UI displays when a key is already configured.
+pub fn validate_stored_api_key(key: &str) -> Result<(), String> {
+    if key == AI_KEY_MASKED {
+        return Err(
+            "this is the masked placeholder, not an API key: re-enter the key".into(),
+        );
+    }
+    Ok(())
+}
+
 /// What the on-disk `master.key` actually holds. It NEVER holds a raw
 /// decryption key when a master password is set — only a verifier derived from
 /// the password via a proper KDF, so the file alone cannot unlock the vault.
@@ -416,4 +433,22 @@ pub fn load_ai_key_internal(
 /// unit-testable.
 pub fn ai_key_presence(store_value: Option<String>) -> Option<String> {
     store_value.map(|_| AI_KEY_MASKED.to_string())
+}
+
+#[cfg(test)]
+mod stored_api_key_tests {
+    use super::*;
+    use iota_stronghold::Store;
+
+    #[test]
+    fn client_store_round_trips_a_multi_kilobyte_key() {
+        let long = format!("sk-proj-{}", "a".repeat(8192));
+        assert!(validate_stored_api_key(&long).is_ok());
+        let store = Store::default();
+        store
+            .insert(b"openai".to_vec(), long.as_bytes().to_vec(), None)
+            .expect("client store must accept a multi-kilobyte API key");
+        let got = store.get(b"openai").unwrap().expect("key was stored");
+        assert_eq!(got, long.as_bytes());
+    }
 }

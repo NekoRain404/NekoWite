@@ -6,7 +6,11 @@
 //! command names, request/response DTOs and error strings are unchanged from
 //! the pre-split layout.
 
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use notify::Watcher;
 use tauri::Emitter;
@@ -273,7 +277,63 @@ fn should_emit_change(
 /// quiet, and when that quiet period started.
 struct PendingBurst {
     kind: String,
-    at: std::time::Instant,
+    at: Instant,
+}
+
+/// Pull every burst that has been quiet for [`COALESCE_WINDOW`].
+fn take_settled_pending(
+    pending: &mut HashMap<String, PendingBurst>,
+    now: Instant,
+) -> Vec<(String, PendingBurst)> {
+    let keys: Vec<String> = pending
+        .iter()
+        .filter(|(_, p)| now.duration_since(p.at) >= COALESCE_WINDOW)
+        .map(|(k, _)| k.clone())
+        .collect();
+    keys.into_iter()
+        .filter_map(|k| pending.remove(&k).map(|p| (k, p)))
+        .collect()
+}
+
+fn emit_fs_change(app: &tauri::AppHandle, path: &str, kind: &str) {
+    let _ = app.emit(
+        "fs-change",
+        serde_json::json!({ "path": path, "kind": kind }),
+    );
+}
+
+/// After the last notify event of a burst there may be no further callback, so
+/// a held trailing event would sit forever. Sleep one window and emit it if it
+/// is still the latest pending event for that path.
+fn schedule_pending_flush(
+    app: tauri::AppHandle,
+    pending: Arc<Mutex<HashMap<String, PendingBurst>>>,
+    recent: Arc<Mutex<HashMap<String, (String, Instant)>>>,
+    generation: Arc<std::sync::atomic::AtomicU64>,
+    my_gen: u64,
+    ipc: String,
+    expected_at: Instant,
+) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(COALESCE_WINDOW).await;
+        if generation.load(Ordering::SeqCst) != my_gen {
+            return;
+        }
+        let Ok(mut pending) = pending.lock() else { return };
+        let Some(p) = pending.get(&ipc) else { return };
+        if p.at != expected_at {
+            return;
+        }
+        if Instant::now().duration_since(p.at) < COALESCE_WINDOW {
+            return;
+        }
+        let p = pending.remove(&ipc).expect("entry was present");
+        drop(pending);
+        if let Ok(mut recent) = recent.lock() {
+            recent.insert(ipc.clone(), (p.kind.clone(), Instant::now()));
+        }
+        emit_fs_change(&app, &ipc, &p.kind);
+    });
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -299,19 +359,25 @@ pub async fn watch_folder(
     // deletion. Collapse identical events for the same path inside a short
     // window; a different kind, or the same kind later, still gets through, so
     // no real change is hidden.
-    let mut recent: std::collections::HashMap<String, (String, std::time::Instant)> =
-        std::collections::HashMap::new();
+    let recent: Arc<Mutex<HashMap<String, (String, Instant)>>> =
+        Arc::new(Mutex::new(HashMap::new()));
     // Events held for the trailing edge of a burst, keyed by path. A burst is
     // reported once when it stops, so the LAST write of a rapid sequence is what
-    // subscribers see.
-    let mut pending: std::collections::HashMap<String, PendingBurst> =
-        std::collections::HashMap::new();
+    // subscribers see. Shared with a timer because a quiet tail has no further
+    // notify callback to flush it.
+    let pending: Arc<Mutex<HashMap<String, PendingBurst>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let generation = state.generation.clone();
+    let my_gen = generation.fetch_add(1, Ordering::SeqCst) + 1;
     // The watcher root, canonical, so the hidden-component filter can be applied
     // to the path RELATIVE to the vault. Applying it to the absolute path meant a
     // vault living in a dot-directory (`~/.notes`) filtered out every event it
     // would ever produce — the whole vault looked unmodified to the app, so
     // external edits were never noticed and the next save overwrote them.
     let watch_root = resolved.clone();
+    let recent_cb = recent.clone();
+    let pending_cb = pending.clone();
+    let generation_cb = generation.clone();
     let mut new_watcher = notify::RecommendedWatcher::new(
         move |res: Result<notify::Event, notify::Error>| {
             let event = match res {
@@ -342,7 +408,9 @@ pub async fn watch_folder(
             } else {
                 return;
             };
-            let now = std::time::Instant::now();
+            let now = Instant::now();
+            let Ok(mut recent) = recent_cb.lock() else { return };
+            let Ok(mut pending) = pending_cb.lock() else { return };
             for path in event.paths {
                 // History/trash churn and our own snapshot temp writes
                 // happen under hidden directories; never surface them. The
@@ -364,38 +432,34 @@ pub async fn watch_folder(
                     // last write in a burst is the one whose content is on disk,
                     // so this is the event subscribers actually need.
                     pending.insert(
-                        ipc,
+                        ipc.clone(),
                         PendingBurst {
                             kind: kind.to_string(),
                             at: now,
                         },
                     );
+                    schedule_pending_flush(
+                        app.clone(),
+                        pending_cb.clone(),
+                        recent_cb.clone(),
+                        generation_cb.clone(),
+                        my_gen,
+                        ipc,
+                        now,
+                    );
                     continue;
                 }
                 recent.insert(ipc.clone(), (kind.to_string(), now));
-                let _ = app.emit(
-                    "fs-change",
-                    serde_json::json!({ "path": ipc, "kind": kind }),
-                );
+                emit_fs_change(&app, &ipc, kind);
             }
             // Trailing edge: a burst that has been quiet for the full window is
             // over, so its final event goes out now. This is what makes a rapid
             // pair of external writes end with an event for the FINAL content.
-            let settled: Vec<String> = pending
-                .iter()
-                .filter(|(_, p)| now.duration_since(p.at) >= COALESCE_WINDOW)
-                .map(|(k, _)| k.clone())
-                .collect();
-            for ipc in settled {
-                if let Some(p) = pending.remove(&ipc) {
-                    // Only the kind is re-emitted, so a held `removed` after a
-                    // `modified` still tells the window the file is gone.
-                    recent.insert(ipc.clone(), (p.kind.clone(), now));
-                    let _ = app.emit(
-                        "fs-change",
-                        serde_json::json!({ "path": ipc, "kind": p.kind }),
-                    );
-                }
+            for (ipc, p) in take_settled_pending(&mut pending, now) {
+                // Only the kind is re-emitted, so a held `removed` after a
+                // `modified` still tells the window the file is gone.
+                recent.insert(ipc.clone(), (p.kind.clone(), now));
+                emit_fs_change(&app, &ipc, &p.kind);
             }
             // Bounded growth: a long session over a busy vault would otherwise
             // keep one entry per touched path forever.
@@ -413,7 +477,7 @@ pub async fn watch_folder(
     // switch stops the abandoned watcher instead of stacking a new thread.
     // A poisoned lock must not panic — return the error instead so the stale
     // watcher stays in place rather than being torn down mid-switch.
-    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    let mut guard = state.watcher.lock().map_err(|e| e.to_string())?;
     *guard = Some(new_watcher);
     Ok(())
 }
@@ -444,7 +508,8 @@ fn allow_vault_media(app: &tauri::AppHandle, vault_root: &str) {
 
 #[cfg(test)]
 mod change_coalescing_tests {
-    use super::{should_emit_change, COALESCE_WINDOW};
+    use super::{should_emit_change, take_settled_pending, PendingBurst, COALESCE_WINDOW};
+    use std::collections::HashMap;
     use std::time::Instant;
 
     fn last(kind: &str, at: Instant) -> (String, Instant) {
@@ -491,5 +556,30 @@ mod change_coalescing_tests {
             "modified",
             t0 + COALESCE_WINDOW
         ));
+    }
+
+    #[test]
+    fn take_settled_pending_emits_the_quiet_tail() {
+        let t0 = Instant::now();
+        let mut pending = HashMap::new();
+        pending.insert(
+            "a.md".into(),
+            PendingBurst {
+                kind: "modified".into(),
+                at: t0,
+            },
+        );
+        pending.insert(
+            "b.md".into(),
+            PendingBurst {
+                kind: "created".into(),
+                at: t0 + COALESCE_WINDOW,
+            },
+        );
+        let settled = take_settled_pending(&mut pending, t0 + COALESCE_WINDOW);
+        assert_eq!(settled.len(), 1);
+        assert_eq!(settled[0].0, "a.md");
+        assert_eq!(settled[0].1.kind, "modified");
+        assert!(pending.contains_key("b.md"));
     }
 }

@@ -9,6 +9,7 @@
 
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use std::net::{IpAddr, ToSocketAddrs};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tauri::{Emitter, Manager};
@@ -212,6 +213,27 @@ pub fn validate_base_url(cfg: &AIConfig) -> Result<(), String> {
 }
 
 fn validate_public_url(base: &str) -> Result<(), String> {
+    validate_public_url_with(base, resolve_host_ips)
+}
+
+fn resolve_host_ips(host: &str) -> Result<Vec<IpAddr>, ()> {
+    (host, 0u16)
+        .to_socket_addrs()
+        .map(|addrs| addrs.map(|a| a.ip()).collect())
+        .map_err(|_| ())
+}
+
+fn private_url_error(host: &str) -> String {
+    format!(
+        "AI Base URL 指向了本机/内网地址（{host}）。为安全起见已默认拒绝连接内网。\
+         如果你确实要连接本地模型（如 Ollama / LM Studio），请在设置中开启“允许本地/内网地址”后再试。"
+    )
+}
+
+fn validate_public_url_with(
+    base: &str,
+    resolve: impl Fn(&str) -> Result<Vec<IpAddr>, ()>,
+) -> Result<(), String> {
     let url = reqwest::Url::parse(base)
         .map_err(|_| format!("AI Base URL 无效：{base}（应为 http:// 或 https:// 格式）"))?;
     if url.scheme() != "http" && url.scheme() != "https" {
@@ -221,12 +243,19 @@ fn validate_public_url(base: &str) -> Result<(), String> {
         .host_str()
         .ok_or_else(|| format!("AI Base URL 缺少主机名：{base}"))?;
     if is_private_or_loopback_host(host) {
-        return Err(format!(
-            "AI Base URL 指向了本机/内网地址（{host}）。为安全起见已默认拒绝连接内网。\
-             如果你确实要连接本地模型（如 Ollama / LM Studio），请在设置中开启“允许本地/内网地址”后再试。"
-        ));
+        return Err(private_url_error(host));
     }
-    Ok(())
+    // Literal IPs are already covered. A hostname must not be allowed to
+    // bypass the check by resolving to a loopback or RFC1918 address.
+    if host.parse::<IpAddr>().is_ok() {
+        return Ok(());
+    }
+    match resolve(host) {
+        Ok(ips) if ips.iter().copied().any(is_private_or_loopback_ip) => {
+            Err(private_url_error(host))
+        }
+        Ok(_) | Err(_) => Ok(()),
+    }
 }
 
 fn is_private_or_loopback_host(host: &str) -> bool {
@@ -1136,6 +1165,42 @@ mod tests {
         assert!(validate_public_url("file:///etc/passwd").is_err());
         assert!(validate_public_url("http://").is_err());
         assert!(validate_public_url("not a url").is_err());
+    }
+
+    #[test]
+    fn hostname_resolving_to_loopback_is_rejected() {
+        let resolve = |host: &str| {
+            if host == "evil.example.com" {
+                Ok(vec!["127.0.0.1".parse().unwrap()])
+            } else {
+                Ok(vec!["203.0.113.9".parse().unwrap()])
+            }
+        };
+        assert!(
+            validate_public_url_with("https://evil.example.com/v1", resolve).is_err(),
+            "DNS to loopback must be rejected"
+        );
+        assert!(
+            validate_public_url_with("https://ok.example.com/v1", resolve).is_ok(),
+            "public resolution must still pass"
+        );
+    }
+
+    #[test]
+    fn mixed_public_and_private_resolved_ips_are_rejected() {
+        let resolve = |_host: &str| {
+            Ok(vec![
+                "203.0.113.9".parse().unwrap(),
+                "10.0.0.1".parse().unwrap(),
+            ])
+        };
+        assert!(validate_public_url_with("https://dual.example.com", resolve).is_err());
+    }
+
+    #[test]
+    fn unresolved_hostname_is_left_to_the_request() {
+        let resolve = |_host: &str| Err(());
+        assert!(validate_public_url_with("https://no-such.example.invalid", resolve).is_ok());
     }
 
     #[test]

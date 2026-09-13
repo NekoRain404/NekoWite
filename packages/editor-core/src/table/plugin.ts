@@ -3,7 +3,7 @@ import { editorViewCtx, EditorViewReady } from '@milkdown/core'
 import type { Node, Schema } from '@milkdown/prose/model'
 import type { EditorView } from '@milkdown/prose/view'
 
-import { registerCommand, registerMarkdownCommand, registerToolbar } from '../registry'
+import { registerCommand, registerMarkdownCommand, registerToolbar, unregisterCommand, unregisterToolbar } from '../registry'
 import { isInTableCell } from './context'
 import { openTableDialog } from './dialog'
 
@@ -66,6 +66,8 @@ function insertTableAtCursor(): void {
 }
 
 export function tableFeature(): void {
+  unregisterCommand(TABLE_COMMAND_ID)
+  unregisterToolbar(TABLE_COMMAND_ID)
   registerCommand({ id: TABLE_COMMAND_ID, run: insertTableAtCursor })
   registerToolbar({ id: TABLE_COMMAND_ID, label: 'Table', run: insertTableAtCursor })
   // Source mode: the dialog steps a table grid, but there is no grid to step

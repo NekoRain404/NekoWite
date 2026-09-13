@@ -11,7 +11,7 @@ use crate::domain::recovery::{open_snapshot, reencrypt_vault};
 use crate::state::KeyVault;
 use crate::storage::key_store::{
     self, ai_key_presence, derive_master_key, encode_keyfile_password, load_ai_key_internal,
-    read_vault_key_state, validate_password, verifier_of, VaultKeyState, AI_KEY_MASKED,
+    read_vault_key_state, validate_password, validate_stored_api_key, verifier_of, VaultKeyState,
 };
 
 /// Store an API key for a provider in the stronghold vault. If the provider
@@ -25,10 +25,9 @@ pub async fn store_ai_key(
 ) -> Result<(), String> {
     // Never store the masked "a key is configured" indicator as a real key —
     // the settings UI shows it as a placeholder and must not persist it over a
-    // previously-saved credential.
-    if key == AI_KEY_MASKED {
-        return Err("this is the masked placeholder, not an API key: re-enter the key".into());
-    }
+    // previously-saved credential. Length is not capped: see
+    // [`validate_stored_api_key`].
+    validate_stored_api_key(&key)?;
     let provider_bytes = provider.into_bytes();
     let key_bytes = key.into_bytes();
     key_store::open_vault(

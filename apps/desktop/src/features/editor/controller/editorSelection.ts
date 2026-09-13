@@ -66,7 +66,7 @@ export function createEditorSelection(deps: EditorSelectionDeps): EditorSelectio
       if (ty === 'image') return { kind: 'image', pos, nodeType: ty }
       if (ty === 'table') return { kind: 'table', pos, nodeType: ty }
     }
-    return { kind: 'text', pos: from, nodeType: state.selection.empty ? 'text' : 'text' }
+    return { kind: 'text', pos: from, nodeType: 'text' }
   }
 
   return { clearSelection, handlePointerDown, selectedId, derive }

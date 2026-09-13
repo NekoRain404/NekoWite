@@ -7,6 +7,7 @@ import { useSettingsStore } from '../stores/settings'
 import type { AIConfig } from '../stores/settings'
 import { useAiPermissionStore } from '../stores/aiPermission'
 import { decideAiWrite, isAiEnabled, type AiPermissionState } from './aiPermissions'
+import { announceAiBlockOnce } from './aiBlockAnnounce'
 import { recordAiAudit } from './aiAudit'
 import { t } from '../i18n'
 
@@ -102,15 +103,9 @@ function aiWritesForbidden(): boolean {
   return decideAiWrite(state, { kind: 'insert', summary: '' }) === 'deny'
 }
 
-/** Reasons already reported to the user in this window. A blocked feature is
- *  worth explaining once; a toast on every Tab press is noise. */
-const announcedBlocks = new Set<string>()
-
 function announceBlock(reason: string, messageKey?: string): void {
-  if (announcedBlocks.has(reason)) return
-  announcedBlocks.add(reason)
   const key = messageKey ?? (reason === 'disabled' ? 'aiperm.blockedDisabled' : 'aiperm.blockedReadonly')
-  notifyError(t(key))
+  announceAiBlockOnce(reason, () => notifyError(t(key)))
 }
 // Incremented by every trigger/accept/reject; events and listener
 // registrations from a superseded trigger are ignored, so a stale stream can

@@ -33,7 +33,8 @@ if command -v taskkill >/dev/null 2>&1; then
   taskkill //IM nekowite.exe //F >/dev/null 2>&1 || true
 fi
 if [ "$PORTABLE" = "1" ]; then
-  npx --yes pnpm --filter @nekowite/desktop build
+  # `tauri build` already runs `beforeBuildCommand` (`pnpm build`); do not
+  # pre-build Vite here or the frontend is compiled twice.
   npx --yes pnpm --filter @nekowite/desktop exec tauri build --no-bundle
 else
   npx --yes pnpm --filter @nekowite/desktop exec tauri build --bundles nsis

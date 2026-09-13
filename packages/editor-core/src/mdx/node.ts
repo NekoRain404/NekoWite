@@ -107,13 +107,18 @@ export function parseMdxTag(html: string): MdxComponentAttrs {
     // so a '>' inside a value does not truncate parsing (the previous
     // [^>]*? scan dropped every prop after it).
     let end = html.length
+    let braceDepth = 0
     for (let j = nameMatch[0].length; j < html.length; j++) {
       const ch = html[j]
       if (ch === '"' || ch === "'") {
         const close = html.indexOf(ch, j + 1)
         if (close === -1) break
         j = close
-      } else if (ch === '>') {
+      } else if (ch === '{') {
+        braceDepth += 1
+      } else if (ch === '}' && braceDepth > 0) {
+        braceDepth -= 1
+      } else if (ch === '>' && braceDepth === 0) {
         end = j
         break
       }

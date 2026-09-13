@@ -4,6 +4,7 @@ import type { Node as ProseNode } from '@milkdown/prose/model'
 import { basicPlugins, createEditor } from '../editor'
 import { configureClipboardWriter } from '../clipboard'
 import { makeCodeBlockNodeView, codeBlockCopyNodeView } from './views'
+import { isInCodeBlock } from './paste'
 
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -30,6 +31,26 @@ function makeView(node: ProseNode): CodeViewSpec {
 
 afterEach(() => {
   configureClipboardWriter(null)
+})
+
+describe('isInCodeBlock', () => {
+  it('does not treat the position after a code block as inside it', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open('```\ncode\n```\n\nHello')
+    const view = editor.getView()
+    let after: number | null = null
+    view.state.doc.descendants((node, pos) => {
+      if (node.type.spec.code === true) {
+        after = pos + node.nodeSize
+        return false
+      }
+      return true
+    })
+    if (after === null) throw new Error('expected a code block in the document')
+    expect(isInCodeBlock(view, after)).toBe(false)
+  })
 })
 
 describe('code block copy node view', () => {
