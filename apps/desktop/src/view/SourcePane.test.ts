@@ -7,15 +7,18 @@ import { useTabsStore } from '../stores/tabs'
 
 // The pane's job here is only to publish a direction; CodeMirror itself is
 // exercised elsewhere, and its real host cannot run in happy-dom.
+const hostMock = vi.hoisted(() => ({
+  mount: vi.fn(),
+  getView: (): null => null,
+  setText: vi.fn(),
+  flush: vi.fn(),
+  reconfigure: vi.fn(),
+  resetHistory: vi.fn(),
+  destroy: vi.fn(),
+}))
+
 vi.mock('../services/codeMirrorHost', () => ({
-  createCodeMirrorHost: () => ({
-    mount: vi.fn(),
-    getView: () => null,
-    setText: vi.fn(),
-    flush: vi.fn(),
-    reconfigure: vi.fn(),
-    destroy: vi.fn(),
-  }),
+  createCodeMirrorHost: () => hostMock,
 }))
 
 const readMock = vi.hoisted(() => vi.fn())
@@ -53,6 +56,8 @@ beforeEach(() => {
   setActivePinia(pinia)
   readMock.mockReset()
   readMock.mockResolvedValue('# hello')
+  hostMock.setText.mockClear()
+  hostMock.resetHistory.mockClear()
   document.body.innerHTML = ''
   mounted = []
 })
@@ -100,5 +105,28 @@ describe('SourcePane content direction', () => {
     useAppearanceStore().setContentDirection('auto')
     await nextTick()
     expect(pane.getAttribute('dir')).toBe('ltr')
+  })
+
+  it('drops the CodeMirror undo stack when the mirrored tab changes', async () => {
+    // Two notes holding identical text are a document swap `setText` cannot
+    // see — it compares text, so it takes its "nothing to do" path and leaves
+    // the previous note's undo entries reachable. Ctrl+Z in the new note would
+    // then invert an edit made in the old one and autosave the result into the
+    // new file. The pane knows a switch happened even when `setText` does not,
+    // so it has to drop the stack itself.
+    await openDoc('# same text in both notes')
+    mountPane()
+    await flush()
+    await nextTick()
+    hostMock.resetHistory.mockClear()
+
+    const tabs = useTabsStore()
+    readMock.mockResolvedValue('# same text in both notes')
+    await tabs.openTab('/vault/b.md')
+    await flush()
+    await nextTick()
+
+    expect(tabs.activeId).toBe(tabs.tabs.find((t) => t.path === '/vault/b.md')!.id)
+    expect(hostMock.resetHistory).toHaveBeenCalled()
   })
 })

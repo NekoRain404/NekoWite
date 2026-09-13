@@ -106,6 +106,14 @@ watch(
     host.flush()
     mirroredTabId = id
     host.setText(tabs.tabs.find((t) => t.id === id)?.content ?? '')
+    // `setText` only recognises a document swap when the TEXT changes, so two
+    // notes that happen to hold identical text are a swap it cannot see and it
+    // leaves the previous note's undo entries reachable. Ctrl+Z in the new note
+    // would then invert an edit made in the old one and autosave the result
+    // into the new file. The tab change itself is the signal `setText` lacks,
+    // so the stack is dropped here unconditionally (idempotent when `setText`
+    // already did it).
+    host.resetHistory()
   },
 )
 
