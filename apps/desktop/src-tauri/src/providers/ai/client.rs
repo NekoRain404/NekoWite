@@ -50,6 +50,152 @@ pub struct AIConfig {
     pub allow_private: bool,
 }
 
+// --- Request and response size ceilings -------------------------------------
+//
+// Every byte an AI request sends or receives crosses this module, and every one
+// of those bytes is chosen by the renderer or by the provider - neither of
+// which the backend controls. The ceilings below are the enforcement points the
+// roadmap requires at the Rust IPC/HTTP boundary: front-end validation is a
+// courtesy to the user, not a guarantee, because anything can invoke the
+// command. Each one is deliberately far above what a legitimate request needs
+// (the reasoning is on each constant) so the limit can only be hit by a bug,
+// a loop, or a hostile peer - and when it is hit the caller gets a named error
+// instead of an unbounded allocation.
+
+/// Largest prompt (UTF-8 bytes) one request may carry.
+///
+/// The renderer builds the prompt from the note context it was allowed to
+/// attach: `CONTEXT_CHARS_MAX` is 32 000 characters (at most ~96 KB as UTF-8
+/// CJK), plus the fixed instruction wrappers. 1 MiB is an order of magnitude
+/// above that, so no request the app itself can build is ever refused, while a
+/// looping renderer or plugin cannot push an unbounded string through IPC.
+pub const MAX_PROMPT_BYTES: usize = 1024 * 1024;
+
+/// Largest number of images one request may carry.
+///
+/// The product limit is `MAX_IMAGES_PER_MESSAGE` = 4 per chat message, and the
+/// composer cannot build a request without it; 16 leaves 4x headroom for a
+/// future/plugin path while staying far below every provider's own image
+/// ceiling (Anthropic: 100 per request, OpenAI: 500), so this bound can never
+/// be the thing that makes a provider reject a request we would have sent.
+pub const MAX_IMAGES_PER_REQUEST: usize = 16;
+
+/// Largest single image, measured on the serialised value that will be sent (a
+/// `data:` URL). 10 MiB of image bytes - the renderer's own
+/// `MAX_ATTACHMENT_BYTES` - base64-encodes to 13 981 016 characters; 14 MiB
+/// accepts everything the renderer allowed, including the `data:` prefix, and
+/// refuses a value that cannot be an image the user attached.
+pub const MAX_IMAGE_DATA_URL_BYTES: usize = 14 * 1024 * 1024;
+
+/// Largest serialised request body.
+///
+/// The biggest body the app can build is one message's image budget (20 MiB
+/// raw, `MAX_ATTACHMENTS_PER_MESSAGE_BYTES`) base64-encoded to ~27 MiB plus the
+/// prompt, so 32 MiB never binds on a legitimate request - but it does bound
+/// what a single IPC call can make the backend allocate, serialise and
+/// transmit. Past this the provider answers 413 anyway (see the hint in
+/// `http_error_message_with_detail`), so nothing is lost by refusing earlier.
+pub const MAX_REQUEST_BODY_BYTES: usize = 32 * 1024 * 1024;
+
+/// Largest single SSE frame, and therefore the largest reassembly buffer: the
+/// buffer drains every complete line as it arrives, so it never holds more than
+/// ONE unterminated line (see [`SseBuffer`]).
+///
+/// The largest legitimate frame is a provider that delivers an answer in one
+/// event instead of deltas. The app's own output ceiling is 8192 tokens (the
+/// settings input's maximum), i.e. ~32 KB of text plus its JSON envelope, so
+/// 1 MiB is ~30x headroom - and it still caps one connection's reassembly at
+/// 1 MiB instead of "whatever the peer sends".
+pub const MAX_SSE_LINE_BYTES: usize = 1024 * 1024;
+
+/// Largest answer one completion may accumulate.
+///
+/// Same order as a frame: 1 MiB of text is roughly 250 000 tokens, far past any
+/// `max_tokens` the settings UI can produce (8192), so this only ever fires for
+/// a provider that ignores its own output cap - and it fires as a clear error
+/// rather than silently truncating the text the user is watching stream in.
+pub const MAX_ANSWER_BYTES: usize = 1024 * 1024;
+
+/// Largest `/models` body read.
+///
+/// The biggest real listings are marketplaces that return hundreds of models
+/// with full metadata, on the order of a few hundred KB; 4 MiB is an order of
+/// magnitude above them. The point is that the read stops somewhere: the list
+/// is display data, and a broken or hostile endpoint must not be able to make
+/// the backend buffer gigabytes for a dropdown.
+pub const MAX_MODELS_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+
+/// Largest provider error body read. Only 300 characters of it ever reach the
+/// user (see [`http_error_message_with_detail`]), so 64 KiB is already 200x the
+/// displayed amount: this bounds the read, it does not fit the message.
+pub const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
+
+/// Check one completion's raw inputs against [`MAX_PROMPT_BYTES`],
+/// [`MAX_IMAGES_PER_REQUEST`] and [`MAX_IMAGE_DATA_URL_BYTES`].
+///
+/// Called at the IPC boundary (`ai_complete`) before anything is claimed or
+/// sent, so an impossible request costs nothing and the user gets a specific
+/// error instead of a provider-side rejection (or a 413) much later. The
+/// provider-agnostic request builder is covered separately by
+/// [`encode_request_body`], which bounds the assembled body whatever it holds.
+pub fn validate_request_inputs(prompt: &str, images: &[serde_json::Value]) -> Result<(), String> {
+    if prompt.len() > MAX_PROMPT_BYTES {
+        return Err(format!(
+            "提示词过长（{} 字节，上限 {} 字节）。请缩小选区或减少附加上下文后重试。",
+            prompt.len(),
+            MAX_PROMPT_BYTES
+        ));
+    }
+    if images.len() > MAX_IMAGES_PER_REQUEST {
+        return Err(format!(
+            "一次请求最多发送 {} 张图片（本次 {} 张）。",
+            MAX_IMAGES_PER_REQUEST,
+            images.len()
+        ));
+    }
+    for (index, image) in images.iter().enumerate() {
+        let size = serialized_len(image);
+        if size > MAX_IMAGE_DATA_URL_BYTES {
+            return Err(format!(
+                "第 {} 张图片过大（{} 字节，上限 {} 字节）。请压缩后再发送。",
+                index + 1,
+                size,
+                MAX_IMAGE_DATA_URL_BYTES
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The size of a value as it will go on the wire. An image arrives as a `data:`
+/// URL string; anything else is measured after serialising, so the number is
+/// the JSON the request will actually carry rather than an approximation.
+fn serialized_len(value: &serde_json::Value) -> usize {
+    match value {
+        serde_json::Value::String(s) => s.len(),
+        other => other.to_string().len(),
+    }
+}
+
+/// Serialise a request body under [`MAX_REQUEST_BODY_BYTES`].
+///
+/// Serialising here, rather than letting `RequestBuilder::json` do it, is what
+/// makes the ceiling enforceable: the bytes that will go on the wire are
+/// measured before a connection is opened, and the very same bytes are then
+/// handed to the request — nothing is serialised twice, and nothing can be
+/// added between the measurement and the send.
+pub fn encode_request_body(body: &serde_json::Value) -> Result<Vec<u8>, String> {
+    let payload = serde_json::to_vec(body).map_err(|e| format!("AI 请求体序列化失败：{e}"))?;
+    if payload.len() > MAX_REQUEST_BODY_BYTES {
+        return Err(format!(
+            "AI 请求体过大（{} 字节，上限 {} 字节）。请减少图片或缩短上下文后重试。",
+            payload.len(),
+            MAX_REQUEST_BODY_BYTES
+        ));
+    }
+    Ok(payload)
+}
+
 /// The system prompt to send, normalised so blanks become `None`.
 pub(crate) fn system_prompt_of(cfg: &AIConfig) -> Option<String> {
     cfg.system_prompt
@@ -195,18 +341,33 @@ pub fn ai_done_payload(id: &str, full: &str, usage: Option<TokenUsage>) -> serde
     })
 }
 
-/// Guard against SSRF / internal-endpoint abuse via a user-supplied `base_url`.
-/// Only `http`/`https` are accepted; hosts that are literal private, loopback,
-/// link-local, CGNAT or unspecified IPs (plus the literal `localhost` name) are
-/// rejected unless the caller explicitly opts in via [`AIConfig::allow_private`]
-/// (for legitimate local models such as Ollama / LM Studio). The default
-/// provider endpoints (api.anthropic.com, api.openai.com, ...) are public and
-/// never rejected.
+/// Guard against SSRF / internal-endpoint abuse via a user-supplied `base_url`,
+/// and against handing the API key to a plaintext public endpoint.
+///
+/// Two rules, and the second one is NOT waived by the opt-in:
+///
+///   * **A public Base URL must be HTTPS.** HTTP is only for local development
+///     addresses — `localhost`, a loopback IP, or (under the opt-in) a private
+///     LAN host — so the key can never cross the public internet in the clear.
+///   * **Without [`AIConfig::allow_private`]**, a host that is (or resolves to)
+///     a literal private, loopback, link-local, CGNAT or unspecified address is
+///     rejected, and the addresses that were vetted are returned so the client
+///     can be pinned to exactly those.
+///
+/// [`AIConfig::allow_private`] waives the SSRF guard for a local model server
+/// (Ollama / LM Studio). It does not waive the URL parse, the scheme rule or the
+/// host requirement: the flag is about REACHING a private address, not about
+/// dropping transport security on the public internet.
 pub fn validate_base_url(cfg: &AIConfig) -> Result<Option<VettedHost>, String> {
+    let Some(base) = cfg.base_url.as_deref() else {
+        return Ok(None);
+    };
     if cfg.allow_private {
+        let url = parse_base_url(base)?;
+        reject_plaintext_public_url(&url, base)?;
         return Ok(None);
     }
-    cfg.base_url.as_deref().map(validate_public_url).transpose()
+    validate_public_url(base).map(Some)
 }
 
 /// The addresses that were vetted for a user-supplied Base URL.
@@ -251,18 +412,54 @@ fn private_url_error(host: &str) -> String {
     )
 }
 
-fn validate_public_url_with(
-    base: &str,
-    resolve: impl Fn(&str) -> Result<Vec<SocketAddr>, String>,
-) -> Result<VettedHost, String> {
+/// Parse a Base URL and require the shape every caller depends on: a scheme the
+/// client can actually speak and a host to send to.
+fn parse_base_url(base: &str) -> Result<reqwest::Url, String> {
     let url = reqwest::Url::parse(base)
         .map_err(|_| format!("AI Base URL 无效：{base}（应为 http:// 或 https:// 格式）"))?;
     if url.scheme() != "http" && url.scheme() != "https" {
         return Err(format!("AI Base URL 必须使用 http:// 或 https://：{base}"));
     }
-    let host = url
-        .host_str()
-        .ok_or_else(|| format!("AI Base URL 缺少主机名：{base}"))?;
+    if url.host_str().unwrap_or("").is_empty() {
+        return Err(format!("AI Base URL 缺少主机名：{base}"));
+    }
+    Ok(url)
+}
+
+/// Refuse a plaintext URL whose host is not local.
+///
+/// This is the rule that keeps the API key off the wire in the clear. The key
+/// rides in `Authorization` / `x-api-key` / `x-goog-api-key`, and reqwest sends
+/// those over `http://` without complaint, visible to every hop between here and
+/// the provider. A local address is exempt because a local model server has no
+/// certificate to offer and `http://localhost:11434` is the documented Ollama /
+/// LM Studio setup — the credential never leaves the machine (or, for a host
+/// the user explicitly opted into, the local network).
+fn reject_plaintext_public_url(url: &reqwest::Url, base: &str) -> Result<(), String> {
+    if url.scheme() != "http" {
+        return Ok(());
+    }
+    let host = url.host_str().unwrap_or("");
+    if is_private_or_loopback_host(host) {
+        return Ok(());
+    }
+    Err(format!(
+        "AI Base URL 使用了明文 HTTP，而主机（{host}）不是本机地址：{base}。\
+         为避免 API Key 以明文发送到公网，公共地址必须使用 https://；\
+         只有本机/内网开发地址（如 http://localhost:11434）可以使用 HTTP。"
+    ))
+}
+
+fn validate_public_url_with(
+    base: &str,
+    resolve: impl Fn(&str) -> Result<Vec<SocketAddr>, String>,
+) -> Result<VettedHost, String> {
+    let url = parse_base_url(base)?;
+    // The scheme rule is decided BEFORE resolution: it is the one rule that
+    // cannot be waived, and a plaintext public URL must be refused on its own
+    // terms rather than after a DNS lookup that a name-based bypass could steer.
+    reject_plaintext_public_url(&url, base)?;
+    let host = url.host_str().unwrap_or("");
     if is_private_or_loopback_host(host) {
         return Err(private_url_error(host));
     }
@@ -390,7 +587,13 @@ pub fn next_ai_id() -> String {
 /// cannot itself corrupt one. Without the byte buffering, a `data:{...}` event
 /// split across two chunks would also fail JSON parse in both halves and be
 /// silently dropped.
-#[derive(Default)]
+///
+/// The buffer is bounded by [`MAX_SSE_LINE_BYTES`]. Because every complete line
+/// is drained the moment its newline arrives, the only thing that ever stays
+/// buffered is ONE unterminated line — so that single ceiling is also the
+/// ceiling on the buffer. A peer that streams bytes without ever sending a
+/// newline is refused rather than buffered.
+#[derive(Debug, Default)]
 pub struct SseBuffer {
     pending: Vec<u8>,
 }
@@ -400,15 +603,51 @@ impl SseBuffer {
         Self::default()
     }
 
-    pub fn feed(&mut self, chunk: &[u8]) -> Vec<String> {
-        self.pending.extend_from_slice(chunk);
+    /// Append a chunk and return the lines it completed.
+    ///
+    /// `Err` means the reassembly buffer's invariant is broken (a frame past
+    /// [`MAX_SSE_LINE_BYTES`]): the caller must abandon the response, because
+    /// the frame boundary it is waiting for can no longer be trusted to be a
+    /// frame — a peer that never sends a newline has no lines left to give.
+    pub fn feed(&mut self, chunk: &[u8]) -> Result<Vec<String>, String> {
         let mut lines = Vec::new();
-        while let Some(nl) = self.pending.iter().position(|&b| b == b'\n') {
-            let line: Vec<u8> = self.pending.drain(..=nl).collect();
-            let line = String::from_utf8_lossy(&line);
-            lines.push(line.trim_end_matches(['\r', '\n']).to_string());
+        let mut rest = chunk;
+        // Walk the chunk instead of appending it whole: a single chunk may hold
+        // thousands of complete frames, and buffering all of them before
+        // checking the size would defeat the ceiling it is meant to enforce.
+        while let Some(nl) = rest.iter().position(|&b| b == b'\n') {
+            let (line, tail) = rest.split_at(nl + 1);
+            self.buffer(line)?;
+            lines.push(self.take_line());
+            rest = tail;
         }
-        lines
+        // Whatever is left has no newline yet: it is the start (or middle) of
+        // the next line and stays buffered.
+        self.buffer(rest)?;
+        Ok(lines)
+    }
+
+    /// Append bytes to the pending line, refusing to grow past the ceiling.
+    fn buffer(&mut self, bytes: &[u8]) -> Result<(), String> {
+        if self.pending.len() + bytes.len() > MAX_SSE_LINE_BYTES {
+            return Err(format!(
+                "AI 响应帧过大（超过 {} 字节），已中止本次生成。",
+                MAX_SSE_LINE_BYTES
+            ));
+        }
+        self.pending.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    /// Decode and drain the pending line. Only called right after a segment
+    /// ending in `\n` was appended, so the pending bytes are exactly one
+    /// complete line and its last byte is that newline.
+    fn take_line(&mut self) -> String {
+        let nl = self.pending.len() - 1;
+        let line: Vec<u8> = self.pending.drain(..=nl).collect();
+        String::from_utf8_lossy(&line)
+            .trim_end_matches(['\r', '\n'])
+            .to_string()
     }
 
     /// Drain any bytes still buffered once the stream has ended, as one final
@@ -628,6 +867,12 @@ pub fn error_detail_from_body(body: &str) -> Option<String> {
 /// Parse one SSE line for a provider and append any delta to `acc`.
 /// Returns the incremental text, or `None` for comments, blanks, `[DONE]`,
 /// and non-data lines. The accumulated `acc` is used for the final `full`.
+///
+/// `acc` grows by whatever the line carries and is NOT bounded here: the
+/// ceiling on a live answer ([`MAX_ANSWER_BYTES`]) belongs to the stream that
+/// owns the accumulation, and that is [`CompletionStream`]. Anything streaming
+/// a provider response must go through it rather than calling this directly in
+/// a loop.
 pub fn parse_sse_event(line: &str, provider: &str, acc: &mut String) -> Option<SseDelta> {
     let line = line.trim();
     if !line.starts_with("data:") {
@@ -755,6 +1000,135 @@ pub fn parse_sse_line(line: &str, provider: &str, acc: &mut String) -> Option<St
     parse_sse_event(line, provider, acc).and_then(|d| d.text)
 }
 
+/// What one folded chunk produced, in the order it must be delivered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamEvent {
+    /// Answer text to append to the document.
+    Text(String),
+    /// Reasoning progress; drives the "thinking" indicator only, never the text.
+    Reasoning(String),
+    /// The provider ended the stream (`data: [DONE]`).
+    Done,
+    /// The provider reported a failure INSIDE an HTTP 200 response.
+    ProviderError(String),
+}
+
+/// The streaming state of ONE completion: the SSE reassembly buffer, the answer
+/// being accumulated, the provider's token accounting and the reason it
+/// stopped.
+///
+/// This is the streaming loop minus the socket and minus the Tauri events, so
+/// the response-side size policy ([`MAX_SSE_LINE_BYTES`] on reassembly,
+/// [`MAX_ANSWER_BYTES`] on the accumulated answer) is enforced in one place and
+/// can be driven in tests without a running app. The caller owns the transport
+/// and the emits: feed it bytes, deliver the events it returns, stop on `Done`.
+#[derive(Debug)]
+pub struct CompletionStream {
+    provider: String,
+    buffer: SseBuffer,
+    full: String,
+    usage: Option<TokenUsage>,
+    reasoning_seen: bool,
+    finish_reason: Option<String>,
+}
+
+impl CompletionStream {
+    pub fn new(provider: &str) -> Self {
+        Self {
+            provider: provider.to_string(),
+            buffer: SseBuffer::new(),
+            full: String::new(),
+            usage: None,
+            reasoning_seen: false,
+            finish_reason: None,
+        }
+    }
+
+    /// Fold one network chunk.
+    ///
+    /// `Err` is a coded ceiling (an oversized frame, an over-long answer): the
+    /// caller must stop, report it and abandon the connection. A PROVIDER error
+    /// inside a 200 response is deliberately NOT an `Err` — it comes back as a
+    /// [`StreamEvent::ProviderError`] so any deltas the same chunk produced
+    /// first are still delivered, which is what the loop did before the fold
+    /// moved here.
+    pub fn feed(&mut self, chunk: &[u8]) -> Result<Vec<StreamEvent>, String> {
+        let lines = self.buffer.feed(chunk)?;
+        self.fold(lines)
+    }
+
+    /// Fold the bytes still buffered after the stream ended (a server that
+    /// stopped mid-line). A cancelled stream must NOT be flushed: the tail of
+    /// an abandoned response is how a late chunk got adopted by the next
+    /// request.
+    pub fn finish(&mut self) -> Result<Vec<StreamEvent>, String> {
+        let lines = self.buffer.flush();
+        self.fold(lines)
+    }
+
+    fn fold(&mut self, lines: Vec<String>) -> Result<Vec<StreamEvent>, String> {
+        let mut events = Vec::new();
+        for line in lines {
+            let Some(delta) = parse_sse_event(&line, &self.provider, &mut self.full) else {
+                continue;
+            };
+            accumulate_usage(&mut self.usage, &delta);
+            if let Some(message) = delta.error {
+                events.push(StreamEvent::ProviderError(message));
+                return Ok(events);
+            }
+            if delta.done {
+                events.push(StreamEvent::Done);
+                return Ok(events);
+            }
+            if let Some(reason) = delta.finish_reason {
+                self.finish_reason = Some(reason);
+            }
+            if let Some(reasoning) = delta.reasoning {
+                self.reasoning_seen = true;
+                events.push(StreamEvent::Reasoning(reasoning));
+            }
+            if let Some(text) = delta.text {
+                events.push(StreamEvent::Text(text));
+            }
+            // The answer ceiling is checked beside the accumulation it bounds,
+            // and it has to be checked here rather than at the end: without it
+            // `full` grows for as long as the provider keeps sending. The
+            // overshoot is one frame, since that is the granularity of a check
+            // that also has to keep streaming in real time.
+            if self.full.len() > MAX_ANSWER_BYTES {
+                return Err(format!(
+                    "AI 回答过长（超过 {} 字节），已中止本次生成。",
+                    MAX_ANSWER_BYTES
+                ));
+            }
+        }
+        Ok(events)
+    }
+
+    /// The answer accumulated so far.
+    pub fn answer(&self) -> &str {
+        &self.full
+    }
+
+    /// Token counts the provider reported, when it reported any.
+    pub fn usage(&self) -> Option<TokenUsage> {
+        self.usage
+    }
+
+    /// Why the provider said it stopped (`length`, `content_filter`, `stop`, …).
+    pub fn finish_reason(&self) -> Option<&str> {
+        self.finish_reason.as_deref()
+    }
+
+    /// True when the provider streamed reasoning progress. An answer-less
+    /// completion that reasoned spent its budget thinking, which is not an
+    /// ordinary empty reply.
+    pub fn saw_reasoning(&self) -> bool {
+        self.reasoning_seen
+    }
+}
+
 fn is_active(app: &tauri::AppHandle, id: &str) -> bool {
     let state = app.state::<AiState>();
     let guard = state.inflight.lock();
@@ -762,6 +1136,49 @@ fn is_active(app: &tauri::AppHandle, id: &str) -> bool {
         Ok(inflight) => inflight.contains(id),
         Err(_) => false,
     }
+}
+
+/// Deliver one folded chunk's events in order, returning `true` once the
+/// provider has ended the stream (`data: [DONE]`).
+///
+/// The reasoning text is emitted as PROGRESS only and never appended to the
+/// answer: a reasoning model streams its thinking before any answer text, and
+/// the ghost writer types whatever the answer streams straight into the
+/// document — the model's internal monologue is not part of the note. An
+/// in-band provider error is emitted AND returned as `Err`, because a 200
+/// response that carries an error frame is a truncated answer, not a complete
+/// one.
+fn deliver_events(
+    app: &tauri::AppHandle,
+    id: &str,
+    events: Vec<StreamEvent>,
+) -> Result<bool, String> {
+    let mut done = false;
+    for event in events {
+        match event {
+            StreamEvent::Text(text) => {
+                let _ = app.emit(
+                    "ai-chunk",
+                    AIChunk {
+                        id: id.to_string(),
+                        text,
+                    },
+                );
+            }
+            StreamEvent::Reasoning(text) => {
+                let _ = app.emit(
+                    "ai-reasoning",
+                    serde_json::json!({ "id": id, "text": text }),
+                );
+            }
+            StreamEvent::Done => done = true,
+            StreamEvent::ProviderError(message) => {
+                emit_ai_error(app, id, &message);
+                return Err(message);
+            }
+        }
+    }
+    Ok(done)
 }
 
 /// Resolve the API key for an AI request. The key is never disclosed to the
@@ -810,6 +1227,38 @@ fn ai_http_client(
         }
     }
     builder.build()
+}
+
+/// Read a response body under a hard ceiling.
+///
+/// `Response::text()` reads whatever the peer sends, so a hostile or broken
+/// endpoint can make the backend allocate for as long as it keeps sending —
+/// unbounded, on the same thread budget as everything else the app is doing.
+/// Here the read stops at `limit` and says so.
+///
+/// The two checks defend different peers: `content_length` refuses an honest
+/// oversized body before a single byte is buffered, and the running total
+/// catches the chunked response that declares no length at all (which is what a
+/// server streaming an endless body uses, deliberately or not).
+async fn read_body_bounded(response: reqwest::Response, limit: usize) -> Result<String, String> {
+    let declared = response.content_length();
+    if declared.is_some_and(|len| len > limit as u64) {
+        return Err(oversized_response_error(limit));
+    }
+    let mut stream = response.bytes_stream();
+    let mut body: Vec<u8> = Vec::with_capacity(declared.unwrap_or(0).min(limit as u64) as usize);
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        if body.len() + chunk.len() > limit {
+            return Err(oversized_response_error(limit));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(String::from_utf8_lossy(&body).into_owned())
+}
+
+fn oversized_response_error(limit: usize) -> String {
+    format!("AI 服务商响应过大（超过 {limit} 字节），已中止读取。")
 }
 
 /// Resolve the provider's `GET {endpoint}` for listing models, matching the
@@ -879,15 +1328,22 @@ pub async fn list_models(config: &AIConfig) -> Result<Vec<String>, String> {
         .await
         .map_err(|e| format!("请求模型列表失败：{e}"))?;
     let status = response.status();
-    let body = response.text().await.map_err(|e| e.to_string())?;
     if !status.is_success() {
         // Same reasoning as the completion path: the body says WHY (wrong key,
-        // wrong base URL, unknown model), and that is what the user needs.
+        // wrong base URL, unknown model), and that is what the user needs. The
+        // read is bounded even here - an error page is peer-controlled bytes
+        // too - and a body past that ceiling simply yields no detail, because
+        // the status hint is the part that has to survive.
+        let detail = read_body_bounded(response, MAX_ERROR_BODY_BYTES)
+            .await
+            .ok()
+            .and_then(|body| error_detail_from_body(&body));
         return Err(http_error_message_with_detail(
             status.as_u16(),
-            error_detail_from_body(&body).as_deref(),
+            detail.as_deref(),
         ));
     }
+    let body = read_body_bounded(response, MAX_MODELS_RESPONSE_BYTES).await?;
 
     // A blank body is a legitimate "no models" signal; anything non-empty must
     // still parse as JSON, otherwise a 500 error page would silently surface as
@@ -915,6 +1371,14 @@ pub async fn stream_complete(
     // ghost-writer behaviour unchanged.
     let (url, body) = resolve_endpoint(config, prompt, images);
 
+    // Serialise (and bound) the request before anything is opened. `json()`
+    // would serialise the same value internally; doing it here means the bytes
+    // that go on the wire are the bytes that were measured, and an oversized
+    // body costs no connection, no concurrency permit and no provider call.
+    let payload = encode_request_body(&body).inspect_err(|e| {
+        emit_ai_error(app, id, e);
+    })?;
+
     // Per-phase timeouts instead of a total-request deadline: `Client::timeout`
     // caps the WHOLE request including the streaming body, so any completion
     // longer than the cap aborts mid-stream. `connect_timeout` bounds the
@@ -926,14 +1390,16 @@ pub async fn stream_complete(
     // `Err` path as a transport failure.
     let client =
         ai_http_client(Duration::from_secs(15), Duration::from_secs(120), pin).map_err(|e| {
-            let _ = app.emit(
-                "ai-error",
-                serde_json::json!({ "id": id, "message": e.to_string() }),
-            );
+            emit_ai_error(app, id, &e.to_string());
             e.to_string()
         })?;
 
-    let mut request = client.post(&url).json(&body);
+    // The pre-serialised payload is sent verbatim, so the body on the wire is
+    // byte-for-byte the body `encode_request_body` measured and approved.
+    let mut request = client
+        .post(&url)
+        .header("content-type", "application/json")
+        .body(payload);
     match config.provider.as_str() {
         "anthropic" => {
             if let Some(key) = &config.api_key {
@@ -974,11 +1440,13 @@ pub async fn stream_complete(
         // Read the provider's own explanation BEFORE reporting: the status code
         // alone misdirects (an unknown model name arrives as 403, which reads as
         // "your key is invalid"), while the body names the actual problem and,
-        // for a model error, the models that would work.
-        let detail = match response.text().await {
-            Ok(body) => error_detail_from_body(&body),
-            Err(_) => None,
-        };
+        // for a model error, the models that would work. The read is bounded
+        // (an error page is peer-controlled bytes like any other response); a
+        // body past that ceiling yields no detail rather than a failed report.
+        let detail = read_body_bounded(response, MAX_ERROR_BODY_BYTES)
+            .await
+            .ok()
+            .and_then(|body| error_detail_from_body(&body));
         let message = http_error_message_with_detail(status.as_u16(), detail.as_deref());
         let _ = app.emit(
             "ai-error",
@@ -988,22 +1456,13 @@ pub async fn stream_complete(
     }
 
     let mut stream = response.bytes_stream();
-    let mut full = String::new();
-    // Provider-reported token counts, merged across the frames that carry them
-    // (see `TokenUsage::merge`); stays `None` when the provider reports none.
-    let mut usage: Option<TokenUsage> = None;
-    let mut buffer = SseBuffer::new();
+    // The completion's streaming state: the reassembly buffer, the answer being
+    // accumulated, the provider's token accounting and why it stopped. It is a
+    // separate type because it is where the response-side size ceilings live,
+    // and it has no socket and no Tauri handle — so the policy it enforces is
+    // testable (see the `CompletionStream` tests).
+    let mut completion = CompletionStream::new(&config.provider);
     let mut stream_ended = false;
-    // Reasoning models can spend the ENTIRE token budget thinking and then
-    // return no answer at all. Measured against tokenflux's `deepseek-flash`
-    // with max_tokens=256: 256 reasoning tokens, zero content deltas and
-    // `finish_reason: "length"`. Without this flag that produced a silent
-    // no-op the user could not explain; with it we can say what happened.
-    let mut reasoning_seen = false;
-    // Why the provider says it stopped, when it says so (`length`,
-    // `content_filter`, …). Recorded here because the decision to warn about a
-    // truncated answer has to happen after the loop, not inside it.
-    let mut finish_reason: Option<String> = None;
     loop {
         if !is_active(app, id) {
             break;
@@ -1025,54 +1484,18 @@ pub async fn stream_complete(
                 // Feed the raw bytes; the buffer decodes only complete lines,
                 // so a multi-byte UTF-8 character split at a chunk boundary
                 // stays intact (decoding per chunk would corrupt it to U+FFFD).
-                for line in buffer.feed(&chunk) {
-                    // A reasoning model streams its thinking BEFORE any answer
-                    // text, so without this the UI showed nothing at all for
-                    // that whole phase and looked hung. The reasoning is
-                    // emitted as progress only — never appended to `full`, or
-                    // the ghost writer would type the model's internal
-                    // monologue into the document.
-                    let Some(delta) = parse_sse_event(&line, &config.provider, &mut full) else {
-                        continue;
-                    };
-                    accumulate_usage(&mut usage, &delta);
-                    // An error frame arrives on a 200 response, so it has to be
-                    // turned into a real error here or the truncated answer is
-                    // accepted as if it were complete.
-                    if let Some(message) = delta.error {
-                        let _ = app.emit(
-                            "ai-error",
-                            serde_json::json!({ "id": id, "message": message }),
-                        );
+                // The fold's `Err` is a size ceiling: the frame boundary (or
+                // the answer) is no longer something we can trust, so the
+                // response is abandoned rather than read any further.
+                let events = match completion.feed(&chunk) {
+                    Ok(events) => events,
+                    Err(message) => {
+                        emit_ai_error(app, id, &message);
                         return Err(message);
                     }
-                    if delta.done {
-                        // `data: [DONE]` finishes the answer even if the server
-                        // keeps the connection open.
-                        stream_ended = true;
-                        break;
-                    }
-                    if let Some(reason) = delta.finish_reason {
-                        finish_reason = Some(reason);
-                    }
-                    if let Some(reasoning) = delta.reasoning {
-                        reasoning_seen = true;
-                        let _ = app.emit(
-                            "ai-reasoning",
-                            serde_json::json!({ "id": id, "text": reasoning }),
-                        );
-                    }
-                    if let Some(text) = delta.text {
-                        let _ = app.emit(
-                            "ai-chunk",
-                            AIChunk {
-                                id: id.to_string(),
-                                text,
-                            },
-                        );
-                    }
-                }
-                if stream_ended {
+                };
+                if deliver_events(app, id, events)? {
+                    stream_ended = true;
                     break;
                 }
             }
@@ -1095,22 +1518,13 @@ pub async fn stream_complete(
     // and emitting the tail of an abandoned response is how a late chunk got
     // adopted by the next request.
     if stream_ended {
-        for line in buffer.flush() {
-            let Some(delta) = parse_sse_event(&line, &config.provider, &mut full) else {
-                continue;
-            };
-            accumulate_usage(&mut usage, &delta);
-            if delta.done {
-                break;
+        match completion.finish() {
+            Ok(events) => {
+                deliver_events(app, id, events)?;
             }
-            if let Some(text) = delta.text {
-                let _ = app.emit(
-                    "ai-chunk",
-                    AIChunk {
-                        id: id.to_string(),
-                        text,
-                    },
-                );
+            Err(message) => {
+                emit_ai_error(app, id, &message);
+                return Err(message);
             }
         }
     }
@@ -1121,11 +1535,13 @@ pub async fn stream_complete(
     if !is_active(app, id) {
         return Ok(());
     }
+    let answer = completion.answer();
+    let finish_reason = completion.finish_reason();
     // `length` means the provider ran out of output budget mid-answer. Saying so
     // matters more than the answer itself: the text the user sees is a fragment,
     // and silently accepting it as the whole reply is how a truncated document
     // ends up inserted into a note.
-    if finish_reason.as_deref() == Some("length") && !full.is_empty() {
+    if finish_reason == Some("length") && !answer.is_empty() {
         let message = "回答因达到最大输出 Tokens 被截断（finish_reason: length）。\n                  内容并不完整，请在设置里调大“最大输出 Tokens”后重试。";
         let _ = app.emit(
             "ai-error",
@@ -1133,7 +1549,7 @@ pub async fn stream_complete(
         );
         return Err(message.into());
     }
-    if finish_reason.as_deref() == Some("content_filter") {
+    if finish_reason == Some("content_filter") {
         let message = "服务端的内容过滤中断了这次回答（finish_reason: content_filter）。";
         let _ = app.emit(
             "ai-error",
@@ -1144,7 +1560,7 @@ pub async fn stream_complete(
     // An answer-less completion that produced reasoning is not a normal result:
     // the budget was consumed by the model's thinking, so tell the user what to
     // change instead of finishing silently with nothing to show.
-    if full.is_empty() && reasoning_seen {
+    if answer.is_empty() && completion.saw_reasoning() {
         let message = "模型把本次最大输出 Tokens 全部用于推理，没有产出正文。                       请在设置里把“最大输出 Tokens”调大（推理模型建议 ≥ 1024）后重试。";
         let _ = app.emit(
             "ai-error",
@@ -1152,7 +1568,7 @@ pub async fn stream_complete(
         );
         return Err(message.into());
     }
-    let _ = app.emit("ai-done", ai_done_payload(id, &full, usage));
+    let _ = app.emit("ai-done", ai_done_payload(id, answer, completion.usage()));
     Ok(())
 }
 
@@ -1219,7 +1635,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_public_http_and_https_bases() {
+    fn accepts_public_https_bases() {
         // The resolver is injected so this test asserts the scheme/host policy
         // and never touches the network or depends on real DNS.
         let public = |_host: &str| Ok(vec![sa("203.0.113.9")]);
@@ -1227,13 +1643,50 @@ mod tests {
             "https://api.openai.com/v1",
             "https://generativelanguage.googleapis.com",
             "https://api.anthropic.com",
-            "http://203.0.113.9:8000/v1",
             "https://llm.internal.example.com",
         ] {
             assert!(
                 validate_public_url_with(base, public).is_ok(),
                 "should accept {base}"
             );
+        }
+    }
+
+    /// The roadmap's rule, at the unit level: a public Base URL must be HTTPS.
+    ///
+    /// This USED to be accepted ("http://203.0.113.9:8000/v1" sat in the
+    /// accepted list above) — the request went out with the API key in an
+    /// `Authorization` header over plaintext, readable by every hop. The check
+    /// here must decide before resolution, so a name never causes a lookup it
+    /// was going to fail anyway.
+    #[test]
+    fn rejects_plaintext_http_to_a_public_host() {
+        let resolve =
+            |_host: &str| panic!("a plaintext public URL must be refused before any lookup");
+        for base in [
+            "http://203.0.113.9:8000/v1",
+            "http://llm.example.com/v1",
+            "http://8.8.8.8/v1",
+        ] {
+            let err = validate_public_url_with(base, resolve)
+                .expect_err("plain HTTP to a public host must be refused");
+            assert!(err.contains("https://"), "{base}: {err}");
+            assert!(err.contains("明文"), "{base}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_local_http_base_is_kept_for_the_opt_in_path() {
+        // `localhost` and loopback are the one HTTP exemption, so the plaintext
+        // rule must not be what refuses them (the private-host rule is, on the
+        // default path — that is what `allow_private` exists to lift).
+        for base in ["http://localhost:11434", "http://127.0.0.1:11434"] {
+            let cfg = AIConfig {
+                base_url: Some(base.into()),
+                allow_private: true,
+                ..Default::default()
+            };
+            assert!(validate_base_url(&cfg).is_ok(), "{base} must stay usable");
         }
     }
 
@@ -1298,7 +1751,7 @@ mod tests {
     #[test]
     fn a_literal_ip_base_has_nothing_to_pin_and_is_not_resolved() {
         let resolve = |_host: &str| panic!("a literal IP must never be resolved");
-        let vetted = validate_public_url_with("http://203.0.113.9:8000/v1", resolve)
+        let vetted = validate_public_url_with("https://203.0.113.9:8000/v1", resolve)
             .expect("public literal ip");
         assert!(vetted.addrs.is_empty());
     }

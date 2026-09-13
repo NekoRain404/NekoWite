@@ -9,7 +9,7 @@ use tauri::Manager;
 
 use crate::providers::ai::client::{
     self, acquire_slot, emit_ai_error, hydrate_stored_key, list_models, next_ai_id,
-    stream_complete, validate_base_url, AIConfig,
+    stream_complete, validate_base_url, validate_request_inputs, AIConfig,
 };
 use crate::state::AiState;
 
@@ -85,6 +85,15 @@ pub async fn ai_complete(
     // A rejected internal/loopback endpoint surfaces a clear user-facing error
     // instead of a silent failure or a request phoning a forbidden host.
     let result = async {
+        // Size policy first, at the IPC boundary: a prompt, an image count or an
+        // individual image past its ceiling is refused before a key is loaded,
+        // a connection slot is taken or a byte is sent. The renderer checks the
+        // same limits for the user's benefit, but this is the boundary that
+        // anything invoking the command has to cross (see the `MAX_*` ceilings
+        // in `providers::ai::client`).
+        validate_request_inputs(&prompt, &images).inspect_err(|e| {
+            emit_ai_error(&app, &id, e);
+        })?;
         // Backfill the key from the vault when the caller did not supply a real
         // one (the window never receives the decrypted key anymore).
         hydrate_stored_key(&app, &mut config).inspect_err(|e| {
