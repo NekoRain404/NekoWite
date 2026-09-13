@@ -15,6 +15,9 @@ const h = vi.hoisted(() => {
       restoreHistory: vi.fn(),
       saveFileDialog: vi.fn(),
       watch: vi.fn(),
+      // The runtime subscribes to reference-file changes: the port is required
+      // by the contract, and a mock without it made every switch throw.
+      onFsChange: vi.fn(async () => () => {}),
     },
     dialogs: { openFolderDialog: vi.fn(), saveFileDialog: vi.fn() },
     events: { on: vi.fn(), emit: vi.fn() },
@@ -43,7 +46,11 @@ const h = vi.hoisted(() => {
     refsMock,
     loadVaultPlugins: vi.fn(),
     deactivateVaultPlugins: vi.fn(),
-    vaultFileIndex: { get: vi.fn() },
+    vaultFileIndex: {
+      get: vi.fn(),
+      isTruncated: vi.fn(() => false),
+      isIncomplete: vi.fn(() => false),
+    },
     tmpRecovery: { scan: vi.fn(), gc: vi.fn(), cancel: vi.fn(), isCancelled: vi.fn() },
     createTmpRecovery: vi.fn(),
     windowTracking: { restore: vi.fn(), start: vi.fn(), flush: vi.fn(), dispose: vi.fn() },
@@ -285,14 +292,15 @@ describe('createDesktopRuntime', () => {
       await runtime.applyVault('/vault')
 
       const deps = h.createTmpRecovery.mock.calls[0]![0] as {
-        getReferencedTmp: () => Promise<Set<string>>
+        getReferencedTmp: () => Promise<{ paths: Set<string>; complete: boolean }>
       }
       // The mocked controller never calls the provider, so drive it directly:
       // the union must include the image owned by the note whose tab is CLOSED
       // (the regression this fixes), not just the open-tab reference.
-      expect(await deps.getReferencedTmp()).toEqual(
-        new Set(['.tmp/open-tab.png', '.tmp/closed-note.png']),
-      )
+      expect(await deps.getReferencedTmp()).toEqual({
+        paths: new Set(['.tmp/open-tab.png', '.tmp/closed-note.png']),
+        complete: true,
+      })
       expect(h.vaultFileIndex.get).toHaveBeenCalledWith('/vault')
       expect(h.gateways.fs.read).toHaveBeenCalledWith('/vault', 'notes/closed.md')
     })
@@ -305,14 +313,19 @@ describe('createDesktopRuntime', () => {
       const runtime = createDesktopRuntime()
       await runtime.applyVault('/vault')
       const deps = h.createTmpRecovery.mock.calls[0]![0] as {
-        getReferencedTmp: () => Promise<Set<string>>
+        getReferencedTmp: () => Promise<{ paths: Set<string>; complete: boolean }>
       }
       const indexCalls = h.vaultFileIndex.get.mock.calls.length
 
       // Teardown makes the switch stale: the provider must not spend reads on a
-      // vault-wide scan the runtime no longer owns.
+      // vault-wide scan the runtime no longer owns, and it must REPORT that the
+      // answer is partial — the recovery loop treats an incomplete set as
+      // "possibly referenced" and leaves every `.tmp` file alone.
       runtime.dispose()
-      expect(await deps.getReferencedTmp()).toEqual(new Set(['.tmp/open-tab.png']))
+      expect(await deps.getReferencedTmp()).toEqual({
+        paths: new Set(['.tmp/open-tab.png']),
+        complete: false,
+      })
       expect(h.vaultFileIndex.get.mock.calls.length).toBe(indexCalls)
     })
   })

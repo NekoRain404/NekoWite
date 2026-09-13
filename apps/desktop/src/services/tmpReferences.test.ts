@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { findReferencedTmpPaths, type TmpReferenceScanDeps } from './tmpReferences'
+import {
+  findReferencedTmpPaths,
+  scanTmpReferences,
+  type TmpReferenceScanDeps,
+} from './tmpReferences'
 
 /** One note fixture: its content, or an Error the reader rejects with. */
 type NoteFixture = Record<string, string | Error>
@@ -84,5 +88,44 @@ describe('findReferencedTmpPaths', () => {
     )
     expect(await result).toEqual(new Set())
     expect(reads).toEqual([])
+  })
+})
+
+describe('scanTmpReferences (completeness)', () => {
+  const scanRich = (
+    notes: NoteFixture,
+    opts: { isComplete?: () => boolean } = {},
+  ): { result: ReturnType<typeof scanTmpReferences> } => ({
+    result: scanTmpReferences('/vault', {
+      notes: Object.keys(notes),
+      read: async (_vault, path) => {
+        const content = notes[path]
+        if (content instanceof Error) throw content
+        return content ?? ''
+      },
+      isComplete: opts.isComplete,
+    }),
+  })
+
+  it('reports a complete scan when every note was read', async () => {
+    const { result } = scanRich({ 'a.md': '![p](.tmp/ok.png)', 'b.md': 'nothing' })
+    expect(await result).toEqual({ paths: new Set(['.tmp/ok.png']), complete: true })
+  })
+
+  it('reports an incomplete scan when a note could not be read', async () => {
+    const { result } = scanRich({
+      'a.md': '![p](.tmp/ok.png)',
+      'locked.md': new Error('EBUSY: the file is locked by another process'),
+    })
+    const scan = await result
+    // The unreadable note is exactly the one that could have referenced a file
+    // the caller is about to delete or move, so the answer is not authoritative.
+    expect(scan.complete).toBe(false)
+    expect(scan.paths).toEqual(new Set(['.tmp/ok.png']))
+  })
+
+  it('reports an incomplete scan when the note list itself was truncated', async () => {
+    const { result } = scanRich({ 'a.md': 'nothing here' }, { isComplete: () => false })
+    expect((await result).complete).toBe(false)
   })
 })

@@ -21,6 +21,10 @@ export type ListFn = (vault: string, dir: string) => Promise<FileEntry[]>
 export interface VaultWalkResult {
   files: string[]
   truncated: boolean
+  /** A directory listing FAILED, so the walk never saw everything under the
+   *  vault. `truncated` covers the deliberate cap; this covers the accidental
+   *  gap, and both mean "the file list is not the whole vault". */
+  incomplete: boolean
 }
 
 /** Recursively collect every markdown/MDX file under the vault. Mirrors the
@@ -51,6 +55,7 @@ export async function walkVault(
   let queue: string[] = [vault]
   let visited = 0
   let truncated = false
+  let incomplete = false
 
   while (queue.length) {
     const remaining = maxDirs - visited
@@ -71,6 +76,10 @@ export async function walkVault(
       try {
         return { entries: await list(vault, dir) }
       } catch {
+        // An unlistable directory (permissions, a vanished mount) hides every
+        // note under it. Callers that DELETE or MOVE files on the strength of
+        // "this file is not referenced by any note" must be able to tell.
+        incomplete = true
         return { entries: null }
       }
     })
@@ -92,7 +101,7 @@ export async function walkVault(
     }
     queue = next
   }
-  return { files: files.sort((a, b) => a.localeCompare(b)), truncated }
+  return { files: files.sort((a, b) => a.localeCompare(b)), truncated, incomplete }
 }
 
 /** Run `fn` over `items` with at most `limit` concurrent invocations,
@@ -127,6 +136,7 @@ export class VaultFileIndex {
    * walk superseded by a fs-change cannot backfill the cache with stale data. */
   private generation = new Map<string, number>()
   private truncated = new Map<string, boolean>()
+  private incomplete = new Map<string, boolean>()
 
   constructor(private list: ListFn, private readonly maxDirs: number = MAX_DIRS) {}
 
@@ -145,6 +155,7 @@ export class VaultFileIndex {
         if ((this.generation.get(vault) ?? 0) === gen) {
           this.cache.set(vault, result.files)
           this.truncated.set(vault, result.truncated)
+          this.incomplete.set(vault, result.incomplete)
         }
         return result.files
       },
@@ -165,11 +176,17 @@ export class VaultFileIndex {
     return this.truncated.get(vault) ?? false
   }
 
+  /** Whether the last walk for `vault` failed to list part of the tree. */
+  isIncomplete(vault: string): boolean {
+    return this.incomplete.get(vault) ?? false
+  }
+
   invalidate(vault?: string): void {
     if (vault === undefined) {
       this.cache.clear()
       this.inflight.clear()
       this.truncated.clear()
+      this.incomplete.clear()
       for (const v of this.generation.keys()) {
         this.generation.set(v, (this.generation.get(v) ?? 0) + 1)
       }
@@ -177,6 +194,7 @@ export class VaultFileIndex {
       this.cache.delete(vault)
       this.inflight.delete(vault)
       this.truncated.delete(vault)
+      this.incomplete.delete(vault)
       this.generation.set(vault, (this.generation.get(vault) ?? 0) + 1)
     }
   }

@@ -48,8 +48,11 @@ export interface TmpRecoveryDeps {
   fs: Pick<FsPort, 'list' | 'stat' | 'deleteFile' | 'renameEntry'>
   /** Vault-relative `.tmp` paths still referenced by a note — the open tabs'
    *  pending staged assets/body refs, or the app's composed promise that also
-   *  scans every note whose tab is closed. Never GC'd or surfaced. */
-  getReferencedTmp: () => Set<string> | Promise<Set<string>>
+   *  scans every note whose tab is closed. Never GC'd or surfaced. A provider
+   *  that can tell the answer is partial returns `{ paths, complete: false }`;
+   *  the plain-set form means "complete" for callers that have nothing more to
+   *  say (see {@link TmpReferenceSet}). */
+  getReferencedTmp: () => TmpReferenceSet | Set<string> | Promise<TmpReferenceSet | Set<string>>
   /** Where a "recoverable versions" prompt is surfaced. Defaults to the app
    *  recovery toast via `notifyRecovery`. */
   notify?: (p: RecoveryPrompt) => void
@@ -59,6 +62,12 @@ export interface TmpRecoveryDeps {
   t?: (key: string, params?: Record<string, unknown>) => string
   /** Surface a failed restore. Defaults to the app's error toast. */
   notifyError?: (message: string) => void
+}
+
+export interface TmpReferenceSet {
+  paths: Set<string>
+  /** False when the provider knows it did not see every note. */
+  complete: boolean
 }
 
 export interface TmpRecoveryController {
@@ -101,13 +110,17 @@ export function createTmpRecovery(deps: TmpRecoveryDeps): TmpRecoveryController 
    *  `attachments/` while the note still referenced `.tmp/…`, and `gc` swept a
    *  still-referenced asset. `stripVaultPrefix` absorbs the separators and the
    *  `\\?\` verbatim prefix too, so both sides agree. */
-  async function referencedPaths(vault: string): Promise<Set<string>> {
+  async function referencedPaths(vault: string): Promise<TmpReferenceSet> {
     // The provider may be async: the app unions the open-tab set with a
     // vault-wide scan that reads every note. Awaiting it here keeps `scan` and
     // `gc` using the exact same set, so they can never disagree about what is
     // still referenced.
     const provided = await deps.getReferencedTmp()
-    return new Set([...provided].map((p) => stripVaultPrefix(p, vault)))
+    const paths = provided instanceof Set ? provided : provided.paths
+    return {
+      paths: new Set([...paths].map((p) => stripVaultPrefix(p, vault))),
+      complete: provided instanceof Set ? true : provided.complete,
+    }
   }
 
   async function collect(vault: string): Promise<TmpFileRef[]> {
@@ -143,11 +156,17 @@ export function createTmpRecovery(deps: TmpRecoveryDeps): TmpRecoveryController 
     // `.tmp` dir, or nothing staged) must never pay for it. `gc` below is
     // ordered the same way to keep both on one contract.
     if (files.length === 0) return []
-    const referenced = await referencedPaths(vault)
+    const { paths: referenced, complete } = await referencedPaths(vault)
     // A cancel that landed while awaiting the (possibly async) provider must
     // not surface a notice for a vault the user has already left.
     if (cancelled) return []
     const orphans = orphaned(files, referenced)
+    // An incomplete picture must never be acted on. "We could not read every
+    // note" is not "nothing references these files": the restore below MOVES
+    // the file into `attachments/`, so a `.tmp` reference in a note the scan
+    // failed to read would be broken for good. Withhold the offer until a
+    // complete scan says it is safe — the files stay in `.tmp` meanwhile.
+    if (!complete) return orphans
     if (orphans.length > 0 && notify) {
       notify({
         message: t('recovery.tmpNotice', { count: orphans.length }),
@@ -192,7 +211,11 @@ export function createTmpRecovery(deps: TmpRecoveryDeps): TmpRecoveryController 
     // Same lazy ordering as `scan`: nothing collected means nothing can be
     // swept, so the vault-wide referenced-set scan is never launched.
     if (files.length === 0) return 0
-    const referenced = await referencedPaths(vault)
+    const { paths: referenced, complete } = await referencedPaths(vault)
+    // Same rule as `scan`, for the same reason: a partial scan would DELETE
+    // files that a note the scan could not read still points at. Litter we keep
+    // is recoverable; litter we delete is not.
+    if (!complete) return 0
     const cutoff = now() - thresholdMs
     let removed = 0
     for (const file of files) {
