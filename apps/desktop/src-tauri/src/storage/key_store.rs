@@ -37,9 +37,7 @@ pub const AI_KEY_MASKED: &str = "••••••••";
 /// UI displays when a key is already configured.
 pub fn validate_stored_api_key(key: &str) -> Result<(), String> {
     if key == AI_KEY_MASKED {
-        return Err(
-            "this is the masked placeholder, not an API key: re-enter the key".into(),
-        );
+        return Err("this is the masked placeholder, not an API key: re-enter the key".into());
     }
     Ok(())
 }

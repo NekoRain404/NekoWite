@@ -49,3 +49,10 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# The Windows development clone. Its history was merged into this repository
+# (see the "integrate the NekoWite_win line" merge), so the directory is now a
+# redundant second checkout with its own .git. Tracking it would commit a
+# gitlink to a commit this repository cannot resolve. Keep the working copy
+# locally, but never add it.
+/NekoWite_win/

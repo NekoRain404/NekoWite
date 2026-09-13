@@ -2,7 +2,7 @@ import { editorViewCtx, EditorViewReady } from '@milkdown/core'
 import type { MilkdownPlugin } from '@milkdown/ctx'
 import type { EditorView } from '@milkdown/prose/view'
 
-import { registerCommand, registerMarkdownCommand, registerToolbar, unregisterCommand, unregisterToolbar } from '../registry'
+import { registerCommand, registerMarkdownCommand, registerToolbar, unregisterCommand } from '../registry'
 import { isInTableCell } from '../table/context'
 import { openMathDialog } from './dialog'
 import { mathToMarkdown } from './nodes'
@@ -42,8 +42,10 @@ export function mathFeature(): void {
   const run = (): void => {
     if (activeView) openMathDialog(activeView, { mode: 'inline' })
   }
+  // `registerCommand` throws on a duplicate id; `registerToolbar` replaces in
+  // place, so only the command needs the pre-clear. Unregistering the toolbar
+  // entry first would move the button to the END of the toolbar instead.
   unregisterCommand(MATH_COMMAND_ID)
-  unregisterToolbar(MATH_COMMAND_ID)
   registerCommand({ id: MATH_COMMAND_ID, run })
   registerToolbar({ id: MATH_COMMAND_ID, label: '∑ f(x)', run })
   // Source mode has no math node: insert the display-math Markdown with the

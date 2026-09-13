@@ -123,6 +123,16 @@ export function parseMdxTag(html: string): MdxComponentAttrs {
         break
       }
     }
+    // A '{' that is never closed (a truncated tag, or a brace inside an
+    // unparsed string) would otherwise leave `end` at the end of the input:
+    // the whole remaining document becomes the attribute source, the component's
+    // children are dropped, and every `k="v"` found later in the note is
+    // harvested as a prop. Fall back to the first '>' so a malformed tag cannot
+    // swallow the document.
+    if (braceDepth > 0 && end === html.length) {
+      const firstClose = html.indexOf('>', nameMatch[0].length)
+      if (firstClose !== -1) end = firstClose
+    }
     attrSource = html.slice(nameMatch[0].length, end)
     // Children are everything after the open tag, minus the closing tag.
     const rest = end + 1 <= html.length ? html.slice(end + 1) : ''
