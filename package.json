@@ -2,6 +2,7 @@
   "name": "nekowite",
   "private": true,
   "version": "1.0.0",
+  "license": "MIT",
   "scripts": {
     "dev": "pnpm --filter @nekowite/desktop dev",
     "build": "pnpm --filter @nekowite/desktop build",
