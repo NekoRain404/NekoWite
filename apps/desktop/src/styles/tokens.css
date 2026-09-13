@@ -12,9 +12,38 @@
   --app-danger: #c94c41;
   --app-danger-contrast: #ffffff;
   --app-success: #5ca878;
+  /* Motion ladder. Pick the step by how far the thing travels and how much of
+     the screen it owns — never by which component it lives in.
+       --app-motion-micro  press/active feedback; the control itself stays put.
+       --app-motion-fast   hover and focus feedback, plus in-place state flips
+                           that keep their footprint (caret rotate, dot fade,
+                           chip toggle).
+       --app-motion        a region changing state in place (menu reveal, toast
+                           in, tab body swap).
+       --app-motion-slow   a whole surface arriving or leaving (dialog, overlay,
+                           drawer, command palette).
+     Exits step DOWN one rung (enter --app-motion-slow → exit --app-motion,
+     ≈69%) and use --app-ease-exit; an exit that takes as long as its entrance
+     reads as lag on whatever the user does next.
+     --app-ease decelerates on arrival, --app-ease-exit accelerates away.
+     Constant-rate motion is not a transition: a spinner or a text caret has no
+     arrival to decelerate, so it runs linear on --app-motion-spin or
+     --app-motion-blink and sits outside the ladder on purpose. A repeating
+     status indicator that is not a rotation (the save dot) breathes on
+     --app-motion-pulse — a cycle fast enough to read as an alarm is a bug, not
+     urgency.
+     Nothing here may gate an action's effect — keystroke-to-glyph, the caret,
+     and the result of a command are instant. Motion only ever describes
+     something that already happened. */
   --app-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --app-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --app-motion-micro: 90ms;
   --app-motion-fast: 140ms;
-  --app-motion: 160ms;
+  --app-motion: 180ms;
+  --app-motion-slow: 260ms;
+  --app-motion-spin: 900ms;
+  --app-motion-blink: 1s;
+  --app-motion-pulse: 1.4s;
   /* Radius ladder: window 16 > dialog 14 > menu/card 10 > button/input 8 >
      segmented 6 > inline-code 5. */
   --app-radius-xl: 14px;

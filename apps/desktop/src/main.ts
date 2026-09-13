@@ -13,6 +13,9 @@ import './styles/editor-content.css'
 import './styles/print.css'
 import './style.css'
 import './math-dialog.css'
+// Last on purpose: the motion layer must outrank every component's scoped
+// styles, and it carries the global prefers-reduced-motion switch.
+import './styles/motion.css'
 
 async function activateBuiltins(): Promise<void> {
   const builtins: { meta: PluginMeta; definition: typeof calloutPlugin }[] = [

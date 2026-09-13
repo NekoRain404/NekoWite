@@ -211,12 +211,19 @@ onBeforeUnmount(() => {
   box-shadow: var(--app-shadow-menu);
   opacity: 0;
   transform: translateY(4px) scale(0.98);
-  transition: opacity var(--app-motion-fast) var(--app-ease),
-              transform var(--app-motion-fast) var(--app-ease);
+  /* Closing: the menu was already read, so it leaves on the next rung down and
+     accelerates away instead of lingering over the user's next click. */
+  transition: opacity var(--app-motion-fast) var(--app-ease-exit),
+              transform var(--app-motion-fast) var(--app-ease-exit);
 }
 .ctx-menu.is-open {
   opacity: 1;
   transform: none;
+  /* Opening: a whole region arriving, so it takes the region step. The rule on
+     the target state is the one the browser uses, which is what lets enter and
+     exit differ without a Vue <Transition>. */
+  transition: opacity var(--app-motion) var(--app-ease),
+              transform var(--app-motion) var(--app-ease);
 }
 .ctx-menu-item {
   display: grid;

@@ -444,10 +444,13 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--app-canvas) 45%, transparent);
   backdrop-filter: blur(2px);
   opacity: 0;
-  transition: opacity var(--app-motion) var(--app-ease);
+  /* Dismissing: one rung down, accelerating away. */
+  transition: opacity var(--app-motion) var(--app-ease-exit);
 }
 .palette-overlay.is-open {
   opacity: 1;
+  /* Summoning: a full surface arriving, so it takes the slowest step. */
+  transition: opacity var(--app-motion-slow) var(--app-ease);
 }
 .palette {
   display: flex;
@@ -459,10 +462,11 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--app-elevated) 97%, var(--app-panel));
   box-shadow: var(--app-shadow-dialog);
   transform: translateY(6px) scale(0.985);
-  transition: transform var(--app-motion) var(--app-ease);
+  transition: transform var(--app-motion) var(--app-ease-exit);
 }
 .palette-overlay.is-open .palette {
   transform: none;
+  transition: transform var(--app-motion-slow) var(--app-ease);
 }
 .palette-search {
   display: flex;

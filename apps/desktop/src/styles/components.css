@@ -1,6 +1,8 @@
 /* NekoWite shared component variants — all styling on design tokens (var(--app-*)).
    Interactive elements get: hover (via color-mix), active, :focus-visible ring,
-   and transition: <ms> var(--app-ease). No bare hex — rgb()/color-mix()/transparent only. */
+   and a transition on a --app-motion-* step with var(--app-ease) — never a raw
+   millisecond value. Which step to use is set out in tokens.css.
+   No bare hex — rgb()/color-mix()/transparent only. */
 
 /* ============ Buttons ============ */
 .btn {
@@ -330,7 +332,9 @@
 }
 .save-dot[data-state="saving"] {
   background: var(--app-accent);
-  animation: save-dot-pulse var(--app-motion-fast) var(--app-ease) infinite;
+  /* Was --app-motion-fast: a 140ms cycle is ~7Hz, which reads as a strobe
+     rather than a status. It breathes now. */
+  animation: save-dot-pulse var(--app-motion-pulse) var(--app-ease) infinite;
 }
 @keyframes save-dot-pulse {
   0%   { transform: scale(1);    opacity: 1;    }

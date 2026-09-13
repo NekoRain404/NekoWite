@@ -33,6 +33,25 @@ describe('tokens.css', () => {
     expect(css).toContain('[data-theme="dark"][data-accent]:not([data-accent="ink"])')
     expect(css).toMatch(/color-mix\(in srgb, var\(--app-accent\) 25%, var\(--app-panel\)\)/)
   })
+  it('declares the motion scale once, outside every theme block', () => {
+    // Motion is not a theme. A dark-mode user, or one who swaps the accent or
+    // the colour scheme, must get exactly the same rhythm — so the ladder lives
+    // in :root and no theme block may restate it. The scale itself is pinned in
+    // motion.test.ts; this only guards where it is allowed to be declared.
+    const ladder = ['--app-motion-micro', '--app-motion-fast', '--app-motion', '--app-motion-slow']
+    for (const t of ladder) {
+      expect(LIGHT_BLOCK, `${t} in :root`).toContain(`${t}:`)
+    }
+    for (const block of css.matchAll(/\[data-theme="dark"\]\s*\{([^}]*)\}/g)) {
+      expect(block[1], 'dark mode must not redefine the motion ladder').not.toMatch(
+        /--app-motion[\w-]*:/,
+      )
+    }
+    for (const s of COLOR_SCHEMES) {
+      const block = css.match(new RegExp(`\\[data-color-scheme="${s}"\\]\\s*\\{([^}]*)\\}`))?.[1] ?? ''
+      expect(block, `${s} palette must not redefine motion`).not.toMatch(/--app-motion[\w-]*:/)
+    }
+  })
   it('sets color-scheme per theme so native controls follow', () => {
     expect(LIGHT_BLOCK).toContain('color-scheme: light')
     expect(DARK_BLOCK).toContain('color-scheme: dark')
