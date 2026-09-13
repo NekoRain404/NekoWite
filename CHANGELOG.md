@@ -304,7 +304,7 @@
 
 ## 验证与交付（第九批，2026-09-13）
 
-- 便携版：`release/nekowite_1.0.0_x64.exe`（未签名），SHA-256 `2a47d5ace43929fa206bdec2767046c66e4342d4cb842a6dc8817a27b30d4c1c`；产物自身回报的版本为 1.0.0（状态栏与设置两处）。
+- 便携版：`release/nekowite_1.0.0_x64.exe`（未签名），SHA-256 `5e5b41e9d2982801443b544dccd544647940f2531728817210840b5093c07e97`；产物自身回报的版本为 1.0.0（状态栏与设置两处）。
 - 测试门禁：desktop **1502**（129 个文件）、editor-core **648**、plugin-host **105**、Rust **193**（42 lib + 66 ai + 76 fs + 6 keys + 3 vault_auth）、Playwright **137**；`typecheck` / `lint` / `clippy -D warnings` 全绿。
 - 真机验收（CDP 驱动**打包版本体**，本轮逐条复跑，控制台零错误）：
   - `apps/desktop/ai-lab/330-release-check.cjs` **4/4**：① 打开知识库后正常启动、无欢迎页；② 状态栏报告 `1.0.0`；③ 设置 → 通用显示 `版本 1.0.0`；④ 插件区明示「当前版本不加载插件」。
