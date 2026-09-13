@@ -528,6 +528,39 @@ git commit -m "feat(appearance): add crimson palette and four accents"
 - **门禁**：desktop **1502**（129 个文件）、editor-core **648**、plugin-host **105**、Rust **193**（42 lib + 66 ai + 76 fs + 6 keys + 3 vault_auth），`typecheck` / `lint` / `clippy -D warnings` 全绿。
 - **真机（打包版，本轮逐条复跑）**：`330-release-check.cjs` **4/4**（状态栏 1.0.0、设置 `版本 1.0.0`、插件区明示不加载插件、启动干净）、`270` **10/10**、`294` **6/6**（首次串行跑为 5/6——上一探针留下的滚动位置，单独复跑 6/6）、`301` **7/7**、`302` **6/6**、`303` PASS、`310` **15/15**、`320` **13/13**；Playwright 首次全量 136/137（`input-ime` 一条在并发下失败），单独复跑 6/6，随后全量复跑 137/137。
 
+### 2026-09-13（第二十三轮：打包版对抗性验证清扫）
+
+本轮的问题是：**发布之后，还能不能说它没坏？**做法是只对着交付物（CDP 驱动 `release/nekowite_1.0.0_x64.exe`）跑约 50 个功能探针，并对每一条失败先怀疑测量、再怀疑被测物。结论有两半：**没有发现新的应用缺陷**；本轮真正修好的是**测量本身**——多数「失败」是探针过期，不是功能坏了。
+
+**三条怀疑全部被对照实验证伪（它们没有进缺陷清单，原因写在这里）**
+- **空单元格写 `<br />`**：这是契约，不是 bug。单元格不写这个标记会塌成单竖线、解析回来不再是表格；`packages/editor-core/src/inlineBreak.test.ts` 的「keeps the empty-cell marker round-tripping」一直钉着它。`292-table-empty.cjs` 旧版断言的是**相反**方向，而且它当时点错了元素（`.nl-cards button` 可能命中卡片上的收藏星），表格根本没写进文件；现在断言真实契约，**5/5**。
+- **`.bib` 一条坏条目就丢库**：以全有效 `.bib` 作 **CONTROL**，与「2 好 + 1 无键」的混合库对照，两次切换 vault 后徽标都是 `引用文献 2`，控制台零错误；新探针 `352-refs-salvage.cjs` **3/3**。没有 CONTROL 的话，「组是空的」对抢救路径什么都不说明。
+- **图片不解码**：图片经 `http://asset.localhost/...` 解码成功，`naturalWidth: 2`。第一版探针的 fixture PNG **IHDR CRC 是坏的**，浏览器拒绝它是对的；新探针 `351-images.cjs` **5/5**，断言的是「解码本身 + 一张已知可解码的 CONTROL」。
+- 两条**重新归类**：某次运行里的 `SyntaxError` 在「两次切换 vault + 完整错误捕获」的序列里没有复现；「应用丢了侧栏」只在探针连续操作后出现，而侧栏可见性是 `App.vue` 里的 `ref(true)`，刷新即恢复。
+
+**第一次真正验证导出（这个覆盖以前不存在）**
+- `340-export.cjs` **14/14**：HTML 导出写出**真实文件**（1.46 MB、独立文档、KaTeX 渲染的公式、表格 / 任务列表 / 引用块、引用解析为 `<span class="cite">1</span>` 并带 `section.references` 参考文献区、frontmatter 不进正文）；PDF 路径构建出可打印文档、带上所选纸张的 `@page` 规则、走到打印步骤。
+- 为什么以前没有：旧导出探针 `import('/src/services/export.ts')`，而打包版只提供打包资源、做不到这件事——**导出从未在交付产物上验证过**。这里的每一步都点用户点的东西。
+
+**其余新增覆盖（打包版）**
+- `350-paths-and-scale.cjs` **8/8**：路径含空格与中文的 vault 打开 / 列出 / 编辑 / 保存只落成**恰好一个文件**；300 篇的 vault 约 **3.1 s** 打开、索引跑完、内容搜索命中唯一匹配的那篇。
+- `351-images.cjs` **5/5**、`352-refs-salvage.cjs` **3/3**、`330-release-check.cjs` **4/4**；**单实例守卫**验证：第二次启动 exe 会退出新进程，只剩一个（实现见 `apps/desktop/src-tauri/src/lib.rs`）。
+
+**探针质量：本轮的主要产出**（多数「没有 SUMMARY」的探针是过期，不是功能坏了）
+- 打包版**不能** `import('/src/...')`；
+- 有的探针把 CDP 端口写死成 `9224` 而不读 `NEKO_CDP_PORT`（`lib.cjs` 默认端口是 9222）；
+- `button[title*="引用"]` 也会匹配侧栏的 `.ref-item`（「插入引用 <key>」），第一个匹配项是侧栏，于是探针把引用插进笔记而不是打开轨道；轨道开关打开后标题变成「收起文档信息」，再点一次会把自己刚打开的轨道关掉——必须只在轨道关着时点它；
+- 引用分组默认折叠（`refsOpen = ref(false)`），不展开就没有 `.ref-item`；
+- 应用在 bundle 初始化时就捕获了 IPC 入口，Tauri 的 `__TAURI_INTERNALS__` 是 **NON-CONFIGURABLE**，页面里装的 IPC stub 什么都拦不到，只会让一个正常的按钮看起来是死的（最早两个导出探针正是这样把自己的 bug 报成应用缺陷）；
+- fixture PNG 的 CRC 必须是对的，否则浏览器拒绝它，探针会把自己的坏图算到应用头上；
+- 翻新后通过的七个：`240` **7/7**、`292-table-empty` **5/5**、`297-history-panel` **4/4**、`113-math` **6/6**、`114-math-dom` **5/5**、`110-images-tables` **8/8**、`130-session` **4/4**。
+
+**仍未覆盖（如实记录）**
+- 约 10 个探针尚未翻新：`250-races`、`131`–`134`，以及需要 fixture / 端口修复的依赖型探针；这些领域目前只靠单元 / e2e 覆盖，不是真机跑过。
+- 没有在 macOS / Linux 上验证过任何东西；试过的最大 vault 是 300 篇；插件执行路径按设计保持关闭（见 `docs/PLUGIN_ISOLATION.md`）。
+
+**验证**：desktop **1502**、editor-core **648**、plugin-host **105**、Rust **193**；`typecheck` / `lint` / `clippy -D warnings` / `fmt --check` 全绿。本轮没有应用代码改动，产物不变：`release/nekowite_1.0.0_x64.exe`，SHA-256 `5e5b41e9d2982801443b544dccd544647940f2531728817210840b5093c07e97`。
+
 ## 验证与交付
 
 ```bash
