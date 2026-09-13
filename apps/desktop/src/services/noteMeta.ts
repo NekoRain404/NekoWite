@@ -412,7 +412,28 @@ export function resolveLinkTarget(fromRelDir: string, target: string): string {
 }
 
 const LINK_RE = /\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g
+/** `[[target]]` / `[[target|alias]]` — the app's own wiki syntax. */
+const WIKILINK_RE = /\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g
 const EXTERNAL_RE = /^(https?:|mailto:|#|data:)/i
+
+/**
+ * A wiki target names a NOTE, so `[[other]]` and `[[other.md]]` are the same
+ * reference. The editor accepts both when you Ctrl+click, and the index has to
+ * key them the same way or a backlink can never match: `inlinksOf` compares the
+ * stored links against a `<name>.md` path, so an extension-less target would sit
+ * in the list invisibly. A `#fragment` rides along untouched — the resolvers
+ * strip it.
+ */
+function withNoteExtension(target: string): string {
+  // Split the fragment OFF before touching the extension: appending to the whole
+  // string turned `[[target#section]]` into `target#section.md`, whose path
+  // resolves to nothing (the fragment is not part of the file name).
+  const hash = target.indexOf('#')
+  const path = (hash < 0 ? target : target.slice(0, hash)).trim()
+  if (!path) return ''
+  const fragment = hash < 0 ? '' : target.slice(hash)
+  return /\.(md|mdx)$/i.test(path) ? `${path}${fragment}` : `${path}.md${fragment}`
+}
 
 export function extractOutlinks(content: string): MdLink[] {
   const out: MdLink[] = []
@@ -422,6 +443,20 @@ export function extractOutlinks(content: string): MdLink[] {
     const path = target.split('#')[0]
     if (!/\.(md|mdx)$/i.test(path)) continue
     out.push({ text: match[1].trim(), target })
+  }
+  // Wikilinks too. They render as chips and Ctrl+click navigates, but the link
+  // EXTRACTOR only knew `[text](target)` — so a note referenced with the app's
+  // own wiki syntax never appeared in the backlinks list or in the graph, and
+  // the panel said "no note references this document" while one plainly did.
+  for (const match of content.matchAll(WIKILINK_RE)) {
+    // An escaped bracket is literal text, not a link (the editor's parser draws
+    // the same line).
+    if (match.index > 0 && content[match.index - 1] === '\\') continue
+    const raw = match[1].trim()
+    if (!raw || EXTERNAL_RE.test(raw)) continue
+    const target = withNoteExtension(raw)
+    if (!target) continue
+    out.push({ text: (match[2] ?? '').trim() || raw, target })
   }
   return out
 }
