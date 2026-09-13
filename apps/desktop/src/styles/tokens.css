@@ -45,10 +45,20 @@
   --app-motion-blink: 1s;
   --app-motion-pulse: 1.4s;
   /* Radius ladder: window 16 > dialog 14 > menu/card 10 > button/input 8 >
-     segmented 6 > inline-code 5. */
+     segmented 6 > inline-code 5. Pick the rung by what the surface is, not by
+     which component asks:
+       --app-radius-xl  14  dialog, overlay
+       --app-radius-lg  10  menu, card
+       --app-radius      8  button, input
+       --app-radius-md   8  the same rung; popovers and panels read the suffixed
+                            name, so it aliases --app-radius instead of repeating
+                            8px and drifting in half.
+       --app-radius-sm   6  segmented control, list row
+       --app-radius-xs   5  inline code */
   --app-radius-xl: 14px;
   --app-radius-lg: 10px;
   --app-radius: 8px;
+  --app-radius-md: var(--app-radius);
   --app-radius-sm: 6px;
   --app-radius-xs: 5px;
   /* Elevation: hairline rings + top-edge highlight instead of hard borders. */
@@ -99,6 +109,7 @@
   --app-radius-xl: 14px;
   --app-radius-lg: 10px;
   --app-radius: 8px;
+  --app-radius-md: var(--app-radius);
   --app-radius-sm: 6px;
   --app-radius-xs: 5px;
   --app-shadow-menu: 0 16px 40px rgb(0 0 0 / 42%), 0 4px 12px rgb(0 0 0 / 24%),
@@ -112,6 +123,18 @@
   --app-code-fn: #8fb0dd;
   --app-code-type: #b7a3dd;
   --app-code-prop: #b3c49a;
+}
+
+/* The muted text colour, under the name components reach for. It has to be
+   declared HERE — on the element that carries data-theme — and not in :root:
+   a var() inside a custom property is substituted where the property is
+   declared and inherited already resolved, so a :root declaration would freeze
+   the light value and ignore every dark, palette and high-contrast re-point of
+   --app-muted further down. The app's shell root is the element that holds the
+   theme attributes (see AppShell.vue), so every re-point happens in this
+   scope and the alias follows it. */
+[data-theme] {
+  --app-text-muted: var(--app-muted);
 }
 
 [data-accent="ink"] { --app-accent: #343532; --app-accent-soft: #e7e5df; }

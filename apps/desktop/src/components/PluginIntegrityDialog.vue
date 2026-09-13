@@ -48,18 +48,21 @@ nextTick(() => dialogEl.value?.focus())
       <div class="plugin-meta">
         {{ t('plugin.integrityDigest', { expected: props.expectedDigest, actual: props.actualDigest }) }}
       </div>
+      <!-- Shared action-row convention (styles/components.css, .dialog-actions):
+           refusing a mismatched digest is the safe answer and Escape's answer,
+           so it sits leftmost; re-approving owns the confirm slot. -->
       <div class="dialog-actions">
-        <button
-          class="btn btn-primary"
-          @click="emit('allow')"
-        >
-          {{ t('plugin.integrityAllow') }}
-        </button>
         <button
           class="btn btn-ghost"
           @click="emit('deny')"
         >
           {{ t('plugin.integrityDeny') }}
+        </button>
+        <button
+          class="btn btn-primary"
+          @click="emit('allow')"
+        >
+          {{ t('plugin.integrityAllow') }}
         </button>
       </div>
     </div>
@@ -74,8 +77,6 @@ nextTick(() => dialogEl.value?.focus())
   transform: translate(-50%, -50%);
   width: min(440px, 90vw);
   padding: 18px 20px;
-  border-radius: var(--app-radius-xl);
-  box-shadow: var(--app-shadow-dialog);
   font-size: 13px;
   color: var(--app-text);
 }

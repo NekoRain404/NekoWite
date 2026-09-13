@@ -57,18 +57,21 @@ const permLabel = computed(() => {
       <div class="plugin-body">
         {{ t('plugin.permissionBody', { name: meta.name, perms: permLabel }) }}
       </div>
+      <!-- Shared action-row convention (styles/components.css, .dialog-actions):
+           the refusal sits leftmost — where Escape lands too — and the grant
+           owns the rightmost/confirm slot. -->
       <div class="dialog-actions">
-        <button
-          class="btn btn-primary"
-          @click="emit('allow')"
-        >
-          {{ t('plugin.permissionAllow') }}
-        </button>
         <button
           class="btn btn-ghost"
           @click="emit('deny')"
         >
           {{ t('plugin.permissionDeny') }}
+        </button>
+        <button
+          class="btn btn-primary"
+          @click="emit('allow')"
+        >
+          {{ t('plugin.permissionAllow') }}
         </button>
       </div>
     </div>
@@ -83,8 +86,6 @@ const permLabel = computed(() => {
   transform: translate(-50%, -50%);
   width: min(440px, 90vw);
   padding: 18px 20px;
-  border-radius: var(--app-radius-xl);
-  box-shadow: var(--app-shadow-dialog);
   font-size: 13px;
   color: var(--app-text);
 }
