@@ -454,3 +454,53 @@ describe('metadata for long frontmatter', () => {
     expect(meta.summary).toContain('summary here')
   })
 })
+
+describe('extractOutlinks and wiki links', () => {
+  it('sees a [[wikilink]] as a link to a note', () => {
+    // The extractor only knew `[text](target)`, so a reference written with the
+    // app's OWN wiki syntax was invisible to the index: the backlinks list said
+    // "no note references this document" while one plainly did, and the graph
+    // had no edge for it.
+    const links = extractOutlinks('# Source\n\nsee [[target]] here\n')
+    expect(links).toEqual([{ text: 'target', target: 'target.md' }])
+  })
+
+  it('uses the alias as the link text and fills in the note extension', () => {
+    expect(extractOutlinks('[[target|Nice Name]]')).toEqual([
+      { text: 'Nice Name', target: 'target.md' },
+    ])
+    // An explicit extension is kept as written.
+    expect(extractOutlinks('[[target.mdx]]')).toEqual([{ text: 'target.mdx', target: 'target.mdx' }])
+    // A heading rides along and is shown as written (the chip does the same);
+    // the resolvers strip it when they look the note up.
+    expect(extractOutlinks('[[target#section]]')).toEqual([
+      { text: 'target#section', target: 'target.md#section' },
+    ])
+  })
+
+  it('still finds markdown links, and both spellings name the same note', () => {
+    const links = extractOutlinks('[text](other.md) and [[other]] and [[other]]')
+    expect(links).toEqual([
+      { text: 'text', target: 'other.md' },
+      { text: 'other', target: 'other.md' },
+      { text: 'other', target: 'other.md' },
+    ])
+  })
+
+  it('leaves escaped brackets, external targets and blanks alone', () => {
+    expect(extractOutlinks('a \\[[not a link]] b')).toEqual([])
+    expect(extractOutlinks('[[https://example.com]]')).toEqual([])
+    expect(extractOutlinks('[[]]')).toEqual([])
+  })
+
+  it('makes a wiki-referenced note show up as a backlink', () => {
+    // The end-to-end consequence: the note the user LINKED to must list the
+    // note that links to it.
+    const source = parseNoteMeta('/v/source.md', 'see [[target]] here\n', {
+      mtime: 0,
+      size: 20,
+      vault: '/v',
+    })
+    expect(source.links).toEqual(['target.md'])
+  })
+})
