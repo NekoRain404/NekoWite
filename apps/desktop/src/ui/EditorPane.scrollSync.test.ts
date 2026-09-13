@@ -100,6 +100,24 @@ function installFrameClock(): void {
   })
 }
 
+// The OS-level motion preference, as the panes read it. One mutable flag the
+// stub answers from, so a test can also flip it mid-session: the preference is
+// consulted per scroll, not sampled once at mount.
+let reduceMotion = false
+
+function installMotionPreference(): void {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query.includes('prefers-reduced-motion') && reduceMotion,
+    media: query,
+    onchange: null,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+    dispatchEvent: () => false,
+  }))
+}
+
 /** Run one frame's worth of queued callbacks. */
 function runFrame(): void {
   const due = [...pendingFrames.values()]
@@ -188,7 +206,9 @@ describe('EditorPane split scroll sync', () => {
     pendingFrames.clear()
     frameHandle = 0
     frameClock = 0
+    reduceMotion = false
     installFrameClock()
+    installMotionPreference()
   })
 
   afterEach(() => {
@@ -383,5 +403,54 @@ describe('EditorPane split scroll sync', () => {
     userScroll(sourceScroller, 0)
     await driveToRest()
     expect(rendered.scrollTop).toBe(0)
+  })
+
+  it('follows a scroll at once when the system asks for reduced motion', async () => {
+    reduceMotion = true
+    const { rendered, sourceScroller } = await mountSplit(FLAT, FLAT_METRICS)
+    // CodeMirror queues a measurement frame as it mounts; nothing has run it.
+    const framesBefore = pendingFrames.size
+
+    userScroll(rendered, 450)
+
+    // No frame has run yet: the counterpart is written in the same turn as the
+    // user's scroll, and no leg was queued to glide it there afterwards.
+    expect(sourceScroller.scrollTop).toBeCloseTo(450, 3)
+    expect(pendingFrames.size).toBe(framesBefore)
+
+    await driveToRest()
+    expect(sourceScroller.scrollTop).toBeCloseTo(450, 3)
+  })
+
+  it('eases the counterpart when motion is allowed, so that landing at once is the preference', async () => {
+    const { rendered, sourceScroller } = await mountSplit(FLAT, FLAT_METRICS)
+
+    userScroll(rendered, 450)
+
+    // The same scroll with motion allowed: the counterpart is still where it
+    // was and a frame is pending, which is what makes the immediate write above
+    // a property of the preference rather than of this mapping.
+    expect(sourceScroller.scrollTop).toBe(0)
+    expect(pendingFrames.size).toBeGreaterThan(0)
+
+    await driveToRest()
+    expect(sourceScroller.scrollTop).toBeCloseTo(450, 3)
+  })
+
+  it('reads the motion preference per scroll, not once at mount', async () => {
+    const { rendered, sourceScroller } = await mountSplit(FLAT, FLAT_METRICS)
+
+    // First scroll with motion allowed: it eases, as always.
+    userScroll(rendered, 450)
+    await driveToRest()
+    expect(sourceScroller.scrollTop).toBeCloseTo(450, 3)
+
+    // The user turns the preference on while the app is running (macOS lets
+    // them, and the webview re-reads matchMedia). The next scroll must land
+    // immediately rather than waiting for a frame.
+    reduceMotion = true
+    userScroll(rendered, 700)
+    expect(sourceScroller.scrollTop).toBeCloseTo(700, 3)
+    expect(pendingFrames.size).toBe(0)
   })
 })
