@@ -165,10 +165,7 @@ pub fn register_vault(
 }
 
 #[tauri::command]
-pub async fn open_folder_dialog(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, VaultRegistry>,
-) -> Result<Option<String>, String> {
+pub async fn open_folder_dialog(app: tauri::AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     let picked = app
         .dialog()
@@ -176,11 +173,20 @@ pub async fn open_folder_dialog(
         .blocking_pick_folder()
         .and_then(|f| f.into_path().ok())
         .map(|p| p.to_string_lossy().to_string());
-    // The native dialog is a genuine user gesture, so the picked folder is a
-    // vault the user actually opened — register it so fs commands can serve it.
-    if let Some(ref path) = picked {
-        let _ = state.register(path);
-    }
+    // Registration deliberately does NOT happen here, even though the native
+    // dialog is a genuine user gesture.
+    //
+    // `VaultRegistry::register` REPLACES the authorized root, so registering at
+    // pick time de-authorizes the vault still on screen. The frontend's switch
+    // (`applyVault`) flushes the outgoing vault's dirty tabs BEFORE it registers
+    // the new one — and that flush writes to the outgoing root. Registering here
+    // therefore made the flush fail with "vault root not opened", which aborts
+    // the switch while leaving the UI on a vault the backend now refuses: every
+    // Ctrl+S, autosave, read and history restore failed until it was re-picked.
+    //
+    // Every pick path (sidebar, settings, startup) funnels into `applyVault`,
+    // which calls `register_vault` — the command that authorizes the root and
+    // extends the asset scope — once the switch is actually committed.
     Ok(picked)
 }
 
@@ -305,21 +311,29 @@ fn emit_fs_change(app: &tauri::AppHandle, path: &str, kind: &str) {
 /// After the last notify event of a burst there may be no further callback, so
 /// a held trailing event would sit forever. Sleep one window and emit it if it
 /// is still the latest pending event for that path.
+///
+/// `observed_gen` is the generation read when the task was scheduled, not the
+/// generation the enclosing `watch_folder` call handed out: a `watch_folder`
+/// that FAILS (inotify watch limit, directory removed between resolve and
+/// watch) leaves the previous watcher installed, so only a watcher that was
+/// actually replaced may invalidate the tasks of the one still running.
 fn schedule_pending_flush(
     app: tauri::AppHandle,
     pending: Arc<Mutex<HashMap<String, PendingBurst>>>,
     recent: Arc<Mutex<HashMap<String, (String, Instant)>>>,
     generation: Arc<std::sync::atomic::AtomicU64>,
-    my_gen: u64,
+    observed_gen: u64,
     ipc: String,
     expected_at: Instant,
 ) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(COALESCE_WINDOW).await;
-        if generation.load(Ordering::SeqCst) != my_gen {
+        if generation.load(Ordering::SeqCst) != observed_gen {
             return;
         }
-        let Ok(mut pending) = pending.lock() else { return };
+        let Ok(mut pending) = pending.lock() else {
+            return;
+        };
         let Some(p) = pending.get(&ipc) else { return };
         if p.at != expected_at {
             return;
@@ -365,10 +379,8 @@ pub async fn watch_folder(
     // reported once when it stops, so the LAST write of a rapid sequence is what
     // subscribers see. Shared with a timer because a quiet tail has no further
     // notify callback to flush it.
-    let pending: Arc<Mutex<HashMap<String, PendingBurst>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let pending: Arc<Mutex<HashMap<String, PendingBurst>>> = Arc::new(Mutex::new(HashMap::new()));
     let generation = state.generation.clone();
-    let my_gen = generation.fetch_add(1, Ordering::SeqCst) + 1;
     // The watcher root, canonical, so the hidden-component filter can be applied
     // to the path RELATIVE to the vault. Applying it to the absolute path meant a
     // vault living in a dot-directory (`~/.notes`) filtered out every event it
@@ -409,8 +421,12 @@ pub async fn watch_folder(
                 return;
             };
             let now = Instant::now();
-            let Ok(mut recent) = recent_cb.lock() else { return };
-            let Ok(mut pending) = pending_cb.lock() else { return };
+            let Ok(mut recent) = recent_cb.lock() else {
+                return;
+            };
+            let Ok(mut pending) = pending_cb.lock() else {
+                return;
+            };
             for path in event.paths {
                 // History/trash churn and our own snapshot temp writes
                 // happen under hidden directories; never surface them. The
@@ -443,13 +459,21 @@ pub async fn watch_folder(
                         pending_cb.clone(),
                         recent_cb.clone(),
                         generation_cb.clone(),
-                        my_gen,
+                        // Read at schedule time: if a later `watch_folder`
+                        // installs a new watcher, this task retires.
+                        generation_cb.load(Ordering::SeqCst),
                         ipc,
                         now,
                     );
                     continue;
                 }
                 recent.insert(ipc.clone(), (kind.to_string(), now));
+                // This event supersedes any burst held for the same path. Leaving
+                // the older entry armed let its flush task re-emit a stale kind
+                // once the timer fired — `removed` arriving AFTER the file was
+                // re-created, with no further event to correct it — and the
+                // index/notes list would drop a file that is back on disk.
+                pending.remove(&ipc);
                 emit_fs_change(&app, &ipc, kind);
             }
             // Trailing edge: a burst that has been quiet for the full window is
@@ -473,6 +497,12 @@ pub async fn watch_folder(
     new_watcher
         .watch(&resolved, notify::RecursiveMode::Recursive)
         .map_err(|e| format!("could not watch {}: {e}", ipc_path(&resolved)))?;
+    // Retire the previous generation only now that this watcher actually exists.
+    // Bumping before the fallible setup meant a FAILED call (inotify watch limit
+    // exhausted, directory removed between resolve and watch) invalidated the
+    // flush tasks of the watcher still installed, so its quiet tail was never
+    // emitted and the next save overwrote the external edit.
+    generation.fetch_add(1, Ordering::SeqCst);
     // Replacing the managed watcher drops the previous one, so a vault
     // switch stops the abandoned watcher instead of stacking a new thread.
     // A poisoned lock must not panic — return the error instead so the stale

@@ -75,20 +75,12 @@ pub fn require_opened_vault(registry: &VaultRegistry, root: &str) -> Result<(), 
 // Watcher state
 // ---------------------------------------------------------------------------
 
+#[derive(Default)]
 pub struct WatcherState {
     pub watcher: Mutex<Option<notify::RecommendedWatcher>>,
     /// Bumped every time `watch_folder` installs a new watcher so trailing-edge
     /// flush tasks from the previous vault stop emitting.
     pub generation: Arc<AtomicU64>,
-}
-
-impl Default for WatcherState {
-    fn default() -> Self {
-        Self {
-            watcher: Mutex::new(None),
-            generation: Arc::new(AtomicU64::new(0)),
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

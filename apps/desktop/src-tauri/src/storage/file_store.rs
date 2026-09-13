@@ -845,13 +845,7 @@ fn unique_attachment_name(preferred: &str, dir: &Path) -> String {
             return candidate;
         }
     }
-    format!(
-        "{stem}-overflow-{}.{ext}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    )
+    format!("{stem}-overflow-{}.{ext}", time_nonce())
 }
 
 /// Decode and save a base64 image attachment, deduplicating name collisions
