@@ -1497,6 +1497,57 @@ fn rename_entry_migrates_its_own_trash_entry_including_legacy_keys() {
     std::fs::remove_dir_all(&vault).unwrap();
 }
 
+/// A renamed trash entry that already carried a collision stamp must get that
+/// stamp REPLACED, never a second one appended.
+///
+/// `strip_collision_suffix` removes exactly one 13-digit stamp, so a name like
+/// `key-<old>-<new>` decodes to a path ending in `-<old>` — a path that never
+/// existed. The entry could then never be restored to the right place, and it
+/// would stop matching its own file on any later rename.
+#[test]
+fn rename_replaces_a_collision_stamp_instead_of_stacking_a_second_one() {
+    let vault = temp_vault("rename-trash-stamp");
+    let root = vault.to_str().unwrap().to_string();
+    let trash_dir = vault.join(".nekowite-trash");
+    std::fs::create_dir_all(&trash_dir).unwrap();
+    std::fs::create_dir_all(vault.join("docs")).unwrap();
+
+    const STAMP: &str = "-1700000000000";
+    let from_key = encode_rel_path("docs/a.md");
+    let to_key = encode_rel_path("docs/b.md");
+    // The trashed copy of the file about to be renamed, already disambiguated
+    // once, plus a name occupying the first candidate for the new key so the
+    // bump path actually runs.
+    std::fs::write(trash_dir.join(format!("{from_key}{STAMP}")), "trashed body").unwrap();
+    std::fs::write(trash_dir.join(format!("{to_key}{STAMP}")), "unrelated").unwrap();
+
+    std::fs::write(vault.join("docs").join("a.md"), "live").unwrap();
+    rename_entry(&root, "docs/a.md", "docs/b.md").unwrap();
+
+    let names: Vec<String> = std::fs::read_dir(&trash_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(names.len(), 2, "the from-key entry moved, not duplicated");
+    for name in &names {
+        let suffix = name
+            .strip_prefix(&format!("{to_key}-"))
+            .unwrap_or_else(|| panic!("every entry should sit under the new key: {name}"));
+        assert!(
+            suffix.len() == 13 && suffix.bytes().all(|b| b.is_ascii_digit()),
+            "exactly one 13-digit stamp, never a stacked pair: {name}"
+        );
+    }
+    // The renamed entry kept its contents.
+    let moved = names
+        .iter()
+        .find(|n| std::fs::read_to_string(trash_dir.join(n)).unwrap() == "trashed body")
+        .expect("the trashed body survived the rename");
+    assert!(moved.starts_with(&format!("{to_key}-")));
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
 /// Concurrent `write_file`s on the same vault never panic, leave no `.tmp`
 /// litter, and never corrupt the file: the read-old -> snapshot -> write
 /// sequence is serialized, and the final content is one written payload.

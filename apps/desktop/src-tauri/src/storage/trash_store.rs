@@ -381,21 +381,26 @@ pub fn move_trash_key(vault_root: &str, from_rel: &str, to_rel: &str) {
         // Keep the original collision stamp, if this entry had one, so several
         // trashed versions of the same path stay distinguishable and in order.
         let stamp = &name[strip_collision_suffix(name).len()..];
-        let new_name = format!("{to_key}{stamp}");
-        let mut target = trash_root.join(&new_name);
-        // A collision stamp has to stay exactly 13 digits — that shape is how
-        // `strip_collision_suffix` tells a disambiguating stamp from a name that
-        // legitimately ends in digits — so bump the stamp instead of appending to
-        // it. Bumping also guarantees a free name: `fs::rename` REPLACES an
-        // existing file on Windows, so reusing the first candidate would destroy
-        // the entry already sitting there.
         let mut ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis())
             .unwrap_or_default();
+        let mut target = trash_root.join(format!("{to_key}{stamp}"));
+        // A collision stamp has to stay exactly 13 digits — that shape is how
+        // `strip_collision_suffix` tells a disambiguating stamp from a name that
+        // legitimately ends in digits — so a taken name gets a REPLACEMENT stamp
+        // rather than a second one appended.
+        //
+        // Appending used to produce `{to_key}{old_stamp}-{new_stamp}`, and only
+        // the LAST stamp is ever stripped: the entry then decoded to a path
+        // ending in the old stamp, which is to say a path that never existed, so
+        // it could never be restored and stopped matching `from_rel` on any
+        // later rename. Bumping also guarantees a free name — `fs::rename`
+        // REPLACES an existing file on Windows, so reusing the first candidate
+        // would destroy the entry already sitting there.
         while target.exists() {
             ts = ts.saturating_add(1);
-            target = trash_root.join(format!("{new_name}-{ts}"));
+            target = trash_root.join(format!("{to_key}-{ts}"));
         }
         let _ = std::fs::rename(&p, &target);
     }
