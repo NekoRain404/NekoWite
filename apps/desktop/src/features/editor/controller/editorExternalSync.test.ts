@@ -124,6 +124,54 @@ describe('editorExternalSync', () => {
     expect(scheduler).toHaveBeenCalled()
   })
 
+  it('re-applies a version the editor was OPENED with, once the user has typed since', async () => {
+    // `appliedContent` is the text the editor was last opened with, and any
+    // typing since then replaced the live document. Restoring a version that
+    // happens to equal it - the common case, "undo my last edit by restoring
+    // the previous version" - was skipped as already-applied: the file went
+    // back, the SCREEN did not, so the user saw no change and their next
+    // keystroke published the discarded text and saved it over the restore.
+    const editor = makeEditor({ save: '# One\n' })
+    session.editor = editor
+    const { sync } = makeSync(session)
+
+    // 1. the editor opens version one.
+    sync.onContentChanged('# One\n')
+    await flush()
+    expect(editor.open).toHaveBeenCalledTimes(1)
+    expect(session.appliedContent).toBe('# One\n')
+
+    // 2. the user types: the editor's own serialization becomes version two
+    //    (this is what editorPersistence records on every edit).
+    session.lastLocalMarkdown = '# One two\n'
+
+    // 3. they restore version one from the history panel.
+    sync.onContentChanged('# One\n')
+    await flush()
+
+    // The editor must really be re-opened with the restored text, not left
+    // showing the discarded version.
+    expect(editor.open).toHaveBeenCalledTimes(2)
+    expect(editor.open).toHaveBeenLastCalledWith('# One\n')
+  })
+
+  it('still skips a duplicate of the content the editor already holds', async () => {
+    // The guard's original job: a watcher echo or a duplicate open must not
+    // replace the live model (that resets caret, undo and scroll).
+    const editor = makeEditor({ save: '# Same\n' })
+    session.editor = editor
+    const { sync } = makeSync(session)
+
+    sync.onContentChanged('# Same\n')
+    await flush()
+    expect(editor.open).toHaveBeenCalledTimes(1)
+
+    // Same text again, nothing typed in between.
+    sync.onContentChanged('# Same\n')
+    await flush()
+    expect(editor.open).toHaveBeenCalledTimes(1)
+  })
+
   it('re-applies a change that arrives during an in-flight apply (pendingExternal)', async () => {
     const gate = deferred()
     const editor = makeEditor({
