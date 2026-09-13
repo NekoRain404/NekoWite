@@ -111,7 +111,10 @@ export interface VaultIndexCoordinator {
   noteContent(path: string): Promise<string | null>
   /** Look up a note's persistent-index entry for content search. */
   indexEntryFor(path: string): IndexLookupResult | null
-  /** Candidate note paths whose indexed text contains `query`. */
+  /** Candidate note paths whose indexed text contains `query`. While the fs
+   *  subscription is degraded this is every indexed note: a candidate list is a
+   *  filter, a filter is an exclusion, and a mirror that cannot be verified may
+   *  not exclude a note the user just edited. */
   indexCandidatePaths(query: string): string[]
   /** Built (or incrementally reconcile) the persistent search index for `vault`.
    * No-op when `vault` is not the current vault (latest-wins guards inside). */
@@ -137,6 +140,12 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
   const mdChangeSeq = new Map<string, number>()
 
   let notes: NoteSummary[] = []
+
+  /** True while the fs-change subscription is missing, so nothing may assume
+   *  in-memory state (the note stat mirror, the content cache, the search
+   *  index) still matches the disk - no event would report a change made
+   *  outside the app (see `subscribeFs`). */
+  let fsWatchDown = false
 
   /** Index one note into a {@link NoteSummary}. Reuses the cached content when the
    * stat token is unchanged; `force` bypasses the cache for a fs-change re-index. */
@@ -338,9 +347,16 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
     return total
   }
 
-  async function noteContent(path: string): Promise<string | null> {
-    const cached = deps.cache.get(path)
-    if (cached !== undefined) return cached
+  /** Read one note body, reusing the cache only while the fs subscription can
+   *  still tell us the entry is current. In degraded mode a cached body may
+   *  predate an edit made in another editor - nothing would have invalidated it
+   *  - so the file is read from disk instead. A slower search is the price of
+   *  not answering "no match" for text that is right there in the note. */
+  async function readNoteBody(path: string): Promise<string | null> {
+    if (!fsWatchDown) {
+      const cached = deps.cache.get(path)
+      if (cached !== undefined) return cached
+    }
     const vault = currentVault
     if (!vault) return null
     try {
@@ -352,18 +368,12 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
     }
   }
 
+  async function noteContent(path: string): Promise<string | null> {
+    return readNoteBody(path)
+  }
+
   async function searchRead(path: string): Promise<string> {
-    const cached = deps.cache.get(path)
-    if (cached !== undefined) return cached
-    const vault = currentVault
-    if (!vault) return ''
-    try {
-      const content = await deps.read(vault, path)
-      deps.cache.set(path, content)
-      return content
-    } catch {
-      return ''
-    }
+    return (await readNoteBody(path)) ?? ''
   }
 
   // The persistent search-index lifecycle. Created with closures over the
@@ -390,10 +400,6 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
     }
   }
 
-  /** True while the fs subscription is missing, so nothing may assume the
-   *  index reflects what is on disk (see `onFsWatch`). */
-  let fsWatchDown = false
-
   /**
    * Try to establish the fs-change subscription for the current vault.
    *
@@ -407,6 +413,11 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
       const listener = await deps.onFsChange(handleFsChange)
       if (fsWatchDown) {
         fsWatchDown = false
+        // The search index is fed through the same mirror: while the
+        // subscription was missing it could not verify anything, so it is told
+        // the mirror is trustworthy again (and rebuilt by `rebuildIndex`, the
+        // only way back to a live subscription).
+        persistence.setWatcherDown(false)
         deps.onFsWatch?.(true)
       }
       return listener
@@ -414,6 +425,11 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
       console.error(`[NekoWite] vault "${v}" file-change subscription failed`, err)
       if (!fsWatchDown) {
         fsWatchDown = true
+        // Nothing local may claim to be current from here on: the note stat
+        // mirror and the content cache keep whatever they saw last, so the
+        // index is told to stop voting on matches (see `entryFor`) and to
+        // report itself as stale instead of `up-to-date`.
+        persistence.setWatcherDown(true)
         deps.onFsWatch?.(false, err)
       }
       return null
@@ -457,12 +473,18 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
     unlistenFs?.()
     unlistenFs = null
     notes = []
+    fsWatchDown = false
     deps.onTruncated(false)
   }
 
   async function rebuildIndex(): Promise<void> {
     const vault = currentVault
     if (!vault) return
+    // Rebuild has to mean re-list: the vault file list is cached until an fs
+    // event invalidates it, and a note created while the subscription was
+    // missing has no event coming, so reusing the cached list would leave it
+    // invisible for good — the one thing this button exists to repair.
+    deps.fileIndex.invalidate(vault)
     // A missing fs subscription is invisible in the index itself, so "refresh
     // this list" is also the natural place to put it back: retry it before the
     // rebuild, and tell the user when it comes back.
@@ -474,6 +496,10 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
         unlistenFs = listener
       }
     }
+    // Catch the note list up first: content search iterates it, so a note that
+    // is missing there cannot be found by any query, however fresh the index.
+    const seq = indexSeq
+    await runIndex(vault, seq)
     try {
       await persistence.rebuild(vault, await deps.fileIndex.get(vault))
     } catch {

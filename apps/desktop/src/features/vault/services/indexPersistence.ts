@@ -12,6 +12,13 @@
  * aborts the previous controller, so a superseded background build can never
  * overwrite the current index. `detach()` cancels any in-flight build and
  * clears the mirror for a vault switch.
+ *
+ * The mirror is only as trustworthy as the fs subscription that feeds it. When
+ * that subscription is missing (`setWatcherDown`) the mirror and its stat
+ * snapshot describe the last time the app could see the disk, so the index
+ * stops answering "cannot match" on its own (`entryFor`) and stops reporting
+ * itself as `up-to-date` (`state`) — a degraded app has to read the note or say
+ * the index is stale, never quietly return fewer results than the vault has.
  */
 
 import type { IndexLookupResult } from '../../../services/contentSearch'
@@ -64,6 +71,10 @@ export interface IndexPersistence {
   candidatePaths(query: string): string[]
   /** Cancel in-flight work and clear the mirror + state on vault switch. */
   detach(): void
+  /** Report that the fs-change subscription is down (degraded mode) or back.
+   *  A degraded index may not answer "cannot match" on its own (see `entryFor`)
+   *  and may not call itself `up-to-date` (see `state`). */
+  setWatcherDown(down: boolean): void
   /** Current UI-facing index state. */
   state(): IndexState
   /** Current build progress, or null when idle. */
@@ -76,9 +87,19 @@ export function createIndexPersistence(deps: IndexPersistenceDeps): IndexPersist
   let seq = 0
   let state: IndexState = 'idle'
   let progress: { done: number; total: number } | null = null
+  /** The fs-change subscription is missing, so nothing here can prove the
+   *  mirror still matches the disk (see `setWatcherDown`). */
+  let watcherDown = false
+
+  /** The state a reader may act on. A completed build under a missing fs
+   *  subscription is NOT `up-to-date`: the build only proves the mirror matched
+   *  the disk when it ran, and no event will report the next outside edit. */
+  function reportedState(): IndexState {
+    return watcherDown && state === 'up-to-date' ? 'stale' : state
+  }
 
   function fire(): void {
-    deps.onState?.(state, progress)
+    deps.onState?.(reportedState(), progress)
   }
 
   async function build(vault: string, paths: string[], opts: { force?: boolean } = {}): Promise<void> {
@@ -203,13 +224,26 @@ export function createIndexPersistence(deps: IndexPersistenceDeps): IndexPersist
     const doc = index.notes[path]
     if (!doc) return null
     const currentStat = deps.getStat?.(path)
+    // The stat mirror and the index entry are two snapshots of the same past
+    // read, so comparing them proves only that nothing in the app updated one
+    // without the other - not that the disk is unchanged. With no fs
+    // subscription an edit made in another editor reaches neither of them, and
+    // claiming `upToDate` here drops that note from the results (see
+    // `searchWithIndex`). Degraded means "read the body", never "cannot match".
     const upToDate =
-      currentStat !== undefined && currentStat.mtime === doc.mtime && currentStat.size === doc.size
+      !watcherDown &&
+      currentStat !== undefined &&
+      currentStat.mtime === doc.mtime &&
+      currentStat.size === doc.size
     return { upToDate, text: doc.text }
   }
 
   function candidatePaths(query: string): string[] {
     if (!currentIndex) return []
+    // A prefilter is an exclusion, and a degraded mirror cannot exclude: a note
+    // edited outside the app would be missing from its own candidate list. Hand
+    // back every indexed note instead and let the caller read them.
+    if (watcherDown) return Object.keys(currentIndex.notes)
     return queryIndex(currentIndex, query)
   }
 
@@ -219,6 +253,17 @@ export function createIndexPersistence(deps: IndexPersistenceDeps): IndexPersist
     currentIndex = null
     state = 'idle'
     progress = null
+    // The flag belongs to the vault session that is ending; the next subscribe
+    // reports the new one.
+    watcherDown = false
+    fire()
+  }
+
+  function setWatcherDown(down: boolean): void {
+    if (watcherDown === down) return
+    watcherDown = down
+    // Re-report at once: the user has to hear that the index they are looking at
+    // is no longer tracking the disk while it still looks healthy on screen.
     fire()
   }
 
@@ -232,7 +277,8 @@ export function createIndexPersistence(deps: IndexPersistenceDeps): IndexPersist
     entryFor,
     candidatePaths,
     detach,
-    state: () => state,
+    setWatcherDown,
+    state: reportedState,
     progress: () => progress,
   }
 }
