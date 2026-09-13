@@ -6,6 +6,7 @@ import FileTree from './FileTree.vue'
 import { useAppearanceStore } from '../stores/appearance'
 import { useFileTreeStore } from '../stores/fileTree'
 import { useDocumentListStore } from '../stores/documentList'
+import { useRefsStore } from '../stores/refs'
 import { useTabsStore } from '../stores/tabs'
 import { useVaultSessionStore } from '../stores/vaultSession'
 import { setRenderedFlush } from '../services/editorOwnership'
@@ -35,6 +36,21 @@ const fsMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('../platform/gateways/fs', () => ({ fsService: fsMocks }))
+
+/**
+ * The export service, stubbed.
+ *
+ * What the card menu owes the export pipeline is exactly its arguments — the
+ * TARGET's text, its path, its title — so the assertions here are on those
+ * instead of on rendered HTML. The pipeline's own half of the contract (a
+ * `notePath` steering attachment resolution, the PDF frame's life cycle) is
+ * covered by `services/export.test.ts`.
+ */
+const exportMocks = vi.hoisted(() => ({ exportHtml: vi.fn(), exportToPdf: vi.fn() }))
+vi.mock('../services/export', () => ({
+  exportHtml: exportMocks.exportHtml,
+  exportToPdf: exportMocks.exportToPdf,
+}))
 
 let pinia: Pinia
 let host: HTMLElement | null = null
@@ -671,6 +687,194 @@ describe('Note card context menu', () => {
 
       const gammaDeletes = fsMocks.deleteFile.mock.calls.filter((c) => c[1] === '/vault/gamma.md')
       expect(gammaDeletes).toHaveLength(1)
+    })
+  })
+
+  describe('export', () => {
+    /** A note in a folder of its own. The active note (`alpha`) sits at the
+     *  vault root, so an attachment resolved against the TARGET and one
+     *  resolved against the ACTIVE TAB are different strings — which is what
+     *  makes the wrong note's context visible instead of plausible. */
+    const NESTED: NoteSummary = {
+      path: '/vault/deep/delta.md',
+      name: 'delta.md',
+      title: 'Delta',
+      tags: [],
+      summary: '',
+      mtime: 4,
+      size: 1,
+      dir: 'deep',
+      links: [],
+    }
+
+    beforeEach(async () => {
+      exportMocks.exportHtml.mockReset()
+      exportMocks.exportToPdf.mockReset()
+      fsMocks.saveFileDialog.mockReset()
+      // The native dialog hands back an absolute path; echoing the default
+      // name under the vault keeps every other assertion about the export
+      // itself instead of about the dialog.
+      fsMocks.saveFileDialog.mockImplementation(async (name: string) => `/vault/${name}`)
+      useDocumentListStore().setNotes([...NOTES, NESTED])
+      // Let the list render the new card before a test right-clicks it.
+      await flush()
+    })
+
+    it('exports the right-clicked note, read from its file and named after it', async () => {
+      fsMocks.read.mockImplementation(async (_vault, path) =>
+        path === '/vault/deep/delta.md' ? '# Delta body\n' : '# Alpha body\n',
+      )
+      // A citation key the vault library knows: a note exported from the menu
+      // has to render it exactly as an export from the settings dialog does.
+      useRefsStore().refs.set('smith2020', {
+        key: 'smith2020',
+        title: 'A paper',
+        authors: ['Smith'],
+        year: '2020',
+        type: 'article',
+      })
+
+      await rightClick(cardFor('Delta'))
+      clickMenuLabel('导出 HTML')
+      await flush()
+
+      expect(fsMocks.read).toHaveBeenCalledWith('/vault', '/vault/deep/delta.md')
+      expect(fsMocks.saveFileDialog).toHaveBeenCalledWith('delta.html', '/vault')
+      const [source, vault, savePath, opts] = exportMocks.exportHtml.mock.calls[0]
+      // Delta's text, never the active note's.
+      expect(source).toBe('# Delta body\n')
+      expect(vault).toBe('/vault')
+      expect(savePath).toBe('/vault/delta.html')
+      expect(opts.title).toBe('delta')
+      // Attachments and citations are resolved against THIS note; without
+      // `notePath` both would be resolved against the active one.
+      expect(opts.notePath).toBe('/vault/deep/delta.md')
+      expect(opts.refs.get('smith2020')?.title).toBe('A paper')
+    })
+
+    it('exports the live text when the target IS the active tab, flushing first', async () => {
+      const tabs = useTabsStore()
+      const order: string[] = []
+      // The real flush mechanism: the pane publishes the keystrokes still
+      // inside its debounce window into the tab.
+      setRenderedFlush(async () => {
+        order.push('flush')
+        tabs.tabs.find((t) => t.path === '/vault/alpha.md')!.content = '# just typed\n'
+      })
+      fsMocks.read.mockImplementation(async () => {
+        order.push('read')
+        return '# stale on disk\n'
+      })
+
+      await rightClick(cardFor('Alpha'))
+      clickMenuLabel('导出 HTML')
+      await flush()
+
+      // Flushed, and the file was never read: it is a debounce window behind
+      // the pane the user is typing in.
+      expect(order).toEqual(['flush'])
+      expect(exportMocks.exportHtml).toHaveBeenCalledWith(
+        '# just typed\n',
+        '/vault',
+        '/vault/alpha.html',
+        expect.objectContaining({ title: 'alpha', notePath: '/vault/alpha.md' }),
+      )
+    })
+
+    it('cancelling the save dialog exports nothing and says nothing', async () => {
+      fsMocks.saveFileDialog.mockResolvedValue(null)
+      const seen: string[] = []
+      const off = onNotify((m) => seen.push(m))
+      try {
+        await rightClick(cardFor('Beta'))
+        clickMenuLabel('导出 HTML')
+        await flush()
+      } finally {
+        off()
+      }
+
+      // The dialog was opened for THIS note, under its own default name...
+      expect(fsMocks.saveFileDialog).toHaveBeenCalledWith('beta.html', '/vault')
+      // ...and cancelling it is a decision, not a failure: no write, no toast,
+      // and no read of a note the user just chose not to export.
+      expect(exportMocks.exportHtml).not.toHaveBeenCalled()
+      expect(fsMocks.read).not.toHaveBeenCalledWith('/vault', '/vault/beta.md')
+      expect(seen).toEqual([])
+    })
+
+    it('refuses a destination outside the vault with the existing message', async () => {
+      // The dialog can aim anywhere, but the backend's write is vault-confined:
+      // letting this through would fail silently behind a closed dialog.
+      fsMocks.saveFileDialog.mockResolvedValue('/tmp/beta.html')
+      const seen: string[] = []
+      const off = onNotify((m) => seen.push(m))
+      try {
+        await rightClick(cardFor('Beta'))
+        clickMenuLabel('导出 HTML')
+        await flush()
+      } finally {
+        off()
+      }
+
+      expect(seen).toEqual(['请选择 vault 内的路径导出'])
+      expect(exportMocks.exportHtml).not.toHaveBeenCalled()
+      expect(fsMocks.read).not.toHaveBeenCalledWith('/vault', '/vault/beta.md')
+    })
+
+    it('prints the right-clicked note to PDF, with its title and path', async () => {
+      fsMocks.read.mockImplementation(async (_vault, path) =>
+        path === '/vault/deep/delta.md' ? '# Delta body\n' : '# Alpha body\n',
+      )
+
+      await rightClick(cardFor('Delta'))
+      clickMenuLabel('导出 PDF')
+      await flush()
+
+      expect(fsMocks.read).toHaveBeenCalledWith('/vault', '/vault/deep/delta.md')
+      // Print goes through the app's own frame; there is no destination to pick.
+      expect(fsMocks.saveFileDialog).not.toHaveBeenCalled()
+      expect(exportMocks.exportToPdf).toHaveBeenCalledWith(
+        '# Delta body\n',
+        expect.objectContaining({ title: 'delta', notePath: '/vault/deep/delta.md' }),
+      )
+      expect(exportMocks.exportHtml).not.toHaveBeenCalled()
+    })
+
+    it('reports a target it could not read instead of exporting an empty document', async () => {
+      fsMocks.read.mockRejectedValue(new Error('read_file: No such file'))
+      const seen: string[] = []
+      const off = onNotify((m) => seen.push(m))
+      try {
+        await rightClick(cardFor('Gamma'))
+        clickMenuLabel('导出 HTML')
+        await flush()
+      } finally {
+        off()
+      }
+
+      expect(seen).toHaveLength(1)
+      expect(seen[0]).toContain('导出失败')
+      expect(seen[0]).toContain('/vault/gamma.md')
+      expect(exportMocks.exportHtml).not.toHaveBeenCalled()
+    })
+
+    it('reports a failed export instead of losing the rejection', async () => {
+      // Awaited and caught: an unhandled rejection here would look exactly
+      // like the menu item doing nothing.
+      exportMocks.exportToPdf.mockRejectedValue(new Error('render exploded'))
+      const seen: string[] = []
+      const off = onNotify((m) => seen.push(m))
+      try {
+        await rightClick(cardFor('Beta'))
+        clickMenuLabel('导出 PDF')
+        await flush()
+      } finally {
+        off()
+      }
+
+      expect(seen).toHaveLength(1)
+      expect(seen[0]).toContain('导出失败')
+      expect(seen[0]).toContain('render exploded')
     })
   })
 })

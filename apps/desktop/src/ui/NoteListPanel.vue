@@ -25,6 +25,7 @@ import ContextMenu from './ContextMenu.vue'
 import type { ContextMenuItem } from './ContextMenu.vue'
 import { useAppearanceStore } from '../stores/appearance'
 import { useDocumentListStore } from '../stores/documentList'
+import { useRefsStore } from '../stores/refs'
 import { useVaultSessionStore } from '../stores/vaultSession'
 import { useFileTreeStore } from '../stores/fileTree'
 import { useTabsStore } from '../stores/tabs'
@@ -40,15 +41,28 @@ import {
   type ContentSearchCandidate,
 } from '../services/contentSearch'
 import { t } from '../i18n'
-import { baseName } from '../services/paths'
-import { isCaseOnlyRename, noteRenameNameError, noteRenameTargetPath } from '../services/noteActions'
+import { baseName, samePath } from '../services/paths'
+import {
+  isCaseOnlyRename,
+  noteActionTarget,
+  noteRenameNameError,
+  noteRenameTargetPath,
+  readTargetContent,
+} from '../services/noteActions'
+import type { NoteActionDeps } from '../services/noteActions'
 import { moveOrRepair } from '../services/noteMoveFlow'
 import { deleteNoteWithAssets } from '../services/noteDelete'
-import { notifyError } from '../services/errors'
+import { describeExportError, notifyError } from '../services/errors'
+import { exportHtml, exportToPdf, type ExportUiOptions } from '../services/export'
+import { exportBaseName } from '../services/exportName'
+import { toExportRefs } from '../services/exportRefs'
+import { isPathWithinVault } from '../services/attachments'
+import { flushEdits } from '../services/editorOwnership'
 import { isComposingKey } from '../services/keyGuard'
 
 const appearance = useAppearanceStore()
 const documentList = useDocumentListStore()
+const refs = useRefsStore()
 const vaultSession = useVaultSessionStore()
 const fileTree = useFileTreeStore()
 const tabs = useTabsStore()
@@ -313,11 +327,15 @@ function onNoteMenuSelect(id: string): void {
     case 'rename':
       startNoteRename(target.path)
       break
+    case 'export-html':
+      void exportNoteHtml(target.path)
+      break
+    case 'export-pdf':
+      void exportNotePdf(target.path)
+      break
     case 'delete':
       requestNoteDelete(target.path)
       break
-    // export-html / export-pdf are added by the task that owns the export flow;
-    // they read the same `noteMenu.value.path`.
   }
 }
 
@@ -524,6 +542,84 @@ async function performNoteDelete(path: string): Promise<void> {
     deleting.delete(path)
     deleteConfirmPath.value = null
     await refreshNoteIndex()
+  }
+}
+
+// --- export -----------------------------------------------------------------
+
+/**
+ * The dependencies {@link readTargetContent} resolves a target's text with,
+ * built from the stores this panel already holds. The lookup keys on the path
+ * — it is asked for the right-clicked note's tab, not for the active one — and
+ * the read is the fs gateway's own vault read.
+ */
+function noteExportDeps(): NoteActionDeps {
+  return {
+    read: (vault, path) => fsService.read(vault, path),
+    findTab: (path) => tabs.tabs.find((t) => t.path !== null && samePath(t.path, path)) ?? null,
+    flushEdits: () => flushEdits(),
+    openTab: (path) => tabs.openTab(path),
+  }
+}
+
+/**
+ * The options both exports hand to the pipeline.
+ *
+ * `notePath` is the load-bearing one: attachments and citations are resolved
+ * against it, so leaving it out resolves the target's `![](pic.png)` against
+ * whatever note happens to be open — the wrong-note bug this whole menu is
+ * built to avoid. `refs` is the same map the settings dialog exports with, so
+ * a cited `[@key]` renders identically whichever way the note leaves the app.
+ */
+function noteExportOptions(path: string): ExportUiOptions {
+  return {
+    title: exportBaseName(path),
+    notePath: path,
+    refs: toExportRefs(refs.refs.values()),
+  }
+}
+
+/**
+ * Export the right-clicked note as a self-contained `.html` file.
+ *
+ * The source is the target's LATEST text ({@link readTargetContent}: its own
+ * open tab, flushed first when it is the active one, its file otherwise), and
+ * the default name is the target's. Everything happens about `path`; the
+ * active tab is not an input.
+ */
+async function exportNoteHtml(path: string): Promise<void> {
+  const vault = tabs.vault
+  // The dialog comes first, so a cancelled save is a decision with no side
+  // effects at all — nothing is read, nothing is exported, nothing is said.
+  const savePath = await fsService.saveFileDialog(exportBaseName(path) + '.html', vault ?? undefined)
+  if (!savePath) return
+  // The native dialog can aim anywhere (Desktop, Home, …), but the backend's
+  // write is vault-confined: an outside path is rejected with "path escapes
+  // vault" and the export dies silently behind the closed dialog. Refuse it up
+  // front, with the message the settings dialog already shows.
+  if (vault && !isPathWithinVault(savePath, vault)) {
+    notifyError(t('error.exportOutsideVault'))
+    return
+  }
+  try {
+    const source = await readTargetContent(noteExportDeps(), vault, noteActionTarget(path))
+    await exportHtml(source, vault ?? '', savePath, noteExportOptions(path))
+  } catch (e) {
+    // Reported, never swallowed: a rejected read (the note is gone) and a
+    // rejected write look exactly like the menu item doing nothing.
+    notifyError(describeExportError(e))
+  }
+}
+
+/** Export the right-clicked note through the app's own print frame. There is
+ *  no destination to pick, so only the target matters. */
+async function exportNotePdf(path: string): Promise<void> {
+  const vault = tabs.vault
+  try {
+    const source = await readTargetContent(noteExportDeps(), vault, noteActionTarget(path))
+    await exportToPdf(source, noteExportOptions(path))
+  } catch (e) {
+    notifyError(describeExportError(e))
   }
 }
 
