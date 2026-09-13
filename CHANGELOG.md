@@ -6,6 +6,9 @@
 
 ### Added
 
+- **AI 操作审计：每次 AI 写入与每次拒绝都会留下一条可查记录**：权限模型此前只能回答「这次准不准」，回答不了「昨天这个应用拿我的 Key 做了什么」。现在每次 AI 写入、每次拒绝、每次被总开关拦下都是一条记录：时间、来源（`ghost` / `chat` / `edit` / `dialog` / `plugin`）、写入种类、结果（`asked` / `allowed` / `denied` / `blocked` / `granted`，`blocked` 另记原因），`detail` 复用插件宿主那一个 `sanitizeAuditDetail` 脱敏而不是另写一份（第二份实现就是第二次泄露 Key 的机会），并且**不记录正文**。记录是容量 200（`MAX_AI_AUDIT_EVENTS`）的环形缓冲，经 `persistence` 端口写在 `nekowite.ai.audit` 键下；`loadAiAuditLog` 按 `seq` 去重、接着已恢复的最大编号继续编号，存储损坏读作「没有历史」而不是让启动失败——一条能把它所观察的功能弄挂的审计记录，比没有审计更糟，所以每个入口都是尽力而为、不向调用方抛错。设置 → AI 新增「最近的 AI 活动」：最新 8 行（时间 / 来源 / 种类 / 结果 / 详情）+ 一行计数（允许 / 拒绝 / 阻止）+ 清空按钮，键在 `aiperm.audit.*` 下。组件用 `AUDIT_OUTCOME_KEYS` / `AUDIT_SOURCE_KEYS` / `AUDIT_KIND_KEYS` 三张**字面量**键表：仓库的 i18n 齐备性测试扫描源码里的真实键字面量，动态拼出来的键没人能检查——第一版正是被这条测试抓到。**为什么放在 localStorage 而不是 vault 文件**：拒绝大多发生在没有打开知识库的时候（全新安装、AI 本来关着），而记录必须跨重启存活，`persistence` 端口本来就是为这件事准备的。
+- **插件可以按知识库关闭（持久化开关）**：此前只有一个选择——装不装；装上就一直在跑。现在 `.nekowite/plugin-governance.json` 里的 `GovernanceFilePayload` 增加 `disabled?: string[]`（仍受 MAC 保护；旧版本写出的文件没有这个字段，读作「什么都没关」），设置里新增「插件」分区（`SectionId` 为 `plugins`，图标 `Puzzle`，键在 `settings.plugins.*` 下）列出当前知识库的插件：每行一个复选框与一行状态（关闭 / 未运行 / 运行中 / 隔离）。**关掉立即生效**：宿主 `deactivatePlugin`、该 id 从 `activeVaultPluginIds` 移除、并记一条 `deactivate / disabled by the user` 审计事件；**重新打开会重跑完整的闸门序列**（撤销 → 版本策略 → 同意 → 信任 → 完整性），因为关着的那段时间并没有让它们变得不相关——这正是重新加载一次知识库做的事情。加载循环在 **GATE 0 之前**就跳过已关闭的插件，所以被关掉的插件**不会被询问、不会被读取、也不会被执行**。新 API：`getVaultDisabledPluginIds`、`isVaultPluginDisabled`、`setVaultPluginDisabled(pluginId, disabled, { vault?, reload? })`、`listVaultPlugins(vault)`。
+
 - **AI 总开关（kill switch）**：权限策略此前只管「写」，关不掉「问」。现在设置 → AI 里多了一个开关，关掉之后**没有任何请求会离开应用**：不是把回答丢掉，而是根本不发出去（正文也就不会送到服务商），同时所有 AI 写入一律拒绝，无论上面的权限档位写的是什么。开关持久化在 `nekowite.ai.enabled`，只有明确写入 `0` 才算关闭——旧版本留下的存储里没有这个键，那位用户的 AI 本来是能用的，把「缺失」当成「关闭」会把他的配置弄坏。**权限档位不受影响**：关掉再打开，原来选的「每次询问 / 直接写入 / 禁止」原样还在。
 - **「替换整篇文档」成为独立的写入种类**：插件通过 `editor.open()` 换掉整个缓冲区，破坏性大于替换选中内容，此前它却完全不走权限——一个什么权限都没声明的插件可以整篇重写文档。现在它是 `replace-document`，与 `insert`、`replace-selection` 各自独立授权（一次「替换选中」的授权不会顺带允许整篇替换），并且会**弹窗说明来源是哪个插件**。
 - **无法询问的写入接口需要常设授权**：`open()` 之外的 `acceptSuggestion()` 也是写入（它返回插入的文本，签名是同步的），`setSuggestion()` 则是它的预备动作。同步接口没法弹窗等待回答，所以它们只在决策**已经是「允许」**时才通过（权限档位为「直接写入」，或本次运行已对同类写入授权）；默认的「每次询问」下会明确拒绝并提示改用可弹窗的插入接口（`setSuggestion(null)` 清空自己的建议始终允许）。拒绝会抛错并弹出提示，不会静默失败。
@@ -63,6 +66,9 @@
 - **修正 AI 权限策略标签的 i18n 键**：`describePolicy` 返回的是嵌套形状的键（`aiperm.policy.ask`），而语言包定义的是扁平键（`aiperm.policyAsk`），设置面板会渲染出一个缺失标签。由 console-clean 巡检（断言不请求缺失翻译）发现。
 
 ### Fixed
+
+- **插件停用开关在打包版上「保存成功」，重载后却回到打开（真机发现）**：第一版把开关交给既有的 `scheduleGovernanceSave()` 持久化，而它读的是模块自己的 `currentVault`——这个字段只在 `loadGovernanceFile()` 里赋值，而严格 CSP 的打包版**根本走不到那里**（CSP 门控在它之前就提前返回了）。真机上的表现因此是：开关看上去保存了、显示「已关闭」，重新加载窗口后又变成打开的。修复：开关按面板明确指出的那个知识库写入（`{ vault }`），并改成**读-改-写**（`loadDisabledPlugins` / `saveDisabledPlugins`）——保留文件里原有的其它记录（信任锚、撤销、摘要），并且 **MAC 校验不通过的文件一律不覆盖**（覆盖一个被篡改的文件，等于让攻击者的版本在下次读取时成为可信版本）。回归测试断言写出的 payload 能用知识库密钥验签通过，并且仍然带着 `trustedKey` / `trustedSources` / `digests`。
+- **删掉不再被调用的死代码链**：后端 `search_notes` 只匹配文件**路径**，应用早已改用前端索引 + 全正文内容搜索（`services/contentSearch.ts` 的 `searchWithIndex`），而且没有任何调用方——严格更弱的重复不是后备，而是第二件要维护的事。整条链路删除：Rust 命令与注册、`storage::file_store` 的 `search_notes` / `search_notes_with_max` / `search_notes_capped` / `walk_search` 与 `SEARCH_MAX_DIRS` / `SEARCH_MAX_DEPTH` / `SearchResults`、`FsPort.searchNotes` 契约、两个适配器（tauri + memory）、e2e 夹具里的那一行，以及只覆盖它的 Rust 测试（`fs_test` 在 Windows 上实际运行的用例数 **70 → 68**）。`contentSearch.ts` 去掉只被测试使用的导出（**242 → 140 行**：`ContentCandidate` / `SNIPPET_RADIUS` / `matchContent` / `buildSnippet` / `contentMatchOf` / `metaHaystack` / `contentMetaMatch` / `mapWithConcurrency` / `searchContentMatches` 移除，现役搜索用到的 `snippetAt` / `mapWithConcurrency` 转为私有），测试文件围绕真正入口重写（9 条），深正文命中、摘要省略号、并发上界与 abort 仍被断言；`stores/aiPermission.awaitingApproval`（零消费者）删除；`NoteListPanel.vue` 里那份内联的 `CONTENT_SEARCH_CONCURRENCY` 改用导入的共享常量，不再有两个可能各自漂移的副本。
 
 - **关掉 AI 之后，之前取回的建议仍会被写进文档（真机发现，数据完整性）**：`aiService.accept()` 完全没有走权限。真机复现路径正是 310 探针的 F 段：AI 开着时按 Tab 取回建议（ghost 文本挂在编辑器里），此时在设置里把 AI 关掉，再按 Tab——建议被**插入文档**，并在数秒内被自动保存写进磁盘（探针实测 `gate.md` 变成 `Hello world.PROBE`）。修复：接受建议属于写入，走同一道闸门；「禁止写入」或总开关关闭时**丢弃建议**并提示（`aiperm.acceptBlocked`），档位为「每次询问 / 直接写入」时不变（第二次 Tab 本身就是用户的明确同意，不该再问一遍）。
 - **`Esc` 无法丢弃建议（真机发现，功能性）**：代码里写着「Escape = 丢弃建议」，真机上却毫无作用——实测原生 Escape 在到达文档级监听器之前就已被编辑器自己的键位表 `preventDefault`（ProseMirror 的基础键位把 Escape 绑给了 `selectParentNode`），而这个监听器刻意忽略「已被处理的按键」，于是这条分支等于死代码：用户只能靠打字或接受来摆脱 ghost 文本。修复：Escape 改到**捕获阶段**处理，并且只在「确实有建议在屏幕上」时才接管（其余 Escape 含义一律不变）。真机验证：`311` 探针的原生 Escape 后 ghost 消失（修复前一直为 `true`）；`310` 的 A3 也从 FAIL 变 PASS。
@@ -285,6 +291,21 @@
 - **Retry 可能永久无效**：解析失败的结果也会被 memoize，若首次解析发生在 vault 授权之前，之后每次 Retry 都只是重放同一个失败。现在 Retry 会带 `refresh` 重新解析；当解析结果与原路径相同（无更优 URL）时才附加 `?retry=` 时间戳强制浏览器重新请求。
 - **Windows 下附件相对路径使用反斜杠**：`resolve_within_rel` 返回的是面向前端的 vault 相对路径（要拼进 Markdown 图片 URL、与文件树路径比较、编码进历史/回收站键），在 Windows 上却返回 `\`，导致插入的图片引用无法显示。现在该函数统一输出 `/`，同时修复了此前 3 个在该平台失败的附件测试。
 - 其他：切 vault 不关闭旧标签导致保存失败、同文件重复标签页、删除文件后残留标签自动保存复活文件、关闭脏标签静默丢失内容、自动保存关闭后残留定时器、未命名文档 Ctrl+S 无响应、应用自身写入触发伪冲突弹窗、引用库文件（.bib 等）在真实后端不可见
+
+## 验证与交付（第八批后续，2026-09-13）
+
+- 命令：`pnpm --filter @nekowite/desktop test`、`pnpm --filter @nekowite/desktop typecheck`、`pnpm --filter @nekowite/desktop exec eslint <changed files>`、`cargo test`（`apps/desktop/src-tauri`）、`cargo clippy`（`-D warnings`）、`bash scripts/package-win.sh`。
+- 测试门禁：desktop **1485**（129 个文件）、editor-core **648**、plugin-host **105**、Rust **68**（`fs_test`，Windows 上实际运行；其余 Rust 套件与 lib 单元测试全绿），`typecheck` / `lint` / `clippy -D warnings` 全绿。
+- 便携版已重新打包：`release/nekowite_0.1.0_x64.exe`（未签名；SHA-256 随后还会变，本轮不记录）。
+- 真机验收（CDP 驱动**打包版本体**，`apps/desktop/ai-lab/320-audit-and-plugins.cjs`，**13/13**，控制台零错误）：
+  1. A1 / A1b / A1c / A1d：AI 活动区块存在、AI 总开关在面板里可达、设置对话框能关闭、信息栏能打开；
+  2. A2 / A3：一次真实的被阻止请求成为一行（实测 `13:32:00 聊天 已阻止`）；
+  3. A4：清空后列表为空；
+  4. B1–B3：插件列表列出知识库里的插件、初始为启用、关掉后界面立即反映；
+  5. B4：选择被写进知识库的治理文件；
+  6. C1：重新加载窗口后它**仍然是关的**；
+  7. D1：再打开被接受。
+- 探针自身的两个坑（记在这里以免重踩）：① `process.exit(0)` 写在 `finally` 里会把异常吞掉——失败的一轮变成静默 exit 0，退出必须放在汇总之后；② 断言「治理文件里有插件 id」时没有先确认文件存在，而探针知识库的目录名里本来就含这个 id，于是**文件缺失时断言也会通过**——现在先判存在、再看内容。
 
 ## 验证与交付（第二十二轮，2026-09-13）
 
