@@ -93,12 +93,17 @@ where
 
 /// Reads one `REG_DWORD` out of a `reg.exe query` listing.
 ///
+/// Gated to its only real caller's platform (plus tests): on a non-Windows
+/// build nothing calls it, and an ungated helper turned `cargo clippy
+/// --all-targets -- -D warnings` into a hard failure.
+///
 /// `reg query <key> /v <name>` prints the key path on its own line and then a
 /// value line `    <name>    REG_DWORD    0x<hex>`; a missing key or value
 /// prints nothing on stdout (the message goes to stderr). Matching the FIRST
 /// token keeps the `HKEY_CURRENT_USER\...` echo from being mistaken for a value,
 /// and requiring the `0x` prefix means a number we cannot interpret (rather than
 /// a bare one we would have to guess the base of) yields `None`.
+#[cfg(any(windows, test))]
 fn parse_reg_dword(output: &str, name: &str) -> Option<u32> {
     output.lines().find_map(|line| {
         let mut tokens = line.split_whitespace();
