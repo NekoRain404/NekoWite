@@ -664,6 +664,9 @@ export const zh = {
     genericName: '插件',
     writeSummary: '插件「{name}」要往光标处插入内容',
     writeDenied: '插件「{name}」的写入被拒绝（可能是当前的 AI 写入权限设置为「禁止写入」）。',
+    aiEmptyPrompt: '插件调用 AI 时提示词为空。',
+    aiTimedOut: '插件调用 AI 超时（60 秒）。',
+    aiEmpty: '插件「{name}」的 AI 调用没有返回内容。',
     permissionSkipped: '插件「{name}」请求敏感权限但未获授权，已跳过加载。',
     permissionTitle: '插件权限请求',
     permissionBody:
