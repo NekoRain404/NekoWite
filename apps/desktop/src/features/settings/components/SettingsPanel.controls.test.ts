@@ -1,0 +1,175 @@
+/**
+ * Every control in the dialog writes through to the store it shows.
+ *
+ * The gap this closes: `typecheck`, `lint` and the other unit tests are all
+ * blind to a two-way binding that renders correctly but drops its write. The
+ * export section's model bindings were exactly that — `defineModel` left as a
+ * bare call registers the model name as a *props* binding, so the template
+ * compiled the change handler into `$props.frontmatter = value`. Vue refuses a
+ * props write in development and drops it in production, so the checkbox moved
+ * under the pointer and the store never changed. Nothing failed except the
+ * e2e console sweep, which caught the dev warning rather than the dead control.
+ *
+ * So each case here drives the real control and then reads the store — the
+ * assertion the warning is a proxy for — and the interactions are also required
+ * to be free of Vue warnings, so a binding that silently detaches again fails
+ * here rather than only in `e2e/console-clean.spec.ts`.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createApp, nextTick, type App as VueApp } from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
+import SettingsPanel from './SettingsPanel.vue'
+import { t } from '../../../i18n'
+import { useAiPermissionStore } from '../../../stores/aiPermission'
+import { useSettingsStore } from '../../../stores/settings'
+
+const invokeMock = vi.hoisted(() => vi.fn())
+vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
+
+const getVersionMock = vi.hoisted(() => vi.fn(async () => '9.9.9'))
+vi.mock('@tauri-apps/api/app', () => ({ getVersion: getVersionMock }))
+
+let mounted: VueApp[] = []
+let warnSpy: ReturnType<typeof vi.spyOn>
+
+beforeEach(() => {
+  invokeMock.mockReset()
+  invokeMock.mockResolvedValue(undefined)
+  localStorage.clear()
+  setActivePinia(createPinia())
+  globalThis.matchMedia = vi.fn(() => ({
+    matches: false,
+    media: '(prefers-color-scheme: dark)',
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  })) as never
+  document.body.innerHTML = ''
+  mounted = []
+  // Vue reports the refused write through `console.warn`, not through a
+  // component's `warnHandler` (the reactivity layer warns on its own), so the
+  // console is where a detached binding shows up.
+  warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+})
+
+afterEach(() => {
+  mounted.forEach((app) => app.unmount())
+  mounted = []
+  document.body.innerHTML = ''
+  warnSpy.mockRestore()
+})
+
+function mountPanel(): void {
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const app = createApp(SettingsPanel, { onClose: vi.fn(), onSaved: vi.fn() } as never)
+  app.mount(host)
+  mounted.push(app)
+}
+
+const SECTIONS = ['general', 'appearance', 'editor', 'export', 'ai', 'plugins'] as const
+type SectionId = (typeof SECTIONS)[number]
+
+/** The section rails are labelled, and the ids are the order they render in. */
+async function openSection(id: SectionId): Promise<void> {
+  mountPanel()
+  await nextTick()
+  const nav = Array.from(document.querySelectorAll<HTMLElement>('.nav-row'))
+  nav[SECTIONS.indexOf(id)]?.click()
+  await nextTick()
+  if (!document.querySelector('.settings-section')) {
+    throw new Error(`no section rendered for ${id}`)
+  }
+}
+
+/** The control inside the labelled field, e.g. the checkbox of "include frontmatter". */
+function fieldControl<T extends HTMLElement>(label: string, selector: string): T {
+  const field = Array.from(document.querySelectorAll<HTMLElement>('.settings-section label'))
+    .find((candidate) => candidate.textContent?.includes(label))
+  const control = field?.querySelector<T>(selector)
+  if (!control) throw new Error(`no ${selector} labelled "${label}"`)
+  return control
+}
+
+function toggle(control: HTMLInputElement): void {
+  control.click()
+}
+
+function choose(control: HTMLSelectElement, value: string): void {
+  control.value = value
+  control.dispatchEvent(new Event('change', { bubbles: true }))
+}
+
+function vueWarnings(): string[] {
+  return warnSpy.mock.calls
+    .map((args) => String(args[0]))
+    .filter((message) => message.includes('[Vue warn]'))
+}
+
+describe('SettingsPanel control bindings', () => {
+  it('writes the export section controls through to the settings store', async () => {
+    await openSection('export')
+    const settings = useSettingsStore()
+    expect(settings.exportIncludeFrontmatter).toBe(true)
+
+    toggle(fieldControl<HTMLInputElement>(t('settings.export.frontmatter'), 'input'))
+    await nextTick()
+    expect(settings.exportIncludeFrontmatter).toBe(false)
+
+    choose(fieldControl<HTMLSelectElement>(t('settings.export.pageSize'), 'select'), 'Letter')
+    choose(fieldControl<HTMLSelectElement>(t('settings.export.orientation'), 'select'), 'landscape')
+    await nextTick()
+    expect(settings.exportPdfPageSize).toBe('Letter')
+    expect(settings.exportPdfOrientation).toBe('landscape')
+
+    // The toggled checkbox has to show the new value on a second pass, which is
+    // what makes the store the single source rather than a side effect.
+    toggle(fieldControl<HTMLInputElement>(t('settings.export.frontmatter'), 'input'))
+    await nextTick()
+    expect(settings.exportIncludeFrontmatter).toBe(true)
+
+    expect(vueWarnings()).toEqual([])
+  })
+
+  it('writes the AI section controls through to the settings store', async () => {
+    await openSection('ai')
+    const settings = useSettingsStore()
+    expect(settings.allowPrivate).toBe(true)
+
+    toggle(fieldControl<HTMLInputElement>(t('aiSettings.allowPrivate'), 'input'))
+    await nextTick()
+    expect(settings.allowPrivate).toBe(false)
+
+    toggle(fieldControl<HTMLInputElement>(t('aiSettings.systemPrompt'), 'input'))
+    await nextTick()
+    expect(settings.systemPromptOn).toBe(true)
+
+    choose(fieldControl<HTMLSelectElement>(t('aiSettings.effort'), 'select'), 'high')
+    await nextTick()
+    expect(settings.reasoningEffort).toBe('high')
+
+    expect(vueWarnings()).toEqual([])
+  })
+
+  it('writes the AI permission controls through to the permission store', async () => {
+    await openSection('ai')
+    const permissions = useAiPermissionStore()
+    const enabledBefore = permissions.enabled
+
+    toggle(fieldControl<HTMLInputElement>(t('aiperm.enabled'), 'input'))
+    await nextTick()
+    expect(permissions.enabled).toBe(!enabledBefore)
+
+    const policy = fieldControl<HTMLSelectElement>(t('aiperm.policy'), 'select')
+    const other = Array.from(policy.options).find((o) => o.value !== policy.value)
+    expect(other).toBeTruthy()
+    choose(policy, other!.value)
+    await nextTick()
+    expect(permissions.policy).toBe(other!.value)
+
+    expect(vueWarnings()).toEqual([])
+  })
+})
