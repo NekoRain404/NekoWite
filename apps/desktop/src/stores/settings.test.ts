@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
 
 vi.hoisted(() => {
   const g = globalThis as { window?: { __TAURI_INTERNALS__?: unknown } }
@@ -12,6 +12,7 @@ const invokeMock = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 
 import { useSettingsStore } from './settings'
+import { DEFAULT_CONTEXT_CHARS } from './settings'
 
 function clearLs(): void {
   localStorage.removeItem('nekowite.ai.provider')
@@ -236,5 +237,31 @@ describe('useSettingsStore', () => {
     expect(s.exportIncludeFrontmatter).toBe(true)
     expect(s.exportPdfPageSize).toBe('A4')
     expect(s.exportPdfOrientation).toBe('portrait')
+  })
+})
+
+describe('chat context budget', () => {
+  it('defaults to a budget that fits a real section of a long note', () => {
+    // It used to be a hardcoded 2000 with no way to change it: on a long note
+    // the model saw the opening pages and answered confidently about the wrong
+    // part of the document, and the user had no lever to fix it.
+    setActivePinia(createPinia())
+    localStorage.clear()
+    const settings = useSettingsStore()
+    expect(settings.contextChars).toBe(DEFAULT_CONTEXT_CHARS)
+    expect(DEFAULT_CONTEXT_CHARS).toBeGreaterThan(2000)
+  })
+
+  it('persists a changed budget and reads it back', async () => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+    const first = useSettingsStore()
+    first.contextChars = 9000
+    // The store persists through a watcher, which Vue flushes on the next tick.
+    await nextTick()
+
+    setActivePinia(createPinia())
+    const second = useSettingsStore()
+    expect(second.contextChars).toBe(9000)
   })
 })

@@ -47,11 +47,21 @@ const LS_MAXHISTORY = 'nekowite.settings.maxHistory'
 const LS_EXPORT_FRONTMATTER = 'nekowite.settings.exportFrontmatter'
 const LS_EXPORT_PDF_PAGE = 'nekowite.settings.exportPageSize'
 const LS_EXPORT_PDF_ORIENT = 'nekowite.settings.exportOrientation'
+const LS_CONTEXT_CHARS = 'nekowite.ai.contextChars'
 
 function readLs(key: string, fallback: string): string {
   const v = persistence.get(key)
   return v && v.length > 0 ? v : fallback
 }
+
+/** Default budget for the chat rail's note context, in characters. Large enough
+ *  for a real section of a long note, small enough not to crowd out the
+ *  conversation on the small local models this app defaults to. */
+export const DEFAULT_CONTEXT_CHARS = 6000
+
+/** The bounds the settings UI enforces on {@link DEFAULT_CONTEXT_CHARS}. */
+export const CONTEXT_CHARS_MIN = 1000
+export const CONTEXT_CHARS_MAX = 32000
 
 function readNumber(key: string, fallback: number): number {
   const v = persistence.get(key)
@@ -101,6 +111,14 @@ export const useSettingsStore = defineStore('settings', () => {
   const apiKey = ref('')
   const autosaveInterval = ref<AutosaveInterval>(readAutosaveInterval(15000))
   const maxHistory = ref<number>(readNumber(LS_MAXHISTORY, 10))
+  // How much of the active note the chat rail may send as context, in
+  // characters. It used to be a hardcoded 2000 with no way to change it, which
+  // made the feature useless for the long documents people actually write:
+  // the model saw the first two pages of a fifty-page note and answered
+  // confidently about the wrong part of it. The WINDOW is split between the
+  // note's opening and its ending (see buildContextBlock), so this is the whole
+  // budget, not one half of it.
+  const contextChars = ref<number>(readNumber(LS_CONTEXT_CHARS, DEFAULT_CONTEXT_CHARS))
   const modelsCache = ref<string[]>([])
   // AI tuning knobs persist per-session like provider/model/baseUrl. The
   // system prompt is empty by default so existing installs see no behaviour
@@ -138,6 +156,7 @@ export const useSettingsStore = defineStore('settings', () => {
   watch(reasoningEffort, (v) => persistence.set(LS_REASONING_EFFORT, v))
   watch(autosaveInterval, (v) => persistence.set(LS_AUTOSAVE, String(v)))
   watch(maxHistory, (v) => persistence.set(LS_MAXHISTORY, String(v)))
+  watch(contextChars, (v) => persistence.set(LS_CONTEXT_CHARS, String(v)))
   watch(exportIncludeFrontmatter, (v) => persistence.set(LS_EXPORT_FRONTMATTER, String(v)))
   watch(exportPdfPageSize, (v) => persistence.set(LS_EXPORT_PDF_PAGE, v))
   watch(exportPdfOrientation, (v) => persistence.set(LS_EXPORT_PDF_ORIENT, v))
@@ -183,5 +202,5 @@ export const useSettingsStore = defineStore('settings', () => {
     modelsCache.value = []
   }
 
-  return { provider, model, baseUrl, apiKey, temperature, maxTokens, systemPrompt, systemPromptOn, allowPrivate, reasoningEffort, autosaveInterval, maxHistory, modelsCache, exportIncludeFrontmatter, exportPdfPageSize, exportPdfOrientation, saveKey, loadKey, config, listModels, clearModelsCache }
+  return { provider, model, baseUrl, apiKey, temperature, maxTokens, systemPrompt, systemPromptOn, allowPrivate, reasoningEffort, autosaveInterval, maxHistory, contextChars, modelsCache, exportIncludeFrontmatter, exportPdfPageSize, exportPdfOrientation, saveKey, loadKey, config, listModels, clearModelsCache }
 })

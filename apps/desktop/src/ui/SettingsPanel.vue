@@ -20,6 +20,11 @@ import { flushEdits } from '../services/editorOwnership'
 import { describeExportError, notifyError } from '../services/errors'
 import { isPathWithinVault } from '../services/attachments'
 import { useSettingsStore } from '../stores/settings'
+import {
+  CONTEXT_CHARS_MAX,
+  CONTEXT_CHARS_MIN,
+  DEFAULT_CONTEXT_CHARS,
+} from '../stores/settings'
 import { useAppearanceStore } from '../stores/appearance'
 import { ACCENTS, ACCENT_COLORS, COLOR_SCHEMES, COLOR_SCHEME_PREVIEW } from '../stores/appearance'
 import type { ColorScheme, ContentDirection, EditorFontId, MonoFontId, UiFontId } from '../stores/appearance'
@@ -946,6 +951,19 @@ async function onExportPdf(): Promise<void> {
                   </option>
                 </select>
                 <span class="settings-note">{{ t('aiSettings.effortHint') }}</span>
+              </label>
+              <label class="settings-field">
+                <span>{{ t('aiSettings.contextChars') }}</span>
+                <input
+                  class="input"
+                  :value="settings.contextChars"
+                  type="number"
+                  :min="CONTEXT_CHARS_MIN"
+                  :max="CONTEXT_CHARS_MAX"
+                  step="1000"
+                  @change="settings.contextChars = Math.min(CONTEXT_CHARS_MAX, Math.max(CONTEXT_CHARS_MIN, Math.round(Number(($event.target as HTMLInputElement).value) || DEFAULT_CONTEXT_CHARS)))"
+                >
+                <span class="settings-note">{{ t('aiSettings.contextCharsHint', { min: CONTEXT_CHARS_MIN, max: CONTEXT_CHARS_MAX }) }}</span>
               </label>
               <label class="settings-field">
                 <span>{{ t('aiperm.policy') }}</span>

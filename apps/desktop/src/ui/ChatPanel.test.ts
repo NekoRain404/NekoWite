@@ -188,6 +188,63 @@ describe('ChatPanel image attachments', () => {
   })
 })
 
+describe('ChatPanel context budget', () => {
+  // These cases actually SEND, so the mocked stream has to be awaitable: a mock
+  // that returns nothing surfaces as an unhandled rejection rather than a test
+  // failure (the same trap the draft case above documents).
+  const streamOk = () =>
+    vi.mocked(startChatCompletion).mockImplementation((_c, _p, _i, handlers) => {
+      handlers.onDone('ok')
+      return Promise.resolve({ cancel: vi.fn() } as never)
+    })
+
+  it('sends as much of the note as the user configured', async () => {
+    streamOk()
+    // The budget is a setting now, not a hardcoded 2000: it has to reach the
+    // context block the model actually receives.
+    localStorage.setItem('nekowite.chat.attachContext', '1')
+    localStorage.setItem('nekowite.ai.contextChars', '8000')
+    const long = 'HEAD ' + 'x'.repeat(4000) + ' TAIL'
+    readMock.mockResolvedValue(long)
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    await tabs.openTab('/vault/long.md')
+    const host = mountPanel()
+    await flush()
+
+    typePrompt(host, 'summarise this')
+    await flush()
+    sendButton(host).click()
+    await flush()
+
+    const call = vi.mocked(startChatCompletion).mock.calls.at(-1)
+    const prompt = String(call?.[1] ?? '')
+    // 4000+ characters of body fit inside an 8000 budget, so nothing is omitted.
+    expect(prompt).toContain('TAIL')
+    expect(prompt).not.toContain('省略')
+  })
+
+  it('marks what was left out when the note is longer than the budget', async () => {
+    streamOk()
+    localStorage.setItem('nekowite.chat.attachContext', '1')
+    localStorage.setItem('nekowite.ai.contextChars', '1000')
+    readMock.mockResolvedValue('HEAD ' + 'x'.repeat(5000) + ' TAIL')
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    await tabs.openTab('/vault/huge.md')
+    const host = mountPanel()
+    await flush()
+
+    typePrompt(host, 'summarise this')
+    await flush()
+    sendButton(host).click()
+    await flush()
+
+    const prompt = String(vi.mocked(startChatCompletion).mock.calls.at(-1)?.[1] ?? '')
+    expect(prompt).toContain('省略')
+  })
+})
+
 describe('ChatPanel composer drafts', () => {
   /** Drive the panel the way a user does - its own header buttons and the
    *  session selector - so the code under test is the code that runs. */

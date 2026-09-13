@@ -127,6 +127,10 @@ async function buildActiveContext(): Promise<string> {
     noteTitle: title,
     selection: activeSelection(),
     noteContent: tab.content,
+    // The user's budget, not a hardcoded one: on a long note the difference
+    // between 2000 and 6000 characters is the difference between the model
+    // seeing the note's title page and seeing the section being worked on.
+    maxChars: settings.contextChars,
   })
 }
 
