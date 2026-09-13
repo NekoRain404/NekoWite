@@ -2,10 +2,10 @@
 //! fsync-then-rename pipeline and the create-only / no-clobber publish
 //! operations.
 //!
-//! This is the leaf of the storage split (roadmap 10.4 step 1): it knows about
-//! paths and filesystems and nothing about vaults, history keys or attachment
-//! names, so every other storage module may depend on it and it depends on none
-//! of them.
+//! It knows about paths and filesystems and nothing about vaults, history keys
+//! or attachment names, so every other storage module may depend on it; its own
+//! one dependency is [`crate::storage::temp_files`], which owns the name and the
+//! shape of the temp sibling this module stages through.
 //!
 //! [`write_lock`] is the crate's ONLY write lock. Everything that must not
 //! interleave with a save holds it - the saves themselves, the create-only
@@ -19,17 +19,9 @@ use std::io;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::errors::fs_error;
-
-/// Nanosecond clock reading used to make temp file names unique.
-pub(crate) fn time_nonce() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default()
-}
+use crate::storage::temp_files::temp_sibling;
 
 /// Serializes the read-old -> snapshot -> atomic-write sequence for every
 /// `write_file`/`create_new_file` call in THIS PROCESS - across all vaults.
@@ -73,12 +65,6 @@ pub(crate) fn write_lock() -> &'static Mutex<()> {
     &WRITE_LOCK
 }
 
-/// How old a `.tmp` sibling must be before the next write in that directory
-/// treats it as crash litter and cleans it up. Fresh temp files written by a
-/// currently-running writer (unique nonce name, recent mtime) are never
-/// touched, so cleaning cannot race a live write.
-pub(crate) const STALE_TMP_MAX_AGE: Duration = Duration::from_secs(3600);
-
 /// Write `content` to `resolved` atomically: write a temp sibling
 /// (`.<name>.<nonce>.tmp`) in the same directory, fsync it, then rename over
 /// the target, and fsync the parent directory so the rename itself survives
@@ -100,7 +86,7 @@ pub fn atomic_write_bytes(resolved: &Path, bytes: &[u8]) -> Result<(), String> {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("file");
-    let tmp = parent.join(format!(".{name}.{}.tmp", time_nonce()));
+    let tmp = temp_sibling(parent, name);
     let result = (|| {
         let mut f = std::fs::OpenOptions::new()
             .write(true)
@@ -176,71 +162,6 @@ pub(crate) fn copy_new(from: &Path, to: &Path) -> io::Result<()> {
     copied
 }
 
-/// Whether `name` matches the temp-file shape this crate writes:
-/// `.<original name>.<nanosecond nonce>.tmp`.
-///
-/// The leading dot keeps these out of the file tree and the numeric nonce
-/// distinguishes them from a file a user or another tool named `*.tmp`. Both
-/// parts matter: the dot alone would still claim `.gitignore.tmp`-style names
-/// that are not ours, and the suffix alone (what this used to check) claimed
-/// every `.tmp` file in the vault.
-fn is_our_temp_file(name: &str) -> bool {
-    let Some(rest) = name.strip_prefix('.') else {
-        return false;
-    };
-    let Some(rest) = rest.strip_suffix(".tmp") else {
-        return false;
-    };
-    // `.<nonce>.tmp` (happens for a nameless source) or `.<name>.<nonce>.tmp`.
-    match rest.rsplit_once('.') {
-        Some((_, nonce)) => !nonce.is_empty() && nonce.bytes().all(|b| b.is_ascii_digit()),
-        None => !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()),
-    }
-}
-
-/// Remove `.tmp` siblings in `dir` whose modified time is older than
-/// `max_age`, returning how many were removed. These are crash remnants of
-/// [`atomic_write`]/[`crate::storage::metadata_store::snapshot_history`] (which
-/// write a `.<name>.<nonce>.tmp` sibling then rename it into place); on a crash
-/// the temp file survives. Cleaning is bounded to mtime so a temp file a live
-/// writer just created (fresh mtime, unique nonce name) is never deleted
-/// mid-write.
-pub fn cleanup_stale_tmp(dir: &Path, max_age: Duration) -> Result<usize, String> {
-    let now = SystemTime::now();
-    let rd = std::fs::read_dir(dir).map_err(|e| fs_error("read the folder", dir, e))?;
-    let mut removed = 0usize;
-    for entry in rd.flatten() {
-        let p = entry.path();
-        if p.is_dir() {
-            continue;
-        }
-        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        // Only OUR temp files: `atomic_write` and `snapshot_history` stage
-        // `.<original>.<nanosecond-nonce>.tmp` — hidden, with a numeric nonce as
-        // the final stem segment. Matching any `.tmp` suffix instead deleted
-        // whatever the user (or another program) happened to leave in the vault
-        // with that extension: a `draft.tmp` in a note's folder was removed by
-        // the next save in that folder, permanently — not to the trash, and with
-        // no history snapshot to recover from. Vaults routinely hold project
-        // files (that is why `node_modules`/`dist` are skipped), so this is a
-        // real document, not litter.
-        if !is_our_temp_file(name) {
-            continue;
-        }
-        let stale = p
-            .metadata()
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|mt| now.duration_since(mt).ok())
-            .map(|age| age > max_age)
-            .unwrap_or(false);
-        if stale && std::fs::remove_file(&p).is_ok() {
-            removed += 1;
-        }
-    }
-    Ok(removed)
-}
-
 /// Why a create-only write failed.
 pub(crate) enum CreateFileError {
     /// The destination name is taken. This is the ordinary outcome of a
@@ -275,7 +196,7 @@ pub(crate) fn create_new_bytes(resolved: &Path, bytes: &[u8]) -> Result<(), Crea
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("file");
-    let tmp = parent.join(format!(".{name}.{}.tmp", time_nonce()));
+    let tmp = temp_sibling(parent, name);
     let staged = (|| {
         let mut f = std::fs::OpenOptions::new()
             .write(true)
@@ -353,7 +274,7 @@ mod no_clobber_move_tests {
         let dir = std::env::temp_dir().join(format!(
             "nekowite-attach-{label}-{}-{}",
             std::process::id(),
-            time_nonce()
+            crate::storage::temp_files::unique_nonce()
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir

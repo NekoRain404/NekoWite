@@ -22,7 +22,8 @@ use std::path::Path;
 
 use crate::domain::path_policy::{resolve_within, resolve_within_rel};
 use crate::errors::fs_error;
-use crate::storage::atomic_write::{create_new_bytes, time_nonce, CreateFileError};
+use crate::storage::atomic_write::{create_new_bytes, CreateFileError};
+use crate::storage::temp_files::unique_nonce;
 
 /// Decode a standard-base64 attachment payload (frontend paste data).
 pub fn decode_base64(data: &str) -> Result<Vec<u8>, String> {
@@ -218,7 +219,7 @@ fn publish_attachment(dir_abs: &Path, preferred: &str, bytes: &[u8]) -> Result<S
     }
     // A nonce makes the name unique in practice; it is still claimed rather
     // than assumed free, so even this last resort cannot overwrite anything.
-    let candidate = format!("{stem}-overflow-{}.{ext}", time_nonce());
+    let candidate = format!("{stem}-overflow-{}.{ext}", unique_nonce());
     match claim(candidate)? {
         Some(name) => Ok(name),
         None => Err(format!(
@@ -306,7 +307,7 @@ mod create_only_write_tests {
         let dir = std::env::temp_dir().join(format!(
             "nekowite-attach-{label}-{}-{}",
             std::process::id(),
-            time_nonce()
+            unique_nonce()
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir

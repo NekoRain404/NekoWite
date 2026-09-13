@@ -21,7 +21,8 @@ use crate::domain::path_policy::{
     encode_rel_path, find_vault_metadata_dir, resolve_vault_metadata_dir, resolve_within_rel,
 };
 use crate::errors::fs_error;
-use crate::storage::atomic_write::{move_no_clobber, time_nonce, write_lock};
+use crate::storage::atomic_write::{move_no_clobber, write_lock};
+use crate::storage::temp_files::temp_sibling;
 use crate::storage::trash_store::move_trash_key;
 
 /// Rename (move) a file or directory within the vault. The target must not
@@ -85,7 +86,7 @@ pub fn rename_entry(vault_root: &str, from: &str, to: &str) -> Result<String, St
             .filter(|n| !n.is_empty())
             .unwrap_or("renamed");
         let target = parent.join(requested_name);
-        let temp = parent.join(format!(".{requested_name}.{}.tmp", time_nonce()));
+        let temp = temp_sibling(parent, requested_name);
         std::fs::rename(&resolved_from, &temp)
             .map_err(|e| fs_error("rename", &resolved_from, e))?;
         if let Err(e) = std::fs::rename(&temp, &target) {
