@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 
 const css = readFileSync(resolve(__dirname, './tokens.css'), 'utf8')
 
-const REQUIRED = ['--app-canvas', '--app-panel', '--app-elevated', '--app-border', '--app-text', '--app-muted', '--app-accent', '--app-accent-soft', '--app-accent-contrast', '--app-danger', '--app-danger-contrast', '--app-ease', '--app-radius', '--app-radius-md']
+const REQUIRED = ['--app-canvas', '--app-panel', '--app-elevated', '--app-border', '--app-text', '--app-muted', '--app-accent', '--app-accent-soft', '--app-accent-contrast', '--app-danger', '--app-danger-contrast', '--app-warn', '--app-ease', '--app-radius', '--app-radius-md']
 
 // 只取主 dark 块（[data-theme="dark"] 后紧跟 { 的那个），避免
 // [data-theme="dark"][data-accent="ink"] 等 accent 子块造成假阳性。
@@ -62,10 +62,15 @@ function toLinear(channel: number): number {
   return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
 }
 
-function luminance(color: string): number {
+/** #rgb / #rrggbb -> 0..255 三通道。 */
+function channels(color: string): [number, number, number] {
   const h = color.replace('#', '')
   const wide = h.length === 3 ? h.replace(/./g, (c) => c + c) : h
-  const [r, g, b] = [0, 2, 4].map((i) => toLinear(parseInt(wide.slice(i, i + 2), 16)))
+  return [0, 2, 4].map((i) => parseInt(wide.slice(i, i + 2), 16)) as [number, number, number]
+}
+
+function luminance(color: string): number {
+  const [r, g, b] = channels(color).map(toLinear)
   return 0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
@@ -74,6 +79,18 @@ function luminance(color: string): number {
 function contrast(a: string, b: string): number {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
   return (hi + 0.05) / (lo + 0.05)
+}
+
+/** sRGB -> HSL 色相角（0..360）。状态色的明度可以随主题走，语义只挂在色相上，
+   所以“这是警告不是错误”唯一能算的判据就是它离红有多远。 */
+function hue(color: string): number {
+  const [r, g, b] = channels(color).map((c) => c / 255)
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const d = max - min
+  if (d === 0) return 0
+  const raw = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4
+  return (raw * 60 + 360) % 360
 }
 
 /** AppShell 恒定的四个属性：theme 是生效后的 light/dark，color-scheme 恒有值，
@@ -189,6 +206,59 @@ describe('tokens.css', () => {
       .filter((r) => !defined.has(r.token))
       .map((r) => `${r.token} — ${r.file}`)
     expect(unresolved, 'tokens read with neither a definition nor a fallback').toEqual([])
+  })
+  it('keeps --app-warn a warning, not a second danger', () => {
+    // 警告和错误只差色相：danger 是红（~5°），warn 是琥珀（~36°）。钉色相而不是钉
+    // 某个 hex，是因为明度本来就该随主题走（深色底上的琥珀要提亮才看得见），而“这
+    // 不是错误”的语义只挂在色相上——把 warn 并成 danger 的别名，插件被禁的提示就
+    // 和真出错了看起来是同一件事，这正是这次要避免的清理。
+    for (const theme of ['light', 'dark'] as const) {
+      const s: Scenario = { theme, scheme: 'default', accent: 'ink', highContrast: false }
+      const warn = hue(resolveToken(s, '--app-warn'))
+      const danger = hue(resolveToken(s, '--app-danger'))
+      expect(warn, `${theme}: --app-warn sits in the amber band`).toBeGreaterThanOrEqual(25)
+      expect(warn, `${theme}: --app-warn sits in the amber band`).toBeLessThanOrEqual(60)
+      expect(
+        Math.abs(warn - danger),
+        `${theme}: --app-warn must stay distinguishable from --app-danger`,
+      ).toBeGreaterThan(15)
+    }
+  })
+  it('reads --app-warn without a hardcoded fallback', () => {
+    // 这条 token 曾经一个定义都没有：唯一读它的声明带着裸 hex 兜底，于是浏览器永远
+    // 渲染兜底值，主题、配色和高对比度对它的重指向全是死代码，而且不报错——兜底把
+    // “token 没定义”变成了静默降级。所以读它的地方不许再自带第二个值；同时它也得
+    // 真的还有人在读，否则这条断言会空转。
+    const reads: { file: string; fallback: boolean }[] = []
+    for (const file of styleSources(SRC_DIR)) {
+      const text = readFileSync(file, 'utf8')
+      for (const m of text.matchAll(/var\(\s*--app-warn\s*([,)])/g)) {
+        reads.push({ file: file.slice(SRC_DIR.length + 1), fallback: m[1] === ',' })
+      }
+    }
+    expect(reads.length, 'nothing reads --app-warn any more').toBeGreaterThan(0)
+    expect(
+      reads.filter((r) => r.fallback).map((r) => r.file),
+      'a fallback silently outranks every theme value',
+    ).toEqual([])
+  })
+  it('keeps --app-warn above the non-text contrast floor on every surface', () => {
+    // 它画的是“插件不可用”那条 2px 左边框，属于 WCAG 1.4.11 的非文本对比度：3:1 是
+    // 底线（正文的 4.5 不适用于边框）。四个主题场景都要过——warn 没有自己的高对比度
+    // 声明，高对比度下拿到的是 light/dark 的值，那也必须还看得见。
+    const SURFACES = ['--app-canvas', '--app-panel', '--app-elevated']
+    for (const theme of ['light', 'dark'] as const) {
+      for (const highContrast of [false, true]) {
+        const s: Scenario = { theme, scheme: 'default', accent: 'ink', highContrast }
+        const where = `${theme}${highContrast ? '/high-contrast' : ''}`
+        for (const surface of SURFACES) {
+          expect(
+            contrast(resolveToken(s, '--app-warn'), resolveToken(s, surface)),
+            `--app-warn on ${surface} (${where})`,
+          ).toBeGreaterThanOrEqual(3)
+        }
+      }
+    }
   })
   it('never fades --app-muted where it is text', () => {
     // --app-muted 已经把 AA 用满，再和透明混一次，合成出来的颜色就掉回 2.5:1
