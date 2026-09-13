@@ -662,6 +662,9 @@ export const en = {
     loadFailed: 'Plugin failed to load: {id} ({error})',
     loadingDisabled:
       'Vault plugins are disabled under the current security policy (CSP blocks in-window module loading). Expected until process/WebView isolation is implemented.',
+    genericName: 'a plugin',
+    writeSummary: 'Plugin “{name}” wants to insert content at the cursor',
+    writeDenied: 'The write from plugin “{name}” was refused (the AI write permission may be set to “never write”).',
     permissionSkipped: 'Plugin “{name}” requested sensitive permissions but was not approved; skipped.',
     permissionTitle: 'Plugin permission request',
     permissionBody:

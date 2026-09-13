@@ -659,6 +659,9 @@ export const zh = {
     loadFailed: '插件加载失败：{id}（{error}）',
     loadingDisabled:
       '当前安全策略下不会加载库内插件（CSP 阻止在窗口内加载模块）。在实现进程/WebView 隔离前，这是预期行为。',
+    genericName: '插件',
+    writeSummary: '插件「{name}」要往光标处插入内容',
+    writeDenied: '插件「{name}」的写入被拒绝（可能是当前的 AI 写入权限设置为「禁止写入」）。',
     permissionSkipped: '插件「{name}」请求敏感权限但未获授权，已跳过加载。',
     permissionTitle: '插件权限请求',
     permissionBody:
