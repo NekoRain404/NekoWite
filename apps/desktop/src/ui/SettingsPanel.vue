@@ -8,6 +8,7 @@ import {
   Sparkles,
   Type,
   X,
+  Puzzle,
 } from 'lucide-vue-next'
 import { useViewStore } from '../stores/view'
 import type { ViewMode } from '../stores/view'
@@ -17,6 +18,10 @@ import { exportHtml, exportToPdf } from '../services/export'
 import { exportBaseName } from '../services/exportName'
 import { fsService } from '../platform/gateways/fs'
 import { flushEdits } from '../services/editorOwnership'
+import { listVaultPlugins, setVaultPluginDisabled } from '../services/plugins'
+import type { VaultPluginSummary } from '../services/plugins'
+import type { AiWriteKind, AiWriteSource } from '../services/aiPermissions'
+import type { AiAuditOutcome } from '../services/aiAudit'
 import { describeExportError, notifyError } from '../services/errors'
 import { isPathWithinVault } from '../services/attachments'
 import { useSettingsStore } from '../stores/settings'
@@ -34,6 +39,7 @@ import { useFocusTrap } from '../composables/useFocusTrap'
 import { modalStack } from '../services/modalStack'
 import { isComposingKey } from '../services/keyGuard'
 import { useAiPermissionStore } from '../stores/aiPermission'
+import { useVaultSessionStore } from '../stores/vaultSession'
 import { AI_WRITE_POLICIES, describePolicy, type AiWritePolicy } from '../services/aiPermissions'
 import type { ExportRef } from '@nekowite/editor-core'
 
@@ -50,7 +56,7 @@ function colorSchemePreview(s: ColorScheme) {
   return COLOR_SCHEME_PREVIEW[s][mode]
 }
 
-type SectionId = 'general' | 'appearance' | 'editor' | 'export' | 'ai'
+type SectionId = 'general' | 'appearance' | 'editor' | 'export' | 'ai' | 'plugins'
 
 const SECTIONS = computed<Array<{ id: SectionId; label: string; icon: typeof Type }>>(() => [
   { id: 'general', label: t('settings.section.general'), icon: SlidersHorizontal },
@@ -58,10 +64,69 @@ const SECTIONS = computed<Array<{ id: SectionId; label: string; icon: typeof Typ
   { id: 'editor', label: t('settings.section.editor'), icon: Type },
   { id: 'export', label: t('settings.section.export'), icon: Download },
   { id: 'ai', label: t('settings.section.ai'), icon: Sparkles },
+  { id: 'plugins', label: t('settings.section.plugins'), icon: Puzzle },
 ])
 
 const aiPermission = useAiPermissionStore()
 const activeSection = ref<SectionId>('general')
+
+/** Literal i18n keys per audit field. A table, not concatenation: the i18n
+ *  parity test scans the source for real key literals, so a dynamically built
+ *  key is a key nobody checks. */
+const AUDIT_OUTCOME_KEYS: Record<AiAuditOutcome, string> = {
+  asked: 'aiperm.audit.outcome.asked',
+  allowed: 'aiperm.audit.outcome.allowed',
+  denied: 'aiperm.audit.outcome.denied',
+  blocked: 'aiperm.audit.outcome.blocked',
+  granted: 'aiperm.audit.outcome.granted',
+}
+const AUDIT_SOURCE_KEYS: Record<AiWriteSource, string> = {
+  ghost: 'aiperm.audit.source.ghost',
+  chat: 'aiperm.audit.source.chat',
+  edit: 'aiperm.audit.source.edit',
+  dialog: 'aiperm.audit.source.dialog',
+  plugin: 'aiperm.audit.source.plugin',
+}
+const AUDIT_KIND_KEYS: Record<AiWriteKind, string> = {
+  insert: 'aiperm.audit.kind.insert',
+  'replace-selection': 'aiperm.audit.kind.replace-selection',
+  'replace-document': 'aiperm.audit.kind.replace-document',
+}
+
+const vaultSession = useVaultSessionStore()
+const vaultPath = computed(() => (vaultSession.vault ?? '').trim())
+const pluginRows = ref<VaultPluginSummary[]>([])
+const pluginsLoading = ref(false)
+
+/** Read the plugins folder for the vault that is open right now. Only
+ *  manifests are read - nothing is imported - so opening the panel can never
+ *  run plugin code. */
+async function refreshPluginRows(): Promise<void> {
+  const vault = vaultPath.value
+  if (!vault) {
+    pluginRows.value = []
+    return
+  }
+  pluginsLoading.value = true
+  try {
+    pluginRows.value = await listVaultPlugins(vault)
+  } catch {
+    pluginRows.value = []
+  } finally {
+    pluginsLoading.value = false
+  }
+}
+
+/** Flip one plugin and re-read, so the row describes the app's actual state
+ *  rather than what the click assumed it would be. */
+async function togglePlugin(row: VaultPluginSummary, enabled: boolean): Promise<void> {
+  setVaultPluginDisabled(row.id, !enabled, { vault: vaultPath.value })
+  await refreshPluginRows()
+}
+
+watch(activeSection, (section) => {
+  if (section === 'plugins') void refreshPluginRows()
+})
 const dialogRef = ref<HTMLElement | null>(null)
 const panelActive = ref(true)
 // aria-modal has to mean something: without a trap, Tab walked out of the
@@ -103,6 +168,20 @@ const WRITE_POLICIES: { value: AiWritePolicy; labelKey: string }[] = AI_WRITE_PO
 )
 
 const modelLoading = ref(false)
+
+/** How many entries the panel shows. The log keeps more than this (see
+ *  services/aiAudit); the panel is a window onto it, not the whole file. */
+const AUDIT_ROWS = 8
+
+/** The newest entries first: the question this list answers is "what just
+ *  happened", so the most recent line has to be the one at the top. */
+const recentAiAudit = computed(() => [...aiPermission.auditLog].reverse().slice(0, AUDIT_ROWS))
+
+/** Wall-clock time only: these rows are all from today in practice, and a date
+ *  on every line would crowd out the part that matters. */
+function clockTime(at: number): string {
+  return new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
 const modelOptions = computed(() => {
   const list = settings.modelsCache
   const current = settings.model
@@ -797,6 +876,48 @@ async function onExportPdf(): Promise<void> {
             </section>
 
             <section
+              v-else-if="activeSection === 'plugins'"
+              class="settings-section"
+            >
+              <span class="settings-label">{{ t('settings.section.plugins') }}</span>
+              <span class="settings-note">{{ t('settings.plugins.hint') }}</span>
+              <span
+                v-if="pluginsLoading"
+                class="settings-note"
+              >{{ t('settings.plugins.loading') }}</span>
+              <span
+                v-else-if="!vaultPath"
+                class="settings-note"
+              >{{ t('settings.plugins.vaultMissing') }}</span>
+              <span
+                v-else-if="!pluginRows.length"
+                class="settings-note"
+              >{{ t('settings.plugins.empty') }}</span>
+              <div
+                v-for="row in pluginRows"
+                :key="row.id"
+                class="plugin-row"
+              >
+                <label class="settings-field settings-toggle plugin-row-toggle">
+                  <span>{{ row.name }} <span class="plugin-version">v{{ row.version }}</span></span>
+                  <input
+                    :checked="!row.disabled"
+                    type="checkbox"
+                    class="checkbox"
+                    @change="togglePlugin(row, ($event.target as HTMLInputElement).checked)"
+                  >
+                </label>
+                <span class="settings-note plugin-state">
+                  {{ row.disabled ? t('settings.plugins.disabledNote') : (row.active ? t('settings.plugins.activeNote') : t('settings.plugins.inactiveNote')) }}
+                </span>
+                <span
+                  v-if="row.unstable"
+                  class="settings-note plugin-state is-warn"
+                >{{ t('settings.plugins.unstableNote') }}</span>
+              </div>
+            </section>
+
+            <section
               v-else-if="activeSection === 'ai'"
               class="settings-section"
             >
@@ -983,6 +1104,48 @@ async function onExportPdf(): Promise<void> {
                 </select>
                 <span class="settings-note">{{ t('aiperm.policyHint') }}</span>
               </label>
+              <div class="settings-field settings-audit">
+                <span>{{ t('aiperm.audit.title') }}</span>
+                <span class="settings-note">{{ t('aiperm.audit.hint') }}</span>
+                <span
+                  v-if="recentAiAudit.length"
+                  class="settings-note"
+                >{{ t('aiperm.audit.counts', aiPermission.auditSummary) }}</span>
+                <ul
+                  v-if="recentAiAudit.length"
+                  class="ai-audit-list"
+                >
+                  <li
+                    v-for="entry in recentAiAudit"
+                    :key="entry.seq"
+                    class="ai-audit-row"
+                    :class="'is-' + entry.outcome"
+                  >
+                    <span class="ai-audit-time">{{ clockTime(entry.at) }}</span>
+                    <span class="ai-audit-source">{{ t(AUDIT_SOURCE_KEYS[entry.source]) }}</span>
+                    <span
+                      v-if="entry.kind"
+                      class="ai-audit-kind"
+                    >{{ t(AUDIT_KIND_KEYS[entry.kind]) }}</span>
+                    <span class="ai-audit-outcome">{{ t(AUDIT_OUTCOME_KEYS[entry.outcome]) }}</span>
+                    <span
+                      v-if="entry.detail"
+                      class="ai-audit-detail"
+                    >{{ entry.detail }}</span>
+                  </li>
+                </ul>
+                <span
+                  v-else
+                  class="settings-note"
+                >{{ t('aiperm.audit.empty') }}</span>
+                <button
+                  class="btn btn-secondary btn-sm"
+                  :disabled="!recentAiAudit.length"
+                  @click="aiPermission.forgetAudit()"
+                >
+                  {{ t('aiperm.audit.clear') }}
+                </button>
+              </div>
               <div class="settings-field">
                 <span>{{ t('aiperm.grants') }}</span>
                 <span class="settings-note">
@@ -1156,6 +1319,59 @@ async function onExportPdf(): Promise<void> {
 .settings-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--app-text); }
 .settings-field > span { color: var(--app-muted); font-size: 11px; }
 .settings-note { font-size: 11px; line-height: 1.5; color: var(--app-muted); }
+
+/* The AI activity list: one line per event, newest first. Outcomes are
+ * colour-coded rather than icon-coded, because the whole list is read at a
+ * glance to answer "did anything get through that I did not want?". */
+.ai-audit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 168px;
+  overflow-y: auto;
+}
+.ai-audit-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--app-muted);
+}
+.ai-audit-time {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+  flex: none;
+}
+.ai-audit-source {
+  flex: none;
+  color: var(--app-text);
+}
+.ai-audit-kind,
+.ai-audit-detail {
+  flex: none;
+  opacity: 0.8;
+}
+.ai-audit-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-audit-outcome {
+  flex: none;
+  margin-left: auto;
+}
+.ai-audit-row.is-allowed .ai-audit-outcome {
+  color: var(--app-accent);
+}
+.ai-audit-row.is-denied .ai-audit-outcome,
+.ai-audit-row.is-blocked .ai-audit-outcome {
+  color: var(--app-danger, #c0392b);
+}
 .settings-save { align-self: flex-start; }
 .vault-row { display: flex; gap: 6px; }
 .vault-row .input { flex: 1; min-width: 0; }

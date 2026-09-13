@@ -7,6 +7,7 @@ import { useSettingsStore } from '../stores/settings'
 import type { AIConfig } from '../stores/settings'
 import { useAiPermissionStore } from '../stores/aiPermission'
 import { decideAiWrite, isAiEnabled, type AiPermissionState } from './aiPermissions'
+import { recordAiAudit } from './aiAudit'
 import { t } from '../i18n'
 
 interface PrefixView {
@@ -157,10 +158,22 @@ async function triggerSuggestion(
   // call this (see GhostWriter.vue), and the service refuses on its own so a
   // caller that goes around the UI cannot turn "AI off" into a request.
   if (aiDisabled()) {
+    recordAiAudit({
+      source: 'ghost',
+      outcome: 'blocked',
+      kind: 'insert',
+      reason: 'AI features are switched off',
+    })
     announceBlock('disabled')
     return
   }
   if (aiWritesForbidden()) {
+    recordAiAudit({
+      source: 'ghost',
+      outcome: 'blocked',
+      kind: 'insert',
+      reason: 'the write permission forbids this',
+    })
     announceBlock('readonly')
     return
   }
@@ -283,6 +296,15 @@ function accept(): void {
   // suggestion fetched before the switch was turned off could still be accepted
   // (and autosaved) afterwards. The text is discarded instead.
   if (aiDisabled() || aiWritesForbidden()) {
+    // The discarded suggestion is a write that did NOT happen, which is exactly
+    // the kind of thing the user should be able to find later: the autosave
+    // used to put it on disk.
+    recordAiAudit({
+      source: 'ghost',
+      outcome: 'blocked',
+      kind: 'insert',
+      reason: 'the suggestion was discarded, not inserted',
+    })
     announceBlock('accept-blocked', 'aiperm.acceptBlocked')
     editor?.rejectSuggestion()
     cancelStream()
@@ -330,6 +352,11 @@ export function startChatCompletion(
   // caller is told through its own error handler: a silent no-op would look
   // like a model that never answers.
   if (aiDisabled()) {
+    recordAiAudit({
+      source: 'chat',
+      outcome: 'blocked',
+      reason: 'AI features are switched off',
+    })
     handlers.onError(t('aiperm.blockedDisabled'))
     return Promise.resolve({ cancel: () => undefined })
   }

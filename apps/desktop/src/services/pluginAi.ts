@@ -16,6 +16,8 @@
 
 import { startChatCompletion } from './ai'
 import { useSettingsStore } from '../stores/settings'
+import { useAiPermissionStore } from '../stores/aiPermission'
+import { recordAiAudit } from './aiAudit'
 import { t } from '../i18n'
 
 /** How long one plugin completion may take before it is abandoned. The chat
@@ -33,6 +35,21 @@ const PLUGIN_AI_TIMEOUT_MS = 60_000
 export function completeForPlugin(pluginId: string, prompt: string): Promise<string> {
   const text = prompt.trim()
   if (!text) return Promise.reject(new Error(t('plugin.aiEmptyPrompt')))
+
+  // A plugin spending the user's key is the least visible AI call in the app
+  // (no panel, no Stop button), so every one of them is recorded - including
+  // the refusals, which the master switch answers here.
+  const permissions = useAiPermissionStore()
+  if (!permissions.enabled) {
+    recordAiAudit({
+      source: 'plugin',
+      outcome: 'blocked',
+      detail: pluginId,
+      reason: 'AI features are switched off',
+    })
+    return Promise.reject(new Error(t('plugin.aiDisabled')))
+  }
+  recordAiAudit({ source: 'plugin', outcome: 'asked', detail: pluginId })
 
   const config = useSettingsStore().config()
   return new Promise<string>((resolve, reject) => {
