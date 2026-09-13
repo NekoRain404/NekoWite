@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { openNote, showRendered } from './support/editorHarness'
+import { repoFsUrl } from './support/repoFs'
 
 /**
  * Heading deep links, end to end.
@@ -13,10 +14,11 @@ import { openNote, showRendered } from './support/editorHarness'
 
 /** The link text every heading anchor copies, in document order. */
 async function copyAllAnchors(page: Page): Promise<string[]> {
-  return page.evaluate(async () => {
+  const clipboardModule = repoFsUrl('packages', 'editor-core', 'src', 'clipboard.ts')
+  return page.evaluate(async (moduleUrl) => {
     const out: string[] = []
     const mod = (await import(
-      '/@fs/C:/Users/Lenovo/Documents/ChatGPT/NekoWrite/packages/editor-core/src/clipboard.ts'
+      moduleUrl
     )) as unknown as { configureClipboardWriter(fn: ((t: string) => Promise<void>) | null): void }
     mod.configureClipboardWriter(async (text: string) => {
       out.push(text)
@@ -29,20 +31,21 @@ async function copyAllAnchors(page: Page): Promise<string[]> {
     }
     mod.configureClipboardWriter(null)
     return out
-  })
+  }, clipboardModule)
 }
 
 /** Render the active document through the export renderer. */
 function exportHtml(page: Page): Promise<string> {
-  return page.evaluate(async () => {
+  const exportModule = repoFsUrl('packages', 'editor-core', 'src', 'export', 'html.ts')
+  return page.evaluate(async (moduleUrl) => {
     const core = (await import(
-      '/@fs/C:/Users/Lenovo/Documents/ChatGPT/NekoWrite/packages/editor-core/src/export/html.ts'
+      moduleUrl
     )) as unknown as { renderDocument(md: string): string }
     const store = (await import('/src/stores/tabs.ts')) as unknown as {
       useTabsStore(): { activeTab: { content: string } | null }
     }
     return core.renderDocument(store.useTabsStore().activeTab?.content ?? '')
-  })
+  }, exportModule)
 }
 
 const fragmentOf = (link: string): string => link.slice(link.lastIndexOf('#') + 1)

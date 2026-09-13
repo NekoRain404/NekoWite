@@ -25,7 +25,11 @@ coverage/
 # local ephemeral files
 *.local
 
-# real-device probe harness + the throwaway vaults its runs create
+# Real-device probe harness + the throwaway vaults its runs create.
+#
+# DO NOT ADD THIS DIRECTORY TO THE REPOSITORY. The live-AI probes carry a real
+# API key for the endpoint they exercise, so committing it would publish a
+# working credential. Keep the ignore rule and keep the key out of git.
 apps/desktop/ai-lab/
 /probe-*/
 .DS_Store
@@ -34,6 +38,11 @@ Thumbs.db
 # local release build artifact
 /nekowite-bin
 /release/
+
+# Local package-manager config. A registry mirror is a developer's own
+# network choice, not a project decision: committing one forces every
+# contributor and CI through a third-party mirror outside their control.
+.npmrc
 
 # editor / OS
 .idea/
