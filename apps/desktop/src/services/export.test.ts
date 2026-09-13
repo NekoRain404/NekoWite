@@ -3,9 +3,14 @@ import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { exportHtml, exportToPdf, buildComponentRenderers } from './export'
 import { useSettingsStore } from '../stores/settings'
+import { useTabsStore } from '../stores/tabs'
 
 const writeMock = vi.hoisted(() => vi.fn())
-vi.mock('../platform/gateways/fs', () => ({ fsService: { write: writeMock } }))
+const readMock = vi.hoisted(() => vi.fn())
+const resolveMediaMock = vi.hoisted(() => vi.fn())
+vi.mock('../platform/gateways/fs', () => ({
+  fsService: { write: writeMock, read: readMock, resolveMediaPath: resolveMediaMock },
+}))
 
 describe('buildComponentRenderers', () => {
   it('renders Callout to aside', () => {
@@ -31,6 +36,51 @@ describe('exportHtml', () => {
     writeMock.mockResolvedValue(undefined)
     await exportHtml('# T\n', 'vault', 'out.html', { title: 'Doc' })
     expect(writeMock).toHaveBeenCalledWith('vault', 'out.html', expect.stringContaining('<!DOCTYPE html>'))
+  })
+})
+
+describe('exportHtml attachment context', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    writeMock.mockReset()
+    readMock.mockReset()
+    readMock.mockResolvedValue('# alpha')
+    resolveMediaMock.mockReset()
+    // The app's resolver turns a vault-relative path into a URL; returning the
+    // relative path itself makes the CONTEXT it was resolved from readable in
+    // the assertion (its own rules are covered in attachments.test.ts).
+    resolveMediaMock.mockImplementation(async (_vault: string, rel: string) => `data:image/png;base64,${rel}`)
+    writeMock.mockResolvedValue(undefined)
+  })
+
+  it('resolves attachments relative to notePath, not to the active tab', async () => {
+    // The note card exports a note that is usually NOT the one on screen.
+    // Resolving `![](x.png)` against the active tab would point the exported
+    // file at another note's folder — or at nothing at all.
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    await tabs.openTab('/vault/notes/alpha.md')
+    expect(tabs.activeTab?.path).toBe('/vault/notes/alpha.md')
+
+    await exportHtml('![pic](x.png)\n', '/vault', 'out.html', {
+      title: 'Delta',
+      notePath: '/vault/deep/delta.md',
+    })
+
+    expect(resolveMediaMock).toHaveBeenCalledWith('/vault', 'deep/x.png')
+    expect(writeMock.mock.calls[0][2]).toContain('data:image/png;base64,deep/x.png')
+  })
+
+  it('falls back to the active tab when the export names no note', async () => {
+    // The settings dialog's export has no target of its own; it must keep
+    // meaning the open note.
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    await tabs.openTab('/vault/notes/alpha.md')
+
+    await exportHtml('![pic](x.png)\n', '/vault', 'out.html', { title: 'Alpha' })
+
+    expect(resolveMediaMock).toHaveBeenCalledWith('/vault', 'notes/x.png')
   })
 })
 

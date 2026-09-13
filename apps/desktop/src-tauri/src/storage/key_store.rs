@@ -152,10 +152,27 @@ pub fn decode_keyfile(bytes: &[u8]) -> Result<VaultKeyState, String> {
     // not a guess — and rejecting it (what the length check below did) locked a
     // perfectly good vault out of its own key with "invalid length 32".
     // `read_vault_key_state` rewrites such a file in the current format.
+    //
+    // The length alone is NOT enough to call it legacy. A *versioned* file cut
+    // short to 32 bytes — `[01, 01, salt[0..30]]`, what a truncated restore or
+    // an interrupted copy leaves — has the same length, and 32 bytes are also
+    // what the upgrade path writes back. Accepting one would therefore destroy
+    // the salt and verifier it still held and rewrite the file over them,
+    // leaving the snapshot permanently undecryptable (`reencrypt_vault` deletes
+    // `master.key.old`, so the load-time fallback cannot help either). Rejecting
+    // it keeps the old, recoverable behaviour: a clear error and the file left
+    // untouched for the user to restore.
+    //
+    // A genuine legacy key is random, so it carries a valid version+mode prefix
+    // about once in 65536 — the discriminator costs essentially nothing.
     if bytes.len() == LEGACY_KEYFILE_LEN {
-        let mut key = [0u8; 32];
-        key.copy_from_slice(bytes);
-        return Ok(VaultKeyState::Auto(key));
+        let truncated_header =
+            bytes[0] == KEYFILE_VERSION && matches!(bytes[1], MODE_PASSWORDLESS | MODE_PASSWORD);
+        if !truncated_header {
+            let mut key = [0u8; 32];
+            key.copy_from_slice(bytes);
+            return Ok(VaultKeyState::Auto(key));
+        }
     }
     let invalid = || {
         format!(

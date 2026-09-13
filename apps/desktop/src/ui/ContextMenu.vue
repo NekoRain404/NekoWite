@@ -30,6 +30,17 @@ const menuRef = ref<HTMLElement | null>(null)
 const pos = ref({ left: props.x, top: props.y })
 const shown = ref(false)
 
+/**
+ * Whatever had focus when the menu opened, so closing it can give focus back.
+ *
+ * Opening moves focus into the first item (that is what makes the arrow keys
+ * and Enter work without a mouse). Without a restore, closing the menu —
+ * Escape, a click outside, or picking an item — leaves focus on the item being
+ * destroyed, and the browser drops it to `<body>`: the keyboard user's place in
+ * the list is gone and the next Tab starts from the top of the app.
+ */
+let restoreFocusTo: HTMLElement | null = null
+
 function menuItems(): HTMLButtonElement[] {
   const el = menuRef.value
   if (!el) return []
@@ -106,6 +117,10 @@ watch(
 )
 
 onMounted(() => {
+  // Captured BEFORE `place()` focuses the first item, and synchronously: the
+  // element under the pointer is still the user's place in the list.
+  const active = document.activeElement
+  restoreFocusTo = active instanceof HTMLElement ? active : null
   document.addEventListener('pointerdown', onPointerDown, true)
   document.addEventListener('keydown', onGlobalKeydown)
   window.addEventListener('resize', onViewportChange)
@@ -118,6 +133,15 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', onGlobalKeydown)
   window.removeEventListener('resize', onViewportChange)
   window.removeEventListener('scroll', onViewportChange, true)
+  const target = restoreFocusTo
+  restoreFocusTo = null
+  // Only when the menu still holds focus. Picking "rename" or "delete" moves
+  // focus out of it (an inline input, a dialog) before the menu is torn down,
+  // and restoring unconditionally would pull focus straight back out of the
+  // field the user is now typing in. A closed element cannot take focus back.
+  if (!target || !target.isConnected) return
+  if (!menuRef.value?.contains(document.activeElement)) return
+  target.focus()
 })
 </script>
 

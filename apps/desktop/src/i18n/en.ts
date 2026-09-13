@@ -695,8 +695,11 @@ export const en = {
     delLabel: 'Removed',
   },
   notecard: {
+    open: 'Open',
     favorite: 'Favorite',
     unfavorite: 'Unfavorite',
+    exportHtml: 'Export HTML',
+    exportPdf: 'Export PDF',
     noSummary: 'No summary',
   },
   toast: {
