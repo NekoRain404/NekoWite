@@ -4,6 +4,8 @@ import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import App from './App.vue'
 import { useAppearanceStore } from './stores/appearance'
 import { fsService } from './platform/gateways/fs'
+import { onNotify } from './services/errors'
+import { t } from './i18n'
 
 const invokeMock = vi.hoisted(() => vi.fn())
 
@@ -294,7 +296,7 @@ describe('App trash restore wiring', () => {
 
     // Opening the trash group refreshes it from the gateway.
     const trashHeader = [...document.querySelectorAll('.group-header')].find(
-      (h) => h.textContent?.includes('回收站'),
+      (h) => h.textContent?.includes(t('nav.trash')),
     )
     expect(trashHeader).toBeDefined()
     ;(trashHeader as HTMLButtonElement).click()
@@ -310,6 +312,98 @@ describe('App trash restore wiring', () => {
     )
     await vi.waitFor(() =>
       expect(listTrashSpy.mock.calls.length).toBeGreaterThanOrEqual(2),
+    )
+  })
+
+  it('says the trash is unreadable instead of claiming it is empty', async () => {
+    const listTrashSpy = vi
+      .spyOn(fsService, 'listTrash')
+      .mockRejectedValue(new Error('could not read the trash folder: permission denied (os error 5)'))
+    await mountAppWithVault()
+
+    const trashHeader = [...document.querySelectorAll('.group-header')].find((h) =>
+      h.textContent?.includes(t('nav.trash')),
+    )
+    expect(trashHeader).toBeDefined()
+    ;(trashHeader as HTMLButtonElement).click()
+    await vi.waitFor(() => expect(listTrashSpy).toHaveBeenCalled())
+
+    // 'Empty' says the deleted notes are gone; the read failed, so the panel
+    // has to say THAT instead of the reassuring sentence.
+    const body = document.querySelector('.group-body')?.textContent ?? ''
+    expect(body).not.toContain(t('nav.trashEmpty'))
+    expect(body).toContain(t('nav.trashUnreadable'))
+  })
+
+  it('reports a partial empty honestly: how many went and which stayed', async () => {
+    const entry = {
+      name: 'a.md',
+      display_name: 'a.md',
+      trash_path: 'a.md',
+      original_path: 'a.md',
+      is_dir: false,
+    }
+    const stuck = {
+      name: 'b.md',
+      display_name: 'b.md',
+      trash_path: 'b.md',
+      original_path: 'b.md',
+      is_dir: false,
+    }
+    vi.spyOn(fsService, 'listTrash').mockResolvedValue([entry, stuck])
+    vi.spyOn(fsService, 'clearTrash').mockResolvedValue({
+      removed: 1,
+      failed: [
+        { name: 'b.md', error: 'could not delete b.md: another program is using it (os error 32)' },
+      ],
+    })
+    await mountAppWithVault()
+
+    const notified: string[] = []
+    const off = onNotify((msg) => notified.push(msg))
+    const trashHeader = [...document.querySelectorAll('.group-header')].find((h) =>
+      h.textContent?.includes(t('nav.trash')),
+    )
+    ;(trashHeader as HTMLButtonElement).click()
+    await vi.waitFor(() => expect(document.querySelector('.trash-clear')).not.toBeNull())
+
+    // Two-step clear: arm, then confirm.
+    ;(document.querySelector('.trash-clear') as HTMLButtonElement).click()
+    ;(document.querySelector('.trash-clear') as HTMLButtonElement).click()
+    await vi.waitFor(() => expect(notified.length).toBeGreaterThan(0))
+    off()
+
+    // The report names what is still there - the generic 'failed' message
+    // would hide the removal that DID happen and the entry still to retry.
+    expect(notified.some((m) => m.includes('b.md'))).toBe(true)
+    expect(notified.some((m) => m.includes(t('trash.cleared', { n: 1 })))).toBe(true)
+    expect(notified).not.toContain(t('trash.clearFailed'))
+  })
+
+  it('announces how many entries were emptied when nothing is stuck', async () => {
+    const entry = {
+      name: 'a.md',
+      display_name: 'a.md',
+      trash_path: 'a.md',
+      original_path: 'a.md',
+      is_dir: false,
+    }
+    vi.spyOn(fsService, 'listTrash').mockResolvedValue([entry])
+    vi.spyOn(fsService, 'clearTrash').mockResolvedValue({ removed: 1, failed: [] })
+    await mountAppWithVault()
+
+    const trashHeader = [...document.querySelectorAll('.group-header')].find((h) =>
+      h.textContent?.includes(t('nav.trash')),
+    )
+    ;(trashHeader as HTMLButtonElement).click()
+    await vi.waitFor(() => expect(document.querySelector('.trash-clear')).not.toBeNull())
+    ;(document.querySelector('.trash-clear') as HTMLButtonElement).click()
+    ;(document.querySelector('.trash-clear') as HTMLButtonElement).click()
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('.nw-aria-live')?.textContent).toContain(
+        t('trash.cleared', { n: 1 }),
+      ),
     )
   })
 })

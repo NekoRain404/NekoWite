@@ -4,6 +4,7 @@ import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import HistoryPanel from './HistoryPanel.vue'
 import { useTabsStore } from '../stores/tabs'
 import { onNotify } from '../services/errors'
+import { t } from '../i18n'
 
 const readMock = vi.hoisted(() => vi.fn())
 const statMock = vi.hoisted(() => vi.fn())
@@ -256,6 +257,22 @@ describe('HistoryPanel', () => {
 
     expect(host.querySelector('.diff-view')).toBeNull()
     expect(notified).toContain('无法读取历史版本内容')
+  })
+
+  it('does not claim there is no history when reading it failed', async () => {
+    // 'No history yet' under an error toast tells the user their versions
+    // are gone; the truth is that they could not be read.
+    listHistoryMock.mockRejectedValue(
+      new Error('could not read the history of a.md: permission denied (os error 5)'),
+    )
+    await openDoc()
+    const host = mountPanel()
+    await flush()
+
+    expect(host.querySelectorAll('.history-item')).toHaveLength(0)
+    const hint = host.querySelector('.rail-empty')?.textContent ?? ''
+    expect(hint).toContain(t('history.unreadable'))
+    expect(hint).not.toContain(t('history.empty'))
   })
 })
 
