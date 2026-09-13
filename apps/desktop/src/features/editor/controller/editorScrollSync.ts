@@ -6,7 +6,6 @@ import {
   countDocumentLines,
   lineRatio,
 } from '../../../services/scrollSyncAnchors'
-import { SPLIT_SCROLL_SETTLE_PX } from '../../../services/splitScrollCoordinator'
 
 export interface EditorScrollSyncDeps {
   getScrollEl: () => HTMLElement | null
@@ -62,7 +61,10 @@ export function createEditorScrollSync(deps: EditorScrollSyncDeps): EditorScroll
     if (!el) return false
     const written = programWrite
     programWrite = null
-    if (written && Math.abs(el.scrollTop - written.top) < SPLIT_SCROLL_SETTLE_PX) return false
+    // The record holds the engine's own value, so its echo matches exactly.
+    // Anything else is a scroll the user made, however close it lands: a
+    // tolerance here is what swallows a fractional scroll next to a write.
+    if (written && el.scrollTop === written.top) return false
     view.syncScroll('rendered', el.scrollTop)
     return true
   }
@@ -75,8 +77,15 @@ export function createEditorScrollSync(deps: EditorScrollSyncDeps): EditorScroll
     const el = deps.getScrollEl()
     if (!el) return
     const clamped = Number.isFinite(top) ? Math.max(0, Math.min(top, scrollRange())) : 0
-    programWrite = { token, top: clamped }
     el.scrollTop = clamped
+    // Record what the engine ACCEPTED, not what was asked for. An engine snaps
+    // a scroll offset to its own quantum (and clamps it to the range), so the
+    // requested value can sit up to half a pixel from the one the write's scroll
+    // event will report — a whole pixel on an engine that truncates instead of
+    // rounding, where the tolerance this used to need would have missed most
+    // frames of an ease. Reading the offset back closes the gap, which is what
+    // lets `onScroll` compare exactly below.
+    programWrite = { token, top: el.scrollTop }
   }
 
   function getHeadingEls(): HTMLElement[] {
