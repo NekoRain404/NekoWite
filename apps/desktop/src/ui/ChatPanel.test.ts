@@ -8,6 +8,8 @@ import { t } from '../i18n'
 import { aiService, startChatCompletion, type ChatStreamHandlers } from '../services/ai'
 import { CHAT_SESSIONS_KEY, useChatSessionStore } from '../stores/chatSession'
 import { useTabsStore } from '../stores/tabs'
+import { useSettingsStore } from '../stores/settings'
+import { persistence } from '../services/persistence'
 
 // The panel only needs the stream entry points here; the real module would
 // reach for gateways and an editor session this test does not exercise.
@@ -112,6 +114,28 @@ afterEach(() => {
   mounted.forEach(({ app }) => app.unmount())
   mounted = []
   document.body.innerHTML = ''
+})
+
+describe('the quick thinking-depth control', () => {
+  it('shows the stored depth and writes a change straight through', async () => {
+    // Thinking depth used to be reachable only from the settings dialog, which
+    // is the wrong place for it: the moment a user wants less thinking is the
+    // moment a reasoning model is silently taking seconds to answer.
+    const settings = useSettingsStore()
+    settings.reasoningEffort = 'high'
+    const host = mountPanel()
+    const select = host.querySelector<HTMLSelectElement>('.chat-effort select')
+    expect(select).toBeTruthy()
+    expect(select!.value).toBe('high')
+
+    select!.value = 'none'
+    select!.dispatchEvent(new Event('change'))
+    expect(settings.reasoningEffort).toBe('none')
+    // Persisted, so the choice survives a restart like the settings panel's.
+    // The store writes through a watcher, hence the tick.
+    await flush()
+    expect(persistence.get('nekowite.ai.reasoningEffort')).toBe('none')
+  })
 })
 
 describe('ChatPanel image attachments', () => {

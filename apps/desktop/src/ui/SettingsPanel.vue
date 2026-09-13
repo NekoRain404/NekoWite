@@ -24,6 +24,7 @@ import {
   CONTEXT_CHARS_MAX,
   CONTEXT_CHARS_MIN,
   DEFAULT_CONTEXT_CHARS,
+  EFFORT_OPTIONS,
 } from '../stores/settings'
 import { useAppearanceStore } from '../stores/appearance'
 import { ACCENTS, ACCENT_COLORS, COLOR_SCHEMES, COLOR_SCHEME_PREVIEW } from '../stores/appearance'
@@ -100,16 +101,6 @@ const AI_PROVIDERS = ['openai', 'anthropic', 'gemini', 'grok', 'deepseek', 'loca
 const WRITE_POLICIES: { value: AiWritePolicy; labelKey: string }[] = AI_WRITE_POLICIES.map(
   (value) => ({ value, labelKey: describePolicy(value) }),
 )
-
-const EFFORT_OPTIONS: { value: string; labelKey: string }[] = [
-  { value: '', labelKey: 'aiSettings.effortDefault' },
-  { value: 'none', labelKey: 'aiSettings.effortNone' },
-  { value: 'minimal', labelKey: 'aiSettings.effortMinimal' },
-  { value: 'low', labelKey: 'aiSettings.effortLow' },
-  { value: 'medium', labelKey: 'aiSettings.effortMedium' },
-  { value: 'high', labelKey: 'aiSettings.effortHigh' },
-  { value: 'xhigh', labelKey: 'aiSettings.effortXhigh' },
-]
 
 const modelLoading = ref(false)
 const modelOptions = computed(() => {

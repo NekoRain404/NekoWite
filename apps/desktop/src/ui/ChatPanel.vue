@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-vue-next'
 import { startChatCompletion, aiService } from '../services/ai'
+import { EFFORT_OPTIONS } from '../stores/settings'
 import { notifyError } from '../services/errors'
 import { editorSessionManager } from '../features/editor/sessionManager'
 import { insertMarkdownAtCursor } from '../services/editorInsert'
@@ -823,6 +824,22 @@ onBeforeUnmount(() => {
       </div>
       <div class="chat-model">
         <span>{{ modelName }}</span>
+        <label class="chat-effort">
+          <span class="chat-effort-label">{{ t('aiSettings.effort') }}</span>
+          <select
+            :value="settings.reasoningEffort"
+            :title="t('aiSettings.effortHint')"
+            @change="settings.reasoningEffort = ($event.target as HTMLSelectElement).value as typeof settings.reasoningEffort"
+          >
+            <option
+              v-for="opt in EFFORT_OPTIONS"
+              :key="opt.value"
+              :value="opt.value"
+            >
+              {{ t(opt.labelKey) }}
+            </option>
+          </select>
+        </label>
         <span class="chat-hint">{{ t('chat.hint') }}</span>
       </div>
     </div>
@@ -1223,5 +1240,32 @@ onBeforeUnmount(() => {
 }
 .chat-hint {
   font-variant-numeric: tabular-nums;
+}
+/* Thinking depth sits next to the model name because that is where the user
+ * notices the wait: a reasoning model stays silent for seconds before the first
+ * word, and the fix ("ask for less thinking") should not require a trip to the
+ * settings dialog mid-conversation. */
+.chat-effort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.chat-effort-label {
+  white-space: nowrap;
+}
+.chat-effort select {
+  max-width: 96px;
+  padding: 1px 2px;
+  font: inherit;
+  font-size: 10px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--app-muted) 34%, transparent);
+  border-radius: 4px;
+}
+.chat-effort select:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
 }
 </style>
