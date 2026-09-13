@@ -1,19 +1,3 @@
-<script lang="ts">
-/**
- * What a right-click on a card reports: the note the user actually targeted
- * (this card's own path) plus the viewport point to open the menu at.
- *
- * The panel keeps this as THE action target — every menu action reads this
- * path, never `tabs.activeTab`, so a menu opened on a background note can
- * never act on the note that happens to be open.
- */
-export interface NoteCardContextTarget {
-  x: number
-  y: number
-  path: string
-}
-</script>
-
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Code2, FileText, Star } from 'lucide-vue-next'
@@ -30,14 +14,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'open'): void
   (e: 'toggle-favorite'): void
-  (e: 'contextmenu', target: NoteCardContextTarget): void
 }>()
-
-/** Right-click reports the card's path and the click position; the browser's
- *  own menu is suppressed by `.prevent` on the card root. */
-function onContextMenu(e: MouseEvent): void {
-  emit('contextmenu', { x: e.clientX, y: e.clientY, path: props.note.path })
-}
 
 const isMdx = computed(() => /\.mdx$/i.test(props.note.path))
 const shownTags = computed(() => props.note.tags.slice(0, 3))
@@ -49,7 +26,6 @@ const timeLabel = computed(() => formatRelativeTime(props.note.mtime))
     class="note-card"
     :class="{ active: props.active }"
     role="listitem"
-    @contextmenu.prevent="onContextMenu"
   >
     <button
       class="card-main"
