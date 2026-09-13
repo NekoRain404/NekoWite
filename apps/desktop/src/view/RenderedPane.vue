@@ -8,7 +8,7 @@ import { useFloatStore } from '../stores/float'
 import { useAppearanceStore } from '../stores/appearance'
 import { resolveDirection } from '../services/rtl'
 import { t } from '../i18n'
-import { configureTaskChecklistRendering, headingAnchorIds } from '@nekowite/editor-core'
+import { configureTaskChecklistRendering } from '@nekowite/editor-core'
 import { resolveLinkPath } from '../features/vault/services/libraryQueries'
 import { useDocumentListStore } from '../stores/documentList'
 import { dirRelativeToVault } from '../services/noteMeta'
@@ -114,6 +114,13 @@ function setScrollToLine(line: number, token: number): void {
   scrollSync.setScrollToLine(line, token)
 }
 
+/** Put the keyboard in the document. The editor keeps its own selection across
+ *  a mode switch (the model is never rebuilt for one), so this only has to hand
+ *  the focus back — the pane the user came from was a button. */
+function focus(): void {
+  editorController.getView()?.focus()
+}
+
 function onContainerPointerDownCapture(e: PointerEvent): void {
   selection.handlePointerDown(e)
 }
@@ -135,7 +142,7 @@ function onEditorClick(e: MouseEvent): void {
     if (href.startsWith('#')) {
       e.preventDefault()
       e.stopPropagation()
-      scrollToHeadingAnchor(href.slice(1))
+      scrollSync.scrollToHeading(href.slice(1))
       return
     }
     if (!/^[a-z][a-z0-9+.-]*:/i.test(href)) {
@@ -164,26 +171,6 @@ function onEditorClick(e: MouseEvent): void {
   }
 }
 
-/**
- * Scroll the rendered pane to the heading whose slug matches `slug`.
- *
- * The editor's own heading anchors copy `#slug` links, so following one has to
- * land on the heading rather than fall through to the browser (which would try
- * to navigate the app window).
- */
-function scrollToHeadingAnchor(slug: string): void {
-  if (!slug) return
-  const headings = editorEl.value?.querySelectorAll('h1, h2, h3, h4, h5, h6')
-  if (!headings) return
-  const list = Array.from(headings)
-  // Build the same document-wide id list the anchors copy and the export
-  // emits, then pick the matching element by INDEX. Comparing slugs would send
-  // `#same-1` to the first "Same" instead of the second.
-  const ids = headingAnchorIds(list.map((heading) => heading.textContent ?? ''))
-  const index = ids.indexOf(slug)
-  if (index >= 0) list[index]?.scrollIntoView({ block: 'start', behavior: 'auto' })
-}
-
 /** Open a same-vault markdown reference in a new tab. */
 async function openLinkedNote(href: string): Promise<void> {
   const vault = tabs.vault
@@ -202,10 +189,6 @@ async function openLinkedNote(href: string): Promise<void> {
     decoded,
   )
   if (resolved) await tabs.openTab(resolved)
-}
-
-function onSpellSuggestion(text: string): void {
-  searchOverlay.handleSpellSuggestion(text)
 }
 
 function onKeydown(e: KeyboardEvent): void {
@@ -235,6 +218,7 @@ defineExpose({
   setScrollTop,
   getHeadingTops,
   setScrollToLine,
+  focus,
 })
 
 onMounted(async () => {
@@ -333,6 +317,7 @@ watch(
     class="rendered-pane"
     :dir="renderDir"
     @scroll="onScroll"
+    @focusin="externalSync.flushPendingSync()"
   >
     <div
       v-if="appearance.wordGoal > 0"
@@ -385,7 +370,7 @@ watch(
           :key="s"
           class="nw-spell-popup-item"
           type="button"
-          @click="onSpellSuggestion(s)"
+          @click="searchOverlay.handleSpellSuggestion(s)"
         >
           {{ s }}
         </button>

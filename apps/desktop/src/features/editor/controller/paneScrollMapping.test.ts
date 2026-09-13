@@ -3,6 +3,7 @@ import type { OutlineItem } from '../../../services/outline'
 import {
   PANE_EDGE_PX,
   planPaneSync,
+  renderedLineFor,
   renderedTopFor,
   sourceTopFor,
   type PaneGeometry,
@@ -212,6 +213,67 @@ describe('sourceTopFor', () => {
     expect(
       sourceTopFor(RENDERED_RANGE / 2, sourceMapping({ items: ITEMS, tops: null, totalLines: 43 })),
     ).toBeCloseTo(SOURCE_RANGE / 2, 6)
+  })
+})
+
+describe('renderedLineFor', () => {
+  // The mode handoff's half of the mapping: it names the position as a source
+  // line, because that is the only unit both panes can be put back on. It is
+  // the same arithmetic `sourceTopFor` runs, so the pane a mode switch restores
+  // to is the one the split sync would have scrolled to.
+  const positioned = (tops: number[] | null = TOPS) => ({
+    items: ITEMS,
+    tops,
+    totalLines: TOTAL_LINES,
+    renderedRange: RENDERED_RANGE,
+  })
+
+  it('reads the line a rendered offset sits on', () => {
+    expect(renderedLineFor(TOPS[1], positioned())).toBeCloseTo(22, 6)
+    expect(renderedLineFor(TOPS[2], positioned())).toBeCloseTo(43, 6)
+  })
+
+  it('interpolates inside a heading’s block', () => {
+    // Halfway between the second and third headings, which are 21 lines apart.
+    const half = (TOPS[1] + TOPS[2]) / 2
+    expect(renderedLineFor(half, positioned())).toBeCloseTo(22 + 10.5, 6)
+  })
+
+  it('measures the document’s own top as line 1, below the first heading', () => {
+    expect(renderedLineFor(0, positioned())).toBeCloseTo(1, 6)
+    // 60 of the preamble's 200px is 0.3 of the way from line 1 to line 4.
+    expect(
+      renderedLineFor(60, {
+        items: PREAMBLE_ITEMS,
+        tops: PREAMBLE_TOPS,
+        totalLines: 10,
+        renderedRange: RENDERED_RANGE,
+      }),
+    ).toBeCloseTo(1.9, 6)
+  })
+
+  it('refuses a document it cannot anchor on', () => {
+    // No headings, or offsets and outline out of step: there is no line to name,
+    // and the caller falls back to the ratio. A wrong anchor is worse than none.
+    expect(renderedLineFor(500, positioned(null))).toBeNull()
+    expect(
+      renderedLineFor(500, { items: [], tops: [], totalLines: TOTAL_LINES, renderedRange: RENDERED_RANGE }),
+    ).toBeNull()
+  })
+
+  it('is the line sourceTopFor maps from', () => {
+    // The two are one function: if they ever disagree, a mode switch lands
+    // somewhere the split sync would not have.
+    for (const offset of [0, 60, TOPS[1], 700, 1200, RENDERED_RANGE]) {
+      const line = renderedLineFor(offset, positioned())
+      if (line === null) continue
+      const direct = sourceTopFor(offset, sourceMapping({ items: ITEMS, tops: TOPS, totalLines: TOTAL_LINES }))
+      const viaLine = sourceTopFor(
+        renderedTopFor(line, ITEMS, TOPS, TOTAL_LINES, RENDERED_RANGE),
+        sourceMapping({ items: ITEMS, tops: TOPS, totalLines: TOTAL_LINES }),
+      )
+      expect(viaLine, `offset ${offset}`).toBeCloseTo(direct, 1)
+    }
   })
 })
 

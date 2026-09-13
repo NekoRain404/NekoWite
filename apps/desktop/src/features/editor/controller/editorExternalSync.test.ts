@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const readMock = vi.hoisted(() => vi.fn())
 vi.mock('../../../platform/gateways/fs', () => ({
   fsService: {
@@ -23,10 +23,15 @@ import { notifyError } from '../../../services/errors'
 import { useTabsStore } from '../../../stores/tabs'
 import { useViewStore } from '../../../stores/view'
 import { armSuppressReapply, shouldSuppressReapply } from '../../../services/suppressReapply'
+import { markSourceAuthored } from '../../../services/editorOwnership'
 import { createDocumentSession, type DocumentSession } from '../model/documentSession'
 import { createExternalDocSync } from '../../../services/externalDocSync'
 import type { FsChangeEvent } from '../../../platform/gateways/contracts'
-import { createEditorExternalSync, type EditorExternalSyncDeps } from './editorExternalSync'
+import {
+  createEditorExternalSync,
+  PREVIEW_RESYNC_DEBOUNCE_MS,
+  type EditorExternalSyncDeps,
+} from './editorExternalSync'
 
 vi.mock('../../../plugins/callout', () => ({ setCalloutView: vi.fn() }))
 // Partially mocked: the C6 tests below drive the real external-doc sync, which
@@ -450,6 +455,136 @@ describe('editorExternalSync', () => {
       expect(external.onConflict).not.toHaveBeenCalled()
       expect(external.reload).not.toHaveBeenCalled()
       external.stop()
+    })
+  })
+
+  // Split mode keeps the preview live on purpose: the model follows source
+  // edits. What it must NOT do is follow them keystroke by keystroke — the
+  // source pane publishes through a 50 ms debounce, so a pause at normal typing
+  // speed arrives here as a whole-document re-parse (`open()` rebuilds the
+  // ProseMirror state) plus a whole-document re-serialization (`save()`). See
+  // `split-reparse-measure` for what that costs on a real note.
+  describe('preview re-sync while the source pane authors the text (split)', () => {
+    /** What the source pane does when it publishes an edit burst. */
+    function sourcePublishes(text: string): void {
+      markSourceAuthored(text)
+      tabs.activeTab!.content = text
+      sync.onContentChanged(text)
+    }
+
+    let sync: ReturnType<typeof makeSync>['sync']
+
+    beforeEach(() => {
+      view.setMode('split')
+      sync = makeSync(session).sync
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('coalesces a typing burst into one re-parse instead of one per pause', async () => {
+      const editor = makeEditor({ save: '# Canonical\n' })
+      session.editor = editor
+
+      for (let i = 0; i < 5; i += 1) sourcePublishes(`# Typed ${i}\n`)
+      // Nothing has been re-parsed yet: the user is still typing.
+      expect(editor.open).not.toHaveBeenCalled()
+
+      vi.advanceTimersByTime(PREVIEW_RESYNC_DEBOUNCE_MS)
+      await flush()
+
+      expect(editor.open).toHaveBeenCalledTimes(1)
+      // The LAST text of the burst, not an intermediate one.
+      expect(editor.open).toHaveBeenCalledWith('# Typed 4\n')
+    })
+
+    it('applies the pending re-sync when asked to (the focus-change flush)', async () => {
+      const editor = makeEditor({ save: '# Canonical\n' })
+      session.editor = editor
+
+      sourcePublishes('# Typed\n')
+      expect(editor.open).not.toHaveBeenCalled()
+
+      // The user has moved to the rendered pane; the model must be current
+      // before their first edit is serialized over the source text.
+      sync.flushPendingSync()
+      await flush()
+      expect(editor.open).toHaveBeenCalledWith('# Typed\n')
+    })
+
+    it('still applies an external change immediately', async () => {
+      // A disk reload / history restore is not source-authored text: nothing
+      // is typing, so there is no burst to coalesce.
+      const editor = makeEditor({ save: '# Canonical\n' })
+      session.editor = editor
+
+      tabs.activeTab!.content = '# From disk\n'
+      sync.onContentChanged('# From disk\n')
+      await flush()
+
+      expect(editor.open).toHaveBeenCalledWith('# From disk\n')
+    })
+
+    it('drops the pending re-sync when the mode leaves split', async () => {
+      const editor = makeEditor({ save: '# Canonical\n' })
+      session.editor = editor
+
+      sourcePublishes('# Typed\n')
+      view.setMode('source')
+      sync.onModeChanged('source')
+      vi.advanceTimersByTime(PREVIEW_RESYNC_DEBOUNCE_MS)
+      await flush()
+
+      // Source mode owns the text; the model is re-synced on the way back.
+      expect(editor.open).not.toHaveBeenCalled()
+    })
+
+    it('drops the pending re-sync when the tab goes away', async () => {
+      const editor = makeEditor({ save: '# Canonical\n' })
+      session.editor = editor
+
+      sourcePublishes('# Typed in the note being closed\n')
+      // The tab closed: the watcher reports no content at all.
+      sync.onContentChanged(undefined)
+      vi.advanceTimersByTime(PREVIEW_RESYNC_DEBOUNCE_MS)
+      await flush()
+
+      // A note that is no longer there must not be re-opened into the model.
+      expect(editor.open).not.toHaveBeenCalled()
+    })
+
+    it('drops the pending re-sync when a save-time rewrite is suppressed', async () => {
+      const editor = makeEditor({ save: '# Canonical\n' })
+      session.editor = editor
+
+      sourcePublishes('# Typed\n')
+      // Saving rewrote the tab (the canonical text) and armed the suppression:
+      // the pre-rewrite text still pending must not land after it.
+      armSuppressReapply(tabs.activeTab!.id)
+      sync.onContentChanged('# Canonical\n')
+      vi.advanceTimersByTime(PREVIEW_RESYNC_DEBOUNCE_MS)
+      await flush()
+
+      expect(editor.open).not.toHaveBeenCalled()
+    })
+
+    it('drops the pending re-sync when another document is applied', async () => {
+      const editor = makeEditor({ save: '# Canonical\n' })
+      session.editor = editor
+
+      sourcePublishes('# Typed in the old note\n')
+      // The user switched notes before the debounce fired: the newer document
+      // is applied immediately and the old note's text must not land after it.
+      tabs.activeTab!.content = '# Another note\n'
+      sync.onContentChanged('# Another note\n')
+      await flush()
+      vi.advanceTimersByTime(PREVIEW_RESYNC_DEBOUNCE_MS)
+      await flush()
+
+      expect(editor.open).toHaveBeenCalledTimes(1)
+      expect(editor.open).toHaveBeenCalledWith('# Another note\n')
     })
   })
 

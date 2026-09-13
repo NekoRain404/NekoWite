@@ -19,11 +19,22 @@ describe('useViewStore', () => {
     s.setMode('source')
     expect(s.mode).toBe('source')
   })
-  it('syncs scroll positions one way', () => {
+  it('remembers where each pane is, and forgets both on a document switch', () => {
     const s = useViewStore()
-    s.syncScroll('source', 42)
-    expect(s.sourceScroll).toBe(42)
-    expect(s.renderedScroll).toBe(0)
+    // The offset and the extent it was measured against: the panes lay the same
+    // document out at different heights, so an offset alone cannot be carried
+    // from one into the other.
+    s.syncScroll('source', 42, 900)
+    expect(s.sourceScroll).toEqual({ top: 42, range: 900 })
+    expect(s.renderedScroll).toEqual({ top: 0, range: 0 })
+
+    s.syncScroll('rendered', 120, 1600)
+    expect(s.renderedScroll).toEqual({ top: 120, range: 1600 })
+
+    // Another document's coordinates must not be carried into the one opening.
+    s.forgetPaneScroll()
+    expect(s.sourceScroll).toEqual({ top: 0, range: 0 })
+    expect(s.renderedScroll).toEqual({ top: 0, range: 0 })
   })
   it('clamps split ratio into [0.15, 0.85]', () => {
     const s = useViewStore()

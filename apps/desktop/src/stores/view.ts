@@ -26,11 +26,37 @@ export interface OutlineTarget {
   index: number
 }
 
+/**
+ * Where one pane was last seen.
+ *
+ * The panes are the only things that can measure themselves, so they report
+ * this on every scroll event they see — the user's and the program's alike
+ * (`syncScroll` used to be called for user scrolls only; a pane a mode switch
+ * has to put back is wherever it ended up, not wherever the user last left it).
+ *
+ * `range` travels with `top` because a scroll POSITION means nothing without
+ * the extent it was measured against: the two panes lay the same document out
+ * at different heights, so an offset can only be carried between them through
+ * the document's own coordinates (a line) — and that conversion needs both
+ * numbers.
+ */
+export interface PaneScrollState {
+  /** Scroll offset, px. */
+  top: number
+  /** Scrollable extent at that moment (`scrollHeight - clientHeight`), px. */
+  range: number
+}
+
+/** A fresh "never seen" state per pane: the two memories must not share a target
+ *  (a write through one would move the other, and the handoff places one pane
+ *  from the other's position). */
+const noScroll = (): PaneScrollState => ({ top: 0, range: 0 })
+
 export const useViewStore = defineStore('view', () => {
   const defaultMode = ref<ViewMode>(readDefaultMode())
   const mode = ref<ViewMode>(defaultMode.value)
-  const sourceScroll = ref(0)
-  const renderedScroll = ref(0)
+  const sourceScroll = ref<PaneScrollState>(noScroll())
+  const renderedScroll = ref<PaneScrollState>(noScroll())
   const splitRatio = ref(SPLIT_RATIO_DEFAULT)
   const pendingOutlineTarget = ref<OutlineTarget | null>(null)
 
@@ -52,9 +78,19 @@ export const useViewStore = defineStore('view', () => {
     mode.value = defaultMode.value
   }
 
-  function syncScroll(from: 'source' | 'rendered', pos: number): void {
-    if (from === 'source') sourceScroll.value = pos
-    else renderedScroll.value = pos
+  /** Record where a pane is. Called by the pane itself, on every scroll event
+   *  it handles — the memory is the pane's position, not just the user's. */
+  function syncScroll(from: 'source' | 'rendered', top: number, range: number): void {
+    const state: PaneScrollState = { top, range }
+    if (from === 'source') sourceScroll.value = state
+    else renderedScroll.value = state
+  }
+
+  /** Forget both panes' positions: a different document's coordinates must not
+   *  be carried into the one being opened. */
+  function forgetPaneScroll(): void {
+    sourceScroll.value = noScroll()
+    renderedScroll.value = noScroll()
   }
 
   function setSplitRatio(r: number): void {
@@ -85,5 +121,6 @@ export const useViewStore = defineStore('view', () => {
     setSplitRatio,
     requestOutlineTarget,
     consumeOutlineTarget,
+    forgetPaneScroll,
   }
 })
