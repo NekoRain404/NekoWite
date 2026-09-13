@@ -34,6 +34,34 @@ describe('export renders every node type', () => {
     expect(text('text $a$ more\n')).toContain('<span class="math-latex">$a$</span>')
   })
 
+  it('sizes an image the way the editor does, height included', () => {
+    // The editor's nodeView applies BOTH stored dimensions inline. Emitting only
+    // the width made `{width=300 height=150}` export at the picture's intrinsic
+    // ratio instead of the shape the user chose — the exported image was a
+    // different proportion from the one on screen.
+    const out = text('![pic](pic.png){width=300 height=150}\n')
+    expect(out).toContain('width:300px')
+    expect(out).toContain('height:150px')
+  })
+
+  it('leaves the height to the image when only a width was stored', () => {
+    // The common case: a width-only resize. The editor clears any stored height
+    // so the picture keeps its own ratio, and the export must not invent one.
+    const out = text('![pic](pic.png){width=300}\n')
+    expect(out).toContain('width:300px')
+    expect(out).not.toContain('height:')
+  })
+
+  it('bounds images to the page the way the editor bounds them to its column', () => {
+    // The stylesheet had no `img` rule at all, so an image with an explicit
+    // pixel width was emitted unbounded: a photo sized to look right in the
+    // editor's narrow column ran past the printed page, and the same document
+    // exported at a different scale from the one the app showed.
+    const html = renderDocument('![pic](pic.png){width=4000}\n', { math: 'text' })
+    const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>'))
+    expect(css).toMatch(/img\s*\{[^}]*max-width:\s*100%/)
+  })
+
   it('keeps a whole document intact (no node silently vanishes)', () => {
     const md = [
       '---',
