@@ -28,8 +28,9 @@ use crate::domain::path_policy::{
 };
 use crate::errors::fs_error;
 use crate::storage::atomic_write::{
-    atomic_write, copy_new, is_link_unsupported, sync_parent_dir, time_nonce, write_lock,
+    atomic_write, copy_new, is_link_unsupported, sync_parent_dir, write_lock,
 };
+use crate::storage::temp_files::temp_sibling;
 
 #[derive(Serialize, Clone, Debug)]
 pub struct HistoryEntry {
@@ -86,7 +87,7 @@ pub fn snapshot_history(
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("md");
-    let tmp = history_dir.join(format!(".{ms}.{}.tmp", time_nonce()));
+    let tmp = temp_sibling(&history_dir, &ms.to_string());
     let result = (|| {
         let mut f = std::fs::OpenOptions::new()
             .write(true)

@@ -29,10 +29,9 @@ use std::path::Path;
 use crate::domain::path_policy::{resolve_within, resolve_within_rel};
 use crate::domain::vault::{is_mdx_path, should_skip_entry};
 use crate::errors::{file_exists_error, fs_error};
-use crate::storage::atomic_write::{
-    create_new_bytes, write_lock, CreateFileError, STALE_TMP_MAX_AGE,
-};
+use crate::storage::atomic_write::{create_new_bytes, write_lock, CreateFileError};
 use crate::storage::metadata_store::DEFAULT_MAX_HISTORY;
+use crate::storage::temp_files::STALE_TMP_MAX_AGE;
 
 // --- Thin forwarders (roadmap 10.4: keep the old public names for one stage) ---
 //
@@ -42,7 +41,7 @@ use crate::storage::metadata_store::DEFAULT_MAX_HISTORY;
 // in the same commit. The modules above are the owners; this file keeps the
 // vault-facing base IO.
 pub(crate) use crate::storage::atomic_write::move_no_clobber;
-pub use crate::storage::atomic_write::{atomic_write, atomic_write_bytes, cleanup_stale_tmp};
+pub use crate::storage::atomic_write::{atomic_write, atomic_write_bytes};
 pub use crate::storage::attachment_store::{
     decode_base64, import_attachment, is_importable_image, sanitize_attachment_name,
     save_attachment, IMPORT_IMAGE_EXTENSIONS, MAX_IMPORT_BYTES,
@@ -51,6 +50,7 @@ pub use crate::storage::metadata_store::{
     list_history, read_history, restore_history, snapshot_history, HistoryEntry,
 };
 pub use crate::storage::rename_store::rename_entry;
+pub use crate::storage::temp_files::cleanup_stale_tmp;
 
 #[derive(Serialize, Clone, Debug)]
 pub struct FileEntry {

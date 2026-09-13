@@ -6,8 +6,9 @@
 //! file_store       facade: vault-facing base IO, and the public surface
 //!   +- rename_store      <- metadata_store, trash_store, atomic_write
 //!   +- attachment_store  <- atomic_write
-//!   +- metadata_store    <- atomic_write
-//!   +- atomic_write      (leaf: the write lock, staging, no-clobber publish)
+//!   +- metadata_store    <- atomic_write, temp_files
+//!   +- atomic_write      <- temp_files
+//!   +- temp_files        (leaf: what a temp file is called, and sweeping it)
 //! ```
 //!
 //! `file_store` re-exports what the split moved out, so the command layer and
@@ -35,4 +36,5 @@ pub mod key_file_io;
 pub mod key_store;
 pub mod metadata_store;
 pub mod rename_store;
+pub mod temp_files;
 pub mod trash_store;
