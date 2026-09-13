@@ -16,10 +16,11 @@
  * subscriptions".
  */
 
-import { ATTACHMENTS_DIR } from '../../../services/attachments'
+import { ATTACHMENTS_DIR, extensionFromFileName } from '../../../services/attachments'
 import type { ContentCache } from '../../../services/contentCache'
 import type { FileEntry, FileStat, FsChangeEvent } from '../../../platform/gateways/contracts'
-import { parseNoteMeta, type NoteSummary } from '../../../services/noteMeta'
+import { parseNoteMeta, relPathOf, type NoteSummary } from '../../../services/noteMeta'
+import { baseName, stripVaultPrefix } from '../../../services/paths'
 import type { IndexLookupResult } from '../../../services/contentSearch'
 import type { IndexState, StoredIndex } from '../../../services/searchIndex'
 import { createIndexPersistence, type IndexPersistence } from './indexPersistence'
@@ -85,6 +86,18 @@ export interface VaultIndexCoordinatorDeps {
   onIndexState(state: IndexState, progress: { done: number; total: number } | null): void
   getFavorites(): string[]
   getRecents(): string[]
+  /**
+   * The fs-change subscription could not be established (`ok: false`) or was
+   * established again (`ok: true`).
+   *
+   * This is a DEGRADED mode with no visible symptom until the user notices
+   * their own file is missing from the list: without the subscription nothing
+   * tells the app that a file appeared, changed or vanished, so the note list,
+   * the attachment badge and the content index all keep showing what they saw
+   * at index time. Silently swallowing the failure (what this did) meant the
+   * app looked healthy while quietly ignoring every change made outside it.
+   */
+  onFsWatch?(ok: boolean, error?: unknown): void
 }
 
 export interface VaultIndexCoordinator {
@@ -98,7 +111,10 @@ export interface VaultIndexCoordinator {
   noteContent(path: string): Promise<string | null>
   /** Look up a note's persistent-index entry for content search. */
   indexEntryFor(path: string): IndexLookupResult | null
-  /** Candidate note paths whose indexed text contains `query`. */
+  /** Candidate note paths whose indexed text contains `query`. While the fs
+   *  subscription is degraded this is every indexed note: a candidate list is a
+   *  filter, a filter is an exclusion, and a mirror that cannot be verified may
+   *  not exclude a note the user just edited. */
   indexCandidatePaths(query: string): string[]
   /** Built (or incrementally reconcile) the persistent search index for `vault`.
    * No-op when `vault` is not the current vault (latest-wins guards inside). */
@@ -124,6 +140,12 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
   const mdChangeSeq = new Map<string, number>()
 
   let notes: NoteSummary[] = []
+
+  /** True while the fs-change subscription is missing, so nothing may assume
+   *  in-memory state (the note stat mirror, the content cache, the search
+   *  index) still matches the disk - no event would report a change made
+   *  outside the app (see `subscribeFs`). */
+  let fsWatchDown = false
 
   /** Index one note into a {@link NoteSummary}. Reuses the cached content when the
    * stat token is unchanged; `force` bypasses the cache for a fs-change re-index. */
@@ -199,15 +221,49 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
     }
   }
 
+  /** True when `path` is, or contains, a note the index currently lists.
+   *
+   *  The event for a folder rename or delete arrives for the FOLDER alone (there
+   *  is no per-child event to rely on), so a non-note change is only structural
+   *  for the note list when a listed note lives under it. Comparing against the
+   *  index keeps attachment churn — an image saved on every paste — from
+   *  triggering a full re-read of the vault. */
+  function affectsIndexedNotes(v: string, path: string): boolean {
+    const target = stripVaultPrefix(path, v).replace(/[/\\]+$/, '')
+    if (!target) return true
+    return notes.some((n) => {
+      const rel = relPathOf(n)
+      return rel === target || rel.startsWith(`${target}/`)
+    })
+  }
+
   function handleFsChange(e: FsChangeEvent): void {
     const v = currentVault
     if (!v) return
     if (!isMdPath(e.path)) {
       deps.fileIndex.invalidate(v)
+      // A folder that was created or removed may have taken notes with it; the
+      // note list would otherwise keep listing notes that are no longer there
+      // (and clicking one fails only later, at read time).
+      const structural = e.kind === 'created' || e.kind === 'removed'
+      const looksLikeAttachment = Boolean(extensionFromFileName(baseName(e.path)))
+      if (structural && (!looksLikeAttachment || affectsIndexedNotes(v, e.path))) {
+        if (reindexTimer) clearTimeout(reindexTimer)
+        reindexTimer = setTimeout(() => {
+          reindexTimer = null
+          if (currentVault !== v) return
+          void runIndex(v, indexSeq)
+        }, MD_CHANGE_DEBOUNCE_MS)
+      }
       if (attachmentRefreshTimer) clearTimeout(attachmentRefreshTimer)
+      // Bind the pending refresh to the vault generation that is current NOW:
+      // reading the attachment tree takes several awaits, so a vault switch can
+      // land while the count is being computed, and the count then belongs to the
+      // vault that was left (see refreshAttachmentCount).
+      const attachmentSeq = indexSeq
       attachmentRefreshTimer = setTimeout(() => {
         attachmentRefreshTimer = null
-        void refreshAttachmentCount(v)
+        void refreshAttachmentCount(v, attachmentSeq)
       }, 200)
       return
     }
@@ -233,7 +289,7 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
     generation: number,
   ): Promise<void> {
     if (currentVault !== v || mdChangeSeq.get(path) !== generation) return
-    if (kind === 'remove') {
+    if (kind === 'removed') {
       notes = notes.filter((n) => n.path !== path)
       deps.cache.delete(path)
       noteStatCache.delete(path)
@@ -259,18 +315,48 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
     deps.onNotes(notes)
   }
 
-  async function refreshAttachmentCount(v: string, seq?: number): Promise<void> {
-    try {
-      const entries = await deps.list(v, ATTACHMENTS_DIR)
-      if (seq === undefined || seq === indexSeq) deps.onAttachmentCount(entries.length)
-    } catch {
-      if (seq === undefined || seq === indexSeq) deps.onAttachmentCount(0)
-    }
+  /** Publish the badge count for `v`, but only while `seq` is still the current
+   *  vault generation: the read spans several awaits, so a switch that lands
+   *  inside it must not write the previous vault's number into the new badge. */
+  async function refreshAttachmentCount(v: string, seq: number): Promise<void> {
+    // Images live one level deeper than `attachments/` — in `attachments/<YYYY-MM>/`
+    // — so counting the top-level entries reported MONTH FOLDERS while the
+    // attachments panel listed IMAGES. The badge and the panel next to it
+    // disagreed by construction ("1" beside a panel showing 12 images). Count
+    // the images, recursively, the way the panel does.
+    const count = await countAttachmentImages(v)
+    if (seq === indexSeq) deps.onAttachmentCount(count)
   }
 
-  async function noteContent(path: string): Promise<string | null> {
-    const cached = deps.cache.get(path)
-    if (cached !== undefined) return cached
+  async function countAttachmentImages(v: string, dir = ATTACHMENTS_DIR): Promise<number> {
+    let entries: Awaited<ReturnType<typeof deps.list>>
+    try {
+      entries = await deps.list(v, dir)
+    } catch {
+      return 0
+    }
+    let total = 0
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue
+      if (entry.is_dir) {
+        total += await countAttachmentImages(v, entry.path)
+      } else if (extensionFromFileName(entry.name)) {
+        total += 1
+      }
+    }
+    return total
+  }
+
+  /** Read one note body, reusing the cache only while the fs subscription can
+   *  still tell us the entry is current. In degraded mode a cached body may
+   *  predate an edit made in another editor - nothing would have invalidated it
+   *  - so the file is read from disk instead. A slower search is the price of
+   *  not answering "no match" for text that is right there in the note. */
+  async function readNoteBody(path: string): Promise<string | null> {
+    if (!fsWatchDown) {
+      const cached = deps.cache.get(path)
+      if (cached !== undefined) return cached
+    }
     const vault = currentVault
     if (!vault) return null
     try {
@@ -282,18 +368,12 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
     }
   }
 
+  async function noteContent(path: string): Promise<string | null> {
+    return readNoteBody(path)
+  }
+
   async function searchRead(path: string): Promise<string> {
-    const cached = deps.cache.get(path)
-    if (cached !== undefined) return cached
-    const vault = currentVault
-    if (!vault) return ''
-    try {
-      const content = await deps.read(vault, path)
-      deps.cache.set(path, content)
-      return content
-    } catch {
-      return ''
-    }
+    return (await readNoteBody(path)) ?? ''
   }
 
   // The persistent search-index lifecycle. Created with closures over the
@@ -320,6 +400,42 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
     }
   }
 
+  /**
+   * Try to establish the fs-change subscription for the current vault.
+   *
+   * Returns the unsubscribe when it worked. A failure is reported rather than
+   * swallowed, and remembered so `rebuildIndex` (the user's "refresh this
+   * list" button) can retry it: otherwise the only way back to a live list was
+   * to switch vaults and back, which nothing on screen suggests.
+   */
+  async function subscribeFs(v: string): Promise<(() => void) | null> {
+    try {
+      const listener = await deps.onFsChange(handleFsChange)
+      if (fsWatchDown) {
+        fsWatchDown = false
+        // The search index is fed through the same mirror: while the
+        // subscription was missing it could not verify anything, so it is told
+        // the mirror is trustworthy again (and rebuilt by `rebuildIndex`, the
+        // only way back to a live subscription).
+        persistence.setWatcherDown(false)
+        deps.onFsWatch?.(true)
+      }
+      return listener
+    } catch (err) {
+      console.error(`[NekoWite] vault "${v}" file-change subscription failed`, err)
+      if (!fsWatchDown) {
+        fsWatchDown = true
+        // Nothing local may claim to be current from here on: the note stat
+        // mirror and the content cache keep whatever they saw last, so the
+        // index is told to stop voting on matches (see `entryFor`) and to
+        // report itself as stale instead of `up-to-date`.
+        persistence.setWatcherDown(true)
+        deps.onFsWatch?.(false, err)
+      }
+      return null
+    }
+  }
+
   async function indexVault(v: string): Promise<void> {
     detach()
     const mySeq = indexSeq
@@ -327,12 +443,7 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
     // Do not show the previous vault's notes while the new vault is indexing.
     deps.onNotes([])
     deps.onAttachmentCount(0)
-    let listener: (() => void) | null = null
-    try {
-      listener = await deps.onFsChange(handleFsChange)
-    } catch {
-      listener = null
-    }
+    const listener = await subscribeFs(v)
     if (mySeq !== indexSeq) {
       // Superseded by a newer vault switch while awaiting: detach our listener
       // and do not touch the vault-scoped state.
@@ -362,12 +473,33 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
     unlistenFs?.()
     unlistenFs = null
     notes = []
+    fsWatchDown = false
     deps.onTruncated(false)
   }
 
   async function rebuildIndex(): Promise<void> {
     const vault = currentVault
     if (!vault) return
+    // Rebuild has to mean re-list: the vault file list is cached until an fs
+    // event invalidates it, and a note created while the subscription was
+    // missing has no event coming, so reusing the cached list would leave it
+    // invisible for good — the one thing this button exists to repair.
+    deps.fileIndex.invalidate(vault)
+    // A missing fs subscription is invisible in the index itself, so "refresh
+    // this list" is also the natural place to put it back: retry it before the
+    // rebuild, and tell the user when it comes back.
+    if (fsWatchDown) {
+      const mySeq = indexSeq
+      const listener = await subscribeFs(vault)
+      if (mySeq === indexSeq && listener) {
+        unlistenFs?.()
+        unlistenFs = listener
+      }
+    }
+    // Catch the note list up first: content search iterates it, so a note that
+    // is missing there cannot be found by any query, however fresh the index.
+    const seq = indexSeq
+    await runIndex(vault, seq)
     try {
       await persistence.rebuild(vault, await deps.fileIndex.get(vault))
     } catch {
@@ -403,4 +535,7 @@ export interface VaultIndexCoordinatorCallbacks {
   onIndexState(state: IndexState, progress: { done: number; total: number } | null): void
   getFavorites(): string[]
   getRecents(): string[]
+  /** The fs-change subscription failed or came back (see
+   *  `VaultIndexCoordinatorDeps.onFsWatch`). */
+  onFsWatch(ok: boolean, error?: unknown): void
 }

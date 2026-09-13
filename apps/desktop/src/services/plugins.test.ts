@@ -18,7 +18,14 @@ import {
   setPluginTrustedSource,
   setPluginTrustPolicy,
 } from './plugins'
-import { buildPluginSignaturePayload, computePluginDigest, createMacEnvelope, createPluginSignature } from '@nekowite/plugin-host'
+import {
+  buildPluginSignaturePayload,
+  computePluginDigest,
+  createMacEnvelope,
+  createPluginSignature,
+  isPluginUnstable,
+  markPluginUnstable,
+} from '@nekowite/plugin-host'
 import type { PluginMeta } from '@nekowite/plugin-host'
 
 const listMock = vi.hoisted(() => vi.fn())
@@ -26,9 +33,10 @@ const readMock = vi.hoisted(() => vi.fn())
 const loadMock = vi.hoisted(() => vi.fn())
 const activateMock = vi.hoisted(() => vi.fn())
 const deactivateMock = vi.hoisted(() => vi.fn())
+const writeMock = vi.hoisted(() => vi.fn())
 const notifyErrorMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../platform/gateways/fs', () => ({ fsService: { list: listMock, read: readMock } }))
+vi.mock('../platform/gateways/fs', () => ({ fsService: { list: listMock, read: readMock, write: writeMock } }))
 vi.mock('./errors', () => ({
   notifyError: notifyErrorMock,
   describePluginError: (e: { message?: string; recovery?: string }) =>
@@ -108,6 +116,36 @@ describe('loadVaultPlugins', () => {
     expect(deactivateMock).toHaveBeenCalledWith('@scope/q')
   })
 
+  it('skips a disabled plugin before consent, trust and import', async () => {
+    const { setVaultPluginDisabled } = await import('./plugins')
+    setVaultPluginDisabled('@scope/q', true)
+    await loadVaultPlugins('/vault')
+    expect(loadMock).not.toHaveBeenCalled()
+    expect(activateMock).not.toHaveBeenCalled()
+    expect(getActiveVaultPluginIds()).toEqual([])
+    setVaultPluginDisabled('@scope/q', false, { reload: async () => undefined })
+  })
+
+  it('deactivates a running plugin the moment it is switched off', async () => {
+    const { setVaultPluginDisabled } = await import('./plugins')
+    await loadVaultPlugins('/vault')
+    expect(getActiveVaultPluginIds()).toEqual(['@scope/q'])
+    deactivateMock.mockClear()
+    setVaultPluginDisabled('@scope/q', true)
+    expect(deactivateMock).toHaveBeenCalledWith('@scope/q')
+    expect(getActiveVaultPluginIds()).toEqual([])
+  })
+
+  it('reports the switch state for the settings list', async () => {
+    const { listVaultPlugins, setVaultPluginDisabled } = await import('./plugins')
+    await loadVaultPlugins('/vault')
+    const before = await listVaultPlugins('/vault')
+    expect(before).toHaveLength(1)
+    expect(before[0]).toMatchObject({ id: '@scope/q', disabled: false, active: true })
+    setVaultPluginDisabled('@scope/q', true)
+    const after = await listVaultPlugins('/vault')
+    expect(after[0]).toMatchObject({ disabled: true, active: false })
+  })
   it('never activates a plugin whose load failed', async () => {
     loadMock.mockResolvedValue({ ok: false, id: '@scope/q', error: 'boom' })
     await loadVaultPlugins('/vault')
@@ -117,19 +155,20 @@ describe('loadVaultPlugins', () => {
 })
 
 describe('CSP gate (production Tauri webview)', () => {
-  it('skips the whole scan and surfaces one per-session notice when the strict CSP blocks in-window blob imports', async () => {
+  it('skips the scan and surfaces one per-session notice when a vault HAS plugins and the strict CSP blocks in-window blob imports', async () => {
     // The production Tauri webview injects a strict CSP script-src (no blob:,
     // no 'unsafe-eval'). isPluginImportAllowedByCsp() detects that via the Tauri
     // runtime signal (__TAURI_INTERNALS__) and refuses to attempt the in-window
-    // import, returning early so no plugin code is read or executed. No silent
+    // import, returning early so no plugin CODE is read or executed. No silent
     // failure and no repeated per-plugin CSP error: exactly ONE user-visible
     // notice per session.
     ;(window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
     try {
       await loadVaultPlugins('/vault')
-      // The whole scan is skipped before any fs read or import — no plugin code
-      // is touched, so there is no path to top-level execution.
-      expect(listMock).not.toHaveBeenCalled()
+      // The directory listing happens first (that is how we tell "has plugins"
+      // from "has none"), but no plugin code is read, imported or executed — the
+      // security invariant the gate exists for.
+      expect(listMock).toHaveBeenCalledWith('/vault', 'plugins')
       expect(readMock).not.toHaveBeenCalled()
       expect(loadMock).not.toHaveBeenCalled()
       expect(activateMock).not.toHaveBeenCalled()
@@ -137,8 +176,9 @@ describe('CSP gate (production Tauri webview)', () => {
       // The gate is observable, not silent.
       expect(notifyErrorMock).toHaveBeenCalledTimes(1)
       const msg = String(notifyErrorMock.mock.calls[0]?.[0])
-      expect(msg).toContain('disabled')
-      expect(msg).toContain('CSP')
+      expect(msg.length).toBeGreaterThan(10)
+      // Localized, not a raw i18n key: the toast renders this string verbatim.
+      expect(msg).not.toContain('plugin.loadingDisabled')
 
       // Once per session: a second load does not repeat the notice.
       notifyErrorMock.mockClear()
@@ -146,6 +186,24 @@ describe('CSP gate (production Tauri webview)', () => {
       expect(notifyErrorMock).not.toHaveBeenCalled()
     } finally {
       // Restore the non-Tauri environment for the remaining tests in this file.
+      delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+    }
+  })
+
+  it('says nothing at all when the vault has no plugins to disable', async () => {
+    // A vault with no `plugins/` directory has nothing the policy could block.
+    // Announcing a security restriction to someone who never asked for the
+    // feature is not "observable instead of silent", it is a permanent alarm on
+    // every launch (and it used to write a plugin audit record into every vault).
+    ;(window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
+    try {
+      listMock.mockResolvedValue([])
+      await loadVaultPlugins('/vault')
+      expect(notifyErrorMock).not.toHaveBeenCalled()
+      expect(readMock).not.toHaveBeenCalled()
+      expect(loadMock).not.toHaveBeenCalled()
+      expect(activateMock).not.toHaveBeenCalled()
+    } finally {
       delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     }
   })
@@ -199,6 +257,80 @@ describe('permission gate during loadVaultPlugins', () => {
     await loadVaultPlugins('/vault')
     expect(activateMock).toHaveBeenCalledTimes(1)
     expect(getActiveVaultPluginIds()).toEqual(['@scope/q'])
+  })
+
+  it('keys the permission verdict by vault so two vaults never share an approval', async () => {
+    readMock.mockResolvedValue(pkg(['fs']))
+    loadMock.mockResolvedValue({ ok: true, id: '@scope/q', meta: META(['fs']), definition: {} })
+    const decider = vi.fn(() => Promise.resolve(true))
+    setPluginPermissionDecider(decider)
+    await loadVaultPlugins('/vaultA')
+    // The first vault asks once (the pre-import gate caches the verdict for the
+    // post-import re-check).
+    expect(decider).toHaveBeenCalledTimes(1)
+    await loadVaultPlugins('/vaultB')
+    // Vault A's approval does NOT authorise the same-id plugin of vault B: the
+    // dangerous capability is asked about again instead of being granted
+    // silently from the other vault's verdict.
+    expect(decider).toHaveBeenCalledTimes(2)
+    expect(getActiveVaultPluginIds()).toEqual(['@scope/q'])
+  })
+
+  it('caches a denial for the session and points at a recovery that works', async () => {
+    readMock.mockResolvedValue(pkg(['fs']))
+    loadMock.mockResolvedValue({ ok: true, id: '@scope/q', meta: META(['fs']), definition: {} })
+    const decider = vi.fn(() => Promise.resolve(false))
+    setPluginPermissionDecider(decider)
+    await loadVaultPlugins('/vault')
+    expect(decider).toHaveBeenCalledTimes(1)
+    expect(activateMock).not.toHaveBeenCalled()
+    expect(getActiveVaultPluginIds()).toEqual([])
+    // A denial is remembered for the whole session (re-prompting on every vault
+    // switch would nag), so the refusal must not tell the user to reload the
+    // vault — that cannot clear a session verdict. A restart can, and does.
+    const msg = String(notifyErrorMock.mock.calls[0]?.[0])
+    expect(msg).toContain('Restart NekoWrite to be asked again')
+    expect(msg).not.toContain('reload the vault')
+
+    // Reloading reuses the cached denial: no silent activation, no re-prompt.
+    notifyErrorMock.mockClear()
+    await loadVaultPlugins('/vault')
+    expect(decider).toHaveBeenCalledTimes(1)
+    expect(getActiveVaultPluginIds()).toEqual([])
+  })
+})
+
+describe('quarantine reset on vault load (crash-restart-on-unstable)', () => {
+  it('re-approves a quarantined plugin when its vault is loaded again', async () => {
+    // The host quarantined the plugin after a hook timeout. `deactivatePlugin`
+    // cannot clear that flag (the plugin left the host's active map when it was
+    // quarantined), so nothing in the app could reset it and the refusal's
+    // "re-approve it, then reload the vault" instruction was impossible to follow.
+    markPluginUnstable('@scope/q', 'hook timeout')
+    expect(isPluginUnstable('@scope/q')).toBe(true)
+
+    await loadVaultPlugins('/vault')
+
+    // Loading the vault IS the user-mediated re-approval: the quarantine is gone
+    // and the plugin runs again.
+    expect(isPluginUnstable('@scope/q')).toBe(false)
+    expect(activateMock).toHaveBeenCalledTimes(1)
+    expect(getActiveVaultPluginIds()).toEqual(['@scope/q'])
+  })
+
+  it('does not let that reset bypass the consent gate', async () => {
+    readMock.mockResolvedValue(pkg(['fs']))
+    loadMock.mockResolvedValue({ ok: true, id: '@scope/q', meta: META(['fs']), definition: {} })
+    setPluginPermissionDecider(() => Promise.resolve(false))
+    markPluginUnstable('@scope/q', 'hook timeout')
+
+    await loadVaultPlugins('/vault')
+
+    // Only the stability flag is dropped: the plugin is still refused by the
+    // permission gate, never imported and never activated.
+    expect(loadMock).not.toHaveBeenCalled()
+    expect(activateMock).not.toHaveBeenCalled()
+    expect(getActiveVaultPluginIds()).toEqual([])
   })
 })
 
@@ -301,7 +433,7 @@ describe('distinct plugin failure buckets', () => {
     const msg = String(notifyErrorMock.mock.calls[0]?.[0])
     expect(msg).toContain('@scope/q')
     expect(msg).toContain('permission(s)')
-    expect(msg).toContain('Grant the requested permission')
+    expect(msg).toContain('Restart NekoWrite to be asked again')
   })
 })
 
@@ -467,6 +599,51 @@ describe('audit log path (vault-relative, never collides with notes)', () => {
     expect(p.endsWith('.markdown')).toBe(false)
   })
 
+  it('persists the switch against a named vault without clobbering trust data', async () => {
+    // Found on the device: the switch only reached the governance file when a
+    // plugin load had set the module's current vault, and the strict-CSP build
+    // never gets that far - so the toggle looked saved and was gone after a
+    // restart. The panel names the vault instead.
+    const key = 'c'.repeat(64)
+    const existing = JSON.stringify({
+      governance: '{}',
+      trustedKey: 'KEEP-ME',
+      trustedSources: ['@scope'],
+      digests: { '@scope/q': 'deadbeef' },
+    })
+    const env = await createMacEnvelope(existing, key)
+    readMock.mockImplementation((_vault, rel) => {
+      if (rel.endsWith(PLUGIN_GOVERNANCE_FILE)) return Promise.resolve(JSON.stringify(env))
+      if (rel.endsWith('.mackey')) return Promise.resolve(key)
+      return Promise.resolve(pkg())
+    })
+    writeMock.mockResolvedValue(undefined)
+
+    const { setVaultPluginDisabled } = await import('./plugins')
+    setVaultPluginDisabled('@scope/q', true, { vault: '/vault' })
+    for (let i = 0; i < 8 && writeMock.mock.calls.length === 0; i += 1) {
+      await new Promise((r) => setTimeout(r, 0))
+    }
+
+    const call = writeMock.mock.calls.find((c) => String(c[1]).endsWith(PLUGIN_GOVERNANCE_FILE))
+    expect(call ? 'written' : 'missing').toBe('written')
+    if (!call) throw new Error('unreachable: the assertion above fails first')
+    const framed = JSON.parse(String(call[2])) as { payload: string; mac: string }
+    const { verifyMacEnvelope } = await import('@nekowite/plugin-host')
+    const ok = await verifyMacEnvelope(framed, key)
+    expect(ok).toBe(true)
+
+    const written = JSON.parse(framed.payload) as {
+      disabled?: string[]
+      trustedKey?: string
+      trustedSources?: string[]
+      digests?: Record<string, string>
+    }
+    expect(written.disabled).toEqual(['@scope/q'])
+    expect(written.trustedKey).toBe('KEEP-ME')
+    expect(written.trustedSources).toEqual(['@scope'])
+    expect(written.digests).toEqual({ '@scope/q': 'deadbeef' })
+  })
   it('keeps the audit log distinct from the governance trust-state file', () => {
     expect(getVaultPluginAuditLogPath('/vault')).not.toMatch(/governance/)
   })
@@ -531,5 +708,36 @@ describe('governance trust-state file (MAC-protected, P1.8)', () => {
     expect(activateMock).toHaveBeenCalledTimes(1)
     expect(getActiveVaultPluginIds()).toEqual(['@scope/q'])
     expect(getPluginTrustedSourceIds()).toEqual(['@scope'])
+  })
+})
+
+describe('consent covers the capabilities actually declared', () => {
+  it('asks again when the code declares a capability the manifest did not', async () => {
+    // A plugin declares permissions in its manifest AND in its code, and the
+    // code declarations are only visible after the module is imported. A
+    // (vault, id) cache let a plugin the user approved for fs later add ai and
+    // activate with no further prompt - while the trusted-but-unsandboxed
+    // notice listed the new capability among those already approved.
+    const asked: string[][] = []
+    const decider = vi.fn(async (_meta: PluginMeta, perms: string[]) => {
+      asked.push([...perms])
+      return true
+    })
+    setPluginPermissionDecider(decider)
+
+    await expect(askPluginPermission(META(['fs']), { permissions: ['fs'] })).resolves.toBe(true)
+    expect(asked).toEqual([['fs']])
+
+    await expect(
+      askPluginPermission(META(['fs']), { permissions: ['fs', 'ai'] }),
+    ).resolves.toBe(true)
+    expect(asked.length).toBe(2)
+    expect(asked[1]).toContain('ai')
+
+    // The same set again is still cached.
+    await expect(
+      askPluginPermission(META(['fs']), { permissions: ['fs', 'ai'] }),
+    ).resolves.toBe(true)
+    expect(asked.length).toBe(2)
   })
 })

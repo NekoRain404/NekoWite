@@ -89,7 +89,26 @@ function tryMergeComponent(
 // the mdxComponent node is a *block* atom that cannot live in that paragraph
 // (Milkdown would throw "Cannot create node for paragraph"). Inside these
 // contexts the JSX stays as raw `html` nodes so it is preserved verbatim.
-const TEXT_BLOCK = new Set(['paragraph', 'listItem', 'tableCell', 'tableHeader'])
+const TEXT_BLOCK = new Set([
+  'paragraph',
+  'listItem',
+  'tableCell',
+  'tableHeader',
+  // Phrasing containers. A block atom cannot be a child of any of these, so
+  // converting the JSX to `mdxJsxFlowElement` here makes ProseMirror reject the
+  // parent it belongs to ("Cannot create node for heading") — and milkdown
+  // swallows that throw, so `open()` succeeds with a TRUNCATED document that the
+  // next save writes over the file. `**[text <Callout />](url)` emptied the file
+  // outright; `# Title <Callout />` dropped every other block in it. The JSX
+  // stays a raw `html` node in these contexts instead: rendered as inline source
+  // text, and written back verbatim.
+  'heading',
+  'emphasis',
+  'strong',
+  'delete',
+  'link',
+  'nekoHighlight',
+])
 
 function transform(
   nodes: MdNode[],

@@ -27,8 +27,10 @@ import {
 } from 'lucide-vue-next'
 import { fsService } from '../platform/gateways/fs'
 import type { TrashEntry } from '../platform/gateways/contracts'
+import { announce } from '../services/announcer'
 import { notifyError } from '../services/errors'
 import { useTabsStore } from '../stores/tabs'
+import { flushSourceEdits } from '../services/sourceView'
 import { useDocumentListStore } from '../stores/documentList'
 import { useFileTreeStore } from '../stores/fileTree'
 import { useAppearanceStore } from '../stores/appearance'
@@ -40,17 +42,23 @@ import {
   buildDailyVars,
   ensureDailyNote,
   listTemplates,
-  nextAvailableName,
+  readTemplate,
   renderTemplate,
+  templateFileBase,
   type TemplateEntry,
 } from '../services/noteTemplates'
+import {
+  MAX_CREATE_ATTEMPTS,
+  createNoteWithFreeName,
+  type CreatedNote,
+} from '../services/noteCreation'
 import TemplatePicker from './TemplatePicker.vue'
 import { t } from '../i18n'
+import { baseName } from '../services/paths'
 
 const props = defineProps<{ vault: string }>()
 const emit = defineEmits<{
   (e: 'open-folder', path: string): void
-  (e: 'conflict', req: { tabId: string; path: string }): void
   (e: 'open-settings'): void
 }>()
 
@@ -66,11 +74,19 @@ const refResults = computed(() => refs.search(refQuery.value).slice(0, 30))
 
 const trashOpen = ref(false)
 const trashEntries = ref<TrashEntry[]>([])
+/**
+ * Set when the last read of the trash FAILED. "The trash is empty" and "the
+ * trash could not be read" must never render the same: the second one is the
+ * answer a user gets when a permission problem hides their deleted notes, and
+ * calling it empty says those notes are gone.
+ */
+const trashUnreadable = ref(false)
 const clearingTrash = ref(false)
 
 const vaultName = computed(() => {
-  const p = props.vault.replace(/\/+$/, '')
-  return p.split('/').pop() || p
+  // Windows vault paths end with a backslash-separated folder name, so a
+  // `/`-split returned the whole path.
+  return baseName(props.vault) || props.vault
 })
 
 const theme = computed<'light' | 'dark'>(() => {
@@ -138,8 +154,14 @@ const navEntries = computed<NavEntry[]>(() => {
 async function refreshTrash(): Promise<void> {
   try {
     trashEntries.value = await fsService.listTrash(props.vault)
-  } catch {
+    trashUnreadable.value = false
+  } catch (e) {
+    // The list is unknown, not empty. Keep the flag so the panel asks the
+    // user to fix the read instead of claiming there is nothing to recover,
+    // and surface the backend reason (which folder, what the OS said).
     trashEntries.value = []
+    trashUnreadable.value = true
+    notifyError(e instanceof Error ? e.message : String(e))
   }
 }
 
@@ -152,6 +174,14 @@ async function restore(entry: TrashEntry): Promise<void> {
   }
 }
 
+/** The trash key is the encoded on-disk name (`docs%2Fa.md`), and a second
+ *  deletion of the same path adds a timestamp — neither is what the user
+ *  deleted. The backend decodes both, so the label is read rather than
+ *  re-derived; the local fallbacks cover an older entry shape. */
+function trashLabel(entry: TrashEntry): string {
+  return entry.display_name || baseName(entry.original_path) || entry.name
+}
+
 /** Two-step clear: the first click arms "confirm", the second empties the
  * trash. No confirm is required when the trash is already empty. */
 async function clearTrash(): Promise<void> {
@@ -161,8 +191,24 @@ async function clearTrash(): Promise<void> {
   }
   clearingTrash.value = false
   try {
-    await fsService.clearTrash(props.vault)
+    const report = await fsService.clearTrash(props.vault)
     await refreshTrash()
+    if (report.failed.length === 0) {
+      announce(t('trash.cleared', { n: report.removed }))
+    } else {
+      // Partial (or total) failure: say what actually happened. "Failed"
+      // over a half-emptied trash hides the removals that DID happen and the
+      // entries that are still there to retry.
+      const names = report.failed.slice(0, 5).map((f) => f.name).join(', ')
+      const extra = report.failed.length > 5 ? ` +${report.failed.length - 5}` : ''
+      notifyError(
+        t('trash.clearPartial', {
+          removed: report.removed,
+          failed: report.failed.length,
+          names: names + extra,
+        }),
+      )
+    }
   } catch {
     notifyError(t('trash.clearFailed'))
   }
@@ -224,23 +270,30 @@ async function rootNoteNames(): Promise<Set<string>> {
 async function createFromTemplate(entry: TemplateEntry): Promise<void> {
   let body: string
   try {
-    body = await fsService.read(props.vault, entry.path)
+    body = await readTemplate(props.vault, entry)
   } catch {
     notifyError(t('template.readFailed'))
     return
   }
   const existing = await rootNoteNames()
-  const fileName = nextAvailableName(entry.name, existing)
-  const path = `${props.vault.replace(/\/+$/, '')}/${fileName}`
-  const content = renderTemplate(body, buildDailyVars(new Date(), { title: entry.name }))
+  const base = templateFileBase(entry)
+  const content = renderTemplate(body, buildDailyVars(new Date(), { title: base }))
+  let created: CreatedNote | null
   try {
-    await fsService.write(props.vault, path, content)
+    created = await createNoteWithFreeName(props.vault, base, content, existing)
   } catch {
     notifyError(t('template.createFailed'))
     return
   }
+  if (!created) {
+    // Every candidate name was claimed by another writer while we were choosing
+    // one. Report that instead of falling back to a write that would land on
+    // top of the file that took the name.
+    notifyError(t('template.nameTaken', { count: MAX_CREATE_ATTEMPTS, base }))
+    return
+  }
   templatePickerOpen.value = false
-  await tabs.openTab(path)
+  await tabs.openTab(created.path)
 }
 
 const activeDocTags = computed(() => {
@@ -257,6 +310,10 @@ function removeCurrentTag(tag: string, e: MouseEvent): void {
   e.stopPropagation()
   const tab = tabs.activeTab
   if (!tab) return
+  // Whole-document read-modify-write: publish the source pane's pending
+  // keystrokes first, or this would transform (and then mirror back) text that
+  // is a debounce window out of date.
+  flushSourceEdits()
   const next = removeTagFromContent(tab.content, tag)
   if (next === tab.content) return
   tab.content = next
@@ -491,8 +548,8 @@ watch(
           >
             <span
               class="trash-name"
-              :title="entry.original_path"
-            >{{ entry.name }}</span>
+              :title="entry.original_path || entry.name"
+            >{{ trashLabel(entry) }}</span>
             <button
               class="trash-restore"
               :title="t('nav.restore')"
@@ -508,7 +565,7 @@ watch(
             v-if="trashEntries.length === 0"
             class="group-empty"
           >
-            {{ t('nav.trashEmpty') }}
+            {{ trashUnreadable ? t('nav.trashUnreadable') : t('nav.trashEmpty') }}
           </p>
         </div>
       </section>

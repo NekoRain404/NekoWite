@@ -15,6 +15,7 @@ import { fsService, type FsChangeEvent } from '../platform/gateways/fs'
 import { vaultFileIndex } from '../services/vaultFiles'
 import { parseFrontmatterBlock, splitFrontmatterRaw } from '../services/noteMeta'
 import { useTabsStore } from '../stores/tabs'
+import { announce } from '../services/announcer'
 import { t } from '../i18n'
 
 /**
@@ -61,9 +62,78 @@ const filterLink = ref<'all' | 'wiki' | 'markdown'>('all')
 const showOrphans = ref(true)
 const showBroken = ref(true)
 
-const canvasAriaLabel = computed(() =>
-  t('graph.count', { n: noteCount.value, m: edgeCount.value }),
-)
+/**
+ * The canvas is the panel's primary surface, but a graph of positioned dots has
+ * no keyboard equivalent: the only way to open a note was to hit it with a
+ * mouse. The canvas is therefore focusable and walks the nodes with the arrow
+ * keys (Enter opens, Escape clears), bounded by a plain bounding-box scan — no
+ * spatial index is worth it at these sizes, and the layout is already in memory.
+ */
+const kbNodeId = ref<string | null>(null)
+
+const canvasAriaLabel = computed(() => {
+  const base = t('graph.count', { n: noteCount.value, m: edgeCount.value })
+  const focused = kbNodeId.value ? fileName(kbNodeId.value) : ''
+  return focused ? `${base} · ${focused} · ${t('graph.kbHint')}` : `${base} · ${t('graph.kbHint')}`
+})
+
+function focusNode(id: string): void {
+  kbNodeId.value = id
+  announce(fileName(id))
+}
+
+/** Nearest node in `direction` from the focused node, by bounding-box scan. */
+function neighbor(dx: number, dy: number): string | null {
+  const points = layout.value
+  if (!points.length) return null
+  const from = points.find((p) => p.id === kbNodeId.value)
+  if (!from) return points[0].id
+  let best: string | null = null
+  let bestDist = Infinity
+  for (const p of points) {
+    if (p.id === from.id) continue
+    const ox = p.x - from.x
+    const oy = p.y - from.y
+    // Projection onto the requested direction; nodes behind it are ignored.
+    const along = ox * dx + oy * dy
+    if (along <= 0) continue
+    const dist = Math.hypot(ox, oy)
+    if (dist < bestDist) {
+      bestDist = dist
+      best = p.id
+    }
+  }
+  return best
+}
+
+const KB_OFFSETS: Record<string, [number, number]> = {
+  ArrowRight: [1, 0],
+  ArrowLeft: [-1, 0],
+  ArrowDown: [0, 1],
+  ArrowUp: [0, -1],
+}
+
+function onCanvasKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape') {
+    if (kbNodeId.value === null) return
+    e.preventDefault()
+    kbNodeId.value = null
+    return
+  }
+  if (e.key === 'Enter' || e.key === ' ') {
+    const id = kbNodeId.value
+    if (!id) return
+    e.preventDefault()
+    void tabs.openTab(id)
+    return
+  }
+  const offset = KB_OFFSETS[e.key]
+  if (!offset) return
+  const next = neighbor(offset[0], offset[1])
+  if (!next) return
+  e.preventDefault()
+  focusNode(next)
+}
 
 const layout = ref<LayoutPoint[]>([])
 const hoverId = ref<string | null>(null)
@@ -128,9 +198,14 @@ let scale = 1
 let offsetX = 0
 let offsetY = 0
 
-/** Directory (parent path) of a vault-relative node path, or '' for root. */
+/** Directory (parent path) of a node's path, or '' for root.
+ *
+ *  Separator-agnostic on purpose: node ids are the note paths the vault walk
+ *  returned, which are NATIVE (backslash-separated on Windows). Splitting on
+ *  `/` alone made every node's directory the empty string there, so the filter
+ *  dropdown offered only "root" and no directory could ever be selected. */
 function dirOf(path: string): string {
-  const i = path.lastIndexOf('/')
+  const i = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   return i < 0 ? '' : path.slice(0, i)
 }
 
@@ -276,7 +351,7 @@ async function rebuild(): Promise<void> {
 async function applyChange(path: string, kind: string): Promise<void> {
   const vault = tabs.vault
   if (!vault || !graph.value) return
-  if (kind === 'remove') {
+  if (kind === 'removed') {
     void rebuild()
     return
   }
@@ -759,12 +834,14 @@ defineExpose({ rebuild })
         ref="canvas"
         class="graph-canvas"
         role="img"
+        tabindex="0"
         :aria-label="canvasAriaLabel"
         @mousedown="onPointerDown"
         @mousemove="onPointerMove"
         @mouseup="onPointerUp"
         @mouseleave="onPointerLeave"
         @wheel="onWheel"
+        @keydown="onCanvasKeydown"
       />
       <div
         v-if="hoverId"

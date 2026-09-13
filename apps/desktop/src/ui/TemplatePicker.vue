@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { nextTick, onMounted, ref } from 'vue'
 import { FilePlus2, X } from 'lucide-vue-next'
 import { useFocusTrap } from '../composables/useFocusTrap'
+import { useModalEscape } from '../composables/useModalEscape'
 import { t } from '../i18n'
-import type { TemplateEntry } from '../services/noteTemplates'
+import { isBuiltinTemplate, type TemplateEntry } from '../services/noteTemplates'
 
 const props = defineProps<{ templates: TemplateEntry[] }>()
 const emit = defineEmits<{
@@ -13,7 +14,13 @@ const emit = defineEmits<{
 
 const dialogEl = ref<HTMLElement | null>(null)
 const active = ref(true)
+// The dialog is opened from a sidebar button, so focus arrives from outside:
+// the trap has to pull it in, or Escape (and the first helpful Tab) stays on
+// the button that opened this. The container is focused rather than the first
+// template so Enter does not immediately create a note the user never chose.
 useFocusTrap(dialogEl, active, { initialFocus: false })
+
+useModalEscape('template-picker', () => close())
 
 function pick(entry: TemplateEntry): void {
   emit('select', entry)
@@ -23,19 +30,15 @@ function close(): void {
   emit('close')
 }
 
-function onKeydown(e: KeyboardEvent): void {
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    close()
-  }
-}
+onMounted(() => {
+  void nextTick(() => dialogEl.value?.focus())
+})
 </script>
 
 <template>
   <div
     class="dialog-overlay"
     @click.self="close"
-    @keydown="onKeydown"
   >
     <div
       ref="dialogEl"
@@ -43,6 +46,7 @@ function onKeydown(e: KeyboardEvent): void {
       role="dialog"
       aria-modal="true"
       aria-labelledby="template-title"
+      tabindex="-1"
     >
       <div class="template-head">
         <div
@@ -75,7 +79,7 @@ function onKeydown(e: KeyboardEvent): void {
           @click="pick(entry)"
         >
           <span class="template-name">{{ entry.name }}</span>
-          <span class="template-path">{{ entry.path }}</span>
+          <span class="template-path">{{ isBuiltinTemplate(entry) ? t('template.builtin') : entry.path }}</span>
         </button>
         <p
           v-if="props.templates.length === 0"

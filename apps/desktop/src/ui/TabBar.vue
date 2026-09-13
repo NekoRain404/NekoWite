@@ -5,6 +5,7 @@ import { useTabsStore } from '../stores/tabs'
 import ContextMenu from './ContextMenu.vue'
 import type { ContextMenuItem } from './ContextMenu.vue'
 import { t } from '../i18n'
+import { baseName as baseNameOf } from '../services/paths'
 
 const tabs = useTabsStore()
 
@@ -19,7 +20,9 @@ const menuItems = computed<ContextMenuItem[]>(() => [
 
 function baseName(path: string | null): string {
   if (!path) return t('tabs.untitled')
-  return path.split('/').pop() ?? path
+  // Separator-agnostic: on Windows the tab path is `\\?\C:\...\note.md`,
+  // so a `split('/')` returned the entire absolute path as the label.
+  return baseNameOf(path)
 }
 
 function dotTitle(id: string): string {
@@ -76,7 +79,7 @@ async function onMenuSelect(id: string): Promise<void> {
   if (!target) return
   if (id === 'close') await tabs.closeTab(target.tabId)
   else if (id === 'close-others') await tabs.closeOthers(target.tabId)
-  else if (id === 'close-all') tabs.closeAll()
+  else if (id === 'close-all') void tabs.closeAll()
 }
 </script>
 

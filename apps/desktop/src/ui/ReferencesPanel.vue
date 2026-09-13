@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { computeCiteOrder, doiUrl } from '@nekowite/editor-core'
+import { CITE_UNRESOLVED, computeCiteOrder, doiUrl } from '@nekowite/editor-core'
 import { useRefsStore } from '../stores/refs'
 import { editorSessionManager } from '../features/editor/sessionManager'
 import { t } from '../i18n'
@@ -12,7 +12,13 @@ let offEditorChange: (() => void) | null = null
 
 interface Cited {
   key: string
+  /** `CITE_UNRESOLVED` when the key is not in the library. */
   num: number
+  numLabel: string
+  /** Whether the library actually holds this key. An entry can be present and
+   *  still have an empty title (RIS without a `TI`), which used to render the
+   *  "not in the library" message for a reference the library does have. */
+  found: boolean
   title: string | null
   authors: string[]
   year: string | null
@@ -32,7 +38,9 @@ const cited = computed<Cited[]>(() => {
     return {
       key,
       num,
-      title: ref?.title ?? null,
+      numLabel: num === CITE_UNRESOLVED ? '?' : String(num),
+      found: ref !== undefined,
+      title: ref?.title || null,
       authors: ref?.authors ?? [],
       year: ref?.year ?? null,
       doi: ref?.doi ?? null,
@@ -88,19 +96,28 @@ onBeforeUnmount(() => {
         :key="c.key"
         class="refs-item"
       >
-        <span class="refs-num">[{{ c.num }}]</span>
+        <span class="refs-num">[{{ c.numLabel }}]</span>
         <span class="refs-body">
           <span class="refs-key">{{ c.key }}</span>
           <span
-            v-if="c.title"
+            v-if="c.found"
             class="refs-detail"
           >
-            {{ c.title }}
+            <template v-if="c.title">
+              {{ c.title }}
+              <span
+                v-if="c.journal"
+                class="refs-journal"
+              > · {{ c.journal }}</span>
+            </template>
             <span
-              v-if="c.journal"
-              class="refs-journal"
-            > · {{ c.journal }}</span>
-            <span class="refs-meta">({{ c.authors.join(', ') }}{{ c.year ? `, ${c.year}` : '' }})</span>
+              v-else
+              class="refs-no-title"
+            >{{ t('references.noTitle') }}</span>
+            <span
+              v-if="c.authors.length || c.year"
+              class="refs-meta"
+            >({{ c.authors.join(', ') }}{{ c.year ? `${c.authors.length ? ', ' : ''}${c.year}` : '' }})</span>
             <a
               v-if="c.doi"
               :href="doiUrl(c.doi) ?? '#'"
@@ -195,6 +212,7 @@ onBeforeUnmount(() => {
   overflow-wrap: anywhere;
 }
 .refs-missing { color: var(--app-muted); }
+.refs-no-title { color: var(--app-muted); font-style: italic; }
 .rail-empty {
   margin: 0;
   font-size: 11px;

@@ -8,10 +8,16 @@ import { activeTabSubtitle, activeTabTitle } from './app/tabMeta'
 import { useViewStore } from './stores/view'
 import { useTabsStore } from './stores/tabs'
 import { useDocumentListStore } from './stores/documentList'
+import { useAiPermissionStore } from './stores/aiPermission'
+import { createExternalDocSync } from './services/externalDocSync'
+import { fsService } from './platform/gateways/fs'
+import { notifyError } from './services/errors'
+import { t } from './i18n'
 
 const tabs = useTabsStore()
 const view = useViewStore()
 const documentList = useDocumentListStore()
+const aiPermission = useAiPermissionStore()
 
 // App shell is a thin orchestrator: it owns the app sub-objects (runtime,
 // dialogs, lifecycle) and the small local UI state, then lets <AppShell> render
@@ -60,17 +66,42 @@ function onOpenFolder(path: string): void {
   runtime.onOpenFolder(path)
 }
 
+// Raised by the app-level external-change service below (and by nothing else
+// since the tree stopped forwarding conflicts).
 function onConflict(req: { tabId: string; path: string }): void {
   dialogs.showConflict(req.tabId, req.path)
 }
+
+// External-edit detection lives at the app level, NOT in the file tree: the
+// tree only exists while the Folders panel is shown, so a note opened from the
+// Notes panel (the default view) had nobody watching the disk. An external edit
+// then went unnoticed and the next save overwrote it.
+const externalDocSync = createExternalDocSync({
+  read: (vault, path) => fsService.read(vault, path),
+  onFsChange: (cb) => fsService.onFsChange(cb),
+  getVault: () => tabs.vault,
+  getActiveTab: () => tabs.activeTab,
+  getOpenTabs: () => tabs.tabs.map((t) => ({ id: t.id, path: t.path })),
+  onMissing: (tabId, path) => {
+    // Detach first, then tell the user: the order matters because the detach is
+    // what stops the next save from silently recreating the vanished path.
+    if (tabs.detachMissingPath(tabId)) notifyError(t('tabs.missingOnDisk', { path }))
+  },
+  isSelfWrite: (path) => tabs.isSelfWrite(path),
+  isPendingMove: (path) => tabs.isPendingMove(path),
+  reload: (tabId) => tabs.reloadFromDisk(tabId),
+  onConflict,
+})
 
 onMounted(() => {
   runtime.start()
   lifecycle.mount()
   dialogs.installPluginDeciders()
+  void externalDocSync.start()
 })
 
 onBeforeUnmount(() => {
+  externalDocSync.stop()
   // Single app teardown: lifecycle.unmount() disposes the runtime AND removes the
   // window listeners, so nothing (vault switch, recovery scan, fs watcher, plugins,
   // editor session) outlives the app.
@@ -89,13 +120,14 @@ onBeforeUnmount(() => {
     :conflict="dialogState.kind === 'conflict' ? { tabId: dialogState.tabId, path: dialogState.path } : null"
     :plugin-permission="dialogState.kind === 'permission' ? dialogState.request : null"
     :plugin-integrity="dialogState.kind === 'integrity' ? dialogState.request : null"
+    :ai-write="aiPermission.pending"
     @toggle-sidebar="sidebarVisible = !sidebarVisible"
     @open-folder="onOpenFolder"
-    @conflict="onConflict"
     @pick-folder="runtime.pickFolder"
     @open-settings="showSettings = true"
     @close-settings="showSettings = false"
     @close-conflict="dialogs.close"
+    @respond-ai-write="(approved: boolean, remember: boolean) => aiPermission.respond(approved, remember)"
     @resolve-permission="dialogs.resolvePermission"
     @resolve-integrity="dialogs.resolveIntegrity"
     @toggle-rail="railOpen = !railOpen"

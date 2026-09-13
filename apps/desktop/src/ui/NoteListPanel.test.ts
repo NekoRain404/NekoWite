@@ -25,7 +25,6 @@ const fsMocks = vi.hoisted(() => ({
   listHistory: vi.fn(),
   readHistory: vi.fn(),
   restoreHistory: vi.fn(),
-  searchNotes: vi.fn(),
   saveAttachment: vi.fn(),
   resolveMediaPath: vi.fn(),
 }))

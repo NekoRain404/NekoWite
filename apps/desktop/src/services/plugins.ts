@@ -30,6 +30,7 @@ import {
   loadPlugin,
   markBadVersion,
   onLifecycleError,
+  setPluginAiProvider,
   onPluginEvent,
   publisherIdOf,
   recordPluginEvent,
@@ -67,6 +68,7 @@ import { joinPath } from '@nekowite/plugin-host'
 import { fsService } from '../platform/gateways/fs'
 import { persistence } from './persistence'
 import { describePluginError, notifyError } from './errors'
+import { completeForPlugin } from './pluginAi'
 import { t } from '../i18n'
 
 interface VaultPluginPackage {
@@ -121,9 +123,7 @@ function signalPluginLoadingDisabledByCsp(): void {
   if (cspBlockedNotified) return
   cspBlockedNotified = true
   recordPluginEvent('*', 'import-refused', 'CSP blocks in-window plugin loading (no process/WebView isolation)')
-  notifyError(
-    'Vault plugins are disabled under the current security policy (CSP blocks in-window module loading). Expected until process/WebView isolation is implemented.',
-  )
+  notifyError(t('plugin.loadingDisabled'))
 }
 
 /* ------------------------------------------------------------------------- *
@@ -193,8 +193,16 @@ function setupAuditFilePersistence(vault: string): AuditLogFileSink | null {
       }
     },
     read: () => (fsService as { read: (v: string, p: string) => Promise<string> }).read(vault, rel),
+    // The audit sink writes its own file and has nothing to do with note
+    // history, so the warning channel (which exists for a failed history
+    // snapshot) is dropped here — with the cast saying so, rather than an
+    // incompatible signature pretending the two are the same call.
     write: (_p, content) =>
-      (fsService as { write: (v: string, p: string, c: string) => Promise<void> }).write(vault, rel, content),
+      (
+        fsService as { write: (v: string, p: string, c: string) => Promise<unknown> }
+      )
+        .write(vault, rel, content)
+        .then(() => undefined),
   }
   setAuditLogFileSink(sink)
   void loadAuditLogFromFile()
@@ -264,9 +272,192 @@ export function getVaultPluginAuditEvents(pluginId: string): PluginAuditEvent[] 
 
 /** Public governance wrappers (wired for a settings/status surface + tests). */
 
-/** Clear a plugin's unstable flag (user-mediated re-approval) so it can run again. */
+/**
+ * Clear a plugin's unstable flag (user-mediated re-approval) so it can run again,
+ * with a fresh session resource budget. `loadVaultPlugins` performs this for every
+ * plugin it finds in a vault, because that is the only reachable path: the host
+ * quarantines a plugin that crashed, timed out or exhausted its budget by tearing
+ * it out of its active map, and `deactivatePlugin` only clears the flag for
+ * plugins still in that map — so a quarantine used to survive every vault switch
+ * and the "re-approve it (reset), then reload the vault" refusal could never be
+ * carried out. Nothing becomes trusted by this: the reload still runs every gate
+ * (revocation, version policy, consent, trust, integrity) before the plugin is
+ * imported again.
+ */
 export function resetUnstableVaultPlugin(pluginId: string): void {
   resetUnstablePlugin(pluginId)
+}
+
+/**
+ * Read the disabled set straight from a vault's governance file.
+ *
+ * The loader normally applies it, but the loader is not always reached: the
+ * strict-CSP build skips plugin loading entirely, so the settings panel - whose
+ * job is to show and change this switch - has to be able to read it on its own.
+ * A missing or unverifiable file reads as "nothing disabled": this must never
+ * invent a policy, and never be the reason a panel fails to render.
+ */
+async function loadDisabledPlugins(vault: string): Promise<void> {
+  try {
+    const raw = await fsService.read(vault, PLUGIN_GOVERNANCE_FILE)
+    const framed = JSON.parse(raw) as { payload?: unknown; mac?: unknown }
+    if (typeof framed?.payload !== 'string' || typeof framed?.mac !== 'string') return
+    const secret = await loadGovernanceMacSecret(vault)
+    if (!(await verifyMacEnvelope(framed, secret))) return
+    const payload = JSON.parse(framed.payload) as GovernanceFilePayload
+    disabledPlugins.clear()
+    for (const id of Array.isArray(payload.disabled) ? payload.disabled : []) {
+      if (typeof id === 'string' && id) disabledPlugins.add(id)
+    }
+  } catch {
+    /* no governance file yet */
+  }
+}
+/**
+ * Persist the disabled set for `vault`, READ-MODIFY-WRITE.
+ *
+ * Reading first is the point: this file also holds trust anchors, revocations
+ * and digests, and the CSP-blocked build never loaded them into memory. Writing
+ * a fresh payload built from empty in-memory records would silently erase a
+ * user's revocations, so the file's own contents are the base whenever they are
+ * readable and their MAC verifies. An unverifiable file is left untouched:
+ * overwriting a tampered file is how the attacker's version becomes the trusted
+ * one on the next read.
+ */
+async function saveDisabledPlugins(vault: string): Promise<void> {
+  try {
+    const secret = await loadGovernanceMacSecret(vault)
+    let payload: GovernanceFilePayload | null = null
+    try {
+      const raw = await fsService.read(vault, PLUGIN_GOVERNANCE_FILE)
+      const framed = JSON.parse(raw) as { payload?: unknown; mac?: unknown }
+      if (typeof framed?.payload === 'string' && typeof framed?.mac === 'string') {
+        if (!(await verifyMacEnvelope(framed, secret))) return
+        payload = JSON.parse(framed.payload) as GovernanceFilePayload
+      }
+    } catch {
+      /* first save for this vault */
+    }
+    const base: GovernanceFilePayload = payload ?? buildGovernancePayload()
+    const next: GovernanceFilePayload = { ...base, disabled: [...disabledPlugins] }
+    const envelope = await createMacEnvelope(JSON.stringify(next), secret)
+    await fsService.write(vault, PLUGIN_GOVERNANCE_FILE, JSON.stringify(envelope))
+  } catch {
+    /* best-effort, exactly like the other governance writer */
+  }
+}
+/** Plugin ids switched off in the current vault. */
+export function getVaultDisabledPluginIds(): string[] {
+  return [...disabledPlugins]
+}
+
+/** Whether a plugin is switched off in the current vault. */
+export function isVaultPluginDisabled(pluginId: string): boolean {
+  return disabledPlugins.has(pluginId)
+}
+
+/**
+ * Switch a plugin off (or back on) for this vault.
+ *
+ * Switching OFF takes effect immediately: the plugin is deactivated in the host
+ * (its components, commands, toolbar buttons and lifecycle hooks are
+ * unregistered, and `onUnload` runs) and every future load skips it BEFORE the
+ * consent/trust/integrity gates - a plugin the user switched off must not be
+ * re-asked about or have its code read, let alone run. The decision is
+ * persisted, so it survives a restart and a vault switch.
+ *
+ * Switching back ON has to re-run the gates (revocation, version policy,
+ * consent, trust, integrity) because none of them stopped being relevant while
+ * it was off: it happens through a fresh vault load, which is exactly that
+ * sequence. `reload` is injectable so tests can observe the reload without
+ * building a whole vault.
+ */
+export interface SetVaultPluginDisabledOptions {
+  /** The vault this decision belongs to. Supplied by the settings panel, which
+   *  knows it; without it the decision could only be saved when a plugin load
+   *  had already set the module's current vault - and the strict-CSP build never
+   *  reaches that point, so the switch would look like it worked and be gone
+   *  after a restart (measured on the device). */
+  vault?: string
+  /** How to re-run the gates when a plugin is switched back on. Injectable so
+   *  tests can observe the reload without building a vault. */
+  reload?: (vault: string) => Promise<void>
+}
+
+export function setVaultPluginDisabled(
+  pluginId: string,
+  disabled: boolean,
+  opts: SetVaultPluginDisabledOptions = {},
+): void {
+  if (!pluginId) return
+  if (disabled) {
+    disabledPlugins.add(pluginId)
+    deactivatePlugin(pluginId)
+    const at = activeVaultPluginIds.indexOf(pluginId)
+    if (at >= 0) activeVaultPluginIds.splice(at, 1)
+    recordPluginEvent(pluginId, 'deactivate', 'disabled by the user')
+  } else {
+    disabledPlugins.delete(pluginId)
+  }
+  // Persist against the vault the user is looking at. The read-modify-write
+  // keeps this file's other records (trust, revocations, digests) intact.
+  if (opts.vault) void saveDisabledPlugins(opts.vault)
+  else scheduleGovernanceSave()
+  const reload = opts.reload ?? loadVaultPlugins
+  const vault = opts.vault ?? currentVault ?? undefined
+  // Enabling has to re-run every gate, and the reload is the one path that does
+  // it in order. Disabling needs no reload: the plugin is already out.
+  if (!disabled && vault) void reload(vault).catch(() => undefined)
+}
+export interface VaultPluginSummary {
+  id: string
+  name: string
+  version: string
+  disabled: boolean
+  active: boolean
+  unstable: boolean
+}
+
+/**
+ * List the plugins in a vault for the settings surface: manifests are read, but
+ * nothing is imported or executed (`preloadVaultPlugin` only reads files). The
+ * flags come from the live state, so a row always describes what is actually
+ * loaded rather than what the last load happened to do.
+ */
+export async function listVaultPlugins(vault: string): Promise<VaultPluginSummary[]> {
+  // The switch is stored in the vault's governance file, which the strict-CSP
+  // build never loads through the plugin path; read it here so the rows show
+  // what is actually configured.
+  await loadDisabledPlugins(vault)
+  const adapter = makeVaultPluginFsAdapter(vault)
+  let entries: PluginFsEntry[]
+  try {
+    entries = await adapter.readdir(joinPath(vault, 'plugins'))
+  } catch {
+    return []
+  }
+  // Same shape the loader uses: only directories are candidate plugins.
+  const dirs = entries.filter((e) => e.isDirectory()).map((e) => e.name)
+  const preloaded = await runBounded(
+    dirs.map((name) => () => preloadVaultPlugin(adapter, vault, name)),
+    MAX_PARALLEL_PLUGIN_LOADS,
+  )
+  const active = new Set(activeVaultPluginIds)
+  const out: VaultPluginSummary[] = []
+  for (const p of preloaded) {
+    const meta = p.meta
+    if (!meta) continue
+    out.push({
+      id: meta.id,
+      name: meta.name,
+      version: meta.version,
+      disabled: disabledPlugins.has(meta.id),
+      active: active.has(meta.id),
+      unstable: isPluginUnstable(meta.id),
+    })
+  }
+  out.sort((a, b) => a.id.localeCompare(b.id))
+  return out
 }
 
 /** True when a vault plugin is currently quarantined as unstable. */
@@ -328,8 +519,29 @@ export function isVaultPluginRevoked(pluginId: string, version: string): boolean
 // no-op, going back to A would never re-register the reloaded definition).
 const activeVaultPluginIds: string[] = []
 
-// Per-session permission verdicts, so a plugin the user already approved (or
-// denied) is not re-prompted on every vault switch.
+/** Plugin ids the user switched off for the current vault (see the payload
+ *  field). Authoritative copy in memory, mirrored to the governance file. */
+const disabledPlugins = new Set<string>()
+
+/** Composite storage key for every record scoped to a (vault, plugin id) pair:
+ *  vault + plugin id, NUL-separated so a vault path and an id that both contain
+ *  "/" can never collide. Two different vaults therefore never share a record for
+ *  the same plugin id — a trust/permission decision made in one vault can never
+ *  authorise the same-id plugin of another. */
+function vaultScopedKey(vault: string | null, id: string): string {
+  // NUL separator: a vault path and a plugin id can both contain "/", so a plain
+  // concatenation (or "/" join) could collide across vaults.
+  return `${vault ?? ''}\u0000${id}`
+}
+
+// Per-session permission verdicts, keyed by vault + plugin id (NOT by id alone:
+// approving a dangerous plugin in vault A must never silently authorise a
+// different plugin that happens to share the id in vault B). The verdict is
+// remembered for the session so a plugin is not re-prompted on every vault
+// switch — including a DENIAL, which is the safe verdict: re-asking for a plugin
+// the user already refused each time they switch vaults is nagging, and the
+// refusal message now names the recovery that actually works (a restart starts a
+// fresh session; reloading a vault cannot clear a session verdict).
 const permissionDecisions = new Map<string, boolean>()
 
 type PermissionDecider = (
@@ -363,16 +575,38 @@ export function getActiveVaultPluginIds(): string[] {
   return [...activeVaultPluginIds]
 }
 
-export async function askPluginPermission(meta: PluginMeta, definition: PluginDefinition): Promise<boolean> {
+/**
+ * Ask the user to grant a plugin's declared dangerous capabilities, caching the
+ * verdict for the session under (vault, plugin id, capabilities).
+ *
+ * The verdict is keyed by the CAPABILITY SET as well as the plugin, because a
+ * plugin declares permissions in two places: its manifest, and its code — and
+ * the code's declarations are only visible after the module is imported. Keying
+ * by (vault, id) alone meant a plugin the user approved for `fs` could later add
+ * `ai` (or `network`) inside its own code and be activated without any further
+ * prompt, while the "trusted but unsandboxed" notice cheerfully listed the new
+ * capability among those "already approved". Approving `fs` is not approving
+ * `network`; a new capability is a new question.
+ *
+ * Callers inside a vault scan pass the vault explicitly so the verdict is scoped
+ * to it; a call with no vault (a test, or a caller outside a scan) is cached
+ * under the empty vault and never merged with a real vault's slot.
+ */
+export async function askPluginPermission(
+  meta: PluginMeta,
+  definition: PluginDefinition,
+  vault: string | null = currentVault,
+): Promise<boolean> {
   // Merge manifest- and definition-declared permissions. Pure UI plugins declare
   // nothing and always pass; anything reaching the user is a dangerous one.
   const declared = collectPluginPermissions(meta, definition)
   if (!hasDangerousPermissions({ permissions: declared })) return true
-  const cached = permissionDecisions.get(meta.id)
+  const key = `${vaultScopedKey(vault, meta.id)}::${[...declared].sort().join(',')}`
+  const cached = permissionDecisions.get(key)
   if (typeof cached === 'boolean') return cached
   // Safe default: without an installed decider, deny risky plugins.
   const decision = permissionDecider ? await permissionDecider(meta, declared) : false
-  permissionDecisions.set(meta.id, decision)
+  permissionDecisions.set(key, decision)
   return decision
 }
 
@@ -417,32 +651,23 @@ export function setPluginRecordedDigestForTest(
   version: string,
   digest: string,
 ): void {
-  memoryDigestMap.set(digestStorageKey(vault, id), { v: version, d: digest })
+  memoryDigestMap.set(vaultScopedKey(vault, id), { v: version, d: digest })
 }
 
 /** Test-only: read the recorded baseline digest for a (vault, id) pair. */
 export function getPluginRecordedDigestForTest(vault: string, id: string): string | undefined {
-  return memoryDigestMap.get(digestStorageKey(vault, id))?.d
-}
-
-/** Composite storage key for a plugin baseline: vault + plugin id, NUL-separated
- *  so a vault path and an id that both contain "/" can never collide. Two
- *  different vaults therefore never share an approval record for the same id. */
-function digestStorageKey(vault: string, id: string): string {
-  // NUL separator: a vault path and a plugin id can both contain "/", so a
-  // plain concatenation (or "/" join) could collide across vaults.
-  return `${vault}\u0000${id}`
+  return memoryDigestMap.get(vaultScopedKey(vault, id))?.d
 }
 
 /** The last-approved digest for a (vault, plugin id) pair, if any. */
 function getRecordedDigest(vault: string, id: string): string | undefined {
-  return readDigestMap()[digestStorageKey(vault, id)]?.d
+  return readDigestMap()[vaultScopedKey(vault, id)]?.d
 }
 
 /** Record (or re-approve) a plugin's digest as the new expected baseline. */
 function setRecordedDigest(vault: string, id: string, version: string, digest: string): void {
   const map = readDigestMap()
-  map[digestStorageKey(vault, id)] = { v: version, d: digest }
+  map[vaultScopedKey(vault, id)] = { v: version, d: digest }
   writeDigestMap(map)
 }
 
@@ -602,6 +827,12 @@ interface GovernanceFilePayload {
   trustedKey: string
   trustedSources: string[]
   digests: DigestMap
+  /** Plugin ids the user switched OFF in this vault. Persisted here rather than
+   *  in localStorage because it is security-relevant policy (it decides whether
+   *  a plugin's code runs at all) and this is the file the app already protects
+   *  and treats as authoritative. A build from before the switch existed simply
+   *  has no field, which reads as "nothing disabled". */
+  disabled?: string[]
 }
 
 /** Reset the in-memory trust records (never trust a tampered file). */
@@ -663,6 +894,7 @@ function buildGovernancePayload(): GovernanceFilePayload {
     trustedKey: memoryTrustedKey,
     trustedSources: [...memoryTrustedSources],
     digests: readDigestMap(),
+    disabled: [...disabledPlugins],
   }
 }
 
@@ -734,6 +966,10 @@ async function loadGovernanceFile(vault: string): Promise<void> {
     for (const id of Array.isArray(payload.trustedSources) ? payload.trustedSources : []) memoryTrustedSources.add(id)
     memoryDigestMap.clear()
     for (const [k, v] of Object.entries(payload.digests ?? {})) memoryDigestMap.set(k, v)
+    disabledPlugins.clear()
+    for (const id of Array.isArray(payload.disabled) ? payload.disabled : []) {
+      if (typeof id === 'string' && id) disabledPlugins.add(id)
+    }
     if (typeof payload.governance === 'string') loadGovernance(payload.governance)
   } catch {
     resetTrustRecordsForTamper()
@@ -970,12 +1206,20 @@ async function runBounded<T>(tasks: Array<() => Promise<T>>, limit: number): Pro
 
 let lifecycleErrorOff: (() => void) | null = null
 
-/** Route plugin lifecycle hook errors (a throwing hook, still isolated by the
- *  host) into the app error channel so a failure is observable and actionable. */
+/**
+ * Route plugin failures into the app error channel so they are observable and
+ * actionable. The host isolates both a throwing lifecycle hook and a throwing
+ * toolbar button / command (see `activatePlugin`), and both report through this
+ * one channel - so every plugin failure reaches the user with the plugin's name
+ * on it instead of an unhandled exception in a click handler.
+ */
 function ensureLifecycleErrorRouter(): void {
   if (lifecycleErrorOff) return
+  // The `ai` capability the permission list advertises, backed by the app's own
+  // AI service (see services/pluginAi). Installed once per app, not per plugin.
+  setPluginAiProvider((id, prompt) => completeForPlugin(id, prompt))
   lifecycleErrorOff = onLifecycleError((ev) => {
-    console.error(`[NekoWite] plugin lifecycle hook failed plugin="${ev.pluginId}" event="${ev.event}"`, ev.error)
+    console.error(`[NekoWite] plugin failed plugin="${ev.pluginId}" origin="${ev.event}"`, ev.error)
     notifyError(describePluginError(ev.error))
   })
 }
@@ -1112,6 +1356,9 @@ export function resetVaultPluginStateForTests(): void {
   unsignedNotified.clear()
   memoryDigestMap.clear()
   cspBlockedNotified = false
+  // The disabled set is vault state too: a test that switches a plugin off
+  // must not leave the next test's plugin switched off.
+  disabledPlugins.clear()
   currentVault = null
   macSecretCache.clear()
   if (governanceSaveTimer) {
@@ -1171,6 +1418,22 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
   setupAuditRouter()
   setupAuditFilePersistence(vault)
 
+  const adapter = makeVaultPluginFsAdapter(vault)
+  let entries: PluginFsEntry[]
+  try {
+    entries = await adapter.readdir(joinPath(vault, 'plugins'))
+  } catch {
+    return
+  }
+  const pluginDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name)
+  // A vault with no `plugins/` directory has nothing that could be disabled, so
+  // there is nothing to report and nothing to gate: staying quiet here is the
+  // absence of a requested feature, not a silent failure. Telling every user on
+  // every launch that plugins are blocked — in a vault they never put a plugin
+  // in — turns a security implementation detail into permanent, alarming noise
+  // (and used to write a plugin audit record into every vault on open).
+  if (pluginDirs.length === 0) return
+
   // CSP gate: the production Tauri webview's strict CSP blocks the in-window
   // `import('blob:...')` that plugin loading relies on. Rather than attempting
   // (and failing) the import for every plugin, skip the scan entirely and surface
@@ -1178,6 +1441,9 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
   // becomes live the moment plugin loading moves behind real isolation. The gate
   // only triggers in the real Tauri webview — not in the unit-test DOM or the
   // browser Demo, where the existing integrity/permission scenarios still run.
+  // Listing the directory first is deliberate: it reads no plugin code and every
+  // vault open already lists directories, but it is what lets us tell "the user
+  // has plugins that cannot load" from "the user has no plugins at all".
   if (!isPluginImportAllowedByCsp()) {
     signalPluginLoadingDisabledByCsp()
     void flushAuditLogToFile()
@@ -1190,15 +1456,6 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
   // not touch the file system. On a MAC failure this refuses the contained trust.
   await loadGovernanceFile(vault)
 
-  const adapter = makeVaultPluginFsAdapter(vault)
-  let entries: PluginFsEntry[]
-  try {
-    entries = await adapter.readdir(joinPath(vault, 'plugins'))
-  } catch {
-    return
-  }
-  const pluginDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name)
-
   // Phase 1 — parallel, independent per-plugin work (manifest + code + digest).
   // No import happens here; execution is deferred until after the gates below.
   const preloaded = await runBounded(
@@ -1207,6 +1464,20 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
   )
   // Deterministic registration order for the UI, independent of IO timing.
   preloaded.sort((a, b) => (a.meta?.id ?? a.dirName).localeCompare(b.meta?.id ?? b.dirName))
+
+  // Re-approval for the host's quarantine ("crash-restart-on-unstable"). The host
+  // refuses to activate a plugin marked unstable until it is explicitly reset, and
+  // deactivating cannot do it: markPluginUnstable already removed the plugin from
+  // the host's active map, so `deactivatePlugin` (and therefore
+  // `deactivateVaultPlugins`) returns early and the flag used to survive a vault
+  // switch forever. Loading a vault IS the re-approval the refusal message asks
+  // for — a deliberate user action (open/switch a library, or reload on the
+  // message's advice) — and it only drops the stability quarantine: the plugin is
+  // imported and activated again only if it passes every gate below (revocation,
+  // version policy, consent, trust, integrity).
+  for (const p of preloaded) {
+    if (p.meta) resetUnstableVaultPlugin(p.meta.id)
+  }
 
   // Phase 2 — sequential permission confirmation (user dialog) + integrity
   // verification, THEN the gated import. Collect the consented plugins for
@@ -1223,6 +1494,11 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
     const meta = p.meta
     const source = p.source
     if (!meta || !source) continue
+
+    // GATE -1 — the user switched this plugin off. Checked before consent,
+    // trust and integrity so a disabled plugin is not asked about, not read
+    // and certainly not run; that is what "off" has to mean.
+    if (disabledPlugins.has(meta.id)) continue
 
     // GATE 0 — revocation, BEFORE any execution. A revoked plugin (id or version
     // /range) is refused here with the recorded reason, so its module is never
@@ -1262,7 +1538,7 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
     // declared in the manifest are known pre-import; those are the trust
     // contract. A denial here means the module is never imported.
     const preManifest = { permissions: meta.permissions } as PluginDefinition
-    if (!(await askPluginPermission(meta, preManifest))) {
+    if (!(await askPluginPermission(meta, preManifest, vault))) {
       const declared = collectPluginPermissions(meta, preManifest)
       recordPluginEvent(meta.id, 'permission-denied', `declared permissions: ${declared.join(', ') || 'none'}`, { version: meta.version })
       notifyError(
@@ -1273,7 +1549,10 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
               declared.length > 0
                 ? `Plugin "${meta.name}" requires permission(s): ${declared.join(', ')} but consent was not granted.`
                 : t('plugin.permissionSkipped', { name: meta.name }),
-            recovery: 'Grant the requested permission in the plugin settings, then reload the vault.',
+            // A denial is cached for the session (see permissionDecisions), so
+            // reloading the vault cannot re-ask — only a restart starts a session
+            // where the plugin is asked about again.
+            recovery: 'Restart NekoWrite to be asked again (a denial is remembered for this session), or remove the plugin.',
           }),
         ),
       )
@@ -1358,7 +1637,7 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
     // code that were not in the manifest. Re-verify the merged set so a
     // code-level declaration is still consent-gated. (Top-level has run by now,
     // but we refuse to register/activate the plugin and surface the denial.)
-    if (!(await askPluginPermission(meta, definition))) {
+    if (!(await askPluginPermission(meta, definition, vault))) {
       const declared = collectPluginPermissions(meta, definition)
       recordPluginEvent(meta.id, 'permission-denied', `declared permissions: ${declared.join(', ') || 'none'}`, { version: meta.version })
       notifyError(
@@ -1369,7 +1648,10 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
               declared.length > 0
                 ? `Plugin "${meta.name}" requires permission(s): ${declared.join(', ')} but consent was not granted.`
                 : t('plugin.permissionSkipped', { name: meta.name }),
-            recovery: 'Grant the requested permission in the plugin settings, then reload the vault.',
+            // A denial is cached for the session (see permissionDecisions), so
+            // reloading the vault cannot re-ask — only a restart starts a session
+            // where the plugin is asked about again.
+            recovery: 'Restart NekoWrite to be asked again (a denial is remembered for this session), or remove the plugin.',
           }),
         ),
       )
@@ -1448,13 +1730,13 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
               ? createPluginError('PLUGIN_UNSTABLE', {
                   pluginId: res.id,
                   message: `Plugin "${meta.name}" is in an unstable state and requires re-approval before it can run again.`,
-                  recovery: 'Re-approve the plugin (reset), then reload the vault.',
+                  recovery: 'Re-approve it by reloading the vault: a reload resets the quarantine and retries it.',
                 })
               : code === 'PLUGIN_QUOTA_EXCEEDED'
                 ? createPluginError('PLUGIN_QUOTA_EXCEEDED', {
                     pluginId: res.id,
                     message: `Plugin "${meta.name}" exceeded its session resource quota and was deactivated; re-approve it to run again.`,
-                    recovery: 'Re-approve the plugin to grant a fresh session budget.',
+                    recovery: 'Re-approve it by reloading the vault to grant a fresh session budget.',
                   })
                 : createPluginError('PLUGIN_ACTIVATE_FAILED', {
                     pluginId: res.id,

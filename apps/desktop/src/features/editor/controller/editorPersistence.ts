@@ -1,6 +1,8 @@
 import { emitLifecycle } from '@nekowite/plugin-host'
 import { debounce } from '../../../services/timing'
 import { useTabsStore } from '../../../stores/tabs'
+import { clearSourceAuthored, isSourceAuthored } from '../../../services/editorOwnership'
+import { getSourceViewHandle } from '../../../services/sourceView'
 import type { DocumentSession } from '../model/documentSession'
 
 export interface EditorPersistenceDeps {
@@ -13,6 +15,16 @@ export interface EditorPersistence {
   attachChangeListener(): () => void
   /** Defer a full-document serialization (runtime call, not instant). */
   scheduleSerialize(): void
+  /**
+   * Serialize NOW and publish the result to the tab.
+   *
+   * The normal path is debounced, so for ~120ms after a keystroke `tab.content`
+   * still holds the previous text. Anything that reads the document for a
+   * one-shot purpose (saving, exporting) has to flush first, or it persists the
+   * stale version — and the save then re-applies that stale text to the model,
+   * discarding the keystroke that was still in flight.
+   */
+  flush(): Promise<void>
   /** Cancel a pending serialization and the doc-change emit timer. */
   cancel(): void
 }
@@ -45,8 +57,23 @@ export function createEditorPersistence(deps: EditorPersistenceDeps): EditorPers
     const markdown = await editor.save()
     if (tabs.activeTab?.id !== active.id) return
     if (myGen !== deps.session.gen) return
-    // The echo of a change we already applied is not an edit.
-    if (markdown === deps.session.lastLocalMarkdown && markdown === active.content) return
+    // Publish anything the source pane is still coalescing before reading the
+    // tab. Without this a keystroke that has not cleared the host's debounce
+    // window is invisible here, and the model's older serialization would be
+    // written over it — the "my last character disappeared" family.
+    getSourceViewHandle()?.flush()
+    // The tab currently holds text the source pane authored and the model has
+    // not caught up with, so this serialization is stale: writing it would
+    // replace the raw Markdown under the user's caret. Note this is about the
+    // text, not the mode — a rendered-pane edit still in flight when the view
+    // switches to source must land, or that edit would be lost.
+    if (isSourceAuthored(active.content)) return
+    // The model has not moved since the last snapshot (a re-open / external
+    // apply only re-loaded the same text) — there is nothing new to persist.
+    // Writing it back here would push the serializer's canonical form into the
+    // tab, replacing the raw Markdown the user is typing in the source pane and
+    // resetting its caret.
+    if (markdown === deps.session.lastLocalMarkdown) return
     deps.session.lastLocalMarkdown = markdown
     active.content = markdown
     deps.session.lastDoc = markdown
@@ -68,6 +95,9 @@ export function createEditorPersistence(deps: EditorPersistenceDeps): EditorPers
       if (deps.session.applyingExternal || !deps.session.editor) return
       const active = tabs.activeTab
       if (!active) return
+      // A real rendered-pane edit: the model authors the text again, so the
+      // source pane's authored marker no longer describes the tab.
+      clearSourceAuthored()
       // Keep the dirty flag & autosave timer per-keystroke (cheap, and the save
       // state must reflect each edit immediately), but defer the expensive
       // full-document serialization until the typing burst settles.
@@ -81,6 +111,11 @@ export function createEditorPersistence(deps: EditorPersistenceDeps): EditorPers
     markdownSync.run()
   }
 
+  async function flush(): Promise<void> {
+    markdownSync.cancel()
+    await persistMarkdown()
+  }
+
   function cancel(): void {
     markdownSync.cancel()
     if (deps.session.docChangeTimer) {
@@ -89,5 +124,5 @@ export function createEditorPersistence(deps: EditorPersistenceDeps): EditorPers
     }
   }
 
-  return { attachChangeListener, scheduleSerialize, cancel }
+  return { attachChangeListener, scheduleSerialize, flush, cancel }
 }

@@ -1,4 +1,4 @@
-import type { ExportRef, RenderDocumentOptions } from '@nekowite/editor-core'
+import type { ExportImageTarget, ExportRef, RenderDocumentOptions } from '@nekowite/editor-core'
 import { fsService } from '../platform/gateways/fs'
 import { buildComponentRenderers } from './exportRenderers'
 import { createImageSrcResolver } from './attachments'
@@ -83,7 +83,15 @@ function injectPdfPageCss(
   return html.slice(0, idx) + style + html.slice(idx)
 }
 
-function toRenderOptions(opts: ExportUiOptions): RenderDocumentOptions {
+/**
+ * `imageSrcTarget` is per destination: a saved .html has to be self-contained
+ * (data URLs), while the in-app print/PDF path renders through the asset
+ * protocol and keeps the cheap display URL.
+ */
+function toRenderOptions(
+  opts: ExportUiOptions,
+  imageSrcTarget: ExportImageTarget = 'display',
+): RenderDocumentOptions {
   const ctx = storeContext()
   return {
     title: opts.title,
@@ -91,6 +99,7 @@ function toRenderOptions(opts: ExportUiOptions): RenderDocumentOptions {
     componentRenderers: buildComponentRenderers(),
     math: opts.math,
     includeCss: true,
+    imageSrcTarget,
     resolveImage: createImageSrcResolver(fsService, {
       getVault: ctx.getVault,
       getNotePath: () => opts.notePath ?? ctx.getNotePath(),
@@ -100,7 +109,11 @@ function toRenderOptions(opts: ExportUiOptions): RenderDocumentOptions {
 
 export async function exportHtml(source: string, vault: string, savePath: string, opts: ExportUiOptions): Promise<void> {
   const { includeFrontmatter } = exportSettings()
-  const html = await renderDocumentAsync(prepareSource(source, includeFrontmatter), toRenderOptions(opts))
+  // A file the user saves has to stand on its own, images included.
+  const html = await renderDocumentAsync(
+    prepareSource(source, includeFrontmatter),
+    toRenderOptions(opts, 'data'),
+  )
   await fsService.write(vault, savePath, html)
 }
 

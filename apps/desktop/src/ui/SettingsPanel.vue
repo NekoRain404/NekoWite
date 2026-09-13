@@ -8,6 +8,7 @@ import {
   Sparkles,
   Type,
   X,
+  Puzzle,
 } from 'lucide-vue-next'
 import { useViewStore } from '../stores/view'
 import type { ViewMode } from '../stores/view'
@@ -16,12 +17,31 @@ import { useRefsStore } from '../stores/refs'
 import { exportHtml, exportToPdf } from '../services/export'
 import { exportBaseName } from '../services/exportName'
 import { fsService } from '../platform/gateways/fs'
+import { flushEdits } from '../services/editorOwnership'
+import { isPluginImportAllowedByCsp, listVaultPlugins, setVaultPluginDisabled } from '../services/plugins'
+import { readAppVersion } from '../platform/appVersion'
+import type { VaultPluginSummary } from '../services/plugins'
+import type { AiWriteKind, AiWriteSource } from '../services/aiPermissions'
+import type { AiAuditOutcome } from '../services/aiAudit'
 import { describeExportError, notifyError } from '../services/errors'
 import { isPathWithinVault } from '../services/attachments'
 import { useSettingsStore } from '../stores/settings'
+import {
+  CONTEXT_CHARS_MAX,
+  CONTEXT_CHARS_MIN,
+  DEFAULT_CONTEXT_CHARS,
+  EFFORT_OPTIONS,
+} from '../stores/settings'
 import { useAppearanceStore } from '../stores/appearance'
-import type { Accent, ContentDirection, EditorFontId, MonoFontId, UiFontId } from '../stores/appearance'
+import { ACCENTS, ACCENT_COLORS, COLOR_SCHEMES, COLOR_SCHEME_PREVIEW } from '../stores/appearance'
+import type { ColorScheme, ContentDirection, EditorFontId, MonoFontId, UiFontId } from '../stores/appearance'
 import { getLocale, setLocale, t } from '../i18n'
+import { useFocusTrap } from '../composables/useFocusTrap'
+import { modalStack } from '../services/modalStack'
+import { isComposingKey } from '../services/keyGuard'
+import { useAiPermissionStore } from '../stores/aiPermission'
+import { useVaultSessionStore } from '../stores/vaultSession'
+import { AI_WRITE_POLICIES, describePolicy, type AiWritePolicy } from '../services/aiPermissions'
 import type { ExportRef } from '@nekowite/editor-core'
 
 const emit = defineEmits<{ (e: 'close'): void; (e: 'saved', path: string): void }>()
@@ -32,7 +52,12 @@ const refs = useRefsStore()
 const settings = useSettingsStore()
 const appearance = useAppearanceStore()
 
-type SectionId = 'general' | 'appearance' | 'editor' | 'export' | 'ai'
+function colorSchemePreview(s: ColorScheme) {
+  const mode = appearance.effectiveTheme() === 'dark' ? 'dark' : 'light'
+  return COLOR_SCHEME_PREVIEW[s][mode]
+}
+
+type SectionId = 'general' | 'appearance' | 'editor' | 'export' | 'ai' | 'plugins'
 
 const SECTIONS = computed<Array<{ id: SectionId; label: string; icon: typeof Type }>>(() => [
   { id: 'general', label: t('settings.section.general'), icon: SlidersHorizontal },
@@ -40,18 +65,136 @@ const SECTIONS = computed<Array<{ id: SectionId; label: string; icon: typeof Typ
   { id: 'editor', label: t('settings.section.editor'), icon: Type },
   { id: 'export', label: t('settings.section.export'), icon: Download },
   { id: 'ai', label: t('settings.section.ai'), icon: Sparkles },
+  { id: 'plugins', label: t('settings.section.plugins'), icon: Puzzle },
 ])
 
+const aiPermission = useAiPermissionStore()
 const activeSection = ref<SectionId>('general')
+
+/** Literal i18n keys per audit field. A table, not concatenation: the i18n
+ *  parity test scans the source for real key literals, so a dynamically built
+ *  key is a key nobody checks. */
+const AUDIT_OUTCOME_KEYS: Record<AiAuditOutcome, string> = {
+  asked: 'aiperm.audit.outcome.asked',
+  allowed: 'aiperm.audit.outcome.allowed',
+  denied: 'aiperm.audit.outcome.denied',
+  blocked: 'aiperm.audit.outcome.blocked',
+  granted: 'aiperm.audit.outcome.granted',
+}
+const AUDIT_SOURCE_KEYS: Record<AiWriteSource, string> = {
+  ghost: 'aiperm.audit.source.ghost',
+  chat: 'aiperm.audit.source.chat',
+  edit: 'aiperm.audit.source.edit',
+  dialog: 'aiperm.audit.source.dialog',
+  plugin: 'aiperm.audit.source.plugin',
+}
+const AUDIT_KIND_KEYS: Record<AiWriteKind, string> = {
+  insert: 'aiperm.audit.kind.insert',
+  'replace-selection': 'aiperm.audit.kind.replace-selection',
+  'replace-document': 'aiperm.audit.kind.replace-document',
+}
+
+const vaultSession = useVaultSessionStore()
+const vaultPath = computed(() => (vaultSession.vault ?? '').trim())
+const pluginRows = ref<VaultPluginSummary[]>([])
+/** Whether THIS build can run plugin code at all. The list below reads the
+ *  plugins folder either way, so a released build would otherwise show a tidy
+ *  list of plugins with working-looking switches and never run one. */
+const pluginsRunnable = isPluginImportAllowedByCsp()
+
+const pluginsLoading = ref(false)
+
+/** Read the plugins folder for the vault that is open right now. Only
+ *  manifests are read - nothing is imported - so opening the panel can never
+ *  run plugin code. */
+async function refreshPluginRows(): Promise<void> {
+  const vault = vaultPath.value
+  if (!vault) {
+    pluginRows.value = []
+    return
+  }
+  pluginsLoading.value = true
+  try {
+    pluginRows.value = await listVaultPlugins(vault)
+  } catch {
+    pluginRows.value = []
+  } finally {
+    pluginsLoading.value = false
+  }
+}
+
+/** Flip one plugin and re-read, so the row describes the app's actual state
+ *  rather than what the click assumed it would be. */
+async function togglePlugin(row: VaultPluginSummary, enabled: boolean): Promise<void> {
+  setVaultPluginDisabled(row.id, !enabled, { vault: vaultPath.value })
+  await refreshPluginRows()
+}
+
+watch(activeSection, (section) => {
+  if (section === 'plugins') void refreshPluginRows()
+})
 const dialogRef = ref<HTMLElement | null>(null)
+const panelActive = ref(true)
+// aria-modal has to mean something: without a trap, Tab walked out of the
+// dialog into the tab bar and editor it was covering. Focusing the container
+// (tabindex=-1) on open matches the other dialogs and keeps Enter from
+// activating whatever control happens to be first.
+useFocusTrap(dialogRef, panelActive, { initialFocus: false })
+// The settings panel and the command palette are both full-screen modals at
+// z-index 10000, and both listen for Escape on window in the capture phase.
+// Keydown listeners on the same target cannot stop each other, so each one asks
+// the stack whether it is the topmost modal before acting.
+const modalToken = modalStack.claimModal('settings-panel')
 
 const vaultInput = ref(localStorage.getItem('nekowite.vault') ?? '')
 const hasActiveTab = computed(() => !!tabs.activeTab?.content)
-const showBaseUrl = computed(() => settings.provider === 'local' || settings.provider === 'custom')
+const showBaseUrl = computed(
+  () =>
+    settings.provider === 'local' ||
+    settings.provider === 'custom' ||
+    // DeepSeek speaks the OpenAI wire format and is routinely served through a
+    // gateway (tokenflux, OpenRouter, a company proxy), so the Base URL has to
+    // be editable rather than pinned to api.deepseek.com.
+    settings.provider === 'deepseek',
+)
 
-const AI_PROVIDERS = ['openai', 'anthropic', 'gemini', 'grok', 'local', 'custom']
+const AI_PROVIDERS = ['openai', 'anthropic', 'gemini', 'grok', 'deepseek', 'local', 'custom']
+
+/**
+ * Thinking-depth choices. `''` is "leave it to the provider": the field is then
+ * omitted from the request entirely. `effortLabelKey` maps a rung to its i18n
+ * key so the template never builds a key by concatenation.
+ */
+/**
+ * The AI write policies, in the order they are offered. `describePolicy` in the
+ * permission service owns the key mapping, so the wording only lives in i18n.
+ */
+const WRITE_POLICIES: { value: AiWritePolicy; labelKey: string }[] = AI_WRITE_POLICIES.map(
+  (value) => ({ value, labelKey: describePolicy(value) }),
+)
 
 const modelLoading = ref(false)
+
+/** The build a bug report should name. Null until it resolves, and null
+ *  when nothing can answer - showing nothing beats showing a guess. */
+const appVersion = ref<string | null>(null)
+void readAppVersion().then((v) => {
+  appVersion.value = v
+}).catch(() => undefined)
+
+/** How many entries the panel shows. The log keeps more than this (see
+ *  services/aiAudit); the panel is a window onto it, not the whole file. */
+const AUDIT_ROWS = 8
+
+/** The newest entries first: the question this list answers is "what just
+ *  happened", so the most recent line has to be the one at the top. */
+const recentAiAudit = computed(() => [...aiPermission.auditLog].reverse().slice(0, AUDIT_ROWS))
+
+/** Wall-clock time only: these rows are all from today in practice, and a date
+ *  on every line would crowd out the part that matters. */
+function clockTime(at: number): string {
+  return new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
 const modelOptions = computed(() => {
   const list = settings.modelsCache
   const current = settings.model
@@ -81,20 +224,15 @@ watch(
   },
 )
 
-const ACCENTS: Accent[] = ['ink', 'coral', 'blue', 'green', 'gold', 'violet', 'slate', 'teal', 'lime', 'rose', 'amber']
-const ACCENT_COLORS: Record<Accent, string> = {
-  ink: '#343532',
-  coral: '#d65f4d',
-  blue: '#3f7edb',
-  green: '#3e9b73',
-  gold: '#b98b09',
-  violet: '#8a65d1',
-  slate: '#607287',
-  teal: '#2e9e8f',
-  lime: '#7aa816',
-  rose: '#e05c76',
-  amber: '#d98c1f',
-}
+/** The note under the accent checkbox has to say which of the two things
+ *  actually happened: the OS colour was read and mapped onto the palette, or it
+ *  could not be read and the accent is the theme-based pick. Claiming the system
+ *  colour was applied when it was not is the lie this replaces. */
+const followAccentNote = computed(() => {
+  if (appearance.systemAccentState === 'read') return t('settings.appearance.followAccentHintRead')
+  if (appearance.systemAccentState === 'unavailable') return t('settings.appearance.followAccentHintUnavailable')
+  return t('settings.appearance.followAccentHint')
+})
 
 const UI_FONT_OPTIONS: UiFontId[] = ['system', 'inter', 'serif', 'rounded']
 const EDITOR_FONT_OPTIONS: EditorFontId[] = ['system', 'serif', 'sans', 'reading']
@@ -110,8 +248,12 @@ function onOverlayPointerDown(e: PointerEvent): void {
 }
 
 function onKeydown(e: KeyboardEvent): void {
-  if (e.isComposing) return
+  // Shared guard: the deprecated keyCode 229 / key="Process" signals matter on
+  // Windows IMEs, where `isComposing` alone is not always set.
+  if (isComposingKey(e)) return
   if (e.key === 'Escape') {
+    // Only the modal the user is looking at may answer Escape.
+    if (!modalStack.isTopModal(modalToken)) return
     e.preventDefault()
     emit('close')
   }
@@ -123,6 +265,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  modalStack.releaseModal(modalToken)
   window.removeEventListener('keydown', onKeydown, true)
 })
 
@@ -198,6 +341,8 @@ async function onExportHtml(): Promise<void> {
     return
   }
   try {
+    // The tab lags the source pane by its debounce window; export the live text.
+    await flushEdits()
     await exportHtml(tab.content, vault ?? '', savePath, { title: exportBaseName(tab.path), refs: refsMap() })
   } catch (e) {
     // Belt-and-braces: if the backend still rejects (e.g. a symlink resolved
@@ -206,9 +351,11 @@ async function onExportHtml(): Promise<void> {
   }
 }
 
-function onExportPdf(): void {
+async function onExportPdf(): Promise<void> {
   const tab = tabs.activeTab
   if (!tab) return
+  // Persist the live text into the tab before handing it to the exporter.
+  await flushEdits()
   exportToPdf(tab.content, { title: exportBaseName(tab.path), refs: refsMap() })
 }
 </script>
@@ -243,12 +390,19 @@ function onExportPdf(): void {
           </button>
         </div>
         <div class="dialog-body">
-          <aside class="dialog-nav">
+          <aside
+            class="dialog-nav"
+            role="tablist"
+            :aria-label="t('settings.dialogTitle')"
+          >
             <button
               v-for="s in SECTIONS"
               :key="s.id"
               class="nav-row"
               :class="{ active: activeSection === s.id }"
+              role="tab"
+              :aria-selected="activeSection === s.id"
+              :aria-current="activeSection === s.id ? 'true' : undefined"
               @click="activeSection = s.id"
             >
               <component
@@ -265,6 +419,14 @@ function onExportPdf(): void {
               v-if="activeSection === 'general'"
               class="settings-section"
             >
+              <div
+                v-if="appVersion"
+                class="settings-field version-row"
+                data-test="app-version"
+              >
+                <span>{{ t('settings.general.version') }}</span>
+                <span class="settings-note">{{ appVersion }}</span>
+              </div>
               <span class="settings-label">{{ t('settings.general.vault') }}</span>
               <div class="vault-row">
                 <input
@@ -331,6 +493,36 @@ function onExportPdf(): void {
                   {{ t('settings.appearance.themeSystem') }}
                 </button>
               </div>
+              <span class="settings-label">{{ t('settings.appearance.colorScheme') }}</span>
+              <div
+                class="color-scheme-grid"
+                role="radiogroup"
+                :aria-label="t('settings.appearance.colorScheme')"
+              >
+                <button
+                  v-for="s in COLOR_SCHEMES"
+                  :key="s"
+                  type="button"
+                  class="color-scheme-card"
+                  role="radio"
+                  :aria-checked="appearance.colorScheme === s"
+                  :class="{ 'is-selected': appearance.colorScheme === s }"
+                  :data-scheme="s"
+                  :title="t(`settings.appearance.colorScheme_${s}`)"
+                  @click="appearance.setColorScheme(s)"
+                >
+                  <span
+                    class="color-scheme-preview"
+                    aria-hidden="true"
+                  >
+                    <span
+                      class="color-scheme-swatch"
+                      :style="{ background: colorSchemePreview(s).canvas, borderColor: colorSchemePreview(s).border }"
+                    />
+                  </span>
+                  <span class="color-scheme-name">{{ t(`settings.appearance.colorScheme_${s}`) }}</span>
+                </button>
+              </div>
               <span class="settings-label">{{ t('settings.appearance.accent') }}</span>
               <div
                 class="accent-row"
@@ -339,9 +531,11 @@ function onExportPdf(): void {
                 <button
                   v-for="a in ACCENTS"
                   :key="a"
+                  type="button"
                   class="accent-swatch"
                   :class="{ 'is-selected': appearance.accent === a }"
                   :style="{ background: ACCENT_COLORS[a] }"
+                  :aria-label="a"
                   :title="a as string"
                   @click="appearance.setAccent(a)"
                 />
@@ -358,7 +552,7 @@ function onExportPdf(): void {
               <span
                 v-if="appearance.followSystemAccent"
                 class="settings-note"
-              >{{ t('settings.appearance.followAccentHint') }}</span>
+              >{{ followAccentNote }}</span>
               <span class="settings-label">{{ t('settings.appearance.font') }}</span>
               <label class="settings-field">
                 <span>{{ t('settings.appearance.uiFont') }}</span>
@@ -703,12 +897,59 @@ function onExportPdf(): void {
             </section>
 
             <section
+              v-else-if="activeSection === 'plugins'"
+              class="settings-section"
+            >
+              <span class="settings-label">{{ t('settings.section.plugins') }}</span>
+              <span class="settings-note">{{ t('settings.plugins.hint') }}</span>
+              <span
+                v-if="!pluginsRunnable"
+                class="settings-note plugin-blocked"
+                data-test="plugins-blocked"
+              >{{ t('settings.plugins.blocked') }}</span>
+              <span
+                v-if="pluginsLoading"
+                class="settings-note"
+              >{{ t('settings.plugins.loading') }}</span>
+              <span
+                v-else-if="!vaultPath"
+                class="settings-note"
+              >{{ t('settings.plugins.vaultMissing') }}</span>
+              <span
+                v-else-if="!pluginRows.length"
+                class="settings-note"
+              >{{ t('settings.plugins.empty') }}</span>
+              <div
+                v-for="row in pluginRows"
+                :key="row.id"
+                class="plugin-row"
+              >
+                <label class="settings-field settings-toggle plugin-row-toggle">
+                  <span>{{ row.name }} <span class="plugin-version">v{{ row.version }}</span></span>
+                  <input
+                    :checked="!row.disabled"
+                    type="checkbox"
+                    class="checkbox"
+                    @change="togglePlugin(row, ($event.target as HTMLInputElement).checked)"
+                  >
+                </label>
+                <span class="settings-note plugin-state">
+                  {{ row.disabled ? t('settings.plugins.disabledNote') : (row.active ? t('settings.plugins.activeNote') : t('settings.plugins.inactiveNote')) }}
+                </span>
+                <span
+                  v-if="row.unstable"
+                  class="settings-note plugin-state is-warn"
+                >{{ t('settings.plugins.unstableNote') }}</span>
+              </div>
+            </section>
+
+            <section
               v-else-if="activeSection === 'ai'"
               class="settings-section"
             >
               <span class="settings-label">{{ t('settings.section.ai') }}</span>
               <label class="settings-field">
-                <span>Provider</span>
+                <span>{{ t('aiSettings.provider') }}</span>
                 <select
                   v-model="settings.provider"
                   class="input"
@@ -723,7 +964,7 @@ function onExportPdf(): void {
                 </select>
               </label>
               <label class="settings-field">
-                <span>Model</span>
+                <span>{{ t('aiSettings.model') }}</span>
                 <div class="model-row">
                   <input
                     v-model="settings.model"
@@ -761,7 +1002,7 @@ function onExportPdf(): void {
                 v-if="showBaseUrl"
                 class="settings-field"
               >
-                <span>Base URL</span>
+                <span>{{ t('aiSettings.baseUrl') }}</span>
                 <input
                   v-model="settings.baseUrl"
                   class="input"
@@ -785,7 +1026,7 @@ function onExportPdf(): void {
                 class="settings-note"
               >{{ t('aiSettings.allowPrivateHint') }}</span>
               <label class="settings-field">
-                <span>API Key</span>
+                <span>{{ t('aiSettings.apiKey') }}</span>
                 <input
                   v-model="settings.apiKey"
                   class="input"
@@ -833,6 +1074,120 @@ function onExportPdf(): void {
                 >
               </label>
               <label class="settings-field">
+                <span>{{ t('aiSettings.effort') }}</span>
+                <select
+                  class="input"
+                  :value="settings.reasoningEffort"
+                  @change="settings.reasoningEffort = ($event.target as HTMLSelectElement).value as typeof settings.reasoningEffort"
+                >
+                  <option
+                    v-for="opt in EFFORT_OPTIONS"
+                    :key="opt.value"
+                    :value="opt.value"
+                  >
+                    {{ t(opt.labelKey) }}
+                  </option>
+                </select>
+                <span class="settings-note">{{ t('aiSettings.effortHint') }}</span>
+              </label>
+              <label class="settings-field">
+                <span>{{ t('aiSettings.contextChars') }}</span>
+                <input
+                  class="input"
+                  :value="settings.contextChars"
+                  type="number"
+                  :min="CONTEXT_CHARS_MIN"
+                  :max="CONTEXT_CHARS_MAX"
+                  step="1000"
+                  @change="settings.contextChars = Math.min(CONTEXT_CHARS_MAX, Math.max(CONTEXT_CHARS_MIN, Math.round(Number(($event.target as HTMLInputElement).value) || DEFAULT_CONTEXT_CHARS)))"
+                >
+                <span class="settings-note">{{ t('aiSettings.contextCharsHint', { min: CONTEXT_CHARS_MIN, max: CONTEXT_CHARS_MAX }) }}</span>
+              </label>
+              <label class="settings-field settings-toggle">
+                <span>{{ t('aiperm.enabled') }}</span>
+                <input
+                  :checked="aiPermission.enabled"
+                  type="checkbox"
+                  class="checkbox"
+                  @change="aiPermission.setEnabled(($event.target as HTMLInputElement).checked)"
+                >
+              </label>
+              <span class="settings-note">{{ t('aiperm.enabledHint') }}</span>
+              <label class="settings-field">
+                <span>{{ t('aiperm.policy') }}</span>
+                <select
+                  class="input"
+                  :value="aiPermission.policy"
+                  @change="aiPermission.setPolicy(($event.target as HTMLSelectElement).value as AiWritePolicy)"
+                >
+                  <option
+                    v-for="opt in WRITE_POLICIES"
+                    :key="opt.value"
+                    :value="opt.value"
+                  >
+                    {{ t(opt.labelKey) }}
+                  </option>
+                </select>
+                <span class="settings-note">{{ t('aiperm.policyHint') }}</span>
+              </label>
+              <div class="settings-field settings-audit">
+                <span>{{ t('aiperm.audit.title') }}</span>
+                <span class="settings-note">{{ t('aiperm.audit.hint') }}</span>
+                <span
+                  v-if="recentAiAudit.length"
+                  class="settings-note"
+                >{{ t('aiperm.audit.counts', aiPermission.auditSummary) }}</span>
+                <ul
+                  v-if="recentAiAudit.length"
+                  class="ai-audit-list"
+                >
+                  <li
+                    v-for="entry in recentAiAudit"
+                    :key="entry.seq"
+                    class="ai-audit-row"
+                    :class="'is-' + entry.outcome"
+                  >
+                    <span class="ai-audit-time">{{ clockTime(entry.at) }}</span>
+                    <span class="ai-audit-source">{{ t(AUDIT_SOURCE_KEYS[entry.source]) }}</span>
+                    <span
+                      v-if="entry.kind"
+                      class="ai-audit-kind"
+                    >{{ t(AUDIT_KIND_KEYS[entry.kind]) }}</span>
+                    <span class="ai-audit-outcome">{{ t(AUDIT_OUTCOME_KEYS[entry.outcome]) }}</span>
+                    <span
+                      v-if="entry.detail"
+                      class="ai-audit-detail"
+                    >{{ entry.detail }}</span>
+                  </li>
+                </ul>
+                <span
+                  v-else
+                  class="settings-note"
+                >{{ t('aiperm.audit.empty') }}</span>
+                <button
+                  class="btn btn-secondary btn-sm"
+                  :disabled="!recentAiAudit.length"
+                  @click="aiPermission.forgetAudit()"
+                >
+                  {{ t('aiperm.audit.clear') }}
+                </button>
+              </div>
+              <div class="settings-field">
+                <span>{{ t('aiperm.grants') }}</span>
+                <span class="settings-note">
+                  {{ aiPermission.sessionGrants.size
+                    ? [...aiPermission.sessionGrants].join(', ')
+                    : t('aiperm.noGrants') }}
+                </span>
+                <button
+                  class="btn btn-secondary btn-sm"
+                  :disabled="aiPermission.sessionGrants.size === 0"
+                  @click="aiPermission.forgetGrants()"
+                >
+                  {{ t('aiperm.revoke') }}
+                </button>
+              </div>
+              <label class="settings-field">
                 <span>{{ t('aiSettings.maxTokens') }}</span>
                 <input
                   class="input"
@@ -841,7 +1196,7 @@ function onExportPdf(): void {
                   min="128"
                   max="8192"
                   step="64"
-                  @change="settings.maxTokens = Math.min(8192, Math.max(128, Math.round(Number(($event.target as HTMLInputElement).value) || 256)))"
+                  @change="settings.maxTokens = Math.min(8192, Math.max(128, Math.round(Number(($event.target as HTMLInputElement).value) || 1024)))"
                 >
               </label>
             </section>
@@ -990,6 +1345,67 @@ function onExportPdf(): void {
 .settings-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--app-text); }
 .settings-field > span { color: var(--app-muted); font-size: 11px; }
 .settings-note { font-size: 11px; line-height: 1.5; color: var(--app-muted); }
+
+/* A build that cannot run plugins must say so where the switches are, not
+ * only in a toast once per session. */
+.plugin-blocked {
+  color: var(--app-muted);
+  border-left: 2px solid var(--app-warn, #b7791f);
+  padding-left: 8px;
+}
+
+/* The AI activity list: one line per event, newest first. Outcomes are
+ * colour-coded rather than icon-coded, because the whole list is read at a
+ * glance to answer "did anything get through that I did not want?". */
+.ai-audit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 168px;
+  overflow-y: auto;
+}
+.ai-audit-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--app-muted);
+}
+.ai-audit-time {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+  flex: none;
+}
+.ai-audit-source {
+  flex: none;
+  color: var(--app-text);
+}
+.ai-audit-kind,
+.ai-audit-detail {
+  flex: none;
+  opacity: 0.8;
+}
+.ai-audit-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-audit-outcome {
+  flex: none;
+  margin-left: auto;
+}
+.ai-audit-row.is-allowed .ai-audit-outcome {
+  color: var(--app-accent);
+}
+.ai-audit-row.is-denied .ai-audit-outcome,
+.ai-audit-row.is-blocked .ai-audit-outcome {
+  color: var(--app-danger, #c0392b);
+}
 .settings-save { align-self: flex-start; }
 .vault-row { display: flex; gap: 6px; }
 .vault-row .input { flex: 1; min-width: 0; }
@@ -1034,4 +1450,55 @@ function onExportPdf(): void {
 .view-modes button:disabled { opacity: 0.5; cursor: not-allowed; }
 .accent-row { display: flex; gap: 6px; }
 .accent-row.is-disabled { opacity: 0.5; pointer-events: none; }
+.color-scheme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(86px, 1fr));
+  gap: 8px;
+}
+.color-scheme-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--app-border) 80%, transparent);
+  border-radius: var(--app-radius-lg);
+  background: color-mix(in srgb, var(--app-elevated) 82%, var(--app-panel));
+  color: var(--app-text);
+  font-family: var(--app-font);
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color var(--app-motion-fast) var(--app-ease),
+              box-shadow var(--app-motion-fast) var(--app-ease),
+              background var(--app-motion-fast) var(--app-ease);
+}
+.color-scheme-card:hover {
+  border-color: color-mix(in srgb, var(--app-accent) 45%, var(--app-border));
+}
+.color-scheme-card:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
+.color-scheme-card.is-selected {
+  border-color: var(--app-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--app-accent) 24%, transparent);
+}
+.color-scheme-preview {
+  display: block;
+}
+.color-scheme-swatch {
+  display: block;
+  width: 100%;
+  height: 44px;
+  border-radius: var(--app-radius-sm);
+  border: 1px solid;
+}
+.color-scheme-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: center;
+  color: var(--app-muted);
+}
+
 </style>

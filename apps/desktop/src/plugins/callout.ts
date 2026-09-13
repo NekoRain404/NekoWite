@@ -1,7 +1,11 @@
 import { defineComponent, h } from 'vue'
 import { definePlugin } from '@nekowite/plugin-host'
 import type { NekoEditor } from '@nekowite/editor-core'
-import { insertMdxComponent } from '@nekowite/editor-core'
+import {
+  insertMdxComponent,
+  mdxComponentToMarkdown,
+  registerMarkdownCommand,
+} from '@nekowite/editor-core'
 import { t } from '../i18n'
 
 type EditorView = ReturnType<NekoEditor['getView']>
@@ -36,8 +40,22 @@ function insertCallout(): void {
   })
 }
 
+const CALLOUT_ID = 'callout.insert'
+
 export const calloutPlugin = definePlugin({
   name: 'Callout',
   components: { Callout },
-  toolbar: [{ id: 'callout.insert', label: t('command.callout.insert'), run: insertCallout }],
+  toolbar: [{ id: CALLOUT_ID, label: t('command.callout.insert'), run: insertCallout }],
+})
+
+// Source mode has no MDX node to insert, so the same component is written as
+// its JSX source. Produced through the serializer's own helper so the two
+// forms cannot drift apart.
+registerMarkdownCommand(CALLOUT_ID, () => {
+  const text = mdxComponentToMarkdown({
+    name: 'Callout',
+    props: { type: 'info' },
+    children: 'note',
+  })
+  return { text, caret: text.indexOf('note') }
 })

@@ -67,7 +67,11 @@ describe('createAppLifecycle', () => {
     // mount() only registers the native close-requested listener under a Tauri
     // runtime; expose the flag so the close paths are exercised in the unit tests.
     ;(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
-    Object.assign(h.windowMock, { onCloseRequested: vi.fn(), close: vi.fn().mockResolvedValue(undefined), destroy: vi.fn() })
+    Object.assign(h.windowMock, {
+      onCloseRequested: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+      destroy: vi.fn().mockResolvedValue(undefined),
+    })
     h.windowMock.onCloseRequested.mockResolvedValue(() => {})
     h.tabsMock.hasUnsavedWork.mockReturnValue(false)
     h.tabsMock.flushDirty.mockResolvedValue(true)
@@ -119,6 +123,21 @@ describe('createAppLifecycle', () => {
     expect(h.tabsMock.flushDirty).not.toHaveBeenCalled()
     expect(h.tabsMock.captureSession).toHaveBeenCalled()
     expect(h.windowMock.close).not.toHaveBeenCalled()
+  })
+
+  it('close-requested falls back to destroy when the native close throws', async () => {
+    h.tabsMock.hasUnsavedWork.mockReturnValue(true)
+    h.tabsMock.flushDirty.mockResolvedValue(true)
+    h.windowMock.close.mockRejectedValue(new Error('close blocked'))
+    const lifecycle = createAppLifecycle({ windowTracking: h.windowTracking })
+    await lifecycle.mount()
+
+    const preventDefault = vi.fn()
+    await registeredCloseHandler()({ preventDefault })
+
+    expect(preventDefault).toHaveBeenCalled()
+    expect(h.windowMock.close).toHaveBeenCalled()
+    expect(h.windowMock.destroy).toHaveBeenCalled()
   })
 
   it('close-requested keeps the window open when a save fails', async () => {

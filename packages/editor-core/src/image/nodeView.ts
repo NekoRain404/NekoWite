@@ -1,7 +1,13 @@
 import { $view } from '@milkdown/utils'
 import type { NodeViewConstructor } from '@milkdown/prose/view'
 
-import { resolveImageSrc } from './resolver'
+import {
+  hasImageResolver,
+  isSelfDisplayableSrc,
+  onImageResolutionInvalidated,
+  resolveImageSrc,
+} from './resolver'
+import { imageNodeMessages, isRemoteHttpSrc } from './messages'
 import { imageDimSchema } from './schema'
 import { nextWidth, proportionalSize } from './resize'
 import { advanceResizeDrag, beginResizeDrag, commitResizeDrag } from './drag'
@@ -38,9 +44,17 @@ export const makeImageNodeView: NodeViewConstructor = (node, view, getPos) => {
   const retryBtn = document.createElement('button')
   retryBtn.className = 'neko-image-error-retry'
   retryBtn.type = 'button'
-  retryBtn.textContent = 'Retry'
+  retryBtn.textContent = imageNodeMessages().retry
+  // A remote http(s) image is refused by the host's CSP, so Retry cannot ever
+  // succeed; the honest affordance there is opening it in the system browser.
+  const openBtn = document.createElement('button')
+  openBtn.className = 'neko-image-error-open'
+  openBtn.type = 'button'
+  openBtn.textContent = imageNodeMessages().openInBrowser
+  openBtn.setAttribute('hidden', '')
   errorBox.appendChild(errorMsg)
   errorBox.appendChild(retryBtn)
+  errorBox.appendChild(openBtn)
   errorBox.setAttribute('hidden', '')
 
   dom.appendChild(img)
@@ -51,6 +65,9 @@ export const makeImageNodeView: NodeViewConstructor = (node, view, getPos) => {
   // its async resolution result to the DOM.
   let version = 0
   let failedSrc: string | null = null
+  // The src the element is currently meant to show, so a `load` for an earlier
+  // src cannot clear the failure of a later one.
+  let expectedSrc: string | null = null
 
   const applyDims = (): void => {
     const width = Number(node.attrs.width)
@@ -85,6 +102,22 @@ export const makeImageNodeView: NodeViewConstructor = (node, view, getPos) => {
     }
   }
 
+  /** Show the failure overlay with the right message and action for `src`. */
+  const showFailure = (src: string): void => {
+    const text = imageNodeMessages()
+    const remote = isRemoteHttpSrc(src)
+    errorMsg.textContent = remote ? text.remoteBlocked : text.loadFailed
+    retryBtn.textContent = text.retry
+    openBtn.textContent = text.openInBrowser
+    if (remote) {
+      retryBtn.setAttribute('hidden', '')
+      openBtn.removeAttribute('hidden')
+    } else {
+      retryBtn.removeAttribute('hidden')
+      openBtn.setAttribute('hidden', '')
+    }
+  }
+
   const applyFailed = (failed: boolean): void => {
     if (failed) {
       dom.setAttribute('data-failed', 'true')
@@ -112,24 +145,56 @@ export const makeImageNodeView: NodeViewConstructor = (node, view, getPos) => {
     if (!src) {
       img.removeAttribute('src')
       applyFailed(true)
-      errorMsg.textContent = 'Missing image source'
+      errorMsg.textContent = imageNodeMessages().missingSource
       return
     }
     applyFailed(false)
     failedSrc = src
-    // Show the raw src immediately (it may already be displayable), then let
-    // the resolver — when configured — replace it with the display URL.
-    img.setAttribute('src', src)
+    // Paint the document src directly only when it is already displayable
+    // (`http:`, `data:`, an absolute path) or when nothing will resolve it.
+    //
+    // A vault-relative path is NOT loadable: painting it fires an `error`
+    // before the async resolver swaps in the real URL, and that failure latch
+    // used to stay on screen over an image that had in fact loaded — the
+    // "images fail on open, Retry fixes it" report. Waiting one IPC round trip
+    // instead means the element is never pointed at a URL that cannot load.
+    if (isSelfDisplayableSrc(src) || !hasImageResolver()) {
+      expectedSrc = src
+      img.setAttribute('src', src)
+    } else {
+      expectedSrc = null
+      img.removeAttribute('src')
+    }
     void resolveImageSrc(src).then((display) => {
-      if (version === mine) img.setAttribute('src', display)
+      if (version !== mine) return
+      expectedSrc = display
+      img.setAttribute('src', display)
     })
   }
   render()
 
   img.addEventListener('error', () => {
     if (version === 0) return
+    const shown = img.getAttribute('src')
+    if (!shown) return
+    // Mirror the `load` guard: an error from a superseded src must not latch a
+    // failure onto the src this node is actually waiting for.
+    if (expectedSrc !== null && shown !== expectedSrc && !shown.startsWith(expectedSrc)) return
     applyFailed(true)
-    errorMsg.textContent = 'Image failed to load'
+    showFailure(failedSrc ?? shown)
+  })
+
+  // The counterpart to `error`: the display URL arrives asynchronously, so a
+  // placeholder src (or a transient failure) can be followed by a real success.
+  // Without this the failure state could only be cleared by clicking Retry.
+  img.addEventListener('load', () => {
+    if (version === 0) return
+    const shown = img.getAttribute('src')
+    if (!shown) return
+    // Only a load of the src this node currently expects counts: a late event
+    // from a superseded src must not clear the present one's failure state.
+    if (expectedSrc !== null && shown !== expectedSrc && !shown.startsWith(expectedSrc)) return
+    applyFailed(false)
   })
 
   retryBtn.addEventListener('pointerdown', (e) => e.stopPropagation())
@@ -139,10 +204,26 @@ export const makeImageNodeView: NodeViewConstructor = (node, view, getPos) => {
     if (!failedSrc) return
     applyFailed(false)
     const mine = ++version
-    img.setAttribute('src', `${failedSrc}?retry=${Date.now()}`)
-    void resolveImageSrc(failedSrc).then((display) => {
-      if (version === mine) img.setAttribute('src', display)
+    // Resolve afresh: a memoized failure (the first attempt can run before the
+    // vault is authorized) would otherwise be replayed on every Retry.
+    void resolveImageSrc(failedSrc, { refresh: true }).then((display) => {
+      if (version !== mine) return
+      // When resolution has nothing better to offer the src is already the
+      // display URL, so bust the browser cache to force a real re-request.
+      const next = display === failedSrc ? `${display}?retry=${Date.now()}` : display
+      // Adopt it as the expected src, or the `load` handler would treat the
+      // successfully retried image as a superseded one and keep the overlay.
+      expectedSrc = next
+      img.setAttribute('src', next)
     })
+  })
+
+  openBtn.addEventListener('pointerdown', (e) => e.stopPropagation())
+  openBtn.addEventListener('click', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!failedSrc) return
+    window.open(failedSrc, '_blank', 'noopener,noreferrer')
   })
 
   // The resize handle plus the bottom-right corner of the image both initiate
@@ -204,6 +285,20 @@ export const makeImageNodeView: NodeViewConstructor = (node, view, getPos) => {
   handle.addEventListener('click', (e) => e.stopPropagation())
   img.addEventListener('click', (e) => e.stopPropagation())
 
+  // A resolution that failed because its inputs were not ready yet (the vault
+  // not authorized, the file mid-write) must not stay failed: a pending
+  // invalidation re-runs it.
+  const stopInvalidationWatch = onImageResolutionInvalidated(() => {
+    if (version === 0 || !failedSrc) return
+    const src = failedSrc
+    const mine = ++version
+    void resolveImageSrc(src).then((display) => {
+      if (version !== mine) return
+      expectedSrc = display
+      img.setAttribute('src', display)
+    })
+  })
+
   return {
     dom,
     ignoreMutation: () => true,
@@ -216,7 +311,10 @@ export const makeImageNodeView: NodeViewConstructor = (node, view, getPos) => {
       return true
     },
     destroy: () => {
+      // Bumping the version invalidates any in-flight resolve, and the
+      // invalidation watch is dropped so a torn-down node view is not woken.
       version += 1
+      stopInvalidationWatch()
     },
   }
 }

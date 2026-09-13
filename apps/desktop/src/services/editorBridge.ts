@@ -1,8 +1,12 @@
 import type { NekoEditor } from '@nekowite/editor-core'
+import { citeToMarkdown } from '@nekowite/editor-core'
 import {
   editorSessionManager,
   EDITOR_BRIDGE_LEGACY_TAB,
 } from '../features/editor/sessionManager'
+import { getSourceView } from './sourceView'
+import { insertSourceText } from './sourceCommands'
+import { sourcePaneOwnsInput } from './editorInsert'
 
 type EditorView = NonNullable<ReturnType<NekoEditor['getView']>>
 
@@ -44,6 +48,13 @@ export const editorBridge = {
 }
 
 export function insertCiteAtCursor(key: string): void {
+  // Source mode: the rendered model is stale, so the citation's Markdown form
+  // goes at the CodeMirror caret instead of into the hidden document.
+  if (sourcePaneOwnsInput()) {
+    const sourceView = getSourceView()
+    if (sourceView) insertSourceText(sourceView, citeToMarkdown(key))
+    return
+  }
   const view = editorSessionManager.getView()
   if (!view) return
   const { state } = view

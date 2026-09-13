@@ -10,11 +10,28 @@ import { t } from '../i18n'
 
 const tabs = useTabsStore()
 const entries = ref<HistoryEntry[]>([])
+/**
+ * Set when the last read of the history FAILED. The panel must not print "no
+ * history yet" underneath an error toast: that sentence says the versions are
+ * gone, while the truth is that they could not be read.
+ */
+const loadFailed = ref(false)
 
 /** The entry being compared against the current content, or null to close. */
 const comparing = ref<HistoryEntry | null>(null)
 /** Historical text of `comparing`, loaded lazily on open. */
 const historyText = ref('')
+/**
+ * The note `comparing`/`historyText` belong to.
+ *
+ * The comparison is a snapshot of ONE note's old version and is not
+ * self-describing: without this, switching notes left the panel showing "this
+ * note's current text vs THAT note's old text" in one diff - two documents mixed
+ * together - and the restore button then asked the backend to restore the other
+ * note's version id onto this one (a confusing failure, or with a coincidentally
+ * equal id, the wrong version pasted into the wrong note).
+ */
+const comparingPath = ref<string | null>(null)
 
 function hasDoc(): boolean {
   return Boolean(tabs.vault && tabs.activeTab?.path)
@@ -22,15 +39,25 @@ function hasDoc(): boolean {
 
 async function load(): Promise<void> {
   const tab = tabs.activeTab
+  // The note changed: any open comparison describes a document that is no longer
+  // on screen, so drop it rather than render (and act on) a mixed diff.
+  if (comparingPath.value !== null && comparingPath.value !== (tab?.path ?? null)) {
+    closeCompare()
+  }
   if (!tab?.path || !tabs.vault) {
     entries.value = []
+    loadFailed.value = false
     return
   }
   try {
     entries.value = await fsService.listHistory(tabs.vault, tab.path)
-  } catch {
-    notifyError(t('history.readFailed'))
+    loadFailed.value = false
+  } catch (e) {
+    // The toast carries the backend reason (which folder, what the OS said);
+    // the inline hint below stops the panel from claiming there is no history.
+    notifyError(t('history.readFailed', { msg: e instanceof Error ? e.message : String(e) }))
     entries.value = []
+    loadFailed.value = true
   }
 }
 
@@ -56,9 +83,16 @@ async function restore(entry: HistoryEntry): Promise<void> {
 async function openCompare(entry: HistoryEntry): Promise<void> {
   const tab = tabs.activeTab
   if (!tab?.path || !tabs.vault) return
+  const path = tab.path
+  const vault = tabs.vault
   try {
-    historyText.value = await fsService.readHistory(tabs.vault, tab.path, entry.id)
+    const text = await fsService.readHistory(vault, path, entry.id)
+    // The read is asynchronous: if the user switched notes while it was in
+    // flight, this text belongs to the note that is no longer open.
+    if (tabs.activeTab?.path !== path || tabs.vault !== vault) return
+    historyText.value = text
     comparing.value = entry
+    comparingPath.value = path
   } catch {
     notifyError(t('history.readHistoryFailed'))
   }
@@ -67,10 +101,14 @@ async function openCompare(entry: HistoryEntry): Promise<void> {
 function closeCompare(): void {
   comparing.value = null
   historyText.value = ''
+  comparingPath.value = null
 }
 
 async function restoreFromDiff(): Promise<void> {
-  if (comparing.value) await restore(comparing.value)
+  // Only restore what the diff actually shows: the same note, still open.
+  if (comparing.value && comparingPath.value === tabs.activeTab?.path) {
+    await restore(comparing.value)
+  }
   closeCompare()
 }
 
@@ -146,11 +184,14 @@ onMounted(() => {
         @restore="restoreFromDiff"
         @close="closeCompare"
       />
+      <!-- Chained to the LIST's condition, not to the DiffView's: the v-else
+           used to hang off the diff, so "no history yet" was printed under
+           every populated history list. -->
       <p
-        v-else
+        v-if="!entries.length && !(comparing && historyText)"
         class="rail-empty"
       >
-        {{ t('history.empty') }}
+        {{ loadFailed ? t('history.unreadable') : t('history.empty') }}
       </p>
     </template>
     <p

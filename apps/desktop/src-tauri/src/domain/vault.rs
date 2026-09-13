@@ -10,9 +10,7 @@ use std::path::Path;
 /// deps, but a node module is not openable content).
 pub fn is_mdx_path(p: &str) -> bool {
     let path = Path::new(p);
-    let has_node_modules = path
-        .components()
-        .any(|c| c.as_os_str() == "node_modules");
+    let has_node_modules = path.components().any(|c| c.as_os_str() == "node_modules");
     if has_node_modules {
         return false;
     }

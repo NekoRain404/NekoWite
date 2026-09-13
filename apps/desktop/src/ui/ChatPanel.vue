@@ -12,13 +12,24 @@ import {
   Trash2,
   X,
 } from 'lucide-vue-next'
-import { startChatCompletion, aiService } from '../services/ai'
+import { startChatCompletion, aiService, usageTotal } from '../services/ai'
+import { EFFORT_OPTIONS } from '../stores/settings'
 import { notifyError } from '../services/errors'
 import { editorSessionManager } from '../features/editor/sessionManager'
-import { collectClipboardImages, isImageFile } from '../services/attachments'
+import { insertMarkdownAtCursor } from '../services/editorInsert'
+import { flushEdits } from '../services/editorOwnership'
+import {
+  collectClipboardImages,
+  formatAttachmentBytes,
+  isImageFile,
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENTS_PER_MESSAGE,
+  MAX_ATTACHMENTS_PER_MESSAGE_BYTES,
+} from '../services/attachments'
 import { useSettingsStore } from '../stores/settings'
 import { useTabsStore } from '../stores/tabs'
 import { useChatSessionStore } from '../stores/chatSession'
+import { useAiPermissionStore } from '../stores/aiPermission'
 import type { ChatSessionMessage } from '../stores/chatSession'
 import {
   buildChatPrompt,
@@ -29,12 +40,30 @@ import {
   type ChatMessage,
 } from './chatLogic'
 import { t } from '../i18n'
+import { isComposingKey } from '../services/keyGuard'
 
 interface ChatAttachment {
   id: string
   name: string
   file: File
   url: string
+}
+
+/** The panel's working copy of a turn: the shared chat type plus the marker for
+ * an answer that was cut off mid-stream (see `interruptStream`). The marker is
+ * part of the session model, so it round-trips through `toSessionMessage`. */
+interface PanelMessage extends ChatMessage {
+  interrupted?: boolean
+  /** Short status about this message's images (refused by the size cap, or
+   *  evicted by a storage budget). Shown under the bubble; without it the
+   *  attachment simply disappears between one launch and the next. */
+  imageNotice?: string
+  /** Token total the provider reported for this answer (see AiTokenUsage).
+   *  Shown under the bubble so the cost of a request is visible without a
+   *  trip to the provider dashboard - and so an unexpectedly large one is
+   *  noticed while it is still relevant. Omitted when the provider reported
+   *  nothing, rather than shown as zero. */
+  usageTotal?: number
 }
 
 const settings = useSettingsStore()
@@ -94,39 +123,69 @@ function activeSelection(): string {
 
 /** Build the context block for the active tab: title (frontmatter → filename),
  * selection in priority over body. Empty string when nothing is usable. */
-function buildActiveContext(): string {
+async function buildActiveContext(): Promise<string> {
   const tab = tabs.activeTab
   if (!tab) return ''
+  // The note is sent to the model as context; flush so it is the live text
+  // rather than whatever a pane had published a debounce window ago.
+  await flushEdits()
   const title = frontmatterTitle(tab.content) || noteTitleFromPath(tab.path)
   return buildContextBlock({
     noteTitle: title,
     selection: activeSelection(),
     noteContent: tab.content,
+    // The user's budget, not a hardcoded one: on a long note the difference
+    // between 2000 and 6000 characters is the difference between the model
+    // seeing the note's title page and seeing the section being worked on.
+    maxChars: settings.contextChars,
   })
 }
 
-const messages = ref<ChatMessage[]>([])
+const messages = ref<PanelMessage[]>([])
 const attachments = ref<ChatAttachment[]>([])
 const prompt = ref('')
 const streaming = ref(false)
 const scrollEl = ref<HTMLElement | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 let cancelFn: (() => void) | null = null
+/** Set on unmount: a `send()` still encoding context/images must not start a
+ * request the destroyed panel could never show, cancel or persist. */
+let disposed = false
 
 const modelName = computed(() => settings.model)
+
+/** The store reports a write that could not store everything (see
+ *  `chatSession.storageWarning`). Without this banner the user only finds out
+ *  after a restart, when the images - or the whole conversation - are gone. */
+const storageWarningText = computed(() => {
+  const warning = chatSessions.storageWarning
+  if (warning === 'images-not-persisted') return t('chat.storageImagesDropped')
+  if (warning === 'history-not-persisted') return t('chat.storageFull')
+  return ''
+})
 const canSend = computed(() => !streaming.value && (prompt.value.trim().length > 0 || attachments.value.length > 0))
 const hasMessages = computed(() => messages.value.length > 0)
 
-/** Strip transient `streaming` before persisting; keep images as-is. */
-function toSessionMessage(m: ChatMessage): ChatSessionMessage {
+/** Strip transient `streaming` before persisting; keep images and the
+ * interrupted marker as-is. */
+function toSessionMessage(m: PanelMessage): ChatSessionMessage {
   const stored: ChatSessionMessage = { role: m.role, content: m.content }
   if (m.images && m.images.length) stored.images = m.images
+  if (m.imageNotice) stored.imageNotice = m.imageNotice
+  if (m.usageTotal) stored.usageTotal = m.usageTotal
+  if (m.interrupted) stored.interrupted = true
   return stored
 }
 
-function fromSessionMessage(m: ChatSessionMessage): ChatMessage {
-  const msg: ChatMessage = { role: m.role, content: m.content }
+function fromSessionMessage(m: ChatSessionMessage): PanelMessage {
+  const msg: PanelMessage = { role: m.role, content: m.content }
   if (m.images && m.images.length) msg.images = m.images
+  // The store explains here why an image is missing ("too large", "removed,
+  // storage limit"). Dropping the notice - which this did - turned a refused
+  // attachment into a message that quietly sent without it.
+  if (m.imageNotice) msg.imageNotice = m.imageNotice
+  if (m.usageTotal) msg.usageTotal = m.usageTotal
+  if (m.interrupted) msg.interrupted = true
   return msg
 }
 
@@ -141,32 +200,70 @@ function syncSession(): void {
   chatSessions.setMessages(messages.value.map(toSessionMessage))
 }
 
-function newSession(): void {
+/**
+ * Composer state per session: the half-written question and its attachments.
+ *
+ * Switching to another session to check something and coming back used to find
+ * the composer empty - the text you were mid-way through was simply gone, and
+ * with it the images you had attached. A draft belongs to the conversation it
+ * was written for, so it is parked under that session and restored with it.
+ */
+const drafts = new Map<string, { prompt: string; attachments: ChatAttachment[] }>()
+
+function stashDraft(): void {
+  const id = chatSessions.activeId
+  if (!id) return
+  if (!prompt.value && attachments.value.length === 0) {
+    drafts.delete(id)
+    return
+  }
+  drafts.set(id, { prompt: prompt.value, attachments: [...attachments.value] })
+}
+
+/** Drop a stashed draft and release the object URLs it holds. */
+function discardDraft(id: string): void {
+  const draft = drafts.get(id)
+  if (!draft) return
+  for (const a of draft.attachments) URL.revokeObjectURL(a.url)
+  drafts.delete(id)
+}
+
+function restoreDraft(): void {
+  const id = chatSessions.activeId
+  const draft = id ? drafts.get(id) : undefined
+  prompt.value = draft?.prompt ?? ''
+  attachments.value = draft ? [...draft.attachments] : []
+}
+
+function switchToSession(id: string | null): void {
   if (streaming.value) stop()
-  chatSessions.newSession()
+  stashDraft()
+  if (id === null) chatSessions.newSession()
+  else chatSessions.switchSession(id)
   loadActiveSession()
-  clearAttachments()
-  prompt.value = ''
+  restoreDraft()
   scrollToBottom()
+}
+
+function newSession(): void {
+  switchToSession(null)
 }
 
 function onSessionChange(e: Event): void {
   const id = (e.target as HTMLSelectElement).value || null
   if (id === chatSessions.activeId) return
-  if (streaming.value) stop()
-  chatSessions.switchSession(id)
-  loadActiveSession()
-  clearAttachments()
-  prompt.value = ''
-  scrollToBottom()
+  switchToSession(id)
 }
 
 function deleteActiveSession(): void {
+  const removed = chatSessions.activeId
   if (streaming.value) stop()
-  chatSessions.deleteSession(chatSessions.activeId ?? '')
+  // The draft goes with the conversation it belonged to: keeping it would
+  // attach a question to whatever session happens to be next.
+  if (removed) discardDraft(removed)
+  chatSessions.deleteSession(removed ?? '')
   loadActiveSession()
-  clearAttachments()
-  prompt.value = ''
+  restoreDraft()
   scrollToBottom()
 }
 
@@ -183,11 +280,40 @@ function scrollToBottom(): void {
 
 function addFiles(files: File[]): void {
   const seen = new Set(attachments.value.map((a) => `${a.name}:${a.file.size}:${a.file.type}`))
+  // The running total for this message, not for this call: the size budget has
+  // to hold across separate picks, which is how the count cap gets evaded.
+  let totalBytes = attachments.value.reduce((sum, a) => sum + a.file.size, 0)
   for (const file of files) {
     if (!isImageFile(file)) continue
+    if (attachments.value.length >= MAX_ATTACHMENTS_PER_MESSAGE) {
+      // Every attachment is base64-encoded into one request: past this cap the
+      // send would spike memory on both processes and be refused by the model.
+      notifyError(t('chat.tooManyImages', { max: MAX_ATTACHMENTS_PER_MESSAGE }))
+      break
+    }
+    // Refuse an oversize image HERE, while the user can still act on it: the
+    // send path (`fileToBase64`) enforces the same cap, and a rejection from
+    // inside `send()` used to vanish — the draft and the thumbnail stayed,
+    // nothing was sent, and no error explained why.
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      notifyError(t('chat.imageTooLarge', { max: formatAttachmentBytes(MAX_ATTACHMENT_BYTES) }))
+      continue
+    }
+    // Refused per image, like the two caps above: the images that already fit
+    // stay put and only this one is left out, so the user can drop one file
+    // instead of starting the message over.
+    if (totalBytes + file.size > MAX_ATTACHMENTS_PER_MESSAGE_BYTES) {
+      notifyError(
+        t('chat.attachmentsTotalTooLarge', {
+          max: formatAttachmentBytes(MAX_ATTACHMENTS_PER_MESSAGE_BYTES),
+        }),
+      )
+      continue
+    }
     const key = `${file.name}:${file.size}:${file.type}`
     if (seen.has(key)) continue
     seen.add(key)
+    totalBytes += file.size
     attachments.value.push({
       id: nextImageId(),
       name: file.name,
@@ -239,7 +365,9 @@ function onDragOver(e: DragEvent): void {
 }
 
 function onComposerKeydown(e: KeyboardEvent): void {
-  if (e.isComposing || e.key === 'Process') return
+  // Enter accepts the IME candidate; sending the message there would fire a
+  // request with the half-composed text.
+  if (isComposingKey(e)) return
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     void send()
@@ -259,19 +387,46 @@ async function send(): Promise<void> {
   const text = prompt.value.trim()
   if (!text && attachments.value.length === 0) return
 
-  const context = useCurrentDoc.value ? buildActiveContext() : ''
-  if (useCurrentDoc.value && !context) {
-    notifyError(t('chat.emptyDocHint'))
+  let context = ''
+  let imageDataUrls: ChatImage[]
+  try {
+    if (useCurrentDoc.value) {
+      const tab = tabs.activeTab
+      if (!tab) {
+        // No document at all: naming that is right, because the switch is on.
+        notifyError(t('chat.emptyDocHint'))
+        return
+      }
+      context = await buildActiveContext()
+      // An EMPTY note is not a missing document. Refusing to send here blocked
+      // exactly the scenario the feature is for — "help me outline this" on a
+      // note you just created — with a message claiming no document was open
+      // while one plainly was. The message goes out without context, and the
+      // user is told why it carries nothing.
+      if (!context) notifyError(t('chat.emptyDocSent'))
+    }
+    imageDataUrls = await itemDataUrls(attachments.value)
+  } catch {
+    // Every caller is `void send()`, so a rejection here is an unhandled one:
+    // the button would look alive while nothing happened at all. State is
+    // untouched on this path, so the user can drop the image and retry.
+    notifyError(t('chat.sendFailed'))
     return
   }
 
-  const imageDataUrls = await itemDataUrls(attachments.value)
+  // The rail can close while the context/images above were still encoding;
+  // starting now would leave a request running with no panel left to show or
+  // cancel it (onBeforeUnmount has already made its own pass).
+  if (disposed) return
+
   const userMessage: ChatMessage = { role: 'user', content: text, images: imageDataUrls }
   const history = [...messages.value, userMessage]
   messages.value = [...messages.value, userMessage]
   syncSession()
   prompt.value = ''
   clearAttachments()
+  const sentFrom = chatSessions.activeId
+  if (sentFrom) drafts.delete(sentFrom)
 
   const chatPrompt = buildChatPrompt(history.map((m) => ({ role: m.role, content: m.content })), { context })
   const assistant: ChatMessage = { role: 'assistant', content: '', streaming: true }
@@ -289,14 +444,24 @@ async function send(): Promise<void> {
       if (m) m.content = chunk
       scrollToBottom()
     },
-    onDone: (full) => {
+    onDone: (full, usage) => {
       const m = messages.value[index]
+      if (m) {
+        const total = usageTotal(usage)
+        if (total !== null) m.usageTotal = total
+      }
       if (m) m.content = full || m.content
       finalize(index, true)
       scrollToBottom()
     },
     onError: (msg) => {
-      finalize(index, false)
+      // An answer that already streamed text before the connection died is a
+      // PARTIAL answer, and must say so: presenting half a paragraph as the
+      // finished reply is how a user quotes a sentence the model never
+      // completed. (The panel-close path already marks this; the failure path
+      // did not.)
+      const partial = (messages.value[index]?.content ?? '').length > 0
+      finalize(index, partial, partial)
       notifyError(t('chat.genFailed', { msg }))
     },
   })
@@ -306,11 +471,12 @@ async function send(): Promise<void> {
     .catch(() => undefined)
 }
 
-function finalize(index: number, retainEmpty: boolean): void {
+function finalize(index: number, retainEmpty: boolean, interrupted = false): void {
   const m = messages.value[index]
   if (m) {
     if (retainEmpty || m.content) {
       m.streaming = false
+      if (interrupted) m.interrupted = true
     } else {
       messages.value = messages.value.filter((_, i) => i !== index)
     }
@@ -320,33 +486,69 @@ function finalize(index: number, retainEmpty: boolean): void {
   syncSession()
 }
 
-function stop(): void {
+/** Cancel through both levels: this panel's own stream handle AND the app-level
+ * registry. The handle is null until the start promise settles, so the registry
+ * is what covers the "cancelled before it was cancellable" window. */
+function cancelCompletion(): void {
   const fn = cancelFn
   cancelFn = null
   fn?.()
   aiService.cancelStream()
+}
+
+function stop(): void {
+  cancelCompletion()
   finalize(messages.value.length - 1, false)
 }
 
+/** Unmount path. Closing the info rail destroys this panel, but the request is
+ * owned by the app-level AI service and would keep streaming — and keep being
+ * billed — into a component nobody can see. Cancel it and persist the turns
+ * received so far, flagging the answer so a reopened panel shows it as cut off
+ * instead of leaving the user's question looking unanswered. */
+/** Release the object URLs of every parked draft. Called on unmount: the
+ *  drafts live only as long as this panel, so nothing must survive it. */
+function releaseDrafts(): void {
+  for (const id of [...drafts.keys()]) discardDraft(id)
+}
+
+function interruptStream(): void {
+  if (!streaming.value) return
+  cancelCompletion()
+  // Retain an empty placeholder too: a bubble that says "interrupted" is more
+  // honest than a question whose reply simply vanished.
+  finalize(messages.value.length - 1, true, true)
+}
+
 function clearAll(): void {
-  cancelFn = null
-  aiService.cancelStream()
+  cancelCompletion()
   streaming.value = false
   messages.value = []
   chatSessions.clearMessages()
   clearAttachments()
   prompt.value = ''
+  const id = chatSessions.activeId
+  if (id) drafts.delete(id)
 }
 
 async function insertIntoDocument(msg: ChatMessage): Promise<void> {
-  if (!tabs.activeTab) return
-  const editor = editorSessionManager.getActiveEditor()
-  if (!editor) {
-    notifyError(t('chat.editorNotReady'))
+  // Permission first: an insert the user declines must not touch the editor at
+  // all (and must not half-apply before the question is answered).
+  const approved = await useAiPermissionStore().ask({
+    kind: 'insert',
+    summary: t('aiperm.action.insert'),
+    target: msg.content.trim().slice(0, 120),
+  })
+  if (!approved) {
+    notifyError(t('aiperm.denied'))
     return
   }
+  if (!tabs.activeTab) return
   try {
-    await editor.insertMarkdownAtCursor(`\n\n${msg.content}\n\n`)
+    // Mode-aware: in source mode the message has to land in the CodeMirror
+    // text rather than in the hidden rendered model.
+    const inserted = await insertMarkdownAtCursor(`\n\n${msg.content}\n\n`)
+    if (inserted === false) notifyError(t('chat.editorNotReady'))
   } catch {
     notifyError(t('chat.insertFailed'))
   }
@@ -361,7 +563,13 @@ async function copyMessage(msg: ChatMessage): Promise<void> {
 }
 
 onBeforeUnmount(() => {
+  // A stream can still be running when the rail closes (`v-if` in AppShell
+  // unmounts this panel): stop it and persist the partial answer before the
+  // working copy dies with the component.
+  disposed = true
+  interruptStream()
   clearAttachments()
+  releaseDrafts()
 })
 </script>
 
@@ -425,6 +633,14 @@ onBeforeUnmount(() => {
     </header>
 
     <div
+      v-if="storageWarningText"
+      class="chat-storage-warning"
+      role="status"
+    >
+      {{ storageWarningText }}
+    </div>
+
+    <div
       ref="scrollEl"
       class="chat-scroll"
       role="log"
@@ -469,6 +685,18 @@ onBeforeUnmount(() => {
               draggable="false"
             >
           </div>
+          <div
+            v-if="m.imageNotice"
+            class="chat-image-notice"
+          >
+            {{ m.imageNotice }}
+          </div>
+          <div
+            v-if="m.usageTotal"
+            class="chat-usage"
+          >
+            {{ t('chat.usage', { count: m.usageTotal }) }}
+          </div>
           <div class="chat-content">
             {{ m.content }}
             <span
@@ -482,6 +710,11 @@ onBeforeUnmount(() => {
           v-if="m.role === 'assistant'"
           class="chat-actions"
         >
+          <span
+            v-if="m.interrupted"
+            class="chat-interrupted"
+            :title="t('chat.interruptedHint')"
+          >{{ t('chat.interrupted') }}</span>
           <button
             v-if="m.streaming"
             class="chat-action chat-stop"
@@ -609,6 +842,22 @@ onBeforeUnmount(() => {
       </div>
       <div class="chat-model">
         <span>{{ modelName }}</span>
+        <label class="chat-effort">
+          <span class="chat-effort-label">{{ t('aiSettings.effort') }}</span>
+          <select
+            :value="settings.reasoningEffort"
+            :title="t('aiSettings.effortHint')"
+            @change="settings.reasoningEffort = ($event.target as HTMLSelectElement).value as typeof settings.reasoningEffort"
+          >
+            <option
+              v-for="opt in EFFORT_OPTIONS"
+              :key="opt.value"
+              :value="opt.value"
+            >
+              {{ t(opt.labelKey) }}
+            </option>
+          </select>
+        </label>
         <span class="chat-hint">{{ t('chat.hint') }}</span>
       </div>
     </div>
@@ -791,6 +1040,37 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 2px;
+}
+.chat-storage-warning {
+  margin: 6px 10px 0;
+  padding: 6px 8px;
+  border-radius: var(--app-radius);
+  border: 1px solid color-mix(in srgb, var(--app-danger) 40%, transparent);
+  background: color-mix(in srgb, var(--app-danger) 10%, transparent);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.chat-image-notice {
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: var(--app-text-muted);
+  font-style: italic;
+}
+
+.chat-interrupted {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  margin-right: 2px;
+  padding: 0 7px;
+  border: 1px dashed color-mix(in srgb, var(--app-muted) 55%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-elevated) 55%, transparent);
+  color: var(--app-muted);
+  font-size: 10.5px;
+  font-weight: 550;
+  letter-spacing: -0.01em;
 }
 .chat-action {
   display: inline-flex;
@@ -976,7 +1256,40 @@ onBeforeUnmount(() => {
   font-size: 10px;
   color: color-mix(in srgb, var(--app-muted) 82%, transparent);
 }
+.chat-usage {
+  margin-top: 2px;
+  font-size: 10px;
+  color: color-mix(in srgb, var(--app-muted) 78%, transparent);
+  font-variant-numeric: tabular-nums;
+}
 .chat-hint {
   font-variant-numeric: tabular-nums;
+}
+/* Thinking depth sits next to the model name because that is where the user
+ * notices the wait: a reasoning model stays silent for seconds before the first
+ * word, and the fix ("ask for less thinking") should not require a trip to the
+ * settings dialog mid-conversation. */
+.chat-effort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.chat-effort-label {
+  white-space: nowrap;
+}
+.chat-effort select {
+  max-width: 96px;
+  padding: 1px 2px;
+  font: inherit;
+  font-size: 10px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--app-muted) 34%, transparent);
+  border-radius: 4px;
+}
+.chat-effort select:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
 }
 </style>

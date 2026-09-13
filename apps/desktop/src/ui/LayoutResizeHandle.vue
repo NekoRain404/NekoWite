@@ -10,8 +10,18 @@ const props = withDefaults(
     defaultValue: number
     step?: number
     disabled?: boolean
+    /**
+     * The unit of `value`, which decides how a pointer drag maps onto it.
+     *
+     * `'px'` (the default) means `value` is a pixel size, so a pointer delta is
+     * added directly — the sidebar and rail widths. `'fraction'` means `value`
+     * is a 0..1 ratio of the track, so a pointer delta has to be divided by the
+     * track's pixel width first; without that a single pixel of movement is a
+     * whole ratio unit and the drag snaps straight to an extreme.
+     */
+    deltaUnit?: 'px' | 'fraction'
   }>(),
-  { step: 16, disabled: false },
+  { step: 16, disabled: false, deltaUnit: 'px' },
 )
 
 const emit = defineEmits<{
@@ -21,6 +31,7 @@ const emit = defineEmits<{
 }>()
 
 const dragging = ref(false)
+const rootEl = ref<HTMLElement | null>(null)
 
 interface DragState {
   onMove: (event: PointerEvent) => void
@@ -36,8 +47,28 @@ function clamp(value: number, low: number, high: number): number {
   return Math.min(high, Math.max(low, value))
 }
 
+/**
+ * Pixels spanned by the full value range.
+ *
+ * Read from the handle's own parent at drag time rather than passed in: the
+ * parent *is* the track, so the two cannot disagree, and a window resize
+ * between drags needs no bookkeeping.
+ */
+function trackSize(): number {
+  const parent = rootEl.value?.parentElement
+  return parent ? parent.clientWidth : 0
+}
+
 function applyPointerDelta(clientX: number, startX: number, startValue: number): void {
-  emit('change', clamp(startValue + (clientX - startX), props.min, props.max))
+  let delta = clientX - startX
+  if (props.deltaUnit === 'fraction') {
+    const size = trackSize()
+    // Nothing measurable to divide by (hidden pane, detached element): leaving
+    // the value alone beats snapping it to a bound.
+    if (size <= 0) return
+    delta /= size
+  }
+  emit('change', clamp(startValue + delta, props.min, props.max))
 }
 
 function stopDrag(): void {
@@ -136,10 +167,16 @@ function onDoubleClick(): void {
 onBeforeUnmount(() => {
   stopDrag()
 })
+// The template has two roots (the handle and a teleported drag guide), so Vue
+// cannot auto-inherit attributes. Without this the caller's class is dropped
+// with a warning and the layout rule that targets it silently does nothing.
+defineOptions({ inheritAttrs: false })
 </script>
 
 <template>
   <div
+    ref="rootEl"
+    v-bind="$attrs"
     class="layout-resize-handle"
     :class="{ 'is-active': dragging }"
     role="separator"

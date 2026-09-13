@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
-import { getCommand } from '@nekowite/editor-core'
+import { setImageInsertHandler } from '@nekowite/editor-core'
 import { FileText } from 'lucide-vue-next'
+import { useAppearanceStore } from '../stores/appearance'
 import { useViewStore, SPLIT_RATIO_DEFAULT, SPLIT_RATIO_MAX, SPLIT_RATIO_MIN } from '../stores/view'
 import { useTabsStore } from '../stores/tabs'
 import type { EditorView } from '@codemirror/view'
@@ -9,6 +10,12 @@ import RenderedPane from '../view/RenderedPane.vue'
 import LayoutResizeHandle from './LayoutResizeHandle.vue'
 import WordToolbar from '../components/WordToolbar.vue'
 import FloatToolbar from '../components/FloatToolbar.vue'
+import RenameDialog from '../components/RenameDialog.vue'
+import { useImageIntake } from '../features/editor/composables/useImageIntake'
+import { runEditorCommand } from '../services/runEditorCommand'
+import { useFloatStore } from '../stores/float'
+import { getSourceView } from '../services/sourceView'
+import { noteFocusedPane, resetFocusedPane } from '../services/editorOwnership'
 import { t } from '../i18n'
 
 // The source (CodeMirror) pane is loaded only when the user actually needs it.
@@ -31,12 +38,29 @@ const SourcePane = defineAsyncComponent(() => import('../view/SourcePane.vue'))
 
 const view = useViewStore()
 const tabs = useTabsStore()
+const appearance = useAppearanceStore()
+const floatStore = useFloatStore()
 
 const hasTab = computed(() => tabs.activeTab !== null)
 
 const sourcePane = ref<SourcePaneExpose | null>(null)
 const renderedPane = ref<InstanceType<typeof RenderedPane> | null>(null)
+const panesEl = ref<HTMLElement | null>(null)
 let syncing = false
+
+// Image intake (paste / drop / file picker) is shared by both panes, so it is
+// registered on the common ancestor rather than inside the rendered pane: the
+// source pane used to have no handler at all, which is why pasting an image in
+// source mode fell through to the raw-text paste.
+const {
+  renamePrompt,
+  onRenameConfirm,
+  onRenameCancel,
+  onPaste,
+  onDrop,
+  onDragOver,
+  insertImagesFromPicker,
+} = useImageIntake()
 
 interface ScrollPane {
   getRatio(): number
@@ -61,10 +85,14 @@ function drive(dst: ScrollPane | null, src: ScrollPane | null): void {
   })
 }
 
+// These two watchers are the switch's only decision point: with "split scroll
+// sync" off the panes scroll independently. The one-shot alignment on entering
+// split mode and on finishing a divider drag (below) is still performed, because
+// that is layout, not following a scroll.
 watch(
   () => view.sourceScroll,
   () => {
-    if (view.mode !== 'split' || syncing || resizing) return
+    if (view.mode !== 'split' || syncing || resizing || !appearance.autoSyncScroll) return
     drive(renderedPane.value, sourcePane.value)
   },
 )
@@ -72,7 +100,7 @@ watch(
 watch(
   () => view.renderedScroll,
   () => {
-    if (view.mode !== 'split' || syncing || resizing) return
+    if (view.mode !== 'split' || syncing || resizing || !appearance.autoSyncScroll) return
     drive(sourcePane.value, renderedPane.value)
   },
 )
@@ -117,6 +145,17 @@ watch(
     const prev = pendingSplitAlignFrom
     pendingSplitAlignFrom = null
     alignSplitPanes(prev)
+  },
+)
+
+// The floating-box toolbar lives on the shared pane container, so it stays on
+// screen in source mode even though the element it operates on is hidden. Its
+// buttons edit the rendered model, which source mode does not own, so the
+// selection is dropped rather than offering controls that cannot work.
+watch(
+  () => view.mode,
+  (mode) => {
+    if (mode === 'source') floatStore.select(null)
   },
 )
 
@@ -182,28 +221,81 @@ watch(
   },
 )
 
+/**
+ * Dispatch a toolbar command through the shared, mode-aware runner so the
+ * button does the same thing in every view mode (the palette and the plugin
+ * buttons use the same entry point).
+ */
 function handleCommand(id: string): void {
-  const cmd = getCommand(id)
-  if (cmd) {
-    cmd.run()
-    return
-  }
-  // Surface-only: concrete markdown actions for builtin buttons are
-  // completed in Tasks 10/13. No-op safely here.
+  runEditorCommand(id)
 }
 
 function onKeydown(e: KeyboardEvent): void {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault()
+    // saveTab flushes the source pane itself, so the save always sees the live
+    // document.
     void tabs.saveActive()
   }
 }
 
+/**
+ * Remember which editor pane the user is working in, so a command invoked from
+ * a surface that takes focus itself (the command palette, a toolbar button)
+ * still targets the right pane.
+ */
+function onFocusIn(e: FocusEvent): void {
+  const target = e.target as Node | null
+  if (!target) return
+  const sourceDom = getSourceView()?.dom
+  if (sourceDom && sourceDom.contains(target)) {
+    noteFocusedPane('source')
+    return
+  }
+  const renderedEl = panesEl.value?.querySelector('.pane.rendered')
+  if (renderedEl && renderedEl.contains(target)) noteFocusedPane('rendered')
+}
+
+/**
+ * Paste/drop listeners are attached to the pane container, which is created
+ * together with the first tab, so they follow the element rather than
+ * mount order (an empty app has no `.panes` to attach to yet).
+ */
+let listenersOn: HTMLElement | null = null
+function attachPaneListeners(el: HTMLElement | null): void {
+  if (listenersOn === el) return
+  if (listenersOn) {
+    listenersOn.removeEventListener('paste', onPaste, true)
+    listenersOn.removeEventListener('drop', onDrop, true)
+    listenersOn.removeEventListener('dragover', onDragOver)
+    listenersOn.removeEventListener('dragenter', onDragOver)
+    listenersOn.removeEventListener('focusin', onFocusIn)
+  }
+  listenersOn = el
+  if (!el) return
+  // Capture phase, on an ancestor of both panes: this must run before
+  // ProseMirror's and CodeMirror's own at-target handlers, or an image paste
+  // would already have been consumed as HTML / a file path.
+  el.addEventListener('paste', onPaste, true)
+  el.addEventListener('drop', onDrop, true)
+  el.addEventListener('dragover', onDragOver)
+  el.addEventListener('dragenter', onDragOver)
+  el.addEventListener('focusin', onFocusIn)
+}
+
+watch(panesEl, (el) => attachPaneListeners(el))
+
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
+  // The `image` toolbar / palette command has no way to reach the clipboard or
+  // the file picker from editor-core; this is the host side of that hook.
+  setImageInsertHandler(() => void insertImagesFromPicker())
 })
 
 onBeforeUnmount(() => {
+  attachPaneListeners(null)
+  setImageInsertHandler(null)
+  resetFocusedPane()
   window.removeEventListener('keydown', onKeydown)
 })
 </script>
@@ -213,6 +305,7 @@ onBeforeUnmount(() => {
     <template v-if="hasTab">
       <WordToolbar @command="handleCommand" />
       <div
+        ref="panesEl"
         class="panes"
         :class="view.mode"
       >
@@ -231,6 +324,7 @@ onBeforeUnmount(() => {
           :value="view.splitRatio"
           :default-value="SPLIT_RATIO_DEFAULT"
           :step="0.02"
+          delta-unit="fraction"
           @resize-start="onSplitResizeStart"
           @change="onSplitResize"
           @resize-end="onSplitResizeEnd"
@@ -243,6 +337,12 @@ onBeforeUnmount(() => {
         />
         <FloatToolbar />
       </div>
+      <RenameDialog
+        v-if="renamePrompt"
+        :initial="renamePrompt.initial"
+        @confirm="onRenameConfirm"
+        @cancel="onRenameCancel"
+      />
     </template>
     <div
       v-else

@@ -408,4 +408,13 @@ describe('indexStateOf', () => {
   it('reports stale when a path has no entry', () => {
     expect(indexStateOf(index, ['a', 'b'])).toBe('stale')
   })
+
+  it('reports stale when the index holds a path the vault no longer has', () => {
+    // A deleted or renamed note keeps its entry until the next build. A caller
+    // that treats 'up-to-date' as "the index describes this vault" would keep
+    // answering searches with a note that is not there any more — and the click
+    // on the result then fails. Being stale is what schedules the reconcile.
+    expect(indexStateOf(index, [])).toBe('stale')
+    expect(indexStateOf(index, ['b'])).toBe('stale')
+  })
 })

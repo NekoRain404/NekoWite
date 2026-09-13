@@ -2,7 +2,7 @@
 // style whose classes mirror editor-content.css typography (all colors via
 // --app-* tokens, so dark/light follows data-theme), a fenced-code block
 // surface, line numbers/ruler, soft wrap, and the zh search panel.
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { defaultKeymap, historyKeymap, indentWithTab, redo } from '@codemirror/commands'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language'
 import { search, searchKeymap } from '@codemirror/search'
@@ -213,10 +213,24 @@ export const SOURCE_EXT_DEFAULTS: Required<SourceExtensionsOptions> = {
   softWrap: true,
 }
 
+// Ctrl+Shift+Z redo. CodeMirror's own `historyKeymap` binds that chord only
+// under its `linux` platform flag, so on Windows — where Ctrl+Shift+Z is what
+// every other editor uses — redo silently did nothing while Ctrl+Z undone-work
+// could not be restored. Binding it here (ahead of the bundled history keymap)
+// makes redo work everywhere; Mod-y from that keymap still applies.
+const redoKeymap = [
+  { key: 'Ctrl-Shift-z', mac: 'Cmd-Shift-z', run: redo, preventDefault: true },
+]
+
 export function sourceExtensions(opts: SourceExtensionsOptions = {}): Extension[] {
   const { lineNumbers, softWrap } = { ...SOURCE_EXT_DEFAULTS, ...opts }
   return [
-    history(),
+    // NOTE: `history()` is deliberately NOT part of this set. The undo stack is
+    // owned by the CodeMirror host (services/codeMirrorHost.ts), which keeps it
+    // in its own compartment so that mirroring a different document into the same
+    // view can rebuild the stack instead of inheriting the previous note's
+    // deletable history. `historyKeymap` below still drives undo/redo; it just
+    // resolves against the stack the host installs.
     // GFM base so strikethrough / task lists / tables parse with proper tags.
     markdown({ base: markdownLanguage }),
     syntaxHighlighting(mdHighlight),
@@ -225,7 +239,7 @@ export function sourceExtensions(opts: SourceExtensionsOptions = {}): Extension[
     highlightActiveLine(),
     ...(softWrap ? [EditorView.lineWrapping] : []),
     search({ top: true, createPanel: createZhSearchPanel }),
-    keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
+    keymap.of([...redoKeymap, ...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
     sourceTheme,
   ]
 }

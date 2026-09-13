@@ -4,11 +4,18 @@ import { ChevronRight, FilePlus2, FileText, Folder, FolderOpen, FolderPlus, Penc
 import { fsService } from '../platform/gateways/fs'
 import type { FileEntry, FsChangeEvent } from '../platform/gateways/fs'
 import { resolveDropTarget, type DropRow } from '../services/treeDrop'
-import { decideConflict, notifyError } from '../services/errors'
+import { deleteNoteWithAssets } from '../services/noteDelete'
+import { notifyError } from '../services/errors'
+import { useAppearanceStore } from '../stores/appearance'
 import { useTabsStore } from '../stores/tabs'
 import ContextMenu from './ContextMenu.vue'
 import type { ContextMenuItem } from './ContextMenu.vue'
 import { t } from '../i18n'
+import { dirName, joinPath } from '../services/paths'
+import { moveNote } from '../services/noteMove'
+import type { NoteMoveIo } from '../services/noteMove'
+import { flushEdits } from '../services/editorOwnership'
+import { isComposingKey } from '../services/keyGuard'
 
 interface TreeNode {
   name: string
@@ -24,14 +31,18 @@ interface TreeEdit {
   kind: 'file' | 'dir' | 'rename'
   parentPath: string
   nodePath?: string
+  /** For `rename`: whether the entry is a directory. Only a renamed note needs
+   *  the reference rewrite; a folder carries its contents with it. */
+  nodeIsDir?: boolean
 }
 
 const props = defineProps<{ vault: string }>()
-const emit = defineEmits<{
-  (e: 'conflict', req: { tabId: string; path: string }): void
-}>()
+// The `conflict` emit is gone: the keep-or-reload question is raised by the
+// app-level external-change service, so this component no longer needs a
+// channel up to the shell for it.
 
 const tabs = useTabsStore()
+const appearance = useAppearanceStore()
 const root = ref<TreeNode | null>(null)
 const unlisten = ref<(() => void) | null>(null)
 const confirmPath = ref<string | null>(null)
@@ -45,6 +56,19 @@ const editInput = ref<HTMLInputElement | null>(null)
 const dragState = ref<{ path: string; isDir: boolean } | null>(null)
 const dropTargetPath = ref<string | null>(null)
 let confirming = false
+
+/** The four fs operations `moveNote` wants, bound to the shared gateway. The
+ *  service takes them as plain functions so it stays testable without Tauri
+ *  (the injection shape `externalDocSync` / `recoveryClosedLoop` use). */
+const noteMoveIo: NoteMoveIo = {
+  read: (vault, path) => fsService.read(vault, path),
+  // `moveNote` writes the rewritten body and reports its own failures; the
+  // warning channel (a history snapshot that could not be kept) is not its to
+  // surface — the tab's save does that.
+  write: (vault, path, content) => fsService.write(vault, path, content).then(() => undefined),
+  rename: (vault, from, to) => fsService.renameEntry(vault, from, to),
+  list: (vault, dir) => fsService.list(vault, dir),
+}
 
 const MENU_ICONS = {
   filePlus: markRaw(FilePlus2),
@@ -72,12 +96,65 @@ function cancelDelete(): void {
   confirmPath.value = null
 }
 
+/** Paths whose delete is already in flight. One deliberate activation deletes
+ *  once: a double-click on the trash icon (or a stray second click on the
+ *  confirm button) must not start a second delete of a path that is already
+ *  on its way out. */
+const deleting = new Set<string>()
+
+/**
+ * Ask for `path` to be deleted.
+ *
+ * Deleting is the one destructive action in the tree, so by default the trash
+ * icon only arms the row and the following confirm button performs the delete.
+ * With "confirm before deleting" switched off that button is the whole gesture:
+ * a single deliberate click on the icon, with no second question.
+ */
+function requestDelete(path: string): void {
+  if (!appearance.confirmBeforeDelete) {
+    void confirmDelete(path)
+    return
+  }
+  confirmPath.value = path
+}
+
+/** True when the tree row at `path` is a folder. The trash icon is offered on
+ *  every row, and a folder must NOT go through the note pair-delete: a folder
+ *  delete already carries its whole subtree (so a nested `_assets` folder needs
+ *  no special handling), and treating its name as a note's would aim a second
+ *  delete at an unrelated `<foldername>_assets` sibling. */
+function isDirPath(path: string): boolean {
+  if (root.value?.path === path) return true
+  return flat.value.some((row) => row.node.path === path && row.node.is_dir)
+}
+
 async function confirmDelete(path: string): Promise<void> {
+  if (deleting.has(path)) return
+  deleting.add(path)
   const tab = tabs.tabs.find((t) => t.path === path)
   try {
     if (tab) await tabs.deleteTabFile(tab.id)
-    else {
+    else if (isDirPath(path)) {
       await fsService.deleteFile(props.vault, path)
+      for (const t of [...tabs.tabs]) {
+        if (t.path && (t.path === path || t.path.startsWith(path + '/'))) tabs.removeTab(t.id)
+      }
+    } else {
+      // The same pair-delete the store performs for an open note: a note with
+      // no tab still owns a `<basename>_assets` folder, and leaving that behind
+      // kept its images invisible and unreclaimable forever.
+      const del = await deleteNoteWithAssets(
+        {
+          deleteFile: (v, p) => fsService.deleteFile(v, p),
+          exists: async (v, p) => {
+            await fsService.stat(v, p)
+            return true
+          },
+        },
+        props.vault,
+        path,
+      )
+      if (del.assetsFailed) notifyError(t('filetree.deleteAssetsFailed'))
       for (const t of [...tabs.tabs]) {
         if (t.path && (t.path === path || t.path.startsWith(path + '/'))) tabs.removeTab(t.id)
       }
@@ -85,6 +162,7 @@ async function confirmDelete(path: string): Promise<void> {
   } catch {
     notifyError(t('filetree.deleteFailed'))
   } finally {
+    deleting.delete(path)
     confirmPath.value = null
     await refreshAncestors(path)
   }
@@ -176,8 +254,11 @@ async function openFile(node: TreeNode): Promise<void> {
 }
 
 function dirOf(path: string): string {
-  const i = path.lastIndexOf('/')
-  return i <= 0 ? path : path.slice(0, i)
+  // Tree rows carry absolute paths in the platform's native spelling
+  // (`\\?\C:\...\note.md` on Windows). A `/`-only split returned the whole
+  // path, so the parent lookup never matched a directory node and RENAME
+  // silently did nothing at all.
+  return dirName(path)
 }
 
 async function refreshAncestors(path: string): Promise<void> {
@@ -252,18 +333,99 @@ function onDrop(row: { node: TreeNode }, e: DragEvent): void {
     dragState.value = null
     return
   }
-  void performMove(result.from, result.to)
+  void performMove(result.from, result.to, drag.isDir)
 }
 
-async function performMove(from: string, to: string): Promise<void> {
+/** Move a tree entry and keep everything that points at it in step: the note's
+ *  file-relative references and sibling `_assets` folder (via `moveNote`), the
+ *  open tab's path, and — when the service rewrote the body on disk — the
+ *  tab's text. */
+async function moveEntry(from: string, to: string, isDir: boolean): Promise<void> {
+  // Publish pending keystrokes first: the service is a read-modify-write of the
+  // file on disk, while each pane coalesces keystrokes before publishing them
+  // to the tab (the same reason `saveTab` flushes before it writes).
+  await flushEdits()
+  // Arm BOTH spellings before the first mutation. The open tab still points at
+  // `from` until `renamePathInTabs` runs, and the fs watcher reports our own
+  // rename/rewrite back to the app-level external-change service: without this
+  // a dirty tab would raise a bogus keep-or-reload prompt for a file we moved
+  // ourselves.
+  tabs.noteSelfWrite(from)
+  tabs.noteSelfWrite(to)
+  // Tell the app-level external-change service that THIS path is being moved by
+  // us. The watcher reports a rename as a change to the parent folder, so the
+  // service looks at every open tab inside it while the tab still points at the
+  // old name - which no longer exists once the rename has landed and
+  // `renamePathInTabs` has not run yet. Without the claim the tab would be
+  // detached as if the file had been moved behind the user's back.
+  tabs.beginMove(from)
   try {
-    await fsService.renameEntry(props.vault, from, to)
-    tabs.renamePathInTabs(from, to)
-    await refreshAncestors(from)
-    await refreshAncestors(to)
+    if (isDir) {
+      // A folder carries its contents, so each note's own `_assets` references
+      // still resolve and only the tab paths change. References OUT of the folder
+      // (the vault-level `attachments/` tree) would need every note inside to be
+      // rewritten; that subtree case is deliberately left as a plain rename.
+      await fsService.renameEntry(props.vault, from, to)
+      tabs.renamePathInTabs(from, to)
+      return
+    }
+    const moved = await moveNote(noteMoveIo, props.vault, from, to)
+    tabs.renamePathInTabs(from, to, moved)
+  } finally {
+    tabs.endMove(from)
+  }
+}
+
+/**
+ * A move can fail AFTER its rename landed: `moveNote` rewrites the body at the
+ * new path and its own rollback is best effort. When that happens the tab is
+ * left pointing at a name that no longer exists — the app would then report the
+ * user's own rename as an external deletion, detach the note and turn Ctrl+S
+ * into a native "save as". Point the tabs at whichever file really exists and
+ * let the editor adopt its bytes (a dirty tab keeps the user's text; see
+ * `reloadFromDisk`).
+ */
+async function retargetAfterFailedMove(from: string, to: string): Promise<void> {
+  const exists = async (path: string): Promise<boolean> => {
+    try {
+      await fsService.read(props.vault, path)
+      return true
+    } catch {
+      return false
+    }
+  }
+  if (await exists(from)) return
+  if (!(await exists(to))) return
+  tabs.renamePathInTabs(from, to)
+  for (const tab of tabs.tabs) {
+    if (tab.path === to) void tabs.reloadFromDisk(tab.id)
+  }
+}
+
+/**
+ * Both ways of moving a note - the inline rename and drag-and-drop - need the
+ * same repair, because both can fail after the rename itself landed. Throws the
+ * original error so the caller keeps wording its own message.
+ */
+async function moveOrRepair(from: string, to: string, isDir: boolean): Promise<void> {
+  try {
+    await moveEntry(from, to, isDir)
+  } catch (error) {
+    await retargetAfterFailedMove(from, to)
+    throw error
+  }
+}
+
+async function performMove(from: string, to: string, isDir: boolean): Promise<void> {
+  try {
+    await moveOrRepair(from, to, isDir)
   } catch {
     notifyError(t('tree.moveFailed'))
   } finally {
+    // Refresh even after a failure: a move that landed the note but not its
+    // references must not leave stale rows on screen.
+    await refreshAncestors(from)
+    await refreshAncestors(to)
     dragState.value = null
     dropTargetPath.value = null
   }
@@ -302,7 +464,12 @@ async function startCreate(kind: 'file' | 'dir', parentPath: string): Promise<vo
 async function startRename(node: TreeNode): Promise<void> {
   const parent = await ensureDirNode(dirOf(node.path))
   if (!parent) return
-  pendingEdit.value = { kind: 'rename', parentPath: parent.path, nodePath: node.path }
+  pendingEdit.value = {
+    kind: 'rename',
+    parentPath: parent.path,
+    nodePath: node.path,
+    nodeIsDir: node.is_dir,
+  }
   editName.value = node.name
   editError.value = ''
 }
@@ -313,7 +480,7 @@ async function onMenuSelect(id: string): Promise<void> {
   if (id === 'new-file') await startCreate('file', parentPath)
   else if (id === 'new-dir') await startCreate('dir', parentPath)
   else if (id === 'rename' && target) await startRename(target)
-  else if (id === 'delete' && target) confirmPath.value = target.path
+  else if (id === 'delete' && target) requestDelete(target.path)
 }
 
 function setEditInput(el: unknown): void {
@@ -329,6 +496,21 @@ function cancelEdit(): void {
   if (confirming) return
   pendingEdit.value = null
   editError.value = ''
+}
+
+/** Enter commits and Escape cancels the inline create/rename input — but not
+ *  while an IME is composing: there Enter accepts the highlighted candidate and
+ *  Escape dismisses the candidate list, and treating those as app actions
+ *  renamed the note to the raw pinyin string or discarded the typing entirely. */
+function onEditKeydown(e: KeyboardEvent): void {
+  if (isComposingKey(e)) return
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    void confirmEdit()
+  } else if (e.key === 'Escape') {
+    e.preventDefault()
+    cancelEdit()
+  }
 }
 
 async function confirmEdit(): Promise<void> {
@@ -366,10 +548,9 @@ async function applyEdit(p: TreeEdit, name: string): Promise<void> {
     if (p.kind === 'rename') {
       const from = p.nodePath
       if (!from) return
-      const to = `${dirOf(from)}/${name}`
+      const to = joinPath(dirOf(from), name)
       if (to !== from) {
-        await fsService.renameEntry(props.vault, from, to)
-        tabs.renamePathInTabs(from, to)
+        await moveOrRepair(from, to, p.nodeIsDir === true)
         await refreshAncestors(from)
       }
     } else {
@@ -394,20 +575,11 @@ async function applyEdit(p: TreeEdit, name: string): Promise<void> {
 }
 
 async function handleFsChange(e: FsChangeEvent): Promise<void> {
-  // The watcher also reports the app's own writes; don't treat those as an
-  // external modification (they would produce spurious conflict dialogs).
-  const selfWrite = tabs.isSelfWrite(e.path)
-  if (!selfWrite) {
-    const active = tabs.activeTab
-    if (active && active.path === e.path) {
-      const decision = decideConflict({ dirty: active.dirty, hasDiskChange: true })
-      if (decision === 'reload') {
-        await tabs.reloadFromDisk(active.id)
-      } else if (decision === 'ask') {
-        emit('conflict', { tabId: active.id, path: e.path })
-      }
-    }
-  }
+  // Reloading the OPEN document is handled at the app level (see
+  // `services/externalDocSync`), because this component only exists while the
+  // Folders panel is shown — the Notes panel (the default view) had no watcher
+  // at all, so external edits went unnoticed. What is left here is the tree's
+  // own concern: refreshing the rows that changed.
   await refreshAncestors(e.path)
 }
 
@@ -426,7 +598,10 @@ function resetRoot(): void {
 onMounted(async () => {
   resetRoot()
   await listChildren(root.value!)
-  await fsService.watch(props.vault)
+  // The backend watcher itself is armed by the runtime when a vault is opened
+  // (appBootstrap), NOT here: this component only exists while the Folders panel
+  // is shown, so arming it here left the default Notes panel unwatched. What is
+  // left for this component is reacting to the events, to refresh its rows.
   unlisten.value = await fsService.onFsChange(handleFsChange)
 })
 
@@ -447,7 +622,6 @@ watch(
     selectedDirPath.value = null
     resetRoot()
     await listChildren(root.value!)
-    await fsService.watch(props.vault)
     unlisten.value = await fsService.onFsChange(handleFsChange)
   },
 )
@@ -506,6 +680,10 @@ watch(
             class="caret"
             :class="{ hidden: !row.node.is_dir }"
             :tabindex="row.node.is_dir ? 0 : -1"
+            :aria-label="row.node.is_dir
+              ? (row.node.expanded ? t('filetree.collapseFolder', { name: row.node.name }) : t('filetree.expandFolder', { name: row.node.name }))
+              : undefined"
+            :aria-expanded="row.node.is_dir ? row.node.expanded : undefined"
             @click.stop="row.node.is_dir ? toggle(row.node) : undefined"
           >
             <ChevronRight
@@ -544,25 +722,24 @@ watch(
             :class="{ invalid: !!editError }"
             type="text"
             @click.stop
-            @keydown.enter.prevent="confirmEdit"
-            @keydown.esc.prevent="cancelEdit"
-            @keydown.stop
+            @keydown.stop="onEditKeydown"
             @blur="cancelEdit"
           >
-          <span
+          <button
             v-else
+            type="button"
             class="tree-name"
             :class="{ dir: row.node.is_dir }"
             :title="row.node.path"
             @click="row.node.is_dir ? toggle(row.node) : openFile(row.node)"
           >
             {{ row.node.name }}
-          </span>
+          </button>
           <button
             v-if="row.node !== root && confirmPath !== row.node.path"
             class="tree-del"
             :title="t('filetree.trash')"
-            @click.stop="confirmPath = row.node.path"
+            @click.stop="requestDelete(row.node.path)"
           >
             <Trash2
               :size="12"
@@ -620,9 +797,7 @@ watch(
             type="text"
             :placeholder="inlineEdit.kind === 'file' ? t('filetree.filePlaceholder') : t('filetree.folderPlaceholder')"
             @click.stop
-            @keydown.enter.prevent="confirmEdit"
-            @keydown.esc.prevent="cancelEdit"
-            @keydown.stop
+            @keydown.stop="onEditKeydown"
             @blur="cancelEdit"
           >
           <span
@@ -768,6 +943,19 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
   letter-spacing: -0.01em;
+  /* A real button (so Tab and Enter reach it) that still reads as a label. */
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.tree-name:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: -2px;
+  border-radius: var(--app-radius-sm);
 }
 .tree-name.dir { font-weight: 550; color: color-mix(in srgb, var(--app-text) 84%, var(--app-muted)); }
 .tree-inline-input {
@@ -814,6 +1002,11 @@ watch(
               background var(--app-motion-fast) var(--app-ease);
 }
 .tree-row:hover .tree-del { opacity: 1; }
+/* Keyboard users never hover: without this the only control in a row is also
+   an invisible one, so a Tab stop cannot be seen before it is pressed. */
+.tree-del:focus-within,
+.tree-row:focus-within .tree-del,
+.tree-del:focus-visible { opacity: 1; }
 .tree-del:hover {
   color: var(--app-danger);
   background: color-mix(in srgb, var(--app-danger) 10%, transparent);

@@ -39,6 +39,13 @@
 > 数值在开发机上重复运行会有波动（本例记录一次整链 `pnpm perf` 输出，上界断言是强门禁，
 > 不会受 ±50% 噪声影响）。
 
+> **补记（2026-09-13）**：`index-build-10k` 一行的上界此前只是**记录**、没有断言——表里写着
+> ≤2000 但代码里没有对应的 `expect`，也就是说冷启动代理退十倍也只会让表格里的数字变大。
+> 现在补上断言（≤2000ms，与 §9 的 2s 一致）。同一轮实测（较慢的开发机）：
+> index-build-10k 1010.3、search-query-p95-10k 6.6、change-to-index-10k 8.5、graph-build-10k 504.0、
+> graph-layout-2k 676.2、image-insert-10mb 33.9、open-doc-1mb 2.5、table-500x30-edit 0.6、
+> first-input-match-x100 0.0——全部在预算内。
+
 图例：
 - **冷启动 / 打开文档 / 首次输入** 是 WebView 层指标，无法在无头 JS 中精确复现；分别用
   “10k 笔记首建索引”“1MB 文档 parseNoteMeta+buildSearchText”“单次 match/snippet 匹配”
@@ -64,13 +71,15 @@
 - 新测试：`vaultFiles.test.ts` 用 `maxDirs` 覆盖验证截断信号；断言默认上限 ≥ 100,000；验证
   恰好塞满时 `truncated=false`。
 
-**1b. 后端 `search_notes` 目录/深度上限 `fs.rs`**
-- 改动：`SEARCH_MAX_DIRS` 512 → **100,000**，`SEARCH_MAX_DEPTH` 24 → **64**；新增
-  `search_notes_with_max(..., max_dirs: Option<usize>)`，`lib.rs` 命令新增可选 `max_dirs` 参数
-  （前端不传 → 用宽裕默认，兼容旧调用）。
-- before → after：**512 目录/24 深度 → 100,000 目录/64 深度**，且可配置。
-- 新测试：`tests/fs_test.rs` 验证 32 层深目录可见（旧 24 层会静默截断）；默认宽裕、显式
-  覆盖 `Some(0)` 能清晰截断（可配置而非静默）。
+**1b. 后端 `search_notes`：先放宽上限，后整体删除**
+- 当年改的是上限：`SEARCH_MAX_DIRS` 512 → **100,000**，`SEARCH_MAX_DEPTH` 24 → **64**，并加了
+  可选的 `max_dirs` 覆盖。
+- 后来发现**整条链路都没有调用方**：前端从某次改动起改用前端索引 + 逐篇读取的内容搜索
+  （`services/contentSearch.ts` 的 `searchWithIndex`，覆盖正文而不只是文件名），`search_notes`
+  只剩下测试在引它。既然它比在用的那条更弱、又没有任何消费者，本轮**整体删除**：Rust 命令
+  与注册、`storage::file_store` 的 `search_notes`/`_with_max`/`_capped`/`walk_search` 与两个
+  上限常量、`FsPort.searchNotes` 契约、Tauri/内存两个适配器、以及只测它的 3 个用例（Rust
+  `fs_test.rs` 68 passed）。「路径搜索」这一能力由前端内容搜索完全覆盖。
 
 **1c. 核对其余静默上限**
 - 无其他静默上限。图谱默认全量（`GraphPanel` `maxNotes=0` = 全部渲染，截断时显式

@@ -47,6 +47,36 @@ export function unregisterToolbar(id: string): void {
   const index = toolbar.findIndex((item) => item.id === id)
   if (index >= 0) toolbar.splice(index, 1)
 }
+/** A command's Markdown-level equivalent, used when the text editor (rather
+ *  than the rendered one) owns the document. */
+export interface MarkdownInsert {
+  text: string
+  /** Caret offset inside `text` after insertion; defaults to the end. */
+  caret?: number
+}
+export type MarkdownCommand = () => string | MarkdownInsert
+
+const markdownCommands = new Map<string, MarkdownCommand>()
+
+/**
+ * Register how a command is expressed as Markdown text.
+ *
+ * A command that inserts a rich node (a math block, a table, an MDX component)
+ * is only meaningful while the rendered editor owns the document. Source mode
+ * has no such node, so the command publishes the Markdown it would have
+ * produced and the host inserts that instead — otherwise the insert would land
+ * in the hidden model and be lost.
+ */
+export function registerMarkdownCommand(id: string, produce: MarkdownCommand): void {
+  markdownCommands.set(id, produce)
+}
+export function getMarkdownCommand(id: string): MarkdownCommand | undefined {
+  return markdownCommands.get(id)
+}
+export function unregisterMarkdownCommand(id: string): void {
+  markdownCommands.delete(id)
+}
+
 export function registerAll(batch: RegistrationBatch): void {
   for (const [name, comp] of Object.entries(batch.components ?? {})) registerComponent(name, comp)
   for (const item of batch.toolbar ?? []) registerToolbar(item)

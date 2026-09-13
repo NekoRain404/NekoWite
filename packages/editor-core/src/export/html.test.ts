@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { renderDocument, renderDocumentAsync, formatReference, doiUrl } from './html'
-import type { ExportRef } from './html'
+import type { ExportRef, ExportImageTarget } from './html'
 
 describe('renderDocument', () => {
   // Kept first in this describe: it must run before any async render, since
@@ -119,6 +119,17 @@ describe('renderDocument', () => {
     expect(html).toContain('a — Alpha (Smith, 2020)')
     expect(html).not.toContain('<em>')
   })
+
+  it('numbers by first citation and picks the branch from the venue fields alone', () => {
+    const refs = new Map<string, ExportRef>()
+    // `publisher` on its own already selects the rich branch; a bare title does
+    // not ("no journal, volume, issue, pages, doi, url, publisher").
+    refs.set('rich', { key: 'rich', title: 'Rich', publisher: 'ACME' })
+    refs.set('plain', { key: 'plain', title: 'Plain' })
+    const html = renderDocument('See [@rich] then [@plain] and [@rich] again.\n', { refs })
+    expect(html).toContain('<li>[1] Rich. ACME</li>')
+    expect(html).toContain('<li>[2] plain — Plain</li>')
+  })
 })
 
 describe('formatReference', () => {
@@ -157,6 +168,23 @@ describe('formatReference', () => {
     const s = formatReference({ key: 'a', title: 'Alpha', authors: ['Smith'], year: '2020' })
     expect(s).toBe('a — Alpha (Smith, 2020)')
   })
+
+  it('escapes markup in the plain branch (key, authors and year)', () => {
+    const s = formatReference({
+      key: '<img src=x onerror=alert(1)>',
+      title: 'T',
+      authors: ['<script>alert(2)</script>'],
+      year: '<b>2020</b>',
+    })
+    // The saved file is opened outside the app, so a .bib/.ris value must never
+    // reach it as live markup.
+    expect(s).not.toContain('<img')
+    expect(s).not.toContain('<script>')
+    expect(s).not.toContain('<b>')
+    expect(s).toContain('&lt;img src=x onerror=alert(1)&gt;')
+    expect(s).toContain('&lt;script&gt;alert(2)&lt;/script&gt;')
+    expect(s).toContain('&lt;b&gt;2020&lt;/b&gt;')
+  })
 })
 
 describe('doiUrl', () => {
@@ -184,13 +212,13 @@ describe('renderDocumentAsync', () => {
   })
 
   it('leaves absolute http(s)/data srcs untouched and keeps alt text', async () => {
-    const resolve = vi.fn(async (src: string) => `resolved:${src}`)
+    const resolve = vi.fn(async (src: string) => `asset://localhost/${src}`)
     const html = await renderDocumentAsync(
       '![one](https://x.dev/a.png) ![two](attachments/a.png)\n',
       { resolveImage: resolve },
     )
     expect(html).toContain('src="https://x.dev/a.png"')
-    expect(html).toContain('src="resolved:attachments/a.png"')
+    expect(html).toContain('src="asset://localhost/attachments/a.png"')
     expect(html).toContain('alt="one"')
     expect(resolve).toHaveBeenCalledTimes(1)
   })
@@ -214,5 +242,84 @@ describe('renderDocumentAsync', () => {
   it('matches the sync renderer output when no resolver is given', async () => {
     const md = '# Title\n\n- a\n\n![pic](attachments/a.png)\n'
     expect(await renderDocumentAsync(md)).toBe(renderDocument(md))
+  })
+
+  it('asks the resolver for a display URL by default (the in-app print/PDF path)', async () => {
+    const resolve = vi.fn(async (src: string) => `asset://localhost/${src}`)
+    const html = await renderDocumentAsync('![pic](attachments/a.png)\n', { resolveImage: resolve })
+    expect(html).toContain('src="asset://localhost/attachments/a.png"')
+    expect(resolve).toHaveBeenCalledWith('attachments/a.png', 'display')
+  })
+
+  it('asks for a self-contained data: URL when the export is a saved file', async () => {
+    const resolve = vi.fn(async (src: string, target: ExportImageTarget) =>
+      target === 'data' ? `data:image/png;base64,${src}` : `asset://localhost/${src}`,
+    )
+    const html = await renderDocumentAsync('![pic](attachments/a.png)\n', {
+      resolveImage: resolve,
+      imageSrcTarget: 'data',
+    })
+    // An `asset://` URL is app-internal, so the saved file would show a broken
+    // image in any other browser or on another machine.
+    expect(html).toContain('src="data:image/png;base64,attachments/a.png"')
+    expect(html).not.toContain('asset://localhost/')
+    expect(resolve).toHaveBeenCalledWith('attachments/a.png', 'data')
+  })
+
+  it('resolves an image inside a component body, keeping cites and heading ids suppressed', async () => {
+    const refs = new Map<string, ExportRef>()
+    refs.set('a', { key: 'a', title: 'Alpha' })
+    const renderers = {
+      Callout: (_props: Record<string, string>, childrenHtml: string) =>
+        `<aside class="callout"><div class="callout-body">${childrenHtml}</div></aside>`,
+    }
+    const md = [
+      '# Aaa',
+      '',
+      '<Callout>',
+      '',
+      '## Inside',
+      '',
+      '![pic](../assets/a.png)',
+      '',
+      'See [@a].',
+      '',
+      '</Callout>',
+      '',
+      '# Bbb',
+      '',
+    ].join('\n')
+    const html = await renderDocumentAsync(md, {
+      refs,
+      componentRenderers: renderers,
+      resolveImage: async (src) => `data:image/png;base64,${src}`,
+    })
+    const aside = html.slice(html.indexOf('<aside'), html.indexOf('</aside>'))
+    // The body's image is resolved like any other one. It used to stay a
+    // relative path, which resolved against wherever the file was saved.
+    expect(aside).toContain('src="data:image/png;base64,../assets/a.png"')
+    // The body stays opaque for citations and heading anchors.
+    expect(aside).toContain('<h2>Inside</h2>')
+    expect(aside).toContain('See [@a].')
+    expect(aside).not.toContain('class="cite"')
+    expect(html).not.toContain('参考文献')
+    // Document headings keep the ids their own anchors point at.
+    expect(html).toContain('<h1 id="aaa">Aaa</h1>')
+    expect(html).toContain('<h1 id="bbb">Bbb</h1>')
+  })
+
+  it('shares one resolution between a body image and the same src outside it', async () => {
+    const resolve = vi.fn(async (src: string) => `data:image/png;base64,${src}`)
+    const renderers = {
+      Callout: (_props: Record<string, string>, childrenHtml: string) => `<aside>${childrenHtml}</aside>`,
+    }
+    const html = await renderDocumentAsync(
+      '![pic](attachments/a.png)\n\n<Callout>\n\n![pic](attachments/a.png)\n\n</Callout>\n',
+      { componentRenderers: renderers, resolveImage: resolve },
+    )
+    // The body's src reaches the resolver through the same cache, so a vault
+    // read is not repeated for a picture the document already resolved.
+    expect(resolve).toHaveBeenCalledTimes(1)
+    expect(html.match(/src="data:image\/png;base64,attachments\/a\.png"/g)).toHaveLength(2)
   })
 })

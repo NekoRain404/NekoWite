@@ -76,3 +76,27 @@ describe('libraryQueries (pure selectors)', () => {
     expect(inlinksOf(notes, null)).toEqual([])
   })
 })
+
+describe('link resolution on native paths', () => {
+  // Note paths are native (backslash-separated on Windows), while link targets
+  // are written with '/'. The suffix fallback compared a raw path against a
+  // '/'-prefixed candidate, so it never matched on Windows — the platform this
+  // app ships to — and links that needed the fallback resolved to nothing.
+  const notes = [
+    { path: 'C:\\vault\\notes\\deep\\idea.md', name: 'idea.md', dir: 'notes/deep' },
+    { path: 'C:\\vault\\plain.md', name: 'plain.md', dir: '' },
+  ] as unknown as Parameters<typeof resolveLinkPath>[0]
+
+  it('resolves a link whose target only matches as a suffix', () => {
+    // From the vault root, `deep/idea` needs the suffix pass to find the note.
+    expect(resolveLinkPath(notes, 'C:\\vault', '', 'deep/idea')).toBe('C:\\vault\\notes\\deep\\idea.md')
+  })
+
+  it('still resolves the obvious vault-relative neighbour', () => {
+    expect(resolveLinkPath(notes, 'C:\\vault', 'notes/deep', 'idea')).toBe('C:\\vault\\notes\\deep\\idea.md')
+  })
+
+  it('returns null for a target no note matches', () => {
+    expect(resolveLinkPath(notes, 'C:\\vault', '', 'nowhere/nothing')).toBeNull()
+  })
+})

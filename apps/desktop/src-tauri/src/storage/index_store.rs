@@ -1,7 +1,13 @@
-//! Vault search index.
+//! Vault search index (reserved).
 //!
-//! Placeholder for a persisted search index that would let the vault be queried
-//! without a full recursive walk (see [`super::file_store::search_notes`]).
-//! Today the vault is small and search walks the tree at request time, so there
-//! is no on-disk index to store here. A future index should be keyed by vault
-//! root and stay confined to it.
+//! The vault's persistent full-text index is owned by the FRONTEND, not by this
+//! module: it is stored inside the vault at `.nekowite/index/` as sharded JSON
+//! (`.nekowite/index/shard-*.json` plus `.nekowite/index.meta.json`) and is
+//! written through the frontend fs gateway — see `services/searchIndex.ts` and
+//! `features/vault/services/indexPersistence.ts`, which reconcile it
+//! incrementally (mtime/size tokens, per-shard checksums, atomic temp+swap).
+//!
+//! This module is the reserved home for a future RUST-side index. Nothing here
+//! reads or writes those files today, so a Rust index would be an addition
+//! rather than a replacement. A future index should be keyed by vault root and
+//! stay confined to it.

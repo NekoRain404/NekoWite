@@ -8,8 +8,12 @@ import remarkFrontmatter from 'remark-frontmatter'
 import remarkMath from 'remark-math'
 import type { Root } from 'mdast'
 import { citeMdast } from '../cite'
+import { highlightMdast } from '../highlight/remark'
 import { imageDimMdast } from '../image'
+import { wikilinkMdast } from '../wikilink/remark'
 import { mdxJsxMdast, parseMdxTag } from '../mdx'
+import { safeImageUrl, safeLinkUrl } from './url'
+import { headingAnchorIds, slugify } from '../slugify'
 
 // KaTeX is only needed at export time (the editor preview renders math via
 // MathLive / the app's own renderer). Loading it lazily keeps the startup
@@ -56,15 +60,35 @@ export type ComponentRenderer = (
   childrenHtml: string,
 ) => string
 
+/** What the exported document is for. It decides which src form the image
+ *  resolver has to return, because the two export paths do not accept the same
+ *  URLs:
+ *
+ *  - `'display'` (default): the HTML is rendered inside the app by the
+ *    print/PDF path, where the app's own `asset:` URL resolves.
+ *  - `'data'`: the HTML is written to disk and opened OUTSIDE the app — in a
+ *    browser, or on another machine. An app-internal URL is a dead link there,
+ *    so the resolver has to return a self-contained `data:` URL. That is the
+ *    same rule the KaTeX CSS and its fonts already follow (imported `?inline`),
+ *    which is what keeps the saved file portable.
+ */
+export type ExportImageTarget = 'display' | 'data'
+
 export interface RenderDocumentOptions {
   title?: string
   refs?: Map<string, ExportRef>
   componentRenderers?: Record<string, ComponentRenderer>
   math?: 'katex' | 'text'
   includeCss?: boolean
-  /** Async display-URL resolver for image srcs (e.g. vault-relative
-   * attachment paths). Only used by the async render entry point. */
-  resolveImage?: (src: string) => Promise<string>
+  /** Async src resolver for images (e.g. vault-relative attachment paths).
+   * Only used by the async render entry point. `target` is the form the caller
+   * can actually use (see {@link ExportImageTarget}): a resolver that returns a
+   * data URL for `'data'` keeps the exported file self-contained. */
+  resolveImage?: (src: string, target: ExportImageTarget) => Promise<string>
+  /** The src form {@link resolveImage} is asked for. Defaults to `'display'`,
+   * which is what the in-app print/PDF path needs; the HTML export that is
+   * saved to disk asks for `'data'`. */
+  imageSrcTarget?: ExportImageTarget
 }
 
 interface TransformNode {
@@ -90,23 +114,50 @@ interface RenderNode extends TransformNode {
   width?: number
   imageAlign?: string
   identifier?: string
+  /** GFM task-list state on a `listItem`: true / false / null (not a task). */
+  checked?: boolean | null
+  /** Visible label of a GFM footnote (the text after `[^`). */
+  label?: string
+  /** `nekoWikiLink` target, i.e. the part before `|` in `[[target|alias]]`. */
+  target?: string
+  /** `nekoWikiLink` alias; empty when the wikilink has no `|` part. */
+  alias?: string
 }
 
 interface RenderContext {
   math: 'katex' | 'text'
   refs?: Map<string, ExportRef>
   componentRenderers?: Record<string, ComponentRenderer>
+  /** Display URL by document src, filled by the async pre-pass. Component
+   *  bodies are raw source text that `renderMdx` parses again at render time,
+   *  so an image inside one cannot be rewritten in place by the pre-pass; it
+   *  looks its resolved URL up here instead (see `resolveImageNodes`). */
+  resolvedImages?: Map<string, string>
   citeNumbers: Map<string, number>
   // When true, nekoCite nodes render their literal `[@key]` source text
   // instead of a number. Mirrors the editor, which treats an mdx component
   // as an atom whose children are opaque — cites inside a component body are
   // never numbered nor registered in the reference list.
   literalCites?: boolean
+  // When true, headings render WITHOUT a document anchor id. In the editor an
+  // mdx component is an atom whose body is opaque source, so a heading inside
+  // that body is not part of the document's anchor list. Emitting an id for it
+  // consumed an entry meant for a real heading: every later id shifted by one
+  // and the last was duplicated, so an exported anchor link pointed at the
+  // wrong heading (or at a heading inside a callout).
+  literalHeadingIds?: boolean
   // Set during render when at least one math node is actually emitted. The
   // exported <style> only injects the KaTeX CSS when math is present, so a
   // document with no math stays lean and sync/async output stays identical
   // (KaTeX CSS is only available after the lazy export-time load).
   hasMath?: boolean
+  /** The remaining heading ids, in document order (see `headingAnchorIds`).
+   *  Consumed by `shift()` as headings are rendered, so the ids match what the
+   *  anchor buttons produce for the same document. */
+  headingIds: string[]
+  /** Footnote numbers by identifier, in order of first appearance. Shared by
+   *  `footnoteReference` and `footnoteDefinition` so the pair always agrees. */
+  footnoteNumbers: Map<string, number>
 }
 
 const processor = unified()
@@ -118,6 +169,13 @@ const processor = unified()
     const t = tree as unknown as TransformNode & { children: TransformNode[] }
     mdxJsxMdast(t, file)
     citeMdast(t, file)
+    // `==highlight==` and `[[wikilink]]` are editor extensions, not markdown:
+    // remark-parse leaves them as literal text. Without these two passes the
+    // renderer received raw `==`/`[[ ]]` text instead of the node types it
+    // renders, so the export disagreed with the editor it came from.
+    highlightMdast(t)
+    wikilinkMdast(t, file)
+    stripEmptyLineMarkers(t)
     resolveReferences(t)
     imageDimMdast(t)
   })
@@ -159,11 +217,16 @@ function formatAuthors(authors: string[], max = 3): string {
 export function formatReference(ref: ExportRef): string {
   const hasRich = ref.journal || ref.volume || ref.issue || ref.pages || ref.doi || ref.url || ref.publisher
   if (!hasRich) {
+    // `key`, `authors` and `year` come from the user's .bib/.ris file, and the
+    // exported HTML is opened OUTSIDE the app (so outside its CSP): escape them
+    // exactly like the rich branch escapes every field it prints.
     const meta: string[] = []
-    if (ref.authors?.length) meta.push(ref.authors.join(', '))
-    if (ref.year) meta.push(ref.year)
+    if (ref.authors?.length) meta.push(ref.authors.map((a) => escapeHtml(a)).join(', '))
+    if (ref.year) meta.push(escapeHtml(ref.year))
     const metaSuffix = meta.length ? ` (${meta.join(', ')})` : ''
-    return ref.title ? `${ref.key} — ${escapeHtml(ref.title)}${metaSuffix}` : `${ref.key}${metaSuffix}`
+    return ref.title
+      ? `${escapeHtml(ref.key)} — ${escapeHtml(ref.title)}${metaSuffix}`
+      : `${escapeHtml(ref.key)}${metaSuffix}`
   }
   const segs: string[] = []
   const author = formatAuthors(ref.authors ?? [])
@@ -181,9 +244,17 @@ export function formatReference(ref: ExportRef): string {
   if (venue.length) segs.push(`${venue.join(' ')}.`)
   const doiHref = doiUrl(ref.doi)
   if (doiHref) {
-    segs.push(`<a href="${escapeHtml(doiHref)}">doi:${escapeHtml(ref.doi ?? '')}</a>`)
+    const doiUrl = safeLinkUrl(doiHref)
+    segs.push(
+      doiUrl === null
+        ? `doi:${escapeHtml(ref.doi ?? '')}`
+        : `<a href="${escapeHtml(doiUrl)}">doi:${escapeHtml(ref.doi ?? '')}</a>`,
+    )
   } else if (ref.url) {
-    segs.push(`<a href="${escapeHtml(ref.url)}">${escapeHtml(ref.url)}</a>`)
+    const refUrl = safeLinkUrl(ref.url)
+    segs.push(
+      refUrl === null ? escapeHtml(ref.url) : `<a href="${escapeHtml(refUrl)}">${escapeHtml(refUrl)}</a>`,
+    )
   } else if (ref.publisher) {
     segs.push(escapeHtml(ref.publisher))
   }
@@ -195,6 +266,42 @@ export function formatReference(ref: ExportRef): string {
  *  Definitions are collected globally first (they may follow their uses);
  *  unresolvable references degrade to plain text / nothing. Component bodies
  *  stay opaque (re-parsed at render time, where definitions resolve locally). */
+/** The `<br>` spellings `visitEmptyLine` in @milkdown/preset-commonmark treats
+ *  as an empty-paragraph marker. */
+const EMPTY_LINE_MARKERS = new Set(['<br />', '<br>', '<br >', '<br/>'])
+
+function isEmptyLineMarker(node: TransformNode): boolean {
+  return node.type === 'html' && EMPTY_LINE_MARKERS.has((node.value ?? '').trim())
+}
+
+/**
+ * Drop the empty-paragraph markers the editor writes to disk.
+ *
+ * Milkdown serializes an empty paragraph as a standalone `<br />` so an
+ * intentional blank line survives a reopen, and removes it again while parsing
+ * (`visitEmptyLine`) — so the editor never shows it. The export parses the raw
+ * file without that step, so the marker reached the renderer as an ordinary
+ * `html` node and was escaped into visible text: `&lt;br /&gt;`. Empty table
+ * cells showed it most, because a cell's empty content is exactly what the
+ * serializer writes a marker for.
+ *
+ * A marker is block-level when it is NOT a child of a paragraph — that is the
+ * shape remark produces for a marker standing on its own line (a direct child of
+ * `root`, a table cell, a blockquote, …). Inside a paragraph the same `<br>`
+ * written next to text is the author's inline HTML, which keeps the `html`
+ * case's escaping like any other raw HTML; a paragraph whose only child is the
+ * marker is an empty paragraph and is emptied rather than printed.
+ */
+function stripEmptyLineMarkers(node: TransformNode): void {
+  if (!Array.isArray(node.children)) return
+  const children = node.children
+  const blockLevel = node.type !== 'paragraph'
+  node.children = children.filter(
+    (child) => !isEmptyLineMarker(child) || (!blockLevel && !children.every(isEmptyLineMarker)),
+  )
+  for (const child of node.children) stripEmptyLineMarkers(child)
+}
+
 function resolveReferences(node: TransformNode): void {
   const children = Array.isArray(node.children) ? node.children : []
   const defs = new Map<string, { url: string; title?: string }>()
@@ -303,9 +410,15 @@ function renderMdx(node: RenderNode, ctx: RenderContext): string {
   const { name, props, children } = parseMdxTag(raw)
   const renderer = ctx.componentRenderers?.[name]
   if (renderer) {
-    // Aligned with the editor: a component body is opaque, so its cites stay
-    // literal (literalCites) instead of being numbered.
-    const childrenHtml = renderChildren(parseFragment(children), { ...ctx, literalCites: true })
+    // Aligned with the editor: a component body is opaque source. Its cites
+    // stay literal (literalCites) instead of being numbered, and its headings
+    // take no document anchor (literalHeadingIds) so they cannot steal an id
+    // from a real heading.
+    const childrenHtml = renderChildren(parseFragment(children), {
+      ...ctx,
+      literalCites: true,
+      literalHeadingIds: true,
+    })
     return renderer(props, childrenHtml)
   }
   return `<div class="mdx-fallback">${escapeHtml(raw)}</div>`
@@ -316,25 +429,113 @@ function renderList(node: RenderNode, ctx: RenderContext): string {
   const start = node.ordered && typeof node.start === 'number' && node.start !== 1
     ? ` start="${node.start}"`
     : ''
-  const items = (node.children ?? [])
-    .map((item) => `<li>${renderChildren(item.children as RenderNode[] ?? [], ctx)}</li>`)
+  const items = (node.children ?? []) as RenderNode[]
+  // GFM marks a task item with `checked: true|false`; there is no other way to
+  // tell `- [x] a` from `- a` after parsing, so the state has to be carried
+  // into the markup or it is lost (the literal `[x]` is consumed by remark-gfm).
+  const hasTasks = items.some((item) => typeof item.checked === 'boolean')
+  const rendered = items
+    .map((item) => {
+      const inner = renderChildren((item.children ?? []) as RenderNode[], ctx)
+      if (typeof item.checked !== 'boolean') return `<li>${inner}</li>`
+      const checked = item.checked ? ' checked' : ''
+      return (
+        `<li class="task-list-item">` +
+        `<input type="checkbox" disabled${checked}>` +
+        `<span class="task-list-item-body">${inner}</span></li>`
+      )
+    })
     .join('')
-  return `<${tag}${start}>${items}</${tag}>`
+  const listClass = hasTasks ? ' class="contains-task-list"' : ''
+  return `<${tag}${start}${listClass}>${rendered}</${tag}>`
+}
+
+/**
+ * A hard line break inside a paragraph.
+ *
+ * mdast models shift+Enter (and the trailing-backslash / two-space spellings) as
+ * a `break` node — a leaf with no children. The renderer had no case for it, so
+ * it fell through to the generic "render the children" branch, which for a
+ * childless node returns the empty string: the break vanished AND the two lines
+ * ran together, turning a two-line paragraph into one concatenated line in the
+ * exported HTML and PDF. The editor shows a real <br> for the same document, so
+ * the export also disagreed with what the user sees.
+ */
+function renderBreak(): string {
+  return '<br />'
 }
 
 function renderTable(node: RenderNode, ctx: RenderContext): string {
   const rows = (node.children ?? []) as RenderNode[]
-  let html = '<table>'
-  rows.forEach((row, i) => {
+  // mdast carries GFM column alignment on the TABLE, one entry per column. It
+  // was declared on the node type and never read, so a right-aligned column of
+  // numbers exported left-aligned: the alignment the author set in the editor
+  // was simply not in the file they handed to someone else.
+  const align = Array.isArray(node.align) ? node.align : []
+  const alignStyle = (index: number): string => {
+    const value = align[index]
+    return value === 'left' || value === 'center' || value === 'right'
+      ? ` style="text-align: ${value}"`
+      : ''
+  }
+  const renderRow = (row: RenderNode, tag: 'th' | 'td'): string => {
     const cells = (row.children ?? []) as RenderNode[]
-    const tag = i === 0 ? 'th' : 'td'
     const cellHtml = cells
-      .map((cell) => `<${tag}>${renderChildren((cell.children ?? []) as RenderNode[], ctx)}</${tag}>`)
+      .map(
+        (cell, index) =>
+          `<${tag}${alignStyle(index)}>${renderChildren((cell.children ?? []) as RenderNode[], ctx)}</${tag}>`,
+      )
       .join('')
-    const wrapper = i === 0 ? 'thead' : 'tbody'
-    html += `<${wrapper}><tr>${cellHtml}</tr></${wrapper}>`
-  })
-  return `${html}</table>`
+    return `<tr>${cellHtml}</tr>`
+  }
+  // One <thead> and ONE <tbody> holding every data row. Emitting a <tbody> per
+  // row was accidental (the wrapper was chosen inside the per-row loop), so a
+  // 100-row table produced 99 row groups — which is what `tbody + tbody` CSS,
+  // copy/paste and DOM tooling see, none of which matches the Markdown table
+  // the author wrote.
+  const [head, ...body] = rows
+  const headHtml = head ? `<thead>${renderRow(head, 'th')}</thead>` : ''
+  const bodyHtml = body.length > 0 ? `<tbody>${body.map((r) => renderRow(r, 'td')).join('')}</tbody>` : ''
+  return `<table>${headHtml}${bodyHtml}</table>`
+}
+
+/** Node types that carry a `value` in mdast yet contribute NO text to a
+ *  heading's slug.
+ *
+ *  The anchor button slugs ProseMirror's `Node.textContent`, which concatenates
+ *  TEXT nodes only — an atom is a leaf with no text content, so it contributes
+ *  nothing however it renders (a citation shows a number, math renders a
+ *  formula, JSX shows its source, and none of it reaches `textContent`).
+ *  Including these values here made the export disagree with every link the
+ *  anchors copy: `# Claim [@smith2020]` was `#claim` in the editor but
+ *  `#claim-smith2020` in the export, so the copied link was dead. */
+const TEXT_FREE_ATOMS = new Set(['inlineMath', 'math', 'nekoCite', 'html', 'mdxJsxFlowElement'])
+
+/** The text of a node as the editor's heading slug sees it, used to derive the
+ *  exported `id`. Must stay in step with ProseMirror's `textContent`. */
+function plainText(node: RenderNode): string {
+  if (typeof node.value === 'string' && !TEXT_FREE_ATOMS.has(node.type)) return node.value
+  return (node.children ?? []).map((child) => plainText(child)).join('')
+}
+
+/**
+ * The text of every heading in the tree, in document order.
+ *
+ * Computed up front (rather than tracked while rendering) so the ids handed to
+ * each heading are exactly the ones `headingAnchorIds` produced for the
+ * document — the anchor buttons and the scroll handler derive from the same
+ * list, which is what keeps a copied link resolvable.
+ */
+function collectHeadingTexts(nodes: RenderNode[]): string[] {
+  const out: string[] = []
+  const walk = (list: RenderNode[]): void => {
+    for (const node of list) {
+      if (node.type === 'heading') out.push(plainText(node))
+      if (node.children?.length) walk(node.children)
+    }
+  }
+  walk(nodes)
+  return out
 }
 
 function renderNode(node: RenderNode, ctx: RenderContext): string {
@@ -347,7 +548,16 @@ function renderNode(node: RenderNode, ctx: RenderContext): string {
       return `<p>${renderChildren((node.children ?? []) as RenderNode[], ctx)}</p>`
     case 'heading': {
       const level = Math.min(Math.max(node.depth ?? 1, 1), 6)
-      return `<h${level}>${renderChildren((node.children ?? []) as RenderNode[], ctx)}</h${level}>`
+      const body = renderChildren((node.children ?? []) as RenderNode[], ctx)
+      // An mdx component body is opaque: its headings are not document
+      // headings, so they render without an anchor (see `literalHeadingIds`).
+      if (ctx.literalHeadingIds) return `<h${level}>${body}</h${level}>`
+      // Heading anchors copy a `#id` deep link, so the exported document has to
+      // expose the matching id or every one of those links is dead. The ids are
+      // the document-wide list computed up front by `headingAnchorIds`, which is
+      // also what the anchor buttons and the scroll handler use.
+      const id = ctx.headingIds.shift() ?? slugify(plainText(node))
+      return `<h${level} id="${escapeHtml(id)}">${body}</h${level}>`
     }
     case 'emphasis':
       return `<em>${renderChildren((node.children ?? []) as RenderNode[], ctx)}</em>`
@@ -363,8 +573,14 @@ function renderNode(node: RenderNode, ctx: RenderContext): string {
     }
     case 'blockquote':
       return `<blockquote>${renderChildren((node.children ?? []) as RenderNode[], ctx)}</blockquote>`
-    case 'link':
-      return `<a href="${escapeHtml(node.url ?? '')}">${renderChildren((node.children ?? []) as RenderNode[], ctx)}</a>`
+    case 'link': {
+      // A destination that fails the allowlist (javascript:, data:text/html,
+      // vbscript:, …) is dropped rather than emitted: the link text survives so
+      // nothing is silently lost, but the exported file cannot run it.
+      const href = safeLinkUrl(node.url)
+      const body = renderChildren((node.children ?? []) as RenderNode[], ctx)
+      return href === null ? body : `<a href="${escapeHtml(href)}">${body}</a>`
+    }
     case 'image': {
       const styles: string[] = []
       if (node.width != null && Number.isFinite(node.width)) styles.push(`width:${node.width}px`)
@@ -376,7 +592,17 @@ function renderNode(node: RenderNode, ctx: RenderContext): string {
         styles.push('float:right')
       }
       const style = styles.length ? ` style="${styles.join(';')}"` : ''
-      return `<img src="${escapeHtml(node.url ?? '')}" alt="${escapeHtml(node.alt ?? '')}"${style}>`
+      // An image inside a component body is re-parsed from that body's raw
+      // source at render time, so it still carries the document src here: take
+      // the display URL the async pre-pass recorded for it. A top-level image
+      // was rewritten in place and misses this lookup.
+      const resolved = typeof node.url === 'string' ? ctx.resolvedImages?.get(node.url) : undefined
+      // Same allowlist as links, plus `data:image/*` for inlined pictures. A
+      // rejected src is omitted so the alt text shows instead of a broken image
+      // that would still have navigated on click.
+      const src = safeImageUrl(resolved ?? node.url)
+      const srcAttr = src === null ? '' : ` src="${escapeHtml(src)}"`
+      return `<img${srcAttr} alt="${escapeHtml(node.alt ?? '')}"${style}>`
     }
     case 'list':
       return renderList(node, ctx)
@@ -394,6 +620,13 @@ function renderNode(node: RenderNode, ctx: RenderContext): string {
       return `<pre class="frontmatter">${escapeHtml(node.value ?? '')}</pre>`
     case 'inlineMath':
       return renderMath(node, ctx, false)
+    // remark-math emits `math` for display math (`$$…$$`), NOT `displayMath`.
+    // Matching only the latter meant display math fell through to
+    // `renderChildren`, which returns '' for a leaf — so every exported
+    // HTML/PDF silently dropped it. Both names are accepted because the editor's
+    // own remark plugin (`mdx`/`math` transforms) is not the only producer of
+    // the tree here.
+    case 'math':
     case 'displayMath':
       return renderMath(node, ctx, true)
     case 'nekoCite': {
@@ -404,8 +637,42 @@ function renderNode(node: RenderNode, ctx: RenderContext): string {
       const number = ctx.citeNumbers.get(key) ?? ctx.citeNumbers.size + 1
       return `<span class="cite">${number}</span>`
     }
+    // `==highlight==` (`nekoHighlight` is produced by highlightMdast above).
+    case 'nekoHighlight':
+      return `<mark class="nk-highlight">${renderChildren((node.children ?? []) as RenderNode[], ctx)}</mark>`
+    case 'nekoWikiLink': {
+      // The export is a standalone file, so a vault-relative wikilink has no
+      // destination to navigate to. Keep the editor's DOM contract
+      // (`span[data-wikilink]`, label = alias || target) so the text survives
+      // instead of vanishing, and a downstream tool can still recover the
+      // target from the attribute.
+      const target = node.target ?? ''
+      const label = node.alias || target
+      return `<span class="wikilink" data-target="${escapeHtml(target)}">${escapeHtml(label)}</span>`
+    }
+    case 'footnoteReference': {
+      const id = node.identifier ?? ''
+      const n = ctx.footnoteNumbers.get(id) ?? ctx.footnoteNumbers.size + 1
+      return (
+        `<sup class="footnote-ref" id="fnref-${escapeHtml(id)}">` +
+        `<a href="#fn-${escapeHtml(id)}">${n}</a></sup>`
+      )
+    }
+    case 'footnoteDefinition': {
+      const id = node.identifier ?? ''
+      const n = ctx.footnoteNumbers.get(id)
+      const marker = n != null ? `<span class="footnote-marker">[${n}]</span>` : ''
+      const back = `<a class="footnote-backref" href="#fnref-${escapeHtml(id)}">↩</a>`
+      const body = renderChildren((node.children ?? []) as RenderNode[], ctx)
+      return (
+        `<div class="footnote" id="fn-${escapeHtml(id)}">${marker}` +
+        `<div class="footnote-body">${body}${back}</div></div>`
+      )
+    }
     case 'mdxJsxFlowElement':
       return renderMdx(node, ctx)
+    case 'break':
+      return renderBreak()
     case 'html':
       // Intentional divergence from the editor: the editor renders inline
       // raw HTML (e.g. `<span style=...>`) as live markup, but the export
@@ -450,6 +717,17 @@ h1, h2, h3, h4, h5, h6 { line-height: 1.25; }
 code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 pre { background: #f6f8fa; padding: 0.75rem 1rem; border-radius: 6px; overflow-x: auto; }
 blockquote { margin: 0; padding-left: 1rem; border-left: 4px solid #d0d7de; color: #57606a; }
+mark.nk-highlight { background: #fff3b0; padding: 0 0.1em; border-radius: 2px; }
+.wikilink { color: #0969da; border-bottom: 1px dashed currentColor; }
+.contains-task-list { list-style: none; padding-left: 0.25rem; }
+.task-list-item { display: flex; align-items: flex-start; gap: 0.5rem; }
+.task-list-item > input { margin: 0.4rem 0 0; flex: none; }
+.task-list-item-body > p { margin: 0; }
+.footnote-ref a { text-decoration: none; }
+.footnote { display: flex; gap: 0.4rem; margin: 0.5rem 0; color: #57606a; font-size: 0.925em; }
+.footnote-marker { flex: none; }
+.footnote-body > p { margin: 0; }
+.footnote-backref { margin-left: 0.35rem; text-decoration: none; }
 table { border-collapse: collapse; margin: 1rem 0; }
 th, td { border: 1px solid #d0d7de; padding: 0.4rem 0.7rem; }
 th { background: #f6f8fa; }
@@ -472,34 +750,76 @@ function parseChildren(markdown: string): RenderNode[] {
 }
 
 /** Rewrite every resolvable image src in the parsed tree to a display URL.
- * Concurrent repeats of the same src share one resolver call. */
+ * Concurrent repeats of the same src share one resolver call.
+ *
+ * `resolved` maps a document src to the URL the resolver produced, so an image
+ * the rewrite cannot reach in place (a component body) is still resolvable at
+ * render time. */
 async function resolveImageNodes(
   nodes: RenderNode[],
-  resolve: (src: string) => Promise<string>,
+  resolve: (src: string, target: ExportImageTarget) => Promise<string>,
+  target: ExportImageTarget,
+  renderers: Record<string, ComponentRenderer> | undefined,
   cache: Map<string, Promise<void>>,
+  resolved: Map<string, string>,
 ): Promise<void> {
   for (const node of nodes) {
     if (node.type === 'image' && typeof node.url === 'string' && node.url && !/^(https?:|data:|asset:|blob:|mailto:)/i.test(node.url) && !node.url.startsWith('/')) {
-      let pending = cache.get(node.url)
+      const src = node.url
+      let pending = cache.get(src)
       if (!pending) {
-        pending = resolve(node.url)
+        pending = resolve(src, target)
           .then((display) => {
             node.url = display
+            resolved.set(src, display)
           })
           .catch(() => undefined)
-        cache.set(node.url, pending)
+        cache.set(src, pending)
       }
       await pending
       continue
     }
-    // Component bodies are opaque source text re-parsed at render time; their
-    // nested images are not rewritten here (same atom rule as the editor).
-    if (node.type === 'mdxJsxFlowElement') continue
-    if (node.children) await resolveImageNodes(node.children as RenderNode[], resolve, cache)
+    // A component body is opaque source text: cites and heading ids inside it
+    // stay suppressed (the render pass re-parses it with `literalCites` /
+    // `literalHeadingIds`), but an image src must still resolve. Skipping the
+    // body outright left `![pic](assets/a.png)` in a saved export pointing at
+    // whatever happened to sit beside it where the user saved the file. Walk a
+    // throwaway parse of the body so those srcs reach `resolved`.
+    if (node.type === 'mdxJsxFlowElement') {
+      // Only a body with a renderer is emitted as HTML; without one the raw
+      // source is escaped into a fallback box, so resolving its images (one
+      // file read per image when the target is `'data'`) would be work that
+      // nothing consumes.
+      const { name, children } = parseMdxTag(typeof node.value === 'string' ? node.value : '')
+      if (children && renderers?.[name]) {
+        await resolveImageNodes(parseFragment(children), resolve, target, renderers, cache, resolved)
+      }
+      continue
+    }
+    if (node.children) await resolveImageNodes(node.children as RenderNode[], resolve, target, renderers, cache, resolved)
   }
 }
 
-function renderFromChildren(children: RenderNode[], opts?: RenderDocumentOptions): string {
+/** Numbers every footnote in order of first appearance (reference first, then
+ *  any definition that was never referenced), mirroring GFM's numbering. */
+function collectFootnoteOrder(nodes: RenderNode[], numbers: Map<string, number>): void {
+  const walk = (list: RenderNode[]): void => {
+    for (const node of list) {
+      if (node.type === 'footnoteReference' || node.type === 'footnoteDefinition') {
+        const id = node.identifier ?? ''
+        if (id && !numbers.has(id)) numbers.set(id, numbers.size + 1)
+      }
+      if (node.children?.length) walk(node.children)
+    }
+  }
+  walk(nodes)
+}
+
+function renderFromChildren(
+  children: RenderNode[],
+  opts?: RenderDocumentOptions,
+  resolvedImages?: Map<string, string>,
+): string {
   const math = opts?.math ?? 'katex'
 
   const citeNumbers = new Map<string, number>()
@@ -509,7 +829,14 @@ function renderFromChildren(children: RenderNode[], opts?: RenderDocumentOptions
     math,
     refs: opts?.refs,
     componentRenderers: opts?.componentRenderers,
+    resolvedImages,
     citeNumbers,
+    headingIds: headingAnchorIds(collectHeadingTexts(children)),
+    footnoteNumbers: (() => {
+      const numbers = new Map<string, number>()
+      collectFootnoteOrder(children, numbers)
+      return numbers
+    })(),
   }
 
   const body = renderChildren(children, ctx)
@@ -532,13 +859,22 @@ export function renderDocument(markdown: string, opts?: RenderDocumentOptions): 
   return renderFromChildren(parseChildren(markdown), opts)
 }
 
-/** Async variant of {@link renderDocument} that resolves image srcs to
- * display URLs before rendering, so exported HTML/PDF keep working images. */
+/** Async variant of {@link renderDocument} that resolves image srcs before
+ * rendering, so exported HTML/PDF keep working images. The src form the
+ * resolver is asked for comes from {@link RenderDocumentOptions.imageSrcTarget}. */
 export async function renderDocumentAsync(markdown: string, opts?: RenderDocumentOptions): Promise<string> {
   const children = parseChildren(markdown)
   await loadKatex()
+  const resolvedImages = new Map<string, string>()
   if (opts?.resolveImage) {
-    await resolveImageNodes(children, opts.resolveImage, new Map())
+    await resolveImageNodes(
+      children,
+      opts.resolveImage,
+      opts.imageSrcTarget ?? 'display',
+      opts.componentRenderers,
+      new Map(),
+      resolvedImages,
+    )
   }
-  return renderFromChildren(children, opts)
+  return renderFromChildren(children, opts, resolvedImages)
 }

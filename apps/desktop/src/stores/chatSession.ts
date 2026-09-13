@@ -17,6 +17,14 @@ export interface ChatSessionMessage {
   /** Human-readable short status explaining images that were refused or
    * evicted by a storage cap (e.g. "image too large"). */
   imageNotice?: string
+  /** True when the answer was cut off mid-stream — the panel that owned the
+   * request was destroyed — instead of reaching a normal end. Lets a reopened
+   * panel show partial text as incomplete rather than as a finished answer. */
+  interrupted?: boolean
+  /** Token total the provider reported for this answer, when it reported one.
+   *  It is part of what a request cost, so it is persisted with the turn: a
+   *  figure that disappears on relaunch cannot be compared with anything. */
+  usageTotal?: number
 }
 
 export interface ChatSession {
@@ -29,9 +37,16 @@ export interface ChatSession {
 
 export const CHAT_SESSIONS_KEY = 'nekowite.chat.sessions'
 export const TITLE_MAX_LENGTH = 20
-/** Cap images saved per message so a data-URL heavy chat cannot blow the
- * localStorage quota on its own. */
-const MAX_IMAGES_PER_MESSAGE = 4
+/**
+ * Cap images saved per message so a data-URL heavy chat cannot blow the
+ * localStorage quota on its own.
+ *
+ * Exported, and used by the chat composer as its own attachment limit: a panel
+ * that let the user attach more than the session can keep would show an
+ * attachment that disappears from the conversation the moment it is sent - the
+ * store would trim it and the user would never know which one they lost.
+ */
+export const MAX_IMAGES_PER_MESSAGE = 4
 
 /** Max base64 length (≈ bytes on disk) of a single image Data URL. Images
  * larger than this are refused: the image is not stored and the message is
@@ -56,6 +71,15 @@ export const IMAGE_TOO_LARGE = 'image too large'
 /** Status notice attached to a message whose images were evicted by a storage
  * budget. */
 export const IMAGE_EVICTED_NOTICE = 'image(s) removed (storage limit)'
+
+/** Storage warning shown when the session history had to be written without
+ * its images to fit the storage budget: the images are still in the open panel,
+ * but a reload will not bring them back. */
+export const STORAGE_WARNING_IMAGES = 'images-not-persisted'
+
+/** Storage warning shown when nothing could be written at all - the history on
+ * screen exists only in memory and will be gone after a reload. */
+export const STORAGE_WARNING_FULL = 'history-not-persisted'
 
 /** The three image budgets, split out so they can be overridden for tests or
  * tuned in one place. */
@@ -137,6 +161,14 @@ function sanitizeMessage(value: unknown): ChatSessionMessage | null {
     if (images.length) msg.images = images.slice(0, MAX_IMAGES_PER_MESSAGE)
   }
   if (typeof o.imageNotice === 'string') msg.imageNotice = o.imageNotice
+  // Only an exact boolean is trusted: any other truthy value from a hand-edited
+  // or foreign store would mark old answers as cut off.
+  if (o.interrupted === true) msg.interrupted = true
+  // Same rule as interrupted: a hand-edited or foreign store must not be
+  // able to put an impossible count on screen.
+  if (typeof o.usageTotal === "number" && Number.isFinite(o.usageTotal) && o.usageTotal > 0) {
+    msg.usageTotal = Math.round(o.usageTotal)
+  }
   return msg
 }
 
@@ -166,6 +198,8 @@ function toStoredMessage(message: ChatSessionMessage): ChatSessionMessage {
   const out: ChatSessionMessage = { role: message.role, content: message.content }
   if (message.images && message.images.length) out.images = message.images
   if (message.imageNotice) out.imageNotice = message.imageNotice
+  if (message.interrupted) out.interrupted = true
+  if (message.usageTotal) out.usageTotal = message.usageTotal
   return out
 }
 
@@ -278,6 +312,9 @@ export function applyImageCaps(
 export const useChatSessionStore = defineStore('chatSession', () => {
   const sessions = ref<ChatSession[]>([])
   const activeId = ref<string | null>(null)
+  /** Set when the last persist could not store everything (see the constants
+   *  above). Cleared as soon as a write lands in full. */
+  const storageWarning = ref<string | null>(null)
 
   function loadAll(): void {
     let next: ChatSession[] = []
@@ -324,27 +361,38 @@ export const useChatSessionStore = defineStore('chatSession', () => {
         messages: s.messages.map(toStoredMessage),
       })),
     }
-    try {
-      persistence.set(CHAT_SESSIONS_KEY, JSON.stringify(payload))
-    } catch (err) {
-      // Quota exceeded because of image data-URLs: retry text-only, otherwise
-      // give up quietly — an in-memory session is better than a thrown error.
-      // (The persistence port swallows quota errors, so this branch is a safe
-      //  backstop for adapters that do surface a write failure.)
-      console.warn('[chatSession] persist failed, retrying without images', err)
-      const textOnly: StoredState = {
-        ...payload,
-        sessions: payload.sessions.map((s) => ({
-          ...s,
-          messages: s.messages.map((m) => ({ role: m.role, content: m.content })),
-        })),
-      }
-      try {
-        persistence.set(CHAT_SESSIONS_KEY, JSON.stringify(textOnly))
-      } catch (innerErr) {
-        console.warn('[chatSession] persist failed even without images', innerErr)
-      }
+    if (persistence.set(CHAT_SESSIONS_KEY, JSON.stringify(payload))) {
+      if (storageWarning.value !== null) storageWarning.value = null
+      return
     }
+    // The write did not land — almost always the localStorage quota, which the
+    // per-message and per-session image budgets failed to prevent (other apps
+    // on the same origin, or a big text history, can eat the budget too). Shed
+    // the images: the text of a conversation is what the user cannot retype.
+    console.warn('[chatSession] persist failed, retrying without images')
+    let droppedImages = 0
+    const textOnly: StoredState = {
+      ...payload,
+      sessions: payload.sessions.map((s) => ({
+        ...s,
+        messages: s.messages.map((m) => {
+          if (!m.images?.length) return { role: m.role, content: m.content }
+          droppedImages += m.images.length
+          return { role: m.role, content: m.content }
+        }),
+      })),
+    }
+    if (persistence.set(CHAT_SESSIONS_KEY, JSON.stringify(textOnly))) {
+      // The in-memory copy keeps its images so the open panel still shows them;
+      // the notice explains why a reopened panel will not.
+      storageWarning.value = STORAGE_WARNING_IMAGES
+      if (droppedImages > 0) console.warn(`[chatSession] dropped ${droppedImages} image(s) to fit storage`)
+      return
+    }
+    // Even the text does not fit. Say so: silently reporting success here is
+    // how a whole conversation disappears at the next launch.
+    storageWarning.value = STORAGE_WARNING_FULL
+    console.warn('[chatSession] persist failed even without images')
   }
 
   const activeSession = computed<ChatSession | null>(
@@ -442,6 +490,7 @@ export const useChatSessionStore = defineStore('chatSession', () => {
     sessions,
     activeId,
     activeSession,
+    storageWarning,
     newSession,
     switchSession,
     deleteSession,

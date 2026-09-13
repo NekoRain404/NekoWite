@@ -11,7 +11,7 @@ use std::path::Path;
 use notify::Watcher;
 use tauri::Emitter;
 
-use crate::domain::path_policy::{has_hidden_component, resolve_within};
+use crate::domain::path_policy::{has_hidden_component, ipc_path, resolve_within};
 use crate::state::{require_opened_vault, VaultRegistry, WatcherState};
 use crate::storage::file_store::{self, FileEntry, FileStat};
 use crate::storage::trash_store;
@@ -55,9 +55,23 @@ pub async fn write_file(
     content: String,
     max_history: Option<u32>,
     state: tauri::State<'_, VaultRegistry>,
+) -> Result<Option<String>, String> {
+    require_opened_vault(&state, &vault_root)?;
+    // `Some(warning)` = the text was written, but something optional around it
+    // failed (currently: the history snapshot). The window shows it; it must not
+    // be mistaken for a failed save.
+    file_store::write_file(&vault_root, &path, &content, max_history)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn create_new_file(
+    vault_root: String,
+    path: String,
+    content: String,
+    state: tauri::State<'_, VaultRegistry>,
 ) -> Result<(), String> {
     require_opened_vault(&state, &vault_root)?;
-    file_store::write_file(&vault_root, &path, &content, max_history)
+    file_store::create_new_file(&vault_root, &path, &content)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -78,21 +92,6 @@ pub async fn list_dir(
 ) -> Result<Vec<FileEntry>, String> {
     require_opened_vault(&state, &vault_root)?;
     file_store::list_dir(&vault_root, path.as_deref())
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn search_notes(
-    vault_root: String,
-    query: String,
-    max_dirs: Option<usize>,
-    state: tauri::State<'_, VaultRegistry>,
-) -> Result<Vec<FileEntry>, String> {
-    require_opened_vault(&state, &vault_root)?;
-    // The frontend does not send `max_dirs`, so it defaults to the generous
-    // SEARCH_MAX_DIRS — a large vault's search is no longer silently capped.
-    // The optional arg is the explicit guard for a future client that wants to
-    // bound an unusually deep/hostile tree.
-    file_store::search_notes_with_max(&vault_root, &query, 100, max_dirs)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -189,10 +188,7 @@ pub async fn save_file_dialog(
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     use tauri_plugin_dialog::FilePath;
-    let mut builder = app
-        .dialog()
-        .file()
-        .set_file_name(&default_name);
+    let mut builder = app.dialog().file().set_file_name(&default_name);
     if let Some(dir) = start_dir {
         builder = builder.set_directory(dir);
     }
@@ -201,6 +197,83 @@ pub async fn save_file_dialog(
         FilePath::Path(p) => Some(p.to_string_lossy().to_string()),
         _ => None,
     }))
+}
+
+/// Native multi-select image picker. Returns the absolute paths the user chose
+/// (empty when the dialog was cancelled), filtered to the image extensions the
+/// import path accepts so an "All files" selection cannot smuggle a
+/// non-image into the vault.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn pick_image_files(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    use tauri_plugin_dialog::FilePath;
+    let picked = app
+        .dialog()
+        .file()
+        .add_filter("Images", file_store::IMPORT_IMAGE_EXTENSIONS)
+        .blocking_pick_files();
+    let Some(paths) = picked else {
+        return Ok(Vec::new());
+    };
+    Ok(paths
+        .into_iter()
+        .filter_map(|p| match p {
+            FilePath::Path(p) => Some(p),
+            _ => None,
+        })
+        .filter(|p| file_store::is_importable_image(p))
+        .map(|p| p.to_string_lossy().to_string())
+        .collect())
+}
+
+/// Copy a user-picked image into the vault's assets directory and return its
+/// vault-relative path. The bytes move backend-side (no base64 IPC hop) and the
+/// destination is still confined to the opened vault.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn import_attachment(
+    vault: String,
+    source_path: String,
+    dir: String,
+    state: tauri::State<'_, VaultRegistry>,
+) -> Result<String, String> {
+    require_opened_vault(&state, &vault)?;
+    file_store::import_attachment(&vault, &source_path, &dir)
+}
+
+/// How long a quiet period must last before a burst is considered over.
+const COALESCE_WINDOW: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// Whether an event that already arrived for a pending burst should be
+/// forwarded, i.e. whether this path should be reported NOW.
+///
+/// The previous version of this was leading-edge — it forwarded the first event
+/// and dropped everything for the same path and kind inside the window, without
+/// refreshing the timestamp. That silently discarded the *later* half of a burst,
+/// and the later half is the one that matters: two external writes 50 ms apart
+/// produced one event for the content in between, so an open note reloaded to a
+/// state that was already stale and then nothing ever arrived to correct it —
+/// until the user saved, overwriting the newer external text with the stale copy.
+///
+/// Now the first event is forwarded immediately (so a single edit is still
+/// instant) and any follow-up within the window is *held* — the caller re-emits
+/// it after the burst goes quiet, which means the last state always reaches
+/// subscribers.
+fn should_emit_change(
+    last: Option<&(String, std::time::Instant)>,
+    kind: &str,
+    now: std::time::Instant,
+) -> bool {
+    match last {
+        Some((last_kind, at)) => last_kind != kind || now.duration_since(*at) >= COALESCE_WINDOW,
+        None => true,
+    }
+}
+
+/// A burst awaiting its trailing edge: the event to re-emit once the burst goes
+/// quiet, and when that quiet period started.
+struct PendingBurst {
+    kind: String,
+    at: std::time::Instant,
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -217,40 +290,125 @@ pub async fn watch_folder(
         Some(p) => resolve_within(&vault_root, &p)?,
         None => resolve_within(&vault_root, ".")?,
     };
+    // `notify` reports one logical write as a BURST of events: a plain write
+    // arrives as two identical `modified` events, and an atomic
+    // write-temp-then-rename arrives as `removed` + `created`/`modified` for the
+    // same path. Forwarding every one of them makes every subscriber redo its
+    // work (the open document re-reads and re-diffs the file, the index
+    // coordinator re-parses it), and a replacement could even be misread as a
+    // deletion. Collapse identical events for the same path inside a short
+    // window; a different kind, or the same kind later, still gets through, so
+    // no real change is hidden.
+    let mut recent: std::collections::HashMap<String, (String, std::time::Instant)> =
+        std::collections::HashMap::new();
+    // Events held for the trailing edge of a burst, keyed by path. A burst is
+    // reported once when it stops, so the LAST write of a rapid sequence is what
+    // subscribers see.
+    let mut pending: std::collections::HashMap<String, PendingBurst> =
+        std::collections::HashMap::new();
+    // The watcher root, canonical, so the hidden-component filter can be applied
+    // to the path RELATIVE to the vault. Applying it to the absolute path meant a
+    // vault living in a dot-directory (`~/.notes`) filtered out every event it
+    // would ever produce — the whole vault looked unmodified to the app, so
+    // external edits were never noticed and the next save overwrote them.
+    let watch_root = resolved.clone();
     let mut new_watcher = notify::RecommendedWatcher::new(
         move |res: Result<notify::Event, notify::Error>| {
-            if let Ok(event) = res {
-                let kind = if event.kind.is_create() {
-                    "created"
-                } else if event.kind.is_modify() {
-                    "modified"
-                } else if event.kind.is_remove() {
-                    "removed"
-                } else {
-                    &format!("{:?}", event.kind).to_lowercase()
-                };
-                for path in event.paths {
-                    // History/trash churn and our own snapshot temp writes
-                    // happen under hidden directories; never surface them.
-                    if has_hidden_component(&path) {
-                        continue;
-                    }
+            let event = match res {
+                Ok(event) => event,
+                Err(e) => {
+                    // A watcher error means events are being LOST — the handle
+                    // may be exhausted or the OS queue overflowed. Staying quiet
+                    // left the app believing it was watching while external
+                    // changes went unseen; ask the window to resynchronise by
+                    // re-reading what it has open.
                     let _ = app.emit(
                         "fs-change",
                         serde_json::json!({
-                            "path": path.to_string_lossy(),
-                            "kind": kind,
+                            "path": crate::domain::path_policy::ipc_path(&watch_root),
+                            "kind": "resync",
+                            "error": e.to_string(),
                         }),
                     );
+                    return;
                 }
+            };
+            let kind = if event.kind.is_create() {
+                "created"
+            } else if event.kind.is_modify() {
+                "modified"
+            } else if event.kind.is_remove() {
+                "removed"
+            } else {
+                return;
+            };
+            let now = std::time::Instant::now();
+            for path in event.paths {
+                // History/trash churn and our own snapshot temp writes
+                // happen under hidden directories; never surface them. The
+                // check is relative to the watch root so a dot-directory
+                // ANCESTOR of the vault is not mistaken for a hidden subtree.
+                let rel = path
+                    .strip_prefix(&watch_root)
+                    .map(|r| r.to_path_buf())
+                    .unwrap_or_else(|_| path.clone());
+                if has_hidden_component(&rel) {
+                    continue;
+                }
+                // Same spelling as `list_dir` (see `ipc_path`); a
+                // verbatim-prefixed path here never equaled the tab path, so
+                // an external edit was silently ignored.
+                let ipc = crate::domain::path_policy::ipc_path(&path);
+                if !should_emit_change(recent.get(&ipc), kind, now) {
+                    // Inside the window: hold it instead of dropping it. The
+                    // last write in a burst is the one whose content is on disk,
+                    // so this is the event subscribers actually need.
+                    pending.insert(
+                        ipc,
+                        PendingBurst {
+                            kind: kind.to_string(),
+                            at: now,
+                        },
+                    );
+                    continue;
+                }
+                recent.insert(ipc.clone(), (kind.to_string(), now));
+                let _ = app.emit(
+                    "fs-change",
+                    serde_json::json!({ "path": ipc, "kind": kind }),
+                );
+            }
+            // Trailing edge: a burst that has been quiet for the full window is
+            // over, so its final event goes out now. This is what makes a rapid
+            // pair of external writes end with an event for the FINAL content.
+            let settled: Vec<String> = pending
+                .iter()
+                .filter(|(_, p)| now.duration_since(p.at) >= COALESCE_WINDOW)
+                .map(|(k, _)| k.clone())
+                .collect();
+            for ipc in settled {
+                if let Some(p) = pending.remove(&ipc) {
+                    // Only the kind is re-emitted, so a held `removed` after a
+                    // `modified` still tells the window the file is gone.
+                    recent.insert(ipc.clone(), (p.kind.clone(), now));
+                    let _ = app.emit(
+                        "fs-change",
+                        serde_json::json!({ "path": ipc, "kind": p.kind }),
+                    );
+                }
+            }
+            // Bounded growth: a long session over a busy vault would otherwise
+            // keep one entry per touched path forever.
+            if recent.len() > 512 {
+                recent.retain(|_, (_, at)| now.duration_since(*at) < COALESCE_WINDOW);
             }
         },
         notify::Config::default(),
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| format!("could not start watching {}: {e}", ipc_path(&resolved)))?;
     new_watcher
         .watch(&resolved, notify::RecursiveMode::Recursive)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("could not watch {}: {e}", ipc_path(&resolved)))?;
     // Replacing the managed watcher drops the previous one, so a vault
     // switch stops the abandoned watcher instead of stacking a new thread.
     // A poisoned lock must not panic — return the error instead so the stale
@@ -281,5 +439,57 @@ fn allow_vault_media(app: &tauri::AppHandle, vault_root: &str) {
     let _ = scope.allow_directory(&path, true);
     for hidden in [".nekowite", ".nekowite-trash", ".git"] {
         let _ = scope.forbid_directory(path.join(hidden), true);
+    }
+}
+
+#[cfg(test)]
+mod change_coalescing_tests {
+    use super::{should_emit_change, COALESCE_WINDOW};
+    use std::time::Instant;
+
+    fn last(kind: &str, at: Instant) -> (String, Instant) {
+        (kind.to_string(), at)
+    }
+
+    #[test]
+    fn first_event_for_a_path_is_always_forwarded() {
+        assert!(should_emit_change(None, "modified", Instant::now()));
+    }
+
+    #[test]
+    fn the_duplicate_notify_delivers_for_one_write_is_dropped() {
+        // Windows reports a single write as two identical `modified` events.
+        let t0 = Instant::now();
+        let previous = last("modified", t0);
+        assert!(!should_emit_change(
+            Some(&previous),
+            "modified",
+            t0 + std::time::Duration::from_millis(1)
+        ));
+    }
+
+    #[test]
+    fn a_replacement_burst_still_reaches_subscribers() {
+        // An atomic write is `removed` then `created`/`modified` for one path:
+        // different kinds, so both are forwarded and the file is never left
+        // looking deleted.
+        let t0 = Instant::now();
+        let removed = last("removed", t0);
+        assert!(should_emit_change(
+            Some(&removed),
+            "created",
+            t0 + std::time::Duration::from_millis(2)
+        ));
+    }
+
+    #[test]
+    fn the_same_kind_later_is_a_new_edit() {
+        let t0 = Instant::now();
+        let previous = last("modified", t0);
+        assert!(should_emit_change(
+            Some(&previous),
+            "modified",
+            t0 + COALESCE_WINDOW
+        ));
     }
 }

@@ -3,10 +3,14 @@ import {
   clampForDisplay,
   isValidWindowState,
   loadWindowState,
+  logicalDisplayBounds,
   MIN_WINDOW_HEIGHT,
   MIN_WINDOW_WIDTH,
+  physicalToLogicalGeometry,
+  pickDisplayBounds,
   saveWindowState,
   WINDOW_STATE_KEY,
+  type MonitorLike,
   type WindowState,
 } from './windowState'
 
@@ -55,6 +59,101 @@ describe('clampForDisplay', () => {
   it('keeps the maximized flag through clamping', () => {
     const out = clampForDisplay({ ...base, maximized: true }, { availWidth: 1920, availHeight: 1080 })
     expect(out.maximized).toBe(true)
+  })
+})
+
+// C4: the capture is PHYSICAL (innerSize/innerPosition and the resize/move
+// payloads) while setSize/setPosition apply LOGICAL pixels. Without this
+// conversion a 125%/150% display multiplied the window by the scale factor on
+// every restart, so the clamp squashed it against the work area and pinned it to
+// the top-left corner.
+describe('physicalToLogicalGeometry', () => {
+  it('divides a physical capture by the display scale', () => {
+    const out = physicalToLogicalGeometry({ width: 2400, height: 1500, x: 300, y: 200 }, 1.25)
+    expect(out).toEqual({ width: 1920, height: 1200, x: 240, y: 160 })
+  })
+
+  it('treats an unusable scale factor as 1 instead of producing 0-sized or NaN geometry', () => {
+    const physical = { width: 1600, height: 1000, x: 100, y: 60 }
+    for (const scale of [0, Number.NaN, -2, Number.POSITIVE_INFINITY]) {
+      const out = physicalToLogicalGeometry(physical, scale)
+      expect(out).toEqual(physical)
+      expect(Number.isFinite(out.width)).toBe(true)
+      expect(Number.isFinite(out.x)).toBe(true)
+    }
+  })
+})
+
+describe('logicalDisplayBounds', () => {
+  it('converts a monitor rect (physical) to logical bounds, origin included', () => {
+    const secondary: MonitorLike = {
+      size: { width: 3840, height: 2160 },
+      position: { x: 3840, y: 0 },
+      scaleFactor: 2,
+    }
+    expect(logicalDisplayBounds(secondary)).toEqual({
+      availWidth: 1920,
+      availHeight: 1080,
+      x: 1920,
+      y: 0,
+    })
+  })
+
+  it('returns null when the monitor is missing or unusable', () => {
+    expect(logicalDisplayBounds(null)).toBeNull()
+    expect(logicalDisplayBounds(undefined)).toBeNull()
+    expect(
+      logicalDisplayBounds({ size: { width: 0, height: 0 }, position: { x: 0, y: 0 }, scaleFactor: 1 }),
+    ).toBeNull()
+  })
+})
+
+describe('clampForDisplay / pickDisplayBounds with a monitor origin', () => {
+  const wide: WindowState = { width: 1200, height: 800, x: 2400, y: 120, maximized: false }
+
+  it('leaves a window that fits inside a secondary monitor untouched', () => {
+    // Pre-fix this was clamped against the PRIMARY screen (0,0 origin), which
+    // dragged every window that lived on a second monitor back onto the first.
+    expect(clampForDisplay(wide, { availWidth: 1920, availHeight: 1080, x: 1920, y: 0 })).toEqual(wide)
+  })
+
+  it('pulls an off-screen window back onto the area it was clamped against', () => {
+    const out = clampForDisplay(
+      { width: 1200, height: 800, x: 9000, y: 9000, maximized: false },
+      { availWidth: 1920, availHeight: 1080, x: 1920, y: 0 },
+    )
+    expect(out.x).toBe(1920 + 1920 - 1200)
+    expect(out.y).toBe(1080 - 800)
+  })
+
+  it('picks the monitor that already contains the window, not the current one', () => {
+    const primary: MonitorLike = {
+      size: { width: 1920, height: 1080 },
+      position: { x: 0, y: 0 },
+      scaleFactor: 1,
+    }
+    const secondary: MonitorLike = {
+      size: { width: 2560, height: 1440 },
+      position: { x: 1920, y: 0 },
+      scaleFactor: 1,
+    }
+    // The window is on the secondary screen while `currentMonitor()` still says
+    // primary (the window has not been moved yet at restore time).
+    expect(pickDisplayBounds(wide, [primary, secondary])).toEqual({
+      availWidth: 2560,
+      availHeight: 1440,
+      x: 1920,
+      y: 0,
+    })
+    // A window that is nowhere to be seen falls back to the first candidate.
+    const offScreen: WindowState = { ...wide, x: 9000, y: 9000 }
+    expect(pickDisplayBounds(offScreen, [primary, secondary])).toEqual({
+      availWidth: 1920,
+      availHeight: 1080,
+      x: 0,
+      y: 0,
+    })
+    expect(pickDisplayBounds(wide, [])).toBeNull()
   })
 })
 

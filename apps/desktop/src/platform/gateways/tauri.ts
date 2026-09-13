@@ -14,6 +14,7 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import type {
   AiPort,
+  ClearTrashReport,
   DialogPort,
   FileEntry,
   FileStat,
@@ -28,22 +29,20 @@ export const tauriFsPort: FsPort = {
   read: (vault, path) => invoke<string>('read_file', { vault_root: vault, path }),
   stat: (vault, path) => invoke<FileStat>('stat_file', { vault_root: vault, path }),
   write: (vault, path, content, maxHistory) =>
-    invoke<void>('write_file', {
+    invoke<string | null>('write_file', {
       vault_root: vault,
       path,
       content,
       max_history: maxHistory ?? null,
     }),
   list: (vault, dir) => invoke<FileEntry[]>('list_dir', { vault_root: vault, path: dir }),
-  searchNotes: (vault, query) =>
-    invoke<FileEntry[]>('search_notes', { vault_root: vault, query }),
   watch: (vault) => invoke<void>('watch_folder', { vault_root: vault, path: null }),
   deleteFile: (vault, path) =>
     invoke<string>('delete_file', { vault_root: vault, path }),
   listTrash: (vault) => invoke<TrashEntry[]>('list_trash', { vault_root: vault }),
   restoreFromTrash: (vault, trashPath) =>
     invoke<string>('restore_from_trash', { vault_root: vault, trash_path: trashPath }),
-  clearTrash: (vault) => invoke<number>('clear_trash', { vault }),
+  clearTrash: (vault) => invoke<ClearTrashReport>('clear_trash', { vault }),
   listHistory: (vault, path) =>
     invoke<HistoryEntry[]>('list_history', { vault_root: vault, path }),
   readHistory: (vault, path, id) =>
@@ -63,6 +62,8 @@ export const tauriFsPort: FsPort = {
   },
   createDir: (vault, path) => invoke<string>('create_dir', { vault, path }),
   renameEntry: (vault, from, to) => invoke<string>('rename_entry', { vault, from, to }),
+  importAttachment: (vault, sourcePath, dir) =>
+    invoke<string>('import_attachment', { vault, source_path: sourcePath, dir: dir ?? '' }),
 }
 
 export const tauriDialogPort: DialogPort = {
@@ -72,11 +73,12 @@ export const tauriDialogPort: DialogPort = {
       default_name: defaultName,
       start_dir: startDir ?? null,
     }),
+  pickImageFiles: () => invoke<string[]>('pick_image_files'),
 }
 
 export const tauriAiPort: AiPort = {
-  complete: (config, prompt, images) =>
-    invoke<void>('ai_complete', { config, prompt, images: images ?? [] }),
+  complete: (config, prompt, images, id) =>
+    invoke<void>('ai_complete', { config, prompt, images: images ?? [], id: id ?? null }),
   cancel: (id) => invoke<void>('ai_cancel', { id }),
   listModels: (config) => invoke<string[]>('ai_list_models', { config }),
 }

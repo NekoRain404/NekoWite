@@ -4,6 +4,7 @@ import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import HistoryPanel from './HistoryPanel.vue'
 import { useTabsStore } from '../stores/tabs'
 import { onNotify } from '../services/errors'
+import { t } from '../i18n'
 
 const readMock = vi.hoisted(() => vi.fn())
 const statMock = vi.hoisted(() => vi.fn())
@@ -71,6 +72,32 @@ describe('HistoryPanel', () => {
     mounted.forEach((app) => app.unmount())
     mounted = []
     document.body.innerHTML = ''
+  })
+
+  it('shows the "no history" hint only when there are no versions', async () => {
+    // The hint's v-else was chained to the DiffView, not to the list, so every
+    // populated history list had "No history yet" printed under it.
+    listHistoryMock.mockResolvedValue([])
+    await openDoc()
+    const host = mountPanel()
+    await flush()
+
+    expect(host.querySelectorAll('.history-item')).toHaveLength(0)
+    expect(host.querySelector('.rail-empty')?.textContent).toContain('暂无历史')
+  })
+
+  it('does not show the "no history" hint next to a populated list', async () => {
+    listHistoryMock.mockResolvedValue([
+      { id: 'ver-2', size: 2048, mtime: 200 },
+      { id: 'ver-1', size: 512, mtime: 100 },
+    ])
+    await openDoc()
+    const host = mountPanel()
+    await flush()
+
+    expect(host.querySelectorAll('.history-item')).toHaveLength(2)
+    const hints = Array.from(host.querySelectorAll('.rail-empty')).map((el) => el.textContent?.trim())
+    expect(hints.filter((t) => t?.includes('暂无历史'))).toEqual([])
   })
 
   it('renders history rows newest-first with timestamps and sizes', async () => {
@@ -230,5 +257,50 @@ describe('HistoryPanel', () => {
 
     expect(host.querySelector('.diff-view')).toBeNull()
     expect(notified).toContain('无法读取历史版本内容')
+  })
+
+  it('does not claim there is no history when reading it failed', async () => {
+    // 'No history yet' under an error toast tells the user their versions
+    // are gone; the truth is that they could not be read.
+    listHistoryMock.mockRejectedValue(
+      new Error('could not read the history of a.md: permission denied (os error 5)'),
+    )
+    await openDoc()
+    const host = mountPanel()
+    await flush()
+
+    expect(host.querySelectorAll('.history-item')).toHaveLength(0)
+    const hint = host.querySelector('.rail-empty')?.textContent ?? ''
+    expect(hint).toContain(t('history.unreadable'))
+    expect(hint).not.toContain(t('history.empty'))
+  })
+})
+
+describe('a comparison belongs to one note', () => {
+  it('drops the diff when the user switches notes', async () => {
+    // The diff shows one note's current text against ANOTHER document's old
+    // version, and the restore button underneath it acts on the note that is
+    // open - so leaving it up mixed two documents together and let a restore be
+    // aimed at the wrong note.
+    await openDoc('/vault/a.md')
+    listHistoryMock.mockResolvedValue([
+      { id: 'a1.md', size: 10, mtime: Date.now() },
+    ])
+    readHistoryMock.mockResolvedValue('OLD TEXT OF A')
+    const host = mountPanel()
+    await flush()
+
+    const compareBtn = [...host.querySelectorAll('button')].find((b) =>
+      (b.textContent ?? '').includes('对比'),
+    )
+    compareBtn?.click()
+    await flush()
+    expect(host.textContent).toContain('OLD TEXT OF A')
+
+    const tabs = useTabsStore()
+    await tabs.openTab('/vault/b.md')
+    await flush()
+
+    expect(host.textContent).not.toContain('OLD TEXT OF A')
   })
 })

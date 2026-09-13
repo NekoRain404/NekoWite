@@ -3,14 +3,19 @@ import { useTabsStore } from '../stores/tabs'
 import { useSettingsStore } from '../stores/settings'
 import { useVaultSessionStore } from '../stores/vaultSession'
 import { useRefsStore } from '../stores/refs'
+import { detectFormat } from '../services/refs'
 import { getSharedGateways } from '../platform/runtime/gatewayRuntime'
 import { loadVaultPlugins, deactivateVaultPlugins } from '../services/plugins'
 import { notifyError, notifyRecovery } from '../services/errors'
+import { scanTmpReferences } from '../services/tmpReferences'
+import { vaultFileIndex } from '../services/vaultFiles'
 import { t } from '../i18n'
 import { setupWindowTracking, type WindowTracking } from './windowState'
+import { persistence } from '../services/persistence'
 import { createTmpRecovery, requestUntitledVaultSwitch } from './recoveryClosedLoop'
 import { setActiveEditor } from '@nekowite/plugin-host'
 import { editorBridge } from '../services/editorBridge'
+import { invalidateImageResolution, refreshCiteChips, setCiteKeyResolver } from '@nekowite/editor-core'
 import { editorSessionManager } from '../features/editor/sessionManager'
 
 const VAULT_LS_KEY = 'nekowite.vault'
@@ -50,6 +55,11 @@ export function createDesktopRuntime(): DesktopRuntime {
   const settings = useSettingsStore()
   const vaultSession = useVaultSessionStore()
   const refs = useRefsStore()
+  // The chip and the references panel both need to know which cite keys the
+  // library holds; the library is app state, so it is published to the editor
+  // here rather than guessed at in two places. Refreshing after each (re)load
+  // is what makes a citation change from `[?]` to `[3]` when the `.bib` lands.
+  setCiteKeyResolver((key) => refs.get(key) !== undefined)
   // Bootstrap is the composition root: it resolves the shared gateway instance
   // (owned by platform/runtime) and reaches into the narrow ports it needs.
   const gateways = getSharedGateways()
@@ -61,13 +71,64 @@ export function createDesktopRuntime(): DesktopRuntime {
   // each new vault (and the prior one is cancelled first so a stale scan can
   // never write results into the new vault).
   let tmpRecovery: ReturnType<typeof createTmpRecovery> | null = null
+  // Reference files are read once per vault open, so an export that overwrites
+  // `Library.bib` outside the app left the session on the OLD library until the
+  // next vault open — a citation the user just exported showed as "not in the
+  // library". Watching the vault for reference-file changes keeps it current.
+  let refsUnwatch: (() => void) | null = null
+  let refsReloadTimer: ReturnType<typeof setTimeout> | null = null
 
-  function makeTmpRecovery() {
+  function makeTmpRecovery(vault: string, isStale: () => boolean) {
     return createTmpRecovery({
       fs: fsPort,
-      getReferencedTmp: () => tabs.referencedTmpPaths(),
+      // The referenced set must cover notes whose tab is CLOSED: `tabs` only
+      // knows the open documents, so a vault note on disk that still embeds
+      // `![p](.tmp/ok.png)` contributed nothing. The notice then offered to
+      // "restore" its image (renaming it to `attachments/…` while the note kept
+      // pointing at `.tmp/…`) and `gc` deleted it for good. Union the live set
+      // with the vault-wide scan so both halves agree on what is referenced.
+      getReferencedTmp: async () => {
+        const open = tabs.referencedTmpPaths()
+        const onDisk = await scanVaultTmpReferences(vault, isStale)
+        // A stale scan belongs to a vault that is no longer current; falling
+        // back to the open-tab set under-reports references, so it is reported
+        // as INCOMPLETE: the recovery loop then leaves every `.tmp` file alone
+        // instead of deleting or relocating one this vault might still use.
+        if (!onDisk) return { paths: open, complete: false }
+        return { paths: new Set([...open, ...onDisk.paths]), complete: onDisk.complete }
+      },
       notify: notifyRecovery,
     })
+  }
+
+  /** Vault-wide `.tmp` references (`services/tmpReferences`), guarded by the
+   *  switch's `isStale` so a superseded switch or teardown never spends reads on
+   *  an abandoned vault. `null` means "fall back to the open-tab set". */
+  async function scanVaultTmpReferences(
+    vault: string,
+    isStale: () => boolean,
+  ): Promise<{ paths: Set<string>; complete: boolean } | null> {
+    if (isStale()) return null
+    try {
+      const notes = await vaultFileIndex.get(vault)
+      if (isStale()) return null
+      const found = await scanTmpReferences(vault, {
+        notes,
+        read: (v, p) => fsPort.read(v, p),
+        shouldAbort: isStale,
+        // A walk that hit its directory cap — or that could not list part of
+        // the tree — never saw the whole vault, so it cannot certify that a
+        // `.tmp` file is unreferenced.
+        isComplete: () =>
+          !vaultFileIndex.isTruncated(vault) && !vaultFileIndex.isIncomplete(vault),
+      })
+      return isStale() ? null : found
+    } catch {
+      // The scan is a safety net for the recovery prompt, never a startup step:
+      // a failed index read falls back to the open-tab set instead of breaking
+      // the closed loop.
+      return null
+    }
   }
   let started = false
   let disposed = false
@@ -148,11 +209,33 @@ export function createDesktopRuntime(): DesktopRuntime {
     // the chosen vault only now that the switch is actually committed, so a failed
     // open never leaves a bad path behind to retry on the next launch.
     vaultPath.value = path
-    localStorage.setItem(VAULT_LS_KEY, path)
+    // Through the persistence port: a disabled/quota-full storage throws on
+    // `localStorage.setItem` and would abort the switch AFTER the vault was
+    // registered and the tabs were closed — an unrecoverable half-switch.
+    persistence.set(VAULT_LS_KEY, path)
     // Open tabs keep absolute paths from the previous vault — leaving them open
-    // would route every save to "path escapes vault" errors. Start fresh.
-    tabs.closeAll()
+    // would route every save to "path escapes vault" errors. Start fresh. This
+    // uses the non-interactive variant on purpose: every dirty tab was flushed
+    // and every untitled one was prompted for above, so `closeAll`'s own guard
+    // would only ask the user a second time for a decision they just made.
+    tabs.removeAllTabs()
     tabs.setVault(path)
+    // Arm the OS-level folder watcher HERE, at the app level. It used to be armed
+    // only by the file tree, which exists while the Folders panel is shown — so a
+    // vault opened through the default Notes panel was not watched at all: an
+    // external edit was never noticed and the next save silently overwrote it.
+    // The backend keeps exactly one managed watcher and replaces it on each call,
+    // so re-arming (e.g. from the tree) is idempotent rather than additive.
+    void fsPort.watch(path).catch((e) => {
+      // External-change detection silently stops working if this fails, so make
+      // the failure visible in the console instead of swallowing it.
+      console.error("[NekoWrite] could not watch the vault: external edits will not be detected", e)
+    })
+    // The vault is now committed (and authorized with the backend), so every
+    // attachment path finally resolves. Drop any resolution that ran before
+    // this point — the editor panel can mount and render before the vault is
+    // ready, and a failure recorded then would otherwise stick forever.
+    invalidateImageResolution()
 
     // Dispose the previous vault's resources now that the new vault is committed:
     // its active plugin instances/hooks, its index coordinator (which detaches
@@ -168,11 +251,17 @@ export function createDesktopRuntime(): DesktopRuntime {
     // old, confirmed-orphaned `.tmp` files), then scan surfaces a "recoverable
     // versions" notice for the fresh orphans left by an interrupted session.
     // Fire-and-forget (never blocks vault open) and cancellable.
-    const recovery = makeTmpRecovery()
+    const recovery = makeTmpRecovery(path, isStale)
     tmpRecovery = recovery
     void (async () => {
-      void recovery.gc(path)
-      void recovery.scan(path)
+      // Reclaim first, THEN look for what is left. Running them concurrently (as
+      // this did) meant scan listed the directory before gc deleted from it, so
+      // the prompt advertised files that were already gone by the time it
+      // appeared: the user clicked "restore" on an entry whose rename failed
+      // silently, and nothing happened at all.
+      await recovery.gc(path)
+      if (isStale()) return
+      await recovery.scan(path)
     })()
     // Index the new vault: `indexVault` is internally latest-wins (the new
     // coordinator detaches the stale one before subscribing). Plugins and refs
@@ -193,10 +282,54 @@ export function createDesktopRuntime(): DesktopRuntime {
         }
       }
     })
-    void refs.loadVault(path, { signal }).catch(() => {
-      // A stale vault path (deleted/renamed folder) must not crash startup;
-      // the tree shows the failure and the user can pick another folder.
-    })
+    watchRefs(path, signal, isStale)
+    void refs
+      .loadVault(path, { signal })
+      .then(() => refreshCiteChips())
+      .catch(() => {
+        // A stale vault path (deleted/renamed folder) must not crash startup;
+        // the tree shows the failure and the user can pick another folder.
+      })
+  }
+
+  /** (Re)subscribe to the vault's fs-change events for reference files. A
+   *  superseded switch's subscription is dropped before a new one is armed, so
+   *  a stale watcher can never reload the previous vault's library. */
+  function watchRefs(vault: string, signal: AbortSignal, isStale: () => boolean): void {
+    refsUnwatch?.()
+    refsUnwatch = null
+    if (refsReloadTimer) {
+      clearTimeout(refsReloadTimer)
+      refsReloadTimer = null
+    }
+    const reload = (): void => {
+      if (refsReloadTimer) clearTimeout(refsReloadTimer)
+      // Editors export a `.bib` by writing several times (truncate, then
+      // chunks); debounce so one export is one reload instead of five.
+      refsReloadTimer = setTimeout(() => {
+        refsReloadTimer = null
+        if (isStale()) return
+        void refs
+          .loadVault(vault, { signal })
+          .then(() => refreshCiteChips())
+          .catch(() => {})
+      }, 250)
+    }
+    void fsPort
+      .onFsChange((e) => {
+        if (isStale() || !detectFormat(e.path)) return
+        reload()
+      })
+      .then((off) => {
+        // The switch may have been superseded while the subscription was being
+        // established: keep listening to nothing rather than to a stale vault.
+        if (isStale()) off()
+        else refsUnwatch = off
+      })
+      .catch(() => {
+        // No fs events: the library is simply as fresh as the vault open, which
+        // is the behaviour before this subscription existed.
+      })
   }
 
   function onOpenFolder(path: string): void {
@@ -224,7 +357,10 @@ export function createDesktopRuntime(): DesktopRuntime {
 
   async function runStartup(): Promise<void> {
     try {
-      const saved = localStorage.getItem(VAULT_LS_KEY)
+      // Through the persistence port: a webview with storage disabled throws on
+      // the GETTER here, and an unguarded read meant startup failed before the
+      // first render (no vault, no session, white screen).
+      const saved = persistence.get(VAULT_LS_KEY)
       // Apply the persisted vault BEFORE restoring the session. The switch is
       // awaited (not fire-and-forget) so restoreSession sees the correct vault and
       // the previous tab set is closed first — it can never restore into the wrong
@@ -255,6 +391,14 @@ export function createDesktopRuntime(): DesktopRuntime {
     vaultSwitchController = null
     tmpRecovery?.cancel()
     tmpRecovery = null
+    // Stop watching the vault for reference-file changes (and drop a pending
+    // debounced reload so teardown cannot re-read a vault the app has left).
+    refsUnwatch?.()
+    refsUnwatch = null
+    if (refsReloadTimer) {
+      clearTimeout(refsReloadTimer)
+      refsReloadTimer = null
+    }
     // Detach the vault index coordinator: clears the fs watcher subscription,
     // cancels in-flight index tasks, and drops the persistent index mirror.
     vaultSession.detachVault()

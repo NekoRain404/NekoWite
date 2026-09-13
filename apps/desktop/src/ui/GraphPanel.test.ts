@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createApp, type App as VueApp } from 'vue'
+import { createApp, nextTick, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import GraphPanel from './GraphPanel.vue'
 import { useTabsStore } from '../stores/tabs'
@@ -185,8 +185,9 @@ describe('GraphPanel', () => {
     const exposed = (instance?.exposed ?? {}) as { rebuild?: () => Promise<void> }
     expect(exposed.rebuild).toBeTypeOf('function')
     await exposed.rebuild!()
-    await flush()
-    expect(readMock.mock.calls.length).toBe(readsAfterMount + 2)
+    // A fixed number of macrotask ticks is not a reliable barrier for a chain
+    // of reads; wait for the count the rebuild is expected to produce.
+    await vi.waitFor(() => expect(readMock.mock.calls.length).toBe(readsAfterMount + 2))
   })
 
   it('truncates beyond the configured cap with a visible total', async () => {
@@ -196,15 +197,14 @@ describe('GraphPanel', () => {
     const tabs = useTabsStore()
     tabs.setVault('/vault-3')
     mountPanel({ maxNotes: 200 })
-    await flush()
-    await flush()
+    // Wait for the capped load to finish before asserting on its output.
+    await vi.waitFor(() => expect(readMock.mock.calls.length).toBe(200))
     // Non-silent: the notice names the cap AND the true total (not just "first N").
     // The capped read never loads more than the cap; a stale/leaked read would
     // over-read (or, under a partial load, under-count the header), so assert the
     // deterministic truncation signals rather than a transient exact count.
     expect(host!.textContent).toContain('仅展示前 200')
     expect(host!.textContent).toContain('201')
-    expect(readMock.mock.calls.length).toBe(200)
   })
 
   it('renders the full vault by default (no silent cap)', async () => {
@@ -214,12 +214,37 @@ describe('GraphPanel', () => {
     const tabs = useTabsStore()
     tabs.setVault('/vault-full')
     mountPanel()
-    await flush()
-    await flush()
     // Full vault default: every node is read and rendered, no truncation notice.
+    // The read count is satisfied when the last read is *issued*, which is one
+    // tick before `rebuild` clears its loading flag (it still has to relayout),
+    // so wait for the settled header instead of the call count.
+    await vi.waitFor(() => expect(host!.textContent).toContain('210 篇'), { timeout: 5000 })
     expect(readMock.mock.calls.length).toBe(210)
     expect(host!.textContent).not.toContain('仅展示前')
-    expect(host!.textContent).toContain('210 篇')
+  })
+
+  it('lists directories from NATIVE (Windows) node paths', async () => {
+    // Node ids are the paths the vault walk returned, which are native. A
+    // '/'-only split made every directory the empty string on Windows, so the
+    // filter offered only "root" and no folder could be selected.
+    listMock.mockResolvedValue([
+      fileEntry('C:\\vault\\notes\\a.md'),
+      fileEntry('C:\\vault\\notes\\b.md'),
+      fileEntry('C:\\vault\\other\\c.md'),
+    ])
+    readMock.mockResolvedValue('no links')
+    const tabs = useTabsStore()
+    tabs.setVault('C:\\vault')
+    mountPanel()
+    await vi.waitFor(() => expect(readMock.mock.calls.length).toBe(3))
+    // The directory filter is offered through a select; a real directory
+    // must appear in it (and the empty string must not subsume them all).
+    const options = [...host!.querySelectorAll('select option')]
+      .map((o) => (o.textContent || '').trim())
+      .filter((v) => v !== '')
+    expect(options.length).toBeGreaterThanOrEqual(2)
+    expect(options.join('|')).toMatch(/notes/)
+    expect(options.join('|')).toMatch(/other/)
   })
 
   it('honours vaultReady=false and skips loading', async () => {
@@ -434,6 +459,69 @@ describe('GraphPanel', () => {
     expect(dashedStubCount()).toBe(dashesBeforeToggle)
     // Toggling only hides the marking: the node itself stays in the graph.
     expect(state().visibleGraph!.nodes.map((n) => n.id)).toContain('docs/a.md')
+    getContextSpy.mockRestore()
+  })
+
+  it('opens a note with the keyboard and announces each focused node', async () => {
+    // The canvas is the panel's main surface but used to be mouse-only: a
+    // keyboard user could filter and relayout but never open a note.
+    const ctx = {
+      setTransform: vi.fn(),
+      clearRect: vi.fn(),
+      save: vi.fn(),
+      restore: vi.fn(),
+      translate: vi.fn(),
+      scale: vi.fn(),
+      beginPath: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      stroke: vi.fn(),
+      arc: vi.fn(),
+      fill: vi.fn(),
+      setLineDash: vi.fn(),
+      lineWidth: 1,
+      strokeStyle: '',
+      fillStyle: '',
+      globalAlpha: 1,
+    }
+    const getContextSpy = vi
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue(ctx as unknown as CanvasRenderingContext2D)
+
+    mountFilterVault('/vault-graph-kb')
+    await flush()
+    await flush()
+    await vi.waitFor(() => expect(state().layout).toHaveLength(3))
+
+    const canvas = host!.querySelector<HTMLCanvasElement>('.graph-canvas')!
+    expect(canvas.getAttribute('tabindex')).toBe('0')
+    expect(canvas.getAttribute('aria-label')).toContain('方向键')
+
+    const press = (key: string): void => {
+      canvas.focus()
+      canvas.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+    }
+
+    // The first arrow key lands on a node, and the label names it.
+    press('ArrowRight')
+    await nextTick()
+    const label = canvas.getAttribute('aria-label') ?? ''
+    const focusedId = state().layout.map((p) => p.id).find((id) => label.includes(id.split('/').pop()!))
+    expect(focusedId).toBe('docs/a.md')
+
+    // Escape clears the selection again.
+    press('Escape')
+    await nextTick()
+    expect(canvas.getAttribute('aria-label')).not.toContain('a.md')
+
+    // Enter opens the focused note; the arrow press picks the first node again.
+    press('ArrowRight')
+    await nextTick()
+    expect(canvas.getAttribute('aria-label')).toContain('a.md')
+    press('Enter')
+    await flush()
+    expect(useTabsStore().activeTab?.path).toBe('docs/a.md')
+
     getContextSpy.mockRestore()
   })
 

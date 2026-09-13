@@ -64,6 +64,10 @@ describe('frontmatter serialization (panel + rewrite)', () => {
       created: '2026-01-01',
       updated: '',
       other: {},
+      rawSegments: [
+        { key: 'tags', lines: ['tags: [a, b]'] },
+        { key: 'created', lines: ['created: 2026-01-01'] },
+      ],
     })
     expect(parseFrontmatterForPanel('title: X\ntags: 数学, 物理')).toMatchObject({
       title: 'X',
@@ -88,6 +92,7 @@ describe('frontmatter serialization (panel + rewrite)', () => {
       created: '2026-01-01',
       updated: '',
       other: { author: 'nekora' },
+      rawSegments: [],
     })
     expect(inner).toContain('tags:')
     expect(inner).toContain('  - 数学')
@@ -107,6 +112,7 @@ describe('frontmatter serialization (panel + rewrite)', () => {
       created: '',
       updated: '',
       other: { note: 'x: y' },
+      rawSegments: [],
     }
     const reparsed = parseFrontmatterForPanel(serializeFrontmatter(fields))
     expect(reparsed.tags).toEqual(['a: b', 'c#d'])
@@ -121,7 +127,15 @@ describe('frontmatter serialization (panel + rewrite)', () => {
 
   it('replaceFrontmatter rewrites only the block, preserving the body byte-for-byte', () => {
     const md = '---\ntitle: old\ntags: [x]\n---\n\n# Hello\n\nBody'
-    const fields = { title: 'new', tags: ['a', 'b'], date: '2026-01-01', created: '', updated: '', other: { author: 'nekora' } }
+    const fields = {
+      title: 'new',
+      tags: ['a', 'b'],
+      date: '2026-01-01',
+      created: '',
+      updated: '',
+      other: { author: 'nekora' },
+      rawSegments: [],
+    }
     const { content, hadFront, changed } = replaceFrontmatter(md, fields)
     expect(hadFront).toBe(true)
     expect(changed).toBe(true)
@@ -131,9 +145,126 @@ describe('frontmatter serialization (panel + rewrite)', () => {
 
   it('prepends a fresh frontmatter block when the document has none', () => {
     const body = '# Welcome\n\nContent'
-    const { content, hadFront } = replaceFrontmatter(body, { title: 'Welcome', tags: [], date: '', created: '', updated: '', other: {} })
+    const { content, hadFront } = replaceFrontmatter(body, {
+      title: 'Welcome',
+      tags: [],
+      date: '',
+      created: '',
+      updated: '',
+      other: {},
+      rawSegments: [],
+    })
     expect(hadFront).toBe(false)
     expect(content).toBe('---\ntitle: Welcome\n---\n\n# Welcome\n\nContent')
+  })
+})
+
+describe('frontmatter raw-text preservation', () => {
+  // The audit's exact document: every unknown key must survive a panel write.
+  const auditBlock = [
+    'title: A',
+    'aliases:',
+    '  - one',
+    '  - two',
+    'cssclasses: [wide, dark]',
+    'meta:',
+    '  nested: 1',
+    'doi: 10.1/x',
+  ].join('\n')
+
+  it('re-emits an untouched block byte-for-byte', () => {
+    const fields = parseFrontmatterForPanel(auditBlock)
+    expect(fields.title).toBe('A')
+    expect(serializeFrontmatter(fields)).toBe(auditBlock)
+  })
+
+  it('keeps a block sequence, a flow sequence and a mapping when a field is edited', () => {
+    const fields = { ...parseFrontmatterForPanel(auditBlock), title: 'B' }
+    expect(serializeFrontmatter(fields)).toBe(auditBlock.replace('title: A', 'title: B'))
+  })
+
+  it('leaves replaceFrontmatter a no-op for an untouched block with unknown keys', () => {
+    const md = `---\n${auditBlock}\n---\n\n# Body`
+    const fields = parseFrontmatterForPanel(splitFrontmatterRaw(md).front)
+    expect(replaceFrontmatter(md, fields)).toEqual({ content: md, hadFront: true, changed: false })
+  })
+
+  it('keeps blank separator lines between keys untouched', () => {
+    const front = ['title: A', 'tags:', '  - 数学', '', 'author: ned', '', 'meta:', '  nested: 1'].join('\n')
+    expect(serializeFrontmatter(parseFrontmatterForPanel(front))).toBe(front)
+  })
+
+  it('still parses a block tag list across a blank line', () => {
+    const front = 'tags:\n\n  - a\n  - b'
+    const fields = parseFrontmatterForPanel(front)
+    expect(fields.tags).toEqual(['a', 'b'])
+    expect(serializeFrontmatter(fields)).toBe('tags:\n  - a\n  - b')
+  })
+
+  it('keeps a key with an empty value and no continuation empty', () => {
+    const front = 'title: A\ndraft:'
+    expect(parseFrontmatterForPanel(front).other).toEqual({ draft: '' })
+    expect(serializeFrontmatter(parseFrontmatterForPanel(front))).toBe(front)
+  })
+
+  it('keeps block scalars with their indented and blank lines', () => {
+    const front = ['title: A', 'summary: |', '  first line', '', '  second line', 'note: >', '  folded'].join('\n')
+    expect(serializeFrontmatter(parseFrontmatterForPanel(front))).toBe(front)
+  })
+
+  it('keeps a duplicated key twice, in its original order', () => {
+    const front = 'title: A\nref: one\nref: two'
+    const fields = parseFrontmatterForPanel(front)
+    expect(fields.rawSegments.map((segment) => segment.key)).toEqual(['title', 'ref', 'ref'])
+    // The display collapses duplicates, the raw text must not.
+    expect(fields.other).toEqual({ ref: 'two' })
+    expect(serializeFrontmatter(fields)).toBe(front)
+  })
+
+  it('keeps a leading comment above the block', () => {
+    const front = '# hand-written\ntitle: A\nauthor: ned'
+    expect(serializeFrontmatter(parseFrontmatterForPanel(front))).toBe(front)
+  })
+
+  it('never treats an indented key-like line as a top-level key', () => {
+    const front = 'title: A\nmeta:\n  title: nested\n\ttitle: tabbed\nauthor: ned'
+    const fields = parseFrontmatterForPanel(front)
+    expect(fields.title).toBe('A')
+    expect(serializeFrontmatter(fields)).toBe(front)
+  })
+
+  it('treats a tab-only indented line as a continuation, never a key', () => {
+    const front = 'meta:\n\tnested: 1'
+    const fields = parseFrontmatterForPanel(front)
+    expect(fields.other).toEqual({ meta: '' })
+    expect(serializeFrontmatter(fields)).toBe(front)
+  })
+
+  it('keeps a `---` inside a quoted value from splitting the block early', () => {
+    const md = '---\nsubtitle: "before --- after"\nquote: "line one\n  --- not a fence\n  line three"\n---\n\n# Body'
+    const { front, body } = splitFrontmatterRaw(md)
+    expect(front).toContain('--- not a fence')
+    const fields = parseFrontmatterForPanel(front)
+    const { content, changed } = replaceFrontmatter(md, fields)
+    expect(changed).toBe(false)
+    expect(content).toBe(md)
+    expect(body).toBe('# Body')
+  })
+
+  it('recognizes a non-ASCII key as a top-level key and keeps it raw', () => {
+    const front = '标题: 我的笔记\ntitle: A'
+    const fields = parseFrontmatterForPanel(front)
+    expect(fields.other['标题']).toBe('我的笔记')
+    expect(fields.rawSegments).toEqual([
+      { key: '标题', lines: ['标题: 我的笔记'] },
+      { key: 'title', lines: ['title: A'] },
+    ])
+    expect(serializeFrontmatter(fields)).toBe('title: A\n标题: 我的笔记')
+  })
+
+  it('keeps a non-indented line the key regex cannot express instead of merging it', () => {
+    const front = 'title: A\nmy key: x'
+    expect(serializeFrontmatter(parseFrontmatterForPanel(front))).toBe(front)
   })
 })
 
@@ -274,5 +405,102 @@ describe('formatRelativeTime', () => {
     expect(formatRelativeTime(now - 4 * 86_400_000, now)).toBe('4 天前')
     expect(formatRelativeTime(now - 45 * 86_400_000, now)).toBe('2026/07/20')
     expect(formatRelativeTime(0, now)).toBe('—')
+  })
+})
+
+describe('metadata for long frontmatter', () => {
+  // A block longer than the old 400-character snapshot never closed inside it,
+  // so `front` came back empty: the note lost its title and tags in the list,
+  // the tag filter and the search index, while the frontmatter panel (which
+  // reads the whole block) still showed them.
+  const longBlock = [
+    '---',
+    'title: A very long meta block',
+    'tags: [alpha, beta]',
+    'abstract: >-',
+    '  ' + 'filler '.repeat(120).trim(),
+    '---',
+    '',
+    '# Heading fallback',
+    '',
+    'Body text that should be the summary.',
+  ].join('\n')
+
+  it('finds the title and tags past the old 400-character limit', () => {
+    const meta = parseNoteMeta('/v/long.md', longBlock, { mtime: 0, size: longBlock.length, vault: '/v' })
+    expect(meta.title).toBe('A very long meta block')
+    expect(meta.tags).toEqual(['alpha', 'beta'])
+  })
+
+  it('takes the summary from the body, not from the YAML', () => {
+    const meta = parseNoteMeta('/v/long.md', longBlock, { mtime: 0, size: longBlock.length, vault: '/v' })
+    expect(meta.summary).toContain('Body text')
+    expect(meta.summary).not.toContain('filler')
+  })
+
+  it('still handles a note that opens with a fence but never closes it', () => {
+    // The scan is capped, so this must not walk the whole document; with no
+    // closing fence there is simply no frontmatter to read.
+    const broken = '---\n' + 'x'.repeat(20000) + '\n\n# Title\n'
+    const meta = parseNoteMeta('/v/broken.md', broken, { mtime: 0, size: broken.length, vault: '/v' })
+    expect(meta.title).toMatch(/broken|Title/)
+  })
+
+  it('keeps a plain short block working exactly as before', () => {
+    const short = '---\ntitle: Short\ntags: [one]\n---\n\n# H1\n\nsummary here\n'
+    const meta = parseNoteMeta('/v/short.md', short, { mtime: 0, size: short.length, vault: '/v' })
+    expect(meta.title).toBe('Short')
+    expect(meta.tags).toEqual(['one'])
+    expect(meta.summary).toContain('summary here')
+  })
+})
+
+describe('extractOutlinks and wiki links', () => {
+  it('sees a [[wikilink]] as a link to a note', () => {
+    // The extractor only knew `[text](target)`, so a reference written with the
+    // app's OWN wiki syntax was invisible to the index: the backlinks list said
+    // "no note references this document" while one plainly did, and the graph
+    // had no edge for it.
+    const links = extractOutlinks('# Source\n\nsee [[target]] here\n')
+    expect(links).toEqual([{ text: 'target', target: 'target.md' }])
+  })
+
+  it('uses the alias as the link text and fills in the note extension', () => {
+    expect(extractOutlinks('[[target|Nice Name]]')).toEqual([
+      { text: 'Nice Name', target: 'target.md' },
+    ])
+    // An explicit extension is kept as written.
+    expect(extractOutlinks('[[target.mdx]]')).toEqual([{ text: 'target.mdx', target: 'target.mdx' }])
+    // A heading rides along and is shown as written (the chip does the same);
+    // the resolvers strip it when they look the note up.
+    expect(extractOutlinks('[[target#section]]')).toEqual([
+      { text: 'target#section', target: 'target.md#section' },
+    ])
+  })
+
+  it('still finds markdown links, and both spellings name the same note', () => {
+    const links = extractOutlinks('[text](other.md) and [[other]] and [[other]]')
+    expect(links).toEqual([
+      { text: 'text', target: 'other.md' },
+      { text: 'other', target: 'other.md' },
+      { text: 'other', target: 'other.md' },
+    ])
+  })
+
+  it('leaves escaped brackets, external targets and blanks alone', () => {
+    expect(extractOutlinks('a \\[[not a link]] b')).toEqual([])
+    expect(extractOutlinks('[[https://example.com]]')).toEqual([])
+    expect(extractOutlinks('[[]]')).toEqual([])
+  })
+
+  it('makes a wiki-referenced note show up as a backlink', () => {
+    // The end-to-end consequence: the note the user LINKED to must list the
+    // note that links to it.
+    const source = parseNoteMeta('/v/source.md', 'see [[target]] here\n', {
+      mtime: 0,
+      size: 20,
+      vault: '/v',
+    })
+    expect(source.links).toEqual(['target.md'])
   })
 })

@@ -17,6 +17,7 @@ use tauri::Manager;
 use tauri_plugin_stronghold::stronghold::Stronghold;
 
 use crate::domain::recovery::open_snapshot;
+use crate::errors::fs_error;
 use crate::state::KeyVault;
 
 /// Client id used for the single provider-key client inside the vault.
@@ -199,14 +200,15 @@ pub fn read_vault_key_state(path: &Path) -> Result<VaultKeyState, String> {
         Ok(bytes) => decode_keyfile(&bytes),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                fs::create_dir_all(parent)
+                    .map_err(|e| fs_error("create the folder containing", parent, e))?;
             }
             let mut key = [0u8; 32];
             getrandom::getrandom(&mut key).map_err(|e| e.to_string())?;
             write_keyfile(path, &encode_keyfile_passwordless(&key))?;
             Ok(VaultKeyState::Auto(key))
         }
-        Err(e) => Err(format!("cannot read master key file: {e}")),
+        Err(e) => Err(fs_error("read the master key file", path, e)),
     }
 }
 
@@ -216,15 +218,20 @@ pub fn read_vault_key_state(path: &Path) -> Result<VaultKeyState, String> {
 /// rename sequence (see `reencrypt_vault`).
 pub fn write_key_file_at(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        fs::create_dir_all(parent)
+            .map_err(|e| fs_error("create the folder containing", parent, e))?;
     }
     let mut options = fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     options.mode(0o600);
-    let mut f = options.open(path).map_err(|e| e.to_string())?;
-    f.write_all(bytes).map_err(|e| e.to_string())?;
-    f.sync_all().map_err(|e| e.to_string())?;
+    let mut f = options
+        .open(path)
+        .map_err(|e| fs_error("open the master key file", path, e))?;
+    f.write_all(bytes)
+        .map_err(|e| fs_error("write the master key file", path, e))?;
+    f.sync_all()
+        .map_err(|e| fs_error("flush the master key file", path, e))?;
     Ok(())
 }
 
@@ -235,7 +242,7 @@ pub fn write_key_file_at(path: &Path, bytes: &[u8]) -> Result<(), String> {
 fn write_keyfile(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let tmp = sibling_tmp(path);
     write_key_file_at(&tmp, bytes)?;
-    fs::rename(&tmp, path).map_err(|e| e.to_string())
+    fs::rename(&tmp, path).map_err(|e| fs_error("replace the master key file", path, e))
 }
 
 /// Flush an existing file's data to stable storage. Stronghold's `save()` does
@@ -244,7 +251,7 @@ fn write_keyfile(path: &Path, bytes: &[u8]) -> Result<(), String> {
 pub fn fsync_file(path: &Path) -> Result<(), String> {
     fs::File::open(path)
         .and_then(|f| f.sync_all())
-        .map_err(|e| e.to_string())
+        .map_err(|e| fs_error("flush", path, e))
 }
 
 /// Create/read a master key and return its raw 32 bytes, ONLY for the
@@ -260,9 +267,9 @@ pub fn fsync_file(path: &Path) -> Result<(), String> {
 pub fn ensure_keyfile(path: &Path) -> Result<Vec<u8>, String> {
     match read_vault_key_state(path)? {
         VaultKeyState::Auto(key) => Ok(key.to_vec()),
-        VaultKeyState::Locked { .. } => Err(
-            "master key is password-protected; the vault is locked (call unlock_vault)".into(),
-        ),
+        VaultKeyState::Locked { .. } => {
+            Err("master key is password-protected; the vault is locked (call unlock_vault)".into())
+        }
     }
 }
 
@@ -311,7 +318,11 @@ pub fn open_vault<R>(
                 )
             }
         };
-        *guard = Some(open_snapshot(&snapshot_path, &key_path, master_key.to_vec())?);
+        *guard = Some(open_snapshot(
+            &snapshot_path,
+            &key_path,
+            master_key.to_vec(),
+        )?);
     }
     let stronghold = guard.as_ref().expect("open_vault guarantees a stronghold");
     f(stronghold)
@@ -362,7 +373,8 @@ pub fn save_vault(stronghold: &Stronghold) -> Result<(), String> {
 #[cfg(unix)]
 pub fn tighten_snapshot_perms(path: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .map_err(|e| fs_error("restrict permissions on", path, e))
 }
 
 /// Platforms without POSIX file modes: nothing to tighten, the platform

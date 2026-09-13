@@ -71,15 +71,15 @@ describe('memoryFsGateway', () => {
     expect(await fs.listTrash('memoir://demo')).toHaveLength(0)
   })
 
-  it('clearTrash removes every entry and returns the count', async () => {
+  it('clearTrash removes every entry and reports the count and failures', async () => {
     const fs = createMemoryFsGateway({ 'a.md': 'a', 'b.md': 'b', 'c.md': 'c' })
     await fs.deleteFile('memoir://demo', 'a.md')
     await fs.deleteFile('memoir://demo', 'b.md')
     expect(await fs.listTrash('memoir://demo')).toHaveLength(2)
-    expect(await fs.clearTrash('memoir://demo')).toBe(2)
+    expect(await fs.clearTrash('memoir://demo')).toEqual({ removed: 2, failed: [] })
     expect(await fs.listTrash('memoir://demo')).toHaveLength(0)
     // Clearing an already-empty trash is a no-op.
-    expect(await fs.clearTrash('memoir://demo')).toBe(0)
+    expect(await fs.clearTrash('memoir://demo')).toEqual({ removed: 0, failed: [] })
   })
 
   it('prunes history to maxHistory keeping the newest snapshots first', async () => {
@@ -245,11 +245,11 @@ describe('memoryFsGateway event simulation', () => {
     const fs = createMemoryFsGateway({}, { events })
     const received: FsChangeEvent[] = []
     await fs.onFsChange((e) => received.push(e))
-    await events.emit('fs-change', { path: 'a.md', kind: 'create' })
-    await events.emit('fs-change', { path: 'b.md', kind: 'remove' })
+    await events.emit('fs-change', { path: 'a.md', kind: 'created' })
+    await events.emit('fs-change', { path: 'b.md', kind: 'removed' })
     expect(received).toEqual([
-      { path: 'a.md', kind: 'create' },
-      { path: 'b.md', kind: 'remove' },
+      { path: 'a.md', kind: 'created' },
+      { path: 'b.md', kind: 'removed' },
     ])
   })
 
@@ -260,9 +260,9 @@ describe('memoryFsGateway event simulation', () => {
     const off = await fs.onFsChange(() => {
       count++
     })
-    await events.emit('fs-change', { path: 'a.md', kind: 'create' })
+    await events.emit('fs-change', { path: 'a.md', kind: 'created' })
     off()
-    await events.emit('fs-change', { path: 'b.md', kind: 'remove' })
+    await events.emit('fs-change', { path: 'b.md', kind: 'removed' })
     expect(count).toBe(1)
   })
 })
@@ -276,21 +276,25 @@ describe('memoryGateways drive an AI stream', () => {
     const onChunk = vi.fn()
     const onDone = vi.fn()
     const onError = vi.fn()
+    // The frontend chooses the request id before the request goes out (see
+    // services/ai.ts), so the test drives the events under that same id.
+    const completeSpy = vi.spyOn(gw.ai, 'complete')
     const stream = await startChatCompletion(
       { provider: 'local', model: 'm' },
       'look',
       [],
       { onChunk, onDone, onError },
     )
-    // Stream adopts the first chunk's id; subsequent chunks accumulate.
-    await gw.events.emit('ai-chunk', { id: 'ai-1', text: 'Hello' })
-    await gw.events.emit('ai-chunk', { id: 'ai-1', text: ' world' })
+    const id = completeSpy.mock.calls[0]?.[3] as string
+    expect(id).toBeTruthy()
+    await gw.events.emit('ai-chunk', { id, text: 'Hello' })
+    await gw.events.emit('ai-chunk', { id, text: ' world' })
     expect(onChunk).toHaveBeenCalledWith('Hello world')
 
     // Cancel mid-stream: later events for the cancelled id must be ignored.
     stream.cancel()
-    await gw.events.emit('ai-chunk', { id: 'ai-1', text: ' ghost' })
-    await gw.events.emit('ai-done', { id: 'ai-1', full: 'Hello world ghost' })
+    await gw.events.emit('ai-chunk', { id, text: ' ghost' })
+    await gw.events.emit('ai-done', { id, full: 'Hello world ghost' })
     expect(onDone).not.toHaveBeenCalled()
     expect(onChunk).toHaveBeenCalledTimes(2)
   })

@@ -15,6 +15,9 @@ const h = vi.hoisted(() => {
       restoreHistory: vi.fn(),
       saveFileDialog: vi.fn(),
       watch: vi.fn(),
+      // The runtime subscribes to reference-file changes: the port is required
+      // by the contract, and a mock without it made every switch throw.
+      onFsChange: vi.fn(async () => () => {}),
     },
     dialogs: { openFolderDialog: vi.fn(), saveFileDialog: vi.fn() },
     events: { on: vi.fn(), emit: vi.fn() },
@@ -26,7 +29,7 @@ const h = vi.hoisted(() => {
     untitledDirtyTabs: vi.fn(),
     saveTab: vi.fn(),
     removeTab: vi.fn(),
-    closeAll: vi.fn(),
+    removeAllTabs: vi.fn(),
     setVault: vi.fn(),
     restoreSession: vi.fn(),
     captureSession: vi.fn(),
@@ -43,7 +46,13 @@ const h = vi.hoisted(() => {
     refsMock,
     loadVaultPlugins: vi.fn(),
     deactivateVaultPlugins: vi.fn(),
+    vaultFileIndex: {
+      get: vi.fn(),
+      isTruncated: vi.fn(() => false),
+      isIncomplete: vi.fn(() => false),
+    },
     tmpRecovery: { scan: vi.fn(), gc: vi.fn(), cancel: vi.fn(), isCancelled: vi.fn() },
+    createTmpRecovery: vi.fn(),
     windowTracking: { restore: vi.fn(), start: vi.fn(), flush: vi.fn(), dispose: vi.fn() },
     requestUntitledVaultSwitch: vi.fn(),
     setActiveEditor: vi.fn(),
@@ -65,8 +74,12 @@ vi.mock('./windowState', () => ({
 }))
 
 vi.mock('./recoveryClosedLoop', () => ({
-  createTmpRecovery: () => h.tmpRecovery,
+  createTmpRecovery: h.createTmpRecovery,
   requestUntitledVaultSwitch: h.requestUntitledVaultSwitch,
+}))
+
+vi.mock('../services/vaultFiles', () => ({
+  vaultFileIndex: h.vaultFileIndex,
 }))
 
 vi.mock('../services/plugins', () => ({
@@ -118,7 +131,7 @@ describe('createDesktopRuntime', () => {
     h.tabsMock.untitledDirtyTabs.mockReturnValue([])
     h.tabsMock.saveTab.mockResolvedValue(true)
     h.tabsMock.removeTab.mockImplementation(() => {})
-    h.tabsMock.closeAll.mockImplementation(() => {})
+    h.tabsMock.removeAllTabs.mockImplementation(() => {})
     h.tabsMock.setVault.mockImplementation(() => {})
     h.tabsMock.restoreSession.mockResolvedValue(undefined)
     h.tabsMock.captureSession.mockImplementation(() => {})
@@ -132,10 +145,13 @@ describe('createDesktopRuntime', () => {
     h.loadVaultPlugins.mockResolvedValue(undefined)
     h.deactivateVaultPlugins.mockImplementation(() => {})
     h.gateways.fs.registerVault.mockResolvedValue(undefined)
+    h.gateways.fs.watch.mockResolvedValue(undefined)
     h.windowTracking.restore.mockResolvedValue(undefined)
     h.windowTracking.start.mockResolvedValue(undefined)
     h.requestUntitledVaultSwitch.mockResolvedValue('save')
     h.editorSessionManager.destroyAll.mockImplementation(() => {})
+    h.createTmpRecovery.mockReturnValue(h.tmpRecovery)
+    h.vaultFileIndex.get.mockResolvedValue([])
   })
 
   describe('start (startup ordering)', () => {
@@ -157,8 +173,34 @@ describe('createDesktopRuntime', () => {
       await vi.waitFor(() => expect(h.tabsMock.restoreSession).toHaveBeenCalled())
 
       expect(h.tabsMock.setVault).toHaveBeenCalledWith('/vault')
+      expect(h.gateways.fs.watch).toHaveBeenCalledWith('/vault')
       expect(runtime.vaultPath.value).toBe('/vault')
       expect(h.windowTracking.start).toHaveBeenCalled()
+    })
+
+    it('starts and opens a vault even when every storage access throws', async () => {
+      // C3: a webview with storage disabled throws on the localStorage GETTER, so
+      // startup used to fail before the first render (white screen) and a vault
+      // switch aborted after the root was registered and the tabs were closed.
+      const original = Object.getOwnPropertyDescriptor(window, 'localStorage')
+      if (!original) throw new Error('the test setup did not install a localStorage')
+      Object.defineProperty(window, 'localStorage', {
+        configurable: true,
+        get() {
+          throw new Error('storage disabled')
+        },
+      })
+      try {
+        const runtime = createDesktopRuntime()
+        expect(() => runtime.start()).not.toThrow()
+        await vi.waitFor(() => expect(h.tabsMock.restoreSession).toHaveBeenCalled())
+
+        await expect(runtime.applyVault('/next')).resolves.toBeUndefined()
+        expect(runtime.vaultPath.value).toBe('/next')
+        expect(h.vaultSessionMock.indexVault).toHaveBeenCalledWith('/next')
+      } finally {
+        Object.defineProperty(window, 'localStorage', original)
+      }
     })
 
     it('does not apply a vault when none was saved, but still restores the session', async () => {
@@ -179,8 +221,11 @@ describe('createDesktopRuntime', () => {
       expect(h.tabsMock.flushDirty).toHaveBeenCalled()
       expect(h.gateways.fs.registerVault).toHaveBeenCalledWith('/vault')
       expect(runtime.vaultPath.value).toBe('/vault')
-      expect(h.tabsMock.closeAll).toHaveBeenCalled()
+      expect(h.tabsMock.removeAllTabs).toHaveBeenCalled()
       expect(h.tabsMock.setVault).toHaveBeenCalledWith('/vault')
+      // The watcher is armed by the runtime, not by a panel: external edits must
+      // be noticed even when only the Notes panel is mounted.
+      expect(h.gateways.fs.watch).toHaveBeenCalledWith('/vault')
       expect(h.vaultSessionMock.detachVault).toHaveBeenCalled()
       expect(h.deactivateVaultPlugins).toHaveBeenCalled()
       expect(h.vaultSessionMock.indexVault).toHaveBeenCalledWith('/vault')
@@ -217,7 +262,7 @@ describe('createDesktopRuntime', () => {
       expect(runtime.vaultPath.value).toBe('/current')
       expect(h.gateways.fs.registerVault.mock.calls.length).toBe(registrationsAfterFirst + 1)
       expect(h.tabsMock.setVault).toHaveBeenLastCalledWith('/current')
-      expect(h.tabsMock.closeAll).toHaveBeenCalledTimes(1)
+      expect(h.tabsMock.removeAllTabs).toHaveBeenCalledTimes(1)
       expect(h.vaultSessionMock.indexVault).toHaveBeenCalledTimes(1)
       expect(h.vaultSessionMock.indexVault).toHaveBeenCalledWith('/current')
       expect(h.loadVaultPlugins).toHaveBeenCalledTimes(1)
@@ -225,9 +270,63 @@ describe('createDesktopRuntime', () => {
       expect(h.tmpRecovery.gc).toHaveBeenCalledTimes(1)
       expect(h.tmpRecovery.scan).toHaveBeenCalledTimes(1)
 
+      // The watcher was never armed for the rejected vault.
+      expect(h.gateways.fs.watch).toHaveBeenCalledTimes(1)
+      expect(h.gateways.fs.watch).toHaveBeenCalledWith('/current')
+
       // A clear, recoverable error is surfaced, and the bad path is NOT persisted.
       expect(h.notifyError).toHaveBeenCalledWith('could not open the vault (missing/permission): /bad')
       expect(localStorage.getItem(VAULT_LS_KEY)).toBe('/current')
+    })
+  })
+
+  describe('vault-wide tmp references (closed notes included)', () => {
+    it('unions the open-tab set with references from ALL notes on disk', async () => {
+      h.tabsMock.referencedTmpPaths.mockReturnValue(new Set(['.tmp/open-tab.png']))
+      h.vaultFileIndex.get.mockResolvedValue(['notes/closed.md', 'notes/unrelated.md'])
+      h.gateways.fs.read.mockImplementation(async (_vault: string, path: string) =>
+        path === 'notes/closed.md' ? '![p](.tmp/closed-note.png)' : 'nothing staged',
+      )
+
+      const runtime = createDesktopRuntime()
+      await runtime.applyVault('/vault')
+
+      const deps = h.createTmpRecovery.mock.calls[0]![0] as {
+        getReferencedTmp: () => Promise<{ paths: Set<string>; complete: boolean }>
+      }
+      // The mocked controller never calls the provider, so drive it directly:
+      // the union must include the image owned by the note whose tab is CLOSED
+      // (the regression this fixes), not just the open-tab reference.
+      expect(await deps.getReferencedTmp()).toEqual({
+        paths: new Set(['.tmp/open-tab.png', '.tmp/closed-note.png']),
+        complete: true,
+      })
+      expect(h.vaultFileIndex.get).toHaveBeenCalledWith('/vault')
+      expect(h.gateways.fs.read).toHaveBeenCalledWith('/vault', 'notes/closed.md')
+    })
+
+    it('skips the vault-wide scan once the switch is stale, falling back to open tabs', async () => {
+      h.tabsMock.referencedTmpPaths.mockReturnValue(new Set(['.tmp/open-tab.png']))
+      h.vaultFileIndex.get.mockResolvedValue(['notes/closed.md'])
+      h.gateways.fs.read.mockResolvedValue('![p](.tmp/closed-note.png)')
+
+      const runtime = createDesktopRuntime()
+      await runtime.applyVault('/vault')
+      const deps = h.createTmpRecovery.mock.calls[0]![0] as {
+        getReferencedTmp: () => Promise<{ paths: Set<string>; complete: boolean }>
+      }
+      const indexCalls = h.vaultFileIndex.get.mock.calls.length
+
+      // Teardown makes the switch stale: the provider must not spend reads on a
+      // vault-wide scan the runtime no longer owns, and it must REPORT that the
+      // answer is partial — the recovery loop treats an incomplete set as
+      // "possibly referenced" and leaves every `.tmp` file alone.
+      runtime.dispose()
+      expect(await deps.getReferencedTmp()).toEqual({
+        paths: new Set(['.tmp/open-tab.png']),
+        complete: false,
+      })
+      expect(h.vaultFileIndex.get.mock.calls.length).toBe(indexCalls)
     })
   })
 

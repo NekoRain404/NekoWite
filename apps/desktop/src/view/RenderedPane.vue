@@ -8,10 +8,13 @@ import { useFloatStore } from '../stores/float'
 import { useAppearanceStore } from '../stores/appearance'
 import { resolveDirection } from '../services/rtl'
 import { t } from '../i18n'
+import { configureTaskChecklistRendering, headingAnchorIds } from '@nekowite/editor-core'
+import { resolveLinkPath } from '../features/vault/services/libraryQueries'
+import { useDocumentListStore } from '../stores/documentList'
+import { dirRelativeToVault } from '../services/noteMeta'
 import RenderSearchPanel from './RenderSearchPanel.vue'
 import ImagePanel from '../ui/ImagePanel.vue'
 import TableMenu from '../ui/TableMenu.vue'
-import RenameDialog from '../components/RenameDialog.vue'
 import { createDocumentSession } from '../features/editor/model/documentSession'
 import { createEditorController } from '../features/editor/controller/editorController'
 import { createEditorPersistence } from '../features/editor/controller/editorPersistence'
@@ -19,12 +22,13 @@ import { createEditorExternalSync } from '../features/editor/controller/editorEx
 import { createEditorScrollSync } from '../features/editor/controller/editorScrollSync'
 import { createEditorSearchOverlay } from '../features/editor/controller/editorSearchOverlay'
 import { createEditorSelection } from '../features/editor/controller/editorSelection'
-import { useImagePasteDrop } from '../features/editor/composables/useImagePasteDrop'
 import { useEditorFocus } from '../features/editor/composables/useEditorFocus'
+import { setRenderedFlush } from '../services/editorOwnership'
 
 const tabs = useTabsStore()
 const view = useViewStore()
 const floatStore = useFloatStore()
+const documentList = useDocumentListStore()
 const appearance = useAppearanceStore()
 
 const scrollEl = ref<HTMLElement | null>(null)
@@ -79,17 +83,6 @@ const {
   getScrollEl: () => scrollEl.value,
 })
 
-const {
-  renamePrompt,
-  onRenameConfirm,
-  onRenameCancel,
-  onPaste,
-  onDrop,
-  onDragOver,
-} = useImagePasteDrop({
-  getEditor: () => session.editor,
-})
-
 let unlistenChange: (() => void) | null = null
 let unlistenOverlayRefresh: (() => void) | null = null
 
@@ -119,13 +112,35 @@ function onContainerPointerDownCapture(e: PointerEvent): void {
 
 function onEditorClick(e: MouseEvent): void {
   const target = e.target as Element | null
-  // External links open in a new tab; internal/markdown links are left alone.
   const anchor = target?.closest?.('a') as HTMLAnchorElement | null
   const href = anchor?.getAttribute('href') ?? ''
-  if (anchor && /^https?:\/\//.test(href)) {
+  if (anchor && href) {
+    // Every in-document link is handled here, and the default is always
+    // prevented: letting the webview follow a relative href would try to
+    // navigate the app window itself.
+    if (/^https?:\/\//i.test(href)) {
+      e.preventDefault()
+      e.stopPropagation()
+      window.open(href, '_blank', 'noopener,noreferrer')
+      return
+    }
+    if (href.startsWith('#')) {
+      e.preventDefault()
+      e.stopPropagation()
+      scrollToHeadingAnchor(href.slice(1))
+      return
+    }
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(href)) {
+      // A same-vault reference (notes/other.md, ../a.md): open it as a tab.
+      e.preventDefault()
+      e.stopPropagation()
+      void openLinkedNote(href)
+      return
+    }
+    // Any other scheme (mailto:, asset:, a hand-written javascript:) is not
+    // this pane's business — but it must not navigate the app either.
     e.preventDefault()
     e.stopPropagation()
-    window.open(href, '_blank', 'noopener,noreferrer')
     return
   }
   const span = target?.closest?.('.nkw-spell') as HTMLElement | null
@@ -139,6 +154,46 @@ function onEditorClick(e: MouseEvent): void {
     const hit = target?.closest?.('.nw-spell-popup')
     if (!hit) spellPopup.value = null
   }
+}
+
+/**
+ * Scroll the rendered pane to the heading whose slug matches `slug`.
+ *
+ * The editor's own heading anchors copy `#slug` links, so following one has to
+ * land on the heading rather than fall through to the browser (which would try
+ * to navigate the app window).
+ */
+function scrollToHeadingAnchor(slug: string): void {
+  if (!slug) return
+  const headings = editorEl.value?.querySelectorAll('h1, h2, h3, h4, h5, h6')
+  if (!headings) return
+  const list = Array.from(headings)
+  // Build the same document-wide id list the anchors copy and the export
+  // emits, then pick the matching element by INDEX. Comparing slugs would send
+  // `#same-1` to the first "Same" instead of the second.
+  const ids = headingAnchorIds(list.map((heading) => heading.textContent ?? ''))
+  const index = ids.indexOf(slug)
+  if (index >= 0) list[index]?.scrollIntoView({ block: 'start', behavior: 'auto' })
+}
+
+/** Open a same-vault markdown reference in a new tab. */
+async function openLinkedNote(href: string): Promise<void> {
+  const vault = tabs.vault
+  const notePath = tabs.activeTab?.path
+  if (!vault || !notePath) return
+  let decoded = href
+  try {
+    decoded = decodeURIComponent(href)
+  } catch {
+    // A malformed escape sequence: fall back to the raw href.
+  }
+  const resolved = resolveLinkPath(
+    documentList.notes,
+    vault,
+    dirRelativeToVault(notePath, vault),
+    decoded,
+  )
+  if (resolved) await tabs.openTab(resolved)
 }
 
 function onSpellSuggestion(text: string): void {
@@ -179,20 +234,15 @@ onMounted(async () => {
 
   editorEl.value.addEventListener('pointerdown', onContainerPointerDownCapture, true)
   editorEl.value.addEventListener('click', onEditorClick)
-  // Paste/drop must be captured on the PANE (an ancestor) so they run before
-  // ProseMirror's own at-target handlers on the editor root; otherwise PM
-  // would already have consumed the event (e.g. inserting remote <img> html)
-  // before the attachment pipeline can intercept image files.
-  scrollEl.value?.addEventListener('paste', onPaste, true)
-  scrollEl.value?.addEventListener('drop', onDrop, true)
-  scrollEl.value?.addEventListener('dragover', onDragOver)
-  scrollEl.value?.addEventListener('dragenter', onDragOver)
   window.addEventListener('keydown', onKeydown)
   editorEl.value.addEventListener('keydown', onFocusKeydown)
   editorEl.value.addEventListener('pointerdown', onFocusPointerdown)
 
   unlistenChange = persistence.attachChangeListener()
   unlistenOverlayRefresh = searchOverlay.attachChangeListener()
+  // Published so a one-shot document read (save, export, sending the note to
+  // the model) can publish this pane's pending serialization first.
+  setRenderedFlush(() => persistence.flush())
 
   // Spell check is a reactive setting: sync the live toggle (default true) so
   // the renderSearch overlay honors it on open, and re-apply on change.
@@ -213,7 +263,18 @@ watch(
   },
 )
 
+// The task-list switch is a rendering choice of the live editor: the pane keeps
+// one editor per document, and rebuilding it to flip a decoration would throw
+// away the undo stack and the caret. editor-core re-decorates the open views
+// instead, so `immediate` also seeds the first editor with the stored value.
+watch(
+  () => appearance.renderTaskChecklist,
+  (enabled) => configureTaskChecklistRendering(enabled),
+  { immediate: true },
+)
+
 onBeforeUnmount(() => {
+  setRenderedFlush(null)
   persistence.cancel()
   searchOverlay.cancelRefresh()
   cancelFocusRaf()
@@ -223,10 +284,6 @@ onBeforeUnmount(() => {
   editorEl.value?.removeEventListener('click', onEditorClick)
   editorEl.value?.removeEventListener('keydown', onFocusKeydown)
   editorEl.value?.removeEventListener('pointerdown', onFocusPointerdown)
-  scrollEl.value?.removeEventListener('paste', onPaste, true)
-  scrollEl.value?.removeEventListener('drop', onDrop, true)
-  scrollEl.value?.removeEventListener('dragover', onDragOver)
-  scrollEl.value?.removeEventListener('dragenter', onDragOver)
   window.removeEventListener('keydown', onKeydown)
   unlistenChange?.()
   unlistenOverlayRefresh?.()
@@ -319,12 +376,6 @@ watch(
         {{ t('spell.noSuggestions') }}
       </div>
     </div>
-    <RenameDialog
-      v-if="renamePrompt"
-      :initial="renamePrompt.initial"
-      @confirm="onRenameConfirm"
-      @cancel="onRenameCancel"
-    />
   </div>
 </template>
 

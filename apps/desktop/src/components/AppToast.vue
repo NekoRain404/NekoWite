@@ -27,8 +27,30 @@ function show(message: string): void {
   window.setTimeout(() => dismiss(id), 3000)
 }
 
+/**
+ * Recovery prompts queue instead of replacing each other.
+ *
+ * There is one slot, and a second prompt used to overwrite the first WITHOUT
+ * settling it: the callbacks of the dropped prompt never ran. One of those
+ * callbacks is `requestUntitledVaultSwitch`'s, whose promise the vault switch
+ * awaits — so if a crash-recovery or `.tmp` notice arrived while the
+ * "you have untitled documents" prompt was up, the switch waited forever:
+ * choosing "open folder" did nothing at all, with no error and no progress.
+ * Queued prompts are shown one at a time, oldest first.
+ */
+const recoveryQueue = ref<Array<{ id: number } & RecoveryPrompt>>([])
+
 function showRecovery(p: RecoveryPrompt): void {
-  recovery.value = { id: ++seq, ...p }
+  if (!recovery.value) {
+    recovery.value = { id: ++seq, ...p }
+    return
+  }
+  recoveryQueue.value.push({ id: ++seq, ...p })
+}
+
+function nextRecovery(): void {
+  const next = recoveryQueue.value.shift()
+  recovery.value = next ?? null
 }
 
 function dismissRecovery(): void {
@@ -36,6 +58,10 @@ function dismissRecovery(): void {
   const p = recovery.value
   recovery.value = null
   p.onDismiss()
+  // The callback can raise its own prompt (a vault switch that then finds
+  // unsaved work); advancing after it keeps that one visible rather than
+  // dropped behind the queue.
+  nextRecovery()
 }
 
 function confirmRecovery(): void {
@@ -43,6 +69,10 @@ function confirmRecovery(): void {
   const p = recovery.value
   recovery.value = null
   p.onRestore()
+  // The callback can raise its own prompt (a vault switch that then finds
+  // unsaved work); advancing after it keeps that one visible rather than
+  // dropped behind the queue.
+  nextRecovery()
 }
 
 const off = onNotify(show)

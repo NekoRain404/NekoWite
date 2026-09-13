@@ -1,0 +1,52 @@
+---
+title: 图片 DEMO
+date: 2026-09-08
+tags: [demo, image]
+---
+
+# 图片功能 DEMO
+
+专门验证图片的渲染、尺寸、对齐、标题和引用式图片。
+
+## 1. 默认尺寸
+
+![默认尺寸](attachments/neko-banner.svg)
+
+## 2. 设置宽度
+
+![宽度 480](attachments/focus-card.svg){width=480}
+
+## 3. 居中对齐
+
+![居中对齐](attachments/neko-banner.svg){width=600 align=center}
+
+## 4. 左对齐
+
+![左对齐](attachments/focus-card.svg){width=300 align=left}
+
+## 5. 右对齐
+
+![右对齐](attachments/neko-avatar.svg){width=200 align=right}
+
+## 6. 宽度 + 高度
+
+![固定尺寸](attachments/neko-avatar.svg){width=250 height=250}
+
+## 7. 带标题
+
+![带标题的图片](attachments/neko-banner.svg "这是一个图片标题"){width=560 align=center}
+
+## 8. 引用式图片
+
+![引用式图片][banner]
+
+[banner]: attachments/neko-banner.svg
+
+## 9. 图片嵌套在列表中
+
+- 列表中的图片：
+  ![列表内图片](attachments/focus-card.svg){width=260 align=center}
+
+## 10. 远程图片
+
+![远程图片（需要网络）](https://picsum.photos/seed/nekowite/600/360)

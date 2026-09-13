@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { EditorView } from '@codemirror/view'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
@@ -10,10 +10,25 @@ import {
   setMeasureSuppressed as gateSetMeasureSuppressed,
   isMeasureSuppressed as gateIsMeasureSuppressed,
 } from '../services/cmSourceView'
+import {
+  setSourceViewHandle,
+  releaseSourceViewHandle,
+  type SourceViewHandle,
+} from '../services/sourceView'
+import { markSourceAuthored } from '../services/editorOwnership'
+import { resolveDirection } from '../services/rtl'
 
 const tabs = useTabsStore()
 const view = useViewStore()
 const appearance = useAppearanceStore()
+
+/**
+ * The rendered pane already lays its content out from the correct edge; the
+ * source pane ignored the setting entirely, so split mode showed the same
+ * document LTR on one side and RTL on the other. Same resolver, so both panes
+ * agree on what the document's direction is.
+ */
+const sourceDir = computed(() => resolveDirection(appearance.contentDirection, tabs.activeTab?.content ?? ''))
 
 const container = ref<HTMLDivElement | null>(null)
 let host: CodeMirrorHostHandle | null = null
@@ -21,6 +36,9 @@ let host: CodeMirrorHostHandle | null = null
 // attributed to it, so a burst that fires right after a tab switch can never
 // land on the wrong tab.
 let mirroredTabId: string | null = null
+// Our own entry in the source-pane registry, so teardown can withdraw it
+// without clobbering a newer pane that mounted first during a hot swap.
+let sourceHandle: SourceViewHandle | null = null
 // Set by setRatio() so the next scroll event (the async echo of a programmatic
 // scroll) is swallowed, breaking the split-mode sync feedback loop.
 let suppressScroll = false
@@ -31,6 +49,10 @@ let scrollRaf = 0
 function emitChange(text: string): void {
   const tab = mirroredTabId ? tabs.tabs.find((t) => t.id === mirroredTabId) : null
   if (!tab) return
+  // Publish the raw text *and* record that the source pane authored it: while
+  // this is the tab's content the rendered serializer's output is stale and
+  // must not be written back over it.
+  markSourceAuthored(text)
   tab.content = text
   tabs.markDirty(tab.id)
   tabs.scheduleAutosave(tab.id)
@@ -48,6 +70,16 @@ onMounted(() => {
     },
   })
   host.mount(container.value)
+  // Published for the mode-aware insert / toolbar routing and for the rendered
+  // pane's "flush before you serialize" handshake: those run from services and
+  // composables, which cannot reach a component ref.
+  sourceHandle = {
+    getView: () => host?.getView() ?? null,
+    flush: () => {
+      host?.flush()
+    },
+  }
+  setSourceViewHandle(sourceHandle)
 })
 
 // Hot-swap the source view layout when line-number / soft-wrap toggles change.
@@ -174,6 +206,8 @@ defineExpose({ getRatio, setRatio, focus, getText, getSourceView, getVisibleUnit
 onBeforeUnmount(() => {
   if (scrollRaf !== 0) cancelAnimationFrame(scrollRaf)
   host?.getView()?.scrollDOM.removeEventListener('scroll', onScroll)
+  if (sourceHandle) releaseSourceViewHandle(sourceHandle)
+  sourceHandle = null
   host?.destroy()
   host = null
 })
@@ -184,6 +218,7 @@ onBeforeUnmount(() => {
     ref="container"
     class="source-pane"
     data-testid="source-pane"
+    :dir="sourceDir"
   />
 </template>
 

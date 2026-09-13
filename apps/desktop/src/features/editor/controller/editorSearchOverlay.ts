@@ -18,6 +18,22 @@ export interface EditorSearchOverlayDeps {
   getEditor: () => NekoEditor | null
 }
 
+type RenderView = NonNullable<ReturnType<typeof getView>>
+
+/** The text currently at `from..to`, or null when the range is not (or no longer)
+ *  inside the document — ProseMirror throws for out-of-range offsets, so the
+ *  range has to be validated before it is asked for. */
+function textAtRange(view: RenderView, from: number, to: number): string | null {
+  const size = view.state.doc.content.size
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return null
+  if (from < 0 || to > size || to < from) return null
+  try {
+    return view.state.doc.textBetween(from, to, '', '')
+  } catch {
+    return null
+  }
+}
+
 export interface SpellPopup {
   x: number
   y: number
@@ -88,6 +104,12 @@ export function createEditorSearchOverlay(deps: EditorSearchOverlayDeps): Editor
     // renderSearch (rAF + idle debounce) so a typing burst does not re-scan the
     // whole document on every keystroke.
     return editor.onContentChange(() => {
+      // The spell popup's range was measured in the document that existed when it
+      // opened, so ANY model change makes it stale (it deliberately does not close
+      // on typing). Dropping it here is the first line of defence; the click
+      // handler re-checks the range as well, because a document swap can change
+      // the model without the listener running (see `applyContent`).
+      spellPopup.value = null
       if (deps.session.applyingExternal) return
       scheduleOverlayRefresh()
     })
@@ -111,12 +133,28 @@ export function createEditorSearchOverlay(deps: EditorSearchOverlayDeps): Editor
     const pop = spellPopup.value
     if (!pop) return
     const view = getView()
-    if (view) applySpellReplacement(view, pop.from, pop.to, text)
+    // A delayed click used to replace whatever sat at the offsets captured when
+    // the popup opened: the popup stays on screen while the user edits elsewhere,
+    // so the suggestion could land on unrelated text — and once the document had
+    // shrunk below `to`, `tr.insertText` threw an uncaught RangeError. Apply the
+    // replacement only while the captured word is still exactly there; otherwise
+    // the popup is stale and is dropped.
+    if (!view || textAtRange(view, pop.from, pop.to) !== pop.word) {
+      spellPopup.value = null
+      return
+    }
+    applySpellReplacement(view, pop.from, pop.to, text)
     spellPopup.value = null
   }
 
   function dispose(): void {
     stopCountAnnouncer()
+    // The pane is gone, so anything the change listener queued must not run
+    // against it: the deferred refresh fires one idle window + one animation
+    // frame later, and by then the editor it would scan can already be
+    // destroyed (it was: the stray frame ran after teardown and took the whole
+    // test process down with it).
+    cancelOverlayRefresh()
   }
 
   return {

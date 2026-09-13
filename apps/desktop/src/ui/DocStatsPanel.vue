@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useTabsStore } from '../stores/tabs'
 import { computeDocStats } from '../services/docStats'
+import { t } from '../i18n'
 
 const tabs = useTabsStore()
 
@@ -16,31 +17,31 @@ const taskPct = computed(() => {
 <template>
   <section class="doc-stats-panel">
     <h3 class="rail-section-title">
-      Stats
+      {{ t('docstats.title') }}
     </h3>
     <div class="stats-grid">
       <div class="stat-item">
-        <span class="stat-label">Words</span>
+        <span class="stat-label">{{ t('docstats.words') }}</span>
         <span class="stat-value">{{ stats.words }}</span>
       </div>
       <div class="stat-item">
-        <span class="stat-label">Characters</span>
+        <span class="stat-label">{{ t('docstats.chars') }}</span>
         <span class="stat-value">{{ stats.chars }}</span>
       </div>
       <div class="stat-item">
-        <span class="stat-label">Paragraphs</span>
+        <span class="stat-label">{{ t('docstats.paragraphs') }}</span>
         <span class="stat-value">{{ stats.paragraphs }}</span>
       </div>
       <div class="stat-item">
-        <span class="stat-label">Images</span>
+        <span class="stat-label">{{ t('docstats.images') }}</span>
         <span class="stat-value">{{ stats.images }}</span>
       </div>
       <div class="stat-item">
-        <span class="stat-label">Citations</span>
+        <span class="stat-label">{{ t('docstats.citations') }}</span>
         <span class="stat-value">{{ stats.citations }}</span>
       </div>
       <div class="stat-item">
-        <span class="stat-label">Read time</span>
+        <span class="stat-label">{{ t('docstats.readMinutes') }}</span>
         <span class="stat-value">{{ stats.readMinutes }}m</span>
       </div>
     </div>
@@ -49,7 +50,7 @@ const taskPct = computed(() => {
       class="task-progress"
     >
       <div class="task-progress-head">
-        <span class="stat-label">Tasks</span>
+        <span class="stat-label">{{ t('docstats.tasks') }}</span>
         <span class="stat-value">{{ stats.taskDone }}/{{ stats.taskTotal }}</span>
       </div>
       <div class="task-bar">
@@ -64,7 +65,7 @@ const taskPct = computed(() => {
       v-else
       class="rail-empty"
     >
-      No tasks in this document.
+      {{ t('docstats.noTasks') }}
     </p>
   </section>
 </template>

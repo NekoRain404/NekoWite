@@ -1,4 +1,6 @@
 export * from './plugin'
 export * from './ops'
 export * from './keymap'
+export * from './context'
 export * from './selection'
+export * from './stringify'

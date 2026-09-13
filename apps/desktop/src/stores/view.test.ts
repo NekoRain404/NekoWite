@@ -81,6 +81,60 @@ describe('useViewStore', () => {
   })
 })
 
+/**
+ * Run `body` with `window.localStorage` replaced by `descriptor`, then put the
+ * original property back (the suite shares one Storage instance).
+ */
+function withStorageDescriptor(descriptor: PropertyDescriptor, body: () => void): void {
+  const original = Object.getOwnPropertyDescriptor(window, 'localStorage')
+  if (!original) throw new Error('the test setup did not install a localStorage')
+  Object.defineProperty(window, 'localStorage', descriptor)
+  try {
+    body()
+  } finally {
+    Object.defineProperty(window, 'localStorage', original)
+  }
+}
+
+// C3: these stores are built while the shell mounts, so an unguarded storage
+// access is not a cosmetic failure — it aborts the render (white screen).
+describe('useViewStore with unavailable storage', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('constructs and still switches the default mode when the getter throws', () => {
+    withStorageDescriptor(
+      {
+        configurable: true,
+        get() {
+          throw new Error('storage disabled')
+        },
+      },
+      () => {
+        const s = useViewStore()
+        expect(s.defaultMode).toBe('rendered')
+        expect(() => s.setDefaultMode('split')).not.toThrow()
+        expect(s.defaultMode).toBe('split')
+        expect(s.mode).toBe('rendered')
+      },
+    )
+  })
+
+  it('swallows a quota error from the write', () => {
+    const storage = window.localStorage
+    const originalSetItem = storage.setItem
+    storage.setItem = () => {
+      throw new Error('QuotaExceededError')
+    }
+    try {
+      const s = useViewStore()
+      expect(() => s.setDefaultMode('split')).not.toThrow()
+      expect(s.defaultMode).toBe('split')
+    } finally {
+      storage.setItem = originalSetItem
+    }
+  })
+})
+
 describe('lifecycle broadcast from view store', () => {
   const unregister: Array<() => void> = []
 

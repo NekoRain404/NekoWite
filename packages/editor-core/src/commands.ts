@@ -8,6 +8,7 @@ import {
 import { wrapInList } from '@milkdown/prose/schema-list'
 
 import { getCommand, registerCommand, unregisterCommand } from './registry'
+import { isInTableCell } from './table/context'
 
 /**
  * Builtin formatting commands for the shared toolbar. The desktop toolbar
@@ -46,11 +47,22 @@ export function setCommandViewProvider(provider: (() => EditorView | null) | nul
   viewProvider = provider
 }
 
-function withView(run: (view: EditorView) => void): void {
+function withView(run: (view: EditorView) => boolean | void): boolean {
   const view = viewProvider?.()
-  if (!view) return
-  run(view)
+  if (!view) return false
+  return run(view) !== false
 }
+
+/**
+ * Commands that insert a BLOCK node, and so cannot run inside a table cell.
+ *
+ * A cell holds one paragraph; a block inserted there is lifted out by the fitter
+ * and splits the table in two (with `doc.check()` still passing, so nothing warns
+ * the user before the split is saved). These commands refuse instead, and the
+ * refusal is reported (`runBuiltinCommandOn` returns false) so a host can surface
+ * it rather than appearing to succeed while changing nothing.
+ */
+const CELL_UNSAFE_COMMANDS = new Set(['hr', 'insert-component'])
 
 /** Outermost node of `typeName` that the selection covers, if any. */
 function coveringNode(view: EditorView, typeName: string): { node: ProseNode; from: number; to: number } | null {
@@ -179,25 +191,52 @@ function runLink(view: EditorView): void {
   toggleMark(link, { href: 'https://' })(view.state, view.dispatch)
 }
 
+/**
+ * Host hook for the `image` command.
+ *
+ * Inserting an image needs bytes from outside the editor (a clipboard payload
+ * or a file the user picks), which editor-core cannot reach. The host app
+ * registers a handler that runs the picker + import + insert flow; without one
+ * the command still produces a visible placeholder instead of silently doing
+ * nothing, so an embedder gets a node it can then point at a real file.
+ */
+let imageInsertHandler: (() => void) | null = null
+
+export function setImageInsertHandler(handler: (() => void) | null): void {
+  imageInsertHandler = handler
+}
+
 function runImage(view: EditorView): void {
+  // An image is an INLINE node, so it is legal inside a cell and needs no guard.
+  if (imageInsertHandler) {
+    imageInsertHandler()
+    return
+  }
   const schema = view.state.schema
   const image = schema.nodes.image
   if (!image) return
-  view.dispatch(view.state.tr.replaceSelectionWith(image.create({ src: '', alt: '' })))
+  // An empty `src` renders as a broken image with nothing to click; a visible
+  // alt plus a placeholder URL makes the inserted node editable in the image
+  // panel.
+  view.dispatch(view.state.tr.replaceSelectionWith(image.create({ src: 'https://', alt: 'image' })))
 }
 
-function runHr(view: EditorView): void {
+function runHr(view: EditorView): boolean {
   const schema = view.state.schema
   const hr = schema.nodes.hr
-  if (!hr) return
+  if (!hr) return false
+  if (isInTableCell(view.state)) return false
   view.dispatch(view.state.tr.replaceSelectionWith(hr.create()))
+  return true
 }
 
-function runInsertComponent(view: EditorView): void {
+function runInsertComponent(view: EditorView): boolean {
   const schema = view.state.schema
   const mdx = schema.nodes.mdxComponent
-  if (!mdx) return
+  if (!mdx) return false
+  if (isInTableCell(view.state)) return false
   view.dispatch(view.state.tr.replaceSelectionWith(mdx.create({ name: 'Component' })))
+  return true
 }
 
 /**
@@ -244,14 +283,22 @@ export function registerBuiltinCommands(): void {
   }
 }
 
-/** Test helper: run a builtin command against an explicit view. */
-export function runBuiltinCommandOn(id: string, view: EditorView): void {
+/**
+ * Run a builtin command against an explicit view.
+ *
+ * Returns false when the command refused to run. Editors must be asked first:
+ * `insertMath` (display), `insertTable` and the block commands all decline inside a
+ * table cell, and a caller that reported success there would be lying about a
+ * change that never happened.
+ */
+export function runBuiltinCommandOn(id: string, view: EditorView): boolean {
   const cmd = getCommand(id)
-  if (!cmd) return
+  if (!cmd) return false
   const prev = viewProvider
   setCommandViewProvider(() => view)
   try {
     cmd.run()
+    return !CELL_UNSAFE_COMMANDS.has(id) || !isInTableCell(view.state)
   } finally {
     viewProvider = prev
   }

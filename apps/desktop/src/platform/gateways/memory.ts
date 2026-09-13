@@ -37,6 +37,34 @@ const DEFAULT_SEED: Record<string, string> = {
     '# Welcome to NekoWite (demo)\n\nThis is the in-browser demo vault.',
 }
 
+/**
+ * Picked-file payloads for the browser demo.
+ *
+ * The real picker returns absolute paths and the Rust side reads the bytes
+ * itself, so no file content ever crosses IPC. The demo has neither a native
+ * dialog nor a real filesystem: a test queues `path -> base64` here and this
+ * makes `pickImageFiles` hand those paths back, which keeps the whole
+ * pick -> import -> insert flow exercisable in a browser.
+ */
+const demoPickedFiles = new Map<string, string>()
+let demoPickQueue: string[] = []
+
+/** Queue the files the next `dialogs.pickImageFiles()` call should return. */
+export function seedMemoryPickedFiles(files: Record<string, string>): void {
+  for (const [path, base64] of Object.entries(files)) {
+    const name = path.replace(/\\/g, '/').split('/').pop() ?? path
+    demoPickedFiles.set(path, base64)
+    demoPickedFiles.set(name, base64)
+    demoPickQueue.push(path)
+  }
+}
+
+/** Drop every queued demo pick (test isolation). */
+export function resetMemoryPickedFiles(): void {
+  demoPickedFiles.clear()
+  demoPickQueue = []
+}
+
 // Inlined from services/attachments so `platform` never depends back on a
 // service module (docs/dev.md §5.3 forbids platform → service).
 const ATTACHMENT_MIME: Record<string, string> = {
@@ -180,6 +208,9 @@ export function createMemoryFsGateway(
       }
       files.set(path, content)
       modified.set(path, Date.now())
+      // The in-memory gateway has no separate history backend that could fail,
+      // so there is never a warning to report.
+      return null
     },
     stat: async (_vault, path) => {
       const content = files.get(path)
@@ -198,12 +229,25 @@ export function createMemoryFsGateway(
       if (trash.has(name)) {
         name = `${name}-${Date.now()}`
       }
-      trash.set(name, { name, trash_path: name, original_path: path, content })
+      trash.set(name, {
+        name,
+        display_name: path.replace(/\\/g, '/').split('/').pop() || name,
+        trash_path: name,
+        original_path: path,
+        is_dir: false,
+        content,
+      })
       return name
     },
     listTrash: async () =>
       [...trash.values()]
-        .map(({ name, trash_path, original_path }) => ({ name, trash_path, original_path }))
+        .map(({ name, display_name, trash_path, original_path, is_dir }) => ({
+          name,
+          display_name,
+          trash_path,
+          original_path,
+          is_dir,
+        }))
         .sort((a, b) => a.name.localeCompare(b.name)),
     restoreFromTrash: async (_vault, trashPath) => {
       const entry = trash.get(trashPath)
@@ -218,9 +262,11 @@ export function createMemoryFsGateway(
       return entry.original_path
     },
     clearTrash: async () => {
-      const count = trash.size
+      // The in-memory fs never has a locked file, so a pass is always total;
+      // the report shape is still the port contract.
+      const removed = trash.size
       trash.clear()
-      return count
+      return { removed, failed: [] }
     },
     listHistory: async (_vault, path) =>
       [...(history.get(path) ?? [])]
@@ -281,28 +327,18 @@ export function createMemoryFsGateway(
         return a.name.localeCompare(b.name)
       })
     },
-    searchNotes: async (_vault, query) => {
-      const q = query.trim().toLowerCase()
-      if (q === '') return []
-      const out: FileEntry[] = []
-      for (const key of files.keys()) {
-        if (out.length >= 100) break
-        if (isHiddenKey(key) || !/\.(md|mdx|markdown)$/i.test(key)) continue
-        if (key.toLowerCase().includes(q)) {
-          out.push({
-            name: key.split('/').pop() ?? key,
-            path: key,
-            is_dir: false,
-            is_mdx: true,
-          })
-        }
-      }
-      return out
-    },
     watch: async () => undefined,
     // Simulated native dialogs: the demo always "picks" the in-memory vault.
     openFolderDialog: async () => 'memoir://demo',
     saveFileDialog: async () => null,
+    // One-shot, like the native dialog: a queued pick is consumed by the call
+    // that reads it, so reopening the picker starts empty instead of
+    // re-importing the previous selection.
+    pickImageFiles: async () => {
+      const next = demoPickQueue
+      demoPickQueue = []
+      return next
+    },
     // Simulated fs-change subscription: emit on the shared event bus to fire it.
     onFsChange: (cb) => events.on<FsChangeEvent>('fs-change', cb),
     saveAttachment: async (_vault, fileName, base64, dir) => {
@@ -321,6 +357,33 @@ export function createMemoryFsGateway(
       // derivation surfaces the attachments tree for free.
       files.set(relPath, base64)
       attachments.set(relPath, base64)
+      modified.set(relPath, Date.now())
+      return relPath
+    },
+    // The demo has no real filesystem, so the picked "path" is the file name
+    // and the payload is whatever the harness stashed for it. This mirrors the
+    // real command's contract (absolute source path in, vault-relative out)
+    // closely enough for the UI flow to be exercised in a browser.
+    importAttachment: async (_vault, sourcePath, dir) => {
+      const name = sourcePath.replace(/\\/g, '/').split('/').pop() ?? ''
+      if (!name) throw new Error(`Picked file has no usable name: ${sourcePath}`)
+      const payload = demoPickedFiles.get(sourcePath) ?? demoPickedFiles.get(name)
+      if (payload === undefined) {
+        throw new Error(`No such picked file in demo vault: ${sourcePath}`)
+      }
+      const cleanDir = dir && dir.trim() ? dir.trim().replace(/^\/+|\/+$/g, '') : ''
+      const targetDir = cleanDir || `attachments/${attachmentMonthDir()}`
+      const dot = name.lastIndexOf('.')
+      const stem = dot > 0 ? name.slice(0, dot) : name
+      const ext = dot > 0 ? name.slice(dot) : ''
+      let relPath = `${targetDir}/${name}`
+      let n = 0
+      while (files.has(relPath) || attachments.has(relPath)) {
+        n += 1
+        relPath = `${targetDir}/${stem}-${n}${ext}`
+      }
+      files.set(relPath, payload)
+      attachments.set(relPath, payload)
       modified.set(relPath, Date.now())
       return relPath
     },
@@ -411,6 +474,8 @@ export interface MemoryAiOptions {
 
 export function createMemoryAiGateway(opts: MemoryAiOptions = {}): AiPort {
   return {
+    // The memory port answers immediately and emits no events; the id is part
+    // of the port contract for the real (streaming) gateways.
     complete: async () => {
       if (opts.delayMs) await sleep(opts.delayMs)
       const err = opts.fail
@@ -433,5 +498,6 @@ export function createMemoryDialogPort(fs: FsGateway): DialogPort {
   return {
     openFolderDialog: () => fs.openFolderDialog(),
     saveFileDialog: (defaultName, startDir) => fs.saveFileDialog(defaultName, startDir),
+    pickImageFiles: () => fs.pickImageFiles(),
   }
 }

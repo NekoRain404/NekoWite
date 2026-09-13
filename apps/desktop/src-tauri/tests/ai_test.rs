@@ -1,6 +1,7 @@
 use nekowite_lib::providers::ai::client::{
-    ai_id_for, build_prompt, http_error_message, next_ai_id, parse_model_ids, parse_sse_line,
-    resolve_endpoint, AIConfig, SseBuffer,
+    ai_id_for, build_prompt, default_base_url, error_detail_from_body, http_error_message,
+    http_error_message_with_detail, next_ai_id, normalize_reasoning_effort, parse_model_ids,
+    parse_sse_event, parse_sse_line, resolve_endpoint, AIConfig, SseBuffer,
 };
 
 #[test]
@@ -22,7 +23,10 @@ fn endpoint_maps_openai() {
     let (url, body) = resolve_endpoint(&cfg, "hello", &[]);
     assert!(url.ends_with("/chat/completions"));
     assert_eq!(body["stream"], true);
-    assert!(body["messages"][0]["content"].is_string(), "no images keeps string content");
+    assert!(
+        body["messages"][0]["content"].is_string(),
+        "no images keeps string content"
+    );
 }
 
 #[test]
@@ -37,7 +41,10 @@ fn endpoint_maps_anthropic() {
     let (url, body) = resolve_endpoint(&cfg, "hello", &[]);
     assert!(url.ends_with("/v1/messages"));
     assert_eq!(body["stream"], true);
-    assert!(body["messages"][0]["content"].is_string(), "no images keeps string content");
+    assert!(
+        body["messages"][0]["content"].is_string(),
+        "no images keeps string content"
+    );
 }
 
 #[test]
@@ -108,7 +115,10 @@ fn sse_parses_anthropic_content_block_start() {
         &mut acc,
     );
     assert_eq!(delta.as_deref(), Some("Hello"));
-    assert_eq!(acc, "Hello", "content_block text must be aggregated into acc");
+    assert_eq!(
+        acc, "Hello",
+        "content_block text must be aggregated into acc"
+    );
 
     // A subsequent delta continues the same block.
     let delta = parse_sse_line(
@@ -152,7 +162,14 @@ fn sse_ignores_other_lines() {
     let mut acc = String::new();
     assert_eq!(parse_sse_line(": keep-alive", "openai", &mut acc), None);
     assert_eq!(parse_sse_line("", "openai", &mut acc), None);
+    // `[DONE]` is a signal, not a line to ignore: it means the answer is
+    // complete even if the server keeps the connection open. Treating it as
+    // "nothing" left the caller waiting for EOF (or for a timeout) on a request
+    // that had already finished.
     assert_eq!(parse_sse_line(r#"data: [DONE]"#, "openai", &mut acc), None);
+    let done = parse_sse_event(r#"data: [DONE]"#, "openai", &mut acc).unwrap();
+    assert!(done.done);
+    assert!(done.text.is_none() && done.error.is_none());
 }
 
 #[test]
@@ -171,7 +188,10 @@ fn sse_reassembles_fragmented_chunk() {
     // chunk 3 terminates the line
     let lines = buf.feed(b"\n");
     assert_eq!(lines.len(), 1);
-    assert_eq!(lines[0], r#"data: {"choices":[{"delta":{"content":"Hello"}}]}"#);
+    assert_eq!(
+        lines[0],
+        r#"data: {"choices":[{"delta":{"content":"Hello"}}]}"#
+    );
 
     let delta = parse_sse_line(&lines[0], "openai", &mut acc);
     assert_eq!(delta.as_deref(), Some("Hello"));
@@ -294,7 +314,10 @@ fn endpoint_openai_without_images_keeps_string() {
         ..Default::default()
     };
     let (_url, body) = resolve_endpoint(&cfg, "hello", &[]);
-    assert!(body["messages"][0]["content"].is_string(), "empty images keeps string content");
+    assert!(
+        body["messages"][0]["content"].is_string(),
+        "empty images keeps string content"
+    );
     assert_eq!(body["messages"][0]["content"], "hello");
 }
 
@@ -399,7 +422,10 @@ fn http_error_429_hints_retry() {
 fn http_error_5xx_hints_unavailable() {
     for status in [500, 502, 503, 504] {
         let msg = http_error_message(status);
-        assert!(msg.contains("服务端暂时不可用"), "status {status} got: {msg}");
+        assert!(
+            msg.contains("服务端暂时不可用"),
+            "status {status} got: {msg}"
+        );
     }
 }
 
@@ -409,7 +435,13 @@ fn http_error_unknown_status_stays_total() {
     // usable message (and never panic), so error_for_status never falls apart on
     // an unexpected provider page.
     let msg = http_error_message(599);
-    assert!(msg.starts_with("AI 请求失败：HTTP 599，网络请求失败"), "got: {msg}");
+    // The unmapped fallback says "request failed" rather than "network failed":
+    // an unexpected status is still a RESPONSE, and calling it a network problem
+    // sent users to check a connection that was working fine.
+    assert!(
+        msg.starts_with("AI 请求失败：HTTP 599，请求失败"),
+        "got: {msg}"
+    );
 }
 
 fn tuned_cfg(provider: &str) -> AIConfig {
@@ -428,7 +460,11 @@ fn tuned_cfg(provider: &str) -> AIConfig {
 #[test]
 fn openai_body_puts_system_first_and_writes_tuning() {
     let (_url, body) = resolve_endpoint(&tuned_cfg("openai"), "hello", &[]);
-    assert_eq!(body["temperature"], serde_json::json!(0.7_f32), "temperature as written by the f32 config");
+    assert_eq!(
+        body["temperature"],
+        serde_json::json!(0.7_f32),
+        "temperature as written by the f32 config"
+    );
     assert_eq!(body["max_tokens"], 512);
     assert_eq!(body["messages"][0]["role"], "system");
     assert_eq!(
@@ -436,7 +472,11 @@ fn openai_body_puts_system_first_and_writes_tuning() {
         "You are a helpful editor assistant."
     );
     assert_eq!(body["messages"][1]["role"], "user");
-    assert_eq!(body["messages"][2], serde_json::json!(null), "no third message");
+    assert_eq!(
+        body["messages"][2],
+        serde_json::json!(null),
+        "no third message"
+    );
 }
 
 #[test]
@@ -468,13 +508,16 @@ fn gemini_body_uses_system_instruction_and_generation_config() {
         body["systemInstruction"]["parts"][0]["text"],
         "You are a helpful editor assistant."
     );
-    assert_eq!(body["generationConfig"]["temperature"], serde_json::json!(0.7_f32));
+    assert_eq!(
+        body["generationConfig"]["temperature"],
+        serde_json::json!(0.7_f32)
+    );
     assert_eq!(body["generationConfig"]["maxOutputTokens"], 512);
     assert_eq!(body["contents"][0]["role"], "user");
 }
 
 #[test]
-fn untuned_cfg_keeps_legacy_defaults() {
+fn untuned_cfg_uses_the_raised_defaults() {
     let cfg = AIConfig {
         provider: "openai".into(),
         model: "m".into(),
@@ -484,8 +527,14 @@ fn untuned_cfg_keeps_legacy_defaults() {
     };
     let (url, body) = resolve_endpoint(&cfg, "hello", &[]);
     assert!(url.ends_with("/chat/completions"));
-    assert_eq!(body["max_tokens"], 256, "default max_tokens stays 256");
-    assert!(body.get("temperature").is_none(), "no temperature by default");
+    // Raised from 256: a reasoning model can spend the entire budget on its
+    // thinking and return no answer at all (measured against deepseek-flash),
+    // so the default has to leave room for the actual text.
+    assert_eq!(body["max_tokens"], 1024, "default max_tokens is 1024");
+    assert!(
+        body.get("temperature").is_none(),
+        "no temperature by default"
+    );
     assert_eq!(
         body["messages"].as_array().unwrap().len(),
         1,
@@ -510,4 +559,563 @@ fn blank_system_prompt_behaves_as_absent() {
         1,
         "whitespace-only system prompt must be dropped"
     );
+}
+
+#[test]
+fn default_base_url_is_per_provider() {
+    // Without a per-provider default, every OpenAI-compatible provider without
+    // an explicit Base URL was sent to api.openai.com — the wrong host, holding
+    // the user's key for a different vendor.
+    assert_eq!(default_base_url("grok"), "https://api.x.ai/v1");
+    assert_eq!(default_base_url("deepseek"), "https://api.deepseek.com/v1");
+    assert_eq!(default_base_url("openai"), "https://api.openai.com/v1");
+    // An unknown/custom provider keeps the OpenAI default rather than an
+    // invented host.
+    assert_eq!(default_base_url("whatever"), "https://api.openai.com/v1");
+}
+
+#[test]
+fn deepseek_and_grok_use_their_own_host_when_no_base_url_is_set() {
+    for (provider, expected) in [
+        ("deepseek", "https://api.deepseek.com/v1/chat/completions"),
+        ("grok", "https://api.x.ai/v1/chat/completions"),
+    ] {
+        let cfg = AIConfig {
+            provider: provider.into(),
+            model: "m".into(),
+            ..Default::default()
+        };
+        let (url, _) = resolve_endpoint(&cfg, "hi", &[]);
+        assert_eq!(url, expected, "{provider} endpoint");
+    }
+}
+
+#[test]
+fn an_explicit_base_url_still_wins() {
+    let cfg = AIConfig {
+        provider: "deepseek".into(),
+        model: "deepseek-flash".into(),
+        base_url: Some("https://tokenflux.dev/v1".into()),
+        ..Default::default()
+    };
+    let (url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    assert_eq!(url, "https://tokenflux.dev/v1/chat/completions");
+    assert_eq!(body["model"], "deepseek-flash");
+    assert_eq!(body["stream"], true);
+}
+
+#[test]
+fn reasoning_deltas_are_reported_separately_from_the_answer() {
+    // Measured against tokenflux's deepseek-flash: 27 `reasoning_content`
+    // deltas arrive (with `content: null`) before the first answer delta.
+    // Reasoning must never join the answer text — the ghost writer inserts
+    // whatever it streams straight into the document.
+    let mut acc = String::new();
+    let reasoning =
+        r#"data: {"choices":[{"index":0,"delta":{"content":null,"reasoning_content":"We need"}}]}"#;
+    let delta = parse_sse_event(reasoning, "deepseek", &mut acc).expect("reasoning delta");
+    assert_eq!(delta.reasoning.as_deref(), Some("We need"));
+    assert_eq!(delta.text, None);
+    assert_eq!(acc, "", "reasoning must not reach the answer accumulator");
+
+    let answer =
+        r#"data: {"choices":[{"index":0,"delta":{"content":"PONG","reasoning_content":null}}]}"#;
+    let delta = parse_sse_event(answer, "deepseek", &mut acc).expect("answer delta");
+    assert_eq!(delta.text.as_deref(), Some("PONG"));
+    assert_eq!(delta.reasoning, None);
+    assert_eq!(acc, "PONG");
+}
+
+#[test]
+fn a_role_only_opening_delta_is_not_reported_as_content() {
+    // The first SSE frame of a reasoning model carries
+    // `{"role":"assistant","content":null,"reasoning_content":""}`. It must not
+    // produce an empty chunk (nor an empty reasoning event).
+    let mut acc = String::new();
+    let opener = r#"data: {"choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":""}}]}"#;
+    assert_eq!(parse_sse_event(opener, "deepseek", &mut acc), None);
+    assert_eq!(acc, "");
+}
+
+#[test]
+fn the_reasoning_field_spelling_is_tolerated() {
+    // Some gateways name the field `reasoning` instead of `reasoning_content`.
+    let mut acc = String::new();
+    let line = r#"data: {"choices":[{"index":0,"delta":{"reasoning":"hmm"}}]}"#;
+    let delta = parse_sse_event(line, "deepseek", &mut acc).expect("delta");
+    assert_eq!(delta.reasoning.as_deref(), Some("hmm"));
+}
+
+#[test]
+fn parse_sse_line_still_returns_answer_text_only() {
+    // Back-compat wrapper: callers that only want document text keep working.
+    let mut acc = String::new();
+    let reasoning = r#"data: {"choices":[{"index":0,"delta":{"reasoning_content":"think"}}]}"#;
+    assert_eq!(parse_sse_line(reasoning, "deepseek", &mut acc), None);
+    let answer = r#"data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}"#;
+    assert_eq!(
+        parse_sse_line(answer, "deepseek", &mut acc).as_deref(),
+        Some("hi")
+    );
+    assert_eq!(acc, "hi");
+}
+
+#[test]
+fn a_tuned_config_still_wins_over_the_raised_default() {
+    // The default rose from 256 to 1024 so a fresh install works with a
+    // reasoning model (which can spend the whole budget thinking). An explicit
+    // setting must still be honoured.
+    let cfg = tuned_cfg("deepseek");
+    let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    assert_eq!(body["max_tokens"], 512);
+}
+
+// --- Thinking depth (`reasoning_effort`) ------------------------------------
+//
+// The server honours exactly the lowercase ladder `none|minimal|low|medium|
+// high|xhigh` and rejects anything else with HTTP 400 (measured against
+// tokenflux's `deepseek-flash`: "ultra", "bogus-level" and even the uppercase
+// "HIGH" were all 400). Normalisation therefore happens once, at the config
+// boundary, and every provider below pins the wire shape it produces.
+
+#[test]
+fn reasoning_effort_keeps_the_ladder_rungs() {
+    for level in ["none", "minimal", "low", "medium", "high", "xhigh"] {
+        assert_eq!(normalize_reasoning_effort(Some(level)), Some(level));
+    }
+}
+
+#[test]
+fn reasoning_effort_lowercases_and_trims_valid_values() {
+    for level in ["none", "minimal", "low", "medium", "high", "xhigh"] {
+        assert_eq!(
+            normalize_reasoning_effort(Some(&level.to_uppercase())),
+            Some(level),
+            "uppercase {level} must normalise"
+        );
+        assert_eq!(
+            normalize_reasoning_effort(Some(&format!("  {level}\t"))),
+            Some(level),
+            "padded {level} must normalise"
+        );
+    }
+}
+
+#[test]
+fn reasoning_effort_drops_missing_blank_and_unknown_values() {
+    for raw in [
+        None,
+        Some(""),
+        Some("   "),
+        Some("ultra"),
+        Some("bogus-level"),
+        Some("  bogus-level  "),
+        Some("highish"),
+    ] {
+        assert_eq!(
+            normalize_reasoning_effort(raw),
+            None,
+            "{raw:?} must be dropped"
+        );
+    }
+}
+
+/// A tuned config with room for the largest thinking budget, so the Anthropic
+/// clamp is never what an unrelated assertion trips over.
+fn thinking_cfg(provider: &str, effort: Option<&str>) -> AIConfig {
+    AIConfig {
+        max_tokens: Some(32_768),
+        reasoning_effort: effort.map(str::to_string),
+        ..tuned_cfg(provider)
+    }
+}
+
+#[test]
+fn unknown_effort_never_reaches_any_provider() {
+    // The whole point of dropping an invalid rung: no provider is handed a
+    // value the server would reject.
+    for provider in ["openai", "anthropic", "gemini"] {
+        let (_url, body) = resolve_endpoint(&thinking_cfg(provider, Some("ultra")), "hi", &[]);
+        assert!(body.get("reasoning_effort").is_none(), "{provider}");
+        assert!(body.get("thinking").is_none(), "{provider}");
+        assert!(
+            body.pointer("/generationConfig/thinkingConfig").is_none(),
+            "{provider}"
+        );
+    }
+}
+
+#[test]
+fn openai_body_pins_the_normalised_reasoning_effort() {
+    let (url, body) = resolve_endpoint(&thinking_cfg("openai", Some("  HIGH ")), "hello", &[]);
+    assert_eq!(url, "https://api.openai.com/v1/chat/completions");
+    assert_eq!(
+        body,
+        serde_json::json!({
+            "model": "m",
+            "max_tokens": 32_768,
+            "stream": true,
+            "messages": [
+                { "role": "system", "content": "You are a helpful editor assistant." },
+                { "role": "user", "content": "hello" }
+            ],
+            "temperature": 0.7_f32,
+            "reasoning_effort": "high",
+            // The request asks the endpoint for its final usage chunk, which is
+            // what the frontend shows as the request's token cost.
+            "stream_options": { "include_usage": true }
+        }),
+        "padded uppercase input must go out trimmed and lowercased"
+    );
+}
+
+#[test]
+fn openai_body_omits_reasoning_effort_when_unset_or_unknown() {
+    for raw in [None, Some("ultra")] {
+        let (_url, body) = resolve_endpoint(&thinking_cfg("openai", raw), "hi", &[]);
+        assert!(
+            body.get("reasoning_effort").is_none(),
+            "{raw:?} must not be forwarded"
+        );
+    }
+}
+
+#[test]
+fn anthropic_maps_effort_to_extended_thinking_budgets() {
+    for (effort, budget) in [
+        ("minimal", 1024_u32),
+        ("low", 2048),
+        ("medium", 4096),
+        ("high", 8192),
+        ("xhigh", 16384),
+    ] {
+        let (_url, body) = resolve_endpoint(&thinking_cfg("anthropic", Some(effort)), "hi", &[]);
+        assert_eq!(
+            body["thinking"],
+            serde_json::json!({ "type": "enabled", "budget_tokens": budget }),
+            "effort {effort}"
+        );
+        assert!(
+            body.get("reasoning_effort").is_none(),
+            "Anthropic has no reasoning_effort field"
+        );
+    }
+}
+
+#[test]
+fn anthropic_none_omits_thinking_entirely() {
+    for raw in [None, Some("none")] {
+        let (_url, body) = resolve_endpoint(&thinking_cfg("anthropic", raw), "hi", &[]);
+        assert!(
+            body.get("thinking").is_none(),
+            "{raw:?} must not enable extended thinking"
+        );
+    }
+}
+
+#[test]
+fn anthropic_clamps_the_budget_below_max_tokens() {
+    // Anthropic rejects `budget_tokens >= max_tokens`, so a 2000-token cap
+    // cannot host the 16384 of `xhigh`: the budget comes down to 1999.
+    let cfg = AIConfig {
+        max_tokens: Some(2000),
+        reasoning_effort: Some("xhigh".into()),
+        ..tuned_cfg("anthropic")
+    };
+    let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    assert_eq!(
+        body["thinking"],
+        serde_json::json!({ "type": "enabled", "budget_tokens": 1999 })
+    );
+}
+
+#[test]
+fn anthropic_omits_thinking_when_max_tokens_is_too_small() {
+    // 1024 is both the default cap and the smallest budget, and the budget must
+    // stay strictly under the cap: no room means no extended thinking, rather
+    // than a request Anthropic would reject outright.
+    for max_tokens in [Some(1_u32), Some(512), Some(1024), None] {
+        let cfg = AIConfig {
+            max_tokens,
+            reasoning_effort: Some("high".into()),
+            ..tuned_cfg("anthropic")
+        };
+        let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+        assert!(
+            body.get("thinking").is_none(),
+            "max_tokens {max_tokens:?} must omit thinking"
+        );
+    }
+
+    // One token above the smallest budget is the first cap that fits it.
+    let cfg = AIConfig {
+        max_tokens: Some(1025),
+        reasoning_effort: Some("minimal".into()),
+        ..tuned_cfg("anthropic")
+    };
+    let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    assert_eq!(
+        body["thinking"],
+        serde_json::json!({ "type": "enabled", "budget_tokens": 1024 })
+    );
+}
+
+#[test]
+fn gemini_maps_effort_to_a_thinking_budget() {
+    for (effort, budget) in [
+        ("none", 0_u32),
+        ("minimal", 512),
+        ("low", 1024),
+        ("medium", 4096),
+        ("high", 8192),
+        ("xhigh", 16384),
+    ] {
+        let (_url, body) = resolve_endpoint(&thinking_cfg("gemini", Some(effort)), "hi", &[]);
+        assert_eq!(
+            body["generationConfig"]["thinkingConfig"],
+            serde_json::json!({ "thinkingBudget": budget }),
+            "effort {effort}"
+        );
+    }
+}
+
+#[test]
+fn gemini_keeps_generation_config_siblings_when_adding_thinking() {
+    let (_url, body) = resolve_endpoint(&thinking_cfg("gemini", Some("high")), "hello", &[]);
+    assert_eq!(
+        body["generationConfig"],
+        serde_json::json!({
+            "temperature": 0.7_f32,
+            "maxOutputTokens": 32_768,
+            "thinkingConfig": { "thinkingBudget": 8192 }
+        }),
+        "the thinking merge must not clobber temperature/maxOutputTokens"
+    );
+    assert_eq!(body["contents"][0]["parts"][0]["text"], "hello");
+}
+
+#[test]
+fn gemini_creates_generation_config_when_nothing_else_is_tuned() {
+    let cfg = AIConfig {
+        provider: "gemini".into(),
+        model: "gemini-2.5-pro".into(),
+        reasoning_effort: Some("medium".into()),
+        ..Default::default()
+    };
+    let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    assert_eq!(
+        body["generationConfig"],
+        serde_json::json!({ "thinkingConfig": { "thinkingBudget": 4096 } })
+    );
+}
+
+#[test]
+fn gemini_omits_thinking_when_unset_or_unknown() {
+    for raw in [None, Some("ultra")] {
+        let (_url, body) = resolve_endpoint(&thinking_cfg("gemini", raw), "hi", &[]);
+        assert!(
+            body.pointer("/generationConfig/thinkingConfig").is_none(),
+            "{raw:?} must not add a thinking config"
+        );
+    }
+}
+
+/// Anthropic rejects a request that carries BOTH extended thinking and a
+/// non-default temperature, and the app's own temperature default (0.7) is not
+/// the model's. Enabling thinking must therefore drop the field rather than
+/// force a value — the provider default is exactly what extended thinking
+/// requires.
+#[test]
+fn anthropic_drops_temperature_when_extended_thinking_is_enabled() {
+    let cfg = thinking_cfg("anthropic", Some("high"));
+    assert!(
+        cfg.temperature.is_some(),
+        "the fixture must set a temperature"
+    );
+    let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    assert!(
+        body.get("thinking").is_some(),
+        "this rung must enable extended thinking or the test proves nothing"
+    );
+    assert!(
+        body.get("temperature").is_none(),
+        "temperature must be omitted while thinking is enabled: {body}"
+    );
+}
+
+/// The flip side: with thinking OFF the user's temperature must still reach the
+/// provider, or the setting would silently stop working.
+#[test]
+fn anthropic_keeps_temperature_when_thinking_is_off() {
+    for raw in [None, Some("none")] {
+        let cfg = thinking_cfg("anthropic", raw);
+        let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+        assert!(body.get("thinking").is_none(), "{raw:?}");
+        assert_eq!(
+            body["temperature"].as_f64(),
+            cfg.temperature.map(f64::from),
+            "the configured temperature must survive when thinking is off ({raw:?})"
+        );
+    }
+}
+
+/// Gemini's thinking budget is carved out of the OUTPUT allowance, so a rung
+/// that asks for more thinking than the request has room for is clamped instead
+/// of being sent as an impossible pair. Anthropic documents the same rule; here
+/// it costs nothing when the two already agree, which the sibling test covers.
+#[test]
+fn gemini_clamps_the_thinking_budget_to_the_output_cap() {
+    let mut cfg = thinking_cfg("gemini", Some("xhigh"));
+    cfg.max_tokens = Some(2048);
+    let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    let budget = body
+        .pointer("/generationConfig/thinkingConfig/thinkingBudget")
+        .and_then(serde_json::Value::as_u64)
+        .expect("xhigh must still ask for thinking");
+    assert!(
+        budget < 2048,
+        "the budget must stay under maxOutputTokens (got {budget})"
+    );
+    // ...and the cap it was clamped against must not have been overwritten.
+    assert_eq!(
+        body.pointer("/generationConfig/maxOutputTokens")
+            .and_then(serde_json::Value::as_u64),
+        Some(2048)
+    );
+}
+
+/// `none` is an explicit `0` at Gemini, not an omission: the clamp must leave
+/// it alone or thinking would look enabled for a rung that turns it off.
+#[test]
+fn gemini_keeps_an_explicit_zero_budget() {
+    let mut cfg = thinking_cfg("gemini", Some("none"));
+    cfg.max_tokens = Some(1024);
+    let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    assert_eq!(
+        body.pointer("/generationConfig/thinkingConfig/thinkingBudget")
+            .and_then(serde_json::Value::as_u64),
+        Some(0)
+    );
+}
+
+/// An error frame inside a 200 OK stream must surface as an error.
+///
+/// Providers send these when the request is rejected mid-generation (rate limit
+/// hit on the first token, content policy, upstream failure). The parser used to
+/// return `None` for them, so the partial answer flowed on as if complete and
+/// `ai-done` fired — the user got a truncated reply with no indication anything
+/// went wrong, and could insert it into a note believing it was the whole answer.
+#[test]
+fn sse_reports_in_band_errors() {
+    let mut acc = String::new();
+    let openai = parse_sse_event(
+        r#"data: {"error":{"message":"rate limit exceeded","type":"rate_limit_error"}}"#,
+        "openai",
+        &mut acc,
+    )
+    .unwrap();
+    let message = openai.error.expect("an error frame must be reported");
+    assert!(message.contains("rate limit exceeded"));
+    assert!(
+        message.contains("rate_limit_error"),
+        "the kind is kept: {message}"
+    );
+    assert!(openai.text.is_none());
+
+    let anthropic = parse_sse_event(
+        r#"data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#,
+        "anthropic",
+        &mut acc,
+    )
+    .unwrap();
+    assert!(anthropic.error.unwrap().contains("Overloaded"));
+
+    // A normal delta is untouched by the error branch.
+    let ok = parse_sse_event(
+        r#"data: {"choices":[{"delta":{"content":"hi"}}]}"#,
+        "openai",
+        &mut acc,
+    )
+    .unwrap();
+    assert_eq!(ok.text.as_deref(), Some("hi"));
+    assert!(ok.error.is_none());
+}
+
+/// `finish_reason` is what tells a complete answer from a truncated one.
+#[test]
+fn sse_reports_finish_reason() {
+    let mut acc = String::new();
+    let cut = parse_sse_event(
+        r#"data: {"choices":[{"delta":{},"finish_reason":"length"}]}"#,
+        "openai",
+        &mut acc,
+    )
+    .unwrap();
+    assert_eq!(cut.finish_reason.as_deref(), Some("length"));
+    assert!(
+        cut.text.is_none(),
+        "a final frame carries no text of its own"
+    );
+
+    let filtered = parse_sse_event(
+        r#"data: {"choices":[{"delta":{},"finish_reason":"content_filter"}]}"#,
+        "openai",
+        &mut acc,
+    )
+    .unwrap();
+    assert_eq!(filtered.finish_reason.as_deref(), Some("content_filter"));
+
+    // Anthropic spells it `stop_reason`.
+    let anthropic = parse_sse_event(
+        r#"data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"}}"#,
+        "anthropic",
+        &mut acc,
+    )
+    .unwrap();
+    assert_eq!(anthropic.finish_reason.as_deref(), Some("max_tokens"));
+
+    // A plain delta reports no finish reason, so the loop does not think the
+    // answer ended on every chunk.
+    let plain = parse_sse_event(
+        r#"data: {"choices":[{"delta":{"content":"x"}}]}"#,
+        "openai",
+        &mut acc,
+    )
+    .unwrap();
+    assert!(plain.finish_reason.is_none());
+    assert!(!plain.done);
+}
+
+/// The provider's own explanation is what tells the user what to fix.
+#[test]
+fn http_error_includes_the_provider_detail() {
+    // Measured against a real gateway: an unknown model name is HTTP 403 with
+    // a body naming the models that WOULD work. Reporting only the status told
+    // the user their API key was invalid, so they re-entered a key that was
+    // fine while the useful sentence sat unread in a response body.
+    let body = r#"{"error":{"message":"The current group does not support the requested model. Available models: deepseek-flash"}}"#;
+    let detail = error_detail_from_body(body).expect("a JSON error body yields its message");
+    let message = http_error_message_with_detail(403, Some(&detail));
+    assert!(message.contains("403"));
+    assert!(message.contains("Available models: deepseek-flash"));
+    assert!(
+        message.contains("模型名"),
+        "the hint names the model as a suspect: {message}"
+    );
+
+    // A non-JSON body is shown verbatim rather than dropped.
+    assert_eq!(
+        error_detail_from_body("  upstream exploded  ").unwrap(),
+        "upstream exploded"
+    );
+
+    // An empty body adds nothing, and 402 is a billing problem rather than a
+    // network one.
+    assert!(error_detail_from_body("   ").is_none());
+    let bare = http_error_message_with_detail(402, None);
+    assert!(bare.contains("余额"), "402 reads as billing: {bare}");
+
+    // A wall of text is capped so it cannot fill the toast.
+    let capped = http_error_message_with_detail(500, Some(&"x".repeat(5000)));
+    assert!(capped.chars().count() < 700);
 }

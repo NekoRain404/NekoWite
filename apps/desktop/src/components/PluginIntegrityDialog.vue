@@ -1,5 +1,8 @@
 <script setup lang="ts">
+import { nextTick, ref } from 'vue'
 import { t } from '../i18n'
+import { useFocusTrap } from '../composables/useFocusTrap'
+import { useModalEscape } from '../composables/useModalEscape'
 import type { PluginMeta } from '@nekowite/plugin-host'
 
 const props = defineProps<{
@@ -8,12 +11,35 @@ const props = defineProps<{
   actualDigest: string
 }>()
 const emit = defineEmits<{ (e: 'allow'): void; (e: 'deny'): void }>()
+
+const active = ref(true)
+const dialogEl = ref<HTMLElement | null>(null)
+useFocusTrap(dialogEl, active, { initialFocus: false })
+
+// A digest mismatch is the one prompt where "make it go away" must never be
+// read as consent, so Escape is an explicit denial.
+useModalEscape('plugin-integrity', () => emit('deny'))
+
+nextTick(() => dialogEl.value?.focus())
 </script>
 
 <template>
-  <div class="dialog-overlay">
-    <div class="dialog plugin-dialog">
-      <div class="plugin-title">
+  <div
+    class="dialog-overlay"
+    @click.self="emit('deny')"
+  >
+    <div
+      ref="dialogEl"
+      class="dialog plugin-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="plugin-integrity-title"
+      tabindex="-1"
+    >
+      <div
+        id="plugin-integrity-title"
+        class="plugin-title"
+      >
         {{ t('plugin.integrityTitle') }}
       </div>
       <div class="plugin-body">

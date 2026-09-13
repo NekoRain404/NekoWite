@@ -1,4 +1,5 @@
 import { ATTACHMENTS_DIR, extensionFromFileName } from './attachments'
+import { baseName } from './paths'
 import { fsService } from '../platform/gateways/fs'
 import type { FileEntry, FsGateway } from '../platform/gateways/contracts'
 import { t } from '../i18n'
@@ -52,7 +53,9 @@ export async function loadAttachmentLibrary(
   for (const path of paths) {
     try {
       const { size, mtime } = await fs.stat(vault, path)
-      items.push({ path, name: path.split('/').pop() ?? path, size, mtime })
+      // Native paths (backslash-separated on Windows): a '/' split returned the
+      // whole path as the name, which the panel then displayed and previewed.
+      items.push({ path, name: baseName(path) || path, size, mtime })
     } catch {
       // The listing already aged; a stat miss just drops the entry.
     }
