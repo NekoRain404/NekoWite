@@ -1,5 +1,7 @@
-/* z-index 10000: modal layer — always above toast (2000) / float toolbar (9999) /
-   settings drawer (100). See the scale comment in styles/components.css. */
+/* z-index 10000: modal layer — above the float toolbar (9999) and the settings
+   drawer (100). The toast (11000) stays above this on purpose: it reports
+   failures, and the overlay's backdrop blur would make it unreadable. See the
+   scale comment in styles/components.css. */
 .math-overlay {
   position: fixed;
   inset: 0;

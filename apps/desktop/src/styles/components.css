@@ -221,11 +221,15 @@
      50    (unused, legacy)
     100    .settings-panel  (fixed right drawer)
    1000   (unused, legacy — math overlay previously)
-   2000   .toast-stack      (transient)
    9999   .float-toolbar    (transient)
   10000   modal overlays (.dialog-overlay, .math-overlay)
-          — always cover toast / float toolbar / settings drawer.
-   Modals are the top-most layer: nothing renders above an open modal. */
+          — cover the float toolbar and the settings drawer.
+  11000   .toast-stack      (transient)
+          — the top-most layer, above an open modal.
+   The toast is deliberately the only thing allowed above a modal: it reports
+   failures, including failures of the dialog that is open, and the modal
+   overlays blur what is behind them — so a toast underneath was unreadable.
+   Anything else that needs to be above a modal has to be a modal itself. */
 .dialog-overlay {
   position: fixed;
   inset: 0;

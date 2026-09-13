@@ -127,7 +127,11 @@ onBeforeUnmount(() => {
   position: fixed;
   top: calc(var(--app-titlebar-height) + 10px);
   right: 12px;
-  z-index: 2000;
+  /* Above the modal layer (10000), not below it. A toast reports a failure —
+     often a failure of the very dialog that is open — and the modal overlays
+     carry `backdrop-filter: blur(2px)`, so a toast underneath was both hidden
+     and smeared into an unreadable smudge. See the scale in components.css. */
+  z-index: 11000;
   display: flex;
   flex-direction: column;
   gap: 8px;
