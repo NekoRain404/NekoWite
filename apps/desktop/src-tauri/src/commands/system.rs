@@ -1,4 +1,3 @@
-
 //! Operating-system integration commands.
 //!
 //! Today there is exactly one question here - "which accent colour did the user
@@ -173,7 +172,8 @@ mod system_accent_tests {
     #[test]
     fn the_explorer_accent_menu_is_decoded_as_abgr() {
         let raw = |key: &str, name: &str| {
-            (key == EXPLORER_ACCENT_KEY && name == EXPLORER_ACCENT_VALUE).then_some(REAL_ACCENT_MENU)
+            (key == EXPLORER_ACCENT_KEY && name == EXPLORER_ACCENT_VALUE)
+                .then_some(REAL_ACCENT_MENU)
         };
         let accent = resolve_system_accent(raw).expect("the accent menu value is present");
         assert_eq!(rgb(accent), REAL_RGB);

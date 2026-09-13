@@ -5,9 +5,8 @@ use nekowite_lib::domain::vault::{is_mdx_path, should_skip_entry};
 use nekowite_lib::errors::ALREADY_EXISTS_PREFIX;
 use nekowite_lib::storage::file_store::{
     atomic_write, cleanup_stale_tmp, create_dir, create_new_file, import_attachment,
-    is_importable_image, list_dir,
-    list_dir_entries, list_history, read_file, read_history, rename_entry, resolve_media_path,
-    restore_history, sanitize_attachment_name, save_attachment,
+    is_importable_image, list_dir, list_dir_entries, list_history, read_file, read_history,
+    rename_entry, resolve_media_path, restore_history, sanitize_attachment_name, save_attachment,
     snapshot_history, stat_file, write_file, MAX_IMPORT_BYTES,
 };
 use nekowite_lib::storage::trash_store::{
@@ -100,7 +99,7 @@ fn rejects_symlink_escape_in_read_path() {
     std::fs::write(dir.join("note.md"), "x").unwrap();
     symlink("/etc", dir.join("escape")).unwrap(); // symlink 指向 vault 外
     symlink(dir.join("note.md"), dir.join("alias.md")).unwrap(); // vault 内 symlink
-    // 读取逃逸 symlink 下的文件 → 拒绝
+                                                                 // 读取逃逸 symlink 下的文件 → 拒绝
     assert!(resolve_within(dir.to_str().unwrap(), "escape/passwd").is_err());
     // 读取 vault 内 symlink 指向的文件 → 允许
     assert!(resolve_within(dir.to_str().unwrap(), "alias.md").is_ok());
@@ -187,10 +186,12 @@ fn vault_roundtrip_with_absolute_root() {
     let vault_root = vault.to_str().unwrap().to_string();
 
     // dialog-style absolute vault root works for write + list + read
-    write_file(&vault_root, "docs/hello.mdx", "# Hello", None)
-        .expect("write under absolute root");
+    write_file(&vault_root, "docs/hello.mdx", "# Hello", None).expect("write under absolute root");
     let listing = list_dir(&vault_root, Some(".")).expect("list with .-relative root");
-    assert!(listing.iter().any(|e| e.name == "docs"), "root listing contains docs");
+    assert!(
+        listing.iter().any(|e| e.name == "docs"),
+        "root listing contains docs"
+    );
     let docs = listing
         .iter()
         .find(|e| e.name == "docs")
@@ -203,14 +204,23 @@ fn vault_roundtrip_with_absolute_root() {
 
     // editing an existing file round-trips
     write_file(&vault_root, abs_doc.as_str(), "# Changed", None).unwrap();
-    assert_eq!(read_file(&vault_root, "docs/hello.mdx").unwrap(), "# Changed");
+    assert_eq!(
+        read_file(&vault_root, "docs/hello.mdx").unwrap(),
+        "# Changed"
+    );
 
     // list_dir with no path (None) defaults to the vault root
     assert!(list_dir(&vault_root, None).is_ok());
 
     // escaping paths are rejected
-    assert!(read_file(&vault_root, "/etc/passwd").is_err(), "absolute outside vault rejected");
-    assert!(read_file(&vault_root, "../outside.md").is_err(), ".. escape rejected");
+    assert!(
+        read_file(&vault_root, "/etc/passwd").is_err(),
+        "absolute outside vault rejected"
+    );
+    assert!(
+        read_file(&vault_root, "../outside.md").is_err(),
+        ".. escape rejected"
+    );
     assert!(write_file(&vault_root, "../outside.md", "x", None).is_err());
 
     std::fs::remove_dir_all(&vault).unwrap();
@@ -274,7 +284,10 @@ fn stat_file_returns_size_and_mtime() {
     write_file(&root, "docs/note.md", "hello world", Some(10)).unwrap();
     let stat = stat_file(&root, "docs/note.md").expect("stat a created file");
     assert_eq!(stat.size, 11, "size matches the known byte count");
-    assert!(stat.mtime > 0, "mtime is a positive unix-millisecond timestamp");
+    assert!(
+        stat.mtime > 0,
+        "mtime is a positive unix-millisecond timestamp"
+    );
     std::fs::remove_dir_all(&vault).unwrap();
 }
 
@@ -427,15 +440,17 @@ fn trash_delete_and_restore_roundtrip() {
     std::fs::remove_dir_all(&vault).unwrap();
 }
 
-/// `clear_trash` removes every trash entry, reports how many it removed, and
-/// is a no-op (returning 0) when the trash directory does not exist.
+/// `clear_trash` removes every trash entry, reports the count, and is a no-op
+/// (an empty report) when the trash directory does not exist.
 #[test]
 fn clear_trash_empties_the_trash() {
     let vault = temp_vault("clear-trash");
     let root = vault.to_str().unwrap().to_string();
 
     // A missing trash dir is not an error.
-    assert_eq!(clear_trash(&root).unwrap(), 0);
+    let empty = clear_trash(&root).unwrap();
+    assert_eq!(empty.removed, 0);
+    assert!(empty.failed.is_empty());
 
     write_file(&root, "docs/a.md", "hello", Some(10)).unwrap();
     write_file(&root, "notes/b.md", "world", Some(10)).unwrap();
@@ -443,12 +458,14 @@ fn clear_trash_empties_the_trash() {
     delete_file(&root, "notes/b.md").unwrap();
     assert_eq!(list_trash(&root).unwrap().len(), 2);
 
-    assert_eq!(clear_trash(&root).unwrap(), 2);
+    let report = clear_trash(&root).unwrap();
+    assert_eq!(report.removed, 2, "every entry is reported as removed");
+    assert!(report.failed.is_empty(), "and none is reported as failed");
     assert!(list_trash(&root).unwrap().is_empty());
     assert!(!vault.join(".nekowite-trash/docs%2Fa.md").exists());
     assert!(!vault.join(".nekowite-trash/notes%2Fb.md").exists());
     // Clearing again is a no-op (the directory persists but is empty).
-    assert_eq!(clear_trash(&root).unwrap(), 0);
+    assert_eq!(clear_trash(&root).unwrap().removed, 0);
 
     std::fs::remove_dir_all(&vault).unwrap();
 }
@@ -483,7 +500,7 @@ fn deleted_directory_is_listed_and_restored_with_contents() {
     );
 
     delete_file(&root, "fld").unwrap();
-    assert_eq!(clear_trash(&root).unwrap(), 1);
+    assert_eq!(clear_trash(&root).unwrap().removed, 1);
     let rd = std::fs::read_dir(vault.join(".nekowite-trash")).unwrap();
     assert_eq!(rd.flatten().count(), 0, "no leftover trash entries");
 
@@ -522,7 +539,10 @@ fn collided_trash_key_restores_the_original_name() {
     let first = delete_file(&root, "docs/a.md").unwrap();
     write_file(&root, "docs/a.md", "two", Some(10)).unwrap();
     let second = delete_file(&root, "docs/a.md").unwrap();
-    assert_ne!(first, second, "the second delete must not clobber the first");
+    assert_ne!(
+        first, second,
+        "the second delete must not clobber the first"
+    );
 
     let listed = list_trash(&root).unwrap();
     assert_eq!(listed.len(), 2);
@@ -727,7 +747,11 @@ fn history_key_is_spelling_independent() {
 
     let hist_abs = list_history(&root, &abs).unwrap();
     let hist_rel = list_history(&root, "docs/note.md").unwrap();
-    assert_eq!(hist_abs.len(), 1, "snapshot taken for the absolute spelling");
+    assert_eq!(
+        hist_abs.len(),
+        1,
+        "snapshot taken for the absolute spelling"
+    );
     assert_eq!(hist_rel.len(), 1, "same key for the relative spelling");
     assert_eq!(hist_abs[0].id, hist_rel[0].id);
     assert_eq!(
@@ -883,7 +907,9 @@ fn watcher_filter_skips_hidden_components() {
     assert!(has_hidden_component(Path::new(
         "/vault/.nekowite/history/docs%2Fa.md/1.md"
     )));
-    assert!(has_hidden_component(Path::new("/vault/.nekowite-trash/x.md")));
+    assert!(has_hidden_component(Path::new(
+        "/vault/.nekowite-trash/x.md"
+    )));
     assert!(has_hidden_component(Path::new("/vault/.git/index")));
     assert!(has_hidden_component(Path::new("/vault/.tmp.md")));
     assert!(!has_hidden_component(Path::new("/vault/docs/note.md")));
@@ -902,13 +928,12 @@ fn save_attachment_writes_decoded_bytes() {
     let rel = save_attachment(&root, "paste.png", &b64(&payload), "").unwrap();
     assert!(rel.starts_with("attachments/"), "got {rel:?}");
     assert!(!rel.contains('\\'), "forward slashes only: {rel:?}");
-    let month = rel
-        .split('/')
-        .nth(1)
-        .expect("month segment")
-        .to_string();
+    let month = rel.split('/').nth(1).expect("month segment").to_string();
     assert_eq!(month.len(), 7, "YYYY-MM month dir: {month:?}");
-    assert!(month.starts_with("20"), "month looks like a year: {month:?}");
+    assert!(
+        month.starts_with("20"),
+        "month looks like a year: {month:?}"
+    );
     assert!(rel.ends_with(".png"));
 
     let saved = std::fs::read(vault.join(&rel)).unwrap();
@@ -937,7 +962,10 @@ fn save_attachment_dedupes_collisions() {
         stem.ends_with("-1") || stem.ends_with("-2"),
         "numeric suffix expected, got {second:?}"
     );
-    assert!(std::fs::read(vault.join(&first)).unwrap() == b"v1", "original untouched");
+    assert!(
+        std::fs::read(vault.join(&first)).unwrap() == b"v1",
+        "original untouched"
+    );
     assert!(std::fs::read(vault.join(&second)).unwrap() == b"v2");
 
     std::fs::remove_dir_all(&vault).unwrap();
@@ -964,8 +992,17 @@ fn save_attachment_rejects_unsafe_names() {
             "name {bad:?} must be rejected"
         );
     }
-    assert!(!vault.join("evil.png").exists(), "no file escaped the vault");
-    assert!(list_dir(&root, Some(".")).unwrap().iter().all(|e| e.name != "attachments"), "nothing written");
+    assert!(
+        !vault.join("evil.png").exists(),
+        "no file escaped the vault"
+    );
+    assert!(
+        list_dir(&root, Some("."))
+            .unwrap()
+            .iter()
+            .all(|e| e.name != "attachments"),
+        "nothing written"
+    );
 
     std::fs::remove_dir_all(&vault).unwrap();
 }
@@ -976,7 +1013,10 @@ fn save_attachment_rejects_bad_base64() {
     let vault = temp_vault("attach-b64");
     let root = vault.to_str().unwrap().to_string();
     assert!(save_attachment(&root, "ok.png", "not!base64!!", "").is_err());
-    assert!(list_dir(&root, Some(".")).unwrap().iter().all(|e| e.name != "attachments"));
+    assert!(list_dir(&root, Some("."))
+        .unwrap()
+        .iter()
+        .all(|e| e.name != "attachments"));
     std::fs::remove_dir_all(&vault).unwrap();
 }
 
@@ -1034,10 +1074,16 @@ fn media_resolver_is_confinement_only_while_domain_policy_flags_metadata_trees()
     assert_eq!(std::fs::read(&snap).unwrap(), b"snapshot");
 
     // Domain policy flags the metadata trees the asset scope must forbid.
-    assert!(has_hidden_component(Path::new(&vault.join(".nekowite/history/snap.md"))));
-    assert!(has_hidden_component(Path::new(&vault.join(".nekowite-trash/key.md"))));
+    assert!(has_hidden_component(Path::new(
+        &vault.join(".nekowite/history/snap.md")
+    )));
+    assert!(has_hidden_component(Path::new(
+        &vault.join(".nekowite-trash/key.md")
+    )));
     assert!(has_hidden_component(Path::new(&vault.join(".git/index"))));
-    assert!(!has_hidden_component(Path::new(&vault.join("notes/note_assets/pic.png"))));
+    assert!(!has_hidden_component(Path::new(
+        &vault.join("notes/note_assets/pic.png")
+    )));
 
     std::fs::remove_dir_all(&vault).unwrap();
 }
@@ -1126,7 +1172,10 @@ fn rename_entry_moves_and_guards() {
     let rel = rename_entry(&root, "docs/a.md", "docs/b.md").unwrap();
     assert_eq!(rel, "docs/b.md");
     assert!(!vault.join("docs/a.md").exists());
-    assert_eq!(std::fs::read_to_string(vault.join("docs/b.md")).unwrap(), "# hi");
+    assert_eq!(
+        std::fs::read_to_string(vault.join("docs/b.md")).unwrap(),
+        "# hi"
+    );
 
     // Directory rename with contents.
     let rel_dir = rename_entry(&root, "docs", "archive").unwrap();
@@ -1148,7 +1197,10 @@ fn rename_entry_moves_and_guards() {
     // name the user just asked for, which reads as nonsense.
     let cased = rename_entry(&root, "archive/b.md", "archive/B.md").unwrap();
     assert_eq!(cased, "archive/B.md", "the caller is told the new spelling");
-    assert_eq!(std::fs::read_to_string(vault.join("archive/B.md")).unwrap(), "# hi");
+    assert_eq!(
+        std::fs::read_to_string(vault.join("archive/B.md")).unwrap(),
+        "# hi"
+    );
     // The on-disk NAME must carry the new casing, not just resolve to the file:
     // a case-insensitive `exists()`/read passes either way, so this is the only
     // assertion that catches a rename Windows silently ignored.
@@ -1216,7 +1268,11 @@ fn save_attachment_dedupes_in_custom_dir() {
     assert_eq!(a, "notes/a_assets/shot.png");
     assert_eq!(b, "notes/a_assets/shot-1.png");
     assert_eq!(c, "notes/a_assets/shot-2.png");
-    assert_eq!(std::fs::read(vault.join(&a)).unwrap(), b"v1", "original untouched");
+    assert_eq!(
+        std::fs::read(vault.join(&a)).unwrap(),
+        b"v1",
+        "original untouched"
+    );
 
     std::fs::remove_dir_all(&vault).unwrap();
 }
@@ -1251,7 +1307,10 @@ fn rename_entry_moves_history_and_trash() {
     write_file(&root, path, "v1", Some(10)).unwrap();
     tick();
     write_file(&root, path, "v2", Some(10)).unwrap();
-    assert!(!list_history(&root, path).unwrap().is_empty(), "history exists");
+    assert!(
+        !list_history(&root, path).unwrap().is_empty(),
+        "history exists"
+    );
 
     // Move the current file into the trash, then recreate a file at the same
     // path so a trash entry AND a live file coexist under the same encoded key.
@@ -1298,7 +1357,10 @@ fn watcher_filter_is_relative_to_the_vault_root() {
 
     let rel_inside = inside.strip_prefix(root).unwrap();
     let rel_hidden = hidden.strip_prefix(root).unwrap();
-    assert!(!has_hidden_component(rel_inside), "an ordinary note is not hidden");
+    assert!(
+        !has_hidden_component(rel_inside),
+        "an ordinary note is not hidden"
+    );
     assert!(has_hidden_component(rel_hidden), "internal trees still are");
 
     // The old behaviour, kept here as the counter-example: the absolute path
@@ -1356,7 +1418,10 @@ fn write_file_reports_no_warning_on_a_normal_save() {
     write_file(&root, "a.md", "v1", Some(10)).unwrap();
     let warning = write_file(&root, "a.md", "v2", Some(10)).unwrap();
     assert_eq!(warning, None);
-    assert!(!list_history(&root, "a.md").unwrap().is_empty(), "history was kept");
+    assert!(
+        !list_history(&root, "a.md").unwrap().is_empty(),
+        "history was kept"
+    );
     std::fs::remove_dir_all(&vault).unwrap();
 }
 
@@ -1424,7 +1489,10 @@ fn rename_entry_migrates_its_own_trash_entry_including_legacy_keys() {
     let entries = list_trash(&root).unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].original_path, "docs/renamed.md");
-    assert_eq!(std::fs::read_to_string(&entries[0].trash_path).unwrap(), "legacy body");
+    assert_eq!(
+        std::fs::read_to_string(&entries[0].trash_path).unwrap(),
+        "legacy body"
+    );
 
     std::fs::remove_dir_all(&vault).unwrap();
 }
@@ -1532,10 +1600,51 @@ fn list_history_distinguishes_missing_from_unreadable() {
     std::fs::remove_dir_all(&vault).unwrap();
 }
 
-/// Clearing the trash reports what it could not delete instead of pretending
-/// the whole operation failed.
+/// Make one direct child of the trash impossible to remove, returning a guard
+/// that must stay alive while `clear_trash` runs.
+///
+/// Windows: hold the file open with sharing disabled - std shares
+/// read/write/delete by default, which lets a delete through as
+/// delete-pending, so the sharing mode is the whole point.
+#[cfg(windows)]
+fn make_undeletable(entry: &Path) -> std::fs::File {
+    use std::os::windows::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(entry)
+        .expect("hold the trash entry open")
+}
+
+/// Unix: deletion needs write permission on the PARENT, so an entry that is a
+/// directory holding an unlistable/unremovable inner directory cannot be
+/// removed. The guard restores the mode on drop so cleanup can finish.
+#[cfg(unix)]
+struct UnreadableDir(PathBuf);
+
+#[cfg(unix)]
+impl Drop for UnreadableDir {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+    }
+}
+
+#[cfg(unix)]
+fn make_undeletable(entry: &Path) -> UnreadableDir {
+    use std::os::unix::fs::PermissionsExt;
+    let inner = entry.join("inner");
+    std::fs::create_dir_all(&inner).unwrap();
+    std::fs::write(inner.join("file"), "x").unwrap();
+    std::fs::set_permissions(&inner, std::fs::Permissions::from_mode(0o500)).unwrap();
+    UnreadableDir(inner)
+}
+
+/// One stuck entry must not turn the whole pass into "failed": the window has
+/// to be able to say how many entries WERE removed and which ones are still
+/// there.
 #[test]
-fn clear_trash_reports_partial_success() {
+fn clear_trash_reports_a_partial_pass() {
     let vault = temp_vault("trash-partial");
     let root = vault.to_str().unwrap().to_string();
     for name in ["a.md", "b.md"] {
@@ -1544,32 +1653,86 @@ fn clear_trash_reports_partial_success() {
     }
     assert_eq!(list_trash(&root).unwrap().len(), 2);
 
-    // Hold one entry open so it cannot be removed on Windows.
     let trash_root = vault.join(".nekowite-trash");
-    let locked_name = std::fs::read_dir(&trash_root)
+    let stuck_name = std::fs::read_dir(&trash_root)
         .unwrap()
         .flatten()
         .map(|e| e.file_name().to_string_lossy().to_string())
         .find(|n| !n.is_empty())
         .unwrap();
-    let handle = std::fs::File::open(trash_root.join(&locked_name)).unwrap();
+    let guard = make_undeletable(&trash_root.join(&stuck_name));
 
-    let result = clear_trash(&root);
+    let report = clear_trash(&root).unwrap();
+    drop(guard);
 
-    // Windows does not always block deletion of an open file, so accept either
-    // outcome — but never a silent one: the count and the failures are both
-    // reported.
-    match result {
-        Ok(removed) => {
-            assert_eq!(removed, 2, "everything was removed and reported");
-            assert!(list_trash(&root).unwrap().is_empty());
-        }
-        Err(message) => assert!(
-            message.contains("removed") && message.contains("could not be deleted"),
-            "a partial clear must say what was removed AND what failed: {message}"
-        ),
+    assert_eq!(
+        report.removed + report.failed.len(),
+        2,
+        "every entry is accounted for exactly once: {report:?}"
+    );
+    assert_eq!(report.removed, 1, "the free entry was removed: {report:?}");
+    assert_eq!(
+        report.failed.len(),
+        1,
+        "the stuck entry was not: {report:?}"
+    );
+    assert_eq!(
+        report.failed[0].name, stuck_name,
+        "the stuck entry is named, not just counted"
+    );
+    assert!(
+        !report.failed[0].error.is_empty(),
+        "and the reason is carried for the report"
+    );
+    assert_eq!(
+        list_trash(&root).unwrap().len(),
+        1,
+        "the stuck entry is what is left"
+    );
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// Nothing removed is still a report, not an error: the caller can say "none
+/// of the 2 entries could be deleted, here they are" instead of dropping the
+/// count on the floor.
+#[test]
+fn clear_trash_reports_a_total_failure() {
+    let vault = temp_vault("trash-all-stuck");
+    let root = vault.to_str().unwrap().to_string();
+    for name in ["a.md", "b.md"] {
+        write_file(&root, name, "x", Some(10)).unwrap();
+        delete_file(&root, name).unwrap();
     }
-    drop(handle);
+
+    let trash_root = vault.join(".nekowite-trash");
+    let names: Vec<String> = std::fs::read_dir(&trash_root)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    let guards: Vec<_> = names
+        .iter()
+        .map(|name| make_undeletable(&trash_root.join(name)))
+        .collect();
+
+    let report = clear_trash(&root).unwrap();
+    drop(guards);
+
+    assert_eq!(report.removed, 0, "nothing was removed: {report:?}");
+    assert_eq!(report.failed.len(), 2, "both entries report a failure");
+    let failed_names: Vec<&str> = report.failed.iter().map(|f| f.name.as_str()).collect();
+    for name in &names {
+        assert!(
+            failed_names.contains(&name.as_str()),
+            "every stuck entry is named: {report:?}"
+        );
+    }
+    assert_eq!(
+        list_trash(&root).unwrap().len(),
+        2,
+        "both entries are still recoverable"
+    );
 
     std::fs::remove_dir_all(&vault).unwrap();
 }
@@ -1683,7 +1846,9 @@ fn import_attachment_accepts_the_allowlisted_extensions() {
     let vault = temp_vault("import-ext-ok");
     let root = vault.to_str().unwrap().to_string();
 
-    for ext in ["png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "svg", "ico", "tiff", "tif"] {
+    for ext in [
+        "png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "svg", "ico", "tiff", "tif",
+    ] {
         let name = format!("img.{ext}");
         let source = temp_source_image("ext-ok", &name, b"x");
         let rel = import_attachment(&root, source.to_str().unwrap(), "assets")
@@ -1705,7 +1870,13 @@ fn import_attachment_rejects_anything_off_the_image_allowlist() {
     let vault = temp_vault("import-ext-bad");
     let root = vault.to_str().unwrap().to_string();
 
-    for name in ["notes.txt", "payload.exe", "run.ps1", "archive.zip", "noext"] {
+    for name in [
+        "notes.txt",
+        "payload.exe",
+        "run.ps1",
+        "archive.zip",
+        "noext",
+    ] {
         let source = temp_source_image("ext-bad", name, b"x");
         assert!(
             import_attachment(&root, source.to_str().unwrap(), "assets").is_err(),
@@ -1739,7 +1910,10 @@ fn import_attachment_rejects_a_source_over_the_size_cap() {
     let root = vault.to_str().unwrap().to_string();
     let source = temp_source_image("oversize", "huge.png", &[]);
     // Sparse: set the length instead of writing 10 MiB of zeros.
-    let file = std::fs::OpenOptions::new().write(true).open(&source).unwrap();
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&source)
+        .unwrap();
     file.set_len(MAX_IMPORT_BYTES + 1).unwrap();
     drop(file);
 
@@ -1759,7 +1933,10 @@ fn import_attachment_confines_the_destination_to_the_vault() {
     let path = source.to_str().unwrap();
 
     for dir in ["../evil", "sub/../../evil", ".."] {
-        assert!(import_attachment(&root, path, dir).is_err(), "{dir} must be rejected");
+        assert!(
+            import_attachment(&root, path, dir).is_err(),
+            "{dir} must be rejected"
+        );
     }
     assert!(!vault.join("evil/shot.png").exists());
 
@@ -1809,7 +1986,14 @@ fn save_attachment_rejects_non_image_extensions() {
     let vault = temp_vault("attach-ext");
     let root = vault.to_str().unwrap().to_string();
 
-    for bad in ["notes.html", "payload.exe", "run.ps1", "archive.zip", "data.json", "noext"] {
+    for bad in [
+        "notes.html",
+        "payload.exe",
+        "run.ps1",
+        "archive.zip",
+        "data.json",
+        "noext",
+    ] {
         assert!(
             save_attachment(&root, bad, &b64(b"x"), "").is_err(),
             "{bad} must be rejected"
@@ -1844,7 +2028,10 @@ fn list_dir_paths_are_not_verbatim_on_windows() {
             entry.path
         );
     }
-    let note = listing.iter().find(|e| e.name == "note.md").expect("note listed");
+    let note = listing
+        .iter()
+        .find(|e| e.name == "note.md")
+        .expect("note listed");
     assert!(note.path.ends_with("note.md"));
     // The path must still resolve when handed straight back to the backend.
     assert_eq!(read_file(&root, &note.path).unwrap(), "x");
@@ -1858,7 +2045,10 @@ fn resolve_media_path_is_not_verbatim() {
     let root = vault.to_str().unwrap().to_string();
     save_attachment(&root, "a.png", "aGVsbG8=", "attachments").unwrap();
     let listing = list_dir(&root, Some("attachments")).unwrap();
-    let file = listing.iter().find(|e| e.name.ends_with(".png")).expect("attachment");
+    let file = listing
+        .iter()
+        .find(|e| e.name.ends_with(".png"))
+        .expect("attachment");
     let resolved = resolve_media_path(&root, &file.path).unwrap();
     assert!(!resolved.starts_with(r"\\?\"), "verbatim: {resolved}");
     std::fs::remove_dir_all(&vault).unwrap();
@@ -1905,7 +2095,294 @@ fn create_new_file_never_replaces_an_existing_note() {
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .filter(|name| name.starts_with('.'))
         .collect();
-    assert!(leftovers.is_empty(), "staging litter left behind: {leftovers:?}");
+    assert!(
+        leftovers.is_empty(),
+        "staging litter left behind: {leftovers:?}"
+    );
 
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// Test-only filesystem hostility: make a path or a single directory entry
+// genuinely unreadable, so "the OS said no" is exercised for real instead of
+// being assumed.
+// ---------------------------------------------------------------------------
+
+/// Deny read/list access to `path`, like a restrictive ACL or `chmod 000`.
+/// Returns false when the filesystem cannot express it here, so the caller can
+/// skip instead of asserting against a sandbox that cannot reproduce it.
+#[cfg(windows)]
+fn deny_read(path: &Path) -> bool {
+    use std::process::Command;
+    Command::new("icacls")
+        .arg(path)
+        .args(["/deny", "*S-1-1-0:(RX)"])
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+/// Undo [`deny_read`] so the temp vault can be removed. The test owns the
+/// directory, so `takeown` succeeds even while the deny ACE blocks listing it
+/// (icacls alone cannot read the DACL back to reset it).
+#[cfg(windows)]
+fn allow_read_again(path: &Path) {
+    use std::process::Command;
+    let _ = Command::new("takeown")
+        .arg("/f")
+        .arg(path)
+        .args(["/r", "/d", "y"])
+        .output();
+    let _ = Command::new("icacls")
+        .arg(path)
+        .args(["/reset", "/t"])
+        .output();
+}
+
+#[cfg(unix)]
+fn deny_read(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).is_ok()
+}
+
+#[cfg(unix)]
+fn allow_read_again(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755));
+}
+
+/// Put a link in `dir` whose target does not exist: the directory still lists,
+/// but stat-ing that one entry fails. Junctions need no privilege on Windows;
+/// on unix the existing symlink-based tests cover the same filesystem shape.
+#[cfg(windows)]
+fn make_dangling_link(link: &Path) {
+    let target = link.with_extension("missing-target");
+    let status = std::process::Command::new("cmd")
+        .args(["/c", "mklink", "/J"])
+        .arg(link)
+        .arg(&target)
+        .status();
+    assert!(
+        status.map(|s| s.success()).unwrap_or(false),
+        "could not create the test junction at {link:?}"
+    );
+}
+
+#[cfg(unix)]
+fn make_dangling_link(link: &Path) {
+    symlink(link.with_extension("missing-target"), link).unwrap();
+}
+
+/// Remove a dangling link before the tree holding it is removed.
+fn drop_dangling_link(link: &Path) {
+    let _ = std::fs::remove_dir(link);
+    let _ = std::fs::remove_file(link);
+}
+
+/// A storage failure must reach the user as a sentence naming the operation
+/// and the file, with a plain-language reason - never as a bare OS code.
+///
+/// Before this, a missing file read "cannot resolve path: ... (os error 2)"
+/// and a refused read was just "Access is denied. (os error 5)": no path, no
+/// operation, nothing a user could act on.
+#[test]
+fn storage_error_messages_name_the_operation_and_the_path() {
+    let vault = temp_vault("error-messages");
+    let root = vault.to_str().unwrap().to_string();
+    // The folder exists, only the note is gone: a genuine file-not-found, not
+    // the path-not-found Windows reports when the parent is missing too.
+    std::fs::create_dir_all(vault.join("notes")).unwrap();
+
+    let missing = read_file(&root, "notes/nope.md").unwrap_err();
+    assert!(
+        missing.starts_with("could not "),
+        "a readable lead comes first: {missing}"
+    );
+    assert!(
+        missing.contains("nope.md"),
+        "the offending path is named: {missing}"
+    );
+    assert!(
+        missing.contains("no such file or folder"),
+        "the reason is plain language: {missing}"
+    );
+    assert!(
+        missing.contains("os error 2"),
+        "the raw OS code survives for bug reports: {missing}"
+    );
+
+    let escape = read_file(&root, "../outside.md").unwrap_err();
+    assert!(
+        escape.starts_with("path escapes vault"),
+        "the stable prefix the frontend matches on is kept: {escape}"
+    );
+    assert!(
+        escape.contains("../outside.md"),
+        "the rejected path is named: {escape}"
+    );
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// The permission-denied text itself, pinned without relying on ACL support:
+/// `fs_error` is the single mapper every storage call site goes through.
+#[test]
+fn permission_denied_message_is_readable() {
+    let message = nekowite_lib::errors::fs_error(
+        "read",
+        Path::new("/vault/notes/a.md"),
+        std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+    );
+    assert!(message.contains("could not read"), "{message}");
+    assert!(message.contains("/vault/notes/a.md"), "{message}");
+    assert!(message.contains("permission denied"), "{message}");
+    assert!(
+        message.contains("close whatever is using it"),
+        "the message has to suggest something: {message}"
+    );
+}
+
+/// The same path with a real deny ACE / chmod 000, end to end.
+#[test]
+fn permission_denied_read_reads_as_permission_denied() {
+    let vault = temp_vault("error-permission");
+    let root = vault.to_str().unwrap().to_string();
+    std::fs::create_dir_all(vault.join("notes")).unwrap();
+    let note = vault.join("notes").join("a.md");
+    std::fs::write(&note, "hello").unwrap();
+
+    if !deny_read(&note) {
+        // The filesystem cannot express the denial; the mapping is already
+        // pinned by `permission_denied_message_is_readable`.
+        eprintln!("skipping: this filesystem cannot deny read access");
+        std::fs::remove_dir_all(&vault).unwrap();
+        return;
+    }
+    let denied = read_file(&root, "notes/a.md").unwrap_err();
+    allow_read_again(&note);
+
+    assert!(denied.contains("a.md"), "names the file: {denied}");
+    assert!(
+        denied.contains("permission denied"),
+        "plain-language reason: {denied}"
+    );
+    assert!(
+        denied.contains("os error 5") || denied.contains("os error 13"),
+        "keeps the raw code (5 on Windows, 13 on unix): {denied}"
+    );
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// An unreadable history folder is a failure, never "this note has no
+/// versions": the empty list is what the panel renders as "no history yet",
+/// which tells the user their snapshots are gone when they are only unreadable.
+#[test]
+fn list_history_read_denied_is_not_empty() {
+    let vault = temp_vault("history-denied");
+    let root = vault.to_str().unwrap().to_string();
+    write_file(&root, "a.md", "v1", Some(10)).unwrap();
+    write_file(&root, "a.md", "v2", Some(10)).unwrap();
+
+    let history_dir = vault
+        .join(".nekowite")
+        .join("history")
+        .join(encode_rel_path("a.md"));
+    if !deny_read(&history_dir) {
+        eprintln!("skipping: this filesystem cannot deny read access");
+        std::fs::remove_dir_all(&vault).unwrap();
+        return;
+    }
+    let result = list_history(&root, "a.md");
+    allow_read_again(&history_dir);
+
+    match result {
+        Ok(listed) => panic!("an unreadable history must not read as a list: {listed:?}"),
+        Err(message) => assert!(
+            message.contains("permission denied"),
+            "the failure must say what happened: {message}"
+        ),
+    }
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// The trash mirror of the test above: "the trash is empty" must not be the
+/// answer to a trash the process was refused permission to read.
+#[test]
+fn list_trash_read_denied_is_not_empty() {
+    let vault = temp_vault("trash-denied");
+    let root = vault.to_str().unwrap().to_string();
+    write_file(&root, "a.md", "v1", Some(10)).unwrap();
+    delete_file(&root, "a.md").unwrap();
+
+    let trash_root = vault.join(".nekowite-trash");
+    if !deny_read(&trash_root) {
+        eprintln!("skipping: this filesystem cannot deny read access");
+        std::fs::remove_dir_all(&vault).unwrap();
+        return;
+    }
+    let result = list_trash(&root);
+    allow_read_again(&trash_root);
+
+    match result {
+        Ok(listed) => panic!("an unreadable trash must not read as empty: {listed:?}"),
+        Err(message) => assert!(
+            message.contains("permission denied"),
+            "the failure must say what happened: {message}"
+        ),
+    }
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+/// One unreadable entry is a hole too: a list that is short for a reason the
+/// user cannot see is the same lie as an empty one.
+#[test]
+fn list_history_reports_an_unreadable_entry() {
+    let vault = temp_vault("history-bad-entry");
+    let root = vault.to_str().unwrap().to_string();
+    write_file(&root, "a.md", "v1", Some(10)).unwrap();
+    write_file(&root, "a.md", "v2", Some(10)).unwrap();
+
+    let history_dir = vault
+        .join(".nekowite")
+        .join("history")
+        .join(encode_rel_path("a.md"));
+    let broken = history_dir.join("zz-broken.md");
+    make_dangling_link(&broken);
+
+    let result = list_history(&root, "a.md");
+    drop_dangling_link(&broken);
+
+    match result {
+        Ok(listed) => panic!("an entry that could not be read must not vanish: {listed:?}"),
+        Err(message) => assert!(
+            message.contains("zz-broken.md"),
+            "the failing entry is named: {message}"
+        ),
+    }
+    std::fs::remove_dir_all(&vault).unwrap();
+}
+
+#[test]
+fn list_trash_reports_an_unreadable_entry() {
+    let vault = temp_vault("trash-bad-entry");
+    let root = vault.to_str().unwrap().to_string();
+    write_file(&root, "a.md", "v1", Some(10)).unwrap();
+    delete_file(&root, "a.md").unwrap();
+
+    let broken = vault.join(".nekowite-trash").join("zz-broken.md");
+    make_dangling_link(&broken);
+
+    let result = list_trash(&root);
+    drop_dangling_link(&broken);
+
+    match result {
+        Ok(listed) => panic!("an entry that could not be read must not vanish: {listed:?}"),
+        Err(message) => assert!(
+            message.contains("zz-broken.md"),
+            "the failing entry is named: {message}"
+        ),
+    }
     std::fs::remove_dir_all(&vault).unwrap();
 }

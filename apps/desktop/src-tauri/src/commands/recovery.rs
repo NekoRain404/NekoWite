@@ -6,7 +6,7 @@
 
 use crate::state::{require_opened_vault, VaultRegistry};
 use crate::storage::file_store::{self, HistoryEntry};
-use crate::storage::trash_store::{self, TrashEntry};
+use crate::storage::trash_store::{self, ClearTrashReport, TrashEntry};
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn list_trash(
@@ -31,7 +31,7 @@ pub async fn restore_from_trash(
 pub async fn clear_trash(
     vault: String,
     state: tauri::State<'_, VaultRegistry>,
-) -> Result<usize, String> {
+) -> Result<ClearTrashReport, String> {
     require_opened_vault(&state, &vault)?;
     trash_store::clear_trash(&vault)
 }

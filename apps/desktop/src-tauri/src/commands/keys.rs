@@ -11,14 +11,18 @@ use crate::domain::recovery::{open_snapshot, reencrypt_vault};
 use crate::state::KeyVault;
 use crate::storage::key_store::{
     self, ai_key_presence, derive_master_key, encode_keyfile_password, load_ai_key_internal,
-    read_vault_key_state, validate_password, verifier_of, AI_KEY_MASKED, VaultKeyState,
+    read_vault_key_state, validate_password, verifier_of, VaultKeyState, AI_KEY_MASKED,
 };
 
 /// Store an API key for a provider in the stronghold vault. If the provider
 /// already has a key, it is overwritten. The snapshot is committed after each
 /// write so the key survives restarts.
 #[tauri::command]
-pub async fn store_ai_key(app: tauri::AppHandle, provider: String, key: String) -> Result<(), String> {
+pub async fn store_ai_key(
+    app: tauri::AppHandle,
+    provider: String,
+    key: String,
+) -> Result<(), String> {
     // Never store the masked "a key is configured" indicator as a real key —
     // the settings UI shows it as a placeholder and must not persist it over a
     // previously-saved credential.
@@ -27,14 +31,18 @@ pub async fn store_ai_key(app: tauri::AppHandle, provider: String, key: String) 
     }
     let provider_bytes = provider.into_bytes();
     let key_bytes = key.into_bytes();
-    key_store::open_vault(&app, &mut key_store::init_with_default(&app), |stronghold| {
-        let client = key_store::get_or_create_client(stronghold)?;
-        client
-            .store()
-            .insert(provider_bytes.clone(), key_bytes.clone(), None)
-            .map_err(|e| e.to_string())?;
-        key_store::save_vault(stronghold)
-    })?;
+    key_store::open_vault(
+        &app,
+        &mut key_store::init_with_default(&app),
+        |stronghold| {
+            let client = key_store::get_or_create_client(stronghold)?;
+            client
+                .store()
+                .insert(provider_bytes.clone(), key_bytes.clone(), None)
+                .map_err(|e| e.to_string())?;
+            key_store::save_vault(stronghold)
+        },
+    )?;
     key_store::tighten_saved_snapshot(&app)?;
     Ok(())
 }
@@ -43,7 +51,10 @@ pub async fn store_ai_key(app: tauri::AppHandle, provider: String, key: String) 
 /// it. Serializes as `string | null` on the JS side (`Some` is the masked
 /// indicator, never the real key) so the settings UI can signal "a key is set".
 #[tauri::command]
-pub async fn load_ai_key(app: tauri::AppHandle, provider: String) -> Result<Option<String>, String> {
+pub async fn load_ai_key(
+    app: tauri::AppHandle,
+    provider: String,
+) -> Result<Option<String>, String> {
     Ok(ai_key_presence(load_ai_key_internal(&app, &provider)?))
 }
 

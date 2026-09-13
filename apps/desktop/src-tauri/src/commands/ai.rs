@@ -57,7 +57,8 @@ pub fn resolve_request_id(requested: Option<String>) -> String {
     match requested {
         Some(id) => {
             let trimmed = id.trim();
-            if trimmed.is_empty() || trimmed.len() > MAX_REQUEST_ID_LEN || trimmed.len() != id.len() {
+            if trimmed.is_empty() || trimmed.len() > MAX_REQUEST_ID_LEN || trimmed.len() != id.len()
+            {
                 next_ai_id()
             } else {
                 trimmed.to_string()

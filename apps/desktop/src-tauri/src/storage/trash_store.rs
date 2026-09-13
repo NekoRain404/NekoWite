@@ -15,8 +15,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::domain::path_policy::{
     decode_rel_path, encode_rel_path, is_safe_rel, resolve_within, resolve_within_rel,
 };
+use crate::errors::fs_error;
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 pub struct TrashEntry {
     /// The encoded trash key (the entry's on-disk name), kept verbatim for
     /// callers that key off it — `docs%2Fa.md`, or `docs%2Fa.md-<ms>` after a
@@ -111,14 +112,15 @@ pub fn delete_file(vault_root: &str, path: &str) -> Result<String, String> {
     }
     if is_internal_rel_path(&relative) {
         if resolved.is_dir() {
-            std::fs::remove_dir_all(&resolved).map_err(|e| e.to_string())?;
+            std::fs::remove_dir_all(&resolved).map_err(|e| fs_error("delete", &resolved, e))?;
         } else {
-            std::fs::remove_file(&resolved).map_err(|e| e.to_string())?;
+            std::fs::remove_file(&resolved).map_err(|e| fs_error("delete", &resolved, e))?;
         }
         return Ok(String::new());
     }
     let trash_root = Path::new(vault_root).join(".nekowite-trash");
-    std::fs::create_dir_all(&trash_root).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&trash_root)
+        .map_err(|e| fs_error("create the trash folder", &trash_root, e))?;
     let encoded = encode_rel_path(&relative);
     let mut target = trash_root.join(&encoded);
     if target.exists() {
@@ -128,7 +130,7 @@ pub fn delete_file(vault_root: &str, path: &str) -> Result<String, String> {
             .unwrap_or_default();
         target = trash_root.join(format!("{encoded}-{ts}"));
     }
-    std::fs::rename(&resolved, &target).map_err(|e| e.to_string())?;
+    std::fs::rename(&resolved, &target).map_err(|e| fs_error("delete", &resolved, e))?;
     Ok(crate::domain::path_policy::ipc_path(&target))
 }
 
@@ -145,11 +147,19 @@ pub fn list_trash(vault_root: &str) -> Result<Vec<TrashEntry>, String> {
         // thing: showing "the trash is empty" would tell the user their deleted
         // notes are gone when they are only unreadable.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
-        Err(e) => return Err(format!("could not read the trash folder: {e}")),
+        Err(e) => return Err(fs_error("read the trash folder", &trash_root, e)),
     };
-    for entry in rd.flatten() {
+    for entry in rd {
+        // Same rule as the history listing: an entry we cannot read is not
+        // "no entry". Skipping it used to make a partially readable trash look
+        // shorter than it is, which the panel cannot tell apart from an empty
+        // one - and a deleted note appearing to be gone for good is the one
+        // thing the trash exists to prevent.
+        let entry = entry.map_err(|e| fs_error("read the trash folder", &trash_root, e))?;
         let p = entry.path();
-        let Ok(meta) = p.metadata() else { continue };
+        let meta = p
+            .metadata()
+            .map_err(|e| fs_error("read the trash entry", &p, e))?;
         // Folders are listed too. Deleting one moves the whole tree into the
         // trash, and skipping anything that was not a file left a deleted
         // folder invisible — no count, no way back.
@@ -171,8 +181,7 @@ pub fn list_trash(vault_root: &str) -> Result<Vec<TrashEntry>, String> {
         // could actually resolve inside the vault — the same rule
         // `restore_from_trash` applies, so the UI never offers a restore
         // that would be refused.
-        let original_path = if is_safe_rel(&decoded)
-            && resolve_within(vault_root, &decoded).is_ok()
+        let original_path = if is_safe_rel(&decoded) && resolve_within(vault_root, &decoded).is_ok()
         {
             decoded
         } else {
@@ -200,33 +209,68 @@ pub fn list_trash(vault_root: &str) -> Result<Vec<TrashEntry>, String> {
     Ok(out)
 }
 
-/// Permanently delete every entry under `.nekowite-trash/`, returning how many
-/// were removed. A missing trash directory is not an error — it returns 0.
+/// One trash entry `clear_trash` could not remove.
+///
+/// `name` is the on-disk key the trash lists (what `restore_from_trash` takes),
+/// and `error` is already a user-facing sentence naming the reason.
+#[derive(Serialize, Clone, Debug)]
+pub struct ClearTrashFailure {
+    pub name: String,
+    pub error: String,
+}
+
+/// What one emptying pass of the trash actually did.
+///
+/// A partial pass is an ordinary outcome (one file still held open by another
+/// program), not a failed command: reporting it as an error lost the count of
+/// everything that WAS removed, so the window could only say "failed" over a
+/// half-empty trash. `removed` is always the truth and `failed` names what is
+/// still there, so the caller can report both honestly.
+#[derive(Serialize, Clone, Debug)]
+pub struct ClearTrashReport {
+    pub removed: usize,
+    pub failed: Vec<ClearTrashFailure>,
+}
+
+/// Permanently delete every entry under `.nekowite-trash/`, reporting how many
+/// were removed and which ones could not be. A missing trash directory is not
+/// an error - it returns an empty report.
 ///
 /// Only direct children of the trash directory are touched (each is the single
 /// encoded, safe component [`delete_file`] wrote), so traversal is impossible;
 /// the defensive `.`/`..`/empty-name guard is belt and braces rather than a
 /// requirement.
-pub fn clear_trash(vault_root: &str) -> Result<usize, String> {
+pub fn clear_trash(vault_root: &str) -> Result<ClearTrashReport, String> {
     let trash_root = Path::new(vault_root).join(".nekowite-trash");
     if !trash_root.exists() {
-        return Ok(0);
+        return Ok(ClearTrashReport {
+            removed: 0,
+            failed: Vec::new(),
+        });
     }
     let rd = std::fs::read_dir(&trash_root)
-        .map_err(|e| format!("could not read the trash directory: {e}"))?;
+        .map_err(|e| fs_error("read the trash folder", &trash_root, e))?;
     let mut removed = 0usize;
-    let mut failures: Vec<String> = Vec::new();
-    for entry in rd.flatten() {
+    let mut failed: Vec<ClearTrashFailure> = Vec::new();
+    for entry in rd {
+        // An iteration failure means we cannot know which entries we never saw,
+        // so refuse the pass instead of reporting a clean sweep over a trash
+        // the process could not enumerate.
+        let entry = entry.map_err(|e| fs_error("read the trash folder", &trash_root, e))?;
         let p = entry.path();
-        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let name = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
         if name.is_empty() || name == "." || name == ".." {
             continue;
         }
         // Keep going after a failure: one locked file (another program holding
         // it, a permission problem) used to abort the whole clear and report a
-        // bare error — while everything already deleted stayed deleted, so the
-        // user saw "clear failed" over a half-empty trash with no way to tell
-        // which half.
+        // bare error - while everything already deleted stayed deleted, so the
+        // user saw a failed clear over a half-empty trash with no way to tell
+        // which half had actually gone.
         let result = if p.is_dir() {
             std::fs::remove_dir_all(&p)
         } else {
@@ -234,17 +278,13 @@ pub fn clear_trash(vault_root: &str) -> Result<usize, String> {
         };
         match result {
             Ok(()) => removed += 1,
-            Err(e) => failures.push(format!("{name}: {e}")),
+            Err(e) => failed.push(ClearTrashFailure {
+                name,
+                error: fs_error("delete", &p, e),
+            }),
         }
     }
-    if failures.is_empty() {
-        return Ok(removed);
-    }
-    Err(format!(
-        "removed {removed} item(s); {} could not be deleted: {}",
-        failures.len(),
-        failures.join("; ")
-    ))
+    Ok(ClearTrashReport { removed, failed })
 }
 
 /// Move a trash entry back to its original vault path. If that path is now
@@ -256,7 +296,7 @@ pub fn restore_from_trash(vault_root: &str, trash_path: &str) -> Result<String, 
     let trash_root = Path::new(vault_root).join(".nekowite-trash");
     let canonical_trash = trash_root
         .canonicalize()
-        .map_err(|e| format!("cannot resolve trash directory: {e}"))?;
+        .map_err(|e| fs_error("open the trash folder", &trash_root, e))?;
     if !resolved_trash.starts_with(&canonical_trash) {
         return Err("trash path outside .nekowite-trash".into());
     }
@@ -276,10 +316,7 @@ pub fn restore_from_trash(vault_root: &str, trash_path: &str) -> Result<String, 
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis())
             .unwrap_or_default();
-        let parent = target
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_default();
+        let parent = target.parent().map(|p| p.to_path_buf()).unwrap_or_default();
         let fname = target
             .file_name()
             .and_then(|n| n.to_str())
@@ -318,7 +355,9 @@ pub fn move_trash_key(vault_root: &str, from_rel: &str, to_rel: &str) {
         return;
     }
     let to_key = encode_rel_path(to_rel);
-    let Ok(rd) = std::fs::read_dir(&trash_root) else { return };
+    let Ok(rd) = std::fs::read_dir(&trash_root) else {
+        return;
+    };
     for entry in rd.flatten() {
         let p = entry.path();
         let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");

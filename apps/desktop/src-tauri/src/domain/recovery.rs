@@ -10,9 +10,10 @@ use std::path::Path;
 
 use tauri_plugin_stronghold::stronghold::Stronghold;
 
+use crate::errors::fs_error;
 use crate::storage::key_store::{
-    fsync_file, read_vault_key_state, sibling_suffixed, stronghold_tmp_path, tighten_snapshot_perms,
-    write_key_file_at, VaultKeyState, VAULT_CLIENT_ID,
+    fsync_file, read_vault_key_state, sibling_suffixed, stronghold_tmp_path,
+    tighten_snapshot_perms, write_key_file_at, VaultKeyState, VAULT_CLIENT_ID,
 };
 
 /// Read an on-disk master key that is directly usable as a Stronghold key. Only
@@ -22,9 +23,7 @@ use crate::storage::key_store::{
 fn read_unlockable_keyfile(path: &Path) -> Result<Vec<u8>, String> {
     match read_vault_key_state(path)? {
         VaultKeyState::Auto(key) => Ok(key.to_vec()),
-        VaultKeyState::Locked { .. } => {
-            Err("backup master key is password-protected".to_string())
-        }
+        VaultKeyState::Locked { .. } => Err("backup master key is password-protected".to_string()),
     }
 }
 
@@ -48,10 +47,9 @@ pub fn open_snapshot(
     match Stronghold::new(snapshot_path, master_key) {
         Ok(stronghold) => Ok(stronghold),
         Err(primary_err) => {
-            let backup = read_unlockable_keyfile(&sibling_suffixed(key_path, "old"))
-                .and_then(|backup_key| {
-                    Stronghold::new(snapshot_path, backup_key).map_err(|e| e.to_string())
-                });
+            let backup = read_unlockable_keyfile(&sibling_suffixed(key_path, "old")).and_then(
+                |backup_key| Stronghold::new(snapshot_path, backup_key).map_err(|e| e.to_string()),
+            );
             match backup {
                 Ok(stronghold) => Ok(stronghold),
                 // Surface the primary error: the backup is missing or also
@@ -114,8 +112,8 @@ pub fn reencrypt_vault(
     //    first, or `Stronghold::new` would try to load it with the new key and
     //    fail.
     let _ = std::fs::remove_file(&tmp_snapshot);
-    let new_stronghold = Stronghold::new(tmp_snapshot.clone(), new_key.to_vec())
-        .map_err(|e| e.to_string())?;
+    let new_stronghold =
+        Stronghold::new(tmp_snapshot.clone(), new_key.to_vec()).map_err(|e| e.to_string())?;
     let client = new_stronghold
         .inner()
         .create_client(VAULT_CLIENT_ID)
@@ -132,19 +130,20 @@ pub fn reencrypt_vault(
     // 3. Move the old key aside BEFORE the new key takes its name, so step 4
     //    does not have to rename over an existing file.
     let _ = std::fs::remove_file(&old_key_backup);
-    std::fs::rename(key_path, &old_key_backup).map_err(|e| e.to_string())?;
+    std::fs::rename(key_path, &old_key_backup)
+        .map_err(|e| fs_error("move the old master key aside", key_path, e))?;
 
     // 4. Promote the staged key. If this fails, put the old key back so the
     //    disk stays consistent with the (still old) snapshot.
     if let Err(e) = std::fs::rename(&new_key_staging, key_path) {
         let _ = std::fs::rename(&old_key_backup, key_path);
-        return Err(e.to_string());
+        return Err(fs_error("replace the master key file", key_path, e));
     }
 
     // 5. Atomic snapshot swap; restore the old key if it fails.
     if let Err(e) = std::fs::rename(&tmp_snapshot, snapshot_path) {
         let _ = std::fs::rename(&old_key_backup, key_path);
-        return Err(e.to_string());
+        return Err(fs_error("replace the vault snapshot", snapshot_path, e));
     }
     // The rename preserved the temp file's umask-derived perms; tighten them.
     tighten_snapshot_perms(snapshot_path)?;
