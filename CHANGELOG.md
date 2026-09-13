@@ -296,7 +296,7 @@
 
 - 命令：`pnpm --filter @nekowite/desktop test`、`pnpm --filter @nekowite/desktop typecheck`、`pnpm --filter @nekowite/desktop exec eslint <changed files>`、`cargo test`（`apps/desktop/src-tauri`）、`cargo clippy`（`-D warnings`）、`bash scripts/package-win.sh`。
 - 测试门禁：desktop **1485**（129 个文件）、editor-core **648**、plugin-host **105**、Rust **68**（`fs_test`，Windows 上实际运行；其余 Rust 套件与 lib 单元测试全绿），`typecheck` / `lint` / `clippy -D warnings` 全绿。
-- 便携版已重新打包：`release/nekowite_0.1.0_x64.exe`（未签名；SHA-256 随后还会变，本轮不记录）。
+- 最终便携版：`release/nekowite_0.1.0_x64.exe`（未签名），SHA-256 `c7b221479629299a441fff2c7559b242cd27297bda9b25cf5acf2593b7df5bec`。该产物上真机复跑：`320-audit-and-plugins.cjs` **13/13**、`310-ai-gates.cjs` **15/15**、回归清扫 `270` **10/10**、`294` **6/6**、`301` **7/7**、`302` **6/6**、`303` PASS、`311` 原生 Escape 丢弃建议；Playwright **137**。
 - 真机验收（CDP 驱动**打包版本体**，`apps/desktop/ai-lab/320-audit-and-plugins.cjs`，**13/13**，控制台零错误）：
   1. A1 / A1b / A1c / A1d：AI 活动区块存在、AI 总开关在面板里可达、设置对话框能关闭、信息栏能打开；
   2. A2 / A3：一次真实的被阻止请求成为一行（实测 `13:32:00 聊天 已阻止`）；
