@@ -1,8 +1,7 @@
 use nekowite_lib::providers::ai::client::{
-    default_base_url, parse_sse_event,
-    ai_id_for, build_prompt, error_detail_from_body, http_error_message,
-    http_error_message_with_detail, next_ai_id, parse_model_ids, parse_sse_line,
-    normalize_reasoning_effort, resolve_endpoint, AIConfig, SseBuffer,
+    ai_id_for, build_prompt, default_base_url, error_detail_from_body, http_error_message,
+    http_error_message_with_detail, next_ai_id, normalize_reasoning_effort, parse_model_ids,
+    parse_sse_event, parse_sse_line, resolve_endpoint, AIConfig, SseBuffer,
 };
 
 #[test]
@@ -24,7 +23,10 @@ fn endpoint_maps_openai() {
     let (url, body) = resolve_endpoint(&cfg, "hello", &[]);
     assert!(url.ends_with("/chat/completions"));
     assert_eq!(body["stream"], true);
-    assert!(body["messages"][0]["content"].is_string(), "no images keeps string content");
+    assert!(
+        body["messages"][0]["content"].is_string(),
+        "no images keeps string content"
+    );
 }
 
 #[test]
@@ -39,7 +41,10 @@ fn endpoint_maps_anthropic() {
     let (url, body) = resolve_endpoint(&cfg, "hello", &[]);
     assert!(url.ends_with("/v1/messages"));
     assert_eq!(body["stream"], true);
-    assert!(body["messages"][0]["content"].is_string(), "no images keeps string content");
+    assert!(
+        body["messages"][0]["content"].is_string(),
+        "no images keeps string content"
+    );
 }
 
 #[test]
@@ -110,7 +115,10 @@ fn sse_parses_anthropic_content_block_start() {
         &mut acc,
     );
     assert_eq!(delta.as_deref(), Some("Hello"));
-    assert_eq!(acc, "Hello", "content_block text must be aggregated into acc");
+    assert_eq!(
+        acc, "Hello",
+        "content_block text must be aggregated into acc"
+    );
 
     // A subsequent delta continues the same block.
     let delta = parse_sse_line(
@@ -180,7 +188,10 @@ fn sse_reassembles_fragmented_chunk() {
     // chunk 3 terminates the line
     let lines = buf.feed(b"\n");
     assert_eq!(lines.len(), 1);
-    assert_eq!(lines[0], r#"data: {"choices":[{"delta":{"content":"Hello"}}]}"#);
+    assert_eq!(
+        lines[0],
+        r#"data: {"choices":[{"delta":{"content":"Hello"}}]}"#
+    );
 
     let delta = parse_sse_line(&lines[0], "openai", &mut acc);
     assert_eq!(delta.as_deref(), Some("Hello"));
@@ -303,7 +314,10 @@ fn endpoint_openai_without_images_keeps_string() {
         ..Default::default()
     };
     let (_url, body) = resolve_endpoint(&cfg, "hello", &[]);
-    assert!(body["messages"][0]["content"].is_string(), "empty images keeps string content");
+    assert!(
+        body["messages"][0]["content"].is_string(),
+        "empty images keeps string content"
+    );
     assert_eq!(body["messages"][0]["content"], "hello");
 }
 
@@ -408,7 +422,10 @@ fn http_error_429_hints_retry() {
 fn http_error_5xx_hints_unavailable() {
     for status in [500, 502, 503, 504] {
         let msg = http_error_message(status);
-        assert!(msg.contains("服务端暂时不可用"), "status {status} got: {msg}");
+        assert!(
+            msg.contains("服务端暂时不可用"),
+            "status {status} got: {msg}"
+        );
     }
 }
 
@@ -421,7 +438,10 @@ fn http_error_unknown_status_stays_total() {
     // The unmapped fallback says "request failed" rather than "network failed":
     // an unexpected status is still a RESPONSE, and calling it a network problem
     // sent users to check a connection that was working fine.
-    assert!(msg.starts_with("AI 请求失败：HTTP 599，请求失败"), "got: {msg}");
+    assert!(
+        msg.starts_with("AI 请求失败：HTTP 599，请求失败"),
+        "got: {msg}"
+    );
 }
 
 fn tuned_cfg(provider: &str) -> AIConfig {
@@ -440,7 +460,11 @@ fn tuned_cfg(provider: &str) -> AIConfig {
 #[test]
 fn openai_body_puts_system_first_and_writes_tuning() {
     let (_url, body) = resolve_endpoint(&tuned_cfg("openai"), "hello", &[]);
-    assert_eq!(body["temperature"], serde_json::json!(0.7_f32), "temperature as written by the f32 config");
+    assert_eq!(
+        body["temperature"],
+        serde_json::json!(0.7_f32),
+        "temperature as written by the f32 config"
+    );
     assert_eq!(body["max_tokens"], 512);
     assert_eq!(body["messages"][0]["role"], "system");
     assert_eq!(
@@ -448,7 +472,11 @@ fn openai_body_puts_system_first_and_writes_tuning() {
         "You are a helpful editor assistant."
     );
     assert_eq!(body["messages"][1]["role"], "user");
-    assert_eq!(body["messages"][2], serde_json::json!(null), "no third message");
+    assert_eq!(
+        body["messages"][2],
+        serde_json::json!(null),
+        "no third message"
+    );
 }
 
 #[test]
@@ -480,7 +508,10 @@ fn gemini_body_uses_system_instruction_and_generation_config() {
         body["systemInstruction"]["parts"][0]["text"],
         "You are a helpful editor assistant."
     );
-    assert_eq!(body["generationConfig"]["temperature"], serde_json::json!(0.7_f32));
+    assert_eq!(
+        body["generationConfig"]["temperature"],
+        serde_json::json!(0.7_f32)
+    );
     assert_eq!(body["generationConfig"]["maxOutputTokens"], 512);
     assert_eq!(body["contents"][0]["role"], "user");
 }
@@ -500,7 +531,10 @@ fn untuned_cfg_uses_the_raised_defaults() {
     // thinking and return no answer at all (measured against deepseek-flash),
     // so the default has to leave room for the actual text.
     assert_eq!(body["max_tokens"], 1024, "default max_tokens is 1024");
-    assert!(body.get("temperature").is_none(), "no temperature by default");
+    assert!(
+        body.get("temperature").is_none(),
+        "no temperature by default"
+    );
     assert_eq!(
         body["messages"].as_array().unwrap().len(),
         1,
@@ -526,7 +560,6 @@ fn blank_system_prompt_behaves_as_absent() {
         "whitespace-only system prompt must be dropped"
     );
 }
-
 
 #[test]
 fn default_base_url_is_per_provider() {
@@ -578,13 +611,15 @@ fn reasoning_deltas_are_reported_separately_from_the_answer() {
     // Reasoning must never join the answer text — the ghost writer inserts
     // whatever it streams straight into the document.
     let mut acc = String::new();
-    let reasoning = r#"data: {"choices":[{"index":0,"delta":{"content":null,"reasoning_content":"We need"}}]}"#;
+    let reasoning =
+        r#"data: {"choices":[{"index":0,"delta":{"content":null,"reasoning_content":"We need"}}]}"#;
     let delta = parse_sse_event(reasoning, "deepseek", &mut acc).expect("reasoning delta");
     assert_eq!(delta.reasoning.as_deref(), Some("We need"));
     assert_eq!(delta.text, None);
     assert_eq!(acc, "", "reasoning must not reach the answer accumulator");
 
-    let answer = r#"data: {"choices":[{"index":0,"delta":{"content":"PONG","reasoning_content":null}}]}"#;
+    let answer =
+        r#"data: {"choices":[{"index":0,"delta":{"content":"PONG","reasoning_content":null}}]}"#;
     let delta = parse_sse_event(answer, "deepseek", &mut acc).expect("answer delta");
     assert_eq!(delta.text.as_deref(), Some("PONG"));
     assert_eq!(delta.reasoning, None);
@@ -618,10 +653,12 @@ fn parse_sse_line_still_returns_answer_text_only() {
     let reasoning = r#"data: {"choices":[{"index":0,"delta":{"reasoning_content":"think"}}]}"#;
     assert_eq!(parse_sse_line(reasoning, "deepseek", &mut acc), None);
     let answer = r#"data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}"#;
-    assert_eq!(parse_sse_line(answer, "deepseek", &mut acc).as_deref(), Some("hi"));
+    assert_eq!(
+        parse_sse_line(answer, "deepseek", &mut acc).as_deref(),
+        Some("hi")
+    );
     assert_eq!(acc, "hi");
 }
-
 
 #[test]
 fn a_tuned_config_still_wins_over_the_raised_default() {
@@ -723,7 +760,10 @@ fn openai_body_pins_the_normalised_reasoning_effort() {
                 { "role": "user", "content": "hello" }
             ],
             "temperature": 0.7_f32,
-            "reasoning_effort": "high"
+            "reasoning_effort": "high",
+            // The request asks the endpoint for its final usage chunk, which is
+            // what the frontend shows as the request's token cost.
+            "stream_options": { "include_usage": true }
         }),
         "padded uppercase input must go out trimmed and lowercased"
     );
@@ -888,7 +928,10 @@ fn gemini_omits_thinking_when_unset_or_unknown() {
 #[test]
 fn anthropic_drops_temperature_when_extended_thinking_is_enabled() {
     let cfg = thinking_cfg("anthropic", Some("high"));
-    assert!(cfg.temperature.is_some(), "the fixture must set a temperature");
+    assert!(
+        cfg.temperature.is_some(),
+        "the fixture must set a temperature"
+    );
     let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
     assert!(
         body.get("thinking").is_some(),
@@ -973,7 +1016,10 @@ fn sse_reports_in_band_errors() {
     .unwrap();
     let message = openai.error.expect("an error frame must be reported");
     assert!(message.contains("rate limit exceeded"));
-    assert!(message.contains("rate_limit_error"), "the kind is kept: {message}");
+    assert!(
+        message.contains("rate_limit_error"),
+        "the kind is kept: {message}"
+    );
     assert!(openai.text.is_none());
 
     let anthropic = parse_sse_event(
@@ -1006,7 +1052,10 @@ fn sse_reports_finish_reason() {
     )
     .unwrap();
     assert_eq!(cut.finish_reason.as_deref(), Some("length"));
-    assert!(cut.text.is_none(), "a final frame carries no text of its own");
+    assert!(
+        cut.text.is_none(),
+        "a final frame carries no text of its own"
+    );
 
     let filtered = parse_sse_event(
         r#"data: {"choices":[{"delta":{},"finish_reason":"content_filter"}]}"#,
@@ -1049,10 +1098,16 @@ fn http_error_includes_the_provider_detail() {
     let message = http_error_message_with_detail(403, Some(&detail));
     assert!(message.contains("403"));
     assert!(message.contains("Available models: deepseek-flash"));
-    assert!(message.contains("模型名"), "the hint names the model as a suspect: {message}");
+    assert!(
+        message.contains("模型名"),
+        "the hint names the model as a suspect: {message}"
+    );
 
     // A non-JSON body is shown verbatim rather than dropped.
-    assert_eq!(error_detail_from_body("  upstream exploded  ").unwrap(), "upstream exploded");
+    assert_eq!(
+        error_detail_from_body("  upstream exploded  ").unwrap(),
+        "upstream exploded"
+    );
 
     // An empty body adds nothing, and 402 is a billing problem rather than a
     // network one.

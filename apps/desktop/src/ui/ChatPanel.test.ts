@@ -21,7 +21,10 @@ vi.mock('../platform/gateways/fs', () => ({
   fsService: { read: readMock },
 }))
 
-vi.mock('../services/ai', () => ({
+vi.mock('../services/ai', async (importOriginal) => ({
+  // The panel also renders the token count, so the real helper is kept: a
+  // stub here would make the display path untested.
+  ...(await importOriginal<typeof import('../services/ai')>()),
   startChatCompletion: vi.fn(),
   aiService: { cancelStream: vi.fn() },
 }))
@@ -116,6 +119,48 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
+describe('the token count on an answer', () => {
+  // A request costs money, and the number that says how much is only visible
+  // in the provider dashboard unless the app shows it. It must show the
+  // provider total when there is one, and stay quiet when there is not.
+  it('shows the total the provider reported', async () => {
+    const host = mountPanel()
+    const stream = startStream()
+    typePrompt(host, 'hello')
+    await flush()
+    sendButton(host).click()
+    await flush()
+    stream.handlers().onDone('ok', { promptTokens: 10, completionTokens: 5, totalTokens: 15 })
+    await flush()
+    expect(host.querySelector('.chat-usage')?.textContent).toContain('15')
+  })
+
+  it('sums the parts when the provider sent no total', async () => {
+    const host = mountPanel()
+    const stream = startStream()
+    typePrompt(host, 'hello')
+    await flush()
+    sendButton(host).click()
+    await flush()
+    stream.handlers().onDone('ok', { promptTokens: 7, completionTokens: 3, totalTokens: null })
+    await flush()
+    expect(host.querySelector('.chat-usage')?.textContent).toContain('10')
+  })
+
+  it('shows nothing at all when no count was reported', async () => {
+    // An absent count is not zero: a fabricated 0 would look like a free
+    // request rather than an unreported one.
+    const host = mountPanel()
+    const stream = startStream()
+    typePrompt(host, 'hello')
+    await flush()
+    sendButton(host).click()
+    await flush()
+    stream.handlers().onDone('ok', null)
+    await flush()
+    expect(host.querySelector('.chat-usage')).toBeNull()
+  })
+})
 describe('the quick thinking-depth control', () => {
   it('shows the stored depth and writes a change straight through', async () => {
     // Thinking depth used to be reachable only from the settings dialog, which

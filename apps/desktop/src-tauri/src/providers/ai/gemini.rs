@@ -6,7 +6,9 @@
 
 use serde_json::Value;
 
-use super::client::{normalize_reasoning_effort, split_data_url, system_prompt_of, AIConfig};
+use super::client::{
+    normalize_reasoning_effort, split_data_url, system_prompt_of, token_count, AIConfig, TokenUsage,
+};
 
 /// Gemini's thinking budget in tokens for a normalised rung; `none` is an
 /// explicit `0` (thinking off), unlike Anthropic where it means "omit the
@@ -99,4 +101,76 @@ pub fn extract_text(v: &Value) -> Option<String> {
     v["candidates"][0]["content"]["parts"][0]["text"]
         .as_str()
         .map(str::to_string)
+}
+
+/// Extract token usage from a Gemini frame.
+///
+/// Gemini attaches `usageMetadata` to chunks — the last chunk of a stream
+/// carries the final counts — with `promptTokenCount`, `candidatesTokenCount`
+/// and `totalTokenCount`. A frame without it, and any count that is not a
+/// non-negative integer, yields nothing rather than a guessed number;
+/// `thoughtsTokenCount` is deliberately not folded into the candidate count,
+/// which is not what the API reports it as.
+pub fn extract_usage(v: &Value) -> Option<TokenUsage> {
+    let meta = v.get("usageMetadata").filter(|m| m.is_object())?;
+    let usage = TokenUsage {
+        prompt_tokens: token_count(meta.get("promptTokenCount")),
+        completion_tokens: token_count(meta.get("candidatesTokenCount")),
+        total_tokens: token_count(meta.get("totalTokenCount")),
+    };
+    usage.has_any().then_some(usage)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn reads_usage_metadata() {
+        let v = json!({
+            "candidates": [{ "content": { "parts": [{ "text": "hi" }] } }],
+            "usageMetadata": {
+                "promptTokenCount": 9,
+                "candidatesTokenCount": 4,
+                "totalTokenCount": 13
+            }
+        });
+        assert_eq!(
+            extract_usage(&v),
+            Some(TokenUsage {
+                prompt_tokens: Some(9),
+                completion_tokens: Some(4),
+                total_tokens: Some(13),
+            })
+        );
+    }
+
+    #[test]
+    fn partial_metadata_keeps_only_what_was_sent() {
+        let v = json!({ "usageMetadata": { "totalTokenCount": 13 } });
+        assert_eq!(
+            extract_usage(&v),
+            Some(TokenUsage {
+                total_tokens: Some(13),
+                ..TokenUsage::default()
+            })
+        );
+    }
+
+    #[test]
+    fn absent_or_malformed_metadata_is_none() {
+        assert_eq!(
+            extract_usage(&json!({ "candidates": [{ "finishReason": "STOP" }] })),
+            None
+        );
+        assert_eq!(extract_usage(&json!({ "usageMetadata": null })), None);
+        assert_eq!(extract_usage(&json!({ "usageMetadata": {} })), None);
+        assert_eq!(
+            extract_usage(
+                &json!({ "usageMetadata": { "promptTokenCount": "9", "candidatesTokenCount": -1 } })
+            ),
+            None
+        );
+    }
 }

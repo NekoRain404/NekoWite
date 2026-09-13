@@ -58,6 +58,13 @@ pub(crate) fn system_prompt_of(cfg: &AIConfig) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Read a token count the provider actually sent: only a non-negative integer
+/// counts. A string, a float, a negative number or an object is not a
+/// measurement, so it is ignored instead of coerced (see [`TokenUsage`]).
+pub(crate) fn token_count(raw: Option<&serde_json::Value>) -> Option<u64> {
+    raw.and_then(serde_json::Value::as_u64)
+}
+
 /// The thinking-depth ladder every provider understands, lowest first. The
 /// server accepts this exact lowercase set and 400s on anything else, so
 /// normalisation may only ever return one of these six words or `None`.
@@ -79,6 +86,50 @@ pub fn normalize_reasoning_effort(raw: Option<&str>) -> Option<&'static str> {
 pub struct AIChunk {
     pub id: String,
     pub text: String,
+}
+
+/// Token accounting for one completion, as the provider itself reported it.
+///
+/// Every count is optional on purpose: the dialects differ (Anthropic never
+/// sends a total; OpenAI-compatible endpoints only put `usage` on the last
+/// chunk of a stream, and only when asked to; Gemini sends all three), and a
+/// number nobody measured must stay absent rather than be estimated from the
+/// text. A provider that omits usage entirely yields no `TokenUsage` at all
+/// (see [`ai_done_payload`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct TokenUsage {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_tokens: Option<u64>,
+}
+
+impl TokenUsage {
+    /// Fold a later frame's counts into this one. Providers split their
+    /// accounting across frames — Anthropic sends a partial `output_tokens` on
+    /// `message_start` and the final value on `message_delta`, Gemini repeats
+    /// `usageMetadata` on several chunks — so the newest value wins per field
+    /// and a frame that omits a field never erases one already seen.
+    pub fn merge(&mut self, other: TokenUsage) {
+        if other.prompt_tokens.is_some() {
+            self.prompt_tokens = other.prompt_tokens;
+        }
+        if other.completion_tokens.is_some() {
+            self.completion_tokens = other.completion_tokens;
+        }
+        if other.total_tokens.is_some() {
+            self.total_tokens = other.total_tokens;
+        }
+    }
+
+    /// True when the provider reported at least one count.
+    pub fn has_any(&self) -> bool {
+        self.prompt_tokens.is_some()
+            || self.completion_tokens.is_some()
+            || self.total_tokens.is_some()
+    }
 }
 
 /// RAII guard that decrements the pending counter on drop, so a task aborted
@@ -119,6 +170,28 @@ pub fn emit_ai_error(app: &tauri::AppHandle, id: &str, message: &str) {
         "ai-error",
         serde_json::json!({ "id": id, "message": message }),
     );
+}
+
+/// Fold one parsed frame's usage into a stream's running total.
+pub fn accumulate_usage(total: &mut Option<TokenUsage>, delta: &SseDelta) {
+    if let Some(found) = delta.usage {
+        total.get_or_insert_with(TokenUsage::default).merge(found);
+    }
+}
+
+/// Payload of the terminal `ai-done` event: the answer plus the provider's
+/// token accounting [when it reported any](TokenUsage).
+///
+/// `usage` is `null` - never a zeroed or estimated object - when nothing was
+/// reported, so a caller can tell "this cost nothing to measure" from "this
+/// cost zero tokens". An empty usage object is normalised to `null` here so the
+/// frontend has one spelling of "not reported".
+pub fn ai_done_payload(id: &str, full: &str, usage: Option<TokenUsage>) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "full": full,
+        "usage": usage.filter(TokenUsage::has_any),
+    })
 }
 
 /// Guard against SSRF / internal-endpoint abuse via a user-supplied `base_url`.
@@ -180,7 +253,7 @@ fn is_private_or_loopback_ip(ip: std::net::IpAddr) -> bool {
                 || (o[0] == 100 && (16..=127).contains(&o[1])) // 100.64.0.0/10 CGNAT
                 || (o[0] == 169 && o[1] == 254)               // 169.254.0.0/16 link-local
                 || (o[0] == 172 && (16..=31).contains(&o[1])) // 172.16.0.0/12 private
-                || (o[0] == 192 && o[1] == 168)               // 192.168.0.0/16 private
+                || (o[0] == 192 && o[1] == 168) // 192.168.0.0/16 private
         }
         std::net::IpAddr::V6(v6) => {
             let seg = v6.segments();
@@ -324,8 +397,10 @@ pub struct SseDelta {
     pub done: bool,
     /// The server reported a failure INSIDE the stream (HTTP was 200).
     pub error: Option<String>,
+    /// Token counts the frame carried, when it carried any. `None` on every
+    /// frame of a provider (or endpoint) that reports no usage.
+    pub usage: Option<TokenUsage>,
 }
-
 
 pub fn build_prompt(cursor_prefix: &str) -> String {
     format!(
@@ -555,13 +630,24 @@ pub fn parse_sse_event(line: &str, provider: &str, acc: &mut String) -> Option<S
     .flatten()
     .find_map(|f| f.as_str())
     .map(str::to_string);
-    if text.is_none() && reasoning.is_none() && finish_reason.is_none() {
+    // Token accounting, where each dialect puts it. A usage-only frame is a
+    // real frame: OpenAI-compatible endpoints answer an
+    // `stream_options.include_usage` request with a last chunk that has an empty
+    // `choices` array and nothing but `usage`, and Gemini attaches
+    // `usageMetadata` to chunks that carry no text at all.
+    let usage = match provider {
+        "anthropic" => openai_compatible::extract_anthropic_usage(&v),
+        "gemini" => gemini::extract_usage(&v),
+        _ => openai_compatible::extract_openai_usage(&v),
+    };
+    if text.is_none() && reasoning.is_none() && finish_reason.is_none() && usage.is_none() {
         return None;
     }
     Some(SseDelta {
         text,
         reasoning,
         finish_reason,
+        usage,
         ..SseDelta::default()
     })
 }
@@ -808,6 +894,9 @@ pub async fn stream_complete(
 
     let mut stream = response.bytes_stream();
     let mut full = String::new();
+    // Provider-reported token counts, merged across the frames that carry them
+    // (see `TokenUsage::merge`); stays `None` when the provider reports none.
+    let mut usage: Option<TokenUsage> = None;
     let mut buffer = SseBuffer::new();
     let mut stream_ended = false;
     // Reasoning models can spend the ENTIRE token budget thinking and then
@@ -851,6 +940,7 @@ pub async fn stream_complete(
                     let Some(delta) = parse_sse_event(&line, &config.provider, &mut full) else {
                         continue;
                     };
+                    accumulate_usage(&mut usage, &delta);
                     // An error frame arrives on a 200 response, so it has to be
                     // turned into a real error here or the truncated answer is
                     // accepted as if it were complete.
@@ -914,6 +1004,7 @@ pub async fn stream_complete(
             let Some(delta) = parse_sse_event(&line, &config.provider, &mut full) else {
                 continue;
             };
+            accumulate_usage(&mut usage, &delta);
             if delta.done {
                 break;
             }
@@ -966,7 +1057,7 @@ pub async fn stream_complete(
         );
         return Err(message.into());
     }
-    let _ = app.emit("ai-done", serde_json::json!({ "id": id, "full": full }));
+    let _ = app.emit("ai-done", ai_done_payload(id, &full, usage));
     Ok(())
 }
 
@@ -999,13 +1090,29 @@ mod tests {
     #[test]
     fn helper_flags_private_loopback_and_mapped_ips() {
         for host in [
-            "127.0.0.1", "10.0.0.5", "172.16.0.1", "192.168.1.1", "169.254.169.254",
-            "100.64.0.1", "0.0.0.0", "::1", "::", "fc00::1", "fe80::1",
-            "::ffff:127.0.0.1", "::ffff:192.168.0.5", "localhost",
+            "127.0.0.1",
+            "10.0.0.5",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "::1",
+            "::",
+            "fc00::1",
+            "fe80::1",
+            "::ffff:127.0.0.1",
+            "::ffff:192.168.0.5",
+            "localhost",
         ] {
             assert!(is_private_or_loopback_host(host), "should flag {host}");
         }
-        for host in ["8.8.8.8", "203.0.113.9", "2606:4700:4700::1111", "api.openai.com"] {
+        for host in [
+            "8.8.8.8",
+            "203.0.113.9",
+            "2606:4700:4700::1111",
+            "api.openai.com",
+        ] {
             assert!(!is_private_or_loopback_host(host), "should allow {host}");
         }
     }
@@ -1064,6 +1171,130 @@ mod tests {
     }
 
     #[test]
+    fn openai_usage_is_read_from_the_final_chunk() {
+        let mut acc = String::new();
+        let line = r#"data: {"id":"1","choices":[],"usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15}}"#;
+        let delta = parse_sse_event(line, "openai", &mut acc).expect("usage frame");
+        assert_eq!(delta.text, None, "a usage frame carries no answer text");
+        assert_eq!(
+            delta.usage,
+            Some(TokenUsage {
+                prompt_tokens: Some(12),
+                completion_tokens: Some(3),
+                total_tokens: Some(15),
+            })
+        );
+    }
+
+    #[test]
+    fn anthropic_usage_is_merged_across_message_start_and_delta() {
+        let mut acc = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        for line in [
+            r#"data: {"type":"message_start","message":{"usage":{"input_tokens":40,"output_tokens":1}}}"#,
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":17}}"#,
+        ] {
+            let delta = parse_sse_event(line, "anthropic", &mut acc).expect("anthropic frame");
+            accumulate_usage(&mut usage, &delta);
+        }
+        assert_eq!(
+            usage,
+            Some(TokenUsage {
+                prompt_tokens: Some(40),
+                completion_tokens: Some(17),
+                total_tokens: None,
+            }),
+            "the final output_tokens must replace the partial one message_start sent"
+        );
+    }
+
+    #[test]
+    fn a_stream_that_reports_no_usage_ends_with_null_and_invents_nothing() {
+        let mut acc = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        for line in [
+            r#"data: {"choices":[{"delta":{"content":"hi"}}]}"#,
+            "data: [DONE]",
+        ] {
+            if let Some(delta) = parse_sse_event(line, "openai", &mut acc) {
+                accumulate_usage(&mut usage, &delta);
+            }
+        }
+        assert_eq!(usage, None);
+        let payload = ai_done_payload("ai-1", "hi", usage);
+        assert_eq!(payload["id"], "ai-1");
+        assert_eq!(payload["full"], "hi");
+        assert_eq!(payload["usage"], serde_json::Value::Null);
+        // An all-empty usage object is the same "not reported", not a 0-token
+        // completion.
+        let empty = ai_done_payload("ai-1", "hi", Some(TokenUsage::default()));
+        assert_eq!(empty["usage"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn malformed_usage_fields_are_ignored_not_converted_to_numbers() {
+        // A count that is not a non-negative integer was not measured: it must
+        // stay absent instead of being cast into a number nobody sent.
+        let mut acc = String::new();
+        for (line, provider) in [
+            (
+                r#"data: {"choices":[{"delta":{"content":"hi"}}],"usage":"lots"}"#,
+                "openai",
+            ),
+            (
+                r#"data: {"choices":[{"delta":{"content":"hi"}}],"usage":{"prompt_tokens":"12","completion_tokens":-3,"total_tokens":1.5}}"#,
+                "openai",
+            ),
+            (
+                r#"data: {"choices":[{"delta":{"content":"hi"}}],"usage":{}}"#,
+                "openai",
+            ),
+            (
+                r#"data: {"type":"message_delta","delta":{"text":"hi"},"usage":{"output_tokens":{}}}"#,
+                "anthropic",
+            ),
+            (
+                r#"data: {"candidates":[{"content":{"parts":[{"text":"hi"}]}}],"usageMetadata":{"promptTokenCount":"9"}}"#,
+                "gemini",
+            ),
+        ] {
+            let delta = parse_sse_event(line, provider, &mut acc)
+                .unwrap_or_else(|| panic!("frame was dropped: {line}"));
+            assert_eq!(delta.usage, None, "must not convert {line}");
+        }
+    }
+
+    #[test]
+    fn ai_done_payload_carries_the_reported_usage() {
+        let usage = TokenUsage {
+            prompt_tokens: Some(40),
+            completion_tokens: Some(17),
+            total_tokens: None,
+        };
+        let payload = ai_done_payload("ai-1", "answer", Some(usage));
+        assert_eq!(payload["usage"]["prompt_tokens"], 40);
+        assert_eq!(payload["usage"]["completion_tokens"], 17);
+        // Anthropic reports no total, so there is no total key at all - the
+        // frontend must not be handed a sum the provider never sent.
+        assert!(payload["usage"].get("total_tokens").is_none());
+    }
+
+    #[test]
+    fn a_usage_only_final_chunk_is_not_dropped() {
+        // OpenAI-compatible endpoints answer a `stream_options.include_usage`
+        // request with a LAST chunk that has an empty `choices` array and only
+        // `usage`. A frame with no text, no reasoning and no finish_reason used
+        // to be dropped by the parser, so the counts never reached the stream
+        // loop (nor the `ai-done` payload) at all.
+        let mut acc = String::new();
+        let line = r#"data: {"id":"1","choices":[],"usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15}}"#;
+        assert!(
+            parse_sse_event(line, "openai", &mut acc).is_some(),
+            "a usage-only frame must not be dropped"
+        );
+    }
+
+    #[test]
     fn gemini_url_has_no_key_embedded() {
         let cfg = AIConfig {
             provider: "gemini".into(),
@@ -1077,7 +1308,13 @@ mod tests {
             allow_private: false,
         };
         let (url, _body) = resolve_endpoint(&cfg, "hi", &[]);
-        assert!(!url.contains("SECRET-KEY"), "key must not appear in URL: {url}");
-        assert!(!url.contains("key="), "url must not carry a key query param: {url}");
+        assert!(
+            !url.contains("SECRET-KEY"),
+            "key must not appear in URL: {url}"
+        );
+        assert!(
+            !url.contains("key="),
+            "url must not carry a key query param: {url}"
+        );
     }
 }

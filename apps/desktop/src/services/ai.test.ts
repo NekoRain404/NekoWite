@@ -24,11 +24,21 @@ vi.mock('../features/editor/sessionManager', () => ({
   },
 }))
 
-import { aiService, aiThinking, buildAIPrompt, getCursorPrefix, startChatCompletion } from './ai'
+import {
+  aiService,
+  aiThinking,
+  buildAIPrompt,
+  getCursorPrefix,
+  startChatCompletion,
+  usageTotal,
+  type AiTokenUsage,
+} from './ai'
 import { useAiPermissionStore } from '../stores/aiPermission'
 
 interface Handlers {
-  [event: string]: (e: { payload: { id: string; text?: string; full?: string; message?: string } }) => void
+  [event: string]: (e: {
+    payload: { id: string; text?: string; full?: string; message?: string; usage?: unknown }
+  }) => void
 }
 
 function captureListen(): { handlers: Handlers; offs: ReturnType<typeof vi.fn>[] } {
@@ -312,7 +322,7 @@ describe('startChatCompletion', () => {
   const cfg = { provider: 'local', model: 'm' } as const
   const noopHandlers = { onChunk: vi.fn(), onDone: vi.fn(), onError: vi.fn() }
 
-  type Payload = { id: string; text?: string; full?: string; message?: string }
+  type Payload = { id: string; text?: string; full?: string; message?: string; usage?: unknown }
 
   function captureStreamListen(): {
     handlers: Record<string, (e: { payload: Payload }) => void>
@@ -368,7 +378,7 @@ describe('startChatCompletion', () => {
     await startChatCompletion({ ...cfg }, 'look', [], { ...noopHandlers, onDone })
     handlers['ai-chunk']({ payload: { id: lastCompleteId(-1), text: 'Hi' } })
     handlers['ai-done']({ payload: { id: lastCompleteId(), full: 'Hello world' } })
-    expect(onDone).toHaveBeenCalledWith('Hello world')
+    expect(onDone).toHaveBeenCalledWith('Hello world', null)
   })
 
   it('calls onError when ai-error fires for the active stream', async () => {
@@ -425,7 +435,7 @@ describe('startChatCompletion', () => {
     await startChatCompletion({ ...cfg }, 'look', [], { ...noopHandlers, onDone })
     handlers['ai-done']({ payload: { id: lastCompleteId(), full: 'final text' } })
     expect(onDone).toHaveBeenCalledTimes(1)
-    expect(onDone).toHaveBeenCalledWith('final text')
+    expect(onDone).toHaveBeenCalledWith('final text', null)
     expect(offs.every((o) => o.mock.calls.length > 0)).toBe(true)
   })
 
@@ -467,7 +477,75 @@ describe('startChatCompletion', () => {
     expect(onDone1).not.toHaveBeenCalled()
     // The newer stream still finalizes normally.
     s2.handlers['ai-done']({ payload: { id: lastCompleteId(-1), full: 'b' } })
-    expect(onDone2).toHaveBeenCalledWith('b')
+    expect(onDone2).toHaveBeenCalledWith('b', null)
+  })
+
+  it('passes the provider token usage to onDone', async () => {
+    const { handlers } = captureStreamListen()
+    const onDone = vi.fn()
+    await startChatCompletion({ ...cfg }, 'look', [], { ...noopHandlers, onDone })
+    handlers['ai-done']({
+      payload: {
+        id: lastCompleteId(),
+        full: 'Answer',
+        usage: { prompt_tokens: 40, completion_tokens: 17 },
+      },
+    })
+    // Anthropic reports no total, so it stays null instead of being invented
+    // here; a caller that wants one adds the parts up with usageTotal.
+    expect(onDone).toHaveBeenCalledWith('Answer', {
+      promptTokens: 40,
+      completionTokens: 17,
+      totalTokens: null,
+    })
+  })
+
+  it('reports null usage when the stream never reported any', async () => {
+    const { handlers } = captureStreamListen()
+    const onDone = vi.fn()
+    await startChatCompletion({ ...cfg }, 'look', [], { ...noopHandlers, onDone })
+    handlers['ai-done']({ payload: { id: lastCompleteId(), full: 'Answer' } })
+    // A provider that omits usage must not produce counts: "unknown" has to
+    // survive to the caller as null, not as 0.
+    expect(onDone).toHaveBeenCalledWith('Answer', null)
+  })
+
+  it('ignores malformed usage instead of turning it into counts', async () => {
+    for (const usage of [
+      'lots',
+      { prompt_tokens: '12' },
+      { completion_tokens: -3 },
+      { total_tokens: Number.NaN },
+      { total_tokens: { total: 5 } },
+      {},
+      null,
+    ]) {
+      const { handlers } = captureStreamListen()
+      const onDone = vi.fn()
+      await startChatCompletion({ ...cfg }, 'look', [], { ...noopHandlers, onDone })
+      handlers['ai-done']({ payload: { id: lastCompleteId(), full: 'Answer', usage } })
+      expect(onDone).toHaveBeenCalledWith('Answer', null)
+    }
+  })
+})
+
+describe('usageTotal', () => {
+  const usage = (
+    promptTokens: number | null,
+    completionTokens: number | null,
+    totalTokens: number | null,
+  ): AiTokenUsage => ({ promptTokens, completionTokens, totalTokens })
+
+  it('prefers the provider total, falls back to the reported parts, else null', () => {
+    // Gemini / OpenAI-compatible: the endpoint sent the total itself.
+    expect(usageTotal(usage(40, 17, 57))).toBe(57)
+    // Anthropic: input/output only.
+    expect(usageTotal(usage(40, 17, null))).toBe(57)
+    expect(usageTotal(usage(40, null, null))).toBe(40)
+    // Nothing reported is not "0 tokens".
+    expect(usageTotal(usage(null, null, null))).toBeNull()
+    expect(usageTotal(null)).toBeNull()
+    expect(usageTotal(undefined)).toBeNull()
   })
 })
 
@@ -553,7 +631,7 @@ describe('reasoning progress', () => {
     expect(onDone).not.toHaveBeenCalled()
 
     handlers['ai-done']({ payload: { id: lastCompleteId(), full: 'Answer' } })
-    expect(onDone).toHaveBeenCalledWith('Answer')
+    expect(onDone).toHaveBeenCalledWith('Answer', null)
     stream.cancel()
   })
 })

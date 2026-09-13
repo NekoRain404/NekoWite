@@ -21,6 +21,10 @@ export interface ChatSessionMessage {
    * request was destroyed — instead of reaching a normal end. Lets a reopened
    * panel show partial text as incomplete rather than as a finished answer. */
   interrupted?: boolean
+  /** Token total the provider reported for this answer, when it reported one.
+   *  It is part of what a request cost, so it is persisted with the turn: a
+   *  figure that disappears on relaunch cannot be compared with anything. */
+  usageTotal?: number
 }
 
 export interface ChatSession {
@@ -160,6 +164,11 @@ function sanitizeMessage(value: unknown): ChatSessionMessage | null {
   // Only an exact boolean is trusted: any other truthy value from a hand-edited
   // or foreign store would mark old answers as cut off.
   if (o.interrupted === true) msg.interrupted = true
+  // Same rule as interrupted: a hand-edited or foreign store must not be
+  // able to put an impossible count on screen.
+  if (typeof o.usageTotal === "number" && Number.isFinite(o.usageTotal) && o.usageTotal > 0) {
+    msg.usageTotal = Math.round(o.usageTotal)
+  }
   return msg
 }
 
@@ -190,6 +199,7 @@ function toStoredMessage(message: ChatSessionMessage): ChatSessionMessage {
   if (message.images && message.images.length) out.images = message.images
   if (message.imageNotice) out.imageNotice = message.imageNotice
   if (message.interrupted) out.interrupted = true
+  if (message.usageTotal) out.usageTotal = message.usageTotal
   return out
 }
 
