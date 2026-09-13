@@ -281,7 +281,7 @@
 
 ## 验证与交付（第二轮，2026-09-13）
 
-- 便携版：`release/nekowite_0.1.0_x64.exe`（未签名），SHA-256 `19e7a82bf1d91711f00a7f7197763d60e595f588813313ee92b996db9799f40b`
+- 便携版：`release/nekowite_0.1.0_x64.exe`（未签名），SHA-256 `19e7a82bf1d91711f00a7f7197763d60e595f588813313ee92b996db9799f40b`（已被后续提交取代）
 - 真机验收（CDP 驱动**打包版本体**，控制台零错误）：
   - `apps/desktop/ai-lab/270-round22-acceptance.cjs` **10/10**：笔记列表渲染、应用内重命名后标签跟随、随后 Ctrl+S 写回改名后的文件且不产生副本、任务列表纯文本渲染、关闭二次确认后单击即删、`system_accent_color` 返回本机真实系统色、无重复 ghost、每日笔记无行尾空格。
   - `apps/desktop/ai-lab/283-delete-assets.cjs` **6/6**：删除笔记后 `notes/doomed.md` **与** `notes/doomed_assets/` 都离开 vault 并出现在回收站（`notes%2Fdoomed.md`、`notes%2Fdoomed%5Fassets`），无关笔记不受影响。
@@ -294,7 +294,7 @@
   5. 故意用不存在的模型名：返回 403，并且**带上服务商自己的说明**（`The current group does not support the requested model ... Available models: deepseek-flash`），而不是一句无从下手的「请求失败」；
   6. 中途取消：`ai_cancel` 后 **3 ms** 内返回，不再等读超时。
 - 测试门禁：desktop **1445**、editor-core **648**、plugin-host **103**、Rust **170**、Playwright **137**；`typecheck` / `lint` / `clippy -D warnings` 全绿。
-- **最终便携版**：`release/nekowite_0.1.0_x64.exe`（未签名），SHA-256 `fa64a5a05a71de4bcae6ea4371501e941566731c0b7d94334d07f55a0b1fb276`。同一轮里真机探针对它复跑全部通过：`270-round22-acceptance.cjs` **10/10**、`283-delete-assets.cjs` **6/6**、`286-live-ai.cjs` **6/6**（对真实端点的发包，含思考深度开关的对照）、`240-editor-fixes.cjs` 前 5 项（第 6 项依赖 dev 构建的模块加载器，打包版无此能力）、`200-packaged-smoke.cjs` 6/8（后两项是探针自身的旧选择器问题）。
+- **最终便携版**：`release/nekowite_0.1.0_x64.exe`（未签名），SHA-256 `cc98761e012aff8df95c98df2d01ce75ba2f9a133f7f233e9542110b3f703937`。同一轮里真机探针对它复跑全部通过：`270-round22-acceptance.cjs` **10/10**、`283-delete-assets.cjs` **6/6**、`286-live-ai.cjs` **6/6**（对真实端点的发包，含思考深度开关的对照）、`240-editor-fixes.cjs` 前 5 项（第 6 项依赖 dev 构建的模块加载器，打包版无此能力）、`200-packaged-smoke.cjs` 6/8（后两项是探针自身的旧选择器问题）。
 - **设置面板实机确认**（`apps/desktop/ai-lab/287-ai-settings.cjs`，打包版，AI 分区）：**思考深度**（不思考/极简/低/中/高/极高/跟随服务商默认）、**写入权限**（每次询问/直接写入/禁止）、**笔记上下文长度** 三项控件都在，且与前面 6/6 的真实发包结果相互印证（「高」确实产生推理增量，「不思考」确实为 0）。
 - **回归清扫**（打包版，本轮修过的历史缺陷逐条复跑）：`210-backend-fixes.cjs` **7/7**——回收站里三条无关条目的路径与正文都没有被改写（P0 回收站破坏）、只改大小写的重命名成功并回报新名、用户自己的 `.tmp` 文件不会被顺带清掉、历史快照失败时保存仍成功并带出可读警告、无插件的 vault 不再弹无关提示；`240-editor-fixes.cjs` 前 5 项——`<br />` 不被吞、表格公式的单个竖线不被转义破坏、大小写重命名在目录项上生效。
 
