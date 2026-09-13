@@ -76,10 +76,14 @@ const DEFAULT_MAX_HISTORY: usize = 10;
 ///     ordering - a silent data-loss failure - while cross-vault waiting is
 ///     unobservable (saves are user-paced and the critical section is a few
 ///     file operations).
-///   * It covers `write_file`/`create_new_file`/`restore_history`.
-///     `rename_entry` and direct `snapshot_history` calls do not hold it, so
-///     the snapshot chain is not protected against those paths; do not read
-///     this as more than it is.
+///   * It covers `write_file`/`create_new_file`/`restore_history` and
+///     `rename_entry`. Direct `snapshot_history` calls do not hold it, so the
+///     snapshot chain is not protected against those paths; do not read this
+///     as more than it is.
+///   * `rename_entry` holds it because a save that resolved the old path just
+///     before the move would otherwise publish its temp file at the path the
+///     rename vacated — an untracked copy at the old name, after the history
+///     and trash keys had already moved to the new one.
 ///
 /// `write_lock_scope_tests` pins the process-wide scope, so narrowing it means
 /// deliberately updating that test and the reasoning above.
@@ -307,6 +311,109 @@ fn copy_new(from: &Path, to: &Path) -> io::Result<()> {
     copied
 }
 
+/// Why a create-only write failed.
+enum CreateFileError {
+    /// The destination name is taken. This is the ordinary outcome of a
+    /// create-only write that raced another writer, which callers handle by
+    /// choosing the next name rather than by reporting an OS error.
+    AlreadyExists,
+    /// Everything else, already phrased for the user.
+    Failed(String),
+}
+
+/// Create `resolved` with `bytes`, refusing to replace anything already there,
+/// and report a taken name as [`CreateFileError::AlreadyExists`].
+///
+/// The bytes are staged in a unique temp sibling and fsynced, then published
+/// with a hard link, which either creates the name or fails with
+/// `AlreadyExists`. That makes "is this name free?" and "write it" ONE step: a
+/// file that appears in between (another instance of the app, a sync client,
+/// the user) is never overwritten, and no reader sees a half-written file under
+/// the real name. Filesystems without hard links (FAT32/exFAT) fall back to a
+/// create-new copy, which refuses an existing destination just the same.
+fn create_new_bytes(resolved: &Path, bytes: &[u8]) -> Result<(), CreateFileError> {
+    let parent = resolved.parent().ok_or_else(|| {
+        CreateFileError::Failed(format!(
+            "cannot create {}: it has no parent folder",
+            crate::domain::path_policy::ipc_path(resolved)
+        ))
+    })?;
+    std::fs::create_dir_all(parent)
+        .map_err(|e| CreateFileError::Failed(fs_error("create the folder", parent, e)))?;
+
+    let name = resolved
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file");
+    let tmp = parent.join(format!(".{name}.{}.tmp", time_nonce()));
+    let staged = (|| {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .map_err(|e| fs_error("create the temporary file", &tmp, e))?;
+        f.write_all(bytes)
+            .map_err(|e| fs_error("write the temporary file", &tmp, e))?;
+        f.sync_all()
+            .map_err(|e| fs_error("flush the temporary file", &tmp, e))
+    })();
+    if let Err(message) = staged {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(CreateFileError::Failed(message));
+    }
+
+    let published = match std::fs::hard_link(&tmp, resolved) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(CreateFileError::AlreadyExists),
+        Err(e) if is_link_unsupported(&e) => copy_new(&tmp, resolved).map_err(|e| {
+            if e.kind() == io::ErrorKind::AlreadyExists {
+                CreateFileError::AlreadyExists
+            } else {
+                CreateFileError::Failed(fs_error("create", resolved, e))
+            }
+        }),
+        Err(e) => Err(CreateFileError::Failed(fs_error("create", resolved, e))),
+    };
+    let _ = std::fs::remove_file(&tmp);
+    published?;
+    sync_parent_dir(resolved).map_err(CreateFileError::Failed)
+}
+
+/// Move `from` to `to` without ever replacing an existing `to`.
+///
+/// `fs::rename` REPLACES its destination, so a name claimed between "is it
+/// free?" and the rename is silently destroyed. For a file the move is a hard
+/// link — which either creates the name or fails with `AlreadyExists` — followed
+/// by removing the source: the same inode, so the result is indistinguishable
+/// from a rename. Filesystems without hard links fall back to a create-new copy,
+/// which refuses an existing destination just the same.
+pub(crate) fn move_no_clobber(from: &Path, to: &Path) -> io::Result<()> {
+    if from.is_dir() {
+        // A directory has no portable no-clobber move: `rename` replaces an
+        // EMPTY destination directory on unix and fails on Windows, and claiming
+        // the name with `create_dir` first would make the move non-atomic (a
+        // crash in between strands an empty directory under the user's name).
+        // The check stays best-effort and the move stays one atomic rename; a
+        // FILE at the destination is still refused by the rename itself.
+        if to.exists() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "the destination already exists",
+            ));
+        }
+        return std::fs::rename(from, to);
+    }
+    match std::fs::hard_link(from, to) {
+        Ok(()) => std::fs::remove_file(from),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(e),
+        Err(e) if is_link_unsupported(&e) => {
+            copy_new(from, to)?;
+            std::fs::remove_file(from)
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// Creation order within one shared mtime: [`snapshot_history`] writes
 /// `{ms}.{ext}` first, then `{ms}-1.{ext}`, `{ms}-2.{ext}`, … so the collision
 /// suffix IS the age order, lower meaning older.
@@ -527,46 +634,10 @@ pub fn create_new_file(vault_root: &str, path: &str, content: &str) -> Result<()
         .ok_or_else(|| format!("cannot create {path}: it has no parent folder"))?;
     std::fs::create_dir_all(parent).map_err(|e| fs_error("create the folder", parent, e))?;
     let _ = cleanup_stale_tmp(parent, STALE_TMP_MAX_AGE);
-
-    let name = resolved
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("file");
-    let tmp = parent.join(format!(".{name}.{}.tmp", time_nonce()));
-    let staged = (|| {
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)
-            .map_err(|e| fs_error("create the temporary file", &tmp, e))?;
-        f.write_all(content.as_bytes())
-            .map_err(|e| fs_error("write the temporary file", &tmp, e))?;
-        f.sync_all()
-            .map_err(|e| fs_error("flush the temporary file", &tmp, e))
-    })();
-    if let Err(e) = staged {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e);
-    }
-
-    let published = match std::fs::hard_link(&tmp, &resolved) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(file_exists_error(path)),
-        // Not every filesystem can hard-link: FAT32 and exFAT (USB sticks, SD
-        // cards) return ERROR_INVALID_FUNCTION. `copy_new` refuses an existing
-        // destination itself, so the exclusivity guarantee survives.
-        Err(e) if is_link_unsupported(&e) => copy_new(&tmp, &resolved).map_err(|e| {
-            if e.kind() == io::ErrorKind::AlreadyExists {
-                file_exists_error(path)
-            } else {
-                fs_error("create", &resolved, e)
-            }
-        }),
-        Err(e) => Err(fs_error("create", &resolved, e)),
-    };
-    let _ = std::fs::remove_file(&tmp);
-    published?;
-    sync_parent_dir(&resolved)
+    create_new_bytes(&resolved, content.as_bytes()).map_err(|e| match e {
+        CreateFileError::AlreadyExists => file_exists_error(path),
+        CreateFileError::Failed(message) => message,
+    })
 }
 
 /// List the history snapshots for `path`, newest first.
@@ -824,9 +895,6 @@ pub fn import_attachment(vault_root: &str, source_path: &str, dir: &str) -> Resu
         resolve_within_rel(vault_root, dir)?
     };
     std::fs::create_dir_all(&dir_abs).map_err(|e| fs_error("create the folder", &dir_abs, e))?;
-    let unique = unique_attachment_name(&name, &dir_abs);
-    let relative = format!("{dir_rel}/{unique}");
-    let target = resolve_within(vault_root, &relative)?;
     // Bound the READ, not just the `metadata` check above: the file can be
     // replaced or grown in between, and `fs::read` would then pull an unbounded
     // amount into memory on the strength of a length that was true a moment
@@ -843,8 +911,8 @@ pub fn import_attachment(vault_root: &str, source_path: &str, dir: &str) -> Resu
             MAX_IMPORT_BYTES / (1024 * 1024)
         ));
     }
-    atomic_write_bytes(&target, &bytes)?;
-    Ok(relative)
+    let unique = publish_attachment(&dir_abs, &name, &bytes)?;
+    Ok(format!("{dir_rel}/{unique}"))
 }
 
 /// Reduce a pasted/typed attachment name to a bare `stem.ext` file name.
@@ -876,34 +944,73 @@ fn attachment_month_dir() -> String {
     Local::now().format("%Y-%m").to_string()
 }
 
-/// First free `stem.ext`, `stem-1.ext`, ... name inside `dir`; after 1000
-/// collisions fall back to a `-overflow` suffix so the loop cannot spin
-/// forever. Mirrors Memoir's `unique_file_name`.
-fn unique_attachment_name(preferred: &str, dir: &Path) -> String {
+/// How many `-<n>` (and then `-overflow-<n>`) names a new attachment may try
+/// before it gives up, so the search cannot spin forever over a directory that
+/// holds every candidate.
+const ATTACHMENT_NAME_ATTEMPTS: u32 = 1000;
+
+/// `stem.ext` for `n == 0`, `stem-<n>.ext` after that — the collision scheme
+/// both attachment entry points promise. Mirrors Memoir's `unique_file_name`.
+fn attachment_candidate(stem: &str, ext: &str, n: u32) -> String {
+    if n == 0 {
+        format!("{stem}.{ext}")
+    } else {
+        format!("{stem}-{n}.{ext}")
+    }
+}
+
+/// Publish `bytes` under the first free name derived from `preferred` inside
+/// `dir_abs`, returning the name it claimed.
+///
+/// The name is probed first (cheap, and in the ordinary case the first
+/// candidate is free) and then CLAIMED by the create-only write: a name another
+/// writer takes in between is reported as taken and the search simply goes on.
+/// Choosing the name and writing it are therefore one step, which the previous
+/// `unique_attachment_name` + `atomic_write_bytes` pair was not — two pastes of
+/// the same file name in the same millisecond both picked `paste.png` and the
+/// second overwrote the first, while both callers were handed the same path and
+/// only one payload was ever readable.
+fn publish_attachment(dir_abs: &Path, preferred: &str, bytes: &[u8]) -> Result<String, String> {
     let path = Path::new(preferred);
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("png");
-    for n in 0..1000u32 {
-        let candidate = if n == 0 {
-            format!("{stem}.{ext}")
-        } else {
-            format!("{stem}-{n}.{ext}")
-        };
-        if !dir.join(&candidate).exists() {
-            return candidate;
+    // `Ok(Some(name))` = claimed, `Ok(None)` = someone else has it.
+    let claim = |candidate: String| match create_new_bytes(&dir_abs.join(&candidate), bytes) {
+        Ok(()) => Ok(Some(candidate)),
+        Err(CreateFileError::AlreadyExists) => Ok(None),
+        Err(CreateFileError::Failed(message)) => Err(message),
+    };
+
+    for n in 0..ATTACHMENT_NAME_ATTEMPTS {
+        let candidate = attachment_candidate(stem, ext, n);
+        if !dir_abs.join(&candidate).exists() {
+            if let Some(name) = claim(candidate)? {
+                return Ok(name);
+            }
         }
     }
-    for n in 0..1000u32 {
+    for n in 0..ATTACHMENT_NAME_ATTEMPTS {
         let candidate = if n == 0 {
             format!("{stem}-overflow.{ext}")
         } else {
             format!("{stem}-overflow-{n}.{ext}")
         };
-        if !dir.join(&candidate).exists() {
-            return candidate;
+        if !dir_abs.join(&candidate).exists() {
+            if let Some(name) = claim(candidate)? {
+                return Ok(name);
+            }
         }
     }
-    format!("{stem}-overflow-{}.{ext}", time_nonce())
+    // A nonce makes the name unique in practice; it is still claimed rather
+    // than assumed free, so even this last resort cannot overwrite anything.
+    let candidate = format!("{stem}-overflow-{}.{ext}", time_nonce());
+    match claim(candidate)? {
+        Some(name) => Ok(name),
+        None => Err(format!(
+            "could not find a free name for {preferred} in {}",
+            crate::domain::path_policy::ipc_path(dir_abs)
+        )),
+    }
 }
 
 /// Decode and save a base64 image attachment, deduplicating name collisions
@@ -971,11 +1078,8 @@ pub fn save_attachment(
         resolve_within_rel(vault_root, dir)?
     };
     std::fs::create_dir_all(&dir_abs).map_err(|e| fs_error("create the folder", &dir_abs, e))?;
-    let unique = unique_attachment_name(&name, &dir_abs);
-    let relative = format!("{dir_rel}/{unique}");
-    let target = resolve_within(vault_root, &relative)?;
-    atomic_write_bytes(&target, &bytes)?;
-    Ok(relative)
+    let unique = publish_attachment(&dir_abs, &name, &bytes)?;
+    Ok(format!("{dir_rel}/{unique}"))
 }
 
 /// Resolve a media reference (e.g. from markdown) to an absolute path the
@@ -1010,6 +1114,12 @@ pub fn create_dir(vault_root: &str, path: &str) -> Result<String, String> {
 /// still carries old relative paths, so migrating the whole subtree's keys is
 /// deliberately out of scope here (single-file renames are covered).
 pub fn rename_entry(vault_root: &str, from: &str, to: &str) -> Result<String, String> {
+    // Serialize with the saves. Without this a save that resolved the old path
+    // just before the move publishes its temp file at the path the rename
+    // vacated, resurrecting the file after its history and trash keys have
+    // already been migrated to the new name — the rename then looks like it
+    // silently failed, and the old path holds a copy nothing tracks.
+    let _guard = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
     let (resolved_from, relative_from) = resolve_within_rel(vault_root, from)?;
     if !resolved_from.exists() {
         return Err(format!("not found: {relative_from}"));
@@ -1062,38 +1172,20 @@ pub fn rename_entry(vault_root: &str, from: &str, to: &str) -> Result<String, St
             let _ = std::fs::rename(&temp, &resolved_from);
             return Err(fs_error("rename to", &target, e));
         }
-    } else if is_dir {
-        // A directory has no portable no-clobber move: `rename` replaces an
-        // empty destination on unix and fails on Windows, and claiming the name
-        // first (create_dir) would make the move non-atomic. The `exists()`
-        // check above stays best-effort here, and the move stays one atomic
-        // rename.
-        std::fs::rename(&resolved_from, &resolved_to)
-            .map_err(|e| fs_error("rename", &resolved_from, e))?;
     } else {
-        // Files get a real no-clobber move. Between the `exists()` check above
-        // and this rename another process can create the destination, and
-        // `rename` REPLACES it — silently destroying that file. A hard link
-        // refuses to overwrite, so the link is what claims the name; removing
-        // the source then completes the move. Same inode, so the result is
-        // indistinguishable from a rename.
-        match std::fs::hard_link(&resolved_from, &resolved_to) {
-            Ok(()) => {
-                std::fs::remove_file(&resolved_from)
-                    .map_err(|e| fs_error("remove", &resolved_from, e))?;
-            }
+        // Files get a real no-clobber move: between the `exists()` check above
+        // and the move another writer can create the destination, and a plain
+        // `rename` would REPLACE it — silently destroying that file. A directory
+        // has no portable no-clobber rename, so `move_no_clobber` falls back to a
+        // best-effort check plus one atomic rename for it.
+        match move_no_clobber(&resolved_from, &resolved_to) {
+            Ok(()) => {}
             // Someone claimed the name in the window: report it exactly as the
-            // check above would have, rather than falling through to a rename
-            // that would clobber them.
+            // check above would have, rather than clobbering them.
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                 return Err(format!("target already exists: {relative_to}"));
             }
-            // No hard links on this volume (FAT32/exFAT): keep the old
-            // behaviour rather than failing a rename that used to work.
-            Err(_) => {
-                std::fs::rename(&resolved_from, &resolved_to)
-                    .map_err(|e| fs_error("rename", &resolved_from, e))?;
-            }
+            Err(e) => return Err(fs_error("rename", &resolved_from, e)),
         }
     }
     // The relative path was canonicalized BEFORE the move, so for a case-only
@@ -1212,6 +1304,42 @@ mod write_lock_scope_tests {
         let _ = std::fs::remove_dir_all(&vault_b);
     }
 
+    /// A rename must wait for a save that is in flight, and vice versa.
+    ///
+    /// Without a shared lock the two interleave: `write_file` resolves the old
+    /// path, `rename_entry` moves the file to its new name (migrating the
+    /// history and trash keys with it), and the save then publishes its temp
+    /// file at the path the rename just vacated. The result is a resurrected
+    /// file at the old name whose history and trash metadata belong to the new
+    /// one — the rename looks like it silently failed.
+    #[test]
+    fn rename_entry_waits_on_the_write_lock() {
+        let vault = temp_root("rename-lock");
+        let root = vault.to_str().unwrap().to_string();
+        std::fs::write(vault.join("a.md"), "content").unwrap();
+
+        let guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (tx, rx) = mpsc::channel();
+        let root_clone = root.clone();
+        let handle = std::thread::spawn(move || {
+            let ok = rename_entry(&root_clone, "a.md", "b.md").is_ok();
+            let _ = tx.send(ok);
+        });
+
+        assert!(
+            rx.recv_timeout(Duration::from_millis(250)).is_err(),
+            "rename_entry ran while the write lock was held"
+        );
+        drop(guard);
+        assert!(
+            rx.recv_timeout(Duration::from_secs(10)).unwrap(),
+            "rename_entry must finish once the lock is released"
+        );
+        handle.join().unwrap();
+        assert!(vault.join("b.md").exists(), "the rename still happened");
+        let _ = std::fs::remove_dir_all(&vault);
+    }
+
     #[test]
     fn restore_history_waits_on_the_write_lock() {
         let vault = temp_root("restore-lock");
@@ -1243,20 +1371,22 @@ mod write_lock_scope_tests {
 }
 
 #[cfg(test)]
-mod unique_attachment_name_tests {
+mod create_only_write_tests {
     use super::*;
+
+    fn scratch(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "nekowite-attach-{label}-{}-{}",
+            std::process::id(),
+            time_nonce()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
 
     #[test]
     fn overflow_name_is_skipped_when_it_already_exists() {
-        let dir = std::env::temp_dir().join(format!(
-            "nekowite-attach-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = scratch("overflow");
         for n in 0..1000u32 {
             let name = if n == 0 {
                 "pic.png".to_string()
@@ -1266,9 +1396,82 @@ mod unique_attachment_name_tests {
             std::fs::write(dir.join(&name), b"x").unwrap();
         }
         std::fs::write(dir.join("pic-overflow.png"), b"x").unwrap();
-        let unique = unique_attachment_name("pic.png", &dir);
+        let unique = publish_attachment(&dir, "pic.png", b"new").unwrap();
         assert_eq!(unique, "pic-overflow-1.png");
-        assert!(!dir.join(&unique).exists() || unique != "pic-overflow.png");
+        assert_eq!(std::fs::read(dir.join(&unique)).unwrap(), b"new");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The claim on a name is the CREATE, not the probe before it: an entry the
+    /// probe cannot see (a dangling symlink reads as absent to `exists()`) is
+    /// still refused, so a writer that owns the name keeps it.
+    #[test]
+    #[cfg(unix)]
+    fn create_new_bytes_refuses_a_name_a_probe_would_call_free() {
+        let dir = scratch("claim");
+        let target = dir.join("pic.png");
+        std::os::unix::fs::symlink(dir.join("missing.png"), &target).unwrap();
+        assert!(!target.exists(), "the probe has to miss this entry");
+
+        assert!(
+            matches!(
+                create_new_bytes(&target, b"new"),
+                Err(CreateFileError::AlreadyExists)
+            ),
+            "a create-only write must refuse the name the symlink holds"
+        );
+        assert!(
+            std::fs::symlink_metadata(&target)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the existing entry must survive the refused write"
+        );
+
+        // And the caller moves on to the next free name instead of failing.
+        assert_eq!(
+            publish_attachment(&dir, "pic.png", b"new").unwrap(),
+            "pic-1.png"
+        );
+        assert_eq!(std::fs::read(dir.join("pic-1.png")).unwrap(), b"new");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The same guarantee for the move: `fs::rename` replaces the destination,
+    /// `move_no_clobber` must not.
+    #[test]
+    #[cfg(unix)]
+    fn move_no_clobber_never_replaces_the_entry_at_the_destination() {
+        let dir = scratch("move");
+        let source = dir.join("from.md");
+        let taken = dir.join("to.md");
+        std::fs::write(&source, "source").unwrap();
+        std::fs::write(&taken, "occupant").unwrap();
+
+        assert!(
+            move_no_clobber(&source, &taken).is_err(),
+            "an existing file must not be replaced"
+        );
+        assert_eq!(std::fs::read_to_string(&taken).unwrap(), "occupant");
+        assert_eq!(std::fs::read_to_string(&source).unwrap(), "source");
+
+        // An entry that only `exists()` can see through: a dangling symlink.
+        let linked = dir.join("linked.md");
+        std::os::unix::fs::symlink(dir.join("missing.md"), &linked).unwrap();
+        assert!(
+            move_no_clobber(&source, &linked).is_err(),
+            "a dead symlink still holds the name"
+        );
+        assert!(std::fs::symlink_metadata(&linked)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+
+        // A free destination still moves, and leaves nothing behind.
+        let free = dir.join("free.md");
+        move_no_clobber(&source, &free).unwrap();
+        assert_eq!(std::fs::read_to_string(&free).unwrap(), "source");
+        assert!(!source.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

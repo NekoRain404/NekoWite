@@ -17,6 +17,7 @@ use crate::domain::path_policy::{
     is_safe_rel, resolve_within, resolve_within_rel,
 };
 use crate::errors::fs_error;
+use crate::storage::file_store;
 
 #[derive(Serialize, Clone, Debug)]
 pub struct TrashEntry {
@@ -285,10 +286,22 @@ pub fn clear_trash(vault_root: &str) -> Result<ClearTrashReport, String> {
     Ok(ClearTrashReport { removed, failed })
 }
 
-/// Move a trash entry back to its original vault path. If that path is now
-/// occupied, insert `-restored-<ts>` before the extension and return the new
-/// path. A missing parent folder (the original directory was deleted too) is
-/// created on the way.
+/// How many `-restored-<stamp>` names a restore may try before it gives up, so
+/// a folder that holds every candidate cannot make the loop spin forever.
+const RESTORE_NAME_ATTEMPTS: u32 = 64;
+
+/// Move a trash entry back to its original vault path. If that path is taken,
+/// insert `-restored-<ts>` before the extension and return the new path. A
+/// missing parent folder (the original directory was deleted too) is created on
+/// the way.
+///
+/// The destination is claimed by the move itself rather than by an `exists()`
+/// probe. Two restores of entries that share one original path run in the same
+/// millisecond, compute the SAME `-restored-<ts>` name, and the second
+/// `fs::rename` then replaced the file the first had just restored: a deleted
+/// note was destroyed by restoring another one, and both callers were told they
+/// had succeeded with the same path. A taken name now pushes the attempt to the
+/// next stamp instead.
 pub fn restore_from_trash(vault_root: &str, trash_path: &str) -> Result<String, String> {
     let resolved_trash = resolve_within(vault_root, trash_path)?;
     // The containment check below can only mean something if the trash root
@@ -312,21 +325,7 @@ pub fn restore_from_trash(vault_root: &str, trash_path: &str) -> Result<String, 
         return Err("cannot restore: invalid trash entry name".into());
     }
     let original_abs = resolve_within(vault_root, &original_rel)?;
-    let mut target = original_abs;
-    if target.exists() {
-        let ts = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or_default();
-        let parent = target.parent().map(|p| p.to_path_buf()).unwrap_or_default();
-        let fname = target
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("file")
-            .to_string();
-        target = parent.join(name_with_suffix(&fname, &format!("-restored-{ts}")));
-    }
-    if let Some(parent) = target.parent() {
+    if let Some(parent) = original_abs.parent() {
         // The original folder may itself be gone by restore time (`docs/` was
         // deleted after `docs/a.md`). `rename` cannot create it — mirror
         // `file_store::rename_entry`, which already does.
@@ -334,17 +333,48 @@ pub fn restore_from_trash(vault_root: &str, trash_path: &str) -> Result<String, 
             format!(
                 "cannot restore: the folder for {} could not be created ({e}); \
                  remove whatever occupies that path and try again",
-                crate::domain::path_policy::ipc_path(&target)
+                crate::domain::path_policy::ipc_path(&original_abs)
             )
         })?;
     }
-    std::fs::rename(&resolved_trash, &target).map_err(|e| {
-        format!(
-            "cannot restore to {}: {e}; check that the location is writable and try again",
-            crate::domain::path_policy::ipc_path(&target)
-        )
-    })?;
-    Ok(crate::domain::path_policy::ipc_path(&target))
+    let fname = original_abs
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file")
+        .to_string();
+    let parent = original_abs
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_default();
+    let mut ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default();
+    let mut target = original_abs;
+    for attempt in 0..=RESTORE_NAME_ATTEMPTS {
+        match file_store::move_no_clobber(&resolved_trash, &target) {
+            Ok(()) => return Ok(crate::domain::path_policy::ipc_path(&target)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                if attempt == RESTORE_NAME_ATTEMPTS {
+                    break;
+                }
+                // Bump rather than stack a second stamp, so the name keeps the
+                // single `-restored-<ms>` shape the frontend shows.
+                ts = ts.saturating_add(1);
+                target = parent.join(name_with_suffix(&fname, &format!("-restored-{ts}")));
+            }
+            Err(e) => {
+                return Err(format!(
+                    "cannot restore to {}: {e}; check that the location is writable and try again",
+                    crate::domain::path_policy::ipc_path(&target)
+                ))
+            }
+        }
+    }
+    Err(format!(
+        "cannot restore to {}: every restored name is taken; rename or remove one of them and try again",
+        crate::domain::path_policy::ipc_path(&target)
+    ))
 }
 
 /// Migrate the trash entry for a renamed file from the key for `from_rel` to
