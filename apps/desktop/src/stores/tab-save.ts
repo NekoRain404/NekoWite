@@ -95,7 +95,7 @@ export function createTabSave(deps: TabSaveDeps) {
     savingIds.value = next
   }
 
-  function saveStateOf(id: string): 'saved' | 'dirty' | 'saving' {
+  function stateOf(id: string): 'saved' | 'dirty' | 'saving' {
     if (savingIds.value.has(id)) return 'saving'
     const tab = tabs.value.find((x) => x.id === id)
     if (tab?.dirty) return 'dirty'
@@ -298,7 +298,7 @@ export function createTabSave(deps: TabSaveDeps) {
   return {
     markSaving,
     markSaved,
-    saveStateOf,
+    stateOf,
     noteSelfWrite,
     isSelfWrite,
     saveTab,

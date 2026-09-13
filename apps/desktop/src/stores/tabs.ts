@@ -166,7 +166,7 @@ export const useTabsStore = defineStore('tabs', () => {
     // save transaction
     markSaving: save.markSaving,
     markSaved: save.markSaved,
-    saveStateOf: save.saveStateOf,
+    saveStateOf: save.stateOf,
     noteSelfWrite: save.noteSelfWrite,
     isSelfWrite: save.isSelfWrite,
     saveActive: save.saveActive,
@@ -181,7 +181,7 @@ export const useTabsStore = defineStore('tabs', () => {
     untitledDirtyTabs: persistence.untitledDirtyTabs,
     referencedTmpPaths: persistence.referencedTmpPaths,
     // file operations
-    renamePathInTabs: fileOperations.renamePathInTabs,
+    renamePathInTabs: fileOperations.retargetAfterRename,
     beginMove: fileOperations.beginMove,
     endMove: fileOperations.endMove,
     isPendingMove: fileOperations.isPendingMove,

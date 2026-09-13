@@ -123,7 +123,7 @@ async function copyReference(item: AttachmentItem): Promise<void> {
   }
 }
 
-async function removeItem(item: AttachmentItem): Promise<void> {
+async function deleteItem(item: AttachmentItem): Promise<void> {
   const vault = tabs.vault
   if (!vault) return
   try {
@@ -184,7 +184,7 @@ function onMenuSelect(id: string): void {
       holdOpen = true
       return
     }
-    void removeItem(m.item)
+    void deleteItem(m.item)
   }
 }
 

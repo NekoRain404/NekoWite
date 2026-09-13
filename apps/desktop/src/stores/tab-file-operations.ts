@@ -95,7 +95,7 @@ export function createTabFileOperations(deps: TabFileOperationsDeps) {
    * alone unless `moved` says the move also rewrote the note's file-relative
    * references (see `services/noteMove.ts`); tabs keep their dirty state and
    * autosave timers. */
-  function renamePathInTabs(from: string, to: string, moved?: NoteMoveResult): void {
+  function retargetAfterRename(from: string, to: string, moved?: NoteMoveResult): void {
     for (const tab of tabs.value) {
       if (!tab.path) continue
       if (tab.path === from) {
@@ -213,7 +213,7 @@ export function createTabFileOperations(deps: TabFileOperationsDeps) {
     beginMove,
     endMove,
     isPendingMove,
-    renamePathInTabs,
+    retargetAfterRename,
     deleteTabFile,
     detachMissingPath,
     reloadFromDisk,
