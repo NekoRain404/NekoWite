@@ -692,8 +692,11 @@ export const zh = {
     delLabel: '删除',
   },
   notecard: {
+    open: '打开',
     favorite: '收藏',
     unfavorite: '取消收藏',
+    exportHtml: '导出 HTML',
+    exportPdf: '导出 PDF',
     noSummary: '暂无摘要',
   },
   toast: {

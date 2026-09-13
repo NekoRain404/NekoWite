@@ -1,15 +1,23 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, markRaw, ref, watch } from 'vue'
 import {
   ArrowDownWideNarrow,
   BookOpen,
+  Download,
+  FileDown,
+  FolderOpen,
   Link2,
   ListTree,
+  PencilLine,
   Search,
+  Star,
+  StarOff,
   TextSearch,
+  Trash2,
 } from 'lucide-vue-next'
 import { splitFrontmatter } from '@nekowite/editor-core'
 import NoteCard from './NoteCard.vue'
+import type { NoteCardContextTarget } from './NoteCard.vue'
 import GraphPanel from './GraphPanel.vue'
 import AttachmentsPanel from './AttachmentsPanel.vue'
 import FileTree from './FileTree.vue'
@@ -226,6 +234,73 @@ function onSortSelect(id: string): void {
   if (id === 'mtime' || id === 'title' || id === 'name') documentList.setSortBy(id)
 }
 
+/**
+ * The note the card menu is acting on: the path recorded when the menu opened,
+ * plus the click position. Every action reads THIS path — never
+ * `tabs.activeTab`, which is a different note whenever the user right-clicks a
+ * background card.
+ */
+const noteMenu = ref<NoteCardContextTarget | null>(null)
+
+const NOTE_MENU_ICONS = {
+  open: markRaw(FolderOpen),
+  favorite: markRaw(Star),
+  unfavorite: markRaw(StarOff),
+  rename: markRaw(PencilLine),
+  exportHtml: markRaw(Download),
+  exportPdf: markRaw(FileDown),
+  delete: markRaw(Trash2),
+}
+
+const noteMenuItems = computed<ContextMenuItem[]>(() => {
+  const target = noteMenu.value
+  if (!target) return []
+  // Resolved on every render, so the label and icon always describe the action
+  // for this note's CURRENT favourite state instead of a cached one.
+  const favorite = documentList.isFavorite(target.path)
+  return [
+    { id: 'open', label: t('notecard.open'), icon: NOTE_MENU_ICONS.open },
+    {
+      id: 'toggle-favorite',
+      label: t(favorite ? 'notecard.unfavorite' : 'notecard.favorite'),
+      // The icon matches the label's action: Star = add, StarOff = remove.
+      icon: favorite ? NOTE_MENU_ICONS.unfavorite : NOTE_MENU_ICONS.favorite,
+    },
+    { id: 'rename', label: t('filetree.rename'), icon: NOTE_MENU_ICONS.rename },
+    { id: 'export-html', label: t('notecard.exportHtml'), icon: NOTE_MENU_ICONS.exportHtml },
+    { id: 'export-pdf', label: t('notecard.exportPdf'), icon: NOTE_MENU_ICONS.exportPdf },
+    // A leading divider sets the destructive action apart from the rest.
+    {
+      id: 'delete',
+      label: t('filetree.delete'),
+      icon: NOTE_MENU_ICONS.delete,
+      separator: true,
+      danger: true,
+    },
+  ]
+})
+
+function openNoteMenu(target: NoteCardContextTarget): void {
+  noteMenu.value = target
+}
+
+function onNoteMenuSelect(id: string): void {
+  // ContextMenu emits `select` before `close`, so the target recorded when the
+  // menu opened is still here.
+  const target = noteMenu.value
+  if (!target) return
+  switch (id) {
+    case 'open':
+      openNote(target.path)
+      break
+    case 'toggle-favorite':
+      documentList.toggleFavorite(target.path)
+      break
+    // rename / export-html / export-pdf / delete are added by the tasks that
+    // own those flows; they read the same `noteMenu.value.path`.
+  }
+}
+
 function openNote(path: string | null): void {
   if (!path) return
   void tabs.openTab(path)
@@ -427,6 +502,7 @@ function jumpOutline(line: number, index: number): void {
             :favorite="documentList.isFavorite(note.path)"
             @open="openNote(note.path)"
             @toggle-favorite="documentList.toggleFavorite(note.path)"
+            @contextmenu="openNoteMenu"
           />
           <p
             v-if="!documentList.indexing && documentList.visibleNotes.length === 0"
@@ -528,6 +604,15 @@ function jumpOutline(line: number, index: number): void {
       :items="sortMenuItems"
       @select="onSortSelect"
       @close="sortMenu = null"
+    />
+
+    <ContextMenu
+      v-if="noteMenu"
+      :x="noteMenu.x"
+      :y="noteMenu.y"
+      :items="noteMenuItems"
+      @select="onNoteMenuSelect"
+      @close="noteMenu = null"
     />
   </section>
 </template>

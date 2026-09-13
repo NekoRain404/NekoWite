@@ -6,6 +6,7 @@ import FileTree from './FileTree.vue'
 import { useFileTreeStore } from '../stores/fileTree'
 import { useDocumentListStore } from '../stores/documentList'
 import { useTabsStore } from '../stores/tabs'
+import type { NoteSummary } from '../services/noteMeta'
 
 const fsMocks = vi.hoisted(() => ({
   read: vi.fn(),
@@ -258,5 +259,159 @@ describe('FileTree create/rename/delete flows (A4)', () => {
     // No tab exactly on /vault/fld -> the tree's delete path runs directly.
     expect(fsMocks.deleteFile).toHaveBeenCalledWith('/vault', '/vault/fld')
     expect(tabs.tabs).toHaveLength(0)
+  })
+})
+
+describe('Note card context menu', () => {
+  const NOTES: NoteSummary[] = [
+    { path: '/vault/alpha.md', name: 'alpha.md', title: 'Alpha', tags: [], summary: '', mtime: 3, size: 1, dir: '', links: [] },
+    { path: '/vault/beta.md', name: 'beta.md', title: 'Beta', tags: [], summary: '', mtime: 2, size: 1, dir: '', links: [] },
+    { path: '/vault/gamma.md', name: 'gamma.md', title: 'Gamma', tags: [], summary: '', mtime: 1, size: 1, dir: '', links: [] },
+  ]
+
+  /** The zh labels the user sees (the test locale is zh). */
+  const MENU_LABELS = ['打开', '收藏', '重命名', '导出 HTML', '导出 PDF', '删除']
+
+  beforeEach(async () => {
+    pinia = createPinia()
+    setActivePinia(pinia)
+    document.body.innerHTML = ''
+    mounted = []
+    fsMocks.read.mockReset()
+    fsMocks.read.mockResolvedValue('# body')
+    fsMocks.listHistory.mockReset()
+    fsMocks.listHistory.mockResolvedValue([])
+    fsMocks.stat.mockReset()
+    fsMocks.stat.mockResolvedValue({ size: 1, mtime: 1 })
+
+    useDocumentListStore().setNotes(NOTES)
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    // Alpha is the OPEN, ACTIVE note. Every test below right-clicks a
+    // different, non-active card, so an action wired to `tabs.activeTab`
+    // instead of the recorded path fails.
+    await tabs.openTab('/vault/alpha.md')
+    mountPanel()
+    await flush()
+  })
+
+  afterEach(() => {
+    for (const app of mounted) app.unmount()
+    mounted = []
+    host?.remove()
+    host = null
+    document.body.innerHTML = ''
+  })
+
+  function cardFor(title: string): HTMLElement {
+    const card = [...host!.querySelectorAll<HTMLElement>('.note-card')].find(
+      (c) => c.querySelector('.card-title')?.textContent?.trim() === title,
+    )
+    expect(card, `note card ${title}`).toBeDefined()
+    return card!
+  }
+
+  /** Right-click a card the way the browser does, wait for the menu to render,
+   *  and hand back the event so the caller can check the browser menu was
+   *  suppressed. */
+  async function rightClick(card: HTMLElement): Promise<MouseEvent> {
+    const event = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 40,
+      clientY: 60,
+    })
+    card.dispatchEvent(event)
+    await flush()
+    return event
+  }
+
+  function menuItems(): HTMLButtonElement[] {
+    return [...document.body.querySelectorAll<HTMLButtonElement>('.ctx-menu-item')]
+  }
+
+  function menuLabels(): string[] {
+    return menuItems().map((b) => b.querySelector('.ctx-menu-label')?.textContent?.trim() ?? '')
+  }
+
+  function clickMenuLabel(label: string): void {
+    const item = menuItems().find(
+      (b) => b.querySelector('.ctx-menu-label')?.textContent?.trim() === label,
+    )
+    expect(item, `context menu item ${label}`).toBeDefined()
+    item!.click()
+  }
+
+  it('right-clicking a non-active card opens the note actions there', async () => {
+    expect(cardFor('Beta').classList.contains('active')).toBe(false)
+    const event = await rightClick(cardFor('Beta'))
+    // `.prevent` keeps the browser's own menu from appearing over ours.
+    expect(event.defaultPrevented).toBe(true)
+    expect(menuLabels()).toEqual(MENU_LABELS)
+  })
+
+  it('open acts on the right-clicked note, not the active tab', async () => {
+    const tabs = useTabsStore()
+    const openSpy = vi.spyOn(tabs, 'openTab')
+    expect(tabs.activeTab?.path).toBe('/vault/alpha.md')
+
+    await rightClick(cardFor('Beta'))
+    clickMenuLabel('打开')
+    await flush()
+
+    expect(openSpy).toHaveBeenCalledWith('/vault/beta.md')
+    expect(tabs.activeTab?.path).toBe('/vault/beta.md')
+    // Selecting an item closes the menu.
+    expect(menuItems()).toHaveLength(0)
+    openSpy.mockRestore()
+  })
+
+  it('favourite toggles only the right-clicked note, and the label follows it', async () => {
+    const documentList = useDocumentListStore()
+
+    await rightClick(cardFor('Beta'))
+    clickMenuLabel('收藏')
+    await flush()
+    expect(documentList.favorites).toEqual(['/vault/beta.md'])
+
+    // Re-open on the same card: the label is computed from the store, not cached.
+    await rightClick(cardFor('Beta'))
+    expect(menuLabels()).toContain('取消收藏')
+    clickMenuLabel('取消收藏')
+    await flush()
+    expect(documentList.favorites).toEqual([])
+  })
+
+  it('closing the menu and re-opening it on another card retargets the action', async () => {
+    const documentList = useDocumentListStore()
+
+    await rightClick(cardFor('Beta'))
+    expect(menuLabels()).toEqual(MENU_LABELS)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flush()
+    expect(menuItems()).toHaveLength(0)
+
+    await rightClick(cardFor('Gamma'))
+    clickMenuLabel('收藏')
+    await flush()
+    // A target cached at the first open would have toggled Beta instead.
+    expect(documentList.favorites).toEqual(['/vault/gamma.md'])
+  })
+
+  it('keeps left-click open and the star button untouched', async () => {
+    const tabs = useTabsStore()
+    const documentList = useDocumentListStore()
+    const openSpy = vi.spyOn(tabs, 'openTab')
+
+    ;(cardFor('Beta').querySelector('.card-main') as HTMLButtonElement).click()
+    await flush()
+    expect(openSpy).toHaveBeenCalledWith('/vault/beta.md')
+    expect(menuItems()).toHaveLength(0)
+
+    ;(cardFor('Gamma').querySelector('.card-star') as HTMLButtonElement).click()
+    await flush()
+    expect(documentList.favorites).toEqual(['/vault/gamma.md'])
+    expect(menuItems()).toHaveLength(0)
+    openSpy.mockRestore()
   })
 })
