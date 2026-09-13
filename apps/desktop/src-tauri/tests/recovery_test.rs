@@ -1,14 +1,19 @@
 //! Crash recovery for the encrypted vault: what the on-disk key files must
 //! look like when a `set_master_password` swap is interrupted, and what the
-//! load-time fallback is able to find afterwards.
+//! load-time fallback and the master-password unlock are able to find
+//! afterwards.
 //!
 //! The expensive tests here build REAL snapshots (each `Stronghold::new` pays
 //! the Argon2id KDF, ~1 minute in debug), so they are `#[ignore]`d and run with
 //! `cargo test -- --ignored`. The cheap ones pin the file-name contract the
 //! recovery depends on.
 
+use nekowite_lib::commands::keys::{password_candidates, unlock_snapshot};
 use nekowite_lib::domain::recovery::{backup_key_paths, open_snapshot, reencrypt_vault};
-use nekowite_lib::storage::key_store::{encode_keyfile_passwordless, sibling_suffixed};
+use nekowite_lib::storage::key_store::{
+    derive_master_key, encode_keyfile_password, encode_keyfile_passwordless, sibling_suffixed,
+    verifier_of,
+};
 use std::fs;
 #[cfg(unix)]
 use std::io::Write;
@@ -78,6 +83,127 @@ fn backup_candidates_start_with_the_canonical_slot_then_newest_rotation() {
             .iter()
             .any(|p| p.ends_with("master.key.new")),
         "the staging file must not be offered as a recovery key"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// The unlock path reads the same key files the load-time recovery does.
+///
+/// `unlock_vault` used to read `master.key` and the canonical `master.key.old`
+/// slot only, while `open_snapshot` searched every backup beside them. A
+/// password-protected vault whose only usable key had been rotated out of the
+/// slot (see `unlock_opens_a_vault_through_a_rotated_backup`) therefore could
+/// not be unlocked with the password that opens it: the key file was right
+/// there, under a name the unlock path never read.
+#[test]
+fn unlock_candidates_cover_every_backup_the_recovery_path_searches() {
+    let dir = temp_dir("unlock-candidates");
+    let key_path = dir.join("master.key");
+
+    let current_salt = [11u8; 32];
+    let current = verifier_of(&derive_master_key("current password", &current_salt).unwrap());
+    fs::write(&key_path, encode_keyfile_password(&current_salt, &current)).unwrap();
+
+    let canonical_salt = [12u8; 32];
+    let canonical = verifier_of(&derive_master_key("first password", &canonical_salt).unwrap());
+    fs::write(
+        sibling_suffixed(&key_path, "old"),
+        encode_keyfile_password(&canonical_salt, &canonical),
+    )
+    .unwrap();
+
+    let older_salt = [13u8; 32];
+    let older = verifier_of(&derive_master_key("older password", &older_salt).unwrap());
+    fs::write(
+        sibling_suffixed(&key_path, "old-1700000000000"),
+        encode_keyfile_password(&older_salt, &older),
+    )
+    .unwrap();
+
+    let newer_salt = [14u8; 32];
+    let newer = verifier_of(&derive_master_key("newer password", &newer_salt).unwrap());
+    fs::write(
+        sibling_suffixed(&key_path, "old-1700000000001"),
+        encode_keyfile_password(&newer_salt, &newer),
+    )
+    .unwrap();
+
+    assert_eq!(
+        password_candidates(&key_path).unwrap(),
+        vec![
+            (current_salt, current),
+            (canonical_salt, canonical),
+            (newer_salt, newer),
+            (older_salt, older),
+        ],
+        "the current key file first, then every backup recovery searches, newest rotation first"
+    );
+
+    // Neither of these may become a candidate. `master.key.new` belongs to a
+    // swap that has not been committed, and a passwordless backup has no
+    // password to check: honoring one would let any string typed into the
+    // unlock dialog open a vault whose `master.key` claims a password protects
+    // it.
+    fs::write(
+        sibling_suffixed(&key_path, "new"),
+        encode_keyfile_password(&[15u8; 32], &[16u8; 32]),
+    )
+    .unwrap();
+    fs::write(
+        sibling_suffixed(&key_path, "old-1700000000002"),
+        encode_keyfile_passwordless(&[17u8; 32]),
+    )
+    .unwrap();
+    assert_eq!(
+        password_candidates(&key_path).unwrap().len(),
+        4,
+        "the staging file and a passwordless backup must not be offered"
+    );
+
+    // A vault with no master password set has nothing to unlock, whatever the
+    // backups hold.
+    fs::write(&key_path, encode_keyfile_passwordless(&[18u8; 32])).unwrap();
+    assert_eq!(
+        password_candidates(&key_path).unwrap_err(),
+        "no master password is set"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A wrong password must not write anything.
+///
+/// The candidate list is built by READING key files, and `read_vault_key_state`
+/// creates a missing one (a fresh random passwordless key). Probing a
+/// `master.key.old` that is not there therefore forged a backup on every failed
+/// or wrong-password unlock — a file that opens nothing, which the recovery
+/// path then tries and a later swap rotates into the key-file history.
+#[test]
+fn a_wrong_password_does_not_forge_a_master_key_backup() {
+    let dir = temp_dir("unlock-no-forge");
+    let key_path = dir.join("master.key");
+    let salt = [21u8; 32];
+    let verifier = verifier_of(&derive_master_key("the real password", &salt).unwrap());
+    fs::write(&key_path, encode_keyfile_password(&salt, &verifier)).unwrap();
+
+    let err = match unlock_snapshot(&dir.join("stronghold.bin"), &key_path, "not the password") {
+        Ok(_) => panic!("a wrong password must be refused"),
+        Err(e) => e,
+    };
+    assert_eq!(err, "incorrect master password");
+    assert!(
+        !sibling_suffixed(&key_path, "old").exists(),
+        "a wrong password must not create a master.key.old"
+    );
+    let files: Vec<String> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(
+        files,
+        vec!["master.key".to_string()],
+        "a failed unlock must leave the key files alone, got {files:?}"
     );
 
     let _ = fs::remove_dir_all(&dir);
@@ -182,6 +308,95 @@ fn a_failed_swap_keeps_the_backup_that_opens_the_snapshot() {
         .unwrap()
         .map(|b| String::from_utf8_lossy(&b).to_string());
     assert_eq!(got.as_deref(), Some("sk-old"));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A password-protected vault whose only usable key was ROTATED must still
+/// unlock with the password that key belongs to.
+///
+/// The state is reachable, and it is exactly the one `displace_current_key`
+/// refuses to destroy: a swap interrupted between steps 4 and 5 leaves
+/// `master.key` holding a key that opens nothing and the real key in
+/// `master.key.old`, the vault is recovered from there (with the old password,
+/// through `unlock_vault`), and the NEXT password change starts by rotating
+/// that backup out of the slot to `master.key.old-<ms>`. Interrupt that swap
+/// too and the only key that decrypts the live snapshot sits in the rotated
+/// name, with a password-protected key file in `master.key`.
+///
+/// `open_snapshot` cannot help here — a password-protected backup has no key to
+/// hand it, the key has to be derived from the password, and it skips those —
+/// so `unlock_vault` is the only path that can open this vault, and it has to
+/// look in the rotated slot.
+///
+/// `#[ignore]`d for the Argon2 cost (two real Stronghold opens, ~2 min in
+/// debug); run with `cargo test -- --ignored`.
+#[test]
+#[ignore = "two real Stronghold opens: ~2 minutes in debug"]
+#[cfg(unix)]
+fn unlock_opens_a_vault_through_a_rotated_backup() {
+    use tauri_plugin_stronghold::stronghold::Stronghold;
+
+    let dir = temp_dir("unlock-rotated");
+    let snapshot = dir.join("stronghold.bin");
+    let key_path = dir.join("master.key");
+    const CLIENT: [u8; 32] = [1u8; 32];
+
+    // The vault the user actually has: encrypted under a key derived from their
+    // password, holding one record.
+    let password = "correct horse battery staple";
+    let salt = [42u8; 32];
+    let genuine_key = derive_master_key(password, &salt).unwrap();
+    {
+        let stronghold = Stronghold::new(snapshot.clone(), genuine_key.to_vec()).unwrap();
+        let client = stronghold.inner().create_client(CLIENT).unwrap();
+        client
+            .store()
+            .insert(b"openai".to_vec(), b"sk-old".to_vec(), None)
+            .unwrap();
+        stronghold.save().unwrap();
+    }
+
+    // The interrupted-swap state: `master.key` carries the password of the
+    // swap that never committed (so it opens nothing), and the password that
+    // does open the snapshot survives in the rotated backup.
+    let stale_salt = [7u8; 32];
+    let stale_key =
+        derive_master_key("the password of the swap that was interrupted", &stale_salt).unwrap();
+    fs::write(
+        &key_path,
+        encode_keyfile_password(&stale_salt, &verifier_of(&stale_key)),
+    )
+    .unwrap();
+    let rotated = sibling_suffixed(&key_path, "old-1700000000000");
+    write_key_file(
+        &rotated,
+        &encode_keyfile_password(&salt, &verifier_of(&genuine_key)),
+    );
+
+    // Anything else is still refused — a rotated key file is not a bypass.
+    assert!(
+        unlock_snapshot(&snapshot, &key_path, "not the password").is_err(),
+        "only the password of a key file on disk may unlock"
+    );
+
+    // Before this fix the loop read `master.key` and `.old` only and answered
+    // "incorrect master password", leaving a vault whose key was on disk
+    // unopenable by any path.
+    let stronghold = unlock_snapshot(&snapshot, &key_path, password)
+        .expect("the password whose key file was rotated must still unlock");
+    let client = stronghold.inner().load_client(CLIENT).unwrap();
+    let got = client
+        .store()
+        .get(b"openai".as_slice())
+        .unwrap()
+        .map(|b| String::from_utf8_lossy(&b).to_string());
+    assert_eq!(got.as_deref(), Some("sk-old"));
+
+    // The rotated backup is what opened it: with that file gone the same
+    // password decrypts nothing.
+    fs::remove_file(&rotated).unwrap();
+    assert!(unlock_snapshot(&snapshot, &key_path, password).is_err());
 
     let _ = fs::remove_dir_all(&dir);
 }
