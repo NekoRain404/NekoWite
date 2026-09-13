@@ -349,7 +349,11 @@ export const zh = {
   },
   aiperm: {
     title: 'AI 想要修改当前文档',
-    kind: { insert: '插入到光标处', replaceSelection: '替换选中的内容' },
+    kind: {
+      insert: '插入到光标处',
+      replaceSelection: '替换选中的内容',
+      replaceDocument: '替换整篇文档',
+    },
     allowOnce: '允许这一次',
     allowSession: '本次运行内始终允许',
     deny: '不允许',
@@ -359,6 +363,11 @@ export const zh = {
     policyAsk: '每次询问（推荐）',
     policyAuto: '直接写入，不再询问',
     policyReadonly: '禁止 AI 写入文档',
+    enabled: '启用 AI 功能',
+    enabledHint: '关闭后不会把文档内容发给服务商，且无论上面的权限怎么设置，一切 AI 写入都会被拒绝。权限设置会保留，重新打开即恢复原样。',
+    blockedDisabled: 'AI 功能已在“设置 → AI”里关闭，因此没有发出任何请求。',
+    blockedReadonly: 'AI 写入权限为“禁止 AI 写入文档”，因此没有请求补全。',
+    acceptBlocked: 'AI 写入已关闭，这条建议被丢弃而没有写入文档。',
     grants: '本次运行已授权的操作：',
     noGrants: '暂无（每次都会询问）',
     action: {
@@ -664,6 +673,8 @@ export const zh = {
     genericName: '插件',
     writeSummary: '插件「{name}」要往光标处插入内容',
     writeDenied: '插件「{name}」的写入被拒绝（可能是当前的 AI 写入权限设置为「禁止写入」）。',
+    openSummary: '插件「{name}」要替换整篇文档',
+    syncWriteDenied: '插件「{name}」用了无法询问的写入接口，而当前权限尚未授权：请让插件改用插入接口，或把 AI 写入权限改为「直接写入」。',
     aiEmptyPrompt: '插件调用 AI 时提示词为空。',
     aiTimedOut: '插件调用 AI 超时（60 秒）。',
     aiEmpty: '插件「{name}」的 AI 调用没有返回内容。',

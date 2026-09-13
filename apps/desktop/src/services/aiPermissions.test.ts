@@ -6,6 +6,7 @@ import {
   describePolicy,
   grantForSession,
   grantKey,
+  isAiEnabled,
   revokeAllGrants,
 } from './aiPermissions'
 import type {
@@ -61,12 +62,57 @@ describe('grantKey', () => {
   })
 
   it('keeps the write kinds isolated, so one grant cannot cover the other', () => {
-    expect(grantKey(req('insert'))).not.toBe(grantKey(req('replace-selection')))
+    // A whole-document replacement destroys more than a selection, so approving
+    // one kind must never approve another.
+    const keys = [
+      grantKey(req('insert')),
+      grantKey(req('replace-selection')),
+      grantKey(req('replace-document')),
+    ]
+    expect(new Set(keys).size).toBe(keys.length)
   })
 
   it('does not embed the request text in the key', () => {
     const key = grantKey(req('replace-selection', { summary: 'private draft text' }))
     expect(key).not.toContain('private')
+  })
+})
+
+describe('the master switch', () => {
+  const EVERY_KIND: AiWriteKind[] = ['insert', 'replace-selection', 'replace-document']
+
+  it('starts on, so nothing the user relied on changes by itself', () => {
+    expect(isAiEnabled(DEFAULT_AI_PERMISSION)).toBe(true)
+    expect(DEFAULT_AI_PERMISSION.enabled).toBe(true)
+  })
+
+  it('reads a state written before the switch existed as ON', () => {
+    // An install from an older build carries no `enabled` field, and that user
+    // had a working AI. Treating the missing field as "off" would break them;
+    // only an explicit false may switch AI off.
+    const legacy: AiPermissionState = { policy: 'auto', sessionGrants: new Set() }
+    expect(isAiEnabled(legacy)).toBe(true)
+    expect(decideAiWrite(legacy, req('insert'))).toBe('allow')
+  })
+
+  it.each(EVERY_KIND)('refuses a %s write even under the permissive policy', (kind) => {
+    const off: AiPermissionState = { policy: 'auto', sessionGrants: new Set(), enabled: false }
+    expect(decideAiWrite(off, req(kind))).toBe('deny')
+  })
+
+  it('overrides a grant given earlier in the session', () => {
+    // The switch is checked before the grant table: "off" must not be undone by
+    // a permission the user handed out while it was still on.
+    const granted = grantForSession(state('ask'), req('insert'))
+    const off: AiPermissionState = { ...granted, enabled: false }
+    expect(decideAiWrite(off, req('insert'))).toBe('deny')
+  })
+
+  it('leaves the grant set alone, so switching back on restores the session', () => {
+    const granted = grantForSession(state('ask'), req('insert'))
+    const off: AiPermissionState = { ...granted, enabled: false }
+    const on: AiPermissionState = { ...off, enabled: true }
+    expect(decideAiWrite(on, req('insert'))).toBe('allow')
   })
 })
 

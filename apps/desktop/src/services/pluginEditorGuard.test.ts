@@ -83,22 +83,106 @@ describe('plugin editor guard', () => {
     const guarded = guardEditorForPlugins(editor as never, { pluginName: 'demo' })
     useAiPermissionStore().setPolicy('readonly')
 
-    await guarded.open('# doc')
     await guarded.save()
     guarded.getView()
     guarded.onContentChange(() => undefined)
-    guarded.setSuggestion('x')
-    guarded.acceptSuggestion()
     guarded.rejectSuggestion()
     guarded.hasSuggestion()
     guarded.onSuggestionChange(() => undefined)
     guarded.destroy()
+    // Clearing a staged suggestion is not a write either: a plugin must always
+    // be able to take its own proposal back.
+    guarded.setSuggestion(null)
 
-    expect(editor.open).toHaveBeenCalledWith('# doc')
     expect(editor.save).toHaveBeenCalled()
     expect(editor.getView).toHaveBeenCalled()
-    expect(editor.setSuggestion).toHaveBeenCalledWith('x')
+    expect(editor.setSuggestion).toHaveBeenCalledWith(null)
     expect(editor.destroy).toHaveBeenCalled()
+  })
+
+  it('does not let a plugin replace the document without asking', async () => {
+    // `open` swaps the whole buffer: it destroys more than a selection, so it
+    // is its own kind of write and cannot ride on a selection grant.
+    const editor = fakeEditor()
+    const guarded = guardEditorForPlugins(editor as never, { pluginName: 'demo' })
+    const permissions = useAiPermissionStore()
+    permissions.setPolicy('ask')
+
+    const pending = guarded.open('# rewritten')
+    await Promise.resolve()
+    expect(editor.open).not.toHaveBeenCalled()
+    expect(permissions.pending?.request.kind).toBe('replace-document')
+
+    permissions.respond(true)
+    await pending
+    expect(editor.open).toHaveBeenCalledWith('# rewritten')
+  })
+
+  it('refuses a whole-document replacement when the user says no', async () => {
+    const editor = fakeEditor()
+    const guarded = guardEditorForPlugins(editor as never, { pluginName: 'demo' })
+    const permissions = useAiPermissionStore()
+    permissions.setPolicy('ask')
+
+    const pending = guarded.open('# rewritten')
+    await Promise.resolve()
+    permissions.respond(false)
+
+    await expect(pending).rejects.toThrow()
+    expect(editor.open).not.toHaveBeenCalled()
+    expect(notifyMock).toHaveBeenCalled()
+  })
+
+  it('refuses the synchronous write surfaces while nothing is granted', async () => {
+    // `acceptSuggestion` returns the inserted text, so it cannot await a
+    // question. Writing anyway would be a write the policy never approved, so
+    // it is refused and the plugin is pointed at the API that can ask.
+    const editor = fakeEditor()
+    const guarded = guardEditorForPlugins(editor as never, { pluginName: 'demo' })
+    useAiPermissionStore().setPolicy('ask')
+
+    expect(() => guarded.setSuggestion('ghost')).toThrow()
+    expect(editor.setSuggestion).toHaveBeenCalledWith(null)
+    expect(() => guarded.acceptSuggestion()).toThrow()
+    expect(editor.acceptSuggestion).not.toHaveBeenCalled()
+    expect(notifyMock).toHaveBeenCalled()
+  })
+
+  it('lets the synchronous write surfaces through once the kind is granted', async () => {
+    const editor = fakeEditor()
+    const guarded = guardEditorForPlugins(editor as never, { pluginName: 'demo' })
+    const permissions = useAiPermissionStore()
+    permissions.setPolicy('ask')
+    // A grant for `insert` is a standing approval for this kind of write.
+    // "Allow once" deliberately is NOT: it approves the write in front of the
+    // user, not a kind of write, so the synchronous surfaces stay refused.
+    const insert = guarded.insertMarkdownAtCursor('hello')
+    await Promise.resolve()
+    expect(permissions.pending).not.toBeNull()
+    permissions.respond(true, false)
+    await insert
+    expect(() => guarded.setSuggestion('ghost')).toThrow()
+
+    const second = guarded.insertMarkdownAtCursor('hello again')
+    await Promise.resolve()
+    permissions.respond(true, true)
+    await second
+    guarded.setSuggestion('ghost')
+    guarded.acceptSuggestion()
+    expect(editor.setSuggestion).toHaveBeenCalledWith('ghost')
+    expect(editor.acceptSuggestion).toHaveBeenCalled()
+  })
+
+  it('refuses the synchronous write surfaces while AI is switched off', () => {
+    const editor = fakeEditor()
+    const guarded = guardEditorForPlugins(editor as never, { pluginName: 'demo' })
+    const permissions = useAiPermissionStore()
+    permissions.setPolicy('auto')
+    permissions.setEnabled(false)
+
+    expect(() => guarded.setSuggestion('ghost')).toThrow()
+    expect(() => guarded.acceptSuggestion()).toThrow()
+    expect(editor.acceptSuggestion).not.toHaveBeenCalled()
   })
 
   it('passes the write through under the permissive policy', async () => {

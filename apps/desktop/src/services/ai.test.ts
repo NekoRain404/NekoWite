@@ -1,4 +1,5 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 
 vi.hoisted(() => {
   const g = globalThis as { window?: { __TAURI_INTERNALS__?: unknown } }
@@ -9,11 +10,22 @@ vi.hoisted(() => {
 const invokeMock = vi.hoisted(() => vi.fn())
 const listenMock = vi.hoisted(() => vi.fn(() => Promise.resolve(() => {})))
 const notifyErrorMock = vi.hoisted(() => vi.fn())
+/** The editor the app-level service would reach for. `accept()`/`reject()` have
+ *  no editor argument (the keyboard handler calls them bare), so the test has to
+ *  stand in for the session manager rather than pass one in. */
+const activeEditor = vi.hoisted(() => ({ current: null as unknown }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }))
 vi.mock('./errors', () => ({ notifyError: notifyErrorMock }))
+vi.mock('../features/editor/sessionManager', () => ({
+  editorSessionManager: {
+    getActiveEditor: () => activeEditor.current,
+    getView: () => null,
+  },
+}))
 
 import { aiService, aiThinking, buildAIPrompt, getCursorPrefix, startChatCompletion } from './ai'
+import { useAiPermissionStore } from '../stores/aiPermission'
 
 interface Handlers {
   [event: string]: (e: { payload: { id: string; text?: string; full?: string; message?: string } }) => void
@@ -543,5 +555,120 @@ describe('reasoning progress', () => {
     handlers['ai-done']({ payload: { id: lastCompleteId(), full: 'Answer' } })
     expect(onDone).toHaveBeenCalledWith('Answer')
     stream.cancel()
+  })
+})
+
+
+/**
+ * The user's AI permission settings gate the two features that reach a provider,
+ * not only the writes. These run with a live pinia (the earlier tests in this
+ * file deliberately run without one, which is the "cannot tell, so keep
+ * working" path).
+ */
+describe('AI permission settings stop the requests themselves', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    invokeMock.mockReset()
+    notifyErrorMock.mockReset()
+    listenMock.mockImplementation(() => Promise.resolve(() => {}))
+  })
+
+  const completeCalls = (): unknown[] =>
+    invokeMock.mock.calls.filter(([cmd]) => cmd === 'ai_complete')
+
+  afterEach(() => {
+    activeEditor.current = null
+  })
+
+  it('sends nothing for a suggestion while AI is switched off', async () => {
+    useAiPermissionStore().setEnabled(false)
+    const editor = makeEditor()
+    await aiService.triggerSuggestion(editor as never, { provider: 'local', model: 'm' })
+    expect(completeCalls()).toHaveLength(0)
+    expect(editor.setSuggestion).not.toHaveBeenCalled()
+    expect(notifyErrorMock).toHaveBeenCalled()
+  })
+
+  it('does not fetch a suggestion the policy would forbid writing', async () => {
+    // The suggestion exists only to be accepted into the document, and asking
+    // for one ships the text around the cursor to the provider. Under "never
+    // write" there is nothing to offer, so the request is not made at all.
+    useAiPermissionStore().setPolicy('readonly')
+    const editor = makeEditor()
+    await aiService.triggerSuggestion(editor as never, { provider: 'local', model: 'm' })
+    expect(completeCalls()).toHaveLength(0)
+    expect(editor.setSuggestion).not.toHaveBeenCalled()
+  })
+
+  it('discards a live suggestion instead of accepting it while AI is off', () => {
+    activeEditor.current = null
+    // Found on a real run: a suggestion fetched while AI was on could still be
+    // accepted by the next Tab after the switch was turned off, and the autosave
+    // put the text on disk. Accepting inserts text, so it obeys the same gate.
+    const permissions = useAiPermissionStore()
+    const editor = makeEditor()
+    editor.acceptSuggestion.mockClear()
+    activeEditor.current = editor
+    permissions.setEnabled(false)
+
+    aiService.accept()
+    expect(editor.acceptSuggestion).not.toHaveBeenCalled()
+    expect(editor.rejectSuggestion).toHaveBeenCalled()
+  })
+
+  it('discards a live suggestion instead of accepting it under "never write"', () => {
+    const permissions = useAiPermissionStore()
+    const editor = makeEditor()
+    editor.acceptSuggestion.mockClear()
+    activeEditor.current = editor
+    permissions.setPolicy('readonly')
+
+    aiService.accept()
+    expect(editor.acceptSuggestion).not.toHaveBeenCalled()
+    expect(editor.rejectSuggestion).toHaveBeenCalled()
+  })
+
+  it('accepts the suggestion under a policy that allows writes', () => {
+    const permissions = useAiPermissionStore()
+    const editor = makeEditor()
+    editor.acceptSuggestion.mockClear()
+    editor.rejectSuggestion.mockClear()
+    activeEditor.current = editor
+    permissions.setPolicy('ask')
+
+    aiService.accept()
+    expect(editor.acceptSuggestion).toHaveBeenCalledTimes(1)
+    expect(editor.rejectSuggestion).not.toHaveBeenCalled()
+  })
+
+  it('still runs the suggestion under the default policy', async () => {
+    // The guard must not be an off switch by accident.
+    const editor = makeEditor()
+    await aiService.triggerSuggestion(editor as never, { provider: 'local', model: 'm' })
+    expect(completeCalls()).toHaveLength(1)
+  })
+
+  it('answers a chat-shaped request with the switch-off message, not a request', async () => {
+    useAiPermissionStore().setEnabled(false)
+    const onError = vi.fn()
+    await startChatCompletion({ provider: 'local', model: 'm' }, 'hi', [], {
+      onChunk: () => undefined,
+      onDone: () => undefined,
+      onError,
+    })
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(String(onError.mock.calls[0][0])).not.toHaveLength(0)
+    expect(completeCalls()).toHaveLength(0)
+  })
+
+  it('leaves the chat path alone when the switch is on', async () => {
+    const onError = vi.fn()
+    await startChatCompletion({ provider: 'local', model: 'm' }, 'hi', [], {
+      onChunk: () => undefined,
+      onDone: () => undefined,
+      onError,
+    })
+    expect(completeCalls()).toHaveLength(1)
+    expect(onError).not.toHaveBeenCalled()
   })
 })
