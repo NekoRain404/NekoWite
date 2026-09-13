@@ -1,15 +1,17 @@
 //! Anthropic + OpenAI-compatible providers (`openai` / `grok` / `local` /
 //! `custom`): request URL/body construction and SSE text extraction.
 //!
-//! Provider-specific knowledge lives here; the shared HTTP client, streaming
-//! loop, concurrency limiter and SSRF guard live in [`super::client`].
+//! Provider-specific knowledge lives here; everything shared is reached through
+//! the sibling modules - request helpers from [`super::request`], usage parsing
+//! from [`super::response`]. This module imports none of `client`/`sse`, so the
+//! provider side stays a leaf the dispatch can call into.
 
 use serde_json::Value;
 
-use super::client::{
-    default_base_url, normalize_reasoning_effort, split_data_url, system_prompt_of, token_count,
-    AIConfig, TokenUsage,
+use super::request::{
+    default_base_url, normalize_reasoning_effort, split_data_url, system_prompt_of, AIConfig,
 };
+use super::response::{token_count, TokenUsage};
 
 /// Smallest extended-thinking budget we will ask for. Anthropic requires
 /// `budget_tokens < max_tokens`, so `MIN_THINKING_BUDGET + 1` output tokens is
