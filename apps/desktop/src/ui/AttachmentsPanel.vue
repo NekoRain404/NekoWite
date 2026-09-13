@@ -34,7 +34,7 @@ const loaded = ref(false)
 
 let runSeq = 0
 
-async function resolveSrcs(vault: string, list: AttachmentItem[]): Promise<void> {
+async function resolveSrcs(vault: string, list: AttachmentItem[], run: number): Promise<void> {
   const next: Record<string, string> = {}
   await Promise.all(
     list.map(async (item) => {
@@ -45,6 +45,12 @@ async function resolveSrcs(vault: string, list: AttachmentItem[]): Promise<void>
       }
     }),
   )
+  // Resolution is async and a vault switch reloads this panel: by the time the
+  // first path comes back, `run` can already be stale. Committing here would
+  // overwrite the new vault's thumbnails with the old vault's URLs and wipe the
+  // broken marks the newer run just set - the reason `reload` checks its own
+  // sequence before touching `items`.
+  if (run !== runSeq) return
   srcs.value = next
   broken.value = {}
 }
@@ -62,7 +68,7 @@ async function reload(): Promise<void> {
       const list = await loadAttachmentLibrary(vault)
       if (run !== runSeq) return
       items.value = list
-      await resolveSrcs(vault, list)
+      await resolveSrcs(vault, list, run)
     }
   } finally {
     if (run === runSeq) {

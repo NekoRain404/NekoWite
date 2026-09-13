@@ -462,6 +462,8 @@ export const zh = {
   references: {
     title: '引用文献',
     missing: '未在引用库中找到',
+    noTitle: '（该条目没有标题）',
+    skippedEntries: '{file} 中有 {count} 条记录无法解析，已跳过（请检查该文件的格式）。',
     empty: '本文档还没有引用。',
   },
   outline: {

@@ -140,6 +140,27 @@ describe('ChatPanel image attachments', () => {
     expect(notifications[0]).toContain('10 MB')
   })
 
+  it('holds one message to a total image budget, refusing only the image that does not fit', async () => {
+    const host = mountPanel()
+    const nineMiB = 9 * 1024 * 1024
+    pickFiles(host, [fileOfSize('a.png', nineMiB), fileOfSize('b.png', nineMiB)])
+    await flush()
+    expect(host.querySelectorAll('.chat-attach')).toHaveLength(2)
+    expect(notifications).toEqual([])
+
+    // Nine more MiB passes every other cap on its own (under 10 MiB, third of
+    // six) but would push the message to 27 MiB of raw images, which the send
+    // path base64-encodes into one IPC request. The two that fit are kept.
+    pickFiles(host, [fileOfSize('c.png', nineMiB)])
+    await flush()
+
+    expect(host.querySelectorAll('.chat-attach')).toHaveLength(2)
+    expect(notifications).toEqual([
+      t('chat.attachmentsTotalTooLarge', { max: formatAttachmentBytes(20 * 1024 * 1024) }),
+    ])
+    expect(sendButton(host).disabled).toBe(false)
+  })
+
   it('surfaces a failed send instead of looking alive while doing nothing', async () => {
     const host = mountPanel()
     const file = fileOfSize('pic.png', 1024)
