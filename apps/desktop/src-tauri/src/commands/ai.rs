@@ -16,22 +16,10 @@ use crate::state::AiState;
 #[tauri::command]
 pub async fn ai_cancel(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let state = app.state::<AiState>();
-    {
-        let mut inflight = state.inflight.lock().map_err(|e| e.to_string())?;
-        inflight.remove(&id);
-    }
-    // Signal the token as well as dropping the id: removing the id is only
-    // visible to the stream loop between reads, and a reasoning model can be
-    // silent for a long time. The token is awaited alongside the socket, so this
-    // is what actually closes the connection and frees the concurrency permit
-    // now rather than after the next chunk or the read timeout.
-    let token = {
-        let mut cancels = state.cancels.lock().map_err(|e| e.to_string())?;
-        cancels.remove(&id)
-    };
-    if let Some(token) = token {
-        token.cancel();
-    }
+    // Cancelling an id that is not in flight is not an error: the frontend
+    // cancels on every abort path, including ones that beat the request to the
+    // backend.
+    state.cancel(&id)?;
     Ok(())
 }
 
@@ -84,10 +72,12 @@ pub async fn ai_complete(
     let cancel = tokio_util::sync::CancellationToken::new();
     {
         let state = app.state::<AiState>();
-        let mut inflight = state.inflight.lock().map_err(|e| e.to_string())?;
-        inflight.insert(id.clone());
-        let mut cancels = state.cancels.lock().map_err(|e| e.to_string())?;
-        cancels.insert(id.clone(), cancel.clone());
+        // `false` means another live request already owns this id, in which case
+        // its registration is left alone: an id addresses exactly one request,
+        // and overwriting it would strand that request's cancel token.
+        if !state.claim(&id, cancel.clone())? {
+            return Err(format!("另一个 AI 请求已在使用这个 id：{id}"));
+        }
     }
     // Everything below, including the validation guard, runs inside a single
     // guarded block so every early-return path (invalid Base URL, saturated
@@ -119,12 +109,7 @@ pub async fn ai_complete(
     // a saturated pool, cancellation) so a finished request leaves nothing
     // behind — a stale token would make a REUSED id uncancellable.
     if let Some(state) = app.try_state::<AiState>() {
-        if let Ok(mut inflight) = state.inflight.lock() {
-            inflight.remove(&id);
-        }
-        if let Ok(mut cancels) = state.cancels.lock() {
-            cancels.remove(&id);
-        }
+        state.release(&id);
     }
     result
 }

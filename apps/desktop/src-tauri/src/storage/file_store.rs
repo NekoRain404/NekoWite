@@ -13,7 +13,7 @@ use base64::Engine as _;
 use chrono::Local;
 use serde::Serialize;
 use std::io;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -783,7 +783,22 @@ pub fn import_attachment(vault_root: &str, source_path: &str, dir: &str) -> Resu
     let unique = unique_attachment_name(&name, &dir_abs);
     let relative = format!("{dir_rel}/{unique}");
     let target = resolve_within(vault_root, &relative)?;
-    let bytes = std::fs::read(source).map_err(|e| fs_error("read the picked file", source, e))?;
+    // Bound the READ, not just the `metadata` check above: the file can be
+    // replaced or grown in between, and `fs::read` would then pull an unbounded
+    // amount into memory on the strength of a length that was true a moment
+    // ago. One byte past the limit is enough to detect it.
+    let mut bytes = Vec::new();
+    std::fs::File::open(source)
+        .map_err(|e| fs_error("open the picked file", source, e))?
+        .take(MAX_IMPORT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| fs_error("read the picked file", source, e))?;
+    if bytes.len() as u64 > MAX_IMPORT_BYTES {
+        return Err(format!(
+            "image is larger than the {} MB import limit",
+            MAX_IMPORT_BYTES / (1024 * 1024)
+        ));
+    }
     atomic_write_bytes(&target, &bytes)?;
     Ok(relative)
 }
