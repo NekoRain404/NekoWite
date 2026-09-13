@@ -12,9 +12,7 @@ import ContextMenu from './ContextMenu.vue'
 import type { ContextMenuItem } from './ContextMenu.vue'
 import { t } from '../i18n'
 import { dirName, joinPath } from '../services/paths'
-import { moveNote } from '../services/noteMove'
-import type { NoteMoveIo } from '../services/noteMove'
-import { flushEdits } from '../services/editorOwnership'
+import { moveOrRepair } from '../services/noteMoveFlow'
 import { isComposingKey } from '../services/keyGuard'
 
 interface TreeNode {
@@ -56,19 +54,6 @@ const editInput = ref<HTMLInputElement | null>(null)
 const dragState = ref<{ path: string; isDir: boolean } | null>(null)
 const dropTargetPath = ref<string | null>(null)
 let confirming = false
-
-/** The four fs operations `moveNote` wants, bound to the shared gateway. The
- *  service takes them as plain functions so it stays testable without Tauri
- *  (the injection shape `externalDocSync` / `recoveryClosedLoop` use). */
-const noteMoveIo: NoteMoveIo = {
-  read: (vault, path) => fsService.read(vault, path),
-  // `moveNote` writes the rewritten body and reports its own failures; the
-  // warning channel (a history snapshot that could not be kept) is not its to
-  // surface — the tab's save does that.
-  write: (vault, path, content) => fsService.write(vault, path, content).then(() => undefined),
-  rename: (vault, from, to) => fsService.renameEntry(vault, from, to),
-  list: (vault, dir) => fsService.list(vault, dir),
-}
 
 const MENU_ICONS = {
   filePlus: markRaw(FilePlus2),
@@ -336,89 +321,13 @@ function onDrop(row: { node: TreeNode }, e: DragEvent): void {
   void performMove(result.from, result.to, drag.isDir)
 }
 
-/** Move a tree entry and keep everything that points at it in step: the note's
- *  file-relative references and sibling `_assets` folder (via `moveNote`), the
- *  open tab's path, and — when the service rewrote the body on disk — the
- *  tab's text. */
-async function moveEntry(from: string, to: string, isDir: boolean): Promise<void> {
-  // Publish pending keystrokes first: the service is a read-modify-write of the
-  // file on disk, while each pane coalesces keystrokes before publishing them
-  // to the tab (the same reason `saveTab` flushes before it writes).
-  await flushEdits()
-  // Arm BOTH spellings before the first mutation. The open tab still points at
-  // `from` until `renamePathInTabs` runs, and the fs watcher reports our own
-  // rename/rewrite back to the app-level external-change service: without this
-  // a dirty tab would raise a bogus keep-or-reload prompt for a file we moved
-  // ourselves.
-  tabs.noteSelfWrite(from)
-  tabs.noteSelfWrite(to)
-  // Tell the app-level external-change service that THIS path is being moved by
-  // us. The watcher reports a rename as a change to the parent folder, so the
-  // service looks at every open tab inside it while the tab still points at the
-  // old name - which no longer exists once the rename has landed and
-  // `renamePathInTabs` has not run yet. Without the claim the tab would be
-  // detached as if the file had been moved behind the user's back.
-  tabs.beginMove(from)
-  try {
-    if (isDir) {
-      // A folder carries its contents, so each note's own `_assets` references
-      // still resolve and only the tab paths change. References OUT of the folder
-      // (the vault-level `attachments/` tree) would need every note inside to be
-      // rewritten; that subtree case is deliberately left as a plain rename.
-      await fsService.renameEntry(props.vault, from, to)
-      tabs.renamePathInTabs(from, to)
-      return
-    }
-    const moved = await moveNote(noteMoveIo, props.vault, from, to)
-    tabs.renamePathInTabs(from, to, moved)
-  } finally {
-    tabs.endMove(from)
-  }
-}
-
-/**
- * A move can fail AFTER its rename landed: `moveNote` rewrites the body at the
- * new path and its own rollback is best effort. When that happens the tab is
- * left pointing at a name that no longer exists — the app would then report the
- * user's own rename as an external deletion, detach the note and turn Ctrl+S
- * into a native "save as". Point the tabs at whichever file really exists and
- * let the editor adopt its bytes (a dirty tab keeps the user's text; see
- * `reloadFromDisk`).
- */
-async function retargetAfterFailedMove(from: string, to: string): Promise<void> {
-  const exists = async (path: string): Promise<boolean> => {
-    try {
-      await fsService.read(props.vault, path)
-      return true
-    } catch {
-      return false
-    }
-  }
-  if (await exists(from)) return
-  if (!(await exists(to))) return
-  tabs.renamePathInTabs(from, to)
-  for (const tab of tabs.tabs) {
-    if (tab.path === to) void tabs.reloadFromDisk(tab.id)
-  }
-}
-
-/**
- * Both ways of moving a note - the inline rename and drag-and-drop - need the
- * same repair, because both can fail after the rename itself landed. Throws the
- * original error so the caller keeps wording its own message.
- */
-async function moveOrRepair(from: string, to: string, isDir: boolean): Promise<void> {
-  try {
-    await moveEntry(from, to, isDir)
-  } catch (error) {
-    await retargetAfterFailedMove(from, to)
-    throw error
-  }
-}
-
+/** Move a tree entry through the shared flow (see `services/noteMoveFlow`): it
+ *  flushes pending edits, arms the self-write/move claims the external-change
+ *  service reads, moves the note with its `_assets` folder and references, and
+ *  repairs the tabs if the move fails after its rename landed. */
 async function performMove(from: string, to: string, isDir: boolean): Promise<void> {
   try {
-    await moveOrRepair(from, to, isDir)
+    await moveOrRepair(props.vault, from, to, isDir)
   } catch {
     notifyError(t('tree.moveFailed'))
   } finally {
@@ -550,7 +459,7 @@ async function applyEdit(p: TreeEdit, name: string): Promise<void> {
       if (!from) return
       const to = joinPath(dirOf(from), name)
       if (to !== from) {
-        await moveOrRepair(from, to, p.nodeIsDir === true)
+        await moveOrRepair(props.vault, from, to, p.nodeIsDir === true)
         await refreshAncestors(from)
       }
     } else {
