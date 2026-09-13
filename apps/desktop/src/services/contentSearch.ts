@@ -78,7 +78,10 @@ async function mapWithConcurrency<T, R>(
 /** Result of looking up a note's entry in the persistent search index.
  *  `upToDate` means the stored index text matches the note's current disk state
  *  (stat token), so an absence of the query in `text` is authoritative and the
- *  body never needs to be read. `text` is the lowercased searchable haystack. */
+ *  body never needs to be read. `text` is the lowercased searchable haystack.
+ *  A caller that cannot prove that match - the vault index coordinator does not
+ *  when its fs subscription is degraded - reports `false`, which makes this an
+ *  accelerator only: the body is read and the miss is never trusted. */
 export interface IndexLookupResult {
   upToDate: boolean
   text: string
