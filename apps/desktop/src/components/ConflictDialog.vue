@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref } from 'vue'
-import { useTabsStore } from '../stores/tabs'
 import { useFocusTrap } from '../composables/useFocusTrap'
 import { modalStack } from '../services/modalStack'
 import { t } from '../i18n'
 
-const props = defineProps<{ tabId: string; path: string }>()
-const emit = defineEmits<{ (e: 'close'): void }>()
-
-const tabs = useTabsStore()
+// The dialog names the conflict but does not resolve it (§10.2): the reload of
+// the tab from disk is a store command, so the prompt reports the choice and
+// the caller — which owns the tab store — performs it and closes the prompt.
+defineProps<{ tabId: string; path: string }>()
+const emit = defineEmits<{
+  (e: 'close'): void
+  (e: 'reload-disk'): void
+}>()
 
 const active = ref(true)
 const dialogEl = ref<HTMLElement | null>(null)
@@ -35,11 +38,11 @@ function onKeydown(e: KeyboardEvent): void {
   }
 }
 
-async function reloadFromDisk(): Promise<void> {
-  // Explicit: the user chose the disk version over their own edits, so this one
-  // wins even though the tab is dirty (the automatic reload must not).
-  await tabs.reloadFromDisk(props.tabId, { explicit: true })
-  emit('close')
+// Deliberately no `close` here: the caller closes the prompt once the reload it
+// was asked for has finished, so the dialog can never disappear before the
+// user's choice has taken effect.
+function reloadFromDisk(): void {
+  emit('reload-disk')
 }
 
 function keepLocal(): void {
