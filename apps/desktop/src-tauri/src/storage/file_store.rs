@@ -1,5 +1,5 @@
-//! Vault file store: reading, writing, listing, searching, history snapshots
-//! and attachments.
+//! Vault file store: the vault-facing base IO (read, stat, write, create,
+//! list) and the public surface of the storage layer.
 //!
 //! Every function takes a `vault_root` (the vault the user opened) as its first
 //! argument and resolves the requested path through
@@ -7,24 +7,50 @@
 //! is traceable to the vault root and confined inside it. The command layer
 //! additionally proves the root was opened this session (see
 //! [`crate::state::require_opened_vault`]) before calling in.
+//!
+//! What used to be one file now lives in sibling modules (roadmap 10.4), and
+//! this file keeps the base IO plus the re-exports below:
+//!
+//! * [`crate::storage::atomic_write`] - the write lock, temp-file staging, the
+//!   fsync/rename pipeline, and the create-only / no-clobber publish operations;
+//! * [`crate::storage::attachment_store`] - the paste and file-picker attachment
+//!   paths, their shared name and size rules, and the name-claiming write;
+//! * [`crate::storage::metadata_store`] - the history side key, snapshots, and
+//!   their listing, reading and restoring;
+//! * [`crate::storage::rename_store`] - the rename transaction.
+//!
+//! Dependencies: this module depends on `atomic_write` and `metadata_store` (the
+//! save pipeline) and on none of the others; nothing below imports back.
 
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use base64::Engine as _;
-use chrono::Local;
 use serde::Serialize;
 use std::io;
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::path::Path;
 
-use crate::domain::path_policy::{
-    create_vault_metadata_dir, encode_rel_path, find_vault_metadata_dir,
-    resolve_vault_metadata_dir, resolve_within, resolve_within_rel,
-};
+use crate::domain::path_policy::{resolve_within, resolve_within_rel};
 use crate::domain::vault::{is_mdx_path, should_skip_entry};
 use crate::errors::{file_exists_error, fs_error};
-use crate::storage::trash_store::move_trash_key;
+use crate::storage::atomic_write::{
+    create_new_bytes, write_lock, CreateFileError, STALE_TMP_MAX_AGE,
+};
+use crate::storage::metadata_store::DEFAULT_MAX_HISTORY;
+
+// --- Thin forwarders (roadmap 10.4: keep the old public names for one stage) ---
+//
+// A re-export, not a wrapper: each item has exactly one definition, in the
+// module named here, and this block is what lets the split land without
+// touching `commands/fs.rs`, `commands/recovery.rs` or `storage/trash_store.rs`
+// in the same commit. The modules above are the owners; this file keeps the
+// vault-facing base IO.
+pub(crate) use crate::storage::atomic_write::move_no_clobber;
+pub use crate::storage::atomic_write::{atomic_write, atomic_write_bytes, cleanup_stale_tmp};
+pub use crate::storage::attachment_store::{
+    decode_base64, import_attachment, is_importable_image, sanitize_attachment_name,
+    save_attachment, IMPORT_IMAGE_EXTENSIONS, MAX_IMPORT_BYTES,
+};
+pub use crate::storage::metadata_store::{
+    list_history, read_history, restore_history, snapshot_history, HistoryEntry,
+};
+pub use crate::storage::rename_store::rename_entry;
 
 #[derive(Serialize, Clone, Debug)]
 pub struct FileEntry {
@@ -35,65 +61,10 @@ pub struct FileEntry {
 }
 
 #[derive(Serialize, Clone, Debug)]
-pub struct HistoryEntry {
-    pub id: String,
-    pub size: u64,
-    pub mtime: u64,
-}
-
-#[derive(Serialize, Clone, Debug)]
 pub struct FileStat {
     pub size: u64,
     pub mtime: u64,
 }
-
-/// Nanosecond clock reading used to make temp file names unique.
-fn time_nonce() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default()
-}
-
-/// Snapshot cap used when the caller does not pass `max_history`.
-const DEFAULT_MAX_HISTORY: usize = 10;
-
-/// Serializes the read-old -> snapshot -> atomic-write sequence for every
-/// `write_file`/`create_new_file` call in THIS PROCESS - across all vaults.
-///
-/// The guarantee it actually provides: while one save holds it, no other save
-/// can be between its read-old and its atomic rename, so no writer can
-/// snapshot a predecessor that another writer is in the middle of replacing.
-/// Two things about the scope are easy to get wrong and are stated here on
-/// purpose:
-///
-///   * It is process-wide, not per-vault, and stays that way until a narrower
-///     scheme is proven safe. Vaults can nest (a folder inside another opened
-///     folder is addressable through both roots), so two writes that look
-///     like different vaults can target the same file; and a per-vault map
-///     would need canonical key normalisation to agree on case and separator
-///     spellings across platforms. Getting that wrong loses snapshot-chain
-///     ordering - a silent data-loss failure - while cross-vault waiting is
-///     unobservable (saves are user-paced and the critical section is a few
-///     file operations).
-///   * It covers `write_file`/`create_new_file`/`restore_history` and
-///     `rename_entry`. Direct `snapshot_history` calls do not hold it, so the
-///     snapshot chain is not protected against those paths; do not read this
-///     as more than it is.
-///   * `rename_entry` holds it because a save that resolved the old path just
-///     before the move would otherwise publish its temp file at the path the
-///     rename vacated — an untracked copy at the old name, after the history
-///     and trash keys had already moved to the new one.
-///
-/// `write_lock_scope_tests` pins the process-wide scope, so narrowing it means
-/// deliberately updating that test and the reasoning above.
-static WRITE_LOCK: Mutex<()> = Mutex::new(());
-
-/// How old a `.tmp` sibling must be before the next write in that directory
-/// treats it as crash litter and cleans it up. Fresh temp files written by a
-/// currently-running writer (unique nonce name, recent mtime) are never
-/// touched, so cleaning cannot race a live write.
-const STALE_TMP_MAX_AGE: Duration = Duration::from_secs(3600);
 
 pub fn read_file(vault_root: &str, path: &str) -> Result<String, String> {
     let resolved = resolve_within(vault_root, path)?;
@@ -110,439 +81,13 @@ pub fn stat_file(vault_root: &str, path: &str) -> Result<FileStat, String> {
     let mtime = meta
         .modified()
         .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     Ok(FileStat {
         size: meta.len(),
         mtime,
     })
-}
-
-/// Write `content` to `resolved` atomically: write a temp sibling
-/// (`.<name>.<nonce>.tmp`) in the same directory, fsync it, then rename over
-/// the target, and fsync the parent directory so the rename itself survives
-/// power loss. On any failure the temp file is removed so no partial file is
-/// left behind. Mirrors Memoir's `atomic.rs`.
-pub fn atomic_write(resolved: &Path, content: &str) -> Result<(), String> {
-    atomic_write_bytes(resolved, content.as_bytes())
-}
-
-/// Byte-level twin of [`atomic_write`] for binary attachment payloads; the
-/// temp-sibling, fsync and rename pipeline is identical.
-pub fn atomic_write_bytes(resolved: &Path, bytes: &[u8]) -> Result<(), String> {
-    let parent = resolved
-        .parent()
-        .ok_or_else(|| "target path has no parent directory".to_string())?;
-    std::fs::create_dir_all(parent)
-        .map_err(|e| fs_error("create the folder containing", parent, e))?;
-    let name = resolved
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("file");
-    let tmp = parent.join(format!(".{name}.{}.tmp", time_nonce()));
-    let result = (|| {
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)
-            .map_err(|e| fs_error("create the temporary file", &tmp, e))?;
-        f.write_all(bytes)
-            .map_err(|e| fs_error("write the temporary file", &tmp, e))?;
-        f.sync_all()
-            .map_err(|e| fs_error("flush the temporary file", &tmp, e))?;
-        std::fs::rename(&tmp, resolved).map_err(|e| fs_error("replace", resolved, e))?;
-        sync_parent_dir(resolved)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
-}
-
-/// fsync the directory containing `path` so a completed rename/link is
-/// durable across power loss. Opening a directory read-only and syncing it
-/// is the portable unix way to flush its entry list; the extra `O_DIRECTORY`
-/// flag is only a fail-fast hint and would need a libc dependency, so it is
-/// not set. On other platforms there is nothing to do.
-#[cfg(unix)]
-fn sync_parent_dir(path: &Path) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| "target path has no parent directory".to_string())?;
-    let dir = std::fs::File::open(parent)
-        .map_err(|e| fs_error("open the folder containing", parent, e))?;
-    dir.sync_all()
-        .map_err(|e| fs_error("flush the folder containing", parent, e))
-}
-
-#[cfg(not(unix))]
-fn sync_parent_dir(_path: &Path) -> Result<(), String> {
-    Ok(())
-}
-
-/// Resolve `path` inside the vault and encode the canonical vault-relative
-/// form as a history key. Every history caller goes through this so all
-/// spellings of a file land on the same key. The vault root itself has no
-/// meaningful relative form and is rejected.
-fn encoded_history_key(vault_root: &str, path: &str) -> Result<String, String> {
-    let (_, relative) = resolve_within_rel(vault_root, path)?;
-    if relative.is_empty() {
-        return Err("path is the vault root".into());
-    }
-    Ok(encode_rel_path(&relative))
-}
-
-/// Snapshot `old_content` into `.nekowite/history/<encoded>/<unix_ms>.<ext>`
-/// under `vault_root`, then prune the directory to the `max` newest snapshots.
-/// Empty `old_content` is skipped (nothing to preserve).
-///
-/// The content is written to a unique temp sibling and fsynced first, then
-/// hard-linked into place under the timestamped name: the link fails with
-/// `AlreadyExists` when another writer claimed the same millisecond, so the
-/// `-<n>` suffix loop below never silently overwrites an existing snapshot
-/// (a plain rename would), and the newest snapshot can never be observed
-/// truncated — the name only exists once the content is complete and durable.
-pub fn snapshot_history(
-    vault_root: &str,
-    path: &str,
-    old_content: &str,
-    max: usize,
-) -> Result<(), String> {
-    if old_content.is_empty() {
-        return Ok(());
-    }
-    let (resolved, relative) = resolve_within_rel(vault_root, path)?;
-    if relative.is_empty() {
-        return Err("path is the vault root".into());
-    }
-    let encoded = encode_rel_path(&relative);
-    let history_dir = create_vault_metadata_dir(vault_root, &[".nekowite", "history", &encoded])?;
-    let ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or_default();
-    let ext = resolved
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("md");
-    let tmp = history_dir.join(format!(".{ms}.{}.tmp", time_nonce()));
-    let result = (|| {
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)
-            .map_err(|e| fs_error("create the temporary file", &tmp, e))?;
-        f.write_all(old_content.as_bytes())
-            .map_err(|e| fs_error("write the temporary file", &tmp, e))?;
-        f.sync_all()
-            .map_err(|e| fs_error("flush the temporary file", &tmp, e))?;
-        let mut n = 0u64;
-        loop {
-            let candidate = if n == 0 {
-                history_dir.join(format!("{ms}.{ext}"))
-            } else {
-                history_dir.join(format!("{ms}-{n}.{ext}"))
-            };
-            match std::fs::hard_link(&tmp, &candidate) {
-                Ok(()) => return Ok(candidate),
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => n += 1,
-                // Not every filesystem can hard-link: FAT32 and exFAT (USB
-                // sticks, SD cards) return ERROR_INVALID_FUNCTION, and a vault on
-                // such a volume would otherwise never be able to save an existing
-                // note — the snapshot is what this link was for, not the write
-                // itself. Copy the staged bytes to the same name instead: the
-                // staging file already holds the complete snapshot, so the copy
-                // only needs to land atomically, which `create_new` gives us.
-                Err(e) if is_link_unsupported(&e) => match copy_new(&tmp, &candidate) {
-                    Ok(()) => return Ok(candidate),
-                    Err(e) if e.kind() == io::ErrorKind::AlreadyExists => n += 1,
-                    Err(e) => return Err(fs_error("save the history version", &candidate, e)),
-                },
-                Err(e) => return Err(fs_error("save the history version", &candidate, e)),
-            }
-        }
-    })();
-    match result {
-        Ok(candidate) => {
-            let _ = std::fs::remove_file(&tmp);
-            sync_parent_dir(&candidate)?;
-            prune_history(&history_dir, max)
-        }
-        Err(e) => {
-            let _ = std::fs::remove_file(&tmp);
-            Err(e)
-        }
-    }
-}
-
-/// True when the error means "this filesystem cannot do that", the shape
-/// Windows reports for `CreateHardLinkW` on FAT/exFAT (`ERROR_INVALID_FUNCTION`)
-/// and the one Linux reports for filesystems that do not implement links.
-fn is_link_unsupported(e: &io::Error) -> bool {
-    matches!(
-        e.kind(),
-        io::ErrorKind::Unsupported | io::ErrorKind::InvalidInput
-    ) || e.raw_os_error() == Some(1) // EPERM on some network shares
-}
-
-/// Copy `from` to `to`, refusing an existing `to` and never exposing a partial
-/// file under the destination name.
-fn copy_new(from: &Path, to: &Path) -> io::Result<()> {
-    let mut src = std::fs::File::open(from)?;
-    let mut dst = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(to)?;
-    let copied = (|| {
-        io::copy(&mut src, &mut dst)?;
-        dst.sync_all()?;
-        Ok(())
-    })();
-    if copied.is_err() {
-        // Close before removing — Windows refuses to delete an open file — and
-        // then drop the half-written snapshot. It was created under the real
-        // `create_new` name, so leaving it behind would present a truncated
-        // file as a valid version to every later list and restore (the same
-        // reason `atomic_write` removes its temp file on failure).
-        drop(dst);
-        let _ = std::fs::remove_file(to);
-    }
-    copied
-}
-
-/// Why a create-only write failed.
-enum CreateFileError {
-    /// The destination name is taken. This is the ordinary outcome of a
-    /// create-only write that raced another writer, which callers handle by
-    /// choosing the next name rather than by reporting an OS error.
-    AlreadyExists,
-    /// Everything else, already phrased for the user.
-    Failed(String),
-}
-
-/// Create `resolved` with `bytes`, refusing to replace anything already there,
-/// and report a taken name as [`CreateFileError::AlreadyExists`].
-///
-/// The bytes are staged in a unique temp sibling and fsynced, then published
-/// with a hard link, which either creates the name or fails with
-/// `AlreadyExists`. That makes "is this name free?" and "write it" ONE step: a
-/// file that appears in between (another instance of the app, a sync client,
-/// the user) is never overwritten, and no reader sees a half-written file under
-/// the real name. Filesystems without hard links (FAT32/exFAT) fall back to a
-/// create-new copy, which refuses an existing destination just the same.
-fn create_new_bytes(resolved: &Path, bytes: &[u8]) -> Result<(), CreateFileError> {
-    let parent = resolved.parent().ok_or_else(|| {
-        CreateFileError::Failed(format!(
-            "cannot create {}: it has no parent folder",
-            crate::domain::path_policy::ipc_path(resolved)
-        ))
-    })?;
-    std::fs::create_dir_all(parent)
-        .map_err(|e| CreateFileError::Failed(fs_error("create the folder", parent, e)))?;
-
-    let name = resolved
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("file");
-    let tmp = parent.join(format!(".{name}.{}.tmp", time_nonce()));
-    let staged = (|| {
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)
-            .map_err(|e| fs_error("create the temporary file", &tmp, e))?;
-        f.write_all(bytes)
-            .map_err(|e| fs_error("write the temporary file", &tmp, e))?;
-        f.sync_all()
-            .map_err(|e| fs_error("flush the temporary file", &tmp, e))
-    })();
-    if let Err(message) = staged {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(CreateFileError::Failed(message));
-    }
-
-    let published = match std::fs::hard_link(&tmp, resolved) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(CreateFileError::AlreadyExists),
-        Err(e) if is_link_unsupported(&e) => copy_new(&tmp, resolved).map_err(|e| {
-            if e.kind() == io::ErrorKind::AlreadyExists {
-                CreateFileError::AlreadyExists
-            } else {
-                CreateFileError::Failed(fs_error("create", resolved, e))
-            }
-        }),
-        Err(e) => Err(CreateFileError::Failed(fs_error("create", resolved, e))),
-    };
-    let _ = std::fs::remove_file(&tmp);
-    published?;
-    sync_parent_dir(resolved).map_err(CreateFileError::Failed)
-}
-
-/// Move `from` to `to` without ever replacing an existing `to`.
-///
-/// `fs::rename` REPLACES its destination, so a name claimed between "is it
-/// free?" and the rename is silently destroyed. For a file the move is a hard
-/// link — which either creates the name or fails with `AlreadyExists` — followed
-/// by removing the source: the same inode, so the result is indistinguishable
-/// from a rename. Filesystems without hard links fall back to a create-new copy,
-/// which refuses an existing destination just the same.
-pub(crate) fn move_no_clobber(from: &Path, to: &Path) -> io::Result<()> {
-    if from.is_dir() {
-        // A directory has no portable no-clobber move: `rename` replaces an
-        // EMPTY destination directory on unix and fails on Windows, and claiming
-        // the name with `create_dir` first would make the move non-atomic (a
-        // crash in between strands an empty directory under the user's name).
-        // The check stays best-effort and the move stays one atomic rename; a
-        // FILE at the destination is still refused by the rename itself.
-        if to.exists() {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "the destination already exists",
-            ));
-        }
-        return std::fs::rename(from, to);
-    }
-    match std::fs::hard_link(from, to) {
-        Ok(()) => std::fs::remove_file(from),
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(e),
-        Err(e) if is_link_unsupported(&e) => {
-            copy_new(from, to)?;
-            std::fs::remove_file(from)
-        }
-        Err(e) => Err(e),
-    }
-}
-
-/// Creation order within one shared mtime: [`snapshot_history`] writes
-/// `{ms}.{ext}` first, then `{ms}-1.{ext}`, `{ms}-2.{ext}`, … so the collision
-/// suffix IS the age order, lower meaning older.
-///
-/// Sorting these names alphabetically gets that backwards — `-` sorts before
-/// `.`, so `<ms>-1.md` compares LESS than `<ms>.md` even though it was written
-/// later. That is what made the newest snapshot of a same-millisecond group
-/// sort as the oldest and be pruned while an older sibling survived.
-fn snapshot_collision_suffix(name: &str) -> u64 {
-    let Some((stem, _ext)) = name.rsplit_once('.') else {
-        return 0;
-    };
-    match stem.rsplit_once('-') {
-        Some((_, n)) => n.parse().unwrap_or(0),
-        None => 0,
-    }
-}
-
-/// Keep only the `max` newest snapshot files (by modified time) in `dir`.
-fn prune_history(dir: &Path, max: usize) -> Result<(), String> {
-    let mut entries: Vec<(PathBuf, u128)> = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for entry in rd.flatten() {
-            let p = entry.path();
-            // Never count temp litter from an interrupted snapshot write.
-            if p.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("")
-                .starts_with('.')
-            {
-                continue;
-            }
-            if let Ok(meta) = p.metadata() {
-                if meta.is_file() {
-                    let mtime = meta
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                        .map(|d| d.as_nanos())
-                        .unwrap_or(0);
-                    entries.push((p, mtime));
-                }
-            }
-        }
-    }
-    if entries.len() > max {
-        // Newest first. File mtimes are only jiffy-coarse, so snapshots written
-        // in quick succession can share one timestamp; break ties by the
-        // COLLISION SUFFIX, not by name. Plain name order gets this backwards —
-        // `-` sorts before `.`, so `<ms>-1.md` compares less than `<ms>.md`
-        // even though it was written later — which made the newest snapshot of
-        // a same-millisecond group sort as the oldest one and be deleted first
-        // while an older sibling survived.
-        entries.sort_by(|a, b| {
-            let an = a.0.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            let bn = b.0.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            b.1.cmp(&a.1)
-                .then(snapshot_collision_suffix(bn).cmp(&snapshot_collision_suffix(an)))
-                .then(an.cmp(bn))
-        });
-        for (p, _) in entries.into_iter().skip(max) {
-            let _ = std::fs::remove_file(p);
-        }
-    }
-    Ok(())
-}
-
-/// Remove `.tmp` siblings in `dir` whose modified time is older than
-/// `max_age`, returning how many were removed. These are crash remnants of
-/// [`atomic_write`]/[`snapshot_history`] (which write a `.<name>.<nonce>.tmp`
-/// sibling then rename it into place); on a crash the temp file survives.
-/// Cleaning is bounded to mtime so a temp file a live writer just created
-/// (fresh mtime, unique nonce name) is never deleted mid-write.
-/// Whether `name` matches the temp-file shape this crate writes:
-/// `.<original name>.<nanosecond nonce>.tmp`.
-///
-/// The leading dot keeps these out of the file tree and the numeric nonce
-/// distinguishes them from a file a user or another tool named `*.tmp`. Both
-/// parts matter: the dot alone would still claim `.gitignore.tmp`-style names
-/// that are not ours, and the suffix alone (what this used to check) claimed
-/// every `.tmp` file in the vault.
-fn is_our_temp_file(name: &str) -> bool {
-    let Some(rest) = name.strip_prefix('.') else {
-        return false;
-    };
-    let Some(rest) = rest.strip_suffix(".tmp") else {
-        return false;
-    };
-    // `.<nonce>.tmp` (happens for a nameless source) or `.<name>.<nonce>.tmp`.
-    match rest.rsplit_once('.') {
-        Some((_, nonce)) => !nonce.is_empty() && nonce.bytes().all(|b| b.is_ascii_digit()),
-        None => !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()),
-    }
-}
-
-pub fn cleanup_stale_tmp(dir: &Path, max_age: Duration) -> Result<usize, String> {
-    let now = SystemTime::now();
-    let rd = std::fs::read_dir(dir).map_err(|e| fs_error("read the folder", dir, e))?;
-    let mut removed = 0usize;
-    for entry in rd.flatten() {
-        let p = entry.path();
-        if p.is_dir() {
-            continue;
-        }
-        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        // Only OUR temp files: `atomic_write` and `snapshot_history` stage
-        // `.<original>.<nanosecond-nonce>.tmp` — hidden, with a numeric nonce as
-        // the final stem segment. Matching any `.tmp` suffix instead deleted
-        // whatever the user (or another program) happened to leave in the vault
-        // with that extension: a `draft.tmp` in a note's folder was removed by
-        // the next save in that folder, permanently — not to the trash, and with
-        // no history snapshot to recover from. Vaults routinely hold project
-        // files (that is why `node_modules`/`dist` are skipped), so this is a
-        // real document, not litter.
-        if !is_our_temp_file(name) {
-            continue;
-        }
-        let stale = p
-            .metadata()
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|mt| now.duration_since(mt).ok())
-            .map(|age| age > max_age)
-            .unwrap_or(false);
-        if stale && std::fs::remove_file(&p).is_ok() {
-            removed += 1;
-        }
-    }
-    Ok(removed)
 }
 
 /// Write `content` to `path` under the vault, snapshotting the previous
@@ -557,7 +102,7 @@ pub fn cleanup_stale_tmp(dir: &Path, max_age: Duration) -> Result<usize, String>
 /// invokes `write_file` with only `{ vault_root, path, content }`; Tauri maps a
 /// missing optional argument to `None`.
 ///
-/// The read-old -> snapshot -> atomic-write sequence holds [`WRITE_LOCK`], so
+/// The read-old -> snapshot -> atomic-write sequence holds [`write_lock`], so
 /// concurrent saves on the same vault are serialized and cannot interleave a
 /// stale snapshot with a newer write. The directory the file lives in is also
 /// swept for stale `.tmp` crash litter before the write.
@@ -570,7 +115,7 @@ pub fn write_file(
     // Serialize the whole read-snapshot-write sequence. `write_file` does no
     // `.await`, so the guard never crosses a yield point and cannot deadlock
     // the async executor; it just windows two concurrent saves apart.
-    let _guard = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
+    let _guard = write_lock().lock().map_err(|e| e.to_string())?;
     let resolved = resolve_within(vault_root, path)?;
     if let Some(parent) = resolved.parent() {
         let _ = cleanup_stale_tmp(parent, STALE_TMP_MAX_AGE);
@@ -627,7 +172,7 @@ pub fn write_file(
 /// is reported through [`crate::errors::ALREADY_EXISTS_PREFIX`] so the caller
 /// can try the next name instead of showing the user an OS error.
 pub fn create_new_file(vault_root: &str, path: &str, content: &str) -> Result<(), String> {
-    let _guard = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
+    let _guard = write_lock().lock().map_err(|e| e.to_string())?;
     let resolved = resolve_within(vault_root, path)?;
     let parent = resolved
         .parent()
@@ -638,121 +183,6 @@ pub fn create_new_file(vault_root: &str, path: &str, content: &str) -> Result<()
         CreateFileError::AlreadyExists => file_exists_error(path),
         CreateFileError::Failed(message) => message,
     })
-}
-
-/// List the history snapshots for `path`, newest first.
-pub fn list_history(vault_root: &str, path: &str) -> Result<Vec<HistoryEntry>, String> {
-    // Validate the path resolves inside the vault (C-round sandbox) before we
-    // trust it as a history key.
-    let encoded = encoded_history_key(vault_root, path)?;
-    // `None` is the ordinary "this note has no history yet" — an empty list is
-    // the truth, and merely looking must not create anything. Any OTHER failure
-    // (permissions, a symlinked metadata tree, a file where the directory
-    // should be) is a hole, and reporting it as "no history" tells the user
-    // their versions are gone when they are merely unreadable.
-    let Some(history_dir) =
-        find_vault_metadata_dir(vault_root, &[".nekowite", "history", &encoded])?
-    else {
-        return Ok(Vec::new());
-    };
-    let mut out = Vec::new();
-    let rd = std::fs::read_dir(&history_dir)
-        .map_err(|e| fs_error("read the history of", Path::new(path), e))?;
-    for entry in rd {
-        // A single unreadable entry is a hole too: skipping it silently turned
-        // a partially readable history into a shorter list, which the panel
-        // cannot tell apart from "this is all there is". Name the entry and
-        // fail instead - the caller already shows an unreadable history as an
-        // error, and an error is at least the truth.
-        let entry = entry.map_err(|e| fs_error("read the history of", Path::new(path), e))?;
-        let p = entry.path();
-        let id = entry.file_name().to_string_lossy().to_string();
-        // Temp litter from an interrupted snapshot write is not a snapshot, and
-        // stat-ing the litter of a crashed write is exactly what could fail.
-        if id.starts_with('.') {
-            continue;
-        }
-        let meta = p
-            .metadata()
-            .map_err(|e| fs_error("read the history entry", &p, e))?;
-        if !meta.is_file() {
-            continue;
-        }
-        let mtime = meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
-        out.push(HistoryEntry {
-            id,
-            size: meta.len(),
-            mtime,
-        });
-    }
-    out.sort_by(|a, b| b.mtime.cmp(&a.mtime).then(b.id.cmp(&a.id)));
-    Ok(out)
-}
-
-/// Read a single history snapshot by id.
-pub fn read_history(vault_root: &str, path: &str, id: &str) -> Result<String, String> {
-    let encoded = encoded_history_key(vault_root, path)?;
-    // The id is joined onto a directory path, so treat it as untrusted input:
-    // it must be a plain single file name.
-    let valid_id = !id.is_empty()
-        && !id.starts_with('.')
-        && !id.contains('/')
-        && !id.contains('\\')
-        && !id.contains(':')
-        && !id.contains("..")
-        && Path::new(id).file_name().and_then(|n| n.to_str()) == Some(id);
-    if !valid_id {
-        return Err("invalid history id".into());
-    }
-    // Resolved through the metadata walk, which refuses a symlinked
-    // `.nekowite`/`history`/key: without it the containment check below would
-    // still pass for a history tree that had been redirected outside the vault
-    // (both paths would agree — on the outside).
-    let history_dir = find_vault_metadata_dir(vault_root, &[".nekowite", "history", &encoded])?
-        .ok_or_else(|| "history is not available for this note".to_string())?;
-    let snapshot = history_dir.join(id);
-    // Belt and braces: even if the lexical checks above missed something, the
-    // resolved snapshot path must stay inside this history directory.
-    let canonical_dir = history_dir
-        .canonicalize()
-        .map_err(|e| fs_error("open the history folder", &history_dir, e))?;
-    let canonical_snapshot = snapshot
-        .canonicalize()
-        .map_err(|e| fs_error("find the history version", &snapshot, e))?;
-    if !canonical_snapshot.starts_with(&canonical_dir) {
-        return Err("invalid history id".into());
-    }
-    std::fs::read_to_string(&canonical_snapshot)
-        .map_err(|e| fs_error("read the history version", &canonical_snapshot, e))
-}
-
-/// Restore a history snapshot onto the main file atomically; returns the
-/// restored content. The content being replaced is snapshotted first (same
-/// pipeline and pruning as `write_file`), so a restore can itself be undone
-/// from the history panel.
-pub fn restore_history(vault_root: &str, path: &str, id: &str) -> Result<String, String> {
-    let content = read_history(vault_root, path, id)?;
-    let _guard = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
-    let resolved = resolve_within(vault_root, path)?;
-    if resolved.exists() {
-        match std::fs::read_to_string(&resolved) {
-            Err(e) if e.kind() == io::ErrorKind::InvalidData => {
-                // Same guard as write_file: never clobber a binary file.
-                return Err("file is not valid UTF-8 text".into());
-            }
-            Ok(old) if !old.is_empty() && old != content => {
-                snapshot_history(vault_root, path, &old, DEFAULT_MAX_HISTORY)?;
-            }
-            _ => {}
-        }
-    }
-    atomic_write(&resolved, &content)?;
-    Ok(content)
 }
 
 pub fn list_dir(vault_root: &str, path: Option<&str>) -> Result<Vec<FileEntry>, String> {
@@ -809,279 +239,6 @@ pub fn list_dir_entries(dir: &Path) -> Result<Vec<FileEntry>, String> {
     Ok(out)
 }
 
-/// Decode a standard-base64 attachment payload (frontend paste data).
-pub fn decode_base64(data: &str) -> Result<Vec<u8>, String> {
-    BASE64_STANDARD
-        .decode(data.trim())
-        .map_err(|e| format!("attachment data is not valid base64: {e}"))
-}
-
-/// Largest image the picker-based import accepts, mirroring the frontend's
-/// `MAX_ATTACHMENT_BYTES` so both entry points agree on what "too large" means.
-pub const MAX_IMPORT_BYTES: u64 = 10 * 1024 * 1024;
-
-/// Image extensions the import path accepts. A native file picker is a user
-/// gesture, but the picked path is still an arbitrary filesystem location, so
-/// the set of things we are willing to copy into a vault stays closed: an
-/// allowlist of image extensions, no executables, scripts or archives.
-pub const IMPORT_IMAGE_EXTENSIONS: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "svg", "ico", "tiff", "tif",
-];
-
-/// True when `path`'s extension is on the import allowlist (case-insensitive).
-pub fn is_importable_image(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase())
-        .is_some_and(|e| IMPORT_IMAGE_EXTENSIONS.contains(&e.as_str()))
-}
-
-/// Copy an image the user picked in the native dialog into the vault,
-/// returning its vault-relative path.
-///
-/// Unlike [`save_attachment`] the bytes never round-trip through the frontend
-/// as base64: the backend reads the source path directly and writes it into the
-/// vault. That keeps a large photo from being encoded (≈4/3 the byte size),
-/// shipped over IPC, decoded and written — and it means the file's real name
-/// and extension are preserved instead of being re-derived from MIME type.
-///
-/// The source path is intentionally outside the vault (that is the point of a
-/// file picker), so it is NOT passed through `resolve_within`. Instead the
-/// destination is confined to the vault by [`resolve_within_rel`] exactly like
-/// [`save_attachment`], the extension is allowlisted, and the size is capped.
-pub fn import_attachment(vault_root: &str, source_path: &str, dir: &str) -> Result<String, String> {
-    let source = Path::new(source_path);
-    if !source.is_absolute() {
-        return Err("picked file path must be absolute".into());
-    }
-    let metadata =
-        std::fs::metadata(source).map_err(|e| fs_error("read the picked file", source, e))?;
-    if !metadata.is_file() {
-        return Err("picked path is not a file".into());
-    }
-    if !is_importable_image(source) {
-        return Err("picked file is not a supported image".into());
-    }
-    if metadata.len() > MAX_IMPORT_BYTES {
-        return Err(format!(
-            "image is larger than the {} MB import limit",
-            MAX_IMPORT_BYTES / (1024 * 1024)
-        ));
-    }
-    let file_name = source
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| "picked file has no usable name".to_string())?;
-    // Reuses the same name sanitizer as the paste path, so an odd source name
-    // can never steer the destination out of the target directory.
-    let name = sanitize_attachment_name(file_name)?;
-
-    let _root = resolve_within(vault_root, ".")?;
-    let dir = dir.trim();
-    if Path::new(dir).is_absolute() {
-        return Err("attachment dir must be vault-relative".into());
-    }
-    let dir = if dir.is_empty() || dir == "." {
-        ""
-    } else {
-        dir.trim_matches('/')
-    };
-    let (dir_abs, dir_rel) = if dir.is_empty() {
-        let month = attachment_month_dir();
-        let rel = format!("attachments/{month}");
-        let abs = resolve_within(vault_root, &rel)?;
-        (abs, rel)
-    } else {
-        resolve_within_rel(vault_root, dir)?
-    };
-    std::fs::create_dir_all(&dir_abs).map_err(|e| fs_error("create the folder", &dir_abs, e))?;
-    // Bound the READ, not just the `metadata` check above: the file can be
-    // replaced or grown in between, and `fs::read` would then pull an unbounded
-    // amount into memory on the strength of a length that was true a moment
-    // ago. One byte past the limit is enough to detect it.
-    let mut bytes = Vec::new();
-    std::fs::File::open(source)
-        .map_err(|e| fs_error("open the picked file", source, e))?
-        .take(MAX_IMPORT_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|e| fs_error("read the picked file", source, e))?;
-    if bytes.len() as u64 > MAX_IMPORT_BYTES {
-        return Err(format!(
-            "image is larger than the {} MB import limit",
-            MAX_IMPORT_BYTES / (1024 * 1024)
-        ));
-    }
-    let unique = publish_attachment(&dir_abs, &name, &bytes)?;
-    Ok(format!("{dir_rel}/{unique}"))
-}
-
-/// Reduce a pasted/typed attachment name to a bare `stem.ext` file name.
-/// Path separators, `..` runs and extension-less names are rejected, so the
-/// name can never steer the write out of the attachments directory.
-pub fn sanitize_attachment_name(name: &str) -> Result<String, String> {
-    let invalid = || "invalid attachment file name".to_string();
-    if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
-        return Err(invalid());
-    }
-    let path = Path::new(name);
-    if path.file_name().and_then(|n| n.to_str()) != Some(name) {
-        return Err(invalid());
-    }
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(invalid)?;
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .ok_or_else(invalid)?;
-    Ok(format!("{stem}.{ext}"))
-}
-
-/// Local-calendar month folder for new attachments (`YYYY-MM`).
-fn attachment_month_dir() -> String {
-    Local::now().format("%Y-%m").to_string()
-}
-
-/// How many `-<n>` (and then `-overflow-<n>`) names a new attachment may try
-/// before it gives up, so the search cannot spin forever over a directory that
-/// holds every candidate.
-const ATTACHMENT_NAME_ATTEMPTS: u32 = 1000;
-
-/// `stem.ext` for `n == 0`, `stem-<n>.ext` after that — the collision scheme
-/// both attachment entry points promise. Mirrors Memoir's `unique_file_name`.
-fn attachment_candidate(stem: &str, ext: &str, n: u32) -> String {
-    if n == 0 {
-        format!("{stem}.{ext}")
-    } else {
-        format!("{stem}-{n}.{ext}")
-    }
-}
-
-/// Publish `bytes` under the first free name derived from `preferred` inside
-/// `dir_abs`, returning the name it claimed.
-///
-/// The name is probed first (cheap, and in the ordinary case the first
-/// candidate is free) and then CLAIMED by the create-only write: a name another
-/// writer takes in between is reported as taken and the search simply goes on.
-/// Choosing the name and writing it are therefore one step, which the previous
-/// `unique_attachment_name` + `atomic_write_bytes` pair was not — two pastes of
-/// the same file name in the same millisecond both picked `paste.png` and the
-/// second overwrote the first, while both callers were handed the same path and
-/// only one payload was ever readable.
-fn publish_attachment(dir_abs: &Path, preferred: &str, bytes: &[u8]) -> Result<String, String> {
-    let path = Path::new(preferred);
-    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("png");
-    // `Ok(Some(name))` = claimed, `Ok(None)` = someone else has it.
-    let claim = |candidate: String| match create_new_bytes(&dir_abs.join(&candidate), bytes) {
-        Ok(()) => Ok(Some(candidate)),
-        Err(CreateFileError::AlreadyExists) => Ok(None),
-        Err(CreateFileError::Failed(message)) => Err(message),
-    };
-
-    for n in 0..ATTACHMENT_NAME_ATTEMPTS {
-        let candidate = attachment_candidate(stem, ext, n);
-        if !dir_abs.join(&candidate).exists() {
-            if let Some(name) = claim(candidate)? {
-                return Ok(name);
-            }
-        }
-    }
-    for n in 0..ATTACHMENT_NAME_ATTEMPTS {
-        let candidate = if n == 0 {
-            format!("{stem}-overflow.{ext}")
-        } else {
-            format!("{stem}-overflow-{n}.{ext}")
-        };
-        if !dir_abs.join(&candidate).exists() {
-            if let Some(name) = claim(candidate)? {
-                return Ok(name);
-            }
-        }
-    }
-    // A nonce makes the name unique in practice; it is still claimed rather
-    // than assumed free, so even this last resort cannot overwrite anything.
-    let candidate = format!("{stem}-overflow-{}.{ext}", time_nonce());
-    match claim(candidate)? {
-        Some(name) => Ok(name),
-        None => Err(format!(
-            "could not find a free name for {preferred} in {}",
-            crate::domain::path_policy::ipc_path(dir_abs)
-        )),
-    }
-}
-
-/// Decode and save a base64 image attachment, deduplicating name collisions
-/// with `-<n>` suffixes, and return the vault-relative path (forward slashes)
-/// for embedding in markdown.
-///
-/// When `dir` is non-empty it is treated as a vault-relative target directory
-/// (e.g. `notes/foo_assets` or `.tmp`) and the file is written there; when it
-/// is empty the legacy `attachments/{YYYY-MM}` layout is used. Traversal and
-/// symlink escapes in `dir` are rejected by [`resolve_within_rel`].
-pub fn save_attachment(
-    vault_root: &str,
-    file_name: &str,
-    base64: &str,
-    dir: &str,
-) -> Result<String, String> {
-    // The frontend caps a paste at `MAX_ATTACHMENT_BYTES` before it ever
-    // encodes, but that is a single caller: a plugin, the chat panel or a
-    // future caller can reach this command directly, and the IPC boundary must
-    // not trust any of them. Checking the encoded length BEFORE decoding also
-    // means an oversized payload is rejected without allocating its bytes.
-    //
-    // Base64 is 4 characters per 3 bytes, so this bound is the decoded limit
-    // rounded up to a whole group — slightly permissive by design, and the
-    // exact check follows the decode.
-    let encoded_limit = (MAX_IMPORT_BYTES as usize).div_ceil(3) * 4;
-    if base64.len() > encoded_limit {
-        return Err(format!(
-            "attachment is larger than the {} MB limit",
-            MAX_IMPORT_BYTES / (1024 * 1024)
-        ));
-    }
-    let bytes = decode_base64(base64)?;
-    if bytes.len() as u64 > MAX_IMPORT_BYTES {
-        return Err(format!(
-            "attachment is larger than the {} MB limit",
-            MAX_IMPORT_BYTES / (1024 * 1024)
-        ));
-    }
-    let name = sanitize_attachment_name(file_name)?;
-    // `sanitize_attachment_name` only constrains the SHAPE of the name, so a
-    // rename to `notes.html` used to land an arbitrary file type in the vault.
-    // The paste path is for images, so it shares the picker's allowlist.
-    if !is_importable_image(Path::new(&name)) {
-        return Err(format!("attachment type is not an allowed image: {name}"));
-    }
-    // Path-confinement guard: validates the vault base resolves inside the
-    // vault; the binding is unused (the target dir is resolved below via dir_abs).
-    let _root = resolve_within(vault_root, ".")?;
-    let dir = dir.trim();
-    if Path::new(dir).is_absolute() {
-        return Err("attachment dir must be vault-relative".into());
-    }
-    let dir = if dir.is_empty() || dir == "." {
-        ""
-    } else {
-        dir.trim_matches('/')
-    };
-    let (dir_abs, dir_rel) = if dir.is_empty() {
-        let month = attachment_month_dir();
-        let rel = format!("attachments/{month}");
-        let abs = resolve_within(vault_root, &rel)?;
-        (abs, rel)
-    } else {
-        resolve_within_rel(vault_root, dir)?
-    };
-    std::fs::create_dir_all(&dir_abs).map_err(|e| fs_error("create the folder", &dir_abs, e))?;
-    let unique = publish_attachment(&dir_abs, &name, &bytes)?;
-    Ok(format!("{dir_rel}/{unique}"))
-}
-
 /// Resolve a media reference (e.g. from markdown) to an absolute path the
 /// frontend can feed to `convertFileSrc`. Traversal and symlink escapes are
 /// rejected by [`resolve_within`]; a missing file is an error.
@@ -1104,163 +261,11 @@ pub fn create_dir(vault_root: &str, path: &str) -> Result<String, String> {
     Ok(relative)
 }
 
-/// Rename (move) a file or directory within the vault. The target must not
-/// exist. Returns the canonical vault-relative path of the moved entry.
-///
-/// For a renamed *file*, the history snapshots and trash entry keyed by the
-/// old vault-relative path are migrated to the new key too, so a rename doesn't
-/// silently orphan (make unreachable) a file's history or a trash restore.
-/// A renamed *directory* is a plain move for now: the file tree inside it
-/// still carries old relative paths, so migrating the whole subtree's keys is
-/// deliberately out of scope here (single-file renames are covered).
-pub fn rename_entry(vault_root: &str, from: &str, to: &str) -> Result<String, String> {
-    // Serialize with the saves. Without this a save that resolved the old path
-    // just before the move publishes its temp file at the path the rename
-    // vacated, resurrecting the file after its history and trash keys have
-    // already been migrated to the new name — the rename then looks like it
-    // silently failed, and the old path holds a copy nothing tracks.
-    let _guard = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
-    let (resolved_from, relative_from) = resolve_within_rel(vault_root, from)?;
-    if !resolved_from.exists() {
-        return Err(format!("not found: {relative_from}"));
-    }
-    let is_dir = resolved_from.is_dir();
-    let (resolved_to, relative_to) = resolve_within_rel(vault_root, to)?;
-    // `exists()` follows the filesystem's CASING rules, so on Windows a case-only
-    // rename (`note.md` -> `Note.md`) hits the file itself and was rejected with
-    // "target already exists: Note.md" — a message naming the very name the user
-    // just asked for, which reads as nonsense.
-    //
-    // The comparison uses the REQUESTED spellings, not the resolved paths:
-    // resolution canonicalizes, and canonicalization reports the ON-DISK casing,
-    // so a request for `archive/B.md` resolves to `archive/b.md` and would look
-    // identical to its own source.
-    let normalize = |s: &str| s.replace('\\', "/").to_lowercase();
-    let case_only_rename = from != to && normalize(from) == normalize(to);
-    if resolved_to.exists() && !case_only_rename {
-        return Err(format!("target already exists: {relative_to}"));
-    }
-    if let Some(parent) = resolved_to.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| fs_error("create the folder containing", parent, e))?;
-    }
-    if case_only_rename {
-        // Two things have to be right here, and the first attempt got both wrong
-        // (measured: the rename reported success and the file kept its old name).
-        //
-        // 1. `resolved_to` is USELESS as the destination. Resolution canonicalizes
-        //    before the move, so for `keep.md` -> `KEEP.md` it holds the OLD
-        //    spelling — renaming to it is exactly what "does nothing". The
-        //    destination is therefore rebuilt from the requested name (that is
-        //    where the user's casing lives) on the resolved parent.
-        // 2. A direct rename will not change an existing entry's case, so it goes
-        //    through a temporary sibling name first. That name wears our staging
-        //    shape, so a process death between the two steps leaves something the
-        //    vault's temp sweeper recognises rather than an orphan — and the file
-        //    is put back under its original name if the second step fails.
-        let parent = resolved_to.parent().unwrap_or(Path::new("."));
-        let requested_name = to
-            .rsplit(['/', '\\'])
-            .next()
-            .filter(|n| !n.is_empty())
-            .unwrap_or("renamed");
-        let target = parent.join(requested_name);
-        let temp = parent.join(format!(".{requested_name}.{}.tmp", time_nonce()));
-        std::fs::rename(&resolved_from, &temp)
-            .map_err(|e| fs_error("rename", &resolved_from, e))?;
-        if let Err(e) = std::fs::rename(&temp, &target) {
-            let _ = std::fs::rename(&temp, &resolved_from);
-            return Err(fs_error("rename to", &target, e));
-        }
-    } else {
-        // Files get a real no-clobber move: between the `exists()` check above
-        // and the move another writer can create the destination, and a plain
-        // `rename` would REPLACE it — silently destroying that file. A directory
-        // has no portable no-clobber rename, so `move_no_clobber` falls back to a
-        // best-effort check plus one atomic rename for it.
-        match move_no_clobber(&resolved_from, &resolved_to) {
-            Ok(()) => {}
-            // Someone claimed the name in the window: report it exactly as the
-            // check above would have, rather than clobbering them.
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                return Err(format!("target already exists: {relative_to}"));
-            }
-            Err(e) => return Err(fs_error("rename", &resolved_from, e)),
-        }
-    }
-    // The relative path was canonicalized BEFORE the move, so for a case-only
-    // rename it still holds the old spelling. Re-resolve to report what is
-    // actually on disk now: the caller stores this string as the tab's path and
-    // shows it as the note's name, so `archive/b.md` after a rename to
-    // `archive/B.md` would leave the title looking as if nothing happened.
-    let relative_to = resolve_within_rel(vault_root, to)
-        .map(|(_, rel)| rel)
-        .unwrap_or(relative_to);
-    if !is_dir {
-        move_history_key(vault_root, &relative_from, &relative_to);
-        move_trash_key(vault_root, &relative_from, &relative_to);
-    }
-    Ok(relative_to)
-}
-
-/// Migrate a file's history snapshots from the key for `from_rel` to the key
-/// for `to_rel`. Best-effort: a renamed entry must not fail because a side
-/// table could not be moved, so every error is swallowed. When the target key
-/// already holds snapshots (a file of that relative path was previously saved),
-/// the two directories are merged file-by-file instead of clobbering.
-fn move_history_key(vault_root: &str, from_rel: &str, to_rel: &str) {
-    let from_name = encode_rel_path(from_rel);
-    let to_name = encode_rel_path(to_rel);
-    // A missing source is the ordinary "the old name had no history"; a
-    // symlinked metadata tree is a refusal. This function reports every failure
-    // by doing nothing.
-    let Ok(Some(from_dir)) =
-        find_vault_metadata_dir(vault_root, &[".nekowite", "history", &from_name])
-    else {
-        return;
-    };
-    // Resolve the target WITHOUT creating it: the single-rename path below
-    // needs it absent, and `None` is exactly "the name is free". Either way the
-    // result stays under the parent the walk already validated.
-    let to_dir =
-        match resolve_vault_metadata_dir(vault_root, &[".nekowite", "history", &to_name], false) {
-            Ok(Some(dir)) => dir,
-            Ok(None) => match from_dir.parent() {
-                Some(parent) => parent.join(&to_name),
-                None => return,
-            },
-            Err(_) => return,
-        };
-    if !to_dir.exists() {
-        let _ = std::fs::rename(&from_dir, &to_dir);
-        return;
-    }
-    let Ok(rd) = std::fs::read_dir(&from_dir) else {
-        return;
-    };
-    for entry in rd.flatten() {
-        let src = entry.path();
-        let name = src
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-        let mut target = to_dir.join(&name);
-        if target.exists() {
-            let ts = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or_default();
-            target = to_dir.join(format!("{name}-merged-{ts}"));
-        }
-        let _ = std::fs::rename(&src, &target);
-    }
-    let _ = std::fs::remove_dir(&from_dir);
-}
-
 #[cfg(test)]
 mod write_lock_scope_tests {
     use super::*;
+    use crate::storage::atomic_write::write_lock;
+    use std::path::PathBuf;
     use std::sync::mpsc;
     use std::time::Duration;
 
@@ -1273,16 +278,21 @@ mod write_lock_scope_tests {
     }
 
     /// The write lock is PROCESS-WIDE, not per vault: a save in one vault waits
-    /// for a save in another. That is the guarantee the comment on `WRITE_LOCK`
-    /// claims, and this test exists so narrowing the lock to a per-vault map has
-    /// to be a deliberate act with updated reasoning, not a silent refactor.
+    /// for a save in another. That is the guarantee the comment on the lock
+    /// (`atomic_write::write_lock`) claims, and this test exists so narrowing the
+    /// lock to a per-vault map has to be a deliberate act with updated reasoning,
+    /// not a silent refactor.
+    ///
+    /// It lives here, at the facade, because the three paths it has to keep on
+    /// ONE lock - `write_file`, `rename_entry`, `restore_history` - meet in this
+    /// module; the lock itself is defined in `atomic_write`.
     #[test]
     fn the_write_lock_is_process_wide_across_vaults() {
         let vault_a = temp_root("scope-a");
         let vault_b = temp_root("scope-b");
         let b_root = vault_b.to_str().unwrap().to_string();
 
-        let guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = write_lock().lock().unwrap_or_else(|e| e.into_inner());
         let (tx, rx) = mpsc::channel();
         let handle = std::thread::spawn(move || {
             let ok = write_file(&b_root, "b.md", "content", None).is_ok();
@@ -1318,7 +328,7 @@ mod write_lock_scope_tests {
         let root = vault.to_str().unwrap().to_string();
         std::fs::write(vault.join("a.md"), "content").unwrap();
 
-        let guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = write_lock().lock().unwrap_or_else(|e| e.into_inner());
         let (tx, rx) = mpsc::channel();
         let root_clone = root.clone();
         let handle = std::thread::spawn(move || {
@@ -1348,7 +358,7 @@ mod write_lock_scope_tests {
         write_file(&root, "note.md", "v2", Some(5)).unwrap();
         let id = list_history(&root, "note.md").unwrap()[0].id.clone();
 
-        let guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = write_lock().lock().unwrap_or_else(|e| e.into_inner());
         let (tx, rx) = mpsc::channel();
         let root_clone = root.clone();
         let handle = std::thread::spawn(move || {
@@ -1367,172 +377,5 @@ mod write_lock_scope_tests {
         );
         handle.join().unwrap();
         let _ = std::fs::remove_dir_all(&vault);
-    }
-}
-
-#[cfg(test)]
-mod create_only_write_tests {
-    use super::*;
-
-    fn scratch(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "nekowite-attach-{label}-{}-{}",
-            std::process::id(),
-            time_nonce()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    #[test]
-    fn overflow_name_is_skipped_when_it_already_exists() {
-        let dir = scratch("overflow");
-        for n in 0..1000u32 {
-            let name = if n == 0 {
-                "pic.png".to_string()
-            } else {
-                format!("pic-{n}.png")
-            };
-            std::fs::write(dir.join(&name), b"x").unwrap();
-        }
-        std::fs::write(dir.join("pic-overflow.png"), b"x").unwrap();
-        let unique = publish_attachment(&dir, "pic.png", b"new").unwrap();
-        assert_eq!(unique, "pic-overflow-1.png");
-        assert_eq!(std::fs::read(dir.join(&unique)).unwrap(), b"new");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// The claim on a name is the CREATE, not the probe before it: an entry the
-    /// probe cannot see (a dangling symlink reads as absent to `exists()`) is
-    /// still refused, so a writer that owns the name keeps it.
-    #[test]
-    #[cfg(unix)]
-    fn create_new_bytes_refuses_a_name_a_probe_would_call_free() {
-        let dir = scratch("claim");
-        let target = dir.join("pic.png");
-        std::os::unix::fs::symlink(dir.join("missing.png"), &target).unwrap();
-        assert!(!target.exists(), "the probe has to miss this entry");
-
-        assert!(
-            matches!(
-                create_new_bytes(&target, b"new"),
-                Err(CreateFileError::AlreadyExists)
-            ),
-            "a create-only write must refuse the name the symlink holds"
-        );
-        assert!(
-            std::fs::symlink_metadata(&target)
-                .unwrap()
-                .file_type()
-                .is_symlink(),
-            "the existing entry must survive the refused write"
-        );
-
-        // And the caller moves on to the next free name instead of failing.
-        assert_eq!(
-            publish_attachment(&dir, "pic.png", b"new").unwrap(),
-            "pic-1.png"
-        );
-        assert_eq!(std::fs::read(dir.join("pic-1.png")).unwrap(), b"new");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// The same guarantee for the move: `fs::rename` replaces the destination,
-    /// `move_no_clobber` must not.
-    #[test]
-    #[cfg(unix)]
-    fn move_no_clobber_never_replaces_the_entry_at_the_destination() {
-        let dir = scratch("move");
-        let source = dir.join("from.md");
-        let taken = dir.join("to.md");
-        std::fs::write(&source, "source").unwrap();
-        std::fs::write(&taken, "occupant").unwrap();
-
-        assert!(
-            move_no_clobber(&source, &taken).is_err(),
-            "an existing file must not be replaced"
-        );
-        assert_eq!(std::fs::read_to_string(&taken).unwrap(), "occupant");
-        assert_eq!(std::fs::read_to_string(&source).unwrap(), "source");
-
-        // An entry that only `exists()` can see through: a dangling symlink.
-        let linked = dir.join("linked.md");
-        std::os::unix::fs::symlink(dir.join("missing.md"), &linked).unwrap();
-        assert!(
-            move_no_clobber(&source, &linked).is_err(),
-            "a dead symlink still holds the name"
-        );
-        assert!(std::fs::symlink_metadata(&linked)
-            .unwrap()
-            .file_type()
-            .is_symlink());
-
-        // A free destination still moves, and leaves nothing behind.
-        let free = dir.join("free.md");
-        move_no_clobber(&source, &free).unwrap();
-        assert_eq!(std::fs::read_to_string(&free).unwrap(), "source");
-        assert!(!source.exists());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
-
-#[cfg(test)]
-mod snapshot_pruning_tests {
-    use super::{prune_history, snapshot_collision_suffix};
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-    #[test]
-    fn the_collision_suffix_is_the_age_order() {
-        assert_eq!(snapshot_collision_suffix("1700.md"), 0);
-        assert_eq!(snapshot_collision_suffix("1700-1.md"), 1);
-        assert_eq!(snapshot_collision_suffix("1700-12.markdown"), 12);
-        // Anything that is not `<stem>-<n>.<ext>` belongs to no collision group.
-        assert_eq!(snapshot_collision_suffix("notes.md"), 0);
-        assert_eq!(snapshot_collision_suffix("no-extension"), 0);
-    }
-
-    #[test]
-    fn pruning_a_same_millisecond_group_keeps_the_newest_snapshot() {
-        let dir = std::env::temp_dir().join(format!(
-            "nekowite-prune-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-
-        // `snapshot_history` writes `<ms>.md` first, then `-1`, then `-2`, so
-        // `1700-2.md` is the NEWEST of the group.
-        let names = ["1700.md", "1700-1.md", "1700-2.md"];
-        for name in names {
-            std::fs::write(dir.join(name), name).unwrap();
-        }
-        // Pin one shared mtime: that is what a jiffy-coarse clock produces for
-        // snapshots written in quick succession, and without it the tie-break
-        // this test is about never runs.
-        let shared = SystemTime::now() - Duration::from_secs(60);
-        for name in names {
-            std::fs::OpenOptions::new()
-                .write(true)
-                .open(dir.join(name))
-                .unwrap()
-                .set_modified(shared)
-                .unwrap();
-        }
-
-        prune_history(&dir, 1).unwrap();
-
-        let kept: Vec<String> = std::fs::read_dir(&dir)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
-            .collect();
-        assert_eq!(
-            kept,
-            vec!["1700-2.md".to_string()],
-            "pruning must drop the OLDEST of the group, not the newest"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }
