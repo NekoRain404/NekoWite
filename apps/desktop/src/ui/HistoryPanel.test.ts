@@ -1,5 +1,15 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { createApp, type App as VueApp } from 'vue'
+import {
+  createApp,
+  defineComponent,
+  h,
+  nextTick,
+  ref,
+  vShow,
+  withDirectives,
+  type App as VueApp,
+  type Ref,
+} from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import HistoryPanel from './HistoryPanel.vue'
 import { useTabsStore } from '../stores/tabs'
@@ -273,6 +283,130 @@ describe('HistoryPanel', () => {
     const hint = host.querySelector('.rail-empty')?.textContent ?? ''
     expect(hint).toContain(t('history.unreadable'))
     expect(hint).not.toContain(t('history.empty'))
+  })
+})
+
+/** Mounts the panel the way InfoRail does: mounted, hidden with `v-show` while
+ *  another rail section has the tab. */
+function mountSection(shown: Ref<boolean>): HTMLElement {
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const app = createApp(
+    defineComponent({
+      render: () => withDirectives(h(HistoryPanel), [[vShow, shown.value]]),
+    }),
+  )
+  app.use(pinia)
+  app.mount(host)
+  mounted.push(app)
+  return host
+}
+
+describe('reading the history only when it can have changed', () => {
+  beforeEach(() => {
+    pinia = createPinia()
+    setActivePinia(pinia)
+    readMock.mockReset()
+    statMock.mockReset()
+    listHistoryMock.mockReset()
+    readHistoryMock.mockReset()
+    restoreHistoryMock.mockReset()
+    readMock.mockResolvedValue('# hello')
+    statMock.mockResolvedValue({ size: 8, mtime: Number.MAX_SAFE_INTEGER })
+    listHistoryMock.mockResolvedValue([{ id: 'ver-1', size: 100, mtime: 100 }])
+    document.body.innerHTML = ''
+    mounted = []
+  })
+
+  afterEach(() => {
+    mounted.forEach((app) => app.unmount())
+    mounted = []
+    document.body.innerHTML = ''
+  })
+
+  it('does not read the history while the user is typing', async () => {
+    // A version file only appears when a save writes one, so a keystroke is not
+    // a reason to issue a listHistory IPC read.
+    await openDoc()
+    mountPanel()
+    await flush()
+    const before = historyCallCount()
+
+    const tabs = useTabsStore()
+    for (let i = 0; i < 5; i++) {
+      tabs.activeTab!.content = `# hello ${i}`
+      tabs.markDirty(tabs.activeTab!.id)
+      await nextTick()
+      await flush()
+    }
+
+    expect(historyCallCount()).toBe(before)
+  })
+
+  it('reads the history again once a save lands', async () => {
+    await openDoc()
+    mountPanel()
+    await flush()
+    const tabs = useTabsStore()
+    const tab = tabs.activeTab!
+
+    tab.content = '# typed since the last save'
+    tabs.markDirty(tab.id)
+    await nextTick()
+    const afterTyping = historyCallCount()
+
+    await tabs.saveTab(tab.id)
+    await flush()
+    await flush()
+
+    expect(historyCallCount()).toBeGreaterThan(afterTyping)
+  })
+
+  it('does not read while its rail section is hidden, and reads when it is shown', async () => {
+    // Both notes are opened before the panel mounts: `openTab` reads the
+    // version list itself (crash recovery), and counting its reads would hide
+    // what the panel does. Switching the active tab has no such side effect.
+    const tabs = useTabsStore()
+    await openDoc('/vault/a.md')
+    await tabs.openTab('/vault/b.md')
+    const idFor = (path: string): string => tabs.tabs.find((t) => t.path === path)!.id
+    tabs.activeId = idFor('/vault/a.md')
+
+    const shown = ref(false)
+    listHistoryMock.mockClear()
+    mountSection(shown)
+    await flush()
+    // Mounting hidden is the rail's normal case (it opens on its AI tab): it
+    // must not read either.
+    expect(historyCallCount()).toBe(0)
+
+    tabs.activeId = idFor('/vault/b.md')
+    await flush()
+    await flush()
+    expect(historyCallCount()).toBe(0)
+
+    shown.value = true
+    await flush()
+    await flush()
+    expect(historyCallCount()).toBe(1)
+  })
+
+  it('still re-reads for the note switch while it is on screen', async () => {
+    const tabs = useTabsStore()
+    await openDoc('/vault/a.md')
+    await tabs.openTab('/vault/b.md')
+    const idFor = (path: string): string => tabs.tabs.find((t) => t.path === path)!.id
+    tabs.activeId = idFor('/vault/a.md')
+
+    mountPanel()
+    await flush()
+    listHistoryMock.mockClear()
+
+    tabs.activeId = idFor('/vault/b.md')
+    await flush()
+    await flush()
+
+    expect(historyCallCount()).toBe(1)
   })
 })
 

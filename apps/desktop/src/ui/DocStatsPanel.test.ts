@@ -1,9 +1,33 @@
-import { beforeEach, describe, expect, it, afterEach } from 'vitest'
-import { createApp, type App as VueApp } from 'vue'
+import { beforeEach, describe, expect, it, afterEach, vi } from 'vitest'
+import {
+  createApp,
+  defineComponent,
+  h,
+  nextTick,
+  ref,
+  vShow,
+  withDirectives,
+  type App as VueApp,
+  type Ref,
+} from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import DocStatsPanel from './DocStatsPanel.vue'
 import { useTabsStore, type OpenTab } from '../stores/tabs'
 import { t } from '../i18n'
+
+/** Counts the document scans, so "the hidden section did not scan" is observed
+ *  rather than inferred. */
+const statCalls = { count: 0 }
+vi.mock('../services/docStats', async (orig) => {
+  const mod = await orig<typeof import('../services/docStats')>()
+  return {
+    ...mod,
+    computeDocStats: (md: string) => {
+      statCalls.count += 1
+      return mod.computeDocStats(md)
+    },
+  }
+})
 
 let pinia: Pinia
 let mounted: VueApp[] = []
@@ -77,5 +101,84 @@ describe('DocStatsPanel', () => {
     const fill = host.querySelector<HTMLElement>('.task-bar-fill')
     expect(fill).not.toBeNull()
     expect(fill?.style.width).toBe('50%')
+  })
+
+  it('updates every reading when the document changes', async () => {
+    // The memo-invalidation test at the panel's level: the shared reading is
+    // keyed on the document, so an edit must move every number.
+    seedDoc('Hello world 你好 世界\n\nSecond paragraph')
+    const host = mountPanel()
+    expect(findStat(host, '8')).not.toBeNull()
+    expect(findStat(host, '2')).not.toBeNull()
+
+    useTabsStore().activeTab!.content = 'Hello world 你好 世界\n\nSecond paragraph\n\nThird one here'
+    await nextTick()
+
+    expect(findStat(host, '8')).toBeNull()
+    expect(findStat(host, '11')).not.toBeNull()
+    expect(findStat(host, '3')).not.toBeNull()
+  })
+})
+
+describe('DocStatsPanel only scans while its rail section is shown', () => {
+  beforeEach(() => {
+    pinia = createPinia()
+    setActivePinia(pinia)
+    document.body.innerHTML = ''
+    mounted = []
+    statCalls.count = 0
+  })
+
+  afterEach(() => {
+    mounted.forEach((app) => app.unmount())
+    mounted = []
+    document.body.innerHTML = ''
+  })
+
+  function mountSection(shown: Ref<boolean>): HTMLElement {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const app = createApp(
+      defineComponent({
+        render: () => withDirectives(h(DocStatsPanel), [[vShow, shown.value]]),
+      }),
+    )
+    app.use(pinia)
+    app.mount(host)
+    mounted.push(app)
+    return host
+  }
+
+  it('stops scanning the document while another rail section is on screen', async () => {
+    seedDoc('# Note\n\nsome text\n')
+    const shown = ref(false)
+    mountSection(shown)
+    await nextTick()
+
+    const afterMount = statCalls.count
+    const tabs = useTabsStore()
+    tabs.activeTab!.content = '# Note\n\ndifferent text entirely\n'
+    await nextTick()
+    await nextTick()
+
+    expect(statCalls.count).toBe(afterMount)
+  })
+
+  it('shows the current reading when it comes back on screen', async () => {
+    seedDoc('# Note\n\nsome text\n')
+    const shown = ref(false)
+    const host = mountSection(shown)
+    await nextTick()
+
+    const tabs = useTabsStore()
+    tabs.activeTab!.content = 'five words in this text\n'
+    await nextTick()
+    await nextTick()
+
+    shown.value = true
+    await nextTick()
+    await nextTick()
+
+    expect(findStat(host, '5')).not.toBeNull()
   })
 })

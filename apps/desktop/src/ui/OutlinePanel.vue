@@ -1,14 +1,33 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { parseOutline, type OutlineItem } from '../services/outline'
+import { storeToRefs } from 'pinia'
+import type { OutlineItem } from '../services/outline'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
+import { useDocDerivedStore } from '../stores/docDerived'
+import { useSectionShown } from './useSectionShown'
 import { t } from '../i18n'
 
 const tabs = useTabsStore()
 const view = useViewStore()
 
-const items = computed<OutlineItem[]>(() => parseOutline(tabs.activeTab?.content ?? ''))
+const { sectionRef, shown } = useSectionShown()
+
+/** Shared with every other reading of the document (see stores/docDerived.ts). */
+const { outline } = storeToRefs(useDocDerivedStore())
+
+/** Shared by every render of a hidden section, so they do not each build an
+ *  empty list. */
+const NO_ITEMS: OutlineItem[] = []
+
+/**
+ * Nothing is parsed while the rail shows a different section: the headings are
+ * only ever read from the list below, and this section stays mounted (the rail
+ * switches with `v-show`) so it used to re-parse the whole note on every typing
+ * pause. Coming back on screen re-reads the current headings — the gate holds no
+ * stale list, it simply does not ask.
+ */
+const items = computed<OutlineItem[]>(() => (shown.value ? outline.value : NO_ITEMS))
 const hasDoc = computed(() => tabs.activeTab !== null)
 
 function onPick(item: OutlineItem): void {
@@ -17,7 +36,10 @@ function onPick(item: OutlineItem): void {
 </script>
 
 <template>
-  <section class="outline-panel">
+  <section
+    :ref="sectionRef"
+    class="outline-panel"
+  >
     <h3 class="rail-section-title">
       {{ t('outline.title') }}
       <span
