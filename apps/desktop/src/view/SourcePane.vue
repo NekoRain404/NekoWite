@@ -17,7 +17,6 @@ import {
 } from '../services/sourceView'
 import { markSourceAuthored } from '../services/editorOwnership'
 import { resolveDirection } from '../services/rtl'
-import { SPLIT_SCROLL_SETTLE_PX } from '../services/splitScrollCoordinator'
 
 const tabs = useTabsStore()
 const view = useViewStore()
@@ -153,11 +152,11 @@ function onScroll(): void {
   if (!el) return
   // A programmatic scroll fires its scroll event asynchronously, and that event
   // is this pane's own echo — not a scroll the user made, so it must not become
-  // a new sync request. The offset is what identifies it: a write that landed
-  // short (or was clamped away) leaves a position the next event cannot match.
+  // a new sync request. The record holds the offset the engine kept, so its echo
+  // matches exactly; anything else is the user, however close it lands.
   const written = programWrite
   programWrite = null
-  if (written && Math.abs(el.scrollTop - written.top) < SPLIT_SCROLL_SETTLE_PX) return
+  if (written && el.scrollTop === written.top) return
   emit('user-scroll')
   if (scrollRaf !== 0) return
   scrollRaf = requestAnimationFrame(() => {
@@ -181,8 +180,13 @@ function setScrollTop(top: number, token: number): void {
   const el = host?.getView()?.scrollDOM
   if (!el) return
   const clamped = Number.isFinite(top) ? Math.max(0, Math.min(top, scrollRange())) : 0
-  programWrite = { token, top: clamped }
   el.scrollTop = clamped
+  // Record what the engine ACCEPTED, not what was asked for: it snaps a scroll
+  // offset to its own quantum (and clamps it to the range), so the requested
+  // value can sit up to half a pixel from the one the write's scroll event will
+  // report — a whole pixel on an engine that truncates. Reading the offset back
+  // closes that gap, which is what lets onScroll compare exactly below.
+  programWrite = { token, top: el.scrollTop }
 }
 
 /** The offset that puts the top of `line` (1-based) at the top of the viewport. */

@@ -21,6 +21,33 @@ function makeScrollEl() {
   }
 }
 
+/** An engine that snaps a scroll offset to whole pixels, as browsers do: the
+ *  value an assignment asks for is not always the value the engine keeps, so a
+ *  write of 500.5 lands on 501. happy-dom stores exactly what it is handed,
+ *  which is why this boundary needs a fake of its own. */
+function makeSnappingScrollEl() {
+  let stored = 0
+  const el = {
+    scrollHeight: 1000,
+    clientHeight: 200,
+    get scrollTop(): number {
+      return stored
+    },
+    set scrollTop(next: number) {
+      stored = Math.round(next)
+    },
+    getBoundingClientRect: () => ({ top: 0, left: 0, width: 0, height: 0 }),
+  }
+  return {
+    el,
+    /** Move the pane the way the user's own scrolling does: a position nothing
+     *  in this code asked for, so nothing may claim it as its echo. */
+    userScrollTo: (next: number): void => {
+      stored = next
+    },
+  }
+}
+
 /** A rendered heading positioned at `top`, reported the way the browser does it:
  *  relative to the viewport, so it moves with the pane's scroll. */
 function makeHeading(top: number): HTMLElement {
@@ -90,6 +117,38 @@ describe('editorScrollSync', () => {
     el.scrollTop = 500
     expect(scrollSync.onScroll()).toBe(true)
     expect(view.renderedScroll).toBe(500)
+  })
+
+  it('consumes the echo of a write the engine snapped to another offset', () => {
+    const { el } = makeSnappingScrollEl()
+    const scrollSync = createEditorScrollSync({
+      getScrollEl: () => el as unknown as HTMLElement,
+      getEditorEl: () => null,
+    })
+
+    // Half a pixel is exactly the boundary: the engine keeps 501, so an echo
+    // reporting 501 is half a pixel away from what the write asked for. Nothing
+    // was ever within half a pixel of the write, so the value the engine
+    // ACCEPTED is the one the echo has to be recognised by.
+    scrollSync.setScrollTop(500.5, 1)
+    expect(el.scrollTop).toBe(501)
+    expect(scrollSync.onScroll()).toBe(false)
+    expect(view.renderedScroll).toBe(0)
+  })
+
+  it('does not swallow a user scroll that lands beside a recorded write', () => {
+    const { el, userScrollTo } = makeSnappingScrollEl()
+    const scrollSync = createEditorScrollSync({
+      getScrollEl: () => el as unknown as HTMLElement,
+      getEditorEl: () => null,
+    })
+
+    scrollSync.setScrollTop(500, 1)
+    // A fractional offset off a trackpad, and not the one this code wrote:
+    // being near the record is not the same as being the record.
+    userScrollTo(500.4)
+    expect(scrollSync.onScroll()).toBe(true)
+    expect(view.renderedScroll).toBe(500.4)
   })
 
   it('clamps a programmatic write into the pane’s range', () => {
