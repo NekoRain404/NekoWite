@@ -30,8 +30,14 @@ const REPO_ROOT = path.resolve(
  * relative to the dev server root.
  */
 export function repoFsUrl(...segments: string[]): string {
-  // Vite wants forward slashes on every platform; on POSIX the resolved path
-  // already begins with one, which is the form Vite expects there.
+  // Vite wants forward slashes on every platform. POSIX paths already begin
+  // with a slash, so appending them verbatim produced "/@fs//home/..." while
+  // the app itself resolves "/@fs/home/...". Vite keys its module graph by the
+  // URL, so the doubled slash handed the spec a SECOND instance of the same
+  // file: `configureClipboardWriter`/`configureImageResolver` set the sink on
+  // the spec's copy and the editor kept using the app's, which is why those
+  // specs silently observed nothing. Strip the leading slash so both sides
+  // agree on one module id.
   const absolute = path.resolve(REPO_ROOT, ...segments).split(path.sep).join("/")
-  return "/@fs/" + absolute
+  return "/@fs/" + absolute.replace(/^\//, "")
 }

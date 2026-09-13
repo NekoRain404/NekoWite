@@ -1633,6 +1633,15 @@ impl Drop for UnreadableDir {
 #[cfg(unix)]
 fn make_undeletable(entry: &Path) -> UnreadableDir {
     use std::os::unix::fs::PermissionsExt;
+    // A trashed FILE cannot be frozen on its own here: removing it needs write
+    // permission on the trash directory, and taking that away would freeze the
+    // sibling entry the partial-pass test needs to stay deletable. Replace it
+    // with a directory of the SAME name (so the reported entry name is
+    // unchanged) holding an unremovable inner directory, which is what
+    // clear_trash trips over.
+    if entry.is_file() {
+        std::fs::remove_file(entry).unwrap();
+    }
     let inner = entry.join("inner");
     std::fs::create_dir_all(&inner).unwrap();
     std::fs::write(inner.join("file"), "x").unwrap();

@@ -31,6 +31,39 @@ function normaliseSpaces(text: string | undefined): string {
   return (text ?? '').replace(/\u00a0/g, ' ')
 }
 
+/** Let the browser process `count` animation frames. A fixed sleep loses its
+ *  meaning under parallel load; two frames are what "the browser has painted
+ *  the composition state" actually requires. */
+async function nextFrames(page: Page, count = 2): Promise<void> {
+  await page.evaluate(
+    (n) =>
+      new Promise<void>((resolve) => {
+        let left = n
+        const step = (): void => {
+          left -= 1
+          if (left <= 0) resolve()
+          else requestAnimationFrame(step)
+        }
+        requestAnimationFrame(step)
+      }),
+    count,
+  )
+}
+
+/** Wait until the model has stopped changing, so an assertion runs after the
+ *  editor applied the commit rather than after an arbitrary delay. */
+async function settleModel(page: Page): Promise<void> {
+  let previous = '\u0000'
+  let stable = 0
+  for (let i = 0; i < 60; i += 1) {
+    const md = await modelMarkdown(page)
+    stable = md === previous ? stable + 1 : 0
+    previous = md
+    if (stable >= 2) return
+    await nextFrames(page, 1)
+  }
+}
+
 /** Drive a full composition session through the CDP and commit `text`. */
 async function composeAndCommit(page: Page, preedit: string, committed: string): Promise<void> {
   const cdp = await page.context().newCDPSession(page)
@@ -39,9 +72,9 @@ async function composeAndCommit(page: Page, preedit: string, committed: string):
     selectionStart: preedit.length,
     selectionEnd: preedit.length,
   })
-  await page.waitForTimeout(60)
+  await nextFrames(page)
   await cdp.send('Input.insertText', { text: committed })
-  await page.waitForTimeout(120)
+  await settleModel(page)
   await cdp.detach()
 }
 
