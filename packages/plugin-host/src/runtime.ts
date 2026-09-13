@@ -2,10 +2,11 @@ import { registerCommand, registerComponent, registerToolbar, getComponent, unre
 import type { LoadResult } from './loader'
 import { registerLifecycleHook, reportPluginCallbackError } from './lifecycle'
 import type { LifecycleEvent } from './lifecycle'
-import type { PluginContext, PluginDefinition, PluginErrorCode } from './types'
+import type { PluginAiApi, PluginContext, PluginDefinition, PluginErrorCode, PluginPermission } from './types'
 import { PluginError } from './types'
 import { withTimeout } from './timing'
 import { recordPluginEvent, type PluginAuditEventType } from './governance'
+import { collectPluginPermissions } from './permissions'
 
 interface ActivePlugin {
   definition: PluginDefinition
@@ -162,6 +163,39 @@ export function resetUnstablePlugin(id: string): void {
   }
 }
 
+/**
+ * The AI provider the host offers to plugins that declared the `ai` permission.
+ *
+ * The model belongs to the app (its settings, its key, its bill, and its write
+ * policy), so the host does not implement AI - the app installs the provider.
+ * With none installed, `ctx.ai` is simply absent: a plugin that declared `ai`
+ * gets no capability rather than a call that fails at the wire.
+ */
+type PluginAiProvider = (pluginId: string, prompt: string) => Promise<string>
+
+let pluginAiProvider: PluginAiProvider | null = null
+
+/** Install (or clear) the provider the host hands to `ai`-declaring plugins. */
+export function setPluginAiProvider(provider: PluginAiProvider | null): void {
+  pluginAiProvider = provider
+}
+
+/**
+ * The `ai` surface for a plugin, or undefined when it may not have one: the
+ * plugin must have DECLARED the permission (a plugin that did not must not gain
+ * the capability by asking) and the app must have installed a provider.
+ */
+function aiApiFor(
+  id: string,
+  declared: PluginPermission[],
+): PluginAiApi | undefined {
+  if (!declared.includes('ai') || !pluginAiProvider) return undefined
+  const provider = pluginAiProvider
+  return {
+    complete: (prompt: string) => provider(id, String(prompt ?? '')),
+  }
+}
+
 export async function activatePlugin(
   result: LoadResult,
   options?: ActivatePluginOptions,
@@ -271,12 +305,17 @@ export async function activatePlugin(
       registerToolbar({ ...item, run: isolate(item.id, `toolbar:${item.id}`, item.run) })
       registeredToolbar.push(item.id)
     }
+    // What the plugin DECLARED (manifest + definition): the AI capability is
+    // gated on it, so a plugin that never asked cannot pick it up by reaching
+    // for `ctx.ai`.
+    const declared = collectPluginPermissions(result.meta, definition)
     const ctx: PluginContext = {
       id,
       name: definition.name ?? id,
       insertComponent: (insertName) => {
         if (!getComponent(insertName)) throw new Error(`component not found: ${insertName}`)
       },
+      ai: aiApiFor(id, declared),
     }
     const onLoadResult = (definition.onLoad?.(ctx) ?? undefined) as
       | void

@@ -667,6 +667,9 @@ export const en = {
     genericName: 'a plugin',
     writeSummary: 'Plugin “{name}” wants to insert content at the cursor',
     writeDenied: 'The write from plugin “{name}” was refused (the AI write permission may be set to “never write”).',
+    aiEmptyPrompt: 'A plugin asked the AI with an empty prompt.',
+    aiTimedOut: 'A plugin\'s AI call timed out (60 seconds).',
+    aiEmpty: 'The AI call from plugin \u201c{name}\u201d returned nothing.',
     permissionSkipped: 'Plugin “{name}” requested sensitive permissions but was not approved; skipped.',
     permissionTitle: 'Plugin permission request',
     permissionBody:

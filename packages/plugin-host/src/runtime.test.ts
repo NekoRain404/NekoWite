@@ -10,6 +10,7 @@ import {
   isPluginUnstable,
   resetUnstablePlugin,
   setMaxInFlightActivations,
+  setPluginAiProvider,
   setPluginSessionQuota,
 } from './runtime'
 import { emitLifecycle, onLifecycleError } from './lifecycle'
@@ -30,6 +31,8 @@ beforeEach(() => {
   unregisterCommand('slow.cmd')
   unregisterCommand('cancel.cmd')
   unregisterCommand('crasher.cmd')
+  deactivatePlugin('withai')
+  deactivatePlugin('noai')
   unregisterComponent('Callout')
   unregisterComponent('DeactComp')
   unregisterToolbar('p1.toolbar')
@@ -61,6 +64,57 @@ describe('activatePlugin', () => {
     expect(getComponent('Callout')).toBeDefined()
     getToolbar().find((t) => t.id === 'p1.toolbar')?.run()
     expect(toolbarRun).toHaveBeenCalledTimes(1)
+  })
+
+  it('offers the ai capability only to a plugin that declared it', async () => {
+    // `permissions: ['ai']` used to buy nothing at all: the host had no AI
+    // surface, so the capability the permission dialog described did not exist.
+    // It exists now, but only for a plugin that ASKED - reaching for ctx.ai
+    // without declaring it must not be a way to get one.
+    setPluginAiProvider(async (id, prompt) => `from ${id}: ${prompt}`)
+    try {
+      let declaredCtx: { ai?: { complete(p: string): Promise<string> } } | null = null
+      let undeclaredCtx: { ai?: unknown } | null = null
+      await activatePlugin(
+        ok('withai', {
+          permissions: ['ai'],
+          onLoad: (ctx) => {
+            declaredCtx = ctx as never
+          },
+        }),
+      )
+      await activatePlugin(
+        ok('noai', {
+          onLoad: (ctx) => {
+            undeclaredCtx = ctx as never
+          },
+        }),
+      )
+
+      expect(declaredCtx!.ai).toBeDefined()
+      await expect(declaredCtx!.ai!.complete('hello')).resolves.toBe('from withai: hello')
+      expect(undeclaredCtx!.ai).toBeUndefined()
+    } finally {
+      setPluginAiProvider(null)
+      deactivatePlugin('withai')
+      deactivatePlugin('noai')
+    }
+  })
+
+  it('has no ai capability at all when the app installed no provider', async () => {
+    // The host does not implement AI: with no provider from the app, `ctx.ai`
+    // is absent rather than a call that fails at the wire.
+    let ctxAi: unknown = 'unset'
+    await activatePlugin(
+      ok('withai', {
+        permissions: ['ai'],
+        onLoad: (ctx) => {
+          ctxAi = ctx.ai
+        },
+      }),
+    )
+    expect(ctxAi).toBeUndefined()
+    deactivatePlugin('withai')
   })
 
   it('isolates a throwing command and reports it through the error channel', async () => {

@@ -30,6 +30,7 @@ import {
   loadPlugin,
   markBadVersion,
   onLifecycleError,
+  setPluginAiProvider,
   onPluginEvent,
   publisherIdOf,
   recordPluginEvent,
@@ -67,6 +68,7 @@ import { joinPath } from '@nekowite/plugin-host'
 import { fsService } from '../platform/gateways/fs'
 import { persistence } from './persistence'
 import { describePluginError, notifyError } from './errors'
+import { completeForPlugin } from './pluginAi'
 import { t } from '../i18n'
 
 interface VaultPluginPackage {
@@ -1026,6 +1028,9 @@ let lifecycleErrorOff: (() => void) | null = null
  */
 function ensureLifecycleErrorRouter(): void {
   if (lifecycleErrorOff) return
+  // The `ai` capability the permission list advertises, backed by the app's own
+  // AI service (see services/pluginAi). Installed once per app, not per plugin.
+  setPluginAiProvider((id, prompt) => completeForPlugin(id, prompt))
   lifecycleErrorOff = onLifecycleError((ev) => {
     console.error(`[NekoWite] plugin failed plugin="${ev.pluginId}" origin="${ev.event}"`, ev.error)
     notifyError(describePluginError(ev.error))
