@@ -97,7 +97,7 @@ const { runnable, loading, vaultPath, rows, togglePlugin } = usePluginSettings()
  * only in a toast once per session. */
 .plugin-blocked {
   color: var(--app-muted);
-  border-left: 2px solid var(--app-warn, #b7791f);
+  border-left: 2px solid var(--app-warn);
   padding-left: 8px;
 }
 </style>
