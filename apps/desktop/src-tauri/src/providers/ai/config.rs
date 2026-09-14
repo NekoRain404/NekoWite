@@ -91,20 +91,51 @@ pub fn models_url_override(config: &AIConfig) -> Option<&str> {
         .filter(|url| !url.is_empty())
 }
 
-/// Resolve the API key for an AI request. The key is never disclosed to the
-/// window (see `keys::load_ai_key`, which returns only a masked indicator), so
-/// the backend injects the *stored* key for the provider here when the caller
-/// did not supply a real one. A real key supplied by the app's own settings
-/// page (a freshly typed, not-yet-saved key) is kept as-is; only a missing or
-/// masked value is backfilled from the vault.
-pub fn hydrate_stored_key(app: &tauri::AppHandle, config: &mut AIConfig) -> Result<(), String> {
+/// Resolve the API key for an AI request: the decision, with the credential
+/// store injected.
+///
+/// The key is never disclosed to the window (see `keys::load_ai_key`, which
+/// returns only a masked indicator), so the backend injects the *stored* key
+/// for the provider here when the caller did not supply a real one. A real key
+/// supplied by the app's own settings page (a freshly typed, not-yet-saved key)
+/// is kept as-is and the store is not read at all; only a missing or masked
+/// value is backfilled from `load_stored`, which is asked for *this* config's
+/// provider.
+///
+/// The store is a parameter rather than an `AppHandle` because this is the rule
+/// that [`AI_KEY_MASKED`] is never what a request authenticates with, and a
+/// rule nobody can execute is a rule nobody can check: with the store injected
+/// the decision is a pure function a test can drive from any store it likes
+/// (roadmap §13.10). [`hydrate_stored_key`] is the wrapper that supplies the
+/// real vault; nothing below this line knows there is a vault at all.
+pub fn hydrate_stored_key_with(
+    config: &mut AIConfig,
+    load_stored: impl Fn(&str) -> Result<Option<String>, String>,
+) -> Result<(), String> {
     if let Some(k) = config.api_key.as_deref() {
         if k != AI_KEY_MASKED {
             return Ok(());
         }
     }
-    if let Some(stored) = load_ai_key_internal(app, &config.provider)? {
+    // Absent or masked, only the store may fill this in — and the placeholder is
+    // dropped BEFORE the read, so no exit from here can leave it in the config.
+    // What the config holds at the end is what the request authenticates with
+    // (`request::with_completion_auth`, `request::models_headers`), so a mask
+    // left behind is a mask sent to the provider; dropping it first also covers
+    // the read failing, where the error propagates but a caller that ignored it
+    // would otherwise still be holding the placeholder.
+    config.api_key = None;
+    if let Some(stored) = load_stored(&config.provider)? {
         config.api_key = Some(stored);
     }
     Ok(())
+}
+
+/// [`hydrate_stored_key_with`] against the real stronghold vault.
+///
+/// Vault access stays HERE, in the wrapper, and only here: the testable part
+/// never sees an `AppHandle`, and `load_ai_key_internal` is still called on the
+/// one path that has one.
+pub fn hydrate_stored_key(app: &tauri::AppHandle, config: &mut AIConfig) -> Result<(), String> {
+    hydrate_stored_key_with(config, |provider| load_ai_key_internal(app, provider))
 }
