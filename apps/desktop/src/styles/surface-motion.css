@@ -88,14 +88,17 @@
 
 /* ---- The compatibility surface ------------------------------------------
    The two keyframes below are the *old* arrival and the *old* action-row beat,
-   kept alive for the one consumer this round cannot reach. `styles/components.css`
-   restates the math and table dialog passthroughs against their own class names
-   — editor-core writes them and its own tests read them, so they cannot simply
-   wear `.dialog` — and it names these two keyframes to do it. Deleting them
-   here would leave two `animation:` shorthands pointing at nothing, and an
-   unparseable animation shorthand is dropped whole: the two dialogs would lose
-   their arrival silently, in a file this round may not write. So the names stay
-   until that file is converted, and `.dialog` no longer uses either of them.
+   kept alive for the one consumer the motion round could not reach.
+   `styles/surfaces.css` restates the math and table dialog passthroughs against
+   their own class names — editor-core writes them and its own tests read them,
+   so they cannot simply wear `.dialog` — and it names these two keyframes to do
+   it. (They were in `styles/components.css` until the component layer was split;
+   only the path changed, and the reason they are still unconverted is
+   editor-core's, not the split's.) Deleting them here would leave two
+   `animation:` shorthands pointing at nothing, and an unparseable animation
+   shorthand is dropped whole: the two dialogs would lose their arrival
+   silently. So the names stay until those rules are converted, and `.dialog` no
+   longer uses either of them.
 
    `surface-in` keeps the combined shape purely because a single keyframe cannot
    carry two timing functions: the passthroughs would need the same split

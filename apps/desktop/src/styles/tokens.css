@@ -47,10 +47,12 @@
                              sequence is a second animation stacked on the first
                              and the half that cannot be reversed.
        --app-motion-stagger  NOT FOR NEW USE. Only `.math-dialog > .math-actions`
-                             and `.table-dialog > .table-dialog-actions` in
-                             `styles/components.css` still spend it; deleting it
-                             would leave both `calc()`s in a file this round may
-                             not write referring to nothing.
+                             and `.table-dialog > .table-dialog-actions` still
+                             spend it — the editor-core dialog passthroughs, in
+                             `styles/surfaces.css` since the component layer was
+                             split. Deleting it would leave both `calc()`s
+                             referring to nothing, and an unparseable animation
+                             shorthand is dropped whole.
 
      Amplitude. How *much* a thing moves, here for the same reason the durations
      are — so the next person tunes one place:

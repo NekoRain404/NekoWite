@@ -14,8 +14,17 @@ import './styles/tokens.css'
 // over these two files in this import order and asserts that it still matches
 // this list — move one, move the other.
 import './styles/palettes.css'
+// The component layer, in two sheets and one order: the controls a user
+// operates, then the surfaces they sit in and the editor-core dialog
+// passthroughs. `styles/components.test.ts` reads both as one sheet and asserts
+// this order against this list — move one, move the other.
 import './styles/components.css'
+import './styles/surfaces.css'
+// The editor content layer, likewise: the text, then the constructs the editor
+// draws. `styles/editorTypography.test.ts` reads both as one sheet and checks
+// them against this list the same way.
 import './styles/editor-content.css'
+import './styles/editor-blocks.css'
 import './styles/print.css'
 import './style.css'
 import './math-dialog.css'
