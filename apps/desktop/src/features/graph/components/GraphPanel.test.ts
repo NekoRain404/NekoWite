@@ -92,11 +92,31 @@ function layout(): LayoutPointState[] {
   return state().canvasView.layout.value
 }
 
-function selectFilter(ariaLabel: string, value: string): void {
-  const el = host!.querySelector(`select[aria-label="${ariaLabel}"]`) as HTMLSelectElement | null
+/** The filters are dropdowns now: the trigger keeps the aria-label the select
+ *  carried, and the rows it opens live in a popup teleported to `<body>`. */
+function filterTrigger(ariaLabel: string): HTMLElement {
+  const el = host!.querySelector<HTMLElement>(`[role="combobox"][aria-label="${ariaLabel}"]`)
   expect(el).not.toBeNull()
-  el!.value = value
-  el!.dispatchEvent(new Event('change'))
+  return el!
+}
+
+async function openFilter(ariaLabel: string): Promise<HTMLElement> {
+  filterTrigger(ariaLabel).dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+  )
+  await nextTick()
+  const popup = document.querySelector<HTMLElement>('.select-popup')
+  expect(popup).not.toBeNull()
+  return popup!
+}
+
+async function selectFilter(ariaLabel: string, value: string): Promise<void> {
+  const popup = await openFilter(ariaLabel)
+  const row = [...popup.querySelectorAll<HTMLButtonElement>('.select-option')]
+    .find((candidate) => candidate.dataset.value === value)
+  expect(row, `option ${value}`).toBeDefined()
+  row!.click()
+  await nextTick()
 }
 
 function toggleCheckbox(labelText: string): void {
@@ -246,9 +266,10 @@ describe('GraphPanel', () => {
     tabs.setVault('C:\\vault')
     mountPanel()
     await vi.waitFor(() => expect(readMock.mock.calls.length).toBe(3))
-    // The directory filter is offered through a select; a real directory
+    // The directory filter is offered through a dropdown; a real directory
     // must appear in it (and the empty string must not subsume them all).
-    const options = [...host!.querySelectorAll('select option')]
+    const popup = await openFilter('目录')
+    const options = [...popup.querySelectorAll('.select-option')]
       .map((o) => (o.textContent || '').trim())
       .filter((v) => v !== '')
     expect(options.length).toBeGreaterThanOrEqual(2)
@@ -365,7 +386,7 @@ describe('GraphPanel', () => {
     await flush()
     expect(state().visibleGraph!.nodes).toHaveLength(3)
 
-    selectFilter('目录', 'docs')
+    await selectFilter('目录', 'docs')
 
     await vi.waitFor(() => expect(layout()).toHaveLength(2))
     expect(state().visibleGraph!.nodes.map((n) => n.id).sort()).toEqual([
@@ -383,7 +404,7 @@ describe('GraphPanel', () => {
     await flush()
     await flush()
 
-    selectFilter('标签', 'beta')
+    await selectFilter('标签', 'beta')
 
     await vi.waitFor(() => expect(layout()).toHaveLength(1))
     expect(state().visibleGraph!.nodes.map((n) => n.id)).toEqual(['docs/b.md'])
@@ -397,7 +418,7 @@ describe('GraphPanel', () => {
     await flush()
     await flush()
 
-    selectFilter('链接类型', 'wiki')
+    await selectFilter('链接类型', 'wiki')
 
     await vi.waitFor(() =>
       expect(state().visibleGraph!.edges).toEqual([
@@ -407,7 +428,7 @@ describe('GraphPanel', () => {
     // Link-kind only filters edges; all nodes stay visible.
     expect(layout()).toHaveLength(3)
 
-    selectFilter('链接类型', 'markdown')
+    await selectFilter('链接类型', 'markdown')
 
     await vi.waitFor(() =>
       expect(state().visibleGraph!.edges).toEqual([

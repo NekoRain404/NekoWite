@@ -11,6 +11,7 @@
  */
 import { computed, ref } from 'vue'
 import { FileText, Paperclip, Send, X } from 'lucide-vue-next'
+import SelectMenu, { type SelectOption } from '../../../components/SelectMenu.vue'
 import { EFFORT_OPTIONS, type ReasoningEffort } from '../../../stores/settings'
 import { t } from '../../../i18n'
 import type { ChatAttachment } from '../types'
@@ -46,6 +47,12 @@ const text = computed({
 })
 
 const fileInput = ref<HTMLInputElement | null>(null)
+
+// Same list, same keys as the settings dialog's: the depth chosen here and
+// there is one setting, so the two must not drift into different labels.
+const effortChoices = computed<SelectOption[]>(() =>
+  EFFORT_OPTIONS.map((option) => ({ value: option.value, label: t(option.labelKey) })),
+)
 
 function onPickClick(): void {
   fileInput.value?.click()
@@ -145,21 +152,19 @@ function onFileChange(e: Event): void {
     </div>
     <div class="chat-model">
       <span>{{ modelName }}</span>
-      <label class="chat-effort">
+      <label
+        class="chat-effort"
+        for="chat-effort-depth"
+      >
         <span class="chat-effort-label">{{ t('aiSettings.effort') }}</span>
-        <select
-          :value="effort"
+        <SelectMenu
+          id="chat-effort-depth"
+          class="chat-effort-select"
+          :model-value="effort"
           :title="t('aiSettings.effortHint')"
-          @change="emit('update:effort', ($event.target as HTMLSelectElement).value)"
-        >
-          <option
-            v-for="opt in EFFORT_OPTIONS"
-            :key="opt.value"
-            :value="opt.value"
-          >
-            {{ t(opt.labelKey) }}
-          </option>
-        </select>
+          :options="effortChoices"
+          @update:model-value="emit('update:effort', $event as string)"
+        />
       </label>
       <span class="chat-hint">{{ t('chat.hint') }}</span>
     </div>
@@ -330,9 +335,11 @@ function onFileChange(e: Event): void {
 .chat-effort-label {
   white-space: nowrap;
 }
-.chat-effort select {
+.chat-effort-select {
   max-width: 96px;
-  padding: 1px 2px;
+  /* One pixel narrower than the closed select's, because the caret the control
+     draws itself needs the room the system arrow used to take for free. */
+  padding: 1px 4px;
   font: inherit;
   font-size: 10px;
   color: inherit;
@@ -340,7 +347,7 @@ function onFileChange(e: Event): void {
   border: 1px solid color-mix(in srgb, var(--app-muted) 34%, transparent);
   border-radius: 4px;
 }
-.chat-effort select:focus-visible {
+.chat-effort-select:focus-visible {
   outline: 2px solid var(--app-accent);
   outline-offset: 1px;
 }

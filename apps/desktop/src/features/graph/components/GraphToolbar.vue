@@ -9,10 +9,12 @@
  * the panel owns, and its two buttons only report what the user asked for
  * (§13.3: a section renders, the panel decides).
  */
+import { computed } from 'vue'
+import SelectMenu, { type SelectOption } from '../../../components/SelectMenu.vue'
 import { t } from '../../../i18n'
 import type { LinkKindFilter } from '../composables/useGraphFilters'
 
-defineProps<{
+const props = defineProps<{
   loading: boolean
   failed: boolean
   noteCount: number
@@ -39,7 +41,27 @@ const filterTag = defineModel<string>('filterTag', { required: true })
 const filterLink = defineModel<LinkKindFilter>('filterLink', { required: true })
 const showOrphans = defineModel<boolean>('showOrphans', { required: true })
 const showBroken = defineModel<boolean>('showBroken', { required: true })
-</script>
+
+// Each filter's first row is "no filter", which is the empty value the panel
+// compares against — so it is a row like any other rather than a null state.
+const capChoices = computed<SelectOption[]>(() => [
+  { value: 0, label: t('graph.showFull') },
+  { value: 200, label: '200' },
+  { value: 500, label: '500' },
+])
+const dirChoices = computed<SelectOption[]>(() => [
+  { value: '', label: t('graph.allDirs') },
+  ...props.directories.map((dir) => ({ value: dir, label: dir || t('notelist.rootDir') })),
+])
+const tagChoices = computed<SelectOption[]>(() => [
+  { value: '', label: t('graph.allTags') },
+  ...props.tagOptions.map((tag) => ({ value: tag, label: tag })),
+])
+const linkChoices = computed<SelectOption[]>(() => [
+  { value: 'all', label: t('graph.allLinks') },
+  { value: 'wiki', label: t('graph.wikiLinks') },
+  { value: 'markdown', label: t('graph.markdownLinks') },
+])</script>
 
 <template>
   <div class="graph-toolbar">
@@ -50,64 +72,58 @@ const showBroken = defineModel<boolean>('showBroken', { required: true })
     <label
       class="graph-filter"
       :title="t('graph.capLabel')"
+      for="graph-cap"
     >
-      <select
-        v-model="capValue"
+      <SelectMenu
+        id="graph-cap"
         class="graph-select"
+        :model-value="capValue"
         :aria-label="t('graph.capLabel')"
-      >
-        <option :value="0">{{ t('graph.showFull') }}</option>
-        <option :value="200">200</option>
-        <option :value="500">500</option>
-      </select>
+        :options="capChoices"
+        @update:model-value="capValue = $event as number"
+      />
     </label>
     <label
       class="graph-filter"
       :title="t('graph.filterDir')"
+      for="graph-filter-dir"
     >
-      <select
-        v-model="filterDir"
+      <SelectMenu
+        id="graph-filter-dir"
         class="graph-select"
+        :model-value="filterDir"
         :aria-label="t('graph.filterDir')"
-      >
-        <option value="">{{ t('graph.allDirs') }}</option>
-        <option
-          v-for="d in directories"
-          :key="d"
-          :value="d"
-        >{{ d || t('notelist.rootDir') }}</option>
-      </select>
+        :options="dirChoices"
+        @update:model-value="filterDir = $event as string"
+      />
     </label>
     <label
       class="graph-filter"
       :title="t('graph.filterTag')"
+      for="graph-filter-tag"
     >
-      <select
-        v-model="filterTag"
+      <SelectMenu
+        id="graph-filter-tag"
         class="graph-select"
+        :model-value="filterTag"
         :aria-label="t('graph.filterTag')"
-      >
-        <option value="">{{ t('graph.allTags') }}</option>
-        <option
-          v-for="tag in tagOptions"
-          :key="tag"
-          :value="tag"
-        >{{ tag }}</option>
-      </select>
+        :options="tagChoices"
+        @update:model-value="filterTag = $event as string"
+      />
     </label>
     <label
       class="graph-filter"
       :title="t('graph.filterLink')"
+      for="graph-filter-link"
     >
-      <select
-        v-model="filterLink"
+      <SelectMenu
+        id="graph-filter-link"
         class="graph-select"
+        :model-value="filterLink"
         :aria-label="t('graph.filterLink')"
-      >
-        <option value="all">{{ t('graph.allLinks') }}</option>
-        <option value="wiki">{{ t('graph.wikiLinks') }}</option>
-        <option value="markdown">{{ t('graph.markdownLinks') }}</option>
-      </select>
+        :options="linkChoices"
+        @update:model-value="filterLink = $event as LinkKindFilter"
+      />
     </label>
     <button
       class="graph-btn"

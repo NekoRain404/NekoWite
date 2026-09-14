@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createApp, type App as VueApp } from 'vue'
+import { createApp, nextTick, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import ChatPanel from './ChatPanel.vue'
 import { onNotify } from '../../../services/errors'
@@ -51,6 +51,31 @@ function mountPanel(): HTMLElement {
   app.mount(host)
   mounted.push({ app, host })
   return host
+}
+
+/** The dropdowns are components now, so a test drives them the way a user does:
+ *  open the closed control, then take a row. The rows are teleported to `<body>`,
+ *  which is why they are queried from the document rather than from `host`. */
+function optionRows(): HTMLButtonElement[] {
+  return [...document.querySelectorAll<HTMLButtonElement>('.select-option')]
+}
+
+async function openMenu(trigger: HTMLElement): Promise<void> {
+  trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  await nextTick()
+}
+
+/** The value on the row the popup marks as chosen. */
+function chosenOption(): string | undefined {
+  return optionRows().find((row) => row.getAttribute('aria-selected') === 'true')?.dataset.value
+}
+
+async function chooseOption(trigger: HTMLElement, value: string): Promise<void> {
+  if (trigger.getAttribute('aria-expanded') !== 'true') await openMenu(trigger)
+  const row = optionRows().find((candidate) => candidate.dataset.value === value)
+  expect(row, `option ${value}`).toBeTruthy()
+  row!.click()
+  await nextTick()
 }
 
 function pickFiles(host: HTMLElement, files: File[]): void {
@@ -169,12 +194,14 @@ describe('the quick thinking-depth control', () => {
     const settings = useSettingsStore()
     settings.reasoningEffort = 'high'
     const host = mountPanel()
-    const select = host.querySelector<HTMLSelectElement>('.chat-effort select')
-    expect(select).toBeTruthy()
-    expect(select!.value).toBe('high')
+    const trigger = host.querySelector<HTMLElement>('.chat-effort-select')
+    expect(trigger).toBeTruthy()
 
-    select!.value = 'none'
-    select!.dispatchEvent(new Event('change'))
+    // The stored depth is the row the popup marks as chosen.
+    await openMenu(trigger!)
+    expect(chosenOption()).toBe('high')
+
+    await chooseOption(trigger!, 'none')
     expect(settings.reasoningEffort).toBe('none')
     // Persisted, so the choice survives a restart like the settings panel's.
     // The store writes through a watcher, hence the tick.
@@ -325,10 +352,9 @@ describe('ChatPanel composer drafts', () => {
     btn!.click()
   }
 
-  function selectSession(host: HTMLElement, id: string): void {
-    const select = host.querySelector<HTMLSelectElement>('.chat-session-select')!
-    select.value = id
-    select.dispatchEvent(new Event('change'))
+  function selectSession(host: HTMLElement, id: string): Promise<void> {
+    const trigger = host.querySelector<HTMLElement>('.chat-session-select')!
+    return chooseOption(trigger, id)
   }
 
   it('keeps a half-written question with the session it was written for', async () => {
@@ -348,7 +374,7 @@ describe('ChatPanel composer drafts', () => {
     expect(host.querySelector<HTMLTextAreaElement>('.chat-textarea')!.value).toBe('')
     expect(host.querySelectorAll('.chat-attach')).toHaveLength(0)
 
-    selectSession(host, first)
+    await selectSession(host, first)
     await flush()
     expect(host.querySelector<HTMLTextAreaElement>('.chat-textarea')!.value).toBe('draft one')
     expect(host.querySelectorAll('.chat-attach')).toHaveLength(1)
@@ -372,7 +398,7 @@ describe('ChatPanel composer drafts', () => {
     expect(store.sessions.some((x) => x.id === second)).toBe(false)
     expect(host.querySelector<HTMLTextAreaElement>('.chat-textarea')!.value).toBe('')
     // ...and it does not come back with the session we return to.
-    selectSession(host, first)
+    await selectSession(host, first)
     await flush()
     expect(host.querySelector<HTMLTextAreaElement>('.chat-textarea')!.value).toBe('')
   })
@@ -396,7 +422,7 @@ describe('ChatPanel composer drafts', () => {
 
     clickTool(host, t('chat.newSession'))
     await flush()
-    selectSession(host, first)
+    await selectSession(host, first)
     await flush()
     expect(host.querySelector<HTMLTextAreaElement>('.chat-textarea')!.value).toBe('')
   })

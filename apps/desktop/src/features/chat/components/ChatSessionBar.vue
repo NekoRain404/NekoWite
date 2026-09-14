@@ -7,16 +7,25 @@
  * and what deleting it means is the panel's business, so this emits the choice
  * and renders what it is given.
  */
+import { computed } from 'vue'
 import { Plus, Trash2 } from 'lucide-vue-next'
+import SelectMenu, { type SelectOption } from '../../../components/SelectMenu.vue'
 import { t } from '../../../i18n'
 import type { ChatSession } from '../../../stores/chatSession'
 
-defineProps<{
+const props = defineProps<{
   sessions: ChatSession[]
   activeId: string | null
   /** Nothing to clear yet: the clear button is only for a conversation with turns. */
   hasMessages: boolean
 }>()
+
+const sessionChoices = computed<SelectOption[]>(() =>
+  props.sessions.map((session) => ({
+    value: session.id,
+    label: session.title || t('chat.untitled'),
+  })),
+)
 
 defineEmits<{
   newSession: []
@@ -42,21 +51,15 @@ defineEmits<{
           :stroke-width="1.8"
         />
       </button>
-      <select
+      <SelectMenu
+        id="chat-session-picker"
         class="chat-session-select"
-        :value="activeId ?? undefined"
+        :model-value="activeId ?? ''"
         :title="t('chat.sessions')"
         :aria-label="t('chat.sessions')"
-        @change="$emit('selectSession', ($event.target as HTMLSelectElement).value)"
-      >
-        <option
-          v-for="s in sessions"
-          :key="s.id"
-          :value="s.id"
-        >
-          {{ s.title || t('chat.untitled') }}
-        </option>
-      </select>
+        :options="sessionChoices"
+        @update:model-value="$emit('selectSession', $event as string)"
+      />
       <button
         class="chat-tool"
         :title="t('chat.deleteSession')"
