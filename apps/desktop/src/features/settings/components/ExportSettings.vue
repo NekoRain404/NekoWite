@@ -7,8 +7,10 @@
  * must not grow a second copy of it. The defaults are `v-model`, so writing one
  * reaches the store through the panel that owns `useExportSettings`.
  */
+import { computed } from 'vue'
+import SelectMenu, { type SelectOption } from '../../../components/SelectMenu.vue'
 import { t } from '../../../i18n'
-// Type-only, so the two selects are bound to the same unions the store holds.
+// Type-only, so the two dropdowns are bound to the same unions the store holds.
 import type { ExportPdfOrientation, ExportPdfPageSize } from '../../../stores/settings'
 
 defineProps<{
@@ -30,6 +32,15 @@ const emit = defineEmits<{
   (e: 'export-html'): void
   (e: 'export-pdf'): void
 }>()
+
+const pageSizeChoices = computed<SelectOption[]>(() => [
+  { value: 'A4', label: t('settings.export.pageSizeA4') },
+  { value: 'Letter', label: t('settings.export.pageSizeLetter') },
+])
+const orientationChoices = computed<SelectOption[]>(() => [
+  { value: 'portrait', label: t('settings.export.portrait') },
+  { value: 'landscape', label: t('settings.export.landscape') },
+])
 </script>
 
 <template>
@@ -65,35 +76,31 @@ const emit = defineEmits<{
         @change="frontmatter = ($event.target as HTMLInputElement).checked"
       >
     </label>
-    <label class="settings-field">
+    <label
+      class="settings-field"
+      for="settings-export-page-size"
+    >
       <span>{{ t('settings.export.pageSize') }}</span>
-      <select
+      <SelectMenu
+        id="settings-export-page-size"
         class="input"
-        :value="pageSize"
-        @change="pageSize = ($event.target as HTMLSelectElement).value as ExportPdfPageSize"
-      >
-        <option value="A4">
-          {{ t('settings.export.pageSizeA4') }}
-        </option>
-        <option value="Letter">
-          {{ t('settings.export.pageSizeLetter') }}
-        </option>
-      </select>
+        :model-value="pageSize"
+        :options="pageSizeChoices"
+        @update:model-value="pageSize = $event as ExportPdfPageSize"
+      />
     </label>
-    <label class="settings-field">
+    <label
+      class="settings-field"
+      for="settings-export-orientation"
+    >
       <span>{{ t('settings.export.orientation') }}</span>
-      <select
+      <SelectMenu
+        id="settings-export-orientation"
         class="input"
-        :value="orientation"
-        @change="orientation = ($event.target as HTMLSelectElement).value as ExportPdfOrientation"
-      >
-        <option value="portrait">
-          {{ t('settings.export.portrait') }}
-        </option>
-        <option value="landscape">
-          {{ t('settings.export.landscape') }}
-        </option>
-      </select>
+        :model-value="orientation"
+        :options="orientationChoices"
+        @update:model-value="orientation = $event as ExportPdfOrientation"
+      />
     </label>
   </section>
 </template>

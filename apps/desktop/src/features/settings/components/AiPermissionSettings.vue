@@ -10,8 +10,10 @@
  * It reads nothing itself: `useAiPermissionSettings` owns the store, and the
  * key tables beside it keep the template a lookup (§10.2).
  */
+import { computed } from 'vue'
+import SelectMenu, { type SelectOption } from '../../../components/SelectMenu.vue'
 import { t } from '../../../i18n'
-// Type-only, so the policy select's cast is checked against the union the
+// Type-only, so the policy dropdown's cast is checked against the union the
 // composable's writable computed accepts.
 import type { AiWritePolicy } from '../../../services/aiPermissions'
 import {
@@ -32,6 +34,10 @@ const {
   forgetAudit,
   clockTime,
 } = useAiPermissionSettings()
+
+const policyChoices = computed<SelectOption[]>(() =>
+  writePolicies.map((option) => ({ value: option.value, label: t(option.labelKey) })),
+)
 </script>
 
 <template>
@@ -45,21 +51,18 @@ const {
     >
   </label>
   <span class="settings-note">{{ t('aiperm.enabledHint') }}</span>
-  <label class="settings-field">
+  <label
+    class="settings-field"
+    for="settings-ai-policy"
+  >
     <span>{{ t('aiperm.policy') }}</span>
-    <select
+    <SelectMenu
+      id="settings-ai-policy"
       class="input"
-      :value="policy"
-      @change="policy = ($event.target as HTMLSelectElement).value as AiWritePolicy"
-    >
-      <option
-        v-for="opt in writePolicies"
-        :key="opt.value"
-        :value="opt.value"
-      >
-        {{ t(opt.labelKey) }}
-      </option>
-    </select>
+      :model-value="policy"
+      :options="policyChoices"
+      @update:model-value="policy = $event as AiWritePolicy"
+    />
     <span class="settings-note">{{ t('aiperm.policyHint') }}</span>
   </label>
   <div class="settings-field settings-audit">

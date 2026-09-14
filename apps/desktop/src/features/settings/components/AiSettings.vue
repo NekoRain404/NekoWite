@@ -6,9 +6,11 @@
  * question ("what may come back") with its own composable — and the provider
  * block is everything here.
  */
+import { computed } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
+import SelectMenu, { type SelectOption } from '../../../components/SelectMenu.vue'
 import { t } from '../../../i18n'
-// Type-only, so the effort select's cast is checked against the union the
+// Type-only, so the effort dropdown's cast is checked against the union the
 // composable's writable computed accepts.
 import type { ReasoningEffort } from '../../../stores/settings'
 import { useAiSettings } from '../composables/useAiSettings'
@@ -37,25 +39,32 @@ const {
   refreshModels,
   saveAiKey,
 } = useAiSettings()
+
+// A provider is named by its id; the effort list carries translation keys, so
+// the labels are resolved here (§13.3).
+const providerChoices = computed<SelectOption[]>(() =>
+  providers.map((name) => ({ value: name, label: name })),
+)
+const effortChoices = computed<SelectOption[]>(() =>
+  effortOptions.map((option) => ({ value: option.value, label: t(option.labelKey) })),
+)
 </script>
 
 <template>
   <section class="settings-section">
     <span class="settings-label">{{ t('settings.section.ai') }}</span>
-    <label class="settings-field">
+    <label
+      class="settings-field"
+      for="settings-ai-provider"
+    >
       <span>{{ t('aiSettings.provider') }}</span>
-      <select
-        v-model="provider"
+      <SelectMenu
+        id="settings-ai-provider"
         class="input"
-      >
-        <option
-          v-for="p in providers"
-          :key="p"
-          :value="p"
-        >
-          {{ p }}
-        </option>
-      </select>
+        :model-value="provider"
+        :options="providerChoices"
+        @update:model-value="provider = $event as string"
+      />
     </label>
     <label class="settings-field">
       <span>{{ t('aiSettings.model') }}</span>
@@ -169,21 +178,18 @@ const {
         @change="temperature = Math.min(2, Math.max(0, Number(($event.target as HTMLInputElement).value) || 0.7))"
       >
     </label>
-    <label class="settings-field">
+    <label
+      class="settings-field"
+      for="settings-ai-effort"
+    >
       <span>{{ t('aiSettings.effort') }}</span>
-      <select
+      <SelectMenu
+        id="settings-ai-effort"
         class="input"
-        :value="reasoningEffort"
-        @change="reasoningEffort = ($event.target as HTMLSelectElement).value as ReasoningEffort"
-      >
-        <option
-          v-for="opt in effortOptions"
-          :key="opt.value"
-          :value="opt.value"
-        >
-          {{ t(opt.labelKey) }}
-        </option>
-      </select>
+        :model-value="reasoningEffort"
+        :options="effortChoices"
+        @update:model-value="reasoningEffort = $event as ReasoningEffort"
+      />
       <span class="settings-note">{{ t('aiSettings.effortHint') }}</span>
     </label>
     <label class="settings-field">

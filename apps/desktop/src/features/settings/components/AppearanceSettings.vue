@@ -7,6 +7,8 @@
  * the store reads (§10.2); this decides only how they are laid out and what a
  * click means.
  */
+import { computed } from 'vue'
+import SelectMenu, { type SelectOption } from '../../../components/SelectMenu.vue'
 import { t } from '../../../i18n'
 // Type-only, so the template's `as UiFontId` casts are checked against the same
 // union the composable's setters take (§13.9); nothing is imported at runtime.
@@ -47,6 +49,24 @@ const {
   focusMode,
   setFocusMode,
 } = useAppearanceSettings()
+
+// The font ids the store holds are not the names a user reads, so each list is
+// paired with its translated label here (§13.3: the section renders its own
+// control). Computed rather than built once, because `t` follows the locale.
+const uiFontChoices = computed<SelectOption[]>(() =>
+  uiFontOptions.map((font) => ({ value: font, label: t(`font.${font}`) })),
+)
+const editorFontChoices = computed<SelectOption[]>(() =>
+  editorFontOptions.map((font) => ({ value: font, label: t(`font.${font}`) })),
+)
+const monoFontChoices = computed<SelectOption[]>(() =>
+  monoFontOptions.map((font) => ({ value: font, label: t(`font.${font}`) })),
+)
+const directionChoices = computed<SelectOption[]>(() => [
+  { value: 'auto', label: t('settings.appearance.directionAuto') },
+  { value: 'ltr', label: t('settings.appearance.directionLtr') },
+  { value: 'rtl', label: t('settings.appearance.directionRtl') },
+])
 </script>
 
 <template>
@@ -136,53 +156,44 @@ const {
       class="settings-note"
     >{{ followAccentNote }}</span>
     <span class="settings-label">{{ t('settings.appearance.font') }}</span>
-    <label class="settings-field">
+    <label
+      class="settings-field"
+      for="settings-ui-font"
+    >
       <span>{{ t('settings.appearance.uiFont') }}</span>
-      <select
+      <SelectMenu
+        id="settings-ui-font"
         class="input"
-        :value="uiFont"
-        @change="setUiFont(($event.target as HTMLSelectElement).value as UiFontId)"
-      >
-        <option
-          v-for="f in uiFontOptions"
-          :key="f"
-          :value="f"
-        >
-          {{ t(`font.${f}`) }}
-        </option>
-      </select>
+        :model-value="uiFont"
+        :options="uiFontChoices"
+        @update:model-value="setUiFont($event as UiFontId)"
+      />
     </label>
-    <label class="settings-field">
+    <label
+      class="settings-field"
+      for="settings-editor-font"
+    >
       <span>{{ t('settings.appearance.editorFont') }}</span>
-      <select
+      <SelectMenu
+        id="settings-editor-font"
         class="input"
-        :value="editorFont"
-        @change="setEditorFont(($event.target as HTMLSelectElement).value as EditorFontId)"
-      >
-        <option
-          v-for="f in editorFontOptions"
-          :key="f"
-          :value="f"
-        >
-          {{ t(`font.${f}`) }}
-        </option>
-      </select>
+        :model-value="editorFont"
+        :options="editorFontChoices"
+        @update:model-value="setEditorFont($event as EditorFontId)"
+      />
     </label>
-    <label class="settings-field">
+    <label
+      class="settings-field"
+      for="settings-mono-font"
+    >
       <span>{{ t('settings.appearance.monoFont') }}</span>
-      <select
+      <SelectMenu
+        id="settings-mono-font"
         class="input"
-        :value="monoFont"
-        @change="setMonoFont(($event.target as HTMLSelectElement).value as MonoFontId)"
-      >
-        <option
-          v-for="f in monoFontOptions"
-          :key="f"
-          :value="f"
-        >
-          {{ t(`font.${f}`) }}
-        </option>
-      </select>
+        :model-value="monoFont"
+        :options="monoFontChoices"
+        @update:model-value="setMonoFont($event as MonoFontId)"
+      />
     </label>
     <label class="settings-field">
       <span>{{ t('settings.appearance.fontSize', { size: bodyFontSize }) }}</span>
@@ -215,17 +226,18 @@ const {
         @change="setHighContrast(($event.target as HTMLInputElement).checked)"
       >
     </label>
-    <label class="settings-field">
+    <label
+      class="settings-field"
+      for="settings-content-direction"
+    >
       <span>{{ t('settings.appearance.contentDirection') }}</span>
-      <select
+      <SelectMenu
+        id="settings-content-direction"
         class="input"
-        :value="contentDirection"
-        @change="setContentDirection(($event.target as HTMLSelectElement).value as ContentDirection)"
-      >
-        <option value="auto">{{ t('settings.appearance.directionAuto') }}</option>
-        <option value="ltr">{{ t('settings.appearance.directionLtr') }}</option>
-        <option value="rtl">{{ t('settings.appearance.directionRtl') }}</option>
-      </select>
+        :model-value="contentDirection"
+        :options="directionChoices"
+        @update:model-value="setContentDirection($event as ContentDirection)"
+      />
     </label>
     <span class="settings-label">{{ t('settings.editor.behavior') }}</span>
     <label class="settings-field settings-toggle">
