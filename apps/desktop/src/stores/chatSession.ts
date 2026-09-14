@@ -1,398 +1,67 @@
+/**
+ * The chat session store: the reactive state (the sessions, which one is
+ * active, the storage warning) and the actions the panel drives.
+ *
+ * The other concerns this file used to carry in 503 lines now live in the chat
+ * feature, one module each, and it composes them:
+ *
+ *   features/chat/services/chat-session-model.ts    the stored shape and its
+ *                                                   pure constructors/label rule
+ *   features/chat/services/chat-image-budget.ts     the image caps, the notices
+ *                                                   they raise, and the eviction
+ *                                                   that enforces them
+ *   features/chat/services/chat-session-storage.ts  the keyed document: sanitise
+ *                                                   on read, shed images before
+ *                                                   text on a refused write
+ *
+ * The wiring below is also the module graph: the store depends on all three and
+ * none of them depends on the store, so each is testable on its own.
+ *
+ * What stays here is the state and the actions over it (§10.2). The names at the
+ * bottom are the compatibility surface (§10.1.5), not a second implementation.
+ */
+
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { persistence } from '../services/persistence'
+import {
+  applyImageCaps,
+  STORAGE_WARNING_FULL,
+  STORAGE_WARNING_IMAGES,
+} from '../features/chat/services/chat-image-budget'
+import { createSession, titleFromText } from '../features/chat/services/chat-session-model'
+import type { ChatSession, ChatSessionMessage } from '../features/chat/services/chat-session-model'
+import {
+  loadSessions,
+  saveSessions,
+  toStoredMessage,
+} from '../features/chat/services/chat-session-storage'
+import type { SaveOutcome } from '../features/chat/services/chat-session-storage'
 
-export type ChatSessionRole = 'user' | 'assistant'
-
-export interface ChatSessionImage {
-  id: string
-  name: string
-  dataUrl: string
-}
-
-export interface ChatSessionMessage {
-  role: ChatSessionRole
-  content: string
-  images?: ChatSessionImage[]
-  /** Human-readable short status explaining images that were refused or
-   * evicted by a storage cap (e.g. "image too large"). */
-  imageNotice?: string
-  /** True when the answer was cut off mid-stream — the panel that owned the
-   * request was destroyed — instead of reaching a normal end. Lets a reopened
-   * panel show partial text as incomplete rather than as a finished answer. */
-  interrupted?: boolean
-  /** Token total the provider reported for this answer, when it reported one.
-   *  It is part of what a request cost, so it is persisted with the turn: a
-   *  figure that disappears on relaunch cannot be compared with anything. */
-  usageTotal?: number
-}
-
-export interface ChatSession {
-  id: string
-  title: string
-  created: number
-  updated: number
-  messages: ChatSessionMessage[]
-}
-
-export const CHAT_SESSIONS_KEY = 'nekowite.chat.sessions'
-export const TITLE_MAX_LENGTH = 20
-/**
- * Cap images saved per message so a data-URL heavy chat cannot blow the
- * localStorage quota on its own.
- *
- * Exported, and used by the chat composer as its own attachment limit: a panel
- * that let the user attach more than the session can keep would show an
- * attachment that disappears from the conversation the moment it is sent - the
- * store would trim it and the user would never know which one they lost.
- */
-export const MAX_IMAGES_PER_MESSAGE = 4
-
-/** Max base64 length (≈ bytes on disk) of a single image Data URL. Images
- * larger than this are refused: the image is not stored and the message is
- * marked "image too large" instead of being silently dropped or overflowing
- * storage. Tune here. */
-export const MAX_IMAGE_BASE64_LENGTH = 2 * 1024 * 1024 // ~2 MB of base64 text
-
-/** Max aggregate base64 length of all image Data URLs in one session. When an
- * append would cross this, the session's OLDEST images are evicted first.
- * Tune here. */
-export const MAX_IMAGE_BYTES_PER_SESSION = 16 * 1024 * 1024 // ~16 MB
-
-/** Max aggregate base64 length of all image Data URLs across every session.
- * Beyond this the least-recently-updated sessions lose images first.
- * Tune here. */
-export const MAX_IMAGE_BYTES_TOTAL = 32 * 1024 * 1024 // ~32 MB
-
-/** Status notice attached to a message whose image was refused by the
- * per-image size cap. */
-export const IMAGE_TOO_LARGE = 'image too large'
-
-/** Status notice attached to a message whose images were evicted by a storage
- * budget. */
-export const IMAGE_EVICTED_NOTICE = 'image(s) removed (storage limit)'
-
-/** Storage warning shown when the session history had to be written without
- * its images to fit the storage budget: the images are still in the open panel,
- * but a reload will not bring them back. */
-export const STORAGE_WARNING_IMAGES = 'images-not-persisted'
-
-/** Storage warning shown when nothing could be written at all - the history on
- * screen exists only in memory and will be gone after a reload. */
-export const STORAGE_WARNING_FULL = 'history-not-persisted'
-
-/** The three image budgets, split out so they can be overridden for tests or
- * tuned in one place. */
-export interface ImageLimits {
-  maxPerImage: number
-  maxPerSession: number
-  maxTotal: number
-}
-
-export const DEFAULT_IMAGE_LIMITS: ImageLimits = {
-  maxPerImage: MAX_IMAGE_BASE64_LENGTH,
-  maxPerSession: MAX_IMAGE_BYTES_PER_SESSION,
-  maxTotal: MAX_IMAGE_BYTES_TOTAL,
-}
-
-interface StoredState {
-  v: 1
-  activeId: string | null
-  sessions: ChatSession[]
-}
-
-/** Collapse whitespace and derive a short session label from the first user
- * message. `max` is in characters; a longer title gets an ellipsis. */
-export function titleFromText(text: string, max = TITLE_MAX_LENGTH): string {
-  const collapsed = text.replace(/\s+/g, ' ').trim()
-  if (!collapsed) return ''
-  if (collapsed.length <= max) return collapsed
-  return `${collapsed.slice(0, max)}…`
-}
-
-let idSeq = 0
-
-/** Unique id for a session: crypto UUID when available, a time-based fallback
- * for older webviews/tests. */
-export function createSessionId(): string {
-  try {
-    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-      return crypto.randomUUID()
-    }
-  } catch {
-    /* fall through */
-  }
-  idSeq += 1
-  return `sess-${Date.now().toString(36)}-${idSeq}`
-}
-
-export function createSession(partial?: Partial<ChatSession>): ChatSession {
-  const now = Date.now()
-  return {
-    id: createSessionId(),
-    title: '',
-    created: now,
-    updated: now,
-    messages: [],
-    ...partial,
-  }
-}
-
-function isChatSessionRole(value: unknown): value is ChatSessionRole {
-  return value === 'user' || value === 'assistant'
-}
-
-function sanitizeImage(value: unknown): ChatSessionImage | null {
-  if (!value || typeof value !== 'object') return null
-  const o = value as Record<string, unknown>
-  if (typeof o.id !== 'string' || typeof o.name !== 'string' || typeof o.dataUrl !== 'string') {
-    return null
-  }
-  return { id: o.id, name: o.name, dataUrl: o.dataUrl }
-}
-
-function sanitizeMessage(value: unknown): ChatSessionMessage | null {
-  if (!value || typeof value !== 'object') return null
-  const o = value as Record<string, unknown>
-  if (!isChatSessionRole(o.role) || typeof o.content !== 'string') return null
-  const msg: ChatSessionMessage = { role: o.role, content: o.content }
-  if (Array.isArray(o.images)) {
-    const images = o.images.map(sanitizeImage).filter((v): v is ChatSessionImage => v !== null)
-    if (images.length) msg.images = images.slice(0, MAX_IMAGES_PER_MESSAGE)
-  }
-  if (typeof o.imageNotice === 'string') msg.imageNotice = o.imageNotice
-  // Only an exact boolean is trusted: any other truthy value from a hand-edited
-  // or foreign store would mark old answers as cut off.
-  if (o.interrupted === true) msg.interrupted = true
-  // Same rule as interrupted: a hand-edited or foreign store must not be
-  // able to put an impossible count on screen.
-  if (typeof o.usageTotal === "number" && Number.isFinite(o.usageTotal) && o.usageTotal > 0) {
-    msg.usageTotal = Math.round(o.usageTotal)
-  }
-  return msg
-}
-
-function toTimestamp(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
-}
-
-function sanitizeSession(value: unknown): ChatSession | null {
-  if (!value || typeof value !== 'object') return null
-  const o = value as Record<string, unknown>
-  if (typeof o.id !== 'string' || typeof o.title !== 'string') return null
-  if (!Array.isArray(o.messages)) return null
-  const messages = o.messages
-    .map(sanitizeMessage)
-    .filter((m): m is ChatSessionMessage => m !== null)
-  return {
-    id: o.id,
-    title: o.title,
-    created: toTimestamp(o.created, Date.now()),
-    updated: toTimestamp(o.updated, Date.now()),
-    messages,
-  }
-}
-
-/** Strip transient fields (`streaming`) before anything reaches storage. */
-function toStoredMessage(message: ChatSessionMessage): ChatSessionMessage {
-  const out: ChatSessionMessage = { role: message.role, content: message.content }
-  if (message.images && message.images.length) out.images = message.images
-  if (message.imageNotice) out.imageNotice = message.imageNotice
-  if (message.interrupted) out.interrupted = true
-  if (message.usageTotal) out.usageTotal = message.usageTotal
-  return out
-}
-
-function imageBytesOf(msg: ChatSessionMessage): number {
-  return (msg.images ?? []).reduce((sum, img) => sum + img.dataUrl.length, 0)
-}
-
-function sessionImageBytes(session: ChatSession): number {
-  return session.messages.reduce((sum, msg) => sum + imageBytesOf(msg), 0)
-}
-
-function totalImageBytes(sessions: ChatSession[]): number {
-  return sessions.reduce((sum, s) => sum + sessionImageBytes(s), 0)
-}
-
-/** Append an explanation to a message's existing notice, or set it. */
-function markNotice(msg: ChatSessionMessage, notice: string): void {
-  msg.imageNotice = msg.imageNotice ? `${msg.imageNotice}; ${notice}` : notice
-}
-
-/** Render an eviction summary (for tests) and set a notice on every message
- * that actually lost images. */
-function noticeEviction(msg: ChatSessionMessage, before: number): void {
-  if (before !== (msg.images?.length ?? 0)) markNotice(msg, IMAGE_EVICTED_NOTICE)
-}
-
-/** Enforce image storage caps over a list of sessions, mutating in place:
- *  1. drop images over `maxPerImage` and beyond `MAX_IMAGES_PER_MESSAGE`;
- *  2. keep each session under `maxPerSession`, evicting oldest images first;
- *  3. keep the cross-session total under `maxTotal`, evicting from the
- *     least-recently-updated session first.
- * Affected messages get an `imageNotice` so the UI can explain what happened.
- * Returns the number of images dropped/evicted. */
-export function applyImageCaps(
-  sessions: ChatSession[],
-  limits: ImageLimits = DEFAULT_IMAGE_LIMITS,
-): number {
-  let dropped = 0
-
-  // 1. Per-image size cap + per-message count cap.
-  for (const session of sessions) {
-    for (const msg of session.messages) {
-      if (!msg.images || msg.images.length === 0) continue
-      const kept: ChatSessionImage[] = []
-      let notice: string | undefined
-      for (const img of msg.images) {
-        if (img.dataUrl.length > limits.maxPerImage) {
-          if (!notice) notice = IMAGE_TOO_LARGE
-          dropped += 1
-          continue
-        }
-        if (kept.length >= MAX_IMAGES_PER_MESSAGE) {
-          if (!notice) notice = IMAGE_EVICTED_NOTICE
-          dropped += 1
-          continue
-        }
-        kept.push(img)
-      }
-      if (kept.length === 0) msg.images = undefined
-      else msg.images = kept
-      if (notice) msg.imageNotice = notice
-    }
-  }
-
-  // 2. Per-session budget, evicting the session's oldest images first.
-  for (const session of sessions) {
-    let budget = sessionImageBytes(session)
-    if (budget <= limits.maxPerSession) continue
-    for (const msg of session.messages) {
-      if (budget <= limits.maxPerSession) break
-      const images = msg.images
-      if (!images || images.length === 0) continue
-      const before = images.length
-      while (images.length > 0 && budget > limits.maxPerSession) {
-        budget -= images.shift()!.dataUrl.length
-        dropped += 1
-      }
-      if (images.length === 0) msg.images = undefined
-      noticeEviction(msg, before)
-    }
-  }
-
-  // 3. Cross-session budget, evicting from least-recently-updated sessions.
-  let total = totalImageBytes(sessions)
-  if (total > limits.maxTotal) {
-    const lru = [...sessions].sort((a, b) => a.updated - b.updated)
-    for (const session of lru) {
-      if (total <= limits.maxTotal) break
-      for (const msg of session.messages) {
-        if (total <= limits.maxTotal) break
-        const images = msg.images
-        if (!images || images.length === 0) continue
-        const before = images.length
-        while (images.length > 0 && total > limits.maxTotal) {
-          total -= images.shift()!.dataUrl.length
-          dropped += 1
-        }
-        if (images.length === 0) msg.images = undefined
-        noticeEviction(msg, before)
-      }
-    }
-  }
-
-  if (dropped > 0) {
-    console.warn(`[chatSession] image caps: dropped/evicted ${dropped} image(s)`)
-  }
-  return dropped
+/** The warning a write leaves on screen, by what it managed to store. A write
+ *  that lands in full clears it. */
+const WARNING_FOR_SAVE: Record<SaveOutcome, string | null> = {
+  saved: null,
+  'text-only': STORAGE_WARNING_IMAGES,
+  nothing: STORAGE_WARNING_FULL,
 }
 
 export const useChatSessionStore = defineStore('chatSession', () => {
   const sessions = ref<ChatSession[]>([])
   const activeId = ref<string | null>(null)
-  /** Set when the last persist could not store everything (see the constants
-   *  above). Cleared as soon as a write lands in full. */
+  /** Set when the last persist could not store everything (see the
+   *  STORAGE_WARNING_* constants in the feature's image-budget module).
+   *  Cleared as soon as a write lands in full. */
   const storageWarning = ref<string | null>(null)
 
   function loadAll(): void {
-    let next: ChatSession[] = []
-    let nextActive: string | null = null
-    try {
-      const raw = persistence.get(CHAT_SESSIONS_KEY)
-      if (raw) {
-        const parsed = JSON.parse(raw) as Partial<StoredState>
-        if (Array.isArray(parsed.sessions)) {
-          next = parsed.sessions
-            .map(sanitizeSession)
-            .filter((s): s is ChatSession => s !== null)
-        }
-        if (typeof parsed.activeId === 'string') nextActive = parsed.activeId
-      }
-    } catch (err) {
-      // Corrupted / private-mode storage: fall through to a fresh state.
-      console.warn('[chatSession] load failed, starting fresh', err)
-    }
-    // Re-assert image budgets on load so legacy oversized/over-budget data
-    // is pruned (and your images are evicted oldest-first / LRU) rather than
-    // breaking JSON parsing or blow the quota on the next persist.
-    applyImageCaps(next)
-    if (!next.some((s) => s.id === nextActive)) nextActive = null
-    if (next.length === 0) {
-      const seeded = createSession()
-      next = [seeded]
-      nextActive = seeded.id
-    }
-    sessions.value = next
-    activeId.value = nextActive
+    const restored = loadSessions()
+    sessions.value = restored.sessions
+    activeId.value = restored.activeId
     persist()
   }
 
   function persist(): void {
-    const payload: StoredState = {
-      v: 1,
-      activeId: activeId.value,
-      sessions: sessions.value.map((s) => ({
-        id: s.id,
-        title: s.title,
-        created: s.created,
-        updated: s.updated,
-        messages: s.messages.map(toStoredMessage),
-      })),
-    }
-    if (persistence.set(CHAT_SESSIONS_KEY, JSON.stringify(payload))) {
-      if (storageWarning.value !== null) storageWarning.value = null
-      return
-    }
-    // The write did not land — almost always the localStorage quota, which the
-    // per-message and per-session image budgets failed to prevent (other apps
-    // on the same origin, or a big text history, can eat the budget too). Shed
-    // the images: the text of a conversation is what the user cannot retype.
-    console.warn('[chatSession] persist failed, retrying without images')
-    let droppedImages = 0
-    const textOnly: StoredState = {
-      ...payload,
-      sessions: payload.sessions.map((s) => ({
-        ...s,
-        messages: s.messages.map((m) => {
-          if (!m.images?.length) return { role: m.role, content: m.content }
-          droppedImages += m.images.length
-          return { role: m.role, content: m.content }
-        }),
-      })),
-    }
-    if (persistence.set(CHAT_SESSIONS_KEY, JSON.stringify(textOnly))) {
-      // The in-memory copy keeps its images so the open panel still shows them;
-      // the notice explains why a reopened panel will not.
-      storageWarning.value = STORAGE_WARNING_IMAGES
-      if (droppedImages > 0) console.warn(`[chatSession] dropped ${droppedImages} image(s) to fit storage`)
-      return
-    }
-    // Even the text does not fit. Say so: silently reporting success here is
-    // how a whole conversation disappears at the next launch.
-    storageWarning.value = STORAGE_WARNING_FULL
-    console.warn('[chatSession] persist failed even without images')
+    storageWarning.value = WARNING_FOR_SAVE[saveSessions(sessions.value, activeId.value)]
   }
 
   const activeSession = computed<ChatSession | null>(
@@ -502,3 +171,46 @@ export const useChatSessionStore = defineStore('chatSession', () => {
     persist,
   }
 })
+
+/* ---------------------------------------------------------------------------
+ * Compatibility surface (§10.1.5), ONE stage only.
+ *
+ * The names this module exported before the split, kept resolvable from
+ * `stores/chatSession` so that every existing importer - the panel's
+ * composables, the attachment intake, the session bar - keeps working without
+ * being edited. New code imports them from `features/chat` (§13.11), which
+ * re-exports the same names.
+ *
+ * The names are listed explicitly rather than `export *`ed from the modules.
+ * This is the compatibility contract, not a copy of it: a helper the new modules
+ * share internally (the storage module's own reader/writer, say) cannot leak
+ * onto this surface by accident, and a name dropped here is a failing typecheck
+ * rather than a silent absence.
+ * ------------------------------------------------------------------------- */
+
+/* The session model (`chat-session-model.ts`). */
+export { createSession, createSessionId, titleFromText, TITLE_MAX_LENGTH } from '../features/chat/services/chat-session-model'
+export type {
+  ChatSession,
+  ChatSessionImage,
+  ChatSessionMessage,
+  ChatSessionRole,
+} from '../features/chat/services/chat-session-model'
+
+/* The image budget and its enforcement (`chat-image-budget.ts`). */
+export {
+  applyImageCaps,
+  DEFAULT_IMAGE_LIMITS,
+  IMAGE_EVICTED_NOTICE,
+  IMAGE_TOO_LARGE,
+  MAX_IMAGES_PER_MESSAGE,
+  MAX_IMAGE_BASE64_LENGTH,
+  MAX_IMAGE_BYTES_PER_SESSION,
+  MAX_IMAGE_BYTES_TOTAL,
+  STORAGE_WARNING_FULL,
+  STORAGE_WARNING_IMAGES,
+} from '../features/chat/services/chat-image-budget'
+export type { ImageLimits } from '../features/chat/services/chat-image-budget'
+
+/* The storage key (`chat-session-storage.ts`). */
+export { CHAT_SESSIONS_KEY } from '../features/chat/services/chat-session-storage'
