@@ -48,9 +48,13 @@ type CallbackIsolator = (
  * message and no plugin name, and the palette's own bookkeeping (a running
  * flag, a spinner) was left stuck.
  *
- * The notice is raised once per callback per session - a broken button that
- * is clicked repeatedly must not turn into a wall of identical toasts - while
- * every failure is still logged.
+ * The notice is raised once per callback per ACTIVATION, not per session: the
+ * record is the isolator's own set, and an isolator is built per activation. So
+ * a broken button that is clicked repeatedly must not turn into a wall of
+ * identical toasts, while every failure is still logged — and a plugin the user
+ * switches off and on again reports once more, which is the point. Re-enabling
+ * is a deliberate act, and remembering across it would mean a user who
+ * re-enabled a plugin could never learn again that its button is broken.
  *
  * `id` is the plugin every report is filed against: the callback does not carry
  * it, and the origin does not name the plugin.
