@@ -210,7 +210,15 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--app-elevated) 96%, var(--app-panel));
   box-shadow: var(--app-shadow-menu);
   opacity: 0;
-  transform: translateY(4px) scale(0.98);
+  /* It grows out of the click. The menu is placed at the pointer, so the corner
+     they share is where it came from, and the travel is *down* into place — the
+     road back to the pointer is up. Starting below the resting position, which
+     is what this did, made the menu rise out of a gap it had never occupied,
+     and scaling about its own centre made it inflate in place rather than
+     emerge; the heading popup in WordToolbar was moved off that same geometry
+     for the same reason. The distance is the travel token, as it is there. */
+  transform-origin: top left;
+  transform: translateY(calc(var(--app-motion-travel) * -1)) scale(0.98);
   /* Closing: the menu was already read, so it leaves on the next rung down and
      accelerates away instead of lingering over the user's next click. */
   transition: opacity var(--app-motion-fast) var(--app-ease-exit),

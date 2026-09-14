@@ -83,8 +83,12 @@ const tabs = useTabsStore()
           </button>
         </li>
       </ul>
+      <!-- The diff is inserted under the list it belongs to, so it wears the
+           shared nudge and comes down out of the button that opened it. It is
+           not a swap: the version list stays on screen above it. -->
       <DiffView
         v-if="comparing && historyText"
+        class="arrives"
         :current="tabs.activeTab?.content ?? ''"
         :history="historyText"
         :history-time="new Date(comparing.mtime).toLocaleString()"

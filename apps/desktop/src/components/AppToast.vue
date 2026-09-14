@@ -97,9 +97,15 @@ onBeforeUnmount(() => {
         {{ toast.message }}
       </div>
     </TransitionGroup>
+    <!-- The prompt is a sibling of the TransitionGroup, not a member of it: it
+         is a queued question rather than a transient notice, so it is not part
+         of the stack's move choreography. It still arrives in the same stack,
+         though, so it wears the shared nudge out of styles/motion.css — it used
+         to be the one thing in the corner that snapped in while every toast
+         beside it eased. -->
     <div
       v-if="recovery"
-      class="toast recovery"
+      class="toast recovery arrives"
       role="alertdialog"
       aria-live="assertive"
     >

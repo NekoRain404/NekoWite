@@ -129,11 +129,12 @@ function springSamples(curve: string): { value: number; at: number }[] {
 // through the split that turned it into a 16-line re-export with no CSS, and
 // three guards went on reading it as an empty string and reporting success.
 //
-// The three panel components still being split (SettingsPanel, FileTree,
-// NoteListPanel) are deliberately absent: their ad-hoc literals are migrated by
-// the follow-up pass, once the split lands. Add each here as it is cleaned up —
-// the list only ever grows, and an entry that stops rendering motion is a
-// defect in the entry, not a reason to delete it quietly.
+// The three panel components that were mid-split (SettingsPanel, FileTree,
+// NoteListPanel) were absent because their ad-hoc literals were waiting on the
+// follow-up pass. The splits landed and the literals are gone, so they are here
+// now, along with the feature components that were never listed at all — the
+// list only ever grows, and an entry that stops rendering motion is a defect in
+// the entry, not a reason to delete it quietly.
 const MOTION_SURFACE = [
   './tokens.css',
   './components.css',
@@ -168,10 +169,29 @@ const MOTION_SURFACE = [
   // The settings model spinner: the app's last bare duration, now on the rate.
   '../features/settings/components/AiSettings.vue',
   '../ui/ContextMenu.vue',
+  // The two surfaces whose hover feedback the unification pass never reached:
+  // they declared no motion at all, so a hover snapped there while it eased
+  // everywhere else. Listed now that they run on the shared rung.
+  '../ui/ImagePanel.vue',
+  '../ui/TableMenu.vue',
   '../ui/InfoRail.vue',
   '../ui/StatusBar.vue',
   '../ui/TabBar.vue',
   '../ui/TitleBar.vue',
+  // Panels and chrome that mount a region whole: the note-list body, the
+  // settings section, the sidebar's two groups, the history diff and the
+  // recovery toast wear the shared `arrives` nudge rather than declaring one of
+  // their own. The rest are their neighbours — the diff's own component, the
+  // template dialog, and the vault tree, which already carried a caret rotate
+  // the guard should have been watching.
+  '../ui/HistoryPanel.vue',
+  '../ui/DiffView.vue',
+  '../ui/TemplatePicker.vue',
+  '../features/notes/components/NoteListPanel.vue',
+  '../features/settings/components/SettingsPanel.vue',
+  '../features/sidebar/components/SidebarGroup.vue',
+  '../features/vault/components/FileTree.vue',
+  '../features/vault/components/FileTreeRow.vue',
 ]
 
 /**
@@ -198,13 +218,28 @@ const MOTION_SURFACE = [
 const MOTION_DECLARATION =
   /(?:^|[;{\s])(?:transition|animation)(?:-[\w-]+)?\s*:|(?:^|[;{\s])will-change\s*:|(?:^|[;{\s])--app-(?:motion|ease)[\w-]*\s*:/
 
-/** The shared arrival's classes, one per surface it is declared for. */
-const SHARED_ARRIVAL: readonly string[] = ['dialog', 'dialog-overlay']
+/**
+ * The classes motion.css animates on behalf of whoever wears them, one per
+ * surface it is declared for.
+ *
+ * The first two are the shared surface arrival: a dialog declares no transition
+ * of its own and is animated anyway. `arrives` is the same mechanism one level
+ * down — the nudge a region *inside* a surface takes as it mounts whole — and it
+ * is a worn class rather than a per-component rule on purpose: a renamed
+ * internal class must not be able to drop a region out of the vocabulary in
+ * silence, and motion.css has no business holding five components' private names
+ * to keep them animated. Wearing it counts as rendering motion, below.
+ */
+const SHARED_ARRIVAL: readonly string[] = ['dialog', 'dialog-overlay', 'arrives']
 
-/** True when the component's markup puts one of those classes on an element. */
-const wearsArrival = (source: string): boolean =>
-  [...source.matchAll(/class="([^"]*)"/g)].some(([, classes]) =>
-    classes.split(/\s+/).some((name) => SHARED_ARRIVAL.includes(name)),
+/** The two that are *scaled* on arrival, which is what the centring rule below
+ *  is about — a fade cannot move anything. */
+const SCALED_ARRIVAL: readonly string[] = ['dialog', 'dialog-overlay']
+
+/** True when the component's markup puts one of the shared classes on an element. */
+const wearsArrival = (source: string, classes: readonly string[] = SHARED_ARRIVAL): boolean =>
+  [...source.matchAll(/class="([^"]*)"/g)].some(([, found]) =>
+    found.split(/\s+/).some((name) => classes.includes(name)),
   )
 
 describe('the surface list itself', () => {
@@ -373,12 +408,16 @@ describe('choreography', () => {
     // `translate` sits outside the scale and is measured from the box, so it
     // holds. A one-line mistake with a nine-pixel symptom, hence the pin.
     //
-    // Scanned over every .vue this round may write rather than a list, so a
-    // dialog added tomorrow is covered without anyone remembering to add it.
-    // src/ui is outside these files and is not scanned; TemplatePicker.vue is
-    // still centring with a transform and is recorded as a follow-up.
+    // Scanned over every .vue in src rather than over the two directories this
+    // round may write, so a dialog added anywhere is covered without anyone
+    // remembering to add it — and filtered to the files that actually wear the
+    // *scaled* arrival, which is the only case the rule is about. Plenty of
+    // chrome centres itself with a transform and is right to (ui/TableMenu.vue
+    // pins a hover toolbar over a cell); none of it is scaled by anything.
     const centring = /transform:\s*translate(?:X|Y)?\(-50%/
-    for (const file of vueFiles('../components')) {
+    const scaled = vueFiles('..').filter((file) => wearsArrival(declarations(read(file), file), SCALED_ARRIVAL))
+    expect(scaled.length, 'the scaled arrival still has wearers to check').toBeGreaterThanOrEqual(5)
+    for (const file of scaled) {
       expect(declarations(read(file), file), `${file} centres itself with a transform`).not.toMatch(
         centring,
       )

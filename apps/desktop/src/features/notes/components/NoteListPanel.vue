@@ -95,23 +95,28 @@ const {
       @set-sort="setSortOrder"
     />
 
+    <!-- Every branch below replaces the whole column body, and the `arrives`
+         class is what keeps that from being a teleport: the new body comes down
+         out from under the toolbar instead of being cut in. Applied per branch
+         rather than once on a wrapper, because the element that mounts is the
+         one the animation has to be on. -->
     <div
       v-if="listView === 'graph'"
-      class="nl-embed"
+      class="nl-embed arrives"
     >
       <GraphPanel />
     </div>
 
     <div
       v-else-if="listView === 'attachments'"
-      class="nl-embed"
+      class="nl-embed arrives"
     >
       <AttachmentsPanel />
     </div>
 
     <div
       v-else-if="listView === 'folders'"
-      class="nl-embed"
+      class="nl-embed arrives"
     >
       <FileTree
         v-if="vault"
@@ -127,7 +132,7 @@ const {
 
     <div
       v-else-if="listView !== 'notes'"
-      class="nl-body nl-empty"
+      class="nl-body nl-empty arrives"
     >
       <p class="empty-hint">
         {{ t('notelist.comingSoon') }}
@@ -137,6 +142,7 @@ const {
     <NoteListContent
       v-else-if="panelMode === 'notes'"
       v-model:rename-name="renameName"
+      class="arrives"
       :content-enabled="contentEnabled"
       :content-searching="contentSearching"
       :content-searched="contentSearched"
@@ -159,7 +165,7 @@ const {
 
     <div
       v-else-if="panelMode === 'outline'"
-      class="nl-body"
+      class="nl-body arrives"
     >
       <OutlineList
         :items="outlineItems"
@@ -170,7 +176,7 @@ const {
 
     <div
       v-else-if="panelMode === 'links'"
-      class="nl-body"
+      class="nl-body arrives"
     >
       <LinkList
         :out="links.out"

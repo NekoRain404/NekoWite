@@ -411,6 +411,12 @@ onBeforeUnmount(() => {
   font-family: var(--app-font);
   font-size: 11px;
   cursor: pointer;
+  /* The shared hover rung, which every other control in the app already runs
+     on: this row — the plain buttons and the danger one that carries this class
+     beside its own — was one the unification pass never reached, so a hover
+     snapped here while it eased everywhere else. */
+  transition: border-color var(--app-motion-fast) var(--app-ease),
+              color var(--app-motion-fast) var(--app-ease);
 }
 .neko-image-btn:hover {
   border-color: var(--app-accent);
