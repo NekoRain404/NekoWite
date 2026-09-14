@@ -4,18 +4,17 @@
  * This module owns the ORDER of the gates. Nothing here decides what a gate
  * means — revocation/version policy is `@nekowite/plugin-host/governance`,
  * consent is ./permissions, publisher authenticity is ./trustPolicy, change
- * detection is ./integrity, and the records they consult are ./governanceStore.
+ * detection is ./integrity, the gates that need the plugin's own code are
+ * ./vaultPluginPostimport, and the records they consult are ./governanceStore.
  * What is owned here is the sequence: no plugin code is executed before every
  * gate has passed, and no gate is skipped.
  * ------------------------------------------------------------------------- */
 
 import {
-  assertPermission,
   clearAuditLog,
   collectPluginPermissions,
   createPluginError,
   flushAuditLogToFile,
-  getNonIsolatedPermissions,
   governanceRefusal,
   isPluginRevoked,
   isVersionAllowed,
@@ -53,11 +52,11 @@ import {
   loadGovernanceFile,
   makeVaultIntegrityStore,
   scheduleGovernanceSave,
-  setRecordedDigest,
 } from './governance-store'
-import { askPluginPermission, signalUnsandboxedCapabilities } from './permissions'
+import { askPluginPermission } from './permissions'
 import { askReapproveIntegrity } from './integrity'
 import { decidePluginTrust } from './trust-policy'
+import { applyPostImportGates } from './vault-plugin-postimport'
 import {
   activateVaultPlugins,
   deactivateVaultPlugins,
@@ -330,52 +329,13 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
     scheduleGovernanceSave()
     void flushAuditLogToFile()
 
-    // Post-import defensive consent: a plugin may declare capabilities in its
-    // code that were not in the manifest. Re-verify the merged set so a
-    // code-level declaration is still consent-gated. (Top-level has run by now,
-    // but we refuse to register/activate the plugin and surface the denial.)
-    if (!(await askPluginPermission(meta, definition, vault))) {
-      const declared = collectPluginPermissions(meta, definition)
-      recordPluginEvent(meta.id, 'permission-denied', `declared permissions: ${declared.join(', ') || 'none'}`, { version: meta.version })
-      notifyError(
-        describePluginError(
-          createPluginError('PLUGIN_PERMISSION_DENIED', {
-            pluginId: meta.id,
-            message:
-              declared.length > 0
-                ? `Plugin "${meta.name}" requires permission(s): ${declared.join(', ')} but consent was not granted.`
-                : t('plugin.permissionSkipped', { name: meta.name }),
-            // A denial is cached for the session (see the permission verdicts in
-            // ./permissions), so reloading the vault cannot re-ask — only a
-            // restart starts a session where the plugin is asked about again.
-            recovery: 'Restart NekoWrite to be asked again (a denial is remembered for this session), or remove the plugin.',
-          }),
-        ),
-      )
-      continue
-    }
+    // GATE 3.5 — everything that can only be judged now that the plugin's code
+    // has run: a code-level capability declaration is consent-checked again, the
+    // declared set is asserted at the point of use, and a non-isolated
+    // capability is surfaced. See ./vault-plugin-postimport for what each does
+    // and why; this loop owns only the order.
+    if (!(await applyPostImportGates({ meta, definition, vault, baseline }))) continue
 
-    // Point-of-use guard: re-verify every declared permission is present before
-    // activation; a missing capability rejects loudly instead of silently
-    // proceeding. Today consent is all-or-nothing, so the granted set equals the
-    // declared set — this is where a future per-capability grant is enforced.
-    const granted = collectPluginPermissions(meta, definition)
-    for (const permission of granted) {
-      assertPermission({ permissions: granted }, permission, {
-        pluginId: meta.id,
-        detail: 'activate its declared capabilities',
-      })
-    }
-
-    // Adopt the (re-)approved fingerprint as the new baseline now that we have
-    // committed to running this plugin.
-    if (baseline) setRecordedDigest(vault, baseline.id, baseline.version, baseline.digest)
-
-    // A declared capability is not capability-isolated while the plugin runs in
-    // the main window; once we have decided to run it, make that explicit rather
-    // than pretending to sandbox it.
-    const nonIsolated = getNonIsolatedPermissions(meta, definition)
-    signalUnsandboxedCapabilities(meta, nonIsolated)
     p.loadResult = loadResult
     consented.push(p)
   }

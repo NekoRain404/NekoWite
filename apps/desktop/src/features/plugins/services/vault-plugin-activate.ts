@@ -26,6 +26,12 @@ import { clearUnsandboxedPlugins } from './permissions'
 // no-op, going back to A would never re-register the reloaded definition).
 const activeVaultPluginIds: string[] = []
 
+// Ids whose activation has started but has not committed. They are NOT in the
+// list above — the host only records a plugin as active once its init resolves —
+// so a vault switch that walked that list alone never cancelled them, and they
+// went on to register into the vault the app had already left.
+const activatingVaultPluginIds = new Set<string>()
+
 /** The plugin ids currently activated from the vault. */
 export function getActiveVaultPluginIds(): string[] {
   return [...activeVaultPluginIds]
@@ -64,6 +70,14 @@ export function deactivateVaultPlugins(): void {
   vaultPluginClaim += 1
   for (const id of activeVaultPluginIds) deactivatePlugin(id)
   activeVaultPluginIds.length = 0
+  // An activation parked at its await has not committed, so the loop above
+  // cannot reach it; cancel it here. This is also why the host's teardown call
+  // is the one used rather than aborting `ActivatePluginOptions.signal`: the
+  // abort lands in `activatePlugin`'s FAILURE branch, which quarantines the
+  // plugin as unstable, where this rolls the registrations back and leaves it
+  // OFF. Switching vaults is not a crash, and it must not ask the user to
+  // re-approve a plugin that never misbehaved.
+  for (const id of activatingVaultPluginIds) deactivatePlugin(id)
   clearUnsandboxedPlugins()
 }
 
@@ -73,35 +87,63 @@ export function deactivateVaultPlugins(): void {
  *
  * An activation rejection is captured into an ok:false result so one failing
  * plugin cannot abort the rest. Each activation is time-boxed (async init that
- * exceeds the budget is cancelled and the plugin marked unstable), and a single
- * AbortController lets the host cancel a running activation (e.g. when the user
- * switches vaults). A timeout/cancel leaves the plugin deactivated and the host
- * continues.
+ * exceeds the budget is cancelled and the plugin marked unstable). A vault
+ * switch cancels an activation it catches in flight; a timeout/cancel leaves
+ * the plugin deactivated and the host continues.
  */
 export async function activateVaultPlugins(consented: PreloadedPlugin[]): Promise<void> {
-  const activationController = new AbortController()
+  // The claim this batch runs under. Only the plugins past MAX_PARALLEL_PLUGIN_LOADS
+  // need it: they have not reached the host yet, so the cancellation in
+  // `deactivateVaultPlugins` has nothing to cancel, and a switch that freed the
+  // running workers would otherwise let them start the REST of this batch into
+  // the vault the app has left - the same leak, one slot further out.
+  const claim = vaultPluginClaim
   const activated = await runBounded(
     consented.map((p) => async () => {
+      if (claim !== vaultPluginClaim) return null
       const loadResult = p.loadResult as LoadResult
-      const res = await activatePlugin(loadResult, {
-        signal: activationController.signal,
-        timeoutMs: DEFAULT_PLUGIN_ACTIVATION_TIMEOUT_MS,
-      }).catch((e) => ({
-        ok: false as const,
-        id: loadResult.id,
-        error: e instanceof Error ? e.message : String(e),
-        code: undefined as PluginErrorCode | undefined,
-      }))
-      return { meta: p.meta as PluginMeta, res }
+      // Two directories may declare the same plugin id (the loader does not
+      // dedupe), and the host answers the second call for an id with its
+      // in-flight no-op, which returns at once. Only the task that actually
+      // started the activation may register the id — otherwise the no-op's
+      // cleanup takes it off the cancel list while the real activation is still
+      // parked, and the vault switch has nothing left to cancel.
+      const started = !activatingVaultPluginIds.has(loadResult.id)
+      if (started) activatingVaultPluginIds.add(loadResult.id)
+      try {
+        const res = await activatePlugin(loadResult, {
+          timeoutMs: DEFAULT_PLUGIN_ACTIVATION_TIMEOUT_MS,
+        }).catch((e) => ({
+          ok: false as const,
+          id: loadResult.id,
+          error: e instanceof Error ? e.message : String(e),
+          code: undefined as PluginErrorCode | undefined,
+        }))
+        return { meta: p.meta as PluginMeta, res }
+      } finally {
+        if (started) activatingVaultPluginIds.delete(loadResult.id)
+      }
     }),
     MAX_PARALLEL_PLUGIN_LOADS,
   )
-  for (const { meta, res } of activated) {
+  for (const entry of activated) {
+    if (!entry) continue
+    const { meta, res } = entry
     if (!res.ok) {
+      const code = res.code
+      // A vault switch cancels the activations it caught in flight, and that is
+      // not an outcome to report: the app cancelled on the user's behalf, there
+      // is nothing they can do about it, and a switch that catches several
+      // plugins would raise one error per plugin over a routine action. The
+      // claim is what tells the two cancellations apart — a switch bumps it
+      // (`deactivateVaultPlugins`), while the plugin the user switched OFF goes
+      // through `deactivatePlugin` without starting a new vault load, so that
+      // one keeps the message its own action produced. Either way the host has
+      // already recorded the cancel event in the audit log.
+      if (code === 'PLUGIN_ABORTED' && claim !== vaultPluginClaim) continue
       // A structured timeout/cancel is routed to a distinct message; anything
       // else is a generic activation failure. In all cases the plugin was
       // already rolled back/marked unstable by the host, so the host continues.
-      const code = res.code
       const error =
         code === 'PLUGIN_HOOK_TIMEOUT'
           ? createPluginError('PLUGIN_HOOK_TIMEOUT', {
