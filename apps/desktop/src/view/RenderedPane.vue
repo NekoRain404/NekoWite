@@ -1,29 +1,18 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import { emitLifecycle } from '@nekowite/plugin-host'
-import type { NekoEditor } from '@nekowite/editor-core'
+import { computed, ref } from 'vue'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 import { useFloatStore } from '../stores/float'
 import { useAppearanceStore } from '../stores/appearance'
+import { useDocumentListStore } from '../stores/documentList'
 import { resolveDirection } from '../services/rtl'
 import { t } from '../i18n'
-import { configureTaskChecklistRendering } from '@nekowite/editor-core'
 import { resolveLinkPath } from '../features/vault/services/libraryQueries'
-import { useDocumentListStore } from '../stores/documentList'
 import { dirRelativeToVault } from '../services/noteMeta'
 import RenderSearchPanel from './RenderSearchPanel.vue'
 import ImagePanel from '../ui/ImagePanel.vue'
 import TableMenu from '../ui/TableMenu.vue'
-import { createDocumentSession } from '../features/editor/model/documentSession'
-import { createEditorController } from '../features/editor/controller/editorController'
-import { createEditorPersistence } from '../features/editor/controller/editorPersistence'
-import { createEditorExternalSync } from '../features/editor/controller/editorExternalSync'
-import { createEditorScrollSync } from '../features/editor/controller/editorScrollSync'
-import { createEditorSearchOverlay } from '../features/editor/controller/editorSearchOverlay'
-import { createEditorSelection } from '../features/editor/controller/editorSelection'
-import { useEditorFocus } from '../features/editor/composables/useEditorFocus'
-import { setRenderedFlush } from '../services/editorOwnership'
+import { useRenderedEditorStack } from '../features/editor/composables/useRenderedEditorStack'
 
 const tabs = useTabsStore()
 const view = useViewStore()
@@ -33,96 +22,42 @@ const appearance = useAppearanceStore()
 
 const scrollEl = ref<HTMLElement | null>(null)
 const editorEl = ref<HTMLElement | null>(null)
-const editorForPanel = shallowRef<NekoEditor | null>(null)
-
-// The pane is a thin orchestrator: it owns only the template-bound DOM refs and
-// reactive UI state, delegating editor lifecycle, persistence, external sync,
-// scroll sync, search overlay and selection to the controller modules.
-const session = createDocumentSession()
-
-// Base direction for the rendered content: the user's explicit override wins,
-// otherwise the document text decides (Arabic/Hebrew -> rtl). Bound as `dir` on
-// the pane root so the browser lays the note out from the correct edge.
-const renderDir = computed(() => resolveDirection(appearance.contentDirection, tabs.activeTab?.content ?? ''))
-
-const editorController = createEditorController({
-  session,
-  getEditorEl: () => editorEl.value,
-})
-const persistence = createEditorPersistence({ session })
-const searchOverlay = createEditorSearchOverlay({
-  session,
-  getEditor: () => session.editor,
-})
-const externalSync = createEditorExternalSync({
-  session,
-  getEditor: () => session.editor,
-  scheduleOverlayRefresh: () => searchOverlay.scheduleRefresh(),
-})
-const scrollSync = createEditorScrollSync({
-  getScrollEl: () => scrollEl.value,
-  getEditorEl: () => editorEl.value,
-})
-const selection = createEditorSelection({ getEditor: () => session.editor })
 
 // Reported to the pane's parent (the editor pane), which owns the split-view
 // scroll coordinator. Only the user's own scrolls are reported: the echo of a
 // programmatic write is consumed inside the scroll controller.
 const emit = defineEmits<{ 'user-scroll': [] }>()
 
-const { searchOpen, spellPopup } = searchOverlay
+// Base direction for the rendered content: the user's explicit override wins,
+// otherwise the document text decides (Arabic/Hebrew -> rtl). Bound as `dir` on
+// the pane root so the browser lays the note out from the correct edge.
+const renderDir = computed(() => resolveDirection(appearance.contentDirection, tabs.activeTab?.content ?? ''))
 
-// Focus/typewriter centering + the word-count goal live in a composable so the
-// pane owns less. The calls read the live `editor`/`scrollEl` via closures.
+// The pane is a thin orchestrator: it owns the template-bound DOM refs, its own
+// reactive UI state and its delegated events. The editor itself — session,
+// controller stack, mount/teardown contract and the store subscriptions that
+// re-configure them — is the composable's, so it can be reasoned about without
+// mounting a component. The two handlers below are handed back to it because
+// they go on with the rest of the mount (see the composable).
 const {
+  editorForPanel,
+  searchOpen,
+  spellPopup,
+  searchOverlay,
+  externalSync,
+  scrollSync,
+  focus,
   wordCount,
   wordGoalMet,
   wordProgressPct,
-  queueCenterCursor,
-  onFocusKeydown,
-  onFocusPointerdown,
-  cancelFocusRaf,
-} = useEditorFocus({
-  getEditor: () => session.editor,
+} = useRenderedEditorStack({
   getScrollEl: () => scrollEl.value,
+  getEditorEl: () => editorEl.value,
+  handlers: { onEditorClick, onKeydown },
 })
-
-let unlistenChange: (() => void) | null = null
-let unlistenOverlayRefresh: (() => void) | null = null
 
 function onScroll(): void {
   if (scrollSync.onScroll()) emit('user-scroll')
-}
-
-function getScrollTop(): number {
-  return scrollSync.getScrollTop()
-}
-
-function getScrollRange(): number {
-  return scrollSync.getScrollRange()
-}
-
-function setScrollTop(top: number, token: number): void {
-  scrollSync.setScrollTop(top, token)
-}
-
-function getHeadingTops(): number[] {
-  return scrollSync.getHeadingTops()
-}
-
-function setScrollToLine(line: number, token: number): void {
-  scrollSync.setScrollToLine(line, token)
-}
-
-/** Put the keyboard in the document. The editor keeps its own selection across
- *  a mode switch (the model is never rebuilt for one), so this only has to hand
- *  the focus back — the pane the user came from was a button. */
-function focus(): void {
-  editorController.getView()?.focus()
-}
-
-function onContainerPointerDownCapture(e: PointerEvent): void {
-  selection.handlePointerDown(e)
 }
 
 function onEditorClick(e: MouseEvent): void {
@@ -212,103 +147,16 @@ function onKeydown(e: KeyboardEvent): void {
   }
 }
 
+// The scroll surface the pane's parent (the split-view coordinator, the handoff)
+// reads through the template ref — see `RenderedPaneHandoff`.
 defineExpose({
-  getScrollTop,
-  getScrollRange,
-  setScrollTop,
-  getHeadingTops,
-  setScrollToLine,
+  getScrollTop: scrollSync.getScrollTop,
+  getScrollRange: scrollSync.getScrollRange,
+  setScrollTop: scrollSync.setScrollTop,
+  getHeadingTops: scrollSync.getHeadingTops,
+  setScrollToLine: scrollSync.setScrollToLine,
   focus,
 })
-
-onMounted(async () => {
-  if (!editorEl.value) return
-  editorController.mount()
-  editorForPanel.value = session.editor
-  const current = tabs.activeTab
-  if (current) await externalSync.applyContent(current.content)
-
-  emitLifecycle('onEditorReady', session.editor)
-
-  editorEl.value.addEventListener('pointerdown', onContainerPointerDownCapture, true)
-  editorEl.value.addEventListener('click', onEditorClick)
-  window.addEventListener('keydown', onKeydown)
-  editorEl.value.addEventListener('keydown', onFocusKeydown)
-  editorEl.value.addEventListener('pointerdown', onFocusPointerdown)
-
-  unlistenChange = persistence.attachChangeListener()
-  unlistenOverlayRefresh = searchOverlay.attachChangeListener()
-  // Published so a one-shot document read (save, export, sending the note to
-  // the model) can publish this pane's pending serialization first.
-  setRenderedFlush(() => persistence.flush())
-
-  // Spell check is a reactive setting: sync the live toggle (default true) so
-  // the renderSearch overlay honors it on open, and re-apply on change.
-  searchOverlay.syncSpellEnabled(appearance.spellCheckEnabled)
-})
-
-watch(
-  () => appearance.spellCheckEnabled,
-  (enabled) => {
-    searchOverlay.syncSpellEnabled(enabled)
-  },
-)
-
-watch(
-  () => appearance.focusMode,
-  (on) => {
-    if (on) queueCenterCursor()
-  },
-)
-
-// The task-list switch is a rendering choice of the live editor: the pane keeps
-// one editor per document, and rebuilding it to flip a decoration would throw
-// away the undo stack and the caret. editor-core re-decorates the open views
-// instead, so `immediate` also seeds the first editor with the stored value.
-watch(
-  () => appearance.renderTaskChecklist,
-  (enabled) => configureTaskChecklistRendering(enabled),
-  { immediate: true },
-)
-
-onBeforeUnmount(() => {
-  try {
-    setRenderedFlush(null)
-    persistence.cancel()
-    searchOverlay.cancelRefresh()
-    cancelFocusRaf()
-    if (tabs.activeId) tabs.cancelAutosave(tabs.activeId)
-    editorForPanel.value = null
-    editorEl.value?.removeEventListener('pointerdown', onContainerPointerDownCapture, true)
-    editorEl.value?.removeEventListener('click', onEditorClick)
-    editorEl.value?.removeEventListener('keydown', onFocusKeydown)
-    editorEl.value?.removeEventListener('pointerdown', onFocusPointerdown)
-    window.removeEventListener('keydown', onKeydown)
-    unlistenChange?.()
-    unlistenOverlayRefresh?.()
-    scrollSync.cancel()
-    editorController.destroy()
-  } finally {
-    if (session.docChangeTimer) {
-      clearTimeout(session.docChangeTimer)
-      session.docChangeTimer = null
-    }
-  }
-})
-
-watch(
-  () => tabs.activeTab?.content,
-  (content) => {
-    externalSync.onContentChanged(content)
-  },
-)
-
-watch(
-  () => view.mode,
-  (mode) => {
-    externalSync.onModeChanged(mode)
-  },
-)
 </script>
 
 <template>
@@ -385,169 +233,4 @@ watch(
   </div>
 </template>
 
-<style scoped>
-.rendered-pane {
-  width: 100%;
-  height: 100%;
-  overflow: auto;
-  background: var(--app-canvas);
-}
-.nw-word-goal {
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  max-width: var(--app-content-width);
-  margin: 0 auto;
-  padding: 10px 24px 8px;
-  background: color-mix(in srgb, var(--app-canvas) 86%, transparent);
-  backdrop-filter: blur(3px);
-  font-family: var(--app-font);
-  font-size: 11px;
-  color: var(--app-muted);
-}
-.nw-word-goal-label {
-  flex: none;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-.nw-word-goal-track {
-  flex: 1;
-  height: 4px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--app-border) 80%, transparent);
-  overflow: hidden;
-}
-.nw-word-goal-fill {
-  display: block;
-  height: 100%;
-  border-radius: 999px;
-  background: var(--app-accent);
-  transition: width var(--app-motion-fast) var(--app-ease),
-              background var(--app-motion-fast) var(--app-ease);
-}
-.nw-word-goal.is-done .nw-word-goal-fill {
-  background: var(--app-accent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--app-accent) 55%, transparent);
-}
-.nw-word-goal.is-done .nw-word-goal-label {
-  color: var(--app-accent);
-  font-weight: 600;
-}
-.editor-container {
-  position: relative;
-  max-width: var(--app-content-width);
-  margin: 0 auto;
-  padding: 24px 24px 96px;
-  min-height: 100%;
-}
-.editor-container :deep(h1),
-.editor-container :deep(h2),
-.editor-container :deep(h3),
-.editor-container :deep(h4),
-.editor-container :deep(h5),
-.editor-container :deep(h6) {
-  scroll-margin-top: 16px;
-}
-
-.rendered-pane :deep(.nw-find-hit) {
-  background: color-mix(in srgb, var(--app-accent) 28%, transparent);
-  border-radius: 2px;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--app-accent) 28%, transparent);
-  color: inherit;
-}
-.rendered-pane :deep(.nw-find-active) {
-  background: var(--app-accent);
-  color: var(--app-accent-contrast);
-  box-shadow: none;
-}
-
-/* Spell squiggle: wavy underline, clickable, theme-token driven. */
-.rendered-pane :deep(.nkw-spell) {
-  text-decoration: underline wavy var(--app-danger);
-  text-decoration-thickness: 1.5px;
-  text-underline-offset: 3px;
-  cursor: pointer;
-  border-radius: 2px;
-}
-.rendered-pane :deep(.nkw-spell:hover) {
-  background: color-mix(in srgb, var(--app-danger) 12%, transparent);
-}
-
-/* Suggestion popup for a clicked misspelled word. */
-.nw-spell-popup {
-  position: fixed;
-  z-index: 60;
-  min-width: 150px;
-  max-width: 240px;
-  padding: 6px;
-  background: var(--app-elevated);
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-md);
-  box-shadow: 0 8px 28px color-mix(in srgb, var(--app-text) 16%, transparent);
-  font-family: var(--app-font);
-  font-size: 12px;
-}
-.nw-spell-popup-title {
-  padding: 2px 6px;
-  font-weight: 600;
-  color: var(--app-danger);
-}
-.nw-spell-popup-label {
-  padding: 2px 6px;
-  color: var(--app-muted);
-  font-size: 11px;
-}
-.nw-spell-popup-item {
-  display: block;
-  width: 100%;
-  padding: 4px 6px;
-  border: none;
-  border-radius: var(--app-radius-sm);
-  background: transparent;
-  color: var(--app-text);
-  font-family: var(--app-font);
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-.nw-spell-popup-item:hover {
-  background: color-mix(in srgb, var(--app-accent) 18%, transparent);
-  color: var(--app-accent);
-}
-.nw-spell-popup-none {
-  padding: 4px 6px;
-  color: var(--app-muted);
-  font-size: 11px;
-}
-
-/* Column-width resize: prosemirror-tables arms a thin handle at each column
-   divider on hover and flags the editor root with `.resize-cursor`. The handle
-   is visual only — pointer events are passed through so the underlying cell
-   still reacts to clicks (and the drag is detected by cursor-x proximity). */
-.editor-container :deep(.ProseMirror.resize-cursor) {
-  cursor: col-resize;
-}
-.editor-container :deep(.tableWrapper) {
-  overflow-x: auto;
-}
-.editor-container :deep(.column-resize-handle) {
-  position: absolute;
-  right: -2px;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  z-index: 20;
-  background: color-mix(in srgb, var(--app-accent) 55%, transparent);
-  pointer-events: none;
-}
-.editor-container :deep(.column-resize-dragging)::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: color-mix(in srgb, var(--app-accent) 18%, transparent);
-  pointer-events: none;
-}
-</style>
+<style scoped src="../features/editor/styles/renderedPane.css"></style>
