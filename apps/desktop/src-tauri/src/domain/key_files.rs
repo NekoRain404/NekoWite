@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 /// What an on-disk `master.key` actually holds. It NEVER holds a raw
 /// decryption key when a master password is set — only a verifier derived from
 /// the password via a proper KDF, so the file alone cannot unlock the vault.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum VaultKeyState {
     /// No master password set (legacy/auto-generated): a random 32-byte key is
     /// stored so the vault auto-unlocks on launch. There is no secret password
@@ -26,6 +26,29 @@ pub enum VaultKeyState {
     /// verifier. The Stronghold key is only recoverable by deriving it from the
     /// password; the file alone cannot decrypt the snapshot.
     Locked { salt: [u8; 32], verifier: [u8; 32] },
+}
+
+/// Hand-written rather than derived, because `Auto` IS the Stronghold master
+/// key: a derived `Debug` prints its 32 bytes wherever the value is formatted,
+/// which puts the whole vault one stray `{:?}` — on this type, on a struct that
+/// holds it, or on an error — from a log line, a panic message or a bug report.
+/// Nothing formats it today; the type is `pub` in the domain layer, so what is
+/// one edit away is what the impl has to assume.
+///
+/// `Locked` stays printable: its salt is public and its verifier is one-way, so
+/// neither is worth anything to a reader, and redacting them would hide the
+/// state the caller is looking at.
+impl std::fmt::Debug for VaultKeyState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Auto(_) => f.write_str("Auto(<master key redacted>)"),
+            Self::Locked { salt, verifier } => f
+                .debug_struct("Locked")
+                .field("salt", salt)
+                .field("verifier", verifier)
+                .finish(),
+        }
+    }
 }
 
 /// `{parent}/{name}.{suffix}` sibling of `path`: the `master.key.new` staging
@@ -87,4 +110,47 @@ pub trait KeyFileIo {
     /// change the mode, so this is what gives the live snapshot its
     /// permissions.
     fn tighten_perms(&self, path: &Path) -> Result<(), String>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `Auto` carries the Stronghold master key itself, so a derived `Debug`
+    /// prints the secret wherever a value is formatted — one stray `{:?}` on a
+    /// config, a struct or an error way from a log line or a bug report. The
+    /// placeholder is what makes that harmless.
+    #[test]
+    fn the_auto_key_is_never_printed_by_debug() {
+        let state = VaultKeyState::Auto([7u8; 32]);
+
+        let shown = format!("{state:?}");
+
+        assert!(
+            !shown.contains('7'),
+            "the raw key reached a Debug string: {shown}"
+        );
+        assert!(
+            shown.contains("Auto"),
+            "the variant still has to be recognisable: {shown}"
+        );
+    }
+
+    /// The `Locked` fields are a public salt and a one-way verifier — the file
+    /// alone cannot unlock the vault from them — so they stay printable, and
+    /// the hand-written `Debug` must not have redacted the useful half of the
+    /// type.
+    #[test]
+    fn the_locked_fields_stay_printable() {
+        let state = VaultKeyState::Locked {
+            salt: [1u8; 32],
+            verifier: [2u8; 32],
+        };
+
+        let shown = format!("{state:?}");
+
+        assert!(shown.contains("Locked"), "{shown}");
+        assert!(shown.contains("salt"), "{shown}");
+        assert!(shown.contains("verifier"), "{shown}");
+    }
 }

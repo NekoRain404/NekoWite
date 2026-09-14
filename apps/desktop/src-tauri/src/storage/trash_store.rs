@@ -124,11 +124,22 @@ pub fn delete_file(vault_root: &str, path: &str) -> Result<String, String> {
     let encoded = encode_rel_path(&relative);
     let mut target = trash_root.join(&encoded);
     if target.exists() {
-        let ts = SystemTime::now()
+        let mut ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis())
             .unwrap_or_default();
         target = trash_root.join(format!("{encoded}-{ts}"));
+        // A stamp that is itself taken has to move on, not be renamed over:
+        // `fs::rename` REPLACES its destination on unix, so two deletes of the
+        // same path inside one millisecond computed the same stamped name, the
+        // second destroyed the copy the first had just moved in, and both
+        // callers were told they had succeeded. `move_trash_key` guards the same
+        // hazard the same way — the name stays a single 13-digit stamp, so
+        // `strip_collision_suffix` still recognises it.
+        while target.exists() {
+            ts = ts.saturating_add(1);
+            target = trash_root.join(format!("{encoded}-{ts}"));
+        }
     }
     std::fs::rename(&resolved, &target).map_err(|e| fs_error("delete", &resolved, e))?;
     Ok(crate::domain::path_policy::ipc_path(&target))
