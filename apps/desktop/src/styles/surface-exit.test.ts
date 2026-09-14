@@ -56,7 +56,12 @@ const DIALOG_HOSTS: Record<string, number> = {
 
 describe('a dialog that arrives can leave', () => {
   it('declares the departure on the shared surface, out of the ladder', () => {
-    const motion = css('./motion.css')
+    // The layer, joined: the departure lives in `surface-motion.css` beside the
+    // arrival it mirrors, and a reader that named one file would be checking
+    // whichever half happened to hold the rule on the day it was written.
+    const motion = ['surface-motion.css', 'motion.css']
+      .map((sheet) => css(`./${sheet}`))
+      .join('\n')
     // The leaver is a transition and not a second keyframe: a keyframe restarts
     // from its first frame, so a dialog dismissed mid-arrival would snap to full
     // and replay the fade before it left.
@@ -117,6 +122,50 @@ describe('a dialog that arrives can leave', () => {
   })
 })
 
+describe('the context menu, whose exit every host used to cut', () => {
+  // A menu is mounted with `v-if` on a nullable state in six hosts, so its own
+  // leave rule never ran and it went from `opacity 1` to out of the document in
+  // one frame — the exact failure this file exists for, on the app's most-used
+  // popup. The host wrapper is what makes the rule run; the two selectors carry
+  // `.ctx-menu` because the component drives its own state with
+  // `.ctx-menu.is-open`, which is *two* classes and beats a bare
+  // `-leave-active` on specificity.
+  const HOSTS = [
+    '../ui/EditorPane.vue',
+    '../ui/TabBar.vue',
+    '../ui/AttachmentsPanel.vue',
+    '../features/notes/components/NoteListPanel.vue',
+    '../features/notes/components/NoteListToolbar.vue',
+    '../features/vault/components/FileTree.vue',
+  ]
+
+  it('is wrapped where the v-if is, in every host that mounts one', () => {
+    for (const file of HOSTS) {
+      const source = read(file)
+      expect(source, `${file} keeps the menu mounted through its exit`).toMatch(
+        /<Transition name="ctx">/,
+      )
+    }
+    expect(HOSTS.length, 'the list is the host count from ContextMenu.vue').toBe(6)
+  })
+
+  it('declares the exit on selectors that can out-specify its own state class', () => {
+    const menu = css('../ui/ContextMenu.vue')
+    expect(menu, 'the leaver takes no pointer').toMatch(
+      /\.ctx-menu\.ctx-leave-active\s*\{[^}]*pointer-events:\s*none/,
+    )
+    expect(menu, 'and fades on the exit rung and curve').toMatch(
+      /\.ctx-menu\.ctx-leave-active\s*\{[^}]*transition:\s*opacity var\(--app-motion-exit\) var\(--app-ease-exit\)/,
+    )
+    expect(menu, 'and reaches opacity 0 against `.is-open`').toMatch(
+      /\.ctx-menu\.ctx-leave-to\s*\{[^}]*opacity:\s*0/,
+    )
+    // A bare `-leave-active`/`-leave-to` is the trap, not a style choice: it
+    // loses to `.ctx-menu.is-open` and the exit silently does nothing.
+    expect(menu, 'and never as a bare class').not.toMatch(/^\s*\.ctx-(?:leave-active|leave-to)\s*\{/m)
+  })
+})
+
 describe('a surface on its way out is not a target', () => {
   it('takes the pointer away from the two panels that were measured taking it', () => {
     // Measured before this rule existed, per frame through the sidebar's whole
@@ -129,6 +178,9 @@ describe('a surface on its way out is not a target', () => {
     expect(shell, 'a leaving column does not take the click').toMatch(
       /\.col-leave-active[\s\S]{0,80}\.rail-leave-active\s*\{[^}]*pointer-events:\s*none/,
     )
+    expect(css('../features/settings/components/SettingsPanel.vue'), 'nor a leaving settings page').toMatch(
+      /\.page-leave-active\s*\{[^}]*pointer-events:\s*none/,
+    )
   })
 
   it('takes the tab order away too, which no stylesheet can do', () => {
@@ -140,6 +192,12 @@ describe('a surface on its way out is not a target', () => {
     const hosts: Array<[string, number]> = [
       ['../app/AppShell.vue', 3],
       ['../ui/InfoRail.vue', 6],
+      // The settings dialog's section swap. It is not this brief's file and it
+      // was measured after this guard was written: 60ms into the swap the
+      // leaving page was still `pointer-events: auto` and still matched fifteen
+      // controls that now sit under the incoming one, which is the same defect
+      // as the shell's panels one level down.
+      ['../features/settings/components/SettingsPanel.vue', 1],
     ]
     for (const [file, expected] of hosts) {
       const source = read(file)
