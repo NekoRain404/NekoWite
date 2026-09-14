@@ -90,10 +90,54 @@ function truncate(s: string, maxChars: number): string {
   return `${s.slice(0, maxChars - 3)}...`
 }
 
+/**
+ * How much of the conversation one request carries, in characters of the
+ * labelled turns (`用户：…` / `助手：…`, joined by blank lines, most recent
+ * first). A turn is kept whole or not at all.
+ *
+ * **What it bounds, in turns rather than in characters** — measured by running
+ * this function over a 200-turn CJK history, which is what a reader needs to
+ * tell whether the number is one exchange or a conversation:
+ *
+ * | one turn | turns kept | exchanges |
+ * |---|---|---|
+ * | 20 chars | 200 (the cap does not bind) | 100 |
+ * | 50 | 113 | ~56 |
+ * | 100 | 58 | 29 |
+ * | 200 | 29 | ~14 |
+ * | 400 | 14 | 7 |
+ * | 800 | 7 | ~3 |
+ * | 1 500 | 3 | 1.5 |
+ * | 3 000 | 1 | 0.5 |
+ *
+ * So on a conversation of short questions and short answers it carries the
+ * whole thing, and it only collapses to "the last exchange or two" once both
+ * sides are writing 1 500-character turns — which is a real configuration (the
+ * max-output setting goes to 8 192) and the one to look at if the model ever
+ * loses the thread.
+ *
+ * **Why it stays 6 000 while the note's budget is 100 000** — they were the same
+ * number once (the note's budget was 6 000 too) and only one of them was raised,
+ * which is why the two are now read together and look like an oversight. They
+ * are not the same kind of number. The note's budget is the user's own choice,
+ * spent on the document the question is about, and it is what the feature
+ * exists for; this is a ceiling on the past, and every character of past is
+ * re-sent with EVERY later request in the conversation, so it is paid for once
+ * per turn rather than once. A user who needs an older turn again can say so in
+ * one line; a note that never reached the model cannot be restated.
+ *
+ * It is deliberately NOT derived from the note budget: that setting is
+ * described to the user as how much of the note is attached, and a number that
+ * also governed the transcript would make one setting mean two things. Growth
+ * here is a decision to be taken on its own evidence, which is why the table
+ * above is here.
+ */
+const TRANSCRIPT_CHARS = 6000
+
 /** Wrap the transcribed turns into the message body, walking backwards to keep
  * only the most recent turns (capped at `maxChars`). `history` must already
  * end with the current user turn. */
-function buildChatTranscript(history: ChatTurn[], maxChars = 6000): string {
+function buildChatTranscript(history: ChatTurn[], maxChars = TRANSCRIPT_CHARS): string {
   const label = (role: ChatRole): string => (role === 'user' ? t('chat.user') : t('chat.assistant'))
   const lines: string[] = []
   let used = 0
@@ -183,10 +227,10 @@ export function contextOmission(context: {
  * identical to the legacy numeric form. */
 export function buildChatPrompt(
   history: ChatTurn[],
-  maxCharsOrOpts: number | { context?: string; maxChars?: number } = 6000,
+  maxCharsOrOpts: number | { context?: string; maxChars?: number } = TRANSCRIPT_CHARS,
 ): string {
   const opts = typeof maxCharsOrOpts === 'number' ? { maxChars: maxCharsOrOpts } : maxCharsOrOpts
-  const maxChars = opts.maxChars ?? 6000
+  const maxChars = opts.maxChars ?? TRANSCRIPT_CHARS
   const context = opts.context?.trim() ?? ''
   const body = buildChatTranscript(history, maxChars)
   if (!context) return body
