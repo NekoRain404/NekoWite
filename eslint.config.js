@@ -22,6 +22,14 @@ const tsFlat = tseslint.configs['flat/recommended']
 // injected `DesktopRuntime`, or imports the narrow ports from the platform layer.
 // Flat-config `files` patterns are relative to this config file (repo root), so
 // scope the ban to the desktop feature/UI layers under apps/desktop/src.
+//
+// No `chat/**` entry: there has never been an `apps/desktop/src/chat/` in this
+// repository. The chat panel came from `ui/ChatPanel.vue` and lives in
+// `features/chat/**` now, which the `features` globs in the list already match —
+// so the entry that named `chat/` protected nothing for as long as it existed.
+// This list is an enumeration of layers, and it is not the whole set: `app/`,
+// `view/` and `composables/` under src/ are the same kind of code and are
+// outside it.
 const LEGACY_GATEWAY_BANNED_FILES = [
   'apps/desktop/src/ui/**/*.ts',
   'apps/desktop/src/ui/**/*.vue',
@@ -31,8 +39,6 @@ const LEGACY_GATEWAY_BANNED_FILES = [
   'apps/desktop/src/features/**/*.vue',
   'apps/desktop/src/components/**/*.ts',
   'apps/desktop/src/components/**/*.vue',
-  'apps/desktop/src/chat/**/*.ts',
-  'apps/desktop/src/chat/**/*.vue',
   'apps/desktop/src/plugins/**/*.ts',
   'apps/desktop/src/plugins/**/*.vue',
 ]
