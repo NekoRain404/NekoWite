@@ -91,6 +91,27 @@ pub fn models_url_override(config: &AIConfig) -> Option<&str> {
         .filter(|url| !url.is_empty())
 }
 
+/// Whether a caller-supplied `api_key` is a credential at all.
+///
+/// The window sends [`AI_KEY_MASKED`] — the placeholder that says "a key is
+/// configured" — when it is not handing the key itself over, and a blank value
+/// when the field is empty. Neither is a credential, and treating either as one
+/// puts a non-key in the provider's auth header (`request::with_completion_auth`)
+/// while the vault's real key stays behind.
+///
+/// The test is deliberately not `== AI_KEY_MASKED`: the literal only matches the
+/// mask spelled exactly as this crate writes it, so the same placeholder padded,
+/// wrapped or spaced out read as a real key and was sent as a bearer token. What
+/// the value SAYS is what counts — trim everything the mask itself is made of,
+/// and whitespace, and every spelling of the placeholder has nothing left. A
+/// real key is ASCII, so the mask's characters are never part of one, let alone
+/// all of one; the empty string is the same statement at its extreme.
+fn is_real_api_key(value: &str) -> bool {
+    !value
+        .trim_matches(|c: char| c.is_whitespace() || AI_KEY_MASKED.contains(c))
+        .is_empty()
+}
+
 /// Resolve the API key for an AI request: the decision, with the credential
 /// store injected.
 ///
@@ -113,7 +134,7 @@ pub fn hydrate_stored_key_with(
     load_stored: impl Fn(&str) -> Result<Option<String>, String>,
 ) -> Result<(), String> {
     if let Some(k) = config.api_key.as_deref() {
-        if k != AI_KEY_MASKED {
+        if is_real_api_key(k) {
             return Ok(());
         }
     }

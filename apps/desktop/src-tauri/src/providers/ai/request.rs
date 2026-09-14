@@ -119,15 +119,52 @@ pub fn normalize_reasoning_effort(raw: Option<&str>) -> Option<&'static str> {
 ///
 /// Without this the `_` arm of `endpoint_default` sent every such provider to
 /// api.openai.com: a Grok or DeepSeek request would reach OpenAI's host and be
-/// rejected there (with the user's key handed to the wrong origin). `local` is
-/// intentionally absent — a local model server always needs an explicit URL,
-/// and guessing one would be worse than surfacing the missing setting.
-pub fn default_base_url(provider: &str) -> &'static str {
+/// rejected there (with the user's key handed to the wrong origin).
+///
+/// Only a provider whose own host this crate knows has an arm. `local`,
+/// `custom` and an unknown id get `None` — not api.openai.com, which is what
+/// "absent from the match" used to mean — because there is no host to guess:
+/// a local model server's address is the user's to name, and an id this crate
+/// has never heard of is not a licence to pick one. [`resolve_base_url`] turns
+/// that `None` into a refusal. (Anthropic and Gemini carry their own default
+/// inside their own request builders; they do not speak this wire format and
+/// are not reachable from here.)
+pub fn default_base_url(provider: &str) -> Option<&'static str> {
     match provider {
-        "grok" => "https://api.x.ai/v1",
-        "deepseek" => "https://api.deepseek.com/v1",
-        _ => "https://api.openai.com/v1",
+        "openai" => Some("https://api.openai.com/v1"),
+        "grok" => Some("https://api.x.ai/v1"),
+        "deepseek" => Some("https://api.deepseek.com/v1"),
+        _ => None,
     }
+}
+
+/// The Base URL a request will actually be dialled at: the one the user
+/// configured, otherwise the provider's own default. `Err` when neither
+/// exists.
+///
+/// The refusal is the whole point of this function. A request with no address
+/// of its own was sent to api.openai.com by the `_` arm, and the SSRF policy
+/// could not catch it: `validate_base_url` returns early when `base_url` is
+/// `None`, so a DERIVED endpoint never passes the check that exists to stop a
+/// request reaching a host the user did not name. `local` is the app's default
+/// provider and a local server has no default address, so that path sent the
+/// note text and the stored credential to a vendor the user had not chosen.
+///
+/// What is NOT done here: inventing `http://localhost:1234/v1` for `local`.
+/// The frontend seeds that address into a fresh install's settings field,
+/// which is a decision made where the user can see and change it; guessing it
+/// here would put the request on a host nobody confirmed.
+pub fn resolve_base_url(cfg: &AIConfig) -> Result<String, String> {
+    if let Some(base) = cfg.base_url.as_deref() {
+        return Ok(base.to_string());
+    }
+    default_base_url(&cfg.provider).map(str::to_string).ok_or_else(|| {
+        format!(
+            "未填写接口地址（Base URL）：服务商“{}”没有自带的默认地址，无法确定请求该发往哪台服务器。\
+             请在“设置 → AI”中填写该服务商的接口地址后重试。",
+            cfg.provider
+        )
+    })
 }
 
 pub fn build_prompt(cursor_prefix: &str) -> String {
@@ -194,15 +231,20 @@ fn models_headers(config: &AIConfig) -> Vec<(String, String)> {
 /// is appended to it. That is the point of the override: it exists for the
 /// provider whose `/v1/models` is somewhere else, and appending a guess to a
 /// URL the user spelled out in full would recreate the failure it is there to
-/// fix.
+/// fix. An override is also an address the user DID name, so it needs no
+/// default behind it and `local` can list its models with one and no Base URL.
+///
+/// Without an override the endpoint is DERIVED, and [`resolve_base_url`]
+/// refuses when there is nothing to derive it from — the model list was the
+/// second entry point that reached api.openai.com for `local`.
 ///
 /// Returned rather than sent, so the caller keeps ownership of the transport
 /// (the pinned client with its per-phase timeouts, see `client::list_models`):
 /// the injection rule the roadmap sets for a split - build nothing inside the
 /// module that cannot be handed in from outside.
-pub fn models_endpoint(config: &AIConfig) -> (String, Vec<(String, String)>) {
+pub fn models_endpoint(config: &AIConfig) -> Result<(String, Vec<(String, String)>), String> {
     if let Some(url) = models_url_override(config) {
-        return (url.to_string(), models_headers(config));
+        return Ok((url.to_string(), models_headers(config)));
     }
     let url = match config.provider.as_str() {
         "anthropic" => {
@@ -220,14 +262,11 @@ pub fn models_endpoint(config: &AIConfig) -> (String, Vec<(String, String)>) {
             format!("{}/v1beta/models", base.trim_end_matches('/'))
         }
         _ => {
-            let base = config
-                .base_url
-                .clone()
-                .unwrap_or_else(|| default_base_url(&config.provider).to_string());
+            let base = resolve_base_url(config)?;
             format!("{}/models", base.trim_end_matches('/'))
         }
     };
-    (url, models_headers(config))
+    Ok((url, models_headers(config)))
 }
 
 /// Attach the credential header the configured provider expects to a completion

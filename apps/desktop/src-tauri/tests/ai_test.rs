@@ -15,6 +15,18 @@ fn prompt_continues_cursor() {
     assert!(p.ends_with('\n'));
 }
 
+/// The endpoint of a provider that HAS one. These tests are about the body and
+/// the path a provider produces, so every config here names a provider with a
+/// host of its own; the refusal for the ones that do not is the subject of
+/// `ai_base_url_test.rs`, and it is not reachable from here by construction.
+fn endpoint(
+    cfg: &AIConfig,
+    prompt: &str,
+    images: &[serde_json::Value],
+) -> (String, serde_json::Value) {
+    resolve_endpoint(cfg, prompt, images).expect("a provider with an address")
+}
+
 #[test]
 fn endpoint_maps_openai() {
     let cfg = AIConfig {
@@ -24,7 +36,7 @@ fn endpoint_maps_openai() {
         api_key: Some("k".into()),
         ..Default::default()
     };
-    let (url, body) = resolve_endpoint(&cfg, "hello", &[]);
+    let (url, body) = endpoint(&cfg, "hello", &[]);
     assert!(url.ends_with("/chat/completions"));
     assert_eq!(body["stream"], true);
     assert!(
@@ -42,7 +54,7 @@ fn endpoint_maps_anthropic() {
         api_key: None,
         ..Default::default()
     };
-    let (url, body) = resolve_endpoint(&cfg, "hello", &[]);
+    let (url, body) = endpoint(&cfg, "hello", &[]);
     assert!(url.ends_with("/v1/messages"));
     assert_eq!(body["stream"], true);
     assert!(
@@ -60,7 +72,7 @@ fn endpoint_maps_gemini() {
         api_key: None,
         ..Default::default()
     };
-    let (url, body) = resolve_endpoint(&cfg, "hello", &[]);
+    let (url, body) = endpoint(&cfg, "hello", &[]);
     assert!(url.contains(":streamGenerateContent"));
     assert!(url.contains("alt=sse"));
     assert_eq!(body["contents"][0]["parts"][0]["text"], "hello");
@@ -143,7 +155,7 @@ fn endpoint_does_not_embed_gemini_key_in_url() {
         api_key: Some("sk-gem-key".into()),
         ..Default::default()
     };
-    let (url, _body) = resolve_endpoint(&cfg, "hello", &[]);
+    let (url, _body) = endpoint(&cfg, "hello", &[]);
     assert!(
         !url.contains("sk-gem-key") && !url.contains("key="),
         "gemini key must NOT ride in the URL query (it goes in the x-goog-api-key header), got: {url}"
@@ -307,7 +319,7 @@ fn endpoint_openai_images_build_array() {
         ..Default::default()
     };
     let images = vec![serde_json::json!("data:image/png;base64,AAA")];
-    let (_url, body) = resolve_endpoint(&cfg, "look", &images);
+    let (_url, body) = endpoint(&cfg, "look", &images);
     let content = &body["messages"][0]["content"];
     assert!(content.is_array(), "images must switch content to an array");
     assert_eq!(content[0]["type"], "text");
@@ -325,7 +337,7 @@ fn endpoint_openai_without_images_keeps_string() {
         api_key: None,
         ..Default::default()
     };
-    let (_url, body) = resolve_endpoint(&cfg, "hello", &[]);
+    let (_url, body) = endpoint(&cfg, "hello", &[]);
     assert!(
         body["messages"][0]["content"].is_string(),
         "empty images keeps string content"
@@ -343,7 +355,7 @@ fn endpoint_anthropic_images_build_base64_source() {
         ..Default::default()
     };
     let images = vec![serde_json::json!("data:image/png;base64,AAA")];
-    let (_url, body) = resolve_endpoint(&cfg, "look", &images);
+    let (_url, body) = endpoint(&cfg, "look", &images);
     let content = &body["messages"][0]["content"];
     assert!(content.is_array(), "images must switch content to an array");
     assert_eq!(content[0]["type"], "text");
@@ -363,7 +375,7 @@ fn endpoint_gemini_images_build_inline_data() {
         ..Default::default()
     };
     let images = vec![serde_json::json!("data:image/png;base64,AAA")];
-    let (_url, body) = resolve_endpoint(&cfg, "look", &images);
+    let (_url, body) = endpoint(&cfg, "look", &images);
     let parts = &body["contents"][0]["parts"];
     assert_eq!(parts[0]["text"], "look");
     assert_eq!(parts[1]["inline_data"]["mime_type"], "image/png");
@@ -471,7 +483,7 @@ fn tuned_cfg(provider: &str) -> AIConfig {
 
 #[test]
 fn openai_body_puts_system_first_and_writes_tuning() {
-    let (_url, body) = resolve_endpoint(&tuned_cfg("openai"), "hello", &[]);
+    let (_url, body) = endpoint(&tuned_cfg("openai"), "hello", &[]);
     assert_eq!(
         body["temperature"],
         serde_json::json!(0.7_f32),
@@ -495,7 +507,7 @@ fn openai_body_puts_system_first_and_writes_tuning() {
 fn openai_images_keep_message_after_system() {
     let cfg = tuned_cfg("openai");
     let images = vec![serde_json::json!("data:image/png;base64,AAA")];
-    let (_url, body) = resolve_endpoint(&cfg, "look", &images);
+    let (_url, body) = endpoint(&cfg, "look", &images);
     assert_eq!(body["messages"][0]["role"], "system");
     assert_eq!(body["messages"][1]["role"], "user");
     assert!(
@@ -506,7 +518,7 @@ fn openai_images_keep_message_after_system() {
 
 #[test]
 fn anthropic_body_uses_top_level_system() {
-    let (_url, body) = resolve_endpoint(&tuned_cfg("anthropic"), "hello", &[]);
+    let (_url, body) = endpoint(&tuned_cfg("anthropic"), "hello", &[]);
     assert_eq!(body["temperature"], serde_json::json!(0.7_f32));
     assert_eq!(body["max_tokens"], 512);
     assert_eq!(body["system"], "You are a helpful editor assistant.");
@@ -515,7 +527,7 @@ fn anthropic_body_uses_top_level_system() {
 
 #[test]
 fn gemini_body_uses_system_instruction_and_generation_config() {
-    let (_url, body) = resolve_endpoint(&tuned_cfg("gemini"), "hello", &[]);
+    let (_url, body) = endpoint(&tuned_cfg("gemini"), "hello", &[]);
     assert_eq!(
         body["systemInstruction"]["parts"][0]["text"],
         "You are a helpful editor assistant."
@@ -537,7 +549,7 @@ fn untuned_cfg_uses_the_raised_defaults() {
         api_key: None,
         ..Default::default()
     };
-    let (url, body) = resolve_endpoint(&cfg, "hello", &[]);
+    let (url, body) = endpoint(&cfg, "hello", &[]);
     assert!(url.ends_with("/chat/completions"));
     // Raised from 256: a reasoning model can spend the entire budget on its
     // thinking and return no answer at all (measured against deepseek-flash),
@@ -565,7 +577,7 @@ fn blank_system_prompt_behaves_as_absent() {
         system_prompt: Some("   ".into()),
         ..Default::default()
     };
-    let (_url, body) = resolve_endpoint(&cfg, "hello", &[]);
+    let (_url, body) = endpoint(&cfg, "hello", &[]);
     assert_eq!(
         body["messages"].as_array().unwrap().len(),
         1,
@@ -578,12 +590,20 @@ fn default_base_url_is_per_provider() {
     // Without a per-provider default, every OpenAI-compatible provider without
     // an explicit Base URL was sent to api.openai.com — the wrong host, holding
     // the user's key for a different vendor.
-    assert_eq!(default_base_url("grok"), "https://api.x.ai/v1");
-    assert_eq!(default_base_url("deepseek"), "https://api.deepseek.com/v1");
-    assert_eq!(default_base_url("openai"), "https://api.openai.com/v1");
-    // An unknown/custom provider keeps the OpenAI default rather than an
-    // invented host.
-    assert_eq!(default_base_url("whatever"), "https://api.openai.com/v1");
+    assert_eq!(default_base_url("grok"), Some("https://api.x.ai/v1"));
+    assert_eq!(
+        default_base_url("deepseek"),
+        Some("https://api.deepseek.com/v1")
+    );
+    assert_eq!(
+        default_base_url("openai"),
+        Some("https://api.openai.com/v1")
+    );
+    // A provider whose host this crate does not know has no default at all —
+    // the fallback to api.openai.com it used to get sent the note text and the
+    // key to a host the user never named (see `ai_base_url_test.rs`).
+    assert_eq!(default_base_url("local"), None);
+    assert_eq!(default_base_url("whatever"), None);
 }
 
 #[test]
@@ -597,7 +617,7 @@ fn deepseek_and_grok_use_their_own_host_when_no_base_url_is_set() {
             model: "m".into(),
             ..Default::default()
         };
-        let (url, _) = resolve_endpoint(&cfg, "hi", &[]);
+        let (url, _) = endpoint(&cfg, "hi", &[]);
         assert_eq!(url, expected, "{provider} endpoint");
     }
 }
@@ -610,7 +630,7 @@ fn an_explicit_base_url_still_wins() {
         base_url: Some("https://tokenflux.dev/v1".into()),
         ..Default::default()
     };
-    let (url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    let (url, body) = endpoint(&cfg, "hi", &[]);
     assert_eq!(url, "https://tokenflux.dev/v1/chat/completions");
     assert_eq!(body["model"], "deepseek-flash");
     assert_eq!(body["stream"], true);
@@ -678,7 +698,7 @@ fn a_tuned_config_still_wins_over_the_raised_default() {
     // reasoning model (which can spend the whole budget thinking). An explicit
     // setting must still be honoured.
     let cfg = tuned_cfg("deepseek");
-    let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    let (_url, body) = endpoint(&cfg, "hi", &[]);
     assert_eq!(body["max_tokens"], 512);
 }
 
@@ -747,7 +767,7 @@ fn unknown_effort_never_reaches_any_provider() {
     // The whole point of dropping an invalid rung: no provider is handed a
     // value the server would reject.
     for provider in ["openai", "anthropic", "gemini"] {
-        let (_url, body) = resolve_endpoint(&thinking_cfg(provider, Some("ultra")), "hi", &[]);
+        let (_url, body) = endpoint(&thinking_cfg(provider, Some("ultra")), "hi", &[]);
         assert!(body.get("reasoning_effort").is_none(), "{provider}");
         assert!(body.get("thinking").is_none(), "{provider}");
         assert!(
@@ -759,7 +779,7 @@ fn unknown_effort_never_reaches_any_provider() {
 
 #[test]
 fn openai_body_pins_the_normalised_reasoning_effort() {
-    let (url, body) = resolve_endpoint(&thinking_cfg("openai", Some("  HIGH ")), "hello", &[]);
+    let (url, body) = endpoint(&thinking_cfg("openai", Some("  HIGH ")), "hello", &[]);
     assert_eq!(url, "https://api.openai.com/v1/chat/completions");
     assert_eq!(
         body,
@@ -784,7 +804,7 @@ fn openai_body_pins_the_normalised_reasoning_effort() {
 #[test]
 fn openai_body_omits_reasoning_effort_when_unset_or_unknown() {
     for raw in [None, Some("ultra")] {
-        let (_url, body) = resolve_endpoint(&thinking_cfg("openai", raw), "hi", &[]);
+        let (_url, body) = endpoint(&thinking_cfg("openai", raw), "hi", &[]);
         assert!(
             body.get("reasoning_effort").is_none(),
             "{raw:?} must not be forwarded"
@@ -801,7 +821,7 @@ fn anthropic_maps_effort_to_extended_thinking_budgets() {
         ("high", 8192),
         ("xhigh", 16384),
     ] {
-        let (_url, body) = resolve_endpoint(&thinking_cfg("anthropic", Some(effort)), "hi", &[]);
+        let (_url, body) = endpoint(&thinking_cfg("anthropic", Some(effort)), "hi", &[]);
         assert_eq!(
             body["thinking"],
             serde_json::json!({ "type": "enabled", "budget_tokens": budget }),
@@ -817,7 +837,7 @@ fn anthropic_maps_effort_to_extended_thinking_budgets() {
 #[test]
 fn anthropic_none_omits_thinking_entirely() {
     for raw in [None, Some("none")] {
-        let (_url, body) = resolve_endpoint(&thinking_cfg("anthropic", raw), "hi", &[]);
+        let (_url, body) = endpoint(&thinking_cfg("anthropic", raw), "hi", &[]);
         assert!(
             body.get("thinking").is_none(),
             "{raw:?} must not enable extended thinking"
@@ -834,7 +854,7 @@ fn anthropic_clamps_the_budget_below_max_tokens() {
         reasoning_effort: Some("xhigh".into()),
         ..tuned_cfg("anthropic")
     };
-    let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    let (_url, body) = endpoint(&cfg, "hi", &[]);
     assert_eq!(
         body["thinking"],
         serde_json::json!({ "type": "enabled", "budget_tokens": 1999 })
@@ -852,7 +872,7 @@ fn anthropic_omits_thinking_when_max_tokens_is_too_small() {
             reasoning_effort: Some("high".into()),
             ..tuned_cfg("anthropic")
         };
-        let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+        let (_url, body) = endpoint(&cfg, "hi", &[]);
         assert!(
             body.get("thinking").is_none(),
             "max_tokens {max_tokens:?} must omit thinking"
@@ -865,7 +885,7 @@ fn anthropic_omits_thinking_when_max_tokens_is_too_small() {
         reasoning_effort: Some("minimal".into()),
         ..tuned_cfg("anthropic")
     };
-    let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    let (_url, body) = endpoint(&cfg, "hi", &[]);
     assert_eq!(
         body["thinking"],
         serde_json::json!({ "type": "enabled", "budget_tokens": 1024 })
@@ -882,7 +902,7 @@ fn gemini_maps_effort_to_a_thinking_budget() {
         ("high", 8192),
         ("xhigh", 16384),
     ] {
-        let (_url, body) = resolve_endpoint(&thinking_cfg("gemini", Some(effort)), "hi", &[]);
+        let (_url, body) = endpoint(&thinking_cfg("gemini", Some(effort)), "hi", &[]);
         assert_eq!(
             body["generationConfig"]["thinkingConfig"],
             serde_json::json!({ "thinkingBudget": budget }),
@@ -893,7 +913,7 @@ fn gemini_maps_effort_to_a_thinking_budget() {
 
 #[test]
 fn gemini_keeps_generation_config_siblings_when_adding_thinking() {
-    let (_url, body) = resolve_endpoint(&thinking_cfg("gemini", Some("high")), "hello", &[]);
+    let (_url, body) = endpoint(&thinking_cfg("gemini", Some("high")), "hello", &[]);
     assert_eq!(
         body["generationConfig"],
         serde_json::json!({
@@ -914,7 +934,7 @@ fn gemini_creates_generation_config_when_nothing_else_is_tuned() {
         reasoning_effort: Some("medium".into()),
         ..Default::default()
     };
-    let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    let (_url, body) = endpoint(&cfg, "hi", &[]);
     assert_eq!(
         body["generationConfig"],
         serde_json::json!({ "thinkingConfig": { "thinkingBudget": 4096 } })
@@ -924,7 +944,7 @@ fn gemini_creates_generation_config_when_nothing_else_is_tuned() {
 #[test]
 fn gemini_omits_thinking_when_unset_or_unknown() {
     for raw in [None, Some("ultra")] {
-        let (_url, body) = resolve_endpoint(&thinking_cfg("gemini", raw), "hi", &[]);
+        let (_url, body) = endpoint(&thinking_cfg("gemini", raw), "hi", &[]);
         assert!(
             body.pointer("/generationConfig/thinkingConfig").is_none(),
             "{raw:?} must not add a thinking config"
@@ -944,7 +964,7 @@ fn anthropic_drops_temperature_when_extended_thinking_is_enabled() {
         cfg.temperature.is_some(),
         "the fixture must set a temperature"
     );
-    let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    let (_url, body) = endpoint(&cfg, "hi", &[]);
     assert!(
         body.get("thinking").is_some(),
         "this rung must enable extended thinking or the test proves nothing"
@@ -961,7 +981,7 @@ fn anthropic_drops_temperature_when_extended_thinking_is_enabled() {
 fn anthropic_keeps_temperature_when_thinking_is_off() {
     for raw in [None, Some("none")] {
         let cfg = thinking_cfg("anthropic", raw);
-        let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+        let (_url, body) = endpoint(&cfg, "hi", &[]);
         assert!(body.get("thinking").is_none(), "{raw:?}");
         assert_eq!(
             body["temperature"].as_f64(),
@@ -979,7 +999,7 @@ fn anthropic_keeps_temperature_when_thinking_is_off() {
 fn gemini_clamps_the_thinking_budget_to_the_output_cap() {
     let mut cfg = thinking_cfg("gemini", Some("xhigh"));
     cfg.max_tokens = Some(2048);
-    let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    let (_url, body) = endpoint(&cfg, "hi", &[]);
     let budget = body
         .pointer("/generationConfig/thinkingConfig/thinkingBudget")
         .and_then(serde_json::Value::as_u64)
@@ -1002,7 +1022,7 @@ fn gemini_clamps_the_thinking_budget_to_the_output_cap() {
 fn gemini_keeps_an_explicit_zero_budget() {
     let mut cfg = thinking_cfg("gemini", Some("none"));
     cfg.max_tokens = Some(1024);
-    let (_url, body) = resolve_endpoint(&cfg, "hi", &[]);
+    let (_url, body) = endpoint(&cfg, "hi", &[]);
     assert_eq!(
         body.pointer("/generationConfig/thinkingConfig/thinkingBudget")
             .and_then(serde_json::Value::as_u64),
@@ -1567,7 +1587,7 @@ fn gemini_url_has_no_key_embedded() {
         api_key: Some("SECRET-KEY".into()),
         ..Default::default()
     };
-    let (url, _body) = resolve_endpoint(&cfg, "hi", &[]);
+    let (url, _body) = endpoint(&cfg, "hi", &[]);
     assert!(
         !url.contains("SECRET-KEY"),
         "key must not appear in URL: {url}"
