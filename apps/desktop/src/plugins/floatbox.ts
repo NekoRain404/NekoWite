@@ -6,7 +6,7 @@ import {
   mdxComponentToMarkdown,
   registerMarkdownCommand,
 } from '@nekowite/editor-core'
-import { editorSessionManager } from '../features/editor/session-manager'
+import { editorSessionManager } from '../features/editor'
 import { useFloatStore } from '../stores/float'
 import { t } from '../i18n'
 import {

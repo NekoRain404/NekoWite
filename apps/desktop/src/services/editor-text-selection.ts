@@ -8,7 +8,7 @@
  * there is silently discarded.
  */
 
-import { editorSessionManager } from '../features/editor/session-manager'
+import { editorSessionManager } from '../features/editor'
 import { sourcePaneOwnsInput } from './editor-ownership'
 import { getSourceView } from './source-view'
 import { insertSourceText } from './source-commands'

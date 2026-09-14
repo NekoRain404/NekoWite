@@ -10,7 +10,7 @@ import {
 import { getTextSelection, replaceTextSelection } from './editor-text-selection'
 import { setSourceViewHandle } from './source-view'
 import { noteFocusedPane, resetFocusedPane } from './editor-ownership'
-import { editorSessionManager } from '../features/editor/session-manager'
+import { editorSessionManager } from '../features/editor'
 import { useViewStore } from '../stores/view'
 
 /** A real `EditorState` behind a minimal view, so dispatch semantics are real. */

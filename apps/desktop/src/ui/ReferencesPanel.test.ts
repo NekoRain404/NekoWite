@@ -8,6 +8,11 @@ vi.mock('@nekowite/editor-core', () => ({
   computeCiteOrder: () => citeOrder,
   doiUrl: (doi: string) => `https://doi.org/${doi}`,
   CITE_UNRESOLVED: 0,
+  // The panel reaches the editor feature's entry point, which loads the callout
+  // plugin: it registers this command at module scope, so the mock has to carry
+  // it even though nothing in this file calls it. Drop it and the suite fails to
+  // collect, which is the mock's job telling on itself.
+  registerMarkdownCommand: vi.fn(),
 }))
 vi.mock('../features/editor/session-manager', () => ({
   editorSessionManager: {

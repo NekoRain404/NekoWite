@@ -98,6 +98,10 @@ vi.mock('../services/editor-bridge', () => ({
 
 vi.mock('@nekowite/plugin-host', () => ({
   setActiveEditor: h.setActiveEditor,
+  // The bootstrap reaches the editor feature's entry point, which loads the
+  // callout plugin: it defines itself through this factory at module scope, so
+  // the mock has to carry it even though nothing in this file calls it.
+  definePlugin: (def: unknown) => def,
 }))
 
 vi.mock('../features/editor/session-manager', () => ({
