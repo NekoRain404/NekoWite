@@ -69,10 +69,11 @@ pub(crate) fn write_lock() -> &'static Mutex<()> {
 }
 
 /// Write `content` to `resolved` atomically: write a temp sibling
-/// (`.<name>.<nonce>.tmp`) in the same directory, fsync it, then rename over
-/// the target, and fsync the parent directory so the rename itself survives
-/// power loss. On any failure the temp file is removed so no partial file is
-/// left behind. Mirrors Memoir's `atomic.rs`.
+/// (`.nekowite-<nonce>.tmp`, see [`crate::storage::temp_files::temp_sibling`])
+/// in the same directory, fsync it, then rename over the target, and fsync the
+/// parent directory so the rename itself survives power loss. On any failure
+/// the temp file is removed so no partial file is left behind. Mirrors Memoir's
+/// `atomic.rs`.
 ///
 /// The file that appears under the name is the destination's file, not the temp
 /// file's: it carries the mode the target had (a free name gets the default, as
@@ -91,10 +92,6 @@ pub fn atomic_write_bytes(resolved: &Path, bytes: &[u8]) -> Result<(), String> {
         .ok_or_else(|| "target path has no parent directory".to_string())?;
     std::fs::create_dir_all(parent)
         .map_err(|e| fs_error("create the folder containing", parent, e))?;
-    let name = resolved
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("file");
     // What this publish is replacing, read before anything is staged: the mode
     // the replacement has to carry over, and whether the file may be replaced at
     // all. Both are decided before the first byte is written, so a refusal or an
@@ -105,7 +102,7 @@ pub fn atomic_write_bytes(resolved: &Path, bytes: &[u8]) -> Result<(), String> {
             return Err(current.refusal(resolved));
         }
     }
-    let tmp = temp_sibling(parent, name);
+    let tmp = temp_sibling(parent);
     let result = (|| {
         let mut f = std::fs::OpenOptions::new()
             .write(true)
@@ -218,11 +215,7 @@ pub(crate) fn create_new_bytes(resolved: &Path, bytes: &[u8]) -> Result<(), Crea
     std::fs::create_dir_all(parent)
         .map_err(|e| CreateFileError::Failed(fs_error("create the folder", parent, e)))?;
 
-    let name = resolved
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("file");
-    let tmp = temp_sibling(parent, name);
+    let tmp = temp_sibling(parent);
     let staged = (|| {
         let mut f = std::fs::OpenOptions::new()
             .write(true)

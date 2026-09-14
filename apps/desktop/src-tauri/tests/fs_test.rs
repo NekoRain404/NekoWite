@@ -1595,8 +1595,8 @@ fn write_file_concurrent_serializes() {
 #[test]
 fn cleanup_stale_tmp_removes() {
     let dir = temp_vault("tmp-clean");
-    let old_tmp = dir.join(".note.111.tmp");
-    let fresh_tmp = dir.join(".note.222.tmp");
+    let old_tmp = dir.join(".nekowite-111.tmp");
+    let fresh_tmp = dir.join(".nekowite-222.tmp");
     std::fs::write(&old_tmp, "stale").unwrap();
 
     // Let the stale file age well past the threshold, then create the fresh
@@ -1613,7 +1613,7 @@ fn cleanup_stale_tmp_removes() {
     assert!(dir.join("keep.md").exists(), "non-tmp file untouched");
 
     // A directory named `*.tmp` must never be deleted.
-    std::fs::create_dir_all(dir.join(".a.tmp")).unwrap();
+    std::fs::create_dir_all(dir.join(".nekowite-333.tmp")).unwrap();
     assert_eq!(cleanup_stale_tmp(&dir, max_age).unwrap(), 0);
 
     std::fs::remove_dir_all(&dir).unwrap();
@@ -1809,12 +1809,24 @@ fn cleanup_stale_tmp_leaves_other_tmp_style_files_alone() {
     let dir = temp_vault("tmp-clean-foreign");
     let max_age = std::time::Duration::from_millis(20);
     // All old enough to be swept, none of them shaped like our staging files.
-    for name in ["draft.tmp", "notes.tmp", ".hidden.tmp", ".x.notanonce.tmp"] {
+    // `.note.<digits>.tmp` is the shape the writer used BEFORE the fixed prefix,
+    // and it is foreign for the same reason as the rest: nothing tells it apart
+    // from a user's or a backup tool's `.photos.2024.tmp` except a guess, and
+    // the two ways of being wrong do not compare — litter stays hidden and
+    // harmless, a false positive deletes something the user still has.
+    const FOREIGN: [&str; 5] = [
+        "draft.tmp",
+        "notes.tmp",
+        ".hidden.tmp",
+        ".x.notanonce.tmp",
+        ".note.1757520000000000000.tmp",
+    ];
+    for name in FOREIGN {
         std::fs::write(dir.join(name), "user data").unwrap();
     }
     // Our own staging shape, written at the same time so it is equally stale:
     // it IS swept, so crash litter still gets reclaimed.
-    std::fs::write(dir.join(".note.1757520000000000000.tmp"), "ours").unwrap();
+    std::fs::write(dir.join(".nekowite-1757520000000000000.tmp"), "ours").unwrap();
     std::thread::sleep(std::time::Duration::from_millis(80));
 
     assert_eq!(
@@ -1822,8 +1834,8 @@ fn cleanup_stale_tmp_leaves_other_tmp_style_files_alone() {
         1,
         "only our own staging file is reclaimed"
     );
-    assert!(!dir.join(".note.1757520000000000000.tmp").exists());
-    for name in ["draft.tmp", "notes.tmp", ".hidden.tmp", ".x.notanonce.tmp"] {
+    assert!(!dir.join(".nekowite-1757520000000000000.tmp").exists());
+    for name in FOREIGN {
         assert!(dir.join(name).exists(), "{name} must survive");
     }
 
