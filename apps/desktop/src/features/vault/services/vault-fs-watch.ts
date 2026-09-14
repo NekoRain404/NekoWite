@@ -13,6 +13,10 @@
  * the same path, turns the pending work into a no-op instead of letting it
  * write into a vault it no longer describes.
  *
+ * `resync` is the one event that names no path: it says the watcher itself may
+ * have lost changes, so it is answered with the same whole-vault re-read a
+ * structural change triggers rather than with a per-path reaction.
+ *
  * Degraded mode lives here too: when the subscription cannot be established the
  * app is deaf to everything that happens outside it, and `isDown()` is what the
  * rest of the index asks before trusting anything it read earlier.
@@ -82,9 +86,43 @@ export function createVaultFsWatch(deps: VaultFsWatchDeps): VaultFsWatch {
    *  outside the app (see `subscribe`). */
   let fsWatchDown = false
 
+  /** Debounce a full re-index of `v`, collapsing a burst into a single run.
+   *
+   * The slot holds ONE pending run and is re-set rather than appended to, so a
+   * newer change supersedes the pending one instead of queueing behind it. A run
+   * that is already in flight is not cancelled and does not swallow the new
+   * request: the timer fires regardless and starts a fresh run over the current
+   * file list. That is the rule the coordinator already applies to full runs
+   * (latest-wins, one generation read when the work actually starts), and a
+   * second policy beside it would be a second thing to keep in step. */
+  function scheduleReindex(v: string): void {
+    if (reindexTimer) clearTimeout(reindexTimer)
+    reindexTimer = setTimeout(() => {
+      reindexTimer = null
+      if (deps.currentVault() !== v) return
+      deps.reindexAll(v, deps.generation())
+    }, MD_CHANGE_DEBOUNCE_MS)
+  }
+
   function handleFsChange(e: FsChangeEvent): void {
     const v = deps.currentVault()
     if (!v) return
+    // A `resync` is not a change to one path — the watcher is telling us it LOST
+    // events (an overflowing OS queue, an exhausted handle), so nothing the index
+    // holds about this vault can be trusted, the file list included. It is the one
+    // case where the watcher knows it may be wrong, so it has to repair itself the
+    // way a structural change does: waiting for the per-path event that would
+    // normally carry a new or deleted note means waiting for an event that was
+    // dropped, and the note list then stays stale for good. Handled before the
+    // path heuristics below, because the path a resync carries is the watch root
+    // and reading it as an ordinary non-note folder is exactly the misreading that
+    // made it a no-op.
+    if (e.kind === 'resync') {
+      deps.invalidateFileList(v)
+      scheduleReindex(v)
+      deps.attachmentChanged(v, deps.generation())
+      return
+    }
     if (!isMdPath(e.path)) {
       deps.invalidateFileList(v)
       // A folder that was created or removed may have taken notes with it; the
@@ -93,12 +131,7 @@ export function createVaultFsWatch(deps: VaultFsWatchDeps): VaultFsWatch {
       const structural = e.kind === 'created' || e.kind === 'removed'
       const looksLikeAttachment = Boolean(extensionFromFileName(baseName(e.path)))
       if (structural && (!looksLikeAttachment || deps.indexedNotesCover(v, e.path))) {
-        if (reindexTimer) clearTimeout(reindexTimer)
-        reindexTimer = setTimeout(() => {
-          reindexTimer = null
-          if (deps.currentVault() !== v) return
-          deps.reindexAll(v, deps.generation())
-        }, MD_CHANGE_DEBOUNCE_MS)
+        scheduleReindex(v)
       }
       // Bind the pending refresh to the vault generation that is current NOW:
       // reading the attachment tree takes several awaits, so a vault switch can
