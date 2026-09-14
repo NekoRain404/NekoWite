@@ -16,7 +16,8 @@ import {
 import { emitLifecycle, onLifecycleError } from './lifecycle'
 import { onPluginEvent, getAuditLog } from './index'
 import { getCommand, getComponent, getToolbar, registerCommand, unregisterCommand, unregisterComponent, unregisterToolbar } from '@nekowite/editor-core'
-import type { PluginDefinition, PluginMeta } from './types'
+import { declaredPermissionsOf, hasDangerousPermissions } from './permissions'
+import type { PluginContext, PluginDefinition, PluginMeta } from './types'
 
 const META = (id: string): PluginMeta => ({ id, name: id, version: '1', main: 'x' })
 
@@ -31,6 +32,8 @@ beforeEach(() => {
   unregisterCommand('slow.cmd')
   unregisterCommand('cancel.cmd')
   unregisterCommand('crasher.cmd')
+  unregisterCommand('late.cmd')
+  unregisterCommand('asyncc.cmd')
   deactivatePlugin('withai')
   deactivatePlugin('noai')
   unregisterComponent('Callout')
@@ -46,6 +49,10 @@ beforeEach(() => {
   deactivatePlugin('slow')
   deactivatePlugin('cancel')
   deactivatePlugin('crasher')
+  deactivatePlugin('evil')
+  deactivatePlugin('late')
+  deactivatePlugin('dup2')
+  deactivatePlugin('asyncc')
 })
 
 describe('activatePlugin', () => {
@@ -501,6 +508,186 @@ describe('resource quota & crash-restart-on-unstable', () => {
       expect(events).toContain('aud:crash')
     } finally {
       off()
+    }
+  })
+})
+describe('a capability is granted from ONE read of the plugin object', () => {
+  it('does not hand ctx.ai to a definition whose permissions answered [] then ["ai"]', async () => {
+    // The app's consent gate reads `definition.permissions` to decide whether the
+    // user is asked (askPluginPermission), and activation reads it again several
+    // awaits later to decide whether to hand over the app's AI surface. The
+    // definition is the plugin's own module export, held by reference, so a
+    // getter that answers [] to the question and ['ai'] to the grant buys the
+    // user's key and bill with no dialog ever shown.
+    setPluginAiProvider(async (id, prompt) => `from ${id}: ${prompt}`)
+    try {
+      let reads = 0
+      let seen: PluginContext | null = null
+      const definition = {
+        name: 'evil',
+        get permissions() {
+          reads += 1
+          return reads === 1 ? [] : ['ai']
+        },
+        onLoad: (ctx: PluginContext) => {
+          seen = ctx
+        },
+      } as unknown as PluginDefinition
+
+      // Exactly what the app's gate reads before it decides to show a dialog
+      // (askPluginPermission reads the pinned declaration, not the object).
+      const gateSaw = declaredPermissionsOf(META('evil'), definition)
+      expect(gateSaw).toEqual([])
+      expect(hasDangerousPermissions({ permissions: gateSaw })).toBe(false)
+
+      const res = await activatePlugin({ ok: true, id: 'evil', meta: META('evil'), definition })
+      expect(res.ok).toBe(true)
+      expect(seen!.ai).toBeUndefined()
+      // One read, one answer, for every consumer - including the grant.
+      expect(reads).toBe(1)
+    } finally {
+      setPluginAiProvider(null)
+      deactivatePlugin('evil')
+    }
+  })
+
+  it('does not re-read a declaration the plugin changed after the first read', async () => {
+    // The accessor is only one way to answer twice: a plain property can be
+    // reassigned (or swapped for an accessor) between the gate and the grant.
+    setPluginAiProvider(async (id, prompt) => `from ${id}: ${prompt}`)
+    try {
+      let seen: PluginContext | null = null
+      const definition: PluginDefinition = {
+        name: 'swap',
+        permissions: [],
+        onLoad: (ctx) => {
+          seen = ctx
+        },
+      }
+
+      expect(declaredPermissionsOf(META('swap'), definition)).toEqual([])
+      definition.permissions = ['ai']
+
+      await activatePlugin({ ok: true, id: 'swap', meta: META('swap'), definition })
+      expect(seen!.ai).toBeUndefined()
+    } finally {
+      setPluginAiProvider(null)
+      deactivatePlugin('swap')
+    }
+  })
+})
+
+describe('teardown during an in-flight activation', () => {
+  it('takes the plugin down instead of letting the activation register it', async () => {
+    // Registrations happen BEFORE the awaited init and `active.set` only after
+    // it, so the user switching a plugin off mid-activation used to find nothing
+    // to tear down and the plugin then finished activating: "off" left it
+    // running, hooks and all.
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    const hook = vi.fn()
+    const activation = activatePlugin(
+      ok('late', {
+        commands: [{ id: 'late.cmd', run: () => {} }],
+        onDocChange: hook,
+        onLoad: async () => {
+          await gate
+        },
+      }),
+    )
+    await new Promise((r) => setTimeout(r, 0)) // parked on its onLoad
+    deactivatePlugin('late')
+    release()
+
+    const res = await activation
+    expect(res.ok).toBe(false)
+    expect(res.code).toBe('PLUGIN_ABORTED')
+    expect(getCommand('late.cmd')).toBeUndefined()
+    emitLifecycle('onDocChange', { doc: 'x' })
+    expect(hook).not.toHaveBeenCalled()
+    // Switching a plugin off is not a crash: it must not need re-approval to
+    // come back.
+    expect(isPluginUnstable('late')).toBe(false)
+  })
+})
+
+describe('concurrent activation of one id', () => {
+  it('lets the first activation own the registrations, with no orphaned hooks', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    const firstHook = vi.fn()
+    const secondHook = vi.fn()
+    const first = activatePlugin(
+      ok('dup2', {
+        onLoad: async () => {
+          await gate
+        },
+        onDocChange: firstHook,
+      }),
+    )
+    const second = await activatePlugin(ok('dup2', { onDocChange: secondHook }))
+    expect(second).toEqual({ ok: true, id: 'dup2' })
+    release()
+    await first
+
+    emitLifecycle('onDocChange', { doc: 'x' })
+    expect(firstHook).toHaveBeenCalledTimes(1)
+    expect(secondHook).not.toHaveBeenCalled()
+    deactivatePlugin('dup2')
+    // The first registration's hooks must be gone with it, not orphaned.
+    emitLifecycle('onDocChange', { doc: 'y' })
+    expect(firstHook).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('async plugin callbacks', () => {
+  it('contains a rejected command promise instead of leaking an unhandled rejection', async () => {
+    // `() => Promise<void>` is assignable to a void-returning callback type, so
+    // the wrapper's try/catch cannot see a rejection that arrives on a promise:
+    // it escaped as an unhandled rejection with no plugin name on it, which is
+    // the failure the wrapper exists to prevent.
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    const failures: string[] = []
+    const off = onLifecycleError((e) => failures.push(`${e.pluginId}:${e.event}`))
+    try {
+      await activatePlugin(
+        ok('asyncc', {
+          commands: [
+            {
+              id: 'asyncc.cmd',
+              run: async () => {
+                throw new Error('async boom')
+              },
+            },
+          ],
+          toolbar: [
+            {
+              id: 'asyncc.btn',
+              label: 'B',
+              run: () => Promise.reject(new Error('async button boom')),
+            },
+          ],
+        }),
+      )
+      getCommand('asyncc.cmd')?.run()
+      getToolbar()
+        .find((t) => t.id === 'asyncc.btn')
+        ?.run()
+      await new Promise((r) => setTimeout(r, 20))
+      expect(unhandled).toEqual([])
+      expect(failures).toEqual(['asyncc:command:asyncc.cmd', 'asyncc:toolbar:asyncc.btn'])
+    } finally {
+      off()
+      process.off('unhandledRejection', onUnhandled)
+      deactivatePlugin('asyncc')
     }
   })
 })

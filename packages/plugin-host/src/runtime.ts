@@ -2,13 +2,15 @@ import { registerCommand, registerComponent, registerToolbar, getComponent, unre
 import type { LoadResult } from './loader'
 import { registerLifecycleHook, reportPluginCallbackError } from './lifecycle'
 import type { LifecycleEvent } from './lifecycle'
-import type { PluginAiApi, PluginContext, PluginDefinition, PluginErrorCode, PluginPermission } from './types'
+import type { PluginContext, PluginDefinition, PluginErrorCode } from './types'
 import { PluginError } from './types'
 import { withTimeout } from './timing'
 /* From the module that owns it, not from `./index`: the barrel this package
  * exports re-exports this file, so going through it would close a cycle. */
 import { recordPluginEvent, type PluginAuditEventType } from './audit-log'
-import { collectPluginPermissions } from './permissions'
+import { declaredPermissionsOf } from './permissions'
+import { addSessionUsage, beginInFlightActivation, cancelInFlightActivation, getPluginSessionQuota, getPluginSessionUsage, isActivationInFlight, resetPluginSessionUsage } from './activation-registry'
+import { aiApiFor } from './ai-provider'
 
 interface ActivePlugin {
   definition: PluginDefinition
@@ -42,65 +44,17 @@ const unstable = new Set<string>()
  * that spins the event loop synchronously still cannot be pre-empted (see
  * documentation in docs/SECURITY.md). The existing per-hook/activation timeout +
  * AbortSignal cancel remain the primary pre-emption mechanism.
+ *
+ * The state itself is in `./activation-registry`, which also owns the in-flight
+ * set: a teardown has to be able to SEE and cancel an activation that has not
+ * finished, so that bookkeeping cannot live inside the activation. The `ai`
+ * surface this file hands out is in `./ai-provider`. Both are re-exported below
+ * because this file is the entry point `@nekowite/plugin-host` and direct
+ * importers have always used.
  * ------------------------------------------------------------------------- */
 
-/** Default cumulative wall-clock budget (ms) a plugin may consume on activation
- *  work during a session before it is quarantined. */
-export const DEFAULT_PLUGIN_SESSION_QUOTA_MS = 15000
-
-/** Default max number of plugins activating concurrently in the host. */
-export const DEFAULT_MAX_IN_FLIGHT_ACTIVATIONS = 4
-
-let sessionQuotaMs = DEFAULT_PLUGIN_SESSION_QUOTA_MS
-let maxInFlightActivations = DEFAULT_MAX_IN_FLIGHT_ACTIVATIONS
-let inFlightActivations = 0
-const sessionUsageMs = new Map<string, number>()
-
-/** Configure the per-plugin per-session wall-clock budget (ms). */
-export function setPluginSessionQuota(ms: number): void {
-  sessionQuotaMs = ms
-}
-
-/** The current per-plugin per-session wall-clock budget (ms). */
-export function getPluginSessionQuota(): number {
-  return sessionQuotaMs
-}
-
-/** Configure the max number of concurrent in-flight activations. */
-export function setMaxInFlightActivations(n: number): void {
-  maxInFlightActivations = n
-}
-
-/** The current max concurrent activation cap. */
-export function getMaxInFlightActivations(): number {
-  return maxInFlightActivations
-}
-
-/** How many activations are currently in flight (awaiting an async init). */
-export function getInFlightActivationCount(): number {
-  return inFlightActivations
-}
-
-/** A plugin's recorded cumulative activation wall-clock for the session (ms). */
-export function getPluginSessionUsage(id: string): number {
-  return sessionUsageMs.get(id) ?? 0
-}
-
-/** Reset a plugin's recorded session usage (grants a fresh budget). Used by
- *  `resetUnstablePlugin` so re-approval is a genuine fresh start. */
-export function resetPluginSessionUsage(id: string): void {
-  sessionUsageMs.delete(id)
-}
-
-/** Add the elapsed activation wall-clock to a plugin's session budget. Returns the
- *  new cumulative total. Guarded so a bad clock never throws. */
-function addSessionUsage(id: string, startedAt: number): number {
-  const now = Date.now()
-  const elapsed = Math.max(0, now - startedAt)
-  const total = (sessionUsageMs.get(id) ?? 0) + elapsed
-  sessionUsageMs.set(id, total)
-  return total
-}
+export * from './activation-registry'
+export * from './ai-provider'
 
 function runUnregister(un: () => void): void {
   try {
@@ -165,39 +119,6 @@ export function resetUnstablePlugin(id: string): void {
   }
 }
 
-/**
- * The AI provider the host offers to plugins that declared the `ai` permission.
- *
- * The model belongs to the app (its settings, its key, its bill, and its write
- * policy), so the host does not implement AI - the app installs the provider.
- * With none installed, `ctx.ai` is simply absent: a plugin that declared `ai`
- * gets no capability rather than a call that fails at the wire.
- */
-type PluginAiProvider = (pluginId: string, prompt: string) => Promise<string>
-
-let pluginAiProvider: PluginAiProvider | null = null
-
-/** Install (or clear) the provider the host hands to `ai`-declaring plugins. */
-export function setPluginAiProvider(provider: PluginAiProvider | null): void {
-  pluginAiProvider = provider
-}
-
-/**
- * The `ai` surface for a plugin, or undefined when it may not have one: the
- * plugin must have DECLARED the permission (a plugin that did not must not gain
- * the capability by asking) and the app must have installed a provider.
- */
-function aiApiFor(
-  id: string,
-  declared: PluginPermission[],
-): PluginAiApi | undefined {
-  if (!declared.includes('ai') || !pluginAiProvider) return undefined
-  const provider = pluginAiProvider
-  return {
-    complete: (prompt: string) => provider(id, String(prompt ?? '')),
-  }
-}
-
 export async function activatePlugin(
   result: LoadResult,
   options?: ActivatePluginOptions,
@@ -234,9 +155,10 @@ export async function activatePlugin(
   // Resource quota: a plugin whose cumulative activation budget for the session is
   // already exhausted is quarantined (marked unstable) so it cannot keep burning
   // wall-clock. Recovery is an explicit `resetUnstablePlugin`.
-  const used = sessionUsageMs.get(id) ?? 0
-  if (used >= sessionQuotaMs) {
-    markPluginUnstable(id, `session resource quota exhausted (${used}ms >= ${sessionQuotaMs}ms)`, 'quota-exceeded')
+  const quotaMs = getPluginSessionQuota()
+  const used = getPluginSessionUsage(id)
+  if (used >= quotaMs) {
+    markPluginUnstable(id, `session resource quota exhausted (${used}ms >= ${quotaMs}ms)`, 'quota-exceeded')
     return {
       ok: false,
       id,
@@ -245,19 +167,28 @@ export async function activatePlugin(
     }
   }
 
-  // Concurrent-activation cap: bound how many plugins may be mid-activation at
-  // once, so a burst of slow inits cannot pile up on the host.
-  if (inFlightActivations >= maxInFlightActivations) {
+  // An activation of this id is already under way: it owns the registrations, so
+  // a second one must not add its own. Both would register the same component
+  // names and hook ids into the process-global registries while only the entry
+  // that `active.set` writes last keeps its unregisters — the other's hooks
+  // would then survive deactivation and fire from a plugin the host believes is
+  // gone. Like the already-active case above, idempotence beats an error: the
+  // caller is told the id is being activated, and the outcome belongs to the
+  // first call.
+  if (isActivationInFlight(id)) return { ok: true, id }
+
+  // Register the activation in flight BEFORE the first await, which is only
+  // possible because this is also where the concurrent-activation cap is
+  // consulted: a teardown arriving while the init is awaited can then find and
+  // cancel it. Bounding the count keeps a burst of slow inits from piling up.
+  const pending = beginInFlightActivation(id, options?.signal)
+  if (!pending) {
     return {
       ok: false,
       id,
       code: 'PLUGIN_ACTIVATE_FAILED',
       error: `Plugin "${definition.name ?? id}" could not start: too many plugins are activating concurrently.`,
     }
-  }
-  inFlightActivations++
-  const releaseInFlight = (): void => {
-    if (inFlightActivations > 0) inFlightActivations--
   }
 
   const registeredComponents: string[] = []
@@ -280,17 +211,28 @@ export async function activatePlugin(
    */
   const reportedCallbacks = new Set<string>()
   function isolate(label: string, origin: `toolbar:${string}` | `command:${string}`, run: () => void): () => void {
+    const report = (err: unknown): void => {
+      if (reportedCallbacks.has(label)) {
+        console.error(`[NekoWite:plugin-host] callback failed again plugin="${id}" origin="${origin}"`, err)
+        return
+      }
+      reportedCallbacks.add(label)
+      recordPluginEvent(id, 'crash', `callback "${label}" threw: ${err instanceof Error ? err.message : String(err)}`)
+      reportPluginCallbackError(id, origin, err)
+    }
     return () => {
       try {
-        run()
-      } catch (err) {
-        if (reportedCallbacks.has(label)) {
-          console.error(`[NekoWite:plugin-host] callback failed again plugin="${id}" origin="${origin}"`, err)
-          return
+        const returned = run() as unknown
+        // A callback may be async — `() => Promise<void>` is assignable to a
+        // void-returning type — and then its failure does NOT arrive at the
+        // catch below: it becomes an unhandled rejection in the host with no
+        // plugin name on it, which is the failure this wrapper exists to
+        // prevent. Contain the thenable as well as the synchronous throw.
+        if (returned && typeof (returned as { then?: unknown }).then === 'function') {
+          Promise.resolve(returned).catch(report)
         }
-        reportedCallbacks.add(label)
-        recordPluginEvent(id, 'crash', `callback "${label}" threw: ${err instanceof Error ? err.message : String(err)}`)
-        reportPluginCallbackError(id, origin, err)
+      } catch (err) {
+        report(err)
       }
     }
   }
@@ -312,8 +254,11 @@ export async function activatePlugin(
     }
     // What the plugin DECLARED (manifest + definition): the AI capability is
     // gated on it, so a plugin that never asked cannot pick it up by reaching
-    // for `ctx.ai`.
-    const declared = collectPluginPermissions(result.meta, definition)
+    // for `ctx.ai`. Read through the PINNED value, never off `definition`
+    // itself: the gate the user answered read the same one answer, so a getter
+    // (or a reassignment) that varies between the two moments cannot turn "no
+    // dialog was needed" into a granted capability.
+    const declared = declaredPermissionsOf(result.meta, definition)
     const ctx: PluginContext = {
       id,
       name: definition.name ?? id,
@@ -328,8 +273,11 @@ export async function activatePlugin(
       | Promise<void | (() => void)>
       | undefined
     if (onLoadResult && typeof (onLoadResult as { then?: unknown }).then === 'function') {
-      // Async init: bound it so a hung onLoad is cancelled, not a stall.
-      const resolved = await withTimeout(Promise.resolve(onLoadResult), timeoutMs, { signal: options?.signal })
+      // Async init: bound it so a hung onLoad is cancelled, not a stall. The
+      // signal is the activation's own, composed with the caller's, so this is
+      // the point a teardown reaches: it aborts, the wait ends, and the catch
+      // below rolls back what was registered before this await.
+      const resolved = await withTimeout(Promise.resolve(onLoadResult), timeoutMs, { signal: pending.signal })
       if (typeof resolved === 'function') hookUnregisters.push(resolved as () => void)
     } else if (typeof onLoadResult === 'function') {
       hookUnregisters.push(onLoadResult as () => void)
@@ -375,8 +323,8 @@ export async function activatePlugin(
     // activation pushed the plugin over its quota, quarantine it (it already
     // registered, so markPluginUnstable tears it down) and require re-approval.
     const total = addSessionUsage(id, startedAt)
-    if (total >= sessionQuotaMs) {
-      markPluginUnstable(id, `session resource quota exceeded (${total}ms >= ${sessionQuotaMs}ms)`, 'quota-exceeded')
+    if (total >= quotaMs) {
+      markPluginUnstable(id, `session resource quota exceeded (${total}ms >= ${quotaMs}ms)`, 'quota-exceeded')
       return {
         ok: false,
         id,
@@ -394,6 +342,14 @@ export async function activatePlugin(
     for (const componentName of registeredComponents) unregisterComponent(componentName)
     for (const commandId of registeredCommands) unregisterCommand(commandId)
     for (const toolbarId of registeredToolbar) unregisterToolbar(toolbarId)
+    // A teardown arrived while the init was awaited: `deactivatePlugin` has
+    // already run its own bookkeeping, and the rollback above is the rest of it.
+    // The plugin is off, NOT unstable — the user's own switch must not quarantine
+    // it, or switching it back on would demand a re-approval.
+    if (pending.cancelled()) {
+      recordPluginEvent(id, 'cancel', 'activation cancelled by deactivatePlugin', { version: result.meta?.version })
+      return { ok: false, id, code: 'PLUGIN_ABORTED', error: 'Plugin activation was cancelled.' }
+    }
     // Recognise a structured timeout/cancel so the host can route a distinct
     // message; everything else is a plain activation failure.
     const code: PluginErrorCode | undefined =
@@ -412,26 +368,43 @@ export async function activatePlugin(
       ...(code ? { code } : {}),
     }
   } finally {
-    releaseInFlight()
+    pending.release()
   }
 }
 
 export function deactivatePlugin(id: string): void {
   const plugin = active.get(id)
-  if (!plugin) return
+  if (!plugin) {
+    // An activation may still be in flight: it registers its components,
+    // commands and toolbar items BEFORE its awaited init and only `active.set`s
+    // afterwards, so this used to find nothing to take down and return — leaving
+    // the plugin registered and running after the user switched it off. Cancel
+    // it instead: the activation rolls back its own registrations when its await
+    // settles, and no longer commits.
+    cancelInFlightActivation(id)
+    return
+  }
   try {
     for (const un of plugin.hookUnregisters) runUnregister(un)
     for (const componentName of plugin.registeredComponents) unregisterComponent(componentName)
     for (const commandId of plugin.registeredCommands) unregisterCommand(commandId)
     for (const toolbarId of plugin.registeredToolbar) unregisterToolbar(toolbarId)
     const name = plugin.definition.name ?? id
-    plugin.definition.onUnload?.({
+    const unloaded = plugin.definition.onUnload?.({
       id,
       name,
       insertComponent: (insertName) => {
         if (!getComponent(insertName)) throw new Error(`component not found: ${insertName}`)
       },
-    })
+    }) as unknown
+    // `deactivatePlugin` is synchronous and the teardown must complete, but a
+    // rejecting async onUnload would otherwise surface as an unhandled rejection
+    // in the host: detached, observed, and reported against the plugin.
+    if (unloaded && typeof (unloaded as { then?: unknown }).then === 'function') {
+      void Promise.resolve(unloaded).catch((err: unknown) => {
+        console.error(`[NekoWite:plugin-host] onUnload failed plugin="${id}"`, err)
+      })
+    }
   } catch {
     // isolation: a plugin's failure must never propagate
   } finally {

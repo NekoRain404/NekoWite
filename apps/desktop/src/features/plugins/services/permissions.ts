@@ -9,8 +9,8 @@
  * ------------------------------------------------------------------------- */
 
 import {
-  collectPluginPermissions,
   createPluginError,
+  declaredPermissionsOf,
   hasDangerousPermissions,
 } from '@nekowite/plugin-host'
 import type { PluginDefinition, PluginMeta, PluginPermission } from '@nekowite/plugin-host'
@@ -72,13 +72,22 @@ export async function askPluginPermission(
 ): Promise<boolean> {
   // Merge manifest- and definition-declared permissions. Pure UI plugins declare
   // nothing and always pass; anything reaching the user is a dangerous one.
-  const declared = collectPluginPermissions(meta, definition)
+  //
+  // The definition's half is read through `declaredPermissionsOf`, never off the
+  // object: `definition` is the plugin's own module export, so its `permissions`
+  // may be an accessor that answers this question ('nothing dangerous, no need to
+  // ask') and the host's later capability grant differently. Asking the host for
+  // the PINNED value is what makes the dialog and the grant the same decision.
+  const declared = declaredPermissionsOf(meta, definition)
   if (!hasDangerousPermissions({ permissions: declared })) return true
   const key = `${vaultScopedKey(vault, meta.id)}::${[...declared].sort().join(',')}`
   const cached = permissionDecisions.get(key)
   if (typeof cached === 'boolean') return cached
+  // The dialog gets its own copy: the host's pinned declaration is the record of
+  // what was asked about, and a prompt must not be able to add to it.
+  const asked = [...declared]
   // Safe default: without an installed decider, deny risky plugins.
-  const decision = permissionDecider ? await permissionDecider(meta, declared) : false
+  const decision = permissionDecider ? await permissionDecider(meta, asked) : false
   permissionDecisions.set(key, decision)
   return decision
 }
