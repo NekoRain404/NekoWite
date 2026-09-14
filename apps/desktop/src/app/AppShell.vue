@@ -8,16 +8,13 @@ import InfoRail, { type RailTab } from '../ui/InfoRail.vue'
 import TabBar from '../ui/TabBar.vue'
 import StatusBar from '../ui/StatusBar.vue'
 import { useFollowPanel } from './follow-panel-toggle'
-import { SettingsPanel } from '../features/settings'
+import { markArrived, markLeaving } from '../composables/surface-leave'
+import AppDialogs from './AppDialogs.vue'
 import EditorPane from '../ui/EditorPane.vue'
 import LayoutResizeHandle from '../ui/LayoutResizeHandle.vue'
 import ViewSwitch from '../view/ViewSwitch.vue'
 import Toast from '../components/AppToast.vue'
-import ConflictDialog from '../components/ConflictDialog.vue'
-import AiWriteDialog from '../components/AiWriteDialog.vue'
 import type { PendingAiWrite } from '../stores/ai-permission'
-import PermissionDialog from '../components/PermissionDialog.vue'
-import PluginIntegrityDialog from '../components/PluginIntegrityDialog.vue'
 import GhostWriter from '../components/GhostWriter.vue'
 import CommandPalette from '../ui/CommandPalette.vue'
 import {
@@ -129,7 +126,11 @@ const shellStyle = computed<Record<string, string>>(() => ({
            *exit*, because `v-show` alone writes `display: none` in the frame the
            state flips. What the leave does with the layout is in `appShell.css`. -->
       <template v-if="vaultPath">
-        <Transition name="col">
+        <Transition
+          name="col"
+          @leave="markLeaving"
+          @enter="markArrived"
+        >
           <AppSidebar
             v-show="sidebarVisible"
             class="layout-col"
@@ -147,7 +148,11 @@ const shellStyle = computed<Record<string, string>>(() => ({
           :default-value="SIDEBAR_WIDTH_DEFAULT"
           @change="appearance.setSidebarWidth"
         />
-        <Transition name="col">
+        <Transition
+          name="col"
+          @leave="markLeaving"
+          @enter="markArrived"
+        >
           <NoteListPanel
             v-show="sidebarVisible"
             class="note-list-col layout-col"
@@ -214,7 +219,11 @@ const shellStyle = computed<Record<string, string>>(() => ({
              it alive for the app's whole life is not what a fade is worth. The
              `<Transition>` gives it an exit without that — the element stays in
              the tree for its own leave, then is destroyed. -->
-        <Transition name="rail">
+        <Transition
+          name="rail"
+          @leave="markLeaving"
+          @enter="markArrived"
+        >
           <InfoRail
             v-if="railOpen"
             v-model:tab="railTab"
@@ -258,38 +267,22 @@ const shellStyle = computed<Record<string, string>>(() => ({
     </StatusBar>
     <GhostWriter />
     <CommandPalette />
-    <SettingsPanel
-      v-if="showSettings"
-      @close="emit('close-settings')"
-      @saved="(p: string) => emit('open-folder', p)"
-    />
     <Toast />
-    <AiWriteDialog
-      v-if="aiWrite"
-      :pending="aiWrite"
-      @respond="(approved: boolean, remember: boolean) => emit('respond-ai-write', approved, remember)"
-    />
-    <ConflictDialog
-      v-if="conflict"
-      :tab-id="conflict.tabId"
-      :path="conflict.path"
-      @close="emit('close-conflict')"
-      @reload-disk="emit('reload-conflict-disk', conflict.tabId)"
-    />
-    <PermissionDialog
-      v-if="pluginPermission"
-      :meta="pluginPermission.meta"
-      :permissions="pluginPermission.permissions"
-      @allow="emit('resolve-permission', true)"
-      @deny="emit('resolve-permission', false)"
-    />
-    <PluginIntegrityDialog
-      v-if="pluginIntegrity"
-      :meta="pluginIntegrity.meta"
-      :expected-digest="pluginIntegrity.expectedDigest"
-      :actual-digest="pluginIntegrity.actualDigest"
-      @allow="emit('resolve-integrity', true)"
-      @deny="emit('resolve-integrity', false)"
+    <!-- The shell's own modals, and the only place their exit is declared; see
+         the component for why they moved out of this template together. -->
+    <AppDialogs
+      :show-settings="showSettings"
+      :conflict="conflict"
+      :plugin-permission="pluginPermission"
+      :plugin-integrity="pluginIntegrity"
+      :ai-write="aiWrite"
+      @close-settings="emit('close-settings')"
+      @open-folder="(p: string) => emit('open-folder', p)"
+      @close-conflict="emit('close-conflict')"
+      @reload-conflict-disk="(tabId: string) => emit('reload-conflict-disk', tabId)"
+      @respond-ai-write="(approved: boolean, remember: boolean) => emit('respond-ai-write', approved, remember)"
+      @resolve-permission="(allowed: boolean) => emit('resolve-permission', allowed)"
+      @resolve-integrity="(reapprove: boolean) => emit('resolve-integrity', reapprove)"
     />
   </div>
 </template>

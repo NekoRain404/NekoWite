@@ -4,8 +4,14 @@
  *
  * Orchestration only (§13.3). Each section renders itself and reads its own
  * state through `composables/*`, so this file holds no store reads at all
- * (§10.2) — what is left is the modal chrome, which section is visible, and the
- * export commands the export section deliberately does not own (§10.3-C).
+ * (§10.2) — what is left is the modal chrome and which section is visible.
+ *
+ * The export section used to be the exception: the panel held its writable
+ * computeds and forwarded its two events, because §10.3-C sends the export
+ * *commands* out of the section. They still are — `useExportSettings` owns
+ * them — but the section now reads that composable itself, the way the AI
+ * prompt shelf does. Forwarding six models and five handlers through a shell
+ * that owns none of them was the panel doing the section's job.
  */
 import { ref, watch } from 'vue'
 import { X } from 'lucide-vue-next'
@@ -17,7 +23,6 @@ import ExportSettings from './ExportSettings.vue'
 import GeneralSettings from './GeneralSettings.vue'
 import PluginSettings from './PluginSettings.vue'
 import SettingsNavigation from './SettingsNavigation.vue'
-import { useExportSettings } from '../composables/use-export-settings'
 import { useSettingsDialog } from '../composables/use-settings-dialog'
 import type { SettingsSectionId } from '../types'
 
@@ -31,15 +36,6 @@ const { appVersion, onOverlayPointerDown, focusDialog } = useSettingsDialog({
   dialogRef,
   onClose: () => emit('close'),
 })
-
-const {
-  hasActiveTab,
-  frontmatter,
-  pageSize,
-  orientation,
-  exportHtmlFile,
-  exportPdfFile,
-} = useExportSettings()
 
 // The keyboard follows the eye: changing section moves focus back to the panel
 // container, so Tab starts from the top of the new section.
@@ -107,12 +103,6 @@ watch(activeSection, () => {
               />
               <ExportSettings
                 v-else-if="activeSection === 'export'"
-                v-model:frontmatter="frontmatter"
-                v-model:page-size="pageSize"
-                v-model:orientation="orientation"
-                :has-active-tab="hasActiveTab"
-                @export-html="exportHtmlFile"
-                @export-pdf="exportPdfFile"
               />
               <PluginSettings
                 v-else-if="activeSection === 'plugins'"

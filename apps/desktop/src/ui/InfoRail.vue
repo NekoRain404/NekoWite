@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { X } from 'lucide-vue-next'
+import { markArrived, markLeaving } from '../composables/surface-leave'
 import ReferencesPanel from './ReferencesPanel.vue'
 import HistoryPanel from './HistoryPanel.vue'
 import OutlinePanel from './OutlinePanel.vue'
@@ -70,22 +71,46 @@ const TABS = computed(() => [
            by `display: none` in the frame of the click. `v-show` and not
            `v-if`, unchanged: the display flip is what keeps the chat session
            and the loaded lists alive (see useSectionShown). -->
-      <Transition name="rail-panel">
+      <Transition
+        name="rail-panel"
+        @leave="markLeaving"
+        @enter="markArrived"
+      >
         <ChatPanel v-show="activeTab === 'ai'" />
       </Transition>
-      <Transition name="rail-panel">
+      <Transition
+        name="rail-panel"
+        @leave="markLeaving"
+        @enter="markArrived"
+      >
         <OutlinePanel v-show="activeTab === 'outline'" />
       </Transition>
-      <Transition name="rail-panel">
+      <Transition
+        name="rail-panel"
+        @leave="markLeaving"
+        @enter="markArrived"
+      >
         <ReferencesPanel v-show="activeTab === 'refs'" />
       </Transition>
-      <Transition name="rail-panel">
+      <Transition
+        name="rail-panel"
+        @leave="markLeaving"
+        @enter="markArrived"
+      >
         <HistoryPanel v-show="activeTab === 'history'" />
       </Transition>
-      <Transition name="rail-panel">
+      <Transition
+        name="rail-panel"
+        @leave="markLeaving"
+        @enter="markArrived"
+      >
         <FrontmatterPanel v-show="activeTab === 'meta'" />
       </Transition>
-      <Transition name="rail-panel">
+      <Transition
+        name="rail-panel"
+        @leave="markLeaving"
+        @enter="markArrived"
+      >
         <DocStatsPanel v-show="activeTab === 'stats'" />
       </Transition>
     </div>

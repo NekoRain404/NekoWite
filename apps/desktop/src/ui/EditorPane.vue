@@ -211,12 +211,22 @@ onBeforeUnmount(() => {
         @select="selectMenu"
         @close="closeMenu"
       />
-      <RenameDialog
-        v-if="renamePrompt"
-        :initial="renamePrompt.initial"
-        @confirm="onRenameConfirm"
-        @cancel="onRenameCancel"
-      />
+      <!-- The shared dialog departure (see motion.css). It has to sit where the
+           `v-if` is, so every host of a `.dialog` needs its own wrapper, and
+           `type="transition"` is required: the arrival is a *keyframe* and the
+           exit a transition, and Vue otherwise waits out the longer of the two
+           (460ms) before removing an element whose fade ended at 280ms. -->
+      <Transition
+        name="dialog"
+        type="transition"
+      >
+        <RenameDialog
+          v-if="renamePrompt"
+          :initial="renamePrompt.initial"
+          @confirm="onRenameConfirm"
+          @cancel="onRenameCancel"
+        />
+      </Transition>
     </template>
     <div
       v-else
