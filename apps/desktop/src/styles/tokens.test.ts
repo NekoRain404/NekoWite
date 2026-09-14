@@ -4,7 +4,13 @@ import { join, resolve } from 'node:path'
 
 const css = readFileSync(resolve(__dirname, './tokens.css'), 'utf8')
 
-const REQUIRED = ['--app-canvas', '--app-panel', '--app-elevated', '--app-border', '--app-text', '--app-muted', '--app-accent', '--app-accent-soft', '--app-accent-contrast', '--app-danger', '--app-danger-contrast', '--app-warn', '--app-ease', '--app-radius', '--app-radius-md']
+// Tokens a theme block has to state for itself, because two themes resolve them
+// differently. --app-ease is deliberately NOT one of them: it is motion, every
+// theme runs the same rhythm, and the dark block used to restate it at the value
+// it already inherited from :root — which meant tuning the curve in :root would
+// have left dark mode, and only dark mode, on the old one. Its real guarantee
+// ("declared once, never per theme") is asserted in the motion tests below.
+const REQUIRED = ['--app-canvas', '--app-panel', '--app-elevated', '--app-border', '--app-text', '--app-muted', '--app-accent', '--app-accent-soft', '--app-accent-contrast', '--app-danger', '--app-danger-contrast', '--app-warn', '--app-radius', '--app-radius-md']
 
 // 只取主 dark 块（[data-theme="dark"] 后紧跟 { 的那个），避免
 // [data-theme="dark"][data-accent="ink"] 等 accent 子块造成假阳性。
@@ -171,7 +177,16 @@ describe('tokens.css', () => {
     // the colour scheme, must get exactly the same rhythm — so the ladder lives
     // in :root and no theme block may restate it. The scale itself is pinned in
     // motion.test.ts; this only guards where it is allowed to be declared.
-    const ladder = ['--app-motion-micro', '--app-motion-fast', '--app-motion', '--app-motion-slow']
+    const ladder = [
+      '--app-motion-micro',
+      '--app-motion-fast',
+      '--app-motion',
+      '--app-motion-slow',
+      // Choreography belongs to the same layer: the gap between two members of
+      // an arriving group, and how far a surface drifts while it settles.
+      '--app-motion-stagger',
+      '--app-motion-travel',
+    ]
     for (const t of ladder) {
       expect(LIGHT_BLOCK, `${t} in :root`).toContain(`${t}:`)
     }
@@ -183,6 +198,18 @@ describe('tokens.css', () => {
     for (const s of COLOR_SCHEMES) {
       const block = css.match(new RegExp(`\\[data-color-scheme="${s}"\\]\\s*\\{([^}]*)\\}`))?.[1] ?? ''
       expect(block, `${s} palette must not redefine motion`).not.toMatch(/--app-motion[\w-]*:/)
+    }
+  })
+  it('keeps every easing curve out of the theme blocks too', () => {
+    // The dark block used to restate --app-ease at the value it already had in
+    // :root, which is worse than dead weight: tuning the curve in :root would
+    // have left dark mode — and only dark mode — running the old one, with
+    // nothing in the file to say so. Curves are motion, and motion is not a
+    // theme, exactly like the ladder. Comments are stripped first because the
+    // declaration being asserted about is not the only place a token is named.
+    const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '')
+    for (const block of withoutComments.matchAll(/\[[^\]]+\]\s*\{([^}]*)\}/g)) {
+      expect(block[1], 'no theme block may restate a curve').not.toMatch(/--app-ease[\w-]*:/)
     }
   })
   it('defines every --app-* token the app reads, so no var() silently resolves to nothing', () => {
