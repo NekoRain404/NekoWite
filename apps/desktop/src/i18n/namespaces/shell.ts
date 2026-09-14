@@ -48,6 +48,7 @@ export const shell = {
       // The editing verbs the editor's own menu takes over from the webview's.
       cut: 'Cut',
       copy: 'Copy',
+      paste: 'Paste',
       selectAll: 'Select all',
     },
   },
@@ -95,6 +96,7 @@ export const shell = {
       aria: '上下文菜单',
       cut: '剪切',
       copy: '复制',
+      paste: '粘贴',
       selectAll: '全选',
     },
   },

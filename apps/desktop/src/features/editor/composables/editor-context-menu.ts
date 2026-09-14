@@ -2,6 +2,7 @@ import { computed, markRaw, ref, type ComputedRef } from 'vue'
 import {
   Bold,
   BoxSelect,
+  ClipboardPaste,
   Code,
   Copy,
   Italic,
@@ -24,31 +25,35 @@ import { COMMAND_CATALOG } from '../../../ui/command-catalog'
  *
  * - `cut`, `copy` and `selectAll` execute, and neither the write side nor the
  *   selection side needs a permission.
- * - **`paste` does not, and this is why there is no Paste item.**
+ * - `paste` is behind a WebKit setting the **host** owns:
+ *   `WebKitSettings:javascript-can-access-clipboard`. With it off,
  *   `document.execCommand('paste')` returns false and leaves the document
  *   untouched, and `navigator.clipboard.readText()` rejects with
  *   `NotAllowedError` — identically with no gesture and from a real trusted
- *   click. WebKit gates clipboard *reads* behind
- *   `WebKitSettings:javascript-can-access-clipboard`, which wry only turns on
- *   when a host opts in through `enable_clipboard_access()`, and this app does
- *   not. `queryCommandSupported('paste')` reports `true` regardless, so it
- *   cannot be used to hide the item honestly either.
+ *   click. `lib.rs` builds the main window with `enable_clipboard_access()`,
+ *   which turns it on, and that is the only reason the item below is honest.
+ *   Remove that call and this entry becomes a no-op again.
  *
- *   A menu entry that silently does nothing is worse than a missing one. Paste
- *   itself is untouched by any of this: the keyboard path (Ctrl+V /
- *   Shift+Insert) is the webview's own editing command and never went through
- *   the context menu. See the report for the one-line host opt-in that would
- *   let a Paste item be added.
+ *   Which is why the item is listed unconditionally rather than probed for:
+ *   `queryCommandSupported('paste')` reports `true` in both states, so there is
+ *   nothing to probe with.
+ *
+ * Paste is also the one verb here the webview reaches on its own: Ctrl+V and
+ * Shift+Insert are the engine's own editing commands and never went through the
+ * context menu, which is why they kept working while the item was missing.
  */
 
-/** The editing verbs a right-click can reach without a permission gate. */
-export type EditorEditId = 'cut' | 'copy' | 'select-all'
+/** The editing verbs the engine will carry out for a right-click. `cut`, `copy`
+ *  and `selectAll` need no permission; `paste` needs the host's, which `lib.rs`
+ *  grants. */
+export type EditorEditId = 'cut' | 'copy' | 'paste' | 'select-all'
 
 /** `execCommand` names. Kept apart from the item ids so the menu's vocabulary
  *  and the DOM's do not have to agree on spelling. */
 const EDIT_COMMAND: Record<EditorEditId, string> = {
   cut: 'cut',
   copy: 'copy',
+  paste: 'paste',
   'select-all': 'selectAll',
 }
 
@@ -63,6 +68,7 @@ const INLINE_COMMAND_IDS = ['bold', 'italic', 'strike', 'inline-code', 'link'] a
 const EDIT_ICONS = {
   cut: markRaw(Scissors),
   copy: markRaw(Copy),
+  paste: markRaw(ClipboardPaste),
   'select-all': markRaw(BoxSelect),
 }
 
@@ -120,6 +126,7 @@ export function useEditorContextMenu(options: EditorContextMenuOptions): EditorC
     const edit: ContextMenuItem[] = [
       { id: 'cut', label: t('contextMenu.cut'), icon: EDIT_ICONS.cut },
       { id: 'copy', label: t('contextMenu.copy'), icon: EDIT_ICONS.copy },
+      { id: 'paste', label: t('contextMenu.paste'), icon: EDIT_ICONS.paste },
       // A leading divider sets the selection commands apart from the editing
       // ones — the same shape the native menu used.
       { id: 'select-all', label: t('contextMenu.selectAll'), icon: EDIT_ICONS['select-all'], separator: true },
@@ -171,10 +178,12 @@ export function useEditorContextMenu(options: EditorContextMenuOptions): EditorC
 
     const edit = EDIT_COMMAND[id as EditorEditId]
     if (edit) {
-      // Deprecated, and deliberately still used: the Clipboard API's *read*
-      // half is what WebKit gates, not this one. The editors restore their own
-      // selection when focus returns, which is what makes this act on what the
-      // user had selected.
+      // Deprecated, and deliberately still used: these are the engine's own
+      // editing commands, and they are what the native menu dispatched. Paste
+      // is among them, and reads the clipboard because the window is built with
+      // access to it (`lib.rs`). The editors restore their own selection when
+      // focus returns, which is what makes this act on what the user had
+      // selected.
       document.execCommand(edit)
       return
     }
