@@ -75,7 +75,7 @@ describe('ConflictDialog', () => {
   })
 
   it('keeps the confirm slot for the safe answer, not the destructive one', () => {
-    // The shared convention (see .dialog-actions in styles/components.css) puts
+    // The shared convention (see .dialog-actions in styles/surfaces.css) puts
     // the affirmative in the rightmost slot — the one muscle memory reaches for
     // — so the action that discards the user's unsaved edits is not allowed to
     // live there. It sits leftmost, styled as danger, and the confirm slot

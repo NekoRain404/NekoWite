@@ -57,7 +57,7 @@ const permLabel = computed(() => {
       <div class="plugin-body">
         {{ t('plugin.permissionBody', { name: meta.name, perms: permLabel }) }}
       </div>
-      <!-- Shared action-row convention (styles/components.css, .dialog-actions):
+      <!-- Shared action-row convention (styles/surfaces.css, .dialog-actions):
            the refusal sits leftmost — where Escape lands too — and the grant
            owns the rightmost/confirm slot. -->
       <div class="dialog-actions">

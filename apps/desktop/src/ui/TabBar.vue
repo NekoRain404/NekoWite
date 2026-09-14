@@ -202,7 +202,7 @@ async function onMenuSelect(id: string): Promise<void> {
 }
 .tab-name { white-space: nowrap; }
 /* No `.save-dot[data-state='saved']` rule here on purpose: the shared recipe in
-   components.css already states the meaning (muted, and hidden until something
+   surfaces.css already states the meaning (muted, and hidden until something
    asks to show it). Repainting "saved" green and forcing it visible — which is
    what this block used to do — made the same document read "green dot" in its
    tab and "no dot" in the status bar, so the dot stopped meaning anything. */
