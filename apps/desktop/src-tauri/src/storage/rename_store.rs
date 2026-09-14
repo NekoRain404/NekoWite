@@ -86,7 +86,7 @@ pub fn rename_entry(vault_root: &str, from: &str, to: &str) -> Result<String, St
             .filter(|n| !n.is_empty())
             .unwrap_or("renamed");
         let target = parent.join(requested_name);
-        let temp = temp_sibling(parent, requested_name);
+        let temp = temp_sibling(parent);
         std::fs::rename(&resolved_from, &temp)
             .map_err(|e| fs_error("rename", &resolved_from, e))?;
         if let Err(e) = std::fs::rename(&temp, &target) {
