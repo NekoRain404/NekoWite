@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { clearIndex, loadIndex, saveIndex, type AsyncIndexStorage } from '../../../services/search-index'
+import { clearIndex, loadIndex, saveIndex, type AsyncIndexStorage } from '../../search'
 import { createMemoryFsGateway } from '../../../platform/gateways/memory'
 import { createIndexPersistence } from './index-persistence'
 

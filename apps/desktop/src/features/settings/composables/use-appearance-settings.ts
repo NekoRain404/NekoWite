@@ -5,17 +5,10 @@ import {
   ACCENT_COLORS,
   COLOR_SCHEMES,
   COLOR_SCHEME_PREVIEW,
-} from '../../../stores/appearance'
-import type {
-  Accent,
-  ColorScheme,
-  ColorSchemePreview,
-  ContentDirection,
-  EditorFontId,
-  MonoFontId,
-  Theme,
-  UiFontId,
-} from '../../../stores/appearance'
+} from '../../../stores/appearance-palette'
+import type { Accent, ColorScheme, ColorSchemePreview } from '../../../stores/appearance-palette'
+import type { ContentDirection, Theme } from '../../../stores/appearance-schema'
+import type { EditorFontId, MonoFontId, UiFontId } from '../../../stores/appearance-fonts'
 import { useAppearanceStore } from '../../../stores/appearance'
 
 export interface AppearanceSettingsModel {

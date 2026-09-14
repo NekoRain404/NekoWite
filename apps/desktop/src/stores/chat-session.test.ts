@@ -4,12 +4,12 @@ import {
   CHAT_SESSIONS_KEY,
   createSession,
   titleFromText,
-  useChatSessionStore,
   applyImageCaps,
   IMAGE_EVICTED_NOTICE,
   IMAGE_TOO_LARGE,
   MAX_IMAGE_BASE64_LENGTH,
-} from './chat-session'
+} from '../features/chat'
+import { useChatSessionStore } from './chat-session'
 
 function sessionStore() {
   const s = useChatSessionStore()

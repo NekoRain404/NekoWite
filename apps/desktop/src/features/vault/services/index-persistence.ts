@@ -31,7 +31,7 @@ import {
   queryIndex,
   type IndexState,
   type StoredIndex,
-} from '../../../services/search-index'
+} from '../../search'
 
 export interface IndexPersistenceDeps {
   /** Load the persisted index for `vault`, or null when none/unchanged. */

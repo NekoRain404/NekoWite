@@ -14,10 +14,10 @@
  * The wiring below is also the module graph: the store depends on all four, and
  * none of them depends on the store, so each is testable on its own.
  *
- * The public API is unchanged - every consumer keeps importing
- * `useAppearanceStore` plus the palette/schema constants. Those are re-exported
- * at the bottom of this file while callers migrate (§10.1.5); the re-exports go
- * away in the naming stage.
+ * The public API is the store and what it computes: `useAppearanceStore`. The
+ * palette, the font presets and the persisted schema are modules of their own
+ * under stores/, and a caller that needs one of their constants imports it from
+ * there - this file no longer re-exports them (§13.11).
  */
 
 import { ref } from 'vue'
@@ -45,14 +45,7 @@ import {
 } from './appearance-fonts'
 import type { EditorFontId, MonoFontId, UiFontId } from './appearance-fonts'
 import { accentFromSystemColor, themeFallbackAccent } from './appearance-palette'
-import {
-  ACCENTS,
-  ACCENT_COLORS,
-  COLOR_SCHEMES,
-  COLOR_SCHEME_PREVIEW,
-} from './appearance-palette'
-import type { Accent, ColorScheme, ColorSchemePreview, Rgb } from './appearance-palette'
-import type { SystemAccentState } from './appearance-system-accent'
+import type { Accent, ColorScheme } from './appearance-palette'
 
 export const useAppearanceStore = defineStore('appearance', () => {
   const stored = readStoredAppearance()
@@ -340,29 +333,3 @@ export const useAppearanceStore = defineStore('appearance', () => {
     monoFontFamily,
   }
 })
-
-// Compatibility surface: every name this module exported before the split is
-// still exported here, so no consumer changes while they migrate (§10.1.5).
-export {
-  ACCENTS,
-  ACCENT_COLORS,
-  COLOR_SCHEMES,
-  COLOR_SCHEME_PREVIEW,
-  accentFromSystemColor,
-}
-export type { Accent, ColorScheme, ColorSchemePreview, Rgb, SystemAccentState }
-export { EDITOR_FONTS, MONO_FONTS, UI_FONTS } from './appearance-fonts'
-export type { EditorFontId, MonoFontId, UiFontId }
-export {
-  NOTELIST_WIDTH_DEFAULT,
-  NOTELIST_WIDTH_MAX,
-  NOTELIST_WIDTH_MIN,
-  RAIL_WIDTH_DEFAULT,
-  RAIL_WIDTH_MAX,
-  RAIL_WIDTH_MIN,
-  SIDEBAR_WIDTH_DEFAULT,
-  SIDEBAR_WIDTH_MAX,
-  SIDEBAR_WIDTH_MIN,
-  WORD_GOAL_MAX,
-} from './appearance-schema'
-export type { ContentDirection, Theme } from './appearance-schema'

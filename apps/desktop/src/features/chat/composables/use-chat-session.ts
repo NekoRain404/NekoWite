@@ -12,9 +12,8 @@ import { computed, onMounted, ref, type ComputedRef, type Ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import {
   useChatSessionStore,
-  type ChatSession,
-  type ChatSessionMessage,
 } from '../../../stores/chat-session'
+import type { ChatSession, ChatSessionMessage } from '../services/chat-session-model'
 import { t } from '../../../i18n'
 import type { ChatAttachment, PanelMessage } from '../types'
 

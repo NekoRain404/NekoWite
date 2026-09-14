@@ -6,14 +6,10 @@
  * what a note contributes and how it is built, how a query answers, and how
  * shards are stored — can change without touching a call site.
  *
- * `services/search-index.ts` is the compatibility surface for one stage
- * (§10.1.5). It re-exports this same list **through here** rather than reaching
- * into the service files, so a name dropped from either surface is a failing
- * typecheck rather than a silent absence. The whole surface is exported, not a
- * curated subset, for that reason: that shim has to keep resolving every name
- * its callers used before the split — the vault coordinator, the persistence
- * wiring, the note list and the search box today — until they migrate one at a
- * time and it can be deleted.
+ * The whole surface is exported, not a curated subset: the vault coordinator,
+ * the persistence wiring, the note list and the search box all take names from
+ * here, and this entry point is what keeps the shard layout, the storage seam
+ * and the build/query split free to change without touching a call site.
  *
  * Why the index exists: the note list does a live full-body scan for content
  * search, which is correct (a deep-body-only match is still found) but re-reads

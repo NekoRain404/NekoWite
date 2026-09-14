@@ -16,7 +16,7 @@ import {
   shardLabelForPath,
   type AsyncIndexStorage,
   type StoredIndex,
-} from './search-index'
+} from '../features/search'
 
 function memoryStorage(): AsyncIndexStorage & { keys(): string[] } {
   const m = new Map<string, string>()

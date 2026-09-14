@@ -19,7 +19,7 @@ import { useTabsStore } from '../../../stores/tabs'
 import { useVaultSessionStore } from '../../../stores/vault-session'
 import { setRenderedFlush } from '../../../services/editor-ownership'
 import { onNotify } from '../../../services/errors'
-import type { NoteSummary } from '../../../services/note-meta'
+import type { NoteSummary } from '../services/note-summary'
 
 const fsMocks = vi.hoisted(() => ({
   read: vi.fn(),

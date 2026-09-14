@@ -28,8 +28,8 @@ import type { ContextMenuItem } from '../../../ui/ContextMenu.vue'
 import NoteSearch from './NoteSearch.vue'
 import { t } from '../../../i18n'
 import type { ListView, PanelMode } from '../../../stores/document-list'
-import type { IndexState } from '../../../services/search-index'
-import type { SortBy } from '../../../services/note-meta'
+import type { IndexState } from '../../search'
+import type { SortBy } from '../services/note-query'
 
 const props = defineProps<{
   listView: ListView

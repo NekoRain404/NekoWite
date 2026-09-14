@@ -7,17 +7,12 @@
  * from a snapshot of it, and `useNoteList` commands both. Nothing here reads a
  * store, a gateway or the DOM, so the projection is testable on its own and the
  * list can change how it selects notes without touching the shared layer: the
- * matching and ordering rules themselves stay in `services/noteMeta`, where the
- * vault index that produces the summaries can share them.
+ * matching and ordering rules themselves stay in `note-query`, where the vault
+ * index that produces the summaries can share them.
  */
 
-import {
-  filterNotes,
-  sortNotes,
-  type FilterOptions,
-  type NoteSummary,
-  type SortBy,
-} from '../../../services/note-meta'
+import { filterNotes, sortNotes, type FilterOptions, type SortBy } from './note-query'
+import type { NoteSummary } from './note-summary'
 
 export type { FilterOptions }
 

@@ -26,9 +26,9 @@
 
 import type { ContentCache } from '../../../services/content-cache'
 import type { FileEntry, FileStat, FsChangeEvent } from '../../../platform/gateways/contracts'
-import type { NoteSummary } from '../../../services/note-meta'
+import type { NoteSummary } from '../../notes'
 import type { IndexLookupResult } from '../../../services/content-search'
-import type { IndexState, StoredIndex } from '../../../services/search-index'
+import type { IndexState, StoredIndex } from '../../search'
 import { createVaultAttachmentBadge } from './vault-attachment-badge'
 import { createVaultFsWatch } from './vault-fs-watch'
 import { createVaultNoteChange } from './vault-note-change'

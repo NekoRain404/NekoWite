@@ -12,7 +12,7 @@
 import NoteCard from '../../../ui/NoteCard.vue'
 import type { NoteCardContextTarget } from '../../../ui/NoteCard.vue'
 import { t } from '../../../i18n'
-import type { NoteSummary } from '../../../services/note-meta'
+import type { NoteSummary } from '../services/note-summary'
 import type { ContentMatch } from '../../../services/content-search'
 
 const props = defineProps<{

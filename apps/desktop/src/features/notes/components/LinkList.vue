@@ -8,7 +8,7 @@
  * link is there and broken rather than missing it.
  */
 import { t } from '../../../i18n'
-import type { NoteSummary } from '../../../services/note-meta'
+import type { NoteSummary } from '../services/note-summary'
 import type { NoteOutlink } from '../composables/use-note-list'
 
 const props = defineProps<{

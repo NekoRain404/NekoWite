@@ -17,8 +17,11 @@
  * The wiring below is also the module graph: the store depends on all three and
  * none of them depends on the store, so each is testable on its own.
  *
- * What stays here is the state and the actions over it (§10.2). The names at the
- * bottom are the compatibility surface (§10.1.5), not a second implementation.
+ * What stays here is the state and the actions over it (§10.2). The names this
+ * module used to re-export for one stage now resolve only in `features/chat`
+ * (§13.11): the session model, the image budget and the storage key are the
+ * feature's, and a caller outside it imports them from the feature's entry
+ * point.
  */
 
 import { computed, ref } from 'vue'
@@ -171,46 +174,3 @@ export const useChatSessionStore = defineStore('chatSession', () => {
     persist,
   }
 })
-
-/* ---------------------------------------------------------------------------
- * Compatibility surface (§10.1.5), ONE stage only.
- *
- * The names this module exported before the split, kept resolvable from
- * `stores/chatSession` so that every existing importer - the panel's
- * composables, the attachment intake, the session bar - keeps working without
- * being edited. New code imports them from `features/chat` (§13.11), which
- * re-exports the same names.
- *
- * The names are listed explicitly rather than `export *`ed from the modules.
- * This is the compatibility contract, not a copy of it: a helper the new modules
- * share internally (the storage module's own reader/writer, say) cannot leak
- * onto this surface by accident, and a name dropped here is a failing typecheck
- * rather than a silent absence.
- * ------------------------------------------------------------------------- */
-
-/* The session model (`chat-session-model.ts`). */
-export { createSession, createSessionId, titleFromText, TITLE_MAX_LENGTH } from '../features/chat/services/chat-session-model'
-export type {
-  ChatSession,
-  ChatSessionImage,
-  ChatSessionMessage,
-  ChatSessionRole,
-} from '../features/chat/services/chat-session-model'
-
-/* The image budget and its enforcement (`chat-image-budget.ts`). */
-export {
-  applyImageCaps,
-  DEFAULT_IMAGE_LIMITS,
-  IMAGE_EVICTED_NOTICE,
-  IMAGE_TOO_LARGE,
-  MAX_IMAGES_PER_MESSAGE,
-  MAX_IMAGE_BASE64_LENGTH,
-  MAX_IMAGE_BYTES_PER_SESSION,
-  MAX_IMAGE_BYTES_TOTAL,
-  STORAGE_WARNING_FULL,
-  STORAGE_WARNING_IMAGES,
-} from '../features/chat/services/chat-image-budget'
-export type { ImageLimits } from '../features/chat/services/chat-image-budget'
-
-/* The storage key (`chat-session-storage.ts`). */
-export { CHAT_SESSIONS_KEY } from '../features/chat/services/chat-session-storage'

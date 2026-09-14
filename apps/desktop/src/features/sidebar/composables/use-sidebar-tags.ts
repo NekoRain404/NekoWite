@@ -10,7 +10,7 @@
  */
 
 import { computed } from 'vue'
-import { parseFrontmatterForPanel, splitFrontmatterRaw } from '../../../services/note-meta'
+import { parseFrontmatterForPanel, splitFrontmatterRaw } from '../../notes'
 import { removeTagFromContent } from '../../../services/tags'
 import { flushSourceEdits } from '../../../services/source-view'
 import { useDocumentListStore } from '../../../stores/document-list'

@@ -8,19 +8,20 @@
  * computed getters without re-reading the index.
  */
 
+// Cycle-blocked deep imports (§13.11): `features/notes` pulls in NoteListPanel,
+// which reaches back here through `features/vault`. The query, summary and path
+// modules reach nothing but i18n and the path helpers, so reading them directly
+// is the one edge that does not close the loop.
 import {
   aggregateTagCounts,
   computeLibraryCounts,
-  extractOutlinks,
   filterAndSortNotes,
-  relPathOf,
-  resolveLinkTarget,
   type LibraryCounts,
   type LibraryFilter,
-  type MdLink,
-  type NoteSummary,
   type SortBy,
-} from '../../../services/note-meta'
+} from '../../notes/services/note-query'
+import { extractOutlinks, type MdLink, type NoteSummary } from '../../notes/services/note-summary'
+import { relPathOf, resolveLinkTarget } from '../../notes/services/note-paths'
 
 export interface NoteListQuery {
   filter: LibraryFilter

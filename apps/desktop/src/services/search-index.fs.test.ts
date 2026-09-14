@@ -11,7 +11,7 @@ import {
   saveIndex,
   shardLabelForPath,
   type StoredIndex,
-} from './search-index'
+} from '../features/search'
 
 const VAULT = 'memoir://demo'
 const BASE = '.nekowite/index'
@@ -102,7 +102,7 @@ describe('createFileIndexStorage (fs-backed shards)', () => {
       },
       storage,
     )
-    const { clearIndex } = await import('./search-index')
+    const { clearIndex } = await import('../features/search')
     await clearIndex(VAULT, storage)
     expect(await loadIndex(VAULT, storage)).toBeNull()
     // Manifest + every possible shard file is gone.

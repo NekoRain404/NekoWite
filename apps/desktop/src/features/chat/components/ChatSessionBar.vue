@@ -11,7 +11,7 @@ import { computed } from 'vue'
 import { Plus, Trash2 } from 'lucide-vue-next'
 import SelectMenu, { type SelectOption } from '../../../components/SelectMenu.vue'
 import { t } from '../../../i18n'
-import type { ChatSession } from '../../../stores/chat-session'
+import type { ChatSession } from '../services/chat-session-model'
 
 const props = defineProps<{
   sessions: ChatSession[]

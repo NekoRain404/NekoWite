@@ -8,7 +8,7 @@ const getEditorMock = vi.hoisted(() => vi.fn())
 const getViewMock = vi.hoisted(() => vi.fn())
 const settingsMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../services/ai', () => ({
+vi.mock('../features/ai', () => ({
   aiService: {
     triggerSuggestion: triggerMock,
     accept: acceptMock,

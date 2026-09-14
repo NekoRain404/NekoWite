@@ -11,13 +11,18 @@
  * `LinkList`) are deliberately absent: they are parts of `NoteListPanel`, not
  * an API, and their props are wired by the panel that composes them.
  *
- * The note-metadata services are the exception, and the whole surface is
- * exported rather than a curated subset: `services/noteMeta.ts` is a
- * compatibility shim for ONE stage (§10.1.5) whose callers — the search index,
- * the vault coordinator, the frontmatter panel, the editor controller — still
- * import it by the old path, and they migrate here one at a time until that
- * shim can be deleted. The names therefore have to be reachable from this entry
- * point as a whole, not only the handful the list happens to use today.
+ * The note-metadata services are exported as a whole rather than as a curated
+ * subset: they are the shared note domain — frontmatter parsing, the summary
+ * projection, the path helpers, the list rules — and their callers sit all over
+ * the app, so the names have to be reachable from here as a whole, not only the
+ * handful this feature uses itself.
+ *
+ * Six of those callers cannot come through this entry point. This file exports
+ * the panel, which reaches the vault, the stores and the search index, so a
+ * caller already inside that runtime closure — the search index build, the graph
+ * filters, the export renderer, the vault's link queries and note index, and
+ * `ui/NoteCard.vue` — would close a cycle by importing here. Each of those reads
+ * the owning service module directly and says why at the import.
  */
 
 export { default as NoteListPanel } from './components/NoteListPanel.vue'

@@ -1,4 +1,7 @@
-import { MAX_IMAGES_PER_MESSAGE } from '../../../stores/chat-session'
+// The same cycle-blocked deep path the module under test uses: the assertion is
+// that the composer's cap and the session's are one number (see the import note
+// in `attachment-import.ts`).
+import { MAX_IMAGES_PER_MESSAGE } from '../../chat/services/chat-image-budget'
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 
 import { fileToBase64 } from './attachment-library'

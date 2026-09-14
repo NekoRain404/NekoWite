@@ -41,3 +41,8 @@ export type {
   VaultFileIo,
   VaultNameError,
 } from './services/vault-file-actions'
+
+/* The coordinator's handle. The vault session store holds one for the life of a
+ * vault and calls into it; the coordinator is built by this feature's wiring, so
+ * the store needs the type and not the factory. */
+export type { VaultIndexCoordinator } from './services/vault-index'

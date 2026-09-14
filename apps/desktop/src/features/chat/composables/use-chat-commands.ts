@@ -15,7 +15,7 @@
  */
 
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
-import { aiService, startChatCompletion, usageTotal } from '../../../services/ai'
+import { aiService, startChatCompletion, usageTotal } from '../../ai'
 import { notifyError } from '../../../services/errors'
 import { insertMarkdownAtCursor } from '../../../services/editor-insert'
 import { useSettingsStore, type ReasoningEffort } from '../../../stores/settings'

@@ -32,7 +32,7 @@ import {
   startChatCompletion,
   usageTotal,
   type AiTokenUsage,
-} from './ai'
+} from '../features/ai'
 import { useAiPermissionStore } from '../stores/ai-permission'
 
 interface Handlers {

@@ -14,7 +14,11 @@ import {
   type LinkGraphEdge,
   type LinkGraphNode,
 } from '../../../services/link-graph'
-import { parseFrontmatterBlock, splitFrontmatterRaw } from '../../../services/note-meta'
+// Cycle-blocked deep import (§13.11): `features/notes` pulls in NoteListPanel,
+// which reaches back here through `ui/GraphPanel.vue`. The scan module reaches
+// nothing but i18n and the path helpers, so reading it directly is the one edge
+// that does not close the loop.
+import { parseFrontmatterBlock, splitFrontmatterRaw } from '../../notes/services/frontmatter-scan'
 import { dirOf } from '../services/graph-geometry'
 
 /** A node-and-edge slice of the graph: what the canvas lays out and draws. */

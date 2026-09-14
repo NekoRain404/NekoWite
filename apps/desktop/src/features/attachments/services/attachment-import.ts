@@ -1,4 +1,8 @@
-import { MAX_IMAGES_PER_MESSAGE } from '../../../stores/chat-session'
+// Cycle-blocked deep import (§13.11): `features/chat` pulls in ChatPanel, which
+// reaches back here through `services/attachments`. The module the cap lives in
+// is a leaf (it imports only the session's types), so reading it directly is the
+// one edge that does not close the loop.
+import { MAX_IMAGES_PER_MESSAGE } from '../../chat/services/chat-image-budget'
 import { notifyError } from '../../../services/errors'
 import { isImageFile } from './attachment-paths'
 

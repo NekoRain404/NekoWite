@@ -16,7 +16,7 @@ import { useNoteList, type NoteListModel } from './use-note-list'
 import { useDocumentListStore } from '../../../stores/document-list'
 import { useTabsStore } from '../../../stores/tabs'
 import { useVaultSessionStore } from '../../../stores/vault-session'
-import type { NoteSummary } from '../../../services/note-meta'
+import type { NoteSummary } from '../services/note-summary'
 
 const searchMocks = vi.hoisted(() => ({ searchWithIndex: vi.fn() }))
 

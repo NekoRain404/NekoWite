@@ -6,7 +6,7 @@ import { useViewStore } from '../stores/view'
 import { useAppearanceStore } from '../stores/appearance'
 import { useDocDerivedStore } from '../stores/doc-derived'
 import { t } from '../i18n'
-import { aiThinking } from '../services/ai'
+import { aiThinking } from '../features/ai'
 import { readAppVersion } from '../platform/app-version'
 
 const tabs = useTabsStore()
