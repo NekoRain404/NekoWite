@@ -7,6 +7,7 @@
 //! [`key_files::KeyFileIo`] is the one the crash-safe recovery sequence uses.
 
 pub mod key_files;
+pub mod path_encoding;
 pub mod path_policy;
 pub mod plugin_policy;
 pub mod recovery;
