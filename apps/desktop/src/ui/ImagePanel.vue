@@ -13,6 +13,7 @@ import type { NekoEditor, ImageSelectionState } from '@nekowite/editor-core'
 import { useFocusTrap } from '../composables/useFocusTrap'
 import { t } from '../i18n'
 import { isComposingKey } from '../services/keyGuard'
+import SelectMenu from '../components/SelectMenu.vue'
 
 const props = defineProps<{ editor: NekoEditor | null }>()
 
@@ -21,7 +22,18 @@ const alt = ref('')
 const title = ref('')
 const link = ref('')
 const width = ref('')
-const align = ref('')
+// `'left'`, not `''`: the control below is a SelectMenu, which shows the option
+// matching its value and nothing when none does. An empty value is only ever
+// reachable before the first sync, and a blank control in that window reads as
+// a bug rather than as "unset".
+const align = ref('left')
+/** The three alignments the editor's schema understands (see the `patch` call
+ *  in the `align` watcher, which is what rejects anything else). */
+const alignOptions = computed(() => [
+  { value: 'left', label: t('imagePanel.alignLeft') },
+  { value: 'center', label: t('imagePanel.alignCenter') },
+  { value: 'right', label: t('imagePanel.alignRight') },
+])
 const natural = ref<{ width: number; height: number } | null>(null)
 
 const visible = computed(() => selected.value !== null)
@@ -266,15 +278,12 @@ onBeforeUnmount(() => {
         for="neko-image-align"
       >
         <span class="neko-image-field-label">{{ t('imagePanel.align') }}</span>
-        <select
+        <SelectMenu
           id="neko-image-align"
           v-model="align"
           class="neko-image-input"
-        >
-          <option value="left">{{ t('imagePanel.alignLeft') }}</option>
-          <option value="center">{{ t('imagePanel.alignCenter') }}</option>
-          <option value="right">{{ t('imagePanel.alignRight') }}</option>
-        </select>
+          :options="alignOptions"
+        />
       </label>
     </div>
 

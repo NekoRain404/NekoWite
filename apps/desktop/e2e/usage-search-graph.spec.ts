@@ -131,7 +131,11 @@ test('real usage: open note, full-text content search, graph panel; no pageerror
   // Filter controls exist: node cap + directory + tag + link type selects.
   expect(await page.locator('.graph-select').count()).toBeGreaterThanOrEqual(3)
   // The tag filter is populated from the frontmatter of the loaded notes.
-  await expect(page.locator('.graph-select').nth(2).locator('option', { hasText: 'graph' })).toHaveCount(1)
+  // The control is a SelectMenu now, not a native <select>: its rows exist only
+  // while the list is up, because the OS no longer draws them outside the DOM.
+  await page.locator('.graph-select').nth(2).click()
+  await expect(page.getByRole('option', { name: 'graph' })).toHaveCount(1)
+  await page.keyboard.press('Escape')
 
   // (d) The whole flow must not raise an uncaught page error.
   expect(errs).toEqual([])
