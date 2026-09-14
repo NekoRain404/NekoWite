@@ -43,8 +43,25 @@ export function forgetActiveVaultPlugin(pluginId: string): void {
   if (at >= 0) activeVaultPluginIds.splice(at, 1)
 }
 
+/**
+ * Which claim on the plugin set this is. Every `deactivateVaultPlugins` (the top
+ * of each vault load, the registry's reload, the app discarding a superseded
+ * one) starts a new claim, and a scan that began under an older one must not
+ * activate: activation registers into a process-wide host, so a scan that was
+ * overtaken by a vault switch would put the old vault's components, commands and
+ * hooks on top of the set the new vault just installed - and nothing would take
+ * them down again, because the load that owns them has already finished.
+ */
+let vaultPluginClaim = 0
+
+/** The claim a scan must still hold at activation time (see `vaultPluginClaim`). */
+export function getVaultPluginClaim(): number {
+  return vaultPluginClaim
+}
+
 /** Deactivate every vault plugin loaded so far and forget their ids. */
 export function deactivateVaultPlugins(): void {
+  vaultPluginClaim += 1
   for (const id of activeVaultPluginIds) deactivatePlugin(id)
   activeVaultPluginIds.length = 0
   clearUnsandboxedPlugins()
