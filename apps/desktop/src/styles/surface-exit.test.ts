@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { markArrived, markLeaving } from '../composables/surface-leave'
+import { MOTION_SHEETS } from './motion-sheets'
 
 /**
  * The exit half of the motion vocabulary.
@@ -59,9 +60,7 @@ describe('a dialog that arrives can leave', () => {
     // The layer, joined: the departure lives in `surface-motion.css` beside the
     // arrival it mirrors, and a reader that named one file would be checking
     // whichever half happened to hold the rule on the day it was written.
-    const motion = ['surface-motion.css', 'motion.css']
-      .map((sheet) => css(`./${sheet}`))
-      .join('\n')
+    const motion = MOTION_SHEETS.map((sheet) => css(sheet)).join('\n')
     // The leaver is a transition and not a second keyframe: a keyframe restarts
     // from its first frame, so a dialog dismissed mid-arrival would snap to full
     // and replay the fade before it left.
