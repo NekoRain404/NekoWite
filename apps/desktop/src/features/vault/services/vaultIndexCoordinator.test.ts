@@ -7,6 +7,7 @@ import { searchWithIndex } from '../../../services/contentSearch'
 import type { NoteSummary } from '../../../services/noteMeta'
 import type { FsChangeEvent } from '../../../platform/gateways/contracts'
 import { createVaultIndexCoordinator } from './vaultIndexCoordinator'
+import { createVaultNoteIndex } from './vault-note-index'
 
 function memStorage(): AsyncIndexStorage {
   const m = new Map<string, string>()
@@ -512,5 +513,58 @@ describe('degraded fs watch (a stale index must not answer "no match")', () => {
     expect(h.state.notes.map((n) => n.path).sort()).toEqual(['/vault/a.md', '/vault/b.md'])
     expect(h.state.watchReports).toEqual(['fail:events unavailable', 'ok'])
     expect(h.coordinator.indexEntryFor('/vault/b.md')?.upToDate).toBe(true)
+  })
+})
+
+// The note-list index is now a unit of its own (vault-note-index). Two of its
+// decisions used to be reachable only through a whole coordinator + gateway
+// setup: which fs changes count as structural, and which caches a note that
+// stopped being readable purges (a deleted file takes everything with it, a
+// failed read only takes the list entry).
+describe('createVaultNoteIndex (the separated note-list index)', () => {
+  function makeIndex(seed: Record<string, string>) {
+    const gateway = createMemoryFsGateway(seed)
+    const cache = new ContentCache()
+    const published: NoteSummary[][] = []
+    const index = createVaultNoteIndex({
+      read: (v, p) => gateway.read(v, p),
+      stat: (v, p) => gateway.stat(v, p),
+      cache,
+      isWatcherDown: () => false,
+      onNotes: (notes) => published.push(notes),
+    })
+    return { cache, published, index }
+  }
+
+  it('counts a folder as structural only while a listed note lives under it', async () => {
+    const h = makeIndex({ '/v/notes/a.md': '# A', '/v/attachments/2026-09/pic.png': 'x' })
+    h.index.replace(await h.index.indexAll('/v', ['/v/notes/a.md']))
+    expect(h.index.covers('/v', '/v/notes')).toBe(true)
+    // The watcher reports a folder with a trailing separator.
+    expect(h.index.covers('/v', '/v/notes/')).toBe(true)
+    expect(h.index.covers('/v', '/v/notes/a.md')).toBe(true)
+    // No note lives under an attachment folder, so a paste must not re-read the
+    // vault.
+    expect(h.index.covers('/v', '/v/attachments/2026-09')).toBe(false)
+  })
+
+  it('purges a deleted note from both caches, and only delists an unreadable one', async () => {
+    const h = makeIndex({ '/v/a.md': '# A' })
+    h.index.replace(await h.index.indexAll('/v', ['/v/a.md']))
+    expect(h.index.statOf('/v/a.md')).toBeDefined()
+    expect(h.cache.peek('/v/a.md')).toBe('# A')
+    // Mutating the mirror is silent; the callers publish once their writes have
+    // landed (see the note-change path).
+    expect(h.published).toEqual([])
+
+    h.index.remove('/v/a.md')
+    expect(h.index.list()).toEqual([])
+    expect(h.index.statOf('/v/a.md')).toBeDefined()
+    expect(h.cache.peek('/v/a.md')).toBe('# A')
+
+    // A removed file takes its cache entries with it.
+    h.index.forget('/v/a.md')
+    expect(h.index.statOf('/v/a.md')).toBeUndefined()
+    expect(h.cache.peek('/v/a.md')).toBeUndefined()
   })
 })
