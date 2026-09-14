@@ -151,6 +151,11 @@ async function onMenuSelect(id: string): Promise<void> {
   align-items: center;
   gap: 4px;
   padding: 6px 10px;
+  /* The bar shares the toolbar rung with the rail header rather than taking its
+     height from whatever 28px tab plus padding happened to add up to. Min, not
+     a fixed height: the strip scrolls sideways, and a scrollbar inside a fixed
+     box would clip the tabs it exists to reveal. */
+  min-height: var(--app-toolbar-height);
   border-bottom: 1px solid var(--app-border);
   background: color-mix(in srgb, var(--app-panel) 55%, var(--app-canvas));
   overflow-x: auto;
@@ -173,7 +178,6 @@ async function onMenuSelect(id: string): Promise<void> {
   color: color-mix(in srgb, var(--app-text) 72%, var(--app-muted));
   transition: background var(--app-motion-fast) var(--app-ease),
               color var(--app-motion-fast) var(--app-ease),
-              border-color var(--app-motion-fast) var(--app-ease),
               box-shadow var(--app-motion-fast) var(--app-ease);
 }
 .tab:hover {
@@ -182,16 +186,19 @@ async function onMenuSelect(id: string): Promise<void> {
 }
 .tab.active {
   background: color-mix(in srgb, var(--app-accent-soft) 72%, var(--app-elevated));
-  border-color: color-mix(in srgb, var(--app-accent) 8%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-accent) 8%, transparent);
+  /* One ring, drawn inside the border box. Pairing a `border-color` with this
+     painted the same 1px line twice, so the active tab wore a 2px edge where
+     every other selected row wears 1px; 9% is the strength those rows use. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-accent) 9%, transparent);
   color: var(--app-text);
   font-weight: 600;
 }
 .tab-name { white-space: nowrap; }
-.save-dot[data-state='saved'] {
-  background: var(--app-success);
-  opacity: 0.75;
-}
+/* No `.save-dot[data-state='saved']` rule here on purpose: the shared recipe in
+   components.css already states the meaning (muted, and hidden until something
+   asks to show it). Repainting "saved" green and forcing it visible — which is
+   what this block used to do — made the same document read "green dot" in its
+   tab and "no dot" in the status bar, so the dot stopped meaning anything. */
 .tab-close {
   display: inline-flex;
   align-items: center;
@@ -203,7 +210,7 @@ async function onMenuSelect(id: string): Promise<void> {
   cursor: pointer;
   color: var(--app-muted);
   padding: 0;
-  border-radius: 4px;
+  border-radius: var(--app-radius-sm);
   transition: background var(--app-motion-fast) var(--app-ease),
               color var(--app-motion-fast) var(--app-ease);
 }

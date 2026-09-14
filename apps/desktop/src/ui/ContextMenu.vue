@@ -234,7 +234,7 @@ onBeforeUnmount(() => {
   height: 30px;
   padding: 0 8px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--app-radius-sm);
   background: transparent;
   color: var(--app-text);
   font-family: var(--app-font);

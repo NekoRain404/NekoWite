@@ -97,7 +97,9 @@ const taskPct = computed(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 0 0 10px;
+  /* 8px, like the rail's other section titles: at 10px this panel's title stood
+     2px further off its content than the sibling tabs it swaps with. */
+  margin: 0 0 8px;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.04em;
