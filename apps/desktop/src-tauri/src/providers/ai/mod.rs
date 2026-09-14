@@ -3,7 +3,10 @@
 //! Dependency direction is one-way, from `client` down to the leaves:
 //!
 //! ```text
-//! client     orchestration: HTTP client lifecycle, streaming loop
+//! client     orchestration: the models fetch and the streaming loop
+//!   +- endpoint     <- request, gemini, openai_compatible
+//!   +- refusal      <- sse
+//!   +- transport    <- url_policy
 //!   +- events       <- sse, state
 //!   +- sse          <- limits, response, gemini, openai_compatible
 //!   +- url_policy   <- request
@@ -23,12 +26,17 @@
 
 pub mod client;
 pub mod config;
+pub mod endpoint;
 pub mod events;
 pub mod gemini;
 pub mod limits;
 pub mod model_list;
 pub mod openai_compatible;
+pub mod refusal;
 pub mod request;
 pub mod response;
 pub mod sse;
+// Private to the layer: `client` is the only module that dials a request, and
+// nothing outside this module tree builds a client.
+mod transport;
 pub mod url_policy;
