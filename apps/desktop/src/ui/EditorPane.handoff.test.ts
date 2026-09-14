@@ -2,9 +2,14 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { createApp, defineComponent, h, nextTick, watch, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { EditorView } from '@codemirror/view'
+import { TextSelection } from '@milkdown/prose/state'
 import { useAppearanceStore } from '../stores/appearance'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
+import { parseOutline } from '../services/outline'
+import { countDocumentLines } from '../services/scroll-sync-anchors'
+import { editorSessionManager } from '../features/editor'
+import { renderedTopFor } from '../features/editor/controller/pane-scroll-mapping'
 
 // `vi.mock` is hoisted above every top-level binding, so the note the mocked fs
 // hands back has to be reachable from inside the factory.
@@ -62,6 +67,10 @@ const METRICS = {
 }
 
 const sourceTopOfLine = (line: number): number => (line - 1) * LINE_PX
+
+/** The rendered pane's ProseMirror view, named so a stubbed member can be typed
+ *  as the real thing rather than asserted into place. */
+type PmView = NonNullable<ReturnType<typeof editorSessionManager.getView>>
 
 let pinia: Pinia
 let mounted: VueApp[] = []
@@ -165,10 +174,16 @@ describe('EditorPane mode handoff', () => {
     document.body.innerHTML = ''
   })
 
-  async function mountPane(mode: 'rendered' | 'source' | 'split'): Promise<HTMLElement> {
+  async function mountPane(
+    mode: 'rendered' | 'source' | 'split',
+    /** The document to open. The caret cases need their own: `HEADED` joins its
+     *  paragraphs with hard breaks, so eighteen of its lines are one model
+     *  block, and a test that names a block has to know which line it came from. */
+    doc: string = HEADED,
+  ): Promise<HTMLElement> {
     const tabs = useTabsStore()
     tabs.setVault('/vault')
-    note.content = HEADED
+    note.content = doc
     await tabs.openTab('notes/a.md')
     const host = document.createElement('div')
     document.body.appendChild(host)
@@ -338,5 +353,198 @@ describe('EditorPane mode handoff', () => {
 
     const rendered = host.querySelector<HTMLElement>('.pane.rendered')!
     expect(rendered.scrollTop).toBe(0)
+  })
+
+  // The caret is the other half of "where the user was", and it travels
+  // independently of the viewport: the two questions ("what am I looking at" and
+  // "where would my next keystroke go") have two different answers, and a switch
+  // that answers the first by overwriting the second puts the user's text
+  // somewhere they were not. Measured in a browser before this: caret on
+  // paragraph 6, switch to source, type `QQ`, and the note began `QQ# Welcome`.
+  describe('the caret', () => {
+    /** `count` single-line paragraphs, blank-line separated, as source lines. */
+    function spaced(name: string, count: number): string[] {
+      const out: string[] = []
+      for (let i = 0; i < count; i += 1) {
+        if (i > 0) out.push('')
+        out.push(`${name} ${i + 1}`)
+      }
+      return out
+    }
+
+    /**
+     * The same shape as `HEADED` but with blank lines between the paragraphs —
+     * `HEADED` joins them with hard breaks, so its eighteen lines are ONE model
+     * block. Here every block is one source line, which is what lets a test name
+     * a block and a line for the same paragraph.
+     */
+    const CARET_DOC =
+      [
+        '# One',
+        '',
+        ...spaced('one', 18),
+        '',
+        '## Two',
+        '',
+        ...spaced('two', 18),
+        '',
+        '## Three',
+        '',
+        ...spaced('three', 18),
+        '',
+      ].join('\n')
+
+    /** The source line each top-level block came from, in document order — the
+     *  k-th non-blank line is the k-th block, for this fixture. */
+    const BLOCK_LINES = CARET_DOC.split('\n')
+      .map((text, index) => ({ text, line: index + 1 }))
+      .filter(({ text }) => text.trim() !== '')
+      .map(({ line }) => line)
+
+    /**
+     * Model the rendered pane's layout, which happy-dom does not perform.
+     *
+     * The model IS the line→offset mapping applied to the view, anchored on the
+     * same heading tops this file already fakes: block k measures at the offset
+     * `renderedTopFor` gives for the source line block k came from. That makes
+     * the round trip exact by construction, which is what this level is for —
+     * it proves the WIRING (the pane reads its caret, the handoff carries it,
+     * the other pane plants it), while `pane-scroll-mapping.test.ts` owns the
+     * arithmetic and the browser checks the arithmetic against a real layout.
+     */
+    /**
+     * The rendered pane's live view and scroll box, or a loud failure.
+     *
+     * The layout below is installed on both, so a test that reached here without
+     * them would be measuring nothing — which is why they are established by a
+     * throw rather than by an assertion: `expect(...).not.toBeNull()` tells the
+     * reader but not the compiler, and what the compiler cannot see here is the
+     * same thing the test cannot actually rely on. The sibling `sourceViewOf`
+     * throws for the same reason.
+     */
+    function renderedView(): PmView {
+      const view = editorSessionManager.getView()
+      if (!view) throw new Error('the rendered pane has no editor')
+      return view
+    }
+
+    function renderedPaneOf(host: HTMLElement): { view: PmView; pane: HTMLElement } {
+      const pane = host.querySelector<HTMLElement>('.pane.rendered')
+      if (!pane) throw new Error('the rendered pane is not mounted')
+      return { view: renderedView(), pane }
+    }
+
+    function installRenderedLayout(host: HTMLElement): void {
+      const { view, pane } = renderedPaneOf(host)
+      const items = parseOutline(CARET_DOC)
+      const totalLines = countDocumentLines(CARET_DOC)
+      expect(items).toHaveLength(HEADING_TOPS.length)
+      view.coordsAtPos = (pos: number) => {
+        const block = view.state.doc.resolve(pos).index(0)
+        // `coordsAtPos` reports VIEWPORT coordinates — the content offset less
+        // wherever the pane is scrolled — which is what makes the pane's own
+        // conversion back to content space (`+ scrollTop`) meaningful, and what
+        // the real one does. Read per call: the cases below scroll the pane
+        // between placing the caret and reading it.
+        const top =
+          renderedTopFor(BLOCK_LINES[block] ?? 1, items, HEADING_TOPS, totalLines, RENDERED_RANGE) -
+          pane.scrollTop
+        return { left: 0, right: 0, top, bottom: top + 10 }
+      }
+    }
+
+    /** Put the rendered caret inside the block at `index`, the way a click does,
+     *  and hand back the source line that block came from. */
+    async function caretIntoRenderedBlock(index: number): Promise<number> {
+      const view = renderedView()
+      expect(view.state.doc.childCount).toBe(BLOCK_LINES.length)
+      let pos = 0
+      for (let i = 0; i < index; i += 1) pos += view.state.doc.child(i).nodeSize
+      view.dispatch(
+        view.state.tr.setSelection(
+          TextSelection.create(view.state.doc, Math.min(pos + 1, view.state.doc.content.size)),
+        ),
+      )
+      await nextTick()
+      return BLOCK_LINES[index]
+    }
+
+    /** The text the block at `index` was made from. */
+    function blockText(index: number): string {
+      return CARET_DOC.split('\n')[BLOCK_LINES[index] - 1]
+    }
+
+    /** The text of the rendered block the caret is in. */
+    function renderedCaretBlock(): string {
+      const view = renderedView()
+      return view.state.doc.resolve(view.state.selection.head).parent.textContent
+    }
+
+    it('渲染 → 源码 puts the caret where the user was typing, not at the top', async () => {
+      const host = await mountPane('rendered', CARET_DOC)
+      installRenderedLayout(host)
+      // `one 12` — the twelfth paragraph of the first section.
+      const line = await caretIntoRenderedBlock(12)
+      expect(blockText(12)).toBe('one 12')
+
+      useViewStore().setMode('source')
+      for (let i = 0; i < 40; i += 1) {
+        await flush()
+        if (host.querySelector('.pane.source .cm-scroller')) break
+      }
+      await nextTick()
+
+      // On the line the caret was on. Before this the source caret was planted
+      // on whatever line the VIEWPORT started at, which is the same thing only
+      // when the user happens to be looking at the top of the pane.
+      expect(caretLineOf(sourceViewOf(host))).toBe(line)
+      expect(line).not.toBe(1)
+    })
+
+    it('carries the caret and the viewport as two different positions', async () => {
+      const host = await mountPane('rendered', CARET_DOC)
+      installRenderedLayout(host)
+      // The user is typing at the top of the note but has scrolled down to read
+      // the third section — which is exactly the state one position cannot
+      // describe, and the one an implementation that follows the scroll alone
+      // silently rewrites.
+      const line = await caretIntoRenderedBlock(1)
+      const rendered = host.querySelector<HTMLElement>('.pane.rendered')!
+      userScroll(rendered, HEADING_TOPS[2])
+      await nextTick()
+
+      useViewStore().setMode('source')
+      for (let i = 0; i < 40; i += 1) {
+        await flush()
+        if (host.querySelector('.pane.source .cm-scroller')) break
+      }
+      await nextTick()
+
+      const cm = sourceViewOf(host)
+      expect(caretLineOf(cm)).toBe(line)
+      // …and the viewport is still showing the third section, so the reading
+      // position survives the switch too.
+      expect(cm.scrollDOM.scrollTop).toBeGreaterThan(sourceTopOfLine(HEADING_LINES[2]))
+    })
+
+    it('源码 → 渲染 puts the caret back on the line the source caret left', async () => {
+      const host = await mountPane('source', CARET_DOC)
+      installRenderedLayout(host)
+      const cm = sourceViewOf(host)
+      const target = BLOCK_LINES[27]
+      // The user puts the caret on a line in the second section, well away from
+      // the document's start, then switches to the rendered pane.
+      cm.dispatch({ selection: { anchor: cm.state.doc.line(target).from } })
+      await nextTick()
+
+      useViewStore().setMode('rendered')
+      await nextTick()
+      await flush()
+
+      // The rendered pane carries its model across the switch, so the caret it
+      // shows is the one that was carried INTO it rather than wherever it
+      // happened to be left.
+      expect(renderedCaretBlock()).toBe(blockText(27))
+    })
   })
 })

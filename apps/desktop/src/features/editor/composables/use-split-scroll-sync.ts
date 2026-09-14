@@ -5,6 +5,7 @@ import { useViewStore } from '../../../stores/view'
 import { parseOutline, type OutlineItem } from '../../../services/outline'
 import { createSplitScrollCoordinator } from '../../../services/split-scroll-coordinator'
 import { countDocumentLines } from '../../../services/scroll-sync-anchors'
+import { getFocusedPane } from '../../../services/editor-ownership'
 import { planPaneSync, type PaneGeometry, type PaneSyncPlan } from '../controller/pane-scroll-mapping'
 import { usePaneHandoff, type RenderedPaneHandoff } from './use-pane-handoff'
 import type { SourcePaneExpose } from './use-source-pane-slot'
@@ -105,7 +106,25 @@ export function useSplitScrollSync(options: SplitScrollSyncOptions): SplitScroll
     getRenderedPane: () => options.getRenderedPane(),
     getPanesEl: () => options.getPanesEl(),
     nextToken,
+    getSourceCaretLine: sourceCaretLine,
   })
+
+  /** The 1-based line the source pane's caret is on, or null when the pane — or
+   *  its CodeMirror view — is not there yet.
+   *
+   *  Only CodeMirror can answer this, and the pane publishes its view rather
+   *  than a caret accessor (`SourcePaneExpose.getSourceView`), which is why the
+   *  handoff takes this as a callback: the rendered pane answers the same
+   *  question itself, through its own line↔offset mapping. */
+  function sourceCaretLine(): number | null {
+    const cm = options.getSourcePane()?.getSourceView()
+    if (!cm) return null
+    try {
+      return cm.state.doc.lineAt(cm.state.selection.main.head).number
+    } catch {
+      return null
+    }
+  }
 
   function writeDestination(top: number): void {
     const token = nextToken()
@@ -298,6 +317,34 @@ export function useSplitScrollSync(options: SplitScrollSyncOptions): SplitScroll
     cm.scrollDOM.scrollTop = Math.max(0, info.top - cm.scrollDOM.clientHeight / 3)
   }
 
+  /**
+   * Give the pane the jump was made in its caret and its keyboard.
+   *
+   * A jump is a navigation the user asked for, and half of it was missing: the
+   * viewport moved and nothing else did, so the keyboard stayed on the outline
+   * button (typing after a jump did nothing at all) and the caret stayed where
+   * it was (the first keystroke that did land would have dragged the viewport
+   * back to it). Both panes' caret writes are `scrollIntoView: false`, so the
+   * jump's own placement is not disturbed.
+   *
+   * Split shows both panes and the jump moves both, so the caret goes to the one
+   * the user was working in — the pane the app already tracks for exactly this
+   * question (see `services/editor-ownership`).
+   */
+  function landOn(line: number): void {
+    const wantsSource =
+      view.mode === 'source' || (view.mode === 'split' && getFocusedPane() === 'source')
+    if (wantsSource) {
+      const source = options.getSourcePane()
+      source?.setCaretLine(line)
+      source?.focus()
+      return
+    }
+    const rendered = options.getRenderedPane()
+    rendered?.setCaretLine(line)
+    rendered?.focus()
+  }
+
   watch(
     () => view.pendingOutlineTarget,
     async (target) => {
@@ -315,6 +362,7 @@ export function useSplitScrollSync(options: SplitScrollSyncOptions): SplitScroll
       const line = target.line + 1
       if (view.mode === 'source') {
         scrollToLine(line)
+        landOn(line)
         return
       }
       // A jump is discrete: the rendered pane snaps onto the block that holds the
@@ -323,6 +371,7 @@ export function useSplitScrollSync(options: SplitScrollSyncOptions): SplitScroll
       destination = 'rendered'
       options.getRenderedPane()?.setScrollToLine(line, nextToken())
       if (view.mode === 'split') align('rendered', false)
+      landOn(line)
     },
   )
 

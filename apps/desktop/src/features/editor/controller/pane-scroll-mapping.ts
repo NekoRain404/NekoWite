@@ -225,6 +225,25 @@ export function renderedLineFor(offset: number, geometry: RenderedPosition): num
   )
 }
 
+/**
+ * The 1-based source line at rendered offset `offset`, with the proportion
+ * fallback folded in: a document with no headings to anchor on (or one whose
+ * offsets and outline are out of step, which the caller signals with a null
+ * `tops`) maps by `offset`'s fraction of the pane instead.
+ *
+ * The fallback lives here rather than at each caller because two of them — the
+ * mode handoff reading the pane's scroll memory when the pane is hidden, and the
+ * pane reading its own caret — must answer with the same line for the same
+ * offset. A second copy is how the two would drift apart.
+ */
+export function renderedLineOrRatio(offset: number, geometry: RenderedPosition): number {
+  const line = renderedLineFor(offset, geometry)
+  if (line !== null) return line
+  const { renderedRange, totalLines } = geometry
+  const ratio = renderedRange > 0 ? Math.max(0, Math.min(offset / renderedRange, 1)) : 0
+  return 1 + ratio * Math.max(0, totalLines - 1)
+}
+
 /** The inverse of `renderedTopFor`: the source offset that puts, at the top of
  *  the source pane, the text the rendered pane has at `offset`. */
 export function sourceTopFor(offset: number, geometry: SourceMapping): number {

@@ -30,8 +30,25 @@ vi.mock('../../../platform/gateways/fs', () => ({
 const DOC = '# One\n\n## Two\n\n## Three\n\nbody\n'
 const HEADING_LINES_0B = [0, 2, 4]
 
+/**
+ * The rendered pane's handoff surface, recording what it is asked to do.
+ *
+ * **It does not model the caret, and says so rather than pretending.** A real
+ * `RenderedPaneHandoff.getCaretLine` answers from a live Milkdown model, which
+ * this double does not have; it therefore reports "no caret to place" (`null`),
+ * which is the value the handoff has to handle anyway, and `setCaretLine`
+ * records the line it was handed. What that buys is the statement *the jump told
+ * the pane to put its caret on line N*, and no more.
+ *
+ * That the caret then LANDS on N is a property of the pane, and it is proved
+ * where a real one exists: `editor-scroll-sync.test.ts` against a live Milkdown
+ * model, and `ui/EditorPane.handoff.test.ts` against both real panes mounted
+ * together. A double that returned a plausible-looking line here would let this
+ * file report green for a pane that never moved its caret.
+ */
 function makeRenderedPane() {
   const writes: Array<{ line: number; token: number }> = []
+  const caretWrites: number[] = []
   const pane: RenderedPaneHandoff = {
     getHeadingTops: () => [0, 400, 900],
     getScrollRange: () => 2000,
@@ -40,9 +57,13 @@ function makeRenderedPane() {
     setScrollToLine: (line, token) => {
       writes.push({ line, token })
     },
+    getCaretLine: () => null,
+    setCaretLine: (line) => {
+      caretWrites.push(line)
+    },
     focus: () => {},
   }
-  return { pane, writes }
+  return { pane, writes, caretWrites }
 }
 
 /** Eight source lines. A real `EditorState`, so `doc.lines` and `doc.line(n)`
@@ -69,6 +90,7 @@ function makeSourcePane() {
   const view = new EditorView({ state: EditorState.create({ doc: SOURCE_DOC }) })
   Object.defineProperty(view.scrollDOM, 'clientHeight', { configurable: true, value: SOURCE_VIEWPORT_PX })
   Object.defineProperty(view.scrollDOM, 'scrollHeight', { configurable: true, value: 1000 })
+  const caretLines: number[] = []
   const pane: SourcePaneExpose = {
     getVisibleLine: () => 1,
     getVisibleUnit: () => 1,
@@ -78,13 +100,22 @@ function makeSourcePane() {
     setScrollTop: (top: number) => {
       view.scrollDOM.scrollTop = top
     },
-    setCaretLine: () => {},
-    focus: () => {},
+    setCaretLine: (line) => {
+      caretLines.push(line)
+    },
+    focus: () => {
+      source.focusCount += 1
+    },
     getText: () => SOURCE_DOC,
     getSourceView: () => view,
     setMeasureSuppressed: () => {},
   }
-  return { pane, scroller: view.scrollDOM }
+  // `caretLines` records the lines the pane was TOLD to put its caret on. The
+  // real pane turns that into a CodeMirror selection (its own `setCaretLine`,
+  // pinned by `EditorPane.handoff.test.ts` against the live pane); there is no
+  // honest way to re-derive it here without a second copy of that logic.
+  const source = { pane, scroller: view.scrollDOM, caretLines, focusCount: 0 }
+  return source
 }
 
 /** 90px, so a third of the viewport (30px) is smaller than the offset of the
@@ -155,6 +186,10 @@ describe('useSplitScrollSync outline jumps', () => {
 
     expect(rendered.writes).toHaveLength(1)
     expect(rendered.writes[0].line).toBe(5)
+    // …and the jump is not half a jump: the caret follows the viewport to the
+    // heading, so the first keystroke after it continues there instead of
+    // dragging the pane back to wherever the caret still was.
+    expect(rendered.caretWrites).toEqual([5])
   })
 
   it('jumps to the first heading for a pick on the document’s first line', async () => {
@@ -178,5 +213,10 @@ describe('useSplitScrollSync outline jumps', () => {
     // guard on a position that must not move when the rendered path is
     // corrected. Line 5 sits at 4 * 14px, lifted by a third of the viewport (30).
     expect(source.scroller.scrollTop).toBe(26)
+    // And the jump hands the pane its caret and its keyboard: it used to leave
+    // both behind, so typing after a jump did nothing at all (measured in a
+    // browser: `document.activeElement` stayed on the outline button).
+    expect(source.caretLines).toEqual([5])
+    expect(source.focusCount).toBe(1)
   })
 })
