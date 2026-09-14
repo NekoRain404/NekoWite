@@ -1,0 +1,98 @@
+/* The palette shell: the overlay, the dialog surface, the search field and the
+   footer. It lives beside the feature rather than in the component because
+   `ui/CommandPalette.vue` has to keep its path — other work assumes it — and
+   stay under the line budget, and the budget is better spent on the modal
+   lifecycle than on markup. The component loads this file through
+   `<style scoped src>`, so the selectors stay scoped to it exactly as they were
+   when they were inlined. The rows themselves are styled by the listbox that
+   draws them (`components/PaletteList.vue`). */
+
+.palette-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh 16px 16px;
+  background: color-mix(in srgb, var(--app-canvas) 45%, transparent);
+  backdrop-filter: blur(2px);
+  opacity: 0;
+  /* Dismissing: one rung down, accelerating away. */
+  transition: opacity var(--app-motion) var(--app-ease-exit);
+}
+.palette-overlay.is-open {
+  opacity: 1;
+  /* Summoning: a full surface arriving, so it takes the slowest step. */
+  transition: opacity var(--app-motion-slow) var(--app-ease);
+}
+.palette {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--app-border) 86%, transparent);
+  border-radius: var(--app-radius-xl);
+  background: color-mix(in srgb, var(--app-elevated) 97%, var(--app-panel));
+  box-shadow: var(--app-shadow-dialog);
+  transform: translateY(6px) scale(0.985);
+  transition: transform var(--app-motion) var(--app-ease-exit);
+}
+.palette-overlay.is-open .palette {
+  transform: none;
+  transition: transform var(--app-motion-slow) var(--app-ease);
+}
+.palette-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--app-border) 60%, transparent);
+  color: var(--app-muted);
+}
+.palette-search-icon {
+  flex: none;
+}
+.palette-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--app-text);
+  font-family: var(--app-font);
+  font-size: 13px;
+}
+.palette-input::placeholder {
+  color: var(--app-muted);
+}
+/* Why the command group is empty (no document open). The commands need an
+   editor, so the palette says so instead of listing actions that cannot run. */
+.palette-note {
+  padding: 10px 14px 0;
+  font-size: 11px;
+  color: var(--app-muted);
+}
+.palette-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-top: 1px solid color-mix(in srgb, var(--app-border) 60%, transparent);
+  font-size: 11px;
+  color: var(--app-muted);
+}
+.palette-footer kbd {
+  display: inline-block;
+  min-width: 14px;
+  margin-right: 2px;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--app-border) 70%, transparent);
+  border-radius: var(--app-radius-xs);
+  background: color-mix(in srgb, var(--app-panel) 70%, transparent);
+  font-family: var(--app-font);
+  font-size: 10px;
+  line-height: 1.4;
+  text-align: center;
+  color: var(--app-muted);
+}
