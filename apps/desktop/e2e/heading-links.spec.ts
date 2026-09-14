@@ -36,7 +36,10 @@ async function copyAllAnchors(page: Page): Promise<string[]> {
 
 /** Render the active document through the export renderer. */
 function exportHtml(page: Page): Promise<string> {
-  const exportModule = repoFsUrl('packages', 'editor-core', 'src', 'export', 'html.ts')
+  // The export module's public entry. Its old `export/html.ts` path was deleted
+  // with the package's compatibility barrels; `renderDocument` is re-exported
+  // here, and this spec was the one dependent nobody updated.
+  const exportModule = repoFsUrl('packages', 'editor-core', 'src', 'export', 'index.ts')
   return page.evaluate(async (moduleUrl) => {
     const core = (await import(
       moduleUrl

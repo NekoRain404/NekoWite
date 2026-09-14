@@ -1,13 +1,11 @@
 import { expect, test } from '@playwright/test'
 import {
-  DEFAULT_DOC,
   modelMarkdown,
   openNote,
   showRendered,
   showSource,
   showSplit,
   sourceDoc,
-  sourceText,
 } from './support/editorHarness'
 
 /**

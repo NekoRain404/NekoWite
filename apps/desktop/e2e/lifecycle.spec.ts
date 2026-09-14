@@ -13,7 +13,7 @@ test.beforeEach(async ({ page }) => {
       const registry: Record<string, unknown> = {}
       let n = 0
       window.__TAURI_INTERNALS__ = {
-        invoke: async (cmd: string, args: Record<string, unknown> = {}) => {
+        invoke: async (cmd: string) => {
           if (cmd === 'list_dir') return fixtures
           if (cmd === 'read_file') return '# Welcome'
           if (cmd === 'write_file') return undefined

@@ -6,8 +6,6 @@ import { repoFsUrl } from './support/repoFs'
 const PNG_1X1 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
 
-const NOTE = 'test-fixtures/welcome.md'
-
 /**
  * The rel path `resolve_media_path` is called with: vault-relative, so the
  * vault name itself is NOT part of it.
