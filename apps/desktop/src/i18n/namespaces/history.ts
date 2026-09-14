@@ -11,7 +11,6 @@ export const history = {
       readFailed: 'Failed to read history: {msg}',
       unreadable: 'History could not be read; some versions may be missing',
       compare: 'Compare',
-      compareFailed: 'Failed to read history content',
       readHistoryFailed: 'Failed to read history content',
     },
 
@@ -24,8 +23,6 @@ export const history = {
       restore: 'Restore this version',
       restoreTitle: 'Replace current content with this historical version',
       identical: 'This version matches the current content, no differences',
-      addLabel: 'Added',
-      delLabel: 'Removed',
     },
   },
   zh: {
@@ -39,7 +36,6 @@ export const history = {
       readFailed: '无法读取历史版本：{msg}',
       unreadable: '无法读取历史版本，部分版本可能未被列出',
       compare: '对比当前',
-      compareFailed: '无法读取历史版本内容',
       readHistoryFailed: '无法读取历史版本内容',
     },
 
@@ -52,8 +48,6 @@ export const history = {
       restore: '恢复此版本',
       restoreTitle: '用当前版本替换为该历史版本',
       identical: '该版本与当前内容一致，无差异',
-      addLabel: '新增',
-      delLabel: '删除',
     },
   },
 }

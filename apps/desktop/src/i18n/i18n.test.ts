@@ -17,13 +17,41 @@ function flatten(obj: object, prefix = ''): string[] {
 }
 
 /**
- * Every `t('…')` key used in source, mapped to the files that use it.
+ * Everything in source that reaches a message key — collected in ONE walk,
+ * because the two directions have to agree about which files count. A file the
+ * used→defined scan reads and the defined→used one skips would show up as a
+ * reader in one test and as an orphan in the other.
  *
- * Only literal keys are collected: a key built at runtime (a template string)
- * cannot be checked here, so those call sites stay the author's responsibility.
+ * `used` is the old narrow set: `t('…')` arguments, mapped to the files that
+ * use them. That is what a *missing* definition is reported against, so it must
+ * stay narrow — a dotted string that is not a key (a path, a version) would
+ * otherwise be reported as an undefined message.
+ *
+ * `literals` is every quoted string that could be a key. A `t('…')` argument is
+ * one such string, but not the only one: the app also keeps keys as values in
+ * tables (COMMAND_KEYS, KIND_KEYS, LABEL_KEYS) and hands the value to `t()`
+ * later, and those are readers too.
+ *
+ * `prefixes` is every `t(`head${…}`)` head — keys the app builds rather than
+ * writes out (a namespace plus a suffix, or a prefix plus a name, either side of
+ * the dot). A defined key that starts with one of these is reached. A
+ * construction the scan cannot see (the dynamic half first, say) leaves its keys
+ * looking unused, which is deliberately the loud direction: it surfaces for a
+ * decision instead of disappearing.
+ *
+ * Test files are skipped in every direction: a key named in an assertion is not
+ * a reader, and this file names several.
  */
-function collectUsedKeys(): Map<string, string[]> {
+interface Readership {
+  used: Map<string, string[]>
+  literals: Set<string>
+  prefixes: string[]
+}
+
+function collectReadership(): Readership {
   const used = new Map<string, string[]>()
+  const literals = new Set<string>()
+  const prefixes: string[] = []
   const walk = (dir: string): void => {
     for (const entry of readdirSync(dir)) {
       const full = join(dir, entry)
@@ -33,16 +61,41 @@ function collectUsedKeys(): Map<string, string[]> {
         continue
       }
       if (!/\.(ts|vue)$/.test(entry) || entry.includes('.test.')) continue
+      // Comments are dropped before the key scan: a key named in a comment is
+      // prose, not a reader. Both patterns are anchored to the start of a line,
+      // and that is load-bearing — an unanchored `/*` reads `accept="image/*"`
+      // as the start of a comment and eats the code up to the next `*/`, which
+      // is how this scan first reported a component's own keys as orphans.
       const text = readFileSync(full, 'utf8')
+        .replace(/^\s*\/\*[\s\S]*?\*\//gm, '')
+        .replace(/^\s*\/\/.*$/gm, '')
       for (const m of text.matchAll(/\bt\(\s*['"]([A-Za-z0-9_.\-:[\]]+)['"]/g)) {
         const list = used.get(m[1]) ?? []
         list.push(full.replace(/.*[\\/]src[\\/]/, ''))
         used.set(m[1], list)
       }
+      // One pass per quote character, not one combined alternation: in
+      // `:title="$t('a.b')"` an alternation matches the whole double-quoted
+      // attribute first and the key inside it is never seen. An interpolated
+      // template is not a literal — the `[^`$]` above leaves those to the
+      // prefix pass.
+      for (const m of [
+        ...text.matchAll(/'([^'\n]*)'/g),
+        ...text.matchAll(/"([^"\n]*)"/g),
+        ...text.matchAll(/`([^`$]*)`/g),
+      ]) {
+        if (m[1].includes('.')) literals.add(m[1])
+      }
+      // `t`/`$t` cover the call sites; `translate` is the injected translator
+      // interface in services/ai-edit.ts (`d.translate(`aiperm.action.${a}`)`),
+      // which is a message call like any other. A third shape would leave its
+      // keys looking unused — loud, not silent.
+      for (const m of text.matchAll(/\b(?:t|\$t|translate|[\w$]+\.translate)\(\s*`([^`$]*)\$\{/g))
+        prefixes.push(m[1])
     }
   }
   walk(join(process.cwd(), 'src'))
-  return used
+  return { used, literals, prefixes }
 }
 
 describe('i18n messages', () => {
@@ -59,11 +112,33 @@ describe('i18n messages', () => {
     const zhKeys = new Set(flatten(messages.zh))
     const enKeys = new Set(flatten(messages.en))
     const missing: string[] = []
-    for (const [key, files] of collectUsedKeys()) {
+    for (const [key, files] of collectReadership().used) {
       if (!zhKeys.has(key)) missing.push(`${key} (zh) <- ${[...new Set(files)].join(', ')}`)
       if (!enKeys.has(key)) missing.push(`${key} (en) <- ${[...new Set(files)].join(', ')}`)
     }
     expect(missing).toEqual([])
+  })
+
+  it('reads every key the catalogue defines', () => {
+    // The direction above is half a guard, and the missing half is invisible:
+    // it checks every key READ has a definition and never that every key
+    // DEFINED has a reader, so a key nothing consumes sits in both locales
+    // forever, translated twice, costing nothing and saying nothing. That is
+    // the same shape as tokens.test.ts checking that --app-* tokens were
+    // declared but not that the declared ones were ever read.
+    //
+    // Deletion is the wrong answer for a key reached by a constructed name, so
+    // the readers collected here include table values and `t(`head${…}`)` heads
+    // (see collectReadership) — an apparent orphan that survives those two is
+    // the real thing, and it gets deleted or wired up, never silenced.
+    const { literals, prefixes } = collectReadership()
+    const orphans = flatten(messages.zh).filter(
+      (key) => !literals.has(key) && !prefixes.some((prefix) => key.startsWith(prefix)),
+    )
+    expect(
+      orphans,
+      `no reader in src (construction heads seen: ${[...new Set(prefixes)].join(' ') || 'none'})`,
+    ).toEqual([])
   })
 
   it('covers the required namespaces', () => {

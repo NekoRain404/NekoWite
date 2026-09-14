@@ -76,7 +76,6 @@ export const documents = {
 
     session: {
       restoreFailed: 'Could not restore the previous tabs',
-      restored: 'Restored {n} tabs',
     },
 
     recovery: {
@@ -145,7 +144,6 @@ export const documents = {
 
     session: {
       restoreFailed: '无法恢复上次打开的标签页',
-      restored: '已恢复 {n} 个标签页',
     },
 
     recovery: {

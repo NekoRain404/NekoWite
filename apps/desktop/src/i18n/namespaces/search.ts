@@ -25,7 +25,6 @@ export const search = {
       next: 'Next',
       replace: 'Replace',
       replaceAll: 'Replace all',
-      noResults: 'No results',
       closeEsc: 'Close (Esc)',
       notFound: 'No matches found',
       replaced: 'Replaced {count} occurrence(s)',
@@ -35,7 +34,6 @@ export const search = {
       title: 'Spell check',
       suggestions: 'Suggestions',
       noSuggestions: 'No suggestions',
-      replace: 'Replace',
     },
   },
   zh: {
@@ -63,7 +61,6 @@ export const search = {
       next: '下一个',
       replace: '替换',
       replaceAll: '全部替换',
-      noResults: '无结果',
       closeEsc: '关闭（Esc）',
       notFound: '未找到匹配项',
       replaced: '已替换 {count} 处',
@@ -73,7 +70,6 @@ export const search = {
       title: '拼写检查',
       suggestions: '建议',
       noSuggestions: '无建议',
-      replace: '替换',
     },
   },
 }
