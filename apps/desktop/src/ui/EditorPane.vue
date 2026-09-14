@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, computed, defineAsyncComponent, ref, watch } from 'vue'
 import { setImageInsertHandler } from '@nekowite/editor-core'
 import { FileText } from 'lucide-vue-next'
-import { useAppearanceStore } from '../stores/appearance'
 import { useViewStore, SPLIT_RATIO_DEFAULT, SPLIT_RATIO_MAX, SPLIT_RATIO_MIN } from '../stores/view'
 import { useTabsStore } from '../stores/tabs'
 import RenderedPane from '../view/RenderedPane.vue'
@@ -10,21 +9,15 @@ import LayoutResizeHandle from './LayoutResizeHandle.vue'
 import WordToolbar from '../components/WordToolbar.vue'
 import FloatToolbar from '../components/FloatToolbar.vue'
 import RenameDialog from '../components/RenameDialog.vue'
+import ContextMenu from './ContextMenu.vue'
 import { useImageIntake } from '../features/editor/composables/useImageIntake'
 import { runEditorCommand } from '../services/runEditorCommand'
 import { useFloatStore } from '../stores/float'
 import { resetFocusedPane } from '../services/editorOwnership'
 import { usePaneInput } from '../features/editor/composables/usePaneInput'
-import { parseOutline, type OutlineItem } from '../services/outline'
-import { createSplitScrollCoordinator } from '../services/splitScrollCoordinator'
-import { usePaneHandoff } from '../features/editor/composables/usePaneHandoff'
+import { useSplitScrollSync } from '../features/editor/composables/useSplitScrollSync'
+import { useEditorContextMenu } from '../features/editor/composables/editorContextMenu'
 import { useSourcePaneSlot } from '../features/editor/composables/useSourcePaneSlot'
-import { countDocumentLines } from '../services/scrollSyncAnchors'
-import {
-  planPaneSync,
-  type PaneGeometry,
-  type PaneSyncPlan,
-} from '../features/editor/controller/paneScrollMapping'
 import { t } from '../i18n'
 
 // The source (CodeMirror) pane is loaded only when the user actually needs it:
@@ -38,7 +31,6 @@ const SourcePane = defineAsyncComponent(() => import('../view/SourcePane.vue'))
 
 const view = useViewStore()
 const tabs = useTabsStore()
-const appearance = useAppearanceStore()
 const floatStore = useFloatStore()
 
 const hasTab = computed(() => tabs.activeTab !== null)
@@ -46,6 +38,23 @@ const hasTab = computed(() => tabs.activeTab !== null)
 const { sourcePane, awaitingSource } = useSourcePaneSlot()
 const renderedPane = ref<InstanceType<typeof RenderedPane> | null>(null)
 const panesEl = ref<HTMLElement | null>(null)
+
+// Split-view scroll sync, the divider's drag handling and the pane widths: the
+// pane they belong to is the layout, and the layout is this component's. What
+// they need from the panes is only "where are you and how do I move you".
+const {
+  sourceStyle,
+  renderedStyle,
+  onUserScroll,
+  onSplitResizeStart,
+  onSplitResize,
+  onSplitResizeEnd,
+  clearResizing,
+} = useSplitScrollSync({
+  getSourcePane: () => sourcePane.value,
+  getRenderedPane: () => renderedPane.value,
+  getPanesEl: () => panesEl.value,
+})
 
 // Image intake (paste / drop / file picker) is shared by both panes, so it is
 // registered on the common ancestor rather than inside the rendered pane: the
@@ -61,197 +70,20 @@ const {
   insertImagesFromPicker,
 } = useImageIntake()
 
-// ---------------------------------------------------------------------------
-// Split-view scroll sync
-//
-// Both panes report the user's own scrolls here; everything else is the
-// coordinator below. It keeps one pending destination per tick and eases toward
-// the newest target, re-anchoring where the pane actually is, so a wheel burst
-// stays responsive instead of queueing one sync per event.
-//
-// The panes' exposed positions are still mirrored into the view store as the
-// current scroll state, but the store is no longer the transport: it used to
-// carry a programmatic write into the other pane, where the resulting scroll
-// event came back as a fresh user-originated sync request and the two panes
-// fought. Instead each pane reports only the scrolls the user made (see its
-// `user-scroll` event) and swallows the echo of a programmatic write, which
-// carries the sync token that caused it.
-// ---------------------------------------------------------------------------
-
-type PaneId = 'source' | 'rendered'
-
-/** The pane the coordinator is currently moving. A user scroll switches it: the
- *  pane being scrolled becomes the origin and stops being driven, which is what
- *  makes a leg in flight interruptible. */
-let destination: PaneId = 'rendered'
-/** Identifies each programmatic write, and handed to the pane that receives it:
- *  a program's scroll event arrives later with nothing else to say where it came
- *  from, so the write carries its token and the pane keeps it (see the panes'
- *  `setScrollTop`). */
-let syncToken = 0
-
-function nextToken(): number {
-  syncToken += 1
-  return syncToken
-}
-
-function paneScrollTop(id: PaneId): number {
-  if (id === 'source') return sourcePane.value?.getScrollTop() ?? 0
-  return renderedPane.value?.getScrollTop() ?? 0
-}
-
-function paneScrollRange(id: PaneId): number {
-  if (id === 'source') return sourcePane.value?.getScrollRange() ?? 0
-  return renderedPane.value?.getScrollRange() ?? 0
-}
-
-// Switching modes changes the surface, not the document: the keyboard follows
-// into the pane now shown, and the place the user was reading is carried across
-// as a source line (a pixel offset from one pane means nothing in the other).
-usePaneHandoff({
-  getSourcePane: () => sourcePane.value,
-  getRenderedPane: () => renderedPane.value,
-  getPanesEl: () => panesEl.value,
-  nextToken,
-})
-
-function writeDestination(top: number): void {
-  const token = nextToken()
-  if (destination === 'source') sourcePane.value?.setScrollTop(top, token)
-  else renderedPane.value?.setScrollTop(top, token)
-}
-
-/** Parsed outline and line count of the document on screen. Every scroll event
- *  maps through these, so they are kept for the content string they were parsed
- *  from: re-parsing the whole document per wheel event would be O(document) per
- *  frame of a burst. */
-let outlineSource = ''
-let outlineItems: OutlineItem[] = []
-let outlineLines = 1
-
-function outlineForSync(): { items: OutlineItem[]; totalLines: number } {
-  const content = tabs.activeTab?.content ?? ''
-  if (content !== outlineSource) {
-    outlineSource = content
-    outlineItems = parseOutline(content)
-    outlineLines = countDocumentLines(content)
-  }
-  return { items: outlineItems, totalLines: outlineLines }
-}
-
-/** The geometry the mapping works from: the panes' live offsets. The rendered
- *  headings' offsets collapse to null when they and the parsed outline are out
- *  of step (a heading mid-render), and the source pane's own line offsets come
- *  from the pane, which is the only thing that can measure them. */
-function paneGeometry(from: PaneId, to: PaneId): PaneGeometry {
-  const { items, totalLines } = outlineForSync()
-  const tops = renderedPane.value?.getHeadingTops() ?? []
-  return {
-    fromTop: paneScrollTop(from),
-    fromRange: paneScrollRange(from),
-    toRange: paneScrollRange(to),
-    totalLines,
-    items,
-    tops: items.length > 0 && tops.length === items.length ? tops : null,
-    sourceTopOfLine: (line) => sourcePane.value?.scrollTopForLine(line) ?? 0,
-  }
-}
-
-/** Where the counterpart pane has to be to show what `from` is showing, or null
- *  while either pane is missing (the source pane is an async component). */
-function planSync(from: PaneId, to: PaneId): PaneSyncPlan | null {
-  const source = sourcePane.value
-  if (!source || !renderedPane.value) return null
-  return planPaneSync(from, paneGeometry(from, to), source.getVisibleUnit() ?? 1)
-}
-
-/** The OS-level "reduce motion" preference — the same check the command palette
- *  makes. Scroll sync has to land immediately when the user asked for that. */
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  )
-}
-
-const scrollCoordinator = createSplitScrollCoordinator({
-  // requestAnimationFrame is already shaped the way the coordinator wants it.
-  requestFrame: (callback) => window.requestAnimationFrame(callback),
-  cancelFrame: (handle) => window.cancelAnimationFrame(handle),
-  readScroll: () => paneScrollTop(destination),
-  writeScroll: (top) => writeDestination(top),
-  clampScroll: (top) => {
-    const range = paneScrollRange(destination)
-    if (!Number.isFinite(top)) return top > 0 ? range : 0
-    return Math.max(0, Math.min(top, range))
-  },
-})
-
-/**
- * Bring the counterpart of `from` onto the position `from` is showing.
- *
- * `animated` is the caller's answer to "may this glide?": user scrolling does,
- * the discrete moves (entering split, the end of a divider drag, an outline
- * jump) do not, and a document end never does — the ease would spend its last
- * frames creeping up on a position the user has already reached.
- */
-function align(from: PaneId, animated: boolean): void {
-  const to: PaneId = from === 'source' ? 'rendered' : 'source'
-  const plan = planSync(from, to)
-  if (!plan) return
-  // The destination has to be selected before the coordinator is asked to move:
-  // it reads and writes through the adapter, which follows this.
-  destination = to
-  scrollCoordinator.schedule(plan.top, animated && !plan.atEdge && !prefersReducedMotion())
-}
-
-/** A scroll the user made in one of the panes. */
-function onUserScroll(from: PaneId): void {
-  if (view.mode !== 'split' || resizing || !appearance.autoSyncScroll) return
-  align(from, true)
-}
-
-// The source pane is loaded on demand (CodeMirror is async). Entering split
-// mode from the rendered view can happen before that chunk has resolved, so we
-// remember the pane that was visible before the switch and re-align once the
-// source pane's ref populates. The pane that was visible before entering split
-// is the reference: align the other pane to its scroll position once layout is
-// done. Both entries do nothing until both panes actually exist.
-let pendingSplitAlignFrom: 'source' | 'rendered' | null = null
-
-function alignSplitPanes(prev: 'source' | 'rendered'): void {
-  // A layout move, not a scroll: the panes are put where they belong at once.
-  align(prev, false)
-}
-
-watch(
-  () => view.mode,
-  (mode, prev) => {
-    // Whatever the coordinator was moving belongs to the layout being left.
-    scrollCoordinator.cancel()
-    if (mode !== 'split' || prev === 'split') return
-    pendingSplitAlignFrom = prev
-    void nextTick(() => {
-      if (view.mode !== 'split') return
-      // The source pane may still be resolving its async chunk — the ref
-      // watcher below retries once it mounts.
-      if (!sourcePane.value || !renderedPane.value) return
-      pendingSplitAlignFrom = null
-      alignSplitPanes(prev)
-    })
-  },
-)
-
-watch(
-  () => sourcePane.value,
-  () => {
-    if (view.mode !== 'split') return
-    if (!pendingSplitAlignFrom || !sourcePane.value || !renderedPane.value) return
-    const prev = pendingSplitAlignFrom
-    pendingSplitAlignFrom = null
-    alignSplitPanes(prev)
-  },
-)
+// The editor's own right-click menu, on the same common ancestor and for the
+// same reason as the paste plumbing above: one listener covers both panes, the
+// split divider and the dead space beside them. It is registered in the capture
+// phase so it runs before ProseMirror's and CodeMirror's own handlers, and the
+// `preventDefault` it raises is the whole mechanism that keeps the webview's
+// native menu off the screen. See the composable for what the menu may offer
+// and why it is not everything the native one did.
+const {
+  target: menuTarget,
+  items: menuItems,
+  onContextMenu,
+  close: closeMenu,
+  select: selectMenu,
+} = useEditorContextMenu({ runCommand: handleCommand })
 
 // The floating-box toolbar lives on the shared pane container, so it stays on
 // screen in source mode even though the element it operates on is hidden. Its
@@ -264,79 +96,10 @@ watch(
   },
 )
 
-let resizing = false
-
-function onSplitResizeStart(): void {
-  resizing = true
-  // The panes are being resized under the animation: stop it where it is and
-  // re-align once the drag is over.
-  scrollCoordinator.cancel()
-  sourcePane.value?.setMeasureSuppressed(true)
-}
-
-function onSplitResize(value: number): void {
-  view.setSplitRatio(value)
-}
-
-function clearResizing(): void {
-  if (!resizing) return
-  resizing = false
-  sourcePane.value?.setMeasureSuppressed(false)
-}
-
-function onSplitResizeEnd(): void {
-  if (!resizing) return
-  clearResizing()
-  if (view.mode !== 'split') return
-  // Widths changed under both panes, so their scroll offsets are stale:
-  // re-align once from the source pane (document flow reference), then let
-  // normal scroll sync take over.
-  align('source', false)
-}
-
-const sourceStyle = computed((): Record<string, string> => {
-  if (view.mode !== 'split') return {}
-  return { width: `${view.splitRatio * 100}%` }
-})
-const renderedStyle = computed((): Record<string, string> => {
-  if (view.mode !== 'split') return {}
-  return { width: `${(1 - view.splitRatio) * 100}%` }
-})
-
-function scrollToLine(line: number): void {
-  const pane = sourcePane.value
-  if (!pane) return
-  const cm = pane.getSourceView()
-  if (!cm) return
-  const doc = cm.state.doc
-  const clamped = Math.max(0, Math.min(line, doc.lines - 1))
-  const info = cm.lineBlockAt(doc.line(clamped + 1).from)
-  cm.scrollDOM.scrollTop = Math.max(0, info.top - cm.scrollDOM.clientHeight / 3)
-}
-
-watch(
-  () => view.pendingOutlineTarget,
-  async (target) => {
-    if (!target) return
-    view.consumeOutlineTarget()
-    await nextTick()
-    if (view.mode === 'source') {
-      scrollToLine(target.line)
-      return
-    }
-    // A jump is discrete: the rendered pane snaps onto the block that holds the
-    // line and the source follows it without easing. Both writes are the
-    // program's, so neither comes back as a user scroll.
-    destination = 'rendered'
-    renderedPane.value?.setScrollToLine(target.line, nextToken())
-    if (view.mode === 'split') align('rendered', false)
-  },
-)
-
 /**
  * Dispatch a toolbar command through the shared, mode-aware runner so the
- * button does the same thing in every view mode (the palette and the plugin
- * buttons use the same entry point).
+ * button does the same thing in every view mode (the palette, the plugin
+ * buttons and the editor's context menu use the same entry point).
  */
 function handleCommand(id: string): void {
   runEditorCommand(id)
@@ -366,10 +129,8 @@ onBeforeUnmount(() => {
   paneInput.attach(null)
   setImageInsertHandler(null)
   resetFocusedPane()
-  scrollCoordinator.dispose()
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('blur', clearResizing)
-  clearResizing()
 })
 </script>
 
@@ -381,6 +142,7 @@ onBeforeUnmount(() => {
         ref="panesEl"
         class="panes"
         :class="view.mode"
+        @contextmenu.capture="onContextMenu"
       >
         <!-- Holds the source pane's place until its chunk lands. -->
         <div
@@ -426,6 +188,14 @@ onBeforeUnmount(() => {
           @remove="floatStore.removeSelected()"
         />
       </div>
+      <ContextMenu
+        v-if="menuTarget"
+        :x="menuTarget.x"
+        :y="menuTarget.y"
+        :items="menuItems"
+        @select="selectMenu"
+        @close="closeMenu"
+      />
       <RenameDialog
         v-if="renamePrompt"
         :initial="renamePrompt.initial"
