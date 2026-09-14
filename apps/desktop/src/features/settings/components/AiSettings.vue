@@ -285,7 +285,10 @@ const effortChoices = computed<SelectOption[]>(() =>
 .model-refresh { flex: none; padding: 0 10px; }
 .model-refresh:disabled { cursor: default; opacity: 0.6; }
 .model-refresh-icon.spin {
-  animation: model-spin 0.9s linear infinite;
+  /* Was the last bare duration in the app — `0.9s` on a spinner, which is
+     constant-rate and so sits outside the ladder. Same rate as the status bar's
+     and the attachments panel's, and what `--app-motion-spin` already names. */
+  animation: model-spin var(--app-motion-spin) linear infinite;
 }
 @keyframes model-spin {
   to { transform: rotate(360deg); }
