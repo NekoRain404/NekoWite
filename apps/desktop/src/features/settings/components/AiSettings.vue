@@ -8,6 +8,7 @@
  */
 import { computed } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
+import ComboBox from '../../../components/ComboBox.vue'
 import SelectMenu, { type SelectOption } from '../../../components/SelectMenu.vue'
 import { t } from '../../../i18n'
 // Type-only, so the effort dropdown's cast is checked against the union the
@@ -70,22 +71,19 @@ const effortChoices = computed<SelectOption[]>(() =>
     <label class="settings-field">
       <span>{{ t('aiSettings.model') }}</span>
       <div class="model-row">
-        <input
+        <!-- The suggestions are drawn by the app, not by a native `<datalist>`:
+             that popup is the engine's and sits outside the DOM, where no CSS
+             reaches it and WebKitGTK barely draws one. The field stays editable
+             either way — the list is only as good as the provider's `/models`
+             endpoint, and a model id can be typed or pasted regardless of it. -->
+        <ComboBox
+          id="settings-ai-model"
           v-model="model"
           class="input"
-          type="text"
-          list="model-list"
+          :options="modelOptions"
+          :list-label="t('aiSettings.modelListAria')"
           placeholder="qwen2.5-coder:3b"
-        >
-        <datalist id="model-list">
-          <option
-            v-for="m in modelOptions"
-            :key="m"
-            :value="m"
-          >
-            {{ m }}
-          </option>
-        </datalist>
+        />
         <button
           class="btn btn-secondary btn-sm model-refresh"
           :disabled="modelLoading"
@@ -279,6 +277,10 @@ const effortChoices = computed<SelectOption[]>(() =>
 }
 .settings-save { align-self: flex-start; }
 .model-row { display: flex; gap: 6px; }
+/* The combobox's own root is the wrapper around the input, so the row's
+   leftover width goes to the wrapper; `.input` still styles the input inside
+   it. */
+.model-row .combobox { flex: 1; min-width: 0; }
 .model-row .input { flex: 1; min-width: 0; }
 .model-refresh { flex: none; padding: 0 10px; }
 .model-refresh:disabled { cursor: default; opacity: 0.6; }
