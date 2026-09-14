@@ -111,7 +111,7 @@ const effortChoices = computed<SelectOption[]>(() =>
         v-model="baseUrl"
         class="input"
         type="text"
-        placeholder="http://localhost:1234/v1"
+        :placeholder="t('aiSettings.baseUrlPlaceholder')"
       >
       <span class="settings-note">{{ t('aiSettings.baseUrlHint') }}</span>
     </label>

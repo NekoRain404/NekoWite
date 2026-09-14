@@ -69,15 +69,19 @@ export function useAiSettings(): AiSettingsModel {
   const settings = useSettingsStore()
   const modelLoading = ref(false)
 
-  const showBaseUrl = computed(
-    () =>
-      settings.provider === 'local' ||
-      settings.provider === 'custom' ||
-      // DeepSeek speaks the OpenAI wire format and is routinely served through a
-      // gateway (tokenflux, OpenRouter, a company proxy), so the Base URL has to
-      // be editable rather than pinned to api.deepseek.com.
-      settings.provider === 'deepseek',
-  )
+  /**
+   * Whether the endpoint fields are shown — for every provider, now.
+   *
+   * They were gated to `local`/`custom`/`deepseek`, which left the setup this
+   * app is most often pointed at — an Anthropic-compatible proxy — with no
+   * field to type its address into at all. The gate was not removable on its
+   * own: it was drawn around a Base URL that every provider shared and whose
+   * stored default is a localhost address only a local model server can mean,
+   * so showing it under `anthropic` would have said the Anthropic key goes
+   * there. The store keeps that field per provider now (see
+   * `stores/settings.ts`), which is what makes the field honest everywhere.
+   */
+  const showBaseUrl = computed(() => true)
 
   const modelOptions = computed(() => {
     const list = settings.modelsCache

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, type Ref, type WritableComputedRef } from 'vue'
 import { getSharedGateways } from '../platform/runtime/gateway-runtime'
 import { persistence } from '../services/persistence'
 
@@ -42,17 +42,22 @@ export type ExportPdfOrientation = 'portrait' | 'landscape'
 
 const LS_PROVIDER = 'nekowite.ai.provider'
 const LS_MODEL = 'nekowite.ai.model'
+// The endpoint fields as JSON objects keyed by provider — see `config()` for
+// why neither is one shared scalar like its neighbours. `LS_BASE_URL` is the
+// scalar those objects replace: still read for an install that predates them,
+// never written again.
 const LS_BASE_URL = 'nekowite.ai.baseUrl'
-// The models-URL overrides as a JSON object keyed by provider — see `config()`
-// for why this field is not one shared scalar like its neighbours.
+const LS_BASE_URLS = 'nekowite.ai.baseUrls'
 const LS_MODELS_URLS = 'nekowite.ai.modelsUrls'
 
 /**
  * The address a local model server is assumed to be on — LM Studio's default.
  *
- * It is the stored default of a field that **every provider shares**, which is
- * why it is named rather than inlined at its use: it is not one provider's
- * default, and treating it as one is what `config()` has to avoid.
+ * It is no provider's default but `local`'s, which is why it is named rather
+ * than inlined at its use: attributed to a hosted provider it would name an
+ * endpoint that provider's requests never reach. It is also the one Base URL
+ * the backend has no fallback for — Rust's `default_base_url` has no arm for
+ * `local`, so an empty field there sends the request to api.openai.com.
  */
 const LOCAL_BASE_URL_DEFAULT = 'http://localhost:1234/v1'
 const LS_TEMPERATURE = 'nekowite.ai.temperature'
@@ -76,12 +81,12 @@ function readLs(key: string, fallback: string): string {
   return v && v.length > 0 ? v : fallback
 }
 
-/** The per-provider models-URL overrides, as stored. Corruption is survivable
- *  on purpose: this is a hand-editable key like any other, and a half-written
+/** One of the per-provider URL maps, as stored. Corruption is survivable on
+ *  purpose: these are hand-editable keys like any other, and a half-written
  *  value must not take the settings page down with it. */
-function readModelsUrls(): Record<string, string> {
+function readUrlMap(key: string): Record<string, string> {
   try {
-    const parsed = JSON.parse(persistence.get(LS_MODELS_URLS) || '{}') as unknown
+    const parsed = JSON.parse(persistence.get(key) || '{}') as unknown
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
     const out: Record<string, string> = {}
     for (const [provider, url] of Object.entries(parsed)) {
@@ -158,13 +163,39 @@ function readEnum<T extends string>(key: string, values: readonly T[], fallback:
   return typeof v === 'string' && (values as readonly string[]).includes(v) ? (v as T) : fallback
 }
 
+/**
+ * A two-way view onto the selected provider's entry in a per-provider map.
+ *
+ * Bound to a field, it shows that provider's own address and writes back to
+ * that same slot. Empty drops the entry, which is what leaves `config()` to
+ * omit the field so the backend derives its own endpoint.
+ */
+function scopedUrl(map: Ref<Record<string, string>>, provider: Ref<string>): WritableComputedRef<string> {
+  return computed({
+    get: () => map.value[provider.value] ?? '',
+    set: (v: string) => {
+      const next = { ...map.value }
+      if (v.trim()) next[provider.value] = v
+      else delete next[provider.value]
+      map.value = next
+    },
+  })
+}
+
 export const useSettingsStore = defineStore('settings', () => {
-  // provider/model/baseUrl persist across sessions (only the API key lives in
-  // the stronghold vault), so the configured model is not lost on relaunch.
+  // provider/model persist across sessions (only the API key lives in the
+  // stronghold vault), so the configured model is not lost on relaunch.
   const provider = ref(readLs(LS_PROVIDER, 'local'))
   const model = ref(readLs(LS_MODEL, 'qwen2.5-coder:3b'))
-  const baseUrl = ref(readLs(LS_BASE_URL, LOCAL_BASE_URL_DEFAULT))
-  const modelsUrls = ref<Record<string, string>>(readModelsUrls())
+  // The scalar the Base URL used to be is read once, into the provider that
+  // could have meant it: the field's own localhost default belongs to `local`
+  // and never to a hosted provider, and anything else was typed under whichever
+  // provider was selected at the time.
+  const stored = readLs(LS_BASE_URL, LOCAL_BASE_URL_DEFAULT)
+  const storedFor = stored === LOCAL_BASE_URL_DEFAULT ? 'local' : provider.value
+  const baseUrls = ref<Record<string, string>>({ [storedFor]: stored, ...readUrlMap(LS_BASE_URLS) })
+  const baseUrl = scopedUrl(baseUrls, provider)
+  const modelsUrls = ref<Record<string, string>>(readUrlMap(LS_MODELS_URLS))
   const apiKey = ref('')
   const autosaveInterval = ref<AutosaveInterval>(readAutosaveInterval(15000))
   const maxHistory = ref<number>(readNumber(LS_MAXHISTORY, 10))
@@ -195,17 +226,8 @@ export const useSettingsStore = defineStore('settings', () => {
   const exportPdfOrientation = ref<ExportPdfOrientation>(readEnum(LS_EXPORT_PDF_ORIENT, ['portrait', 'landscape'], 'portrait'))
   /** The models-URL override of the provider selected RIGHT NOW — a view onto
    *  `modelsUrls`, so the field is a plain two-way binding while the value
-   *  stays scoped to one provider. Empty removes the entry, so `config()`
-   *  omits the field and the backend derives the endpoint again. */
-  const modelsUrl = computed({
-    get: () => modelsUrls.value[provider.value] ?? '',
-    set: (v: string) => {
-      const next = { ...modelsUrls.value }
-      if (v.trim()) next[provider.value] = v
-      else delete next[provider.value]
-      modelsUrls.value = next
-    },
-  })
+   *  stays scoped to one provider. */
+  const modelsUrl = scopedUrl(modelsUrls, provider)
 
   watch(provider, (p) => {
     persistence.set(LS_PROVIDER, p)
@@ -217,7 +239,7 @@ export const useSettingsStore = defineStore('settings', () => {
     })
   })
   watch(model, (m) => persistence.set(LS_MODEL, m))
-  watch(baseUrl, (b) => persistence.set(LS_BASE_URL, b))
+  watch(baseUrls, (urls) => persistence.set(LS_BASE_URLS, JSON.stringify(urls)), { deep: true })
   watch(modelsUrls, (urls) => persistence.set(LS_MODELS_URLS, JSON.stringify(urls)), { deep: true })
   watch(temperature, (v) => persistence.set(LS_TEMPERATURE, String(v)))
   watch(maxTokens, (v) => persistence.set(LS_MAX_TOKENS, String(v)))
@@ -257,15 +279,13 @@ export const useSettingsStore = defineStore('settings', () => {
     // The Rust side defaults per provider when `base_url` is absent
     // (`default_base_url`), so passing it through is the whole fix.
     //
-    // The one exception is the field's own stored default: it is a localhost
-    // address that only means anything to `local`/`custom`, and sending it to a
-    // hosted provider would point the request at a machine that is not running
-    // a model server at all.
+    // No gate here any more: the field is stored per provider, so what it
+    // holds for this provider is what this provider's request carries. The
+    // exception for the field's own default existed only while that default was
+    // shared, and keeping it would put the panel and the request back in
+    // disagreement — the field showing an address the request dropped.
     const typed = baseUrl.value.trim()
-    const isLocalDefault = typed === LOCAL_BASE_URL_DEFAULT
-    if (typed && (!isLocalDefault || provider.value === 'local' || provider.value === 'custom')) {
-      cfg.base_url = typed
-    }
+    if (typed) cfg.base_url = typed
     // The override is the one endpoint field that is NOT shared: it is looked
     // up under the current provider, so another provider's models URL cannot
     // ride along on a request that was never meant for it. Empty omits the

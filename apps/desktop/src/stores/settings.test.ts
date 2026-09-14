@@ -18,6 +18,7 @@ function clearLs(): void {
   localStorage.removeItem('nekowite.ai.provider')
   localStorage.removeItem('nekowite.ai.model')
   localStorage.removeItem('nekowite.ai.baseUrl')
+  localStorage.removeItem('nekowite.ai.baseUrls')
   localStorage.removeItem('nekowite.ai.modelsUrls')
   localStorage.removeItem('nekowite.ai.temperature')
   localStorage.removeItem('nekowite.ai.maxTokens')
@@ -45,6 +46,9 @@ describe('useSettingsStore', () => {
   })
 
   it('reads persisted provider/model/baseUrl from localStorage', () => {
+    // The Base URL is stored per provider now, but the scalar an older install
+    // wrote is still read: it can only have been typed under the provider that
+    // was selected when it was written, so that is the entry it becomes.
     localStorage.setItem('nekowite.ai.provider', 'anthropic')
     localStorage.setItem('nekowite.ai.model', 'claude-sonnet-4-5')
     localStorage.setItem('nekowite.ai.baseUrl', 'https://api.anthropic.com')
@@ -54,7 +58,7 @@ describe('useSettingsStore', () => {
     expect(s.baseUrl).toBe('https://api.anthropic.com')
   })
 
-  it('persists provider/model/baseUrl changes to localStorage (I5)', async () => {
+  it('persists provider/model and the Base URL under the provider it was typed for (I5)', async () => {
     const s = useSettingsStore()
     s.provider = 'gemini'
     s.model = 'gemini-2.5-pro'
@@ -62,7 +66,55 @@ describe('useSettingsStore', () => {
     await nextTick()
     expect(localStorage.getItem('nekowite.ai.provider')).toBe('gemini')
     expect(localStorage.getItem('nekowite.ai.model')).toBe('gemini-2.5-pro')
-    expect(localStorage.getItem('nekowite.ai.baseUrl')).toBe('https://generativelanguage.googleapis.com')
+    // Keyed by provider, so one provider's address cannot come back as
+    // another's — which is what the single `nekowite.ai.baseUrl` scalar did.
+    // `local` is in the map because the field's own localhost default is its
+    // entry and nothing else's, not because anything was typed for it.
+    expect(JSON.parse(localStorage.getItem('nekowite.ai.baseUrls') ?? '{}')).toEqual({
+      local: 'http://localhost:1234/v1',
+      gemini: 'https://generativelanguage.googleapis.com',
+    })
+  })
+
+  it('keeps one provider’s Base URL out of every other provider', () => {
+    // Reusing the address of a provider the user configured elsewhere is how
+    // the shared scalar told an `anthropic` user their key goes to a local
+    // model server, and how a `custom` address ended up on a hosted request.
+    const s = useSettingsStore()
+    s.provider = 'custom'
+    s.baseUrl = 'https://gateway.example.com/v1'
+
+    s.provider = 'anthropic'
+    expect(s.baseUrl).toBe('')
+    expect(s.config().base_url).toBeUndefined()
+
+    s.provider = 'custom'
+    expect(s.baseUrl).toBe('https://gateway.example.com/v1')
+    expect(s.config().base_url).toBe('https://gateway.example.com/v1')
+  })
+
+  it('sends exactly the address the field holds for the provider on screen', () => {
+    // config() used to drop the address for providers the field was not
+    // rendered for, so the panel and the request disagreed about what was
+    // configured. One rule now: whatever this provider's entry holds is what
+    // this provider's request carries.
+    const s = useSettingsStore()
+    for (const provider of ['anthropic', 'openai', 'gemini', 'grok', 'deepseek', 'local', 'custom']) {
+      s.provider = provider
+      s.baseUrl = `https://proxy.example.com/${provider}`
+      expect(s.config().base_url, `${provider} must carry the address on screen`).toBe(
+        `https://proxy.example.com/${provider}`,
+      )
+    }
+  })
+
+  it('lets the Base URL be cleared, and derives the endpoint again', () => {
+    const s = useSettingsStore()
+    s.provider = 'local'
+    expect(s.config().base_url).toBe('http://localhost:1234/v1')
+    s.baseUrl = ''
+    expect(s.baseUrl).toBe('')
+    expect(s.config().base_url).toBeUndefined()
   })
 
   it('reloads the key for the new provider on provider change (I5)', async () => {
@@ -121,11 +173,13 @@ describe('useSettingsStore', () => {
     expect(s.config().api_key?.length).toBe(longKey.length)
   })
 
-  it('includes base_url only for local/custom in config', () => {
+  it('omits base_url for a provider nothing was typed for, and keeps local’s default', () => {
     const s = useSettingsStore()
     s.provider = 'openai'
     const cfg = s.config()
     expect(cfg.provider).toBe('openai')
+    // Absent, not blank: the backend then applies `default_base_url` for this
+    // provider rather than being handed an address that means nothing.
     expect(cfg.base_url).toBeUndefined()
     s.provider = 'local'
     expect(s.config().base_url).toBe('http://localhost:1234/v1')
@@ -140,25 +194,30 @@ describe('useSettingsStore', () => {
     // The Rust side already defaults per provider when `base_url` is absent
     // (`default_base_url`), so forwarding it is the whole fix.
     const s = useSettingsStore()
-    s.baseUrl = 'https://proxy.example.com/v1'
     for (const provider of ['anthropic', 'gemini', 'openai', 'grok'] as const) {
       s.provider = provider
+      s.baseUrl = `https://proxy.example.com/${provider}`
       expect(s.config().base_url, `${provider} must carry its Base URL`).toBe(
-        'https://proxy.example.com/v1',
+        `https://proxy.example.com/${provider}`,
       )
     }
   })
 
-  it('never sends the local model server default to a hosted provider', () => {
-    // The field is shared by every provider, and its stored default is a
-    // localhost address that only `local` and `custom` can mean anything by.
-    // Forwarding it unconditionally would point a hosted provider at a machine
-    // that is not running a model server.
+  it('never hands a hosted provider the local model server’s address', () => {
+    // The Base URL used to be ONE value every provider shared, and its stored
+    // default is a localhost address that only `local`/`custom` can mean
+    // anything by. An address reaching a hosted provider has to be one the user
+    // typed under that provider: the default is `local`'s own entry now, so a
+    // hosted provider starts empty and is left to Rust's `default_base_url`.
+    localStorage.setItem('nekowite.ai.baseUrl', 'http://localhost:1234/v1')
     const s = useSettingsStore()
+
     s.provider = 'anthropic'
-    s.baseUrl = 'http://localhost:1234/v1'
+    expect(s.baseUrl).toBe('')
     expect(s.config().base_url).toBeUndefined()
-    s.provider = 'custom'
+
+    s.provider = 'local'
+    expect(s.baseUrl).toBe('http://localhost:1234/v1')
     expect(s.config().base_url).toBe('http://localhost:1234/v1')
   })
 
