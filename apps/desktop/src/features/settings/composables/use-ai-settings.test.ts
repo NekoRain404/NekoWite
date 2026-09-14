@@ -60,20 +60,42 @@ afterEach(() => {
 })
 
 describe('useAiSettings', () => {
-  it('offers the Base URL only where a gateway makes sense', () => {
+  it('offers the Base URL for every provider', () => {
     const m = mountModel()
     const settings = useSettingsStore()
 
+    // The fields were gated to `local`/`custom`/`deepseek`, which left the setup
+    // this app is most often pointed at — an Anthropic-compatible proxy — with
+    // no field to type its address into at all: it reached the backend only
+    // once typed somewhere the UI never offered.
+    for (const provider of ['openai', 'anthropic', 'gemini', 'grok', 'deepseek', 'local', 'custom']) {
+      settings.provider = provider
+      expect(m.showBaseUrl.value, `${provider} must offer its Base URL`).toBe(true)
+    }
+  })
+
+  it('shows each provider its own Base URL, never another provider’s', () => {
+    const m = mountModel()
+    const settings = useSettingsStore()
+
+    // `local` is the only provider whose address the app defaults, and the
+    // default is a localhost address only a local model server can mean.
+    settings.provider = 'local'
+    expect(m.baseUrl.value).toBe('http://localhost:1234/v1')
+
+    // Typed under `anthropic`, the proxy address belongs to `anthropic` alone.
+    // Showing it under `openai` — or showing `openai` the localhost default the
+    // shared field used to carry — would name an endpoint that provider's
+    // requests never reach.
+    settings.provider = 'anthropic'
+    m.baseUrl.value = 'https://tokenflux.dev/anthropic/v1'
     settings.provider = 'openai'
-    expect(m.showBaseUrl.value).toBe(false)
-
-    // DeepSeek speaks the OpenAI wire format and is routinely fronted by a
-    // gateway, so its Base URL is editable rather than pinned.
-    settings.provider = 'deepseek'
-    expect(m.showBaseUrl.value).toBe(true)
-
-    settings.provider = 'custom'
-    expect(m.showBaseUrl.value).toBe(true)
+    expect(m.baseUrl.value).toBe('')
+    expect(m.baseUrl.value).not.toBe('http://localhost:1234/v1')
+    settings.provider = 'anthropic'
+    expect(m.baseUrl.value).toBe('https://tokenflux.dev/anthropic/v1')
+    settings.provider = 'local'
+    expect(m.baseUrl.value).toBe('http://localhost:1234/v1')
   })
 
   it('drops the stale model list and refetches when the provider changes', async () => {
