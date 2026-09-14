@@ -27,6 +27,15 @@
     "src/**/*.vue",
     "perf/**/*.ts",
     "e2e/**/*.ts",
+    // `check-katex.ts` is a CI gate (`pnpm check:export-css`, run after the
+    // build) and it was outside every project here, so nothing compiled it.
+    // It is only clean as part of THIS program: the file imports nothing but
+    // `node:*`, and with `types: ["vite/client"]` the node types reach it
+    // through the test files' vitest imports. Compiled on its own it reports
+    // seven errors — two unresolved node modules, `process` twice,
+    // `import.meta.dirname`, and two implicit-`any` cascades from those —
+    // which say nothing about the script.
+    "scripts/**/*.ts",
     "vite.config.ts",
     "vitest.perf.config.ts",
     "playwright.config.ts"
