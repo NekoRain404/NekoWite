@@ -18,16 +18,20 @@
  * Every adapter is a pure closure over its own state — creating two gateways
  * yields two independent stores, so tests never leak state across instances.
  *
- * The implementation is one module per contract, so a reader can take in a
- * single port without holding the other four in their head:
+ * The implementation is one module per concern — the fs gateway is five of
+ * them — so a reader can take in one area without holding the rest in their
+ * head:
  *
- *  - `memoryFs.ts`          the vault: notes, trash, history, listing
- *  - `memoryAttachments.ts` the fs gateway's attachment area
- *  - `memoryDialogs.ts`     DialogPort
- *  - `memoryAi.ts`          AiPort
- *  - `memoryKeys.ts`        KeyPort
- *  - `memoryFaults.ts`      the delay/fail policy the adapters share
- *  - `memoryPickedFiles.ts` the demo's picked-file registry (module-scope state)
+ *  - `memory-fs.ts`           the vault: the fs gateway's composition root
+ *  - `memory-file-ops.ts`     reading, writing, stating, listing, mkdir
+ *  - `memory-trash.ts`        deleting, listing, restoring, emptying
+ *  - `memory-history.ts`      the snapshots a write keeps of what it replaced
+ *  - `memory-attachments.ts`  the attachment bytes and their media URLs
+ *  - `memory-dialogs.ts`      DialogPort
+ *  - `memory-ai.ts`           AiPort
+ *  - `memory-keys.ts`         KeyPort
+ *  - `memory-faults.ts`       the delay/fail policy the adapters share
+ *  - `memory-picked-files.ts` the demo's picked-file registry (module-scope state)
  *
  * The names below are listed explicitly rather than `export *`ing the modules:
  * this file is imported by path across the suite, so what it offers is a

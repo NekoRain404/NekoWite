@@ -116,6 +116,19 @@ describe('ComboBox', () => {
     expect(rowByValue('qwen2.5-coder:3b').getAttribute('aria-selected')).toBe('false')
   })
 
+  it('places the popup against the box the list measured', async () => {
+    mount({ value: 'gpt-4o-mini' })
+    input().click()
+
+    // jsdom measures every rect as zero, so what lands is the field's own 8px
+    // margin and its 4px gap under the anchor — the values the default `pos`
+    // (0, 0) never produces. The list is a child component, and this is what
+    // pins that its size still crosses back: a measurement that went missing
+    // would leave the popup at the origin.
+    await vi.waitFor(() => expect(popup()?.style.left).toBe('8px'))
+    expect(popup()?.style.top).toBe('4px')
+  })
+
   it('walks the list with the arrows and commits the row they are on', async () => {
     const model = mount({ value: 'gpt-4o-mini' })
     await press('ArrowDown')
