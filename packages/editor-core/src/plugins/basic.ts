@@ -33,7 +33,7 @@ import {
   mathRemark,
 } from '../math'
 import { linkOrderSchema } from '../link'
-import { mdxComponent, mdxComponentNodeView, mdxJsxRemark } from '../mdx'
+import { mdxComponent, mdxComponentNodeView, mdxJsxRemark, mdxTextStringify } from '../mdx'
 import { tableAutoRowKeymap, tableClipboardKeymap } from '../table/keymap'
 import { tableCellHtmlEscapeStringify } from '../table/stringify'
 import { tableFeaturePlugin } from '../table/plugin'
@@ -121,6 +121,11 @@ export const basicPlugins: MilkdownPlugin[] = [
   $prose(() => tableClipboardKeymap),
   ...mdxJsxRemark,
   mdxComponentNodeView,
+  // Both stringifiers must agree on how an MDX run is written back; this one
+  // installs the handler for the editor's own serializer (its parse-time twin is
+  // `mdxJsxRemark` above, and `serialize.ts` uses the same handler for the
+  // re-parse every save runs).
+  mdxTextStringify,
   // The preset's thematic-break rule is dropped and replaced below. Input rules
   // run in registration order and the first one that matches wins, so a later rule
   // cannot veto the preset's — inside a cell the preset's rule fired first and

@@ -22,6 +22,18 @@ function findMdxComponent(doc: Node): Node | null {
   return found
 }
 
+function findMdxComponentPos(doc: Node): number | null {
+  let found: number | null = null
+  doc.descendants((n, pos) => {
+    if (n.type.name === 'mdxComponent') {
+      found = pos
+      return false
+    }
+    return true
+  })
+  return found
+}
+
 describe('parseMdxTag', () => {
   it('keeps attributes after a comparison inside a JSX expression', () => {
     const attrs = parseMdxTag('<Tag value={count > 0 ? "yes" : "no"} other="keep" />')
@@ -51,6 +63,64 @@ describe('mdxComponentToMarkdown', () => {
     expect(
       mdxComponentToMarkdown({ name: 'Callout', props: {}, children: 'note' })
     ).toBe('<Callout>\n\nnote\n\n</Callout>')
+  })
+
+  // The source a node was parsed from is emitted verbatim only while it still
+  // describes the node; see `rawIsCurrent`. These two pin both halves of that
+  // rule: the form the author wrote survives, and an edit is not overwritten by
+  // it.
+  it('emits the captured source while the attrs still describe it', () => {
+    expect(
+      mdxComponentToMarkdown({
+        name: 'FloatBox',
+        props: { x: '20', y: '20' },
+        children: '',
+        raw: '<FloatBox  x="20" y="20"/>',
+      })
+    ).toBe('<FloatBox  x="20" y="20"/>')
+  })
+  it('re-serializes from the attrs once they no longer match the source', () => {
+    expect(
+      mdxComponentToMarkdown({
+        name: 'FloatBox',
+        props: { x: '99', y: '77' },
+        children: '',
+        raw: '<FloatBox x="20" y="20" />',
+      })
+    ).toBe('<FloatBox x="99" y="77" />')
+  })
+})
+
+/**
+ * Every FloatBox drag, resize, rotate and retext is a `setNodeMarkup` on the
+ * `mdxComponent` node, and those transactions replace `attrs` while leaving the
+ * captured source alone. The save wrote the source, so the edit was discarded:
+ * the file kept the original coordinates and the box snapped back on reload.
+ */
+describe('an edited component is written back', () => {
+  it('saves the moved coordinates, not the source the node was parsed from', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el)
+    await editor.open('<FloatBox x="20" y="20" w="280" h="180" angle="0" z="1">box</FloatBox>\n')
+
+    const view = editor.getView()
+    const pos = findMdxComponentPos(view.state.doc)
+    expect(pos).not.toBeNull()
+    const node = view.state.doc.nodeAt(pos as number)
+    // The transaction `updateFloatProps` dispatches on every drag frame.
+    view.dispatch(
+      view.state.tr.setNodeMarkup(pos as number, undefined, {
+        ...node?.attrs,
+        props: { ...(node?.attrs.props as Record<string, string>), x: '99', y: '77' },
+      })
+    )
+
+    const md = await editor.save()
+    expect(md).toContain('x="99"')
+    expect(md).toContain('y="77"')
+    expect(md).not.toContain('x="20"')
+    editor.destroy()
   })
 })
 
