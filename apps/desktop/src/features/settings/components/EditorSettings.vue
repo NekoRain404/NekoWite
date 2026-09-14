@@ -7,7 +7,12 @@
  * the first writes the live mode, the second the mode a new note opens in, and
  * the two are read-only mirrors of each other, not a shared control.
  */
+import { computed } from 'vue'
+import SelectMenu, { type SelectOption } from '../../../components/SelectMenu.vue'
 import { t } from '../../../i18n'
+// Type-only, so the template's cast is checked against the same union the
+// store holds.
+import type { AutosaveInterval } from '../../../stores/settings'
 import { useEditorSettings } from '../composables/useEditorSettings'
 
 const {
@@ -37,6 +42,16 @@ const {
   setStatusBarWords,
   setConfirmBeforeDelete,
 } = useEditorSettings()
+
+// The cadence is stored in milliseconds (and `'off'`), so the labels are the
+// only place the user's seconds appear.
+const autosaveChoices = computed<SelectOption[]>(() => [
+  { value: 'off', label: t('settings.editor.autosaveOff') },
+  { value: 5000, label: t('settings.editor.autosave5s') },
+  { value: 15000, label: t('settings.editor.autosave15s') },
+  { value: 30000, label: t('settings.editor.autosave30s') },
+  { value: 60000, label: t('settings.editor.autosave60s') },
+])
 </script>
 
 <template>
@@ -90,28 +105,18 @@ const {
       </button>
     </div>
     <span class="settings-label">{{ t('settings.editor.save') }}</span>
-    <label class="settings-field">
+    <label
+      class="settings-field"
+      for="settings-autosave-interval"
+    >
       <span>{{ t('settings.editor.autosaveInterval') }}</span>
-      <select
-        v-model="autosaveInterval"
+      <SelectMenu
+        id="settings-autosave-interval"
         class="input"
-      >
-        <option :value="'off'">
-          {{ t('settings.editor.autosaveOff') }}
-        </option>
-        <option :value="5000">
-          {{ t('settings.editor.autosave5s') }}
-        </option>
-        <option :value="15000">
-          {{ t('settings.editor.autosave15s') }}
-        </option>
-        <option :value="30000">
-          {{ t('settings.editor.autosave30s') }}
-        </option>
-        <option :value="60000">
-          {{ t('settings.editor.autosave60s') }}
-        </option>
-      </select>
+        :model-value="autosaveInterval"
+        :options="autosaveChoices"
+        @update:model-value="autosaveInterval = $event as AutosaveInterval"
+      />
     </label>
     <label class="settings-field">
       <span>{{ t('settings.editor.maxHistory') }}</span>

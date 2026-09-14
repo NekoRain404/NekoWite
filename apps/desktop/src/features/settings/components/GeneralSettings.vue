@@ -7,7 +7,9 @@
  * the only way it changes, and the browse itself is the composable's — this
  * renders what the two return and reports a pick upward (§13.3).
  */
-import { t } from '../../../i18n'
+import { computed } from 'vue'
+import SelectMenu, { type SelectOption } from '../../../components/SelectMenu.vue'
+import { setLocale, t } from '../../../i18n'
 import { useGeneralSettings } from '../composables/useGeneralSettings'
 
 defineProps<{
@@ -17,7 +19,20 @@ defineProps<{
 
 const emit = defineEmits<{ (e: 'saved', path: string): void }>()
 
-const { vaultPath, locale, browseVault, onLocaleChange } = useGeneralSettings()
+const { vaultPath, locale, browseVault } = useGeneralSettings()
+
+const languageChoices = computed<SelectOption[]>(() => [
+  { value: 'zh', label: t('settings.general.languageZh') },
+  { value: 'en', label: t('settings.general.languageEn') },
+])
+
+/** The composable's `onLocaleChange` still reads the value off a native
+ *  select's `change` event and its module is outside this change, so the
+ *  dropdown reaches `setLocale` — the same command — with the same narrowing
+ *  the composable applied. */
+function pickLocale(value: string | number): void {
+  setLocale(value === 'en' ? 'en' : 'zh')
+}
 
 async function onBrowse(): Promise<void> {
   const picked = await browseVault()
@@ -61,15 +76,17 @@ async function onBrowse(): Promise<void> {
     <span class="settings-note">{{ t('settings.general.vaultNote') }}</span>
 
     <span class="settings-label">{{ t('settings.general.language') }}</span>
-    <label class="settings-field">
-      <select
+    <label
+      class="settings-field"
+      for="settings-locale"
+    >
+      <SelectMenu
+        id="settings-locale"
         class="input"
-        :value="locale"
-        @change="onLocaleChange"
-      >
-        <option value="zh">{{ t('settings.general.languageZh') }}</option>
-        <option value="en">{{ t('settings.general.languageEn') }}</option>
-      </select>
+        :model-value="locale"
+        :options="languageChoices"
+        @update:model-value="pickLocale"
+      />
     </label>
   </section>
 </template>
