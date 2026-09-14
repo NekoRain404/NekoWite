@@ -1,0 +1,222 @@
+/**
+ * The editor surface: the formatting toolbar, the status bar, the view switch, and the
+ * in-document widgets (tables, images, floats, doc stats).
+ */
+export const editor = {
+  en: {
+    toolbar: {
+      heading: 'Heading',
+      headingLevel: 'Heading {n}',
+      bold: 'Bold',
+      italic: 'Italic',
+      strike: 'Strikethrough',
+      inlineCode: 'Inline code',
+      link: 'Link',
+      image: 'Image',
+      listUnordered: 'Unordered list',
+      listOrdered: 'Ordered list',
+      listTask: 'Task list',
+      quote: 'Quote',
+      codeBlock: 'Code block',
+      hr: 'Horizontal rule',
+      insertComponent: 'Insert MDX component',
+    },
+
+    docstats: {
+      title: 'Stats',
+      words: 'Words',
+      chars: 'Characters',
+      paragraphs: 'Paragraphs',
+      images: 'Images',
+      citations: 'Citations',
+      readMinutes: 'Read time',
+      tasks: 'Tasks',
+      noTasks: 'No tasks in this document.',
+    },
+
+    status: {
+      aiThinking: 'AI is thinking…',
+      words: '{n} words',
+      chars: '{n} chars',
+      readMinutes: '~{n} min',
+      tasks: '{done}/{total} tasks done',
+      saving: 'Saving',
+      dirty: 'Unsaved',
+      saved: 'Saved',
+      source: 'Source',
+      rendered: 'Rendered',
+      split: 'Split',
+    },
+
+    viewswitch: {
+      source: 'Source',
+      rendered: 'Rendered',
+      split: 'Split',
+      aria: 'View switch',
+    },
+
+    floatToolbar: {
+      bringForward: 'Bring forward',
+      sendBackward: 'Send backward',
+    },
+
+    editorPane: {
+      resizeSplit: 'Adjust split ratio',
+      emptyTitle: 'Open a file from the left to start writing',
+      emptyHint: 'Ctrl+S save · Ctrl+Z undo · supports math, citations and MDX components',
+    },
+
+    rendered: {
+      parseFailed: 'Document parse failed; switched to source view, check the document format',
+      saveImageNoVault: 'No vault is open; cannot save the image',
+    },
+
+    imageNode: {
+      retry: 'Retry',
+      missingSource: 'Missing image source',
+      loadFailed: 'Image failed to load',
+      remoteBlocked: 'Remote image not loaded (blocked by the security policy)',
+      openInBrowser: 'Open in browser',
+    },
+
+    imagePanel: {
+      aria: 'Image properties',
+      title: 'Image',
+      alt: 'Alt text',
+      titleField: 'Title',
+      link: 'Link',
+      width: 'Width',
+      align: 'Align',
+      alignLeft: 'Left',
+      alignCenter: 'Center',
+      alignRight: 'Right',
+      currentSize: 'Current',
+      originalSize: 'Original',
+      restoreSize: 'Restore size',
+      replace: 'Replace',
+      delete: 'Delete',
+    },
+
+    tableMenu: {
+      addRowAfter: 'Add row below',
+      addRowBefore: 'Add row above',
+      deleteRow: 'Delete row',
+      addColAfter: 'Add column right',
+      addColBefore: 'Add column left',
+      deleteCol: 'Delete column',
+      toggleHeader: 'Header row',
+      alignLeft: 'Align left',
+      alignCenter: 'Align center',
+      alignRight: 'Align right',
+      aria: 'Table actions',
+    },
+  },
+  zh: {
+    toolbar: {
+      heading: '标题',
+      headingLevel: '标题 {n}',
+      bold: '加粗',
+      italic: '斜体',
+      strike: '删除线',
+      inlineCode: '行内代码',
+      link: '链接',
+      image: '图片',
+      listUnordered: '无序列表',
+      listOrdered: '有序列表',
+      listTask: '任务列表',
+      quote: '引用',
+      codeBlock: '代码块',
+      hr: '分隔线',
+      insertComponent: '插入 MDX 组件',
+    },
+
+    docstats: {
+      title: '统计',
+      words: '词',
+      chars: '字符',
+      paragraphs: '段落',
+      images: '图片',
+      citations: '引用',
+      readMinutes: '阅读时间',
+      tasks: '任务',
+      noTasks: '本文档中没有任务。',
+    },
+
+    status: {
+      aiThinking: 'AI 思考中…',
+      words: '{n} 词',
+      chars: '{n} 字符',
+      readMinutes: '约 {n} 分钟',
+      tasks: '已完成 {done}/{total} 任务',
+      saving: '保存中',
+      dirty: '未保存',
+      saved: '已保存',
+      source: '源码',
+      rendered: '渲染',
+      split: '对照',
+    },
+
+    viewswitch: {
+      source: '源码',
+      rendered: '渲染',
+      split: '对照',
+      aria: '视图切换',
+    },
+
+    floatToolbar: {
+      bringForward: '置前',
+      sendBackward: '置后',
+    },
+
+    editorPane: {
+      resizeSplit: '调整分屏比例',
+      emptyTitle: '从左侧打开一个文件开始写作',
+      emptyHint: 'Ctrl+S 保存 · Ctrl+Z 撤销 · 支持数学公式、引用与 MDX 组件',
+    },
+
+    rendered: {
+      parseFailed: '文档解析失败，已切换到源码视图，请检查文档格式',
+      saveImageNoVault: '尚未打开 vault，无法保存图片',
+    },
+
+    imageNode: {
+      retry: '重试',
+      missingSource: '缺少图片地址',
+      loadFailed: '图片加载失败',
+      remoteBlocked: '远程图片未加载（受安全策略限制）',
+      openInBrowser: '在浏览器中打开',
+    },
+
+    imagePanel: {
+      aria: '图片属性',
+      title: '图片',
+      alt: '替代文本',
+      titleField: '标题',
+      link: '链接',
+      width: '宽度',
+      align: '对齐',
+      alignLeft: '左对齐',
+      alignCenter: '居中',
+      alignRight: '右对齐',
+      currentSize: '当前尺寸',
+      originalSize: '原始尺寸',
+      restoreSize: '恢复尺寸',
+      replace: '替换图片',
+      delete: '删除图片',
+    },
+
+    tableMenu: {
+      addRowAfter: '下方添加行',
+      addRowBefore: '上方添加行',
+      deleteRow: '删除行',
+      addColAfter: '右侧添加列',
+      addColBefore: '左侧添加列',
+      deleteCol: '删除列',
+      toggleHeader: '首行为表头',
+      alignLeft: '左对齐',
+      alignCenter: '居中',
+      alignRight: '右对齐',
+      aria: '表格操作',
+    },
+  },
+}

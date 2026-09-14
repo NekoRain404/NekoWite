@@ -1,0 +1,43 @@
+/** The attachment library panel. */
+export const attachments = {
+  en: {
+    attachments: {
+      title: 'Attachments',
+      refresh: 'Refresh',
+      loading: 'Loading attachments…',
+      emptyTitle: 'Attachment library is empty',
+      emptyHint: 'Paste or drag images into the editor; they are saved to the vault attachments folder and appear here.',
+      insertImage: 'Insert image {name}',
+      insert: 'Insert into document',
+      copyPath: 'Copy relative path',
+      deleteConfirm: 'Confirm delete',
+      openDocFirst: 'Open a document first to insert an image',
+      editorNotReady: 'Editor is not ready yet, try again shortly',
+      insertFailed: 'Failed to insert image, please retry',
+      pickFailed: 'Could not open the file picker, please retry',
+      importFailed: 'Failed to import the image, please retry',
+      copyFailed: 'Failed to copy, please copy manually',
+      deleteFailed: 'Delete failed, please retry',
+    },
+  },
+  zh: {
+    attachments: {
+      title: '附件',
+      refresh: '刷新',
+      loading: '正在加载附件…',
+      emptyTitle: '附件库为空',
+      emptyHint: '在编辑器中粘贴或拖入图片，会自动保存到 vault 的 attachments 目录并出现在这里。',
+      insertImage: '插入图片 {name}',
+      insert: '插入到文档',
+      copyPath: '复制相对路径',
+      deleteConfirm: '确认删除',
+      openDocFirst: '请先打开一个文档，再插入图片',
+      editorNotReady: '编辑器尚未就绪，请稍后再试',
+      insertFailed: '插入图片失败，请重试',
+      pickFailed: '打开文件选择器失败，请重试',
+      importFailed: '导入图片失败，请重试',
+      copyFailed: '复制失败，请手动复制',
+      deleteFailed: '删除失败，请重试',
+    },
+  },
+}
