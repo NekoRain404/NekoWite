@@ -1564,13 +1564,8 @@ fn gemini_url_has_no_key_embedded() {
     let cfg = AIConfig {
         provider: "gemini".into(),
         model: "gemini-2.5-pro".into(),
-        base_url: None,
         api_key: Some("SECRET-KEY".into()),
-        temperature: None,
-        max_tokens: None,
-        system_prompt: None,
-        reasoning_effort: None,
-        allow_private: false,
+        ..Default::default()
     };
     let (url, _body) = resolve_endpoint(&cfg, "hi", &[]);
     assert!(

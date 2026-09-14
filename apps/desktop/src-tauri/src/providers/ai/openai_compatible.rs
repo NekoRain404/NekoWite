@@ -231,13 +231,7 @@ mod tests {
         AIConfig {
             provider: "openai".into(),
             model: "gpt-4o".into(),
-            base_url: None,
-            api_key: None,
-            temperature: None,
-            max_tokens: None,
-            system_prompt: None,
-            reasoning_effort: None,
-            allow_private: false,
+            ..Default::default()
         }
     }
 

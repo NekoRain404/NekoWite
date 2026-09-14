@@ -1,17 +1,18 @@
 //! Shared AI client layer: the completion path and the state one completion
 //! runs in - the HTTP client lifecycle, the streaming loop, the concurrency
-//! slot, the cancel/emit plumbing and the events the frontend listens to.
+//! slot and the cancel plumbing.
 //!
 //! Everything this layer *decides* lives in a sibling module, and the decisions
 //! are re-exported here for one stage (roadmap 10.1 rule 5) so the sole consumer
 //! (`commands/ai.rs`) and the integration tests keep their imports unchanged:
 //!
+//! * [`super::events`] - the completion's id and the events it emits;
 //! * [`super::limits`] - the byte, time and concurrency ceilings, and the guard
 //!   that enforces the concurrency one;
 //! * [`super::request`] - the request configuration, body/URL construction and
 //!   the input ceiling check;
-//! * [`super::response`] - the non-streaming read, its JSON parsing and the
-//!   error-body wording;
+//! * [`super::response`] - the non-streaming read, the error-body wording and
+//!   the token accounting;
 //! * [`super::sse`] - frame reassembly, folding and the answer ceiling;
 //! * [`super::url_policy`] - the HTTPS rule, the SSRF guard and the pin.
 //!
@@ -24,14 +25,13 @@
 //! the others, and the provider modules reach their helpers through
 //! `request`/`response`/`url_policy` instead of through this file.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use serde::Serialize;
-use tauri::{Emitter, Manager};
+use tauri::Emitter;
 
-use crate::state::AiState;
+pub use super::events::{ai_id_for, emit_ai_error, next_ai_id, AIChunk};
+use super::events::{deliver_events, is_active};
 
 // --- Compatibility re-exports -------------------------------------------------
 //
@@ -65,41 +65,6 @@ pub use super::sse::{
 pub use super::url_policy::{validate_base_url, VettedHost};
 use super::{gemini, openai_compatible};
 
-#[derive(Serialize, Clone)]
-pub struct AIChunk {
-    pub id: String,
-    pub text: String,
-}
-
-pub fn emit_ai_error(app: &tauri::AppHandle, id: &str, message: &str) {
-    let _ = app.emit(
-        "ai-error",
-        serde_json::json!({ "id": id, "message": message }),
-    );
-}
-
-static AI_ID_SEQ: AtomicU64 = AtomicU64::new(0);
-
-/// Format a completion id as `ai-{unix_micros}-{seq}`. The monotonic `seq`
-/// disambiguates calls that land in the same microsecond, so concurrent
-/// `ai_complete` invocations never share an id (which would let one finish
-/// cancel the other in the shared in-flight set).
-pub fn ai_id_for(micros: u64, seq: u64) -> String {
-    format!("ai-{micros}-{seq}")
-}
-
-/// Generate a unique id for a completion: unix-micros timestamp plus a
-/// process-local monotonic sequence counter.
-pub fn next_ai_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let micros = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_micros() as u64;
-    let seq = AI_ID_SEQ.fetch_add(1, Ordering::Relaxed);
-    ai_id_for(micros, seq)
-}
-
 /// Resolve a completion's request endpoint + body for the configured provider.
 /// Provider-specific construction is delegated to [`super::gemini`] and
 /// [`super::openai_compatible`].
@@ -113,58 +78,6 @@ pub fn resolve_endpoint(
         "gemini" => gemini::endpoint(cfg, prompt, images),
         _ => openai_compatible::endpoint_default(cfg, prompt, images),
     }
-}
-
-fn is_active(app: &tauri::AppHandle, id: &str) -> bool {
-    let state = app.state::<AiState>();
-    let guard = state.inflight.lock();
-    match guard {
-        Ok(inflight) => inflight.contains(id),
-        Err(_) => false,
-    }
-}
-
-/// Deliver one folded chunk's events in order, returning `true` once the
-/// provider has ended the stream (`data: [DONE]`).
-///
-/// The reasoning text is emitted as PROGRESS only and never appended to the
-/// answer: a reasoning model streams its thinking before any answer text, and
-/// the ghost writer types whatever the answer streams straight into the
-/// document — the model's internal monologue is not part of the note. An
-/// in-band provider error is emitted AND returned as `Err`, because a 200
-/// response that carries an error frame is a truncated answer, not a complete
-/// one.
-fn deliver_events(
-    app: &tauri::AppHandle,
-    id: &str,
-    events: Vec<StreamEvent>,
-) -> Result<bool, String> {
-    let mut done = false;
-    for event in events {
-        match event {
-            StreamEvent::Text(text) => {
-                let _ = app.emit(
-                    "ai-chunk",
-                    AIChunk {
-                        id: id.to_string(),
-                        text,
-                    },
-                );
-            }
-            StreamEvent::Reasoning(text) => {
-                let _ = app.emit(
-                    "ai-reasoning",
-                    serde_json::json!({ "id": id, "text": text }),
-                );
-            }
-            StreamEvent::Done => done = true,
-            StreamEvent::ProviderError(message) => {
-                emit_ai_error(app, id, &message);
-                return Err(message);
-            }
-        }
-    }
-    Ok(done)
 }
 
 /// Build the HTTP client used for every AI request.
@@ -208,7 +121,11 @@ fn ai_http_client(
 pub async fn list_models(config: &AIConfig) -> Result<Vec<String>, String> {
     // Reject a private/loopback Base URL unless the user opts in (see
     // `validate_base_url`); a model dropdown must never phone an internal host.
-    let pin = validate_base_url(config)?;
+    // The address this path dials is the models-URL override when one is set,
+    // so THAT is what the policy is handed - an override is a second address,
+    // never a second set of rules, and the pin it returns must belong to the
+    // host that will actually be dialled.
+    let pin = validate_base_url(&config.for_models_fetch())?;
     let client = ai_http_client(MODELS_CONNECT_TIMEOUT, MODELS_READ_TIMEOUT, pin.as_ref())
         .map_err(|e| e.to_string())?;
     fetch_model_ids(&client, config).await
