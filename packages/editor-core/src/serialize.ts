@@ -8,6 +8,7 @@ import type { Root } from 'mdast'
 
 import { mdxTextHandler } from './mdx/text'
 import { flattenMdxElements, mdxJsxMdast } from './mdx/remark'
+import { normalizeMdxTree, withMdxSyntax } from './mdx/document'
 
 /**
  * Un-escape the opening bracket ONLY when it introduces a citation:
@@ -52,6 +53,15 @@ export function serializeMarkdown(root: Root): string {
   return processor.stringify(root)
 }
 
+/** The same pipeline with MDX syntax, built on first use: a Markdown document
+ *  never constructs it. */
+let mdxProcessor: ReturnType<typeof processor.copy> | null = null
+
+function parseMdx(md: string): Root {
+  mdxProcessor ??= withMdxSyntax(processor.copy() as never)
+  return mdxProcessor.parse(md) as Root
+}
+
 /**
  * Re-parse and re-stringify, which is what every save runs over its own output.
  *
@@ -62,8 +72,32 @@ export function serializeMarkdown(root: Root): string {
  * `mdxJsxMdast` merges each element into one node carrying its source; the
  * flattened `html` node writes that source out verbatim, because remark-stringify
  * has no handler for this pass's own node type.
+ *
+ * `mdx` says the document was opened as an MDX one, and then this is the SAME
+ * parser that opened it — the symmetry the paragraph above is about. It is not
+ * an optimisation and it is not optional: the CommonMark pass reads a tag whose
+ * `>` sits on a line of its own as three unrelated blocks, and glues a close tag
+ * to the element before it (`<Inner />\n</Outer>`), so an element that the MDX
+ * parser saw as one node came back out of the re-parse as several — escaped.
+ * The MDX parser reads the same bytes back into the same node, which the flatten
+ * below then writes out verbatim.
+ *
+ * MDX the parser rejects is not a failure here: it is a document that fell back
+ * to Markdown when it was opened (`plugins/remark.ts`), and it falls back here
+ * too, so the two ends of the round trip keep agreeing.
  */
-export function roundTrip(md: string): string {
+export function roundTrip(md: string, opts: { mdx?: boolean } = {}): string {
+  if (opts.mdx) {
+    try {
+      const tree = parseMdx(md)
+      const root = tree as unknown as Parameters<typeof normalizeMdxTree>[0]
+      normalizeMdxTree(root, md)
+      flattenMdxElements(tree as unknown as Parameters<typeof flattenMdxElements>[0])
+      return serializeMarkdown(tree)
+    } catch {
+      // Fall through to the Markdown pipeline.
+    }
+  }
   const tree = parseMarkdown(md)
   const root = tree as unknown as Parameters<typeof mdxJsxMdast>[0]
   mdxJsxMdast(root, { value: md })

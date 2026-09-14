@@ -4,6 +4,8 @@ import type { Schema } from '@milkdown/prose/model'
 import { ParserState } from '@milkdown/transformer'
 import type { Parser } from '@milkdown/transformer'
 
+import { normalizeMdxTree, withMdxSyntax } from '../mdx/document'
+
 /**
  * The spellings milkdown (and the export) treat as an empty-paragraph marker.
  */
@@ -123,6 +125,19 @@ export function maskInlineBreaks(markdown: string): string {
   return masked + markdown.slice(cursor)
 }
 
+/**
+ * Put the hidden markers back into a slice of masked source.
+ *
+ * A raw run is carried as its own source text, so a marker the masker hid
+ * inside one has to be restored — the sentinel pair is a parse-time device and
+ * would otherwise be written into the user's file.
+ */
+function unmaskInlineBreaks(text: string): string {
+  return text.includes(SENTINEL_OPEN)
+    ? text.split(SENTINEL_OPEN).join('').split(SENTINEL_CLOSE).join('')
+    : text
+}
+
 type Piece = string | { html: string }
 
 function splitSentinel(value: string, inCode: boolean): Piece[] {
@@ -229,23 +244,53 @@ export function unescapeCellPipes(tree: MdastLike, inCell = false): void {
  * Markdown through it, and repairs the tree before it becomes a ProseMirror
  * document.
  *
+ * `isMdx` says whether the document being opened is an MDX one. It is a callback
+ * rather than a flag because one editor serves every document the user opens and
+ * the answer changes with each `open()`: a `.mdx` file is read with the MDX
+ * parser, a `.md` file with the Markdown one, and neither pays for the other.
+ *
  * Returns null while the context is incomplete, so the caller can fall back to the
  * stock parser.
  */
-export function createInlineBreakParser(ctx: Ctx): Parser | null {
+export function createInlineBreakParser(ctx: Ctx, isMdx: () => boolean = () => false): Parser | null {
   const base = ctx.get(remarkCtx) as unknown as FrozenProcessor
   const schema = ctx.get(schemaCtx) as unknown as Schema
   if (typeof base?.runSync !== 'function' || !schema) return null
-  const processor = base.copy() as unknown as RemarkProcessor
-  return ((markdown: string) => {
+  const plain = base.copy() as unknown as RemarkProcessor
+  // Built on the first MDX document, never at editor creation, so a Markdown
+  // session does not pay for the extension or for its acorn parser.
+  let mdx: RemarkProcessor | null = null
+
+  const build = (markdown: string, processor: RemarkProcessor, asMdx: boolean): unknown => {
     const masked = maskInlineBreaks(markdown)
-    const tree = processor.runSync(
-      processor.parse(masked) as never,
-      masked,
-    ) as unknown as MdastLike
+    // An MDX tree is folded into the shapes the schema knows BETWEEN the parse
+    // and the transformers. It has to be here: the preset's transformers (image
+    // dimensions, math, highlights, wikilinks, citations, the empty-line marker)
+    // read plain text nodes, and MDX hands them `mdxTextExpression` nodes they
+    // would walk past — an image's `{width=480}` would stop being an image
+    // dimension.
+    const tree = processor.parse(masked) as unknown as MdastLike
+    if (asMdx) normalizeMdxTree(tree as never, masked, unmaskInlineBreaks)
+    processor.runSync(tree as never, masked)
     restoreInlineBreaks(tree)
     unescapeCellPipes(tree)
     const state = guardEmptyText(new ParserState(schema) as unknown as ParserStateLike)
     return state.next(tree as never).toDoc()
+  }
+
+  return ((markdown: string) => {
+    if (isMdx()) {
+      mdx ??= withMdxSyntax(base.copy() as unknown as RemarkProcessor) as unknown as RemarkProcessor
+      try {
+        return build(markdown, mdx, true)
+      } catch {
+        // micromark REJECTS MDX it cannot read — an unterminated tag, a `{ … }`
+        // that is not JavaScript, a raw HTML comment — and throws out of the
+        // parse. A document the user has open must still open: it falls back to
+        // the Markdown pipeline, which reads the same file the way it did before
+        // MDX parsing existed, byte for byte.
+      }
+    }
+    return build(markdown, plain, false)
   }) as Parser
 }

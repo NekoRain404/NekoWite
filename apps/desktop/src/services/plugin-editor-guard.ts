@@ -64,7 +64,7 @@ export function guardEditorForPlugins(
   return {
     // Whole-document replacement: it destroys more than a selection, so it is
     // asked about separately and granted separately.
-    open: async (content): Promise<void> => {
+    open: async (content, path): Promise<void> => {
       const approved = await useAiPermissionStore().ask({
         kind: 'replace-document',
         summary: t('plugin.openSummary', { name: opts.pluginName }),
@@ -74,7 +74,7 @@ export function guardEditorForPlugins(
         notifyError(t('plugin.writeDenied', { name: opts.pluginName }))
         throw new Error(`plugin ${opts.pluginName} was not allowed to replace the document`)
       }
-      await editor.open(content)
+      await editor.open(content, path)
     },
     save: () => editor.save(),
     getView: () => editor.getView(),

@@ -115,7 +115,7 @@ describe('editorExternalSync', () => {
 
     // The watcher's content is opened into the editor...
     expect(editor.open).toHaveBeenCalledTimes(1)
-    expect(editor.open).toHaveBeenCalledWith('# External\n')
+    expect(editor.open).toHaveBeenCalledWith('# External\n', null)
     expect(session.applyingExternal).toBe(false)
     // ...the editor's canonical serialization is captured and adopted into the
     // tab (a clean tab also refreshes savedContent).
@@ -157,7 +157,7 @@ describe('editorExternalSync', () => {
     // The editor must really be re-opened with the restored text, not left
     // showing the discarded version.
     expect(editor.open).toHaveBeenCalledTimes(2)
-    expect(editor.open).toHaveBeenLastCalledWith('# One\n')
+    expect(editor.open).toHaveBeenLastCalledWith('# One\n', null)
   })
 
   it('still skips a duplicate of the content the editor already holds', async () => {
@@ -205,7 +205,7 @@ describe('editorExternalSync', () => {
     // finishes, and the tab adopts the canonical form of the newest content.
     expect(session.pendingExternal).toBeNull()
     expect(editor.open).toHaveBeenCalledTimes(2)
-    expect(editor.open).toHaveBeenLastCalledWith('# B\n')
+    expect(editor.open).toHaveBeenLastCalledWith('# B\n', null)
     expect(session.lastLocalMarkdown).toBe('# Canonical\n')
     expect(tabs.activeTab?.content).toBe('# Canonical\n')
     // The first apply's finally routed through the re-apply branch, so the
@@ -242,7 +242,7 @@ describe('editorExternalSync', () => {
     // wins the adopt.
     sync.onContentChanged('# Newer\n')
     await flush()
-    expect(editor.open).toHaveBeenLastCalledWith('# Newer\n')
+    expect(editor.open).toHaveBeenLastCalledWith('# Newer\n', null)
     expect(session.gen).toBe(1)
     expect(tabs.activeTab?.content).toBe('# Stale Canonical\n')
   })
@@ -307,7 +307,7 @@ describe('editorExternalSync', () => {
     await flush()
 
     expect(session.parseFailed).toBe(false)
-    expect(editor.open).toHaveBeenLastCalledWith('# Unknown\n')
+    expect(editor.open).toHaveBeenLastCalledWith('# Unknown\n', null)
     expect(session.lastLocalMarkdown).toBe('# Recovered Canonical\n')
   })
 
@@ -340,8 +340,31 @@ describe('editorExternalSync', () => {
     sync.onModeChanged('rendered')
     await flush()
 
-    expect(editor.open).toHaveBeenCalledWith('# Raw Markdown\n')
+    expect(editor.open).toHaveBeenCalledWith('# Raw Markdown\n', null)
     expect(session.lastLocalMarkdown).toBe('# Canonical\n')
+  })
+
+  // The editor's parser reads a `.mdx` file with MDX syntax and everything else
+  // as Markdown, so the path is not decoration: dropping it makes every document
+  // Markdown, and a `.mdx` file loses the constructs only MDX has.
+  it('hands the open document its file path, and null for an untitled tab', async () => {
+    const editor = makeEditor({ save: '# Canonical\n' })
+    session.editor = editor
+    const { sync } = makeSync(session)
+
+    tabs.activeTab!.path = '/vault/note.mdx'
+    tabs.activeTab!.content = '# Note\n'
+    sync.onContentChanged('# Note\n')
+    await flush()
+
+    expect(editor.open).toHaveBeenLastCalledWith('# Note\n', '/vault/note.mdx')
+
+    tabs.activeTab!.path = null
+    tabs.activeTab!.content = '# Untitled\n'
+    sync.onContentChanged('# Untitled\n')
+    await flush()
+
+    expect(editor.open).toHaveBeenLastCalledWith('# Untitled\n', null)
   })
 
   // C1: the suppress-reapply arm is per tab. A background save (autosave timer,
@@ -497,7 +520,7 @@ describe('editorExternalSync', () => {
 
       expect(editor.open).toHaveBeenCalledTimes(1)
       // The LAST text of the burst, not an intermediate one.
-      expect(editor.open).toHaveBeenCalledWith('# Typed 4\n')
+      expect(editor.open).toHaveBeenCalledWith('# Typed 4\n', null)
     })
 
     it('applies the pending re-sync when asked to (the focus-change flush)', async () => {
@@ -511,7 +534,7 @@ describe('editorExternalSync', () => {
       // before their first edit is serialized over the source text.
       sync.flushPendingSync()
       await flush()
-      expect(editor.open).toHaveBeenCalledWith('# Typed\n')
+      expect(editor.open).toHaveBeenCalledWith('# Typed\n', null)
     })
 
     it('still applies an external change immediately', async () => {
@@ -524,7 +547,7 @@ describe('editorExternalSync', () => {
       sync.onContentChanged('# From disk\n')
       await flush()
 
-      expect(editor.open).toHaveBeenCalledWith('# From disk\n')
+      expect(editor.open).toHaveBeenCalledWith('# From disk\n', null)
     })
 
     it('drops the pending re-sync when the mode leaves split', async () => {
@@ -584,7 +607,7 @@ describe('editorExternalSync', () => {
       await flush()
 
       expect(editor.open).toHaveBeenCalledTimes(1)
-      expect(editor.open).toHaveBeenCalledWith('# Another note\n')
+      expect(editor.open).toHaveBeenCalledWith('# Another note\n', null)
     })
   })
 
@@ -605,7 +628,7 @@ describe('editorExternalSync', () => {
     await flush()
 
     // The active tab's change must reach the editor model...
-    expect(editor.open).toHaveBeenCalledWith('# B External\n')
+    expect(editor.open).toHaveBeenCalledWith('# B External\n', null)
     // ...and the background tab's arm must be untouched (it is still the only tab
     // allowed to consume it).
     expect(shouldSuppressReapply(background.id)).toBe(true)

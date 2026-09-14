@@ -5,15 +5,33 @@ import { createApp, h, type App } from 'vue'
 import { escapeMdxText } from '../serialize'
 import { getComponent } from '../registry'
 
+/** Which construct of MDX the source is. A component is the only kind that has
+ *  a structured form (`name` / `props` / `children`) to fall back on when its
+ *  source no longer describes the node; an expression and an ESM statement are
+ *  their source and nothing else. */
+export type MdxKind = 'component' | 'expression' | 'esm'
+
 export interface MdxComponentAttrs {
   name: string
   props: Record<string, string>
   children: string
-  /** Exact source text of the JSX element, captured on parse. An unknown /
+  /** Exact source text of the MDX construct, captured on parse. An unknown /
    * uneditable element keeps its raw source so an unmodified document
    * round-trips byte-for-byte (expressions, attribute order, and inline vs
    * block form are all preserved verbatim). */
   raw?: string
+  /** Defaults to `component`, so every existing node — and every node a
+   *  caller builds without naming a kind — keeps its meaning. */
+  kind?: MdxKind
+}
+
+/** The mdast node types that are a whole block of MDX source, and what each one
+ *  is. They are one node in the model because they are one thing to it: source
+ *  that has to be written back untouched. */
+const BLOCK_MDX: Record<string, MdxKind> = {
+  mdxJsxFlowElement: 'component',
+  mdxFlowExpression: 'expression',
+  mdxjsEsm: 'esm',
 }
 
 export const mdxComponent = $node('mdxComponent', () => ({
@@ -31,6 +49,7 @@ export const mdxComponent = $node('mdxComponent', () => ({
     props: { default: {} as Record<string, string> },
     children: { default: '' },
     raw: { default: undefined },
+    kind: { default: 'component' as MdxKind },
   },
   parseDOM: [{ tag: 'div[data-mdx-component]' }],
   toDOM: (node) => {
@@ -41,13 +60,12 @@ export const mdxComponent = $node('mdxComponent', () => ({
     return el
   },
   parseMarkdown: {
-    match: (node) =>
-      node.type === 'mdxJsxFlowElement' &&
-      typeof node.value === 'string',
+    match: (node) => BLOCK_MDX[node.type] !== undefined && typeof node.value === 'string',
     runner: (state, node, type) => {
       const source = node.value as string
-      const attrs = parseMdxTag(source)
-      state.addNode(type, { ...attrs, raw: source })
+      const kind = BLOCK_MDX[node.type]
+      const attrs = kind === 'component' ? parseMdxTag(source) : { name: '', props: {}, children: '' }
+      state.addNode(type, { ...attrs, kind, raw: source })
     },
   },
   toMarkdown: {
@@ -58,6 +76,7 @@ export const mdxComponent = $node('mdxComponent', () => ({
         props: node.attrs.props,
         children: node.attrs.children,
         raw: node.attrs.raw,
+        kind: node.attrs.kind,
       }
       state.addNode('html', undefined, mdxComponentToMarkdown(attrs))
     },
@@ -65,13 +84,17 @@ export const mdxComponent = $node('mdxComponent', () => ({
 }))
 
 export function mdxComponentToMarkdown(attrs: MdxComponentAttrs): string {
-  const { name, props, children, raw } = attrs
+  const { name, props, children, raw, kind = 'component' } = attrs
+  // A `{ … }` expression and an ESM statement have no structured form: the
+  // source is the whole node, so it is written as it was read, always.
+  if (raw && kind !== 'component') return raw
   // An element parsed from source carries its captured raw source. Emit it
   // verbatim so JSX attribute expressions, attribute order, self-closing form,
   // and inline-vs-block layout all round-trip byte-for-byte (the structured
   // attrs below only hold strings and would mangle `{expr}`/reorder attrs) —
   // as long as it still describes this node. See `rawIsCurrent`.
   if (raw && rawIsCurrent(raw, attrs)) return raw
+  if (kind !== 'component') return raw ?? ''
   const propStr = Object.entries(props)
     .map(([k, v]) => ` ${k}="${escapeMdxText(v)}"`)
     .join('')
@@ -180,8 +203,10 @@ const mdxNodeView: NodeViewConstructor = (node, view, getPos) => {
   let app: App | null = null
 
   const render = (): void => {
-    const { name, props, children, raw } = node.attrs as MdxComponentAttrs
-    const component = getComponent(name)
+    const { name, props, children, raw, kind } = node.attrs as MdxComponentAttrs
+    // Only a component can have a registered Vue component behind it; an
+    // expression or an ESM statement is source and renders as source.
+    const component = kind === undefined || kind === 'component' ? getComponent(name) : undefined
     if (app) {
       app.unmount()
       app = null
@@ -200,7 +225,7 @@ const mdxNodeView: NodeViewConstructor = (node, view, getPos) => {
       dom.className = 'mdx-component mdx-component-placeholder'
       const source = document.createElement('div')
       source.className = 'mdx-component-source'
-      source.textContent = mdxComponentToMarkdown({ name, props, children, raw })
+      source.textContent = mdxComponentToMarkdown({ name, props, children, raw, kind })
       dom.appendChild(source)
     }
   }

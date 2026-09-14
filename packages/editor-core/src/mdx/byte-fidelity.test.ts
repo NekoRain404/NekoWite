@@ -67,6 +67,41 @@ const BYTE_IDENTICAL: Array<[string, string]> = [
   ['multi-line self-closing tag', '<Callout\n  title="x"\n/>\n'],
 ]
 
+/**
+ * The same constructs, nested in a container.
+ *
+ * A node inside a blockquote or a list item is offset by that container: its
+ * position spans the `> ` / indentation that prefixes every continuation line,
+ * and the stringifier adds that prefix back when the node is written out. An
+ * element written across lines inside a container therefore came back
+ * double-prefixed (`> > >`) and escaped, because the source slice kept the
+ * prefix the writer was about to add again.
+ *
+ * Both document kinds are exercised: reading the source off the offsets is the
+ * same job in both, and a `.md` file must not lose what a `.mdx` file keeps.
+ */
+const NESTED: Array<[string, string]> = [
+  ['component spanning a blockquote', '> <Callout>\n>\n> body\n>\n> </Callout>\n'],
+  ['multi-line open tag in a blockquote', '> <Callout\n>   title="x"\n> >\n> body\n> </Callout>\n'],
+  ['multi-line self-closing tag in a blockquote', '> <Callout\n>   title="x"\n> />\n'],
+]
+
+/**
+ * Nested elements only the MDX parser reads as one node.
+ *
+ * CommonMark distributes them across parents: inside a list item the line
+ * holding the tag's `>` is a blockquote of its own, and a close tag that
+ * follows another element shares a paragraph with it (`<Inner />\n</Outer>`),
+ * so the element's open tag, body and close tag are three unrelated blocks and
+ * no sibling-level merge can put them back together. Opening them as Markdown
+ * rewrites them (pre-existing behaviour, unchanged here); the MDX parser reads
+ * the same bytes into one `mdxJsxFlowElement` and the bytes survive.
+ */
+const NESTED_MDX_ONLY: Array<[string, string]> = [
+  ['multi-line open tag in a list item', '- <Callout\n  title="x"\n  >\n  body\n  </Callout>\n'],
+  ['nested multi-line tag in a blockquote', '> <Outer\n>   a="1"\n> >\n> <Inner />\n> </Outer>\n'],
+]
+
 describe('unrecognised MDX source round-trips byte for byte', () => {
   for (const [label, input] of BYTE_IDENTICAL) {
     it(label, async () => {
@@ -76,6 +111,40 @@ describe('unrecognised MDX source round-trips byte for byte', () => {
       try {
         await ed.open(input)
         // Nothing was edited, so nothing may move.
+        expect(await ed.save()).toBe(input)
+      } finally {
+        ed.destroy()
+        el.remove()
+      }
+    })
+  }
+})
+
+describe('MDX nested in a container round-trips byte for byte', () => {
+  for (const path of [undefined, '/vault/nested.mdx']) {
+    for (const [label, input] of NESTED) {
+      it(`${label} (${path ? '.mdx' : '.md'})`, async () => {
+        const el = document.createElement('div')
+        document.body.appendChild(el)
+        const ed = createEditor(el)
+        try {
+          await ed.open(input, path)
+          expect(await ed.save()).toBe(input)
+        } finally {
+          ed.destroy()
+          el.remove()
+        }
+      })
+    }
+  }
+
+  for (const [label, input] of NESTED_MDX_ONLY) {
+    it(`${label} (.mdx)`, async () => {
+      const el = document.createElement('div')
+      document.body.appendChild(el)
+      const ed = createEditor(el)
+      try {
+        await ed.open(input, '/vault/nested.mdx')
         expect(await ed.save()).toBe(input)
       } finally {
         ed.destroy()
