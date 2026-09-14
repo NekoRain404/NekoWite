@@ -8,6 +8,12 @@ import { calloutPlugin } from './plugins/callout'
 import { floatboxPlugin } from './plugins/floatbox'
 import { statusPlugin } from './plugins/status'
 import './styles/tokens.css'
+// The colour half of tokens.css (brief 75), and it has to load AFTER it: the
+// dark block repeats the radius ladder, and a re-point must keep coming after
+// the declaration it repeats. `styles/tokens.test.ts` simulates the cascade
+// over these two files in this import order and asserts that it still matches
+// this list — move one, move the other.
+import './styles/palettes.css'
 import './styles/components.css'
 import './styles/editor-content.css'
 import './styles/print.css'
