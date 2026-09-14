@@ -173,6 +173,87 @@ describe('unrecognised MDX source survives a table cell', () => {
   })
 })
 
+/**
+ * The envelope around the Markdown: a UTF-8 BOM, and the file's line endings.
+ *
+ * Neither is part of the document the model holds, and neither was ever looked
+ * at: the frontmatter was carried through raw while the body was serialized, so
+ * a CRLF file came back with a CRLF frontmatter and an LF body — consistent in,
+ * inconsistent out — and a BOM was dropped on the floor (task-37 M1, M3). The
+ * corpus above is entirely `\n`-terminated, which is why both survived it.
+ *
+ * The rule these cases pin: the file's own ending is read once, when it is
+ * opened, and the whole document is written in it. A MIXED file has no single
+ * ending to keep, so its majority decides (see `document-envelope.ts`); the
+ * expected value below says which way each mixed case goes.
+ */
+const ENVELOPE: Array<[string, string, string?]> = [
+  ['LF body', 'one\ntwo\n'],
+  ['CRLF body', 'one\r\ntwo\r\n'],
+  ['CRLF with a blank line', 'para one\r\n\r\npara two\r\n'],
+  ['CRLF frontmatter and CRLF body', '---\r\ntitle: x\r\n---\r\n\r\nbody line\r\n'],
+  ['CRLF list', '- one\r\n- two\r\n'],
+  ['CRLF blockquote', '> one\r\n> two\r\n'],
+  ['CRLF table', '| a | b |\r\n| - | - |\r\n| 1 | 2 |\r\n'],
+
+  ['BOM', '﻿# Title\n\nbody\n'],
+  ['BOM with frontmatter', '﻿---\ntitle: x\n---\n\nbody\n'],
+  ['BOM and CRLF', '﻿# Title\r\n\r\nbody\r\n'],
+  ['BOM, CRLF and frontmatter', '﻿---\r\ntitle: x\r\n---\r\n\r\nbody\r\n'],
+
+  // Mixed: the majority ending is applied to the whole document, so the file
+  // comes back consistent instead of half-and-half.
+  ['mixed, CRLF majority', 'one\r\ntwo\r\nthree\n', 'one\r\ntwo\r\nthree\r\n'],
+  [
+    'mixed, LF majority',
+    '---\r\ntitle: x\r\n---\r\n\r\nb1\nb2\nb3\nb4\nb5\n',
+    '---\ntitle: x\n---\n\nb1\nb2\nb3\nb4\nb5\n',
+  ],
+  ['mixed, a tie goes to LF', 'one\r\ntwo\n', 'one\ntwo\n'],
+
+  // A line ending the model carries as CONTENT — the value of a code block — is
+  // not normalised away, in either direction.
+  ['CRLF inside a code block', '```\ncode one\r\ncode two\n```\n'],
+  ['CRLF inside a code block of a CRLF file', '```\r\ncode one\r\n```\r\n'],
+
+  // Classic-Mac endings are the one shape that is deliberately NOT preserved:
+  // nothing in this pipeline treats a lone CR as a line ending, so the file is
+  // read as one line and written back as LF.
+  ['CR-only', 'one\rtwo\r', 'one\ntwo\n'],
+]
+
+describe('the document’s own bytes round-trip byte for byte', () => {
+  for (const [label, input, expected = input] of ENVELOPE) {
+    it(label, async () => {
+      const el = document.createElement('div')
+      document.body.appendChild(el)
+      const ed = createEditor(el)
+      try {
+        await ed.open(input)
+        // Nothing was edited, so nothing may move.
+        expect(await ed.save()).toBe(expected)
+      } finally {
+        ed.destroy()
+        el.remove()
+      }
+    })
+  }
+
+  it('holds for a .mdx document too', async () => {
+    const input = '﻿---\r\ntitle: x\r\n---\r\n\r\n<Callout {...props} />\r\n'
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const ed = createEditor(el)
+    try {
+      await ed.open(input, '/vault/note.mdx')
+      expect(await ed.save()).toBe(input)
+    } finally {
+      ed.destroy()
+      el.remove()
+    }
+  })
+})
+
 describe('MDX put into the model without the parser', () => {
   // Typing, pasting and the AI insert write text into the document directly, so
   // the parse-time rules never see it. The escaping is Markdown's either way, and

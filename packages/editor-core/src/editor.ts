@@ -10,6 +10,8 @@ import { getMarkdown } from '@milkdown/utils'
 import { basicPlugins } from './plugins/basic'
 import { createInlineBreakParser } from './plugins/remark'
 import { isMdxDocument } from './mdx/document'
+import { readDocumentEnvelope, writeDocumentEnvelope } from './document-envelope'
+import { createDocumentHolder } from './held-document'
 import { insertMarkdownInCell, isInTableCell } from './table/context'
 import { invalidateTableClipboard } from './table/clipboard'
 import { registerBuiltinCommands, setCommandViewProvider } from './commands'
@@ -26,12 +28,22 @@ import {
 import type { SuggestionStatus } from './suggest'
 
 export { basicPlugins }
+// Kept on this module's path (and this package's public surface) although the
+// implementation moved out; see the two modules for what they are.
+export { splitFrontmatter } from './document-envelope'
+export { NoDocumentLoadedError } from './held-document'
 
 export interface NekoEditor {
   /** Load a document. `path` is what the document IS — a `.mdx` file is read
    *  with the MDX parser, anything else (including `.md`, and nothing at all for
-   *  a document with no file behind it) stays Markdown. See `mdx/document.ts`. */
+   *  a document with no file behind it) stays Markdown. See `mdx/document.ts`.
+   *
+   *  Rejects when the document cannot be read, and the editor then holds NO
+   *  document: whatever the model still has belongs to the file that was open
+   *  before it, so `save()` refuses until a later `open()` succeeds. */
   open(content: string, path?: string | null): Promise<void>
+  /** The open document, serialized. Throws `NoDocumentLoadedError` when the
+   *  editor is holding none (see `open`). */
   save(): Promise<string>
   getView(): EditorView
   onContentChange(cb: () => void): () => void
@@ -42,17 +54,6 @@ export interface NekoEditor {
   hasSuggestion(): boolean
   onSuggestionChange(cb: (status: SuggestionStatus) => void): () => void
   destroy(): void
-}
-
-/** YAML frontmatter block at the very start of a document, if any. The
- * trailing line breaks (including blank separator lines) are part of the
- * block so a save() re-prepends the source byte-faithfully. */
-const FRONTMATTER_RE = /^---\r?\n(?:[\s\S]*?\r?\n)?---((?:\r?\n)+|$)/
-
-export function splitFrontmatter(md: string): { front: string; body: string } {
-  const match = FRONTMATTER_RE.exec(md)
-  if (!match) return { front: '', body: md }
-  return { front: match[0], body: md.slice(match[0].length) }
 }
 
 export function createEditor(
@@ -70,15 +71,11 @@ export function createEditor(
   // `open()` and `insertMarkdownAtCursor` parse through this wrapper, which keeps
   // the author's inline `<br>` (see plugins/remark.ts). It falls back to the stock
   // parser until the editor is ready.
-  let parse: Parser | null = null
+  let parse: ((markdown: string, mdx: boolean) => ProseNode) | null = null
   let destroyed = false
-  // Whether the document currently loaded is MDX. Read by the parser on every
-  // parse, so `open()` sets it and the insert path inherits the document's kind.
-  let mdxDocument = false
-  // YAML frontmatter is not representable in the Milkdown model (it would be
-  // parsed as a thematic break + setext heading and rewritten on save), so it
-  // is extracted before the body enters the editor and re-prepended on save.
-  let frontmatter = ''
+  // The document this editor is holding — the model's frontmatter, line ending,
+  // BOM and kind — or the fact that it is holding none (held-document.ts).
+  const held = createDocumentHolder()
 
   /**
    * Load `doc` as a brand-new editor state.
@@ -106,9 +103,16 @@ export function createEditor(
     })
   }
 
-  /** The inline-break-repairing parser, or the stock one before the editor is ready. */
-  const parserFor = (ctx: { get: (slice: typeof parserCtx) => Parser }): Parser =>
-    parse ?? ctx.get(parserCtx)
+  /**
+   * The inline-break-repairing parser for a document of kind `mdx`, or the
+   * stock one before the editor is ready. The kind is an argument because a load
+   * must read the file it was HANDED, before anything about it is committed.
+   */
+  const parserFor = (ctx: { get: (slice: typeof parserCtx) => Parser }, mdx: boolean): Parser => {
+    const documentParser = parse
+    if (!documentParser) return ctx.get(parserCtx)
+    return (markdown: string) => documentParser(markdown, mdx)
+  }
 
   const notifySuggestion = (status: SuggestionStatus): void => {
     suggestionHandlers.forEach((handler) => handler(status))
@@ -133,7 +137,7 @@ export function createEditor(
     // good on the next save. That transformer cannot be replaced (a duplicate
     // remark plugin name replaces the whole entry), so the parser repairs the tree
     // it produced. See plugins/remark.ts.
-    parse = created.action((ctx) => createInlineBreakParser(ctx, () => mdxDocument))
+    parse = created.action((ctx) => createInlineBreakParser(ctx))
     // Toolbar commands resolve the view lazily; point them at this editor and
     // make sure the global registry has fresh handlers for this schema. The
     // math/table dialog commands capture the view eagerly — keep them in
@@ -174,39 +178,56 @@ export function createEditor(
   return {
     async open(content: string, path?: string | null) {
       await ready
-      const { front, body } = splitFrontmatter(content)
-      frontmatter = front
-      // Set as late as possible: the parse below is what reads it, and another
-      // `open()` may have been awaited through while this one was.
-      mdxDocument = isMdxDocument(path)
+      // Read off the SOURCE and kept local until the load has succeeded: a parse
+      // that throws must not leave the previous document wearing this file's
+      // frontmatter, line ending and kind (task-37 C1).
+      const envelope = readDocumentEnvelope(content)
+      const asMdx = isMdxDocument(path)
       const created = await editor
-      created.action((ctx) => {
-        const v = ctx.get(editorViewCtx)
-        const node = parserFor(ctx)(normalizeNbsp(body))
-        // Rebuilding the state (rather than dispatching a replace transaction)
-        // gives the freshly opened note its own, EMPTY history. Dispatching with
-        // `addToHistory: false` kept the load out of the stack but left the
-        // previous note's edits on it, so the first Cmd+Z after switching notes
-        // consumed one of those stale events — `undoDepth` went from 1 to 0 while
-        // the new note did not change, which reads as "undo is broken". The
-        // plugins are carried over unchanged, so nothing else about the state (or
-        // the view) is affected.
-        v.updateState(openState(v.state, node))
-      })
+      try {
+        created.action((ctx) => {
+          const v = ctx.get(editorViewCtx)
+          const node = parserFor(ctx, asMdx)(normalizeNbsp(envelope.body))
+          // Rebuilding the state (rather than dispatching a replace transaction)
+          // gives the freshly opened note its own, EMPTY history. Dispatching with
+          // `addToHistory: false` kept the load out of the stack but left the
+          // previous note's edits on it, so the first Cmd+Z after switching notes
+          // consumed one of those stale events — `undoDepth` went from 1 to 0 while
+          // the new note did not change, which reads as "undo is broken". The
+          // plugins are carried over unchanged, so nothing else about the state (or
+          // the view) is affected.
+          v.updateState(openState(v.state, node))
+          // The load's last statement: the model is in place, so the envelope
+          // describing it can be committed with it, and not one line earlier.
+          held.hold({ envelope, mdx: asMdx })
+        })
+      } catch (err) {
+        // Disowning: the file the user asked for is not the one the model holds,
+        // and may never have been opened at all. The model itself is left alone,
+        // so a save cannot write another file's document out of it.
+        held.drop()
+        throw err
+      }
     },
     async save() {
       const created = await editor
-      const md = created.action((ctx) => roundTrip(getMarkdown()(ctx), { mdx: mdxDocument }))
+      const document = held.require()
+      const md = created.action((ctx) =>
+        roundTrip(getMarkdown()(ctx), { mdx: document.mdx })
+      )
       // The model can hold U+00A0 for a space typed at the end of a text run;
-      // it must not reach the file (see normalizeNbsp).
-      return frontmatter + normalizeNbsp(md)
+      // it must not reach the file (see normalizeNbsp). Then the bytes the model
+      // cannot hold are written back around it: this file's BOM, its own line
+      // ending, and its frontmatter as source.
+      return writeDocumentEnvelope(document.envelope, normalizeNbsp(md))
     },
     async insertMarkdownAtCursor(md: string): Promise<void> {
       await ready
       const created = await editor
       created.action((ctx) => {
         const v = ctx.get(editorViewCtx)
-        const parsed = parserFor(ctx)(md)
+        // A snippet is parsed in the language of the document it lands in.
+        const parsed = parserFor(ctx, held.mdx)(md)
         if (!parsed) return
         // Inside a table cell only the first paragraph's INLINE content can be
         // inserted: the cell holds one paragraph, so putting a block in it would
