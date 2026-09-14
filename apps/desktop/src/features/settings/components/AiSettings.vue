@@ -22,6 +22,7 @@ const {
   provider,
   model,
   baseUrl,
+  modelsUrl,
   apiKey,
   allowPrivate,
   systemPromptOn,
@@ -112,6 +113,21 @@ const effortChoices = computed<SelectOption[]>(() =>
         type="text"
         placeholder="http://localhost:1234/v1"
       >
+      <span class="settings-note">{{ t('aiSettings.baseUrlHint') }}</span>
+    </label>
+    <label
+      v-if="showBaseUrl"
+      class="settings-field"
+    >
+      <span>{{ t('aiSettings.modelsUrl') }}</span>
+      <input
+        v-model="modelsUrl"
+        class="input"
+        type="text"
+        spellcheck="false"
+        placeholder="https://tokenflux.dev/v1/models"
+      >
+      <span class="settings-note">{{ t('aiSettings.modelsUrlHint') }}</span>
     </label>
     <label
       v-if="showBaseUrl"

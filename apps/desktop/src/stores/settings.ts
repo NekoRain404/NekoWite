@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { getSharedGateways } from '../platform/runtime/gatewayRuntime'
 import { persistence } from '../services/persistence'
 
@@ -7,6 +7,16 @@ export interface AIConfig {
   provider: string
   model: string
   base_url?: string
+  /**
+   * The exact URL the model list is fetched from, used verbatim when set.
+   *
+   * Absent, the endpoint is derived from `base_url` by the provider's own
+   * convention (Rust's `models_endpoint`: `/v1/models` for anthropic,
+   * `/v1beta/models` for gemini, `/models` otherwise). A provider serving its
+   * list anywhere else — a gateway whose derived path answers 200 with a web
+   * page — was otherwise unreachable from this UI.
+   */
+  models_url?: string
   api_key?: string
   temperature?: number
   max_tokens?: number
@@ -33,6 +43,9 @@ export type ExportPdfOrientation = 'portrait' | 'landscape'
 const LS_PROVIDER = 'nekowite.ai.provider'
 const LS_MODEL = 'nekowite.ai.model'
 const LS_BASE_URL = 'nekowite.ai.baseUrl'
+// The models-URL overrides as a JSON object keyed by provider — see `config()`
+// for why this field is not one shared scalar like its neighbours.
+const LS_MODELS_URLS = 'nekowite.ai.modelsUrls'
 
 /**
  * The address a local model server is assumed to be on — LM Studio's default.
@@ -61,6 +74,23 @@ const LS_CONTEXT_CHARS = 'nekowite.ai.contextChars'
 function readLs(key: string, fallback: string): string {
   const v = persistence.get(key)
   return v && v.length > 0 ? v : fallback
+}
+
+/** The per-provider models-URL overrides, as stored. Corruption is survivable
+ *  on purpose: this is a hand-editable key like any other, and a half-written
+ *  value must not take the settings page down with it. */
+function readModelsUrls(): Record<string, string> {
+  try {
+    const parsed = JSON.parse(persistence.get(LS_MODELS_URLS) || '{}') as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const out: Record<string, string> = {}
+    for (const [provider, url] of Object.entries(parsed)) {
+      if (typeof url === 'string' && url) out[provider] = url
+    }
+    return out
+  } catch {
+    return {}
+  }
 }
 
 /** Default budget for the chat rail's note context, in characters. Large enough
@@ -134,6 +164,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const provider = ref(readLs(LS_PROVIDER, 'local'))
   const model = ref(readLs(LS_MODEL, 'qwen2.5-coder:3b'))
   const baseUrl = ref(readLs(LS_BASE_URL, LOCAL_BASE_URL_DEFAULT))
+  const modelsUrls = ref<Record<string, string>>(readModelsUrls())
   const apiKey = ref('')
   const autosaveInterval = ref<AutosaveInterval>(readAutosaveInterval(15000))
   const maxHistory = ref<number>(readNumber(LS_MAXHISTORY, 10))
@@ -162,6 +193,19 @@ export const useSettingsStore = defineStore('settings', () => {
   const exportIncludeFrontmatter = ref<boolean>(readBool(LS_EXPORT_FRONTMATTER, true))
   const exportPdfPageSize = ref<ExportPdfPageSize>(readEnum(LS_EXPORT_PDF_PAGE, ['A4', 'Letter'], 'A4'))
   const exportPdfOrientation = ref<ExportPdfOrientation>(readEnum(LS_EXPORT_PDF_ORIENT, ['portrait', 'landscape'], 'portrait'))
+  /** The models-URL override of the provider selected RIGHT NOW — a view onto
+   *  `modelsUrls`, so the field is a plain two-way binding while the value
+   *  stays scoped to one provider. Empty removes the entry, so `config()`
+   *  omits the field and the backend derives the endpoint again. */
+  const modelsUrl = computed({
+    get: () => modelsUrls.value[provider.value] ?? '',
+    set: (v: string) => {
+      const next = { ...modelsUrls.value }
+      if (v.trim()) next[provider.value] = v
+      else delete next[provider.value]
+      modelsUrls.value = next
+    },
+  })
 
   watch(provider, (p) => {
     persistence.set(LS_PROVIDER, p)
@@ -174,6 +218,7 @@ export const useSettingsStore = defineStore('settings', () => {
   })
   watch(model, (m) => persistence.set(LS_MODEL, m))
   watch(baseUrl, (b) => persistence.set(LS_BASE_URL, b))
+  watch(modelsUrls, (urls) => persistence.set(LS_MODELS_URLS, JSON.stringify(urls)), { deep: true })
   watch(temperature, (v) => persistence.set(LS_TEMPERATURE, String(v)))
   watch(maxTokens, (v) => persistence.set(LS_MAX_TOKENS, String(v)))
   watch(systemPrompt, (v) => persistence.set(LS_SYSTEM_PROMPT, v))
@@ -221,6 +266,12 @@ export const useSettingsStore = defineStore('settings', () => {
     if (typed && (!isLocalDefault || provider.value === 'local' || provider.value === 'custom')) {
       cfg.base_url = typed
     }
+    // The override is the one endpoint field that is NOT shared: it is looked
+    // up under the current provider, so another provider's models URL cannot
+    // ride along on a request that was never meant for it. Empty omits the
+    // field, leaving the backend to derive the endpoint.
+    const modelsOverride = (modelsUrls.value[provider.value] ?? '').trim()
+    if (modelsOverride) cfg.models_url = modelsOverride
     if (apiKey.value) cfg.api_key = apiKey.value
     cfg.temperature = temperature.value
     cfg.max_tokens = maxTokens.value
@@ -240,5 +291,5 @@ export const useSettingsStore = defineStore('settings', () => {
     modelsCache.value = []
   }
 
-  return { provider, model, baseUrl, apiKey, temperature, maxTokens, systemPrompt, systemPromptOn, allowPrivate, reasoningEffort, autosaveInterval, maxHistory, contextChars, modelsCache, exportIncludeFrontmatter, exportPdfPageSize, exportPdfOrientation, saveKey, loadKey, config, listModels, clearModelsCache }
+  return { provider, model, baseUrl, modelsUrl, apiKey, temperature, maxTokens, systemPrompt, systemPromptOn, allowPrivate, reasoningEffort, autosaveInterval, maxHistory, contextChars, modelsCache, exportIncludeFrontmatter, exportPdfPageSize, exportPdfOrientation, saveKey, loadKey, config, listModels, clearModelsCache }
 })

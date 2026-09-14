@@ -16,6 +16,7 @@ export interface AiSettingsModel {
   provider: WritableComputedRef<string>
   model: WritableComputedRef<string>
   baseUrl: WritableComputedRef<string>
+  modelsUrl: WritableComputedRef<string>
   apiKey: WritableComputedRef<string>
   allowPrivate: WritableComputedRef<boolean>
   systemPromptOn: WritableComputedRef<boolean>
@@ -35,6 +36,27 @@ export interface AiSettingsModel {
 }
 
 const AI_PROVIDERS = ['openai', 'anthropic', 'gemini', 'grok', 'deepseek', 'local', 'custom']
+
+/**
+ * The provider's failure reason, as the user must see it.
+ *
+ * `ai_list_models` rejects with the backend's `Err(String)` itself — a bare
+ * string, not an `Error` — and that string is the whole diagnosis: the URL that
+ * was asked and what came back instead of a model list. It is shown verbatim,
+ * with nothing truncated or reworded past the prefix `getModelsFailed` adds.
+ * The shape is still probed rather than assumed, because `String(e)` on a
+ * structured rejection yields `[object Object]` and throws away the only
+ * sentence that says what to change.
+ */
+function providerFailureMessage(e: unknown): string {
+  if (e instanceof Error && e.message) return e.message
+  if (typeof e === 'string' && e) return e
+  if (e && typeof e === 'object') {
+    const message = (e as { message?: unknown }).message
+    if (typeof message === 'string' && message) return message
+  }
+  return String(e)
+}
 
 /**
  * State and commands for the AI section's provider configuration.
@@ -70,7 +92,7 @@ export function useAiSettings(): AiSettingsModel {
     try {
       await settings.listModels()
     } catch (e) {
-      notifyError(t('aiSettings.getModelsFailed', { msg: e instanceof Error ? e.message : String(e) }))
+      notifyError(t('aiSettings.getModelsFailed', { msg: providerFailureMessage(e) }))
     } finally {
       modelLoading.value = false
     }
@@ -90,7 +112,7 @@ export function useAiSettings(): AiSettingsModel {
     try {
       await settings.saveKey()
     } catch (e) {
-      notifyError(t('settings.general.saveKeyFailed', { msg: e instanceof Error ? e.message : String(e) }))
+      notifyError(t('settings.general.saveKeyFailed', { msg: providerFailureMessage(e) }))
     }
   }
 
@@ -108,6 +130,12 @@ export function useAiSettings(): AiSettingsModel {
     baseUrl: computed({
       get: () => settings.baseUrl,
       set: (v) => { settings.baseUrl = v },
+    }),
+    // Scoped to the selected provider by the store, so the field shows that
+    // provider's own override and a refresh acts on that same one.
+    modelsUrl: computed({
+      get: () => settings.modelsUrl,
+      set: (v) => { settings.modelsUrl = v },
     }),
     apiKey: computed({
       get: () => settings.apiKey,
