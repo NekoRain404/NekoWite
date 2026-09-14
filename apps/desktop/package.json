@@ -12,7 +12,7 @@
     "tauri": "tauri",
     "test": "vitest run --passWithNoTests",
     "typecheck": "vue-tsc -b",
-    "lint": "eslint src",
+    "lint": "eslint src perf",
     "perf": "vitest run --config vitest.perf.config.ts"
   },
   "dependencies": {

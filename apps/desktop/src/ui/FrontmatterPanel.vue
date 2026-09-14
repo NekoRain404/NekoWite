@@ -1,5 +1,11 @@
 <script setup lang="ts">
 import { Hash, Plus, X } from 'lucide-vue-next'
+// Cycle-blocked deep import (§13.11): `features/notes` cannot export this
+// composable. The model edits tags through `services/tags`, which imports the
+// frontmatter helpers back through the feature's entry, so an entry that took
+// the composable would close `index → composable → services/tags → index`. The
+// composable's own modules reach nothing that reaches the entry, so reading it
+// directly is the one edge that does not close the loop.
 import { useFrontmatterPanel } from '../features/notes/composables/use-frontmatter-panel'
 import { t } from '../i18n'
 

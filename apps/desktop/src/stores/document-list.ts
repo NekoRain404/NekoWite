@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { LibraryCounts, LibraryFilter, NoteSummary, SortBy } from '../features/notes'
 import type { IndexState } from '../features/search'
-import { queryCounts, queryTagCounts, queryVisibleNotes } from '../features/vault/services/library-queries'
+import { queryCounts, queryTagCounts, queryVisibleNotes } from '../features/vault'
 import { persistence } from '../services/persistence'
 
 /** 列表栏整体视图：notes 模式下列表内容 = filter + query（notes/outline/links 子模式）。 */
