@@ -94,13 +94,44 @@ function fieldControl<T extends HTMLElement>(label: string, selector: string): T
   return control
 }
 
+/** The dropdown inside the labelled field. It is reached through the same
+ *  `label` wrapper the native select sat in, so the association this suite is
+ *  about is still the thing under test. */
+function fieldMenu(label: string): HTMLElement {
+  return fieldControl<HTMLElement>(label, '[role="combobox"]')
+}
+
 function toggle(control: HTMLInputElement): void {
   control.click()
 }
 
-function choose(control: HTMLSelectElement, value: string): void {
-  control.value = value
-  control.dispatchEvent(new Event('change', { bubbles: true }))
+/** The rows live in the popup, which is teleported to `<body>`. */
+function optionRows(): HTMLButtonElement[] {
+  return [...document.querySelectorAll<HTMLButtonElement>('.select-option')]
+}
+
+async function openMenu(trigger: HTMLElement): Promise<void> {
+  trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  await nextTick()
+}
+
+/** Take the row carrying `value`, the way a user does: open, then pick. */
+async function choose(trigger: HTMLElement, value: string): Promise<void> {
+  if (trigger.getAttribute('aria-expanded') !== 'true') await openMenu(trigger)
+  const row = optionRows().find((candidate) => candidate.dataset.value === value)
+  if (!row) throw new Error(`no option ${value}`)
+  row.click()
+  await nextTick()
+}
+
+/** Take any row other than the chosen one, and say which it was. */
+async function chooseOther(trigger: HTMLElement): Promise<string> {
+  if (trigger.getAttribute('aria-expanded') !== 'true') await openMenu(trigger)
+  const row = optionRows().find((candidate) => candidate.getAttribute('aria-selected') === 'false')
+  if (!row) throw new Error('no unselected option to take')
+  row.click()
+  await nextTick()
+  return row.dataset.value ?? ''
 }
 
 function vueWarnings(): string[] {
@@ -119,8 +150,8 @@ describe('SettingsPanel control bindings', () => {
     await nextTick()
     expect(settings.exportIncludeFrontmatter).toBe(false)
 
-    choose(fieldControl<HTMLSelectElement>(t('settings.export.pageSize'), 'select'), 'Letter')
-    choose(fieldControl<HTMLSelectElement>(t('settings.export.orientation'), 'select'), 'landscape')
+    await choose(fieldMenu(t('settings.export.pageSize')), 'Letter')
+    await choose(fieldMenu(t('settings.export.orientation')), 'landscape')
     await nextTick()
     expect(settings.exportPdfPageSize).toBe('Letter')
     expect(settings.exportPdfOrientation).toBe('landscape')
@@ -147,7 +178,7 @@ describe('SettingsPanel control bindings', () => {
     await nextTick()
     expect(settings.systemPromptOn).toBe(true)
 
-    choose(fieldControl<HTMLSelectElement>(t('aiSettings.effort'), 'select'), 'high')
+    await choose(fieldMenu(t('aiSettings.effort')), 'high')
     await nextTick()
     expect(settings.reasoningEffort).toBe('high')
 
@@ -163,12 +194,10 @@ describe('SettingsPanel control bindings', () => {
     await nextTick()
     expect(permissions.enabled).toBe(!enabledBefore)
 
-    const policy = fieldControl<HTMLSelectElement>(t('aiperm.policy'), 'select')
-    const other = Array.from(policy.options).find((o) => o.value !== policy.value)
+    const other = await chooseOther(fieldMenu(t('aiperm.policy')))
     expect(other).toBeTruthy()
-    choose(policy, other!.value)
     await nextTick()
-    expect(permissions.policy).toBe(other!.value)
+    expect(permissions.policy).toBe(other)
 
     expect(vueWarnings()).toEqual([])
   })

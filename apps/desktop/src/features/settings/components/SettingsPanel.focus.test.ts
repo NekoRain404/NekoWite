@@ -78,8 +78,10 @@ describe('SettingsPanel modal focus', () => {
     nav.find((n) => n.textContent?.includes('AI'))!.click()
     await settle()
 
-    const aiSection = [...document.querySelectorAll<HTMLElement>('.settings-section')]
-      .find((s) => s.querySelector('select'))!
+    // Found by the provider dropdown it renders, which is the control that
+    // identifies the section regardless of what else lives in it.
+    const aiSection = document.getElementById('settings-ai-provider')!
+      .closest<HTMLElement>('.settings-section')!
     const labels = [...aiSection.querySelectorAll('label > span:first-child')]
       .map((el) => el.textContent?.trim() ?? '')
     expect(labels).toContain('服务商')
