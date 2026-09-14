@@ -115,9 +115,26 @@ export function createEditorSearchOverlay(deps: EditorSearchOverlayDeps): Editor
     })
   }
 
+  /**
+   * Close the find panel and give the keyboard back to the document.
+   *
+   * The panel takes the keyboard when it opens (its own field is focused on
+   * mount) and is removed from the tree when it closes, so without this the
+   * focus lands on `<body>`: the panel is gone, nothing looks wrong, and every
+   * keystroke after it goes nowhere until the user clicks in the text. Measured
+   * in the running app, and the source pane's own find panel has never had the
+   * hole — CodeMirror's `closeSearchPanel` focuses the editor on the way out, so
+   * Escape hands the keyboard straight back to the note there.
+   *
+   * Both callers are the panel itself (Escape and the ✕), i.e. the keyboard is
+   * already this panel's to return. `getView()` resolves the live view and
+   * answers null before one exists, which is why the editor's own accessor —
+   * that throws until the view is ready — is not used here.
+   */
   function closeSearch(): void {
     searchOpen.value = false
     spellPopup.value = null
+    getView()?.focus()
   }
 
   function openSpellPopup(span: HTMLElement, clientX: number, clientY: number): void {

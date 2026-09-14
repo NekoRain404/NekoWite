@@ -1,4 +1,5 @@
 import { emitLifecycle } from '@nekowite/plugin-host'
+import { NoDocumentLoadedError } from '@nekowite/editor-core'
 import { debounce } from '../../../services/timing'
 import { useTabsStore } from '../../../stores/tabs'
 import {
@@ -66,7 +67,24 @@ export function createEditorPersistence(deps: EditorPersistenceDeps): EditorPers
     // Capture generation BEFORE the await: a reloadFromDisk during the save
     // bumps gen, and the stale markdown must not win.
     const myGen = deps.session.gen
-    const markdown = await editor.save()
+    let markdown: string
+    try {
+      markdown = await editor.save()
+    } catch (error) {
+      // The editor's own statement of the same fact as `renderedModelRefused()`
+      // above, reached from the other side: it is holding no document of the
+      // open tab — the load has not succeeded (yet, or since the last one
+      // failed), so there is no serialization that answers "what is in this
+      // file". Publish nothing and let the tab keep the text it has; the
+      // alternative is inventing a string and writing it over the note.
+      //
+      // Caught HERE rather than at the callers because this is the single place
+      // a model serialization enters `tab.content`: it covers the debounced
+      // path (which cannot forward a rejection — it runs from a timer), the
+      // save's flush, and anything added later.
+      if (error instanceof NoDocumentLoadedError) return
+      throw error
+    }
     if (tabs.activeTab?.id !== active.id) return
     if (myGen !== deps.session.gen) return
     // Publish anything the source pane is still coalescing before reading the

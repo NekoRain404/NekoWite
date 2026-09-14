@@ -99,6 +99,57 @@ describe('editorSearchOverlay live-region announcements', () => {
   })
 })
 
+// The panel focuses its own field on mount and is then removed from the tree, so
+// closing it used to leave the keyboard on `<body>`: the panel is gone, nothing
+// looks wrong, and the next keystrokes go nowhere until the user clicks in the
+// text. The source pane's find panel has never done that — CodeMirror's
+// `closeSearchPanel` focuses the editor on the way out.
+describe('editorSearchOverlay keyboard handover', () => {
+  let editor: NekoEditor | null = null
+
+  beforeEach(async () => {
+    setActivePinia(createPinia())
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    await tabs.openTab('notes/a.md')
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    editor = createEditor(host, { plugins: basicPlugins })
+    editorBridge.setEditor(editor)
+    await editor.open('# Title\n\nbody')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+
+  it('gives the keyboard back to the document when the panel closes', () => {
+    const overlay = makeOverlay()
+    // What the panel's own field holds while it is open: the keyboard is in the
+    // panel, not in the note.
+    const field = document.createElement('input')
+    document.body.appendChild(field)
+    field.focus()
+    expect(document.activeElement).toBe(field)
+
+    overlay.searchOpen.value = true
+    overlay.closeSearch()
+
+    expect(overlay.searchOpen.value).toBe(false)
+    const active = document.activeElement
+    const view = editorBridge.getView()
+    expect(view).not.toBeNull()
+    expect(active).not.toBe(document.body)
+    expect(view!.dom.contains(active)).toBe(true)
+  })
+
+  it('closes without a view to hand the keyboard to', () => {
+    const overlay = makeOverlay()
+    // A teardown-order close (the pane is gone before the panel's own unmount):
+    // there is no editor to focus, and asking for one must not throw.
+    editorBridge.setEditor(null)
+    expect(() => overlay.closeSearch()).not.toThrow()
+    expect(overlay.searchOpen.value).toBe(false)
+  })
+})
+
 /** A `<span class="nkw-spell">`-shaped element, as the rendered pane builds it. */
 function spellSpan(from: number, to: number, word: string, suggestions: string[]): HTMLElement {
   const span = document.createElement('span')

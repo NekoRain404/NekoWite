@@ -141,6 +141,12 @@
   border: 1.5px solid color-mix(in srgb, var(--app-muted) 70%, transparent);
   border-radius: 0.3em;
   background: var(--app-elevated);
+  /* The box is the control the click zone is measured from (editor-core's task
+     plugin), so it is the box that has to say so; inheriting the I-beam read as
+     decoration while a click here toggles the task. Cursor only — the fill and
+     the tick stay instant, because a checkbox that fades in its own answer has
+     made the user wait to read it. */
+  cursor: pointer;
   transition: background var(--app-motion-fast) var(--app-ease),
               border-color var(--app-motion-fast) var(--app-ease);
 }
@@ -182,6 +188,9 @@
   border: none;
   background: none;
   border-radius: 0;
+  /* Not a control any more: the pointer inherits from the pointer rule above
+     would promise a toggle this variant's click does not perform. */
+  cursor: inherit;
 }
 .editor-container .ProseMirror li[data-item-type="task"].neko-task-plain::after {
   content: none;
