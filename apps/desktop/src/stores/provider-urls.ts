@@ -30,8 +30,11 @@ const LS_MODELS_URLS = 'nekowite.ai.modelsUrls'
  * It is no provider's default but `local`'s, which is why it is named rather
  * than inlined at its use: attributed to a hosted provider it would name an
  * endpoint that provider's requests never reach. It is also the one Base URL
- * the backend has no fallback for — Rust's `default_base_url` has no arm for
- * `local`, so an empty field there sends the request to api.openai.com.
+ * the backend deliberately has no fallback for: `default_base_url` has no arm
+ * for `local`, and an empty field is refused with a message naming the setting
+ * rather than dialled anywhere. This constant is what the *field* is seeded
+ * with, which is a different decision made in this layer — the backend must
+ * not guess a host the user did not name.
  */
 const LOCAL_BASE_URL_DEFAULT = 'http://localhost:1234/v1'
 
