@@ -5,7 +5,6 @@ import {
   showRendered,
   sourceCaret,
   renderedTexts,
-  focusParagraph,
   sourceCaretToEnd,
   modelMarkdown,
   placeRenderedCaretInParagraph,
@@ -30,6 +29,17 @@ import {
 function normaliseSpaces(text: string | undefined): string {
   return (text ?? '').replace(/\u00a0/g, ' ')
 }
+
+/**
+ * End of the first paragraph of `DEFAULT_DOC` (`alpha  one`, 10 characters).
+ *
+ * The three composition tests below park the caret here before committing, and
+ * they used to reach it the way a user would: click the paragraph, press End.
+ * That is not where the caret ends up under load, and the failure it produces
+ * is indistinguishable from the app eating the text — so the position is set
+ * through the model instead (see `placeRenderedCaretInParagraph`).
+ */
+const FIRST_PARAGRAPH_END = 'alpha  one'.length
 
 /** Let the browser process `count` animation frames. A fixed sleep loses its
  *  meaning under parallel load; two frames are what "the browser has painted
@@ -101,10 +111,12 @@ test.describe('rendered pane - IME composition', () => {
 
   test('composition pre-edit followed by commit produces exactly one copy', async ({ page }) => {
     await openNote(page)
-    await focusParagraph(page, 0)
-
-    await page.keyboard.press('End')
-    await waitForRenderedCaretSettle(page)
+    // Park the caret through the model. Reaching it by click-then-End used to
+    // send the commit into `gamma    three` — the paragraph the editor's own
+    // caret sits in on open — while this test read `texts[1]`, which then failed
+    // with the pre-commit text and read as "the CJK commit was dropped". It was
+    // not: it was one paragraph down. See FIRST_PARAGRAPH_END.
+    await placeRenderedCaretInParagraph(page, 0, FIRST_PARAGRAPH_END)
     await composeAndCommit(page, 'zhongwen', '中文测试')
 
     const texts = await renderedTexts(page)
@@ -115,9 +127,7 @@ test.describe('rendered pane - IME composition', () => {
 
   test('repeated commits accumulate at the caret instead of replacing the line', async ({ page }) => {
     await openNote(page)
-    await focusParagraph(page, 0)
-    await page.keyboard.press('End')
-    await waitForRenderedCaretSettle(page)
+    await placeRenderedCaretInParagraph(page, 0, FIRST_PARAGRAPH_END)
 
     for (const chunk of ['你好', '世界', '测试']) {
       await composeAndCommit(page, chunk, chunk)
@@ -129,9 +139,7 @@ test.describe('rendered pane - IME composition', () => {
 
   test('a newline committed through a composition splits the paragraph', async ({ page }) => {
     await openNote(page)
-    await focusParagraph(page, 0)
-    await page.keyboard.press('End')
-    await waitForRenderedCaretSettle(page)
+    await placeRenderedCaretInParagraph(page, 0, FIRST_PARAGRAPH_END)
 
     await page.keyboard.insertText('\n')
     await page.waitForTimeout(150)
