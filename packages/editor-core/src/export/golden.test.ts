@@ -3,8 +3,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import katexCss from 'katex/dist/katex.min.css?inline'
-import { renderDocument, renderDocumentAsync } from './html'
-import type { ExportImageTarget, ExportRef, RenderDocumentOptions } from './html'
+import { renderDocument, renderDocumentAsync } from './index'
+import type { ExportImageTarget, ExportRef, RenderDocumentOptions } from './index'
 
 /**
  * Byte-exact golden for the exporter.

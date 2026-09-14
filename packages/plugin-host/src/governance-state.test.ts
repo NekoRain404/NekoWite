@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import * as governance from './governance'
+import * as governance from './index'
 import {
   getGovernancePluginIds,
   loadGovernance,
@@ -93,11 +93,11 @@ describe('governance snapshot round trip', () => {
   })
 })
 
-// The split's hard constraint: `governance.ts` is a compatibility surface, so
-// every value it exported before must still resolve from it. Most of these are
-// absent from api-surface.test.ts's curated list, so nothing else would catch a
-// name dropped while the implementation moved.
-const VALUE_EXPORTS_AT_HEAD = [
+// The package barrel is the only way in to these: `plugin-host` exports `.`
+// alone, so a governance value that stops being re-exported is unreachable for
+// every embedder. Most of them are absent from api-surface.test.ts's curated
+// list, so nothing else would catch one dropped while the modules moved.
+const VALUE_EXPORTS_IN_BARREL = [
   'PLUGIN_AUDIT_EVENT_LABELS',
   'sanitizeAuditDetail',
   'recordPluginEvent',
@@ -136,10 +136,10 @@ const VALUE_EXPORTS_AT_HEAD = [
   'governanceRefusal',
 ] as const
 
-describe('compatibility surface', () => {
-  it('still exports every value name the pre-split module exported', () => {
-    for (const name of VALUE_EXPORTS_AT_HEAD) {
-      expect(governance, `governance.ts must still export "${name}"`).toHaveProperty(name)
+describe('package barrel surface', () => {
+  it('exports every governance value name from the package entry', () => {
+    for (const name of VALUE_EXPORTS_IN_BARREL) {
+      expect(governance, `@nekowite/plugin-host must export "${name}"`).toHaveProperty(name)
     }
   })
 

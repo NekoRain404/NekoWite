@@ -14,7 +14,7 @@ import {
   setPluginSessionQuota,
 } from './runtime'
 import { emitLifecycle, onLifecycleError } from './lifecycle'
-import { onPluginEvent, getAuditLog } from './governance'
+import { onPluginEvent, getAuditLog } from './index'
 import { getCommand, getComponent, getToolbar, registerCommand, unregisterCommand, unregisterComponent, unregisterToolbar } from '@nekowite/editor-core'
 import type { PluginDefinition, PluginMeta } from './types'
 

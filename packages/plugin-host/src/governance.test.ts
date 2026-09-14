@@ -31,7 +31,7 @@ import {
   unrevokePlugin,
   verifyMacEnvelope,
   versionSatisfies,
-} from './governance'
+} from './index'
 
 beforeEach(() => {
   resetGovernanceForTests()

@@ -5,7 +5,9 @@ import type { LifecycleEvent } from './lifecycle'
 import type { PluginAiApi, PluginContext, PluginDefinition, PluginErrorCode, PluginPermission } from './types'
 import { PluginError } from './types'
 import { withTimeout } from './timing'
-import { recordPluginEvent, type PluginAuditEventType } from './governance'
+/* From the module that owns it, not from `./index`: the barrel this package
+ * exports re-exports this file, so going through it would close a cycle. */
+import { recordPluginEvent, type PluginAuditEventType } from './audit-log'
 import { collectPluginPermissions } from './permissions'
 
 interface ActivePlugin {

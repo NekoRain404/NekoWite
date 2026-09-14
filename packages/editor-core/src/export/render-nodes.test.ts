@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { renderDocument } from './html'
+import { renderDocument } from './index'
 
 /** Just the document body, so assertions are not distracted by the stylesheet. */
 function body(html: string): string {

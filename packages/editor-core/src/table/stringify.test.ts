@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createEditor } from '../editor'
-import { renderDocument } from '../export/html'
+import { renderDocument } from '../export'
 
 /**
  * A `|` inside a GFM table cell is a cell separator.

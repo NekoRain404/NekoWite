@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { renderDocument } from './html'
+import { renderDocument } from './index'
 
 /**
  * Content has to survive being NESTED, not just being present.

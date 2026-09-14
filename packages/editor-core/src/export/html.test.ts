@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { renderDocument, renderDocumentAsync, formatReference, doiUrl } from './html'
-import type { ExportRef, ExportImageTarget } from './html'
+import { renderDocument, renderDocumentAsync, formatReference, doiUrl } from './index'
+import type { ExportRef, ExportImageTarget } from './index'
 
 describe('renderDocument', () => {
   // Kept first in this describe: it must run before any async render, since
