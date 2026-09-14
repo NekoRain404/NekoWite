@@ -40,10 +40,14 @@ const NEGLIGIBLE_PX = 1
 
 /**
  * Arrange for `el` to travel from wherever it is now to wherever the layout has
- * just put it, over `timing` (a full `transition` value, so the duration and the
- * curve come from tokens.css like every other duration and curve here).
+ * just put it, over `duration` (a token name, so the timing comes from
+ * tokens.css like every other duration here). The curve is `--app-ease-travel`,
+ * which is symmetric: a half-screen move on an ease-out lurches off the line and
+ * one on an exit curve stops dead on arrival, and both were measured (see the
+ * token). The *durations* stay the panel's own — 300ms in, 195ms out — so the
+ * two halves of the gesture still finish together.
  */
-function glide(el: HTMLElement | null, fromLeft: number, timing: string): void {
+function glide(el: HTMLElement | null, fromLeft: number, duration: string): void {
   if (!el) return
   // Stand the element up with no transform at all before reading where the
   // layout has put it. A reversal lands *inside* the previous glide, so the
@@ -80,7 +84,7 @@ function glide(el: HTMLElement | null, fromLeft: number, timing: string): void {
   // displacement, so the element is left exactly as the stylesheet describes it
   // and a later toggle starts from a clean box.
   el.addEventListener('transitionend', clear)
-  el.style.transition = `translate ${timing}`
+  el.style.transition = `translate ${duration} var(--app-ease-travel)`
   el.style.translate = ''
 }
 
@@ -108,12 +112,19 @@ export function useFollowPanel(el: Ref<HTMLElement | null>, visible: () => boole
       if (!box) return
       const fromLeft = box.getBoundingClientRect().left
       void nextTick(() => {
+        // Same *durations* as the panel's own fade either way, so the two halves
+        // of the gesture finish together — but the **arriving** curve in both
+        // directions, never the departing one. `--app-ease-exit` accelerates
+        // away from where it started and stops dead on arrival, which is right
+        // for a panel the user is done with and wrong for content that is being
+        // *put somewhere*: measured on a 528px close, the per-frame steps ran
+        // 26 → 64 → 89 → 107 → 124 → 118 px and then zero. On `--app-ease` the
+        // movement is spent early and the last frames are a settle into place,
+        // which is the same shape the open already had.
         glide(
           el.value,
           fromLeft,
-          open
-            ? 'var(--app-motion) var(--app-ease)'
-            : 'var(--app-motion-exit) var(--app-ease-exit)',
+          open ? 'var(--app-motion)' : 'var(--app-motion-exit)',
         )
       })
     },

@@ -72,6 +72,15 @@
        --app-motion-press-scale  how far a control gives under a press; only a
                              standalone button shrinks, since a control in a row
                              has neighbours to stay aligned with.
+       --app-motion-drawer-offset  how far a panel drifts out of its own edge as
+                             it fades — a *fraction of the panel's own width*, so
+                             it is the same gesture on a 232px sidebar and a
+                             300px rail. Deliberately not the whole width: a
+                             panel that starts entirely off-screen spends most of
+                             its slide invisible, and the fade it is supposed to
+                             be *combined with* has nothing to do. At a quarter
+                             both read for the whole of the motion — the panel
+                             is visibly there and visibly arriving.
 
      Easing. One curve per *kind* of motion; a component picks by kind:
        --app-ease            state change — hover, focus, colour, an in-place
@@ -84,6 +93,21 @@
                              colour, which have no room above 1: hence two
                              animations per arrival, the fade on --app-ease and
                              the movement on this.
+       --app-ease-travel     a *long* travel being put somewhere — the content
+                             following a panel it has made room for. Symmetric:
+                             zero speed at both ends, so a move of half the
+                             screen neither lurches off the line nor stops dead
+                             on arrival. That shape is the same mathematics as
+                             --app-ease-attention below and the two are
+                             deliberately the same curve — "no fast half and no
+                             slow half" is the whole of both — kept as two names
+                             because they are two different kinds of motion and
+                             the next person to tune one must not move the other.
+                             Measured on the 528px close, per frame: the exit
+                             curve peaks at 68px and *ends* at 68px (a dead
+                             stop), the state-change curve peaks at 185px (4x the
+                             average — a lurch), this one peaks at 81 and ends at
+                             17.
        --app-ease-exit       departure — accelerates away; nothing lingers.
        --app-ease-attention  attention — a repeating cycle, symmetric so it has
                              no fast half and slow half.
@@ -109,6 +133,7 @@
   --app-motion-scale-pop: 0.98;
   --app-motion-scale-exit: 0.992;
   --app-motion-press-scale: 0.98;
+  --app-motion-drawer-offset: 25%;
   /* Declared here as well as in the @supports block below, which is the value
      that actually wins wherever the spring can run. This fallback is what keeps
      the arrival working at all on an engine without `linear()`: an animation
@@ -117,6 +142,7 @@
      better outcome than no curve at all. */
   --app-ease-surface: cubic-bezier(0.32, 0.9, 0.45, 1.06);
   --app-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --app-ease-travel: cubic-bezier(0.45, 0, 0.55, 1);
   --app-ease-exit: cubic-bezier(0.4, 0, 1, 1);
   --app-ease-attention: cubic-bezier(0.45, 0, 0.55, 1);
   /* Radius ladder: window 16 > dialog 14 > menu/card 10 > button/input 8 >
