@@ -32,7 +32,10 @@ function isTauriRuntime(): boolean {
  *     real save: when dirty tabs exist it PREVENTS the close, `flushDirty()`s
  *     them (and routes unnamed dirty tabs through the existing save-as prompt
  *     path), and only then closes. If a save fails the window stays open so the
- *     work is not lost.
+ *     work is not lost — and when it failed because the file refuses the write,
+ *     the user is offered the one route out that does not need that file (a copy
+ *     under another name, `rescueUnflushableTabs`), because "some files could
+ *     not be saved" on its own leaves them with an X that never works.
  *   - In the browser Demo (no Tauri runtime, no `close-requested`), the
  *     `beforeunload` fallback just prompts, because an async flush cannot be
  *     reliably awaited during an unload.
@@ -72,9 +75,49 @@ export function createAppLifecycle(deps: {
     const tab = tabs.activeTab
     if (!tab?.dirty || blurSaving) return
     blurSaving = true
-    void tabs.saveActive().finally(() => {
+    // `saveTab` rather than `saveActive`: losing focus is not the user asking
+    // for anything, and a save that answers a refusal with a file dialog would
+    // throw a picker into whatever window they just switched to.
+    void tabs.saveTab(tab.id).finally(() => {
       blurSaving = false
     })
+  }
+
+  /** The user's answer to the close-blocked question below. */
+  function requestSaveCopies(count: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      notifyRecovery({
+        message: t('tabs.unsavedWorkRescue', { count }),
+        onRestore: () => resolve(true),
+        onDismiss: () => resolve(false),
+      })
+    })
+  }
+
+  /**
+   * The way out of a close that a refused save would otherwise block forever.
+   *
+   * `flushDirty()` cannot put every dirty tab on disk when one of them is
+   * read-only: the backend refuses that write deliberately, and no retry of it
+   * can ever land. The window then will not close — correctly, since the text is
+   * unsaved — but a user who typed into a protected note (a note restored from
+   * the trash carries the bit, so they need never have set it) had no move left
+   * at all: Ctrl+S refused, the X refused, and the only ways out were to lose
+   * the edits or to leave the app and `chmod` the file. Offer the one route that
+   * needs neither the protected file nor a retry, and let the close go ahead
+   * once the text is somewhere the user chose.
+   */
+  async function rescueUnflushableTabs(): Promise<boolean> {
+    const stuck = tabs.tabs.filter((tab) => tab.dirty && tab.path)
+    if (stuck.length === 0) return false
+    if (!(await requestSaveCopies(stuck.length))) return false
+    for (const tab of stuck) {
+      // Resolves true only once that tab's text is on disk — under the copy's
+      // name. A cancelled dialog, or a copy that was refused in turn, leaves
+      // this false and the window open, with the text still in the editor.
+      if (!(await tabs.saveTab(tab.id, { offerCopy: true }))) return false
+    }
+    return true
   }
 
   // With autosave on, a dirty tab's pending timer may never fire if the window
@@ -108,9 +151,12 @@ export function createAppLifecycle(deps: {
     closing = true
     try {
       const flushed = await tabs.flushDirty()
-      if (!flushed) {
-        // A path'd save failed — keep the window open so the work is not lost.
-        notifyError(t('tabs.unsavedWorkBlocker'))
+      if (!flushed && !(await rescueUnflushableTabs())) {
+        // A path'd save failed, and the user did not (or could not) route the
+        // text elsewhere — keep the window open so the work is not lost. The
+        // wording is this path's own: the shared sentence describes a vault
+        // switch, which is not what the user just tried to do.
+        notifyError(t('tabs.unsavedWorkBlockerClose'))
         return
       }
       // Unnamed dirty docs need a Save-As dialog a background flush must not open,
@@ -123,7 +169,7 @@ export function createAppLifecycle(deps: {
           for (const tab of untitled) {
             const saved = await tabs.saveTab(tab.id)
             if (!saved) {
-              notifyError(t('tabs.unsavedWorkBlocker'))
+              notifyError(t('tabs.unsavedWorkBlockerClose'))
               return
             }
           }
@@ -141,7 +187,7 @@ export function createAppLifecycle(deps: {
       // Never let an unexpected save/flush error swallow the user's X. Try the
       // native close; if even that fails, fall back to destroy so the process
       // cannot become unclosable. Data protection is still best-effort above.
-      notifyError(t('tabs.unsavedWorkBlocker'))
+      notifyError(t('tabs.unsavedWorkBlockerClose'))
       await getCurrentWindow().close().catch(async () => {
         await getCurrentWindow().destroy().catch(() => undefined)
       })

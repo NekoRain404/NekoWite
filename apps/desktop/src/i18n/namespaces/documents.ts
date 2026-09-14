@@ -36,14 +36,38 @@ export const documents = {
       // the app is broken rather than the note unreadable to it.
       saveBlockedUnrenderable:
         'Not saved: this note could not be rendered, so the editor cannot vouch for what it would write. Your text is unchanged.',
+      // Also not `saveFailed`, for the same reason and one more: a retry is
+      // refused again for as long as the file stays read-only, and the same
+      // refusal is what keeps the window from closing. The reason is the point.
+      saveBlockedReadOnly:
+        'Not saved: {path} is read-only on disk, so the note was left untouched. Your text is kept in the editor.',
+      // The same refusal when the Save-As dialog is answering it: the user has
+      // to know why a dialog appeared, and that the note itself is unchanged.
+      saveBlockedReadOnlyCopy:
+        'Not saved: {path} is read-only on disk, so the note was left untouched. Choose where to keep a copy of your text.',
+      savedAsCopy: 'Saved as {path}',
       deleteFailed: 'Delete failed',
       deleteAssetsFailed: 'The note was deleted, but its image folder could not be moved to the trash.',
       watchFailed: 'External file changes cannot be tracked right now, so this list may not follow what happens outside the app. Rebuilding the index retries it.',
       watchRestored: 'External file changes are tracked again.',
       restoreHistoryFailed: 'Failed to restore the historical version',
+      // A restore is refused for the same reason a save is, and says so: the
+      // version is not lost, the note it would have gone into is protected, and
+      // no retry changes that.
+      restoreBlockedReadOnly:
+        'Not restored: {path} is read-only on disk, so it was left untouched. Your current text is unchanged.',
       reloadFailed: 'Could not reload file: {path}; current content kept',
       unsavedWorkPrompt: 'You have unsaved changes. Leave anyway?',
       unsavedWorkBlocker: 'Some files could not be saved; the vault was not switched.',
+      // The close path's own wording. The vault-switch sentence above describes
+      // an action the user closing the window never took.
+      unsavedWorkBlockerClose:
+        'Some files could not be saved; the window stays open and your text is still in the editor.',
+      // The way out of a refused save at the moment the user is trying to
+      // leave, where a retry they cannot carry out would strand them: the X is
+      // the last thing they have left to press.
+      unsavedWorkRescue:
+        'Some files could not be saved. Choose Restore to save your text as copies under other names; choose Dismiss to keep the window open.',
       untitledVaultSwitchMsg: 'You have {count} unsaved document(s) without a path. Restore to save them before switching; Dismiss to discard them.',
       untitledCloseAllMsg:
         'You have {count} untitled document(s) with unsaved changes. Choose Restore to save them before closing; choose Dismiss to discard them.',
@@ -95,14 +119,24 @@ export const documents = {
       saveFailed: '保存失败，内容已保留在编辑器中，请重试',
       saveBlockedUnrenderable:
         '未保存：这篇笔记无法被渲染，编辑器无法为将要写入的内容担保。你的文字未改动。',
+      saveBlockedReadOnly:
+        '未保存：{path} 在磁盘上是只读的，笔记未被改动。你的文字仍保留在编辑器中。',
+      saveBlockedReadOnlyCopy:
+        '未保存：{path} 在磁盘上是只读的，笔记未被改动。请选择位置保存一份副本。',
+      savedAsCopy: '已另存为 {path}',
       deleteFailed: '删除失败',
       deleteAssetsFailed: '笔记已删除，但其图片文件夹未能移入回收站。',
       watchFailed: '当前无法跟踪外部文件变化，列表可能不会随应用外的改动更新。重建索引会重试。',
       watchRestored: '已恢复跟踪外部文件变化。',
       restoreHistoryFailed: '恢复历史版本失败',
+      restoreBlockedReadOnly:
+        '未恢复：{path} 在磁盘上是只读的，未被改动。当前文字未受影响。',
       reloadFailed: '无法重新加载文件：{path}，已保留当前内容',
       unsavedWorkPrompt: '你有未保存的更改，仍要离开吗？',
       unsavedWorkBlocker: '部分文件无法保存，未切换 vault',
+      unsavedWorkBlockerClose: '部分文件无法保存；窗口保持打开，文字仍在编辑器中。',
+      unsavedWorkRescue:
+        '有文件无法保存。选择“恢复”把文字另存为副本；选择“忽略”则保持窗口打开。',
       untitledVaultSwitchMsg: '你有 {count} 个未命名的未保存文档。选择“恢复”在切换前保存；选择“忽略”则丢弃。',
       untitledCloseAllMsg:
         '你有 {count} 个未命名的未保存文档。选择“恢复”在关闭前保存；选择“忽略”则丢弃。',

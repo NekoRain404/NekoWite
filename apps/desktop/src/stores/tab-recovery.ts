@@ -11,6 +11,7 @@
 
 import type { Ref } from 'vue'
 import type { HistoryEntry } from '../platform/gateways/contracts'
+import { classifyWriteRefusal } from './write-refusal'
 import type { OpenTab } from './tabs'
 
 /** The slice of the fs gateway the recovery flows use. */
@@ -57,7 +58,16 @@ export function createTabRecovery(deps: TabRecoveryDeps) {
       tab.dirty = false
       announce(t('recovery.restored'))
       return content
-    } catch {
+    } catch (e) {
+      // A restore is refused for the same reason a save is, and the sentence
+      // has to say which: "failed to restore" invites a retry that a read-only
+      // note refuses just as flatly every time. Nothing is lost either way —
+      // the write never happened, so the tab keeps the text it had — which is
+      // why this refusal needs no route out of its own.
+      if (classifyWriteRefusal(e) === 'read-only') {
+        notifyError(t('tabs.restoreBlockedReadOnly', { path: tab.path }))
+        return null
+      }
       notifyError(t('tabs.restoreHistoryFailed'))
       return null
     }

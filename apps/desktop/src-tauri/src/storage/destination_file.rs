@@ -29,6 +29,18 @@ use std::path::Path;
 
 use crate::errors::fs_error;
 
+/// Marks a refusal for the frontend, in front of the sentence.
+///
+/// The frontend has to answer a refusal differently from a failure — one is a
+/// decision that no retry changes, the other is a transient error worth
+/// repeating — and it must not learn which by matching the sentence, which is
+/// the user's copy and free to change. Same shape, and the same reason, as
+/// [`crate::errors::ALREADY_EXISTS_PREFIX`]: a token the frontend strips, with
+/// everything after it belonging to the message. The mirror on the other side is
+/// `READ_ONLY_PREFIX` in `apps/desktop/src/stores/write-refusal.ts`, and a test
+/// pins the literal on each side.
+pub const READ_ONLY_PREFIX: &str = "EREADONLY: ";
+
 /// A file a publish is about to replace: what has to survive it, read BEFORE the
 /// rename — afterwards the file it describes is gone.
 pub(crate) struct DestinationFile {
@@ -160,10 +172,11 @@ impl DestinationFile {
     }
 
     /// The refusal, phrased for the user: what was refused, that their file is
-    /// still there, and the one thing that unblocks the save.
+    /// still there, and the one thing that unblocks the save. The token in
+    /// front is for the frontend, not for the user — see [`READ_ONLY_PREFIX`].
     pub(crate) fn refusal(&self, path: &Path) -> String {
         format!(
-            "could not replace {}: the file is read-only{}, so it was left untouched; \
+            "{READ_ONLY_PREFIX}could not replace {}: the file is read-only{}, so it was left untouched; \
              clear the read-only permission to save over it, or save it under a different name",
             crate::domain::path_policy::ipc_path(path),
             self.mode_detail(),
