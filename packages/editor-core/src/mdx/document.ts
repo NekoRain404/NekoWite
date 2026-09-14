@@ -1,8 +1,8 @@
 import remarkMdx from 'remark-mdx'
 
 import { isMaskName, maskMdxSource } from './mask'
-import { restoreImageAlts, type AltNode } from './image-alt'
-import { contentIndent, sourceOf } from './source'
+import { restoreImageAlts } from './image-alt'
+import { contentIndent, sourceOf, type SourceNode } from './source'
 
 /**
  * An MDX document: what makes one, how it is parsed, and how the source it is
@@ -101,10 +101,23 @@ function masking<T>(processor: T, plain: ((text: string) => unknown) | null): T 
 // The parsed tree, in the shapes the schema knows
 // ---------------------------------------------------------------------------
 
-interface MdxNode extends AltNode {
+/**
+ * A node of the MDX parse.
+ *
+ * `children` is declared here rather than inherited from `image-alt.ts`'s
+ * `AltNode`: a child of an MDX node is an MDX node, and inheriting the wider
+ * `AltNode[]` would say the tree is made of nodes without `name` — which is how
+ * `fold` below came to be reading `child.name` off a type that no longer had it.
+ * `MdxNode` is still structurally an `AltNode`, so the alt repair takes one
+ * without a cast.
+ */
+interface MdxNode extends SourceNode {
+  children?: MdxNode[]
   /** The element's name; `null` for a fragment, which is what `mdast`'s own
    *  `MdxJsxFlowElement` says about it once `remark-mdx` is in the program. */
   name?: string | null
+  /** An image's alt text, which the serializer writes back verbatim. */
+  alt?: unknown
 }
 
 /** The mdast types that are a whole block of MDX source. */
