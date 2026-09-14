@@ -182,7 +182,12 @@ function springSamples(curve: string): { value: number; at: number }[] {
 // the entry, not a reason to delete it quietly.
 const MOTION_SURFACE = [
   './tokens.css',
+  // Both halves of the component layer, for the reason the motion sheets below
+  // are listed joined: several guards here are *negative*, and `.dialog` — the
+  // shared arrival — lives in the second half now. Naming only the first would
+  // check its absence in a file that never had it.
   './components.css',
+  './surfaces.css',
   // The layer's first half. Split out of motion.css for the reason both files'
   // headers give; the list above is what the guards read, and this list is what
   // they check, so both have to carry it.
@@ -191,7 +196,10 @@ const MOTION_SURFACE = [
   // them. Added when they moved off keyframes onto transitions, which is
   // exactly the moment a listed file became worth listing.
   '../app/appShell.css',
+  // Both halves of the editor content layer; the hover-revealed chrome — the
+  // code block's copy button, the image node's handle — is in the second.
   './editor-content.css',
+  './editor-blocks.css',
   './motion.css',
   '../components/AppToast.vue',
   // The toolbar's dropdowns: the button, the panel and the `menu` transition
@@ -493,20 +501,21 @@ describe('choreography', () => {
     // prevents does not need a token to happen, and a `:nth-child` rule with a
     // literal delay in it would be the same defect wearing different clothes.
     //
-    // The two lines in `./components.css` are the one exception, and they are
+    // The two lines in `./surfaces.css` are the one exception, and they are
     // named here rather than waved through: `.math-dialog > .math-actions` and
-    // `.table-dialog > .table-dialog-actions` are the editor-core passthroughs,
-    // and that file is outside the set this round may write. They are the same
-    // defect as the dialog-actions rule that was removed from motion.css, and
-    // they are the remaining half of the same fix — reported, not tolerated. Any
-    // *third* delay fails this, wherever it appears.
+    // `.table-dialog > .table-dialog-actions` are the editor-core passthroughs.
+    // They are the same defect as the dialog-actions rule that was removed from
+    // motion.css, and they are the remaining half of the same fix — reported,
+    // not tolerated. Any *third* delay fails this, wherever it appears. The key
+    // is a file path, so it moved with them when the component layer was split;
+    // the reason it exists did not change and the exception was not dropped.
     const UNCONVERTED = new Set([
       '  animation-delay: calc(var(--app-motion-stagger) * 2);',
     ])
     for (const file of MOTION_SURFACE) {
       for (const line of declarations(read(file), file).split('\n')) {
         if (!/animation-delay:/.test(line)) continue
-        if (file === './components.css' && UNCONVERTED.has(line)) continue
+        if (file === './surfaces.css' && UNCONVERTED.has(line)) continue
         expect(line, `${file} delays an animation: ${line.trim()}`).toMatch(
           // The one honest use: zeroing the delay rather than setting one. The
           // reduced-motion sweep is the only place allowed to say it.
