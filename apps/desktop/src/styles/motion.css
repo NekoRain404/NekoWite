@@ -146,6 +146,41 @@
   animation: rail-in var(--app-motion-slow) var(--app-ease);
 }
 
+/* The rail is the outer case: a whole column appearing where 300px of layout
+   was not. A region *inside* a surface that is already on screen is the same
+   shape one level down and needs one thing more — the rail may fade, but a
+   block that replaces another block has an edge to have come from, and a fade
+   alone answers "this changed" without answering "from where".
+
+   Everything in this app's chrome hangs downward off the thing that owns it: a
+   group body under its header, a column's body under its toolbar, a dialog's
+   section under the dialog's own header, a diff under the button that opened
+   it. The road back to the anchor is therefore *up*, which is the travel token
+   with its sign flipped — a distance and a direction already stated once in
+   tokens.css, rather than a fresh pair invented per site.
+
+   `translate` and not `transform`, for the reason the surface arrival above
+   gives: it composes with whatever a component does with its own `transform`,
+   where the shorthand would wipe it.
+
+   The rung is the one the ladder names for "a region changing state in place",
+   and the curve is the state-change one — this is not a surface arriving, it is
+   content inside a surface that has already arrived.
+
+   Worn rather than chased: the same mechanism as `.dialog`. The layer names the
+   class and the region wears it (it is in the `SHARED_ARRIVAL` list of
+   motion.test.ts, which is what ties a wearer to this rule), so a component is
+   free to rename its internals without silently dropping out of the vocabulary,
+   and this file does not have to hold a list of five components' private class
+   names to keep them animated. */
+@keyframes region-in {
+  from { opacity: 0; translate: 0 calc(var(--app-motion-travel) * -1); }
+  to   { opacity: 1; translate: 0 0; }
+}
+.arrives {
+  animation: region-in var(--app-motion) var(--app-ease);
+}
+
 /* ---- will-change --------------------------------------------------------
    Promotion is a loan against memory and against text rendering (a promoted
    layer is composited on its own and loses subpixel antialiasing), so it is

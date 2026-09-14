@@ -97,7 +97,15 @@ onMounted(() => {
   position: fixed;
   top: 50%;
   left: 50%;
-  transform: translate(-50%, -50%);
+  /* Centred with `translate`, never with `transform`. This dialog wears the
+     shared arrival (`.dialog`, out of styles/motion.css), which scales the
+     surface from 0.96 — and a `scale` multiplies whatever `transform` holds,
+     so a transform-centred dialog enters two per cent of its own width and
+     height off the centre of the window and slides home. `translate` sits
+     outside the scale and is measured from the box, so the centring holds for
+     every frame of the arrival. This was the last dialog in the app still doing
+     it the other way, and styles/motion.css records it as a known follow-up. */
+  translate: -50% -50%;
   width: min(420px, 90vw);
   max-height: 70vh;
   display: flex;

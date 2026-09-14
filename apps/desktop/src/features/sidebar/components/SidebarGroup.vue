@@ -9,7 +9,7 @@
  * the one that collapses them when the vault changes — and the body arrives as
  * a slot, so this component renders nothing of what it opens.
  */
-import { ChevronDown, ChevronRight } from 'lucide-vue-next'
+import { ChevronRight } from 'lucide-vue-next'
 
 defineProps<{
   title: string
@@ -28,15 +28,9 @@ defineEmits<{
       class="group-header"
       @click="$emit('toggle')"
     >
-      <ChevronDown
-        v-if="open"
-        class="group-caret"
-        :size="12"
-        :stroke-width="1.8"
-      />
       <ChevronRight
-        v-else
         class="group-caret"
+        :class="{ 'is-open': open }"
         :size="12"
         :stroke-width="1.8"
       />
@@ -46,9 +40,14 @@ defineEmits<{
         class="group-count"
       >{{ count }}</span>
     </button>
+    <!-- The body mounts whole, so it cannot be transitioned — it wears the
+         shared nudge out of styles/motion.css, which arrives from the header
+         this button is. The height it takes still lands in one frame: the
+         sidebar scrolls, and animating a scroll container's height is the
+         scrollbar thrash that a fade is here to avoid (see the rail body). -->
     <div
       v-if="open"
-      class="group-body"
+      class="group-body arrives"
     >
       <slot />
     </div>
@@ -85,7 +84,15 @@ defineEmits<{
   color: var(--app-text);
   background: color-mix(in srgb, var(--app-elevated) 54%, transparent);
 }
-.group-caret { flex: none; }
+/* A disclosure caret turns; it does not swap glyphs. Rendering both a down and a
+   right chevron and choosing between them made the one caret in the app that
+   jumped — the file tree has always rotated its own at this rung, which the
+   ladder names for exactly this ("in-place state flips (caret rotate)"). */
+.group-caret {
+  flex: none;
+  transition: transform var(--app-motion-fast) var(--app-ease);
+}
+.group-caret.is-open { transform: rotate(90deg); }
 .group-title { flex: 1; text-align: left; }
 .group-count {
   font-size: 10px;

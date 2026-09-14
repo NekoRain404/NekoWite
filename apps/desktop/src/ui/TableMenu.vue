@@ -174,6 +174,11 @@ onBeforeUnmount(() => {
   font-size: 11px;
   white-space: nowrap;
   cursor: pointer;
+  /* The shared hover rung. This toolbar is the app's densest row of controls and
+     it was the one row where a hover snapped: every other button in the app
+     eases at this rung. */
+  transition: background var(--app-motion-fast) var(--app-ease),
+              color var(--app-motion-fast) var(--app-ease);
 }
 .neko-table-menu-btn:hover,
 .neko-table-menu-btn:focus-visible {

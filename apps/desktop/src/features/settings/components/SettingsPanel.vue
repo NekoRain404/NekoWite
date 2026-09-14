@@ -80,24 +80,43 @@ watch(activeSection, () => {
         <div class="dialog-body">
           <SettingsNavigation v-model:active-section="activeSection" />
           <div class="dialog-content">
+            <!-- One section at a time, swapped whole, so each wears the shared
+                 nudge (`arrives`) and comes down out of the dialog's own header
+                 rather than being cut in. Every section's root is a single
+                 element, so the class falls through onto it and nothing about
+                 the markup or the focus watch changes. -->
             <GeneralSettings
               v-if="activeSection === 'general'"
+              class="arrives"
               :app-version="appVersion"
               @saved="(p: string) => emit('saved', p)"
             />
-            <AppearanceSettings v-else-if="activeSection === 'appearance'" />
-            <EditorSettings v-else-if="activeSection === 'editor'" />
+            <AppearanceSettings
+              v-else-if="activeSection === 'appearance'"
+              class="arrives"
+            />
+            <EditorSettings
+              v-else-if="activeSection === 'editor'"
+              class="arrives"
+            />
             <ExportSettings
               v-else-if="activeSection === 'export'"
               v-model:frontmatter="frontmatter"
               v-model:page-size="pageSize"
               v-model:orientation="orientation"
+              class="arrives"
               :has-active-tab="hasActiveTab"
               @export-html="exportHtmlFile"
               @export-pdf="exportPdfFile"
             />
-            <PluginSettings v-else-if="activeSection === 'plugins'" />
-            <AiSettings v-else-if="activeSection === 'ai'" />
+            <PluginSettings
+              v-else-if="activeSection === 'plugins'"
+              class="arrives"
+            />
+            <AiSettings
+              v-else-if="activeSection === 'ai'"
+              class="arrives"
+            />
           </div>
         </div>
       </div>
