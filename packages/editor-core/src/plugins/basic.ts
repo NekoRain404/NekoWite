@@ -41,6 +41,7 @@ import { tableSelectionPlugin } from '../table/selection'
 import { suggestionPlugin } from '../suggest'
 import { taskCheckbox } from '../task/checkbox'
 import { wikilink, wikilinkNodeView, wikilinkRemark } from '../wikilink'
+import { inlineBreakNodeView } from './inline-break-view'
 
 
 /**
@@ -138,6 +139,9 @@ export const basicPlugins: MilkdownPlugin[] = [
   ),
   // Same regex, but it checks the schema before replacing the paragraph.
   insertHrInputRule,
+  // After `commonmark`, whose `html` node this overrides: an `html` atom holding
+  // a break tag renders as a line break rather than as the text `<br />`.
+  inlineBreakNodeView,
   // Must come after `commonmark` (which declares the base `link` mark) so this
   // later registration wins; see `linkOrderSchema` for why the priority matters.
   ...linkOrderSchema,
