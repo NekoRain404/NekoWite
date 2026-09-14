@@ -53,6 +53,18 @@ export interface ExternalDocSync {
 
 export function createExternalDocSync(deps: ExternalDocSyncDeps): ExternalDocSync {
   let unlisten: (() => void) | null = null
+  /**
+   * Bumped by every `start()` and every `stop()`.
+   *
+   * `if (unlisten) return` is checked *before* the await, so two starts in
+   * flight both pass it and the second to resolve overwrites the first —
+   * orphaning a registration nothing holds the unsubscribe for. And a `stop()`
+   * during the await nulls `unlisten` only for the registration to land
+   * afterwards, leaving a listener alive on an object the caller believes is
+   * stopped. A ticket tells a late registration that the world moved, so it can
+   * release **its own** registration instead of storing it.
+   */
+  let generation = 0
 
   /** True when `path` is `ancestor` itself or lives beneath it. */
   function isUnder(path: string, ancestor: string): boolean {
@@ -156,11 +168,18 @@ export function createExternalDocSync(deps: ExternalDocSyncDeps): ExternalDocSyn
   return {
     async start(): Promise<void> {
       if (unlisten) return
-      unlisten = await deps.onFsChange((e) => {
+      const mine = ++generation
+      const off = await deps.onFsChange((e) => {
         void handle(e)
       })
+      if (mine !== generation) {
+        off()
+        return
+      }
+      unlisten = off
     },
     stop(): void {
+      generation++
       unlisten?.()
       unlisten = null
     },

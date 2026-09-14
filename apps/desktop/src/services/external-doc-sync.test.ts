@@ -325,3 +325,113 @@ describe('watcher resync', () => {
     expect(h.onConflict).not.toHaveBeenCalled()
   })
 })
+
+/**
+ * The subscription's own lifetime.
+ *
+ * `onFsChange` here books a registration **per call**, the way the Tauri adapter
+ * does — `listen()` installs its own wrapper and backend id, so two
+ * registrations are genuinely independent and unlistening one leaves the other
+ * live. A stub that keys by callback identity would fold them together and hide
+ * both defects below, which is exactly what the renderer's memory adapter used
+ * to do.
+ */
+function subscriptionHarness({ defer = false }: { defer?: boolean } = {}) {
+  const live = new Set<symbol>()
+  const resolvers: Array<() => void> = []
+  const sync = createExternalDocSync({
+    read: async () => 'disk',
+    onFsChange: () => {
+      const id = Symbol('registration')
+      const unsubscribe = () => live.delete(id)
+      // `defer` is for the races: two starts must be able to be in flight at
+      // once, which needs a registration nobody has resolved yet. The default
+      // resolves at once so an ordinary `await start()` cannot deadlock on a
+      // settle that is only scheduled after it returns.
+      if (!defer) {
+        live.add(id)
+        return Promise.resolve(unsubscribe)
+      }
+      return new Promise<() => void>((resolve) => {
+        resolvers.push(() => {
+          live.add(id)
+          resolve(unsubscribe)
+        })
+      })
+    },
+    getVault: () => 'C:\\vault',
+    getActiveTab: () => null,
+    isSelfWrite: () => false,
+    reload: async () => undefined,
+    onConflict: () => undefined,
+    onChange: () => undefined,
+    onMissing: () => undefined,
+    getOpenTabs: () => [],
+  })
+  return {
+    sync,
+    liveCount: () => live.size,
+    /** Let every pending `onFsChange` resolve, without awaiting in test order. */
+    async settle(): Promise<void> {
+      const pending = resolvers.splice(0, resolvers.length)
+      for (const r of pending) r()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    },
+  }
+}
+
+describe('the fs-change subscription is not leaked', () => {
+  it('two starts in flight leave exactly one live registration', async () => {
+    const h = subscriptionHarness({ defer: true })
+    const first = h.sync.start()
+    const second = h.sync.start()
+    await h.settle()
+    await Promise.all([first, second])
+
+    // Before the fix both registrations were stored, the second overwriting the
+    // first — and nothing held the first's unsubscribe, so it stayed live for
+    // the rest of the session.
+    expect(h.liveCount()).toBe(1)
+
+    h.sync.stop()
+    expect(h.liveCount()).toBe(0)
+  })
+
+  it('a stop during start leaves nothing live', async () => {
+    const h = subscriptionHarness({ defer: true })
+    const starting = h.sync.start()
+    h.sync.stop()
+    await h.settle()
+    await starting
+
+    // Before the fix the registration landed after `stop()` had nulled the
+    // field, so it was never stored and never unlistened: a live listener on an
+    // object the caller believes is stopped.
+    expect(h.liveCount()).toBe(0)
+  })
+
+  it('start/stop/start leaves exactly one live registration', async () => {
+    const h = subscriptionHarness()
+    await h.sync.start()
+    await h.settle()
+    h.sync.stop()
+    expect(h.liveCount()).toBe(0)
+    await h.sync.start()
+    await h.settle()
+    expect(h.liveCount()).toBe(1)
+    h.sync.stop()
+    expect(h.liveCount()).toBe(0)
+  })
+
+  it('a second start after a first succeeded is a no-op', async () => {
+    const h = subscriptionHarness()
+    await h.sync.start()
+    await h.settle()
+    await h.sync.start()
+    await h.settle()
+    expect(h.liveCount()).toBe(1)
+    h.sync.stop()
+  })
+})
