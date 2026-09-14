@@ -1,5 +1,5 @@
-//! Vault file store: the vault-facing base IO (read, stat, write, create,
-//! list) and the public surface of the storage layer.
+//! Vault file store: the vault-facing base IO (read, stat, list, mkdir, media
+//! paths) and the public surface of the storage layer.
 //!
 //! Every function takes a `vault_root` (the vault the user opened) as its first
 //! argument and resolves the requested path through
@@ -9,30 +9,27 @@
 //! [`crate::state::require_opened_vault`]) before calling in.
 //!
 //! What used to be one file now lives in sibling modules (roadmap 10.4), and
-//! this file keeps the base IO plus the re-exports below:
+//! this file keeps the reading and inspecting half plus the re-exports below:
 //!
+//! * [`crate::storage::save_store`] - the two writes (save, create-new) and the
+//!   history version a save takes on the way;
 //! * [`crate::storage::atomic_write`] - the write lock, temp-file staging, the
 //!   fsync/rename pipeline, and the create-only / no-clobber publish operations;
 //! * [`crate::storage::attachment_store`] - the paste and file-picker attachment
 //!   paths, their shared name and size rules, and the name-claiming write;
-//! * [`crate::storage::metadata_store`] - the history side key, snapshots, and
-//!   their listing, reading and restoring;
+//! * [`crate::storage::metadata_store`] - the history side key, and the
+//!   listing, reading and restoring of the versions under it;
 //! * [`crate::storage::rename_store`] - the rename transaction.
 //!
-//! Dependencies: this module depends on `atomic_write` and `metadata_store` (the
-//! save pipeline) and on none of the others; nothing below imports back.
+//! Dependencies: this module depends on `save_store` and on none of the others
+//! it re-exports; nothing below imports it back.
 
 use serde::Serialize;
-use std::io;
 use std::path::Path;
 
 use crate::domain::path_policy::{resolve_within, resolve_within_rel};
 use crate::domain::vault::{is_mdx_path, should_skip_entry};
-use crate::errors::{file_exists_error, fs_error};
-use crate::storage::atomic_write::{create_new_bytes, write_lock, CreateFileError};
-use crate::storage::destination_file;
-use crate::storage::metadata_store::DEFAULT_MAX_HISTORY;
-use crate::storage::temp_files::STALE_TMP_MAX_AGE;
+use crate::errors::fs_error;
 
 // --- Thin forwarders (roadmap 10.4: keep the old public names for one stage) ---
 //
@@ -51,6 +48,7 @@ pub use crate::storage::metadata_store::{
     list_history, read_history, restore_history, snapshot_history, HistoryEntry,
 };
 pub use crate::storage::rename_store::rename_entry;
+pub use crate::storage::save_store::{create_new_file, write_file};
 pub use crate::storage::temp_files::cleanup_stale_tmp;
 
 #[derive(Serialize, Clone, Debug)]
@@ -88,109 +86,6 @@ pub fn stat_file(vault_root: &str, path: &str) -> Result<FileStat, String> {
     Ok(FileStat {
         size: meta.len(),
         mtime,
-    })
-}
-
-/// Write `content` to `path` under the vault, snapshotting the previous
-/// content first (when it exists, differs, and is non-empty).
-///
-/// Returns `Ok(None)` when everything succeeded and `Ok(Some(warning))` when the
-/// text was written but the history snapshot was not — never an error for a
-/// failure of the optional part.
-///
-/// `max_history` caps how many snapshots are kept (default 10 when `None`).
-/// `Option<u32>` keeps the command compatible with the current frontend, which
-/// invokes `write_file` with only `{ vault_root, path, content }`; Tauri maps a
-/// missing optional argument to `None`.
-///
-/// The read-old -> snapshot -> atomic-write sequence holds [`write_lock`], so
-/// concurrent saves on the same vault are serialized and cannot interleave a
-/// stale snapshot with a newer write. The directory the file lives in is also
-/// swept for stale `.tmp` crash litter before the write.
-pub fn write_file(
-    vault_root: &str,
-    path: &str,
-    content: &str,
-    max_history: Option<u32>,
-) -> Result<Option<String>, String> {
-    // Serialize the whole read-snapshot-write sequence. `write_file` does no
-    // `.await`, so the guard never crosses a yield point and cannot deadlock
-    // the async executor; it just windows two concurrent saves apart.
-    let _guard = write_lock().lock().map_err(|e| e.to_string())?;
-    let resolved = resolve_within(vault_root, path)?;
-    // Refused before the read and the snapshot below, which is the point of
-    // asking here as well as at the publish (which stays the authority): those
-    // two steps are work done FOR a write that is not going to happen, and the
-    // snapshot spends a history slot. A user typing into a read-only note saves
-    // on every burst, so five refused saves would otherwise fill the ten-slot
-    // history with duplicates of a version that never changed and evict the
-    // older ones the panel exists to offer.
-    destination_file::refuse_if_read_only(&resolved)?;
-    if let Some(parent) = resolved.parent() {
-        let _ = cleanup_stale_tmp(parent, STALE_TMP_MAX_AGE);
-    }
-    let old = if resolved.exists() {
-        match std::fs::read_to_string(&resolved) {
-            Ok(old) => Some(old),
-            // A binary file has no text snapshot to take; refuse the
-            // overwrite instead of destroying it untracked.
-            Err(e) if e.kind() == io::ErrorKind::InvalidData => {
-                return Err("file is not valid UTF-8 text".into());
-            }
-            // Unreadable for another reason (permissions, ...): keep the old
-            // best-effort behavior and write without a snapshot.
-            Err(_) => None,
-        }
-    } else {
-        None
-    };
-    // The snapshot is best-effort: it is a convenience the user asked for
-    // implicitly, while the write is the thing they explicitly asked for. A
-    // history failure (unwritable history dir, full disk, quota) used to abort
-    // the save with a bare OS error, which meant an existing note could not be
-    // edited at all until the unrelated problem was fixed. Report it instead, and
-    // report it in a form the caller can show: `Ok(Some(warning))` means "your
-    // text was written, and this other thing failed".
-    let mut warning = None;
-    if let Some(old_content) = old {
-        if !old_content.is_empty() && old_content != content {
-            let max = max_history.map_or(DEFAULT_MAX_HISTORY, |m| m as usize);
-            if let Err(e) = snapshot_history(vault_root, path, &old_content, max) {
-                warning = Some(format!(
-                    "Saved, but the previous version could not be kept in history: {e}"
-                ));
-            }
-        }
-    }
-    atomic_write(&resolved, content)?;
-    Ok(warning)
-}
-
-/// Creates `path` with `content`, refusing to replace anything already there.
-///
-/// The difference from [`write_file`] is the whole point: saving REPLACES the
-/// file it finds (that is what saving means), while a note born from a template
-/// or a daily note must never land on top of a file that appeared between "is
-/// this name free?" and "write it" - another instance of the app, a sync
-/// client, or the user in Explorer can all win that race, and the loser used to
-/// be whoever's file was already there.
-///
-/// The bytes are staged first and then published with a hard link, which either
-/// creates the name or fails with `AlreadyExists`: the check and the creation
-/// are one step, a reader never sees a half-written note, and the "taken" case
-/// is reported through [`crate::errors::ALREADY_EXISTS_PREFIX`] so the caller
-/// can try the next name instead of showing the user an OS error.
-pub fn create_new_file(vault_root: &str, path: &str, content: &str) -> Result<(), String> {
-    let _guard = write_lock().lock().map_err(|e| e.to_string())?;
-    let resolved = resolve_within(vault_root, path)?;
-    let parent = resolved
-        .parent()
-        .ok_or_else(|| format!("cannot create {path}: it has no parent folder"))?;
-    std::fs::create_dir_all(parent).map_err(|e| fs_error("create the folder", parent, e))?;
-    let _ = cleanup_stale_tmp(parent, STALE_TMP_MAX_AGE);
-    create_new_bytes(&resolved, content.as_bytes()).map_err(|e| match e {
-        CreateFileError::AlreadyExists => file_exists_error(path),
-        CreateFileError::Failed(message) => message,
     })
 }
 
