@@ -1,8 +1,7 @@
 import { remarkCtx, schemaCtx } from '@milkdown/core'
 import type { Ctx } from '@milkdown/ctx'
-import type { Schema } from '@milkdown/prose/model'
+import type { Node as ProseNode, Schema } from '@milkdown/prose/model'
 import { ParserState } from '@milkdown/transformer'
-import type { Parser } from '@milkdown/transformer'
 
 import { normalizeMdxTree, withMdxSyntax } from '../mdx/document'
 import { parseWithTableRepair } from '../table/delimiter'
@@ -245,6 +244,13 @@ export function unescapeCellPipes(tree: MdastLike, inCell = false): void {
 }
 
 /**
+ * A body parser that is told which language it is reading: `mdx` selects the MDX
+ * processor for that call, and a caller that is loading a document passes the
+ * kind of the file it was handed.
+ */
+export type DocumentParser = (markdown: string, mdx: boolean) => ProseNode
+
+/**
  * Build a parser that keeps the author’s inline `<br>` when a document loads.
  *
  * The context’s processor is frozen (the preset already ran `use` on it) and its
@@ -253,15 +259,18 @@ export function unescapeCellPipes(tree: MdastLike, inCell = false): void {
  * Markdown through it, and repairs the tree before it becomes a ProseMirror
  * document.
  *
- * `isMdx` says whether the document being opened is an MDX one. It is a callback
- * rather than a flag because one editor serves every document the user opens and
- * the answer changes with each `open()`: a `.mdx` file is read with the MDX
- * parser, a `.md` file with the Markdown one, and neither pays for the other.
+ * The kind of document to read is an ARGUMENT of each call, not state on the
+ * parser: one editor serves every document the user opens and the answer
+ * changes with each load — a `.mdx` file is read with the MDX parser, a `.md`
+ * file with the Markdown one, and neither pays for the other. The caller that
+ * is loading a document is the only one that knows its kind at the moment it
+ * has to be known, which is before anything about that document has been
+ * committed anywhere (see `editor.ts` `open()`).
  *
  * Returns null while the context is incomplete, so the caller can fall back to the
  * stock parser.
  */
-export function createInlineBreakParser(ctx: Ctx, isMdx: () => boolean = () => false): Parser | null {
+export function createInlineBreakParser(ctx: Ctx): DocumentParser | null {
   const base = ctx.get(remarkCtx) as unknown as FrozenProcessor
   const schema = ctx.get(schemaCtx) as unknown as Schema
   if (typeof base?.runSync !== 'function' || !schema) return null
@@ -295,8 +304,8 @@ export function createInlineBreakParser(ctx: Ctx, isMdx: () => boolean = () => f
     return state.next(tree as never).toDoc()
   }
 
-  return ((markdown: string) => {
-    if (isMdx()) {
+  return ((markdown: string, asMdx: boolean) => {
+    if (asMdx) {
       mdx ??= withMdxSyntax(base.copy() as unknown as RemarkProcessor) as unknown as RemarkProcessor
       try {
         return build(markdown, mdx, true)
@@ -309,5 +318,5 @@ export function createInlineBreakParser(ctx: Ctx, isMdx: () => boolean = () => f
       }
     }
     return build(markdown, plain, false)
-  }) as Parser
+  }) as DocumentParser
 }
