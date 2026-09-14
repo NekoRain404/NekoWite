@@ -44,6 +44,26 @@ vi.mock('../platform/gateways/fs', () => ({
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
 const historyCallCount = (): number => listHistoryMock.mock.calls.length
 
+/** A read the test settles by hand, so two of them can settle out of order. */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason: unknown) => void } {
+  let resolve: (value: T) => void = () => {}
+  let reject: (reason: unknown) => void = () => {}
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+const version = (id: string): { id: string; size: number; mtime: number } => ({
+  id,
+  size: 100,
+  mtime: 100,
+})
+
+const renderedIds = (host: HTMLElement): (string | null)[] =>
+  Array.from(host.querySelectorAll('.history-id')).map((el) => el.textContent)
+
 let pinia: Pinia
 let mounted: VueApp[] = []
 
@@ -407,6 +427,95 @@ describe('reading the history only when it can have changed', () => {
     await flush()
 
     expect(historyCallCount()).toBe(1)
+  })
+})
+
+describe('the version list describes the note that is open', () => {
+  beforeEach(() => {
+    pinia = createPinia()
+    setActivePinia(pinia)
+    readMock.mockReset()
+    statMock.mockReset()
+    listHistoryMock.mockReset()
+    readHistoryMock.mockReset()
+    restoreHistoryMock.mockReset()
+    readMock.mockResolvedValue('# hello')
+    statMock.mockResolvedValue({ size: 8, mtime: Number.MAX_SAFE_INTEGER })
+    document.body.innerHTML = ''
+    mounted = []
+  })
+
+  afterEach(() => {
+    mounted.forEach((app) => app.unmount())
+    mounted = []
+    document.body.innerHTML = ''
+  })
+
+  it('keeps the newer list when an earlier read resolves after it', async () => {
+    // Two reads overlap on a note switch (or a save tick, or Refresh) and the
+    // later-RESOLVING one used to win: note A's versions rendered under note B,
+    // and every Restore in that list then aimed A's version id at B's file.
+    const tabs = useTabsStore()
+    await openDoc('/vault/a.md')
+    await tabs.openTab('/vault/b.md')
+    const idFor = (path: string): string => tabs.tabs.find((t) => t.path === path)!.id
+    tabs.activeId = idFor('/vault/a.md')
+
+    const aRead = deferred<ReturnType<typeof version>[]>()
+    const bRead = deferred<ReturnType<typeof version>[]>()
+    listHistoryMock.mockReset()
+    listHistoryMock
+      .mockImplementationOnce(() => aRead.promise)
+      .mockImplementationOnce(() => bRead.promise)
+
+    const host = mountPanel()
+    await flush()
+    // The switch starts B's read while A's is still in flight.
+    tabs.activeId = idFor('/vault/b.md')
+    await nextTick()
+    await flush()
+    expect(listHistoryMock).toHaveBeenCalledTimes(2)
+
+    bRead.resolve([version('b-version-1')])
+    await flush()
+    expect(renderedIds(host)).toEqual(['b-version-1'])
+
+    aRead.resolve([version('a-version-1')])
+    await flush()
+
+    expect(renderedIds(host)).toEqual(['b-version-1'])
+  })
+
+  it('does not toast a failure of a read the user has already left behind', async () => {
+    const tabs = useTabsStore()
+    await openDoc('/vault/a.md')
+    await tabs.openTab('/vault/b.md')
+    const idFor = (path: string): string => tabs.tabs.find((t) => t.path === path)!.id
+    tabs.activeId = idFor('/vault/a.md')
+
+    const aRead = deferred<ReturnType<typeof version>[]>()
+    const bRead = deferred<ReturnType<typeof version>[]>()
+    listHistoryMock.mockReset()
+    listHistoryMock
+      .mockImplementationOnce(() => aRead.promise)
+      .mockImplementationOnce(() => bRead.promise)
+
+    const notified: string[] = []
+    const off = onNotify((msg) => notified.push(msg))
+    const host = mountPanel()
+    await flush()
+    tabs.activeId = idFor('/vault/b.md')
+    await nextTick()
+    await flush()
+
+    bRead.resolve([version('b-version-1')])
+    await flush()
+    aRead.reject(new Error('could not read the history of a.md'))
+    await flush()
+    off()
+
+    expect(notified).toEqual([])
+    expect(renderedIds(host)).toEqual(['b-version-1'])
   })
 })
 

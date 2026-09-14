@@ -166,6 +166,19 @@ export function setupWindowTracking(): WindowTracking {
     }, WINDOW_TRACK_MS)
   }
 
+  /** Release every window listener that is currently attached. The three
+   *  registrations are three separate awaits, so a failure partway through
+   *  `start()` must release the ones that already succeeded instead of dropping
+   *  their handles (see the catch there). */
+  function releaseListeners(): void {
+    unlistenResized?.()
+    unlistenMoved?.()
+    unlistenScale?.()
+    unlistenResized = null
+    unlistenMoved = null
+    unlistenScale = null
+  }
+
   async function start(): Promise<void> {
     if (!inTauri) return
     // Track geometry eagerly from the event payloads too, so an unload that
@@ -200,9 +213,9 @@ export function setupWindowTracking(): WindowTracking {
         scheduleSave()
       })
     } catch {
-      unlistenResized = null
-      unlistenMoved = null
-      unlistenScale = null
+      // A registration that rejects leaves the earlier ones attached with no
+      // handle left to remove them, so release what did succeed.
+      releaseListeners()
     }
     void captureWindowGeometry()
   }
@@ -216,12 +229,7 @@ export function setupWindowTracking(): WindowTracking {
   }
 
   function dispose(): void {
-    unlistenResized?.()
-    unlistenMoved?.()
-    unlistenScale?.()
-    unlistenResized = null
-    unlistenMoved = null
-    unlistenScale = null
+    releaseListeners()
     if (windowSaveTimer) {
       clearTimeout(windowSaveTimer)
       windowSaveTimer = null

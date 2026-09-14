@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { onUnmounted, ref } from 'vue'
 import { fsService } from '../../../platform/gateways/fs'
 import { getSharedGateways } from '../../../platform/runtime/gateway-runtime'
 import { notifyError } from '../../../services/errors'
@@ -35,8 +35,27 @@ interface RenamePrompt {
 export function useImageIntake() {
   const tabs = useTabsStore()
   const renamePrompt = ref<RenamePrompt | null>(null)
+  /**
+   * True once the host that renders `RenameDialog` is gone. The dialog is the
+   * only thing that can settle a prompt, so a promise left pending would
+   * suspend `insertImageFiles` forever — the pasted image dropped with no
+   * toast and nothing logged.
+   */
+  let unmounted = false
+
+  onUnmounted(() => {
+    unmounted = true
+    // Settle as a cancel, which is what Escape does: the intake's awaiting loop
+    // already has that branch (`continue`), so the files are skipped rather
+    // than inserted into a pane that no longer exists.
+    renamePrompt.value?.resolve({ ok: false, name: '' })
+    renamePrompt.value = null
+  })
 
   function promptRename(file: { name: string; type: string }): Promise<{ ok: boolean; name: string }> {
+    // A prompt opened after the host unmounted would never be answered either:
+    // cancel it immediately rather than hand back another hanging promise.
+    if (unmounted) return Promise.resolve({ ok: false, name: '' })
     return new Promise((resolve) => {
       renamePrompt.value = { initial: suggestRename(file), resolve }
     })

@@ -33,11 +33,31 @@ export function useSidebarTrash(options: UseSidebarTrashOptions) {
   const trashUnreadable = ref(false)
   const clearingTrash = ref(false)
 
+  /**
+   * Every read takes a ticket; only the newest one may write.
+   *
+   * `refreshTrash` runs on open, after a restore and after a clear, and the
+   * sidebar survives a vault switch — so a read can be overtaken while it is in
+   * flight, and the reads do not have to settle in the order they started.
+   * Without the ticket the later-RESOLVING list won: the vault that is no longer
+   * open had its entries (and its `trash_path`s) rendered under the current one.
+   * Same policy as `useHistoryPanel.load`; it also covers two reads of the SAME
+   * vault, where the older list is simply the staler one.
+   */
+  let readSeq = 0
+
   async function refreshTrash(): Promise<void> {
+    const seq = ++readSeq
     try {
-      trashEntries.value = await fsService.listTrash(options.vault())
+      const entries = await fsService.listTrash(options.vault())
+      if (seq !== readSeq) return
+      trashEntries.value = entries
       trashUnreadable.value = false
     } catch (e) {
+      // A read the user has already left behind reports nothing: the failure is
+      // about a vault that is no longer open, and the newer read says what this
+      // one's trash state actually is.
+      if (seq !== readSeq) return
       // The list is unknown, not empty. Keep the flag so the panel asks the
       // user to fix the read instead of claiming there is nothing to recover,
       // and surface the backend reason (which folder, what the OS said).
