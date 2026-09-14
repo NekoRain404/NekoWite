@@ -47,35 +47,61 @@ pub(crate) fn unique_nonce() -> u128 {
     (((nanos << 32) | u128::from(std::process::id())) << 32) | u128::from(seq)
 }
 
-/// The temp sibling a writer stages `name` through, in the SAME directory as
-/// the target so the publish is a same-filesystem rename or hard link and a
-/// reader never sees a half-written file under the real name.
-pub(crate) fn temp_sibling(parent: &Path, name: &str) -> PathBuf {
-    parent.join(format!(".{name}.{}.tmp", unique_nonce()))
+/// The shape of every staged sibling, and the one thing it must NOT be: named
+/// after the file it stages.
+///
+/// It used to be `.<target name>.<nonce>.tmp`, which made the staged name grow
+/// with the name it was staging — and a name that is legal on its own (212
+/// bytes for a file, one past what this suffix could carry) made its sibling
+/// ILLEGAL. A note with such a name could never be saved again: every attempt
+/// died with `ENAMETOOLONG` before a byte was written, and the user was told
+/// nothing they could act on. The limit is in BYTES, so "such a name" is
+/// roughly a 70-character Chinese title — an ordinary note title, not an
+/// exotic one.
+///
+/// Nothing about staging wants the target's name. The publish needs the file to
+/// be in the target's DIRECTORY — that is what makes it a same-filesystem
+/// rename — and the name is the writer's own business. Fixing it here removes
+/// the whole class rather than the one instance: no future caller can make a
+/// staged name too long, because no caller names it at all.
+const TEMP_PREFIX: &str = ".nekowite-";
+const TEMP_SUFFIX: &str = ".tmp";
+
+/// The temp sibling a writer stages through, in the SAME directory as the
+/// target so the publish is a same-filesystem rename or hard link and a reader
+/// never sees a half-written file under the real name.
+///
+/// The leading dot keeps it out of the file tree; the name is otherwise fixed
+/// in length, whatever it is staging (see [`TEMP_PREFIX`]).
+pub(crate) fn temp_sibling(parent: &Path) -> PathBuf {
+    parent.join(format!("{TEMP_PREFIX}{}{TEMP_SUFFIX}", unique_nonce()))
 }
 
 /// Whether `name` matches the temp-file shape this crate writes:
-/// `.<original name>.<numeric nonce>.tmp`.
+/// `.nekowite-<numeric nonce>.tmp`.
 ///
-/// The leading dot keeps these out of the file tree and the numeric nonce
-/// distinguishes them from a file a user or another tool named `*.tmp`. Both
-/// parts matter: the dot alone would still claim `.gitignore.tmp`-style names
-/// that are not ours, and the suffix alone (what this used to check) claimed
-/// every `.tmp` file in the vault — a user's `draft.tmp` was deleted by the
-/// next save in that folder, permanently, with no trash entry and no history
-/// snapshot to restore from.
+/// The leading dot keeps these out of the file tree, the fixed prefix makes
+/// them ours rather than "any `.tmp`", and the numeric nonce distinguishes them
+/// from a file a user or another tool named `.nekowite-something.tmp`. All
+/// three parts matter: the dot alone would still claim `.gitignore.tmp`-style
+/// names that are not ours, and the suffix alone (what this used to check)
+/// claimed every `.tmp` file in the vault — a user's `draft.tmp` was deleted by
+/// the next save in that folder, permanently, with no trash entry and no
+/// history snapshot to restore from.
+///
+/// A staged name from a build before the prefix existed (`.<name>.<nonce>.tmp`)
+/// is deliberately NOT recognised any more. It could only be told apart from a
+/// user's own `.photos.2024.tmp` by a guess, and the two failure directions are
+/// not comparable: litter stays hidden and harmless, while a false positive
+/// deletes something the user still has.
 fn is_our_temp_file(name: &str) -> bool {
-    let Some(rest) = name.strip_prefix('.') else {
+    let Some(rest) = name.strip_prefix(TEMP_PREFIX) else {
         return false;
     };
-    let Some(rest) = rest.strip_suffix(".tmp") else {
+    let Some(nonce) = rest.strip_suffix(TEMP_SUFFIX) else {
         return false;
     };
-    // `.<nonce>.tmp` (happens for a nameless source) or `.<name>.<nonce>.tmp`.
-    match rest.rsplit_once('.') {
-        Some((_, nonce)) => !nonce.is_empty() && nonce.bytes().all(|b| b.is_ascii_digit()),
-        None => !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()),
-    }
+    !nonce.is_empty() && nonce.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// How old a `.tmp` sibling must be before the next write in that directory
@@ -152,15 +178,55 @@ mod temp_name_tests {
     #[test]
     fn the_names_written_are_the_names_recognised() {
         let dir = Path::new("/vault/notes");
-        let first = temp_sibling(dir, "note.md");
-        assert_ne!(first, temp_sibling(dir, "note.md"));
-        for name in ["note.md", ".hidden", "no-extension", "a.b.c.png"] {
-            let temp = temp_sibling(dir, name);
-            let file = temp.file_name().unwrap().to_str().unwrap();
-            assert!(
-                is_our_temp_file(file),
-                "{file} would never be swept as crash litter"
-            );
+        assert_ne!(temp_sibling(dir), temp_sibling(dir));
+        let file = temp_sibling(dir);
+        let name = file.file_name().unwrap().to_str().unwrap();
+        assert!(
+            is_our_temp_file(name),
+            "{name} would never be swept as crash litter"
+        );
+    }
+
+    /// The length is the point, and it is the defect this module was rewritten
+    /// for: the staged name used to carry the target's, so a note whose own
+    /// file name was legal made the sibling ILLEGAL and could never be saved
+    /// again. Nothing a caller passes can lengthen this, because nothing is
+    /// passed — this pins that a name at the very edge of what the filesystem
+    /// allows still stages.
+    #[test]
+    fn the_staged_name_does_not_grow_with_what_it_stages() {
+        // A legal-but-maximal file name: `NAME_MAX` is 255 bytes on Linux and
+        // macOS, and this is the longest one worth considering.
+        let longest_still_legal = "笔".repeat(84); // 252 bytes
+        assert_eq!(longest_still_legal.len(), 252);
+        let staged = temp_sibling(Path::new("/vault/notes"));
+        let staged_name = staged.file_name().unwrap().to_str().unwrap();
+        assert!(
+            staged_name.len() < 128,
+            "the staged name is {} bytes: {}",
+            staged_name.len(),
+            "it is carrying something again"
+        );
+        assert!(is_our_temp_file(staged_name));
+    }
+
+    /// A user's file is never claimed. The sweeper deletes what it claims, with
+    /// no trash entry and no history snapshot, so a false positive here is
+    /// permanent data loss — which is why the prefix is a fixed word rather
+    /// than "the digit-suffixed shape a temp file happens to have".
+    #[test]
+    fn a_users_tmp_file_is_not_ours() {
+        for name in [
+            "draft.tmp",
+            ".gitignore.tmp",
+            ".photos.2024.tmp",
+            ".nekowite.tmp",
+            ".nekowite-.tmp",
+            ".nekowite-notes.tmp",
+            ".nekowite-12ab.tmp",
+        ] {
+            assert!(!is_our_temp_file(name), "{name} is not a stage of ours");
         }
+        assert!(is_our_temp_file(".nekowite-1234.tmp"));
     }
 }
