@@ -1,5 +1,7 @@
-import { describe, expect, it, beforeEach, vi } from 'vitest'
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { basicPlugins, createEditor, type NekoEditor } from '@nekowite/editor-core'
+import { TextSelection } from '@milkdown/prose/state'
 import { useTabsStore } from '../../../stores/tabs'
 import { useViewStore } from '../../../stores/view'
 import { createEditorScrollSync } from './editor-scroll-sync'
@@ -235,5 +237,165 @@ describe('editorScrollSync', () => {
     scrollSync.cancel()
     expect(el.scrollTop).toBe(400)
     expect(scrollSync.onScroll()).toBe(true)
+  })
+})
+
+/**
+ * The caret half of the pane: the source line the caret sits on, and putting the
+ * caret back on a line.
+ *
+ * Against a REAL Milkdown model, because a caret is a ProseMirror position and
+ * only a real editor has one. What is not real is the layout: happy-dom performs
+ * none, so every block measures zero and a linear model is supplied instead —
+ * `BLOCK_PX` per top-level block, which is the shape a document of one-line
+ * paragraphs lays out to. That is a model of layout and not layout itself, which
+ * is the one thing these cases cannot prove; the browser checks the real thing.
+ *
+ * The sections the assertions use are the ones the line↔offset mapping is exact
+ * in: anywhere between two headings it interpolates one heading's offset to the
+ * next, and the linear model below agrees with that exactly (one 2-line step per
+ * block). The last section has no following heading to interpolate against and
+ * is deliberately not used.
+ */
+const BLOCK_PX = 140
+const CARET_DOC = ['# One', '', 'alpha', '', 'beta', '', '# Two', '', 'gamma', '', 'delta', '', '# Three', '', 'epsilon', ''].join(
+  '\n',
+)
+/** Where each heading and each body paragraph sits, in the model below. */
+const CARET_BLOCKS = ['One', 'alpha', 'beta', 'Two', 'gamma', 'delta', 'Three', 'epsilon']
+
+describe('editorScrollSync caret', () => {
+  let editor: NekoEditor | null = null
+  let host: HTMLElement | null = null
+
+  beforeEach(async () => {
+    setActivePinia(createPinia())
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    await tabs.openTab('notes/a.md')
+    tabs.activeTab!.content = CARET_DOC
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    editor = createEditor(host, { plugins: basicPlugins })
+    await editor.open(CARET_DOC)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    installLinearLayout(editor!)
+  })
+
+  afterEach(() => {
+    editor?.destroy()
+    editor = null
+    document.body.innerHTML = ''
+    host = null
+  })
+
+  /** A pane whose rect is the origin of content space and whose scrollable
+   *  extent is the document's own height (`CLIENT_PX` of it is on screen). */
+  function makePaneEl(): HTMLElement {
+    const doc = editor!.getView().state.doc
+    return {
+      scrollTop: 0,
+      scrollHeight: doc.childCount * BLOCK_PX,
+      clientHeight: 0,
+      getBoundingClientRect: () => ({ top: 0, left: 0, width: 0, height: 0 }),
+    } as unknown as HTMLElement
+  }
+
+  /** Positions and headings measured as the model says they are. */
+  function installLinearLayout(from: NekoEditor): void {
+    const view = from.getView()
+    // `index(0)` — the top-level block this position falls in (`ResolvedPos.index`
+    // is a method, and reading it as a property multiplies a function).
+    const blockTop = (pos: number): number =>
+      view.state.doc
+        .resolve(Math.max(0, Math.min(pos, view.state.doc.content.size)))
+        .index(0) * BLOCK_PX
+    view.coordsAtPos = ((pos: number) => ({
+      left: 0,
+      right: 0,
+      top: blockTop(pos),
+      bottom: blockTop(pos) + BLOCK_PX,
+    })) as typeof view.coordsAtPos
+    const headings = Array.from(host!.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+    expect(headings).toHaveLength(3)
+    headings.forEach((heading, index) => {
+      // `One`, `Two`, `Three` are every third block.
+      const top = index * 3 * BLOCK_PX
+      heading.getBoundingClientRect = () =>
+        ({ top, left: 0, width: 0, height: BLOCK_PX }) as DOMRect
+    })
+  }
+
+  function makeSync(): ReturnType<typeof createEditorScrollSync> {
+    return createEditorScrollSync({
+      getScrollEl: () => makePaneEl(),
+      getEditorEl: () => host,
+      getEditor: () => editor,
+    })
+  }
+
+  /** Put the caret inside the block at `index`, the way a click does. */
+  function caretInto(index: number): void {
+    const view = editor!.getView()
+    let pos = 0
+    for (let i = 0; i < index; i += 1) pos += view.state.doc.child(i).nodeSize
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.create(view.state.doc, Math.min(pos + 1, view.state.doc.content.size))),
+    )
+  }
+
+  /** The text of the block the caret is in. */
+  function caretBlock(): string {
+    const head = editor!.getView().state.selection.head
+    return editor!.getView().state.doc.resolve(head).parent.textContent
+  }
+
+  it('puts the caret in the block the source line names', () => {
+    const scrollSync = makeSync()
+    // Line 3 is `alpha`, line 11 is `delta`: one block per two source lines, so
+    // the mapping lands on the block and not merely in its section.
+    scrollSync.setCaretLine(3)
+    expect(caretBlock()).toBe('alpha')
+    scrollSync.setCaretLine(11)
+    expect(caretBlock()).toBe('delta')
+  })
+
+  it('reads the source line the caret is on', () => {
+    const scrollSync = makeSync()
+    caretInto(CARET_BLOCKS.indexOf('gamma'))
+    expect(scrollSync.getCaretLine()).toBeCloseTo(9, 1)
+    caretInto(CARET_BLOCKS.indexOf('beta'))
+    expect(scrollSync.getCaretLine()).toBeCloseTo(5, 1)
+  })
+
+  it('is the inverse of itself: a caret carried out comes back where it was', () => {
+    const scrollSync = makeSync()
+    caretInto(CARET_BLOCKS.indexOf('gamma'))
+    const line = scrollSync.getCaretLine()!
+    // Move it somewhere else first, so the second write has to do the work.
+    scrollSync.setCaretLine(3)
+    expect(caretBlock()).toBe('alpha')
+    scrollSync.setCaretLine(line)
+    expect(caretBlock()).toBe('gamma')
+  })
+
+  it('places the caret without a history entry', () => {
+    const scrollSync = makeSync()
+    caretInto(CARET_BLOCKS.indexOf('alpha'))
+    const before = editor!.getView().state.doc
+    scrollSync.setCaretLine(11)
+    // Nothing was edited: the document is byte-identical and the only change is
+    // the selection.
+    expect(editor!.getView().state.doc.eq(before)).toBe(true)
+  })
+
+  it('answers "no line" rather than guessing when there is no editor', () => {
+    const scrollSync = createEditorScrollSync({
+      getScrollEl: () => makePaneEl(),
+      getEditorEl: () => null,
+    })
+    expect(scrollSync.getCaretLine()).toBeNull()
+    // …and placing one is a no-op, not a throw.
+    expect(() => scrollSync.setCaretLine(3)).not.toThrow()
   })
 })

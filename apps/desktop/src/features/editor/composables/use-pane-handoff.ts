@@ -3,7 +3,11 @@ import { useTabsStore } from '../../../stores/tabs'
 import { useViewStore } from '../../../stores/view'
 import { countDocumentLines } from '../../../services/scroll-sync-anchors'
 import { parseOutline } from '../../../services/outline'
-import { renderedLineFor, renderedTopFor } from '../controller/pane-scroll-mapping'
+import {
+  renderedLineOrRatio,
+  renderedTopFor,
+  type RenderedPosition,
+} from '../controller/pane-scroll-mapping'
 
 /**
  * What a pane has to be able to tell the handoff: where in the document it is,
@@ -42,6 +46,13 @@ export interface RenderedPaneHandoff {
   /** Put `line` at the top of the pane. `token` marks the write as the
    *  program's, so the echo does not come back as a user scroll. */
   setScrollToLine(line: number, token: number): void
+  /** The 1-based (fractional) source line the pane's caret is on, or null when
+   *  it cannot say (no editor yet, or a selection with no position in this
+   *  document). The counterpart of the source pane's own caret, read through
+   *  CodeMirror there. */
+  getCaretLine(): number | null
+  /** Put the caret on `line` (1-based) without moving the pane. */
+  setCaretLine(line: number): void
   focus(): void
 }
 
@@ -54,6 +65,17 @@ export interface PaneHandoffOptions {
   /** Identifies each programmatic write, so the pane that receives it can
    *  recognise its own echo (see the panes' `setScrollTop`). */
   nextToken: () => number
+  /**
+   * The 1-based line the source pane's caret is on, or null when there is none
+   * to report.
+   *
+   * A callback rather than a `SourcePaneHandoff` member because only CodeMirror
+   * can answer it, and the only thing the pane publishes for that is its view
+   * (`SourcePaneExpose.getSourceView`) — the rendered pane answers the same
+   * question as a member, through its own mapping. Whatever answers it, the
+   * handoff treats the two alike: it carries the caret the pane actually has.
+   */
+  getSourceCaretLine: () => number | null
 }
 
 /** A control that switches which pane is shown. The keyboard follows it: the
@@ -82,8 +104,9 @@ export function usePaneHandoff(options: PaneHandoffOptions): void {
   const view = useViewStore()
   const tabs = useTabsStore()
 
-  /** The line a source pane that does not exist yet has to be planted on. */
-  let pendingSourceLine: number | null = null
+  /** Where a source pane that does not exist yet has to be planted: the place
+   *  on screen, and the caret, which are two different lines (see `plantSource`). */
+  let pendingSource: { scrollLine: number; caretLine: number } | null = null
   /** The source pane still owes the handoff its keyboard (it mounts late). */
   let pendingSourceFocus = false
 
@@ -105,33 +128,38 @@ export function usePaneHandoff(options: PaneHandoffOptions): void {
     },
   )
 
-  /** The document position a pane's own scroll state corresponds to, for a
-   *  document with no headings to anchor on. */
+  /** The document position an offset corresponds to by proportion. The rendered
+   *  pane's own fallback lives in the mapping module (`renderedLineOrRatio`,
+   *  which the pane reads its caret with too); this is the source pane's, whose
+   *  offsets are measured against its own range. */
   function ratioLine(top: number, range: number, totalLines: number): number {
     const ratio = range > 0 ? Math.max(0, Math.min(top / range, 1)) : 0
     return 1 + ratio * Math.max(0, totalLines - 1)
   }
 
-  /** The line the rendered pane is showing, or null when nothing can place it. */
-  function renderedLine(): number | null {
+  /** Everything the offset→line mapping needs, read from the store's memory of
+   *  where the rendered pane is (the pane itself may be hidden by now). */
+  function renderedGeometry(): RenderedPosition {
     const rendered = options.getRenderedPane()
-    const { top, range } = view.renderedScroll
+    const { range } = view.renderedScroll
     const content = tabs.activeTab?.content ?? ''
     const items = parseOutline(content)
-    const totalLines = countDocumentLines(content)
     const tops = rendered?.getHeadingTops() ?? []
-    const line = renderedLineFor(top, {
+    return {
       items,
       // The offsets come from the DOM and the outline from the text, so a
       // length mismatch means a heading is mid-render: the anchors cannot be
       // paired, and the ratio is the honest fallback.
       tops: items.length > 0 && tops.length === items.length ? tops : null,
-      totalLines,
+      totalLines: countDocumentLines(content),
       renderedRange: range,
-    })
-    if (line !== null) return line
-    if (!rendered) return null
-    return ratioLine(top, range, totalLines)
+    }
+  }
+
+  /** The line the rendered pane is showing, or null when nothing can place it. */
+  function renderedLine(): number | null {
+    if (!options.getRenderedPane()) return null
+    return renderedLineOrRatio(view.renderedScroll.top, renderedGeometry())
   }
 
   /** The line the source pane is showing: the pane's own measurement when it is
@@ -154,12 +182,28 @@ export function usePaneHandoff(options: PaneHandoffOptions): void {
     return panes !== null && panes.contains(active)
   }
 
-  /** Plant the source pane on `line`: the offset that shows it at the top of the
-   *  viewport, and the caret there so the next keystroke continues where the
-   *  user was — which is the whole complaint: it used to land at offset 0. */
-  function plantSource(line: number, source: SourcePaneHandoff): void {
-    source.setScrollTop(source.scrollTopForLine(line), options.nextToken())
-    source.setCaretLine(line)
+  /**
+   * Plant the source pane: `scrollLine` at the top of its viewport, and the
+   * caret on `caretLine`.
+   *
+   * Two lines, because the pane is showing two things. Where the viewport is is
+   * the reading position; where the caret is is the writing position, and the
+   * whole complaint was that the second one used to be thrown away — a switch
+   * that lands the caret at offset 0 (or at the top of the viewport, which is
+   * the same guess with a better aim) puts the next keystroke somewhere the user
+   * was not. Typing after a mode switch has to continue where typing before it
+   * would have gone, whether or not the viewport happens to be scrolled to it.
+   *
+   * The caret write does not scroll (`SourcePane.setCaretLine` passes
+   * `scrollIntoView: false`), so the two do not fight.
+   */
+  function plantSource(
+    scrollLine: number,
+    caretLine: number,
+    source: SourcePaneHandoff,
+  ): void {
+    source.setScrollTop(source.scrollTopForLine(scrollLine), options.nextToken())
+    source.setCaretLine(caretLine)
   }
 
   function handOffFocus(pane: 'source' | 'rendered' | 'split'): void {
@@ -195,9 +239,12 @@ export function usePaneHandoff(options: PaneHandoffOptions): void {
         if (prev === 'rendered') {
           const line = renderedLine()
           if (line !== null) {
+            // Read now, while the rendered pane is still measurable and its
+            // model still holds this document: the flush is what hides it.
+            const caretLine = options.getRenderedPane()?.getCaretLine() ?? line
             const source = options.getSourcePane()
-            if (source) plantSource(line, source)
-            else pendingSourceLine = line
+            if (source) plantSource(line, caretLine, source)
+            else pendingSource = { scrollLine: line, caretLine }
           }
         }
       } else if (mode === 'rendered' && prev === 'source') {
@@ -210,6 +257,13 @@ export function usePaneHandoff(options: PaneHandoffOptions): void {
         const line = sourceLine()
         const rendered = options.getRenderedPane()
         if (line !== null && rendered) {
+          // The caret comes across too, and independently of the viewport line
+          // above. Read here — outside the tick below, which is the same
+          // read-before-the-flush rule as the line itself: this is the last
+          // moment CodeMirror exists. A pane that cannot name its caret falls
+          // back to the viewport line, which is what every switch did before
+          // there was a caret to carry.
+          const caretLine = options.getSourceCaretLine() ?? line
           void nextTick(() => {
             const content = tabs.activeTab?.content ?? ''
             const items = parseOutline(content)
@@ -226,13 +280,17 @@ export function usePaneHandoff(options: PaneHandoffOptions): void {
               ),
               options.nextToken(),
             )
+            // After the scroll, and deliberately not `scrollIntoView`: the
+            // pane's own placement is the scroll's business, the caret's is
+            // this one's, and both are true at once.
+            rendered.setCaretLine(caretLine)
           })
         }
       } else {
         // The mode is no longer the one that wanted the source pane placed:
         // a handoff still waiting for it belongs to a switch the user has
         // already left behind.
-        pendingSourceLine = null
+        pendingSource = null
         pendingSourceFocus = false
       }
 
@@ -249,13 +307,13 @@ export function usePaneHandoff(options: PaneHandoffOptions): void {
     () => options.getSourcePane(),
     (source) => {
       if (!source) return
-      const line = pendingSourceLine
+      const pending = pendingSource
       const wantsFocus = pendingSourceFocus
-      pendingSourceLine = null
+      pendingSource = null
       pendingSourceFocus = false
-      if (line === null && !wantsFocus) return
+      if (pending === null && !wantsFocus) return
       void nextTick(() => {
-        if (line !== null) plantSource(line, source)
+        if (pending) plantSource(pending.scrollLine, pending.caretLine, source)
         if (wantsFocus) source.focus()
       })
     },

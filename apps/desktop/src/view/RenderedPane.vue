@@ -147,14 +147,19 @@ function onKeydown(e: KeyboardEvent): void {
   }
 }
 
-// The scroll surface the pane's parent (the split-view coordinator, the handoff)
-// reads through the template ref — see `RenderedPaneHandoff`.
+// The scroll surface and the caret the pane's parent (the split-view
+// coordinator, the handoff) drives through the template ref — see
+// `RenderedPaneHandoff`. The caret is part of it because a mode switch carries
+// both: the pane keeps its model across a switch, so a caret the source pane
+// moved is a caret the rendered pane has to be told about.
 defineExpose({
   getScrollTop: scrollSync.getScrollTop,
   getScrollRange: scrollSync.getScrollRange,
   setScrollTop: scrollSync.setScrollTop,
   getHeadingTops: scrollSync.getHeadingTops,
   setScrollToLine: scrollSync.setScrollToLine,
+  getCaretLine: scrollSync.getCaretLine,
+  setCaretLine: scrollSync.setCaretLine,
   focus,
 })
 </script>

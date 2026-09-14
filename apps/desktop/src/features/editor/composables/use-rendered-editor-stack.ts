@@ -87,6 +87,9 @@ export function useRenderedEditorStack(options: RenderedEditorStackOptions) {
   const scrollSync = createEditorScrollSync({
     getScrollEl: () => options.getScrollEl(),
     getEditorEl: () => options.getEditorEl(),
+    // The caret lives in the model, not in the scroll box: the pane's own
+    // line↔offset mapping needs the view to read one and place the other.
+    getEditor: () => session.editor,
   })
   const selection = createEditorSelection({ getEditor: () => session.editor })
 
