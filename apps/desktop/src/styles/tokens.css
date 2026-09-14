@@ -32,20 +32,57 @@
        --app-motion-slow   a whole surface arriving or leaving (dialog, overlay,
                            drawer, command palette).
      Exits step DOWN one rung (enter --app-motion-slow → exit --app-motion,
-     ≈69%) and use --app-ease-exit; an exit that takes as long as its entrance
-     reads as lag on whatever the user does next.
-     --app-ease decelerates on arrival, --app-ease-exit accelerates away.
+     ≈69%); an exit that takes as long as its entrance reads as lag on whatever
+     the user does next.
+
+     Choreography. A group that lands as one block is the thing that reads as
+     coarse, so a group arrives in sequence instead:
+       --app-motion-stagger  the gap between one member of an arriving group and
+                             the next — a dialog's content → its action row, a
+                             menu's rows. It is only ever an animation-delay,
+                             and only ever on something that is still
+                             *arriving*: nothing the user can already reach
+                             waits behind it. Departures never stagger —
+                             leaving is one motion, and a fast one.
+       --app-motion-travel   how far a surface drifts while it settles. A
+                             *distance*, so it is not a rung of the ladder: the
+                             ladder says how long, this says how far. A sign is
+                             part of the value at the point of use, because the
+                             direction is the whole content of the token — a
+                             dropdown drops out of the button above it, a toast
+                             in from the corner its stack hangs off. It is a few
+                             pixels and never a slide.
+                             A centred surface gets its direction from
+                             transform-origin instead: it has no edge to come
+                             from, only a centre to grow out of, and drifting it
+                             sideways would be a direction nobody asked for.
+
+     Easing. One curve per *kind* of motion. A component picks by kind and never
+     inlines a curve of its own:
+       --app-ease            state change — hover, focus, colour, a control
+                             flipping in place. A plain decelerating bezier: over
+                             these distances a spring reads as mush, and the
+                             curve only has to get out of the way.
+       --app-ease-surface    surface arrival — a dialog, menu, popover or toast
+                             coming to rest. A spring, so the last few
+                             millimetres decelerate and settle rather than
+                             stopping dead. Its overshoot stays under a pixel at
+                             the distances this app travels, which is the point:
+                             it is felt as a settle, not seen as a bounce.
+       --app-ease-exit       departure — accelerates away, because a thing that
+                             is leaving should not linger.
+       --app-ease-attention  attention — a repeating status cycle (the save dot
+                             breathing). Symmetric, so the cycle has no fast half
+                             and slow half.
      Constant-rate motion is not a transition: a spinner or a text caret has no
      arrival to decelerate, so it runs linear on --app-motion-spin or
      --app-motion-blink and sits outside the ladder on purpose. A repeating
      status indicator that is not a rotation (the save dot) breathes on
-     --app-motion-pulse — a cycle fast enough to read as an alarm is a bug, not
-     urgency.
+     --app-motion-pulse with --app-ease-attention — a cycle fast enough to read
+     as an alarm is a bug, not urgency.
      Nothing here may gate an action's effect — keystroke-to-glyph, the caret,
      and the result of a command are instant. Motion only ever describes
      something that already happened. */
-  --app-ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --app-ease-exit: cubic-bezier(0.4, 0, 1, 1);
   --app-motion-micro: 90ms;
   --app-motion-fast: 140ms;
   --app-motion: 180ms;
@@ -53,6 +90,18 @@
   --app-motion-spin: 900ms;
   --app-motion-blink: 1s;
   --app-motion-pulse: 1.4s;
+  --app-motion-stagger: 24ms;
+  --app-motion-travel: 6px;
+  /* Declared here as well as in the @supports block below, which is the value
+     that actually wins wherever the spring can run. This fallback is what keeps
+     the arrival working at all on an engine without `linear()`: an animation
+     shorthand whose timing function fails to parse is dropped whole, so the
+     surface would not animate — and a curve that merely overshoots once is a
+     better outcome than no curve at all. */
+  --app-ease-surface: cubic-bezier(0.34, 1.2, 0.64, 1);
+  --app-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --app-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --app-ease-attention: cubic-bezier(0.45, 0, 0.55, 1);
   /* Radius ladder: window 16 > dialog 14 > menu/card 10 > button/input 8 >
      segmented 6 > inline-code 5. Pick the rung by what the surface is, not by
      which component asks:
@@ -100,6 +149,29 @@
   font-family: var(--app-font);
 }
 
+/* The surface-arrival curve, upgraded to a spring wherever the engine can run
+   one. A cubic bezier is a single monotone-then-overshoot shape and cannot ring,
+   so the settle the brief asks for has to be a sampled damped oscillator —
+   `linear()` is exactly a list of samples, which is why it can express one at
+   all. It is standard in current Chromium, WebKit and Gecko; the guard is for
+   the engines that are not, and for them the :root fallback above stands.
+
+   Parameters of the sampled spring: damping ratio 0.72 (3.8% overshoot on the
+   first swing, first peak at 57% of the curve) and a natural frequency chosen so
+   the residual at the end of the curve is 0.02% — the surface is genuinely at
+   rest when the animation ends, not snapped there. Twenty-one samples hold the
+   reconstruction to within 0.002 of the true response. */
+@supports (animation-timing-function: linear(0, 1)) {
+  :root {
+    --app-ease-surface: linear(
+      0, 0.0068 1.5%, 0.0256 3%, 0.06 4.75%, 0.1117 6.75%, 0.2149 10%,
+      0.464 17%, 0.5659 20%, 0.6663 23.25%, 0.754 26.5%, 0.823 29.5%,
+      0.8803 32.5%, 0.9301 35.75%, 0.9683 39%, 0.9981 42.5%, 1.0193 46.25%,
+      1.0322 50.25%, 1.038 54.75%, 1.0353 62.25%, 1.0073 85.5%, 1
+    );
+  }
+}
+
 [data-theme="dark"] {
   color-scheme: dark;
   --app-canvas: #171714;
@@ -118,7 +190,10 @@
      saturation. 3.28:1 on the light panel becomes 6.53:1 here, which is where the
      other dark status colours live (danger 6.01:1, success 5.90:1 on this panel). */
   --app-warn: #da9225;
-  --app-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  /* No motion token below this line, deliberately. This block used to restate
+     --app-ease at the value it already had in :root, which is worse than noise:
+     tuning the curve in :root would have left dark mode silently running the old
+     one, and only dark mode. Motion is not a theme. */
   --app-radius-xl: 14px;
   --app-radius-lg: 10px;
   --app-radius: 8px;
