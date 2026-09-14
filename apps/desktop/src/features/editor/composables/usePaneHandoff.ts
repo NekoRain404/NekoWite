@@ -28,7 +28,20 @@ export interface RenderedPaneHandoff {
   getHeadingTops(): number[]
   /** Scrollable extent: what a rendered offset is measured against. */
   getScrollRange(): number
+  /**
+   * The pane's current scroll offset, in content space.
+   *
+   * Paired with `setScrollTop`: the split-view sync reads both panes to decide
+   * which one the user actually scrolled, so it needs to read as well as write.
+   * Both were exposed by the component before they were declared here, which is
+   * why the split sync compiled against a narrower type than it used — the
+   * declaration had simply not kept up.
+   */
+  getScrollTop(): number
   setScrollTop(top: number, token: number): void
+  /** Put `line` at the top of the pane. `token` marks the write as the
+   *  program's, so the echo does not come back as a user scroll. */
+  setScrollToLine(line: number, token: number): void
   focus(): void
 }
 
