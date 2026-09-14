@@ -69,13 +69,36 @@ export function mdxComponentToMarkdown(attrs: MdxComponentAttrs): string {
   // An element parsed from source carries its captured raw source. Emit it
   // verbatim so JSX attribute expressions, attribute order, self-closing form,
   // and inline-vs-block layout all round-trip byte-for-byte (the structured
-  // attrs below only hold strings and would mangle `{expr}`/reorder attrs).
-  if (raw) return raw
+  // attrs below only hold strings and would mangle `{expr}`/reorder attrs) —
+  // as long as it still describes this node. See `rawIsCurrent`.
+  if (raw && rawIsCurrent(raw, attrs)) return raw
   const propStr = Object.entries(props)
     .map(([k, v]) => ` ${k}="${escapeMdxText(v)}"`)
     .join('')
   if (!children) return `<${name}${propStr} />`
   return `<${name}${propStr}>\n\n${children}\n\n</${name}>`
+}
+
+/**
+ * Whether `raw` still says what the node says.
+ *
+ * The edit paths that move a FloatBox (drag, resize, rotate, retext, z-order) go
+ * through `setNodeMarkup` with the new attributes, which leaves `raw` — the
+ * source the node was parsed from — untouched. Emitting it regardless wrote the
+ * ORIGINAL geometry back over the edit, so every drag was discarded on the next
+ * save and the box snapped back on reload. The source is therefore used only
+ * while it still parses to the same name, props and children; a node that has been
+ * edited is re-serialized from its attributes instead.
+ */
+function rawIsCurrent(raw: string, attrs: MdxComponentAttrs): boolean {
+  const parsed = parseMdxTag(raw)
+  if (parsed.name !== attrs.name || parsed.children !== (attrs.children ?? '')) return false
+  return propsMatch(parsed.props, attrs.props ?? {})
+}
+
+function propsMatch(a: Record<string, string>, b: Record<string, string>): boolean {
+  const keys = Object.keys(a)
+  return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key])
 }
 
 export function insertMdxComponent(

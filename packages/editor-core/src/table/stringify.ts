@@ -40,7 +40,7 @@ type Loose = any
  * separates cells again. (Raw `html` nodes keep the source's escapes:
  * remark-gfm unescapes cell text but not raw HTML.)
  */
-function escapeUnescapedPipes(value: string): string {
+export function escapeUnescapedPipes(value: string): string {
   let out = ''
   let backslashes = 0
   for (const char of value) {
@@ -56,7 +56,21 @@ function escapeUnescapedPipes(value: string): string {
 }
 
 /** The construct stack of `mdast-util-to-markdown` marks a table cell. */
-function inTableCell(state: StringifyState | undefined, node?: ParentNode): boolean {
+/**
+ * Whether a node is being stringified inside a table cell.
+ *
+ * Takes only the one field it reads rather than the whole {@link StringifyState}.
+ * `StringifyState`'s `safe` is declared with an `unknown` second parameter so the
+ * handlers stay assignable to the library's wide `Handle` type — and a caller
+ * whose own `safe` is *narrower* than that (the MDX text handler, whose `safe`
+ * must accept the real `SafeConfig`) cannot satisfy `StringifyState` for a reason
+ * that has nothing to do with this function. Narrowing the parameter to the field
+ * actually used is what lets both kinds of caller through.
+ */
+export function inTableCell(
+  state: { stack?: string[] } | undefined,
+  node?: ParentNode,
+): boolean {
   if (Array.isArray(state?.stack) && state.stack.includes('tableCell')) return true
   // Defensive: a caller may pass a state whose stack is not populated yet.
   return node?.type === 'tableCell'

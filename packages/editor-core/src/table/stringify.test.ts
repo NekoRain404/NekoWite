@@ -51,4 +51,15 @@ describe('pipes in raw HTML inside a table cell', () => {
     const input = '# H <Comp a="x|y" />\n'
     expect(await save(input)).toBe(input)
   })
+
+  it('keeps a pipe inside an MDX expression inside its cell', async () => {
+    // An MDX run is written back verbatim — but `|` still separates cells, so the
+    // escape the author wrote must come back. The run is escaped by the MDX text
+    // handler rather than by `state.safe` (see mdx/text.ts); without that the row
+    // gained cells on the next save and the expression was split in two.
+    const input = '| a | b |\n| - | - |\n| {x \\|\\| y} | z |\n'
+    const saved = await save(input)
+    expect(saved).toContain('{x \\|\\| y}')
+    expect(await save(saved)).toBe(saved)
+  })
 })
