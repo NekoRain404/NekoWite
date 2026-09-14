@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { MOTION_SHEETS } from './motion-sheets'
 
 const read = (p: string) => readFileSync(resolve(__dirname, p), 'utf8')
 
@@ -18,9 +19,8 @@ const tokens = read('./tokens.css')
  * gone on reporting success for guards about `.dialog`, `.arrives` and the
  * arrival keyframes while looking at none of them.
  *
- * So the layer has a list, and the list is what every guard reads.
+ * It lives in `motion-sheets.ts`, because this file is not its only reader.
  */
-const MOTION_SHEETS = ['./surface-motion.css', './motion.css'] as const
 const motion = MOTION_SHEETS.map((sheet) => read(sheet)).join('\n')
 const main = read('../main.ts')
 
