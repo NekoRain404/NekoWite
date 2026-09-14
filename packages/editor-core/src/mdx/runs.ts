@@ -107,12 +107,16 @@ function scanTag(text: string, start: number): TagScan {
  * Scan a `{…}` expression starting at `start`, or return null when the braces do
  * not balance.
  *
+ * Exported because the masker (`mask.ts`) asks the same question about the same
+ * source — which `{ … }` group encloses this offset — and a second brace matcher
+ * would be a second set of rules for where a `}` is.
+ *
  * Braces nest (`{f({a: 1})}`) and strings inside the expression may hold one
  * (`{"}"}`), so both are tracked. A brace pair in prose (`a {note} here`) is
  * returned as a run as well: it costs nothing, and choosing between "expressions"
  * and "braces the author liked" is MDX's job, not this scanner's.
  */
-function scanExpression(text: string, start: number): number | null {
+export function scanExpression(text: string, start: number): number | null {
   let quote: string | null = null
   let depth = 0
   for (let i = start; i < text.length; i++) {

@@ -1,7 +1,7 @@
 import { $remark } from '@milkdown/utils'
 
 import { openTagName } from './runs'
-import { contentIndent, sourceBetween, sourceOf } from './document'
+import { contentIndent, sourceBetween, sourceOf } from './source'
 
 interface MdNode {
   type: string
@@ -21,7 +21,8 @@ const CLOSE_RE = /^<\/([A-Z][A-Za-z0-9]*)>\s*$/
 const SELF_CLOSE_RE = /^<([A-Z][A-Za-z0-9]*)[^>]*\/\s*>$/
 const INLINE_BLOCK_RE = /^<([A-Z][A-Za-z0-9]*)[^>]*>([\s\S]*)<\/\1>$/
 
-function isOpenTag(value: string): string | null {
+/** Also asked of an open tag the MDX parser could not pair, by `mask.ts`. */
+export function isOpenTag(value: string): string | null {
   const m = OPEN_RE.exec(value)
   return m ? m[1] : null
 }

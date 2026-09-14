@@ -1,5 +1,8 @@
 import remarkMdx from 'remark-mdx'
 
+import { isMaskName, maskMdxSource } from './mask'
+import { contentIndent, sourceOf, type SourceNode } from './source'
+
 /**
  * An MDX document: what makes one, how it is parsed, and how the source it is
  * made of is read back off that parse.
@@ -11,108 +14,77 @@ import remarkMdx from 'remark-mdx'
  * fine today, so the file's own path decides — `.mdx` is MDX, everything else
  * (including `.md`) stays Markdown.
  *
+ * A `.mdx` file is not expected to be valid MDX either, though: it is a file the
+ * user has, and a construct the parser cannot read must cost that construct
+ * rather than the document. `mask.ts` holds that rule and the parser is what
+ * applies it — the document goes through the MDX parser, whatever it rejects is
+ * masked, and it goes through again. The registration below is therefore where
+ * the two meet, and the reason the masking is invisible to every caller: the
+ * masked text is exactly as long as the original, so the tree's offsets keep
+ * addressing the original source and `source.ts` reads the author's bytes back
+ * out with no restore step of its own.
+ *
  * The second half exists because a parse is not a source file. micromark's
  * `html` value drops the indentation of a tag's continuation lines, and a node
  * inside a blockquote or a list item is offset by its container, so what a node
- * is *made of* and what the file *says* are different strings. Both the MDX
- * parse (`normalizeMdxTree` below) and the CommonMark one (`remark.ts`) read the
- * author's text off the offsets, so the reading lives here once.
+ * is *made of* and what the file *says* are different strings. That reading now
+ * lives in `source.ts`, shared with the CommonMark parse (`remark.ts`) and with
+ * the masker.
  */
+
+export * from './source'
 
 export function isMdxDocument(path: string | null | undefined): boolean {
   return typeof path === 'string' && /\.mdx$/i.test(path.trim())
 }
 
 /**
- * Add MDX syntax to a processor.
+ * Add MDX syntax to a processor, and read documents the MDX parser refuses.
  *
- * The processor has to be a copy that `use()` accepts (see
- * `plugins/remark.ts` and `serialize.ts`, which copy the frozen one), and the
- * result reads `mdxjsEsm`, `mdxFlowExpression`, `mdxTextExpression` and the two
- * JSX element types as mdast nodes of their own instead of text that happens to
- * contain braces or angle brackets.
+ * The processor has to be a copy that `use()` accepts (see `plugins/remark.ts`
+ * and `serialize.ts`, which copy the frozen one), and the result reads
+ * `mdxjsEsm`, `mdxFlowExpression`, `mdxTextExpression` and the two JSX element
+ * types as mdast nodes of their own instead of text that happens to contain
+ * braces or angle brackets.
+ *
+ * The `parse` it returns masks first — see `mask.ts` — which needs a SECOND
+ * parser: the same one without the MDX extension, whose answers about code spans
+ * and about elements that never close cannot be got from the MDX parser itself.
+ * It is taken as a copy made BEFORE the extension goes on, because `use()`
+ * mutates the processor it is called on and a bound reference to this one's
+ * `parse` would have grown the extension too. A processor that cannot be copied
+ * is returned unmasked rather than not returned: the reader is worth more than
+ * the recovering.
  */
 export function withMdxSyntax<T>(processor: T): T {
   const use = (processor as { use?: unknown } | null | undefined)?.use
   if (typeof use !== 'function') return processor
-  return (use as (plugin: unknown) => T).call(processor, remarkMdx)
+  const plain = plainParser(processor)
+  const mdx = (use as (plugin: unknown) => T).call(processor, remarkMdx)
+  return masking(mdx, plain)
 }
 
-// ---------------------------------------------------------------------------
-// The source behind a node
-// ---------------------------------------------------------------------------
+/** A parser for the same documents WITHOUT the MDX extension, or null when the
+ *  processor has no independent copy to make one from. */
+function plainParser<T>(processor: T): ((text: string) => unknown) | null {
+  const copy = (processor as { copy?: () => unknown } | null | undefined)?.copy
+  if (typeof copy !== 'function') return null
+  const source = copy.call(processor) as { parse?: (text: string) => unknown } | null
+  return typeof source?.parse === 'function' ? source.parse.bind(source) : null
+}
 
-export interface SourceNode {
-  type?: string
-  value?: unknown
-  position?: {
-    start?: { offset?: number }
-    end?: { offset?: number }
+function masking<T>(processor: T, plain: ((text: string) => unknown) | null): T {
+  const target = processor as { parse?: (text: string) => unknown }
+  if (typeof target.parse !== 'function') return processor
+  const parse = target.parse.bind(processor)
+  try {
+    target.parse = (markdown: string) => parse(maskMdxSource(markdown, parse, plain))
+  } catch {
+    // A frozen processor keeps the stock parse. A document it refuses then
+    // falls back to Markdown, which is the behaviour this replaced.
+    return processor
   }
-}
-
-/**
- * The prefix width that applies to `node`'s own content, given the width its
- * container already contributes.
- *
- * A blockquote adds `> ` to every non-blank continuation line. A list item adds
- * its marker plus one space — read from the source rather than computed from the
- * list, because that is the indentation the item's own lines actually carry
- * (`- `, `10. `, and whatever its parent added on top). Anything that is not a
- * marker falls back to the canonical two.
- */
-export function contentIndent(node: SourceNode, containerIndent: number, source: string): number {
-  if (node.type === 'blockquote') return containerIndent + 2
-  if (node.type !== 'listItem') return containerIndent
-  const start = node.position?.start?.offset
-  if (start === undefined || !source) return containerIndent + 2
-  const lineStart = source.lastIndexOf('\n', start - 1) + 1
-  const prefix = source.slice(lineStart, start)
-  return /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+$/.test(prefix) ? prefix.length : containerIndent + 2
-}
-
-/** The source between two nodes' offsets, de-prefixed — or null when the parse
- *  carries no offsets (a synthetic tree) or no source. */
-export function sourceBetween(
-  from: SourceNode,
-  to: SourceNode,
-  source: string,
-  indent = 0,
-): string | null {
-  const start = from.position?.start?.offset
-  const end = to.position?.end?.offset
-  if (start === undefined || end === undefined || !source) return null
-  return stripContainerPrefix(source.slice(start, end), indent)
-}
-
-/** The source of one node, falling back to its parsed value when the tree has
- *  no offsets to slice. */
-export function sourceOf(node: SourceNode, source: string, indent = 0): string {
-  return sourceBetween(node, node, source, indent) ?? (typeof node.value === 'string' ? node.value : '')
-}
-
-/**
- * Take the container's prefix off the continuation lines of a raw span.
- *
- * The stringifier adds the prefix back when it writes the span out again, so
- * keeping it here would double it — an element written across lines inside a
- * blockquote came back as `> > >` and, at the top level of a list item, escaped
- * into literal text. Blank lines get no indent from a list item and only a bare
- * `>` from a blockquote, so they are normalised to empty, which is exactly what
- * the writer re-creates for them.
- */
-function stripContainerPrefix(raw: string, indent: number): string {
-  if (indent <= 0) return raw
-  const lines = raw.split('\n')
-  for (let i = 1; i < lines.length; i++) {
-    const head = lines[i].slice(0, indent)
-    // Not a container prefix — the line is content that happens to start with
-    // these characters, and removing them would change it.
-    if (!/^[> \t]*$/.test(head)) continue
-    const rest = lines[i].slice(indent)
-    lines[i] = rest.trim() === '' ? '' : rest
-  }
-  return lines.join('\n')
+  return processor
 }
 
 // ---------------------------------------------------------------------------
@@ -121,6 +93,9 @@ function stripContainerPrefix(raw: string, indent: number): string {
 
 interface MdxNode extends SourceNode {
   children?: MdxNode[]
+  /** The element's name; `null` for a fragment, which is what `mdast`'s own
+   *  `MdxJsxFlowElement` says about it once `remark-mdx` is in the program. */
+  name?: string | null
 }
 
 /** The mdast types that are a whole block of MDX source. */
@@ -152,8 +127,16 @@ const BLOCK = new Set(['mdxJsxFlowElement', 'mdxFlowExpression', 'mdxjsEsm'])
  * atom instead, which is the same answer the Markdown pipeline reaches for the
  * same reason (`TEXT_BLOCK` in `remark.ts`).
  *
+ * A masked element is the other exception, and it takes the inline answer even
+ * at flow level: what the name stands for is source the MDX parser could not
+ * read, so it is carried as source. Folding it to a component instead would put
+ * a component in the tree that the author never wrote — and for a name that is
+ * NOT a mask, the fold is a no-op, because a component node writes its source
+ * back verbatim too. The node kind changes; the bytes never do.
+ *
  * `source` is the document the offsets belong to — the MASKED one during a
- * parse, hence `unmask`, which puts the inline `<br>` markers back.
+ * parse, which is byte-aligned with the original on purpose, hence `unmask`,
+ * which puts the inline `<br>` markers back.
  */
 export function normalizeMdxTree(
   tree: MdxNode,
@@ -179,8 +162,8 @@ function fold(
       // inside `value` and must not be walked into.
       const value = raw(child, source, indent, unmask)
       delete child.children
-      if (parent.type === 'listItem') {
-        children[i] = { type: 'paragraph', children: [{ type: 'html', value }] }
+      if (parent.type === 'listItem' || (type === 'mdxJsxFlowElement' && isMaskName(child.name))) {
+        children[i] = { type: 'html', value }
         continue
       }
       child.value = value
