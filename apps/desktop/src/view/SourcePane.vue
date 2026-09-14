@@ -192,6 +192,18 @@ watch(
   },
 )
 
+// A body-size change is a CSS-variable change (the stylesheet reads the same
+// tokens the rendered pane does), so nothing here reconfigures: CodeMirror's
+// line heights are cached measurements, and the pane only has to tell it they are
+// stale. A reconfigure would rebuild the view and take the caret, the selection,
+// the undo history and the scroll position with it.
+watch(
+  [() => appearance.bodyFontSize, () => appearance.lineHeight],
+  () => {
+    host?.getView()?.requestMeasure()
+  },
+)
+
 // The pane lives under v-show: re-measure once it becomes visible again so
 // the CodeMirror layout (created while display:none) is correct.
 watch(
