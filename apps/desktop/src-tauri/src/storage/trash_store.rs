@@ -5,8 +5,14 @@
 //! [`crate::domain::path_policy::encode_rel_path`]), so the frontend's absolute
 //! spellings (what `list_dir` entries carry) decode back to the same vault path
 //! regardless of how the path was spelled. Every entry is confined to the vault
-//! through [`crate::domain::path_policy`], and `restore_from_trash` refuses to
-//! move anything outside the trash directory.
+//! through [`crate::domain::path_policy`].
+//!
+//! Two of the four verbs are their own modules, because each is a policy the
+//! rest of the store does not share: [`super::trash_restore`] claims a
+//! destination that may already be taken, and [`super::trash_clear`] destroys
+//! and can half-succeed. Both are re-exported below, so
+//! `commands::recovery` and the integration tests keep their imports.
+//! The entry-name vocabulary stays here — three of the operations speak it.
 
 use serde::Serialize;
 use std::path::Path;
@@ -17,7 +23,13 @@ use crate::domain::path_policy::{
     is_safe_rel, resolve_within, resolve_within_rel,
 };
 use crate::errors::fs_error;
-use crate::storage::file_store;
+
+// The two verbs the split moved out, kept reachable from this module path
+// because it is the one `commands::recovery` names them from. The direction of
+// USE is `trash_clear`/`trash_restore` → this file, never the reverse: both are
+// handed nothing but a vault root.
+pub use super::trash_clear::{clear_trash, ClearTrashFailure, ClearTrashReport};
+pub use super::trash_restore::restore_from_trash;
 
 #[derive(Serialize, Clone, Debug)]
 pub struct TrashEntry {
@@ -70,7 +82,11 @@ fn strip_collision_suffix(name: &str) -> &str {
 
 /// Decode a trash entry's on-disk key back to the vault-relative path it stands
 /// for, collision suffix included in the key but never in the path.
-fn decode_trash_key(name: &str) -> String {
+///
+/// `pub(crate)` because `super::trash_restore` reads a key the same way this
+/// module's listing and rename-migration do — one reading of a key, in one
+/// place, so a change to the suffix rule cannot apply to two of the three.
+pub(crate) fn decode_trash_key(name: &str) -> String {
     decode_rel_path(strip_collision_suffix(name))
 }
 
@@ -81,16 +97,6 @@ fn purge_trash_entry(p: &Path, is_dir: bool) {
     } else {
         std::fs::remove_file(p)
     };
-}
-
-/// Insert `suffix` before the extension (`a.md` -> `a-restored-1.md`) so a
-/// name-collision restore keeps a recognised extension. Appending after it
-/// produced `a.md-restored-1`, which no note loader can open.
-fn name_with_suffix(name: &str, suffix: &str) -> String {
-    match name.rsplit_once('.') {
-        Some((stem, ext)) if !stem.is_empty() => format!("{stem}{suffix}.{ext}"),
-        _ => format!("{name}{suffix}"),
-    }
 }
 
 /// Move `path` into `.nekowite-trash/<encode(path)>`, appending `-<ts>` if a
@@ -218,174 +224,6 @@ pub fn list_trash(vault_root: &str) -> Result<Vec<TrashEntry>, String> {
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
-}
-
-/// One trash entry `clear_trash` could not remove.
-///
-/// `name` is the on-disk key the trash lists (what `restore_from_trash` takes),
-/// and `error` is already a user-facing sentence naming the reason.
-#[derive(Serialize, Clone, Debug)]
-pub struct ClearTrashFailure {
-    pub name: String,
-    pub error: String,
-}
-
-/// What one emptying pass of the trash actually did.
-///
-/// A partial pass is an ordinary outcome (one file still held open by another
-/// program), not a failed command: reporting it as an error lost the count of
-/// everything that WAS removed, so the window could only say "failed" over a
-/// half-empty trash. `removed` is always the truth and `failed` names what is
-/// still there, so the caller can report both honestly.
-#[derive(Serialize, Clone, Debug)]
-pub struct ClearTrashReport {
-    pub removed: usize,
-    pub failed: Vec<ClearTrashFailure>,
-}
-
-/// Permanently delete every entry under `.nekowite-trash/`, reporting how many
-/// were removed and which ones could not be. A missing trash directory is not
-/// an error - it returns an empty report.
-///
-/// Only direct children of the trash directory are touched (each is the single
-/// encoded, safe component [`delete_file`] wrote), so traversal is impossible;
-/// the defensive `.`/`..`/empty-name guard is belt and braces rather than a
-/// requirement.
-pub fn clear_trash(vault_root: &str) -> Result<ClearTrashReport, String> {
-    let Some(trash_root) = find_vault_metadata_dir(vault_root, &[".nekowite-trash"])? else {
-        return Ok(ClearTrashReport {
-            removed: 0,
-            failed: Vec::new(),
-        });
-    };
-    let rd = std::fs::read_dir(&trash_root)
-        .map_err(|e| fs_error("read the trash folder", &trash_root, e))?;
-    let mut removed = 0usize;
-    let mut failed: Vec<ClearTrashFailure> = Vec::new();
-    for entry in rd {
-        // An iteration failure means we cannot know which entries we never saw,
-        // so refuse the pass instead of reporting a clean sweep over a trash
-        // the process could not enumerate.
-        let entry = entry.map_err(|e| fs_error("read the trash folder", &trash_root, e))?;
-        let p = entry.path();
-        let name = p
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-        if name.is_empty() || name == "." || name == ".." {
-            continue;
-        }
-        // Keep going after a failure: one locked file (another program holding
-        // it, a permission problem) used to abort the whole clear and report a
-        // bare error - while everything already deleted stayed deleted, so the
-        // user saw a failed clear over a half-empty trash with no way to tell
-        // which half had actually gone.
-        let result = if p.is_dir() {
-            std::fs::remove_dir_all(&p)
-        } else {
-            std::fs::remove_file(&p)
-        };
-        match result {
-            Ok(()) => removed += 1,
-            Err(e) => failed.push(ClearTrashFailure {
-                name,
-                error: fs_error("delete", &p, e),
-            }),
-        }
-    }
-    Ok(ClearTrashReport { removed, failed })
-}
-
-/// How many `-restored-<stamp>` names a restore may try before it gives up, so
-/// a folder that holds every candidate cannot make the loop spin forever.
-const RESTORE_NAME_ATTEMPTS: u32 = 64;
-
-/// Move a trash entry back to its original vault path. If that path is taken,
-/// insert `-restored-<ts>` before the extension and return the new path. A
-/// missing parent folder (the original directory was deleted too) is created on
-/// the way.
-///
-/// The destination is claimed by the move itself rather than by an `exists()`
-/// probe. Two restores of entries that share one original path run in the same
-/// millisecond, compute the SAME `-restored-<ts>` name, and the second
-/// `fs::rename` then replaced the file the first had just restored: a deleted
-/// note was destroyed by restoring another one, and both callers were told they
-/// had succeeded with the same path. A taken name now pushes the attempt to the
-/// next stamp instead.
-pub fn restore_from_trash(vault_root: &str, trash_path: &str) -> Result<String, String> {
-    let resolved_trash = resolve_within(vault_root, trash_path)?;
-    // The containment check below can only mean something if the trash root
-    // itself is known to be inside the vault: a symlinked `.nekowite-trash`
-    // would put both paths outside it, where they would agree with each other.
-    let trash_root = find_vault_metadata_dir(vault_root, &[".nekowite-trash"])?
-        .ok_or_else(|| "there is nothing to restore: the trash is empty".to_string())?;
-    let canonical_trash = trash_root
-        .canonicalize()
-        .map_err(|e| fs_error("open the trash folder", &trash_root, e))?;
-    if !resolved_trash.starts_with(&canonical_trash) {
-        return Err("trash path outside .nekowite-trash".into());
-    }
-    let name = resolved_trash
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("")
-        .to_string();
-    let original_rel = decode_trash_key(&name);
-    if !is_safe_rel(&original_rel) {
-        return Err("cannot restore: invalid trash entry name".into());
-    }
-    let original_abs = resolve_within(vault_root, &original_rel)?;
-    if let Some(parent) = original_abs.parent() {
-        // The original folder may itself be gone by restore time (`docs/` was
-        // deleted after `docs/a.md`). `rename` cannot create it — mirror
-        // `file_store::rename_entry`, which already does.
-        std::fs::create_dir_all(parent).map_err(|e| {
-            format!(
-                "cannot restore: the folder for {} could not be created ({e}); \
-                 remove whatever occupies that path and try again",
-                crate::domain::path_policy::ipc_path(&original_abs)
-            )
-        })?;
-    }
-    let fname = original_abs
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("file")
-        .to_string();
-    let parent = original_abs
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_default();
-    let mut ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or_default();
-    let mut target = original_abs;
-    for attempt in 0..=RESTORE_NAME_ATTEMPTS {
-        match file_store::move_no_clobber(&resolved_trash, &target) {
-            Ok(()) => return Ok(crate::domain::path_policy::ipc_path(&target)),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                if attempt == RESTORE_NAME_ATTEMPTS {
-                    break;
-                }
-                // Bump rather than stack a second stamp, so the name keeps the
-                // single `-restored-<ms>` shape the frontend shows.
-                ts = ts.saturating_add(1);
-                target = parent.join(name_with_suffix(&fname, &format!("-restored-{ts}")));
-            }
-            Err(e) => {
-                return Err(format!(
-                    "cannot restore to {}: {e}; check that the location is writable and try again",
-                    crate::domain::path_policy::ipc_path(&target)
-                ))
-            }
-        }
-    }
-    Err(format!(
-        "cannot restore to {}: every restored name is taken; rename or remove one of them and try again",
-        crate::domain::path_policy::ipc_path(&target)
-    ))
 }
 
 /// Migrate the trash entry for a renamed file from the key for `from_rel` to

@@ -1,19 +1,23 @@
 //! One history version, end to end: the name it takes inside a note's history
-//! directory, the staging that gets its bytes there durably, the eviction that
-//! keeps the directory to `max` versions, and what a save that failed does with
-//! the version it staged.
+//! directory, the staging that gets its bytes there durably, and what a save
+//! that failed does with the version it staged.
 //!
 //! It is split out of [`crate::storage::metadata_store`] because those two are
 //! different concerns: that module is the KEY (which directory a vault path
 //! maps to, and the listing/reading/restoring a panel asks for), and this one
-//! is the FILE (how a version is written, ordered and dropped). The eviction is
-//! the reason the seam has to be here rather than anywhere else — it belongs to
-//! the version's lifecycle, and the caller that stages a version is the only
-//! one that knows whether the save it belongs to happened.
+//! is the FILE (how a version is written and settled). The eviction is why the
+//! seam has to be here rather than anywhere else — it is a consequence of the
+//! save, and the caller that stages a version is the only one that knows
+//! whether the save it belongs to happened.
 //!
-//! Leaf-ish: it depends on [`crate::storage::atomic_write`] for the transport
-//! and on [`crate::storage::temp_files`] for the staged name, and on nothing
-//! above it. It knows nothing about listing, reading back or restoring.
+//! The RETENTION rule — which stored version is the oldest, and dropping the
+//! ones past `max` — is [`super::history_prune`], split out so that the
+//! ordering policy (where the same-millisecond bug was) is testable on its own.
+//!
+//! Leaf-ish: it depends on [`crate::storage::atomic_write`] for the transport,
+//! on [`crate::storage::temp_files`] for the staged name and on
+//! [`super::history_prune`] for the eviction, and on nothing above it. It knows
+//! nothing about listing, reading back or restoring.
 
 use std::io;
 use std::io::Write;
@@ -23,6 +27,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::domain::path_policy::{create_vault_metadata_dir, encode_rel_path, resolve_within_rel};
 use crate::errors::fs_error;
 use crate::storage::atomic_write::{copy_new, is_link_unsupported, sync_parent_dir};
+use crate::storage::history_prune::prune_history;
 use crate::storage::temp_files::temp_sibling;
 
 /// Snapshot cap used when the caller does not pass `max_history`.
@@ -191,133 +196,5 @@ pub(crate) fn settle_failed_publish(
         let _ = snapshot.commit(max);
     } else {
         snapshot.discard();
-    }
-}
-
-/// Creation order within one shared mtime: a snapshot is written `{ms}.{ext}`
-/// first, then `{ms}-1.{ext}`, `{ms}-2.{ext}`, … so the collision suffix IS the
-/// age order, lower meaning older.
-///
-/// Sorting these names alphabetically gets that backwards — `-` sorts before
-/// `.`, so `<ms>-1.md` compares LESS than `<ms>.md` even though it was written
-/// later. That is what made the newest snapshot of a same-millisecond group
-/// sort as the oldest and be pruned while an older sibling survived.
-fn snapshot_collision_suffix(name: &str) -> u64 {
-    let Some((stem, _ext)) = name.rsplit_once('.') else {
-        return 0;
-    };
-    match stem.rsplit_once('-') {
-        Some((_, n)) => n.parse().unwrap_or(0),
-        None => 0,
-    }
-}
-
-/// Keep only the `max` newest snapshot files (by modified time) in `dir`.
-fn prune_history(dir: &Path, max: usize) -> Result<(), String> {
-    let mut entries: Vec<(PathBuf, u128)> = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for entry in rd.flatten() {
-            let p = entry.path();
-            // Never count temp litter from an interrupted snapshot write.
-            if p.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("")
-                .starts_with('.')
-            {
-                continue;
-            }
-            if let Ok(meta) = p.metadata() {
-                if meta.is_file() {
-                    let mtime = meta
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                        .map(|d| d.as_nanos())
-                        .unwrap_or(0);
-                    entries.push((p, mtime));
-                }
-            }
-        }
-    }
-    if entries.len() > max {
-        // Newest first. File mtimes are only jiffy-coarse, so snapshots written
-        // in quick succession can share one timestamp; break ties by the
-        // COLLISION SUFFIX, not by name. Plain name order gets this backwards —
-        // `-` sorts before `.`, so `<ms>-1.md` compares less than `<ms>.md`
-        // even though it was written later — which made the newest snapshot of
-        // a same-millisecond group sort as the oldest one and be deleted first
-        // while an older sibling survived.
-        entries.sort_by(|a, b| {
-            let an = a.0.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            let bn = b.0.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            b.1.cmp(&a.1)
-                .then(snapshot_collision_suffix(bn).cmp(&snapshot_collision_suffix(an)))
-                .then(an.cmp(bn))
-        });
-        for (p, _) in entries.into_iter().skip(max) {
-            let _ = std::fs::remove_file(p);
-        }
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod snapshot_pruning_tests {
-    use super::{prune_history, snapshot_collision_suffix};
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-    #[test]
-    fn the_collision_suffix_is_the_age_order() {
-        assert_eq!(snapshot_collision_suffix("1700.md"), 0);
-        assert_eq!(snapshot_collision_suffix("1700-1.md"), 1);
-        assert_eq!(snapshot_collision_suffix("1700-12.markdown"), 12);
-        // Anything that is not `<stem>-<n>.<ext>` belongs to no collision group.
-        assert_eq!(snapshot_collision_suffix("notes.md"), 0);
-        assert_eq!(snapshot_collision_suffix("no-extension"), 0);
-    }
-
-    #[test]
-    fn pruning_a_same_millisecond_group_keeps_the_newest_snapshot() {
-        let dir = std::env::temp_dir().join(format!(
-            "nekowite-prune-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-
-        // A snapshot is written `<ms>.md` first, then `-1`, then `-2`, so
-        // `1700-2.md` is the NEWEST of the group.
-        let names = ["1700.md", "1700-1.md", "1700-2.md"];
-        for name in names {
-            std::fs::write(dir.join(name), name).unwrap();
-        }
-        // Pin one shared mtime: that is what a jiffy-coarse clock produces for
-        // snapshots written in quick succession, and without it the tie-break
-        // this test is about never runs.
-        let shared = SystemTime::now() - Duration::from_secs(60);
-        for name in names {
-            std::fs::OpenOptions::new()
-                .write(true)
-                .open(dir.join(name))
-                .unwrap()
-                .set_modified(shared)
-                .unwrap();
-        }
-
-        prune_history(&dir, 1).unwrap();
-
-        let kept: Vec<String> = std::fs::read_dir(&dir)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
-            .collect();
-        assert_eq!(
-            kept,
-            vec!["1700-2.md".to_string()],
-            "pruning must drop the OLDEST of the group, not the newest"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }
