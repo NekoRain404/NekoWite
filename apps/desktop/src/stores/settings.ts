@@ -1,7 +1,14 @@
 import { defineStore } from 'pinia'
-import { computed, ref, watch, type Ref, type WritableComputedRef } from 'vue'
+import { ref, watch } from 'vue'
 import { getSharedGateways } from '../platform/runtime/gateway-runtime'
 import { persistence } from '../services/persistence'
+import {
+  readBaseUrls,
+  readModelsUrls,
+  scopedUrl,
+  writeBaseUrls,
+  writeModelsUrls,
+} from './provider-urls'
 
 export interface AIConfig {
   provider: string
@@ -42,24 +49,6 @@ export type ExportPdfOrientation = 'portrait' | 'landscape'
 
 const LS_PROVIDER = 'nekowite.ai.provider'
 const LS_MODEL = 'nekowite.ai.model'
-// The endpoint fields as JSON objects keyed by provider — see `config()` for
-// why neither is one shared scalar like its neighbours. `LS_BASE_URL` is the
-// scalar those objects replace: still read for an install that predates them,
-// never written again.
-const LS_BASE_URL = 'nekowite.ai.baseUrl'
-const LS_BASE_URLS = 'nekowite.ai.baseUrls'
-const LS_MODELS_URLS = 'nekowite.ai.modelsUrls'
-
-/**
- * The address a local model server is assumed to be on — LM Studio's default.
- *
- * It is no provider's default but `local`'s, which is why it is named rather
- * than inlined at its use: attributed to a hosted provider it would name an
- * endpoint that provider's requests never reach. It is also the one Base URL
- * the backend has no fallback for — Rust's `default_base_url` has no arm for
- * `local`, so an empty field there sends the request to api.openai.com.
- */
-const LOCAL_BASE_URL_DEFAULT = 'http://localhost:1234/v1'
 const LS_TEMPERATURE = 'nekowite.ai.temperature'
 const LS_MAX_TOKENS = 'nekowite.ai.maxTokens'
 const LS_SYSTEM_PROMPT = 'nekowite.ai.systemPrompt'
@@ -79,23 +68,6 @@ const LS_CONTEXT_CHARS = 'nekowite.ai.contextChars'
 function readLs(key: string, fallback: string): string {
   const v = persistence.get(key)
   return v && v.length > 0 ? v : fallback
-}
-
-/** One of the per-provider URL maps, as stored. Corruption is survivable on
- *  purpose: these are hand-editable keys like any other, and a half-written
- *  value must not take the settings page down with it. */
-function readUrlMap(key: string): Record<string, string> {
-  try {
-    const parsed = JSON.parse(persistence.get(key) || '{}') as unknown
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-    const out: Record<string, string> = {}
-    for (const [provider, url] of Object.entries(parsed)) {
-      if (typeof url === 'string' && url) out[provider] = url
-    }
-    return out
-  } catch {
-    return {}
-  }
 }
 
 /** Default budget for the chat rail's note context, in characters. Large enough
@@ -163,39 +135,17 @@ function readEnum<T extends string>(key: string, values: readonly T[], fallback:
   return typeof v === 'string' && (values as readonly string[]).includes(v) ? (v as T) : fallback
 }
 
-/**
- * A two-way view onto the selected provider's entry in a per-provider map.
- *
- * Bound to a field, it shows that provider's own address and writes back to
- * that same slot. Empty drops the entry, which is what leaves `config()` to
- * omit the field so the backend derives its own endpoint.
- */
-function scopedUrl(map: Ref<Record<string, string>>, provider: Ref<string>): WritableComputedRef<string> {
-  return computed({
-    get: () => map.value[provider.value] ?? '',
-    set: (v: string) => {
-      const next = { ...map.value }
-      if (v.trim()) next[provider.value] = v
-      else delete next[provider.value]
-      map.value = next
-    },
-  })
-}
-
 export const useSettingsStore = defineStore('settings', () => {
   // provider/model persist across sessions (only the API key lives in the
   // stronghold vault), so the configured model is not lost on relaunch.
   const provider = ref(readLs(LS_PROVIDER, 'local'))
   const model = ref(readLs(LS_MODEL, 'qwen2.5-coder:3b'))
-  // The scalar the Base URL used to be is read once, into the provider that
-  // could have meant it: the field's own localhost default belongs to `local`
-  // and never to a hosted provider, and anything else was typed under whichever
-  // provider was selected at the time.
-  const stored = readLs(LS_BASE_URL, LOCAL_BASE_URL_DEFAULT)
-  const storedFor = stored === LOCAL_BASE_URL_DEFAULT ? 'local' : provider.value
-  const baseUrls = ref<Record<string, string>>({ [storedFor]: stored, ...readUrlMap(LS_BASE_URLS) })
+  // The endpoint fields are stored per provider. `readBaseUrls` also folds the
+  // legacy single scalar into the provider it could have meant; the two maps
+  // are written back by the watchers below.
+  const baseUrls = ref<Record<string, string>>(readBaseUrls(provider.value))
   const baseUrl = scopedUrl(baseUrls, provider)
-  const modelsUrls = ref<Record<string, string>>(readUrlMap(LS_MODELS_URLS))
+  const modelsUrls = ref<Record<string, string>>(readModelsUrls())
   const apiKey = ref('')
   const autosaveInterval = ref<AutosaveInterval>(readAutosaveInterval(15000))
   const maxHistory = ref<number>(readNumber(LS_MAXHISTORY, 10))
@@ -239,8 +189,8 @@ export const useSettingsStore = defineStore('settings', () => {
     })
   })
   watch(model, (m) => persistence.set(LS_MODEL, m))
-  watch(baseUrls, (urls) => persistence.set(LS_BASE_URLS, JSON.stringify(urls)), { deep: true })
-  watch(modelsUrls, (urls) => persistence.set(LS_MODELS_URLS, JSON.stringify(urls)), { deep: true })
+  watch(baseUrls, (urls) => writeBaseUrls(urls), { deep: true })
+  watch(modelsUrls, (urls) => writeModelsUrls(urls), { deep: true })
   watch(temperature, (v) => persistence.set(LS_TEMPERATURE, String(v)))
   watch(maxTokens, (v) => persistence.set(LS_MAX_TOKENS, String(v)))
   watch(systemPrompt, (v) => persistence.set(LS_SYSTEM_PROMPT, v))
