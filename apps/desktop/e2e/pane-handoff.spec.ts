@@ -88,6 +88,12 @@ test('渲染 → 源码 keeps the place and hands over the keyboard', async ({ p
   })
   expect(caret.inSource).toBe(true)
   // On a line from the middle of the note, not the heading it starts with.
+  // LEFT RED ON PURPOSE (task-59 report §3): it fails deterministically on this
+  // tree, with the caret CARRIED TO THE END of the document (line 242 of 242,
+  // the empty last line, because this fixture ends in a newline) while the
+  // viewport lands on the mapped line and the keyboard does arrive — measured,
+  // not inferred. Whether that carry is the contract or the bug is brief 61's
+  // call; the assertion is untouched so the signal survives.
   expect(caret.lineText).not.toBe('')
   expect(caret.lineText).not.toContain('Welcome')
 
@@ -122,6 +128,11 @@ test('源码 → 渲染 keeps the place and hands over the keyboard', async ({ p
     renderedScrollTop,
   )
 
-  const focused = await page.evaluate(() => !!document.activeElement?.closest('.pane.rendered'))
+  // The editor itself owns the keyboard: focus on the pane around it would leave
+  // the first keystroke swallowed, which is the complaint this file was written
+  // for, so "somewhere under .pane.rendered" cannot see it.
+  const focused = await page.evaluate(
+    () => !!document.activeElement?.classList.contains('ProseMirror'),
+  )
   expect(focused).toBe(true)
 })

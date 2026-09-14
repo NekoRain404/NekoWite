@@ -1,4 +1,22 @@
 import { test, expect, type Page } from '@playwright/test'
+// Every caret helper comes from the shared harness. This file used to carry its
+// own copies, and they drifted: the local `focusParagraph` kept the "the caret
+// is inside some <p>" check after the harness's was fixed, which is the same
+// false-pass the harness had — a second place for it to come back from.
+import {
+  focusHeadingEnd,
+  focusParagraph,
+  pasteText,
+  placeRenderedCaretInParagraph,
+  pressKey,
+  renderedCaret,
+  showRendered,
+  showSource,
+  showSplit,
+  sourceCaret,
+  sourceCaretToEnd,
+  typeChars,
+} from './support/editorHarness'
 
 // Comprehensive input regression suite for every editing mode.
 //
@@ -71,233 +89,6 @@ async function openNote(page: Page, options: FixtureOptions = {}): Promise<void>
   await page.locator('.nav-item', { hasText: '文件夹' }).click()
   await page.locator('.tree-name', { hasText: 'welcome.md' }).click()
   await expect(page.locator('.pane.rendered .ProseMirror h1')).toHaveText('Welcome')
-}
-
-async function showSource(page: Page): Promise<void> {
-  await page.locator('.switch-option', { hasText: '源码' }).click()
-  await expect(page.locator('[data-testid="source-pane"] .cm-content')).toBeVisible()
-}
-
-async function showSplit(page: Page): Promise<void> {
-  await page.locator('.switch-option', { hasText: '对照' }).click()
-  await expect(page.locator('[data-testid="source-pane"] .cm-content')).toBeVisible()
-}
-
-async function showRendered(page: Page): Promise<void> {
-  await page.locator('.switch-option', { hasText: '渲染' }).click()
-  await expect(page.locator('.pane.rendered .ProseMirror')).toBeVisible()
-}
-
-/** Caret position inside the CodeMirror source pane: line index + column. */
-function sourceCaret(page: Page) {
-  return page.evaluate(() => {
-    const sel = window.getSelection()
-    const range = sel?.rangeCount ? sel.getRangeAt(0) : null
-    const lines = Array.from(document.querySelectorAll('.source-pane .cm-line'))
-    const node = range?.startContainer ?? null
-    const el = node instanceof Node && node.nodeType === Node.ELEMENT_NODE
-      ? (node as Element)
-      : node?.parentElement ?? null
-    const lineEl = el?.closest?.('.cm-line') ?? null
-    return {
-      line: lineEl ? lines.indexOf(lineEl) : -1,
-      column: range?.startOffset ?? -1,
-      lineText: lineEl?.textContent ?? '',
-      focused: document.activeElement?.classList.contains('cm-content') ?? false,
-    }
-  })
-}
-
-/** Caret position inside the rendered (ProseMirror) pane. */
-function renderedCaret(page: Page) {
-  return page.evaluate(() => {
-    const root = document.querySelector('.pane.rendered .ProseMirror') as HTMLElement | null
-    const sel = window.getSelection()
-    const range = sel?.rangeCount ? sel.getRangeAt(0) : null
-    let path = ''
-    let cur: Node | null = range?.startContainer ?? null
-    while (cur && cur !== document.body) {
-      path = (cur.nodeName || '') + (path ? '>' + path : '')
-      cur = cur.parentNode
-    }
-    return {
-      path,
-      offset: range?.startOffset ?? -1,
-      blocks: Array.from(root?.children ?? []).map((el) => ({
-        tag: el.tagName,
-        text: el.textContent ?? '',
-      })),
-    }
-  })
-}
-
-/** Put the CodeMirror caret at the very end of the document. */
-async function sourceCaretToEnd(page: Page): Promise<void> {
-  await page.locator('[data-testid="source-pane"] .cm-content').click()
-  await page.keyboard.press('Control+End')
-  await waitForSourceFocus(page)
-}
-
-/** Wait until the CodeMirror pane owns the selection. */
-async function waitForSourceFocus(page: Page): Promise<void> {
-  await expect
-    .poll(async () => (await sourceCaret(page)).line, { timeout: 5000 })
-    .toBeGreaterThanOrEqual(0)
-}
-
-/**
- * Wait until the rendered pane's caret has stopped moving.
- *
- * ProseMirror coalesces DOM mutations and flushes them ~20ms after the last
- * one. A keystroke sent before that flush is resolved against a selection the
- * model has not adopted yet, so it lands in the wrong block. Requiring two
- * identical consecutive samples proves the flush has caught up, and costs
- * nothing once the editor is idle.
- */
-async function waitForRenderedCaretSettle(page: Page): Promise<void> {
-  let previous = ''
-  await expect
-    .poll(
-      async () => {
-        const sample = JSON.stringify(await renderedCaret(page))
-        const settled = sample === previous
-        previous = sample
-        return settled
-      },
-      { timeout: 5000, intervals: [40] },
-    )
-    .toBe(true)
-}
-
-/** Press one key and let the rendered editor absorb it before the next one. */
-async function pressKey(page: Page, key: string): Promise<void> {
-  await page.keyboard.press(key)
-  await waitForRenderedCaretSettle(page)
-}
-
-/**
- * Put the caret at the end of the heading text.
- *
- * A click alone only starts focus transfer; pressing a key before ProseMirror
- * owns the selection drops the keystroke on the floor.
- *
- * The point is taken at the END OF THE TEXT, not at the end of the `<h1>`
- * element. The element spans the whole content column, so its right edge is
- * blank space — and ProseMirror resolves blank space to the nearest position,
- * which is the paragraph *below* the heading while the pane is still settling.
- * The text rect also only exists once the heading has been painted, so it is
- * polled rather than read once.
- */
-async function focusHeadingEnd(page: Page): Promise<void> {
-  const heading = page.locator('.pane.rendered .ProseMirror h1').first()
-  await expect(heading).toBeVisible()
-  let point: { x: number; y: number } | null = null
-  await expect
-    .poll(
-      async () => {
-        point = await heading.evaluate((el) => {
-          const range = document.createRange()
-          range.selectNodeContents(el)
-          const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0)
-          const last = rects[rects.length - 1]
-          if (!last || !el.textContent) return null
-          return { x: Math.max(last.left + 1, last.right - 2), y: last.top + last.height / 2 }
-        })
-        return point !== null
-      },
-      { timeout: 5000, intervals: [30] },
-    )
-    .toBe(true)
-  const target = point as { x: number; y: number } | null
-  if (!target) throw new Error('heading text never rendered')
-
-  await page.mouse.click(target.x, target.y)
-  await expect
-    .poll(async () => (await renderedCaret(page)).path, { timeout: 5000 })
-    .toMatch(/H1>(?:SPAN>)?#text$/)
-  await waitForRenderedCaretSettle(page)
-}
-
-/** Click a paragraph and wait until the caret is inside the editor. */
-async function focusParagraph(page: Page, index: number): Promise<void> {
-  const paragraph = page.locator('.pane.rendered .ProseMirror p').nth(index)
-  await paragraph.click()
-  await expect
-    .poll(async () => (await renderedCaret(page)).path, { timeout: 5000 })
-    .toContain('P')
-  await waitForRenderedCaretSettle(page)
-}
-
-/**
- * Place the rendered caret at a character offset inside the Nth paragraph,
- * through the editor's own model.
- *
- * Reaching an exact offset by clicking and then arrowing is a chain of input
- * events that each have to be resolved against an adopted selection; under
- * load one lost press moves the caret a paragraph away. Tests that assert on an
- * exact caret position start from here instead.
- */
-async function placeRenderedCaretInParagraph(
-  page: Page,
-  paragraphIndex: number,
-  offset: number,
-): Promise<void> {
-  await page.evaluate(
-    async ({ index, at }) => {
-      const mod = (await import('/src/features/editor/session-manager.ts')) as unknown as {
-        editorSessionManager: { getView(): unknown }
-      }
-      const view = mod.editorSessionManager.getView() as {
-        dom: HTMLElement
-        posAtDOM(node: Node, offset: number): number
-        state: {
-          doc: { resolve(position: number): unknown }
-          selection: { constructor: { near(pos: unknown, bias?: number): unknown } }
-          tr: { setSelection(selection: unknown): unknown }
-        }
-        dispatch(tr: unknown): void
-        focus(): void
-      } | null
-      if (!view) return
-      const paragraphs = Array.from(view.dom.querySelectorAll(':scope > p')) as HTMLElement[]
-      const element = paragraphs[index]
-      if (!element) return
-      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
-      let node = walker.nextNode()
-      let remaining = at
-      let target: { node: Node; offset: number } | null = null
-      while (node) {
-        const length = node.textContent?.length ?? 0
-        if (remaining <= length) {
-          target = { node, offset: remaining }
-          break
-        }
-        remaining -= length
-        node = walker.nextNode()
-      }
-      if (!target) return
-      const pos = view.posAtDOM(target.node, target.offset)
-      const Selection = view.state.selection.constructor
-      view.dispatch(view.state.tr.setSelection(Selection.near(view.state.doc.resolve(pos), 1)))
-      view.focus()
-    },
-    { index: paragraphIndex, at: offset },
-  )
-  await waitForRenderedCaretSettle(page)
-}
-
-/** Type a value with the real keyboard, one physical press per character. */
-async function typeChars(page: Page, value: string): Promise<void> {
-  for (const ch of value) await page.keyboard.type(ch)
-}
-
-/** Paste `text` through the system clipboard (real Ctrl+V). */
-async function pasteText(page: Page, text: string): Promise<void> {
-  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
-  await page.evaluate(async (value) => {
-    await navigator.clipboard.writeText(value)
-  }, text)
-  await page.keyboard.press('Control+V')
 }
 
 // ---------------------------------------------------------------------------

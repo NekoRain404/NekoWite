@@ -198,20 +198,26 @@ async function label(page: Page, key: string): Promise<string> {
  * Put the CodeMirror caret at `offset` in the source document.
  *
  * `EditorView.dispatch` takes an anchor/head selection spec, which avoids
- * reaching for the `EditorSelection` class through the state object.
+ * reaching for the `EditorSelection` class through the state object. The
+ * position is read back: a missing view — or a dispatch that did not take —
+ * would otherwise leave the caret wherever it was, and the keystrokes this
+ * exists to place would land somewhere the case is not about.
  */
 async function placeCaretInSource(page: Page, offset: number): Promise<void> {
-  await page.evaluate(async (at) => {
+  const head = await page.evaluate(async (at) => {
     const mod = (await import('/src/services/source-view.ts')) as unknown as {
       getSourceView(): {
         dispatch(spec: { selection: { anchor: number } }): void
         focus(): void
+        state: { selection: { main: { head: number } } }
       } | null
     }
     const view = mod.getSourceView()
-    if (!view) return
+    if (!view) return null
     view.dispatch({ selection: { anchor: at } })
     view.focus()
+    return view.state.selection.main.head
   }, offset)
+  expect(head, 'the source pane did not take the caret position').toBe(offset)
   await page.waitForTimeout(80)
 }
