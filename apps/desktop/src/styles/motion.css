@@ -1,199 +1,18 @@
-/* The motion layer. This file owns three things and nothing else:
-     1. how a shared surface arrives, and how a group arrives in sequence,
-     2. the press vocabulary every control shares,
-     3. the single global switch that turns motion off for a user who asks.
+/* The motion layer, second half. This file owns two things and nothing else:
+     1. the press vocabulary every control shares,
+     2. the single global switch that turns motion off for a user who asks.
+   The first half — how a shared surface arrives, leaves and is nudged — is
+   `surface-motion.css`, which is loaded before this one so the `!important`
+   sweep below still has the last word.
+
    It is imported last (see main.ts) so it governs every component's scoped
    styles rather than being one more opinion in the pile.
    The values themselves live in tokens.css — nothing here invents a duration,
-   a distance or a curve. */
-
-/* ---- Surface arrival ----------------------------------------------------
-   These dialogs mount with `v-if`, and an inserted element cannot be
-   transitioned: it is already at its final state on the first frame, so
-   there is no state change to animate from. An animation runs on insertion
-   instead, which is why this is keyframes rather than a transition.
-
-   Which makes this the placeholder for the question "keyframe or transition?"
-   An entrance keyframe is right for exactly one case: something that appears
-   once and is gone. It is wrong for anything the user toggles, because a
-   keyframe **restarts from its first frame** — closing a half-opened thing
-   snaps it back to the start and replays the entrance from zero, where a
-   transition between two states continues from wherever the element actually
-   is. Everything toggled in this app that can hold both states at once
-   (ContextMenu's `is-open`, the palette's overlay, the select and combobox
-   popups, the toast stack) is a transition for that reason. The toggles that
-   are *not* — the columns and the rail panels, which Vue shows and hides with
-   `display: none` — are listed in the report instead: an element that is not
-   rendered has no state to interpolate from, so making them reversible means
-   keeping them in the layout, which is a behaviour change and not a curve.
-
-   Only the entrance animates. A removed element leaves the tree immediately;
-   holding it for a fade would delay the action the user just took, which is
-   always worse than the polish it buys.
-
-   `scale` is written as its own property and never inside `transform`: a
-   `transform` used for centring survives that way where the animation would
-   otherwise wipe it and throw the dialog off-screen.
-
-   Surviving is not the same as being left alone, and that is the half that bit.
-   A `transform` is not merely preserved alongside a `scale`, it is *multiplied*
-   by it, so a dialog centring itself with `transform: translate(-50%, -50%)`
-   has its centring scaled too: at `scale: 0.96` it lands two per cent of its
-   own width and height off the centre of the window and slides home — around
-   nine pixels sideways on a wide prompt, on every arrival, in silence. Centring
-   belongs in the `translate` property, which sits outside the scale in the
-   transform chain and is measured from the box, so it holds the surface still
-   while it grows. Every dialog this round could reach was moved over;
-   TemplatePicker.vue still centres with a transform and still drifts, and is
-   recorded as a follow-up because it lives outside these files. The amplitude
-   is down to 1.5% now, so that drift would be under four pixels rather than
-   nine — smaller, and still the wrong number, so the rule stands.
-
-   Where a surface is anchored rather than centred, its direction comes from
-   `transform-origin` instead — a prompt pinned to the bottom edge scales about
-   that edge, so it grows up out of the edge it belongs to rather than inflating
-   from a centre it does not have.
-
-   Two animations, one surface. A spring on the movement and the state-change
-   bezier on the fade, because they are two different kinds of thing: the scale
-   has mass and should decelerate through its last pixels, while the opacity has
-   no overshoot to make — put on the spring it arrives at 42% of the timeline
-   and then sits clamped at 1 for the rest, so the fade ends long before the
-   movement does and the surface finishes appearing while it is still growing.
-   The amplitude is the token, so the next person tunes one place.
-
-   No fill mode: the resting look belongs to the base rule, so a user whose
-   animations are neutralised lands on the final state rather than a frame
-   of the animation. */
-@keyframes overlay-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-@keyframes surface-fade {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-@keyframes surface-scale {
-  from { scale: var(--app-motion-scale-surface); }
-  to   { scale: 1; }
-}
-
-/* ---- The compatibility surface ------------------------------------------
-   The two keyframes below are the *old* arrival and the *old* action-row beat,
-   kept alive for the one consumer this round cannot reach. `styles/components.css`
-   restates the math and table dialog passthroughs against their own class names
-   — editor-core writes them and its own tests read them, so they cannot simply
-   wear `.dialog` — and it names these two keyframes to do it. Deleting them
-   here would leave two `animation:` shorthands pointing at nothing, and an
-   unparseable animation shorthand is dropped whole: the two dialogs would lose
-   their arrival silently, in a file this round may not write. So the names stay
-   until that file is converted, and `.dialog` no longer uses either of them.
-
-   `surface-in` keeps the combined shape purely because a single keyframe cannot
-   carry two timing functions: the passthroughs would need the same split
-   `.dialog` got, in their own file. It still takes the amplitude token, so those
-   two dialogs get the smaller scale as well — the 4% this used to be is the
-   thing the brief names by hand, and it costs nothing to fix here. What is left
-   is the spring on their opacity, which is the curve those rules name and
-   therefore theirs to change. `dialog-row-in` is the fade the action row took
-   before the beat was removed. Both are reported as the remaining work, not
-   recommended. */
-@keyframes surface-in {
-  from { opacity: 0; scale: var(--app-motion-scale-surface); }
-  to   { opacity: 1; scale: 1; }
-}
-@keyframes dialog-row-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
-/* The dim behind a dialog only fades: it has no mass and nothing to settle, so
-   the spring would be a curve spent on a property that cannot show it. */
-.dialog-overlay {
-  animation: overlay-in var(--app-motion-slow) var(--app-ease);
-}
-.dialog {
-  animation:
-    surface-fade var(--app-motion-slow) var(--app-ease),
-    surface-scale var(--app-motion-slow) var(--app-ease-surface);
-}
-
-/* ---- The dialog's departure, which did not exist -------------------------
-   Every dialog in the app arrives on the two rules above and, until this round,
-   every one of them *vanished*: the hosts mount them with `v-if`, and a removed
-   element leaves the tree in the frame the state flips. Measured on the
-   settings dialog, the largest of them: `opacity 1` in the last frame it is
-   rendered, the node gone in the next one, after an arrival of 460ms. An exit
-   of zero frames after an entrance that taught the eye there was something to
-   watch is the one shape that reads as a glitch rather than as a decision, so
-   the exit is the mirror the arrival implied: the ladder's exit fraction
-   (`--app-motion-exit-slow`), accelerating away on `--app-ease-exit`.
-
-   **A transition, not a second keyframe**, for the reason the top of this file
-   gives about keyframes; that is what lets the `-enter-active` pair below carry
-   no `-enter-from` and still be a matched pair — an interrupted close glides
-   back from where it is instead of snapping to full.
-
-   `pointer-events: none` is load-bearing and not decoration. This overlay is
-   `position: fixed; inset: 0` at the top of the app's z-scale, so without it
-   the whole window is dead to the pointer for the length of the exit. The
-   select popup, the combobox popup and the rail panels already carry it; this
-   is the largest surface that was missing it.
-
-   The *keyboard* half is deliberately not `inert`, because that fix is worse
-   than the fault: these dialogs run a focus trap, an inert subtree cannot take
-   focus at all, and the trap would go on swallowing Tab with nowhere to put it
-   — a dead keyboard for the length of the exit instead of a held one. The trap
-   already restores the user's focus when the dialog unmounts at the end of the
-   leave, which is where that focus belongs. */
-.dialog-leave-active {
-  pointer-events: none;
-  transition: opacity var(--app-motion-exit-slow) var(--app-ease-exit);
-}
-.dialog-leave-active .dialog {
-  transition: opacity var(--app-motion-exit-slow) var(--app-ease-exit),
-              scale var(--app-motion-exit-slow) var(--app-ease-exit);
-}
-.dialog-leave-to {
-  opacity: 0;
-}
-.dialog-leave-to .dialog {
-  opacity: 0;
-  /* The exit amplitude, which is far smaller than the 1.5% the arrival grows
-     by: an exit is a withdrawal, and the surface is being read on the way out. */
-  scale: var(--app-motion-scale-exit);
-}
-/* The reverse. No `-enter-from` and no duration of its own beyond the arrival
-   rung, so a dialog reopened mid-exit continues upward from where it is rather
-   than snapping back to full — the same rule the columns and the rail carry,
-   and the half that would otherwise be a teleport on a fast Escape-then-reopen. */
-.dialog-enter-active {
-  transition: opacity var(--app-motion-fade) var(--app-ease);
-}
-.dialog-enter-active .dialog {
-  transition: opacity var(--app-motion-fade) var(--app-ease),
-              scale var(--app-motion) var(--app-ease);
-}
-
-/* ---- Choreography, and where it went ------------------------------------
-   A dialog's action row used to settle a beat after the content it answers,
-   and a menu's rows used to step in from the top down. Both are gone, and the
-   rule that removed them is worth stating because it is not obvious from the
-   outside: **a parent that is already fading in may not have its children fade
-   in as well.** The surface is the arrival; a child animating on top of it is
-   the same fade twice, and a group that arrives in batches reads as slow
-   rather than as composed. One interaction keeps one main animation.
-
-   It is also the half that could not be reversed. A staggered child is an
-   `animation-delay` on something that is already animating, so reversing
-   mid-flight cancels the animation and drops the child straight to its resting
-   state — the children snap while the parent eases back. There is no delay that
-   survives being interrupted, which is why nothing in this app spends one.
-
-   The reduced-motion switch below still sweeps `animation-delay`, which now
-   guards whatever staggering a future component tries to add rather than
-   anything in this file. */
-
+   a distance or a curve.
+   The two sheets are one layer to every guard that checks them: `motion.test.ts`
+   reads them joined, because a *negative* guard — "`.dialog` must not use
+   `:nth-child`" — passes vacuously against a half that no longer contains the
+   selector, and a sheet split must not be able to make a check go quiet. */
 /* ---- Press vocabulary ---------------------------------------------------
    A press that only changes colour reads as flat, so every control that takes a
    press also gives a little: it shrinks under the finger and eases back out
@@ -230,55 +49,6 @@
 }
 :is(.btn, .accent-swatch):active {
   transform: scale(var(--app-motion-press-scale));
-}
-
-/* ---- Where the rail's arrival went --------------------------------------
-   The rail used to take `rail-in` here: a fade keyframe, because it mounts with
-   `v-if` and an inserted element cannot be transitioned. That is true of the
-   *mechanism*, and it was the wrong one for the surface — a keyframe cannot be
-   reversed, so closing a half-open rail destroyed it mid-fade and the next open
-   replayed from frame 0. It is a `<Transition>` now, declared in
-   `app/appShell.css` beside the other two panels, which is also where the
-   absolute-on-leave rule lives that keeps the exit from holding the layout for
-   195ms.
-
-   What is left below is the nudge for a region *inside* a surface that is
-   already on screen, which is a different case and still a keyframe: those
-   regions mount once and are replaced whole. */
-
-/* The rail is the outer case: a whole column appearing where 300px of layout
-   was not. A region *inside* a surface that is already on screen is the same
-   shape one level down and needs one thing more — the rail may fade, but a
-   block that replaces another block has an edge to have come from, and a fade
-   alone answers "this changed" without answering "from where".
-
-   Everything in this app's chrome hangs downward off the thing that owns it: a
-   group body under its header, a column's body under its toolbar, a dialog's
-   section under the dialog's own header, a diff under the button that opened
-   it. The road back to the anchor is therefore *up*, which is the travel token
-   with its sign flipped — a distance and a direction already stated once in
-   tokens.css, rather than a fresh pair invented per site.
-
-   `translate` and not `transform`, for the reason the surface arrival above
-   gives: it composes with whatever a component does with its own `transform`,
-   where the shorthand would wipe it.
-
-   The rung is the one the ladder names for "a region changing state in place",
-   and the curve is the state-change one — this is not a surface arriving, it is
-   content inside a surface that has already arrived.
-
-   Worn rather than chased: the same mechanism as `.dialog`. The layer names the
-   class and the region wears it (it is in the `SHARED_ARRIVAL` list of
-   motion.test.ts, which is what ties a wearer to this rule), so a component is
-   free to rename its internals without silently dropping out of the vocabulary,
-   and this file does not have to hold a list of five components' private class
-   names to keep them animated. */
-@keyframes region-in {
-  from { opacity: 0; translate: 0 calc(var(--app-motion-travel) * -1); }
-  to   { opacity: 1; translate: 0 0; }
-}
-.arrives {
-  animation: region-in var(--app-motion) var(--app-ease);
 }
 
 /* ---- will-change --------------------------------------------------------
@@ -352,3 +122,4 @@
     transform: none;
   }
 }
+

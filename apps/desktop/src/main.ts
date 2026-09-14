@@ -19,8 +19,11 @@ import './styles/editor-content.css'
 import './styles/print.css'
 import './style.css'
 import './math-dialog.css'
-// Last on purpose: the motion layer must outrank every component's scoped
-// styles, and it carries the global prefers-reduced-motion switch.
+// The motion layer, in two sheets and one order: the surface lifecycle first,
+// then the press vocabulary and the global prefers-reduced-motion switch — last
+// on purpose, so the switch's `!important` sweep outranks every component's
+// scoped styles.
+import './styles/surface-motion.css'
 import './styles/motion.css'
 
 async function activateBuiltins(): Promise<void> {

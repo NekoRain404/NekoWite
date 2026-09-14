@@ -5,7 +5,23 @@ import { resolve } from 'node:path'
 const read = (p: string) => readFileSync(resolve(__dirname, p), 'utf8')
 
 const tokens = read('./tokens.css')
-const motion = read('./motion.css')
+/**
+ * The motion layer's sheets, read as one text.
+ *
+ * Reading a single path was a real hazard and not a hypothetical one: several
+ * guards in this file are *negative* — `declarations(motion)` must not hold a
+ * `.dialog :nth-child` rule, and a stagger scan asserts the absence of
+ * something — and a negative assertion run against a sheet that no longer
+ * contains the selector passes while checking nothing. When the layer was split
+ * into `surface-motion.css` (how a surface arrives, leaves and is nudged) and
+ * `motion.css` (the press and the switch), a `read('./motion.css')` would have
+ * gone on reporting success for guards about `.dialog`, `.arrives` and the
+ * arrival keyframes while looking at none of them.
+ *
+ * So the layer has a list, and the list is what every guard reads.
+ */
+const MOTION_SHEETS = ['./surface-motion.css', './motion.css'] as const
+const motion = MOTION_SHEETS.map((sheet) => read(sheet)).join('\n')
 const main = read('../main.ts')
 
 // The motion ladder, ordered by how far a thing travels and how much of the
@@ -167,6 +183,10 @@ function springSamples(curve: string): { value: number; at: number }[] {
 const MOTION_SURFACE = [
   './tokens.css',
   './components.css',
+  // The layer's first half. Split out of motion.css for the reason both files'
+  // headers give; the list above is what the guards read, and this list is what
+  // they check, so both have to carry it.
+  './surface-motion.css',
   // The shell's share: the three openable panels and the content that follows
   // them. Added when they moved off keyframes onto transitions, which is
   // exactly the moment a listed file became worth listing.
@@ -174,7 +194,10 @@ const MOTION_SURFACE = [
   './editor-content.css',
   './motion.css',
   '../components/AppToast.vue',
-  '../components/WordToolbar.vue',
+  // The toolbar's dropdowns: the button, the panel and the `menu` transition
+  // moved here when the word toolbar crossed §13.1's hard stop, and this list
+  // follows the motion rather than the component it used to live in.
+  '../components/ToolbarMenu.vue',
   // The dialogs moved onto the shared arrival this round. They declare no
   // transition of their own — `.dialog` / `.dialog-overlay` carry it — and the
   // first two also carry a direction of their own, being anchored to a bottom
