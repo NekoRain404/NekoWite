@@ -2,7 +2,27 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
-const css = readFileSync(resolve(__dirname, './tokens.css'), 'utf8')
+const read = (file: string): string => readFileSync(resolve(__dirname, file), 'utf8')
+
+/**
+ * The token files, in the order the BROWSER loads them — which is `main.ts`'s
+ * import order and nothing else.
+ *
+ * Brief 75 split the single tokens.css in two, and the `RULES`/`resolveToken`
+ * cascade below is simulated over their concatenation: it reads the files as
+ * one document and lets the later declaration win. That simulation is faithful
+ * only while this list matches main.ts, so the last test in this file reads
+ * main.ts and fails when the two drift apart. Change one, change the other.
+ *
+ * tokens.css is the semantic scale (declared once, the same in every theme);
+ * palettes.css is every colour and must load second, because the dark block
+ * repeats the radius ladder and a re-point has to keep coming after the
+ * declaration it repeats.
+ */
+const TOKEN_FILES = ['./tokens.css', './palettes.css'] as const
+const scaleCss = read(TOKEN_FILES[0])
+const colorCss = read(TOKEN_FILES[1])
+const css = [scaleCss, colorCss].join('\n')
 
 // Tokens a theme block has to state for itself, because two themes resolve them
 // differently. --app-ease is deliberately NOT one of them: it is motion, every
@@ -12,10 +32,15 @@ const css = readFileSync(resolve(__dirname, './tokens.css'), 'utf8')
 // ("declared once, never per theme") is asserted in the motion tests below.
 const REQUIRED = ['--app-canvas', '--app-panel', '--app-elevated', '--app-border', '--app-text', '--app-muted', '--app-accent', '--app-accent-soft', '--app-accent-contrast', '--app-danger', '--app-danger-contrast', '--app-warn', '--app-radius', '--app-radius-md']
 
-// 只取主 dark 块（[data-theme="dark"] 后紧跟 { 的那个），避免
-// [data-theme="dark"][data-accent="ink"] 等 accent 子块造成假阳性。
-const DARK_BLOCK = css.match(/\[data-theme="dark"\]\s*\{([^}]*)\}/)?.[1] ?? ''
-const LIGHT_BLOCK = css.match(/:root\s*\{([^}]*)\}/)?.[1] ?? ''
+// 主 dark 块：`[data-theme="dark"]` 后紧跟 `{`，所以全局唯一的 accent 子块
+// `[data-theme="dark"][data-accent="ink"]` 和配色的复合选择器都取不到。取第一个而不是
+// 拼一个并集，是因为下面有一条断言钉住"这样的块只有一个"——`match` 碰巧取到哪一个是
+// 隐式的，而"浅色和深色各有一套基线"是这份调色板的约定。
+const DARK_BLOCKS = [...css.matchAll(/\[data-theme="dark"\]\s*\{([^}]*)\}/g)].map((m) => m[1])
+const DARK_BLOCK = DARK_BLOCKS[0] ?? ''
+// 浅色基线：`:root` 在 tokens.css（尺度）和 palettes.css（颜色）里各写了一次，而浏览器
+// 看到的是两个块合起来的结果。只取第一个会让 REQUIRED 里横跨两边的 token 找不到声明。
+const LIGHT_BLOCK = [...css.matchAll(/:root\s*\{([^}]*)\}/g)].map((m) => m[1]).join('\n')
 
 const SRC_DIR = resolve(__dirname, '..')
 
@@ -47,10 +72,15 @@ function pxIn(block: string, token: string): number {
   return Number(value.replace('px', ''))
 }
 
-/** 这次对比度修复没有授权的文件：两个分栏滚动文件和一个拼 CSS 字符串的 service。
+/** 这次对比度修复没有授权的文件：一个分栏滚动组件和一个拼 CSS 字符串的 service。
    它们里面的 muted 淡化仍然低于 AA（浅色下 2.78-3.87:1），作为已知例外记录在案，
-   而不是被当成正确——名单写死在这里，想加一个进来必须改这行测试。 */
-const OUT_OF_FOOTPRINT = ['view/SourcePane.vue', 'ui/EditorPane.vue', 'services/cmSourceView.ts']
+   而不是被当成正确——名单写死在这里，想加一个进来必须改这行测试。
+
+   两份名单都曾经有过时成员，两条都按同一个判据处理——这里是不是真的还有淡化：
+   `services/cmSourceView.ts` 是改名前的写法（文件已经是 kebab），而它描述的那个
+   文件现在仍有 72%/70% 的 muted 文字色，所以按现名留下；`view/SourcePane.vue` 的
+   淡化在 839bce1 就没了，留下只会让该文件永远够不着下面这条检查。 */
+const OUT_OF_FOOTPRINT = ['ui/EditorPane.vue', 'services/cm-source-view.ts']
 
 const ACCENTS = ['ink', 'coral', 'blue', 'green', 'gold', 'violet', 'slate', 'teal', 'lime', 'rose', 'amber', 'orange', 'pink', 'cyan', 'cocoa']
 
@@ -154,8 +184,28 @@ function resolveToken(s: Scenario, name: string): string {
   return best.value
 }
 
-describe('tokens.css', () => {
+describe('tokens.css and palettes.css', () => {
+  it('splits the sheets by change frequency: the scale in one, the colours in the other', () => {
+    // Brief 75. Each file has to be describable in one sentence, and the
+    // sentence has to be checkable: a value that drifts back into the wrong
+    // file resolves exactly the same through the concatenation, so every other
+    // test in this file would stay green while the split stopped meaning
+    // anything.
+    //
+    // tokens.css is the semantic scale — how big, how fast, how round, how far.
+    // It is declared once and the same in every theme, so no theme, accent,
+    // scheme or contrast selector may appear in it.
+    expect(scaleCss, 'the scale is not theme-dependent').not.toMatch(
+      /\[data-(?:theme|accent|color-scheme|contrast)/,
+    )
+    // palettes.css is the data table. Nothing in it is a duration or a curve —
+    // the dark block's verbatim repetition of the radius ladder is the one
+    // scale value it still carries, and it stays there because this round moves
+    // declarations rather than editing them.
+    expect(colorCss, 'motion is not a colour').not.toMatch(/--app-(?:motion|ease)[\w-]*\s*:/)
+  })
   it('defines all semantic tokens in light (:root) and dark ([data-theme=dark])', () => {
+    expect(DARK_BLOCKS, 'the dark base is one block, not one per reader').toHaveLength(1)
     for (const t of REQUIRED) {
       expect(LIGHT_BLOCK, `${t} in light`).toContain(`${t}:`)
       expect(DARK_BLOCK, `${t} in dark`).toContain(`${t}:`)
@@ -175,7 +225,10 @@ describe('tokens.css', () => {
   it('declares the motion scale once, outside every theme block', () => {
     // Motion is not a theme. A dark-mode user, or one who swaps the accent or
     // the colour scheme, must get exactly the same rhythm — so the ladder lives
-    // in :root and no theme block may restate it. The scale itself is pinned in
+    // in :root, in the scale file, and no theme block may restate it. Since the
+    // split that is one assertion stronger than it was: palettes.css, the file
+    // every theme block lives in, may not name a motion token at all (asserted
+    // with the other job rules above). The scale itself is pinned in
     // motion.test.ts; this only guards where it is allowed to be declared.
     const ladder = [
       '--app-motion-micro',
@@ -188,7 +241,7 @@ describe('tokens.css', () => {
       '--app-motion-travel',
     ]
     for (const t of ladder) {
-      expect(LIGHT_BLOCK, `${t} in :root`).toContain(`${t}:`)
+      expect(scaleCss, `${t} in the :root of tokens.css`).toContain(`${t}:`)
     }
     for (const block of css.matchAll(/\[data-theme="dark"\]\s*\{([^}]*)\}/g)) {
       expect(block[1], 'dark mode must not redefine the motion ladder').not.toMatch(
@@ -296,7 +349,10 @@ describe('tokens.css', () => {
     for (const file of styleSources(SRC_DIR)) {
       const name = file.slice(SRC_DIR.length + 1)
       if (OUT_OF_FOOTPRINT.includes(name)) continue
-      const dimmedMuted = /(?<![-\w])color:\s*color-mix\(\s*in srgb,\s*var\(--app-muted\)/g
+      // 淡化可能写在样式表里，也可能写在拼 CSS 的 .ts 里——后者跟在一个引号后面。
+      // 只认「color: color-mix」会让这条检查够不到那种写法，于是名单上会出现一个
+      // 检查从来没有可能碰到的文件：例外就不再是例外，只是没人再读的注释。
+      const dimmedMuted = /(?<![-\w])color:\s*['`"]?\s*color-mix\(\s*in srgb,\s*var\(--app-muted\)/g
       for (const m of readFileSync(file, 'utf8').matchAll(dimmedMuted)) {
         offenders.push(`${name}: ${m[0]}`)
       }
@@ -401,5 +457,20 @@ describe('tokens.css', () => {
         expect(block, `${s} palette ${token}`).toContain(token)
       }
     }
+  })
+  it('reads the token files in the order main.ts loads them', () => {
+    // The cascade simulation above is faithful only while this file's
+    // concatenation order matches the browser's, and the browser's is main.ts's
+    // import order and nothing else. So it is asserted rather than described: a
+    // comment in two places can drift out of step with itself, and this cannot.
+    // It matters most for the tokens the dark block repeats (the radius ladder)
+    // — the wrong order hands a dark-mode reader the other file's declaration.
+    const main = readFileSync(resolve(__dirname, '../main.ts'), 'utf8')
+    const imports = [...main.matchAll(/^import\s+'([^']+)'$/gm)].map((m) => m[1])
+    const positions = TOKEN_FILES.map((f) => imports.indexOf(`./styles/${f.replace('./', '')}`))
+    expect(positions, 'every token file must be imported by main.ts').not.toContain(-1)
+    expect(positions, `${TOKEN_FILES.join(' then ')}, as main.ts loads them`).toEqual(
+      [...positions].sort((a, b) => a - b),
+    )
   })
 })
