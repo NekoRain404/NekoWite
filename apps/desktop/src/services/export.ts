@@ -1,115 +1,47 @@
-import type { ExportImageTarget, ExportRef, RenderDocumentOptions } from '@nekowite/editor-core'
+/**
+ * The exporters, one function per destination.
+ *
+ * This file is the orchestration only: read the source, render it, hand the
+ * bytes to the vault. The pieces that are worth testing on their own live in
+ * the siblings — `export-render` (the settings and render options every
+ * exporter shares), `export-page` (paper size, orientation, margin and the
+ * `@page` rule they produce), `export-image` (the long image),
+ * `export-text` (plain text and CSV) and `export-name` (what the file is
+ * called). It was 181 lines with two exporters and would have been past the
+ * 300-line planning rung with six; splitting now is cheaper than splitting
+ * after.
+ */
 import { fsService } from '../platform/gateways/fs'
 import { buildComponentRenderers } from './export-renderers'
-import { createImageSrcResolver } from './attachments'
-// Cycle-blocked deep import (§13.11): `features/notes` pulls in useNoteActions,
-// which reaches back here through useNoteExport. The scan module reaches nothing
-// but i18n and the path helpers, so reading it directly is the one edge that
-// does not close the loop.
-import { splitFrontmatterRaw } from '../features/notes/services/frontmatter-scan'
-import { useTabsStore } from '../stores/tabs'
-import { useSettingsStore } from '../stores/settings'
-import type { ExportPdfPageSize, ExportPdfOrientation } from '../stores/settings'
+import { exportPageCss, injectExportPageCss } from './export-page'
+import { IMAGE_MIME, renderHtmlToImage, type ExportImageFormat } from './export-image'
+import { htmlTablesToCsv, htmlToPlainText } from './export-text'
+import {
+  exportSettings,
+  prepareSource,
+  renderDocumentAsync,
+  toRenderOptions,
+  type ExportUiOptions,
+} from './export-render'
 
 export { buildComponentRenderers }
-
-// The export implementation pulls in KaTeX (and the remark/cite parsing
-// pipeline behind it) purely to render markdown to HTML/PDF, which only
-// happens on explicit user export. Loading it on demand keeps the editor's
-// startup bundle free of that ~1MB of math machinery.
-async function renderDocumentAsync(
-  markdown: string,
-  opts?: RenderDocumentOptions,
-): Promise<string> {
-  const mod = await import('@nekowite/editor-core')
-  return mod.renderDocumentAsync(markdown, opts)
-}
-
-export interface ExportUiOptions {
-  title?: string
-  refs?: Map<string, ExportRef>
-  math?: 'katex' | 'text'
-  savePath?: string
-  /** Vault-relative path of the exported note; defaults to the active tab. */
-  notePath?: string | null
-}
-
-function storeContext(): { getVault(): string | null; getNotePath(): string | null } {
-  // The tabs store is read lazily per resolution so exports always see the
-  // live vault/note, and contexts without an active pinia (tests) degrade.
-  try {
-    const tabs = useTabsStore()
-    return {
-      getVault: () => tabs.vault,
-      getNotePath: () => tabs.activeTab?.path ?? null,
-    }
-  } catch {
-    return { getVault: () => null, getNotePath: () => null }
-  }
-}
-
-/** Read export params from the settings store, degrading to defaults outside
- * an active pinia (the export pipeline is also exercised by unit tests). */
-function exportSettings(): {
-  includeFrontmatter: boolean
-  pageSize: ExportPdfPageSize
-  orientation: ExportPdfOrientation
-} {
-  try {
-    const settings = useSettingsStore()
-    return {
-      includeFrontmatter: settings.exportIncludeFrontmatter,
-      pageSize: settings.exportPdfPageSize,
-      orientation: settings.exportPdfOrientation,
-    }
-  } catch {
-    return { includeFrontmatter: true, pageSize: 'A4', orientation: 'portrait' }
-  }
-}
-
-/** Strip the YAML frontmatter block when the export should not include it. */
-function prepareSource(source: string, includeFrontmatter: boolean): string {
-  if (includeFrontmatter) return source
-  return splitFrontmatterRaw(source).body
-}
-
-/** Add a print `@page` rule so the browser print dialog honors the configured
- * paper size and orientation for the PDF export. */
-function injectPdfPageCss(
-  html: string,
-  size: ExportPdfPageSize,
-  orientation: ExportPdfOrientation,
-): string {
-  const rule = `@page{size:${size} ${orientation};margin:1cm;}`
-  const style = `<style>${rule}</style>`
-  const idx = html.indexOf('</head>')
-  if (idx === -1) return style + html
-  return html.slice(0, idx) + style + html.slice(idx)
-}
-
-/**
- * `imageSrcTarget` is per destination: a saved .html has to be self-contained
- * (data URLs), while the in-app print/PDF path renders through the asset
- * protocol and keeps the cheap display URL.
- */
-function toRenderOptions(
-  opts: ExportUiOptions,
-  imageSrcTarget: ExportImageTarget = 'display',
-): RenderDocumentOptions {
-  const ctx = storeContext()
-  return {
-    title: opts.title,
-    refs: opts.refs,
-    componentRenderers: buildComponentRenderers(),
-    math: opts.math,
-    includeCss: true,
-    imageSrcTarget,
-    resolveImage: createImageSrcResolver(fsService, {
-      getVault: ctx.getVault,
-      getNotePath: () => opts.notePath ?? ctx.getNotePath(),
-    }),
-  }
-}
+export type { ExportUiOptions } from './export-render'
+export type { ExportImageFormat } from './export-image'
+export { EXPORT_EXTENSIONS, exportBaseName, exportFileName } from './export-name'
+export type { ExportFileFormat } from './export-name'
+export {
+  EXPORT_MARGIN_MM_DEFAULT,
+  EXPORT_MARGIN_MM_MAX,
+  EXPORT_MARGIN_MM_MIN,
+  EXPORT_PAGE_SIZES,
+  PX_PER_MM,
+  exportPageCss,
+  pageBox,
+  pageSizeMm,
+  type ExportOrientation,
+  type ExportPageSize,
+  type PageBox,
+} from './export-page'
 
 export async function exportHtml(source: string, vault: string, savePath: string, opts: ExportUiOptions): Promise<void> {
   const { includeFrontmatter } = exportSettings()
@@ -130,13 +62,21 @@ const LOAD_SAFETY_MS = 60_000
 /// and removing the frame underneath it cancels their print.
 const PRINT_BACKSTOP_MS = 300_000
 
+/** The document as the printer should see it: rendered, with the configured
+ *  paper size, orientation and margin as its `@page` rule. Shared with the
+ *  preview so what the user is shown and what they print are the same bytes. */
+export async function renderForPrint(source: string, opts: ExportUiOptions): Promise<string> {
+  const { includeFrontmatter, pageSize, orientation, marginMm } = exportSettings()
+  const html = await renderDocumentAsync(prepareSource(source, includeFrontmatter), toRenderOptions(opts))
+  return injectExportPageCss(html, exportPageCss(pageSize, orientation, marginMm))
+}
+
 export async function exportToPdf(source: string, opts: ExportUiOptions): Promise<void> {
   if (typeof document === 'undefined') return
-  const { includeFrontmatter, pageSize, orientation } = exportSettings()
-  const html = await renderDocumentAsync(prepareSource(source, includeFrontmatter), toRenderOptions(opts))
+  const html = await renderForPrint(source, opts)
   const iframe = document.createElement('iframe')
   iframe.style.display = 'none'
-  iframe.srcdoc = injectPdfPageCss(html, pageSize, orientation)
+  iframe.srcdoc = html
   document.body.appendChild(iframe)
 
   let cleanupTimer: ReturnType<typeof setTimeout> | undefined
@@ -178,4 +118,78 @@ export async function exportToPdf(source: string, opts: ExportUiOptions): Promis
     if (cleanupTimer !== undefined) clearTimeout(cleanupTimer)
     cleanupTimer = setTimeout(cleanup, PRINT_BACKSTOP_MS)
   }
+}
+
+/** Render the document the way the printers do, so every exporter and the
+ *  preview agree about what the document is before they disagree about what to
+ *  do with it. Only the image path asks for inlined images; the others keep the
+ *  cheap display URL. */
+async function renderExportDocument(
+  source: string,
+  opts: ExportUiOptions,
+  imageSrcTarget: 'display' | 'data',
+): Promise<string> {
+  const { includeFrontmatter } = exportSettings()
+  return renderDocumentAsync(
+    prepareSource(source, includeFrontmatter),
+    toRenderOptions(opts, imageSrcTarget),
+  )
+}
+
+export interface ExportImageResult {
+  /** The encoded bytes, base64 — what `saveAttachment` takes, because it is the
+   *  vault's only binary write path (`fs.write` takes a string, and a data URL
+   *  in a `.png` is not a PNG). */
+  base64: string
+  /** The MIME actually produced, read back from the data URL rather than
+   *  assumed, so the caller can refuse to write JPEG bytes into a `.png`. */
+  mime: string
+  width: number
+  height: number
+  /** Encoded size in bytes, so the caller can say how big it came out and
+   *  check it against the vault's own limit before shipping it over IPC. */
+  bytes: number
+}
+
+/** The long image: one picture of the whole document, PNG or JPEG. */
+export async function exportImage(
+  source: string,
+  format: ExportImageFormat,
+  quality: number,
+  opts: ExportUiOptions,
+): Promise<ExportImageResult> {
+  const html = await renderExportDocument(source, opts, 'data')
+  const image = await renderHtmlToImage(html, format, quality)
+  return {
+    base64: image.base64,
+    mime: image.mime,
+    width: image.width,
+    height: image.height,
+    bytes: base64Bytes(image.base64),
+  }
+}
+
+function base64Bytes(base64: string): number {
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0
+  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding)
+}
+
+/** The document as plain text, for pasting where markup is not welcome. */
+export async function renderPlainText(source: string, opts: ExportUiOptions): Promise<string> {
+  const html = await renderExportDocument(source, opts, 'display')
+  return htmlToPlainText(html)
+}
+
+/** The document's tables as CSV, or `null` when it has none — writing an empty
+ *  file and calling it an export is worse than saying there is nothing to
+ *  export. */
+export async function renderCsv(source: string, opts: ExportUiOptions): Promise<string | null> {
+  const html = await renderExportDocument(source, opts, 'display')
+  return htmlTablesToCsv(html)
+}
+
+/** The MIME of an image export, so a caller can label what it is about to
+ *  write without a second table of formats. */
+export function imageMime(format: ExportImageFormat): string {
+  return IMAGE_MIME[format]
 }

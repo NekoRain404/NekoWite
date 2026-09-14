@@ -243,18 +243,33 @@ describe('export applies settings-store params', () => {
     const settings = useSettingsStore()
     settings.exportPdfPageSize = 'Letter'
     settings.exportPdfOrientation = 'landscape'
+    settings.exportMarginMm = 12
     await nextTick()
     const iframe = makeIframe(() => undefined)
     stubDom(iframe)
     await exportToPdf('# T\n', {})
-    expect(iframe.srcdoc).toContain('@page{size:Letter landscape;margin:1cm;}')
+    expect(iframe.srcdoc).toContain('@page{size:Letter landscape;margin:12mm;}')
     expect(iframe.srcdoc).toContain('<!DOCTYPE html>')
   })
 
-  it('defaults to A4 portrait pdf rules', async () => {
+  it('defaults to A4 portrait pdf rules with the default margin', async () => {
     const iframe = makeIframe(() => undefined)
     stubDom(iframe)
     await exportToPdf('# T\n', {})
-    expect(iframe.srcdoc).toContain('@page{size:A4 portrait;margin:1cm;}')
+    expect(iframe.srcdoc).toContain('@page{size:A4 portrait;margin:20mm;}')
+  })
+
+  it('neutralises the renderer\'s window chrome on paper, so the margin is the one the user set', async () => {
+    // The renderer's own stylesheet gives `body` a 2rem padding and a 50rem
+    // column for the browser window. Printed on top of a `@page` margin the two
+    // stack, and the number in the settings field is then 8.47mm short of the
+    // number on the paper.
+    const iframe = makeIframe(() => undefined)
+    stubDom(iframe)
+    await exportToPdf('# T\n', {})
+    expect(iframe.srcdoc).toContain('body{margin:0;padding:0;max-width:none;}')
+    // The page rule has to come after the renderer's <style>, or the reset
+    // loses the cascade to it.
+    expect(iframe.srcdoc.indexOf('data-neko-export-page')).toBeGreaterThan(iframe.srcdoc.indexOf('max-width: 50rem'))
   })
 })
