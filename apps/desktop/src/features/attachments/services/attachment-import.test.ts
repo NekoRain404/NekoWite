@@ -1,4 +1,4 @@
-import { MAX_IMAGES_PER_MESSAGE } from '../../../stores/chatSession'
+import { MAX_IMAGES_PER_MESSAGE } from '../../../stores/chat-session'
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 
 import { fileToBase64 } from './attachment-library'

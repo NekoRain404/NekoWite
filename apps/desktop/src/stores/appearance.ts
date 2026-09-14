@@ -22,7 +22,7 @@
 
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
-import { readSystemAccentColor } from '../platform/systemAccent'
+import { readSystemAccentColor } from '../platform/system-accent'
 import { createSystemAccentReader } from './appearance-system-accent'
 import {
   APPEARANCE_DEFAULTS,

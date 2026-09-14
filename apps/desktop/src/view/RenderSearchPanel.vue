@@ -9,7 +9,7 @@ import {
   SpellCheck,
   X,
 } from 'lucide-vue-next'
-import { isComposingKey } from '../services/keyGuard'
+import { isComposingKey } from '../services/key-guard'
 import { t } from '../i18n'
 import {
   closePanel,
@@ -22,7 +22,7 @@ import {
   setCaseSensitive,
   setQuery,
   setSpellEnabled,
-} from '../services/renderSearch'
+} from '../services/render-search'
 
 const emit = defineEmits<{ (e: 'close'): void }>()
 

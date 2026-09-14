@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createApp, nextTick, type App as VueApp } from 'vue'
 import TemplatePicker from './TemplatePicker.vue'
-import type { TemplateEntry } from '../services/noteTemplates'
+import type { TemplateEntry } from '../services/note-templates'
 import { t } from '../i18n'
 
 interface Received {

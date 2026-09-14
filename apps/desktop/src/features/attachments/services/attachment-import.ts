@@ -1,4 +1,4 @@
-import { MAX_IMAGES_PER_MESSAGE } from '../../../stores/chatSession'
+import { MAX_IMAGES_PER_MESSAGE } from '../../../stores/chat-session'
 import { notifyError } from '../../../services/errors'
 import { isImageFile } from './attachment-paths'
 

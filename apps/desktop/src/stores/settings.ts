@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
-import { getSharedGateways } from '../platform/runtime/gatewayRuntime'
+import { getSharedGateways } from '../platform/runtime/gateway-runtime'
 import { persistence } from '../services/persistence'
 
 export interface AIConfig {

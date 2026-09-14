@@ -5,7 +5,7 @@ import SettingsPanel from './SettingsPanel.vue'
 import { setLocale } from '../../../i18n'
 import { fsService } from '../../../platform/gateways/fs'
 import { onNotify } from '../../../services/errors'
-import { useVaultSessionStore } from '../../../stores/vaultSession'
+import { useVaultSessionStore } from '../../../stores/vault-session'
 
 /**
  * The vault field is a read-only display of the vault that is open.

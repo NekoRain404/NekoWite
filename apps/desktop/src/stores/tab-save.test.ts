@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { registerLifecycleHook, setActiveEditor } from '@nekowite/plugin-host'
 import type { PluginContext } from '@nekowite/plugin-host'
-import { consumeSuppressReapply, pruneSuppressReapply, shouldSuppressReapply } from '../services/suppressReapply'
+import { consumeSuppressReapply, pruneSuppressReapply, shouldSuppressReapply } from '../services/suppress-reapply'
 import { useTabsStore } from './tabs'
-import { setSourceViewHandle } from '../services/sourceView'
+import { setSourceViewHandle } from '../services/source-view'
 
 const readMock = vi.hoisted(() => vi.fn())
 const writeMock = vi.hoisted(() => vi.fn())

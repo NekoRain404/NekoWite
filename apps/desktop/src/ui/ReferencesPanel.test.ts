@@ -9,7 +9,7 @@ vi.mock('@nekowite/editor-core', () => ({
   doiUrl: (doi: string) => `https://doi.org/${doi}`,
   CITE_UNRESOLVED: 0,
 }))
-vi.mock('../features/editor/sessionManager', () => ({
+vi.mock('../features/editor/session-manager', () => ({
   editorSessionManager: {
     getView: () => ({}),
     getActiveEditor: () => null,

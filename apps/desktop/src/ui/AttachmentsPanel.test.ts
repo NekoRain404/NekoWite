@@ -3,7 +3,7 @@ import { createApp, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import AttachmentsPanel from './AttachmentsPanel.vue'
 import { useTabsStore } from '../stores/tabs'
-import { editorBridge } from '../services/editorBridge'
+import { editorBridge } from '../services/editor-bridge'
 import { onNotify } from '../services/errors'
 
 const listMock = vi.hoisted(() => vi.fn())

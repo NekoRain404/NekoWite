@@ -17,7 +17,7 @@
  * stat snapshot, not the mirror, not the index.
  */
 
-import type { ContentCache } from '../../../services/contentCache'
+import type { ContentCache } from '../../../services/content-cache'
 import type { FsChangeKind } from '../../../platform/gateways/contracts'
 import type { VaultNoteIndex } from './vault-note-index'
 import type { VaultSearchIndex } from './vault-search-index'

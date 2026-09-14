@@ -8,7 +8,7 @@
  * the visible one, so nothing is read in the background.
  */
 import { t } from '../../../i18n'
-import { usePluginSettings } from '../composables/usePluginSettings'
+import { usePluginSettings } from '../composables/use-plugin-settings'
 
 const { runnable, loading, vaultPath, rows, togglePlugin } = usePluginSettings()
 </script>

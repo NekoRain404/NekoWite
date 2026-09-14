@@ -10,7 +10,7 @@
  * this component's, so the styles below are this component's too.
  */
 import SidebarGroup from './SidebarGroup.vue'
-import { useSidebarReferences } from '../composables/useSidebarReferences'
+import { useSidebarReferences } from '../composables/use-sidebar-references'
 import { t } from '../../../i18n'
 
 const open = defineModel<boolean>('open', { required: true })

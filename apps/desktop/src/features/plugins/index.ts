@@ -21,12 +21,12 @@
 
 /* ------------------------------ the vault ------------------------------ */
 
-export { loadVaultPlugins } from './services/vaultPluginLoad'
+export { loadVaultPlugins } from './services/vault-plugin-load'
 
-export { listVaultPlugins, setVaultPluginDisabled } from './services/vaultPluginRegistry'
-export type { SetVaultPluginDisabledOptions, VaultPluginSummary } from './services/vaultPluginRegistry'
+export { listVaultPlugins, setVaultPluginDisabled } from './services/vault-plugin-registry'
+export type { SetVaultPluginDisabledOptions, VaultPluginSummary } from './services/vault-plugin-registry'
 
-export { deactivateVaultPlugins, getActiveVaultPluginIds } from './services/vaultPluginActivate'
+export { deactivateVaultPlugins, getActiveVaultPluginIds } from './services/vault-plugin-activate'
 
 /** Whether THIS build can run plugin code at all (the strict-CSP webview cannot
  *  import a blob: module). The settings panel reads it to say so honestly rather
@@ -46,12 +46,12 @@ export { getActiveUnsandboxedPluginIds, getUnsandboxedPermissions } from './serv
 export { setPluginIntegrityDecider } from './services/integrity'
 export type { PluginIntegrityRequest } from './services/integrity'
 
-export { getPluginTrustPolicy, setPluginTrustPolicy, setPluginTrustDecider } from './services/trustPolicy'
-export type { PluginTrustPolicy, PluginTrustRequest } from './services/trustPolicy'
+export { getPluginTrustPolicy, setPluginTrustPolicy, setPluginTrustDecider } from './services/trust-policy'
+export type { PluginTrustPolicy, PluginTrustRequest } from './services/trust-policy'
 
 /* --------------------- vault-scoped records (stored) ------------------- */
 
-export { PLUGIN_GOVERNANCE_FILE, PLUGIN_GOVERNANCE_MACKEY_FILE } from './services/governanceFile'
+export { PLUGIN_GOVERNANCE_FILE, PLUGIN_GOVERNANCE_MACKEY_FILE } from './services/governance-file'
 
 export {
   getPluginRecordedDigestForTest,
@@ -63,13 +63,13 @@ export {
   setPluginTrustedKey,
   setPluginTrustedSource,
   setVaultPluginVersionRange,
-} from './services/governanceStore'
+} from './services/governance-store'
 
 /* ------------------------- the audit log file -------------------------- */
 
-export { PLUGIN_AUDIT_LOG_FILE, getVaultPluginAuditEvents, getVaultPluginAuditLogPath } from './services/auditLog'
+export { PLUGIN_AUDIT_LOG_FILE, getVaultPluginAuditEvents, getVaultPluginAuditLogPath } from './services/audit-log'
 
 /* ------------------------------ test seams ----------------------------- */
 
 /** Reset every piece of in-memory plugin state this feature holds. Test-only. */
-export { resetVaultPluginStateForTests } from './services/vaultPluginRegistry'
+export { resetVaultPluginStateForTests } from './services/vault-plugin-registry'

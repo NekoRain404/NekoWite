@@ -24,11 +24,11 @@
  * keeps this module's move from reaching any consumer.)
  */
 
-import type { ContentCache } from '../../../services/contentCache'
+import type { ContentCache } from '../../../services/content-cache'
 import type { FileEntry, FileStat, FsChangeEvent } from '../../../platform/gateways/contracts'
-import type { NoteSummary } from '../../../services/noteMeta'
-import type { IndexLookupResult } from '../../../services/contentSearch'
-import type { IndexState, StoredIndex } from '../../../services/searchIndex'
+import type { NoteSummary } from '../../../services/note-meta'
+import type { IndexLookupResult } from '../../../services/content-search'
+import type { IndexState, StoredIndex } from '../../../services/search-index'
 import { createVaultAttachmentBadge } from './vault-attachment-badge'
 import { createVaultFsWatch } from './vault-fs-watch'
 import { createVaultNoteChange } from './vault-note-change'

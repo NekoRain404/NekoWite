@@ -15,7 +15,7 @@
  */
 
 import type { PersistencePort } from './contracts'
-import { localStoragePersistencePort } from './localStorage'
+import { localStoragePersistencePort } from './local-storage'
 import { memoryPersistencePort } from './memory'
 
 export function createPersistence(): PersistencePort {
@@ -42,7 +42,7 @@ export function createPersistence(): PersistencePort {
   }
 }
 
-export { localStoragePersistencePort } from './localStorage'
+export { localStoragePersistencePort } from './local-storage'
 export { memoryPersistencePort } from './memory'
 export { filePersistencePort, encodePersistenceKey, persistencePathFor } from './file'
 export type { PersistencePort, AsyncPersistencePort } from './contracts'

@@ -1,0 +1,166 @@
+import { headingAnchorIds } from '@nekowite/editor-core'
+import { useTabsStore } from '../../../stores/tabs'
+import { useViewStore } from '../../../stores/view'
+import { parseOutline } from '../../../services/outline'
+import {
+  anchorHeadingIndex,
+  countDocumentLines,
+  lineRatio,
+} from '../../../services/scroll-sync-anchors'
+
+export interface EditorScrollSyncDeps {
+  getScrollEl: () => HTMLElement | null
+  getEditorEl: () => HTMLElement | null
+}
+
+export interface EditorScrollSync {
+  /** Scroll handler. Returns whether the user made this scroll: a programmatic
+   *  write's own echo reports it, so it is not one. */
+  onScroll(): boolean
+  getScrollTop(): number
+  /** The pane's scrollable extent: 0 when the whole document fits. */
+  getScrollRange(): number
+  /** Write an offset from outside, tagged with the sync token that caused it. */
+  setScrollTop(top: number, token: number): void
+  /** Content-space top offsets of the rendered headings, in document order. */
+  getHeadingTops(): number[]
+  /** Scroll so the block containing the given 1-based source line is top-most,
+   *  anchored on the nearest heading; falls back to a line-proportional ratio. */
+  setScrollToLine(line: number, token: number): void
+  /** Scroll the heading whose anchor slug is `slug` into view. */
+  scrollToHeading(slug: string): void
+  /** Drop any pending write record (used on teardown). */
+  cancel(): void
+}
+
+/**
+ * Source/rendered scroll synchronization.
+ *
+ * Keeps the source-line → heading → DOM scroll mapping in one place. A
+ * programmatic write records what it wrote, and the scroll event the browser
+ * delivers for it later is swallowed on that record: a write that never fired
+ * an event (a no-op, a clamped-away offset, a hidden pane) leaves a record the
+ * next event cannot match, so the user's next scroll is still their own. An
+ * unconditional "swallow the next event" flag cannot do that — it eats whatever
+ * arrives next, which is how a pane gets stuck.
+ */
+export function createEditorScrollSync(deps: EditorScrollSyncDeps): EditorScrollSync {
+  const view = useViewStore()
+  const tabs = useTabsStore()
+
+  // The last programmatic write: the token that caused it and the offset it
+  // landed on. Its scroll event arrives asynchronously and looks exactly like a
+  // user's, so the record is the only thing that tells the two apart.
+  let programWrite: { token: number; top: number } | null = null
+
+  function scrollRange(): number {
+    const el = deps.getScrollEl()
+    if (!el) return 0
+    return Math.max(0, el.scrollHeight - el.clientHeight)
+  }
+
+  function onScroll(): boolean {
+    const el = deps.getScrollEl()
+    if (!el) return false
+    // Where this pane is, recorded whoever moved it: a mode switch reads the
+    // memory to put the pane back, and a programmatic write moved it just as
+    // much as a wheel did. Written before the echo check below, which decides
+    // only whether this scroll is the USER's (a sync request) — not whether it
+    // counts as position.
+    view.syncScroll('rendered', el.scrollTop, scrollRange())
+    const written = programWrite
+    programWrite = null
+    // The record holds the engine's own value, so its echo matches exactly.
+    // Anything else is a scroll the user made, however close it lands: a
+    // tolerance here is what swallows a fractional scroll next to a write.
+    if (written && el.scrollTop === written.top) return false
+    return true
+  }
+
+  function getScrollTop(): number {
+    return deps.getScrollEl()?.scrollTop ?? 0
+  }
+
+  function write(top: number, token: number): void {
+    const el = deps.getScrollEl()
+    if (!el) return
+    const clamped = Number.isFinite(top) ? Math.max(0, Math.min(top, scrollRange())) : 0
+    el.scrollTop = clamped
+    // Record what the engine ACCEPTED, not what was asked for. An engine snaps
+    // a scroll offset to its own quantum (and clamps it to the range), so the
+    // requested value can sit up to half a pixel from the one the write's scroll
+    // event will report — a whole pixel on an engine that truncates instead of
+    // rounding, where the tolerance this used to need would have missed most
+    // frames of an ease. Reading the offset back closes the gap, which is what
+    // lets `onScroll` compare exactly below.
+    programWrite = { token, top: el.scrollTop }
+  }
+
+  function getHeadingEls(): HTMLElement[] {
+    const root = deps.getEditorEl()
+    if (!root) return []
+    return Array.from(root.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'))
+  }
+
+  /** Content-space top of every rendered heading. Read live: an image that
+   *  finishes loading moves every heading below it. */
+  function getHeadingTops(): number[] {
+    const el = deps.getScrollEl()
+    const root = deps.getEditorEl()
+    if (!el || !root) return []
+    const origin = el.getBoundingClientRect().top - el.scrollTop
+    return getHeadingEls().map((heading) => heading.getBoundingClientRect().top - origin)
+  }
+
+  function setScrollToLine(line: number, token: number): void {
+    const el = deps.getScrollEl()
+    if (!el) return
+    const content = tabs.activeTab?.content ?? ''
+    const items = parseOutline(content)
+    const index = anchorHeadingIndex(items, line)
+    const target = index === null ? null : getHeadingEls()[index]
+    if (!target) {
+      write(lineRatio(line, countDocumentLines(content)) * scrollRange(), token)
+      return
+    }
+    // Content-space top of the heading, minus the same 16px scroll-margin-top
+    // the editor styles use, so the heading sits just inside the viewport.
+    const pos =
+      target.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop - 16
+    write(pos, token)
+  }
+
+  /**
+   * Follow a heading anchor (`#slug`) to the heading it names.
+   *
+   * The editor's own heading anchors copy these links, so following one has to
+   * land on the heading rather than fall through to the browser (which would try
+   * to navigate the app window). The document-wide id list is rebuilt here the
+   * same way the anchors and the export build it, and the heading is picked by
+   * INDEX: comparing slugs would send `#same-1` to the first "Same" instead of
+   * the second.
+   */
+  function scrollToHeading(slug: string): void {
+    if (!slug) return
+    const headings = getHeadingEls()
+    if (headings.length === 0) return
+    const ids = headingAnchorIds(headings.map((heading) => heading.textContent ?? ''))
+    const index = ids.indexOf(slug)
+    if (index >= 0) headings[index]?.scrollIntoView({ block: 'start', behavior: 'auto' })
+  }
+
+  function cancel(): void {
+    programWrite = null
+  }
+
+  return {
+    onScroll,
+    getScrollTop,
+    getScrollRange: scrollRange,
+    setScrollTop: write,
+    getHeadingTops,
+    setScrollToLine,
+    scrollToHeading,
+    cancel,
+  }
+}

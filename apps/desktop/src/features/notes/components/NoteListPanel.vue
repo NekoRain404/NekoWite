@@ -21,8 +21,8 @@ import LinkList from './LinkList.vue'
 import NoteListContent from './NoteListContent.vue'
 import NoteListToolbar from './NoteListToolbar.vue'
 import OutlineList from './OutlineList.vue'
-import { useNoteActions } from '../composables/useNoteActions'
-import { useNoteList } from '../composables/useNoteList'
+import { useNoteActions } from '../composables/use-note-actions'
+import { useNoteList } from '../composables/use-note-list'
 import { t } from '../../../i18n'
 
 const {

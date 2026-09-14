@@ -22,9 +22,9 @@
  * about that file), which is why `indexAll` carries no commit predicate.
  */
 
-import type { ContentCache } from '../../../services/contentCache'
+import type { ContentCache } from '../../../services/content-cache'
 import type { FileStat } from '../../../platform/gateways/contracts'
-import { parseNoteMeta, relPathOf, type NoteSummary } from '../../../services/noteMeta'
+import { parseNoteMeta, relPathOf, type NoteSummary } from '../../../services/note-meta'
 import { stripVaultPrefix } from '../../../services/paths'
 
 /** Maximum number of note reads running concurrently during a full index. */

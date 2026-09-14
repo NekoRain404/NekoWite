@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue'
 import { FilePlus2, X } from 'lucide-vue-next'
-import { useFocusTrap } from '../composables/useFocusTrap'
-import { useModalEscape } from '../composables/useModalEscape'
+import { useFocusTrap } from '../composables/use-focus-trap'
+import { useModalEscape } from '../composables/use-modal-escape'
 import { t } from '../i18n'
-import { isBuiltinTemplate, type TemplateEntry } from '../services/noteTemplates'
+import { isBuiltinTemplate, type TemplateEntry } from '../services/note-templates'
 
 const props = defineProps<{ templates: TemplateEntry[] }>()
 const emit = defineEmits<{

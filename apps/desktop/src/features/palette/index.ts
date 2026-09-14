@@ -13,8 +13,8 @@
  */
 
 export { default as PaletteList } from './components/PaletteList.vue'
-export { usePaletteEntries } from './composables/usePaletteEntries'
-export { usePaletteNavigation } from './composables/usePaletteNavigation'
+export { usePaletteEntries } from './composables/use-palette-entries'
+export { usePaletteNavigation } from './composables/use-palette-navigation'
 export { PALETTE_LIST_ID, paletteItemId } from './types'
 export type { PaletteGroupRows, PaletteRow } from './types'
-export type { PaletteEntry } from './services/commandPaletteLogic'
+export type { PaletteEntry } from './services/command-palette-logic'

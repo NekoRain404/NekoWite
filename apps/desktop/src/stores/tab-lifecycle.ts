@@ -12,7 +12,7 @@
 
 import type { Ref } from 'vue'
 import { emitLifecycle } from '@nekowite/plugin-host'
-import { pruneSuppressReapply } from '../services/suppressReapply'
+import { pruneSuppressReapply } from '../services/suppress-reapply'
 import type { HistoryEntry } from '../platform/gateways/contracts'
 import type { RecoveryPrompt } from '../services/errors'
 import type { OpenTab } from './tabs'

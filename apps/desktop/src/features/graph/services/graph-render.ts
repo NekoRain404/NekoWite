@@ -8,7 +8,7 @@
  * `useGraphCanvas`, which owns them.
  */
 
-import type { BrokenLink, LayoutPoint } from '../../../services/linkGraph'
+import type { BrokenLink, LayoutPoint } from '../../../services/link-graph'
 import { nodeRadius } from './graph-geometry'
 
 // Canvas 无法使用 CSS 变量，颜色经 getComputedStyle 读取 --app-* token；

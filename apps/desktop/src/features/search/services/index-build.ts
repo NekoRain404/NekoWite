@@ -8,7 +8,7 @@
  * storage: the caller loads and saves around a build.
  */
 
-import { parseNoteMeta } from '../../../services/noteMeta'
+import { parseNoteMeta } from '../../../services/note-meta'
 import type { FileStat } from '../../../platform/gateways/contracts'
 import { INDEX_VERSION, type IndexedDoc, type StoredIndex } from './index-model'
 

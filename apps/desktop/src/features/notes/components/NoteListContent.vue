@@ -12,8 +12,8 @@
 import NoteCard from '../../../ui/NoteCard.vue'
 import type { NoteCardContextTarget } from '../../../ui/NoteCard.vue'
 import { t } from '../../../i18n'
-import type { NoteSummary } from '../../../services/noteMeta'
-import type { ContentMatch } from '../../../services/contentSearch'
+import type { NoteSummary } from '../../../services/note-meta'
+import type { ContentMatch } from '../../../services/content-search'
 
 const props = defineProps<{
   contentEnabled: boolean

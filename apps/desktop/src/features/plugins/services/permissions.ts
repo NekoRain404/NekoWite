@@ -15,7 +15,7 @@ import {
 } from '@nekowite/plugin-host'
 import type { PluginDefinition, PluginMeta, PluginPermission } from '@nekowite/plugin-host'
 import { describePluginError, notifyError } from '../../../services/errors'
-import { getCurrentVault, vaultScopedKey } from './governanceStore'
+import { getCurrentVault, vaultScopedKey } from './governance-store'
 
 // Per-session permission verdicts, keyed by vault + plugin id (NOT by id alone:
 // approving a dangerous plugin in vault A must never silently authorise a

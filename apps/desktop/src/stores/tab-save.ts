@@ -13,13 +13,13 @@
 import { ref } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 import { emitLifecycle, getActiveEditor } from '@nekowite/plugin-host'
-import { armSuppressReapply } from '../services/suppressReapply'
-import { flushEdits } from '../services/editorOwnership'
+import { armSuppressReapply } from '../services/suppress-reapply'
+import { flushEdits } from '../services/editor-ownership'
 import {
   assetsDirForNote,
   moveAttachments,
   rewireTempRefsInContent,
-} from '../services/renameAsset'
+} from '../services/rename-asset'
 import type { OpenTab } from './tabs'
 
 /** Window during which an fs-change for a path is attributed to our own save. */

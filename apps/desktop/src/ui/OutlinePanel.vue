@@ -4,8 +4,8 @@ import { storeToRefs } from 'pinia'
 import type { OutlineItem } from '../services/outline'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
-import { useDocDerivedStore } from '../stores/docDerived'
-import { useSectionShown } from './useSectionShown'
+import { useDocDerivedStore } from '../stores/doc-derived'
+import { useSectionShown } from './use-section-shown'
 import { t } from '../i18n'
 
 const tabs = useTabsStore()

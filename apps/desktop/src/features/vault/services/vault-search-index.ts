@@ -18,9 +18,9 @@
  */
 
 import type { FileStat } from '../../../platform/gateways/contracts'
-import type { IndexLookupResult } from '../../../services/contentSearch'
-import type { IndexState, StoredIndex } from '../../../services/searchIndex'
-import { createIndexPersistence, type IndexPersistence } from './indexPersistence'
+import type { IndexLookupResult } from '../../../services/content-search'
+import type { IndexState, StoredIndex } from '../../../services/search-index'
+import { createIndexPersistence, type IndexPersistence } from './index-persistence'
 import type { NoteStat } from './vault-note-index'
 
 export interface VaultSearchIndexDeps {

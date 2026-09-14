@@ -6,7 +6,7 @@ import {
   mdxComponentToMarkdown,
   registerMarkdownCommand,
 } from '@nekowite/editor-core'
-import { editorSessionManager } from '../features/editor/sessionManager'
+import { editorSessionManager } from '../features/editor/session-manager'
 import { useFloatStore } from '../stores/float'
 import { t } from '../i18n'
 import {
@@ -16,7 +16,7 @@ import {
   normalizeProps,
   updateFloatProps,
   type ResizeCorner,
-} from '../services/floatProps'
+} from '../services/float-props'
 
 type EditorView = NonNullable<ReturnType<NekoEditor['getView']>>
 

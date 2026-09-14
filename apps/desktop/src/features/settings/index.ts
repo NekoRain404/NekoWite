@@ -17,28 +17,28 @@
 
 export { default as SettingsPanel } from './components/SettingsPanel.vue'
 
-export { useSettingsDialog } from './composables/useSettingsDialog'
-export type { SettingsDialogModel, UseSettingsDialogOptions } from './composables/useSettingsDialog'
+export { useSettingsDialog } from './composables/use-settings-dialog'
+export type { SettingsDialogModel, UseSettingsDialogOptions } from './composables/use-settings-dialog'
 
-export { useGeneralSettings } from './composables/useGeneralSettings'
-export type { GeneralSettingsModel } from './composables/useGeneralSettings'
+export { useGeneralSettings } from './composables/use-general-settings'
+export type { GeneralSettingsModel } from './composables/use-general-settings'
 
-export { useAppearanceSettings } from './composables/useAppearanceSettings'
-export type { AppearanceSettingsModel } from './composables/useAppearanceSettings'
+export { useAppearanceSettings } from './composables/use-appearance-settings'
+export type { AppearanceSettingsModel } from './composables/use-appearance-settings'
 
-export { useEditorSettings } from './composables/useEditorSettings'
-export type { EditorSettingsModel } from './composables/useEditorSettings'
+export { useEditorSettings } from './composables/use-editor-settings'
+export type { EditorSettingsModel } from './composables/use-editor-settings'
 
-export { useExportSettings } from './composables/useExportSettings'
-export type { ExportSettingsModel } from './composables/useExportSettings'
+export { useExportSettings } from './composables/use-export-settings'
+export type { ExportSettingsModel } from './composables/use-export-settings'
 
-export { useAiSettings } from './composables/useAiSettings'
-export type { AiSettingsModel } from './composables/useAiSettings'
+export { useAiSettings } from './composables/use-ai-settings'
+export type { AiSettingsModel } from './composables/use-ai-settings'
 
-export { useAiPermissionSettings } from './composables/useAiPermissionSettings'
-export type { AiPermissionSettingsModel } from './composables/useAiPermissionSettings'
+export { useAiPermissionSettings } from './composables/use-ai-permission-settings'
+export type { AiPermissionSettingsModel } from './composables/use-ai-permission-settings'
 
-export { usePluginSettings } from './composables/usePluginSettings'
-export type { PluginSettingsModel } from './composables/usePluginSettings'
+export { usePluginSettings } from './composables/use-plugin-settings'
+export type { PluginSettingsModel } from './composables/use-plugin-settings'
 
 export type { SettingsSectionId } from './types'

@@ -5,18 +5,18 @@ import { Transaction } from '@codemirror/state'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 import { useAppearanceStore } from '../stores/appearance'
-import { createCodeMirrorHost, type CodeMirrorHostHandle } from '../services/codeMirrorHost'
+import { createCodeMirrorHost, type CodeMirrorHostHandle } from '../services/code-mirror-host'
 import {
   sourceExtensions,
   setMeasureSuppressed as gateSetMeasureSuppressed,
   isMeasureSuppressed as gateIsMeasureSuppressed,
-} from '../services/cmSourceView'
+} from '../services/cm-source-view'
 import {
   setSourceViewHandle,
   releaseSourceViewHandle,
   type SourceViewHandle,
-} from '../services/sourceView'
-import { markSourceAuthored } from '../services/editorOwnership'
+} from '../services/source-view'
+import { markSourceAuthored } from '../services/editor-ownership'
 import { resolveDirection } from '../services/rtl'
 
 const tabs = useTabsStore()

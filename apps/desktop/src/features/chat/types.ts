@@ -6,7 +6,7 @@
  * here is what a *panel instance* adds on top of them.
  */
 
-import type { ChatMessage } from './services/chatLogic'
+import type { ChatMessage } from './services/chat-logic'
 
 /** An image the composer is holding before it is sent: the picked `File` and
  *  the object URL the thumbnail renders from. That URL pins the whole file in

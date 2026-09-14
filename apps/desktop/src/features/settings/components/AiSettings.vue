@@ -13,7 +13,7 @@ import { t } from '../../../i18n'
 // Type-only, so the effort dropdown's cast is checked against the union the
 // composable's writable computed accepts.
 import type { ReasoningEffort } from '../../../stores/settings'
-import { useAiSettings } from '../composables/useAiSettings'
+import { useAiSettings } from '../composables/use-ai-settings'
 import AiPermissionSettings from './AiPermissionSettings.vue'
 
 const {

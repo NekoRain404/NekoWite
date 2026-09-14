@@ -13,7 +13,7 @@ import { t } from '../../../i18n'
 // Type-only, so the template's cast is checked against the same union the
 // store holds.
 import type { AutosaveInterval } from '../../../stores/settings'
-import { useEditorSettings } from '../composables/useEditorSettings'
+import { useEditorSettings } from '../composables/use-editor-settings'
 
 const {
   viewMode,

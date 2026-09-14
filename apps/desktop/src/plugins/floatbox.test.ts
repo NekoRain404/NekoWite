@@ -13,7 +13,7 @@ import {
   applyResize,
   applyRotate,
   normalizeProps,
-} from '../services/floatProps'
+} from '../services/float-props'
 
 describe('floatbox selection', () => {
   beforeEach(() => {

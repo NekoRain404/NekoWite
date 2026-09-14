@@ -10,7 +10,7 @@
 import { computed } from 'vue'
 import SelectMenu, { type SelectOption } from '../../../components/SelectMenu.vue'
 import { setLocale, t } from '../../../i18n'
-import { useGeneralSettings } from '../composables/useGeneralSettings'
+import { useGeneralSettings } from '../composables/use-general-settings'
 
 defineProps<{
   /** The build a bug report should name, or null when nothing can answer. */

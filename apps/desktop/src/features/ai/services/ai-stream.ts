@@ -13,7 +13,7 @@
  * back except the request id and generation it was just handed.
  */
 
-import { getSharedGateways } from '../../../platform/runtime/gatewayRuntime'
+import { getSharedGateways } from '../../../platform/runtime/gateway-runtime'
 import { markThinking } from './ai-thinking'
 
 type ListenerCleanup = () => void

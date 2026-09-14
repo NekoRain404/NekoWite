@@ -13,13 +13,13 @@ import { createApp, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import NoteListPanel from './NoteListPanel.vue'
 import { useAppearanceStore } from '../../../stores/appearance'
-import { useDocumentListStore } from '../../../stores/documentList'
+import { useDocumentListStore } from '../../../stores/document-list'
 import { useRefsStore } from '../../../stores/refs'
 import { useTabsStore } from '../../../stores/tabs'
-import { useVaultSessionStore } from '../../../stores/vaultSession'
-import { setRenderedFlush } from '../../../services/editorOwnership'
+import { useVaultSessionStore } from '../../../stores/vault-session'
+import { setRenderedFlush } from '../../../services/editor-ownership'
 import { onNotify } from '../../../services/errors'
-import type { NoteSummary } from '../../../services/noteMeta'
+import type { NoteSummary } from '../../../services/note-meta'
 
 const fsMocks = vi.hoisted(() => ({
   read: vi.fn(),

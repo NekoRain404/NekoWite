@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { CITE_UNRESOLVED, computeCiteOrder, doiUrl } from '@nekowite/editor-core'
 import { useRefsStore } from '../stores/refs'
-import { editorSessionManager } from '../features/editor/sessionManager'
+import { editorSessionManager } from '../features/editor/session-manager'
 import { t } from '../i18n'
 
 const refs = useRefsStore()

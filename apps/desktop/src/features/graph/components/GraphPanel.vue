@@ -2,9 +2,9 @@
 import { computed, ref, watch } from 'vue'
 import { t } from '../../../i18n'
 import GraphToolbar from './GraphToolbar.vue'
-import { useGraphCanvas } from '../composables/useGraphCanvas'
-import { useGraphFilters } from '../composables/useGraphFilters'
-import { useNoteGraph } from '../composables/useNoteGraph'
+import { useGraphCanvas } from '../composables/use-graph-canvas'
+import { useGraphFilters } from '../composables/use-graph-filters'
+import { useNoteGraph } from '../composables/use-note-graph'
 import { fileName } from '../services/graph-geometry'
 
 /**

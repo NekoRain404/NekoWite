@@ -15,7 +15,7 @@
 import { watch } from 'vue'
 import { RotateCcw, Trash2 } from 'lucide-vue-next'
 import SidebarGroup from './SidebarGroup.vue'
-import { useSidebarTrash } from '../composables/useSidebarTrash'
+import { useSidebarTrash } from '../composables/use-sidebar-trash'
 import { t } from '../../../i18n'
 
 const props = defineProps<{

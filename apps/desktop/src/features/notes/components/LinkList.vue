@@ -8,8 +8,8 @@
  * link is there and broken rather than missing it.
  */
 import { t } from '../../../i18n'
-import type { NoteSummary } from '../../../services/noteMeta'
-import type { NoteOutlink } from '../composables/useNoteList'
+import type { NoteSummary } from '../../../services/note-meta'
+import type { NoteOutlink } from '../composables/use-note-list'
 
 const props = defineProps<{
   out: NoteOutlink[]

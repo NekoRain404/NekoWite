@@ -8,14 +8,14 @@ import {
   formatRelativeTime,
   loadAttachmentLibrary,
   type AttachmentItem,
-} from '../services/attachmentLibrary'
+} from '../services/attachment-library'
 import { markdownImageBlock, relativePathFromNoteVault } from '../services/attachments'
-import { insertMarkdownAtCursor } from '../services/editorInsert'
+import { insertMarkdownAtCursor } from '../services/editor-insert'
 import { notifyError } from '../services/errors'
 import { useTabsStore } from '../stores/tabs'
 import ContextMenu from './ContextMenu.vue'
 import type { ContextMenuItem } from './ContextMenu.vue'
-import { isComposingKey } from '../services/keyGuard'
+import { isComposingKey } from '../services/key-guard'
 import { t } from '../i18n'
 
 /**

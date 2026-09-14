@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { NekoEditor } from '@nekowite/editor-core'
-import { editorSessionManager } from '../features/editor/sessionManager'
+import { editorSessionManager } from '../features/editor/session-manager'
 
 type EditorView = NonNullable<ReturnType<NekoEditor['getView']>>
 

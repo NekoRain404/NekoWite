@@ -36,19 +36,19 @@
  * surface by accident.
  */
 
-export { createMemoryFsGateway, memoryFsGateway } from './memoryFs'
-export type { MemoryFsOptions } from './memoryFs'
+export { createMemoryFsGateway, memoryFsGateway } from './memory-fs'
+export type { MemoryFsOptions } from './memory-fs'
 
 /** Queue / drop the files the demo's image picker hands back. */
-export { seedMemoryPickedFiles, resetMemoryPickedFiles } from './memoryPickedFiles'
+export { seedMemoryPickedFiles, resetMemoryPickedFiles } from './memory-picked-files'
 
-export { createMemoryAiGateway, memoryAiGateway } from './memoryAi'
-export type { MemoryAiOptions } from './memoryAi'
+export { createMemoryAiGateway, memoryAiGateway } from './memory-ai'
+export type { MemoryAiOptions } from './memory-ai'
 
-export { memoryKeyPort } from './memoryKeys'
+export { memoryKeyPort } from './memory-keys'
 
 /** A dialog-port view over a (combined) memory FS gateway. */
-export { createMemoryDialogPort } from './memoryDialogs'
+export { createMemoryDialogPort } from './memory-dialogs'
 
 /** Re-export so createGateways and tests can address the same event bus. */
-export { createMemoryEventAdapter } from '../events/memoryEventAdapter'
+export { createMemoryEventAdapter } from '../events/memory-event-adapter'

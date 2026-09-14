@@ -17,11 +17,11 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import ChatComposer from './ChatComposer.vue'
 import ChatSessionBar from './ChatSessionBar.vue'
 import ChatTranscript from './ChatTranscript.vue'
-import { isComposingKey } from '../../../services/keyGuard'
-import { useChatAttachments } from '../composables/useChatAttachments'
-import { useChatCommands } from '../composables/useChatCommands'
-import { useChatContext } from '../composables/useChatContext'
-import { useChatSession } from '../composables/useChatSession'
+import { isComposingKey } from '../../../services/key-guard'
+import { useChatAttachments } from '../composables/use-chat-attachments'
+import { useChatCommands } from '../composables/use-chat-commands'
+import { useChatContext } from '../composables/use-chat-context'
+import { useChatSession } from '../composables/use-chat-session'
 
 /** The composer's half-written question. It lives here because two other
  *  modules read it: a draft parks it per session (`useChatSession`) and a send

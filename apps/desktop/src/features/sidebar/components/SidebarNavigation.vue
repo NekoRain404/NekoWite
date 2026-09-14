@@ -12,8 +12,8 @@
  * The vault arrives as a name because that is all this section shows of it.
  */
 import { Calendar, FolderOpen, Hash, LayoutTemplate, Tag as TagIcon, X } from 'lucide-vue-next'
-import { useSidebarNavigation } from '../composables/useSidebarNavigation'
-import { useSidebarTags } from '../composables/useSidebarTags'
+import { useSidebarNavigation } from '../composables/use-sidebar-navigation'
+import { useSidebarTags } from '../composables/use-sidebar-tags'
 import { t } from '../../../i18n'
 
 defineProps<{

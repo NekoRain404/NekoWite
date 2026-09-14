@@ -17,8 +17,8 @@ export interface NoteCardContextTarget {
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Code2, FileText, Star } from 'lucide-vue-next'
-import { formatRelativeTime } from '../services/noteMeta'
-import type { NoteSummary } from '../services/noteMeta'
+import { formatRelativeTime } from '../services/note-meta'
+import type { NoteSummary } from '../services/note-meta'
 import { t } from '../i18n'
 
 const props = defineProps<{

@@ -29,7 +29,7 @@ vi.mock('../platform/gateways/fs', () => ({
 }))
 
 import EditorPane from './EditorPane.vue'
-import { editorBridge } from '../services/editorBridge'
+import { editorBridge } from '../services/editor-bridge'
 import { t } from '../i18n'
 import {
   resetMemoryPickedFiles,

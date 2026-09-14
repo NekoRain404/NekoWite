@@ -17,8 +17,8 @@ import ExportSettings from './ExportSettings.vue'
 import GeneralSettings from './GeneralSettings.vue'
 import PluginSettings from './PluginSettings.vue'
 import SettingsNavigation from './SettingsNavigation.vue'
-import { useExportSettings } from '../composables/useExportSettings'
-import { useSettingsDialog } from '../composables/useSettingsDialog'
+import { useExportSettings } from '../composables/use-export-settings'
+import { useSettingsDialog } from '../composables/use-settings-dialog'
 import type { SettingsSectionId } from '../types'
 
 const emit = defineEmits<{ (e: 'close'): void; (e: 'saved', path: string): void }>()

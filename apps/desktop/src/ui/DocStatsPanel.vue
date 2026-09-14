@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
-import { computeDocStats, type DocStats } from '../services/docStats'
-import { useDocDerivedStore } from '../stores/docDerived'
-import { useSectionShown } from './useSectionShown'
+import { computeDocStats, type DocStats } from '../services/doc-stats'
+import { useDocDerivedStore } from '../stores/doc-derived'
+import { useSectionShown } from './use-section-shown'
 import { t } from '../i18n'
 
 const { sectionRef, shown } = useSectionShown()

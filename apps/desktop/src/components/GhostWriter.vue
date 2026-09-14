@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useGhostWriterShortcut } from '../composables/useGhostWriterShortcut'
+import { useGhostWriterShortcut } from '../composables/use-ghost-writer-shortcut'
 
 // Display and event forwarding only (§10.2). The Tab/Escape shortcut needs the
 // settings and AI-permission stores to decide whether there is a model to ask
