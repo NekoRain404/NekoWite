@@ -9,6 +9,7 @@
  */
 
 import { editorSessionManager } from '../features/editor'
+import { selectionTextOf } from '../features/editor/model/selection-text'
 import { sourcePaneOwnsInput } from './editor-ownership'
 import { getSourceView } from './source-view'
 import { insertSourceText } from './source-commands'
@@ -33,7 +34,10 @@ export function getTextSelection(): TextSelection | null {
   if (!view) return null
   const { from, to, empty } = view.state.selection
   if (empty) return null
-  return { from, to, text: view.state.doc.textBetween(from, to, '\n', ' ') }
+  // The shared payload builder, not `textBetween(from, to, '\n', ' ')`: a
+  // STRING leafText replaces every atom with a space, so an AI rewrite of a
+  // paragraph containing a formula was being handed the formula as a blank.
+  return { from, to, text: selectionTextOf(view.state.doc, from, to) }
 }
 
 /**

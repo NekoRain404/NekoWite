@@ -88,6 +88,11 @@ export { useImageIntake } from './composables/use-image-intake'
 // which is the toolbar's entrance, not its engine (the commands stay
 // editor-core's, and it already refuses the header row and the last row/column).
 export { useTableToolbar } from './composables/use-table-toolbar'
+
+// Copy/Cut fidelity for the rendered pane (see the composable for what the
+// engine's own serialisation loses).
+export { useClipboardFidelity } from './composables/use-clipboard-fidelity'
+export type { ClipboardFidelityOptions } from './composables/use-clipboard-fidelity'
 export type { TableToolbar, TableToolbarOptions } from './composables/use-table-toolbar'
 
 export { useSplitScrollSync } from './composables/use-split-scroll-sync'

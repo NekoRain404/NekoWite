@@ -11,6 +11,8 @@ import FloatToolbar from '../components/FloatToolbar.vue'
 import RenameDialog from '../components/RenameDialog.vue'
 import ContextMenu from './ContextMenu.vue'
 import {
+  editorSessionManager,
+  useClipboardFidelity,
   useEditorContextMenu,
   useImageIntake,
   usePaneInput,
@@ -56,6 +58,17 @@ const {
   getSourcePane: () => sourcePane.value,
   getRenderedPane: () => renderedPane.value,
   getPanesEl: () => panesEl.value,
+})
+
+// Copy and Cut: the rendered pane's node views are `contenteditable="false"`,
+// so the engine's own serialisation of a selection loses maths, code blocks,
+// tables and wiki-links (measured: `Inline maths  sits here.`, and the empty
+// string for a formula on its own — while Cut deleted the paragraph too). The
+// handler fixes the payload and is scoped to the rendered pane: the source
+// pane's copy is byte-exact and must stay that way.
+useClipboardFidelity({
+  getPanesEl: () => panesEl.value,
+  getEditor: () => editorSessionManager.getActiveEditor(),
 })
 
 // Image intake (paste / drop / file picker) is shared by both panes, so it is
