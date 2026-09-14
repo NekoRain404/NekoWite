@@ -26,10 +26,34 @@ use crate::state::{AiState, MAX_PENDING};
 /// Largest prompt (UTF-8 bytes) one request may carry.
 ///
 /// The renderer builds the prompt from the note context it was allowed to
-/// attach: `CONTEXT_CHARS_MAX` is 32 000 characters (at most ~96 KB as UTF-8
-/// CJK), plus the fixed instruction wrappers. 1 MiB is an order of magnitude
-/// above that, so no request the app itself can build is ever refused, while a
-/// looping renderer or plugin cannot push an unbounded string through IPC.
+/// attach, so the largest one it can build is bounded by `CONTEXT_CHARS_MAX`
+/// plus the transcript plus the fixed wrappers. **Re-derived against the
+/// ceiling as it stands now, because the sentence that used to be here was
+/// true and stopped being true when that ceiling moved** — it claimed an order
+/// of magnitude of headroom against a 32 000-character ceiling, which was
+/// so at the time and is not now:
+///
+/// | term | characters | bytes |
+/// |---|---|---|
+/// | note context at `CONTEXT_CHARS_MAX` | 200 000 | 600 000 |
+/// | transcript, capped by `buildChatPrompt` | 6 000 | 18 000 |
+/// | headers, labels, the truncation notice | — | ~4 000 |
+/// | | | **~622 000 = 607 KiB** |
+///
+/// So 1 MiB is **1.7x** the largest request the app itself can build, not ten
+/// times it. It is still the right bound: it is above everything the renderer
+/// can produce (so a legitimate request is never refused — the user sees
+/// "提示词过长" only if something else is pushing this), and it still stops a
+/// looping renderer or a plugin from putting an unbounded string through IPC.
+///
+/// What it is *not* is a token budget. The provider's own context window is
+/// enforced by the provider, and a 200 000-character Chinese note is on the
+/// order of that whole window — see `DEFAULT_CONTEXT_CHARS` in the renderer's
+/// settings store for what the app picks so that does not happen by default.
+///
+/// If the ceiling moves again, this table moves with it; the arithmetic is
+/// three lines and the failure mode of skipping it is that the next reader
+/// trusts a number nobody recomputed.
 pub const MAX_PROMPT_BYTES: usize = 1024 * 1024;
 
 /// Largest number of images one request may carry.

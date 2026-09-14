@@ -15,7 +15,8 @@
  */
 
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
-import { aiService, startChatCompletion, usageTotal } from '../../ai'
+import { aiService, CHAT_PROMPTS, enabledPrompts, startChatCompletion, usageTotal } from '../../ai'
+import type { ChatPrompt } from '../../ai'
 import { notifyError } from '../../../services/errors'
 import { insertMarkdownAtCursor } from '../../../services/editor-insert'
 import { useSettingsStore, type ReasoningEffort } from '../../../stores/settings'
@@ -26,6 +27,10 @@ import { t } from '../../../i18n'
 import { buildChatPrompt, type ChatImage, type ChatMessage } from '../services/chat-logic'
 import type { ChatAttachment, PanelMessage } from '../types'
 import { encodeAttachments } from './use-chat-attachments'
+
+/** id to prompt, for the composer's emit. Built once from the shelf, so an id
+ *  that is not on it resolves to nothing rather than to a missing translation. */
+const CHAT_PROMPTS_BY_ID = new Map(CHAT_PROMPTS.map((p) => [p.id, p]))
 
 export interface UseChatCommandsOptions {
   /** The composer's question text. Cleared once the message goes out. */
@@ -44,8 +49,8 @@ export interface UseChatCommandsOptions {
   attachContext: Ref<boolean>
   /** Whether a document is open at all. */
   hasActiveTab: ComputedRef<boolean>
-  /** The context block for the active note. */
-  buildActiveContext(): Promise<string>
+  /** The context block for the active note, and how much of it was left out. */
+  buildActiveContext(): Promise<{ text: string; omitted: number }>
   /** Keep the transcript pinned to its newest turn. */
   scrollToBottom(): void
 }
@@ -58,6 +63,14 @@ export interface ChatCommandsModel {
   setEffort(value: string): void
   /** False while a request is running, or when there is nothing to send. */
   canSend: ComputedRef<boolean>
+  /** The writing-prompt shortcuts the composer offers, in shelf order and
+   *  without the ones switched off in Settings to AI. */
+  promptShortcuts: ComputedRef<readonly ChatPrompt[]>
+  /** Put a shortcut's text into the composer. It is a STARTING POINT and not a
+   *  send: the question a shortcut opens with is rarely the whole question, and
+   *  firing a request on the click would take the decision away from the person
+   *  about to add "about the third section". */
+  usePrompt(id: string): void
   send(): Promise<void>
   stop(): void
   /** Stop only when this panel owns a live request: the app-level cancel is
@@ -133,7 +146,16 @@ export function useChatCommands(options: UseChatCommandsOptions): ChatCommandsMo
           notifyError(t('chat.emptyDocHint'))
           return
         }
-        context = await options.buildActiveContext()
+        const built = await options.buildActiveContext()
+        context = built.text
+        // The note was longer than the budget. The model is told (the block
+        // carries the count), and until now it was the only one: the notice
+        // rides inside the context, so the person who wrote the note never saw
+        // it. This is the send that answer belongs to, not a settings screen
+        // they would have to go and read.
+        if (built.omitted > 0) {
+          notifyError(t('aiSettings.contextTruncatedNotice', { omitted: built.omitted }))
+        }
         // Before the images of the conversation the user moved to are encoded
         // for a question that is no longer going there.
         if (abandoned()) return
@@ -309,11 +331,29 @@ export function useChatCommands(options: UseChatCommandsOptions): ChatCommandsMo
     }
   }
 
+
+  /**
+   * The shelf minus what the user switched off. The store keeps the OFF-list,
+   * so the polarity is applied here and in `use-ai-prompt-settings` and nowhere
+   * else — a second place to invert it is a second place to get it wrong.
+   */
+  const promptShortcuts = computed<readonly ChatPrompt[]>(() =>
+    enabledPrompts(settings.disabledPrompts),
+  )
+
+  function usePrompt(id: string): void {
+    const prompt = CHAT_PROMPTS_BY_ID.get(id)
+    if (!prompt) return
+    options.prompt.value = t(prompt.instructionKey)
+  }
+
   return {
     modelName,
     effort,
     setEffort,
     canSend,
+    promptShortcuts,
+    usePrompt,
     send,
     stop,
     stopIfStreaming,

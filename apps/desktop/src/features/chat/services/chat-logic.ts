@@ -118,26 +118,59 @@ export function buildContextBlock(context: {
 } = {}): string {
   const maxChars = context.maxChars ?? 2000
   const title = context.noteTitle?.trim() ?? ''
-  const selection = context.selection?.trim() ?? ''
-  const content = context.noteContent?.trim() ?? ''
+  const { body, keepTail } = bodyOf(context)
   const lines: string[] = []
   const header = title ? t('chat.currentDocHeader', { title }) : ''
-  const pushBody = (body: string, keepTail = false): void => {
-    const { text, notice } = truncateWithNotice(body, maxChars, keepTail)
-    lines.push(text)
-    // The notice follows the text it describes: a reader (and the model) sees
-    // what was included first, then learns that something was left out.
-    if (notice) lines.push(notice)
-  }
-  if (selection) {
-    if (header) lines.push(header)
-    lines.push(t('chat.selectionHeader'))
-    pushBody(selection)
-  } else if (content) {
-    if (header) lines.push(header)
-    pushBody(content, true)
-  }
+  if (!body) return ''
+  if (header) lines.push(header)
+  if (context.selection?.trim()) lines.push(t('chat.selectionHeader'))
+  const cut = truncateWithNotice(body, maxChars, keepTail)
+  lines.push(cut.text)
+  // The notice follows the text it describes: a reader (and the model) sees
+  // what was included first, then learns that something was left out.
+  if (cut.notice) lines.push(cut.notice)
   return lines.join('\n')
+}
+
+/** Which text the block is built from, and how it is cut.
+ *
+ *  A selection takes priority over the whole body, and a selection keeps its
+ *  BEGINNING (it is what the user pointed at) while a note keeps both ends (it
+ *  is where the work is). One rule, shared by the block builder and the
+ *  omission count below — the two must never disagree about how much was sent.
+ */
+function bodyOf(context: {
+  selection?: string
+  noteContent?: string
+}): { body: string; keepTail: boolean } {
+  const selection = context.selection?.trim() ?? ''
+  if (selection) return { body: selection, keepTail: false }
+  return { body: context.noteContent?.trim() ?? '', keepTail: true }
+}
+
+/**
+ * How many characters of the note the block had to leave out — for telling the
+ * USER, which nothing did before.
+ *
+ * The truncation was never silent to the *model*: the omitted count has gone
+ * into the prompt since the day a 100 000-character note was sent under a
+ * 2 000-character budget and the reply discussed the opening of a document
+ * whose subject was fifty pages further down. But the notice rides inside the
+ * context, so the person who wrote the note was the one reader who never saw
+ * it. With the budget 16x larger this is rarer; it is not impossible, and the
+ * case it happens in is the one this budget exists for.
+ *
+ * Pure and total: the same inputs as `buildContextBlock`, and 0 whenever that
+ * function sends everything.
+ */
+export function contextOmission(context: {
+  selection?: string
+  noteContent?: string
+  maxChars?: number
+} = {}): number {
+  const maxChars = context.maxChars ?? 2000
+  const { body } = bodyOf(context)
+  return Math.max(0, body.length - maxChars)
 }
 
 /** Pack the transcript into a single prompt, walking backwards to keep only

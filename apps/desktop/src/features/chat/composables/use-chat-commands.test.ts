@@ -35,8 +35,10 @@ interface Harness {
   session: ChatSessionModel
   prompt: Ref<string>
   attachments: Ref<ChatAttachment[]>
-  /** Resolve the Nth `buildActiveContext()` the send path is waiting on. */
-  releaseContext: (index: number, context: string) => void
+  /** Resolve the Nth `buildActiveContext()` the send path is waiting on.
+   *  `omitted` is what the budget left out, so a test can drive the notice the
+   *  user gets when their note was longer than the context they allowed. */
+  releaseContext: (index: number, context: string, omitted?: number) => void
 }
 
 let pinia: Pinia
@@ -49,7 +51,7 @@ let offNotify: (() => void) | null = null
 function mountHarness(): Harness {
   const prompt = ref('')
   const attachments = ref<ChatAttachment[]>([])
-  const contexts: Array<(value: string) => void> = []
+  const contexts: Array<(value: { text: string; omitted: number }) => void> = []
   let created: { commands: ChatCommandsModel; session: ChatSessionModel } | null = null
 
   const app = createApp({
@@ -71,7 +73,7 @@ function mountHarness(): Harness {
         attachContext: ref(true),
         hasActiveTab: computed(() => true),
         buildActiveContext: () =>
-          new Promise<string>((resolve) => {
+          new Promise<{ text: string; omitted: number }>((resolve) => {
             contexts.push(resolve)
           }),
         scrollToBottom: () => undefined,
@@ -93,7 +95,7 @@ function mountHarness(): Harness {
     },
     prompt,
     attachments,
-    releaseContext: (index, context) => contexts[index]!(context),
+    releaseContext: (index, context, omitted = 0) => contexts[index]!({ text: context, omitted }),
   } as Harness
 }
 
@@ -202,5 +204,36 @@ describe('sending while the conversation changes', () => {
     expect(notifications).toEqual([])
     // The composer is cleared only once the question is really on its way.
     expect(h.prompt.value).toBe('')
+  })
+
+  it('tells the user when the note did not fit the context they allowed', async () => {
+    // The model has been told since the day the notice went into the block;
+    // the person who wrote the note never was, because that notice rides
+    // inside the context. This is the one place the count reaches them, and it
+    // is the send it belongs to rather than a settings screen they would have
+    // to go and read.
+    seedSessions()
+    const h = mountHarness()
+    await nextTick()
+
+    h.prompt.value = 'summarise this'
+    const sending = h.commands.send()
+    h.releaseContext(0, 'the note as it stands', 4200)
+    await sending
+
+    expect(notifications).toEqual([t('aiSettings.contextTruncatedNotice', { omitted: 4200 })])
+  })
+
+  it('says nothing when the whole note fitted', async () => {
+    seedSessions()
+    const h = mountHarness()
+    await nextTick()
+
+    h.prompt.value = 'summarise this'
+    const sending = h.commands.send()
+    h.releaseContext(0, 'the note as it stands', 0)
+    await sending
+
+    expect(notifications).toEqual([])
   })
 })

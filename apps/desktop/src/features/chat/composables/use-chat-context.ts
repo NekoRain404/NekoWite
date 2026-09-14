@@ -13,7 +13,7 @@ import { useSettingsStore } from '../../../stores/settings'
 import { useTabsStore } from '../../../stores/tabs'
 import { editorSessionManager } from '../../editor'
 import { flushEdits } from '../../../services/editor-ownership'
-import { buildContextBlock } from '../services/chat-logic'
+import { buildContextBlock, contextOmission } from '../services/chat-logic'
 
 export interface ChatContextModel {
   /** Persisted toggle for whether to send the active note / selection as context. */
@@ -23,8 +23,12 @@ export interface ChatContextModel {
    *  the send path tells them apart (see `useChatCommands.send`). */
   hasActiveTab: ComputedRef<boolean>
   /** The context block for the active tab: title (frontmatter → filename),
-   *  selection in priority over body. Empty string when nothing is usable. */
-  buildActiveContext(): Promise<string>
+   *  selection in priority over body — plus how many characters of the note the
+   *  budget left out. `text` is empty when nothing is usable; `omitted` is 0
+   *  whenever everything was sent. The caller needs both: the block goes to the
+   *  model, and the count is the only thing that can tell the *user* their note
+   *  was cut (the notice inside the block is read by the model, not by them). */
+  buildActiveContext(): Promise<{ text: string; omitted: number }>
 }
 
 const ATTACH_KEY = 'nekowite.chat.attachContext'
@@ -83,22 +87,27 @@ export function useChatContext(): ChatContextModel {
 
   const hasActiveTab = computed(() => tabs.activeTab !== null)
 
-  async function buildActiveContext(): Promise<string> {
+  async function buildActiveContext(): Promise<{ text: string; omitted: number }> {
     const tab = tabs.activeTab
-    if (!tab) return ''
+    if (!tab) return { text: '', omitted: 0 }
     // The note is sent to the model as context; flush so it is the live text
     // rather than whatever a pane had published a debounce window ago.
     await flushEdits()
     const title = frontmatterTitle(tab.content) || noteTitleFromPath(tab.path)
-    return buildContextBlock({
+    const context = {
       noteTitle: title,
       selection: activeSelection(),
       noteContent: tab.content,
       // The user's budget, not a hardcoded one: on a long note the difference
       // between 2000 and 6000 characters is the difference between the model
-      // seeing the note's title page and seeing the section being worked on.
+      // seeing the note's title page and seeing the section being worked on —
+      // and the default is now sixteen times that, so for most notes the
+      // question does not arise at all.
       maxChars: settings.contextChars,
-    })
+    }
+    // Both answers come from the same call and the same rule, so the count the
+    // user is told can never describe a different block from the one that went.
+    return { text: buildContextBlock(context), omitted: contextOmission(context) }
   }
 
   return { attachContext, toggleAttachContext, hasActiveTab, buildActiveContext }

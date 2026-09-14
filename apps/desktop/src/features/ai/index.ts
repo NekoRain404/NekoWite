@@ -20,5 +20,8 @@ export { nextRequestId } from './services/ai-stream'
 
 export { aiService } from './services/ai-ghost'
 
+export { CHAT_PROMPTS, CHAT_PROMPT_IDS, enabledPrompts } from './prompts'
+export type { ChatPrompt } from './prompts'
+
 export { startChatCompletion, usageTotal } from './services/ai-chat'
 export type { AiTokenUsage, ChatStream, ChatStreamHandlers } from './services/ai-chat'

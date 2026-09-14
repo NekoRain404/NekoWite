@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { buildChatPrompt, buildContextBlock, fileToDataURL, nextImageId, pickImageMime } from './chat-logic'
+import {
+  buildChatPrompt,
+  buildContextBlock,
+  contextOmission,
+  fileToDataURL,
+  nextImageId,
+  pickImageMime,
+} from './chat-logic'
 
 describe('chatLogic', () => {
   it('jsons the current user turn as the last line', () => {
@@ -66,6 +73,24 @@ describe('chatLogic', () => {
   })
 
   describe('buildContextBlock', () => {
+    it('reports what the budget left out, by the same rule that cut it', () => {
+      // The count the user is told has to describe the block that was actually
+      // sent, so it comes from the same body-selection rule — a note keeps both
+      // ends, a selection keeps its head, and the two must not disagree about
+      // how much went.
+      const note = 'x'.repeat(500)
+      expect(contextOmission({ noteContent: note, maxChars: 100 })).toBe(400)
+      expect(contextOmission({ noteContent: note, maxChars: 500 })).toBe(0)
+      expect(contextOmission({ noteContent: note, maxChars: 5000 })).toBe(0)
+      // A selection wins over the body, exactly as it does in the block.
+      expect(
+        contextOmission({ noteContent: note, selection: 'ab', maxChars: 1 }),
+      ).toBe(1)
+      // And nothing to send is nothing left out.
+      expect(contextOmission({ noteContent: '   ', maxChars: 1 })).toBe(0)
+      expect(contextOmission({})).toBe(0)
+    })
+
     it('emits a titled header with the note body', () => {
       const block = buildContextBlock({ noteTitle: '图论', noteContent: '# 图论\n\n内容' })
       expect(block).toBe('【当前文档：图论】\n# 图论\n\n内容')
