@@ -4,14 +4,22 @@
 //!
 //! ```text
 //! file_store       facade: vault-facing base IO, and the public surface
+//!   +- save_store        <- history_snapshot, atomic_write, temp_files
 //!   +- rename_store      <- metadata_store, trash_store, atomic_write
 //!   +- attachment_store  <- atomic_write
-//!   +- metadata_store    <- atomic_write, temp_files
+//!   +- metadata_store    <- history_snapshot, atomic_write
+//!   +- history_snapshot  <- atomic_write, temp_files
 //!   +- atomic_write      <- temp_files, destination_file
 //!   +- temp_files        (leaf: what a temp file is called, and sweeping it)
 //!   +- destination_file  (leaf: what a publish carries over from the file it
 //!                         replaces, and whether it may replace it at all)
 //! ```
+//!
+//! `metadata_store` is the history KEY (which directory a vault path maps to,
+//! and the listing/reading/restoring a panel asks for) and `history_snapshot`
+//! is the history FILE (how one version is named, staged, evicted). The seam is
+//! there because the eviction belongs to a version's lifecycle and only the
+//! caller that staged one knows whether the save it belongs to happened.
 //!
 //! `file_store` re-exports what the split moved out, so the command layer and
 //! the integration tests keep their `file_store::{...}` imports unchanged for
@@ -39,11 +47,13 @@ pub mod atomic_write;
 pub mod attachment_store;
 pub mod destination_file;
 pub mod file_store;
+pub mod history_snapshot;
 pub mod index_store;
 pub mod key_file_io;
 pub mod key_file_store;
 pub mod key_store;
 pub mod metadata_store;
 pub mod rename_store;
+pub mod save_store;
 pub mod temp_files;
 pub mod trash_store;
