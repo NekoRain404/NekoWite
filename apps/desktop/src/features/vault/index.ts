@@ -23,12 +23,20 @@ export { useFileTreeDrag } from './composables/use-file-tree-drag'
 export type { UseFileTreeDragOptions } from './composables/use-file-tree-drag'
 
 /**
- * The link queries over the indexed notes. The notes panel resolves its links
- * mode with them (§13.11), which is why they are exported here rather than
- * reached for by path: the index that answers them belongs to this feature, and
- * its internals stay this feature's business.
+ * The queries over the indexed notes. The notes panel resolves its links mode
+ * with them, the library list filters and counts with them, and the rendered
+ * pane resolves a clicked link with them, which is why they are exported here
+ * rather than reached for by path (§13.11): the index that answers them belongs
+ * to this feature, and its internals stay this feature's business.
  */
-export { inlinksOf, outlinksOf } from './services/library-queries'
+export {
+  inlinksOf,
+  outlinksOf,
+  queryCounts,
+  queryTagCounts,
+  queryVisibleNotes,
+  resolveLinkPath,
+} from './services/library-queries'
 
 export { createVaultFileActions, validateEntryName } from './services/vault-file-actions'
 export type {
@@ -42,7 +50,8 @@ export type {
   VaultNameError,
 } from './services/vault-file-actions'
 
-/* The coordinator's handle. The vault session store holds one for the life of a
- * vault and calls into it; the coordinator is built by this feature's wiring, so
- * the store needs the type and not the factory. */
+/* The coordinator's handle, and the factory that binds it to the real platform
+ * services. The vault session store holds one for the life of a vault, builds it
+ * from here and calls into it; the binding itself stays this feature's wiring. */
+export { createBoundVaultIndexCoordinator } from './services/index-coordinator-wiring'
 export type { VaultIndexCoordinator } from './services/vault-index'
