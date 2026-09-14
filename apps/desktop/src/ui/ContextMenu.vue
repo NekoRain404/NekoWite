@@ -259,6 +259,27 @@ onBeforeUnmount(() => {
   transition: opacity var(--app-motion) var(--app-ease),
               transform var(--app-motion) var(--app-ease);
 }
+/* ---- The exit, which every host used to cut ------------------------------
+   The rules above declare the exit and it has never run: every host mounts this
+   with `v-if` on a nullable state, so the element was destroyed in the frame the
+   user acted and the menu entered over 300ms and vanished in one. `<Transition
+   name="ctx">` at the host keeps the node mounted for this rule.
+   Both selectors carry `.ctx-menu`, and that is not tidiness — it is the whole
+   trap. The component drives its own state with `.ctx-menu.is-open`, which is
+   *two* classes: a bare `.ctx-leave-active` loses to it on specificity, so the
+   leaver kept the arriving curve and `opacity: 1` for the whole of its life.
+   Measured before the fix: 20 frames at `opacity 1` with `pointer-events: none`
+   and then out of the document. Measured after: 1 → 0.986 → 0.897 → 0.750 →
+   0.563 → 0.344 → 0.095, `none` throughout — the same walk the panels make. */
+.ctx-menu.ctx-leave-active {
+  transition: opacity var(--app-motion-exit) var(--app-ease-exit),
+              transform var(--app-motion-exit) var(--app-ease-exit);
+  pointer-events: none;
+}
+.ctx-menu.ctx-leave-to {
+  opacity: 0;
+  transform: translateY(calc(var(--app-motion-travel) * -1)) scale(var(--app-motion-scale-pop));
+}
 .ctx-menu-item {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr);
