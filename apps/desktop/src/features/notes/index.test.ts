@@ -20,8 +20,8 @@ import {
   resolveLinkTarget,
   serializeFrontmatter,
   splitFrontmatterRaw,
-} from '../features/notes'
-import type { NoteSummary } from '../features/notes'
+} from './index'
+import type { NoteSummary } from './index'
 
 function note(overrides: Partial<NoteSummary> & { path: string }): NoteSummary {
   return {

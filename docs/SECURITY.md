@@ -79,7 +79,9 @@ password-protected vault must be unlocked (`unlock_vault`) before use.
 ### 6. Plugin governance (audit log, version policy/rollback, revocation, resource quota)
 
 Beyond the trust/integrity gates, the host enforces a governance layer
-(`packages/plugin-host/src/governance.ts` + the quota/unstable logic in `runtime.ts`):
+(`packages/plugin-host/src/` — the `governance-*.ts` modules plus `audit-log.ts`,
+`version-policy.ts`, `revocation.ts` and `mac-envelope.ts`, re-exported by `index.ts`,
+plus the quota/unstable logic in `runtime.ts`):
 
 - **Audit log** — every load/activate/deactivate/timeout/crash/revoke/signature-invalid
   decision is recorded to a structured, **non-secret** in-memory ring

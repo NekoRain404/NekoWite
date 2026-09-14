@@ -13,6 +13,10 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
+      # The perf harness is a separate vitest project, so `pnpm test` never
+      # reached it — and it sat broken for two stages because nothing ran it.
+      # It asserts the budgets recorded in docs/PERF.md, so it is a gate.
+      - run: pnpm perf
       - run: pnpm --filter @nekowite/desktop build
       - run: pnpm --filter @nekowite/desktop check:export-css
       - run: pnpm --filter @nekowite/desktop exec playwright install --with-deps chromium
