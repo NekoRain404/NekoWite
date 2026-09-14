@@ -1,0 +1,72 @@
+<!-- case: frontmatter and headings -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Export Corpse</title></head><body><pre class="frontmatter">title: Export Corpse
+author: Neko</pre><h1 id="heading-one">Heading One</h1><h2 id="heading-one-1">Heading One</h2><h3 id="bold-and-code-heading"><strong>Bold</strong> and <code>code</code> heading</h3><h4 id="claim">Claim <span class="cite">1</span></h4><h5 id="a-b">A <span class="wikilink" data-target="Other Note">Alias</span> B</h5><h6 id="formula">Formula <span class="math-latex">$a^2$</span></h6><section class="references"><h2>参考文献</h2><ol><li>[1] John Smith, Jane Doe, A. Third, et al. (2020) A Study of &lt;Things&gt;. <em>Journal of Testing</em> 12(3) 45-67. <a href="https://doi.org/10.1000/abc">doi:10.1000/abc</a></li></ol></section></body></html>
+<!-- case: frontmatter without a title -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Untitled</title></head><body><pre class="frontmatter">author: Nobody</pre><p>Body only.</p></body></html>
+<!-- case: inline marks, breaks and raw html -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Untitled</title></head><body><p>Body with <em>em</em>, <strong>strong</strong>, <code>code</code>, <del>gone</del> and a <a href="https://example.com/a?b=1&amp;c=2">link</a>.</p><p>line one<br />line two<br />line three</p><hr><p>Raw &lt;span style=&quot;color:red&quot;&gt;html&lt;/span&gt; &amp; an entity &amp; and an inline &lt;br&gt; break.</p><p>A reference link <a href="https://example.com/ref">text</a> and a reference image <img src="https://example.com/a.png" alt="alt">.</p><p>![orphan][missing]</p></body></html>
+<!-- case: lists and task state -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Untitled</title></head><body><ul class="contains-task-list"><li><p>item one</p></li><li class="task-list-item"><input type="checkbox" disabled checked><span class="task-list-item-body"><p>done</p></span></li><li class="task-list-item"><input type="checkbox" disabled><span class="task-list-item-body"><p>todo</p></span></li></ul><ol><li><p>first</p></li><li><p>second</p></li><li><p>five</p></li><li><p>six</p></li></ol><ul><li><p>l1</p><ul><li><p>l2</p><ul><li><p>l3</p></li></ul></li></ul></li></ul></body></html>
+<!-- case: blockquote nesting and code fence -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Untitled</title></head><body><blockquote><p>quoted text</p><blockquote><p>inner</p></blockquote></blockquote><pre><code class="language-ts">const a = 1 &lt; 2 &amp;&amp; &quot;b&quot;</code></pre><pre><code>no language</code></pre></body></html>
+<!-- case: aligned table with nested content -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Untitled</title></head><body><table><thead><tr><th style="text-align: left">left</th><th style="text-align: center">center</th><th style="text-align: right">right</th><th>none</th></tr></thead><tbody><tr><td style="text-align: left">a</td><td style="text-align: center"><code>code</code></td><td style="text-align: right"><strong>bold</strong></td><td><a href="https://x.test">text</a></td></tr><tr><td style="text-align: left"><mark class="nk-highlight">hi</mark></td><td style="text-align: center"><span class="wikilink" data-target="N">alias</span></td><td style="text-align: right"><span class="cite">1</span></td><td></td></tr><tr><td style="text-align: left"><span class="math-latex">$z^2$</span></td><td style="text-align: center"><img src="https://x.test/a.png" alt="alt"></td><td style="text-align: right">- [x] done</td><td></td></tr></tbody></table><table><thead><tr><th>only</th></tr></thead></table><p>n<sup class="footnote-ref" id="fnref-1"><a href="#fn-1">1</a></sup></p><div class="footnote" id="fn-1"><span class="footnote-marker">[1]</span><div class="footnote-body"><p>footnote with a definition</p><a class="footnote-backref" href="#fnref-1">↩</a></div></div><section class="references"><h2>参考文献</h2><ol><li>[1] doe2021 — Plain Entry (Doe, 2021)</li></ol></section></body></html>
+<!-- case: math inline and display -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Untitled</title></head><body><p>Inline <span class="math-latex">$E = mc^2$</span> and another <span class="math-latex">$x &lt; y &amp; z$</span>.</p><div class="math-latex">$$\int_0^1 x^2 \, dx = \frac{1}{3}$$</div><blockquote><p>math in a quote <span class="math-latex">$y^2$</span></p></blockquote><ul><li><div class="math-latex">$$Z = 1$$</div></li></ul></body></html>
+<!-- case: wikilinks, highlights and citations -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Untitled</title></head><body><p>See <span class="wikilink" data-target="Other Note">Other Note</span> and <span class="wikilink" data-target="Other Note">alias</span> and <span class="wikilink" data-target="Target With Spaces">label with spaces</span>.</p><p>An empty alias <span class="wikilink" data-target="OnlyTarget">OnlyTarget</span> stays.</p><p>Marked ==text with <em>em</em> inside<mark class="nk-highlight"> and </mark>plain==.</p><p>Citations: <span class="cite">1</span>, <span class="cite">2</span>, <span class="cite">3</span>, <span class="cite">4</span>, <span class="cite">5</span>, <span class="cite">6</span>
+and again <span class="cite">1</span>.</p><section class="references"><h2>参考文献</h2><ol><li>[1] John Smith, Jane Doe, A. Third, et al. (2020) A Study of &lt;Things&gt;. <em>Journal of Testing</em> 12(3) 45-67. <a href="https://doi.org/10.1000/abc">doi:10.1000/abc</a></li><li>[2] doe2021 — Plain Entry (Doe, 2021)</li><li>[3] &lt;b&gt;k&lt;/b&gt; — T (&lt;script&gt;x&lt;/script&gt;, &lt;i&gt;2022&lt;/i&gt;)</li><li>[4] Web Source. javascript:alert(9)</li><li>[5] Published. ACME &lt;Press&gt;</li><li>[6] missingkey</li></ol></section></body></html>
+<!-- case: footnotes -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Untitled</title></head><body><p>Note<sup class="footnote-ref" id="fnref-1"><a href="#fn-1">1</a></sup> and another<sup class="footnote-ref" id="fnref-2"><a href="#fn-2">2</a></sup> and an unreferenced one below.</p><div class="footnote" id="fn-1"><span class="footnote-marker">[1]</span><div class="footnote-body"><p>First definition with <code>code</code>.</p><a class="footnote-backref" href="#fnref-1">↩</a></div></div><div class="footnote" id="fn-2"><span class="footnote-marker">[2]</span><div class="footnote-body"><p>Second with a <a href="https://example.com/f">link</a>.</p><ul><li><p>nested</p></li><li><p>items</p></li></ul><a class="footnote-backref" href="#fnref-2">↩</a></div></div><div class="footnote" id="fn-unused"><span class="footnote-marker">[3]</span><div class="footnote-body"><p>never referenced</p><a class="footnote-backref" href="#fnref-unused">↩</a></div></div></body></html>
+<!-- case: images with dimensions and alignment -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Untitled</title></head><body><p><img src="https://example.com/a.png" alt="plain"></p><p><img src="https://example.com/b.png" alt="sized" style="width:300px"></p><p><img src="https://example.com/c.png" alt="both" style="width:300px;height:150px"></p><p><img src="https://example.com/d.png" alt="centered" style="width:200px;display:block;margin-left:auto;margin-right:auto"></p><p><img src="https://example.com/e.png" alt="left" style="width:200px;float:left"></p><p><img src="https://example.com/f.png" alt="right" style="width:200px;float:right"></p><p><img src="https://example.com/g.png" alt="titled"></p><p><img src="https://example.com/h.png" alt="an &lt;alt&gt; with &amp; markup" style="width:100px"></p></body></html>
+<!-- case: destinations the allowlist rejects -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Untitled</title></head><body><p>js</p><p>data</p><p>vb</p><p>jsx</p><p><a href="notes/other.md">relative</a></p><p><a href="/abs/path">absolute</a></p><p><a href="#anchor">fragment</a></p><p><a href="mailto:a@b.c">mail</a> and <a href="tel:1234">tel:1234</a></p><p><img alt="js-image"></p><p><img alt="svg-payload"></p><p><img alt="svg-utf8"></p><p><img alt="mime-prefix"></p><p><img src="data:image/png;base64,AAAA" alt="raster-ok"></p><p><img src="&quot;onerror=alert(5)" alt="already-inline"></p></body></html>
+<!-- case: mdx components -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Untitled</title></head><body><aside class="callout callout-warn"><div class="callout-body"><p>Heads up with [@smith2020] and an <img src="attachments/body.png" alt="in body"></p></div></aside><div class="float-box"><h2>Inside heading</h2><p>Body inside.</p></div><div class="mdx-fallback">&lt;Unknown thing={1}&gt;raw body&lt;/Unknown&gt;</div><table><thead><tr><th>a</th></tr></thead><tbody><tr><td>&lt;Callout&gt;cell&lt;/Callout&gt;</td></tr></tbody></table></body></html>
+<!-- case: empty paragraph markers -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Untitled</title></head><body><p>a</p><p>b</p><p>c</p><p>end</p></body></html>
+<!-- case: image resolution, display target -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Untitled</title></head><body><p><img src="asset://localhost/RESOLVED-display-attachments/local.png" alt="relative"></p><p><img src="https://example.com/remote.png" alt="already absolute"></p><aside class="callout callout-info"><div class="callout-body"><p><img src="asset://localhost/RESOLVED-display-attachments/body.png" alt="in body"></p></div></aside><ul><li><p><img src="asset://localhost/RESOLVED-display-attachments/list.png" alt="in list"></p></li></ul></body></html>
+<!-- case: image resolution, data target -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Untitled</title></head><body><p><img src="data:image/png;base64,RESOLVED-data-attachments/local.png" alt="relative"></p><p><img src="data:image/png;base64,RESOLVED-data-../assets/deep/other.png" alt="nested" style="width:64px"></p></body></html>
+<!-- case: print stylesheet included once -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Untitled</title><style>
+body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; max-width: 50rem; margin: 0 auto; padding: 2rem; color: #222; position: relative; }
+/* Mirrors the editor's own image rule (.neko-image img in editor-content.css:
+   max-width + height:auto + the 3px radius). Without it an image carrying an
+   explicit {width=N} was emitted at N device pixels with nothing to bound it,
+   so a photo sized for the editor's narrow column overflowed the printed page
+   and the exported image did not match what the app showed. height:auto is the
+   no-stored-height case only — an explicit height is inline, exactly as in the
+   editor, where the inline style also wins over this rule. */
+img { max-width: 100%; height: auto; border-radius: 3px; }
+h1, h2, h3, h4, h5, h6 { line-height: 1.25; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+pre { background: #f6f8fa; padding: 0.75rem 1rem; border-radius: 6px; overflow-x: auto; }
+blockquote { margin: 0; padding-left: 1rem; border-left: 4px solid #d0d7de; color: #57606a; }
+mark.nk-highlight { background: #fff3b0; padding: 0 0.1em; border-radius: 2px; }
+.wikilink { color: #0969da; border-bottom: 1px dashed currentColor; }
+.contains-task-list { list-style: none; padding-left: 0.25rem; }
+.task-list-item { display: flex; align-items: flex-start; gap: 0.5rem; }
+.task-list-item > input { margin: 0.4rem 0 0; flex: none; }
+.task-list-item-body > p { margin: 0; }
+.footnote-ref a { text-decoration: none; }
+.footnote { display: flex; gap: 0.4rem; margin: 0.5rem 0; color: #57606a; font-size: 0.925em; }
+.footnote-marker { flex: none; }
+.footnote-body > p { margin: 0; }
+.footnote-backref { margin-left: 0.35rem; text-decoration: none; }
+table { border-collapse: collapse; margin: 1rem 0; }
+th, td { border: 1px solid #d0d7de; padding: 0.4rem 0.7rem; }
+th { background: #f6f8fa; }
+.cite { color: #0969da; }
+.cite::before { content: '['; }
+.cite::after { content: ']'; }
+.math-display { overflow-x: auto; }
+.references { margin-top: 3rem; border-top: 1px solid #d0d7de; padding-top: 1rem; }
+.references ol { padding-left: 1.5rem; }
+.callout { border-left: 4px solid #0969da; background: #f6f8fa; padding: 0.75rem 1rem; margin: 1rem 0; }
+.callout-body { margin: 0; }
+.mdx-fallback { border: 1px dashed #d0d7de; padding: 0.5rem 0.75rem; color: #57606a; }
+.frontmatter { background: #f6f8fa; padding: 0.75rem 1rem; border-radius: 6px; color: #57606a; }
+</style></head><body><h1 id="styled">Styled</h1><p>Body.</p></body></html>
