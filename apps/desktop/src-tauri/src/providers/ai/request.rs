@@ -9,6 +9,12 @@
 //! transport or parses a response, so this module never imports `client`,
 //! `response`, `sse` or `url_policy`; the arrow points one way only
 //! (`client`/`url_policy`/the provider modules depend on this file).
+//!
+//! The continuation instruction is NOT built here. `build_prompt` used to sit in
+//! this file with no caller — the ghost writer assembles the prompt in
+//! `features/ai/services/ai-prompt.ts`, where the cursor prefix lives — and the
+//! byte-identical second copy was deleted rather than left to drift. Do not
+//! re-add it: a prompt built here would need the prefix over IPC first.
 
 use super::limits::{
     MAX_IMAGES_PER_REQUEST, MAX_IMAGE_DATA_URL_BYTES, MAX_PROMPT_BYTES, MAX_REQUEST_BODY_BYTES,
@@ -165,13 +171,6 @@ pub fn resolve_base_url(cfg: &AIConfig) -> Result<String, String> {
             cfg.provider
         )
     })
-}
-
-pub fn build_prompt(cursor_prefix: &str) -> String {
-    format!(
-        "Continue writing the following text. Only output the continuation, no preamble.\n\n{}\n",
-        cursor_prefix.trim_end()
-    )
 }
 
 /// Split a data URL (`data:<mime>[;base64],<data>`) into its media type and

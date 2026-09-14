@@ -55,8 +55,8 @@ use super::limits::{
 pub use super::refusal::completion_refusal;
 use super::request::with_completion_auth;
 pub use super::request::{
-    build_prompt, default_base_url, encode_request_body, hydrate_stored_key,
-    normalize_reasoning_effort, resolve_base_url, validate_request_inputs, AIConfig,
+    default_base_url, encode_request_body, hydrate_stored_key, normalize_reasoning_effort,
+    resolve_base_url, validate_request_inputs, AIConfig,
 };
 pub use super::response::{
     ai_done_payload, error_detail_from_body, http_error_message, http_error_message_with_detail,

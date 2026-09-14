@@ -12,6 +12,7 @@
 //!   +- url_policy   <- request
 //!   +- model_list   <- limits, request, response
 //!   +- response     <- limits
+//!   +- error_message (leaf: what a rejection says to the user)
 //!   +- request      <- limits, config
 //!   +- config       <- key_store (leaf)
 //!   +- limits       (leaf)
@@ -20,13 +21,14 @@
 //! `gemini` and `openai_compatible` hold the provider-specific knowledge and
 //! reach shared helpers through `request`/`response`; nothing below `client`
 //! imports `client`, so the graph has no cycle. `response` re-exports the two
-//! items `model_list` took over, and `request` re-exports the config names it
-//! gave up to `config` - the compatibility surface a split keeps, not a
-//! dependency back.
+//! items `model_list` took over AND the failure wording `error_message` did,
+//! and `request` re-exports the config names it gave up to `config` - the
+//! compatibility surface a split keeps, not a dependency back.
 
 pub mod client;
 pub mod config;
 pub mod endpoint;
+pub mod error_message;
 pub mod events;
 pub mod gemini;
 pub mod limits;
