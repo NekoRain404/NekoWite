@@ -38,6 +38,11 @@ export function withTimeout<T>(
     }
     signal?.addEventListener('abort', onAbort, { once: true })
     const timer = setTimeout(() => {
+      // The timer winning is the one path on which the promise never settles:
+      // the handlers below never run, so the listener has to be released here or
+      // it stays attached to the caller's signal — one per timed-out hook, on a
+      // signal the app keeps for a whole vault scan.
+      signal?.removeEventListener('abort', onAbort)
       reject(
         createPluginError('PLUGIN_HOOK_TIMEOUT', {
           pluginId: '',

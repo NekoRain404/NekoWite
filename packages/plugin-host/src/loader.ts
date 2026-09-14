@@ -1,5 +1,6 @@
 import type { PluginDefinition, PluginMeta, PluginPermission } from './types'
 import { createPluginError } from './types'
+import { declaredPermissionsOf } from './permissions'
 
 export type { PluginDefinition, PluginMeta } from './types'
 
@@ -51,8 +52,18 @@ export function joinPath(...parts: string[]): string {
 export async function loadPlugin(meta: PluginMeta, dynamicImport: DynamicImport): Promise<LoadResult> {
   try {
     const mod = await dynamicImport(meta.main)
-    if (!mod.default) return { ok: false, id: meta.id, error: 'plugin has no default export' }
-    return { ok: true, id: meta.id, meta, definition: mod.default }
+    // Read the export ONCE. `default` is a property of the module the plugin
+    // wrote, so on a module namespace bound as a live binding a second read is a
+    // second object — and everything downstream must be working on the same one.
+    const definition = mod.default
+    if (!definition) return { ok: false, id: meta.id, error: 'plugin has no default export' }
+    // Pin what the plugin DECLARED here, at load: this is the moment the host
+    // first owns the definition, and the gate that asks the user and the
+    // activation that grants the capability both work from this one read
+    // (declaredPermissionsOf). A declaration the host cannot read at all refuses
+    // the load rather than being silently treated as an empty one.
+    declaredPermissionsOf(meta, definition)
+    return { ok: true, id: meta.id, meta, definition }
   } catch (err) {
     return { ok: false, id: meta.id, error: err instanceof Error ? err.message : String(err) }
   }

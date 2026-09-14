@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { loadPlugin, loadPluginsFromDir, computePluginDigest, verifyPluginIntegrity } from './loader'
 import type { PluginDigestStore, PluginFsAdapter } from './loader'
+import { declaredPermissionsOf } from './permissions'
 import { PluginError } from './types'
 
 const importMock = vi.hoisted(() => vi.fn())
@@ -19,6 +20,38 @@ describe('loadPlugin', () => {
     const out = await loadPlugin({ id: 'bad', name: 'Bad', version: '1', main: './x.ts' }, importMock)
     expect(out.ok).toBe(false)
     if (!out.ok) expect(out.error).toContain('boom')
+  })
+
+  it('reads what the plugin declared exactly once, at load', async () => {
+    // Load is where the host first owns the definition, so it is where the
+    // declaration is read (and pinned): a plugin whose getter answers one thing
+    // here and another later has already been read by the time anything asks.
+    let reads = 0
+    const def = {
+      name: 'Once',
+      get permissions() {
+        reads += 1
+        return reads === 1 ? ['fs'] : ['ai']
+      },
+    }
+    importMock.mockResolvedValue({ default: def })
+    const out = await loadPlugin({ id: 'once', name: 'Once', version: '1.0.0', main: './y.ts' }, importMock)
+    expect(out.ok).toBe(true)
+    expect(reads).toBe(1)
+    if (out.ok) expect(declaredPermissionsOf(out.meta, out.definition)).toEqual(['fs'])
+  })
+
+  it('refuses a plugin whose declared permissions cannot be read at all', async () => {
+    const def = {
+      name: 'Hostile',
+      get permissions() {
+        throw new Error('no declaration for you')
+      },
+    }
+    importMock.mockResolvedValue({ default: def })
+    const out = await loadPlugin({ id: 'hostile', name: 'Hostile', version: '1', main: './z.ts' }, importMock)
+    expect(out.ok).toBe(false)
+    if (!out.ok) expect(out.error).toContain('no declaration')
   })
 })
 

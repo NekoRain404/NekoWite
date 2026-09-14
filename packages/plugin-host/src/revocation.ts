@@ -1,4 +1,4 @@
-import { versionSatisfies } from './semver'
+import { parseSemver, versionSatisfies } from './semver'
 import { state, type PluginRevocation } from './governance-state'
 
 /* ------------------------------------------------------------------------- *
@@ -35,13 +35,38 @@ export function getRevokedPlugins(): PluginRevocation[] {
   return state.revocations.map((r) => ({ ...r }))
 }
 
+/** Whether revocation `range` covers `version`.
+ *
+ *  An id-wide revocation ('all' / '*') covers everything, and a comparable
+ *  version is judged against the range on its merits. A version the host cannot
+ *  parse is a DIFFERENT answer from "provably outside the range", and it must
+ *  not be read as one: `loadPluginsFromDir` takes the manifest's `version` field
+ *  verbatim, so a withdrawn plugin can present `"1.0"` and no comparator can
+ *  evaluate it — answering "not revoked" there fails OPEN, letting the one
+ *  plugin the rule exists to stop load. An unevaluable revocation therefore
+ *  refuses. `isVersionAllowed` independently fails closed on the same input
+ *  (its synthesised `>=min` matches nothing either), so both gates agree.
+ *
+ *  This stays local to revocation on purpose: `versionSatisfies` is shared with
+ *  the version policy, which relies on an unparseable version being "not in
+ *  range", so the comparator's answer must not be changed for this gate. */
+function revocationCovers(version: string, range: string): boolean {
+  if (versionSatisfies(version, range)) return true
+  return parseSemver(version) === null
+}
+
 /** Whether a specific plugin version is revoked. Returns a structured result so
- *  the host can surface the recorded reason, never silently. */
+ *  the host can surface the recorded reason, never silently — including when the
+ *  reason is that the version could not be compared at all. */
 export function isPluginRevoked(
   pluginId: string,
   version: string,
 ): { revoked: boolean; reason?: string; matching?: PluginRevocation } {
-  const matching = state.revocations.find((r) => r.pluginId === pluginId && versionSatisfies(version, r.version))
+  const matching = state.revocations.find((r) => r.pluginId === pluginId && revocationCovers(version, r.version))
   if (!matching) return { revoked: false }
-  return { revoked: true, reason: matching.reason, matching }
+  const compared = parseSemver(version) !== null || versionSatisfies(version, matching.version)
+  const reason = compared
+    ? matching.reason
+    : `${matching.reason ? `${matching.reason}; ` : ''}declared version "${version}" cannot be compared against the revocation and is refused rather than assumed unrevoked`
+  return { revoked: true, reason, matching }
 }

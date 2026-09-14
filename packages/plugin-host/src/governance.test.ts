@@ -290,6 +290,28 @@ describe('revocation list', () => {
     expect(isPluginRevoked('@scope/r', '2.0.0').revoked).toBe(false)
   })
 
+  it('refuses a version it cannot compare rather than answering "not revoked"', () => {
+    revokePlugin('@scope/r', '<2.0.0', 'withdrawn')
+    // `loadPluginsFromDir` takes the manifest's `version` field verbatim, so a
+    // withdrawn plugin can present a version no comparator can evaluate ("1.0").
+    // "Cannot compare" and "provably outside the range" are different answers,
+    // and only the second one may let a plugin load: a revocation that cannot be
+    // evaluated must refuse, or the gate fails OPEN for the one plugin it exists
+    // to stop.
+    expect(isPluginRevoked('@scope/r', '1.0').revoked).toBe(true)
+    expect(isPluginRevoked('@scope/r', 'not-a-version').revoked).toBe(true)
+    // A comparable version is still judged on its merits.
+    expect(isPluginRevoked('@scope/r', '1.9.9').revoked).toBe(true)
+    expect(isPluginRevoked('@scope/r', '2.0.0').revoked).toBe(false)
+    // The shared comparator is deliberately unchanged - the version-policy gate
+    // synthesises `>=min` from its range and must keep failing closed on the same
+    // input, so the refusal is decided by the revocation gate, not by editing the
+    // comparison both gates rest on.
+    expect(versionSatisfies('1.0', '<2.0.0')).toBe(false)
+    setPluginVersionRange('@scope/r', { min: '1.0.0' })
+    expect(isVersionAllowed('@scope/r', '1.0')).toBe(false)
+  })
+
   it('unrevokes a plugin', () => {
     revokePlugin('@scope/evil')
     expect(isPluginRevoked('@scope/evil', '1.0.0').revoked).toBe(true)

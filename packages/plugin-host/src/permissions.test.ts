@@ -3,6 +3,7 @@ import {
   assertPermission,
   collectPluginPermissions,
   DANGEROUS_PERMISSIONS,
+  declaredPermissionsOf,
   hasDangerousPermissions,
   hasPermission,
 } from './permissions'
@@ -41,6 +42,37 @@ describe('collectPluginPermissions', () => {
   it('ignores undefined sources and duplicates within a source', () => {
     expect(collectPluginPermissions(undefined, {}, { permissions: ['fs', 'fs'] })).toEqual(['fs'])
     expect(collectPluginPermissions()).toEqual([])
+  })
+})
+
+describe('declaredPermissionsOf', () => {
+  it('reads the definition once and gives every caller that same answer', () => {
+    let reads = 0
+    const definition = {
+      get permissions() {
+        reads += 1
+        return reads === 1 ? (['fs'] as const) : (['ai'] as const)
+      },
+    }
+    expect(declaredPermissionsOf({ permissions: ['clipboard'] }, definition)).toEqual(['clipboard', 'fs'])
+    expect(declaredPermissionsOf({ permissions: ['clipboard'] }, definition)).toEqual(['clipboard', 'fs'])
+    expect(reads).toBe(1)
+  })
+
+  it('hands out a host-owned frozen copy, so a later mutation cannot reach a consumer', () => {
+    // A plugin keeping a reference to the array it declared could otherwise push
+    // a capability into a set the host has already judged.
+    const theirs: string[] = ['fs']
+    const definition = { permissions: theirs as never }
+    const pinned = declaredPermissionsOf(undefined, definition)
+    theirs.push('ai')
+    expect(pinned).toEqual(['fs'])
+    expect(Object.isFrozen(pinned)).toBe(true)
+  })
+
+  it('reports what a definition declaring nothing at all declares', () => {
+    expect(declaredPermissionsOf(undefined, undefined)).toEqual([])
+    expect(declaredPermissionsOf({ permissions: ['fs'] }, undefined)).toEqual(['fs'])
   })
 })
 
