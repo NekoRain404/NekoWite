@@ -1,27 +1,21 @@
-/** Persistent, incremental full-text index for vault search.
+/**
+ * Compatibility surface, ONE stage only (§10.1.5).
  *
- * Compatibility surface: the implementation moved to `features/search/services/`
- * (§13.3) and split along its build / query / persistence seams — what a note
- * contributes and how the index is built, how a query answers, and how shards are
- * stored. This module re-exports all of it under the paths it has always had, so
- * no consumer changes; nothing outside the feature should import those internals
- * directly.
+ * The implementation moved to `features/search/services/` (§13.3) and split
+ * along its build / query / persistence seams. This module keeps the old
+ * `services/searchIndex` path resolving so an import this change did not reach
+ * cannot break, and is deleted with the rest of the compatibility layer once
+ * nothing imports it.
  *
- * Why the index exists: the note list does a live full-body scan for content
- * search, which is correct (a deep-body-only match is still found) but re-reads
- * every note on every keystroke. The index lets a search skip notes that cannot
- * match, while the full-body scan remains the source of truth for the snippet
- * (see contentSearch `searchWithIndex`).
+ * It re-exports through `features/search` — the feature's public entry point —
+ * rather than reaching into its service files. The list below is therefore the
+ * compatibility contract as a whole: a helper the feature shares internally
+ * cannot leak out here by accident, and a name dropped from either surface is a
+ * failing typecheck rather than a silent absence. What the index is, why it
+ * exists and how it is stored is documented there.
  *
- * How it is stored: per-vault in **shards**, so a large vault never serializes
- * one huge blob. Notes are partitioned across a fixed number of shards by a
- * stable hash of their path, each shard is persisted under its own storage key
- * and carries a checksum, so a corrupted shard is detected and only that shard
- * (not the whole index) is rebuilt. A per-note version token (`mtime:size`) lets
- * a rebuild update only the notes that actually changed, and a `text` field
- * holds the lowercased haystack of every searchable field — including the full
- * body, so a deep-body match is captured by the index itself and never silently
- * dropped.
+ * Nothing outside the search feature should import its internals directly: new
+ * callers go through `features/search`, which exports the same names.
  */
 
 /** The stored document shape and its on-disk version. */
@@ -30,7 +24,7 @@ export {
   type IndexedDoc,
   type IndexState,
   type StoredIndex,
-} from '../features/search/services/index-model'
+} from '../features/search'
 
 /** Shard placement and integrity. */
 export {
@@ -40,7 +34,7 @@ export {
   INDEX_SHARD_NAME_PREFIX,
   shardLabelForPath,
   shardLabels,
-} from '../features/search/services/index-shards'
+} from '../features/search'
 
 /** The storage seam: contracts, key scheme and the fallback/fs adapters. */
 export {
@@ -51,7 +45,7 @@ export {
   indexShardKey,
   type AsyncIndexStorage,
   type IndexStorage,
-} from '../features/search/services/index-storage'
+} from '../features/search'
 
 /** Sharded load/save/clear and the atomic commit. */
 export {
@@ -60,7 +54,7 @@ export {
   saveIndex,
   type IndexShardMeta,
   type IndexShardMetaEntry,
-} from '../features/search/services/index-shard-store'
+} from '../features/search'
 
 /** The build/update path. */
 export {
@@ -71,7 +65,7 @@ export {
   type IndexBuildDeps,
   type IndexBuildOptions,
   type IndexBuildResult,
-} from '../features/search/services/index-build'
+} from '../features/search'
 
 /** The query path. */
-export { indexStateOf, queryIndex } from '../features/search/services/index-query'
+export { indexStateOf, queryIndex } from '../features/search'
