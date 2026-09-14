@@ -4,7 +4,7 @@ import { EditorSelection, EditorState } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { insertMarkdownAtCursor, sourcePaneOwnsInput } from './editor-insert'
 import { releaseSourceViewHandle, setSourceViewHandle } from './source-view'
-import { editorSessionManager } from '../features/editor/session-manager'
+import { editorSessionManager } from '../features/editor'
 import { useViewStore } from '../stores/view'
 
 /**

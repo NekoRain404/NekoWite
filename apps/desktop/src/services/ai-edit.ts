@@ -1,4 +1,4 @@
-import { editorSessionManager } from '../features/editor/session-manager'
+import { editorSessionManager } from '../features/editor'
 import { getTextSelection, replaceTextSelection } from './editor-text-selection'
 import type { TextSelection } from './editor-text-selection'
 import { notifyError } from './errors'

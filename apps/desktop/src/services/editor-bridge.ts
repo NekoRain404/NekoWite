@@ -3,7 +3,7 @@ import { citeToMarkdown } from '@nekowite/editor-core'
 import {
   editorSessionManager,
   EDITOR_BRIDGE_LEGACY_TAB,
-} from '../features/editor/session-manager'
+} from '../features/editor'
 import { getSourceView } from './source-view'
 import { insertSourceText } from './source-commands'
 import { sourcePaneOwnsInput } from './editor-insert'

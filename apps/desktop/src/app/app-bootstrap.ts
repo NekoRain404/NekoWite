@@ -16,7 +16,7 @@ import { createTmpRecovery, requestUntitledVaultSwitch } from './recovery-closed
 import { setActiveEditor } from '@nekowite/plugin-host'
 import { editorBridge } from '../services/editor-bridge'
 import { invalidateImageResolution, refreshCiteChips, setCiteKeyResolver } from '@nekowite/editor-core'
-import { editorSessionManager } from '../features/editor/session-manager'
+import { editorSessionManager } from '../features/editor'
 
 const VAULT_LS_KEY = 'nekowite.vault'
 

@@ -14,7 +14,7 @@
  */
 
 import type { NekoEditor } from '@nekowite/editor-core'
-import { editorSessionManager } from '../../editor/session-manager'
+import { editorSessionManager } from '../../editor'
 import { notifyError } from '../../../services/errors'
 import { getSharedGateways } from '../../../platform/runtime/gateway-runtime'
 import { useSettingsStore } from '../../../stores/settings'

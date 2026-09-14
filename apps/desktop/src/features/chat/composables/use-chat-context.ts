@@ -11,7 +11,7 @@
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { useSettingsStore } from '../../../stores/settings'
 import { useTabsStore } from '../../../stores/tabs'
-import { editorSessionManager } from '../../editor/session-manager'
+import { editorSessionManager } from '../../editor'
 import { flushEdits } from '../../../services/editor-ownership'
 import { buildContextBlock } from '../services/chat-logic'
 

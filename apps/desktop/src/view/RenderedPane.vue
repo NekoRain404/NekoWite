@@ -12,7 +12,7 @@ import { dirRelativeToVault } from '../services/note-meta'
 import RenderSearchPanel from './RenderSearchPanel.vue'
 import ImagePanel from '../ui/ImagePanel.vue'
 import TableMenu from '../ui/TableMenu.vue'
-import { useRenderedEditorStack } from '../features/editor/composables/use-rendered-editor-stack'
+import { useRenderedEditorStack } from '../features/editor'
 
 const tabs = useTabsStore()
 const view = useViewStore()

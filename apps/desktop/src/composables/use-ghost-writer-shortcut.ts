@@ -1,6 +1,6 @@
 import { onBeforeUnmount, onMounted } from 'vue'
 import { aiService } from '../services/ai'
-import { editorSessionManager } from '../features/editor/session-manager'
+import { editorSessionManager } from '../features/editor'
 import { isComposingKey } from '../services/key-guard'
 import { isAiConfigured } from '../services/ai-readiness'
 import { useSettingsStore } from '../stores/settings'

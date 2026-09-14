@@ -10,14 +10,16 @@ import WordToolbar from '../components/WordToolbar.vue'
 import FloatToolbar from '../components/FloatToolbar.vue'
 import RenameDialog from '../components/RenameDialog.vue'
 import ContextMenu from './ContextMenu.vue'
-import { useImageIntake } from '../features/editor/composables/use-image-intake'
+import {
+  useEditorContextMenu,
+  useImageIntake,
+  usePaneInput,
+  useSourcePaneSlot,
+  useSplitScrollSync,
+} from '../features/editor'
 import { runEditorCommand } from '../services/run-editor-command'
 import { useFloatStore } from '../stores/float'
 import { resetFocusedPane } from '../services/editor-ownership'
-import { usePaneInput } from '../features/editor/composables/use-pane-input'
-import { useSplitScrollSync } from '../features/editor/composables/use-split-scroll-sync'
-import { useEditorContextMenu } from '../features/editor/composables/editor-context-menu'
-import { useSourcePaneSlot } from '../features/editor/composables/use-source-pane-slot'
 import { t } from '../i18n'
 
 // The source (CodeMirror) pane is loaded only when the user actually needs it:
