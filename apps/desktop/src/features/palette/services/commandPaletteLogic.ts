@@ -1,5 +1,5 @@
-import { t } from '../i18n'
-import { baseName, dirName, stripVaultPrefix } from '../services/paths'
+import { t } from '../../../i18n'
+import { baseName, dirName, stripVaultPrefix } from '../../../services/paths'
 
 export type PaletteKind = 'command' | 'file'
 

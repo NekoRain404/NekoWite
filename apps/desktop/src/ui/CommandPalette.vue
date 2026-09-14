@@ -14,7 +14,7 @@ import {
   filterEntries,
   groupEntries,
   type PaletteEntry,
-} from './commandPaletteLogic'
+} from '../features/palette/services/commandPaletteLogic'
 import { t } from '../i18n'
 import { isComposingKey } from '../services/keyGuard'
 import { modalStack } from '../services/modalStack'
