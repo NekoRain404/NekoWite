@@ -27,6 +27,7 @@
     "remark-frontmatter": "^5",
     "remark-gfm": "^4",
     "remark-math": "^6.0.0",
+    "remark-mdx": "^3.1.1",
     "remark-parse": "^11.0.0",
     "remark-stringify": "^11.0.0",
     "unified": "^11",

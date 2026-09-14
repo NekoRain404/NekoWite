@@ -132,7 +132,12 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
     }
     deps.session.applyingExternal = true
     try {
-      await editor.open(content)
+      // The file's path, because it is what says whether the document is MDX:
+      // `open` reads a `.mdx` file with the MDX parser and leaves everything
+      // else — including `.md` — as Markdown. An untitled tab has no path, and
+      // no path is Markdown. Read here rather than after the await: this text
+      // belongs to the tab that is active NOW.
+      await editor.open(content, tabs.activeTab?.path ?? null)
       // Mark the exact content as applied immediately after open() succeeds.
       // Later canonicalization (save()) can change the tab's text, but the
       // editor model is now loaded; another open of this same source must be

@@ -115,7 +115,19 @@ describe('plugin editor guard', () => {
 
     permissions.respond(true)
     await pending
-    expect(editor.open).toHaveBeenCalledWith('# rewritten')
+    // The document's path travels with the content: it is what tells the editor
+    // whether to read the buffer as MDX, and the guard is a pass-through for it.
+    expect(editor.open).toHaveBeenCalledWith('# rewritten', undefined)
+  })
+
+  it('passes the document path through to the editor', async () => {
+    const editor = fakeEditor()
+    const guarded = guardEditorForPlugins(editor as never, { pluginName: 'demo' })
+    useAiPermissionStore().setPolicy('auto')
+
+    await guarded.open('# Note\n', '/vault/note.mdx')
+
+    expect(editor.open).toHaveBeenCalledWith('# Note\n', '/vault/note.mdx')
   })
 
   it('refuses a whole-document replacement when the user says no', async () => {

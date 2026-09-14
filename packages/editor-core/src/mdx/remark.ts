@@ -1,12 +1,15 @@
 import { $remark } from '@milkdown/utils'
 
 import { openTagName } from './runs'
+import { contentIndent, sourceBetween, sourceOf } from './document'
 
 interface MdNode {
   type: string
   value?: string
   children?: MdNode[]
-  name?: string
+  /** `string | null`: an MDX fragment has no name, which is what `mdast`'s own
+   *  `MdxJsxFlowElement` says about it once `remark-mdx` is in the program. */
+  name?: string | null
   position?: {
     start: { offset?: number | undefined }
     end: { offset?: number | undefined }
@@ -34,26 +37,10 @@ interface MergeResult {
   endIndex: number
 }
 
-/**
- * The node's own source text.
- *
- * micromark's `html` value drops the indentation of a tag's continuation lines, so
- * a self-closing tag written across lines (`<Callout\n  title="x"\n/>`) lost its
- * layout on the way through the model. The offsets still point at the original
- * text, so the source is what is carried — the same thing the open/close branch
- * below does for the span it merges.
- */
-function sourceOf(node: MdNode, source: string): string {
-  const start = node.position?.start.offset
-  const end = node.position?.end.offset
-  return start !== undefined && end !== undefined && source
-    ? source.slice(start, end)
-    : (node.value as string)
-}
-
 function tryMergeComponent(
   nodes: MdNode[],
   source: string,
+  indent: number,
 ): MergeResult | null {
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i]
@@ -62,7 +49,7 @@ function tryMergeComponent(
     const selfClose = SELF_CLOSE_RE.exec(node.value)
     if (selfClose) {
       return {
-        node: { type: 'mdxJsxFlowElement', name: selfClose[1], value: sourceOf(node, source) },
+        node: { type: 'mdxJsxFlowElement', name: selfClose[1], value: sourceOf(node, source, indent) },
         startIndex: i,
         endIndex: i,
       }
@@ -71,7 +58,7 @@ function tryMergeComponent(
     const inlineBlock = INLINE_BLOCK_RE.exec(node.value)
     if (inlineBlock) {
       return {
-        node: { type: 'mdxJsxFlowElement', name: inlineBlock[1], value: sourceOf(node, source) },
+        node: { type: 'mdxJsxFlowElement', name: inlineBlock[1], value: sourceOf(node, source, indent) },
         startIndex: i,
         endIndex: i,
       }
@@ -83,18 +70,12 @@ function tryMergeComponent(
     for (let j = i + 1; j < nodes.length; j++) {
       const cand = nodes[j]
       if (cand.type === 'html' && typeof cand.value === 'string' && isCloseTag(cand.value, openName)) {
-        const openStart = node.position?.start.offset
-        const closeEnd = cand.position?.end.offset
-        let value: string
-        if (openStart !== undefined && closeEnd !== undefined && source) {
-          value = source.slice(openStart, closeEnd)
-        } else {
-          const body = nodes
+        const value =
+          sourceBetween(node, cand, source, indent) ??
+          `${node.value}\n\n${nodes
             .slice(i + 1, j)
             .map((c) => (typeof c.value === 'string' ? c.value : ''))
-            .join('\n\n')
-          value = `${node.value}\n\n${body}\n\n${cand.value}`
-        }
+            .join('\n\n')}\n\n${cand.value}`
         return { node: { type: 'mdxJsxFlowElement', name: openName, value }, startIndex: i, endIndex: j }
       }
     }
@@ -122,18 +103,20 @@ function tryMergeOpenTagSpan(
   nodes: MdNode[],
   start: number,
   source: string,
+  indent: number,
 ): MergeResult | null {
   const first = nodes[start].children?.[0]
   if (first?.type !== 'text' || typeof first.value !== 'string') return null
   const name = openTagName(first.value)
-  const openStart = first.position?.start.offset
-  if (!name || openStart === undefined || !source) return null
+  if (!name || first.position?.start.offset === undefined || !source) return null
 
   for (let j = start + 1; j < nodes.length; j++) {
     const closeEnd = closeTagEnd(nodes[j], name)
     if (closeEnd !== null) {
+      const value = sourceBetween(first, nodes[j], source, indent)
+      if (value === null) return null
       return {
-        node: { type: 'html', value: source.slice(openStart, closeEnd) },
+        node: { type: 'html', value },
         startIndex: start,
         endIndex: j,
       }
@@ -159,20 +142,25 @@ function closeTagEnd(node: MdNode, name: string): number | null {
   return null
 }
 
+/** The mdast types that carry a block of MDX source in `value` and that
+ *  remark-stringify has no handler for, so they are written as `html`. */
+const MDX_BLOCKS = new Set(['mdxJsxFlowElement', 'mdxFlowExpression', 'mdxjsEsm'])
+
 /**
- * Write each merged element back as raw HTML.
+ * Write each block of MDX source back as raw HTML.
  *
- * `mdxJsxFlowElement` is this pass's own node type: the editor's parse turns it
- * into an `mdxComponent` node, but the save path re-parses its own output with
- * plain remark-stringify, which has no handler for it. Flattening to `html` —
- * which is what the element is, source text — is what lets the save path write the
- * element out verbatim instead of dropping it.
+ * `mdxJsxFlowElement` is this pass's own node type, and `mdxFlowExpression` /
+ * `mdxjsEsm` are the MDX parser's: the editor's parse turns all three into an
+ * `mdxComponent` node, but the save path re-parses its own output with plain
+ * remark-stringify, which has no handler for any of them. Flattening to `html` —
+ * which is what they are, source text — is what lets the save path write them
+ * out verbatim instead of dropping them.
  */
 export function flattenMdxElements(node: MdNode): void {
   if (!node.children) return
   for (let i = 0; i < node.children.length; i++) {
     const child = node.children[i]
-    if (child.type === 'mdxJsxFlowElement' && typeof child.value === 'string') {
+    if (typeof child.value === 'string' && MDX_BLOCKS.has(child.type)) {
       node.children[i] = { type: 'html', value: child.value }
       continue
     }
@@ -211,6 +199,7 @@ function transform(
   nodes: MdNode[],
   file: { value?: unknown },
   inTextBlock = false,
+  indent = 0,
 ): MdNode[] {
   const out: MdNode[] = []
   const source = typeof file.value === 'string' ? file.value : ''
@@ -224,7 +213,7 @@ function transform(
       node.children &&
       node.children.length > 0
     ) {
-      const merged = tryMergeComponent(node.children, source)
+      const merged = tryMergeComponent(node.children, source, indent)
       if (
         merged &&
         merged.startIndex === 0 &&
@@ -237,7 +226,7 @@ function transform(
     }
 
     if (!inTextBlock) {
-      const single = tryMergeComponent([node], source)
+      const single = tryMergeComponent([node], source, indent)
       if (single) {
         out.push(single.node)
         i += 1
@@ -260,15 +249,12 @@ function transform(
             typeof cand.value === 'string' &&
             isCloseTag(cand.value, openName)
           ) {
-            const openStart = node.position?.start.offset
-            const closeEnd = cand.position?.end.offset
             const value =
-              openStart !== undefined && closeEnd !== undefined && source
-                ? source.slice(openStart, closeEnd)
-                : `${node.value}\n\n${nodes
-                    .slice(i + 1, j)
-                    .map((c) => (typeof c.value === 'string' ? c.value : ''))
-                    .join('\n\n')}\n\n${cand.value}`
+              sourceBetween(node, cand, source, indent) ??
+              `${node.value}\n\n${nodes
+                .slice(i + 1, j)
+                .map((c) => (typeof c.value === 'string' ? c.value : ''))
+                .join('\n\n')}\n\n${cand.value}`
             out.push({ type: 'mdxJsxFlowElement', name: openName, value })
             i = j + 1
             found = true
@@ -280,11 +266,9 @@ function transform(
     }
 
     // A tag whose `>` is in a later block (see `tryMergeOpenTagSpan`). Runs after
-    // the two merges above, which handle the tags micromark could read. It wants
-    // the element's blocks to share a parent, so a tag whose `>` line breaks out
-    // of the list item or blockquote that holds it is still left as it is.
+    // the two merges above, which handle the tags micromark could read.
     if (!inTextBlock && node.type === 'paragraph') {
-      const span = tryMergeOpenTagSpan(nodes, i, source)
+      const span = tryMergeOpenTagSpan(nodes, i, source, indent)
       if (span) {
         out.push(span.node)
         i = span.endIndex + 1
@@ -294,7 +278,11 @@ function transform(
 
     if (node.children && node.children.length > 0) {
       const childIsTextBlock = TEXT_BLOCK.has(node.type)
-      out.push({ ...node, children: transform(node.children, file, childIsTextBlock) })
+      // The container's own indent applies to everything inside it: a component
+      // merged out of a blockquote's or a list item's children still carries the
+      // block's prefix on its continuation lines.
+      const childIndent = contentIndent(node, indent, source)
+      out.push({ ...node, children: transform(node.children, file, childIsTextBlock, childIndent) })
     } else {
       out.push(node)
     }

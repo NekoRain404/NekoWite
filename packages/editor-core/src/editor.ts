@@ -9,6 +9,7 @@ import { getMarkdown } from '@milkdown/utils'
 
 import { basicPlugins } from './plugins/basic'
 import { createInlineBreakParser } from './plugins/remark'
+import { isMdxDocument } from './mdx/document'
 import { insertMarkdownInCell, isInTableCell } from './table/context'
 import { invalidateTableClipboard } from './table/clipboard'
 import { registerBuiltinCommands, setCommandViewProvider } from './commands'
@@ -27,7 +28,10 @@ import type { SuggestionStatus } from './suggest'
 export { basicPlugins }
 
 export interface NekoEditor {
-  open(content: string): Promise<void>
+  /** Load a document. `path` is what the document IS — a `.mdx` file is read
+   *  with the MDX parser, anything else (including `.md`, and nothing at all for
+   *  a document with no file behind it) stays Markdown. See `mdx/document.ts`. */
+  open(content: string, path?: string | null): Promise<void>
   save(): Promise<string>
   getView(): EditorView
   onContentChange(cb: () => void): () => void
@@ -68,6 +72,9 @@ export function createEditor(
   // parser until the editor is ready.
   let parse: Parser | null = null
   let destroyed = false
+  // Whether the document currently loaded is MDX. Read by the parser on every
+  // parse, so `open()` sets it and the insert path inherits the document's kind.
+  let mdxDocument = false
   // YAML frontmatter is not representable in the Milkdown model (it would be
   // parsed as a thematic break + setext heading and rewritten on save), so it
   // is extracted before the body enters the editor and re-prepended on save.
@@ -126,7 +133,7 @@ export function createEditor(
     // good on the next save. That transformer cannot be replaced (a duplicate
     // remark plugin name replaces the whole entry), so the parser repairs the tree
     // it produced. See plugins/remark.ts.
-    parse = created.action((ctx) => createInlineBreakParser(ctx))
+    parse = created.action((ctx) => createInlineBreakParser(ctx, () => mdxDocument))
     // Toolbar commands resolve the view lazily; point them at this editor and
     // make sure the global registry has fresh handlers for this schema. The
     // math/table dialog commands capture the view eagerly — keep them in
@@ -165,10 +172,13 @@ export function createEditor(
   })
 
   return {
-    async open(content: string) {
+    async open(content: string, path?: string | null) {
       await ready
       const { front, body } = splitFrontmatter(content)
       frontmatter = front
+      // Set as late as possible: the parse below is what reads it, and another
+      // `open()` may have been awaited through while this one was.
+      mdxDocument = isMdxDocument(path)
       const created = await editor
       created.action((ctx) => {
         const v = ctx.get(editorViewCtx)
@@ -186,7 +196,7 @@ export function createEditor(
     },
     async save() {
       const created = await editor
-      const md = created.action((ctx) => roundTrip(getMarkdown()(ctx)))
+      const md = created.action((ctx) => roundTrip(getMarkdown()(ctx), { mdx: mdxDocument }))
       // The model can hold U+00A0 for a space typed at the end of a text run;
       // it must not reach the file (see normalizeNbsp).
       return frontmatter + normalizeNbsp(md)
