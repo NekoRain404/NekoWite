@@ -32,15 +32,34 @@ import { useViewStore } from '../../../stores/view'
  * can be tested without a live CodeMirror.
  */
 export type SourcePaneExpose = {
+  /** Write a scroll offset from outside, tagged with the sync token that caused
+   *  it, so the pane recognises its own echo instead of reporting it as a
+   *  scroll the user made. */
   setScrollTop(top: number, token: number): void
+  /**
+   * Put 1-based `line` at the top of the viewport, measured rather than
+   * estimated: the write waits for CodeMirror's measure cycle, because a pane
+   * that has just been handed a document has no real line heights yet and an
+   * estimate can be out by an order of magnitude.
+   */
+  setScrollTopForLine(line: number, token: number): void
   getScrollTop(): number
+  /** The pane's scrollable extent, with the panel's trailing space excluded:
+   *  the space is the panel's, not the document's, and the split sync maps
+   *  through the document. */
   getScrollRange(): number
+  /** The offset that puts 1-based `line` at the top of the viewport. */
   scrollTopForLine(line: number): number
   focus(): void
   getText(): string
   getSourceView(): EditorView | null
+  /** The 1-based line of the first content line visible, i.e. the one occupying
+   *  the viewport's first pixel, or null when there is no view. */
   getVisibleUnit(): number | null
+  /** The 1-based (fractional) line at the top of the viewport: the document
+   *  position this pane is showing, in the unit both panes share. */
   getVisibleLine(): number
+  /** Put the caret on `line` (1-based, floored) without moving the viewport. */
   setCaretLine(line: number): void
   setMeasureSuppressed(suppressed: boolean): void
 }

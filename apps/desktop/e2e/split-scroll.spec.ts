@@ -47,18 +47,38 @@ interface PaneScroll {
  * Both panes' offsets and ranges, read from the elements the app itself reads:
  * `SourcePane` scrolls CodeMirror's `.cm-scroller`, and the rendered pane is
  * its own scroll container.
+ *
+ * Each pane's trailing space is subtracted from the range, because that is the
+ * range the app reports to the sync: the space is the PANEL's (80 % of its own
+ * height, so the last line can be raised off the bottom edge), not the
+ * document's, and the two panes lay the document out at different heights — a
+ * pad folded into both ranges is what would misalign them. The pad is read from
+ * the CSS variable the pane sets (`--nkw-tail-space`), so this follows the app
+ * rather than restating it.
  */
 function readPanes(page: Page): Promise<PaneScroll> {
   return page.evaluate(() => {
     const source = document.querySelector('.pane.source .cm-scroller') as HTMLElement | null
     const rendered = document.querySelector('.pane.rendered') as HTMLElement | null
-    const rangeOf = (el: HTMLElement | null): number =>
-      el ? el.scrollHeight - el.clientHeight : -1
+    // Each pane writes the pad on its own content box: the rendered pane on
+    // `.editor-container`, the source pane on its root. Read from there rather
+    // than by walking up from the scroller (`.pane.rendered` carries an inline
+    // width, so an ancestor walk would find the pane's own style attribute and
+    // read no pad at all).
+    const padOf = (selector: string): number => {
+      const holder = document.querySelector(selector) as HTMLElement | null
+      const raw = holder?.style.getPropertyValue('--nkw-tail-space') ?? ''
+      return Number.parseFloat(raw) || 0
+    }
+    const sourcePad = padOf('.pane.source')
+    const renderedPad = padOf('.pane.rendered .editor-container')
+    const rangeOf = (el: HTMLElement | null, pad: number): number =>
+      el ? Math.max(0, el.scrollHeight - el.clientHeight - pad) : -1
     return {
       source: source?.scrollTop ?? -1,
       rendered: rendered?.scrollTop ?? -1,
-      sourceRange: rangeOf(source),
-      renderedRange: rangeOf(rendered),
+      sourceRange: rangeOf(source, sourcePad),
+      renderedRange: rangeOf(rendered, renderedPad),
     }
   })
 }

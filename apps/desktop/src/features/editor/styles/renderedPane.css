@@ -61,7 +61,11 @@
   position: relative;
   max-width: var(--app-content-width);
   margin: 0 auto;
-  padding: 24px 24px 96px;
+  /* The 96px is the read's own breathing room; `--nkw-tail-space` is the panel's
+     trailing space, set by `useEditorTailSpace` from the panel's own height.
+     It has to be PADDING on this box rather than a blank paragraph: padding is
+     not content, so it cannot be saved, exported or counted. */
+  padding: 24px 24px calc(96px + var(--nkw-tail-space, 0px));
   min-height: 100%;
 }
 .editor-container :deep(h1),

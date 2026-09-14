@@ -14,6 +14,16 @@ export interface EditorExternalSyncDeps {
   getEditor: () => DocumentSession['editor']
   /** Ask the search overlay to re-scan the model after a content swap. */
   scheduleOverlayRefresh: () => void
+  /**
+   * The model has just been given `content` — this pane is holding that
+   * document now (only the successful path: a refused parse holds nothing).
+   *
+   * Anything that measures the document has to wait for this: the pane's own
+   * geometry does not exist until the model does, so a caller that acted on the
+   * content watcher alone would be mapping through the document it just
+   * replaced.
+   */
+  onDocumentApplied?: (content: string) => void
 }
 
 export interface EditorExternalSync {
@@ -154,6 +164,10 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
       // editor model is now loaded; another open of this same source must be
       // skipped or it would reset the user's selection/undo/scroll.
       deps.session.appliedContent = content
+      // Published with the text it holds: the pane's record that this document
+      // is measurable now, which is what a position waiting for a document
+      // (the reading position of a note being switched to) waits for.
+      deps.onDocumentApplied?.(content)
       floatStore.select(null)
       // Capture the editor's canonical serialization immediately. The
       // debounced markdownUpdated emit would otherwise arrive later and — for

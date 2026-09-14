@@ -8,6 +8,8 @@ import {
   renderedTopFor,
   type RenderedPosition,
 } from '../controller/pane-scroll-mapping'
+import { useReadingPosition } from './use-reading-position'
+import type { SourcePaneExpose } from './use-source-pane-slot'
 
 /**
  * What a pane has to be able to tell the handoff: where in the document it is,
@@ -17,17 +19,34 @@ import {
  * depends on is visible in one place — and so it is testable without a live
  * CodeMirror or Milkdown.
  */
-export interface SourcePaneHandoff {
-  /** 1-based (fractional) line at the top of the viewport. */
-  getVisibleLine(): number
-  /** The offset that puts that line at the top of the viewport. */
-  scrollTopForLine(line: number): number
-  setScrollTop(top: number, token: number): void
-  setCaretLine(line: number): void
-  focus(): void
-}
+/**
+ * What the handoff needs from the source pane: the pane's own surface, and
+ * nothing else.
+ *
+ * Declared as an extension of `SourcePaneExpose` rather than as its own list of
+ * members on purpose. The handoff and the panes it drives are wired through the
+ * same ref, so two member-by-member declarations would have to be kept in step
+ * by hand — and this file's history already contains the failure that shape
+ * produces: the handoff compiled against a narrower declaration than the pane
+ * actually implemented (`setScrollTopForLine`, added when the plant had to be
+ * measured rather than estimated), which no test in this feature can see because
+ * `vitest` strips types. Naming the pane's own contract makes that drift a
+ * compile error at the pane instead.
+ */
+export type SourcePaneHandoff = SourcePaneExpose
 
 export interface RenderedPaneHandoff {
+  /**
+   * How many documents this pane's model has been given.
+   *
+   * The pane's own record that it is holding a document, and the only signal
+   * that says WHEN that happened: the model is rebuilt asynchronously (the parse
+   * is awaited), so a position that has to be written into this pane cannot be
+   * written on the flush that opened the note. The pane counts the documents
+   * that are the ACTIVE tab's, so an apply that lost a race with a tab switch
+   * never reports a document no tab is showing. Read by `useReadingPosition`.
+   */
+  getDocumentVersion(): number
   /** Content-space top offsets of the rendered headings, in document order. */
   getHeadingTops(): number[]
   /** Scrollable extent: what a rendered offset is measured against. */
@@ -115,6 +134,7 @@ export function usePaneHandoff(options: PaneHandoffOptions): void {
    *  its default on every newly opened document, and the coordinates being
    *  carried were measured in the note being left. */
   let documentSwitched = false
+
   watch(
     () => tabs.activeId,
     () => {
@@ -127,6 +147,17 @@ export function usePaneHandoff(options: PaneHandoffOptions): void {
       })
     },
   )
+
+  // Where the reader was in each note, and putting them back on it when the
+  // note is activated again. A sibling of this module rather than a part of it:
+  // it is the same contract (a position crossing a change of surface) between
+  // two VISITS to a note instead of between the two panes, and it needs the
+  // same pane accessors.
+  useReadingPosition({
+    getSourcePane: options.getSourcePane,
+    getRenderedPane: options.getRenderedPane,
+    nextToken: options.nextToken,
+  })
 
   /** The document position an offset corresponds to by proportion. The rendered
    *  pane's own fallback lives in the mapping module (`renderedLineOrRatio`,
@@ -202,7 +233,13 @@ export function usePaneHandoff(options: PaneHandoffOptions): void {
     caretLine: number,
     source: SourcePaneHandoff,
   ): void {
-    source.setScrollTop(source.scrollTopForLine(scrollLine), options.nextToken())
+    // Measured, not `setScrollTop(scrollTopForLine(...))`: the pane has just
+    // mounted (a mode switch into source) or just been handed the note, and an
+    // unmeasured height map turns a wrapped paragraph's line into a wildly
+    // wrong offset — the browser-level handoff spec fails on exactly that,
+    // roughly half the time, because the estimates are then either right
+    // enough or nowhere near.
+    source.setScrollTopForLine(scrollLine, options.nextToken())
     source.setCaretLine(caretLine)
   }
 

@@ -2,10 +2,17 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { EditorView } from '@codemirror/view'
 import { Transaction } from '@codemirror/state'
+import { isolateHistory } from '@codemirror/commands'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 import { useAppearanceStore } from '../stores/appearance'
-import { createCodeMirrorHost, type CodeMirrorHostHandle } from '../services/code-mirror-host'
+import {
+  createCodeMirrorHost,
+  ExternalChange,
+  type CodeMirrorHostHandle,
+} from '../services/code-mirror-host'
+import { mirrorChange } from '../features/editor/model/mirror-change'
+import { useEditorTailSpace } from '../features/editor/composables/use-editor-tail-space'
 import {
   sourceExtensions,
   setMeasureSuppressed as gateSetMeasureSuppressed,
@@ -38,6 +45,15 @@ const sourceDir = computed(() => resolveDirection(appearance.contentDirection, t
 
 const container = ref<HTMLDivElement | null>(null)
 let host: CodeMirrorHostHandle | null = null
+
+// Trailing space, the source pane's half: the pad goes on CodeMirror's own
+// content box (`.cm-content`), which is where "below the last line" lives, and
+// it is subtracted from the scroll range this pane reports — space, not
+// document, and never part of the extent the split sync maps through.
+const { tailSpacePx, attach: attachTailSpace } = useEditorTailSpace({
+  getScrollEl: () => host?.getView()?.scrollDOM ?? null,
+  apply: (px) => container.value?.style.setProperty('--nkw-tail-space', `${px}px`),
+})
 // The tab whose content the CodeMirror doc currently mirrors. Local edits are
 // attributed to it, so a burst that fires right after a tab switch can never
 // land on the wrong tab.
@@ -90,6 +106,9 @@ onMounted(() => {
     },
   }
   setSourceViewHandle(sourceHandle)
+  // The scroller this measures is CodeMirror's own element, created just above:
+  // there is nothing reactive to watch, so the pane says when it exists.
+  attachTailSpace()
 })
 
 // Hot-swap the source view layout when line-number / soft-wrap toggles change.
@@ -123,13 +142,52 @@ watch(
   },
 )
 
-// External content changes (disk reload, history restore, plugin rewrite,
-// conflict re-write) follow into the source view as a full setValue tagged
-// with the ExternalChange annotation — no undo pollution, no echo back.
+/**
+ * Mirror the tab's text into the CodeMirror document.
+ *
+ * A change of the SAME note's text (a disk reload, a history restore, a plugin
+ * rewrite, or — in split mode — the rendered pane's own edits arriving back
+ * through the tab) is applied as the smallest edit that produces the text, not
+ * as the host's whole-document `setText`.
+ *
+ * Why that distinction is the difference between "the mirror" and "the reader
+ * is thrown to the top": a whole-document replacement moves CodeMirror's scroll
+ * anchor to position 0 (a position inside a replaced range maps to the start of
+ * the replacement), so the view decides everything above the viewport is gone
+ * and scrolls up — measured in the browser on a 9000px note: 4145px -> 115px.
+ * In split mode the sync then reads that scroll as one the user made and eases
+ * the OTHER pane to the top as well, which is the reported defect ("typing in
+ * the rendered pane collapses both panes"). A minimal change maps every position
+ * through itself — the scroll anchor included — so the reader does not move.
+ *
+ * The transaction carries the host's own semantics — the `ExternalChange`
+ * annotation (so the host's listener does not echo this back as a local edit),
+ * `addToHistory: false` and an isolation point (a text that arrived from
+ * elsewhere is not an undo step) — and the host's `setText` still runs
+ * afterwards, on a document that already holds the text, which is the host's
+ * documented no-op path: it is what cancels a pending local burst and keeps
+ * `lastEmitted` the host's business rather than this pane's.
+ *
+ * A document SWAP goes through the tab watcher below, which calls the host
+ * directly: a different note's text must NOT keep this pane's position.
+ */
 watch(
   () => tabs.activeTab?.content,
   (content) => {
     if (content === undefined || !host) return
+    const cm = host.getView()
+    const change = cm ? mirrorChange(cm.state.doc.toString(), content) : null
+    if (cm && change) {
+      host.resetHistory()
+      cm.dispatch({
+        changes: change,
+        annotations: [
+          ExternalChange.of(true),
+          Transaction.addToHistory.of(false),
+          isolateHistory.of('full'),
+        ],
+      })
+    }
     host.setText(content)
   },
 )
@@ -205,10 +263,34 @@ function scrollTopForLine(line: number): number {
   return Math.max(0, block.top + (clamped - start) * block.height)
 }
 
+/**
+ * Put `line` at the top of the viewport, measured rather than estimated.
+ *
+ * `scrollTopForLine` turns a line into an offset through CodeMirror's height
+ * map, and a document that has just been mirrored into the view (a mount, a note
+ * switch, a reload) has not been measured yet: the map is then estimates, and a
+ * wrapped paragraph's estimate is out by an order of magnitude — measured, a
+ * restore landed at 3404px where the reader left 4793px. Reading the offset
+ * inside a measure request makes it the layout's own answer: CodeMirror runs
+ * that read after it has measured the document it is holding.
+ *
+ * The write is the pane's ordinary program write, so its echo is recognised
+ * rather than reported as a scroll the user made (which would drag the other
+ * pane with it in split mode).
+ */
+function setScrollTopForLine(line: number, token: number): void {
+  const cm = host?.getView()
+  if (!cm) return
+  cm.requestMeasure({
+    read: () => scrollTopForLine(line),
+    write: (top: number) => setScrollTop(top, token),
+  })
+}
+
 function scrollRange(): number {
   const el = host?.getView()?.scrollDOM
   if (!el) return 0
-  return Math.max(0, el.scrollHeight - el.clientHeight)
+  return Math.max(0, el.scrollHeight - el.clientHeight - tailSpacePx.value)
 }
 
 function focus(): void {
@@ -291,6 +373,7 @@ function setMeasureSuppressed(suppressed: boolean): void {
 
 defineExpose({
   setScrollTop,
+  setScrollTopForLine,
   getScrollTop,
   getScrollRange,
   scrollTopForLine,
@@ -321,178 +404,4 @@ onBeforeUnmount(() => {
   />
 </template>
 
-<style scoped>
-.source-pane {
-  width: 100%;
-  height: 100%;
-  background: var(--app-canvas);
-}
-
-/* Markdown source highlighting — mirrors editor-content.css typography.
-   All colors come from --app-* tokens and follow data-theme automatically. */
-.source-pane :deep(.cm-md-heading) {
-  color: var(--app-text);
-  font-weight: 700;
-  letter-spacing: -0.03em;
-}
-.source-pane :deep(.cm-line:has(.cm-md-h1)) {
-  font-size: 1.72em;
-  line-height: 1.28;
-}
-.source-pane :deep(.cm-line:has(.cm-md-h2)) {
-  font-size: 1.45em;
-  line-height: 1.3;
-}
-.source-pane :deep(.cm-line:has(.cm-md-h3)) {
-  font-size: 1.14em;
-  line-height: 1.4;
-}
-.source-pane :deep(.cm-md-mark) {
-  color: color-mix(in srgb, var(--app-muted) 88%, transparent);
-  font-weight: 500;
-}
-.source-pane :deep(.cm-md-task) {
-  color: color-mix(in srgb, var(--app-muted) 70%, var(--app-text));
-  font-weight: 550;
-}
-.source-pane :deep(.cm-md-emphasis) {
-  font-style: italic;
-}
-.source-pane :deep(.cm-md-strong) {
-  font-weight: 700;
-}
-.source-pane :deep(.cm-md-strikethrough) {
-  color: var(--app-muted);
-  text-decoration: line-through;
-}
-.source-pane :deep(.cm-md-link) {
-  color: var(--app-accent);
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, var(--app-accent) 38%, transparent);
-  text-underline-offset: 2px;
-}
-.source-pane :deep(.cm-md-url),
-.source-pane :deep(.cm-md-label) {
-  color: color-mix(in srgb, var(--app-accent) 58%, var(--app-muted));
-}
-.source-pane :deep(.cm-md-code) {
-  font-family: var(--app-mono-font);
-  font-size: 0.88em;
-  background: color-mix(in srgb, var(--app-panel) 72%, var(--app-canvas));
-  border: 1px solid color-mix(in srgb, var(--app-border) 72%, transparent);
-  border-radius: var(--app-radius-xs);
-  padding: 0.1em 0.35em;
-  color: color-mix(in srgb, var(--app-text) 88%, var(--app-muted));
-}
-.source-pane :deep(.cm-md-codeblock) {
-  background: color-mix(in srgb, var(--app-panel) 88%, var(--app-canvas));
-}
-.source-pane :deep(.cm-md-codeblock .cm-md-code) {
-  background: transparent;
-  border: none;
-  padding: 0;
-  font-size: inherit;
-}
-.source-pane :deep(.cm-md-quote) {
-  color: color-mix(in srgb, var(--app-text) 74%, var(--app-muted));
-}
-.source-pane :deep(.cm-md-hr),
-.source-pane :deep(.cm-md-comment) {
-  color: var(--app-muted);
-}
-.source-pane :deep(.cm-md-comment) {
-  font-style: italic;
-}
-.source-pane :deep(.cm-md-string) {
-  color: var(--app-code-string);
-}
-.source-pane :deep(.cm-code-keyword) {
-  color: var(--app-code-keyword);
-}
-.source-pane :deep(.cm-code-number) {
-  color: var(--app-code-number);
-}
-.source-pane :deep(.cm-code-fn) {
-  color: var(--app-code-fn);
-}
-.source-pane :deep(.cm-code-type) {
-  color: var(--app-code-type);
-}
-.source-pane :deep(.cm-code-prop) {
-  color: var(--app-code-prop);
-}
-.source-pane :deep(.cm-code-name),
-.source-pane :deep(.cm-code-operator) {
-  color: color-mix(in srgb, var(--app-text) 88%, var(--app-muted));
-}
-.source-pane :deep(.cm-code-invalid) {
-  color: var(--app-danger);
-}
-
-/* zh search panel */
-.source-pane :deep(.nw-search) {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 6px 12px;
-  font-family: var(--app-font);
-  font-size: 12px;
-}
-.source-pane :deep(.nw-search-field) {
-  width: 180px;
-  padding: 4px 8px;
-  border: 1px solid color-mix(in srgb, var(--app-border) 72%, transparent);
-  border-radius: var(--app-radius-sm);
-  background: var(--app-canvas);
-  color: var(--app-text);
-  font-family: var(--app-font);
-  font-size: 12px;
-  outline: none;
-}
-.source-pane :deep(.nw-search-field:focus) {
-  border-color: color-mix(in srgb, var(--app-accent) 55%, var(--app-border));
-}
-.source-pane :deep(.nw-search-field.is-invalid) {
-  border-color: var(--app-danger);
-}
-.source-pane :deep(.nw-search-count) {
-  min-width: 56px;
-  text-align: center;
-  color: var(--app-muted);
-}
-.source-pane :deep(.nw-search-group) {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-.source-pane :deep(.nw-search-toggle),
-.source-pane :deep(.nw-search-action),
-.source-pane :deep(.nw-search-close) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 24px;
-  height: 24px;
-  padding: 0 6px;
-  border: none;
-  border-radius: var(--app-radius-sm);
-  background: transparent;
-  color: var(--app-muted);
-  font-family: var(--app-font);
-  font-size: 11px;
-  cursor: pointer;
-  transition: background var(--app-motion-fast) var(--app-ease),
-              color var(--app-motion-fast) var(--app-ease);
-}
-.source-pane :deep(.nw-search-toggle:hover),
-.source-pane :deep(.nw-search-action:hover),
-.source-pane :deep(.nw-search-close:hover) {
-  color: var(--app-text);
-  background: color-mix(in srgb, var(--app-elevated) 62%, transparent);
-}
-.source-pane :deep(.nw-search-toggle.is-active) {
-  color: var(--app-accent-contrast);
-  background: var(--app-accent);
-}
-</style>
+<style scoped src="../features/editor/styles/sourcePane.css"></style>
