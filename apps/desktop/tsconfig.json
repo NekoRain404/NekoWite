@@ -5,7 +5,30 @@
     "noEmit": true,
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.tsbuildinfo",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    // The e2e specs reach into the dev server's own URL space: `/src/...` is
+    // how Vite addresses the app from the page, and it is also what the harness
+    // hands `import()` at runtime. Without this mapping `tsc` resolves nothing
+    // for those specifiers and reports nothing either — which is how a spec
+    // importing a module that had since been deleted stayed invisible. Mapping
+    // them onto the real files makes a spec that names a module which no longer
+    // exists a typecheck failure.
+    "paths": {
+      "/src/*": ["./src/*"]
+    },
+    // Required by the line above: the specs' specifiers carry the extension
+    // because they are URLs, not module paths. Legal here because this project
+    // never emits (`noEmit`).
+    "allowImportingTsExtensions": true
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.vue", "perf/**/*.ts", "vite.config.ts"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.d.ts",
+    "src/**/*.vue",
+    "perf/**/*.ts",
+    "e2e/**/*.ts",
+    "vite.config.ts",
+    "vitest.perf.config.ts",
+    "playwright.config.ts"
+  ]
 }

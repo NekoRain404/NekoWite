@@ -7,7 +7,6 @@ import {
   modelMarkdown,
   openNote,
   pasteImage,
-  pasteImageFiles,
   queuePick,
   showRendered,
   showSource,

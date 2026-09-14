@@ -11,7 +11,7 @@ test('diagnose heading blank edge Enter / delete slash', async ({ page }) => {
     const registry: Record<string, unknown> = {}
     let n = 0
     window.__TAURI_INTERNALS__ = {
-      invoke: async (cmd: string, args: Record<string, unknown> = {}) => {
+      invoke: async (cmd: string) => {
         if (cmd === 'list_dir') return fixtures
         if (cmd === 'read_file') return '# Welcome\n\nSome body text.\n'
         if (cmd === 'stat_file') return { size: 1, mtime: 1 }
