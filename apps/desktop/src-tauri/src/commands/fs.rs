@@ -24,11 +24,6 @@ use crate::state::{
 use crate::storage::file_store::{self, FileEntry, FileStat};
 use crate::storage::trash_store;
 
-#[tauri::command]
-pub fn ping() -> String {
-    "pong".into()
-}
-
 // The frontend gateway invokes every command with snake_case argument names
 // (`vault_root`, `max_history`, `trash_path`, `default_name`, `start_dir`),
 // while the default `#[tauri::command]` expects camelCase — hence
@@ -558,6 +553,11 @@ const MEDIA_STAGING_DIR: &str = ".tmp";
 /// rest of the session after A → B → A). Granting one file at a time leaves
 /// nothing that needs taking back — a vault the user leaves stops being
 /// extended, and no tree-wide grant exists to outlive it.
+///
+/// `tauri.conf.json`'s `assetProtocol.scope` is empty on purpose: it held
+/// `attachments/**`, which granted nothing (a configured pattern stays relative,
+/// the path is canonicalized) but would have handed every vault's attachment
+/// tree to the protocol had it matched — `tests/asset_config_scope_test.rs`.
 ///
 /// What is refused, and why it is refused here rather than by the scope: the
 /// vault's own bookkeeping (`.nekowite`, `.nekowite-trash`, `.git`), the user's

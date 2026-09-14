@@ -76,7 +76,8 @@ pub fn decode_keyfile(bytes: &[u8]) -> Result<VaultKeyState, String> {
     // untouched for the user to restore.
     //
     // A genuine legacy key is random, so it carries a valid version+mode prefix
-    // about once in 65536 — the discriminator costs essentially nothing.
+    // about once in 32768 (1 of 256 version bytes × 2 of 256 mode bytes) — the
+    // discriminator costs essentially nothing.
     if bytes.len() == LEGACY_KEYFILE_LEN {
         let truncated_header =
             bytes[0] == KEYFILE_VERSION && matches!(bytes[1], MODE_PASSWORDLESS | MODE_PASSWORD);

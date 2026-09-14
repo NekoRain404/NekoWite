@@ -5,8 +5,14 @@
 //! verified here before any file-system access. There is no other place in the
 //! crate that decides whether a path stays inside a vault; storage modules
 //! (`file_store`, `trash_store`, ...) resolve paths through these functions and
-//! are therefore traceable to a vault root. All functions here are pure (no
-//! Fs I/O except canonicalization, no managed state) so they are unit-testable.
+//! are therefore traceable to a vault root. NOT pure, and one path writes:
+//! `resolve_within` / `resolve_within_rel` and `canonicalize_vault_root`
+//! canonicalize, and the former also `lstat`s every component in between
+//! (`reject_symlink_components`, `canonicalize_loose`);
+//! `resolve_vault_metadata_dir` does the same per level and calls
+//! `std::fs::create_dir` on the missing ones (`create_vault_metadata_dir` is the
+//! writer wrapper). Pure: `sanitize_path`, `ipc_path`, `encode_rel_path`,
+//! `decode_rel_path`, `is_safe_rel`, `has_hidden_component`.
 
 use std::io;
 use std::path::{Component, Path, PathBuf};

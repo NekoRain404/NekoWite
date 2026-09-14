@@ -15,7 +15,9 @@
 /// entries in a `data` array with an `id` field; Gemini uses a `models` array
 /// holding a fully-qualified `name` (e.g. `models/gemini-2.5-pro`) that we
 /// reduce to its final segment. An empty or unparseable body yields an empty
-/// list so the caller can degrade gracefully.
+/// list: "no id was readable" is this function's only failure signal, and it is
+/// [`super::fetch_model_ids`] that turns it into the reported error — nothing
+/// here decides how loud that is.
 pub fn parse_model_ids(body: &str, _provider: &str) -> Vec<String> {
     let v: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,

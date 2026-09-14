@@ -71,7 +71,6 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::fs::ping,
             commands::fs::read_file,
             commands::fs::stat_file,
             commands::fs::write_file,
