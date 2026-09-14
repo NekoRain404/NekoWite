@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const read = (p: string) => readFileSync(resolve(__dirname, p), 'utf8')
@@ -49,9 +49,21 @@ const curveOf = (token: string): string => {
  * A file with its prose removed, so an assertion can read declarations only.
  *
  * `//` is a comment in a `<script>` and not in CSS, so a .vue file is stripped
- * in two halves: line comments go up to the first `<style>` block, and nothing
- * inside the stylesheet is touched (a `//` in a `url()` is not a comment, and
- * stripping it there would eat the rest of the declaration).
+ * by region rather than as one text: block comments and line comments inside
+ * `<script>`, HTML comments in the template, block comments in the stylesheet.
+ * A `//` in a stylesheet is not a comment either — stripping it there would eat
+ * the rest of the declaration — so the stylesheet half is left to its own
+ * syntax.
+ *
+ * The stylesheet is located in the *raw* text, which is not a detail. A
+ * comment opener that is not one — the `accept="image/*"` of a file input —
+ * begins a "comment" that runs to the next terminator, and in one component
+ * that terminator is a stylesheet comment *past* its `<style>` tag: the
+ * stylesheet sat inside the body of that phantom comment, so the whole file
+ * read as an empty string to every guard below and every one of them passed.
+ * Finding the tag before any stripping is what keeps a guard from reading a
+ * file that is not there — the same failure as a listed path that has become a
+ * shim, one level up.
  *
  * This is prose handling and not a relaxation. A script comment cannot reach an
  * element any more than a stylesheet comment can, and the check exists to stop
@@ -61,13 +73,18 @@ const curveOf = (token: string): string => {
  * literal.
  */
 const declarations = (source: string, file = ''): string => {
-  const withoutBlocks = source.replace(/\/\*[\s\S]*?\*\//g, '')
-  if (!file.endsWith('.vue')) return withoutBlocks
-  const styleAt = withoutBlocks.indexOf('<style')
-  if (styleAt === -1) return withoutBlocks.replace(/\/\/[^\n]*/g, '')
-  return (
-    withoutBlocks.slice(0, styleAt).replace(/\/\/[^\n]*/g, '') + withoutBlocks.slice(styleAt)
-  )
+  const blocks = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, '')
+  if (!file.endsWith('.vue')) return blocks(source)
+  /** The half above the stylesheet: script comments and markup comments. */
+  const prose = (text: string) =>
+    text
+      .replace(/<script[\s\S]*?<\/script>/g, (script) =>
+        blocks(script).replace(/\/\/[^\n]*/g, ''),
+      )
+      .replace(/<!--[\s\S]*?-->/g, '')
+  const styleAt = source.indexOf('<style')
+  if (styleAt === -1) return prose(source)
+  return prose(source.slice(0, styleAt)) + blocks(source.slice(styleAt))
 }
 
 /** Every .vue under a directory, so a new dialog is covered without being listed. */
@@ -106,38 +123,118 @@ function springSamples(curve: string): { value: number; at: number }[] {
   })
 }
 
-// Every file that renders motion. The three panel components still being split
-// (SettingsPanel, FileTree, NoteListPanel) are deliberately absent: their
-// ad-hoc literals are migrated by the follow-up pass, once the split lands.
-// Add each here as it is cleaned up — this list only ever grows.
+// Every file that renders motion, and the list every guard below reads. A path
+// here is worth exactly what the file behind it is worth, which is why the
+// list itself is the first thing asserted: `../ui/AppSidebar.vue` stayed listed
+// through the split that turned it into a 16-line re-export with no CSS, and
+// three guards went on reading it as an empty string and reporting success.
+//
+// The three panel components still being split (SettingsPanel, FileTree,
+// NoteListPanel) are deliberately absent: their ad-hoc literals are migrated by
+// the follow-up pass, once the split lands. Add each here as it is cleaned up —
+// the list only ever grows, and an entry that stops rendering motion is a
+// defect in the entry, not a reason to delete it quietly.
 const MOTION_SURFACE = [
   './tokens.css',
   './components.css',
   './editor-content.css',
   './motion.css',
-  '../style.css',
   '../components/AppToast.vue',
   '../components/WordToolbar.vue',
-  // The dialogs moved onto the shared arrival this round. The first two also
-  // carry a direction of their own, being anchored to a bottom edge where the
-  // rest are centred.
+  // The dialogs moved onto the shared arrival this round. They declare no
+  // transition of their own — `.dialog` / `.dialog-overlay` carry it — and the
+  // first two also carry a direction of their own, being anchored to a bottom
+  // edge where the rest are centred.
   '../components/AiWriteDialog.vue',
   '../components/ConflictDialog.vue',
   '../components/PermissionDialog.vue',
   '../components/PluginIntegrityDialog.vue',
   '../components/RenameDialog.vue',
   '../ui/AttachmentsPanel.vue',
-  '../ui/AppSidebar.vue',
+  // The sidebar, listed where it now lives. The old `../ui/AppSidebar.vue` path
+  // is a one-stage shim whose own header says this list moves with the feature.
+  '../features/sidebar/components/AppSidebar.vue',
+  '../features/sidebar/components/SidebarGroup.vue',
+  '../features/sidebar/components/SidebarNavigation.vue',
+  '../features/sidebar/components/SidebarReferences.vue',
+  '../features/sidebar/components/SidebarTrash.vue',
   '../features/chat/components/ChatComposer.vue',
   '../features/chat/components/ChatMessageRow.vue',
   '../features/chat/components/ChatSessionBar.vue',
-  '../ui/CommandPalette.vue',
+  // The palette's shell, likewise: its motion moved out of `ui/CommandPalette.vue`
+  // into the feature's stylesheet, and the mount point that is left keeps none
+  // of its own. The chat split made the same move when the panel was split.
+  '../features/palette/styles/commandPalette.css',
+  // The settings model spinner: the app's last bare duration, now on the rate.
+  '../features/settings/components/AiSettings.vue',
   '../ui/ContextMenu.vue',
   '../ui/InfoRail.vue',
   '../ui/StatusBar.vue',
   '../ui/TabBar.vue',
   '../ui/TitleBar.vue',
 ]
+
+/**
+ * What a listed file has to be, or the list is a claim nobody is checking.
+ *
+ * There are two honest ways to render motion here, and a listed file must do
+ * one of them:
+ *
+ *   - declare it — a `transition`, an `animation` or a `will-change`, or the
+ *     motion tokens themselves, which are declared in `tokens.css` and nowhere
+ *     else;
+ *   - or wear the arrival — every dialog under `components/` declares no
+ *     transition at all, because `.dialog` and `.dialog-overlay` carry the
+ *     shared one out of `motion.css` to whatever wears them. Their own CSS is
+ *     still theirs to spoil: a hand-written duration on the surface the shared
+ *     arrival already animates is exactly the defect this list exists to catch,
+ *     so they stay listed.
+ *
+ * A file that does neither is a path every guard below reads as nothing and
+ * passes. `../style.css` was the one entry in that state — no motion of any
+ * kind, shared or declared — and was dropped rather than left as a second
+ * silent pass.
+ */
+const MOTION_DECLARATION =
+  /(?:^|[;{\s])(?:transition|animation)(?:-[\w-]+)?\s*:|(?:^|[;{\s])will-change\s*:|(?:^|[;{\s])--app-(?:motion|ease)[\w-]*\s*:/
+
+/** The shared arrival's classes, one per surface it is declared for. */
+const SHARED_ARRIVAL: readonly string[] = ['dialog', 'dialog-overlay']
+
+/** True when the component's markup puts one of those classes on an element. */
+const wearsArrival = (source: string): boolean =>
+  [...source.matchAll(/class="([^"]*)"/g)].some(([, classes]) =>
+    classes.split(/\s+/).some((name) => SHARED_ARRIVAL.includes(name)),
+  )
+
+describe('the surface list itself', () => {
+  it('names a shared class that motion.css actually animates', () => {
+    // Wearing the shared arrival is only a reason to be on the list while the
+    // arrival is there: a `.dialog` that `motion.css` stopped animating would
+    // leave the five dialogs listed for motion nothing declares.
+    for (const cls of SHARED_ARRIVAL) {
+      expect(motion, `.${cls} is the class motion.css gives the arrival to`).toMatch(
+        new RegExp(`\\.${cls}\\s*\\{[^}]*animation:`),
+      )
+    }
+  })
+
+  it('lists only files that exist and still render motion', () => {
+    for (const file of MOTION_SURFACE) {
+      expect(
+        existsSync(resolve(__dirname, file)),
+        `${file} is listed as a motion surface and is not there`,
+      ).toBe(true)
+      // Read stripped, prose and all: a file's own comment naming `.dialog` is
+      // documentation and not a class it puts on anything.
+      const text = declarations(read(file), file)
+      expect(
+        MOTION_DECLARATION.test(text) || wearsArrival(text),
+        `${file} is listed as a motion surface and no longer renders motion`,
+      ).toBe(true)
+    }
+  })
+})
 
 describe('motion scale', () => {
   it('defines every ladder step, in strictly increasing order', () => {
