@@ -1,0 +1,120 @@
+/**
+ * Open documents: the tab strip, session restore, crash recovery and the external-change
+ * conflict dialog.
+ */
+export const documents = {
+  en: {
+    conflict: {
+      title: 'File changed externally',
+      bodyPrefix: 'The file',
+      bodySuffix: 'changed on disk, but your local edits here are not saved yet.',
+      reloadDisk: 'Use disk (discard local)',
+      keepLocal: 'Keep local',
+      later: 'Later',
+      note: 'Using the disk loads disk content and discards local edits; keeping local keeps the current content unsaved.',
+    },
+
+    tabs: {
+      missingOnDisk: '{path} was moved or deleted outside the app. It has been detached from the note, your text is still here, and the next save will ask where to put it.',
+      close: 'Close',
+      closeOthers: 'Close others',
+      closeAll: 'Close all',
+      closeTab: 'Close tab',
+      newDoc: 'New document',
+      untitled: 'Untitled',
+      saving: 'Saving…',
+      dirty: 'Unsaved',
+      saved: 'Saved',
+      openVaultFirst: 'No vault is open; cannot read the file',
+      readFileFailed: 'Could not read file: {path}',
+      crashRecoveryMsg: 'It looks like the app was interrupted last time. Unsaved changes detected ({time}) — restore the latest version?',
+      saveAttachmentFailed: 'Failed to save attachment; the image remains in the temp folder',
+      saveFailed: 'Save failed; content is kept in the editor, please retry',
+      deleteFailed: 'Delete failed',
+      deleteAssetsFailed: 'The note was deleted, but its image folder could not be moved to the trash.',
+      watchFailed: 'External file changes cannot be tracked right now, so this list may not follow what happens outside the app. Rebuilding the index retries it.',
+      watchRestored: 'External file changes are tracked again.',
+      restoreHistoryFailed: 'Failed to restore the historical version',
+      reloadFailed: 'Could not reload file: {path}; current content kept',
+      unsavedWorkPrompt: 'You have unsaved changes. Leave anyway?',
+      unsavedWorkBlocker: 'Some files could not be saved; the vault was not switched.',
+      untitledVaultSwitchMsg: 'You have {count} unsaved document(s) without a path. Restore to save them before switching; Dismiss to discard them.',
+      untitledCloseAllMsg:
+        'You have {count} untitled document(s) with unsaved changes. Choose Restore to save them before closing; choose Dismiss to discard them.',
+      aria: 'Open documents',
+    },
+
+    session: {
+      restoreFailed: 'Could not restore the previous tabs',
+      restored: 'Restored {n} tabs',
+    },
+
+    recovery: {
+      saved: 'Document saved',
+      restored: 'Restored the previous version',
+      searchCount: '{count} match(es) found',
+      wordGoalReached: 'Word goal reached: {goal} words',
+      wordGoalProgress: '{current} of {goal} words',
+      tmpNotice: 'Found {count} recoverable temporary file(s) left by an interrupted session.',
+      restoreFailed:
+        'Could not restore {count} temporary file(s): {names}',
+    },
+  },
+  zh: {
+    conflict: {
+      title: '文件已在外部被修改',
+      bodyPrefix: '文件',
+      bodySuffix: '的磁盘内容已变化，而当前有未保存的本地修改。',
+      reloadDisk: '以磁盘为准（放弃本地）',
+      keepLocal: '保留本地',
+      later: '稍后再说',
+      note: '以磁盘为准将加载磁盘内容并放弃本地修改；保留本地则维持当前内容并保持未保存状态。',
+    },
+
+    tabs: {
+      missingOnDisk: '{ path } 已被移动或删除（在应用之外）。它已从标签页分离，内容仍在这里——下次保存会询问新位置。',
+      close: '关闭',
+      closeOthers: '关闭其他',
+      closeAll: '关闭全部',
+      closeTab: '关闭标签',
+      newDoc: '新建文档',
+      untitled: '未命名',
+      saving: '保存中…',
+      dirty: '未保存',
+      saved: '已保存',
+      openVaultFirst: '尚未打开 vault，无法读取文件',
+      readFileFailed: '无法读取文件：{path}',
+      crashRecoveryMsg: '检测到上次程序中断，检测到未保存的更改（{time}），恢复最近版本？',
+      saveAttachmentFailed: '保存附件失败，图片仍保留在临时目录',
+      saveFailed: '保存失败，内容已保留在编辑器中，请重试',
+      deleteFailed: '删除失败',
+      deleteAssetsFailed: '笔记已删除，但其图片文件夹未能移入回收站。',
+      watchFailed: '当前无法跟踪外部文件变化，列表可能不会随应用外的改动更新。重建索引会重试。',
+      watchRestored: '已恢复跟踪外部文件变化。',
+      restoreHistoryFailed: '恢复历史版本失败',
+      reloadFailed: '无法重新加载文件：{path}，已保留当前内容',
+      unsavedWorkPrompt: '你有未保存的更改，仍要离开吗？',
+      unsavedWorkBlocker: '部分文件无法保存，未切换 vault',
+      untitledVaultSwitchMsg: '你有 {count} 个未命名的未保存文档。选择“恢复”在切换前保存；选择“忽略”则丢弃。',
+      untitledCloseAllMsg:
+        '你有 {count} 个未命名的未保存文档。选择“恢复”在关闭前保存；选择“忽略”则丢弃。',
+      aria: '打开的文档',
+    },
+
+    session: {
+      restoreFailed: '无法恢复上次打开的标签页',
+      restored: '已恢复 {n} 个标签页',
+    },
+
+    recovery: {
+      saved: '文档已保存',
+      restored: '已恢复历史版本',
+      searchCount: '找到 {count} 处匹配',
+      wordGoalReached: '已达成字数目标：{goal} 字',
+      wordGoalProgress: '已完成 {current} / {goal} 字',
+      tmpNotice: '发现 {count} 个因会话中断遗留的可恢复临时文件。',
+      restoreFailed:
+        '有 {count} 个临时文件无法恢复：{names}',
+    },
+  },
+}

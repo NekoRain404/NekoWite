@@ -87,6 +87,58 @@ describe('i18n messages', () => {
   })
 })
 
+describe('catalogue split', () => {
+  // The catalogue lives in one module per namespace under ./namespaces/, with
+  // en.ts/zh.ts as barrels. The parity test above only compares the *merged*
+  // trees, so a mistake there says "zh and en differ" without saying where.
+  // These checks run per module, and cover the failure the split newly makes
+  // possible: a namespace written but never spread by a barrel.
+  type Trees = Record<'en' | 'zh', Record<string, unknown>>
+  const modules = import.meta.glob<Record<string, Trees>>('./namespaces/*.ts', { eager: true })
+  const namespaces = Object.entries(modules).map(([path, mod]) => ({
+    name: path.replace(/^.*\//, '').replace(/\.ts$/, ''),
+    exports: Object.values(mod),
+  }))
+
+  it('keeps each namespace structurally identical across languages', () => {
+    // Guards the glob too: an empty list would make this vacuously pass.
+    expect(namespaces.length).toBeGreaterThan(0)
+    expect(namespaces.filter((n) => n.exports.length !== 1).map((n) => n.name)).toEqual([])
+    const mismatched: string[] = []
+    for (const { name, exports } of namespaces) {
+      const trees = exports[0]
+      if (!trees) continue
+      const enKeys = flatten(trees.en).sort()
+      const zhKeys = flatten(trees.zh).sort()
+      if (JSON.stringify(enKeys) !== JSON.stringify(zhKeys)) {
+        mismatched.push(
+          `${name}: only-en=[${enKeys.filter((k) => !zhKeys.includes(k))}] ` +
+            `only-zh=[${zhKeys.filter((k) => !enKeys.includes(k))}]`,
+        )
+      }
+    }
+    expect(mismatched).toEqual([])
+  })
+
+  it('is assembled by both barrels without loss or shadowing', () => {
+    for (const lang of ['en', 'zh'] as const) {
+      const merged = messages[lang] as Record<string, unknown>
+      // Equality, not subset: a top-level key spread by two modules would make
+      // the union longer than the barrel, and a module no barrel spreads makes
+      // it shorter. Either way the sorted arrays stop matching.
+      const fromModules = namespaces
+        .flatMap((n) => Object.keys(n.exports[0]?.[lang] ?? {}))
+        .sort()
+      expect(fromModules, `${lang} barrel vs namespace modules`).toEqual(Object.keys(merged).sort())
+      for (const { name, exports } of namespaces) {
+        for (const [key, subtree] of Object.entries(exports[0]?.[lang] ?? {})) {
+          expect(merged[key], `${lang}.${key} (from ${name}.ts)`).toEqual(subtree)
+        }
+      }
+    }
+  })
+})
+
 describe('locale switching', () => {
   beforeEach(() => {
     localStorage.clear()
