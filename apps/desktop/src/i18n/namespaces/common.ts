@@ -8,14 +8,9 @@ export const common = {
       settings: 'Settings',
       close: 'Close',
       browse: 'Browse…',
-      save: 'Save',
-      saveAndSwitch: 'Save & Switch',
       cancel: 'Cancel',
       confirm: 'Confirm',
       delete: 'Delete',
-      rename: 'Rename',
-      search: 'Search',
-      openFolder: 'Open Folder',
     },
 
     error: {
@@ -37,14 +32,9 @@ export const common = {
       settings: '设置',
       close: '关闭',
       browse: '浏览…',
-      save: '保存',
-      saveAndSwitch: '保存并切换',
       cancel: '取消',
       confirm: '确认',
       delete: '删除',
-      rename: '重命名',
-      search: '搜索',
-      openFolder: '打开文件夹',
     },
 
     error: {

@@ -73,7 +73,6 @@ export const ai = {
       emptyAnswer: 'The model returned nothing. Nothing was changed — try again.',
       selectionMoved:
         'The document changed while the model was working, so the answer was not applied. Select the text again and retry.',
-      running: 'AI working…',
     },
 
     aiSettings: {
@@ -219,7 +218,6 @@ export const ai = {
       noSelection: '请先选中要处理的文字',
       emptyAnswer: '模型没有返回内容。文档未被改动，请重试。',
       selectionMoved: '模型工作期间文档已发生变化，因此没有写入结果。请重新选择后重试。',
-      running: 'AI 处理中…',
     },
 
     aiSettings: {
