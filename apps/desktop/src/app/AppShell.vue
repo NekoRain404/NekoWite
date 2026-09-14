@@ -173,6 +173,7 @@ const shellStyle = computed<Record<string, string>>(() => ({
         </div>
         <LayoutResizeHandle
           v-if="railOpen"
+          side="end"
           :label="t('layout.resizeRail')"
           :min="RAIL_WIDTH_MIN"
           :max="RAIL_WIDTH_MAX"

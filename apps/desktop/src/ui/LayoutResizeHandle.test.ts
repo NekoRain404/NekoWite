@@ -239,3 +239,70 @@ describe('LayoutResizeHandle delta units', () => {
     h.app.unmount()
   })
 })
+
+describe('LayoutResizeHandle side', () => {
+  // The info rail is anchored to the right edge of the layout, so its handle
+  // grows LEFTWARD: dragging left has to make the pane wider. With the leading
+  // handle's maths the drag was inverted — drag left and the rail narrowed, so
+  // its edge appeared to move right — which is the report this prop fixes.
+  it('grows a trailing handle when the pointer moves left', () => {
+    stubRaf()
+    const h = mountHandle({ value: 320, min: 240, max: 560, defaultValue: 320, side: 'end' })
+    h.el.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 500, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 440, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    // 60px to the left is 60px WIDER, not 60px narrower.
+    expect(h.changes).toEqual([380])
+    h.app.unmount()
+  })
+
+  it('keeps the trailing handle guide line on the pointer', async () => {
+    stubRaf()
+    const h = mountHandle({ value: 320, min: 240, max: 560, defaultValue: 320, side: 'end' })
+    h.el.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 500, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 440, bubbles: true }))
+    flushRaf()
+    await nextTick()
+    // The guide shows where the edge will land, so it tracks the raw pointer
+    // rather than the mirrored value.
+    const guide = document.body.querySelector('.resize-guide-line') as HTMLElement | null
+    expect(guide?.style.left).toBe('440px')
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    h.app.unmount()
+  })
+
+  it('mirrors the arrow keys and the extremes for a trailing handle', () => {
+    const h = mountHandle({ value: 320, min: 240, max: 560, defaultValue: 320, side: 'end' })
+    keydown(h.el, 'ArrowLeft')
+    expect(h.changes.at(-1)).toBe(336)
+    keydown(h.el, 'ArrowRight')
+    expect(h.changes.at(-1)).toBe(304)
+    // Home is the pane's start, which for a trailing handle is its right edge.
+    keydown(h.el, 'Home')
+    expect(h.changes.at(-1)).toBe(560)
+    keydown(h.el, 'End')
+    expect(h.changes.at(-1)).toBe(240)
+    h.app.unmount()
+  })
+
+  // The sidebar and the note-list column are leading handles and pass no
+  // `side`; the default has to leave them exactly as they were.
+  it('defaults to a leading handle', () => {
+    stubRaf()
+    const h = mountHandle({ value: 320, min: 240, max: 560, defaultValue: 320 })
+    h.el.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 500, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 440, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    // 60px to the left is 60px NARROWER on a leading handle.
+    expect(h.changes).toEqual([260])
+    keydown(h.el, 'ArrowLeft')
+    expect(h.changes.at(-1)).toBe(304)
+    keydown(h.el, 'ArrowRight')
+    expect(h.changes.at(-1)).toBe(336)
+    keydown(h.el, 'Home')
+    expect(h.changes.at(-1)).toBe(240)
+    keydown(h.el, 'End')
+    expect(h.changes.at(-1)).toBe(560)
+    h.app.unmount()
+  })
+})

@@ -20,8 +20,22 @@ const props = withDefaults(
      * whole ratio unit and the drag snaps straight to an extreme.
      */
     deltaUnit?: 'px' | 'fraction'
+    /**
+     * Which edge of the layout the resized pane is anchored to, which decides
+     * how a pointer delta maps onto `value`.
+     *
+     * `'start'` (the default) is a pane whose handle grows RIGHTWARD as the
+     * pane gets wider — the sidebar and the note-list column — so the pointer
+     * delta is the value delta. `'end'` is a pane anchored to the right edge —
+     * the info rail — whose handle grows LEFTWARD instead, so the same drag has
+     * to be negated. Without this the rail followed the pointer backwards (drag
+     * left, rail narrows and its edge moves right) and the arrow keys were
+     * mirrored the same way. Getting it wrong is invisible on the two leading
+     * handles, so a new handle has to state its side.
+     */
+    side?: 'start' | 'end'
   }>(),
-  { step: 16, disabled: false, deltaUnit: 'px' },
+  { step: 16, disabled: false, deltaUnit: 'px', side: 'start' },
 )
 
 const emit = defineEmits<{
@@ -61,6 +75,10 @@ function trackSize(): number {
 
 function applyPointerDelta(clientX: number, startX: number, startValue: number): void {
   let delta = clientX - startX
+  // Only the VALUE is mirrored for a trailing handle: the guide line stays on
+  // the raw pointer, because it marks where the edge will land, not the value it
+  // lands on.
+  if (props.side === 'end') delta = -delta
   if (props.deltaUnit === 'fraction') {
     const size = trackSize()
     // Nothing measurable to divide by (hidden pane, detached element): leaving
@@ -144,18 +162,24 @@ function onKeydown(event: KeyboardEvent): void {
   if (props.disabled) return
   if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
     event.preventDefault()
-    const delta = event.key === 'ArrowLeft' ? -props.step : props.step
+    // Mirrored for a trailing handle as well: there ArrowLeft is the direction
+    // that makes the pane wider, so the keys stay tied to the pane's growth
+    // rather than to the screen direction.
+    const step = event.key === 'ArrowRight' ? props.step : -props.step
+    const delta = props.side === 'end' ? -step : step
     emit('change', clamp(props.value + delta, props.min, props.max))
     return
   }
   if (event.key === 'Home') {
     event.preventDefault()
-    emit('change', props.min)
+    // Home is the pane's start, which for a trailing handle is its right edge —
+    // the largest value, not the smallest.
+    emit('change', props.side === 'end' ? props.max : props.min)
     return
   }
   if (event.key === 'End') {
     event.preventDefault()
-    emit('change', props.max)
+    emit('change', props.side === 'end' ? props.min : props.max)
   }
 }
 
