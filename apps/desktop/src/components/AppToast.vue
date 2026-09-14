@@ -148,6 +148,12 @@ onBeforeUnmount(() => {
   box-shadow: var(--app-shadow-menu);
   cursor: pointer;
   word-break: break-word;
+  /* The stack hangs off the window's top-right corner and grows downward, so
+     that corner is where a toast conceptually lives: it grows out of the anchor
+     rather than fading in over it. Set here and not on the transition classes,
+     which are removed a frame into the transition and would snap the origin
+     back to the centre mid-flight. */
+  transform-origin: top right;
 }
 .toast.recovery {
   color: var(--app-text);
@@ -161,19 +167,36 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 6px;
 }
+/* The stack is a group, and it must not be the one group that snaps: when a
+   toast is dismissed the ones under it close the gap instead of teleporting up
+   by a toast's height. Vue drives this through the FLIP technique — it inverts
+   the shift as a transform and this is the transition it plays out. */
+.toast-move {
+  transition: transform var(--app-motion) var(--app-ease);
+}
 .toast-enter-active {
-  transition: opacity var(--app-motion) var(--app-ease),
-              transform var(--app-motion) var(--app-ease);
+  transition: opacity var(--app-motion) var(--app-ease-surface),
+              transform var(--app-motion) var(--app-ease-surface);
+  /* Promotion is taken out only for as long as the transition that needs it.
+     The stack itself is permanent, so a `will-change` in the base rule would
+     hold every toast on its own compositing layer for its whole life — see the
+     note in styles/motion.css. */
+  will-change: opacity, transform;
 }
 /* Leaving steps down one rung on the ladder and accelerates away: a toast that
-   takes as long to go as it took to arrive reads as lag on the next action. */
+   takes as long to go as it took to arrive reads as lag on the next action. The
+   leave is deliberately not staggered and not slowed — a departing toast is
+   already old news. */
 .toast-leave-active {
   transition: opacity var(--app-motion-fast) var(--app-ease-exit),
               transform var(--app-motion-fast) var(--app-ease-exit);
+  will-change: opacity, transform;
 }
 .toast-enter-from,
 .toast-leave-to {
   opacity: 0;
-  transform: translateY(-6px);
+  /* Travel is a few pixels in from the edge the stack is anchored to, not a
+     slide across the window. */
+  transform: translateY(calc(var(--app-motion-travel) * -1)) scale(0.98);
 }
 </style>

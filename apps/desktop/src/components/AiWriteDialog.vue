@@ -125,11 +125,19 @@ function kindLabel(): string {
   position: fixed;
   bottom: 32px;
   left: 50%;
-  transform: translateX(-50%);
+  /* `translate`, not `transform: translateX(...)`: the shared arrival animates
+     `scale`, and a `transform` is multiplied by it rather than preserved
+     alongside it — a horizontally centred prompt written there slides in from
+     the side as it grows. See the note on the arrival in styles/motion.css. */
+  translate: -50% 0;
   width: min(460px, 90vw);
   padding: 14px 16px;
   font-size: 13px;
   color: var(--app-text);
+  /* Anchored to the bottom edge, so it has a direction where a centred modal
+     has only a centre: pinning the scale to that edge makes it grow up out of
+     the edge it belongs to instead of inflating from a point it does not own. */
+  transform-origin: bottom;
 }
 .ai-write-title {
   font-weight: 600;

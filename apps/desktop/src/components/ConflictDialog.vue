@@ -121,11 +121,18 @@ function later(): void {
   position: fixed;
   bottom: 32px;
   left: 50%;
-  transform: translateX(-50%);
+  /* `translate`, not `transform: translateX(...)` — the shared arrival animates
+     `scale`, which multiplies a `transform` rather than preserving it, so a
+     prompt centred that way slides in from the side as it grows. See the note
+     on the arrival in styles/motion.css. */
+  translate: -50% 0;
   width: min(440px, 90vw);
   padding: 14px 16px;
   font-size: 13px;
   color: var(--app-text);
+  /* Anchored to the bottom edge, so the scale is pinned to the edge it grows
+     out of rather than to a centre it does not have. */
+  transform-origin: bottom;
 }
 .conflict-title {
   font-weight: 600;
