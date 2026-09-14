@@ -148,6 +148,12 @@ test('the command palette is clean for every query', async ({ page }) => {
 })
 
 test('the settings dialog survives a walk over every control', async ({ page }) => {
+  // This one walks every control in six sections and waits for each section's
+  // cross-fade to finish before it counts (see the loop below). The default 30s
+  // was already close on an idle machine and the only symptom of running out
+  // was a timeout mid-click — which reads as a product failure and is not one.
+  test.setTimeout(90_000)
+
   const issues = watchConsole(page)
   await openNote(page)
 
@@ -170,7 +176,20 @@ test('the settings dialog survives a walk over every control', async ({ page }) 
   expect(sections).toBeGreaterThan(2)
   for (let i = 0; i < sections; i += 1) {
     await page.locator('.dialog-nav .nav-row').nth(i).click()
-    await page.waitForTimeout(60)
+    // Wait for the swap to finish, not for a guess at how long it takes.
+    //
+    // The section change is a cross-fade, so for its exit the previous page is
+    // still *in the document* — it is out of flow, it takes no pointer and it is
+    // `inert` (see `.page-leave-active` and `surface-leave.ts`), but it still
+    // matches `.settings-overlay .color-scheme-card`. A `count()` taken during
+    // those 280ms counts the section the user just left, and the walk then waits
+    // for the nth card of a section that has none: this test timed out here
+    // deterministically, and the timeout was the symptom of exactly that.
+    await page.locator('.dialog-content > .page-leave-active').waitFor({
+      state: 'detached',
+      timeout: 3000,
+    })
+    await page.waitForTimeout(20)
 
     // Colour schemes and accents are where the theme work lives, so all of
     // them get exercised rather than a sample.
