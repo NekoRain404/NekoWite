@@ -35,6 +35,10 @@ interface CoState {
   recents: string[]
   /** Every `onFsWatch` report, in order. */
   watchReports: string[]
+  /** How many full note-index runs have STARTED. `onIndexing(true)` is published
+   *  once per `runIndex`, so this counts runs rather than observable reads (a
+   *  re-index of an unchanged vault reads nothing). */
+  indexRuns: number
 }
 
 interface CoordinatorHarness {
@@ -43,6 +47,9 @@ interface CoordinatorHarness {
   state: CoState
   emit: (e: FsChangeEvent) => void
   readCount: () => number
+  /** How many times the coordinator asked for an fs-change subscription: what a
+   *  detached coordinator must stop doing for the vault it left. */
+  fsCalls: () => number
 }
 
 function makeCoordinator(opts: {
@@ -72,6 +79,7 @@ function makeCoordinator(opts: {
     favorites: [],
     recents: [],
     watchReports: [],
+    indexRuns: 0,
   }
   const read = (v: string, p: string): Promise<string> => {
     reads += 1
@@ -105,6 +113,7 @@ function makeCoordinator(opts: {
     },
     onIndexing: (v) => {
       state.indexing = v
+      if (v) state.indexRuns += 1
     },
     onTruncated: (v) => {
       state.truncated = v
@@ -131,6 +140,7 @@ function makeCoordinator(opts: {
     gateway,
     state,
     readCount: () => reads,
+    fsCalls: () => fsCalls,
     emit: (e) => {
       for (const h of handlers) h(e)
     },
@@ -255,6 +265,73 @@ describe('createVaultIndexCoordinator (memory fs gateway, no Vue)', () => {
   })
 })
 
+// `detach()` is the whole vault-session teardown, but the coordinator OBJECT
+// survives it: every port it owns (`rebuildIndex`, `noteContent`, and the search
+// index's own vault checks) reads `currentVault` as "a vault is open". Leaving
+// it set meant a coordinator held past detach still read, still re-indexed and
+// still re-subscribed for the vault that was left. Nothing in the app holds one
+// today (the session store drops its coordinator before creating the next), so
+// these are defensive: detach is the function that claims to clear vault state,
+// and the next caller to keep a coordinator will not know it was unsafe.
+describe('detach (a coordinator held past it outlives nothing)', () => {
+  function makeDetachCase() {
+    const files = ['/vault/a.md']
+    return {
+      h: makeCoordinator({
+        seed: { '/vault/a.md': '# A', '/vault/b.md': 'B', '/vault/未索引.md': '从未被索引过' },
+        fileIndex: {
+          get: async () => [...files],
+          isTruncated: () => false,
+          invalidate: () => {},
+        },
+      }),
+      files,
+    }
+  }
+
+  it('does not re-index, re-publish or re-subscribe for the vault it left', async () => {
+    const { h, files } = makeDetachCase()
+    await h.coordinator.indexVault('/vault')
+    await h.coordinator.buildSearchIndex('/vault')
+    expect(h.coordinator.indexEntryFor('/vault/a.md')).not.toBeNull()
+
+    h.coordinator.detach()
+    const notesAtDetach = h.state.notes
+    const fsCallsAtDetach = h.fsCalls()
+    // A note appeared in the vault that was left. A held coordinator that
+    // re-indexes would publish it into whatever list is on screen now.
+    files.push('/vault/b.md')
+
+    // `rebuildIndex` is the "refresh this list" button. On a coordinator that
+    // outlived its vault it belongs to nobody, so it must not re-index the left
+    // vault, rebuild that vault's persistent index, or re-establish its fs watch.
+    await h.coordinator.rebuildIndex()
+
+    expect(h.state.notes.map((n) => n.path)).toEqual(['/vault/a.md'])
+    // Nothing published at all, not merely nothing new.
+    expect(h.state.notes).toBe(notesAtDetach)
+    expect(h.coordinator.indexEntryFor('/vault/a.md')).toBeNull()
+    // The re-subscribe half: `fsWatch.stop()` clears the degraded flag, so
+    // today's `rebuildIndex` would not reach its retry branch even without the
+    // fix. Pinned here so the branch cannot start firing for a left vault if
+    // that ordering ever changes.
+    expect(h.fsCalls()).toBe(fsCallsAtDetach)
+  })
+
+  it('does not read a note body through the vault it left', async () => {
+    const { h } = makeDetachCase()
+    await h.coordinator.indexVault('/vault')
+    h.coordinator.detach()
+    const readsBefore = h.readCount()
+
+    // A path the note index never cached: returning its body could only mean
+    // reading the vault that was left. `readBody` already takes `null` to mean
+    // "no vault is open"; detach is what makes that true.
+    expect(await h.coordinator.noteContent('/vault/未索引.md')).toBeNull()
+    expect(h.readCount()).toBe(readsBefore)
+  })
+})
+
 // C7: the badge refresh is debounced and then reads the whole attachment tree
 // (several awaits). A vault switch landing inside that window used to write the
 // PREVIOUS vault's count into the new vault's badge: the debounced call passed no
@@ -349,6 +426,126 @@ describe('structural folder changes', () => {
     h.emit({ path: '/v/attachments/2026-09/pic.png', kind: 'created' })
     await new Promise((r) => setTimeout(r, 400))
     expect(h.readCount()).toBe(before)
+  })
+})
+
+// A `resync` is not a change to one path: it is the watcher saying it lost
+// events (an overflowing OS queue, an exhausted handle), which makes it the one
+// case where the watcher KNOWS its mirror may be wrong. Dropping the file-list
+// cache without re-indexing meant every change it missed stayed missed — the
+// note list kept showing what it saw at index time, for good.
+//
+// The path it carries is the WATCH ROOT (Rust emits `watch_root`), which the
+// md/attachment heuristics read as an ordinary non-structural folder event —
+// which is exactly why it used to do nothing.
+describe('watcher resync', () => {
+  const VAULT_ROOT_RESYNC: FsChangeEvent = { path: '/vault', kind: 'resync' }
+
+  /** A mutable vault file list, so a re-read is observable. */
+  function mutableFiles(files: string[]) {
+    return {
+      get: async () => [...files],
+      isTruncated: () => false,
+      invalidate: () => {},
+    }
+  }
+
+  it('re-reads the vault, so a note created while events were being lost is recovered', async () => {
+    const files = ['/vault/a.md']
+    const h = makeCoordinator({
+      seed: { '/vault/a.md': '# A', '/vault/b.md': '---\ntitle: B\n---\nB' },
+      fileIndex: mutableFiles(files),
+    })
+    await h.coordinator.indexVault('/vault')
+    expect(h.state.notes.map((n) => n.path)).toEqual(['/vault/a.md'])
+
+    // Created outside the app while the watcher was losing events: no per-path
+    // event for it is coming, so the resync is the only notice there will be.
+    files.push('/vault/b.md')
+    h.emit(VAULT_ROOT_RESYNC)
+
+    await vi.waitFor(() => {
+      expect(
+        h.state.notes.map((n) => n.path).sort(),
+      ).toEqual(['/vault/a.md', '/vault/b.md'])
+    })
+  })
+
+  it('collapses a burst of resyncs into a single re-index', async () => {
+    const files = ['/vault/a.md']
+    const h = makeCoordinator({
+      seed: { '/vault/a.md': '# A', '/vault/b.md': 'B' },
+      fileIndex: mutableFiles(files),
+    })
+    await h.coordinator.indexVault('/vault')
+    files.push('/vault/b.md')
+    const runsBefore = h.state.indexRuns
+
+    h.emit(VAULT_ROOT_RESYNC)
+    h.emit(VAULT_ROOT_RESYNC)
+    h.emit({ path: '/vault', kind: 'resync' })
+    await vi.waitFor(() => expect(h.state.notes).toHaveLength(2))
+    // Past the debounce window: a run per event would have started two more.
+    await new Promise((r) => setTimeout(r, 300))
+    expect(h.state.indexRuns - runsBefore).toBe(1)
+  })
+
+  it('does not drop a resync that lands while a full re-index is in flight', async () => {
+    // Supersede, not queue: this follows the rule the coordinator already
+    // applies to full runs (latest-wins, one generation read when the work
+    // starts). The in-flight run is neither cancelled nor allowed to swallow
+    // the request — the resync replaces the ONE pending slot and a fresh run
+    // follows. A "busy, ignore it" guard would lose the only notice the watcher
+    // will ever give that it missed a change.
+    const files = ['/vault/a.md']
+    let gets = 0
+    let releaseFirst!: () => void
+    const firstHeld = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    const h = makeCoordinator({
+      seed: { '/vault/a.md': '# A', '/vault/b.md': 'B' },
+      fileIndex: {
+        get: async () => {
+          gets += 1
+          // Snapshot at call time, so the first (held) run reads the file list
+          // as it was before b.md appeared.
+          const snapshot = [...files]
+          if (gets === 1) await firstHeld
+          return snapshot
+        },
+        isTruncated: () => false,
+        invalidate: () => {},
+      },
+    })
+    const indexed = h.coordinator.indexVault('/vault')
+    // Wait until the first run is actually in flight (and its fs subscription
+    // armed, so the event has somewhere to land).
+    await vi.waitFor(() => expect(gets).toBe(1))
+    const runsBefore = h.state.indexRuns
+
+    files.push('/vault/b.md')
+    h.emit(VAULT_ROOT_RESYNC)
+
+    // The follow-up run starts at the debounce edge, while run #1 is STILL
+    // held: supersede, not queue. A queue (or a "the vault is busy, ignore it"
+    // guard) would leave `gets` at 1 until the in-flight run finished, which is
+    // the dropping this pins.
+    await vi.waitFor(() => expect(gets).toBe(2))
+    expect(h.state.indexRuns - runsBefore).toBe(1)
+
+    await vi.waitFor(() => {
+      expect(
+        h.state.notes.map((n) => n.path).sort(),
+      ).toEqual(['/vault/a.md', '/vault/b.md'])
+    })
+
+    // Run #1 is released last, so it publishes its own (older) file list over
+    // run #2's. Nothing is asserted about the list after this point: which of
+    // two OVERLAPPING full runs publishes last is the coordinator's existing
+    // behaviour for full runs, not a property of the resync fix.
+    releaseFirst()
+    await indexed
   })
 })
 

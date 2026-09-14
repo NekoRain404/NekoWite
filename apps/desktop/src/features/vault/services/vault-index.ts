@@ -110,7 +110,9 @@ export interface VaultIndexCoordinator {
 export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): VaultIndexCoordinator {
   /** Vault session generation. `detach` bumps it; every continuation that must
    *  not write across a switch compares against it live, never against a
-   *  snapshot taken before an await. */
+   *  snapshot taken before an await. Clearing `currentVault` does not make it
+   *  redundant: reopening the SAME vault restores the same string, so only the
+   *  bumped counter can tell a torn-down session's run from the current one. */
   let indexSeq = 0
   let currentVault: string | null = null
   let unlistenFs: (() => void) | null = null
@@ -221,6 +223,14 @@ export function createVaultIndexCoordinator(deps: VaultIndexCoordinatorDeps): Va
 
   function detach(): void {
     indexSeq += 1
+    // Forget the vault, not just its subscription. `currentVault` is what every
+    // port below answers "is a vault open" with, and the object stays usable
+    // after detach: a held one would otherwise still read for the vault it left,
+    // re-index it through `rebuildIndex` (publishing its notes into whatever
+    // list is on screen now) and re-subscribe its fs watch. Defensive today —
+    // the session store drops its coordinator before creating the next — but
+    // detach is the function that claims to clear vault state.
+    currentVault = null
     fsWatch.stop()
     badge.cancel()
     search.detach()
