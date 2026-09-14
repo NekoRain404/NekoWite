@@ -1,6 +1,20 @@
 /* ProseMirror (Milkdown) editor content typography — ported from the Memoir
    preview spec: warm-paper surface, soft heading scale, hairline code and
-   table surfaces. All colors go through the --app-* tokens. */
+   table surfaces. All colors go through the --app-* tokens.
+
+   This is the half of the layer that styles TEXT as text: the base scale the two
+   panes share a setting for, the heading ladder and its anchor, the marks inside
+   a line, the blockquote, the lists (GFM task items included), and where the
+   caret, the selection and the empty-paragraph placeholder sit. Every rule here
+   hangs off `.editor-container .ProseMirror`.
+
+   The other half — the constructs the editor DRAWS as objects rather than sets
+   as type: code blocks with their copy button, tables with their cell
+   selection, rules and images, the resizable image node with its handle and its
+   failure overlay, and the citation and footnote pills — is
+   `editor-blocks.css`, which main.ts loads after this file. The split is
+   line-only: no selector, value or curve changed, and `editor-blocks.css`'s own
+   header says the same from its side. */
 
 .editor-container .ProseMirror {
   outline: none;
@@ -200,158 +214,6 @@
   text-decoration: none;
 }
 
-/* ---------- Code block ---------- */
-.editor-container .ProseMirror pre {
-  font-family: var(--app-mono-font);
-  font-size: 0.88em;
-  line-height: 1.72;
-  background: color-mix(in srgb, var(--app-panel) 88%, var(--app-canvas));
-  border: 1px solid color-mix(in srgb, var(--app-border) 70%, transparent);
-  border-radius: var(--app-radius-lg);
-  padding: 0.9em 1.1em;
-  overflow-x: auto;
-}
-.editor-container .ProseMirror pre code {
-  background: none;
-  border: none;
-  padding: 0;
-  font-size: inherit;
-}
-
-/* Copy button lives in a corner of the code block — a top-right affordance
-   that appears on hover and swaps to a checkmark once copied. */
-.editor-container .ProseMirror .nk-code-block {
-  position: relative;
-}
-.editor-container .ProseMirror .nk-code-block pre { margin: 0; }
-.editor-container .ProseMirror .nk-code-copy {
-  position: absolute;
-  top: 0.55rem;
-  right: 0.55rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: 1px solid color-mix(in srgb, var(--app-border) 80%, transparent);
-  border-radius: var(--app-radius-sm);
-  background: color-mix(in srgb, var(--app-elevated) 90%, var(--app-panel));
-  color: var(--app-muted);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity var(--app-motion-fast) var(--app-ease),
-              color var(--app-motion-fast) var(--app-ease),
-              border-color var(--app-motion-fast) var(--app-ease);
-}
-.editor-container .ProseMirror .nk-code-block:hover .nk-code-copy,
-.editor-container .ProseMirror .nk-code-copy:focus-visible { opacity: 1; }
-.editor-container .ProseMirror .nk-code-copy:hover {
-  color: var(--app-accent);
-  border-color: color-mix(in srgb, var(--app-accent) 50%, var(--app-border));
-}
-.editor-container .ProseMirror .nk-code-copy .nk-code-copy-state { display: none; }
-.editor-container .ProseMirror .nk-code-block.nk-copied .nk-code-copy { color: var(--app-success); }
-.editor-container .ProseMirror .nk-code-block.nk-copied .nk-code-copy > svg:first-child { display: none; }
-.editor-container .ProseMirror .nk-code-block.nk-copied .nk-code-copy .nk-code-copy-state { display: inline-flex; }
-
-/* ---------- Table ---------- */
-.editor-container .ProseMirror table {
-  border-collapse: collapse;
-  width: 100%;
-  font-size: 0.92em;
-  overflow: hidden;
-  border-radius: var(--app-radius);
-}
-.editor-container .ProseMirror th,
-.editor-container .ProseMirror td {
-  border: 1px solid color-mix(in srgb, var(--app-border) 90%, transparent);
-  padding: 0.45em 0.7em;
-  text-align: left;
-  vertical-align: top;
-  /* The containing block for the two absolutely-positioned things a cell draws:
-     prosemirror-tables' `.column-resize-handle` (a widget INSIDE the cell, laid
-     out at `right: -2px`) and this file's own `.selectedCell::after`. Without
-     this they resolve against `.editor-container` instead — so every column's
-     divider handle was drawn, 4px wide and full height, at the editor's RIGHT
-     edge whichever divider the pointer was on, and selecting cells tinted the
-     whole editor rather than the cells. */
-  position: relative;
-}
-.editor-container .ProseMirror th {
-  background: color-mix(in srgb, var(--app-panel) 80%, var(--app-canvas));
-  font-weight: 650;
-  color: var(--app-text);
-}
-.editor-container .ProseMirror .selectedCell::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: color-mix(in srgb, var(--app-accent) 12%, transparent);
-  pointer-events: none;
-}
-
-/* ---------- Misc blocks ---------- */
-.editor-container .ProseMirror hr {
-  border: none;
-  background: linear-gradient(90deg, transparent, var(--app-border), transparent);
-  height: 1px;
-  width: min(72%, 34em);
-  margin: 2.2em auto;
-  position: relative;
-  border-radius: 999px;
-}
-.editor-container .ProseMirror hr::before {
-  content: '◆';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  padding: 0 0.6em;
-  background: var(--app-canvas);
-  color: var(--app-muted);
-  font-size: 0.62em;
-}
-.editor-container .ProseMirror img {
-  max-width: 100%;
-  border-radius: var(--app-radius);
-}
-.editor-container .ProseMirror .math-node {
-  color: var(--app-text);
-}
-.editor-container .ProseMirror cite[data-cite-key] {
-  font-style: normal;
-  font-size: 0.82em;
-  font-weight: 550;
-  color: var(--app-accent);
-  background: color-mix(in srgb, var(--app-accent-soft) 76%, var(--app-elevated));
-  border-radius: 999px;
-  padding: 0.08em 0.55em;
-  white-space: nowrap;
-}
-
-/* Footnote reference: a small superscript chip tinted with the accent. */
-.editor-container .ProseMirror .footnote-ref {
-  background: color-mix(in srgb, var(--app-accent-soft) 80%, var(--app-elevated));
-  border-radius: 999px;
-  padding: 0.02em 0.42em;
-  vertical-align: super;
-  font-weight: 600;
-}
-
-/* External links: an arrow glyph after the label. Clicking opens in a new
-   tab (the click is handled in the rendered pane). */
-.editor-container .ProseMirror a[href^="http"]::after {
-  content: '';
-  display: inline-block;
-  width: 0.72em;
-  height: 0.72em;
-  margin-left: 0.18em;
-  vertical-align: -0.08em;
-  background: currentColor;
-  -webkit-mask: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg>') center / contain no-repeat;
-  mask: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg>') center / contain no-repeat;
-}
-
 /* Selection inside the editor */
 .editor-container .ProseMirror ::selection {
   background: color-mix(in srgb, var(--app-accent) 26%, transparent);
@@ -364,105 +226,4 @@
   pointer-events: none;
   float: left;
   height: 0;
-}
-
-/* ---------- Image node (M3) ---------- */
-/* The image node view wraps the <img> in a <figure class="neko-image">. It is
-   inline-sized (the img's width/height are set inline), and shows a selected
-   outline + a visible corner handle when the node is under a NodeSelection. */
-.editor-container .ProseMirror .neko-image {
-  position: relative;
-  display: inline-block;
-  margin: 0.15em 0.3em;
-  max-width: 100%;
-  cursor: default;
-}
-.editor-container .ProseMirror .neko-image img {
-  display: block;
-  max-width: 100%;
-  height: auto;
-  border-radius: 3px;
-  user-select: none;
-}
-.editor-container .ProseMirror .neko-image[data-selected="true"] {
-  outline: 2px solid var(--app-accent);
-  outline-offset: 2px;
-}
-.editor-container .ProseMirror .neko-image[data-failed="true"] img {
-  opacity: 0.35;
-}
-/* Visible resize handle (bottom-right corner). Shown on selection. */
-.editor-container .ProseMirror .neko-image-handle {
-  position: absolute;
-  right: -3px;
-  bottom: -3px;
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
-  background: var(--app-accent);
-  border: 1px solid var(--app-canvas);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--app-accent) 40%, transparent);
-  cursor: nwse-resize;
-  opacity: 0;
-  transition: opacity var(--app-motion-fast) var(--app-ease);
-}
-.editor-container .ProseMirror .neko-image[data-selected="true"] .neko-image-handle {
-  opacity: 1;
-}
-/* Recoverable error overlay (failed-to-load image). */
-.editor-container .ProseMirror .neko-image-error {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  background: color-mix(in srgb, var(--app-canvas) 78%, transparent);
-  border-radius: 3px;
-  font-size: 12px;
-  color: var(--app-muted);
-}
-.editor-container .ProseMirror .neko-image-error[hidden] {
-  display: none;
-}
-.editor-container .ProseMirror .neko-image-error-open {
-  padding: 3px 10px;
-  border: 1px solid color-mix(in srgb, var(--app-border) 80%, transparent);
-  border-radius: var(--app-radius-sm);
-  background: var(--app-elevated);
-  color: var(--app-text);
-  font-size: 11px;
-  cursor: pointer;
-}
-.editor-container .ProseMirror .neko-image-error-open:hover {
-  border-color: var(--app-accent);
-  color: var(--app-accent);
-}
-.editor-container .ProseMirror .neko-image-error-retry {
-  padding: 3px 10px;
-  border: 1px solid color-mix(in srgb, var(--app-border) 80%, transparent);
-  border-radius: var(--app-radius-sm);
-  background: var(--app-elevated);
-  color: var(--app-text);
-  font-size: 11px;
-  cursor: pointer;
-}
-.editor-container .ProseMirror .neko-image-error-retry:hover {
-  border-color: var(--app-accent);
-  color: var(--app-accent);
-}
-
-/* Cite chips were class-only (no rule anywhere), so a citation rendered as bare
-   text and a key with no library entry was indistinguishable from a resolved
-   one. The missing state is the one the reader must be able to see. */
-.rendered-pane .editor-container .ProseMirror .cite-chip {
-  font-variant-numeric: tabular-nums;
-  color: var(--app-accent);
-  cursor: default;
-}
-.rendered-pane .editor-container .ProseMirror .cite-chip.cite-chip-missing {
-  color: var(--app-danger);
-  text-decoration: underline dotted;
-  text-underline-offset: 2px;
 }

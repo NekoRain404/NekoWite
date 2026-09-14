@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 /* The two panes are one setting.
@@ -21,7 +21,11 @@ import { resolve } from 'node:path'
  * CodeMirror theme that is the only thing able to silently override them from
  * JavaScript. Heading ladders, code and table sizes are per-pane decisions and
  * are not asserted here — a test that has to be exclusion-listed into
- * uselessness is worse than no test.
+ * uselessness is worse than no test. The second half of the rendered pane's layer
+ * is still read, though, and for a reason that is not about scope: a stylesheet
+ * split must not be able to move the rule out from under this file while it goes
+ * on reporting success against the half that is left. So the rendered pane is a
+ * LIST of sheets, read joined, and the list is asserted below.
  *
  * What this cannot see: a later rule overriding these. This is a source-level
  * check and it is honest about it — it catches the literal coming back, which is
@@ -30,7 +34,17 @@ import { resolve } from 'node:path'
 const SRC = resolve(__dirname, '..')
 const read = (path: string): string => readFileSync(resolve(SRC, path), 'utf8')
 
-const RENDERED = 'styles/editor-content.css'
+/**
+ * The rendered pane's sheets, in the order main.ts loads them.
+ *
+ * Reading one path was correct only while the layer was one file. The rules
+ * below are `toMatch`es against the joined text, so a sheet left out of this
+ * list takes its rules out of every one of them without failing anything —
+ * which is precisely how a guard reports success while checking nothing.
+ */
+const RENDERED_SHEETS = ['styles/editor-content.css', 'styles/editor-blocks.css'] as const
+const rendered = (): string => RENDERED_SHEETS.map(read).join('\n')
+
 const SOURCE = 'features/editor/styles/sourcePane.css'
 const THEME = 'services/cm-source-view.ts'
 
@@ -43,10 +57,45 @@ function block(text: string, selector: RegExp, where: string): string {
   return found![1]
 }
 
+describe('the rendered pane sheet list itself', () => {
+  it('is non-empty, and every sheet in it is there with rules in it', () => {
+    expect(RENDERED_SHEETS.length, 'an empty list makes every assertion below vacuous').toBeGreaterThan(0)
+    for (const file of RENDERED_SHEETS) {
+      expect(existsSync(resolve(SRC, file)), `${file} is listed and is not there`).toBe(true)
+      expect(read(file).replace(/\/\*[\s\S]*?\*\//g, '').trim(), `${file} is listed and has no rules`).not.toBe('')
+    }
+  })
+
+  it('only lists sheets that still style the rendered editor', () => {
+    // A renamed, emptied or wrongly-listed sheet would otherwise be read as a
+    // string that happens to contain no rules and pass every regex below.
+    for (const file of RENDERED_SHEETS) {
+      // Comments stripped first: the selector named in a sentence is not the
+      // selector declared, and a file whose only mention of it is prose is a
+      // file this list should not be reading.
+      const code = read(file).replace(/\/\*[\s\S]*?\*\//g, '')
+      expect(
+        code,
+        `${file} is in this layer and styles none of it — a sheet read as a string with no rules passes every check below`,
+      ).toMatch(/\.editor-container \.ProseMirror[\s,{:]/)
+    }
+  })
+
+  it('is the order main.ts loads them, because that is the order the browser concatenates', () => {
+    const main = read('main.ts')
+    const imports = [...main.matchAll(/^import\s+'([^']+)'$/gm)].map((m) => m[1])
+    const positions = RENDERED_SHEETS.map((f) => imports.indexOf(`./${f}`))
+    expect(positions, 'every sheet of the rendered pane must be imported by main.ts').not.toContain(-1)
+    expect(positions, `${RENDERED_SHEETS.join(' then ')}, as main.ts loads them`).toEqual(
+      [...positions].sort((a, b) => a - b),
+    )
+  })
+})
+
 describe('the editor body scale', () => {
   it('reads the base size from --app-body-size in both panes', () => {
-    for (const [pane, file] of [['rendered', RENDERED], ['source', SOURCE]] as const) {
-      expect(read(file), `${pane}: a literal here is the bug the user reported`).toMatch(
+    for (const [pane, text] of [['rendered', rendered()], ['source', read(SOURCE)]] as const) {
+      expect(text, `${pane}: a literal here is the bug the user reported`).toMatch(
         /font-size:\s*var\(--app-body-size\)/,
       )
     }
@@ -55,8 +104,8 @@ describe('the editor body scale', () => {
   it('reads the leading from --app-line-height in both panes', () => {
     // Managed separately from the size, per the user's request: same size does
     // not mean same leading, and the two are tuned by different criteria.
-    for (const [pane, file] of [['rendered', RENDERED], ['source', SOURCE]] as const) {
-      expect(read(file), `${pane}: leading must be the token, not a number`).toMatch(
+    for (const [pane, text] of [['rendered', rendered()], ['source', read(SOURCE)]] as const) {
+      expect(text, `${pane}: leading must be the token, not a number`).toMatch(
         /line-height:\s*var\(--app-line-height\)/,
       )
     }
@@ -94,7 +143,7 @@ describe('the editor body scale', () => {
       /fontFamily:\s*'var\(--app-mono-font\)'/,
     )
     expect(
-      block(read(RENDERED), /\.editor-container \.ProseMirror\s*\{([^}]*)\}/, RENDERED),
+      block(rendered(), /\.editor-container \.ProseMirror\s*\{([^}]*)\}/, 'the rendered pane'),
       'the rendered body follows the editor face; its code is a deliberate exception',
     ).toMatch(/font-family:\s*var\(--app-editor-font\)/)
   })
