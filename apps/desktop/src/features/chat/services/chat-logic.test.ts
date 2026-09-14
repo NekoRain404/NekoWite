@@ -45,6 +45,31 @@ describe('chatLogic', () => {
     expect(prompt).not.toContain('aaa')
   })
 
+  /** Turns that survived the cap, counted by their labels. */
+  const turnsKept = (prompt: string): number => (prompt.match(/用户：|助手：/g) ?? []).length
+
+  const history = (turns: number, perTurn: number) =>
+    Array.from({ length: turns }, (_, i) => ({
+      role: (i % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
+      content: '字'.repeat(perTurn),
+    }))
+
+  it('carries a whole conversation of short turns', () => {
+    // The cap is 6 000 characters; 200 turns of 20 characters are well inside
+    // it, so the older half of a long chat is not lost the way the character
+    // count alone suggests (see the table on TRANSCRIPT_CHARS).
+    expect(turnsKept(buildChatPrompt(history(200, 20)))).toBe(200)
+  })
+
+  it('carries one turn once a turn is thousands of characters', () => {
+    // 3 000-character turns (a long answer at a high max-output setting) fill
+    // the budget by themselves: the model sees its own last reply and nothing
+    // before it.
+    const prompt = buildChatPrompt(history(10, 3000))
+    expect(turnsKept(prompt)).toBe(1)
+    expect(prompt.endsWith('字'.repeat(3000))).toBe(true)
+  })
+
   it('trims trailing whitespace of each turn', () => {
     const prompt = buildChatPrompt([{ role: 'user', content: '  你好  \n' }])
     expect(prompt).toBe('用户：  你好')

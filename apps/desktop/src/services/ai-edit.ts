@@ -57,6 +57,32 @@ export const aiEditDeps: AiEditDeps = {
   translate: (key, params) => t(key, params),
 }
 
+/**
+ * The instruction each edit command sends, in English — a ruling, not a
+ * leftover beside the localised prompt shelf.
+ *
+ * These strings are built by a command, prepended to the selected text and
+ * sent; nothing displays them. No composer, no transcript, no settings list.
+ * The shelf's prompts are different in exactly that respect: the composer's
+ * shortcut command puts one INTO the composer as the user's own message, where
+ * the user reads it, edits it and sends it, so it is UI copy that happens to be
+ * model-facing and follows the interface language for that reason (see
+ * `features/ai/prompts.ts`). Who reads the string is what decides its language.
+ *
+ * Leaving these English was measured, not assumed (tokenflux `deepseek-flash`,
+ * the endpoint this checkout is configured against, 3 runs per arm, temperature
+ * 0.7 — the app's default): a Chinese selection rewritten under the instruction
+ * below came back Chinese 3/3 (94/95/88 Han characters, 0 Latin), and a
+ * generative prompt over a Chinese note behaved the same way with an English
+ * instruction as with a Chinese one. The text being worked on sets the answer's
+ * language; the instruction's language did not move it.
+ *
+ * The one action whose language IS a decision takes it from the UI: `translate`
+ * resolves its target language from the locale (`targetOfLocale`), not from a
+ * constant. The ghost writer's continuation instruction
+ * (`features/ai/services/ai-prompt.ts`) is English for the same reason and in
+ * the same category.
+ */
 const ACTION_INSTRUCTIONS: Record<EditAction, string> = {
   rewrite:
     'Rewrite the following selected text in your own words. Keep the meaning, tone and any markup intact. Output only the rewritten text, with no quotation marks around it and no preamble or explanation.',

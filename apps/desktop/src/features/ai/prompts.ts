@@ -23,8 +23,12 @@
  * strongest signal the model has for what language to answer in: an English
  * instruction over a Chinese note is an invitation to answer in English, which
  * is the defect, not the localisation. (`services/ai-edit.ts` keeps its
- * selection instructions in English for the same feature from the other side;
- * that inconsistency is recorded in the report rather than resolved here.)
+ * selection instructions in English for the same feature from the other side.
+ * That is a ruling rather than an accident, and it rests on the same question —
+ * who reads the string: those are built by a command and shown to nobody, while
+ * a shelf prompt goes into the composer as the user's own message. The reason,
+ * the measurement behind it and the one action that takes its language from the
+ * locale are written at `ACTION_INSTRUCTIONS`.)
  *
  * **Out of scope, deliberately:** letting the user author their own prompts.
  * The request was to *add* a set — 加入 — and a prompt editor is a different
