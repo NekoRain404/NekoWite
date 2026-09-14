@@ -5,7 +5,6 @@ import { FileText } from 'lucide-vue-next'
 import { useAppearanceStore } from '../stores/appearance'
 import { useViewStore, SPLIT_RATIO_DEFAULT, SPLIT_RATIO_MAX, SPLIT_RATIO_MIN } from '../stores/view'
 import { useTabsStore } from '../stores/tabs'
-import type { EditorView } from '@codemirror/view'
 import RenderedPane from '../view/RenderedPane.vue'
 import LayoutResizeHandle from './LayoutResizeHandle.vue'
 import WordToolbar from '../components/WordToolbar.vue'
@@ -19,6 +18,7 @@ import { usePaneInput } from '../features/editor/composables/usePaneInput'
 import { parseOutline, type OutlineItem } from '../services/outline'
 import { createSplitScrollCoordinator } from '../services/splitScrollCoordinator'
 import { usePaneHandoff } from '../features/editor/composables/usePaneHandoff'
+import { useSourcePaneSlot } from '../features/editor/composables/useSourcePaneSlot'
 import { countDocumentLines } from '../services/scrollSyncAnchors'
 import {
   planPaneSync,
@@ -27,26 +27,13 @@ import {
 } from '../features/editor/controller/paneScrollMapping'
 import { t } from '../i18n'
 
-// The source (CodeMirror) pane is loaded only when the user actually needs it.
-// Its graph (@codemirror/*, @lezer/*, the host and highlighting services) would
+// The source (CodeMirror) pane is loaded only when the user actually needs it:
+// its graph (@codemirror/*, @lezer/*, the host and highlighting services) would
 // otherwise be pulled into the first-load bundle even though the Milkdown
 // rendered view is what shows on open. Importing it on demand keeps CodeMirror
 // off the eager path and lets the pane be torn down (v-if, not v-show) so it is
-// not kept resident while the rendered editor is displayed.
-type SourcePaneExpose = {
-  setScrollTop(top: number, token: number): void
-  getScrollTop(): number
-  getScrollRange(): number
-  scrollTopForLine(line: number): number
-  focus(): void
-  getText(): string
-  getSourceView(): EditorView | null
-  getVisibleUnit(): number | null
-  getVisibleLine(): number
-  setCaretLine(line: number): void
-  setMeasureSuppressed(suppressed: boolean): void
-}
-
+// not kept resident while the rendered editor is displayed. What that costs —
+// and how the slot it leaves behind is warmed and held — is the composable's.
 const SourcePane = defineAsyncComponent(() => import('../view/SourcePane.vue'))
 
 const view = useViewStore()
@@ -56,7 +43,7 @@ const floatStore = useFloatStore()
 
 const hasTab = computed(() => tabs.activeTab !== null)
 
-const sourcePane = ref<SourcePaneExpose | null>(null)
+const { sourcePane, awaitingSource } = useSourcePaneSlot()
 const renderedPane = ref<InstanceType<typeof RenderedPane> | null>(null)
 const panesEl = ref<HTMLElement | null>(null)
 
@@ -395,6 +382,12 @@ onBeforeUnmount(() => {
         class="panes"
         :class="view.mode"
       >
+        <!-- Holds the source pane's place until its chunk lands. -->
+        <div
+          v-if="awaitingSource"
+          class="pane-pending"
+          aria-hidden="true"
+        />
         <SourcePane
           v-if="view.mode !== 'rendered'"
           ref="sourcePane"
@@ -525,3 +518,5 @@ onBeforeUnmount(() => {
   color: color-mix(in srgb, var(--app-muted) 82%, transparent);
 }
 </style>
+
+<style scoped src="../features/editor/styles/editorPane.css"></style>

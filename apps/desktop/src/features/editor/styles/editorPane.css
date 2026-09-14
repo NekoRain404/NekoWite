@@ -1,0 +1,67 @@
+/* The editor pane's motion, plus the placeholder its source half shows while
+   that pane's chunk is still in flight.
+
+   It lives beside the feature rather than in the component because
+   `ui/EditorPane.vue` has to stay under the line budget, and that budget is
+   better spent on the pane's behaviour than on keyframes. The component loads it
+   as a second scoped style block, so every selector keeps the scope attribute it
+   had while it was inlined. */
+
+/* While the source chunk is in flight this holds the pane's place, so the region
+   the mode switch just cleared is a surface rather than a hole in the layout. It
+   is positioned out of the flex flow on purpose: it is a skin, and giving it a
+   pane's width would split the row with the real pane for the tick between that
+   pane mounting and this clearing. */
+.pane-pending {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--app-canvas);
+}
+
+/* The mode switch replaces the whole document surface in one frame — the largest
+   area of the screen that changes on a click. One opacity ramp on the container:
+   the two panes are showing the same place in the same document, so travelling
+   between them would be a lie, and ramping each pane on its own would fade the
+   outgoing text and the incoming text through one another instead of swapping
+   one surface for another.
+
+   Three names for the same two frames, because a CSS animation only restarts
+   when its `animation-name` changes: one shared name would leave a source →
+   rendered switch with a name that never changed, and therefore no motion at
+   all.
+
+   Everything this rides on is already in place before the first faded frame is
+   painted — the handoff reads the outgoing pane's line and plants the incoming
+   one on it in the same flush, and the keyboard follows on the next tick — so
+   the automatic switch to source after a failed parse, which can land while the
+   user is mid-sentence, keeps its position, its caret and its input; the fade
+   only rides on top of them. */
+@keyframes pane-in-source {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes pane-in-rendered {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes pane-in-split {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.panes.source {
+  animation: pane-in-source var(--app-motion) var(--app-ease);
+}
+.panes.rendered {
+  animation: pane-in-rendered var(--app-motion) var(--app-ease);
+}
+.panes.split {
+  animation: pane-in-split var(--app-motion) var(--app-ease);
+}
+
+/* The other half of the same boundary: closing the last tab puts the empty card
+   back. It mounts, so it needs no second animation name, and it takes the shared
+   surface fade from styles/motion.css rather than restating the frames. */
+.editor-empty {
+  animation: overlay-in var(--app-motion) var(--app-ease);
+}

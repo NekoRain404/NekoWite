@@ -70,10 +70,16 @@ const modes = computed<ModeItem[]>(() => [
   border: 1px solid transparent;
   border-radius: var(--app-radius-sm);
   cursor: pointer;
+  /* `transform` is in this list for the shared press movement (motion.css scales
+     every `.switch-option` under the pointer): a control that scales without a
+     transform in its own transition list snaps to the pressed size and snaps
+     back, which is the one press in the app that read as a glitch rather than as
+     a press. */
   transition: background var(--app-motion-fast) var(--app-ease),
               color var(--app-motion-fast) var(--app-ease),
               border-color var(--app-motion-fast) var(--app-ease),
-              box-shadow var(--app-motion-fast) var(--app-ease);
+              box-shadow var(--app-motion-fast) var(--app-ease),
+              transform var(--app-motion-fast) var(--app-ease);
 }
 .switch-option:hover {
   color: var(--app-text);

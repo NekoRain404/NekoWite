@@ -1,0 +1,35 @@
+/* The shell's share of the motion layer: the two surfaces it mounts but does not
+   own, and the columns it shows and hides.
+
+   These rules are global, not scoped, so they sit beside the component rather
+   than inlined in it — the same reason the shell's own layout rules live in a
+   plain style block. `AppShell.vue` has to stay under the line budget, and that
+   budget belongs to the layout, not to keyframes. */
+
+/* The settings dialog is mounted from the shell, but its chrome belongs to the
+   feature — and it was the one surface left in the app that appeared
+   dead-instant while every other dialog faded and scaled in. Rather than restate
+   a curve in a file this shell does not own, the two class names the panel
+   already renders are handed the shared entrance from styles/motion.css. The
+   dialog centres itself with flexbox, so the arrival's `scale` is free to
+   compose with it; a dialog that centred with a `transform` would drift. */
+.settings-overlay {
+  animation: overlay-in var(--app-motion-slow) var(--app-ease);
+}
+.settings-dialog {
+  animation: surface-in var(--app-motion-slow) var(--app-ease-surface);
+}
+
+/* The sidebar and the note list arrive as columns, not as a page: the same fade
+   the right rail takes, and no slide, because both take part in the flex row and
+   a translate would fight the reflow that happened the instant they were shown.
+   `display: none` cancels an animation, so this replays on every expand — which
+   is what makes a toggle feel like the column coming back rather than the app
+   cutting to a new layout. */
+@keyframes column-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.layout-col {
+  animation: column-in var(--app-motion) var(--app-ease);
+}

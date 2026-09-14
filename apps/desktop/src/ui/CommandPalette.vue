@@ -25,8 +25,31 @@ import {
 } from '../features/palette'
 import { t } from '../i18n'
 
-/** How long a closing palette stays mounted, so its fade-out can run. */
-const MOTION_MS = 160
+/**
+ * How long a closing palette stays mounted, so its fade-out can run.
+ *
+ * Read from the token rather than restated: this was a hand-copied `160` while
+ * the fade it has to cover runs on `--app-motion`, and the token moved to 180ms
+ * without the copy following, so the last 20ms of the fade was cut off. Read
+ * once — the value cannot change while the app is running — and fall back to a
+ * number only where there is no stylesheet to read (a test environment, or the
+ * first frame before tokens.css has landed).
+ */
+const MOTION_FALLBACK_MS = 180
+
+let motionHold: number | null = null
+
+function holdMs(): number {
+  if (motionHold !== null) return motionHold
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--app-motion').trim()
+  const value = raw.endsWith('ms')
+    ? Number.parseFloat(raw)
+    : raw.endsWith('s')
+      ? Number.parseFloat(raw) * 1000
+      : Number.NaN
+  motionHold = Number.isFinite(value) && value > 0 ? value : MOTION_FALLBACK_MS
+  return motionHold
+}
 
 const open = ref(false)
 const visible = ref(false)
@@ -110,13 +133,23 @@ function hide(): void {
   modalToken = null
   cancelPaint()
   visible.value = false
-  closing.value = true
   if (hideTimer) clearTimeout(hideTimer)
-  hideTimer = setTimeout(() => {
+  hideTimer = null
+  // Nothing to cover without a fade: a reduced-motion user has no 180ms to wait
+  // out, and holding the overlay anyway would hand them the one delay in the app
+  // they cannot see and cannot avoid. The overlay stops taking pointer events
+  // either way — see the closing rule in this component's second style block.
+  if (prefersReducedMotion()) {
     open.value = false
     closing.value = false
-    hideTimer = null
-  }, MOTION_MS)
+  } else {
+    closing.value = true
+    hideTimer = setTimeout(() => {
+      open.value = false
+      closing.value = false
+      hideTimer = null
+    }, holdMs())
+  }
   const el = prevFocus
   prevFocus = null
   if (el && el.isConnected) el.focus()
@@ -247,3 +280,18 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped src="../features/palette/styles/commandPalette.css"></style>
+
+<style scoped>
+/* The overlay is `position: fixed; inset: 0` and stays in the tree for the
+   length of its fade-out. At `opacity: 0` it still hit-tests, so for those 180ms
+   the whole screen was dead: a click meant for the note under it reached the
+   overlay instead, and `@pointerdown.self` re-entered the close. The palette is
+   usable only while it is actually shown, so it may only take the pointer then —
+   which also covers the two frames between opening and the deferred paint.
+   (The fade itself stays in the stylesheet beside the feature; this is the one
+   thing about it the component owns, because it is the component that knows
+   whether the palette is showing.) */
+.palette-overlay:not(.is-open) {
+  pointer-events: none;
+}
+</style>
