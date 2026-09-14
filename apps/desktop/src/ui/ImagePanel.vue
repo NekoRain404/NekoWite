@@ -10,9 +10,9 @@ import {
   clearImageSelection,
 } from '@nekowite/editor-core'
 import type { NekoEditor, ImageSelectionState } from '@nekowite/editor-core'
-import { useFocusTrap } from '../composables/useFocusTrap'
+import { useFocusTrap } from '../composables/use-focus-trap'
 import { t } from '../i18n'
-import { isComposingKey } from '../services/keyGuard'
+import { isComposingKey } from '../services/key-guard'
 import SelectMenu from '../components/SelectMenu.vue'
 
 const props = defineProps<{ editor: NekoEditor | null }>()

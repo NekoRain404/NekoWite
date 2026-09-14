@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { nextTick, ref } from 'vue'
 import { t } from '../i18n'
-import { useFocusTrap } from '../composables/useFocusTrap'
-import { useModalEscape } from '../composables/useModalEscape'
+import { useFocusTrap } from '../composables/use-focus-trap'
+import { useModalEscape } from '../composables/use-modal-escape'
 import type { PluginMeta } from '@nekowite/plugin-host'
 
 const props = defineProps<{

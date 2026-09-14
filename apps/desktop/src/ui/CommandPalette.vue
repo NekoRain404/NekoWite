@@ -13,9 +13,9 @@
  */
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Search } from 'lucide-vue-next'
-import { useFocusTrap } from '../composables/useFocusTrap'
-import { isComposingKey } from '../services/keyGuard'
-import { modalStack } from '../services/modalStack'
+import { useFocusTrap } from '../composables/use-focus-trap'
+import { isComposingKey } from '../services/key-guard'
+import { modalStack } from '../services/modal-stack'
 import {
   PALETTE_LIST_ID,
   PaletteList,

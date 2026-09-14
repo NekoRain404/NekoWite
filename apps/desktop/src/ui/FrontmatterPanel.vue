@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Hash, Plus, X } from 'lucide-vue-next'
-import { useFrontmatterPanel } from '../features/notes/composables/useFrontmatterPanel'
+import { useFrontmatterPanel } from '../features/notes/composables/use-frontmatter-panel'
 import { t } from '../i18n'
 
 // The model — the fields, the tag input, and the writes back into the document

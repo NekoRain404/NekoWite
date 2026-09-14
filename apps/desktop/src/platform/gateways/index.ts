@@ -8,8 +8,8 @@
  * can be injected into app services.
  */
 
-import { createMemoryEventAdapter } from '../events/memoryEventAdapter'
-import { createTauriEventAdapter } from '../events/tauriEventAdapter'
+import { createMemoryEventAdapter } from '../events/memory-event-adapter'
+import { createTauriEventAdapter } from '../events/tauri-event-adapter'
 import type {
   AppGateways,
   FsChangeEvent,

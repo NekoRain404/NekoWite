@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { GitCompareArrows } from 'lucide-vue-next'
-import { useHistoryPanel } from './useHistoryPanel'
+import { useHistoryPanel } from './use-history-panel'
 import DiffView from './DiffView.vue'
 import { t } from '../i18n'
 import { useTabsStore } from '../stores/tabs'

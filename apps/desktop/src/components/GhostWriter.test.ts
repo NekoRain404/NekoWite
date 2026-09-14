@@ -15,7 +15,7 @@ vi.mock('../services/ai', () => ({
     reject: rejectMock,
   },
 }))
-vi.mock('../features/editor/sessionManager', () => ({
+vi.mock('../features/editor/session-manager', () => ({
   editorSessionManager: { getActiveEditor: getEditorMock, getView: getViewMock },
 }))
 vi.mock('../stores/settings', () => ({ useSettingsStore: settingsMock }))

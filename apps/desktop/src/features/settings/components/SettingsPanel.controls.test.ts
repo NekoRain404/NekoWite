@@ -20,7 +20,7 @@ import { createApp, nextTick, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import SettingsPanel from './SettingsPanel.vue'
 import { t } from '../../../i18n'
-import { useAiPermissionStore } from '../../../stores/aiPermission'
+import { useAiPermissionStore } from '../../../stores/ai-permission'
 import { useSettingsStore } from '../../../stores/settings'
 
 const invokeMock = vi.hoisted(() => vi.fn())

@@ -19,7 +19,7 @@
  * never constructs a Pinia store or reaches for Tauri itself.
  */
 
-import { deleteNoteWithAssets } from '../../../services/noteDelete'
+import { deleteNoteWithAssets } from '../../../services/note-delete'
 import { dirName, joinPath } from '../../../services/paths'
 
 /** The three name rules the tree has always applied to a new entry name. */

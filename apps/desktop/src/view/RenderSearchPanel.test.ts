@@ -24,7 +24,7 @@ vi.mock('../platform/gateways/fs', () => ({
 }))
 
 import { createEditor, basicPlugins } from '@nekowite/editor-core'
-import { editorBridge } from '../services/editorBridge'
+import { editorBridge } from '../services/editor-bridge'
 import {
   applySpellReplacement,
   closePanel,
@@ -38,7 +38,7 @@ import {
   setQuery,
   setRenderSearchState,
   suggestionsFromAttr,
-} from '../services/renderSearch'
+} from '../services/render-search'
 
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
 

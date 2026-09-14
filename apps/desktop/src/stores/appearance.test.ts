@@ -15,7 +15,7 @@ import { useAppearanceStore } from './appearance'
 // it keeps these tests about the store's decisions instead of about the machine
 // they run on (which has its own accent, or none at all).
 const readSystemAccentColorMock = vi.hoisted(() => vi.fn())
-vi.mock('../platform/systemAccent', () => ({ readSystemAccentColor: readSystemAccentColorMock }))
+vi.mock('../platform/system-accent', () => ({ readSystemAccentColor: readSystemAccentColorMock }))
 
 /** Let the store's fire-and-forget accent read settle. */
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))

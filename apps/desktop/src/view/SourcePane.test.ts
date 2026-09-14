@@ -17,7 +17,7 @@ const hostMock = vi.hoisted(() => ({
   destroy: vi.fn(),
 }))
 
-vi.mock('../services/codeMirrorHost', () => ({
+vi.mock('../services/code-mirror-host', () => ({
   createCodeMirrorHost: () => hostMock,
 }))
 

@@ -3,7 +3,7 @@ import { createApp, nextTick, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import GraphPanel from './GraphPanel.vue'
 import { useTabsStore } from '../../../stores/tabs'
-import { resetVaultFileIndex } from '../../../services/vaultFiles'
+import { resetVaultFileIndex } from '../../../services/vault-files'
 
 const readMock = vi.hoisted(() => vi.fn())
 const listMock = vi.hoisted(() => vi.fn())

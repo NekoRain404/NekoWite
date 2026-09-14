@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref } from 'vue'
-import { useFocusTrap } from '../composables/useFocusTrap'
-import { modalStack } from '../services/modalStack'
+import { useFocusTrap } from '../composables/use-focus-trap'
+import { modalStack } from '../services/modal-stack'
 import { t } from '../i18n'
-import type { PendingAiWrite } from '../stores/aiPermission'
-import type { AiWriteKind } from '../services/aiPermissions'
+import type { PendingAiWrite } from '../stores/ai-permission'
+import type { AiWriteKind } from '../services/ai-permissions'
 
 /**
  * The "the AI wants to change your document" prompt.

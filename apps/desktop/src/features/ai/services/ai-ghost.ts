@@ -14,12 +14,12 @@
  */
 
 import type { NekoEditor } from '@nekowite/editor-core'
-import { editorSessionManager } from '../../editor/sessionManager'
+import { editorSessionManager } from '../../editor/session-manager'
 import { notifyError } from '../../../services/errors'
-import { getSharedGateways } from '../../../platform/runtime/gatewayRuntime'
+import { getSharedGateways } from '../../../platform/runtime/gateway-runtime'
 import { useSettingsStore } from '../../../stores/settings'
 import type { AIConfig } from '../../../stores/settings'
-import { recordAiAudit } from '../../../services/aiAudit'
+import { recordAiAudit } from '../../../services/ai-audit'
 import { t } from '../../../i18n'
 import { buildAIPrompt, getCursorPrefix, type PrefixView } from './ai-prompt'
 import { aiDisabled, aiWritesForbidden, announceBlock } from './ai-gate'

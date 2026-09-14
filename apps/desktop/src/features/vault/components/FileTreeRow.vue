@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { FileTreeNode } from '../composables/useFileTree'
+import type { FileTreeNode } from '../composables/use-file-tree'
 
 /**
  * The two shapes a tree row takes: a real entry, and the inline editor that

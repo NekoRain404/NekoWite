@@ -8,7 +8,7 @@
  * neither generated nor static data).
  */
 
-import type { LayoutPoint } from '../../../services/linkGraph'
+import type { LayoutPoint } from '../../../services/link-graph'
 
 /** Node radius from its degree: a hub grows, but stays small enough that its
  *  own links remain visible between neighbours. */

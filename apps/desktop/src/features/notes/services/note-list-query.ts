@@ -17,7 +17,7 @@ import {
   type FilterOptions,
   type NoteSummary,
   type SortBy,
-} from '../../../services/noteMeta'
+} from '../../../services/note-meta'
 
 export type { FilterOptions }
 

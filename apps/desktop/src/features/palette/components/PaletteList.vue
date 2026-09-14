@@ -18,8 +18,8 @@
 import { ref, type Component } from 'vue'
 import { FileText } from 'lucide-vue-next'
 import { t } from '../../../i18n'
-import { catalogOf } from '../../../ui/commandCatalog'
-import type { PaletteEntry } from '../services/commandPaletteLogic'
+import { catalogOf } from '../../../ui/command-catalog'
+import type { PaletteEntry } from '../services/command-palette-logic'
 import { PALETTE_LIST_ID, paletteItemId, type PaletteGroupRows } from '../types'
 
 defineProps<{

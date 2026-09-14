@@ -9,7 +9,7 @@
  * to its own projection behaviour-preserving.
  */
 import { describe, expect, it } from 'vitest'
-import type { FilterOptions, NoteSummary } from '../../../services/noteMeta'
+import type { FilterOptions, NoteSummary } from '../../../services/note-meta'
 import { count, filter, sort } from './note-list-query'
 
 function note(path: string, over: Partial<NoteSummary> = {}): NoteSummary {

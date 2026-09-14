@@ -9,10 +9,10 @@
  */
 
 import type { Ref } from 'vue'
-import type { NoteMoveResult } from '../services/noteMove'
-import { rewriteNoteRefs } from '../services/noteMove'
-import { deleteNoteWithAssets } from '../services/noteDelete'
-import type { NoteDeleteResult } from '../services/noteDelete'
+import type { NoteMoveResult } from '../services/note-move'
+import { rewriteNoteRefs } from '../services/note-move'
+import { deleteNoteWithAssets } from '../services/note-delete'
+import type { NoteDeleteResult } from '../services/note-delete'
 import type { OpenTab } from './tabs'
 
 /** The slice of the fs gateway the tab file operations use. */

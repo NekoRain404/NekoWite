@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { validateRenameName } from '../services/renameAsset'
-import { useFocusTrap } from '../composables/useFocusTrap'
-import { isComposingKey } from '../services/keyGuard'
-import { modalStack } from '../services/modalStack'
+import { validateRenameName } from '../services/rename-asset'
+import { useFocusTrap } from '../composables/use-focus-trap'
+import { isComposingKey } from '../services/key-guard'
+import { modalStack } from '../services/modal-stack'
 import { t } from '../i18n'
 
 const props = defineProps<{ initial: string }>()

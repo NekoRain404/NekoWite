@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, type App as VueApp } from 'vue'
 
 import NoteCard from './NoteCard.vue'
-import type { NoteSummary } from '../services/noteMeta'
+import type { NoteSummary } from '../services/note-meta'
 
 let mounted: VueApp[] = []
 

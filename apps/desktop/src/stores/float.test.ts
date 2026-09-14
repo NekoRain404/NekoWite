@@ -19,7 +19,7 @@ const trMock = vi.hoisted(() => {
   return tr
 })
 const nodeAtMock = vi.hoisted(() => vi.fn())
-vi.mock('../features/editor/sessionManager', () => ({
+vi.mock('../features/editor/session-manager', () => ({
   editorSessionManager: {
     getView: vi.fn(() => ({
       state: { tr: trMock, doc: { nodeAt: nodeAtMock } },

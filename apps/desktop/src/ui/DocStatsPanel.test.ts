@@ -18,8 +18,8 @@ import { t } from '../i18n'
 /** Counts the document scans, so "the hidden section did not scan" is observed
  *  rather than inferred. */
 const statCalls = { count: 0 }
-vi.mock('../services/docStats', async (orig) => {
-  const mod = await orig<typeof import('../services/docStats')>()
+vi.mock('../services/doc-stats', async (orig) => {
+  const mod = await orig<typeof import('../services/doc-stats')>()
   return {
     ...mod,
     computeDocStats: (md: string) => {

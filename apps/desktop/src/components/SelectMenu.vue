@@ -40,7 +40,7 @@ let instances = 0
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { ChevronDown } from 'lucide-vue-next'
-import { modalStack } from '../services/modalStack'
+import { modalStack } from '../services/modal-stack'
 
 const props = defineProps<{
   /** The chosen value. Picking a row emits the new one. */

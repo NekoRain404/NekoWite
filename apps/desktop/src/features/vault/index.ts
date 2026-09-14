@@ -13,14 +13,14 @@
 
 export { default as FileTree } from './components/FileTree.vue'
 
-export { useFileTree } from './composables/useFileTree'
-export type { FileTreeFlatRow, FileTreeNode, UseFileTreeOptions } from './composables/useFileTree'
+export { useFileTree } from './composables/use-file-tree'
+export type { FileTreeFlatRow, FileTreeNode, UseFileTreeOptions } from './composables/use-file-tree'
 
-export { useFileTreeRename } from './composables/useFileTreeRename'
-export type { EditTarget, TreeEdit, UseFileTreeRenameOptions } from './composables/useFileTreeRename'
+export { useFileTreeRename } from './composables/use-file-tree-rename'
+export type { EditTarget, TreeEdit, UseFileTreeRenameOptions } from './composables/use-file-tree-rename'
 
-export { useFileTreeDrag } from './composables/useFileTreeDrag'
-export type { UseFileTreeDragOptions } from './composables/useFileTreeDrag'
+export { useFileTreeDrag } from './composables/use-file-tree-drag'
+export type { UseFileTreeDragOptions } from './composables/use-file-tree-drag'
 
 /**
  * The link queries over the indexed notes. The notes panel resolves its links
@@ -28,7 +28,7 @@ export type { UseFileTreeDragOptions } from './composables/useFileTreeDrag'
  * reached for by path: the index that answers them belongs to this feature, and
  * its internals stay this feature's business.
  */
-export { inlinksOf, outlinksOf } from './services/libraryQueries'
+export { inlinksOf, outlinksOf } from './services/library-queries'
 
 export { createVaultFileActions, validateEntryName } from './services/vault-file-actions'
 export type {

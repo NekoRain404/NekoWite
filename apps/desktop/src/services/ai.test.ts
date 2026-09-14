@@ -17,7 +17,7 @@ const activeEditor = vi.hoisted(() => ({ current: null as unknown }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }))
 vi.mock('./errors', () => ({ notifyError: notifyErrorMock }))
-vi.mock('../features/editor/sessionManager', () => ({
+vi.mock('../features/editor/session-manager', () => ({
   editorSessionManager: {
     getActiveEditor: () => activeEditor.current,
     getView: () => null,
@@ -33,7 +33,7 @@ import {
   usageTotal,
   type AiTokenUsage,
 } from './ai'
-import { useAiPermissionStore } from '../stores/aiPermission'
+import { useAiPermissionStore } from '../stores/ai-permission'
 
 interface Handlers {
   [event: string]: (e: {

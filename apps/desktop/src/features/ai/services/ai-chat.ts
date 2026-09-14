@@ -13,9 +13,9 @@
  * for exactly the shape this module normalises.
  */
 
-import { getSharedGateways } from '../../../platform/runtime/gatewayRuntime'
+import { getSharedGateways } from '../../../platform/runtime/gateway-runtime'
 import type { AIConfig } from '../../../stores/settings'
-import { recordAiAudit } from '../../../services/aiAudit'
+import { recordAiAudit } from '../../../services/ai-audit'
 import { t } from '../../../i18n'
 import { aiDisabled } from './ai-gate'
 import { markThinking } from './ai-thinking'

@@ -6,7 +6,7 @@ import { useTabsStore, type OpenTab } from '../stores/tabs'
 import { useAppearanceStore } from '../stores/appearance'
 import { t } from '../i18n'
 
-vi.mock('../platform/appVersion', () => ({
+vi.mock('../platform/app-version', () => ({
   readAppVersion: vi.fn().mockResolvedValue('1.0.0'),
   BUILD_VERSION: '1.0.0',
 }))

@@ -12,9 +12,9 @@
  * off" and "we cannot tell", and it is deliberate in both directions.
  */
 
-import { useAiPermissionStore } from '../../../stores/aiPermission'
-import { decideAiWrite, isAiEnabled, type AiPermissionState } from '../../../services/aiPermissions'
-import { announceAiBlockOnce } from '../../../services/aiBlockAnnounce'
+import { useAiPermissionStore } from '../../../stores/ai-permission'
+import { decideAiWrite, isAiEnabled, type AiPermissionState } from '../../../services/ai-permissions'
+import { announceAiBlockOnce } from '../../../services/ai-block-announce'
 import { notifyError } from '../../../services/errors'
 import { t } from '../../../i18n'
 

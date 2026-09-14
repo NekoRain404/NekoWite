@@ -8,7 +8,7 @@
  * draws, and the id wiring that ties the search field to that listbox.
  */
 
-import type { PaletteEntry, PaletteKind } from './services/commandPaletteLogic'
+import type { PaletteEntry, PaletteKind } from './services/command-palette-logic'
 
 /** A row as rendered: the entry plus the index the arrow keys move through it
  *  by, and the index `aria-activedescendant` points at. */

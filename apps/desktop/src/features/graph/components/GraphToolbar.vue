@@ -12,7 +12,7 @@
 import { computed } from 'vue'
 import SelectMenu, { type SelectOption } from '../../../components/SelectMenu.vue'
 import { t } from '../../../i18n'
-import type { LinkKindFilter } from '../composables/useGraphFilters'
+import type { LinkKindFilter } from '../composables/use-graph-filters'
 
 const props = defineProps<{
   loading: boolean

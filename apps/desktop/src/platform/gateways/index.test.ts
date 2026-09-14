@@ -8,7 +8,7 @@ describe('getGateways', () => {
 
   it('returns tauri gateways when Tauri internals are present', async () => {
     vi.stubGlobal('window', { __TAURI_INTERNALS__: {} })
-    const { getSharedGateways } = await import('../runtime/gatewayRuntime')
+    const { getSharedGateways } = await import('../runtime/gateway-runtime')
     const gw = getSharedGateways()
     expect(gw.fs.read).toBeTypeOf('function')
     expect(gw.ai.listModels).toBeTypeOf('function')
@@ -18,7 +18,7 @@ describe('getGateways', () => {
 
   it('returns memory gateways when running in a plain browser', async () => {
     vi.stubGlobal('window', {})
-    const { getSharedGateways } = await import('../runtime/gatewayRuntime')
+    const { getSharedGateways } = await import('../runtime/gateway-runtime')
     const gw = getSharedGateways()
     expect(gw.fs.read).toBeTypeOf('function')
     expect(gw.ai.listModels).toBeTypeOf('function')

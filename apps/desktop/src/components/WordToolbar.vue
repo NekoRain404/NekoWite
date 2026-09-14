@@ -23,9 +23,9 @@ import {
   Boxes,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
-import { COMMAND_KEYS } from '../ui/commandCatalog'
-import { rewriteSelection } from '../services/aiEdit'
-import type { EditAction } from '../services/aiEdit'
+import { COMMAND_KEYS } from '../ui/command-catalog'
+import { rewriteSelection } from '../services/ai-edit'
+import type { EditAction } from '../services/ai-edit'
 import { t } from '../i18n'
 
 const emit = defineEmits<{ (e: 'command', id: string): void }>()

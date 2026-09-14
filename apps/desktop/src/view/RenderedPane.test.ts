@@ -27,7 +27,7 @@ vi.mock('../platform/gateways/fs', () => ({
 }))
 
 import RenderedPane from './RenderedPane.vue'
-import { editorBridge } from '../services/editorBridge'
+import { editorBridge } from '../services/editor-bridge'
 import { fsService } from '../platform/gateways/fs'
 import { useAppearanceStore } from '../stores/appearance'
 

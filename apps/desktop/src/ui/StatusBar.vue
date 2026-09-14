@@ -4,10 +4,10 @@ import { storeToRefs } from 'pinia'
 import { useTabsStore } from '../stores/tabs'
 import { useViewStore } from '../stores/view'
 import { useAppearanceStore } from '../stores/appearance'
-import { useDocDerivedStore } from '../stores/docDerived'
+import { useDocDerivedStore } from '../stores/doc-derived'
 import { t } from '../i18n'
 import { aiThinking } from '../services/ai'
-import { readAppVersion } from '../platform/appVersion'
+import { readAppVersion } from '../platform/app-version'
 
 const tabs = useTabsStore()
 const view = useViewStore()

@@ -5,10 +5,10 @@ import { t } from '../../../i18n'
 import FileTreeRow from './FileTreeRow.vue'
 import type { FileTreeRowView } from './FileTreeRow.vue'
 import FileTreeContextMenu from './FileTreeContextMenu.vue'
-import { useFileTree } from '../composables/useFileTree'
-import type { FileTreeFlatRow, FileTreeNode } from '../composables/useFileTree'
-import { useFileTreeRename } from '../composables/useFileTreeRename'
-import { useFileTreeDrag } from '../composables/useFileTreeDrag'
+import { useFileTree } from '../composables/use-file-tree'
+import type { FileTreeFlatRow, FileTreeNode } from '../composables/use-file-tree'
+import { useFileTreeRename } from '../composables/use-file-tree-rename'
+import { useFileTreeDrag } from '../composables/use-file-tree-drag'
 
 /**
  * The Folders panel: a vault tree the user can expand, open from, create in,

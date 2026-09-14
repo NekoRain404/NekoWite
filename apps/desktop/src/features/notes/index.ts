@@ -22,11 +22,11 @@
 
 export { default as NoteListPanel } from './components/NoteListPanel.vue'
 
-export { useNoteList } from './composables/useNoteList'
-export type { NoteListLinks, NoteListModel, NoteOutlink } from './composables/useNoteList'
+export { useNoteList } from './composables/use-note-list'
+export type { NoteListLinks, NoteListModel, NoteOutlink } from './composables/use-note-list'
 
-export { useNoteActions } from './composables/useNoteActions'
-export type { NoteActionsModel } from './composables/useNoteActions'
+export { useNoteActions } from './composables/use-note-actions'
+export type { NoteActionsModel } from './composables/use-note-actions'
 
 export { count, filter, sort } from './services/note-list-query'
 

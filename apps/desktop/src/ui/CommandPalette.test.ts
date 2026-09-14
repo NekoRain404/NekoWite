@@ -15,12 +15,12 @@ vi.mock('../platform/gateways/fs', () => ({
   },
 }))
 
-vi.mock('../services/vaultFiles', () => ({
+vi.mock('../services/vault-files', () => ({
   vaultFileIndex: { invalidate: vi.fn(), files: vi.fn(() => []) },
 }))
 
 const runEditorCommandMock = vi.hoisted(() => vi.fn(() => true))
-vi.mock('../services/runEditorCommand', () => ({ runEditorCommand: runEditorCommandMock }))
+vi.mock('../services/run-editor-command', () => ({ runEditorCommand: runEditorCommandMock }))
 
 import CommandPalette from './CommandPalette.vue'
 import { useTabsStore } from '../stores/tabs'

@@ -9,7 +9,7 @@
  * is impractical (module-singleton services, Pinia stores).
  */
 
-import { getSharedGateways } from '../runtime/gatewayRuntime'
+import { getSharedGateways } from '../runtime/gateway-runtime'
 
 export const fsService = getSharedGateways().fs
 

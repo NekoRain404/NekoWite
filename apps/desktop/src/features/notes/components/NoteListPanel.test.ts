@@ -3,8 +3,8 @@ import { createApp, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import NoteListPanel from './NoteListPanel.vue'
 import { FileTree } from '../../vault'
-import { useFileTreeStore } from '../../../stores/fileTree'
-import { useDocumentListStore } from '../../../stores/documentList'
+import { useFileTreeStore } from '../../../stores/file-tree'
+import { useDocumentListStore } from '../../../stores/document-list'
 import { useTabsStore } from '../../../stores/tabs'
 
 const fsMocks = vi.hoisted(() => ({

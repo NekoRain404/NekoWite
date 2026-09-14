@@ -15,13 +15,13 @@ import SelectMenu, { type SelectOption } from '../../../components/SelectMenu.vu
 import { t } from '../../../i18n'
 // Type-only, so the policy dropdown's cast is checked against the union the
 // composable's writable computed accepts.
-import type { AiWritePolicy } from '../../../services/aiPermissions'
+import type { AiWritePolicy } from '../../../services/ai-permissions'
 import {
   AUDIT_KIND_KEYS,
   AUDIT_OUTCOME_KEYS,
   AUDIT_SOURCE_KEYS,
   useAiPermissionSettings,
-} from '../composables/useAiPermissionSettings'
+} from '../composables/use-ai-permission-settings'
 
 const {
   enabled,
