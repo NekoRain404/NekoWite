@@ -16,7 +16,9 @@ import { useEditorContextMenu } from './editor-context-menu'
  *
  * What is NOT asserted here is that the engine honours any of it: that is
  * WebKit's behaviour, not this module's, and it was verified against a real
- * WebKitGTK 2.52.6 webview instead (see the report).
+ * WebKitGTK 2.52.6 webview instead (see the report). Paste is the one item that
+ * depends on something outside this module entirely — the window is built with
+ * `enable_clipboard_access()` in `lib.rs`, and no test here can see that call.
  */
 
 /** The commands `select` asked the DOM for, in order. */
@@ -98,6 +100,7 @@ describe('editor context menu', () => {
     expect(menu.items.value.map((item) => item.id)).toEqual([
       'cut',
       'copy',
+      'paste',
       'select-all',
       'bold',
       'italic',
@@ -107,14 +110,20 @@ describe('editor context menu', () => {
     ])
   })
 
-  it('offers no Paste item, because this engine cannot paste from a menu', () => {
-    // Not an oversight: WebKit gates clipboard reads behind a setting the app
-    // does not enable, so the item could only ever be a silent no-op. Asserted
-    // so a later change has to be deliberate.
+  it('offers Paste, which the host opted into when it built the window', () => {
+    // This assertion used to run the other way: no Paste item, because WebKit's
+    // clipboard setting was off and the entry could only ever be a silent
+    // no-op. `lib.rs` now builds the window with `enable_clipboard_access()`,
+    // which is what makes the item honest — and the only thing that does, so
+    // it is worth asserting rather than merely commenting.
     const { menu } = setup()
     menu.onContextMenu(contextMenuEvent())
 
-    expect(menu.items.value.map((item) => item.id)).not.toContain('paste')
+    const ids = menu.items.value.map((item) => item.id)
+    expect(ids).toContain('paste')
+    // Where the native menu had it: with the other clipboard verbs, before the
+    // divider that sets off the selection commands.
+    expect(ids.indexOf('paste')).toBe(ids.indexOf('copy') + 1)
   })
 
   it('is empty while closed', () => {
@@ -155,9 +164,12 @@ describe('editor context menu', () => {
     menu.onContextMenu(contextMenuEvent())
 
     menu.select('cut')
+    menu.select('paste')
     menu.select('select-all')
 
-    expect(execCommands).toEqual(['cut', 'selectAll'])
+    // `paste` is the load-bearing one: the engine's own command, which is what
+    // the host's clipboard opt-in makes execute.
+    expect(execCommands).toEqual(['cut', 'paste', 'selectAll'])
   })
 
   it('routes a formatting pick to the pane command runner instead of the DOM', () => {

@@ -9,7 +9,8 @@
 //! - [`state`]: managed app state ([`state::VaultRegistry`], watcher, AI, keys).
 //! - [`errors`]: shared user-facing error helpers.
 //!
-//! [`lib.rs`] itself only assembles app state and registers commands.
+//! [`lib.rs`] itself only assembles app state, builds the main window and
+//! registers commands.
 
 pub mod commands;
 pub mod domain;
@@ -27,6 +28,21 @@ pub use state::VaultRegistry;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let mut context = tauri::generate_context!();
+
+    // Tauri builds the windows declared in `tauri.conf.json` itself, through a
+    // builder this crate never gets to see. The editor's right-click Paste needs
+    // that builder: WebKit gates the clipboard behind
+    // `WebKitSettings:javascript-can-access-clipboard`, which surfaces as
+    // `enable_clipboard_access()` — a builder-only method, with no key in
+    // `WindowConfig` to reach it from the config file. Marking the config windows
+    // as not auto-created hands the build to `setup` below, so the definition
+    // itself (title, size, decorations) stays where it is and only the build
+    // moves.
+    for window in &mut context.config_mut().app.windows {
+        window.create = false;
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
@@ -40,6 +56,20 @@ pub fn run() {
         .manage(state::VaultRegistry::default())
         .manage(state::AiState::default())
         .manage(state::KeyVault::default())
+        .setup(|app| {
+            // The windows `run` above took over from Tauri's own pass, built
+            // from their config so nothing about them is duplicated here.
+            for config in app.config().app.windows.iter().filter(|w| !w.create) {
+                tauri::WebviewWindowBuilder::from_config(app.handle(), config)?
+                    // What makes right-click Paste possible at all: with the
+                    // setting off, `document.execCommand('paste')` returns false
+                    // and `navigator.clipboard.readText()` rejects
+                    // `NotAllowedError`, driver gesture or not.
+                    .enable_clipboard_access()
+                    .build()?;
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::fs::ping,
             commands::fs::read_file,
@@ -73,6 +103,6 @@ pub fn run() {
             commands::keys::unlock_vault,
             commands::system::system_accent_color,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }
