@@ -16,6 +16,7 @@ import { t } from '../../../i18n'
 import type { ReasoningEffort } from '../../../stores/settings'
 import { useAiSettings } from '../composables/use-ai-settings'
 import AiPermissionSettings from './AiPermissionSettings.vue'
+import AiPromptSettings from './AiPromptSettings.vue'
 
 const {
   providers,
@@ -219,6 +220,7 @@ const effortChoices = computed<SelectOption[]>(() =>
       >
       <span class="settings-note">{{ t('aiSettings.contextCharsHint', { min: contextCharsMin, max: contextCharsMax }) }}</span>
     </label>
+    <AiPromptSettings />
     <AiPermissionSettings />
     <label class="settings-field">
       <span>{{ t('aiSettings.maxTokens') }}</span>

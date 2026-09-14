@@ -11,7 +11,9 @@
  */
 import { computed, ref } from 'vue'
 import { FileText, Paperclip, Send, X } from 'lucide-vue-next'
+import ChatPromptBar from './ChatPromptBar.vue'
 import SelectMenu, { type SelectOption } from '../../../components/SelectMenu.vue'
+import type { ChatPrompt } from '../../ai'
 import { EFFORT_OPTIONS, type ReasoningEffort } from '../../../stores/settings'
 import { t } from '../../../i18n'
 import type { ChatAttachment } from '../types'
@@ -24,6 +26,10 @@ const props = defineProps<{
   /** Send the active note / selection along with the question. */
   attachContext: boolean
   canSend: boolean
+  /** The writing-prompt shortcuts, already filtered by the user's switches and
+   *  in shelf order. The composer shows the row and forwards the pick; which
+   *  prompts exist is not its business. */
+  prompts: readonly ChatPrompt[]
 }>()
 
 const emit = defineEmits<{
@@ -36,6 +42,7 @@ const emit = defineEmits<{
   drop: [e: DragEvent]
   dragover: [e: DragEvent]
   toggleAttach: []
+  usePrompt: [id: string]
   removeAttachment: [id: string]
 }>()
 
@@ -93,6 +100,10 @@ function onFileChange(e: Event): void {
         </button>
       </div>
     </div>
+    <ChatPromptBar
+      :prompts="prompts"
+      @pick="emit('usePrompt', $event)"
+    />
     <div
       class="chat-input-row"
       @drop="emit('drop', $event)"

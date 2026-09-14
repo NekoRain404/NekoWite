@@ -111,6 +111,43 @@ export const ai = {
       systemPromptPlaceholder: 'e.g. You are an academic writing assistant…',
       allowPrivate: 'Allow local/private addresses',
       allowPrivateHint: 'Allow localhost or private-range custom URLs (local models). Turn off for stricter SSRF protection.',
+      promptTitle: 'Writing prompts',
+      promptHint: 'Shortcuts the chat shows under its composer. Switch off the ones you never reach for.',
+      contextTruncatedNotice: 'The note was longer than the context budget: {omitted} characters were left out of what the AI read. Raise the budget in Settings → AI if it should see the rest.',
+      prompt: {
+        summarize: {
+          label: 'Summarise',
+          text: 'Summarise the note above. Lead with what it is about in one sentence, then the main points as a short list. Write in the same language as the note.',
+        },
+        actionItems: {
+          label: 'Action items',
+          text: 'Pull every task, decision and open question out of the note above as a checklist. Quote the line each one came from when it is not obvious. Do not invent tasks that are not there; say so if there are none.',
+        },
+        outline: {
+          label: 'Outline',
+          text: 'Propose an outline for this note: the sections it needs, in order, and one line each on what belongs in them. Base it on what is already written and mark anything the note does not cover yet.',
+        },
+        tighten: {
+          label: 'Tighten',
+          text: 'Tighten the selected passage or, if nothing is selected, the note above. Cut filler and repetition, keep every fact and every piece of markup, and do not change the tone. Output only the tightened text.',
+        },
+        proofread: {
+          label: 'Proofread',
+          text: 'Proofread the selected passage or, if nothing is selected, the note above. Fix spelling, grammar, punctuation and awkward phrasing, and list what you changed in one line each. Do not rewrite passages that are already correct.',
+        },
+        title: {
+          label: 'Title',
+          text: 'Suggest five titles for this note, from plain and descriptive to a little more evocative. Do not explain them; just the list.',
+        },
+        tags: {
+          label: 'Tags',
+          text: 'Suggest tags for this note: up to eight, lowercase, one or two words each, the kind of thing that would be useful as a frontmatter tag list. Output them as a single comma-separated line.',
+        },
+        continue: {
+          label: 'Continue',
+          text: 'Continue writing this note from where it stops. Match its voice, its level of detail and any conventions it already follows. Write only the continuation, with no preamble.',
+        },
+      },
     },
   },
   zh: {
@@ -220,6 +257,43 @@ export const ai = {
       systemPromptPlaceholder: '例如：你是一名学术写作助手……',
       allowPrivate: '允许本地/内网地址',
       allowPrivateHint: '允许使用 localhost 或私有网段的自定义地址（本地模型）。关闭后可对请求地址做更严格的 SSRF 防护。',
+      promptTitle: '写作提示词',
+      promptHint: '聊天输入框下方会显示这些快捷提示词，用不到的可以关掉。',
+      contextTruncatedNotice: '笔记超出上下文预算，有 {omitted} 个字符没有发送给 AI。如果希望它读到全部内容，可在“设置 → AI”里调大上下文长度。',
+      prompt: {
+        summarize: {
+          label: '总结笔记',
+          text: '总结上面的笔记。先用一句话说清它讲的是什么，再用简短的列表列出要点。请用与笔记相同的语言作答。',
+        },
+        actionItems: {
+          label: '提取待办',
+          text: '把上面笔记里的任务、决定和悬而未决的问题提取成一份清单。来源不明显的条目请附上它出自哪一句。不要编造笔记里没有的任务；如果没有，就直接说明。',
+        },
+        outline: {
+          label: '生成大纲',
+          text: '为这篇笔记提出一份大纲：需要哪些小节、按什么顺序、每节写什么，各用一句话说明。以已写的内容为依据，并标出笔记目前还没有覆盖的部分。',
+        },
+        tighten: {
+          label: '精简文字',
+          text: '精简选中的段落；如果没有选中内容，就精简上面的笔记。删掉冗词和重复，保留全部事实与标记格式，不要改变语气。只输出精简后的正文。',
+        },
+        proofread: {
+          label: '校对',
+          text: '校对选中的段落；如果没有选中内容，就校对上面的笔记。修正错别字、语法、标点和别扭的表达，并逐条说明改了什么。本来就正确的地方不要改写。',
+        },
+        title: {
+          label: '起标题',
+          text: '为这篇笔记拟五个标题，从朴素直白到稍微有点意思都有。不用解释，直接列出标题。',
+        },
+        tags: {
+          label: '提取标签',
+          text: '为这篇笔记建议标签：最多八个，小写，每个一到两个词，适合直接放进 frontmatter 的 tags。用逗号分隔，输出一行。',
+        },
+        continue: {
+          label: '接着写',
+          text: '顺着这篇笔记停下的地方继续写下去。保持它的语气、详略程度和已经形成的写法。只输出续写的部分，不要有任何开场白。',
+        },
+      },
     },
   },
 }

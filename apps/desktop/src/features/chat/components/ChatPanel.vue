@@ -68,6 +68,8 @@ const {
   effort,
   setEffort,
   canSend,
+  promptShortcuts,
+  usePrompt,
   send,
   stop,
   stopIfStreaming,
@@ -161,6 +163,7 @@ onBeforeUnmount(() => {
       :effort="effort"
       :attach-context="attachContext"
       :can-send="canSend"
+      :prompts="promptShortcuts"
       @update:effort="setEffort"
       @files="addFiles"
       @keydown="onComposerKeydown"
@@ -169,6 +172,7 @@ onBeforeUnmount(() => {
       @dragover="onDragOver"
       @toggle-attach="toggleAttachContext"
       @remove-attachment="removeAttachment"
+      @use-prompt="usePrompt"
       @send="send"
     />
   </section>
