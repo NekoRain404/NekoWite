@@ -1,84 +1,26 @@
-//! Request-side construction: the completion configuration, the shared
-//! body/URL helpers every provider builds from, and the input ceilings that are
-//! checked before anything is sent.
+//! Request-side construction: the shared body/URL helpers every provider
+//! builds from, the endpoint the model list is fetched from, and the input
+//! ceilings that are checked before anything is sent.
 //!
-//! Dependencies: [`super::limits`] for the ceilings, `serde` for the config DTO
-//! and [`crate::storage::key_store`] for credential hydration. Nothing here
-//! builds a transport or parses a response, so this module never imports
-//! `client`, `response`, `sse` or `url_policy`; the arrow points one way only
+//! The completion configuration and its derivations live in [`super::config`];
+//! the names the old layout exposed from here are re-exported below.
+//!
+//! Dependencies: [`super::limits`] for the ceilings. Nothing here builds a
+//! transport or parses a response, so this module never imports `client`,
+//! `response`, `sse` or `url_policy`; the arrow points one way only
 //! (`client`/`url_policy`/the provider modules depend on this file).
-
-use serde::Deserialize;
 
 use super::limits::{
     MAX_IMAGES_PER_REQUEST, MAX_IMAGE_DATA_URL_BYTES, MAX_PROMPT_BYTES, MAX_REQUEST_BODY_BYTES,
 };
-use crate::storage::key_store::{load_ai_key_internal, AI_KEY_MASKED};
 
-#[derive(Deserialize, Clone, Default)]
-pub struct AIConfig {
-    pub provider: String,
-    pub model: String,
-    pub base_url: Option<String>,
-    pub api_key: Option<String>,
-    /// Sampling temperature (0.0–2.0). `None` omits the field, letting the
-    /// provider use its own default.
-    pub temperature: Option<f32>,
-    /// Completion token cap. `None` falls back to the legacy hardcoded 256.
-    pub max_tokens: Option<u32>,
-    /// Optional system prompt. `None`/empty adds no system message.
-    pub system_prompt: Option<String>,
-    /// The user's thinking-depth choice: one of the lowercase rungs
-    /// `none|minimal|low|medium|high|xhigh`, case- and padding-insensitive.
-    /// Normalised by [`normalize_reasoning_effort`] before a provider ever sees
-    /// it. A value outside that ladder is dropped rather than forwarded: the
-    /// server answers an invalid rung with HTTP 400 (measured against
-    /// tokenflux's `deepseek-flash`: "ultra", "bogus-level" and even the
-    /// uppercase "HIGH" were all rejected), so an unrecognised value must
-    /// degrade to "send nothing" instead of failing the whole request.
-    pub reasoning_effort: Option<String>,
-    /// Opt-in to allow private/loopback Base URLs (e.g. Ollama / LM Studio).
-    /// Default `false`: a Base URL whose host is a literal private, loopback,
-    /// link-local, CGNAT or unspecified IP (or `localhost`) is rejected. The
-    /// frontend must send this to reach a local model endpoint.
-    #[serde(default)]
-    pub allow_private: bool,
-    /// The address the model list comes from, when the user names one.
-    ///
-    /// The list is otherwise DERIVED from the Base URL (`{base}/v1/models` for
-    /// Anthropic, `{base}/models` for everything else), which is a guess about
-    /// a provider's layout. A provider whose layout differs cannot be reached
-    /// by guessing harder, and one that answers unknown paths with a 200 HTML
-    /// page cannot even be told apart from a broken response — this override is
-    /// the way out: the complete endpoint, used verbatim, nothing appended.
-    /// Blank means unset, so clearing the field restores the derived path.
-    ///
-    /// It is vetted by the same URL policy as `base_url` (see
-    /// [`for_models_fetch`](AIConfig::for_models_fetch)): a second address,
-    /// never a second set of rules.
-    pub models_url: Option<String>,
-}
-
-impl AIConfig {
-    /// A copy of this config whose `base_url` is the address `GET /models` will
-    /// actually be sent to.
-    ///
-    /// The URL policy judges one address per request, and on the model-list
-    /// path that address is the `models_url` override whenever there is one —
-    /// so the override is what `validate_base_url` has to see. Substituting it
-    /// here is what keeps the override INSIDE that policy rather than beside
-    /// it: it is a second address, never a second set of rules, and the Base
-    /// URL still governs the completion path unchanged.
-    pub fn for_models_fetch(&self) -> AIConfig {
-        match models_url_override(self) {
-            Some(url) => AIConfig {
-                base_url: Some(url.to_string()),
-                ..self.clone()
-            },
-            None => self.clone(),
-        }
-    }
-}
+// The config DTO, its `for_models_fetch` derivation and the credential
+// hydration moved to `super::config`, which is also where the split's
+// compatibility surface is kept: `client`, `url_policy`, `model_list`, the
+// provider modules and the integration tests import these names from here
+// exactly as before, and no consumer file had to be edited. The direction of
+// USE is `request` → `config`, never the reverse.
+pub use super::config::{hydrate_stored_key, models_url_override, AIConfig};
 
 /// Check one completion's raw inputs against [`MAX_PROMPT_BYTES`],
 /// [`MAX_IMAGES_PER_REQUEST`] and [`MAX_IMAGE_DATA_URL_BYTES`].
@@ -214,18 +156,6 @@ pub(crate) fn split_data_url(data_url: &str) -> (String, String) {
     (mime, data.to_string())
 }
 
-/// The endpoint the user named for the model list, when they named one.
-///
-/// Blank is treated as unset so clearing the settings field restores the
-/// derived path instead of asking for an empty URL.
-pub fn models_url_override(config: &AIConfig) -> Option<&str> {
-    config
-        .models_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|url| !url.is_empty())
-}
-
 /// The credential headers a model-list request carries.
 ///
 /// The conventions of [`with_completion_auth`], kept in one place so an
@@ -298,24 +228,6 @@ pub fn models_endpoint(config: &AIConfig) -> (String, Vec<(String, String)>) {
         }
     };
     (url, models_headers(config))
-}
-
-/// Resolve the API key for an AI request. The key is never disclosed to the
-/// window (see `keys::load_ai_key`, which returns only a masked indicator), so
-/// the backend injects the *stored* key for the provider here when the caller
-/// did not supply a real one. A real key supplied by the app's own settings
-/// page (a freshly typed, not-yet-saved key) is kept as-is; only a missing or
-/// masked value is backfilled from the vault.
-pub fn hydrate_stored_key(app: &tauri::AppHandle, config: &mut AIConfig) -> Result<(), String> {
-    if let Some(k) = config.api_key.as_deref() {
-        if k != AI_KEY_MASKED {
-            return Ok(());
-        }
-    }
-    if let Some(stored) = load_ai_key_internal(app, &config.provider)? {
-        config.api_key = Some(stored);
-    }
-    Ok(())
 }
 
 /// Attach the credential header the configured provider expects to a completion
