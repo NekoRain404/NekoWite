@@ -109,6 +109,10 @@ export const editor = {
       alignCenter: 'Align center',
       alignRight: 'Align right',
       aria: 'Table actions',
+      /** Said when a table action refuses — the header row and the last
+       *  remaining row/column cannot be deleted, and a control that does
+       *  nothing in silence reads as broken rather than as a refusal. */
+      refused: 'Not available here — the header row and the last row or column stay',
     },
   },
   zh: {
@@ -217,6 +221,9 @@ export const editor = {
       alignCenter: '居中',
       alignRight: '右对齐',
       aria: '表格操作',
+      /** 表格操作被拒绝时的说明：表头行与最后一行/列不能删除，静默无反应的按钮
+       *  会被当成故障，而不是一次拒绝。 */
+      refused: '此处不可用——表头行与最后一行/列保留',
     },
   },
 }
