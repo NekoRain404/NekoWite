@@ -134,7 +134,7 @@ function keptOffset(page: Page, requested: number): Promise<number> {
 /** The markdown the source pane holds, as the app parses it for the mapping. */
 async function sourceText(page: Page): Promise<string> {
   return page.evaluate(async () => {
-    const mod = (await import('/src/services/sourceView.ts')) as unknown as {
+    const mod = (await import('/src/services/source-view.ts')) as unknown as {
       getSourceView(): { state: { doc: { toString(): string } } } | null
     }
     return mod.getSourceView()?.state.doc.toString() ?? ''
@@ -165,7 +165,7 @@ async function scrollSourceToLine(
   line: number,
 ): Promise<{ offset: number; line: number }> {
   return page.evaluate(async (target) => {
-    const mod = (await import('/src/services/sourceView.ts')) as unknown as {
+    const mod = (await import('/src/services/source-view.ts')) as unknown as {
       getSourceView(): {
         state: { doc: { line(n: number): { from: number }; lineAt(pos: number): { number: number } } }
         lineBlockAt(pos: number): { top: number }

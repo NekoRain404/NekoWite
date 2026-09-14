@@ -304,7 +304,7 @@ export function sourceText(page: Page): Promise<string> {
 /** The markdown the live editor serializes to (the authoritative model). */
 export function modelMarkdown(page: Page): Promise<string> {
   return page.evaluate(async () => {
-    const mod = (await import('/src/features/editor/sessionManager.ts')) as unknown as {
+    const mod = (await import('/src/features/editor/session-manager.ts')) as unknown as {
       editorSessionManager: { getActiveEditor(): { save(): Promise<string> } | null }
     }
     const editor = mod.editorSessionManager.getActiveEditor()
@@ -315,7 +315,7 @@ export function modelMarkdown(page: Page): Promise<string> {
 /** The live ProseMirror selection head (UTF-16 offset into the model). */
 export function modelHead(page: Page): Promise<number> {
   return page.evaluate(async () => {
-    const mod = (await import('/src/features/editor/sessionManager.ts')) as unknown as {
+    const mod = (await import('/src/features/editor/session-manager.ts')) as unknown as {
       editorSessionManager: { getView(): { state: { selection: { head: number } } } | null }
     }
     return mod.editorSessionManager.getView()?.state.selection.head ?? -1
@@ -450,7 +450,7 @@ export async function placeRenderedCaretInParagraph(
 ): Promise<void> {
   await page.evaluate(
     async ({ index, at }) => {
-      const mod = (await import('/src/features/editor/sessionManager.ts')) as unknown as {
+      const mod = (await import('/src/features/editor/session-manager.ts')) as unknown as {
         editorSessionManager: { getView(): unknown }
       }
       const view = mod.editorSessionManager.getView() as {
@@ -555,7 +555,7 @@ export async function imageToolbarButton(page: Page): Promise<ReturnType<Page['g
 /** Raw markdown held by the live CodeMirror source view. */
 export function sourceDoc(page: Page): Promise<string> {
   return page.evaluate(async () => {
-    const mod = (await import('/src/services/sourceView.ts')) as unknown as {
+    const mod = (await import('/src/services/source-view.ts')) as unknown as {
       getSourceView(): { state: { doc: { toString(): string } } } | null
     }
     return mod.getSourceView()?.state.doc.toString() ?? ''

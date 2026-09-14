@@ -202,7 +202,7 @@ async function label(page: Page, key: string): Promise<string> {
  */
 async function placeCaretInSource(page: Page, offset: number): Promise<void> {
   await page.evaluate(async (at) => {
-    const mod = (await import('/src/services/sourceView.ts')) as unknown as {
+    const mod = (await import('/src/services/source-view.ts')) as unknown as {
       getSourceView(): {
         dispatch(spec: { selection: { anchor: number } }): void
         focus(): void

@@ -244,7 +244,7 @@ async function placeRenderedCaretInParagraph(
 ): Promise<void> {
   await page.evaluate(
     async ({ index, at }) => {
-      const mod = (await import('/src/features/editor/sessionManager.ts')) as unknown as {
+      const mod = (await import('/src/features/editor/session-manager.ts')) as unknown as {
         editorSessionManager: { getView(): unknown }
       }
       const view = mod.editorSessionManager.getView() as {
