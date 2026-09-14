@@ -3,9 +3,11 @@
 //! operations.
 //!
 //! It knows about paths and filesystems and nothing about vaults, history keys
-//! or attachment names, so every other storage module may depend on it; its own
-//! one dependency is [`crate::storage::temp_files`], which owns the name and the
-//! shape of the temp sibling this module stages through.
+//! or attachment names, so every other storage module may depend on it; its
+//! dependencies are [`crate::storage::temp_files`], which owns the name and the
+//! shape of the temp sibling this module stages through, and
+//! [`crate::storage::destination_file`], which owns what the publish carries
+//! over from the file it replaces — and whether it may replace it at all.
 //!
 //! [`write_lock`] is the crate's ONLY write lock. Everything that must not
 //! interleave with a save holds it - the saves themselves, the create-only
@@ -21,6 +23,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use crate::errors::fs_error;
+use crate::storage::destination_file;
 use crate::storage::temp_files::temp_sibling;
 
 /// Serializes the read-old -> snapshot -> atomic-write sequence for every
@@ -70,6 +73,12 @@ pub(crate) fn write_lock() -> &'static Mutex<()> {
 /// the target, and fsync the parent directory so the rename itself survives
 /// power loss. On any failure the temp file is removed so no partial file is
 /// left behind. Mirrors Memoir's `atomic.rs`.
+///
+/// The file that appears under the name is the destination's file, not the temp
+/// file's: it carries the mode the target had (a free name gets the default, as
+/// any new file does), and a target the user made read-only is refused rather
+/// than replaced. [`crate::storage::destination_file`] owns both rules and says
+/// why the rename needs them.
 pub fn atomic_write(resolved: &Path, content: &str) -> Result<(), String> {
     atomic_write_bytes(resolved, content.as_bytes())
 }
@@ -86,6 +95,16 @@ pub fn atomic_write_bytes(resolved: &Path, bytes: &[u8]) -> Result<(), String> {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("file");
+    // What this publish is replacing, read before anything is staged: the mode
+    // the replacement has to carry over, and whether the file may be replaced at
+    // all. Both are decided before the first byte is written, so a refusal or an
+    // unreadable destination costs nothing and creates nothing.
+    let existing = destination_file::inspect(resolved)?;
+    if let Some(current) = &existing {
+        if current.is_read_only_file() {
+            return Err(current.refusal(resolved));
+        }
+    }
     let tmp = temp_sibling(parent, name);
     let result = (|| {
         let mut f = std::fs::OpenOptions::new()
@@ -95,6 +114,13 @@ pub fn atomic_write_bytes(resolved: &Path, bytes: &[u8]) -> Result<(), String> {
             .map_err(|e| fs_error("create the temporary file", &tmp, e))?;
         f.write_all(bytes)
             .map_err(|e| fs_error("write the temporary file", &tmp, e))?;
+        // The identity goes on BEFORE the fsync, so the one flush covers the
+        // bytes and the mode the file will be published with. Confirmed against
+        // the staged file rather than the destination because a failure here
+        // still leaves the original untouched; after the rename it could not.
+        if let Some(current) = &existing {
+            current.carry_over_to(&tmp)?;
+        }
         f.sync_all()
             .map_err(|e| fs_error("flush the temporary file", &tmp, e))?;
         std::fs::rename(&tmp, resolved).map_err(|e| fs_error("replace", resolved, e))?;

@@ -7,8 +7,10 @@
 //!   +- rename_store      <- metadata_store, trash_store, atomic_write
 //!   +- attachment_store  <- atomic_write
 //!   +- metadata_store    <- atomic_write, temp_files
-//!   +- atomic_write      <- temp_files
+//!   +- atomic_write      <- temp_files, destination_file
 //!   +- temp_files        (leaf: what a temp file is called, and sweeping it)
+//!   +- destination_file  (leaf: what a publish carries over from the file it
+//!                         replaces, and whether it may replace it at all)
 //! ```
 //!
 //! `file_store` re-exports what the split moved out, so the command layer and
@@ -35,6 +37,7 @@
 
 pub mod atomic_write;
 pub mod attachment_store;
+pub mod destination_file;
 pub mod file_store;
 pub mod index_store;
 pub mod key_file_io;

@@ -30,6 +30,7 @@ use crate::errors::fs_error;
 use crate::storage::atomic_write::{
     atomic_write, copy_new, is_link_unsupported, sync_parent_dir, write_lock,
 };
+use crate::storage::destination_file;
 use crate::storage::temp_files::temp_sibling;
 
 #[derive(Serialize, Clone, Debug)]
@@ -303,6 +304,10 @@ pub fn restore_history(vault_root: &str, path: &str, id: &str) -> Result<String,
     let content = read_history(vault_root, path, id)?;
     let _guard = write_lock().lock().map_err(|e| e.to_string())?;
     let resolved = resolve_within(vault_root, path)?;
+    // The same pre-flight `write_file` runs, for the same reason: without it a
+    // refused restore still snapshots the content it is not going to replace,
+    // and a retry loop spends the history it is being asked to restore from.
+    destination_file::refuse_if_read_only(&resolved)?;
     if resolved.exists() {
         match std::fs::read_to_string(&resolved) {
             Err(e) if e.kind() == io::ErrorKind::InvalidData => {
