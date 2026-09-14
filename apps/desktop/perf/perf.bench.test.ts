@@ -18,10 +18,10 @@ import {
   queryIndex,
   buildSearchText,
   type StoredIndex,
-} from '../src/services/searchIndex'
-import { buildLinkGraphDetailed, computeLayoutChunked } from '../src/services/linkGraph'
+} from '../src/features/search'
+import { buildLinkGraphDetailed, computeLayoutChunked } from '../src/services/link-graph'
 import { fileToBase64 } from '../src/services/attachments'
-import { parseNoteMeta } from '../src/services/noteMeta'
+import { parseNoteMeta } from '../src/features/notes'
 
 const N = 10_000
 const QUERIES = 50
