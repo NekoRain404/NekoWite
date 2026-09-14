@@ -17,6 +17,7 @@
 //! Windows has instead reaches the same code with a one-bit mode.
 #![cfg(unix)]
 
+use nekowite_lib::storage::destination_file::READ_ONLY_PREFIX;
 use nekowite_lib::storage::file_store::{atomic_write, list_history, restore_history, write_file};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -137,6 +138,20 @@ fn a_read_only_note_is_not_replaced() {
         assert!(
             error.contains("left untouched"),
             "says the file is still there: {error}"
+        );
+        // The frontend answers a refusal differently from a failure — one is a
+        // decision no retry changes, the other is an error worth repeating — and
+        // it reads the TOKEN to tell them apart, never the sentence above, which
+        // is copy and free to change. The literal is the mirror of
+        // `READ_ONLY_PREFIX` in `apps/desktop/src/stores/write-refusal.ts`; the
+        // pair is the whole contract, so both sides pin it.
+        assert!(
+            error.starts_with(READ_ONLY_PREFIX),
+            "the refusal must lead with the token the frontend classifies on: {error}"
+        );
+        assert_eq!(
+            READ_ONLY_PREFIX, "EREADONLY: ",
+            "the token moved: update the mirror in stores/write-refusal.ts"
         );
 
         // Nothing may be lost: same bytes, same mode, and the refusal staged

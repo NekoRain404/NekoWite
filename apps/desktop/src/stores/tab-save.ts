@@ -20,6 +20,7 @@ import {
   moveAttachments,
   rewireTempRefsInContent,
 } from '../services/rename-asset'
+import { createRefusedSaveAnswer } from './refused-save'
 import type { OpenTab } from './tabs'
 
 /** Window during which an fs-change for a path is attributed to our own save. */
@@ -53,9 +54,33 @@ export interface TabSaveDeps {
   now?: () => number
 }
 
+export interface TabSaveOptions {
+  /**
+   * Offer another name for the text when the target file refuses the write.
+   *
+   * Only a save the user asked for may set this. A read-only file refuses every
+   * retry, so its refusal is not a failure to report and repeat — but `saveTab`
+   * is also the autosave's, the window-blur save's and the bulk flush's entry
+   * point, and none of those may put a file dialog in front of the user
+   * mid-keystroke or behind a vault switch. Callers that speak for the user
+   * (Ctrl+S, and the close path's rescue) are the ones that set it.
+   */
+  offerCopy?: boolean
+}
+
 export function createTabSave(deps: TabSaveDeps) {
   const { tabs, activeTab, vault, settings, files, t, notifyError, announce } = deps
   const now = deps.now ?? (() => Date.now())
+  // What a rejected write tells the user, and the route out of a refusal: the
+  // text goes to a name they pick, and the tab follows it there.
+  const refusedSave = createRefusedSaveAnswer({
+    files,
+    settings,
+    t,
+    notifyError,
+    announce,
+    noteSelfWrite: (path) => noteSelfWrite(path),
+  })
 
   const savingIds = ref<Set<string>>(new Set())
   const selfWrites = new Map<string, number>()
@@ -151,7 +176,7 @@ export function createTabSave(deps: TabSaveDeps) {
   }
 
   /** Returns true when the file is on disk with the intended content. */
-  async function saveTab(id: string): Promise<boolean> {
+  async function saveTab(id: string, opts: TabSaveOptions = {}): Promise<boolean> {
     const running = inFlightSaves.get(id)
     if (running) {
       const ok = await running.catch(() => false)
@@ -164,14 +189,14 @@ export function createTabSave(deps: TabSaveDeps) {
       // would only add a history snapshot.
       if (!current.dirty) return true
     }
-    const run = runSaveTab(id).finally(() => {
+    const run = runSaveTab(id, opts).finally(() => {
       if (inFlightSaves.get(id) === run) inFlightSaves.delete(id)
     })
     inFlightSaves.set(id, run)
     return run
   }
 
-  async function runSaveTab(id: string): Promise<boolean> {
+  async function runSaveTab(id: string, opts: TabSaveOptions): Promise<boolean> {
     const tab = tabs.value.find((x) => x.id === id)
     if (!tab || !vault.value) return false
     // The vault a save commits to is decided when the write happens, which is
@@ -183,12 +208,21 @@ export function createTabSave(deps: TabSaveDeps) {
     // vault it is writing to.
     const vaultAtStart = vault.value
     let path = tab.path
+    // Save-As binds the tab to the picked name BEFORE the write, because
+    // everything below (the asset relocation, the save itself) needs the
+    // destination. A write that then FAILS leaves that binding standing — the
+    // tab naming a file it never wrote to, with `savedContent` still holding the
+    // untitled '' — so the catch below puts such a tab back to untitled, which
+    // is the state that is actually true. Nothing is lost by that: the Save-As
+    // dialog proposes `untitled.md` from the tab's state, not from this pick.
+    let pickedInThisSave = false
     if (!path) {
       // Untitled tab: an explicit save means "save as", not a silent no-op.
       const picked = await files.saveFileDialog('untitled.md', vault.value)
       if (!picked) return false
       tab.path = picked
       path = picked
+      pickedInThisSave = true
     }
     markSaving(tab.id)
     // Both panes coalesce keystrokes before publishing them to the tab, so
@@ -282,24 +316,43 @@ export function createTabSave(deps: TabSaveDeps) {
       // Screen-reader status: a save round-trip landed (dirty → saved).
       announce(t('recovery.saved'))
       return true
-    } catch {
-      notifyError(t('tabs.saveFailed'))
-      return false
+    } catch (e) {
+      // The write did not land, so a path this save was the one to pick names a
+      // file the tab never wrote and has never read: give the tab back its
+      // untitled state rather than leave it asserting an association that does
+      // not hold. Nothing is lost by that — the Save-As dialog proposes
+      // `untitled.md` from the tab's state, not from this pick.
+      if (pickedInThisSave) tab.path = null
+      // What the user is told, and the way out, belong to the refusal itself:
+      // see `refused-save.ts`. A refusal is not a failure, and `saveFailed`'s
+      // "please retry" is advice a read-only file never lets them carry out.
+      return await refusedSave.answer(
+        e,
+        tab,
+        { vaultPath: vaultAtStart, path, content, contentAtStart, editor },
+        opts.offerCopy === true,
+      )
     } finally {
       markSaved(tab.id)
     }
   }
 
+  /** Ctrl+S. An explicit save, so it may ask where the text should go when the
+   *  file it was aimed at refuses to take it — the same latitude an untitled
+   *  tab already has. */
   async function saveActive(): Promise<void> {
     const tab = activeTab.value
-    if (tab) await saveTab(tab.id)
+    if (tab) await saveTab(tab.id, { offerCopy: true })
   }
 
   /** Best-effort save of every dirty tab that has a real path (used before a
    *  vault switch or an app close, where a pending autosave timer may never
    *  fire). Untitled tabs are skipped: with no path they would need a save-as
-   *  dialog, which a background/bulk flush must not open. Returns false when a
-   *  path'd save failed so the caller can block the potentially-lossy action. */
+   *  dialog, which a background/bulk flush must not open — and for the same
+   *  reason a tab whose file refuses the write is left to the caller that owns
+   *  the moment (the close offers the copy route itself; see `app-lifecycle`).
+   *  Returns false when a path'd save failed so the caller can block the
+   *  potentially-lossy action. */
   async function flushDirty(): Promise<boolean> {
     let ok = true
     for (const tab of tabs.value) {
