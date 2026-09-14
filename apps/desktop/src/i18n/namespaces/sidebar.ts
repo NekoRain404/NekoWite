@@ -24,7 +24,6 @@ export const sidebar = {
       switchLight: 'Switch to light',
       switchDark: 'Switch to dark',
       settings: 'Settings',
-      library: 'Library',
       restoreFailed: 'Restore failed, please retry',
       noteCount: '{n} notes',
     },
@@ -39,8 +38,6 @@ export const sidebar = {
 
     daily: {
       new: 'New daily note',
-      opened: 'Daily note opened',
-      exists: 'Daily note already exists',
       createFailed: 'Failed to create the daily note, please retry',
     },
 
@@ -78,7 +75,6 @@ export const sidebar = {
       switchLight: '切换到浅色',
       switchDark: '切换到深色',
       settings: '设置',
-      library: '知识库',
       restoreFailed: '恢复失败，请重试',
       noteCount: '{n} 篇笔记',
     },
@@ -93,8 +89,6 @@ export const sidebar = {
 
     daily: {
       new: '新建每日笔记',
-      opened: '已打开今日笔记',
-      exists: '今日笔记已存在',
       createFailed: '创建每日笔记失败，请重试',
     },
 
