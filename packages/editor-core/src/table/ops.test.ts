@@ -173,13 +173,85 @@ describe('table structural ops', () => {
     editor.destroy()
   })
 
-  it('setCellAlignment writes center colons for the affected column', async () => {
-    const { editor, view } = await makeTable(3, 3)
-    placeCursor(view, 1, 1)
-    const ok = setCellAlignment(view, 'center')
-    expect(ok).toBe(true)
-    const md = await editor.save()
-    expect(md).toMatch(/\| :---: |/)
+  /**
+   * Open a real Markdown table, the way a note reaches the editor.
+   *
+   * The `makeTable` harness above builds cells from the schema instead, and
+   * `createAndFill()` takes the schema's `alignment` DEFAULT (`'left'`, not
+   * null) — so every column of a schema-built table already carries an explicit
+   * left marker and there is no unmarked column left to tell a stray write
+   * apart from. A table parsed from Markdown is what the user has.
+   */
+  async function openTable(md: string): Promise<Harness> {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open(md)
+    return { editor, view: editor.getView() }
+  }
+
+  /**
+   * The saved delimiter row as one colon shape per column: `:-` left, `-:`
+   * right, `:-:` center, `-` neither. Runs of hyphens collapse to one, because
+   * how MANY hyphens a column gets is remark-stringify's re-padding and belongs
+   * to `serialize-fuzz.test.ts`; what this file is about is the colons — which
+   * column got them, and which side of the hyphens they sit on.
+   */
+  const delimiterColons = async (editor: Harness['editor']): Promise<string[]> =>
+    (await editor.save())
+      .trim()
+      .split('\n')[1]
+      .split('|')
+      .map((cell) => cell.trim())
+      .filter((cell) => cell !== '')
+      .map((cell) => cell.replace(/-+/g, '-'))
+
+  /**
+   * Which COLUMN the alignment landed on, and which way its colons lean.
+   *
+   * The earlier form of this case was `expect(md).toMatch(/\| :---: |/)` — a
+   * pattern any column satisfies, so it passed whichever column the op picked
+   * and whichever direction it wrote. It named a column and asserted none. The
+   * three cases below are the same action on three different columns: between
+   * them an off-by-one column, or `left` and `right` swapped, fails here.
+   */
+  it('setCellAlignment writes the colons of the chosen column, and only there', async () => {
+    // One case per column. `left` and `right` are read as the colons GFM puts
+    // BEFORE and AFTER the hyphens (`:--`, `--:`, `:-:` — markdown-table's own
+    // mapping), which is the direction the report is about.
+    for (const [col, align, expected] of [
+      [0, 'right', ['-:', '-', '-']],
+      [1, 'center', ['-', ':-:', '-']],
+      [2, 'right', ['-', '-', '-:']],
+    ] as const) {
+      const { editor, view } = await openTable('| a | b | c |\n| - | - | - |\n| 1 | 2 | 3 |\n')
+      placeCursor(view, 1, col)
+      expect(setCellAlignment(view, align)).toBe(true)
+      expect(await delimiterColons(editor)).toEqual(expected)
+      editor.destroy()
+    }
+  })
+
+  it('setCellAlignment leaves every other column exactly as it found it', async () => {
+    // A table the author aligned by hand, with one column deliberately
+    // unmarked: aligning the first column must not respell the other two.
+    const { editor, view } = await openTable('| a | b | c |\n| :-: | --- | --: |\n| 1 | 2 | 3 |\n')
+    placeCursor(view, 1, 0)
+
+    expect(setCellAlignment(view, 'right')).toBe(true)
+    expect(await delimiterColons(editor)).toEqual(['-:', '-', '-:'])
+    editor.destroy()
+  })
+
+  it('an aligned file saved without an edit keeps every colon', async () => {
+    // The other half of the same contract, and a data one: `:---` (explicit
+    // left), `:---:` (center), `---:` (right) and a bare `---` (none) are the
+    // author's, and opening the note and saving it must not respell any of
+    // them. Only the hyphen padding moves, which is remark-stringify's own
+    // re-spacing of the delimiter row (`serialize-fuzz.test.ts` pins that too).
+    const { editor } = await openTable('| l | c | r | n |\n| :--- | :---: | ---: | --- |\n| 1 | 2 | 3 | 4 |\n')
+
+    expect(await delimiterColons(editor)).toEqual([':-', ':-:', '-:', '-'])
     editor.destroy()
   })
 
