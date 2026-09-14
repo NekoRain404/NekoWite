@@ -16,8 +16,8 @@ const notifyErrorMock = vi.hoisted(() => vi.fn())
 const activeEditor = vi.hoisted(() => ({ current: null as unknown }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }))
-vi.mock('./errors', () => ({ notifyError: notifyErrorMock }))
-vi.mock('../features/editor/session-manager', () => ({
+vi.mock('../../services/errors', () => ({ notifyError: notifyErrorMock }))
+vi.mock('../editor/session-manager', () => ({
   editorSessionManager: {
     getActiveEditor: () => activeEditor.current,
     getView: () => null,
@@ -32,8 +32,8 @@ import {
   startChatCompletion,
   usageTotal,
   type AiTokenUsage,
-} from '../features/ai'
-import { useAiPermissionStore } from '../stores/ai-permission'
+} from './index'
+import { useAiPermissionStore } from '../../stores/ai-permission'
 
 interface Handlers {
   [event: string]: (e: {

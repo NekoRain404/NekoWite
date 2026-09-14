@@ -277,7 +277,7 @@ describe('memoryGateways drive an AI stream', () => {
     const onDone = vi.fn()
     const onError = vi.fn()
     // The frontend chooses the request id before the request goes out (see
-    // services/ai.ts), so the test drives the events under that same id.
+    // features/ai/services/ai-chat.ts), so the test drives the events under that same id.
     const completeSpy = vi.spyOn(gw.ai, 'complete')
     const stream = await startChatCompletion(
       { provider: 'local', model: 'm' },

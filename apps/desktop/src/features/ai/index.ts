@@ -6,11 +6,6 @@
  * stream registry / thinking state / the two lifecycles) can change without
  * touching a call site.
  *
- * `services/ai.ts` still resolves for the callers that have not migrated: it is
- * a compatibility surface for one stage (§10.1.5) and re-exports this same list,
- * not more. The names below are exactly the ones that path exported before the
- * split, so the two surfaces cannot drift apart.
- *
  * The gate is deliberately absent. `aiDisabled`/`aiWritesForbidden` are the
  * feature's internal policy checks — callers that need a permission decision
  * ask `services/aiPermissions.ts`, which owns the table, rather than reading

@@ -19,9 +19,6 @@
  * `detach()` cancels in-flight builds and clears the subscription, satisfying
  * "switching vault cancels the prior vault's index tasks and clears its
  * subscriptions".
- *
- * (Imported through `vaultIndexCoordinator.ts`, the compatibility barrel that
- * keeps this module's move from reaching any consumer.)
  */
 
 import type { ContentCache } from '../../../services/content-cache'

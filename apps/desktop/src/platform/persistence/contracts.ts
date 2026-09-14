@@ -6,7 +6,7 @@
  * without depending on a concrete backend. It is deliberately sync — localStorage
  * and in-memory stores are synchronous — so reactive stores can read/write
  * directly inside a watcher or ref initializer. Larger, async persisted data
- * (the per-vault search index, see `services/searchIndex`) lives behind the
+ * (the per-vault search index, see `features/search`) lives behind the
  * async `AsyncPersistencePort`/`filePersistencePort` adapter instead.
  *
  * The sync port is a string-keyed KV store (like `localStorage`), so swapping an

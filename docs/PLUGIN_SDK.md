@@ -327,7 +327,8 @@ quota** so a bad plugin cannot burn unbounded wall-clock:
 ### 4.4 Governance: audit log, revocation & version policy
 
 For third-party distribution the host applies a governance layer on top of the gates
-(`packages/plugin-host/src/governance.ts`):
+(`packages/plugin-host/src/` — `audit-log.ts`, `version-policy.ts`, `revocation.ts`,
+`mac-envelope.ts` and `governance-state.ts`, re-exported by `index.ts`):
 
 - **Audit log.** `recordPluginEvent(pluginId, event, detail?)` records every
   load/activate/deactivate/timeout/crash/signature-invalid/revoked/... to a structured,

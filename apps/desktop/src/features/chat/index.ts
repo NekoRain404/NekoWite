@@ -14,12 +14,11 @@
  * callers).
  *
  * The session services are the exception: they are exported rather than kept
- * internal. They were split out of `stores/chatSession.ts`, which is now a
- * one-stage compatibility surface (§10.1.5) whose callers - the panel's
- * composables, the attachment intake, the session bar - still import them by the
- * old path. New callers reach the same names here, so the shim can be deleted
- * without touching a call site. The store itself is not here: it is app state,
- * and it composes these services (§10.2).
+ * internal. They were split out of `stores/chat-session.ts`, which now holds
+ * only the reactive state and the actions over it (§10.2) - it composes these
+ * services rather than owning them - so the panel's composables, the attachment
+ * intake and the session bar reach the session model (the stored shape and its
+ * pure constructors, the image budget, the keyed storage document) from here.
  */
 
 export { default as ChatPanel } from './components/ChatPanel.vue'

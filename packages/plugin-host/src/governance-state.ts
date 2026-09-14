@@ -55,7 +55,7 @@ interface GovernanceState {
 /** The in-memory store the version policy and the revocation list both mutate.
  *  Exported for those two modules only: it is a mutable singleton, and an
  *  embedder reaches this state through serializeGovernance/loadGovernance, so
- *  the compatibility barrel re-exports this module by name and never `*`. */
+ *  the package barrel re-exports this module by name and never `*`. */
 export const state: GovernanceState = {
   recordedPlugins: {},
   recordedOrder: {},

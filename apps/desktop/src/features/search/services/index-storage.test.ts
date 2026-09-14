@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createMemoryFsGateway } from '../platform/gateways/memory'
+import { createMemoryFsGateway } from '../../../platform/gateways/memory'
 import {
   buildIndexIncremental,
   checksumOf,
@@ -11,7 +11,7 @@ import {
   saveIndex,
   shardLabelForPath,
   type StoredIndex,
-} from '../features/search'
+} from '../index'
 
 const VAULT = 'memoir://demo'
 const BASE = '.nekowite/index'
@@ -102,7 +102,7 @@ describe('createFileIndexStorage (fs-backed shards)', () => {
       },
       storage,
     )
-    const { clearIndex } = await import('../features/search')
+    const { clearIndex } = await import('../index')
     await clearIndex(VAULT, storage)
     expect(await loadIndex(VAULT, storage)).toBeNull()
     // Manifest + every possible shard file is gone.

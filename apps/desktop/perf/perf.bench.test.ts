@@ -7,8 +7,14 @@
  * measured via representative proxies (note-index build, single-match latency,
  * note-meta parse) — see docs/PERF.md for the legend.
  *
- * Run: `pnpm --filter @nekowite/desktop perf` (or `pnpm perf` from the repo root
- * if the root script is wired). Output is a table of `metric — ms`.
+ * Run: `pnpm perf` from the repo root (or `pnpm --filter @nekowite/desktop perf`).
+ * Output is a table of `metric — ms`.
+ *
+ * CI runs it (`pnpm perf` in .github/workflows/ci.yml), so this suite is a gate,
+ * not a report. It is deliberately outside `pnpm test`: it builds a 10k-note
+ * index and lays out a 2k graph, which is seconds of work that does not belong in
+ * the per-file unit loop. Being in no gate at all is what let it rot — for two
+ * stages its imports did not resolve and nothing said so.
  */
 
 import { afterAll, describe, expect, it } from 'vitest'
@@ -17,7 +23,6 @@ import {
   buildIndexIncremental,
   queryIndex,
   buildSearchText,
-  type StoredIndex,
 } from '../src/features/search'
 import { buildLinkGraphDetailed, computeLayoutChunked } from '../src/services/link-graph'
 import { fileToBase64 } from '../src/services/attachments'

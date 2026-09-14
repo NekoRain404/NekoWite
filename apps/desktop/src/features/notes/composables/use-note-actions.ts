@@ -74,7 +74,7 @@ export function useNoteActions(): NoteActionsModel {
    * is a mirror of that index, so this is what makes the renamed note appear under
    * its new name (and the deleted one disappear) without waiting for the fs
    * watcher — and the index run is also what prunes favorites/recents pointing at
-   * paths that no longer exist (see `vaultIndexCoordinator` →
+   * paths that no longer exist (see `features/vault/services/vault-index.ts` →
    * `documentList.setFavoritesRecents`).
    */
   async function refreshNoteIndex(): Promise<void> {
