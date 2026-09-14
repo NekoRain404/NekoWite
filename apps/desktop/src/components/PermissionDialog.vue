@@ -83,7 +83,10 @@ const permLabel = computed(() => {
   position: fixed;
   top: 50%;
   left: 50%;
-  transform: translate(-50%, -50%);
+  /* `translate`, not `transform`: the shared arrival animates `scale`, which
+     multiplies a `transform` rather than merely preserving it — see the note on
+     the arrival in styles/motion.css. */
+  translate: -50% -50%;
   width: min(440px, 90vw);
   padding: 18px 20px;
   font-size: 13px;

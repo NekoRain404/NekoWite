@@ -408,6 +408,12 @@ function runRegistry(id: string): void {
   border: 1px solid color-mix(in srgb, var(--app-border) 86%, transparent);
   border-radius: var(--app-radius-lg);
   box-shadow: var(--app-shadow-menu);
+  /* The menu hangs off the button that owns it, and they share a left edge, so
+     the corner they touch is where the menu conceptually comes from. Set on the
+     base rule rather than on the transition classes: those are removed a frame
+     into the transition, and the origin would snap back to the centre while the
+     menu was still scaling. */
+  transform-origin: top left;
 }
 .heading-option {
   display: flex;
@@ -444,14 +450,47 @@ function runRegistry(id: string): void {
 .heading-preview[data-level="1"] { font-size: 13px; }
 .heading-preview[data-level="2"] { font-size: 12px; }
 .heading-preview[data-level="3"] { font-size: 11px; }
-.menu-enter-active,
+/* A menu is a group, so its rows step in from the top down instead of landing
+   as one block. Each row takes --app-motion-fast — a row travels a few pixels,
+   not a region — and the delay stops growing after the fifth, because a cascade
+   that keeps stepping is a queue the user is standing in.
+   `:nth-child` is a stable handle here and is emphatically not one inside a
+   dialog: this menu is created whole and never gains a row while it is open,
+   whereas a dialog that inserts a row renumbers its siblings (see the note in
+   styles/motion.css). */
+@keyframes menu-row-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.menu-enter-active .heading-option {
+  animation: menu-row-in var(--app-motion-fast) var(--app-ease) backwards;
+}
+.heading-menu > :nth-child(2) { animation-delay: calc(var(--app-motion-stagger) * 1); }
+.heading-menu > :nth-child(3) { animation-delay: calc(var(--app-motion-stagger) * 2); }
+.heading-menu > :nth-child(4) { animation-delay: calc(var(--app-motion-stagger) * 3); }
+.heading-menu > :nth-child(n+5) { animation-delay: calc(var(--app-motion-stagger) * 4); }
+.menu-enter-active {
+  /* --app-motion is the rung for a region changing state in place, and a menu
+     reveal is the case the ladder names. The spring is right here where the
+     state-change bezier was not: the menu has a corner to settle into. */
+  transition: opacity var(--app-motion) var(--app-ease-surface),
+              transform var(--app-motion) var(--app-ease-surface);
+  will-change: opacity, transform;
+}
+/* Leaving steps down one rung and accelerates away, and it does not stagger:
+   a menu the user is done with should be gone. */
 .menu-leave-active {
-  transition: opacity var(--app-motion-fast) var(--app-ease),
-              transform var(--app-motion-fast) var(--app-ease);
+  transition: opacity var(--app-motion-fast) var(--app-ease-exit),
+              transform var(--app-motion-fast) var(--app-ease-exit);
+  will-change: opacity, transform;
 }
 .menu-enter-from,
 .menu-leave-to {
   opacity: 0;
-  transform: translateY(4px) scale(0.98);
+  /* It grows out of the button's corner and covers the few pixels between them.
+     Starting *below* the resting position — which this used to do — meant the
+     menu rose into place from a gap it never occupied, arriving from nowhere;
+     the button is above the menu, so the travel has to be downward. */
+  transform: translateY(calc(var(--app-motion-travel) * -1)) scale(0.96);
 }
 </style>

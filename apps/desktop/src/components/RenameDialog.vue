@@ -120,7 +120,13 @@ onMounted(() => {
   position: fixed;
   top: 50%;
   left: 50%;
-  transform: translate(-50%, -50%);
+  /* Centred with `translate`, not `transform: translate(...)`. The shared
+     arrival animates `scale`, and a `transform` is multiplied by it rather than
+     merely preserved — so centring written there is scaled too, and the dialog
+     would enter two per cent of its own width off-centre and slide home. The
+     `translate` property sits outside the scale in the chain and is measured
+     from the box, so it holds the dialog still while it grows. */
+  translate: -50% -50%;
   width: min(380px, 90vw);
   padding: 16px;
 }
