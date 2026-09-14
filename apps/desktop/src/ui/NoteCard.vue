@@ -124,10 +124,13 @@ const timeLabel = computed(() => formatRelativeTime(props.note.mtime))
 .note-card:hover {
   background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
 }
+/* The selected-row tint: 76% over the panel and a 9% ring are the values the
+   app's other selected rows use (FileTreeRow, SidebarNavigation). At 72/10 this
+   card shifted tint the moment the eye moved from the file tree beside it. */
 .note-card.active {
-  background: color-mix(in srgb, var(--app-accent-soft) 72%, var(--app-panel));
+  background: color-mix(in srgb, var(--app-accent-soft) 76%, var(--app-panel));
   border-color: transparent;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-accent) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-accent) 9%, transparent);
 }
 
 .card-main {
@@ -191,8 +194,13 @@ const timeLabel = computed(() => formatRelativeTime(props.note.mtime))
               color var(--app-motion-fast) var(--app-ease),
               background var(--app-motion-fast) var(--app-ease);
 }
+/* Focus counts as a reveal, not just hover. The star starts at `opacity: 0`, so
+   without this a keyboard user tabbed onto a button that was not there — the
+   focus ring below lands on an invisible target, and the only affordance on the
+   card that a pointer-less user cannot find is the one that marks favourites. */
 .note-card:hover .card-star,
-.card-star.on {
+.card-star.on,
+.card-star:focus-visible {
   opacity: 1;
 }
 .card-star:hover {
