@@ -25,7 +25,7 @@
 import { test, expect, type Page } from '@playwright/test'
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { openNote } from './support/editorHarness'
+import { imageToolbarButton, openNote, queuePick, showSource } from './support/editorHarness'
 
 const OUT = process.env.NEKOWITE_MOTION_OUT
 
@@ -387,7 +387,15 @@ test('settings dialog: closed and reopened inside its own exit', async ({ page }
 test('the departing panel takes no pointer, and the tab order gets it back', async ({ page }) => {
   // Closed: the leaver is inert, so nothing inside it can take focus.
   await page.locator('.tb-left .tb-btn').click()
-  await page.waitForTimeout(120)
+  // Wait for the leave to *start* rather than guessing how long the click takes
+  // to land: collapsing the sidebar is the heaviest frame in the app (measured
+  // at 50–100ms), and a fixed wait reads the panel before its leave classes are
+  // on it. It was flaky in exactly that window and passed on retry.
+  await page.waitForFunction(
+    () => Boolean(document.querySelector<HTMLElement>('.layout-col.sidebar')?.inert),
+    undefined,
+    { timeout: 3000 },
+  )
   const during = await page.evaluate(() => {
     const el = document.querySelector<HTMLElement>('.layout-col.sidebar')!
     const button = el.querySelector<HTMLElement>('button')!
@@ -482,7 +490,70 @@ test('rail sections: the leaver, the arriver, and which one is on top', async ({
 })
 
 // ---------------------------------------------------------------------------
-// The settings body — another brief's file, measured and handed off
+// The popups: two surfaces whose exit was never measured, because the
+// instrument could not see them until the toolbar's own clip was found.
+// ---------------------------------------------------------------------------
+
+test('the heading dropdown: exit, and whether the leaver takes the pointer', async ({ page }) => {
+  // The dropdown hangs off a button inside a toolbar that scrolls horizontally,
+  // and until this round the toolbar clipped it away entirely: measured with it
+  // open, the toolbar's scrollport was y 86–128 and the menu's box y 127–324 —
+  // an overlap of one pixel, and `elementFromPoint` at the centre of an option
+  // answered `div.editor-container`. (A Playwright click on that option still
+  // worked, which is how the defect stayed invisible: `click()` scrolls its
+  // target into view first, and scrolling a 197px menu into a 42px scrollport
+  // brings it on screen for the machine and for nobody else.) See
+  // WordToolbar.vue's `placementFor` for the fix.
+  await page.locator('.toolbar-menu-wrap .toolbar-btn').first().click()
+  await page.waitForTimeout(500)
+  await ensureProbe(page)
+  const done = probe(page, '.toolbar-menu', 700)
+  await page.locator('.toolbar-menu-wrap .toolbar-btn').first().click()
+  const frames = await done()
+  report('heading dropdown — close', frames)
+
+  expect(fadedOut(frames), 'the menu fades rather than disappearing').toBe(true)
+  // The exit takes the pointer off it, one frame in: before that frame the menu
+  // is still the resting surface, and from it onward it is not a target.
+  expect(untouched(frames), 'the exit takes the pointer off the menu').toBeGreaterThan(3)
+})
+
+test('a toast: exit, and whether the leaver takes the pointer', async ({ page }) => {
+  await openNote(page, { importFails: true })
+  await showSource(page)
+  await queuePick(page, { 'C:/pics/cat.png': 'QUJD' })
+  await (await imageToolbarButton(page)).click()
+  await expect(page.locator('.toast-stack .toast').first()).toBeVisible()
+  await page.waitForTimeout(500)
+
+  await ensureProbe(page)
+  const done = probe(page, '.toast-stack .toast', 700)
+  await page.locator('.toast-stack .toast').first().click()
+  const frames = await done()
+  report('toast — dismissed', frames)
+
+  expect(fadedOut(frames), 'the toast fades rather than disappearing').toBe(true)
+  expect(untouched(frames), 'the exit takes the pointer off the toast').toBeGreaterThan(3)
+})
+
+test('a context menu: the exit every host used to cut', async ({ page }) => {
+  await page.locator('.pane.rendered .ProseMirror').click({ button: 'right' })
+  await page.locator('.ctx-menu').waitFor({ state: 'visible', timeout: 3000 })
+  await page.waitForTimeout(500)
+
+  await ensureProbe(page)
+  const done = probe(page, '.ctx-menu', 700)
+  await page.waitForTimeout(200)
+  await page.keyboard.press('Escape')
+  const frames = await done()
+  report('context menu — closed with Escape', frames)
+
+  expect(fadedOut(frames), 'the menu fades rather than being cut').toBe(true)
+  expect(untouched(frames), 'and its exit takes the pointer off it').toBeGreaterThan(3)
+})
+
+// ---------------------------------------------------------------------------
+// The settings body
 // ---------------------------------------------------------------------------
 
 test('the settings section swap, and what the leaving page still exposes', async ({ page }) => {
@@ -503,6 +574,7 @@ test('the settings section swap, and what the leaving page still exposes', async
       present: Boolean(leaver),
       pointerEvents: cs?.pointerEvents ?? null,
       position: cs?.position ?? null,
+      inert: leaver ? (leaver as HTMLElement).inert : null,
       colourSchemesStillMatched: document.querySelectorAll(
         '.settings-overlay .color-scheme-card',
       ).length,
@@ -516,12 +588,14 @@ test('the settings section swap, and what the leaving page still exposes', async
   }))
   console.log(`=== and 660ms after it: ${JSON.stringify(after)}\n`)
 
-  // Only the durable half is asserted. That the leaver is still taking the
-  // pointer at 60ms is a *defect* in a file this brief does not own, so it is
-  // recorded above and reported rather than pinned here — a test that went red
-  // the day someone fixed it would be worse than no test. What is safe to pin
-  // is that it does go: the exit ends, and the previous section is gone with
-  // it rather than accumulating in the scroll container.
+  // It goes when the exit is over, rather than accumulating in the scroll
+  // container...
   expect(after.stillThere, 'the exit finishes and the previous section is gone').toBe(false)
   expect(after.colourSchemesStillMatched, 'and nothing of it is left behind').toBe(0)
+  // ...and it is out of the user's reach for the whole of the exit. It stays
+  // *findable by a selector* — a cross-fade keeps both pages in the document,
+  // which is what `console-clean`'s walk trips over — so the walk has to wait
+  // for the swap to settle rather than count during it.
+  expect(during.pointerEvents, 'the leaving page takes no pointer').toBe('none')
+  expect(during.inert, 'and is out of the tab order').toBe(true)
 })

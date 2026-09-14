@@ -161,6 +161,24 @@ describe('Note card context menu', () => {
     return menuItems().map((b) => b.querySelector('.ctx-menu-label')?.textContent?.trim() ?? '')
   }
 
+  /**
+   * Wait for the menu to leave the document.
+   *
+   * The menu exits now — `<Transition name="ctx">` at the host, 195ms of fade
+   * and no pointer — instead of being destroyed in the frame the user acts, so
+   * "the menu is closed" is no longer finished on the next macrotask and an
+   * assertion taken there reads the leaver. There is no stylesheet in this
+   * environment, so Vue finds nothing to wait on and the leave resolves on the
+   * next animation frame; this waits for that rather than hard-coding the
+   * component's duration, which would rot the moment it is retuned.
+   */
+  async function menuGone(): Promise<void> {
+    for (let frame = 0; frame < 20 && menuItems().length > 0; frame += 1) {
+      await new Promise((r) => requestAnimationFrame(() => r(undefined)))
+    }
+    expect(menuItems(), 'the context menu has left the document').toHaveLength(0)
+  }
+
   function clickMenuLabel(label: string): void {
     const item = menuItems().find(
       (b) => b.querySelector('.ctx-menu-label')?.textContent?.trim() === label,
@@ -189,7 +207,7 @@ describe('Note card context menu', () => {
     expect(openSpy).toHaveBeenCalledWith('/vault/beta.md')
     expect(tabs.activeTab?.path).toBe('/vault/beta.md')
     // Selecting an item closes the menu.
-    expect(menuItems()).toHaveLength(0)
+    await menuGone()
     openSpy.mockRestore()
   })
 
@@ -216,7 +234,7 @@ describe('Note card context menu', () => {
     expect(menuLabels()).toEqual(MENU_LABELS)
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     await flush()
-    expect(menuItems()).toHaveLength(0)
+    await menuGone()
 
     await rightClick(cardFor('Gamma'))
     clickMenuLabel('收藏')
@@ -233,6 +251,7 @@ describe('Note card context menu', () => {
     ;(cardFor('Beta').querySelector('.card-main') as HTMLButtonElement).click()
     await flush()
     expect(openSpy).toHaveBeenCalledWith('/vault/beta.md')
+    // No menu was opened here, so there is nothing to wait for.
     expect(menuItems()).toHaveLength(0)
 
     ;(cardFor('Gamma').querySelector('.card-star') as HTMLButtonElement).click()

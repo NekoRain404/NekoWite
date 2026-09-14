@@ -198,14 +198,21 @@ function onSortSelect(id: string): void {
     {{ t('notelist.vaultTruncated') }}
   </p>
 
-  <ContextMenu
-    v-if="sortMenu"
-    :x="sortMenu.x"
-    :y="sortMenu.y"
-    :items="sortMenuItems"
-    @select="onSortSelect"
-    @close="sortMenu = null"
-  />
+  <!-- The exit. A context menu is mounted with `v-if` in every host, so its
+       own leave rule never ran and it was gone in the frame the user acted;
+       `<Transition>` keeps the node mounted for that rule and nothing else
+       changes. See `ui/ContextMenu.vue` for the selectors that had to
+       out-specify its own `.is-open`. -->
+  <Transition name="ctx">
+    <ContextMenu
+      v-if="sortMenu"
+      :x="sortMenu.x"
+      :y="sortMenu.y"
+      :items="sortMenuItems"
+      @select="onSortSelect"
+      @close="sortMenu = null"
+    />
+  </Transition>
 </template>
 
 <style scoped>

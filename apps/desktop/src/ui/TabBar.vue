@@ -134,14 +134,21 @@ async function onMenuSelect(id: string): Promise<void> {
         :stroke-width="1.8"
       />
     </button>
-    <ContextMenu
-      v-if="menu"
-      :x="menu.x"
-      :y="menu.y"
-      :items="menuItems"
-      @select="onMenuSelect"
-      @close="menu = null"
-    />
+    <!-- The exit. A context menu is mounted with `v-if` in every host, so its
+         own leave rule never ran and it was gone in the frame the user acted;
+         `<Transition>` keeps the node mounted for that rule and nothing else
+         changes. See `ui/ContextMenu.vue` for the selectors that had to
+         out-specify its own `.is-open`. -->
+    <Transition name="ctx">
+      <ContextMenu
+        v-if="menu"
+        :x="menu.x"
+        :y="menu.y"
+        :items="menuItems"
+        @select="onMenuSelect"
+        @close="menu = null"
+      />
+    </Transition>
   </div>
 </template>
 
