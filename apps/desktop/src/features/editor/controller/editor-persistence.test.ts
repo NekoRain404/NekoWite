@@ -5,7 +5,7 @@ import { useSettingsStore } from '../../../stores/settings'
 import { createDocumentSession, type DocumentSession } from '../model/document-session'
 import { createEditorPersistence } from './editor-persistence'
 import { clearRefusedDocument, markRefusedDocument } from '../../../services/editor-ownership'
-import type { NekoEditor } from '@nekowite/editor-core'
+import { NoDocumentLoadedError, type NekoEditor } from '@nekowite/editor-core'
 
 vi.mock('../../../platform/gateways/fs', () => ({
   fsService: {
@@ -115,6 +115,41 @@ describe('editorPersistence', () => {
     await vi.advanceTimersByTimeAsync(200)
 
     expect(tabs.activeTab?.content).toBe('# Canonical\n')
+  })
+
+  // `save()` refuses with `NoDocumentLoadedError` when the editor is holding no
+  // document of the open tab, instead of resolving to `""` (which the app wrote
+  // over a real note). The refusal is the same fact as the C1 guard above, so it
+  // takes the same exit: publish nothing. It must be caught here — the debounced
+  // path runs from a timer, so an escaping rejection is unhandled by
+  // construction, and the flush's several awaiters get it instead of a document.
+  it('publishes nothing when the editor refuses to serialize a document it does not hold', async () => {
+    vi.useFakeTimers()
+    const { editor } = makeFakeEditor('')
+    editor.save = vi.fn().mockRejectedValue(new NoDocumentLoadedError())
+    session.editor = editor as unknown as NekoEditor
+    tabs.activeTab!.content = '# The text the tab is holding\n'
+    const persistence = createEditorPersistence({ session })
+
+    persistence.scheduleSerialize()
+    await vi.advanceTimersByTimeAsync(200)
+
+    // The call was made — the refusal is the answer, not a skipped read — and
+    // the tab is exactly as it was: `""` here is the blank note this replaced.
+    expect(editor.save).toHaveBeenCalledTimes(1)
+    expect(tabs.activeTab?.content).toBe('# The text the tab is holding\n')
+    expect(session.lastLocalMarkdown).toBeNull()
+  })
+
+  it('does not swallow a serialization failure that is not a refusal', async () => {
+    const { editor } = makeFakeEditor('')
+    editor.save = vi.fn().mockRejectedValue(new Error('serializer exploded'))
+    session.editor = editor as unknown as NekoEditor
+    const persistence = createEditorPersistence({ session })
+
+    // Narrow by construction: only the named refusal is an answer to "there is
+    // nothing to publish", and a real failure still has to reach its caller.
+    await expect(persistence.flush()).rejects.toThrow('serializer exploded')
   })
 
   it('cancel() drops a pending serialization before it fires', async () => {

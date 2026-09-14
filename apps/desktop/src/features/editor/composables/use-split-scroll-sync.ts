@@ -284,14 +284,17 @@ export function useSplitScrollSync(options: SplitScrollSyncOptions): SplitScroll
     return { width: `${(1 - view.splitRatio) * 100}%` }
   })
 
+  /** Put a 1-based source line at a third of the way down the source pane.
+   *  Deliberately not the top: a heading read as the first line of the viewport
+   *  has nothing above it to say what section it belongs to. */
   function scrollToLine(line: number): void {
     const pane = options.getSourcePane()
     if (!pane) return
     const cm = pane.getSourceView()
     if (!cm) return
     const doc = cm.state.doc
-    const clamped = Math.max(0, Math.min(line, doc.lines - 1))
-    const info = cm.lineBlockAt(doc.line(clamped + 1).from)
+    const clamped = Math.max(1, Math.min(line, doc.lines))
+    const info = cm.lineBlockAt(doc.line(clamped).from)
     cm.scrollDOM.scrollTop = Math.max(0, info.top - cm.scrollDOM.clientHeight / 3)
   }
 
@@ -301,15 +304,24 @@ export function useSplitScrollSync(options: SplitScrollSyncOptions): SplitScroll
       if (!target) return
       view.consumeOutlineTarget()
       await nextTick()
+      // The outline numbers a line the way `parseOutline` finds it in the
+      // document's text — an index, so the first line is 0 — while every pane
+      // API and the whole scroll mapping speak 1-based source lines. Convert
+      // once, here, at the only place the store's outline target is read.
+      // Skipping it for the rendered pane is what made a jump land on the
+      // heading ABOVE the one that was clicked: the index was read as the count
+      // of lines before the target, so the block it resolved to was the previous
+      // heading's.
+      const line = target.line + 1
       if (view.mode === 'source') {
-        scrollToLine(target.line)
+        scrollToLine(line)
         return
       }
       // A jump is discrete: the rendered pane snaps onto the block that holds the
       // line and the source follows it without easing. Both writes are the
       // program's, so neither comes back as a user scroll.
       destination = 'rendered'
-      options.getRenderedPane()?.setScrollToLine(target.line, nextToken())
+      options.getRenderedPane()?.setScrollToLine(line, nextToken())
       if (view.mode === 'split') align('rendered', false)
     },
   )
