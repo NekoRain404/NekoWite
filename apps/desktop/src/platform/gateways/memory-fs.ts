@@ -1,75 +1,44 @@
 /**
- * The in-memory filesystem gateway.
+ * The in-memory filesystem gateway — the composition root.
  *
  * A zero-backend implementation of the fs port (plus the dialog methods it
  * carries as the combined {@link FsGateway}) so core application services can
  * be unit-tested — or run the browser demo — without a Tauri bridge. It mirrors
  * the Rust `encode_rel_path` keying.
  *
- * Its two neighbouring areas are composed in rather than restated: the dialogs
- * from `memoryDialogs.ts`, the attachment bytes from `memoryAttachments.ts`.
- * What stays here is the vault itself — the note key space, the trash, the
- * version history and the directory listing derived from all three.
+ * The vault's state is declared here and the areas that operate on it are
+ * composed in, one module per concern, so a reader can take in a single one
+ * without holding the others in their head:
+ *
+ *  - `memory-file-ops.ts`    reading, writing, stating, the listing, mkdir
+ *  - `memory-trash.ts`       deleting, listing, restoring, emptying
+ *  - `memory-history.ts`     the snapshots a write keeps of what it replaced
+ *  - `memory-attachments.ts` the attachment bytes and their media URLs
+ *  - `memory-dialogs.ts`     the (simulated) native dialogs
+ *
+ * `renameEntry` is the one operation no area owns: a rename has to carry every
+ * per-path structure the vault keeps, so it stays where all of them are in
+ * scope. The fault/delay simulation is applied to the assembled gateway by
+ * `withBehavior` below (the policy itself is `memoryFaults.ts`).
  *
  * The gateway is a pure closure over its own state — creating two gateways
  * yields two independent stores, so tests never leak state across instances.
  * The one piece of state with a wider lifetime is the demo pick registry
- * (`memoryPickedFiles.ts`), which is deliberately module-scope.
- *
- * `withBehavior` adds the controllable-failure simulation on top of any gateway
- * this module builds: an injected `fail` map makes a named command reject, and
- * an injected `delayMs` postpones every call (drive with fake timers to model a
- * slow backend or a timed-out operation). The policy itself is `memoryFaults.ts`.
+ * (`memory-picked-files.ts`), which is deliberately module-scope.
  */
 
-import type {
-  EventPort,
-  FileEntry,
-  FsChangeEvent,
-  FsGateway,
-  HistoryEntry,
-  TrashEntry,
-} from './contracts'
+import type { EventPort, FsChangeEvent, FsGateway } from './contracts'
 import { createMemoryEventAdapter } from '../events/memory-event-adapter'
 import { memoryDialogPort } from './memory-dialogs'
 import { createAttachmentArea } from './memory-attachments'
 import { simulateCall, type MemoryFault } from './memory-faults'
+import { createFileOpsArea } from './memory-file-ops'
+import { createTrashArea, type TrashItem } from './memory-trash'
+import { createHistoryArea, type Snapshot } from './memory-history'
 
 const DEFAULT_SEED: Record<string, string> = {
   'welcome.md':
     '# Welcome to NekoWite (demo)\n\nThis is the in-browser demo vault.',
-}
-
-interface Snapshot extends HistoryEntry {
-  content: string
-}
-
-interface TrashItem extends TrashEntry {
-  content: string
-}
-
-/** Mirrors the Rust `encode_rel_path` so trash/history keys stay pure and
- * readable: `/` becomes `__`, a leading dot run is dropped, and an interior
- * `..` run collapses to `_` (no path traversal can leak into a key). */
-function encode(p: string): string {
-  let out = ''
-  for (const c of p) {
-    if (c === '/') {
-      out += '__'
-    } else if (c === '.') {
-      if (out === '') {
-        // leading dot dropped
-      } else if (out.endsWith('.')) {
-        out = out.slice(0, -1) + '_'
-      } else {
-        out += '.'
-      }
-    } else {
-      out += c
-    }
-  }
-  while (out.endsWith('.')) out = out.slice(0, -1)
-  return out === '' ? '_' : out
 }
 
 /** Tuning knobs for the memory FS adapter's controllable-failure simulation. */
@@ -113,186 +82,32 @@ export function createMemoryFsGateway(
   // hands one in (as createGateways does) `onFsChange` shares it with the rest
   // of the runtime; otherwise a private bus is created.
   const events = opts.events ?? createMemoryEventAdapter()
-  let idSeq = 0
 
-  function snapshot(path: string, oldContent: string, maxHistory?: number): void {
-    const max = maxHistory ?? 10
-    const list = history.get(path) ?? []
-    idSeq += 1
-    list.push({
-      id: `${Date.now()}-${idSeq}`,
-      size: oldContent.length,
-      mtime: Date.now(),
-      content: oldContent,
-    })
-    while (list.length > max) list.shift()
-    history.set(path, list)
-  }
-
-  function normalizeDir(dir: string): string {
-    if (dir === '.' || dir === '' || dir === 'memoir://demo') return ''
-    if (dir.startsWith('memoir://demo/')) return dir.slice('memoir://demo/'.length)
-    return dir.replace(/\/+$/, '')
-  }
-
-  function isHiddenKey(key: string): boolean {
-    return key.split('/').some((seg) => seg.startsWith('.'))
-  }
+  // `snapshot` is the history area's write-side entry point, not a port member:
+  // the file area takes it directly and it is kept off the gateway below, so a
+  // caller cannot mistake it for a command and `withBehavior` cannot wrap it as
+  // one.
+  const { snapshot, ...historyOps } = createHistoryArea({ files, history })
 
   const base: FsGateway = {
-    registerVault: async () => {},
-    read: async (_vault, path) => {
-      const content = files.get(path)
-      if (content === undefined) {
-        throw new Error(`No such file in demo vault: ${path}`)
-      }
-      return content
-    },
-    write: async (_vault, path, content, maxHistory) => {
-      const old = files.get(path)
-      if (old !== undefined && old !== '' && old !== content) {
-        snapshot(path, old, maxHistory)
-      }
-      files.set(path, content)
-      modified.set(path, Date.now())
-      // The in-memory gateway has no separate history backend that could fail,
-      // so there is never a warning to report.
-      return null
-    },
-    stat: async (_vault, path) => {
-      const content = files.get(path)
-      if (content === undefined) {
-        throw new Error(`No such file in demo vault: ${path}`)
-      }
-      return { size: content.length, mtime: modified.get(path) ?? 0 }
-    },
-    deleteFile: async (_vault, path) => {
-      const content = files.get(path)
-      if (content === undefined) {
-        throw new Error(`No such file in demo vault: ${path}`)
-      }
-      files.delete(path)
-      let name = encode(path)
-      if (trash.has(name)) {
-        name = `${name}-${Date.now()}`
-      }
-      trash.set(name, {
-        name,
-        display_name: path.replace(/\\/g, '/').split('/').pop() || name,
-        trash_path: name,
-        original_path: path,
-        is_dir: false,
-        content,
-      })
-      return name
-    },
-    listTrash: async () =>
-      [...trash.values()]
-        .map(({ name, display_name, trash_path, original_path, is_dir }) => ({
-          name,
-          display_name,
-          trash_path,
-          original_path,
-          is_dir,
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    restoreFromTrash: async (_vault, trashPath) => {
-      const entry = trash.get(trashPath)
-      if (!entry) {
-        throw new Error(`No such file in trash: ${trashPath}`)
-      }
-      if (files.has(entry.original_path)) {
-        throw new Error(`Cannot restore: ${entry.original_path} already exists`)
-      }
-      files.set(entry.original_path, entry.content)
-      trash.delete(trashPath)
-      return entry.original_path
-    },
-    clearTrash: async () => {
-      // The in-memory fs never has a locked file, so a pass is always total;
-      // the report shape is still the port contract.
-      const removed = trash.size
-      trash.clear()
-      return { removed, failed: [] }
-    },
-    listHistory: async (_vault, path) =>
-      [...(history.get(path) ?? [])]
-        .reverse()
-        .map(({ id, size, mtime }) => ({ id, size, mtime })),
-    readHistory: async (_vault, path, id) => {
-      const snap = (history.get(path) ?? []).find((s) => s.id === id)
-      if (!snap) {
-        throw new Error(`No history snapshot ${id} for ${path}`)
-      }
-      return snap.content
-    },
-    restoreHistory: async (_vault, path, id) => {
-      const snap = (history.get(path) ?? []).find((s) => s.id === id)
-      if (!snap) {
-        throw new Error(`No history snapshot ${id} for ${path}`)
-      }
-      files.set(path, snap.content)
-      return snap.content
-    },
-    list: async (_vault, dir) => {
-      const baseDir = normalizeDir(dir)
-      const prefix = baseDir === '' ? '' : `${baseDir}/`
-      const derivedDirs = new Set<string>()
-      const fileKeys = new Map<string, string>()
-      for (const key of files.keys()) {
-        if (!key.startsWith(prefix) || isHiddenKey(key)) continue
-        const rest = key.slice(prefix.length)
-        if (rest === '') continue
-        const [seg] = rest.split('/')
-        if (rest.includes('/')) derivedDirs.add(seg)
-        else fileKeys.set(seg, key)
-      }
-      for (const explicit of virtualDirs) {
-        if (explicit === baseDir || !explicit.startsWith(prefix)) continue
-        const rest = explicit.slice(prefix.length)
-        if (rest !== '') derivedDirs.add(rest.split('/')[0])
-      }
-      const entries: FileEntry[] = []
-      for (const name of derivedDirs) {
-        entries.push({
-          name,
-          path: baseDir === '' ? name : `${baseDir}/${name}`,
-          is_dir: true,
-          is_mdx: false,
-        })
-      }
-      for (const [name, key] of fileKeys) {
-        entries.push({
-          name,
-          path: key,
-          is_dir: false,
-          is_mdx: /\.(md|mdx)$/i.test(name),
-        })
-      }
-      return entries.sort((a, b) => {
-        if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1
-        return a.name.localeCompare(b.name)
-      })
-    },
-    watch: async () => undefined,
+    // The note key space and the listing derived from it, the trash a delete
+    // parks in, and the history a write snapshots into — three areas over the
+    // same maps.
+    ...createFileOpsArea({ files, virtualDirs, modified, snapshot }),
+    ...createTrashArea({ files, trash }),
+    ...historyOps,
     // The dialog members the combined gateway carries: simulated native
-    // dialogs (see memoryDialogs.ts).
+    // dialogs (see memory-dialogs.ts).
     ...memoryDialogPort,
     // Simulated fs-change subscription: emit on the shared event bus to fire it.
     onFsChange: (cb) => events.on<FsChangeEvent>('fs-change', cb),
-    // Attachment bytes: same vault, one area (see memoryAttachments.ts).
+    // Attachment bytes: same vault, one area (see memory-attachments.ts).
     ...createAttachmentArea({ files, attachments, modified }),
-    createDir: async (_vault, path) => {
-      const clean = path.replace(/^\/+|\/+$/g, '')
-      if (clean === '' || clean.split('/').some((seg) => seg === '.' || seg === '..')) {
-        throw new Error(`Invalid directory name: ${path}`)
-      }
-      if ([...files.keys()].some((key) => key === clean || key.startsWith(`${clean}/`))) {
-        throw new Error(`Already exists: ${clean}`)
-      }
-      virtualDirs.add(clean)
-      return clean
-    },
+    // A rename moves the whole of a path, so it is the one operation written
+    // where every map is in scope: the key itself, the virtual directory, the
+    // attachment bytes, the history snapshots and the write time are all keyed
+    // by the path that changed, and a move that carried only some of them would
+    // leave the vault describing a file that is no longer there.
     renameEntry: async (_vault, from, to) => {
       const fromClean = from.replace(/^\/+|\/+$/g, '')
       const toClean = to.replace(/^\/+|\/+$/g, '')
