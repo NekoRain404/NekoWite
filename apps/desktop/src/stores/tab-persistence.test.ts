@@ -127,6 +127,52 @@ describe('autosave debounce', () => {
     await vi.advanceTimersByTimeAsync(20000)
     expect(writeMock).not.toHaveBeenCalled()
   })
+
+  /** A keystroke every 5 s for a minute: never a pause long enough for the
+   *  trailing timer, which is the case the ceiling exists for. */
+  async function typeForAMinute(
+    s: ReturnType<typeof useTabsStore>,
+    tab: { id: string; content: string },
+  ): Promise<void> {
+    for (let elapsed = 0; elapsed < 60000; elapsed += 5000) {
+      tab.content = `typed at ${elapsed}`
+      s.markDirty(tab.id)
+      s.scheduleAutosave(tab.id)
+      await vi.advanceTimersByTimeAsync(5000)
+    }
+  }
+
+  it('saves during continuous typing, at the ceiling', async () => {
+    readMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    const tab = s.tabs[0]
+
+    await typeForAMinute(s, tab)
+
+    // Before the ceiling existed this was ZERO: every keystroke moved the
+    // trailing timer out from under itself, so a user who typed for ten minutes
+    // had nothing on disk and no sign of it. A minute of unbroken typing is
+    // 30 s of exposure, not a minute, so two saves is the floor.
+    expect(writeMock.mock.calls.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('bounds the unsaved window even at the slowest interval', async () => {
+    const settings = useSettingsStore()
+    settings.autosaveInterval = 60000
+    readMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    const tab = s.tabs[0]
+
+    await typeForAMinute(s, tab)
+
+    // 60 s is a deliberate choice of a lazy delay, and it is still honoured
+    // when the user pauses — but it cannot mean "never" while they do not.
+    expect(writeMock).toHaveBeenCalled()
+  })
 })
 
 describe('session capture and restore', () => {
