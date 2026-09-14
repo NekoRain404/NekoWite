@@ -19,7 +19,14 @@ import { createEditor } from '../editor'
  * *opened* today comes back with its JSX escaped into literal text and its
  * expressions rewritten into invalid JavaScript.
  *
- * Sources: `.superpowers/sdd/roadmap/mdx-audit.md` D1, D3, D4, D6.
+ * The two corpora at the end are about the file's own BYTES rather than its
+ * constructs: the envelope around the Markdown (a BOM, the line endings) and the
+ * form a save writes (whitespace, a setext underline, an indented code block).
+ * Neither is MDX, and both belong here because this is the only corpus that
+ * compares saved output byte for byte.
+ *
+ * Sources: `.superpowers/sdd/roadmap/mdx-audit.md` D1, D3, D4, D6;
+ * task-37 m1 and M1, M3 for the byte corpora.
  */
 
 /** Documents whose bytes must not change across open → save. */
@@ -252,6 +259,142 @@ describe('the document’s own bytes round-trip byte for byte', () => {
       el.remove()
     }
   })
+})
+
+async function saved(input: string): Promise<string> {
+  const el = document.createElement('div')
+  document.body.appendChild(el)
+  const ed = createEditor(el)
+  try {
+    await ed.open(input)
+    return await ed.save()
+  } finally {
+    ed.destroy()
+    el.remove()
+  }
+}
+
+/**
+ * The FORM a save writes, shape by shape.
+ *
+ * task-37 m1 measured ten of these as byte changes nobody asked for — the
+ * CRLF/BOM work added seventeen cases and none of these — and one of the ten was
+ * a defect by any reading: a file whose whole content is a single newline came
+ * back as 0 bytes. The rest keep the parsed document identical (checked: the
+ * position-pruned mdast is equal on both sides of every respelling below), so
+ * the honest question for each row is not "does it render the same" but "what
+ * does a tool reading the RAW vault see", and that is what the reason beside it
+ * answers. The decision itself lives with the code that makes it: the canonical
+ * form in `serialize.ts` (at the stringify options), the body with no content in
+ * `document-envelope.ts` (`bodyToWrite`).
+ */
+const CANONICALISED: Array<[string, string, string]> = [
+  // `one` -> `one\n`. POSIX text files end with a newline, and a file without
+  // one is what `git diff` calls out. A Markdown reader loses nothing; a
+  // line-oriented diff sees one line change. Preserving it would need the
+  // envelope to remember "this file ended without a newline" and to strip the
+  // serializer's own final byte — two stored states for the same document, for
+  // a byte the user never asked about.
+  ['missing final newline', 'one\ntwo', 'one\ntwo\n'],
+
+  // `one\n\n\n` -> `one\n`. Blank lines at the end of a document parse to no
+  // nodes at all, so this is the row above one direction over. A reader that
+  // counts lines sees two go; nothing else can tell.
+  ['trailing blank lines', 'one\n\n\n', 'one\n'],
+
+  // `\n` -> `\n` — it was `''`. THE DEFECT of the ten: the file's entire content
+  // is one newline, the model holds no node for a blank line, and the save wrote
+  // a 0-byte file. `bodyToWrite` writes the file's own whitespace back when the
+  // serializer says the body is empty and the body was only whitespace, which is
+  // the one case where the whitespace is not form around the document but the
+  // document. The two rows after it are the same shape at other sizes.
+  ['a file that is one newline', '\n', '\n'],
+  ['a file that is two newlines', '\n\n', '\n\n'],
+  ['a file that is a blank line of spaces', '   \n', '   \n'],
+
+  // `-\titem` -> `- item`. A tab after a marker is whitespace under CommonMark's
+  // tab expansion, and the item's text value is `item` either way (checked), so
+  // this is a separator being respelled. It is respelled by the stringifier
+  // because a marker's spacing is part of how it lays out nesting and
+  // continuation lines — there is no per-item separator to hand back.
+  ['tab after a list marker', '-\titem\n', '- item\n'],
+
+  // `\tcode` -> a fenced block. THE ROW A NON-MARKDOWN READER CAN TELL APART BY
+  // CONSTRUCT, and the one worth arguing: both spellings are a code block to a
+  // CommonMark renderer, but a tool that looks for ``` — a highlighter, a docs
+  // pipeline, a grep over the vault — finds code in one file and prose in the
+  // other. Canonicalised to the fence because it is the only form this app's own
+  // editing produces (slash command, paste, info strings) and because keeping
+  // each block's source form is a stringifier feature, not an option: the
+  // argument, and what it would cost, are in `serialize.ts`.
+  ['tab-indented code block', '\tcode\n', '```\ncode\n```\n'],
+
+  // `Title\n=====` -> `# Title`. The same heading at the same level; what changes
+  // is two lines of source for one. ATX is what the editor's own heading
+  // commands write, so one file has one spelling, and setext could not express
+  // h3-h6 anyway.
+  ['setext heading', 'Title\n=====\n', '# Title\n'],
+
+  // `one  \n` -> `one\` and a newline. Both are a hard break and both render as
+  // one, so this is a spelling of the same construct — canonicalised in the
+  // direction that SURVIVES: trailing spaces are stripped by editors, git hooks
+  // and formatters, and the break is stripped with them, while the backslash
+  // form is read back byte for byte (the corpus above pins that).
+  ['two-space hard break', 'one  \ntwo\n', 'one\\\ntwo\n'],
+]
+
+/**
+ * The other half of the same measurement: the shapes a save already left alone,
+ * pinned so a change to the canonical form above cannot quietly start moving
+ * them. Two are whitespace the parser keeps verbatim, and the frontmatter rows
+ * are the envelope's own rule — the block is carried as source, including its
+ * blank separator line, so a save never adds or takes away one of these.
+ */
+const PRESERVED: Array<[string, string, string?]> = [
+  // A tab inside a paragraph is a character in a text node, not layout: the
+  // model holds it and writes it back.
+  ['tabs in prose', 'a\tb\n'],
+
+  // A file with nothing in it stays a file with nothing in it. Not the same
+  // shape as the blank file above: this one must not GAIN a newline.
+  ['empty file', ''],
+
+  // Frontmatter and nothing else, in all three shapes it comes in. This is why
+  // the "one gains a newline" rule above does not reach into the block: the
+  // block is written back as source, and the blank line after it belongs to the
+  // block rather than being a trailing blank line of the body.
+  ['frontmatter only, no trailing newline', '---\ntitle: x\n---'],
+  ['frontmatter only, with a newline', '---\ntitle: x\n---\n'],
+  ['frontmatter only, with a blank line', '---\ntitle: x\n---\n\n'],
+
+  // The blank-file defect one level in: a note whose body is a single blank line
+  // after its frontmatter. The block is a string of its own (it swallows its own
+  // trailing breaks); what is left is the body, which serialized to `''` — so
+  // this file lost its last line while keeping everything above it.
+  ['frontmatter and a blank body line', '---\ntitle: x\n---\n \n'],
+
+  // The canonicalisation this brief did NOT decide, because it was already
+  // decided: the only row that changes a character of the user's TEXT. See
+  // `normalizeNbsp` — a browser types U+00A0 for a space at the end of a run,
+  // and a plain-text search or diff for the phrase would not match it.
+  ['non-breaking space', 'a b\n', 'a b\n'],
+]
+
+describe('the form a save writes is a decision, shape by shape', () => {
+  for (const [label, input, expected] of CANONICALISED) {
+    it(`canonicalises ${label}`, async () => {
+      expect(await saved(input)).toBe(expected)
+      // The canonical form has to be a fixed point, or it is a second shape to
+      // drift from rather than a form.
+      expect(await saved(expected)).toBe(expected)
+    })
+  }
+
+  for (const [label, input, expected = input] of PRESERVED) {
+    it(`preserves ${label}`, async () => {
+      expect(await saved(input)).toBe(expected)
+    })
+  }
 })
 
 describe('MDX put into the model without the parser', () => {

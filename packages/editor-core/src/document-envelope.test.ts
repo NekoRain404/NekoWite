@@ -117,6 +117,43 @@ describe('reading and writing a document’s envelope', () => {
     const bomOnly = readDocumentEnvelope('﻿')
     expect(writeDocumentEnvelope(bomOnly, bomOnly.body)).toBe('﻿')
   })
+
+  it('does not empty a body with no content (it was `""`, now the file’s own bytes)', () => {
+    // mdast has no node for a blank line, so the serializer answers `''` for
+    // every one of these — and `''` is what used to be written, turning a file
+    // that was a single newline into a 0-byte file (task-37 m1). The whitespace
+    // is the whole document, so it is written back.
+    const serializerSaysNothing = ''
+    for (const input of ['\n', '\n\n', '   \n', '\t\n', '\r', '\r\n']) {
+      const envelope = readDocumentEnvelope(input)
+      expect(writeDocumentEnvelope(envelope, serializerSaysNothing), JSON.stringify(input)).toBe(
+        input
+      )
+    }
+  })
+
+  it('still writes the empty file when the document’s content was deleted', () => {
+    // The rule reads the SOURCE body, not the model: a note that had words in
+    // it is still emptied when the model says it is empty, because that is the
+    // user deleting everything rather than the save losing it.
+    expect(writeDocumentEnvelope(readDocumentEnvelope('one\ntwo\n'), '')).toBe('')
+    expect(writeDocumentEnvelope(readDocumentEnvelope('# Title\n\nbody\n'), '')).toBe('')
+  })
+
+  it('writes a restored blank body in the document’s own ending', () => {
+    // The blank line after the frontmatter is the body (the block's own
+    // trailing breaks belong to the block), so it is restored — and then it is
+    // written like any other body byte, in the document's ending, which is what
+    // makes the CRLF file consistent.
+    expect(writeDocumentEnvelope(readDocumentEnvelope('---\r\ntitle: x\r\n---\r\n \n'), '')).toBe(
+      '---\r\ntitle: x\r\n---\r\n \r\n'
+    )
+    // A lone CR is inside the restored class (see `bodyToWrite`): a body with
+    // no content has no line to normalise, so the byte is kept.
+    expect(writeDocumentEnvelope(readDocumentEnvelope('---\ntitle: x\n---\n\r'), '')).toBe(
+      '---\ntitle: x\n---\n\r'
+    )
+  })
 })
 
 describe('splitFrontmatter', () => {

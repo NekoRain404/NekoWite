@@ -43,6 +43,12 @@
  *     value of a code block, which mdast keeps verbatim — is therefore preserved
  *     in an LF document rather than normalised away; only a CRLF document
  *     converts its body (LF to CRLF, never the other way).
+ *   - **A body with no content.** When the serializer answers `''`, the file's
+ *     own body is written back IF it held nothing but whitespace: a document
+ *     with no content is nothing but its whitespace, and writing `''` emptied a
+ *     file that was a single newline (task-37 m1). A body that held content is
+ *     not restored — an empty model there means the user deleted it. See
+ *     `bodyToWrite`.
  */
 
 /** The two line endings a document may be written in. */
@@ -102,6 +108,38 @@ export function readDocumentEnvelope(content: string): DocumentEnvelope {
   return { bom, front, body, eol: detectLineEnding(text) }
 }
 
+/** A body made of nothing but whitespace — no content, but a shape. */
+const BLANK_BODY = /^[ \t\r\n]+$/
+
+/**
+ * The bytes to write for the body: the serializer's output, except when it says
+ * the model holds nothing AND the file held nothing but whitespace.
+ *
+ * mdast has no node for a blank line, so a file that is a single newline parses
+ * to an empty tree and serializes to `''` — the save emptied the file (task-37
+ * m1: it came back 0 bytes). A body with no content is the one case where the
+ * whitespace is not form around the document, it IS the file, so `''` is not a
+ * representation of it but the loss of it; the file's own bytes are written
+ * back instead. Spaces or tabs on that blank line are the same case.
+ *
+ * The rule stops at the first non-whitespace byte deliberately. As soon as the
+ * document HAS content, the blank lines around it are the serializer's to own
+ * (its canonical form is stated in `serialize.ts`), so `one\n\n\n` still comes
+ * back `one` with one newline, and a user who deletes every word of a note
+ * still gets the empty file they asked for — the source body is not a backup to
+ * restore from.
+ *
+ * `[ \t\r\n]` rather than `\s`, which would also match U+00A0 — the character
+ * `normalizeNbsp` exists to take OUT of a file — and a form feed, which the
+ * parser round-trips as a code block rather than dropping. A lone CR is inside
+ * the class: the CR-only decision in the header is about endings BETWEEN lines
+ * of content, and this body has no line to normalise, so the byte is kept.
+ */
+function bodyToWrite(source: string, serialized: string): string {
+  if (serialized !== '') return serialized
+  return BLANK_BODY.test(source) ? source : serialized
+}
+
 /**
  * Write `body` (the serializer's output) back into the document's envelope.
  *
@@ -111,12 +149,13 @@ export function readDocumentEnvelope(content: string): DocumentEnvelope {
  */
 export function writeDocumentEnvelope(envelope: DocumentEnvelope, body: string): string {
   const front = inLineEnding(envelope.front, envelope.eol)
+  const written = bodyToWrite(envelope.body, body)
   // The LF case is left alone rather than "normalised to LF": the serializer
   // already writes LF, so the only ones left are the CRLFs the model carried as
   // content, and rewriting those is the silent byte rewrite this module exists
   // to stop. Converting in the other direction is what makes a CRLF document
   // consistent, so that direction is applied.
-  const text = envelope.eol === '\r\n' ? inLineEnding(body, '\r\n') : body
+  const text = envelope.eol === '\r\n' ? inLineEnding(written, '\r\n') : written
   return `${envelope.bom ? BOM : ''}${front}${text}`
 }
 
