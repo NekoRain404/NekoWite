@@ -45,6 +45,10 @@ export const shell = {
 
     contextMenu: {
       aria: 'Context menu',
+      // The editing verbs the editor's own menu takes over from the webview's.
+      cut: 'Cut',
+      copy: 'Copy',
+      selectAll: 'Select all',
     },
   },
   zh: {
@@ -89,6 +93,9 @@ export const shell = {
 
     contextMenu: {
       aria: '上下文菜单',
+      cut: '剪切',
+      copy: '复制',
+      selectAll: '全选',
     },
   },
 }
