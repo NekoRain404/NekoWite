@@ -7,7 +7,11 @@ export default defineConfig({
     baseURL: 'http://localhost:1420',
   },
   webServer: {
-    command: 'pnpm dev',
+    // `e2e/vite.frozen.config.ts`, not the plain dev server: it extends the app's
+    // own Vite config with `server.watch: null`, so the page under test cannot be
+    // hot-reloaded out from under a run by a source edit. See that file for why
+    // a static `vite preview` build is not an option here.
+    command: 'pnpm dev --config e2e/vite.frozen.config.ts',
     url: 'http://localhost:1420',
     // NOT `true`. Reusing whatever already answers on 1420 means a run can be
     // served by a DIFFERENT checkout's app — another worktree, or a `tauri dev`

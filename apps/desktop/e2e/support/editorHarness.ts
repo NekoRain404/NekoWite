@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test'
+import { expect, type Locator, type Page } from '@playwright/test'
 
 // Shared harness for the editor input suites. The app talks to Tauri over
 // `window.__TAURI_INTERNALS__.invoke`; these fixtures stand in for the Rust
@@ -251,6 +251,27 @@ export interface RenderedCaret {
   path: string
   offset: number
   blocks: Array<{ tag: string; text: string }>
+  /**
+   * Index of the `p` holding the caret, counted the way the specs address them
+   * (`.pane.rendered .ProseMirror p`, in document order), or -1 when the caret
+   * is not in one.
+   *
+   * The caret the editor opens with is already inside SOME paragraph — the end
+   * of the loaded document — so "the caret is in a paragraph" is true of a
+   * click that never landed. Only the index can tell those apart.
+   */
+  paragraphIndex: number
+  /**
+   * True when nothing but the caret's own position separates it from the end of
+   * its top-level block's text — "the caret is after the last character", for a
+   * heading as much as for a paragraph.
+   *
+   * Measured as the text between the caret and the end of the block rather than
+   * by comparing offsets: the anchor may be an element (an empty line, a node
+   * selection) or a text node nested in inline markup, and only the range
+   * answers both.
+   */
+  atBlockTextEnd: boolean
 }
 
 /** Caret position inside the rendered (ProseMirror) pane. */
@@ -265,6 +286,28 @@ export function renderedCaret(page: Page): Promise<RenderedCaret> {
       path = (cur.nodeName || '') + (path ? '>' + path : '')
       cur = cur.parentNode
     }
+
+    const anchorEl: Element | null = range
+      ? range.startContainer.nodeType === Node.TEXT_NODE
+        ? range.startContainer.parentElement
+        : (range.startContainer as Element)
+      : null
+    const paragraphs = Array.from(root?.querySelectorAll('p') ?? [])
+    const paragraph = anchorEl?.closest?.('p') ?? null
+
+    // The top-level block (a child of the editor root) the caret sits in. The
+    // walk stops at the root: a caret that is not inside one has no answer, and
+    // walking past it would read the whole pane's text as "after the caret".
+    let block: Element | null = anchorEl
+    while (block && block.parentElement !== root) block = block.parentElement
+    let atBlockTextEnd = false
+    if (range && block && block !== root && block.parentElement === root) {
+      const rest = document.createRange()
+      rest.setStart(range.startContainer, range.startOffset)
+      rest.setEnd(block, block.childNodes.length)
+      atBlockTextEnd = rest.toString() === ''
+    }
+
     return {
       path,
       offset: range?.startOffset ?? -1,
@@ -272,6 +315,8 @@ export function renderedCaret(page: Page): Promise<RenderedCaret> {
         tag: el.tagName,
         text: el.textContent ?? '',
       })),
+      paragraphIndex: paragraph ? paragraphs.indexOf(paragraph) : -1,
+      atBlockTextEnd,
     }
   })
 }
@@ -356,22 +401,53 @@ export async function pressKey(page: Page, key: string): Promise<void> {
   await waitForRenderedCaretSettle(page)
 }
 
-/** Put the CodeMirror caret at the very end of the document. */
+/**
+ * Whether the source pane's own selection is at the end of its document.
+ *
+ * Read from CodeMirror's state rather than from the DOM: the document ends with
+ * a newline, so the caret's line is an empty one and the DOM cannot say whether
+ * that is the end of the document or a blank line in the middle of it.
+ */
+function sourceCaretAtDocEnd(page: Page): Promise<boolean> {
+  return page.evaluate(async () => {
+    const mod = (await import('/src/services/source-view.ts')) as unknown as {
+      getSourceView(): {
+        state: { doc: { length: number }; selection: { main: { head: number } } }
+      } | null
+    }
+    const view = mod.getSourceView()
+    if (!view) return false
+    return view.state.selection.main.head === view.state.doc.length
+  })
+}
+
+/**
+ * Put the CodeMirror caret at the very end of the document.
+ *
+ * Both halves are asserted: the pane owns the DOM selection, and its own
+ * selection is at the document's end. "A source line owns the selection" alone
+ * is true of any caret the pane already had, so a dropped click or a dropped
+ * Control+End would leave a test typing into the middle of the document while
+ * the setup looked like it had succeeded.
+ */
 export async function sourceCaretToEnd(page: Page): Promise<void> {
   await page.locator('[data-testid="source-pane"] .cm-content').click()
   await page.keyboard.press('Control+End')
   await expect
     .poll(async () => (await sourceCaret(page)).line, { timeout: 5000 })
     .toBeGreaterThanOrEqual(0)
+  await expect.poll(() => sourceCaretAtDocEnd(page), { timeout: 5000 }).toBe(true)
 }
 
 /**
- * Click a rendered paragraph and wait until the caret is inside the editor.
+ * Click a rendered paragraph and wait until the caret is inside THAT paragraph.
  *
- * A paragraph spans the whole content column, so a click near its right edge
- * lands in blank space whose caret mapping is only unambiguous once the pane
- * has settled. The click is retried so a lost race cannot turn into a caret in
- * the wrong block.
+ * The assertion is the paragraph's index, not "a paragraph": the caret the
+ * editor opens with is already inside one (the end of the loaded document), so
+ * a click lost under load used to satisfy the weak form and let the test carry
+ * on typing into a different paragraph — a failure that reads as the app losing
+ * text. The click is retried, because a click can be lost; the check after it
+ * is what makes a lost click fail here instead of three assertions later.
  */
 export async function focusParagraph(page: Page, index: number): Promise<void> {
   const paragraph = page.locator('.pane.rendered .ProseMirror p').nth(index)
@@ -380,8 +456,11 @@ export async function focusParagraph(page: Page, index: number): Promise<void> {
     await paragraph.click()
     try {
       await expect
-        .poll(async () => (await renderedCaret(page)).path, { timeout: 1000, intervals: [40] })
-        .toContain('P')
+        .poll(async () => (await renderedCaret(page)).paragraphIndex, {
+          timeout: 1000,
+          intervals: [40],
+        })
+        .toBe(index)
       break
     } catch (error) {
       if (attempt === 2) throw error
@@ -406,6 +485,41 @@ export async function focusParagraph(page: Page, index: number): Promise<void> {
 export async function focusHeadingEnd(page: Page): Promise<void> {
   const heading = page.locator('.pane.rendered .ProseMirror h1').first()
   await expect(heading).toBeVisible()
+
+  // Retried with the point re-measured each time: the rect can be read while the
+  // pane is still settling, and a click resolved against that layout lands past
+  // the heading — under parallel load that is observable as the caret sitting at
+  // the end of the paragraph below it.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const target = await headingEndPoint(heading)
+    await page.mouse.click(target.x, target.y)
+    // Inside the heading AND past its last character. "Inside the h1" alone is
+    // also true of a caret parked at the heading's start, which then splits the
+    // heading in the middle on the next keystroke and reads as the editor having
+    // moved the caret. The poll reports the sample it gave up on: "the click
+    // landed elsewhere" and "it landed at the heading's start" need different
+    // fixes, and a bare `true` cannot tell them apart.
+    try {
+      await expect
+        .poll(
+          async () => {
+            const caret = await renderedCaret(page)
+            const where = `${caret.path} @${caret.offset}, block end=${caret.atBlockTextEnd}`
+            return /H1>(?:SPAN>)?#text$/.test(caret.path) && caret.atBlockTextEnd ? 'ok' : where
+          },
+          { timeout: 1500, intervals: [40] },
+        )
+        .toBe('ok')
+      break
+    } catch (error) {
+      if (attempt === 2) throw error
+    }
+  }
+  await waitForRenderedCaretSettle(page)
+}
+
+/** The point inside the heading's last character, once the text has painted. */
+async function headingEndPoint(heading: Locator): Promise<{ x: number; y: number }> {
   let point: { x: number; y: number } | null = null
   await expect
     .poll(
@@ -425,30 +539,31 @@ export async function focusHeadingEnd(page: Page): Promise<void> {
     .toBe(true)
   const target = point as { x: number; y: number } | null
   if (!target) throw new Error('heading text never rendered')
-
-  await page.mouse.click(target.x, target.y)
-  await expect
-    .poll(async () => (await renderedCaret(page)).path, { timeout: 5000 })
-    .toMatch(/H1>(?:SPAN>)?#text$/)
-  await waitForRenderedCaretSettle(page)
+  return target
 }
 
 /**
  * Place the rendered caret at a character offset inside the Nth paragraph,
- * through the editor's own model.
+ * through the editor's own model, and fail unless it landed there.
  *
  * Reaching a specific offset by clicking and then arrowing is a chain of
  * six input events, each of which must be resolved against a selection
  * ProseMirror has already adopted; under load a single lost press moves the
  * caret a paragraph away. Tests that assert on an exact caret position use
  * this instead, so the starting point is exact by construction.
+ *
+ * The placement is verified rather than assumed, because the failure it guards
+ * against is silent: the paragraphs the specs click and the paragraphs this
+ * walks are found by two different selectors, and an early return on a missing
+ * editor, a missing paragraph or an out-of-range offset would leave the caret
+ * wherever it was and let the caller assert on a document it never reached.
  */
 export async function placeRenderedCaretInParagraph(
   page: Page,
   paragraphIndex: number,
   offset: number,
 ): Promise<void> {
-  await page.evaluate(
+  const placed = await page.evaluate(
     async ({ index, at }) => {
       const mod = (await import('/src/features/editor/session-manager.ts')) as unknown as {
         editorSessionManager: { getView(): unknown }
@@ -458,18 +573,29 @@ export async function placeRenderedCaretInParagraph(
         posAtDOM(node: Node, offset: number): number
         state: {
           doc: { resolve(position: number): unknown }
-          selection: { constructor: { near(pos: unknown, bias?: number): unknown } }
+          selection: {
+            head: number
+            constructor: { near(pos: unknown, bias?: number): unknown }
+          }
           tr: { setSelection(selection: unknown): unknown }
         }
         dispatch(tr: unknown): void
         focus(): void
       } | null
-      if (!view) return
+      if (!view) return { error: 'the editor has no view' }
       const paragraphs = Array.from(
         view.dom.querySelectorAll(':scope > p'),
       ) as HTMLElement[]
       const element = paragraphs[index]
-      if (!element) return
+      if (!element) return { error: `there is no paragraph ${index} (the editor has ${paragraphs.length})` }
+      // The same elements the click-based helpers address, so an index means
+      // one paragraph whichever way a test parks the caret.
+      const clicked = Array.from(
+        document.querySelectorAll('.pane.rendered .ProseMirror p'),
+      )
+      if (clicked[index] !== element) {
+        return { error: `paragraph ${index} is a different element than the pane's ${index}` }
+      }
       // Walk to the character at `at` within the paragraph's text, then let
       // ProseMirror map that DOM position back into the document.
       const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
@@ -485,15 +611,28 @@ export async function placeRenderedCaretInParagraph(
         remaining -= length
         node = walker.nextNode()
       }
-      if (!target) return
+      if (!target) return { error: `paragraph ${index} has no character ${at}` }
       const pos = view.posAtDOM(target.node, target.offset)
       const Selection = view.state.selection.constructor
       view.dispatch(view.state.tr.setSelection(Selection.near(view.state.doc.resolve(pos), 1)))
       view.focus()
+      // Read back rather than assume: `Selection.near` is allowed to answer with
+      // a different position, and a silent snap is exactly what a test starting
+      // from "the caret is at offset N" cannot survive.
+      return { pos, head: view.state.selection.head }
     },
     { index: paragraphIndex, at: offset },
   )
+  if ('error' in placed) throw new Error(`placeRenderedCaretInParagraph: ${placed.error}`)
+  expect(
+    placed.head,
+    `the caret landed at ${placed.head}, not at the requested ${placed.pos}`,
+  ).toBe(placed.pos)
   await waitForRenderedCaretSettle(page)
+  expect(
+    (await renderedCaret(page)).paragraphIndex,
+    'the rendered caret is not in the paragraph that was asked for',
+  ).toBe(paragraphIndex)
 }
 
 /** Type a value with the real keyboard, one physical press per character. */
