@@ -419,12 +419,8 @@ mod tests {
             provider: "openai".into(),
             model: "gpt-4o".into(),
             base_url: Some("http://localhost:11434/v1".into()),
-            api_key: None,
-            temperature: None,
-            max_tokens: None,
-            system_prompt: None,
-            reasoning_effort: None,
             allow_private: true,
+            ..Default::default()
         };
         assert!(validate_base_url(&cfg).is_ok());
     }
@@ -434,13 +430,7 @@ mod tests {
         let cfg = AIConfig {
             provider: "openai".into(),
             model: "gpt-4o".into(),
-            base_url: None,
-            api_key: None,
-            temperature: None,
-            max_tokens: None,
-            system_prompt: None,
-            reasoning_effort: None,
-            allow_private: false,
+            ..Default::default()
         };
         assert!(validate_base_url(&cfg).is_ok());
     }

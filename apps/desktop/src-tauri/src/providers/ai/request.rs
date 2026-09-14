@@ -43,6 +43,41 @@ pub struct AIConfig {
     /// frontend must send this to reach a local model endpoint.
     #[serde(default)]
     pub allow_private: bool,
+    /// The address the model list comes from, when the user names one.
+    ///
+    /// The list is otherwise DERIVED from the Base URL (`{base}/v1/models` for
+    /// Anthropic, `{base}/models` for everything else), which is a guess about
+    /// a provider's layout. A provider whose layout differs cannot be reached
+    /// by guessing harder, and one that answers unknown paths with a 200 HTML
+    /// page cannot even be told apart from a broken response — this override is
+    /// the way out: the complete endpoint, used verbatim, nothing appended.
+    /// Blank means unset, so clearing the field restores the derived path.
+    ///
+    /// It is vetted by the same URL policy as `base_url` (see
+    /// [`for_models_fetch`](AIConfig::for_models_fetch)): a second address,
+    /// never a second set of rules.
+    pub models_url: Option<String>,
+}
+
+impl AIConfig {
+    /// A copy of this config whose `base_url` is the address `GET /models` will
+    /// actually be sent to.
+    ///
+    /// The URL policy judges one address per request, and on the model-list
+    /// path that address is the `models_url` override whenever there is one —
+    /// so the override is what `validate_base_url` has to see. Substituting it
+    /// here is what keeps the override INSIDE that policy rather than beside
+    /// it: it is a second address, never a second set of rules, and the Base
+    /// URL still governs the completion path unchanged.
+    pub fn for_models_fetch(&self) -> AIConfig {
+        match models_url_override(self) {
+            Some(url) => AIConfig {
+                base_url: Some(url.to_string()),
+                ..self.clone()
+            },
+            None => self.clone(),
+        }
+    }
 }
 
 /// Check one completion's raw inputs against [`MAX_PROMPT_BYTES`],
@@ -179,57 +214,90 @@ pub(crate) fn split_data_url(data_url: &str) -> (String, String) {
     (mime, data.to_string())
 }
 
+/// The endpoint the user named for the model list, when they named one.
+///
+/// Blank is treated as unset so clearing the settings field restores the
+/// derived path instead of asking for an empty URL.
+pub fn models_url_override(config: &AIConfig) -> Option<&str> {
+    config
+        .models_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+}
+
+/// The credential headers a model-list request carries.
+///
+/// The conventions of [`with_completion_auth`], kept in one place so an
+/// explicit models URL gets the provider's own authentication instead of a
+/// guessed one: the key rides in the header each provider actually
+/// authenticates with — `x-api-key` + `anthropic-version`, `x-goog-api-key`,
+/// `Authorization: Bearer` — never in the URL, where a proxy or a server log
+/// would capture it.
+fn models_headers(config: &AIConfig) -> Vec<(String, String)> {
+    match config.provider.as_str() {
+        "anthropic" => {
+            let mut headers = vec![("anthropic-version".to_string(), "2023-06-01".to_string())];
+            if let Some(key) = &config.api_key {
+                headers.push(("x-api-key".to_string(), key.clone()));
+            }
+            headers
+        }
+        "gemini" => config
+            .api_key
+            .as_ref()
+            .map(|key| vec![("x-goog-api-key".to_string(), key.clone())])
+            .unwrap_or_default(),
+        _ => config
+            .api_key
+            .as_ref()
+            .map(|key| vec![("Authorization".to_string(), format!("Bearer {key}"))])
+            .unwrap_or_default(),
+    }
+}
+
 /// Resolve the provider's `GET {endpoint}` for listing models, matching the
 /// base/credential conventions of `resolve_endpoint` so the dropdown pulls from
 /// the same origin a completion would use.
+///
+/// An explicit [`AIConfig::models_url`] replaces the whole endpoint — nothing
+/// is appended to it. That is the point of the override: it exists for the
+/// provider whose `/v1/models` is somewhere else, and appending a guess to a
+/// URL the user spelled out in full would recreate the failure it is there to
+/// fix.
 ///
 /// Returned rather than sent, so the caller keeps ownership of the transport
 /// (the pinned client with its per-phase timeouts, see `client::list_models`):
 /// the injection rule the roadmap sets for a split - build nothing inside the
 /// module that cannot be handed in from outside.
 pub fn models_endpoint(config: &AIConfig) -> (String, Vec<(String, String)>) {
-    match config.provider.as_str() {
+    if let Some(url) = models_url_override(config) {
+        return (url.to_string(), models_headers(config));
+    }
+    let url = match config.provider.as_str() {
         "anthropic" => {
             let base = config
                 .base_url
                 .clone()
                 .unwrap_or_else(|| "https://api.anthropic.com".into());
-            let url = format!("{}/v1/models", base.trim_end_matches('/'));
-            let mut headers = vec![("anthropic-version".to_string(), "2023-06-01".to_string())];
-            if let Some(key) = &config.api_key {
-                headers.push(("x-api-key".to_string(), key.clone()));
-            }
-            (url, headers)
+            format!("{}/v1/models", base.trim_end_matches('/'))
         }
         "gemini" => {
             let base = config
                 .base_url
                 .clone()
                 .unwrap_or_else(|| "https://generativelanguage.googleapis.com".into());
-            // Keep the key out of the URL; it rides in the `x-goog-api-key`
-            // header instead so it is never logged by a proxy/server.
-            let url = format!("{}/v1beta/models", base.trim_end_matches('/'));
-            let headers = if let Some(key) = &config.api_key {
-                vec![("x-goog-api-key".to_string(), key.clone())]
-            } else {
-                Vec::new()
-            };
-            (url, headers)
+            format!("{}/v1beta/models", base.trim_end_matches('/'))
         }
         _ => {
             let base = config
                 .base_url
                 .clone()
                 .unwrap_or_else(|| default_base_url(&config.provider).to_string());
-            let url = format!("{}/models", base.trim_end_matches('/'));
-            let headers = if let Some(key) = &config.api_key {
-                vec![("Authorization".to_string(), format!("Bearer {key}"))]
-            } else {
-                Vec::new()
-            };
-            (url, headers)
+            format!("{}/models", base.trim_end_matches('/'))
         }
-    }
+    };
+    (url, models_headers(config))
 }
 
 /// Resolve the API key for an AI request. The key is never disclosed to the
