@@ -126,6 +126,15 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
     // discarded text and saved it over the restore. The pair of fields is what
     // distinguishes the two states: they are equal only while nothing has been
     // typed (editorPersistence updates `lastLocalMarkdown` on every edit).
+    //
+    // And the pair says nothing at all about a document the editor has since
+    // DISOWNED: `open()`'s catch clears `appliedContent`, because a failed load
+    // leaves the model showing the previous document while the editor holds
+    // none. So this guard is skipped after a refusal, and the open below is
+    // what re-establishes the claim (clearing the refusal with it). Skipping it
+    // there is the C1 of brief 58: the editor held nothing while the refusal
+    // stayed armed, so the rendered pane published nothing and a save of the
+    // note in front of the user wrote the text from before their keystroke.
     const editorStillHoldsApplied = deps.session.lastLocalMarkdown === deps.session.appliedContent
     if (content === deps.session.appliedContent && editorStillHoldsApplied && !deps.session.parseFailed) {
       return
@@ -196,15 +205,28 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
           view.setMode('source')
         }
       }
-    } catch {
+    } catch (error) {
       deps.session.parseFailed = true
-      // The model still holds the previous document: open() committed this
-      // file's frontmatter before the parse threw, so `save()` would hand back
-      // that frontmatter glued onto the old body. Published with the text that
-      // failed, so the write path can refuse to save exactly that text on the
-      // strength of a model that does not hold it (C1). `parseFailed` above is
-      // the session's own view — retry eligibility, suppressed re-applies — and
-      // this one is what the save transaction reads.
+      // The load failed, so the editor holds no document: `held.drop()` leaves
+      // the model showing the PREVIOUS document while disowning it, so nothing
+      // the model can serialize is this file's text. `appliedContent` names the
+      // text the editor was last OPENED with, which is a claim that it holds
+      // that text — and the idempotence guard in `applyContent` skips the
+      // re-open on the strength of it. Clearing it here is what keeps the two
+      // facts from disagreeing: the next apply re-opens the note in front of the
+      // user and re-establishes the claim, instead of skipping past it and
+      // leaving the editor holding nothing for every note they switch to (C1,
+      // brief 58).
+      deps.session.appliedContent = null
+      // `error` is bound for the brief that must tell a document too large to
+      // render (`DocumentTooComplexToRenderError`) apart from a genuine parse
+      // failure. Nothing reads it yet, so it is discarded rather than carried.
+      void error
+      // Published with the text that failed, so the write path can refuse to
+      // save exactly that text on the strength of a model that does not hold it
+      // (C1). `parseFailed` above is the session's own view — retry
+      // eligibility, suppressed re-applies — and this one is what the save
+      // transaction reads.
       markRefusedDocument(content)
       notifyError(t('rendered.parseFailed'))
       view.setMode('source')
