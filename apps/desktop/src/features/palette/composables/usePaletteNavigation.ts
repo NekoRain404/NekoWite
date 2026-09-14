@@ -10,6 +10,11 @@
  * the action they target arrive as getters rather than being read from a
  * mounted component.
  *
+ * The number indexes the *rendered* rows: the same numbering `paletteItemId()`
+ * mints the option ids from and the listbox marks each row with `data-index`,
+ * so the arrows, the DOM ids and `aria-activedescendant` cannot drift apart
+ * (§13.9).
+ *
  * Scrolling the highlighted row into view is deliberately NOT here: it is DOM
  * work, and §13.3 keeps the component that owns the listbox doing its own.
  */
@@ -17,11 +22,11 @@
 import { computed, ref, watch, type Ref } from 'vue'
 import { isComposingKey } from '../../../services/keyGuard'
 import type { PaletteEntry } from '../services/commandPaletteLogic'
-import { paletteItemId } from '../types'
+import { paletteItemId, type PaletteRow } from '../types'
 
 export interface UsePaletteNavigationOptions {
   /** The results the user is moving through, in the order they are drawn. */
-  flatRows: () => PaletteEntry[]
+  flatRows: () => PaletteRow[]
   /** Runs the entry the user settled on. */
   activate: (entry: PaletteEntry) => void
   /** Resets the highlight whenever the results change. */
@@ -62,7 +67,7 @@ export function usePaletteNavigation(options: UsePaletteNavigationOptions) {
     if (e.key === 'Enter') {
       e.preventDefault()
       const row = options.flatRows()[activeIndex.value]
-      if (row) options.activate(row)
+      if (row) options.activate(row.entry)
     }
   }
 

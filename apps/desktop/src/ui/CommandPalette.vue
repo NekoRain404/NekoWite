@@ -1,60 +1,46 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+/**
+ * The palette's mount point: the modal it raises, and the two global keys that
+ * raise and dismiss it.
+ *
+ * What it offers and which row the arrows are on come from the feature's
+ * composables and the rows are drawn by `PaletteList` (§13.3), so what is left
+ * here is the on-screen lifecycle: the fade in and out with its cancellable
+ * paint, the modal-stack claim that arbitrates Escape between two open dialogs,
+ * the focus trap and the Ctrl+K listener. The component lives for the app's
+ * whole life and renders nothing while closed, which is why those listeners are
+ * its own rather than a parent's.
+ */
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { Search } from 'lucide-vue-next'
 import { useFocusTrap } from '../composables/useFocusTrap'
-import type { Component } from 'vue'
-import { BUILTIN_COMMAND_IDS, getToolbar, listCommands } from '@nekowite/editor-core'
-import { runEditorCommand } from '../services/runEditorCommand'
-import { FileText, Search } from 'lucide-vue-next'
-import { useTabsStore } from '../stores/tabs'
-import { fsService } from '../platform/gateways/fs'
-import { vaultFileIndex } from '../services/vaultFiles'
-import { catalogOf, COMMAND_KEYS } from './commandCatalog'
-import {
-  fileEntryOf,
-  filterEntries,
-  groupEntries,
-  type PaletteEntry,
-} from '../features/palette/services/commandPaletteLogic'
-import { t } from '../i18n'
 import { isComposingKey } from '../services/keyGuard'
 import { modalStack } from '../services/modalStack'
+import {
+  PALETTE_LIST_ID,
+  PaletteList,
+  usePaletteEntries,
+  usePaletteNavigation,
+  type PaletteEntry,
+} from '../features/palette'
+import { t } from '../i18n'
 
+/** How long a closing palette stays mounted, so its fade-out can run. */
 const MOTION_MS = 160
-const FILE_RESULT_LIMIT = 20
-
-interface PaletteRow {
-  entry: PaletteEntry
-  index: number
-}
-
-interface PaletteGroupRows {
-  key: 'command' | 'file'
-  label: string
-  entries: PaletteRow[]
-}
-
-const LIST_ID = 'nekowite-command-palette-list'
-
-const tabs = useTabsStore()
-
-// Every command the palette offers is an editor command: it runs against the
-// live rendered/source model (see runEditorCommand). With no document open there
-// is no model, so nothing below can be offered honestly.
-const hasDocument = computed(() => tabs.activeTab !== null)
 
 const open = ref(false)
 const visible = ref(false)
 /** True from the moment a close begins until the fade-out finishes. */
 const closing = ref(false)
 const query = ref('')
-const activeIndex = ref(0)
 const inputRef = ref<HTMLInputElement | null>(null)
-const listRef = ref<HTMLElement | null>(null)
+/** The listbox owns its element and scrolls the active row into view itself. */
+const listRef = ref<InstanceType<typeof PaletteList> | null>(null)
 // The palette declares aria-modal, so Tab has to stay inside it; the search
 // input is focused explicitly by `show()`, so the trap only has to cycle.
 const paletteEl = ref<HTMLElement | null>(null)
 useFocusTrap(paletteEl, open, { initialFocus: false })
-const files = ref<string[]>([])
+
 let hideTimer: ReturnType<typeof setTimeout> | null = null
 // The deferred paint that turns the fade-in on. It has to be cancellable: a
 // close that lands inside those two frames would otherwise let the stale paint
@@ -62,111 +48,27 @@ let hideTimer: ReturnType<typeof setTimeout> | null = null
 // on-screen while closed.
 let paintRaf = 0
 let prevFocus: HTMLElement | null = null
-let fsUnlisten: Promise<() => void> | null = null
 
-// Registry reads are not reactive; bump on every open so freshly loaded
-// plugins contribute their toolbar commands.
-const registryRevision = ref(0)
-
-const commandEntries = computed<PaletteEntry[]>(() => {
-  void registryRevision.value
-  // The formatting/insert commands are ProseMirror commands (or plugin commands
-  // resolving the rendered view): with no document open `runEditorCommand`
-  // reports "nothing handled it" and the row would be a silent no-op — no toast,
-  // no disabled state, nothing. Rather than offering ~20 dead rows, offer none
-  // until a document exists (the Files group still opens one) and say why in the
-  // note above the list.
-  if (!hasDocument.value) return []
-  const byId = new Map<string, PaletteEntry>()
-  const add = (rawId: string, run: () => void, fallbackLabel?: string): void => {
-    if (byId.has(rawId)) return
-    const meta = catalogOf(rawId)
-    byId.set(rawId, {
-      id: rawId,
-      kind: 'command',
-      label: COMMAND_KEYS[rawId] ? t(COMMAND_KEYS[rawId]) : (meta.label === rawId && fallbackLabel ? fallbackLabel : meta.label),
-      keywords: meta.keywords ?? rawId,
-      run,
-    })
-  }
-  // Every command goes through the mode-aware runner: these are ProseMirror
-  // commands (or plugin commands resolving the rendered view), so in source
-  // mode they would otherwise edit the hidden model and appear to do nothing.
-  for (const id of BUILTIN_COMMAND_IDS) add(id, () => runEditorCommand(id))
-  for (const cmd of listCommands()) add(cmd.id, () => runEditorCommand(cmd.id))
-  for (const item of getToolbar()) add(item.id, () => runEditorCommand(item.id), item.label)
-  return [...byId.values()]
+const { hasDocument, rows, flatRows, refreshForOpen } = usePaletteEntries({
+  query,
+  isOpen: () => open.value,
 })
 
-const recentEntries = computed<PaletteEntry[]>(() => {
-  const withPath = tabs.tabs.filter((t) => t.path !== null)
-  const active = tabs.activeTab
-  const ordered = active?.path
-    ? [active, ...withPath.filter((t) => t.id !== active.id)]
-    : withPath
-  const seen = new Set<string>()
-  const out: PaletteEntry[] = []
-  for (const t of ordered) {
-    const path = t.path
-    if (!path || seen.has(path)) continue
-    seen.add(path)
-    out.push(fileEntryOf(path, tabs.vault, () => void tabs.openTab(path)))
-  }
-  return out
+const { activeIndex, activeId, setActive, onInputKeydown } = usePaletteNavigation({
+  flatRows: () => flatRows.value,
+  activate: execute,
+  query,
 })
-
-const fileSearchEntries = computed<PaletteEntry[]>(() =>
-  files.value.map((path) => fileEntryOf(path, tabs.vault, () => void tabs.openTab(path))),
-)
-
-const trimmed = computed(() => query.value.trim())
-
-const commandResults = computed(() => filterEntries(commandEntries.value, trimmed.value))
-const fileResults = computed(() => {
-  const q = trimmed.value
-  if (!q) return recentEntries.value
-  return filterEntries(fileSearchEntries.value, q, FILE_RESULT_LIMIT)
-})
-
-const groups = computed(() => groupEntries([...commandResults.value, ...fileResults.value]))
-
-const rows = computed<PaletteGroupRows[]>(() => {
-  let index = 0
-  return groups.value.map((group) => ({
-    key: group.key,
-    label: group.key === 'command' ? t('palette.groupCommand') : t('palette.groupFile'),
-    entries: group.entries.map((entry) => ({ entry, index: index++ })),
-  }))
-})
-
-const flatRows = computed<PaletteRow[]>(() => rows.value.flatMap((group) => group.entries))
-
-const activeId = computed(() =>
-  activeIndex.value < flatRows.value.length ? `${LIST_ID}-item-${activeIndex.value}` : undefined,
-)
-
-function iconFor(entry: PaletteEntry): Component {
-  return entry.kind === 'file' ? FileText : catalogOf(entry.id).icon
-}
-
-function prefersReducedMotion(): boolean {
-  return typeof window.matchMedia === 'function'
-    && window.matchMedia('(prefers-reduced-motion: reduce)').matches
-}
-
-async function loadFiles(): Promise<void> {
-  const vault = tabs.vault
-  if (!vault) {
-    files.value = []
-    return
-  }
-  files.value = await vaultFileIndex.get(vault)
-}
 
 // Claimed while the palette is open: the most recently raised modal is the one
 // Escape reaches. Claimed on open rather than in `onMounted` because the
 // component is always mounted (it renders nothing while closed).
 let modalToken: symbol | null = null
+
+function prefersReducedMotion(): boolean {
+  return typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
 
 function show(): void {
   if (hideTimer) {
@@ -178,9 +80,8 @@ function show(): void {
   closing.value = false
   query.value = ''
   activeIndex.value = 0
-  registryRevision.value += 1
+  refreshForOpen()
   prevFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-  void loadFiles()
   const paint = (): void => {
     paintRaf = 0
     visible.value = true
@@ -226,35 +127,10 @@ function execute(entry: PaletteEntry): void {
   entry.run()
 }
 
-function move(delta: number): void {
-  const len = flatRows.value.length
-  if (!len) return
-  activeIndex.value = (activeIndex.value + delta + len) % len
-}
-
+/** The highlight moved, so the listbox is asked to keep the row it landed on
+ *  in view. The DOM is the listbox's to touch; the index is ours. */
 function scrollActiveIntoView(): void {
-  const el = listRef.value?.querySelector<HTMLElement>(`[data-index="${activeIndex.value}"]`)
-  el?.scrollIntoView({ block: 'nearest' })
-}
-
-function onInputKeydown(e: KeyboardEvent): void {
-  // Arrow/Enter belong to the IME candidate list while it is open.
-  if (isComposingKey(e)) return
-  if (e.key === 'ArrowDown') {
-    e.preventDefault()
-    move(1)
-    return
-  }
-  if (e.key === 'ArrowUp') {
-    e.preventDefault()
-    move(-1)
-    return
-  }
-  if (e.key === 'Enter') {
-    e.preventDefault()
-    const row = flatRows.value[activeIndex.value]
-    if (row) execute(row.entry)
-  }
+  listRef.value?.scrollActiveIntoView(activeIndex.value)
 }
 
 function onGlobalKeydown(e: KeyboardEvent): void {
@@ -289,34 +165,20 @@ function onGlobalKeydown(e: KeyboardEvent): void {
   }
 }
 
-watch(query, () => {
-  activeIndex.value = 0
-})
-
-watch(
-  () => flatRows.value.length,
-  (len) => {
-    if (activeIndex.value >= len) activeIndex.value = Math.max(0, len - 1)
-  },
-)
-
+// The query and a shrinking result list reset and clamp the highlight inside
+// `usePaletteNavigation`; only the scroll follows from here.
 watch(activeIndex, () => {
   void nextTick(scrollActiveIntoView)
 })
 
 onMounted(() => {
   window.addEventListener('keydown', onGlobalKeydown, true)
-  fsUnlisten = fsService.onFsChange(() => {
-    vaultFileIndex.invalidate()
-    if (open.value) void loadFiles()
-  })
 })
 
 onBeforeUnmount(() => {
   modalStack.releaseModal(modalToken)
   modalToken = null
   window.removeEventListener('keydown', onGlobalKeydown, true)
-  void fsUnlisten?.then((unlisten) => unlisten())
   if (hideTimer) clearTimeout(hideTimer)
   cancelPaint()
 })
@@ -353,7 +215,7 @@ onBeforeUnmount(() => {
             role="combobox"
             aria-autocomplete="list"
             aria-expanded="true"
-            :aria-controls="LIST_ID"
+            :aria-controls="PALETTE_LIST_ID"
             :aria-activedescendant="activeId"
             autocomplete="off"
             spellcheck="false"
@@ -366,62 +228,14 @@ onBeforeUnmount(() => {
         >
           {{ t('palette.noDocument') }}
         </p>
-        <div
-          :id="LIST_ID"
+        <PaletteList
           ref="listRef"
-          class="palette-list"
-          role="listbox"
-          :aria-label="t('palette.aria')"
-        >
-          <template
-            v-for="group in rows"
-            :key="group.key"
-          >
-            <!-- role=presentation: a listbox may only own options, and a
-                 group heading in between is otherwise announced as one. -->
-            <div
-              class="palette-group-label"
-              role="presentation"
-            >
-              {{ group.label }}
-            </div>
-            <button
-              v-for="row in group.entries"
-              :id="`${LIST_ID}-item-${row.index}`"
-              :key="row.entry.id"
-              class="palette-item"
-              :class="{ 'is-active': row.index === activeIndex }"
-              type="button"
-              role="option"
-              :aria-selected="row.index === activeIndex"
-              :data-index="row.index"
-              tabindex="-1"
-              @mousedown.prevent
-              @mouseenter="activeIndex = row.index"
-              @click="execute(row.entry)"
-            >
-              <span class="palette-item-icon">
-                <component
-                  :is="iconFor(row.entry)"
-                  :size="14"
-                  :stroke-width="1.8"
-                />
-              </span>
-              <span class="palette-item-label">{{ row.entry.label }}</span>
-              <span
-                v-if="row.entry.hint"
-                class="palette-item-hint"
-              >{{ row.entry.hint }}</span>
-            </button>
-          </template>
-          <div
-            v-if="!flatRows.length && hasDocument"
-            class="palette-empty"
-            role="presentation"
-          >
-            {{ t('palette.empty') }}
-          </div>
-        </div>
+          :rows="rows"
+          :active-index="activeIndex"
+          :show-empty="!flatRows.length && hasDocument"
+          @activate="execute"
+          @highlight="setActive"
+        />
         <div class="palette-footer">
           <span><kbd>↑</kbd><kbd>↓</kbd> {{ t('palette.footerSelect') }}</span>
           <span><kbd>Enter</kbd> {{ t('palette.footerExecute') }}</span>
@@ -432,161 +246,4 @@ onBeforeUnmount(() => {
   </Teleport>
 </template>
 
-<style scoped>
-.palette-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 10000;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 12vh 16px 16px;
-  background: color-mix(in srgb, var(--app-canvas) 45%, transparent);
-  backdrop-filter: blur(2px);
-  opacity: 0;
-  /* Dismissing: one rung down, accelerating away. */
-  transition: opacity var(--app-motion) var(--app-ease-exit);
-}
-.palette-overlay.is-open {
-  opacity: 1;
-  /* Summoning: a full surface arriving, so it takes the slowest step. */
-  transition: opacity var(--app-motion-slow) var(--app-ease);
-}
-.palette {
-  display: flex;
-  flex-direction: column;
-  width: min(560px, 100%);
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--app-border) 86%, transparent);
-  border-radius: var(--app-radius-xl);
-  background: color-mix(in srgb, var(--app-elevated) 97%, var(--app-panel));
-  box-shadow: var(--app-shadow-dialog);
-  transform: translateY(6px) scale(0.985);
-  transition: transform var(--app-motion) var(--app-ease-exit);
-}
-.palette-overlay.is-open .palette {
-  transform: none;
-  transition: transform var(--app-motion-slow) var(--app-ease);
-}
-.palette-search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--app-border) 60%, transparent);
-  color: var(--app-muted);
-}
-.palette-search-icon {
-  flex: none;
-}
-.palette-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--app-text);
-  font-family: var(--app-font);
-  font-size: 13px;
-}
-.palette-input::placeholder {
-  color: var(--app-muted);
-}
-/* Why the command group is empty (no document open). The commands need an
-   editor, so the palette says so instead of listing actions that cannot run. */
-.palette-note {
-  padding: 10px 14px 0;
-  font-size: 11px;
-  color: var(--app-muted);
-}
-.palette-list {
-  max-height: min(420px, 56vh);
-  overflow-y: auto;
-  padding: 6px;
-}
-.palette-group-label {
-  padding: 8px 8px 4px;
-  font-size: 10px;
-  font-weight: 650;
-  letter-spacing: 0.06em;
-  color: var(--app-muted);
-}
-.palette-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  height: 32px;
-  padding: 0 8px;
-  border: none;
-  border-radius: var(--app-radius-sm);
-  background: transparent;
-  color: var(--app-text);
-  font-family: var(--app-font);
-  font-size: 12px;
-  letter-spacing: -0.01em;
-  text-align: left;
-  cursor: pointer;
-  transition: background var(--app-motion-fast) var(--app-ease),
-              color var(--app-motion-fast) var(--app-ease);
-}
-.palette-item.is-active {
-  background: color-mix(in srgb, var(--app-accent-soft) 82%, var(--app-elevated));
-}
-.palette-item-icon {
-  display: grid;
-  place-items: center;
-  width: 16px;
-  flex: none;
-  color: var(--app-muted);
-}
-.palette-item.is-active .palette-item-icon {
-  color: var(--app-accent);
-}
-.palette-item-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 500;
-}
-.palette-item-hint {
-  flex: none;
-  max-width: 45%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-  color: var(--app-muted);
-}
-.palette-empty {
-  padding: 24px 0;
-  font-size: 12px;
-  color: var(--app-muted);
-  text-align: center;
-}
-.palette-footer {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 14px;
-  border-top: 1px solid color-mix(in srgb, var(--app-border) 60%, transparent);
-  font-size: 11px;
-  color: var(--app-muted);
-}
-.palette-footer kbd {
-  display: inline-block;
-  min-width: 14px;
-  margin-right: 2px;
-  padding: 1px 5px;
-  border: 1px solid color-mix(in srgb, var(--app-border) 70%, transparent);
-  border-radius: var(--app-radius-xs);
-  background: color-mix(in srgb, var(--app-panel) 70%, transparent);
-  font-family: var(--app-font);
-  font-size: 10px;
-  line-height: 1.4;
-  text-align: center;
-  color: var(--app-muted);
-}
-</style>
+<style scoped src="../features/palette/styles/commandPalette.css"></style>
