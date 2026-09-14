@@ -249,7 +249,11 @@ export async function activatePlugin(
       registeredCommands.push(cmd.id)
     }
     for (const item of definition.toolbar ?? []) {
-      registerToolbar({ ...item, run: isolate(item.id, `toolbar:${item.id}`, item.run) })
+      // The plugin id is the owner. Without it the registry keys a plugin's
+      // button the same way it keys the host's, so a second plugin declaring an
+      // id the first already used *replaced* it rather than colliding — and then
+      // removed it on its own teardown, taking the first plugin's button with it.
+      registerToolbar({ ...item, run: isolate(item.id, `toolbar:${item.id}`, item.run) }, id)
       registeredToolbar.push(item.id)
     }
     // What the plugin DECLARED (manifest + definition): the AI capability is
@@ -341,7 +345,7 @@ export async function activatePlugin(
     for (const un of hookUnregisters) runUnregister(un)
     for (const componentName of registeredComponents) unregisterComponent(componentName)
     for (const commandId of registeredCommands) unregisterCommand(commandId)
-    for (const toolbarId of registeredToolbar) unregisterToolbar(toolbarId)
+    for (const toolbarId of registeredToolbar) unregisterToolbar(toolbarId, id)
     // A teardown arrived while the init was awaited: `deactivatePlugin` has
     // already run its own bookkeeping, and the rollback above is the rest of it.
     // The plugin is off, NOT unstable — the user's own switch must not quarantine
@@ -388,7 +392,7 @@ export function deactivatePlugin(id: string): void {
     for (const un of plugin.hookUnregisters) runUnregister(un)
     for (const componentName of plugin.registeredComponents) unregisterComponent(componentName)
     for (const commandId of plugin.registeredCommands) unregisterCommand(commandId)
-    for (const toolbarId of plugin.registeredToolbar) unregisterToolbar(toolbarId)
+    for (const toolbarId of plugin.registeredToolbar) unregisterToolbar(toolbarId, id)
     const name = plugin.definition.name ?? id
     const unloaded = plugin.definition.onUnload?.({
       id,

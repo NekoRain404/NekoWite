@@ -73,6 +73,51 @@ describe('activatePlugin', () => {
     expect(toolbarRun).toHaveBeenCalledTimes(1)
   })
 
+  it('one plugin cannot take, or delete, another plugin\'s toolbar button', async () => {
+    // Toolbar entries used to be keyed by id alone, and the host registered a
+    // plugin's button with no owner at all — so it landed under the same key a
+    // second plugin would use. That made the second plugin's declaration a
+    // *replace* rather than a collision: it silently took the first plugin's
+    // button, and its own teardown then removed it, leaving the first plugin
+    // running with its UI gone and nothing said.
+    const firstRun = vi.fn()
+    const secondRun = vi.fn()
+    await activatePlugin(
+      ok('owner_a', { toolbar: [{ id: 'shared.btn', label: 'A', run: firstRun }] }),
+    )
+    const second = await activatePlugin(
+      ok('owner_b', { toolbar: [{ id: 'shared.btn', label: 'B', run: secondRun }] }),
+    )
+
+    // B is refused rather than quietly winning, and the failure is the host's
+    // existing rollback doing its job — no special case for this.
+    expect(second.ok).toBe(false)
+    const entries = getToolbar().filter((t) => t.id === 'shared.btn')
+    expect(entries).toHaveLength(1)
+    entries[0].run()
+    expect(firstRun).toHaveBeenCalledTimes(1)
+    expect(secondRun).not.toHaveBeenCalled()
+
+    // And A's button is still A's to remove: deactivating A takes it away, and
+    // only then is the id free for B.
+    deactivatePlugin('owner_a')
+    expect(getToolbar().filter((t) => t.id === 'shared.btn')).toHaveLength(0)
+    // B's failed activation quarantined it — a plugin that could not register
+    // cleanly needs re-approval before it may run again. That is the host's
+    // standing rule for a failed activation, not a special case for this one,
+    // and it is asserted rather than stepped around so the cost of a collision
+    // is on the record.
+    expect(isPluginUnstable('owner_b')).toBe(true)
+    resetUnstablePlugin('owner_b')
+    const retry = await activatePlugin(
+      ok('owner_b', { toolbar: [{ id: 'shared.btn', label: 'B', run: secondRun }] }),
+    )
+    expect(retry.ok).toBe(true)
+    getToolbar().find((t) => t.id === 'shared.btn')?.run()
+    expect(secondRun).toHaveBeenCalledTimes(1)
+    deactivatePlugin('owner_b')
+  })
+
   it('offers the ai capability only to a plugin that declared it', async () => {
     // `permissions: ['ai']` used to buy nothing at all: the host had no AI
     // surface, so the capability the permission dialog described did not exist.
