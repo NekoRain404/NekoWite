@@ -33,6 +33,15 @@ export type ExportPdfOrientation = 'portrait' | 'landscape'
 const LS_PROVIDER = 'nekowite.ai.provider'
 const LS_MODEL = 'nekowite.ai.model'
 const LS_BASE_URL = 'nekowite.ai.baseUrl'
+
+/**
+ * The address a local model server is assumed to be on — LM Studio's default.
+ *
+ * It is the stored default of a field that **every provider shares**, which is
+ * why it is named rather than inlined at its use: it is not one provider's
+ * default, and treating it as one is what `config()` has to avoid.
+ */
+const LOCAL_BASE_URL_DEFAULT = 'http://localhost:1234/v1'
 const LS_TEMPERATURE = 'nekowite.ai.temperature'
 const LS_MAX_TOKENS = 'nekowite.ai.maxTokens'
 const LS_SYSTEM_PROMPT = 'nekowite.ai.systemPrompt'
@@ -124,7 +133,7 @@ export const useSettingsStore = defineStore('settings', () => {
   // the stronghold vault), so the configured model is not lost on relaunch.
   const provider = ref(readLs(LS_PROVIDER, 'local'))
   const model = ref(readLs(LS_MODEL, 'qwen2.5-coder:3b'))
-  const baseUrl = ref(readLs(LS_BASE_URL, 'http://localhost:1234/v1'))
+  const baseUrl = ref(readLs(LS_BASE_URL, LOCAL_BASE_URL_DEFAULT))
   const apiKey = ref('')
   const autosaveInterval = ref<AutosaveInterval>(readAutosaveInterval(15000))
   const maxHistory = ref<number>(readNumber(LS_MAXHISTORY, 10))
@@ -194,11 +203,23 @@ export const useSettingsStore = defineStore('settings', () => {
 
   function config(): AIConfig {
     const cfg: AIConfig = { provider: provider.value, model: model.value }
-    if (provider.value === 'local' || provider.value === 'custom' || provider.value === 'deepseek') {
-      // `deepseek` is OpenAI-compatible and commonly fronted by a gateway, so
-      // an explicit Base URL must reach the backend; when the field is empty
-      // the backend falls back to api.deepseek.com.
-      if (baseUrl.value.trim()) cfg.base_url = baseUrl.value.trim()
+    // A typed Base URL reaches EVERY provider, not only the local ones. It used
+    // to be forwarded for `local`/`custom`/`deepseek` alone, which silently
+    // dropped the address for `anthropic`, `gemini` and `openai`: the settings
+    // page renders the field for all of them, so the visible effect was an
+    // Anthropic-compatible proxy being ignored and the request going to
+    // api.anthropic.com carrying the proxy's key — a 401, and no model list.
+    // The Rust side defaults per provider when `base_url` is absent
+    // (`default_base_url`), so passing it through is the whole fix.
+    //
+    // The one exception is the field's own stored default: it is a localhost
+    // address that only means anything to `local`/`custom`, and sending it to a
+    // hosted provider would point the request at a machine that is not running
+    // a model server at all.
+    const typed = baseUrl.value.trim()
+    const isLocalDefault = typed === LOCAL_BASE_URL_DEFAULT
+    if (typed && (!isLocalDefault || provider.value === 'local' || provider.value === 'custom')) {
+      cfg.base_url = typed
     }
     if (apiKey.value) cfg.api_key = apiKey.value
     cfg.temperature = temperature.value

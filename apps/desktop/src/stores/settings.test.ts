@@ -130,6 +130,37 @@ describe('useSettingsStore', () => {
     expect(s.config().base_url).toBe('http://localhost:1234/v1')
   })
 
+  it('carries a typed Base URL to every provider, not only the local ones', () => {
+    // Reported from use: entering an API address and a key, then refreshing,
+    // returned no models. The settings UI renders the Base URL field for every
+    // provider, but config() forwarded it only for local/custom/deepseek — so an
+    // Anthropic-compatible proxy was silently dropped and the request went to
+    // api.anthropic.com carrying the *proxy's* key, which is a 401 every time.
+    // The Rust side already defaults per provider when `base_url` is absent
+    // (`default_base_url`), so forwarding it is the whole fix.
+    const s = useSettingsStore()
+    s.baseUrl = 'https://proxy.example.com/v1'
+    for (const provider of ['anthropic', 'gemini', 'openai', 'grok'] as const) {
+      s.provider = provider
+      expect(s.config().base_url, `${provider} must carry its Base URL`).toBe(
+        'https://proxy.example.com/v1',
+      )
+    }
+  })
+
+  it('never sends the local model server default to a hosted provider', () => {
+    // The field is shared by every provider, and its stored default is a
+    // localhost address that only `local` and `custom` can mean anything by.
+    // Forwarding it unconditionally would point a hosted provider at a machine
+    // that is not running a model server.
+    const s = useSettingsStore()
+    s.provider = 'anthropic'
+    s.baseUrl = 'http://localhost:1234/v1'
+    expect(s.config().base_url).toBeUndefined()
+    s.provider = 'custom'
+    expect(s.config().base_url).toBe('http://localhost:1234/v1')
+  })
+
   it('defaults autosaveInterval to 15000 and maxHistory to 10', () => {
     const s = useSettingsStore()
     expect(s.autosaveInterval).toBe(15000)
