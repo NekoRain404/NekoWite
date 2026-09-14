@@ -47,7 +47,7 @@ export interface RenderDocumentOptions {
 
 const printCss = `
 body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; max-width: 50rem; margin: 0 auto; padding: 2rem; color: #222; position: relative; }
-/* Mirrors the editor's own image rule (.neko-image img in editor-content.css:
+/* Mirrors the editor's own image rule (.neko-image img in editor-blocks.css:
    max-width + height:auto + the 3px radius). Without it an image carrying an
    explicit {width=N} was emitted at N device pixels with nothing to bound it,
    so a photo sized for the editor's narrow column overflowed the printed page

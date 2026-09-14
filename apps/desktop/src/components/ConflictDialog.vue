@@ -85,7 +85,7 @@ function later(): void {
         {{ t('conflict.bodySuffix') }}
       </div>
       <!-- Shared action-row convention (see .dialog-actions in
-           styles/components.css): the confirm slot is the rightmost button, the
+           styles/surfaces.css): the confirm slot is the rightmost button, the
            one a hand reaches for without reading, so it holds the answer that
            keeps the user's edits. Discarding them is the one action that must
            not sit there; it goes first, styled as the danger it is. -->

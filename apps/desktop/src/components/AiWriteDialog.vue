@@ -89,7 +89,7 @@ function kindLabel(): string {
       >
         {{ pending.request.target }}
       </div>
-      <!-- Shared action-row convention (styles/components.css, .dialog-actions):
+      <!-- Shared action-row convention (styles/surfaces.css, .dialog-actions):
            refusals and neutral choices on the left, the affirmative in the
            rightmost/confirm slot. Deny is also what Escape means, so the key
            that dismisses lands on the same answer as the leftmost button. -->

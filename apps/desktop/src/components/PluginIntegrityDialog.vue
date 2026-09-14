@@ -48,7 +48,7 @@ nextTick(() => dialogEl.value?.focus())
       <div class="plugin-meta">
         {{ t('plugin.integrityDigest', { expected: props.expectedDigest, actual: props.actualDigest }) }}
       </div>
-      <!-- Shared action-row convention (styles/components.css, .dialog-actions):
+      <!-- Shared action-row convention (styles/surfaces.css, .dialog-actions):
            refusing a mismatched digest is the safe answer and Escape's answer,
            so it sits leftmost; re-approving owns the confirm slot. -->
       <div class="dialog-actions">
