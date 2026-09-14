@@ -209,12 +209,13 @@ export function createEditor(
         const parsed = parserFor(ctx)(md)
         if (!parsed) return
         // Inside a table cell only the first paragraph's INLINE content can be
-        // inserted: the cell holds one paragraph, so replacing its content with
-        // a block would make the fitter lift the block out and split the table in
-        // two. Markdown is what the image intake and the AI insert send, so a
-        // snippet whose first block is a paragraph still lands (image, inline
-        // math, text); a snippet that starts with a block (an hr, a table) has
-        // nowhere legal to go and the cell is left untouched.
+        // inserted: the cell holds one paragraph, so putting a block in it would
+        // make the fitter lift the block out and split the table in two.
+        // Markdown is what the image intake and the AI insert send, so a snippet
+        // whose first block is a paragraph still lands (image, inline math,
+        // text) AT THE CARET — the cell's other text is left alone; a snippet
+        // that starts with a block (an hr, a table) has nowhere legal to go and
+        // the cell is left untouched.
         if (isInTableCell(v.state)) {
           insertMarkdownInCell(v, parsed)
           return

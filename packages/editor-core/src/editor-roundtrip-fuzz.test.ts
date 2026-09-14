@@ -183,6 +183,42 @@ describe('editor open/save canonicalizations (content preserved, form changed)',
     }
   })
 
+  it('opens an un-piped table with `- | -` delimiters as a table', async () => {
+    // The same stolen delimiter row the `roundTrip` case in serialize.test.ts
+    // pins; this is the path a user's file actually takes on open.
+    await withEditor(async (ed) => {
+      await ed.open('a | b\n- | -\n1 | 2\n')
+      expect(await ed.save()).toBe('| a | b |\n| - | - |\n| 1 | 2 |\n')
+    })
+  })
+
+  it('keeps a link reference definition nothing references', async () => {
+    // Milkdown's preset runs `remark-inline-links` over the tree, which deletes
+    // EVERY definition after turning the references it could resolve into inline
+    // links. The inlining is intended (see the case above); deleting a
+    // definition nothing pointed at is not — the note lost its only content.
+    const cases: Array<[string, string, string]> = [
+      ['definition only', '[unused]: https://example.com\n', '[unused]: https://example.com\n'],
+      ['definition below text', 'text\n\n[unused]: https://example.com "T"\n', '[unused]: https://example.com "T"\n'],
+    ]
+    for (const [label, input, expected] of cases) {
+      await withEditor(async (ed) => {
+        await ed.open(input)
+        const saved = await ed.save()
+        expect(saved, label).toContain(expected)
+      })
+    }
+  })
+
+  it('keeps an unused definition beside a used one', async () => {
+    await withEditor(async (ed) => {
+      await ed.open('[a]: https://a.example\n[b]: https://b.example\n\nsee [a]\n')
+      const saved = await ed.save()
+      expect(saved).toContain('see [a](https://a.example)')
+      expect(saved).toContain('[b]: https://b.example')
+    })
+  })
+
   it('writes a `<br />` marker for an empty table cell and round-trips it', async () => {
     // An empty paragraph is serialized by milkdown's paragraph serializer as a
     // standalone `<br />` so an intentional blank line survives a reopen;

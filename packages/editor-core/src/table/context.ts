@@ -1,4 +1,3 @@
-import { Fragment } from '@milkdown/prose/model'
 import type { Node as ProseNode, ResolvedPos } from '@milkdown/prose/model'
 import { TextSelection } from '@milkdown/prose/state'
 import type { EditorState } from '@milkdown/prose/state'
@@ -37,13 +36,23 @@ function isInCell($pos: ResolvedPos): boolean {
 /**
  * Insert the inline part of a parsed Markdown snippet into the caret's cell.
  *
- * The cell's paragraph is replaced with the FIRST text block's inline content —
- * the one thing a cell can hold. Everything else in the snippet is dropped, and
+ * The selection is replaced with the FIRST text block's inline content — the one
+ * thing a cell can hold. Everything else in the snippet is dropped, and
  * deliberately so: there is no place in a cell for it, and inserting it after the
  * table would put content where the user did not point. Returns false when the
  * snippet has no inline-representable first block (an `hr`, a table, a fence) or
  * when the content does not fit, so a caller can report that nothing was inserted
  * instead of pretending it worked.
+ *
+ * The range is the SELECTION, not the enclosing paragraph: this is the in-cell
+ * half of `insertMarkdownAtCursor`, which the image intake and the AI insert
+ * call, and "insert at the cursor" has to leave the rest of the cell alone.
+ * Replacing the paragraph instead turned that same insert into "replace the
+ * cell" — an AI reply landing before "hello" in a cell holding "h hello world"
+ * left the cell as "h X", and the next save wrote the loss to disk. A selection
+ * that reaches past the caret's paragraph (a `CellSelection`, a range spanning
+ * blocks) is clipped to the caret's own paragraph, because the rest of it holds
+ * nodes a cell's single paragraph cannot be replaced by.
  */
 export function insertMarkdownInCell(view: EditorView, parsed: ProseNode): boolean {
   const { state } = view
@@ -52,12 +61,22 @@ export function insertMarkdownInCell(view: EditorView, parsed: ProseNode): boole
   const content = block.content
   const { $from } = state.selection
   const start = $from.start()
-  const end = $from.end()
-  if (content.size > 0 && !$from.parent.canReplace(0, $from.parent.content.size, Fragment.from(content))) {
+  const size = $from.parent.content.size
+  const from = Math.min(Math.max(state.selection.from - start, 0), size)
+  const to = Math.min(Math.max(state.selection.to - start, from), size)
+  // The question a cell asks is whether this fragment can live in its one
+  // paragraph at all. `canReplace`/`canReplaceWith` take CHILD INDICES rather
+  // than content offsets, so the old whole-paragraph form was only safe while
+  // its range began at index 0: `contentMatchAt(from)` walks `from` children
+  // into the paragraph, and a range starting inside the text indexes a child
+  // that is not there ("Index 1 out of range for <…>"). Ask the content model
+  // directly — which is what that call computed on the runs where it did not
+  // throw.
+  if (content.size > 0 && !$from.parent.type.contentMatch.matchFragment(content)) {
     return false
   }
-  const tr = state.tr.replaceWith(start, end, content)
-  const caret = Math.min(start + content.size, tr.doc.content.size)
+  const tr = state.tr.replaceWith(start + from, start + to, content)
+  const caret = Math.min(start + from + content.size, tr.doc.content.size)
   view.dispatch(tr.setSelection(TextSelection.create(tr.doc, caret)).scrollIntoView())
   return true
 }

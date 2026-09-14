@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { TextSelection } from '@milkdown/prose/state'
 
 import { basicPlugins, createEditor } from '../editor'
 
@@ -24,6 +25,20 @@ describe('suggestion ghost text', () => {
     expect(inserted).toBe('world')
     const md = await editor.save()
     expect(md).toContain('world')
+    editor.destroy()
+  })
+
+  it('acceptSuggestion inserts where the ghost was drawn, keeping the selected text', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open('alpha beta gamma\n')
+    const view = editor.getView()
+    // Select "beta": the ghost is drawn at the selection's HEAD, i.e. after it.
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 7, 11)))
+    editor.setSuggestion('REPLACED')
+    editor.acceptSuggestion()
+    expect(await editor.save()).toBe('alpha betaREPLACED gamma\n')
     editor.destroy()
   })
 

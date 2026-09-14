@@ -10,6 +10,32 @@ describe('roundTrip', () => {
     const md = '| a | b |\n| - | - |\n| 1 | 2 |\n'
     expect(roundTrip(md)).toBe(md)
   })
+  it('reads a table whose delimiter row starts with a lone hyphen as a table', () => {
+    // `- | -` at the start of a line is also a bullet-list marker, and micromark
+    // hands the line to the list before the table resolver sees it, so the note
+    // came back as a paragraph plus a list with its pipes escaped. The same row
+    // written `-- | --`, or with a leading pipe, is a table — a one-character
+    // difference must not decide whether the user keeps their table.
+    expect(roundTrip('a | b\n- | -\n1 | 2\n')).toBe('| a | b |\n| - | - |\n| 1 | 2 |\n')
+    expect(roundTrip('a | b |\n- | - |\n1 | 2 |\n')).toBe('| a | b |\n| - | - |\n| 1 | 2 |\n')
+  })
+  it('reads the same row inside a container as a table', () => {
+    expect(roundTrip('> a | b\n> - | -\n> 1 | 2\n')).toBe('> | a | b |\n> | - | - |\n> | 1 | 2 |\n')
+  })
+  it('leaves a list that is not a delimiter row alone', () => {
+    // No header row above it: nothing to be a table of, so the list stands.
+    expect(roundTrip('text\n- | -\n')).toBe('text\n\n- \\| -\n')
+  })
+  it('leaves a row whose cell count does not match the header alone', () => {
+    // GFM wants the delimiter row to match the header row cell for cell; the
+    // repair only fires when it does, so a deliberate list is not turned into a
+    // table on a guess.
+    expect(roundTrip('a | b | c\n- | -\n1 | 2\n')).toBe('a | b | c\n\n- \\| -\n  1 | 2\n')
+  })
+  it('leaves `- | -` inside a fenced code block alone', () => {
+    const md = '```\na | b\n- | -\n1 | 2\n```\n'
+    expect(roundTrip(md)).toBe(md)
+  })
   // Pinned canonicalization: remark-stringify escapes a lone `$` in prose as its
   // Markdown literal form `\$` so the `$` is not misread as math delimiters. This
   // is intended (not a regression) and kept for v1.1; math delimiters themselves

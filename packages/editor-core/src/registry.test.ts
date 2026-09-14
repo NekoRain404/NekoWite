@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DuplicateRegistrationError,
   registerCommand,
   getCommand,
   listCommands,
@@ -64,6 +65,37 @@ describe('registry', () => {
 
     expect(getToolbar().map((t) => t.id)).toEqual(before)
     expect(getToolbar().find((t) => t.id === 't-order-b')?.label).toBe('B2')
+  })
+  it('keeps one owner out of another owner\'s toolbar item', () => {
+    // Ownership is separate from "the same id registered twice in place": the
+    // features re-register their own ids on every editor, but a second PLUGIN
+    // claiming an id it does not own must not silently take the button over —
+    // and its teardown must not delete the item it never owned.
+    const a = () => {}
+    const b = () => {}
+    registerToolbar({ id: 'own.toolbar', label: 'A', run: a }, 'pluginA')
+    expect(() => registerToolbar({ id: 'own.toolbar', label: 'B', run: b }, 'pluginB')).toThrow(
+      DuplicateRegistrationError,
+    )
+    const items = getToolbar().filter((t) => t.id === 'own.toolbar')
+    expect(items).toHaveLength(1)
+    expect(items[0].label).toBe('A')
+    expect(items[0].run).toBe(a)
+
+    unregisterToolbar('own.toolbar', 'pluginB')
+    expect(getToolbar().some((t) => t.id === 'own.toolbar'), "B's teardown").toBe(true)
+    unregisterToolbar('own.toolbar', 'pluginA')
+    expect(getToolbar().some((t) => t.id === 'own.toolbar')).toBe(false)
+  })
+  it('lets an owner re-register its own id in place', () => {
+    const first = () => {}
+    const second = () => {}
+    registerToolbar({ id: 'own.reload', label: 'first', run: first }, 'pluginA')
+    registerToolbar({ id: 'own.reload', label: 'second', run: second }, 'pluginA')
+    const items = getToolbar().filter((t) => t.id === 'own.reload')
+    expect(items).toHaveLength(1)
+    expect(items[0].run).toBe(second)
+    unregisterToolbar('own.reload', 'pluginA')
   })
   it('registerAll registers batch', () => {
     const run = () => {}

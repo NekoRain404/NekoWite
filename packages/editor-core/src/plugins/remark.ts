@@ -5,6 +5,8 @@ import { ParserState } from '@milkdown/transformer'
 import type { Parser } from '@milkdown/transformer'
 
 import { normalizeMdxTree, withMdxSyntax } from '../mdx/document'
+import { parseWithTableRepair } from '../table/delimiter'
+import { keepUnusedDefinitions, restoreKeptDefinitions } from './link-definitions'
 
 /**
  * The spellings milkdown (and the export) treat as an empty-paragraph marker.
@@ -30,6 +32,13 @@ export interface MdastLike {
   type?: string
   value?: unknown
   children?: MdastLike[]
+  /** Link/image reference label, already normalised by the parser. */
+  identifier?: unknown
+  /** Link reference definition fields, for the position-less fallback. */
+  url?: unknown
+  title?: unknown
+  label?: unknown
+  position?: { start?: { offset?: number }; end?: { offset?: number } }
 }
 
 interface RemarkProcessor {
@@ -269,11 +278,19 @@ export function createInlineBreakParser(ctx: Ctx, isMdx: () => boolean = () => f
     // read plain text nodes, and MDX hands them `mdxTextExpression` nodes they
     // would walk past — an image's `{width=480}` would stop being an image
     // dimension.
-    const tree = processor.parse(masked) as unknown as MdastLike
-    if (asMdx) normalizeMdxTree(tree as never, masked, unmaskInlineBreaks)
-    processor.runSync(tree as never, masked)
+    // The parse also rescues a GFM delimiter row that the list construct stole
+    // (`- | -` above a table body); it answers with the source its offsets
+    // describe, which is what every step below has to read.
+    const { tree, source } = parseWithTableRepair(masked, (text) => processor.parse(text) as MdastLike)
+    if (asMdx) normalizeMdxTree(tree as never, source, unmaskInlineBreaks)
+    // Both around the transformers: the definitions nothing references have to
+    // be out of `remark-inline-links`'s way while it runs, and back in the tree
+    // as model-holdable nodes before the schema conversion (link-definitions.ts).
+    keepUnusedDefinitions(tree)
+    processor.runSync(tree as never, source)
     restoreInlineBreaks(tree)
     unescapeCellPipes(tree)
+    restoreKeptDefinitions(tree, (start, end) => unmaskInlineBreaks(source.slice(start, end)))
     const state = guardEmptyText(new ParserState(schema) as unknown as ParserStateLike)
     return state.next(tree as never).toDoc()
   }

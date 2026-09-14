@@ -9,6 +9,8 @@ import type { Root } from 'mdast'
 import { mdxTextHandler } from './mdx/text'
 import { flattenMdxElements, mdxJsxMdast } from './mdx/remark'
 import { normalizeMdxTree, withMdxSyntax } from './mdx/document'
+import { parseWithTableRepair } from './table/delimiter'
+import type { MdastNode } from './table/delimiter'
 
 /**
  * Un-escape the opening bracket ONLY when it introduces a citation:
@@ -45,6 +47,13 @@ const processor = unified()
     },
   })
 
+/**
+ * Parse `md` with the Markdown processor. The tree's offsets describe `md`
+ * itself, which callers rely on to read source slices back out of it
+ * (`mdx/mask.ts`), so nothing is repaired here: `roundTrip` and the editor's
+ * parser both parse through `parseWithTableRepair`, which answers with the
+ * source its offsets describe.
+ */
 export function parseMarkdown(md: string): Root {
   return processor.parse(md)
 }
@@ -89,20 +98,23 @@ function parseMdx(md: string): Root {
 export function roundTrip(md: string, opts: { mdx?: boolean } = {}): string {
   if (opts.mdx) {
     try {
-      const tree = parseMdx(md)
+      // The repair is per parse and its result carries the source it was parsed
+      // from: every reader below slices THAT text by the offsets in the tree,
+      // and a repair shifts every offset after the row it fixed.
+      const { tree, source } = parseWithTableRepair(md, (text) => parseMdx(text) as MdastNode)
       const root = tree as unknown as Parameters<typeof normalizeMdxTree>[0]
-      normalizeMdxTree(root, md)
+      normalizeMdxTree(root, source)
       flattenMdxElements(tree as unknown as Parameters<typeof flattenMdxElements>[0])
-      return serializeMarkdown(tree)
+      return serializeMarkdown(tree as unknown as Root)
     } catch {
       // Fall through to the Markdown pipeline.
     }
   }
-  const tree = parseMarkdown(md)
+  const { tree, source } = parseWithTableRepair(md, (text) => parseMarkdown(text) as MdastNode)
   const root = tree as unknown as Parameters<typeof mdxJsxMdast>[0]
-  mdxJsxMdast(root, { value: md })
+  mdxJsxMdast(root, { value: source })
   flattenMdxElements(root)
-  return serializeMarkdown(tree)
+  return serializeMarkdown(tree as unknown as Root)
 }
 
 /**

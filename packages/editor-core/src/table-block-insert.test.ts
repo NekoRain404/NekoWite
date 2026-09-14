@@ -155,7 +155,11 @@ describe('insertMarkdownAtCursor inside a cell keeps the markdown that survives'
     }
   })
 
-  it('a plain-text paragraph replaces the cell content (AI insert at cursor)', async () => {
+  // Renamed from "a plain-text paragraph replaces the cell content": that name
+  // described the defect, not the behaviour. The cell's paragraph used to be
+  // replaced whole, so a caret anywhere in the cell lost the rest of it. What
+  // the user points at is the caret, and the snippet lands there.
+  it('a plain-text paragraph lands at the caret in the cell (AI insert at cursor)', async () => {
     const h = await withTable([
       ['H1', 'H2'],
       ['old', 'b'],
@@ -164,7 +168,36 @@ describe('insertMarkdownAtCursor inside a cell keeps the markdown that survives'
       placeCursor(h.view, 1, 0)
       await h.ed.insertMarkdownAtCursor('brand new text\n')
       expect(tableCount(h.view)).toBe(1)
-      expect(gridText(h.view)[2]).toBe('brand new text')
+      // The caret was at the cell's start and nothing separated the two texts,
+      // so they meet. The point is that `old` is still there at all.
+      expect(gridText(h.view)[2]).toBe('brand new textold')
+      expect(() => docCheck(h.view), 'document must stay valid').not.toThrow()
+    } finally {
+      h.destroy()
+    }
+  })
+
+  it('an insert into the middle of a cell keeps the text on both sides', async () => {
+    const h = await withTable([
+      ['H1', 'H2'],
+      ['hello world', 'b'],
+    ])
+    try {
+      // `placeCursor` puts the caret at the cell paragraph's start; move it six
+      // characters in, to just after `hello `. The old code replaced the whole
+      // paragraph here, so both `hello ` and `world` were destroyed by an insert
+      // that was only supposed to add one character.
+      placeCursor(h.view, 1, 0)
+      const { state } = h.view
+      const into = state.selection.from + 6
+      h.view.dispatch(
+        state.tr
+          .setSelection(TextSelection.create(state.doc, into))
+          .setMeta('addToHistory', false),
+      )
+      await h.ed.insertMarkdownAtCursor('X\n')
+      expect(tableCount(h.view)).toBe(1)
+      expect(gridText(h.view)[2]).toBe('hello Xworld')
       expect(() => docCheck(h.view), 'document must stay valid').not.toThrow()
     } finally {
       h.destroy()
@@ -198,7 +231,10 @@ describe('insertMarkdownAtCursor inside a cell keeps the markdown that survives'
       placeCursor(h.view, 1, 0)
       await h.ed.insertMarkdownAtCursor('\n\n<br />\n\n')
       expect(tableCount(h.view)).toBe(1)
-      expect(gridText(h.view)[2]).toBe('')
+      // An empty-block snippet adds nothing and, crucially, takes nothing: the
+      // old code replaced the cell's paragraph with the snippet's (empty)
+      // content, so `a` was destroyed by an insert that carried no text at all.
+      expect(gridText(h.view)[2]).toBe('a')
       expect(() => docCheck(h.view), 'document must stay valid').not.toThrow()
     } finally {
       h.destroy()
