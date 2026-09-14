@@ -118,6 +118,24 @@ function isStandaloneLine(markdown: string, index: number, length: number): bool
   return before === '' && after === ''
 }
 
+/**
+ * True when the `<` at `index` is escaped, by Markdown's own rule: an odd run of
+ * backslashes in front of it makes the character literal.
+ *
+ * The masker matches the source with a regex and cannot see that, so it also
+ * matched the escape the SERIALIZER writes to protect a literal `<` — `\<br/>`.
+ * Masking it undid the escape: the backslash stopped escaping anything, the tag
+ * became a live marker again, and because the writer re-escapes what the model
+ * holds, an image alt gained two backslashes on every open-and-save cycle.
+ * In prose the same mis-read turned an escaped literal tag into a real line
+ * break. An escaped `<` is text, so there is no marker here to mask.
+ */
+function isEscaped(markdown: string, index: number): boolean {
+  let backslashes = 0
+  for (let i = index - 1; i >= 0 && markdown[i] === '\\'; i--) backslashes += 1
+  return backslashes % 2 === 1
+}
+
 /** Hide the inline markers before the parser sees them (see the module comment). */
 export function maskInlineBreaks(markdown: string): string {
   const pattern = markerPattern()
@@ -127,9 +145,10 @@ export function maskInlineBreaks(markdown: string): string {
     const index = match.index ?? 0
     const token = match[0]
     masked += markdown.slice(cursor, index)
-    masked += isStandaloneLine(markdown, index, token.length)
-      ? token
-      : `${SENTINEL_OPEN}${token}${SENTINEL_CLOSE}`
+    masked +=
+      isEscaped(markdown, index) || isStandaloneLine(markdown, index, token.length)
+        ? token
+        : `${SENTINEL_OPEN}${token}${SENTINEL_CLOSE}`
     cursor = index + token.length
   }
   return masked + markdown.slice(cursor)

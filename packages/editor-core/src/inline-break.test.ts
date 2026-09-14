@@ -32,6 +32,38 @@ import { withEditor } from './testkit'
 
 const SENTINEL = /[]/
 
+/**
+ * Open a document of a given KIND: the kind decides which reader runs, and the
+ * two must agree about what a document says.
+ */
+async function withKind<T>(
+  md: string,
+  kind: 'md' | 'mdx',
+  fn: (ed: ReturnType<typeof createEditor>) => Promise<T>,
+): Promise<T> {
+  const el = document.createElement('div')
+  document.body.appendChild(el)
+  const ed = createEditor(el)
+  try {
+    await ed.open(md, kind === 'mdx' ? 'note.mdx' : 'note.md')
+    return await fn(ed)
+  } finally {
+    ed.destroy()
+    el.remove()
+  }
+}
+
+/** Every text the document takes across `times` open-and-save cycles. */
+async function cycles(input: string, kind: 'md' | 'mdx', times = 3): Promise<string[]> {
+  const seen: string[] = []
+  let text = input
+  for (let i = 0; i < times; i++) {
+    text = await withKind(text, kind, (ed) => ed.save())
+    seen.push(text)
+  }
+  return seen
+}
+
 /** Saved text, re-opened, must save to the same bytes: the round trip is a fixpoint. */
 async function savedAndStable(input: string): Promise<string> {
   const once = await withEditor(input, (ed) => ed.save())
@@ -288,5 +320,111 @@ describe("the block-level empty-paragraph marker convention is unchanged", () =>
     // because the fix must not weaken it.
     const saved = await savedAndStable("| a | b |\n| - | - |\n|  |  |\n")
     expect(saved).toContain("<br />")
+  })
+})
+
+/**
+ * An escaped marker is TEXT, and the masker must leave it alone.
+ *
+ * `maskInlineBreaks` matches the source with a regex, so it also matched the
+ * escape the SERIALIZER writes to protect a literal `<` — `\<br/>`. Masking it
+ * undid the author's escape (and the writer's own): the backslash stopped
+ * escaping anything, the tag became a live marker again, and because the writer
+ * then re-escapes what the model holds, an image alt gained **two backslashes on
+ * every open-and-save cycle** — `![a\<br/>b](p.png)` → `![a\\\<br/>b](p.png)` →
+ * `![a\\\\\<br/>b](p.png)` — for as long as the note was used. In prose the same
+ * mis-read turned an escaped literal tag into a real line break, which is the
+ * opposite of what escaping means.
+ *
+ * An odd run of backslashes in front of the `<` is Markdown's own escape rule,
+ * and the marker is a tag only when it is not escaped.
+ */
+describe('a backslash-escaped marker is left as text', () => {
+  const MARKERS = ['<br/>', '<br />', '<br>', '<br >'] as const
+
+  it('never masks an escaped marker, in either kind', async () => {
+    for (const kind of ['md', 'mdx'] as const) {
+      for (const marker of MARKERS) {
+        const input = `a\\${marker}b\n`
+        const shown = await withKind(input, kind, async (ed) => ({
+          text: ed.getView().dom.textContent,
+          breaks: renderedBreaks(ed),
+          saved: await ed.save(),
+        }))
+        const label = `${kind} ${marker}`
+        // The escaped tag is literal text: it shows as the tag, not as a break.
+        expect(shown.breaks, label).toBe(0)
+        expect(shown.text, label).toBe(`a${marker}b`)
+        // ... and the escape survives the round trip as the escape it is.
+        expect(shown.saved, label).toBe(input)
+      }
+    }
+  })
+
+  it('leaves a real tag alone behind an even run of backslashes', async () => {
+    // Markdown's own escape rule is what the masker now follows: an ODD run
+    // escapes the `<` (literal text), an EVEN one leaves a real tag behind it.
+    // The even side is the half that could be lost by over-correcting, so it is
+    // pinned: `a\\<br/>b` is a backslash and a break, not literal text.
+    const cases: Array<[number, number, string]> = [
+      [0, 1, 'ab'],
+      [1, 0, 'a<br/>b'],
+      [2, 1, 'a\\b'],
+      [3, 0, 'a\\<br/>b'],
+    ]
+    for (const kind of ['md', 'mdx'] as const) {
+      for (const [count, breaks, text] of cases) {
+        const label = `${kind}, ${count} backslashes`
+        const seen = await withKind(`a${'\\'.repeat(count)}<br/>b\n`, kind, async (ed) => ({
+          breaks: renderedBreaks(ed),
+          text: ed.getView().dom.textContent,
+        }))
+        expect(seen.breaks, `${label}: rendered breaks`).toBe(breaks)
+        expect(seen.text, `${label}: text`).toBe(text)
+      }
+    }
+  })
+
+  it('is a fixpoint: an image alt holding a marker does not grow', async () => {
+    for (const kind of ['md', 'mdx'] as const) {
+      for (const marker of MARKERS) {
+        for (const alt of [`a${marker}b`, `a\\${marker}b`] as const) {
+          const input = `![${alt}](p.png)\n`
+          const seen = await cycles(input, kind)
+          const label = `${kind} ${JSON.stringify(input.trim())}`
+          // Stable is not enough: a document that has LOST the tag is stable too
+          // (the MDX reader drops it on the first open, and every later cycle
+          // reproduces the loss exactly). The bytes must be stable AND still say
+          // what the author wrote — the round trip is not a licence to converge
+          // on something smaller.
+          expect(seen[0], `${label} (did the tag survive?)`).toContain('<br')
+          expect(seen[0], `${label} (did the text on both sides survive?)`).toMatch(/a.*<br.*>b/)
+          expect(seen[1], `${label} (save 2 vs save 1)`).toBe(seen[0])
+          expect(seen[2], `${label} (save 3 vs save 1)`).toBe(seen[0])
+        }
+      }
+    }
+  })
+
+  it('is a fixpoint for one document holding every spelling, escaped and not', async () => {
+    const prose = MARKERS.flatMap((m) => [`a${m}b`, `a\\${m}b`]).join('\n\n')
+    const alts = MARKERS.map((m) => `![a${m}b](p.png)`).join('\n\n')
+    const escapedAlts = MARKERS.map((m) => `![a${m}b](q.png)`.replace(m, `\\${m}`)).join('\n\n')
+    const cases: Array<[string, string, number]> = [
+      // Every line keeps its tag, so the count is exact: a document that drops
+      // one is not "stable", it is smaller.
+      ['prose', prose, MARKERS.length * 2],
+      ['alts', alts, MARKERS.length],
+      ['escaped alts', escapedAlts, MARKERS.length],
+    ]
+    for (const kind of ['md', 'mdx'] as const) {
+      for (const [what, input, expected] of cases) {
+        const seen = await cycles(`${input}\n`, kind)
+        const label = `${kind} ${what}\n${seen.join('\n---\n')}`
+        expect((seen[0].match(/<br/g) ?? []).length, `tags left in the file: ${label}`).toBe(expected)
+        expect(seen[1], `save 2 vs save 1: ${label}`).toBe(seen[0])
+        expect(seen[2], `save 3 vs save 1: ${label}`).toBe(seen[0])
+      }
+    }
   })
 })

@@ -1,7 +1,8 @@
 import remarkMdx from 'remark-mdx'
 
 import { isMaskName, maskMdxSource } from './mask'
-import { contentIndent, sourceOf, type SourceNode } from './source'
+import { restoreImageAlts, type AltNode } from './image-alt'
+import { contentIndent, sourceOf } from './source'
 
 /**
  * An MDX document: what makes one, how it is parsed, and how the source it is
@@ -78,7 +79,16 @@ function masking<T>(processor: T, plain: ((text: string) => unknown) | null): T 
   if (typeof target.parse !== 'function') return processor
   const parse = target.parse.bind(processor)
   try {
-    target.parse = (markdown: string) => parse(maskMdxSource(markdown, parse, plain))
+    target.parse = (markdown: string) => {
+      const masked = maskMdxSource(markdown, parse, plain)
+      const tree = parse(masked) as MdxNode
+      // The UNMASKED source: `masked` may hold placeholders, which are exactly
+      // as long as what they replace (that is `mask.ts`'s rule), so the tree's
+      // offsets address both — and a placeholder must never reach a value that
+      // is written back.
+      restoreImageAlts(tree, markdown, plain)
+      return tree
+    }
   } catch {
     // A frozen processor keeps the stock parse. A document it refuses then
     // falls back to Markdown, which is the behaviour this replaced.
@@ -91,8 +101,7 @@ function masking<T>(processor: T, plain: ((text: string) => unknown) | null): T 
 // The parsed tree, in the shapes the schema knows
 // ---------------------------------------------------------------------------
 
-interface MdxNode extends SourceNode {
-  children?: MdxNode[]
+interface MdxNode extends AltNode {
   /** The element's name; `null` for a fragment, which is what `mdast`'s own
    *  `MdxJsxFlowElement` says about it once `remark-mdx` is in the program. */
   name?: string | null
