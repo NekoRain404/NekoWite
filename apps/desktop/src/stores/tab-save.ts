@@ -14,7 +14,7 @@ import { ref } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 import { emitLifecycle, getActiveEditor } from '@nekowite/plugin-host'
 import { armSuppressReapply } from '../services/suppress-reapply'
-import { flushEdits } from '../services/editor-ownership'
+import { flushEdits, isRefusedDocument, isSourceAuthored } from '../services/editor-ownership'
 import {
   assetsDirForNote,
   moveAttachments,
@@ -201,6 +201,31 @@ export function createTabSave(deps: TabSaveDeps) {
     // within its debounce window used to persist the previous text and then
     // re-apply it to the model, losing the keystrokes outright.
     await flushEdits()
+    // A document the rendered model could not load must not be written. The
+    // flush above published nothing for it (editorPersistence refuses while the
+    // model is refused), so the tab still holds exactly the text that failed —
+    // and writing that is writing a document the editor could not read, on the
+    // strength of a model that holds something else. Refused, and said out
+    // loud: a save that did not happen must not come back as one. Returning
+    // false is what blocks the callers that act on the answer — the autosave,
+    // the close, the vault switch — instead of letting them treat the file as
+    // safe.
+    //
+    // Text the source pane authored is the one thing here that is the user's
+    // own writing over this file rather than the model's output, so it is
+    // theirs to save. Refusing it would strand the edits they typed to fix the
+    // document: the tab stays dirty, and a dirty tab whose save fails cannot be
+    // closed or closed over (tab-lifecycle keeps it; app-lifecycle refuses to
+    // close the window) — the user would have to make the document render
+    // again to be allowed to put their own text on disk.
+    if (isRefusedDocument(tab.content) && !isSourceAuthored(tab.content)) {
+      notifyError(t('tabs.saveBlockedUnrenderable'))
+      // The same unwinding the `finally` below does for a failed write: this
+      // refusal returns before it, and a flag left set pins the status line on
+      // "Saving…" forever.
+      markSaved(tab.id)
+      return false
+    }
     if (tab.pendingAssetPaths.length > 0) {
       await relocatePendingAssets(tab, vault.value, path)
     }

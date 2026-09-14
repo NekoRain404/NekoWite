@@ -3,7 +3,7 @@ import { useViewStore } from '../../../stores/view'
 import { useFloatStore } from '../../../stores/float'
 import { setCalloutView } from '../../../plugins/callout'
 import { notifyError } from '../../../services/errors'
-import { isSourceAuthored } from '../../../services/editor-ownership'
+import { clearRefusedDocument, isSourceAuthored, markRefusedDocument } from '../../../services/editor-ownership'
 import { consumeSuppressReapply } from '../../../services/suppress-reapply'
 import { debounce } from '../../../services/timing'
 import { t } from '../../../i18n'
@@ -138,6 +138,8 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
       // no path is Markdown. Read here rather than after the await: this text
       // belongs to the tab that is active NOW.
       await editor.open(content, tabs.activeTab?.path ?? null)
+      // The model holds this document now, whatever it refused before.
+      clearRefusedDocument()
       // Mark the exact content as applied immediately after open() succeeds.
       // Later canonicalization (save()) can change the tab's text, but the
       // editor model is now loaded; another open of this same source must be
@@ -185,7 +187,10 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
           setCalloutView(editor.getView())
           deps.session.calloutViewSet = true
         } catch {
-          // The editor view is expected to be ready once open() resolves.
+          // The editor view is expected to be ready once open() resolves. Note
+          // this arm deliberately does NOT publish the refusal below: what
+          // failed is the view, not the model — the document IS loaded, so a
+          // save would still be writing the document the user is looking at.
           deps.session.parseFailed = true
           notifyError(t('rendered.parseFailed'))
           view.setMode('source')
@@ -193,6 +198,14 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
       }
     } catch {
       deps.session.parseFailed = true
+      // The model still holds the previous document: open() committed this
+      // file's frontmatter before the parse threw, so `save()` would hand back
+      // that frontmatter glued onto the old body. Published with the text that
+      // failed, so the write path can refuse to save exactly that text on the
+      // strength of a model that does not hold it (C1). `parseFailed` above is
+      // the session's own view — retry eligibility, suppressed re-applies — and
+      // this one is what the save transaction reads.
+      markRefusedDocument(content)
       notifyError(t('rendered.parseFailed'))
       view.setMode('source')
     } finally {
