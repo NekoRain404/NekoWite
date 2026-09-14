@@ -1,4 +1,5 @@
 import { parseMdxTag } from '../mdx'
+import { isInlineBreakValue } from '../plugins/inline-break'
 import { renderList as renderBlockList, renderTable as renderBlockTable } from './blocks'
 import { safeImageUrl, safeLinkUrl } from './url'
 import { escapeHtml } from './escape-html'
@@ -235,13 +236,21 @@ export function renderNode(node: RenderNode, ctx: RenderContext): string {
       return renderMdx(node, ctx)
     case 'break':
       return renderBreak()
-    case 'html':
-      // Intentional divergence from the editor: the editor renders inline
-      // raw HTML (e.g. `<span style=...>`) as live markup, but the export
-      // escapes it to visible text. Escaping is the XSS-safe default for
-      // untrusted markdown; if raw HTML support is ever needed it must be
-      // opt-in with sanitization. See spec §3.2.
-      return escapeHtml(node.value ?? '')
+    case 'html': {
+      // A break tag is the one piece of inline HTML the app implements: the pane
+      // renders it as a line break (plugins/inline-break-view.ts) and so does the
+      // export, because a reader who wrote `<br>` in a paragraph, a heading or a
+      // table cell means a line break — not the characters, and not two lines run
+      // together. Every OTHER raw tag keeps the escaping below.
+      const value = node.value ?? ''
+      if (isInlineBreakValue(value)) return renderBreak()
+      // Intentional divergence from the editor: the editor shows inline
+      // raw HTML (e.g. `<span style=...>`) as its source text, while the export
+      // escapes it so it also shows as visible text. Escaping is the XSS-safe
+      // default for untrusted markdown; if raw HTML support is ever needed it
+      // must be opt-in with sanitization. See spec §3.2.
+      return escapeHtml(value)
+    }
     default:
       return renderChildren((node.children ?? []) as RenderNode[], ctx)
   }

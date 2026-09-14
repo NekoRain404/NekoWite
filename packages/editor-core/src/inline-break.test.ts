@@ -5,7 +5,7 @@ import { renderDocument } from './export'
 import { withEditor } from './testkit'
 
 /**
- * An author-written inline `<br />` must survive open → save.
+ * An author-written inline `<br />` must survive open → save AND render as a break.
  *
  * The commonmark preset ships `remarkPreserveEmptyLine`, which deletes EVERY
  * mdast `html` node whose value is one of the `<br>` spellings. That rule exists
@@ -17,11 +17,20 @@ import { withEditor } from './testkit'
  * the next save wrote that over the file, so the break was gone for good. GFM has
  * no other way to break a line inside a table cell, so cells lost it too.
  *
- * The fix masks an inline marker while the document is parsed (a sentinel that no
- * transformer matches) and turns it back into an `html` node before the tree
- * becomes a ProseMirror document; the block-level marker keeps the preset’s
- * behavior. See `plugins/remark.ts`.
+ * The first fix masked an inline marker while the document was parsed (a sentinel
+ * that no transformer matches) and turned it back into an `html` node before the
+ * tree became a ProseMirror document; the block-level marker kept the preset’s
+ * behavior. See `plugins/inline-break.ts`.
+ *
+ * Masking the marker keeps the BYTES — the marker still reaches the model as an
+ * `html` atom, whose value the serializer writes back verbatim — but an `html`
+ * atom is rendered by the preset as a `<span>` holding the tag as literal text,
+ * so for every one of these cases the pane showed `<br />` as characters instead
+ * of breaking the line (task-71). The atom is now rendered as a break
+ * (`plugins/inline-break-view.ts`), and the export renders it as `<br />` too.
  */
+
+const SENTINEL = /[]/
 
 /** Saved text, re-opened, must save to the same bytes: the round trip is a fixpoint. */
 async function savedAndStable(input: string): Promise<string> {
@@ -32,18 +41,19 @@ async function savedAndStable(input: string): Promise<string> {
 }
 
 /**
- * Line breaks in the live document. Accepts the hardbreak node (the backslash
- * form in Markdown) and the raw `html` node: both re-open as a break, and which
- * one a given spelling produces depends on the parser’s node matching.
+ * Line breaks the RENDERED PANE shows.
+ *
+ * This is deliberately a measure of the DOM and not of node types. The previous
+ * version of this helper counted any `html` node as a break, which is how the
+ * suite passed while the pane was showing `<br />` as literal text: the node that
+ * proved the marker had SURVIVED was counted as the node that proves it is
+ * RENDERED. ProseMirror’s own caret `<br>` (inside an empty block) is not a line
+ * break the author wrote, so it is excluded.
  */
-function lineBreaks(ed: ReturnType<typeof createEditor>): number {
-  let count = 0
-  ed.getView().state.doc.descendants((node) => {
-    if (node.type.name === 'hardbreak') count += 1
-    else if (node.type.name === 'html') count += 1
-    return true
-  })
-  return count
+function renderedBreaks(ed: ReturnType<typeof createEditor>): number {
+  return [...ed.getView().dom.querySelectorAll('br')].filter(
+    (br) => !br.classList.contains('ProseMirror-trailingBreak'),
+  ).length
 }
 
 describe('an author-written inline <br /> survives open → save', () => {
@@ -63,9 +73,9 @@ describe('an author-written inline <br /> survives open → save', () => {
       for (const token of tokens) expect(saved, `${label}: ${token}`).toContain(token)
       expect(saved).toContain("<br />")
 
-      // ... and re-opens as a break, not as the literal text of the tag.
-      const breaks = await withEditor(saved, async (ed) => lineBreaks(ed))
-      expect(breaks, `no line break survived in: ${JSON.stringify(saved)}`).toBeGreaterThan(0)
+      // ... and the pane shows a break, not the literal text of the tag.
+      const breaks = await withEditor(saved, async (ed) => renderedBreaks(ed))
+      expect(breaks, `no rendered line break survived in: ${JSON.stringify(saved)}`).toBeGreaterThan(0)
     })
   }
 
@@ -74,7 +84,7 @@ describe('an author-written inline <br /> survives open → save', () => {
     for (const token of ["a", "b", "c", "d", "e"]) expect(saved).toContain(token)
     // The literal tag text must not show up inside the paragraph.
     expect(saved.replace(/<br\s*\/?>/g, '')).toContain('abcde')
-    const breaks = await withEditor(saved, async (ed) => lineBreaks(ed))
+    const breaks = await withEditor(saved, async (ed) => renderedBreaks(ed))
     expect(breaks).toBe(4)
   })
 
@@ -82,19 +92,181 @@ describe('an author-written inline <br /> survives open → save', () => {
     const saved = await savedAndStable("a **bold**<br />*em*\n")
     expect(saved).toContain("bold")
     expect(saved).toContain("em")
-    const breaks = await withEditor(saved, async (ed) => lineBreaks(ed))
+    const breaks = await withEditor(saved, async (ed) => renderedBreaks(ed))
     expect(breaks).toBe(1)
   })
 
   it("keeps both sides of the break in the exported HTML", async () => {
-    // The export escapes inline raw HTML (see export/renderNodes.test.ts, which
-    // pins that choice for every inline `<br>`), so the break shows up as
-    // `line1&lt;br /&gt;line2` there rather than as a rendered `<br>`. What must
-    // NOT happen — the defect — is losing the text around it or dropping the
-    // marker before the export ever sees it.
+    // The export renders the marker as a `<br />` (the break the author wrote),
+    // so the two sides are still separated in the exported document.
     const saved = await withEditor("line1<br />line2\n", (ed) => ed.save())
     const html = await renderDocument(saved)
-    expect(html).toMatch(/line1&lt;br\s*\/&gt;line2/i)
+    expect(html).toMatch(/line1<br\s*\/?>line2/i)
+  })
+})
+
+/**
+ * The pane must SHOW the break, for every spelling a browser would read as one.
+ *
+ * `<BR/>` and `<br  />` are not in the preset’s marker list, so nothing masked
+ * them — they survived as `html` atoms with their own spelling and were rendered
+ * as literal tag text, which is the same defect through the other door. The
+ * rendering rule is therefore about the TAG, not about the four spellings the
+ * masking code happens to know.
+ */
+describe('the pane renders the author’s break as a line break', () => {
+  const contexts: Array<[string, string]> = [
+    ['in a paragraph', 'line1<br/>line2\n'],
+    ['in a heading', '# Head<br/>ing\n'],
+    ['in a list item', '- one<br/>two\n'],
+    ['in a blockquote', '> q<br/>r\n'],
+    ['in a table cell', '| a<br/>b | c |\n| - | - |\n| x | y |\n'],
+  ]
+
+  for (const [label, input] of contexts) {
+    it(label, async () => {
+      const breaks = await withEditor(input, async (ed) => renderedBreaks(ed))
+      expect(breaks, label).toBe(1)
+      // ... and the tag itself is not what the reader sees.
+      const shown = await withEditor(input, async (ed) => ed.getView().dom.textContent)
+      expect(shown, label).not.toContain('<br')
+    })
+  }
+
+  it('renders every spelling a browser calls a line break', async () => {
+    const spellings = ['<br/>', '<br />', '<br>', '<br  />', '<BR/>', '<br >']
+    for (const spelling of spellings) {
+      const breaks = await withEditor(`a${spelling}b\n`, async (ed) => renderedBreaks(ed))
+      expect(breaks, spelling).toBe(1)
+      const shown = await withEditor(`a${spelling}b\n`, async (ed) => ed.getView().dom.textContent)
+      expect(shown, spelling).toBe('ab')
+    }
+  })
+
+  it('still shows other inline raw HTML as its source', async () => {
+    // The rendering rule is about the break tag, not about raw HTML in general:
+    // an arbitrary tag keeps the atom’s own rendering (the tag as its text), so
+    // nothing here turns the editor into an HTML renderer.
+    const shown = await withEditor('a<span class="x">b</span>c\n', async (ed) =>
+      ed.getView().dom.textContent,
+    )
+    expect(shown).toContain('<span')
+    expect(shown).not.toContain('<br')
+  })
+
+  it('renders the empty-cell marker as a break, so an empty cell looks empty', async () => {
+    // The serializer writes a standalone `<br />` for an empty cell, and a line
+    // with pipes is never a “standalone line” to the masker, so the marker comes
+    // back through the inline path. It used to be shown to the reader as the text
+    // `<br />` inside every empty cell.
+    const shown = await withEditor('| a |\n| - |\n| <br /> |\n', async (ed) =>
+      ed.getView().dom.textContent,
+    )
+    expect(shown).toBe('a')
+  })
+
+  it('renders the exported document with the same break', async () => {
+    const html = await renderDocument('line one<br>line two\n')
+    expect(html).toContain('<p>line one<br />line two</p>')
+  })
+
+  it('keeps the atom’s own DOM identity around the break', async () => {
+    // The break is drawn INSIDE the atom’s span rather than replacing it: the
+    // schema’s parseDOM and ProseMirror’s clipboard both read a
+    // `span[data-type="html"]` with the source in `data-value`, so dropping either
+    // would make a copy of a note containing a break come back as something else.
+    await withEditor('a<br />b\n', async (ed) => {
+      const span = ed.getView().dom.querySelector('span[data-type="html"]')
+      expect(span).not.toBeNull()
+      expect(span?.getAttribute('data-value')).toBe('<br />')
+      expect(span?.querySelector('br')).not.toBeNull()
+    })
+  })
+
+  it('reuses that span when the atom is edited', async () => {
+    await withEditor('a<br />b\n', async (ed) => {
+      const view = ed.getView()
+      const span = view.dom.querySelector('span[data-type="html"]')
+      let pos = -1
+      view.state.doc.descendants((node, at) => {
+        if (node.type.name === 'html') {
+          pos = at
+          return false
+        }
+        return true
+      })
+      expect(pos).toBeGreaterThanOrEqual(0)
+      view.dispatch(view.state.tr.setNodeAttribute(pos, 'value', '<span>x</span>'))
+      const after = view.dom.querySelector('span[data-type="html"]')
+      expect(after).toBe(span)
+      expect(after?.querySelector('br')).toBeNull()
+      expect(after?.textContent).toBe('<span>x</span>')
+    })
+  })
+})
+
+/**
+ * The marker must never leave the parse, whatever the tree shape carries it.
+ *
+ * `restoreInlineBreaks` treated every value-carrying node as if it were a text
+ * run: it split the value into siblings of the same node type and dropped an
+ * `html` node between them. A text run is the one node that can hold that shape.
+ * Anywhere else the node was destroyed — a fenced block holding a marker became
+ * three top-level nodes and `open()` threw, a code span and a formula came apart
+ * in two — and a string the walk never looked at (an image’s `alt`, a link’s
+ * `title`) carried the sentinels into the model and out into the user’s file.
+ */
+describe('the marker stays inside the node that holds it', () => {
+  it('opens a fenced code block that contains a break spelling', async () => {
+    for (const spelling of ['<br/>', '<br />', '<br>']) {
+      const input = '```\nfoo' + spelling + 'bar\n```\n'
+      expect(await withEditor(input, (ed) => ed.save()), spelling).toBe(input)
+    }
+  })
+
+  it('opens an indented code block that contains a break spelling', async () => {
+    const saved = await withEditor('    foo<br/>bar\n', (ed) => ed.save())
+    expect(saved).toContain('foo<br/>bar')
+    expect(saved).not.toMatch(SENTINEL)
+  })
+
+  it('keeps an inline code span in one piece', async () => {
+    const input = 'foo `a<br/>b` bar\n'
+    expect(await withEditor(input, (ed) => ed.save())).toBe(input)
+  })
+
+  it('keeps a formula in one piece', async () => {
+    const input = 'foo $a<br/>b$ bar\n'
+    expect(await withEditor(input, (ed) => ed.save())).toBe(input)
+  })
+
+  it('opens a document whose MDX component holds an inline break', async () => {
+    const input = '<Callout>a<br/>b</Callout>\n'
+    expect(await withEditor(input, (ed) => ed.save())).toBe(input)
+  })
+
+  it('never writes a sentinel into the file', async () => {
+    const inputs = [
+      'line1<br />line2\n',
+      '![a<br/>b](p.png)\n',
+      '[x](http://y "t<br/>u")\n',
+      '[x]: http://y "t<br/>u"\n\n[x]\n',
+      '| a<br/>b | c |\n| - | - |\n| x | y |\n',
+      '```\nfoo<br/>bar\n```\n',
+    ]
+    for (const input of inputs) {
+      const saved = await withEditor(input, (ed) => ed.save())
+      expect(saved, input).not.toMatch(SENTINEL)
+    }
+  })
+
+  it('keeps the text a marker sits in, in an image alt and a link title', async () => {
+    // The alt is written with the serializer’s own escaping for `<`, which is
+    // what any `<` in an alt gets; the marker itself must still be there.
+    const alt = await withEditor('![a<br/>b](p.png)\n', (ed) => ed.save())
+    expect(alt).toContain('<br/>')
+    const title = await withEditor('[x](http://y "t<br/>u")\n', (ed) => ed.save())
+    expect(title).toBe('[x](http://y "t<br/>u")\n')
   })
 })
 

@@ -192,12 +192,23 @@ describe('export hides the empty-paragraph marker', () => {
     expect(out).toContain('<blockquote>')
   })
 
-  it('keeps a <br> the author wrote inline', () => {
-    // Only a block-level marker stands in for an empty paragraph. A `<br>` next
-    // to text is the author's inline HTML, which the export escapes like any
-    // other raw HTML.
+  it('renders a <br> the author wrote inline as a line break', () => {
+    // Only a block-level marker stands in for an empty paragraph. A `<br>` next to
+    // text is the author's own line break — the same tag the app keeps in the
+    // editor — so it is rendered as the break it names, while every OTHER raw tag
+    // in the same paragraph is still escaped. It used to be escaped like any raw
+    // HTML, which put the characters `<br>` in the exported document and in the
+    // PDF: the tag the app does implement was the one tag it printed literally.
     const out = text('line one<br>line two\n')
-    expect(out).toContain('&lt;br&gt;')
+    expect(out).toContain('<p>line one<br />line two</p>')
+    expect(out).not.toContain('&lt;br')
+  })
+
+  it('escapes every other raw tag next to a break', () => {
+    const out = text('a <span style="color:red">raw</span> <br/> tail\n')
+    expect(out).toContain('&lt;span')
+    expect(out).toContain('raw')
+    expect(out).toContain('<br />')
   })
 })
 

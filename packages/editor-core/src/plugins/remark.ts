@@ -5,40 +5,14 @@ import { ParserState } from '@milkdown/transformer'
 
 import { normalizeMdxTree, withMdxSyntax } from '../mdx/document'
 import { parseWithTableRepair } from '../table/delimiter'
+import { maskInlineBreaks, restoreInlineBreaks, unmaskInlineBreaks } from './inline-break'
+import type { MdastLike } from './inline-break'
 import { keepUnusedDefinitions, restoreKeptDefinitions } from './link-definitions'
 
-/**
- * The spellings milkdown (and the export) treat as an empty-paragraph marker.
- */
-const BR_MARKERS = ['<br />', '<br>', '<br/>', '<br >'] as const
-
-/**
- * Delimiters for the sentinel an inline marker is swapped for while parsing.
- *
- * They have to be characters a note cannot reasonably contain AND characters
- * `String.prototype.trim()` keeps: the preset’s predicate compares
- * `node.value?.trim()`, so a whitespace-like delimiter (a control character, for
- * instance) would be trimmed away and the value would match the marker again.
- * Unicode’s Private Use Area is neither whitespace nor markdown syntax.
- */
-const SENTINEL_OPEN = '\uE000'
-const SENTINEL_CLOSE = '\uE001'
-
-/** Node types whose text must not be reinterpreted as HTML. */
-const CODE_NODES = new Set(['code', 'inlineCode', 'code_block'])
-
-export interface MdastLike {
-  type?: string
-  value?: unknown
-  children?: MdastLike[]
-  /** Link/image reference label, already normalised by the parser. */
-  identifier?: unknown
-  /** Link reference definition fields, for the position-less fallback. */
-  url?: unknown
-  title?: unknown
-  label?: unknown
-  position?: { start?: { offset?: number }; end?: { offset?: number } }
-}
+// The marker mechanism moved to `inline-break.ts`; it stays on this module's path
+// for every existing importer.
+export { maskInlineBreaks, restoreInlineBreaks, unmaskInlineBreaks } from './inline-break'
+export type { MdastLike } from './inline-break'
 
 interface RemarkProcessor {
   parse: (markdown: string) => unknown
@@ -71,149 +45,6 @@ function guardEmptyText(state: ParserStateLike): ParserStateLike {
   const addText = state.addText.bind(state)
   state.addText = (text: string) => (text === '' ? state : addText(text))
   return state
-}
-
-function escapeRe(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-function markerPattern(): RegExp {
-  return new RegExp(BR_MARKERS.map(escapeRe).join('|'), 'g')
-}
-
-/**
- * True when the marker is the only thing on its line.
- *
- * A marker on its own line is an HTML BLOCK: that is the shape the serializer
- * writes for an empty paragraph, so the parser has to fold it away. A marker next
- * to text is an inline HTML node: the author’s line break, which has to survive
- * (and in a GFM cell is the only way to write one).
- */
-function isStandaloneLine(markdown: string, index: number, length: number): boolean {
-  const lineStart = markdown.lastIndexOf('\n', index - 1) + 1
-  let lineEnd = markdown.indexOf('\n', index)
-  if (lineEnd === -1) lineEnd = markdown.length
-  const before = markdown.slice(lineStart, index).trim()
-  const after = markdown.slice(index + length, lineEnd).trim()
-  return before === '' && after === ''
-}
-
-/**
- * Hide the inline markers before the parser sees them.
- *
- * @milkdown/preset-commonmark ships `remarkPreserveEmptyLine`, whose transformer
- * DELETES every mdast `html` node whose value is one of the `<br>` spellings. That
- * rule exists for the empty-paragraph marker above, but it also matched the
- * author’s own break: `line1<br />line2` re-opened as `line1line2` (the two text
- * runs merged, because the only node between them had been spliced out) and the
- * next save wrote that over the file, so the break was lost permanently. Inside a
- * GFM cell the same thing happened, and there the author has no other way to write
- * a line break at all.
- *
- * The preset’s transformer is not exported, takes no options, and unified only
- * APPENDS transformers, so it always runs before one this package could add. Its
- * input is changed instead: an inline marker is rewritten to a sentinel (no `html`
- * node is produced, so nothing deletes it) and turned back into an `html` node
- * after the transformers ran. A marker standing alone on its line is left alone
- * and keeps the preset’s behavior.
- */
-export function maskInlineBreaks(markdown: string): string {
-  const pattern = markerPattern()
-  let masked = ''
-  let cursor = 0
-  for (const match of markdown.matchAll(pattern)) {
-    const index = match.index ?? 0
-    const token = match[0]
-    masked += markdown.slice(cursor, index)
-    masked += isStandaloneLine(markdown, index, token.length)
-      ? token
-      : `${SENTINEL_OPEN}${token}${SENTINEL_CLOSE}`
-    cursor = index + token.length
-  }
-  return masked + markdown.slice(cursor)
-}
-
-/**
- * Put the hidden markers back into a slice of masked source.
- *
- * A raw run is carried as its own source text, so a marker the masker hid
- * inside one has to be restored — the sentinel pair is a parse-time device and
- * would otherwise be written into the user's file.
- */
-function unmaskInlineBreaks(text: string): string {
-  return text.includes(SENTINEL_OPEN)
-    ? text.split(SENTINEL_OPEN).join('').split(SENTINEL_CLOSE).join('')
-    : text
-}
-
-type Piece = string | { html: string }
-
-function splitSentinel(value: string, inCode: boolean): Piece[] {
-  const pieces: Piece[] = []
-  const pattern = new RegExp(`${SENTINEL_OPEN}([\\s\\S]*?)${SENTINEL_CLOSE}`, 'g')
-  let cursor = 0
-  for (const match of value.matchAll(pattern)) {
-    const index = match.index ?? 0
-    const lead = value.slice(cursor, index)
-    if (lead !== '') pieces.push(lead)
-    pieces.push(inCode ? match[1] : { html: match[1] })
-    cursor = index + match[0].length
-  }
-  const tail = value.slice(cursor)
-  if (tail !== '') pieces.push(tail)
-  return pieces
-}
-
-/**
- * Turn the sentinels back into `html` nodes (or plain text inside code).
- *
- * Two shapes have to be handled. Normally the masked marker comes back as one text
- * node (`line1<sentinel><br /><sentinel>line2`) and is split into text/html/text. A
- * marker the parser broke out of its run — the `html` node it produced is removed
- * while the surrounding text stays — leaves the open sentinel at the end of one
- * node and the close sentinel at the start of the next, so that pair is joined and
- * replaced by the `html` node alone. Inside code the sentinel is put back as the
- * literal source text: the preset never touched code content, so code must stay
- * byte-identical. Empty `text` pieces are dropped, because milkdown’s parser
- * rejects an empty text node.
- */
-export function restoreInlineBreaks(tree: MdastLike): void {
-  const children = tree.children
-  if (!children) return
-  const inCode = tree.type !== undefined && CODE_NODES.has(tree.type)
-  for (let i = 0; i < children.length; i++) {
-    const child = children[i]
-    if (Array.isArray(child.children)) {
-      restoreInlineBreaks(child)
-      continue
-    }
-    if (typeof child.value !== 'string') continue
-    if (!inCode && child.value.endsWith(SENTINEL_OPEN) && i + 1 < children.length) {
-      const next = children[i + 1]
-      if (typeof next.value === 'string' && next.value.startsWith(SENTINEL_CLOSE)) {
-        child.value = child.value.slice(0, -SENTINEL_OPEN.length)
-        next.value = next.value.slice(SENTINEL_CLOSE.length)
-        children.splice(i + 1, 0, { type: 'html', value: '<br />' })
-        i += 1
-        continue
-      }
-    }
-    if (!child.value.includes(SENTINEL_OPEN)) continue
-    const pieces = splitSentinel(child.value, inCode)
-    if (pieces.length === 1 && typeof pieces[0] === 'string') {
-      child.value = pieces[0]
-      continue
-    }
-    const replacement: MdastLike[] = pieces
-      .map((piece: Piece) =>
-        typeof piece === 'string'
-          ? { type: child.type, value: piece }
-          : { type: 'html', value: piece.html },
-      )
-      .filter((node) => node.type !== 'text' || String(node.value ?? '').length > 0)
-    children.splice(i, 1, ...replacement)
-    i += replacement.length - 1
-  }
 }
 
 /**
@@ -257,7 +88,8 @@ export type DocumentParser = (markdown: string, mdx: boolean) => ProseNode
  * parser keeps its state private, so this copies the processor — a copy of a frozen
  * processor is unfrozen and carries the same configured plugins — runs the masked
  * Markdown through it, and repairs the tree before it becomes a ProseMirror
- * document.
+ * document. The masking and the repair are `inline-break.ts`'s; what is here is the
+ * order they and the other tree passes have to run in.
  *
  * The kind of document to read is an ARGUMENT of each call, not state on the
  * parser: one editor serves every document the user opens and the answer
