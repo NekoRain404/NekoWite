@@ -1,46 +1,69 @@
 <script setup lang="ts">
 /**
- * The Export section: the two export buttons and the defaults they use.
+ * The Export section: what to export as, how the page is set up, and a preview
+ * of the result.
  *
- * It emits `export-html` / `export-pdf` and nothing else happens here (§10.3-C):
- * the export implementation belongs to `features/export/services`, so this file
- * must not grow a second copy of it. The defaults are `v-model`, so writing one
- * reaches the store through the panel that owns `useExportSettings`.
+ * It reads its own composable, the way the AI section's prompt shelf does, and
+ * takes no props (§10.2): the panel that composes the sections is orchestration
+ * and nothing else, and there is no reason for it to be holding six `v-model`s
+ * and five event handlers on this section's behalf. `useExportSettings` owns
+ * the store reads and the commands; `useExportPreview` owns the preview.
  */
 import { computed } from 'vue'
 import SelectMenu, { type SelectOption } from '../../../components/SelectMenu.vue'
 import { t } from '../../../i18n'
-// Type-only, so the two dropdowns are bound to the same unions the store holds.
-import type { ExportPdfOrientation, ExportPdfPageSize } from '../../../stores/settings'
+import {
+  EXPORT_MARGIN_MM_MAX,
+  EXPORT_MARGIN_MM_MIN,
+  EXPORT_PAGE_SIZES,
+} from '../../../services/export-page'
+import { EXPORT_JPEG_QUALITY_MAX, EXPORT_JPEG_QUALITY_MIN } from '../../../stores/settings'
+import type {
+  ExportImageFormat,
+  ExportPdfOrientation,
+  ExportPdfPageSize,
+} from '../../../stores/settings'
+import { useExportSettings } from '../composables/use-export-settings'
+import ExportPreview from './ExportPreview.vue'
 
-defineProps<{
-  /** Whether a note is open for the two buttons to act on. */
-  hasActiveTab: boolean
-}>()
+const {
+  hasActiveTab,
+  frontmatter,
+  pageSize,
+  orientation,
+  marginMm,
+  imageFormat,
+  imageQuality,
+  exportHtmlFile,
+  exportPdfFile,
+  exportImageFile,
+  exportTextFile,
+  exportCsvFile,
+} = useExportSettings()
 
-// The bindings are assigned, not left as bare calls: `defineModel` registers the
-// model *name* as a props binding, so a bare `defineModel('frontmatter')` makes
-// the template compile `frontmatter = $event` into a write to `$props.frontmatter`
-// — a props mutation Vue refuses in dev and drops in production, which left the
-// checkbox flipping nowhere. Named, the compiler binds the model ref and the
-// write becomes `frontmatter.value = $event`, which emits `update:frontmatter`.
-const frontmatter = defineModel<boolean>('frontmatter', { required: true })
-const pageSize = defineModel<ExportPdfPageSize>('pageSize', { required: true })
-const orientation = defineModel<ExportPdfOrientation>('orientation', { required: true })
-
-const emit = defineEmits<{
-  (e: 'export-html'): void
-  (e: 'export-pdf'): void
-}>()
-
-const pageSizeChoices = computed<SelectOption[]>(() => [
-  { value: 'A4', label: t('settings.export.pageSizeA4') },
-  { value: 'Letter', label: t('settings.export.pageSizeLetter') },
-])
+// The two dropdowns are bound to the same unions the store holds, and the paper
+// list is the store's own closed list rather than a second copy of it — a size
+// offered here that `@page` did not recognise would be a rule the print dialog
+// silently ignores.
+const pageSizeChoices = computed<SelectOption[]>(() =>
+  EXPORT_PAGE_SIZES.map((size) => ({ value: size, label: t(`settings.export.pageSize${size}`) })),
+)
 const orientationChoices = computed<SelectOption[]>(() => [
   { value: 'portrait', label: t('settings.export.portrait') },
   { value: 'landscape', label: t('settings.export.landscape') },
 ])
+const imageFormatChoices = computed<SelectOption[]>(() => [
+  { value: 'png', label: t('settings.export.imageFormatPng') },
+  { value: 'jpeg', label: t('settings.export.imageFormatJpeg') },
+])
+
+/** The quality control is a percentage; the encoder takes 0–1. */
+const qualityPercent = computed({
+  get: () => Math.round(imageQuality.value * 100),
+  set: (pct: number) => { imageQuality.value = pct / 100 },
+})
+
+const disabled = computed(() => !hasActiveTab.value)
 </script>
 
 <template>
@@ -49,23 +72,48 @@ const orientationChoices = computed<SelectOption[]>(() => [
     <div class="view-modes">
       <button
         class="btn btn-secondary btn-sm"
-        :disabled="!hasActiveTab"
-        @click="emit('export-html')"
+        :disabled="disabled"
+        @click="exportHtmlFile"
       >
         {{ t('settings.export.html') }}
       </button>
       <button
         class="btn btn-secondary btn-sm"
-        :disabled="!hasActiveTab"
-        @click="emit('export-pdf')"
+        :disabled="disabled"
+        @click="exportPdfFile"
       >
         {{ t('settings.export.pdf') }}
       </button>
+      <button
+        class="btn btn-secondary btn-sm"
+        :disabled="disabled"
+        @click="exportImageFile"
+      >
+        {{ t('settings.export.image') }}
+      </button>
+      <button
+        class="btn btn-secondary btn-sm"
+        :disabled="disabled"
+        @click="exportTextFile"
+      >
+        {{ t('settings.export.txt') }}
+      </button>
+      <button
+        class="btn btn-secondary btn-sm"
+        :disabled="disabled"
+        @click="exportCsvFile"
+      >
+        {{ t('settings.export.csv') }}
+      </button>
     </div>
     <span
-      v-if="!hasActiveTab"
+      v-if="disabled"
       class="settings-note"
     >{{ t('settings.export.none') }}</span>
+
+    <span class="settings-label">{{ t('settings.export.preview') }}</span>
+    <ExportPreview v-if="!disabled" />
+
     <span class="settings-label">{{ t('settings.export.defaults') }}</span>
     <label class="settings-field settings-toggle">
       <span>{{ t('settings.export.frontmatter') }}</span>
@@ -102,6 +150,56 @@ const orientationChoices = computed<SelectOption[]>(() => [
         @update:model-value="orientation = $event as ExportPdfOrientation"
       />
     </label>
+    <label
+      class="settings-field"
+      for="settings-export-margin"
+    >
+      <span>{{ t('settings.export.margin') }}</span>
+      <input
+        id="settings-export-margin"
+        class="input"
+        type="number"
+        inputmode="numeric"
+        :min="EXPORT_MARGIN_MM_MIN"
+        :max="EXPORT_MARGIN_MM_MAX"
+        step="1"
+        :value="marginMm"
+        @change="marginMm = Number(($event.target as HTMLInputElement).value)"
+      >
+    </label>
+    <span class="settings-note">{{ t('settings.export.marginNote') }}</span>
+
+    <span class="settings-label">{{ t('settings.export.image') }}</span>
+    <label
+      class="settings-field"
+      for="settings-export-image-format"
+    >
+      <span>{{ t('settings.export.imageFormat') }}</span>
+      <SelectMenu
+        id="settings-export-image-format"
+        class="input"
+        :model-value="imageFormat"
+        :options="imageFormatChoices"
+        @update:model-value="imageFormat = $event as ExportImageFormat"
+      />
+    </label>
+    <label
+      class="settings-field"
+      for="settings-export-image-quality"
+    >
+      <span>{{ t('settings.export.imageQuality', { pct: qualityPercent }) }}</span>
+      <input
+        id="settings-export-image-quality"
+        class="input range"
+        type="range"
+        :min="Math.round(EXPORT_JPEG_QUALITY_MIN * 100)"
+        :max="Math.round(EXPORT_JPEG_QUALITY_MAX * 100)"
+        step="1"
+        :value="qualityPercent"
+        @input="qualityPercent = Number(($event.target as HTMLInputElement).value)"
+      >
+    </label>
+    <span class="settings-note">{{ t('settings.export.imageQualityNote') }}</span>
   </section>
 </template>
 
