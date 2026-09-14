@@ -27,37 +27,57 @@ const LS_DISABLED_PROMPTS = 'nekowite.ai.disabledPrompts'
  * asked for the app to allow the whole of it.
  *
  * It is a **character** budget, and a context window is measured in **tokens**,
- * so the two are not the same unit and the gap between them is the whole reason
- * {@link DEFAULT_CONTEXT_CHARS} is not this number. For CJK, roughly one token
- * per character; for Latin, roughly a quarter. At this ceiling a Chinese note
- * is therefore on the order of 200 000 tokens — the entire window, with nothing
- * left for the system prompt, the conversation or the answer — while the same
- * count of English is nearer 50 000, a quarter of it.
+ * so the two are not the same unit — and the ratio between them is the whole
+ * question. **Measured** (2026-09-15, against the gateway this checkout is
+ * configured for, `https://tokenflux.dev/v1`, model `deepseek-flash`, using the
+ * provider's own `prompt_tokens`): the app's maximal request — a
+ * 200 000-character Chinese note wrapped the way `buildContextBlock` wraps one
+ * — came to **102 757 tokens**, i.e. **0.51 tokens per character**, and the
+ * ratio held as the note grew: 300 000 chars → 154 108 tokens, 600 000 →
+ * 308 162, and a rejected 2 000 000-character request whose message reported
+ * 1 027 056 tokens. So at the ratio this tokenizer produces, this
+ * ceiling is about **103 000 tokens** — roughly a tenth of that model's window
+ * (1 048 576 tokens, from the provider's own rejection) and about half of the
+ * 200 000-token window the 200K above is named for.
+ *
+ * That is one tokenizer's answer, and the app cannot see the user's. A
+ * vocabulary hostile to Chinese reaches 1.5 tokens per character, which puts
+ * this ceiling at 300 000 tokens — over a 200 000-token window, with nothing
+ * left for the system prompt, the conversation or the answer. Both ends of that
+ * range are real, which is why {@link DEFAULT_CONTEXT_CHARS} is not this number.
  */
 export const CONTEXT_CHARS_MAX = 200000
 
 /**
  * What the app picks when the user has not chosen.
  *
- * **Half the ceiling, and the halving is the point.** At the pessimistic end of
- * what a tokenizer does to Chinese (modern BPE tokenizers land anywhere between
- * 1.0 and 1.5 tokens per character depending on the vocabulary), 200 000
- * characters is 200 000–300 000 tokens against a 200 000-token window: the
- * request overflows and the provider rejects it, on exactly the long Chinese
- * note this setting exists to stop cutting off. 100 000 characters is
- * 100 000–150 000 tokens, which leaves 50 000–100 000 for everything else in
- * the request — and the rest of it is bounded and small: the transcript is
- * capped separately at 6 000 characters by `buildChatPrompt`, the answer at the
- * max-output setting, the system prompt by whatever the user wrote.
+ * **Half the ceiling. The halving survives the measurement; the sentence that
+ * used to justify it does not, so it is restated here.** It read: "200 000
+ * characters is 200 000–300 000 tokens against a 200 000-token window, so the
+ * request overflows on exactly the long Chinese note this setting exists for."
+ * Measured (see {@link CONTEXT_CHARS_MAX}), that is the pessimistic end only:
+ * at 0.51 tokens per character the ceiling is ~103 000 tokens and fits a
+ * 200 000-token window with room to spare.
  *
- * So the ceiling is theirs and the default is deliberately cautious: a number
- * that overflows on the case the feature is *for* is worse than a number that
- * is 16x the old one and still fits. A user who knows their model and their
- * script can raise it to 200 000; nothing stops them.
+ * What the default has to survive is the other end, because the app cannot see
+ * the user's tokenizer: at 1.5 tokens per character the ceiling is 300 000
+ * tokens and does not fit, while **this** number is 150 000 — inside a
+ * 200 000-token window, with 50 000 left for everything else in the request.
+ * The rest of it is bounded and small: the transcript is capped separately at
+ * 6 000 characters by `buildChatPrompt`, the answer at the max-output setting,
+ * the system prompt by whatever the user wrote. At the measured ratio this
+ * number is 51 000 tokens, a quarter of the window it is named for; and it is
+ * 16x the old 6 000-character default, which is the difference between the
+ * model reading a section and reading the whole note.
  *
- * (The old default was 6 000, against a 32 000 ceiling. The note is truncated
- * to this on the way out — see `buildContextBlock` — so this is the difference
- * between the model reading a section and reading the whole note.)
+ * So the ceiling is theirs and the default is deliberately cautious — but for a
+ * reason narrower than the old one: the two failure modes are not equally bad.
+ * A default that is too large costs a rejected request on the case the feature
+ * exists for (the user is told why and told to lower this number, see
+ * `CONTEXT_OVERFLOW_HINT`); one that is too small sends most of the note and
+ * says what it left out, on the same toast that names this setting
+ * (`contextTruncatedNotice`). A user who knows their model and their script can
+ * raise it to 200 000; nothing stops them.
  */
 export const DEFAULT_CONTEXT_CHARS = 100000
 
