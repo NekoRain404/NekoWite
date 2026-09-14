@@ -195,9 +195,21 @@ describe('ImagePanel accessibility', () => {
     widthInput.value = '240'
     widthInput.dispatchEvent(new Event('input', { bubbles: true }))
     await flush()
-    const alignSelect = document.getElementById('neko-image-align') as HTMLSelectElement
-    alignSelect.value = 'center'
-    alignSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    // The align control is a SelectMenu, not a native <select>: its rows exist
+    // only while the list is up, because the OS used to draw them outside the
+    // DOM where no CSS could reach them. So it is driven the way a user drives
+    // it — open, then click the row — matching the helper the graph and settings
+    // suites already use for the same control.
+    const alignTrigger = document.getElementById('neko-image-align') as HTMLButtonElement
+    alignTrigger.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    )
+    await flush()
+    const alignRow = [
+      ...document.querySelectorAll<HTMLButtonElement>('.select-option'),
+    ].find((row) => row.dataset.value === 'center')
+    expect(alignRow, 'the center option').toBeDefined()
+    alignRow!.click()
     await flush()
 
     const attrs = getImageAttrs(editor.getView(), pos)
