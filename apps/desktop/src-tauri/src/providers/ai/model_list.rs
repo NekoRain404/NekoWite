@@ -10,193 +10,30 @@
 //! compatibility surface, so `client` and the integration tests import them from
 //! where they always did.
 //!
+//! The slice is three files, and this one is the round trip: the ids a body
+//! carries are read in `ids` and the sentences a failure produces are written in
+//! `diagnosis`, with the names the old layout exposed re-exported below so that
+//! no caller can tell where they moved.
+//!
 //! Dependencies: [`super::request`] for the endpoint and the configuration,
 //! [`super::response`] for the bounded read and the status wording,
 //! [`super::limits`] for the ceilings. The `pub use` in `response` points back
 //! here only to satisfy the compatibility rule that split follows — the
 //! direction of USE is this file → `response`, never the reverse.
 
+mod diagnosis;
+mod ids;
+
+// The parser moved to `model_list::ids` and the failure wording to
+// `model_list::diagnosis`; this path is the compatibility surface the split
+// keeps, so `response` (and, through it, `client` and the integration tests)
+// still import the name from where it always was.
+pub use self::ids::parse_model_ids;
+
+use self::diagnosis::{body_preview, transport_failure_note, unexpected_body_error};
 use super::limits::{MAX_ERROR_BODY_BYTES, MAX_MODELS_RESPONSE_BYTES};
 use super::request::{models_endpoint, AIConfig};
 use super::response::{error_detail_from_body, http_error_message_at, read_body_bounded};
-
-/// How much of an unexpected body a failure message shows.
-///
-/// Recognition, not fidelity: an HTML fallback is unmistakable from its
-/// doctype, a gateway's sorry page from its first sentence. This is also the
-/// bound that keeps a 124 KB single-page-app document out of a toast.
-const BODY_PREVIEW_CHARS: usize = 120;
-
-/// A transport failure with its **whole** cause chain appended.
-///
-/// `reqwest::Error`'s own `Display` prints the top-level kind and the URL —
-/// `error sending request for url (…)` — and then its source *only when it has
-/// one*. A connect failure that arrives with no appended source therefore reaches
-/// the user as a sentence naming neither the cause nor any way to find it.
-///
-/// That is not hypothetical: this exact message was reported twice, and one
-/// build later the same request succeeded **ten times out of ten** from a test
-/// process using the app's own `list_models` on the same machine — so the
-/// difference had to be in the app process's own environment (a proxy, a
-/// resolver, a trust store) and the message said nothing about which. Walking
-/// `source()` by hand is what makes the next report name the cause instead of
-/// restating the symptom.
-///
-/// Takes `&dyn Error` rather than `&reqwest::Error` so the walk itself is
-/// testable: a `reqwest::Error` cannot be constructed by hand, and an untestable
-/// error formatter is how this one came to be written in the first place.
-fn error_chain(e: &(dyn std::error::Error + 'static)) -> String {
-    let mut out = e.to_string();
-    let mut source = e.source();
-    let mut depth = 0;
-    while let Some(s) = source {
-        depth += 1;
-        // A reqwest error's source is frequently another reqwest error repeating
-        // the parent's text verbatim; only a line that adds something is worth
-        // printing, and the cap stops a misbehaving chain becoming the toast.
-        let text = s.to_string();
-        if !out.contains(&text) {
-            out.push_str(" → ");
-            out.push_str(&text);
-        }
-        if depth >= 8 {
-            break;
-        }
-        source = s.source();
-    }
-    out
-}
-
-/// The proxy this request will go through, if the environment names one.
-///
-/// reqwest reads the conventional variables itself and exposes nothing about the
-/// result, so the only way to tell a user "this failed through a proxy you may
-/// have forgotten about" is to read the same variables. It is worth saying out
-/// loud: a `127.0.0.1:7890` left over from a proxy client that is no longer
-/// running produces exactly the failure this function is called for, and it is
-/// invisible from inside the app otherwise.
-fn proxy_in_use() -> Option<String> {
-    const VARS: [&str; 6] = [
-        "HTTPS_PROXY",
-        "https_proxy",
-        "ALL_PROXY",
-        "all_proxy",
-        "HTTP_PROXY",
-        "http_proxy",
-    ];
-    VARS.iter().find_map(|k| match std::env::var(k) {
-        Ok(v) if !v.trim().is_empty() => Some(format!("{k}={}", v.trim())),
-        _ => None,
-    })
-}
-
-/// What to append to a send failure: the cause chain, and the proxy if one is in
-/// play. Kept together because a proxy failure and a socket failure read the
-/// same at the top of the chain and are told apart by this line.
-fn transport_failure_note(e: &reqwest::Error) -> String {
-    match proxy_in_use() {
-        Some(p) => format!("{}；本次请求经由代理 {p}", error_chain(e)),
-        None => error_chain(e),
-    }
-}
-
-/// The opening of a body, whitespace collapsed, for showing the user what
-/// actually came back.
-///
-/// Collapsing matters as much as truncating: the bodies worth showing are
-/// pretty-printed documents and multi-line error pages, and their meaning lives
-/// in the first line, not in the blank lines between them.
-fn body_preview(body: &str) -> String {
-    let collapsed = body.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut shown: String = collapsed.chars().take(BODY_PREVIEW_CHARS).collect();
-    if collapsed.chars().count() > BODY_PREVIEW_CHARS {
-        shown.push('…');
-    }
-    shown
-}
-
-/// The failure to report when a 2xx body is not the provider's JSON.
-///
-/// Two shapes, because they mean different things to the user. A body that
-/// reads as a web page is a wrong-URL symptom — the report this workstream
-/// exists for: the provider answers every path it does not recognise with HTTP
-/// 200 and the same 124 KB SPA document, so a typo'd Base URL does not fail, it
-/// "succeeds" with a web page. Anything else is an upstream breaking its own
-/// contract. Both name the URL, because neither is diagnosable without it, and
-/// both show a bounded preview: the message this replaces was a bare serde
-/// offset (`expected value at line 1 column 1`) describing a body the user had
-/// never seen, which is what made the original report unanswerable.
-fn unexpected_body_error(url: &str, content_type: &str, body: &str) -> String {
-    let preview = body_preview(body);
-    if reads_as_a_web_page(body, content_type) {
-        return format!(
-            "模型列表请求失败：{url} 返回的是网页（HTML）而不是模型列表，Base URL 很可能填错了。\
-             请在设置里检查 Base URL，或直接填写「模型列表 URL」——\
-             这里的地址会被原样请求。服务商返回内容开头：{preview}"
-        );
-    }
-    let declared = if content_type.is_empty() {
-        "未声明"
-    } else {
-        content_type
-    };
-    format!(
-        "模型列表请求失败：{url} 返回的内容不是 JSON（Content-Type: {declared}）。\
-         请检查 Base URL 是否正确。服务商返回内容开头：{preview}"
-    )
-}
-
-/// True when a body reads as a web page rather than a provider response.
-///
-/// `<` as the first non-whitespace byte is markup — no JSON document starts
-/// that way — and a declared `text/html` says the same for a page whose doctype
-/// sits behind a BOM or whose head was rewritten in transit. Only ever asked
-/// about a body that has ALREADY failed to parse as JSON, which is what keeps
-/// an API that mislabels its own JSON (`text/html` on a real payload) readable.
-fn reads_as_a_web_page(body: &str, content_type: &str) -> bool {
-    body.trim_start().starts_with('<') || content_type.contains("html")
-}
-
-/// Extract stable, sorted model IDs from a provider's `/models` response.
-///
-/// Robust across providers: OpenAI-compatible and Anthropic place their
-/// entries in a `data` array with an `id` field; Gemini uses a `models` array
-/// holding a fully-qualified `name` (e.g. `models/gemini-2.5-pro`) that we
-/// reduce to its final segment. An empty or unparseable body yields an empty
-/// list so the caller can degrade gracefully.
-pub fn parse_model_ids(body: &str, _provider: &str) -> Vec<String> {
-    let v: serde_json::Value = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-    let arr = v
-        .get("data")
-        .and_then(|d| d.as_array())
-        .or_else(|| v.get("models").and_then(|m| m.as_array()));
-    let Some(arr) = arr else {
-        return Vec::new();
-    };
-    let mut ids: Vec<String> = Vec::new();
-    for item in arr {
-        let id = item
-            .get("id")
-            .and_then(|x| x.as_str())
-            .map(str::to_string)
-            .or_else(|| {
-                item.get("name")
-                    .and_then(|x| x.as_str())
-                    .map(|n| n.rsplit('/').next().unwrap_or(n).to_string())
-            });
-        if let Some(id) = id {
-            if !id.trim().is_empty() {
-                ids.push(id);
-            }
-        }
-    }
-    ids.sort();
-    ids.dedup();
-    ids
-}
 
 /// Run the `GET /models` round trip against an already-built, already-pinned
 /// client and return the parsed model ids.
@@ -216,7 +53,10 @@ pub async fn fetch_model_ids(
     client: &reqwest::Client,
     config: &AIConfig,
 ) -> Result<Vec<String>, String> {
-    let (url, headers) = models_endpoint(config);
+    // A provider with no Base URL and no host of its own is refused here, before
+    // the request is built — the model list used to be the second path that
+    // reached api.openai.com in that state.
+    let (url, headers) = models_endpoint(config)?;
 
     let mut request = client.get(&url);
     for (k, v) in &headers {
@@ -296,166 +136,4 @@ pub async fn fetch_model_ids(
         ));
     }
     Ok(ids)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fmt;
-
-    /// An error that carries another, so a chain can be built by hand —
-    /// `reqwest::Error` cannot be constructed in a test, which is why
-    /// [`error_chain`] takes `&dyn Error` in the first place.
-    #[derive(Debug)]
-    struct Layer {
-        message: String,
-        source: Option<Box<Layer>>,
-    }
-
-    impl Layer {
-        fn leaf(message: &str) -> Box<Layer> {
-            Box::new(Layer {
-                message: message.into(),
-                source: None,
-            })
-        }
-
-        fn over(message: &str, source: Box<Layer>) -> Box<Layer> {
-            Box::new(Layer {
-                message: message.into(),
-                source: Some(source),
-            })
-        }
-    }
-
-    impl fmt::Display for Layer {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.write_str(&self.message)
-        }
-    }
-
-    impl std::error::Error for Layer {
-        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-            self.source
-                .as_ref()
-                .map(|b| b.as_ref() as &(dyn std::error::Error + 'static))
-        }
-    }
-
-    #[test]
-    fn a_bare_error_is_reported_as_itself() {
-        // The reported symptom, verbatim: one sentence and no cause. It must not
-        // gain padding — the fix is to add the cause when there IS one, not to
-        // decorate the case where there is not.
-        let e = Layer::leaf("error sending request for url (https://example.test/v1/models)");
-        assert_eq!(error_chain(e.as_ref()), e.message);
-    }
-
-    #[test]
-    fn the_whole_cause_chain_is_appended_in_order() {
-        let e = Layer::over(
-            "error sending request",
-            Layer::over(
-                "error trying to connect",
-                Layer::leaf("tcp connect error: connection refused"),
-            ),
-        );
-        assert_eq!(
-            error_chain(e.as_ref()),
-            concat!(
-                "error sending request → ",
-                "error trying to connect → ",
-                "tcp connect error: connection refused",
-            ),
-        );
-    }
-
-    #[test]
-    fn a_source_repeating_its_parent_is_not_printed_twice() {
-        // reqwest wraps its own error several layers deep, so the same sentence
-        // arrives repeatedly; printing it each time is what buries the one line
-        // that would have answered the bug report.
-        let e = Layer::over(
-            "error sending request",
-            Layer::leaf("error sending request"),
-        );
-        assert_eq!(error_chain(e.as_ref()), "error sending request");
-    }
-
-    #[test]
-    fn a_chain_that_never_ends_is_capped() {
-        // Nothing may turn a toast into an unbounded walk, so the cap is what
-        // makes this safe to call on an error a peer ultimately influenced.
-        let mut e = Layer::leaf("layer 0");
-        for i in 1..20 {
-            e = Layer::over(&format!("layer {i}"), e);
-        }
-        assert_eq!(error_chain(e.as_ref()).matches('\u{2192}').count(), 8);
-    }
-
-    #[test]
-    fn a_bare_array_is_not_silently_empty() {
-        // The shape this parser does NOT know. A top-level array is valid JSON
-        // and carries models, and before this it produced an empty dropdown with
-        // nothing said — the exact symptom reported as "刷新完成，模型列表下拉还是
-        // 没有对应的模型". Asserting the ids stay empty documents the parser's
-        // limit; asserting the MESSAGE is what proves the limit is reported.
-        let ids = parse_model_ids(r#"[{"id": "qwen3.7-max"}]"#, "anthropic");
-        assert!(ids.is_empty(), "the parser does not read a bare array");
-    }
-
-    #[test]
-    fn a_renamed_key_is_not_silently_empty() {
-        let ids = parse_model_ids(r#"{"result": [{"id": "qwen3.7-max"}]}"#, "anthropic");
-        assert!(ids.is_empty(), "the parser does not read a renamed key");
-    }
-
-    #[test]
-    fn the_shapes_that_are_known_still_parse() {
-        // The other half: the two shapes the parser DOES read must keep working,
-        // so the empty-list report above cannot be tightened into a false alarm.
-        assert_eq!(
-            parse_model_ids(r#"{"data": [{"id": "a"}, {"id": "b"}]}"#, "openai"),
-            vec!["a".to_string(), "b".to_string()],
-        );
-        assert_eq!(
-            parse_model_ids(
-                r#"{"models": [{"name": "models/gemini-2.5-pro"}]}"#,
-                "gemini"
-            ),
-            vec!["gemini-2.5-pro".to_string()],
-        );
-    }
-
-    #[test]
-    fn a_preview_is_collapsed_and_bounded() {
-        // A pretty-printed page must not put its blank lines into the toast,
-        // and its tail must not come along at all.
-        let page = format!("<!DOCTYPE html>\n\n<html>\n{}</html>", "x".repeat(4000));
-        let preview = body_preview(&page);
-        assert_eq!(preview.chars().count(), BODY_PREVIEW_CHARS + 1); // + the ellipsis
-        assert!(preview.starts_with("<!DOCTYPE html> <html>"));
-    }
-
-    #[test]
-    fn a_page_is_recognised_by_its_body_or_by_its_declared_type() {
-        for (body, content_type) in [
-            ("<!DOCTYPE html>", "application/json"),
-            ("  \n\t<html>", ""),
-            // A doctype behind a BOM is not a `<` at the first byte; the
-            // declared type is what catches it.
-            ("\u{feff}<html>", "text/html; charset=utf-8"),
-        ] {
-            assert!(
-                reads_as_a_web_page(body, content_type),
-                "{body:?} / {content_type:?} must read as a page"
-            );
-        }
-        for (body, content_type) in [
-            ("upstream connect error", "text/plain"),
-            ("[1,2,3]", "application/json"),
-        ] {
-            assert!(!reads_as_a_web_page(body, content_type));
-        }
-    }
 }

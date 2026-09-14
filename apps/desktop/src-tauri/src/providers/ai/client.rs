@@ -51,7 +51,7 @@ use super::limits::{
 use super::request::with_completion_auth;
 pub use super::request::{
     build_prompt, default_base_url, encode_request_body, hydrate_stored_key,
-    normalize_reasoning_effort, validate_request_inputs, AIConfig,
+    normalize_reasoning_effort, resolve_base_url, validate_request_inputs, AIConfig,
 };
 pub use super::response::{
     ai_done_payload, error_detail_from_body, http_error_message, http_error_message_with_detail,
@@ -68,14 +68,17 @@ use super::{gemini, openai_compatible};
 /// Resolve a completion's request endpoint + body for the configured provider.
 /// Provider-specific construction is delegated to [`super::gemini`] and
 /// [`super::openai_compatible`].
+///
+/// `Err` when the provider has neither a Base URL nor a host of its own (see
+/// [`resolve_base_url`]): the caller reports it instead of sending anything.
 pub fn resolve_endpoint(
     cfg: &AIConfig,
     prompt: &str,
     images: &[serde_json::Value],
-) -> (String, serde_json::Value) {
+) -> Result<(String, serde_json::Value), String> {
     match cfg.provider.as_str() {
-        "anthropic" => openai_compatible::endpoint_anthropic(cfg, prompt, images),
-        "gemini" => gemini::endpoint(cfg, prompt, images),
+        "anthropic" => Ok(openai_compatible::endpoint_anthropic(cfg, prompt, images)),
+        "gemini" => Ok(gemini::endpoint(cfg, prompt, images)),
         _ => openai_compatible::endpoint_default(cfg, prompt, images),
     }
 }
@@ -143,8 +146,11 @@ pub async fn stream_complete(
     // `resolve_endpoint` builds the content itself: with images it emits the
     // provider's multimodal array (text + image blocks), without images it
     // keeps the plain string prompt — preserving the existing single-text
-    // ghost-writer behaviour unchanged.
-    let (url, body) = resolve_endpoint(config, prompt, images);
+    // ghost-writer behaviour unchanged. It refuses when the provider has no
+    // address at all, which is the one case that must not reach the network.
+    let (url, body) = resolve_endpoint(config, prompt, images).inspect_err(|e| {
+        emit_ai_error(app, id, e);
+    })?;
 
     // Serialise (and bound) the request before anything is opened. `json()`
     // would serialise the same value internally; doing it here means the bytes
@@ -288,40 +294,41 @@ pub async fn stream_complete(
         return Ok(());
     }
     let answer = completion.answer();
-    let finish_reason = completion.finish_reason();
-    // `length` means the provider ran out of output budget mid-answer. Saying so
-    // matters more than the answer itself: the text the user sees is a fragment,
-    // and silently accepting it as the whole reply is how a truncated document
-    // ends up inserted into a note.
-    if finish_reason == Some("length") && !answer.is_empty() {
-        let message = "回答因达到最大输出 Tokens 被截断（finish_reason: length）。\n                  内容并不完整，请在设置里调大“最大输出 Tokens”后重试。";
-        let _ = app.emit(
-            "ai-error",
-            serde_json::json!({ "id": id, "message": message }),
-        );
-        return Err(message.into());
-    }
-    if finish_reason == Some("content_filter") {
-        let message = "服务端的内容过滤中断了这次回答（finish_reason: content_filter）。";
-        let _ = app.emit(
-            "ai-error",
-            serde_json::json!({ "id": id, "message": message }),
-        );
-        return Err(message.into());
-    }
-    // An answer-less completion that produced reasoning is not a normal result:
-    // the budget was consumed by the model's thinking, so tell the user what to
-    // change instead of finishing silently with nothing to show.
-    if answer.is_empty() && completion.saw_reasoning() {
-        let message = "模型把本次最大输出 Tokens 全部用于推理，没有产出正文。                       请在设置里把“最大输出 Tokens”调大（推理模型建议 ≥ 1024）后重试。";
-        let _ = app.emit(
-            "ai-error",
-            serde_json::json!({ "id": id, "message": message }),
-        );
+    if let Some(message) = completion_refusal(&completion) {
+        emit_ai_error(app, id, message);
         return Err(message.into());
     }
     let _ = app.emit("ai-done", ai_done_payload(id, answer, completion.usage()));
     Ok(())
+}
+
+/// Why a finished completion must be reported as a FAILURE, and what to tell
+/// the user. `None` means the run is an ordinary success; every case here is a
+/// completion with nothing (or nothing whole) to put in the document, which is
+/// why none of them may end in an `ai-done`.
+pub fn completion_refusal(completion: &CompletionStream) -> Option<&'static str> {
+    // `length` means the provider ran out of output budget mid-answer, and an
+    // answer truncated to NOTHING is the same statement at its extreme: the
+    // empty case used to be carved out here, so it reached `ai-done` with
+    // `full: ""` — a silent no-op where the intent is an explanation. The
+    // `!saw_reasoning` leaves an answer-less reasoning turn to the more
+    // specific message below.
+    if completion.finish_reason() == Some("length")
+        && (!completion.answer().is_empty() || !completion.saw_reasoning())
+    {
+        return Some(
+            "回答因达到最大输出 Tokens 被截断（finish_reason: length）。\n                  内容并不完整，请在设置里调大“最大输出 Tokens”后重试。",
+        );
+    }
+    if completion.finish_reason() == Some("content_filter") {
+        return Some("服务端的内容过滤中断了这次回答（finish_reason: content_filter）。");
+    }
+    if completion.answer().is_empty() && completion.saw_reasoning() {
+        return Some(
+            "模型把本次最大输出 Tokens 全部用于推理，没有产出正文。                       请在设置里把“最大输出 Tokens”调大（推理模型建议 ≥ 1024）后重试。",
+        );
+    }
+    None
 }
 
 #[cfg(test)]

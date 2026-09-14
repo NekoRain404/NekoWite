@@ -9,7 +9,7 @@
 use serde_json::Value;
 
 use super::request::{
-    default_base_url, normalize_reasoning_effort, split_data_url, system_prompt_of, AIConfig,
+    normalize_reasoning_effort, resolve_base_url, split_data_url, system_prompt_of, AIConfig,
 };
 use super::response::{token_count, TokenUsage};
 
@@ -92,14 +92,21 @@ pub fn endpoint_anthropic(cfg: &AIConfig, prompt: &str, images: &[Value]) -> (St
 
 /// Build an OpenAI-compatible request `(url, body)`. The system prompt becomes
 /// `messages[0]` so any images still ride in `messages[1]`.
-pub fn endpoint_default(cfg: &AIConfig, prompt: &str, images: &[Value]) -> (String, Value) {
-    // Per-provider default: without one, every OpenAI-compatible provider
-    // that has no explicit Base URL (grok, deepseek, ...) would be sent to
-    // api.openai.com — reaching the wrong host with someone else's key.
-    let base = cfg
-        .base_url
-        .clone()
-        .unwrap_or_else(|| default_base_url(&cfg.provider).to_string());
+///
+/// `Err` is the missing-setting refusal [`resolve_base_url`] hands back for a
+/// provider with no Base URL and no host of its own (`local`, `custom`, an
+/// unknown id): this is the COMPLETION entry point, and the one that used to
+/// send the prompt to api.openai.com in that state.
+pub fn endpoint_default(
+    cfg: &AIConfig,
+    prompt: &str,
+    images: &[Value],
+) -> Result<(String, Value), String> {
+    // Per-provider default where there is one, refusal where there is not:
+    // without it every OpenAI-compatible provider with no explicit Base URL
+    // (grok, deepseek, ...) was sent to api.openai.com — reaching the wrong
+    // host with someone else's key.
+    let base = resolve_base_url(cfg)?;
     let content = if !images.is_empty() {
         let mut parts = vec![serde_json::json!({ "type": "text", "text": prompt })];
         for img in images {
@@ -137,10 +144,10 @@ pub fn endpoint_default(cfg: &AIConfig, prompt: &str, images: &[Value]) -> (Stri
     if let Some(effort) = normalize_reasoning_effort(cfg.reasoning_effort.as_deref()) {
         body["reasoning_effort"] = serde_json::json!(effort);
     }
-    (
+    Ok((
         format!("{}/chat/completions", base.trim_end_matches('/')),
         body,
-    )
+    ))
 }
 
 /// Extract the incremental Anthropic text for one parsed SSE event body.
@@ -336,7 +343,7 @@ mod tests {
 
     #[test]
     fn openai_compatible_requests_ask_the_endpoint_for_usage() {
-        let (_url, body) = endpoint_default(&cfg(), "hi", &[]);
+        let (_url, body) = endpoint_default(&cfg(), "hi", &[]).expect("openai has a default host");
         assert_eq!(body["stream_options"]["include_usage"], true);
     }
 }
