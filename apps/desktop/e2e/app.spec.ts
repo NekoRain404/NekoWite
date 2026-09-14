@@ -91,7 +91,7 @@ test('toolbar commands format the document (bold + heading dropdown)', async ({ 
 
   // Re-level the heading via the heading dropdown (h1 → h3).
   await page.locator('.toolbar-btn[title="标题"]').click()
-  await page.locator('.heading-option', { hasText: '标题 3' }).click()
+  await page.locator('.menu-option', { hasText: '标题 3' }).click()
 
   await page.locator('.switch-option', { hasText: '源码' }).click()
   const source = page.locator('[data-testid="source-pane"] .cm-content')

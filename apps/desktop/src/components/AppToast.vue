@@ -200,6 +200,11 @@ onBeforeUnmount(() => {
   transition: opacity var(--app-motion-exit) var(--app-ease-exit),
               transform var(--app-motion-exit) var(--app-ease-exit);
   will-change: opacity, transform;
+  /* Measured through a dismiss: `pointer-events: auto` and the toast topmost at
+     its own centre for all 195ms of the exit, so a click meant for the notice
+     underneath — or for the page it is covering — lands on the one that is
+     already going. The popups carry the same rule for the same reason. */
+  pointer-events: none;
 }
 .toast-enter-from,
 .toast-leave-to {

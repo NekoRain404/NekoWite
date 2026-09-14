@@ -24,6 +24,7 @@ import GeneralSettings from './GeneralSettings.vue'
 import PluginSettings from './PluginSettings.vue'
 import SettingsNavigation from './SettingsNavigation.vue'
 import { useSettingsDialog } from '../composables/use-settings-dialog'
+import { markArrived, markLeaving } from '../../../composables/surface-leave'
 import type { SettingsSectionId } from '../types'
 
 const emit = defineEmits<{ (e: 'close'): void; (e: 'saved', path: string): void }>()
@@ -88,8 +89,18 @@ watch(activeSection, () => {
                  while the thing inside it changes.
                  Every section's root is a single element, so the transition
                  classes land on it and nothing about the markup or the focus
-                 watch changes. -->
-            <Transition name="page">
+                 watch changes.
+                 The two hooks are the other half of taking the leaver out of
+                 flow: an out-of-flow page that is still in the tab order is
+                 still a place the user can be, and measured it stayed *findable*
+                 too — 60ms after a switch the previous section still matched 15
+                 controls that now sit under the new one. See surface-leave.ts,
+                 and `.page-leave-active` below for the pointer. -->
+            <Transition
+              name="page"
+              @leave="markLeaving"
+              @enter="markArrived"
+            >
               <GeneralSettings
                 v-if="activeSection === 'general'"
                 :app-version="appVersion"
@@ -237,6 +248,11 @@ watch(activeSection, () => {
   transition: opacity var(--app-motion-exit-slow) var(--app-ease-exit),
               scale var(--app-motion-exit-slow) var(--app-ease-exit),
               translate var(--app-motion-exit-slow) var(--app-ease-exit);
+  /* Out of flow is not out of the way. The page that is leaving sits exactly
+     where the incoming one is arriving, so without this a click in the first
+     280ms of a section switch lands on the section the user has just left —
+     the same defect the shell's panels and the popups carry the same rule for. */
+  pointer-events: none;
 }
 .page-leave-to {
   opacity: 0;
