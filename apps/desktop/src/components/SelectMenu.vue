@@ -128,10 +128,20 @@ function onViewportChange(): void {
 }
 
 function watchViewport(watching: boolean): void {
-  const method = watching ? 'addEventListener' : 'removeEventListener'
-  document[method]('pointerdown', onPointerDown, true)
-  window[method]('resize', onViewportChange)
-  window[method]('scroll', onViewportChange, true)
+  // Written out rather than dispatched through `document[watching ? 'add' :
+  // 'remove'](...)`: the computed method defeats overload resolution, and
+  // `onPointerDown` takes a `PointerEvent`, which is not assignable to the
+  // generic `EventListener` its sibling handlers satisfy. Explicit branches
+  // typecheck without a cast and say the same thing.
+  if (watching) {
+    document.addEventListener('pointerdown', onPointerDown, true)
+    window.addEventListener('resize', onViewportChange)
+    window.addEventListener('scroll', onViewportChange, true)
+  } else {
+    document.removeEventListener('pointerdown', onPointerDown, true)
+    window.removeEventListener('resize', onViewportChange)
+    window.removeEventListener('scroll', onViewportChange, true)
+  }
 }
 
 function show(): void {
