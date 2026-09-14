@@ -64,13 +64,23 @@ const mdHighlight = HighlightStyle.define([
 // Every value goes through --app-* tokens: the editor follows data-theme
 // (light/dark) with no reconfiguration.
 //
-// The two that did not — `fontSize: '13.5px'` and `lineHeight: '1.7'` — are
-// gone, because this comment was already claiming they could not exist. The
-// source pane read 13.5px against the rendered pane's 15px (an 11 % gap the user
-// could see and could not name), and both numbers now come from the same tokens
-// as the rendered pane: `features/editor/styles/sourcePane.css` sets
-// `font-size: var(--app-body-size)` on `.cm-editor` and
-// `line-height: var(--app-line-height)` on `.cm-scroller`.
+// What DOES go through the tokens is the two values that carry the reading
+// experience: the base size and the leading, now read by
+// `features/editor/styles/sourcePane.css` as `font-size: var(--app-body-size)`
+// on `.cm-editor` and `line-height: var(--app-line-height)` on `.cm-scroller`,
+// so a theme change needs no reconfiguration. They used to be literals here
+// (`fontSize: '13.5px'`, `lineHeight: '1.7'`, against the rendered pane's 15px —
+// an 11 % gap the user could see and could not name), which is why this comment
+// said one thing and the code beneath it did another.
+//
+// What still does NOT go through the tokens is everything below that is a fixed
+// size on purpose: the line-number gutter (10px), the content padding
+// (24/24/48), the gutter's minWidth and the cursor's hairline (1.5px). These are
+// CHROME, measured against the panel rather than the text — a gutter that grew
+// with the body size would change the column's proportions at every step, and a
+// caret hairline is a hairline at any size. A first version of this comment
+// claimed the theme had no absolute values left; a reader who believes that
+// stops looking, and there are four.
 //
 // In the stylesheet rather than here on purpose: a CSS variable is live, so a
 // body-size change reaches this editor with no reconfiguration and no view
