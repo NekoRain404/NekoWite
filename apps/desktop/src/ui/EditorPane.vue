@@ -203,14 +203,21 @@ onBeforeUnmount(() => {
           @remove="floatStore.removeSelected()"
         />
       </div>
-      <ContextMenu
-        v-if="menuTarget"
-        :x="menuTarget.x"
-        :y="menuTarget.y"
-        :items="menuItems"
-        @select="selectMenu"
-        @close="closeMenu"
-      />
+      <!-- The exit. A context menu is mounted with `v-if` in every host, so its
+           own leave rule never ran and it was gone in the frame the user acted;
+           `<Transition>` keeps the node mounted for that rule and nothing else
+           changes. See `ui/ContextMenu.vue` for the selectors that had to
+           out-specify its own `.is-open`. -->
+      <Transition name="ctx">
+        <ContextMenu
+          v-if="menuTarget"
+          :x="menuTarget.x"
+          :y="menuTarget.y"
+          :items="menuItems"
+          @select="selectMenu"
+          @close="closeMenu"
+        />
+      </Transition>
       <!-- The shared dialog departure (see motion.css). It has to sit where the
            `v-if` is, so every host of a `.dialog` needs its own wrapper, and
            `type="transition"` is required: the arrival is a *keyframe* and the

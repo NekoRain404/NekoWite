@@ -172,14 +172,21 @@ function entryRow(row: FileTreeFlatRow): FileTreeRowView {
         />
       </template>
     </div>
-    <FileTreeContextMenu
-      v-if="menu"
-      :x="menu.x"
-      :y="menu.y"
-      :can-modify="menuCanModify"
-      @select="onMenuSelect"
-      @close="menu = null"
-    />
+    <!-- The exit. A context menu is mounted with `v-if` in every host, so its
+         own leave rule never ran and it was gone in the frame the user acted;
+         `<Transition>` keeps the node mounted for that rule and nothing else
+         changes. See `ui/ContextMenu.vue` for the selectors that had to
+         out-specify its own `.is-open`. -->
+    <Transition name="ctx">
+      <FileTreeContextMenu
+        v-if="menu"
+        :x="menu.x"
+        :y="menu.y"
+        :can-modify="menuCanModify"
+        @select="onMenuSelect"
+        @close="menu = null"
+      />
+    </Transition>
   </div>
 </template>
 
