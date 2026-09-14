@@ -182,6 +182,15 @@ describe('SettingsPanel control bindings', () => {
     await nextTick()
     expect(settings.reasoningEffort).toBe('high')
 
+    // The models-URL override is the field the "refresh finds no models" report
+    // needed; a binding that renders but drops its write would leave the escape
+    // hatch inert, which is exactly the failure this suite exists to catch.
+    const modelsUrl = fieldControl<HTMLInputElement>(t('aiSettings.modelsUrl'), 'input')
+    modelsUrl.value = 'https://tokenflux.dev/v1/models'
+    modelsUrl.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    expect(settings.modelsUrl).toBe('https://tokenflux.dev/v1/models')
+
     expect(vueWarnings()).toEqual([])
   })
 

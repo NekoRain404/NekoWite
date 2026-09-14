@@ -18,6 +18,7 @@ function clearLs(): void {
   localStorage.removeItem('nekowite.ai.provider')
   localStorage.removeItem('nekowite.ai.model')
   localStorage.removeItem('nekowite.ai.baseUrl')
+  localStorage.removeItem('nekowite.ai.modelsUrls')
   localStorage.removeItem('nekowite.ai.temperature')
   localStorage.removeItem('nekowite.ai.maxTokens')
   localStorage.removeItem('nekowite.ai.systemPrompt')
@@ -159,6 +160,71 @@ describe('useSettingsStore', () => {
     expect(s.config().base_url).toBeUndefined()
     s.provider = 'custom'
     expect(s.config().base_url).toBe('http://localhost:1234/v1')
+  })
+
+  it('carries the models-URL override through config for the provider that set it', () => {
+    // Reported from use: refreshing the list against a provider whose models
+    // live somewhere other than `{base}/models` could not be made to work at
+    // all — the app derived the path and offered no way to override it. The
+    // override is sent verbatim; Rust uses it in place of the derived endpoint.
+    const s = useSettingsStore()
+    s.provider = 'custom'
+    s.modelsUrl = 'https://tokenflux.dev/v1/models'
+    expect(s.config().models_url).toBe('https://tokenflux.dev/v1/models')
+  })
+
+  it('never sends one provider the models URL another one set', () => {
+    // The field sits beside a Base URL that every provider shares, but a models
+    // URL names ONE provider's exact endpoint: a value typed while `custom` was
+    // selected would aim `deepseek`'s refresh at a host serving a different
+    // list, or nothing at all. The trap the Base URL's stored default already
+    // taught (see LOCAL_BASE_URL_DEFAULT), in a field where a default is not
+    // even needed — the override is kept per provider instead.
+    const s = useSettingsStore()
+    s.provider = 'custom'
+    s.modelsUrl = 'http://localhost:1234/v1/models'
+
+    s.provider = 'deepseek'
+    expect(s.config().models_url).toBeUndefined()
+
+    s.provider = 'custom'
+    expect(s.config().models_url).toBe('http://localhost:1234/v1/models')
+  })
+
+  it('omits an empty or whitespace-only models URL so the backend derives the path', () => {
+    const s = useSettingsStore()
+    s.provider = 'custom'
+    s.modelsUrl = '   '
+    expect(s.config().models_url).toBeUndefined()
+    s.modelsUrl = 'https://tokenflux.dev/v1/models'
+    s.modelsUrl = ''
+    expect(s.config().models_url).toBeUndefined()
+  })
+
+  it('persists the models URL per provider and reads it back', async () => {
+    const first = useSettingsStore()
+    first.provider = 'custom'
+    first.modelsUrl = 'https://tokenflux.dev/v1/models'
+    await nextTick()
+    expect(JSON.parse(localStorage.getItem('nekowite.ai.modelsUrls') ?? '{}')).toEqual({
+      custom: 'https://tokenflux.dev/v1/models',
+    })
+
+    setActivePinia(createPinia())
+    const second = useSettingsStore()
+    second.provider = 'custom'
+    expect(second.modelsUrl).toBe('https://tokenflux.dev/v1/models')
+    // The other provider starts clean: only the provider that set it inherited it.
+    second.provider = 'deepseek'
+    expect(second.modelsUrl).toBe('')
+  })
+
+  it('falls back to no override when the stored models-URL map is corrupt', () => {
+    // A hand-edited or half-written value must not take the settings page down.
+    localStorage.setItem('nekowite.ai.modelsUrls', 'not json at all')
+    const s = useSettingsStore()
+    expect(s.modelsUrl).toBe('')
+    expect(s.config().models_url).toBeUndefined()
   })
 
   it('defaults autosaveInterval to 15000 and maxHistory to 10', () => {

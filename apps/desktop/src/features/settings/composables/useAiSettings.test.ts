@@ -116,6 +116,49 @@ describe('useAiSettings', () => {
     expect(m.modelLoading.value).toBe(false)
   })
 
+  it('hands the provider failure to the toast verbatim', async () => {
+    // `ai_list_models` rejects with the Rust `Err(String)` itself — a plain
+    // string, not an `Error` — and that string IS the diagnosis: the URL that
+    // was asked, and what came back. Dropping or re-wrapping it puts the user
+    // back where this report started, reading a serde offset ("expected value
+    // at line 1 column 1") that names neither the URL nor the body.
+    const m = mountModel()
+    const messages: string[] = []
+    const off = onNotify((msg) => messages.push(msg))
+    const detail =
+      '模型列表响应解析失败：https://tokenflux.dev/anthropic/v1/models 返回了网页而不是 JSON' +
+      '（HTTP 200，text/html）。响应开头：<!doctype html><html lang="en">'
+    mocks.listModels.mockRejectedValue(detail)
+
+    await m.refreshModels()
+    off()
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toContain(detail)
+    expect(messages[0]).toContain('tokenflux.dev/anthropic/v1/models')
+    expect(messages[0]).toContain('<!doctype html>')
+    expect(messages[0]).not.toContain('[object Object]')
+  })
+
+  it('takes the reason out of a structured rejection instead of stringifying it', async () => {
+    // A structured `Err` (a shape with a `message`) is what a `String(e)` would
+    // flatten to `[object Object]`, erasing the only sentence that says what to
+    // change.
+    const m = mountModel()
+    const messages: string[] = []
+    const off = onNotify((msg) => messages.push(msg))
+    mocks.listModels.mockRejectedValue({
+      message: '缺少 API Key：https://tokenflux.dev/v1/models 返回 401',
+    })
+
+    await m.refreshModels()
+    off()
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toContain('https://tokenflux.dev/v1/models')
+    expect(messages[0]).not.toContain('[object Object]')
+  })
+
   it('ignores a second refresh while one is in flight', async () => {
     const m = mountModel()
     let release: () => void = () => undefined
@@ -143,5 +186,21 @@ describe('useAiSettings', () => {
     expect(settings.model).toBe('claude')
     expect(settings.apiKey).toBe('sk-test')
     expect(settings.contextChars).toBe(9000)
+  })
+
+  it('shows the models-URL override of the provider on screen, and writes it back', () => {
+    const m = mountModel()
+    const settings = useSettingsStore()
+
+    settings.provider = 'custom'
+    m.modelsUrl.value = 'http://localhost:1234/v1/models'
+    expect(settings.modelsUrl).toBe('http://localhost:1234/v1/models')
+
+    // The field follows the provider: switching away shows that provider's own
+    // (empty) override rather than the one just typed.
+    settings.provider = 'deepseek'
+    expect(m.modelsUrl.value).toBe('')
+    settings.provider = 'custom'
+    expect(m.modelsUrl.value).toBe('http://localhost:1234/v1/models')
   })
 })

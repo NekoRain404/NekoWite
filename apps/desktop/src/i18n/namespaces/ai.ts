@@ -80,6 +80,11 @@ export const ai = {
       provider: 'Provider',
       model: 'Model',
       baseUrl: 'Base URL',
+      baseUrlHint:
+        'Enter the address only — the app appends the provider\'s own path to it (/v1/models for Anthropic, /v1beta/models for Gemini, /models for the OpenAI-compatible ones). Adding that path yourself asks for an address that serves something other than the model list.',
+      modelsUrl: 'Models URL (optional)',
+      modelsUrlHint:
+        'Where the model list is fetched from. Left empty, the app appends the provider\'s path to the Base URL above. Set it when your provider serves the list elsewhere — for example https://tokenflux.dev/v1/models — and it is used exactly as written, for this provider only.',
       apiKey: 'API Key',
       refreshModels: 'Refresh model list',
       getModelsFailed: 'Failed to fetch models: {msg}',
@@ -182,6 +187,11 @@ export const ai = {
       provider: '服务商',
       model: '模型',
       baseUrl: '接口地址（Base URL）',
+      baseUrlHint:
+        '这里只填地址，应用会自动接上服务商自己的路径（Anthropic 是 /v1/models，Gemini 是 /v1beta/models，OpenAI 兼容的服务商是 /models）。自己再带上这段路径，请求到的就不是模型列表了。',
+      modelsUrl: '模型列表 URL（可选）',
+      modelsUrlHint:
+        '模型列表从哪里获取。留空时，应用会把服务商自己的路径接到上面的接口地址后面。如果服务商的列表在别处（例如 https://tokenflux.dev/v1/models），填在这里，应用会原样使用，且只对当前服务商生效。',
       apiKey: '密钥（API Key）',
       refreshModels: '刷新模型列表',
       getModelsFailed: '获取模型失败：{msg}',
