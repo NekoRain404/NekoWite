@@ -29,9 +29,15 @@ let instances = 0
  * follows the recipe `ui/ContextMenu.vue` established — same surface, radius,
  * shadow, placement, dismissal and motion rungs. Ported rather than shared,
  * because those two files sit in the frozen `ui/` surface.
+ *
+ * This file is the field half: the input, the narrowing, the keyboard, and
+ * where the popup goes. The list — its element, its option ids, its scrolling —
+ * is `ComboBoxList.vue`, teleported under the field here.
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { modalStack } from '../services/modal-stack'
+import ComboBoxList from './ComboBoxList.vue'
+import { comboOptionId } from './combo-option-id'
 
 // `class`, `placeholder`, `title` and any listener are the closed control's
 // look and behaviour, and the closed control is the input — not the wrapper
@@ -54,8 +60,8 @@ const emit = defineEmits<{
 }>()
 
 /** Whether the list is up. The travel itself is the stylesheet's: `<Transition>`
- *  stages the two class sets below, and the global prefers-reduced-motion rule
- *  in `styles/motion.css` is what shortens them. */
+ *  stages the two class sets the list defines, and the global
+ *  prefers-reduced-motion rule in `styles/motion.css` is what shortens them. */
 const open = ref(false)
 /** The text typed since the list opened, and the only thing the list narrows
  *  on. It starts empty even when the field already holds a model, so opening
@@ -69,11 +75,11 @@ const activeIndex = ref(0)
 const pos = ref({ left: 0, top: 0, minWidth: 180 })
 
 const inputEl = ref<HTMLInputElement | null>(null)
-const popupEl = ref<HTMLElement | null>(null)
+const listEl = ref<InstanceType<typeof ComboBoxList> | null>(null)
 
 const uid = props.id ?? `combobox-${++instances}`
 const listId = `${uid}-list`
-const optionId = (index: number): string => `${listId}-option-${index}`
+const optionId = (index: number): string => comboOptionId(listId, index)
 
 /** Claimed while the list is up. See `show()`. */
 let escapeToken: symbol | null = null
@@ -89,15 +95,17 @@ const rows = computed(() => {
 async function place(): Promise<void> {
   await nextTick()
   const anchor = inputEl.value?.getBoundingClientRect()
-  const popup = popupEl.value
-  if (!anchor || !popup) return
+  // Measured by the list, placed by the field: it is the field that can measure
+  // its own anchor, and the list that holds the box to place against it.
+  const box = listEl.value?.measure()
+  if (!anchor || !box) return
   const pad = 8
   // The box, not the rect: the rect is measured through the enter transition.
   // And the wider of the two: the floor below widens the popup, so clamping
   // against the old width would let it cross the right edge.
   const floor = Math.max(180, Math.min(anchor.width, 280))
-  const width = Math.max(popup.offsetWidth, floor)
-  const height = popup.offsetHeight
+  const width = Math.max(box.width, floor)
+  const height = box.height
   const below = anchor.bottom + 4
   const above = anchor.top - height - 4
   pos.value = {
@@ -115,7 +123,9 @@ function onPointerDown(e: PointerEvent): void {
   // The input is not "outside": its own click handler owns the open, and
   // dismissing here as well would close and immediately reopen the list.
   if (inputEl.value?.contains(target)) return
-  if (popupEl.value?.contains(target)) return
+  // Nor is the list: its rows are the popup, and a click on one is a commit,
+  // not a dismissal.
+  if (listEl.value?.contains(target)) return
   hide()
 }
 
@@ -244,13 +254,10 @@ function onKeydown(e: KeyboardEvent): void {
 }
 
 // A list taller than the popup's cap has to follow the arrows, as the command
-// palette's does. The keyboard only ever moved the index; the DOM is ours.
+// palette's does. The keyboard only ever moved the index; the scroll is DOM
+// work on an element the list owns.
 watch(activeIndex, () => {
-  void nextTick(() => {
-    popupEl.value
-      ?.querySelector<HTMLElement>(`[data-index="${activeIndex.value}"]`)
-      ?.scrollIntoView({ block: 'nearest' })
-  })
+  void nextTick(() => listEl.value?.scrollActiveIntoView(activeIndex.value))
 })
 
 onBeforeUnmount(() => {
@@ -283,34 +290,20 @@ onBeforeUnmount(() => {
     >
     <Teleport to="body">
       <Transition name="combo-popup">
-        <div
+        <ComboBoxList
           v-if="open"
-          :id="listId"
-          ref="popupEl"
-          class="combo-popup"
-          :style="{ left: `${pos.left}px`, top: `${pos.top}px`, minWidth: `${pos.minWidth}px` }"
-          role="listbox"
-          :aria-label="listLabel"
-        >
-          <button
-            v-for="(option, index) in rows"
-            :id="optionId(index)"
-            :key="option"
-            class="combo-option"
-            :class="{ 'is-active': index === activeIndex, 'is-selected': option === modelValue }"
-            type="button"
-            role="option"
-            :aria-selected="option === modelValue"
-            tabindex="-1"
-            :data-index="index"
-            :data-value="option"
-            @mousedown.prevent
-            @mouseenter="setActive(index)"
-            @click="commit(index)"
-          >
-            <span class="combo-option-label">{{ option }}</span>
-          </button>
-        </div>
+          ref="listEl"
+          :list-id="listId"
+          :rows="rows"
+          :active-index="activeIndex"
+          :model-value="modelValue"
+          :list-label="listLabel"
+          :left="pos.left"
+          :top="pos.top"
+          :min-width="pos.minWidth"
+          @activate="commit"
+          @highlight="setActive"
+        />
       </Transition>
     </Teleport>
   </div>
@@ -328,69 +321,5 @@ onBeforeUnmount(() => {
 .combo-input {
   flex: 1;
   min-width: 0;
-}
-
-.combo-popup {
-  position: fixed;
-  /* Above the modal layer (10000) — a dropdown opens from inside the settings
-     dialog — and below the toast layer (11000). */
-  z-index: 10001;
-  max-width: 280px;
-  max-height: 280px;
-  overflow-y: auto;
-  padding: 5px;
-  border: 1px solid color-mix(in srgb, var(--app-border) 86%, transparent);
-  border-radius: var(--app-radius-lg);
-  background: color-mix(in srgb, var(--app-elevated) 96%, var(--app-panel));
-  box-shadow: var(--app-shadow-menu);
-}
-/* The list is a region arriving in place, so it takes the region rung, and it
-   leaves on the next rung down, accelerating, because by then it has been read.
-   A leaving popup is on screen for a frame and must not take the dismissing
-   click. */
-.combo-popup-enter-active {
-  transition: opacity var(--app-motion) var(--app-ease),
-              transform var(--app-motion) var(--app-ease);
-}
-.combo-popup-leave-active {
-  transition: opacity var(--app-motion-fast) var(--app-ease-exit),
-              transform var(--app-motion-fast) var(--app-ease-exit);
-  pointer-events: none;
-}
-.combo-popup-enter-from,
-.combo-popup-leave-to {
-  opacity: 0;
-  transform: translateY(4px) scale(0.98);
-}
-
-.combo-option {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  height: 30px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--app-text);
-  font-family: var(--app-font);
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-  text-align: left;
-  cursor: pointer;
-  transition: background var(--app-motion-fast) var(--app-ease),
-              color var(--app-motion-fast) var(--app-ease);
-}
-.combo-option.is-active {
-  background: color-mix(in srgb, var(--app-accent-soft) 82%, var(--app-elevated));
-}
-.combo-option.is-selected { color: var(--app-accent); }
-.combo-option-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 </style>
