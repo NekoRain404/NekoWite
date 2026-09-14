@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { createEditor } from './editor'
-import { renderDocument } from './export/html'
+import { renderDocument } from './export'
 import { withEditor } from './testkit'
 
 /**

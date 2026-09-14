@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createEditor } from './editor'
-import { renderDocumentAsync } from './export/html'
+import { renderDocumentAsync } from './export'
 
 const root = resolve(__dirname, '../../../docs/mdx-demo')
 const files = [

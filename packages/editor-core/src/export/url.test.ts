@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { renderDocument } from './html'
+import { renderDocument } from './index'
 import { safeImageUrl, safeLinkUrl, urlScheme } from './url'
 
 /** The href of the first anchor in `html`, or null when there is none. */

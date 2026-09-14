@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { renderDocument } from './html'
+import { renderDocument } from './index'
 import { slugify, headingAnchorIds } from '../slugify'
 import { createEditor } from '../editor'
 
