@@ -24,7 +24,7 @@
       "devCsp": "default-src 'self' ipc: http://ipc.localhost asset: http://asset.localhost http://localhost:1420 ws://localhost:1420; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data: blob: http://localhost:1420; media-src 'self' asset: http://asset.localhost data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost asset: http://asset.localhost http://localhost:1420 ws://localhost:1420; worker-src 'self' blob:; frame-src 'none'; object-src 'none';",
       "assetProtocol": {
         "enable": true,
-        "scope": ["attachments/**"]
+        "scope": []
       }
     }
   },
