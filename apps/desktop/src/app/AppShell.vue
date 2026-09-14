@@ -7,6 +7,7 @@ import { NoteListPanel } from '../features/notes'
 import InfoRail, { type RailTab } from '../ui/InfoRail.vue'
 import TabBar from '../ui/TabBar.vue'
 import StatusBar from '../ui/StatusBar.vue'
+import { useFollowPanel } from './follow-panel-toggle'
 import { SettingsPanel } from '../features/settings'
 import EditorPane from '../ui/EditorPane.vue'
 import LayoutResizeHandle from '../ui/LayoutResizeHandle.vue'
@@ -42,7 +43,7 @@ import { getLocale, t } from '../i18n'
 // editor region is a default slot so the shell stays composable, with the
 // standard TabBar+EditorPane as the fallback.
 
-defineProps<{
+const props = defineProps<{
   sidebarVisible: boolean
   vaultPath: string | null
   railOpen: boolean
@@ -77,6 +78,11 @@ const appearance = useAppearanceStore()
 // outlive it: held here, closing the rail and reopening it puts the user back on
 // the panel they were reading instead of resetting to the chat (D1).
 const railTab = ref<RailTab>('ai')
+
+// The content glides with the columns rather than teleporting when they give
+// their width back; see the module for the measurement and why.
+const mainEl = ref<HTMLElement | null>(null)
+useFollowPanel(mainEl, () => props.sidebarVisible)
 
 const theme = computed<string>(() => {
   void appearance.systemRevision
@@ -116,23 +122,22 @@ const shellStyle = computed<Record<string, string>>(() => ({
 
     <div class="shell-body">
       <!-- Having a vault open and having the sidebar shown are two different
-           things, and only the first of them should build the columns. They used
-           to share one `v-if`, so collapsing the sidebar unmounted the sidebar
-           and the note list: the list came back at the top of a long scroll and
-           the References/Trash groups closed themselves, because both are local
-           state that went with the unmount. Mounted once per vault, the toggle
-           only hides the columns — so the scroll position, the open groups and
-           the fetched lists all survive, and a column coming back from
-           `display: none` replays its CSS animation, which is what gives the
-           arriving one its fade. -->
+           things, and only the first builds the columns: sharing one `v-if` once
+           meant collapsing the sidebar unmounted it and the note list, losing
+           the list's scroll and the open groups. Mounted once per vault, the
+           toggle only hides them — and the `<Transition>` is what gives it an
+           *exit*, because `v-show` alone writes `display: none` in the frame the
+           state flips. What the leave does with the layout is in `appShell.css`. -->
       <template v-if="vaultPath">
-        <AppSidebar
-          v-show="sidebarVisible"
-          class="layout-col"
-          :vault="vaultPath"
-          @open-folder="(p: string) => emit('open-folder', p)"
-          @open-settings="emit('open-settings')"
-        />
+        <Transition name="col">
+          <AppSidebar
+            v-show="sidebarVisible"
+            class="layout-col"
+            :vault="vaultPath"
+            @open-folder="(p: string) => emit('open-folder', p)"
+            @open-settings="emit('open-settings')"
+          />
+        </Transition>
         <LayoutResizeHandle
           v-if="sidebarVisible"
           :label="t('layout.resizeSidebar')"
@@ -142,10 +147,12 @@ const shellStyle = computed<Record<string, string>>(() => ({
           :default-value="SIDEBAR_WIDTH_DEFAULT"
           @change="appearance.setSidebarWidth"
         />
-        <NoteListPanel
-          v-show="sidebarVisible"
-          class="note-list-col layout-col"
-        />
+        <Transition name="col">
+          <NoteListPanel
+            v-show="sidebarVisible"
+            class="note-list-col layout-col"
+          />
+        </Transition>
         <LayoutResizeHandle
           v-if="sidebarVisible"
           :label="t('layout.resizeNotelist')"
@@ -182,7 +189,10 @@ const shellStyle = computed<Record<string, string>>(() => ({
         </div>
       </div>
 
-      <section class="main">
+      <section
+        ref="mainEl"
+        class="main"
+      >
         <div class="main-content">
           <slot>
             <TabBar />
@@ -199,11 +209,18 @@ const shellStyle = computed<Record<string, string>>(() => ({
           :default-value="RAIL_WIDTH_DEFAULT"
           @change="appearance.setRailWidth"
         />
-        <InfoRail
-          v-if="railOpen"
-          v-model:tab="railTab"
-          @close="emit('toggle-rail')"
-        />
+        <!-- `v-if`, not `v-show`, and the difference is a cost worth naming: the
+             rail holds a chat session and a file-watch subscription, so keeping
+             it alive for the app's whole life is not what a fade is worth. The
+             `<Transition>` gives it an exit without that — the element stays in
+             the tree for its own leave, then is destroyed. -->
+        <Transition name="rail">
+          <InfoRail
+            v-if="railOpen"
+            v-model:tab="railTab"
+            @close="emit('toggle-rail')"
+          />
+        </Transition>
       </section>
     </div>
 

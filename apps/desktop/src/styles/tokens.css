@@ -23,82 +23,99 @@
   --app-warn: #b7791f;
   /* Motion ladder. Pick the step by how far the thing travels and how much of
      the screen it owns — never by which component it lives in.
-       --app-motion-micro  press/active feedback; the control itself stays put.
-       --app-motion-fast   hover and focus feedback, plus in-place state flips
-                           that keep their footprint (caret rotate, dot fade,
-                           chip toggle).
-       --app-motion        a region changing state in place (menu reveal, toast
-                           in, tab body swap).
-       --app-motion-slow   a whole surface arriving or leaving (dialog, overlay,
-                           drawer, command palette).
-     Exits step DOWN one rung (enter --app-motion-slow → exit --app-motion,
-     ≈69%); an exit that takes as long as its entrance reads as lag on whatever
-     the user does next.
+       --app-motion-micro  press/active feedback; the control stays put. ~0.1s
+       --app-motion-fast   hover and focus, and in-place flips that keep their
+                           footprint (caret rotate, dot fade, chip). ~0.15s, and
+                           deliberately *not* part of the slow end.
+       --app-motion        a region changing state in place — menu reveal, toast,
+                           disclosure, tab body swap. ~0.3s
+       --app-motion-slow   a whole surface arriving — dialog, overlay, drawer,
+                           panel, palette. 0.46s, ceiling 500.
+       --app-motion-fade   a surface's *opacity*: the fade is finished long
+                           before the movement is. 0.2s.
+       --app-motion-exit   a region *leaving*, and --app-motion-exit-slow a
+                           surface leaving; see below.
+     The slow rungs are long on purpose: 180/260 under a curve done a third of
+     the way in made a dialog read as a jump, not a movement — 生硬 and 很快 at
+     once. Q弹 needs to be watched to exist.
+     Exits are a fraction of the entrance they mirror, not a rung: 60–70% is the
+     band, written as arithmetic over the rung so it cannot drift.
 
-     Choreography. A group that lands as one block is the thing that reads as
-     coarse, so a group arrives in sequence instead:
-       --app-motion-stagger  the gap between one member of an arriving group and
-                             the next — a dialog's content → its action row, a
-                             menu's rows. It is only ever an animation-delay,
-                             and only ever on something that is still
-                             *arriving*: nothing the user can already reach
-                             waits behind it. Departures never stagger —
-                             leaving is one motion, and a fast one.
-       --app-motion-travel   how far a surface drifts while it settles. A
-                             *distance*, so it is not a rung of the ladder: the
-                             ladder says how long, this says how far. A sign is
-                             part of the value at the point of use, because the
-                             direction is the whole content of the token — a
-                             dropdown drops out of the button above it, a toast
-                             in from the corner its stack hangs off. It is a few
-                             pixels and never a slide.
-                             A centred surface gets its direction from
-                             transform-origin instead: it has no edge to come
-                             from, only a centre to grow out of, and drifting it
-                             sideways would be a direction nobody asked for.
+     Choreography is one value and it is a *distance*:
+       --app-motion-travel   how far a surface drifts while it settles. The sign
+                             belongs to the call site — direction is the whole
+                             content of it. A few pixels, never a slide; a
+                             centred surface takes its direction from
+                             transform-origin instead. **When an overlay flips
+                             its placement near a screen edge the sign flips with
+                             it.** No stagger sits beside it: a group arriving in
+                             sequence is a second animation stacked on the first
+                             and the half that cannot be reversed.
+       --app-motion-stagger  NOT FOR NEW USE. Only `.math-dialog > .math-actions`
+                             and `.table-dialog > .table-dialog-actions` in
+                             `styles/components.css` still spend it; deleting it
+                             would leave both `calc()`s in a file this round may
+                             not write referring to nothing.
 
-     Easing. One curve per *kind* of motion. A component picks by kind and never
-     inlines a curve of its own:
-       --app-ease            state change — hover, focus, colour, a control
-                             flipping in place. A plain decelerating bezier: over
-                             these distances a spring reads as mush, and the
-                             curve only has to get out of the way.
-       --app-ease-surface    surface arrival — a dialog, menu, popover or toast
-                             coming to rest. A spring, so the last few
-                             millimetres decelerate and settle rather than
-                             stopping dead. Its overshoot stays under a pixel at
-                             the distances this app travels, which is the point:
-                             it is felt as a settle, not seen as a bounce.
-       --app-ease-exit       departure — accelerates away, because a thing that
-                             is leaving should not linger.
-       --app-ease-attention  attention — a repeating status cycle (the save dot
-                             breathing). Symmetric, so the cycle has no fast half
-                             and slow half.
-     Constant-rate motion is not a transition: a spinner or a text caret has no
+     Amplitude. How *much* a thing moves, here for the same reason the durations
+     are — so the next person tunes one place:
+       --app-motion-scale-surface  1.5%, not the 4% it was: 4% on a 720px dialog
+                             is 29px of travel, and text on a growing surface
+                             reads soft until it stops. On the *movement* only —
+                             an opacity has nothing to overshoot into.
+       --app-motion-scale-pop  an anchored popover — smaller furniture, so the
+                             same *fraction* is a shorter trip.
+       --app-motion-scale-exit  a surface *leaving* shrinks far less than one
+                             arriving: an exit is a withdrawal, and the edge of a
+                             shrinking box is the same rasterisation cost as a
+                             growing one.
+       --app-motion-press-scale  how far a control gives under a press; only a
+                             standalone button shrinks, since a control in a row
+                             has neighbours to stay aligned with.
+
+     Easing. One curve per *kind* of motion; a component picks by kind:
+       --app-ease            state change — hover, focus, colour, an in-place
+                             flip. Done early: feedback on something that has not
+                             gone anywhere has to land.
+       --app-ease-surface    surface arrival — a sampled damped oscillator, see
+                             the guarded block below. A bezier cannot ring, and
+                             the small settle at the end of a movement is the
+                             ring. For *movement* only, never an opacity or a
+                             colour, which have no room above 1: hence two
+                             animations per arrival, the fade on --app-ease and
+                             the movement on this.
+       --app-ease-exit       departure — accelerates away; nothing lingers.
+       --app-ease-attention  attention — a repeating cycle, symmetric so it has
+                             no fast half and slow half.
+     Constant-rate motion is not a transition: a spinner or a caret has no
      arrival to decelerate, so it runs linear on --app-motion-spin or
-     --app-motion-blink and sits outside the ladder on purpose. A repeating
-     status indicator that is not a rotation (the save dot) breathes on
-     --app-motion-pulse with --app-ease-attention — a cycle fast enough to read
-     as an alarm is a bug, not urgency.
-     Nothing here may gate an action's effect — keystroke-to-glyph, the caret,
-     and the result of a command are instant. Motion only ever describes
-     something that already happened. */
+     --app-motion-blink; the save dot breathes on --app-motion-pulse.
+     Nothing here may gate an action's effect — keystroke-to-glyph, the caret, and
+     the result of a command are instant. Motion only ever describes something
+     that already happened. */
   --app-motion-micro: 90ms;
   --app-motion-fast: 140ms;
-  --app-motion: 180ms;
-  --app-motion-slow: 260ms;
+  --app-motion: 300ms;
+  --app-motion-slow: 460ms;
+  --app-motion-fade: 200ms;
+  --app-motion-exit: calc(var(--app-motion) * 0.65);
+  --app-motion-exit-slow: calc(var(--app-motion-slow) * 0.61);
   --app-motion-spin: 900ms;
   --app-motion-blink: 1s;
   --app-motion-pulse: 1.4s;
   --app-motion-stagger: 24ms;
   --app-motion-travel: 6px;
+  --app-motion-scale-surface: 0.985;
+  --app-motion-scale-pop: 0.98;
+  --app-motion-scale-exit: 0.992;
+  --app-motion-press-scale: 0.98;
   /* Declared here as well as in the @supports block below, which is the value
      that actually wins wherever the spring can run. This fallback is what keeps
      the arrival working at all on an engine without `linear()`: an animation
      shorthand whose timing function fails to parse is dropped whole, so the
      surface would not animate — and a curve that merely overshoots once is a
      better outcome than no curve at all. */
-  --app-ease-surface: cubic-bezier(0.34, 1.2, 0.64, 1);
+  --app-ease-surface: cubic-bezier(0.32, 0.9, 0.45, 1.06);
   --app-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --app-ease-exit: cubic-bezier(0.4, 0, 1, 1);
   --app-ease-attention: cubic-bezier(0.45, 0, 0.55, 1);
@@ -149,25 +166,33 @@
   font-family: var(--app-font);
 }
 
-/* The surface-arrival curve, upgraded to a spring wherever the engine can run
-   one. A cubic bezier is a single monotone-then-overshoot shape and cannot ring,
-   so the settle the brief asks for has to be a sampled damped oscillator —
-   `linear()` is exactly a list of samples, which is why it can express one at
-   all. It is standard in current Chromium, WebKit and Gecko; the guard is for
-   the engines that are not, and for them the :root fallback above stands.
 
-   Parameters of the sampled spring: damping ratio 0.72 (3.8% overshoot on the
-   first swing, first peak at 57% of the curve) and a natural frequency chosen so
-   the residual at the end of the curve is 0.02% — the surface is genuinely at
-   rest when the animation ends, not snapped there. Twenty-one samples hold the
-   reconstruction to within 0.002 of the true response. */
+/* The surface-arrival curve, a spring wherever the engine can run one: a
+   `linear()` sample set, because that is the only CSS timing function that can
+   express a damped oscillator — and a bezier cannot overshoot once, decay, and
+   stop, which is the shape the design asks for (一次极轻回弹，先只让缩放轻轻
+   超过终点一次). The `:root` value above is the fallback for an engine without
+   `linear()`, and it overshoots once on purpose so the character survives; the
+   installed WebKitGTK is 2.52.6, and `linear()` landed in 2.44, so the spring
+   is the branch that actually runs here.
+
+   The rise and the peak are a damped oscillator at damping ratio 0.62 — 8.35%
+   overshoot, one peak, at 42% of the curve. The tail is not: the oscillator
+   would dip 0.7% under its target afterwards, and on a surface the user is
+   reading a second excursion the other way is what 一次 rules out, so the decay
+   is written monotone to 1 instead of through it. This is a simulation of a
+   spring, not a spring, and the simulation is allowed to stop at the shape the
+   design asked for. What that is worth in absolute terms is set by the
+   amplitude it multiplies: 8.35% of a 1.5% scale is 1.002, and 8.35% of a 6px
+   drift is -0.5px. */
 @supports (animation-timing-function: linear(0, 1)) {
   :root {
     --app-ease-surface: linear(
-      0, 0.0068 1.5%, 0.0256 3%, 0.06 4.75%, 0.1117 6.75%, 0.2149 10%,
-      0.464 17%, 0.5659 20%, 0.6663 23.25%, 0.754 26.5%, 0.823 29.5%,
-      0.8803 32.5%, 0.9301 35.75%, 0.9683 39%, 0.9981 42.5%, 1.0193 46.25%,
-      1.0322 50.25%, 1.038 54.75%, 1.0353 62.25%, 1.0073 85.5%, 1
+      0.0000 0%, 0.0674 4.17%, 0.2245 8.33%, 0.4167 12.5%, 0.6064 16.67%, 0.7709
+      20.83%, 0.8996 25%, 0.9904 29.17%, 1.0470 33.33%, 1.0755 37.5%, 1.0835 41.67%,
+      1.0780 45.83%, 1.0649 50%, 1.0489 54.17%, 1.0330 58.33%, 1.0193 62.5%, 1.0085
+      66.67%, 1.0010 70.83%, 1.0004 75%, 1.0001 79.17%, 1.0000 83.33%, 1.0000 87.5%,
+      1.0000 91.67%, 1.0000 95.83%, 1.0000 100%
     );
   }
 }

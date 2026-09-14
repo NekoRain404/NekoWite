@@ -63,12 +63,31 @@ const TABS = computed(() => [
       </button>
     </div>
     <div class="rail-body">
-      <ChatPanel v-show="activeTab === 'ai'" />
-      <OutlinePanel v-show="activeTab === 'outline'" />
-      <ReferencesPanel v-show="activeTab === 'refs'" />
-      <HistoryPanel v-show="activeTab === 'history'" />
-      <FrontmatterPanel v-show="activeTab === 'meta'" />
-      <DocStatsPanel v-show="activeTab === 'stats'" />
+      <!-- One `<Transition>` per section — a `<Transition>` takes a single
+           child, and all six stay mounted — which is what gives the tab swap
+           the same shape the sidebar has: the section arriving fades in place,
+           and the one leaving fades out *still rendered* instead of being cut
+           by `display: none` in the frame of the click. `v-show` and not
+           `v-if`, unchanged: the display flip is what keeps the chat session
+           and the loaded lists alive (see useSectionShown). -->
+      <Transition name="rail-panel">
+        <ChatPanel v-show="activeTab === 'ai'" />
+      </Transition>
+      <Transition name="rail-panel">
+        <OutlinePanel v-show="activeTab === 'outline'" />
+      </Transition>
+      <Transition name="rail-panel">
+        <ReferencesPanel v-show="activeTab === 'refs'" />
+      </Transition>
+      <Transition name="rail-panel">
+        <HistoryPanel v-show="activeTab === 'history'" />
+      </Transition>
+      <Transition name="rail-panel">
+        <FrontmatterPanel v-show="activeTab === 'meta'" />
+      </Transition>
+      <Transition name="rail-panel">
+        <DocStatsPanel v-show="activeTab === 'stats'" />
+      </Transition>
     </div>
   </aside>
 </template>
@@ -150,6 +169,8 @@ const TABS = computed(() => [
   background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
 }
 .rail-body {
+  /* The containing block for a section on its way out. */
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -162,19 +183,30 @@ const TABS = computed(() => [
      still. Engines without `scrollbar-gutter` keep today's behaviour. */
   scrollbar-gutter: stable;
 }
-/* The six panels are kept mounted and switched with `v-show`, and that is what
-   makes this a one-rule cross-fade: an element coming back from `display: none`
-   restarts its CSS animations, so the arriving panel replays this on every tab
-   click. No <Transition> and no `v-if` — the display flip is what keeps the chat
-   session and the panels' loaded lists alive (see useSectionShown). Purely
-   opacity: the body must not move, and nothing here may touch its height — the
-   panels differ by hundreds of pixels and animating a scroll container's height
-   would thrash the scrollbar the rule above just stabilised. */
-@keyframes rail-panel-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+/* The section swap — the sidebar's pattern one level down, because that is the
+   one the user judged and asked for here. Opacity only: these are text panels,
+   and a `scale` on a container re-rasterises every glyph inside it (which is
+   what 文字发虚 was). Nothing here may touch the body's *height* either — the
+   panels differ by hundreds of pixels, and animating a scroll container's
+   height would thrash the scrollbar the rule above just stabilised.
+
+   The section on its way out is taken out of flow, exactly as the sidebar is
+   and for the same reason: the flex column must not hold two panels for the
+   length of a fade, and it must not give up the outgoing one's height at the
+   end of it either. It stays rendered to fade, and stops taking the pointer. */
+.rail-panel-enter-active {
+  transition: opacity var(--app-motion) var(--app-ease);
 }
-.rail-body > :deep(*) {
-  animation: rail-panel-in var(--app-motion) var(--app-ease);
+.rail-panel-leave-active {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+  transition: opacity var(--app-motion-exit) var(--app-ease-exit);
+}
+.rail-panel-enter-from,
+.rail-panel-leave-to {
+  opacity: 0;
 }
 </style>

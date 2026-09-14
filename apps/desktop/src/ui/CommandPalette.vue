@@ -26,16 +26,28 @@ import {
 import { t } from '../i18n'
 
 /**
- * How long a closing palette stays mounted, so its fade-out can run.
+ * How long the overlay stays in the tree after the palette has closed, so its
+ * fade-out has something to run on.
+ *
+ * This covers a *decoration's* lifetime and nothing else. The state change it
+ * used to gate — `open` — now happens on the frame the user acts, so this timer
+ * decides only when a node that is already invisible and already
+ * `pointer-events: none` leaves the DOM; no keyboard path, no focus trap and no
+ * control waits behind it. That is the distinction worth keeping straight: a
+ * fade-out needs the element to exist for its duration, which is true of any
+ * mechanism including Vue's own `<Transition>` — but nothing about the palette
+ * may depend on the fade finishing.
  *
  * Read from the token rather than restated: this was a hand-copied `160` while
- * the fade it has to cover runs on `--app-motion`, and the token moved to 180ms
+ * the fade it has to cover runs on `--app-motion`, and the token moved on
  * without the copy following, so the last 20ms of the fade was cut off. Read
  * once — the value cannot change while the app is running — and fall back to a
  * number only where there is no stylesheet to read (a test environment, or the
- * first frame before tokens.css has landed).
+ * first frame before tokens.css has landed). The fallback is the current value
+ * of `--app-motion` in tokens.css and must be moved with it; the fade it covers
+ * is the `.palette-overlay` leave in the feature's own stylesheet.
  */
-const MOTION_FALLBACK_MS = 180
+const MOTION_FALLBACK_MS = 300
 
 let motionHold: number | null = null
 
@@ -51,10 +63,29 @@ function holdMs(): number {
   return motionHold
 }
 
+/**
+ * Three flags, and the split between them is the whole of this file's motion
+ * story.
+ *
+ * `open` is the palette's *state*. It flips on the frame the user acts and
+ * nothing about it waits on a curve: the focus trap releases, Escape and Ctrl+K
+ * see the truth, and the modal claim is given up, all before a pixel has moved.
+ *
+ * `visible` and `mounted` are the animation: the first is the class the
+ * stylesheet transitions on, the second keeps the overlay in the tree for as
+ * long as that transition needs an element to run on. Both are consequences of
+ * the state change, never conditions of it.
+ *
+ * `visible` used to be the only flag, with the paint deferred by two frames and
+ * a `closing` flag covering the window in between — which meant a palette that
+ * had been dismissed was still, as far as the keyboard was concerned, the thing
+ * on screen: its focus trap stayed armed and Tab kept pulling focus back into a
+ * fading overlay. That is the defect this split removes.
+ */
 const open = ref(false)
 const visible = ref(false)
-/** True from the moment a close begins until the fade-out finishes. */
-const closing = ref(false)
+/** True while the overlay must exist for its own exit to run on. */
+const mounted = ref(false)
 const query = ref('')
 const inputRef = ref<HTMLInputElement | null>(null)
 /** The listbox owns its element and scrolls the active row into view itself. */
@@ -100,7 +131,7 @@ function show(): void {
   }
   if (!modalToken) modalToken = modalStack.claimModal('command-palette')
   open.value = true
-  closing.value = false
+  mounted.value = true
   query.value = ''
   activeIndex.value = 0
   refreshForOpen()
@@ -129,24 +160,26 @@ function cancelPaint(): void {
 
 function hide(): void {
   if (!open.value) return
+  // Every one of these is the state change, and all of it lands now. The modal
+  // claim goes back the moment the palette stops being the top modal, so the
+  // next Escape reaches whatever is under it.
+  open.value = false
   modalStack.releaseModal(modalToken)
   modalToken = null
   cancelPaint()
   visible.value = false
   if (hideTimer) clearTimeout(hideTimer)
   hideTimer = null
-  // Nothing to cover without a fade: a reduced-motion user has no 180ms to wait
-  // out, and holding the overlay anyway would hand them the one delay in the app
-  // they cannot see and cannot avoid. The overlay stops taking pointer events
-  // either way — see the closing rule in this component's second style block.
+  // Then the animation, which is a consequence and not a gate. Nothing to cover
+  // without a fade: a reduced-motion user has no 180ms to wait out, and holding
+  // the overlay anyway would hand them the one delay in the app they cannot see
+  // and cannot avoid. The overlay stops taking pointer events either way — see
+  // the closing rule in this component's second style block.
   if (prefersReducedMotion()) {
-    open.value = false
-    closing.value = false
+    mounted.value = false
   } else {
-    closing.value = true
     hideTimer = setTimeout(() => {
-      open.value = false
-      closing.value = false
+      mounted.value = false
       hideTimer = null
     }, holdMs())
   }
@@ -178,10 +211,11 @@ function onGlobalKeydown(e: KeyboardEvent): void {
     // two frames, so just after opening `visible` is still false and keying off
     // it would make the first Ctrl+K press open rather than close.
     //
-    // A palette that is mid fade-out counts as closed here so the press
-    // revives it — otherwise a quick Escape-then-Ctrl+K would be swallowed by
-    // `hide()` and the palette would look like it refused to reopen.
-    if (open.value && !closing.value) hide()
+    // And a palette that is mid fade-out is already closed here, because `hide`
+    // closes it on the spot rather than at the end of the fade — which is what
+    // makes a quick Escape-then-Ctrl+K revive the palette instead of being
+    // swallowed by the in-flight close.
+    if (open.value) hide()
     else show()
     return
   }
@@ -220,7 +254,7 @@ onBeforeUnmount(() => {
 <template>
   <Teleport to="body">
     <div
-      v-if="open"
+      v-if="mounted"
       class="palette-overlay"
       :class="{ 'is-open': visible }"
       role="presentation"
@@ -290,7 +324,13 @@ onBeforeUnmount(() => {
    which also covers the two frames between opening and the deferred paint.
    (The fade itself stays in the stylesheet beside the feature; this is the one
    thing about it the component owns, because it is the component that knows
-   whether the palette is showing.) */
+   whether the palette is showing.)
+
+   The keyboard is the same rule seen from the other side: an overlay that is
+   leaving must not hold the focus trap, because a trap that outlives the thing
+   it is trapping sends the next Tab into a fading dialog. That is why the trap
+   is keyed on `open` and not on `mounted` — the node may outlive the palette,
+   the modal state may not. */
 .palette-overlay:not(.is-open) {
   pointer-events: none;
 }

@@ -4,6 +4,9 @@ const h = vi.hoisted(() => {
   const windowMock = { onCloseRequested: vi.fn(), close: vi.fn(), destroy: vi.fn() }
   const tabsMock = {
     activeTab: null as { id: string; dirty: boolean } | null,
+    /** The open tabs, as the store exposes them: the close path reads this to
+     *  find the tabs a refused flush could not put on disk. */
+    tabs: [] as Array<{ id: string; path: string | null; dirty: boolean }>,
     hasUnsavedWork: vi.fn(),
     flushDirty: vi.fn(),
     untitledDirtyTabs: vi.fn(),
@@ -83,7 +86,11 @@ describe('createAppLifecycle', () => {
     h.tabsMock.saveActive.mockResolvedValue(undefined)
     h.tabsMock.captureSession.mockImplementation(() => {})
     h.tabsMock.activeTab = null
+    h.tabsMock.tabs = []
     h.requestUntitledVaultSwitch.mockResolvedValue('save')
+    // The close path's rescue question: by default the user says no, so a test
+    // that is not about the rescue never has to answer it.
+    h.notifyRecovery.mockImplementation((p: { onDismiss: () => void }) => p.onDismiss())
   })
 
   afterEach(() => {
@@ -142,9 +149,10 @@ describe('createAppLifecycle', () => {
     expect(h.windowMock.destroy).toHaveBeenCalled()
   })
 
-  it('close-requested keeps the window open when a save fails', async () => {
+  it('close-requested keeps the window open when a save fails and the copy is declined', async () => {
     h.tabsMock.hasUnsavedWork.mockReturnValue(true)
     h.tabsMock.flushDirty.mockResolvedValue(false)
+    h.tabsMock.tabs = [{ id: 'tab-ro', path: '/vault/ro.md', dirty: true }]
     const lifecycle = createAppLifecycle({ windowTracking: h.windowTracking })
     await lifecycle.mount()
 
@@ -152,8 +160,70 @@ describe('createAppLifecycle', () => {
     await registeredCloseHandler()({ preventDefault })
 
     expect(preventDefault).toHaveBeenCalled()
-    expect(h.notifyError).toHaveBeenCalled()
+    // The user was offered the way out (the prompt is raised by the default
+    // mock, which dismisses it) and chose to stay, so nothing was written and
+    // the window stays open with their text in the editor.
+    expect(h.notifyRecovery).toHaveBeenCalled()
+    expect(h.tabsMock.saveTab).not.toHaveBeenCalled()
+    expect(h.notifyError).toHaveBeenCalledWith('tabs.unsavedWorkBlockerClose')
     expect(h.windowMock.close).not.toHaveBeenCalled()
+  })
+
+  // The trap this exists for: a save refused because the file is read-only keeps
+  // `flushDirty()` false forever, so the X used to do nothing at all — Ctrl+S
+  // refused, the X refused, and the user could not leave the app without losing
+  // the text or leaving it to chmod the file from outside.
+  it('close-requested offers a copy of a refused save, and closes once it is taken', async () => {
+    h.tabsMock.hasUnsavedWork.mockReturnValue(true)
+    h.tabsMock.flushDirty.mockResolvedValue(false)
+    h.tabsMock.tabs = [
+      { id: 'tab-ro', path: '/vault/ro.md', dirty: true },
+      // A clean tab is not the close's business and must not be dragged into
+      // the rescue's Save-As dialogs.
+      { id: 'tab-clean', path: '/vault/clean.md', dirty: false },
+    ]
+    h.notifyRecovery.mockImplementation((p: { onRestore: () => void }) => p.onRestore())
+    h.tabsMock.saveTab.mockResolvedValue(true)
+    const lifecycle = createAppLifecycle({ windowTracking: h.windowTracking })
+    await lifecycle.mount()
+
+    const preventDefault = vi.fn()
+    await registeredCloseHandler()({ preventDefault })
+
+    expect(h.tabsMock.saveTab).toHaveBeenCalledWith('tab-ro', { offerCopy: true })
+    expect(h.tabsMock.saveTab).toHaveBeenCalledTimes(1)
+    expect(h.windowMock.close).toHaveBeenCalled()
+  })
+
+  it('close-requested stays open when the copy itself fails', async () => {
+    h.tabsMock.hasUnsavedWork.mockReturnValue(true)
+    h.tabsMock.flushDirty.mockResolvedValue(false)
+    h.tabsMock.tabs = [{ id: 'tab-ro', path: '/vault/ro.md', dirty: true }]
+    h.notifyRecovery.mockImplementation((p: { onRestore: () => void }) => p.onRestore())
+    h.tabsMock.saveTab.mockResolvedValue(false)
+    const lifecycle = createAppLifecycle({ windowTracking: h.windowTracking })
+    await lifecycle.mount()
+
+    const preventDefault = vi.fn()
+    await registeredCloseHandler()({ preventDefault })
+
+    expect(h.tabsMock.saveTab).toHaveBeenCalledWith('tab-ro', { offerCopy: true })
+    expect(h.windowMock.close).not.toHaveBeenCalled()
+    expect(h.notifyError).toHaveBeenCalledWith('tabs.unsavedWorkBlockerClose')
+  })
+
+  it('close-requested closes when the refused tab was rescued on an earlier save', async () => {
+    // The same chain a user walks: the refusal, then the copy, then the X.
+    h.tabsMock.hasUnsavedWork.mockReturnValue(true)
+    h.tabsMock.flushDirty.mockResolvedValue(true)
+    const lifecycle = createAppLifecycle({ windowTracking: h.windowTracking })
+    await lifecycle.mount()
+
+    const preventDefault = vi.fn()
+    await registeredCloseHandler()({ preventDefault })
+
+    expect(h.notifyRecovery).not.toHaveBeenCalled()
+    expect(h.windowMock.close).toHaveBeenCalled()
   })
 
   it('close-requested routes unnamed dirty tabs through the save-as prompt and closes', async () => {

@@ -29,6 +29,10 @@ const emit = defineEmits<{
 const menuRef = ref<HTMLElement | null>(null)
 const pos = ref({ left: props.x, top: props.y })
 const shown = ref(false)
+/** True when the viewport clamp pushed the menu above the pointer it opened at.
+ *  Read by the stylesheet, which flips the scale origin and the travel with it —
+ *  see `place()`. */
+const flipped = ref(false)
 
 /**
  * Whatever had focus when the menu opened, so closing it can give focus back.
@@ -57,10 +61,21 @@ async function place(): Promise<void> {
     return
   }
   const rect = el.getBoundingClientRect()
-  pos.value = {
-    left: Math.min(Math.max(pad, props.x), Math.max(pad, window.innerWidth - rect.width - pad)),
-    top: Math.min(Math.max(pad, props.y), Math.max(pad, window.innerHeight - rect.height - pad)),
-  }
+  const left = Math.min(Math.max(pad, props.x), Math.max(pad, window.innerWidth - rect.width - pad))
+  const top = Math.min(Math.max(pad, props.y), Math.max(pad, window.innerHeight - rect.height - pad))
+  pos.value = { left, top }
+  // Near the bottom of the window the clamp pushes the menu up past the pointer
+  // it was opened at, and once it has gone far enough that the pointer is below
+  // the menu's own middle, that is a flip: the corner they share is now the
+  // menu's bottom edge rather than its top, so the scale has to grow out of that
+  // edge and the travel has to run upward into place. Left at "down", the menu
+  // would sit above the pointer while still rising from below it — arriving from
+  // the gap underneath, which is where nothing happened.
+  //
+  // The test is the midpoint and not `top !== props.y`: a couple of pixels of
+  // clamp at the very bottom of a tall window is not a flip, and treating it as
+  // one put the origin on the wrong edge for the common case.
+  flipped.value = top + rect.height / 2 < props.y
   const first = shown.value ? null : menuItems()[0]
   shown.value = true
   first?.focus()
@@ -150,7 +165,7 @@ onBeforeUnmount(() => {
     <div
       ref="menuRef"
       class="ctx-menu"
-      :class="{ 'is-open': shown }"
+      :class="{ 'is-open': shown, 'is-flipped': flipped }"
       role="menu"
       :aria-label="t('contextMenu.aria')"
       :style="{ left: `${pos.left}px`, top: `${pos.top}px` }"
@@ -218,11 +233,22 @@ onBeforeUnmount(() => {
      emerge; the heading popup in WordToolbar was moved off that same geometry
      for the same reason. The distance is the travel token, as it is there. */
   transform-origin: top left;
-  transform: translateY(calc(var(--app-motion-travel) * -1)) scale(0.98);
-  /* Closing: the menu was already read, so it leaves on the next rung down and
-     accelerates away instead of lingering over the user's next click. */
-  transition: opacity var(--app-motion-fast) var(--app-ease-exit),
-              transform var(--app-motion-fast) var(--app-ease-exit);
+  transform: translateY(calc(var(--app-motion-travel) * -1)) scale(var(--app-motion-scale-pop));
+  /* Closing: the menu was already read, so it leaves on the exit fraction of its
+     own entrance and accelerates away instead of lingering over the user's next
+     click. (In practice the hosts mount this with `v-if`, so the element is
+     destroyed on close and neither curve runs — the rule is here for a host that
+     ever keeps it mounted, and the mismatch is recorded in the report.) */
+  transition: opacity var(--app-motion-exit) var(--app-ease-exit),
+              transform var(--app-motion-exit) var(--app-ease-exit);
+}
+/* Clamped up near the bottom edge: the pointer is now *below* the menu, so the
+   shared corner is the bottom one and the road back to the anchor runs down.
+   Both halves flip together — an origin that flipped while the travel did not
+   would grow out of the bottom edge while still sliding down from above it. */
+.ctx-menu.is-flipped {
+  transform-origin: bottom left;
+  transform: translateY(var(--app-motion-travel)) scale(var(--app-motion-scale-pop));
 }
 .ctx-menu.is-open {
   opacity: 1;

@@ -60,7 +60,16 @@ const emit = defineEmits<{
 const open = ref(false)
 /** The row `Enter` would take, as an index into `options`. */
 const activeIndex = ref(0)
-const pos = ref({ left: 0, top: 0, minWidth: 180 })
+/** Where the popup was put, and which way it had to open. `drop` is not
+ *  geometry the component uses — it is what tells the stylesheet which edge of
+ *  the popup is the one touching the trigger, so the arrival can come from there
+ *  and the scale can grow out of it. */
+const pos = ref<{ left: number; top: number; minWidth: number; drop: 'down' | 'up' }>({
+  left: 0,
+  top: 0,
+  minWidth: 180,
+  drop: 'down',
+})
 
 const triggerEl = ref<HTMLButtonElement | null>(null)
 const popupEl = ref<HTMLElement | null>(null)
@@ -100,13 +109,21 @@ async function place(): Promise<void> {
   const height = popup.offsetHeight
   const below = anchor.bottom + 4
   const above = anchor.top - height - 4
+  // Which way it opened, decided once and carried through to the stylesheet: the
+  // popup tells the user where it came from with the pixels it travels, and near
+  // the bottom of the window that direction is *up*. A popup that flipped to sit
+  // above its trigger while still rising into place from below would be
+  // arriving from a gap it does not occupy — the same defect the heading menu
+  // and the context menu were both moved off.
+  const dropsDown = below + height <= window.innerHeight - pad || above < pad
   pos.value = {
     left: Math.min(Math.max(pad, anchor.left), Math.max(pad, window.innerWidth - width - pad)),
-    top: below + height <= window.innerHeight - pad || above < pad
+    top: dropsDown
       ? Math.min(below, Math.max(pad, window.innerHeight - height - pad))
       : above,
     // Never narrower than the control it belongs to, never wider than a menu.
     minWidth: floor,
+    drop: dropsDown ? 'down' : 'up',
   }
 }
 
@@ -284,6 +301,7 @@ onBeforeUnmount(() => {
           :id="listId"
           ref="popupEl"
           class="select-popup"
+          :class="{ 'is-above': pos.drop === 'up' }"
           :style="{ left: `${pos.left}px`, top: `${pos.top}px`, minWidth: `${pos.minWidth}px` }"
           role="listbox"
         >
@@ -355,24 +373,41 @@ onBeforeUnmount(() => {
   border-radius: var(--app-radius-lg);
   background: color-mix(in srgb, var(--app-elevated) 96%, var(--app-panel));
   box-shadow: var(--app-shadow-menu);
+  /* The edge the trigger is on is the edge it grows out of, and which edge that
+     is comes from `pos.drop` — the placement the component measured. Set on the
+     base rule rather than on the transition classes, which Vue removes a frame
+     into the transition, where the origin would snap to the centre mid-flight. */
+  transform-origin: top center;
+}
+.select-popup.is-above {
+  transform-origin: bottom center;
 }
 /* The list is a region arriving in place, so it takes the region rung, and it
-   leaves on the next rung down, accelerating, because by then it has been read.
-   A leaving popup is on screen for a frame and must not take the dismissing
-   click. */
+   leaves on that rung's exit fraction, accelerating, because by then it has been
+   read. A leaving popup is on screen for a moment and must not take the
+   dismissing click — hence `pointer-events` below. */
 .select-popup-enter-active {
   transition: opacity var(--app-motion) var(--app-ease),
               transform var(--app-motion) var(--app-ease);
 }
 .select-popup-leave-active {
-  transition: opacity var(--app-motion-fast) var(--app-ease-exit),
-              transform var(--app-motion-fast) var(--app-ease-exit);
+  transition: opacity var(--app-motion-exit) var(--app-ease-exit),
+              transform var(--app-motion-exit) var(--app-ease-exit);
   pointer-events: none;
 }
 .select-popup-enter-from,
 .select-popup-leave-to {
   opacity: 0;
-  transform: translateY(4px) scale(0.98);
+  /* Dropping down: it starts a few pixels *up*, against the trigger it came from,
+     and travels down into place. Opening upward the sign flips with the
+     placement, so it still emerges from the control rather than from a gap it
+     never occupied. There is no `transform: scale` shorthand trick here — the
+     travel is the travel token, one sign per placement, both stated once. */
+  transform: translateY(calc(var(--app-motion-travel) * -1)) scale(var(--app-motion-scale-pop));
+}
+.select-popup.is-above.select-popup-enter-from,
+.select-popup.is-above.select-popup-leave-to {
+  transform: translateY(var(--app-motion-travel)) scale(var(--app-motion-scale-pop));
 }
 
 .select-option {
