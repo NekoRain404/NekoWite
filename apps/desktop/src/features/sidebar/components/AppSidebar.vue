@@ -115,12 +115,20 @@ watch(
       </button>
     </div>
 
-    <TemplatePicker
-      v-if="templatePickerOpen"
-      :templates="templateTemplates"
-      @select="createFromTemplate"
-      @close="closeTemplatePicker"
-    />
+    <!-- The shared dialog departure (see motion.css). It has to sit where the
+         `v-if` is, so every host of a `.dialog` needs its own wrapper — this one
+         is a child of the sidebar rather than of the shell. -->
+    <Transition
+      name="dialog"
+      type="transition"
+    >
+      <TemplatePicker
+        v-if="templatePickerOpen"
+        :templates="templateTemplates"
+        @select="createFromTemplate"
+        @close="closeTemplatePicker"
+      />
+    </Transition>
   </aside>
 </template>
 

@@ -194,6 +194,26 @@
   min-width: var(--app-rail-width);
 }
 
+/* ---- A panel on its way out is not a target ------------------------------
+   The leaver above is out of flow, at its own edge, *and on top* (`z-index: 1`,
+   for the reason the stacking note gives) — which is exactly what makes it
+   clickable. Measured on the running app at the sidebar's centre, frame by
+   frame through the whole 195ms exit: `position: absolute`, `pointer-events:
+   auto`, and `elementFromPoint` answering a control **inside the departing
+   column**. For that window the 232px the column occupied is a dead zone over
+   the content that has already moved into it, and the same is true of the rail
+   over 225px on the right; a click a user makes on the note they were about to
+   open lands on the panel they just closed.
+
+   `pointer-events: none` is the whole fix and it is the rule the two popups and
+   the rail's own sections already carry. The keyboard half — the leaver is
+   still in the tab order for those 195ms — is `surface-leave.ts`, which is the
+   only reason those two transitions take hooks at all. */
+.col-leave-active,
+.rail-leave-active {
+  pointer-events: none;
+}
+
 /* ---- The content follows the panel ---------------------------------------
    The layout collapses in the frame the user acts — unavoidable, and not what
    they are complaining about; a single reflow is what this app always did. The

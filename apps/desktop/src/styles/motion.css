@@ -118,6 +118,63 @@
     surface-scale var(--app-motion-slow) var(--app-ease-surface);
 }
 
+/* ---- The dialog's departure, which did not exist -------------------------
+   Every dialog in the app arrives on the two rules above and, until this round,
+   every one of them *vanished*: the hosts mount them with `v-if`, and a removed
+   element leaves the tree in the frame the state flips. Measured on the
+   settings dialog, the largest of them: `opacity 1` in the last frame it is
+   rendered, the node gone in the next one, after an arrival of 460ms. An exit
+   of zero frames after an entrance that taught the eye there was something to
+   watch is the one shape that reads as a glitch rather than as a decision, so
+   the exit is the mirror the arrival implied: the ladder's exit fraction
+   (`--app-motion-exit-slow`), accelerating away on `--app-ease-exit`.
+
+   **A transition, not a second keyframe**, for the reason the top of this file
+   gives about keyframes; that is what lets the `-enter-active` pair below carry
+   no `-enter-from` and still be a matched pair — an interrupted close glides
+   back from where it is instead of snapping to full.
+
+   `pointer-events: none` is load-bearing and not decoration. This overlay is
+   `position: fixed; inset: 0` at the top of the app's z-scale, so without it
+   the whole window is dead to the pointer for the length of the exit. The
+   select popup, the combobox popup and the rail panels already carry it; this
+   is the largest surface that was missing it.
+
+   The *keyboard* half is deliberately not `inert`, because that fix is worse
+   than the fault: these dialogs run a focus trap, an inert subtree cannot take
+   focus at all, and the trap would go on swallowing Tab with nowhere to put it
+   — a dead keyboard for the length of the exit instead of a held one. The trap
+   already restores the user's focus when the dialog unmounts at the end of the
+   leave, which is where that focus belongs. */
+.dialog-leave-active {
+  pointer-events: none;
+  transition: opacity var(--app-motion-exit-slow) var(--app-ease-exit);
+}
+.dialog-leave-active .dialog {
+  transition: opacity var(--app-motion-exit-slow) var(--app-ease-exit),
+              scale var(--app-motion-exit-slow) var(--app-ease-exit);
+}
+.dialog-leave-to {
+  opacity: 0;
+}
+.dialog-leave-to .dialog {
+  opacity: 0;
+  /* The exit amplitude, which is far smaller than the 1.5% the arrival grows
+     by: an exit is a withdrawal, and the surface is being read on the way out. */
+  scale: var(--app-motion-scale-exit);
+}
+/* The reverse. No `-enter-from` and no duration of its own beyond the arrival
+   rung, so a dialog reopened mid-exit continues upward from where it is rather
+   than snapping back to full — the same rule the columns and the rail carry,
+   and the half that would otherwise be a teleport on a fast Escape-then-reopen. */
+.dialog-enter-active {
+  transition: opacity var(--app-motion-fade) var(--app-ease);
+}
+.dialog-enter-active .dialog {
+  transition: opacity var(--app-motion-fade) var(--app-ease),
+              scale var(--app-motion) var(--app-ease);
+}
+
 /* ---- Choreography, and where it went ------------------------------------
    A dialog's action row used to settle a beat after the content it answers,
    and a menu's rows used to step in from the top down. Both are gone, and the
