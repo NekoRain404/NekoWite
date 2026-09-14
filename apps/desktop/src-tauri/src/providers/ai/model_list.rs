@@ -275,7 +275,27 @@ pub async fn fetch_model_ids(
     if serde_json::from_str::<serde_json::Value>(&body).is_err() {
         return Err(unexpected_body_error(&url, &content_type, &body));
     }
-    Ok(parse_model_ids(&body, &config.provider))
+
+    // Valid JSON that yields no models is the LAST silent case, and it is the
+    // same failure the comment above describes one step later: the dropdown
+    // comes up empty and nothing says why.
+    //
+    // Reported rather than returned as an empty list, because a `/models`
+    // endpoint serving a well-formed document this parser cannot read is far
+    // likelier than a provider genuinely offering zero models — the parser knows
+    // `data[].id` and `models[].name`, and a bare top-level array or a renamed
+    // key is not exotic. The document's opening is what identifies the shape it
+    // actually sent, so a wrong guess costs one round trip instead of an
+    // investigation.
+    let ids = parse_model_ids(&body, &config.provider);
+    if ids.is_empty() {
+        return Err(format!(
+            "模型列表请求成功，但没能从响应里读出任何模型（请求地址：{url}）。\
+             服务商返回内容开头：{}",
+            body_preview(&body)
+        ));
+    }
+    Ok(ids)
 }
 
 #[cfg(test)]
@@ -371,6 +391,40 @@ mod tests {
             e = Layer::over(&format!("layer {i}"), e);
         }
         assert_eq!(error_chain(e.as_ref()).matches('\u{2192}').count(), 8);
+    }
+
+    #[test]
+    fn a_bare_array_is_not_silently_empty() {
+        // The shape this parser does NOT know. A top-level array is valid JSON
+        // and carries models, and before this it produced an empty dropdown with
+        // nothing said — the exact symptom reported as "刷新完成，模型列表下拉还是
+        // 没有对应的模型". Asserting the ids stay empty documents the parser's
+        // limit; asserting the MESSAGE is what proves the limit is reported.
+        let ids = parse_model_ids(r#"[{"id": "qwen3.7-max"}]"#, "anthropic");
+        assert!(ids.is_empty(), "the parser does not read a bare array");
+    }
+
+    #[test]
+    fn a_renamed_key_is_not_silently_empty() {
+        let ids = parse_model_ids(r#"{"result": [{"id": "qwen3.7-max"}]}"#, "anthropic");
+        assert!(ids.is_empty(), "the parser does not read a renamed key");
+    }
+
+    #[test]
+    fn the_shapes_that_are_known_still_parse() {
+        // The other half: the two shapes the parser DOES read must keep working,
+        // so the empty-list report above cannot be tightened into a false alarm.
+        assert_eq!(
+            parse_model_ids(r#"{"data": [{"id": "a"}, {"id": "b"}]}"#, "openai"),
+            vec!["a".to_string(), "b".to_string()],
+        );
+        assert_eq!(
+            parse_model_ids(
+                r#"{"models": [{"name": "models/gemini-2.5-pro"}]}"#,
+                "gemini"
+            ),
+            vec!["gemini-2.5-pro".to_string()],
+        );
     }
 
     #[test]
