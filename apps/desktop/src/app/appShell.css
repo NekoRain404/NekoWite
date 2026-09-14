@@ -82,19 +82,91 @@
    them entirely and the fade carries the whole arrival — which is also the half
    of 淡入淡出+缩放 that is free of this cost. The dialog keeps its 1.5%, where it
    is one small surface with a reason to have depth. */
+/* Fade *and* slide, on the panel itself — 叠加, so the two are one gesture
+   rather than a fade with a separate glide happening next to it. The drift is a
+   fraction of the panel's own width (see the token): the full width would start
+   it entirely off-screen, where most of the slide is invisible and there is
+   nothing left for the fade to be combined with.
+
+   Both properties are on the same element and both are transitions, so an
+   interrupted toggle continues each of them from its own current value; and
+   both are composited — the layout is not touched by either. The panel is
+   already out of flow for its leave, so the drift composes with that
+   positioning rather than fighting it: `left`/`right` place the box and the
+   transform moves the paint. */
 .col-enter-active,
 .rail-enter-active {
-  transition: opacity var(--app-motion) var(--app-ease);
+  transition: opacity var(--app-motion) var(--app-ease),
+              translate var(--app-motion) var(--app-ease-travel);
 }
 .col-leave-active,
 .rail-leave-active {
-  transition: opacity var(--app-motion-exit) var(--app-ease-exit);
+  transition: opacity var(--app-motion-exit) var(--app-ease-exit),
+              translate var(--app-motion-exit) var(--app-ease-travel);
+}
+
+/* ---- Which of the two is in front, while either of them is moving --------
+   The mechanism above was correct and its effect was invisible, which the user
+   is the one who noticed: 「左上角抽屉似乎没有淡入淡出」. Measured at the sidebar's
+   centre with `elementFromPoint` frame by frame, the element on top during the
+   first frames of the entrance is an element **inside the editor** — the
+   opacity was walking 0 → 0.439 → 0.717 → 1 exactly as intended, underneath
+   `.main`, which had already taken the full width and was gliding back over the
+   sidebar's own box. The sidebar spends most of its fade behind an opaque
+   surface and the user watches the content move, which is why they described a
+   drawer with no fade.
+
+   So the panel paints above the content while it is animating, and the decision
+   is this: **the thing arriving or leaving is the thing the eye is on, and the
+   content is what it displaces.** A drawer is the panel; the content is what
+   gets out of its way. Nothing changes at rest — a column in flow is beside the
+   content, not over it, and a spent transition leaves no property behind.
+
+   `z-index` needs a positioned box, and the leaves are already `absolute`; this
+   covers the entrances. **Both states carry it on purpose**: on an interrupted
+   toggle the classes swap, and a `z-index` that lived on only one of them would
+   leave a frame where the panel drops behind the content mid-flight — the
+   stacking version of the jump this whole round is about. */
+.col-enter-active,
+.col-leave-active,
+.rail-enter-active,
+.rail-leave-active {
+  position: relative;
+  z-index: 1;
 }
 .col-enter-from,
-.col-leave-to,
+.col-leave-to {
+  opacity: 0;
+  /* Away from its own edge: the left cluster withdraws leftward. */
+  translate: calc(var(--app-motion-drawer-offset) * -1) 0;
+}
+
+/* ---- The rail is the same gesture, mirrored, and it moves differently ------
+   Measured, because the answer decides the transform: with the rail open the
+   content box is [528, 972] and the rail is [980, 1280]; with it closed the
+   content box is [528, 1280] and the rail is gone. **The content's left origin
+   never moves — only its right edge does.** So the rail's toggle is a *width*
+   change where the sidebar's is an origin change, and the sidebar's cure does
+   not transfer: a `translateX` on the content would drag its left edge 300px
+   left on the first frame, which is a jump the layout never made.
+
+   What moves is the rail. It leaves to the right, out past the edge of `.main`
+   (which is `overflow: hidden`), and comes back in from there — a drawer on
+   the side it is on. That is also what the sidebar's glide *looks like* from
+   the outside: the panel withdraws and the content is left with the space.
+
+   Durations and curves are the very same tokens as the opacity beside them —
+   300ms in, 195ms out, `--app-ease` / `--app-ease-exit` — so the two halves of
+   the gesture finish together rather than one trailing the other. It is a
+   `translate` and not a width, so the body is at its final width from the first
+   frame; nothing about the re-wrap is animated. */
 .rail-enter-from,
 .rail-leave-to {
   opacity: 0;
+  /* And the same fraction the other way: the rail is on the right, so it
+     withdraws rightward. `%` resolves against the element, and the leave rule
+     above pins its width so both states agree. */
+  translate: var(--app-motion-drawer-offset) 0;
 }
 
 /* Out of flow for the length of the exit, and back in it on the way in. Each
