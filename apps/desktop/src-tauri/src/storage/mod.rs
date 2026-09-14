@@ -27,12 +27,18 @@
 //! `domain::recovery` declares. That direction is the point: the crash-safe
 //! swap is domain policy, so the domain takes the trait and storage supplies
 //! the implementation, never the other way round.
+//!
+//! [`key_file_store`] is the master key file itself — format, KDF, and the
+//! state a missing file puts the vault in — and [`key_store`] is the vault
+//! lifecycle it opens plus the provider-key store, re-exporting the file half
+//! so no consumer of the key store had to move with the split.
 
 pub mod atomic_write;
 pub mod attachment_store;
 pub mod file_store;
 pub mod index_store;
 pub mod key_file_io;
+pub mod key_file_store;
 pub mod key_store;
 pub mod metadata_store;
 pub mod rename_store;

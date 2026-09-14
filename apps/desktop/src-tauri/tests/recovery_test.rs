@@ -316,6 +316,108 @@ fn a_failed_swap_keeps_the_backup_that_opens_the_snapshot() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// The crash the two-phase swap exists for: the process died between step 3
+/// (`master.key` -> `master.key.old`) and step 4 (`master.key.new` ->
+/// `master.key`), so there is no `master.key` at all.
+///
+/// The snapshot is still the OLD one — step 5 never ran — and the password that
+/// opens it is the one whose salt and verifier sit in `master.key.old`. Nothing
+/// else can open this vault: load-time recovery skips a password-protected
+/// backup by design (it has no key to hand `Stronghold::new`), so `unlock_vault`
+/// is the only path left, exactly as `password_candidates`' doc comment says.
+///
+/// It used to be closed anyway. Reading the key file answered the missing
+/// `master.key` by CREATING a passwordless one, so `password_candidates` saw an
+/// `Auto` state and returned "no master password is set" before its loop ever
+/// looked at the backup — with the user's password correct and its material on
+/// disk. The generated file then shadowed the backup for every later reader.
+///
+/// `#[ignore]`d for the Argon2 cost (two real Stronghold opens, ~2 min in
+/// debug); run with `cargo test -- --ignored`.
+#[test]
+#[ignore = "two real Stronghold opens: ~2 minutes in debug"]
+#[cfg(unix)]
+fn unlock_opens_a_vault_whose_master_key_was_renamed_away() {
+    use tauri_plugin_stronghold::stronghold::Stronghold;
+
+    let dir = temp_dir("unlock-missing-key");
+    let snapshot = dir.join("stronghold.bin");
+    let key_path = dir.join("master.key");
+    const CLIENT: [u8; 32] = [1u8; 32];
+
+    // The vault the user actually has: encrypted under a key derived from their
+    // password, holding one record.
+    let password = "correct horse battery staple";
+    let salt = [42u8; 32];
+    let live_key = derive_master_key(password, &salt).unwrap();
+    {
+        let stronghold = Stronghold::new(snapshot.clone(), live_key.to_vec()).unwrap();
+        let client = stronghold.inner().create_client(CLIENT).unwrap();
+        client
+            .store()
+            .insert(b"openai".to_vec(), b"sk-old".to_vec(), None)
+            .unwrap();
+        stronghold.save().unwrap();
+    }
+
+    // Step 3 landed, step 4 did not: the key file of the live snapshot is in the
+    // recovery slot, `master.key` is gone, and the staged key of the swap that
+    // never committed is still there.
+    let new_salt = [7u8; 32];
+    let new_key = derive_master_key("the password that was being set", &new_salt).unwrap();
+    write_key_file(
+        &sibling_suffixed(&key_path, "old"),
+        &encode_keyfile_password(&salt, &verifier_of(&live_key)),
+    );
+    write_key_file(
+        &sibling_suffixed(&key_path, "new"),
+        &encode_keyfile_password(&new_salt, &verifier_of(&new_key)),
+    );
+    assert!(!key_path.exists(), "the crash state has no master.key");
+
+    // The password of the backup is the candidate list, and the staged key —
+    // which belongs to a swap that never committed — is not.
+    assert_eq!(
+        password_candidates(&key_path).unwrap(),
+        vec![(salt, verifier_of(&live_key))],
+        "the backup is the only key file that may check a password in this state"
+    );
+    assert!(
+        !key_path.exists(),
+        "a missing master.key must not be replaced by a fresh passwordless one"
+    );
+
+    // A wrong password is still refused: this is not a bypass.
+    assert!(
+        unlock_snapshot(&snapshot, &key_path, "not the password").is_err(),
+        "only the password of a key file on disk may unlock"
+    );
+    assert!(
+        unlock_snapshot(&snapshot, &key_path, "the password that was being set").is_err(),
+        "the staged key of the uncommitted swap must not open the vault"
+    );
+
+    // The password opens the OLD snapshot — the one that is still live, whose
+    // key is the backup's — and the vault is intact.
+    let stronghold = unlock_snapshot(&snapshot, &key_path, password)
+        .expect("the password of the key file left in master.key.old must still unlock");
+    let client = stronghold.inner().load_client(CLIENT).unwrap();
+    let got = client
+        .store()
+        .get(b"openai".as_slice())
+        .unwrap()
+        .map(|b| String::from_utf8_lossy(&b).to_string());
+    assert_eq!(got.as_deref(), Some("sk-old"));
+
+    // Nothing was written over the state on the way: the vault is still where
+    // the crash left it, and the next launch reads the same three key files.
+    assert!(!key_path.exists());
+    assert!(sibling_suffixed(&key_path, "old").exists());
+    assert!(sibling_suffixed(&key_path, "new").exists());
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A password-protected vault whose only usable key was ROTATED must still
 /// unlock with the password that key belongs to.
 ///

@@ -1,11 +1,12 @@
+use nekowite_lib::commands::keys::password_candidates;
 #[cfg(unix)]
 use nekowite_lib::domain::recovery::{open_snapshot, reencrypt_vault};
 #[cfg(unix)]
 use nekowite_lib::storage::key_file_io::DiskKeyFiles;
 use nekowite_lib::storage::key_store::{
     ai_key_presence, decode_keyfile, derive_master_key, encode_keyfile_password,
-    encode_keyfile_passwordless, ensure_keyfile, read_vault_key_state, validate_password,
-    validate_stored_api_key, verifier_of, VaultKeyState, AI_KEY_MASKED,
+    encode_keyfile_passwordless, ensure_keyfile, read_vault_key_state, sibling_suffixed,
+    validate_password, validate_stored_api_key, verifier_of, VaultKeyState, AI_KEY_MASKED,
 };
 use std::fs;
 #[cfg(unix)]
@@ -53,6 +54,169 @@ fn master_key_created_and_reused() {
     let perm = fs::metadata(&p).unwrap().permissions().mode();
     assert_eq!(perm & 0o777, 0o600, "master key file must be mode 0600");
     fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A missing `master.key` is a first run ONLY when nothing is beside it.
+///
+/// The crash state: `reencrypt_vault` renamed `master.key` to `master.key.old`
+/// (step 3) and died before promoting `master.key.new` (step 4). The key that
+/// opens the snapshot — for a password-protected vault, the salt and verifier
+/// the password is derived against — is the backup, and the snapshot is still
+/// the one that backup matches (step 5 never ran).
+///
+/// Reading the key file used to answer this state by CREATING a passwordless
+/// `master.key`, which turned "the key file is missing" into "this vault has no
+/// password": `password_candidates` then returned "no master password is set"
+/// before it ever looked at the backup, and the vault was unopenable by every
+/// path (load-time recovery skips a password-protected backup by design, so
+/// unlock was the only one left). The forged file also shadowed the backup for
+/// every later reader, so the state could not be recovered from.
+///
+/// Cheap on purpose (no Stronghold): it pins the file-level contract the heavy
+/// unlock test in `recovery_test.rs` then drives end to end.
+#[test]
+fn a_missing_key_file_beside_a_backup_is_not_a_fresh_vault() {
+    let dir = temp_dir("missing-key-crash");
+    let key_path = dir.join("master.key");
+    let password = "correct horse battery staple";
+    let salt = [42u8; 32];
+    let verifier = verifier_of(&derive_master_key(password, &salt).unwrap());
+    fs::write(
+        sibling_suffixed(&key_path, "old"),
+        encode_keyfile_password(&salt, &verifier),
+    )
+    .unwrap();
+
+    // Whatever the read answers, it must not leave a passwordless `master.key`
+    // where the backup is the key that opens the vault.
+    let _ = read_vault_key_state(&key_path);
+    assert!(
+        !key_path.exists(),
+        "a missing master.key beside a backup is the interrupted-swap state, not a fresh vault"
+    );
+
+    // And the unlock path must reach the backup's password rather than answering
+    // that the vault has none.
+    assert_eq!(
+        password_candidates(&key_path).unwrap(),
+        vec![(salt, verifier)],
+        "the password of the key file in master.key.old is the one that opens this vault"
+    );
+    assert!(
+        !key_path.exists(),
+        "building the candidate list must not write a key file either"
+    );
+
+    // The contrast that must survive: with no backup beside it, a missing key
+    // file IS the first run (`master_key_created_and_reused`), and a key file
+    // that really is passwordless still has nothing to unlock.
+    let fresh = dir.join("fresh").join("master.key");
+    assert!(
+        read_vault_key_state(&fresh).is_ok(),
+        "a fresh install must still get a key file"
+    );
+    assert!(fresh.exists(), "a fresh install must still write it");
+    fs::write(&key_path, encode_keyfile_passwordless(&[18u8; 32])).unwrap();
+    assert_eq!(
+        password_candidates(&key_path).unwrap_err(),
+        "no master password is set",
+        "a genuinely passwordless master.key has nothing to unlock, whatever the backups hold"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// In the same state, what the vault OPENS with has to be the key that is still
+/// there — the load path is the only one that can open a vault whose
+/// `master.key` is gone, so this answer decides whether the user gets the vault
+/// back at all.
+///
+/// A passwordless backup is the vault's key and opens the snapshot without a
+/// password, so it is the answer. It is preferred over a password-protected
+/// backup because that one cannot be used from here at all — `open_snapshot`
+/// skips it by design — and because reporting `Locked` over a vault that opens
+/// by itself would send the user looking for a password that is not the point.
+#[test]
+fn a_missing_key_file_reads_as_the_backup_that_still_opens_the_vault() {
+    let dir = temp_dir("missing-key-opens-from-backup");
+    let key_path = dir.join("master.key");
+    let live_key = [5u8; 32];
+    fs::write(
+        sibling_suffixed(&key_path, "old"),
+        encode_keyfile_password(&[7u8; 32], &[8u8; 32]),
+    )
+    .unwrap();
+    fs::write(
+        sibling_suffixed(&key_path, "old-1700000000000"),
+        encode_keyfile_passwordless(&live_key),
+    )
+    .unwrap();
+
+    assert_eq!(
+        read_vault_key_state(&key_path).unwrap(),
+        VaultKeyState::Auto(live_key),
+        "the passwordless backup is the key the load path has to open with"
+    );
+    assert!(
+        !key_path.exists(),
+        "reading the state must not create the missing key file"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// With every readable backup password-protected there is no key the load path
+/// may use, and the vault is locked: the state has to say so — it is what makes
+/// the load path report the vault as locked and send the user to `unlock_vault`
+/// with the password that derives the key, instead of trying a key it does not
+/// have (or inventing one).
+#[test]
+fn a_missing_key_file_reads_as_locked_when_only_the_password_can_open_it() {
+    let dir = temp_dir("missing-key-locked-backup");
+    let key_path = dir.join("master.key");
+    let salt = [11u8; 32];
+    let verifier = [12u8; 32];
+    fs::write(
+        sibling_suffixed(&key_path, "old"),
+        encode_keyfile_password(&salt, &verifier),
+    )
+    .unwrap();
+
+    assert_eq!(
+        read_vault_key_state(&key_path).unwrap(),
+        VaultKeyState::Locked { salt, verifier },
+        "a password-protected backup is the vault being locked, not a fresh vault"
+    );
+    assert!(
+        !key_path.exists(),
+        "no key file may be forged over this state"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// And a backup that cannot be read is neither: there is nothing to open with
+/// and nothing that may check a password, so the read reports the damage rather
+/// than writing a fresh key over whatever is still there to be restored.
+#[test]
+fn unreadable_backups_do_not_become_a_fresh_vault() {
+    let dir = temp_dir("missing-key-damaged-backup");
+    let key_path = dir.join("master.key");
+    let truncated = vec![0u8; 16];
+    fs::write(sibling_suffixed(&key_path, "old"), &truncated).unwrap();
+
+    assert!(
+        read_vault_key_state(&key_path).is_err(),
+        "a damaged backup is an error, not a reason to invent key material"
+    );
+    assert!(!key_path.exists());
+    assert_eq!(
+        fs::read(sibling_suffixed(&key_path, "old")).unwrap(),
+        truncated,
+        "the damaged backup must be left byte-for-byte intact to be restored"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
 }
 
 /// `ensure_keyfile` must regenerate ONLY on a missing file (`NotFound`). A

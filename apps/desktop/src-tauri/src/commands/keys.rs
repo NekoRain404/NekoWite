@@ -9,12 +9,14 @@ use std::path::Path;
 use tauri::Manager;
 use tauri_plugin_stronghold::stronghold::Stronghold;
 
+use crate::domain::path_policy::ipc_path;
 use crate::domain::recovery::{backup_key_paths, open_snapshot, reencrypt_vault};
 use crate::state::KeyVault;
 use crate::storage::key_file_io::DiskKeyFiles;
 use crate::storage::key_store::{
     self, ai_key_presence, derive_master_key, encode_keyfile_password, load_ai_key_internal,
-    read_vault_key_state, validate_password, validate_stored_api_key, verifier_of, VaultKeyState,
+    read_existing_vault_key_state, validate_password, validate_stored_api_key, verifier_of,
+    VaultKeyState,
 };
 
 /// Store an API key for a provider in the stronghold vault. If the provider
@@ -203,16 +205,36 @@ pub type PasswordCandidate = ([u8; 32], [u8; 32]);
 /// a vault whose `master.key` claims a password protects it; and
 /// `master.key.new`, whose key belongs to a swap that has not been committed.
 ///
-/// Only files that exist are read. `read_vault_key_state` CREATES a missing key
-/// file (a fresh passwordless one), so probing a path that is not there forged a
-/// `master.key.old` that opens nothing on every failed unlock — a backup the
-/// recovery path would then try and a later swap would rotate into the user's
-/// key-file history.
+/// Only files that exist are read, and they are read without creating anything:
+/// probing a path that is not there used to forge a `master.key.old` that opens
+/// nothing on every failed unlock — a backup the recovery path would then try
+/// and a later swap would rotate into the user's key-file history.
+///
+/// A missing `master.key` is not the passwordless vault above, and it is not a
+/// reason to stop looking either. It is the state the two-phase swap leaves
+/// when it dies between its two renames (`master.key` -> `master.key.old`,
+/// then `master.key.new` -> `master.key`): the backup then holds the only salt
+/// and verifier left for the password that opens the live snapshot. Returning
+/// early there answered "no master password is set" over a vault that has one,
+/// and the loop below — the one written to read that backup — never ran.
 pub fn password_candidates(key_path: &Path) -> Result<Vec<PasswordCandidate>, String> {
-    let VaultKeyState::Locked { salt, verifier } = read_vault_key_state(key_path)? else {
+    // `read_existing_vault_key_state`, not `read_vault_key_state`: the two
+    // states this function has to tell apart — no `master.key` at all, and a
+    // `master.key` that really is passwordless — are exactly what the plain
+    // read collapses, and what it may WRITE over.
+    let primary = read_existing_vault_key_state(key_path)?;
+    if let Some(VaultKeyState::Auto(_)) = primary {
+        // A vault with no master password set has nothing to unlock, whatever
+        // the backups hold: its key is right there in `master.key` and opens it
+        // without a password, so honouring a passwordless backup here would only
+        // let any string typed into the unlock dialog through.
         return Err("no master password is set".into());
-    };
-    let mut candidates = vec![(salt, verifier)];
+    }
+
+    let mut candidates = Vec::new();
+    if let Some(VaultKeyState::Locked { salt, verifier }) = primary {
+        candidates.push((salt, verifier));
+    }
     for backup in backup_key_paths(key_path) {
         // `backup_key_paths` offers existing files, but a backup that vanished
         // between that listing and this read must not be resurrected as a
@@ -223,9 +245,25 @@ pub fn password_candidates(key_path: &Path) -> Result<Vec<PasswordCandidate>, St
         // Unreadable, malformed or passwordless backups are skipped: one bad
         // backup must not stop the unlock, and a passwordless one has no
         // password to check.
-        if let Ok(VaultKeyState::Locked { salt, verifier }) = read_vault_key_state(&backup) {
+        if let Ok(Some(VaultKeyState::Locked { salt, verifier })) =
+            read_existing_vault_key_state(&backup)
+        {
             candidates.push((salt, verifier));
         }
+    }
+    if candidates.is_empty() {
+        // Only reachable with no `master.key` to read. The vault was not
+        // passwordless — that returned above — so its key file is missing, and
+        // that is what the user has to be told. Answering "no master password is
+        // set" here told them something untrue about their own vault: the
+        // password is correct and its salt and verifier are in a backup the loop
+        // above never got to look at, because the read had replaced the missing
+        // file with a fresh passwordless one.
+        return Err(format!(
+            "the master key file {} is missing and no key file on disk holds a master \
+             password to check",
+            ipc_path(key_path)
+        ));
     }
     Ok(candidates)
 }
