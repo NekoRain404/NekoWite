@@ -113,6 +113,18 @@ function painted(): boolean {
 
 const settle = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
+/**
+ * Long enough for the overlay to leave the tree on the *animated* close path.
+ *
+ * The palette holds the node for `--app-motion` while it fades, and there is no
+ * stylesheet in this environment, so the component's own `MOTION_FALLBACK_MS`
+ * is what governs — 300ms. The other close tests run under reduced motion,
+ * where the node goes on the same tick, which is why only the two that opt out
+ * of it need this. This is the harness keeping up with a duration, not an
+ * assertion being loosened: what is asserted is still "the overlay is gone".
+ */
+const AFTER_FADE = 400
+
 beforeEach(async () => {
   pinia = createPinia()
   setActivePinia(pinia)
@@ -170,7 +182,7 @@ describe('CommandPalette toggle', () => {
 
     pressEscape()
     await nextTick()
-    await settle(250)
+    await settle(AFTER_FADE)
     expect(overlay()).toBeNull()
   })
 
@@ -210,7 +222,7 @@ describe('CommandPalette toggle', () => {
     await nextTick()
     expect(painted()).toBe(false)
 
-    await settle(250)
+    await settle(AFTER_FADE)
     expect(overlay()).toBeNull()
 
     // And it is still usable afterwards.

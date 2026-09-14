@@ -13,6 +13,20 @@
    there is no state change to animate from. An animation runs on insertion
    instead, which is why this is keyframes rather than a transition.
 
+   Which makes this the placeholder for the question "keyframe or transition?"
+   An entrance keyframe is right for exactly one case: something that appears
+   once and is gone. It is wrong for anything the user toggles, because a
+   keyframe **restarts from its first frame** — closing a half-opened thing
+   snaps it back to the start and replays the entrance from zero, where a
+   transition between two states continues from wherever the element actually
+   is. Everything toggled in this app that can hold both states at once
+   (ContextMenu's `is-open`, the palette's overlay, the select and combobox
+   popups, the toast stack) is a transition for that reason. The toggles that
+   are *not* — the columns and the rail panels, which Vue shows and hides with
+   `display: none` — are listed in the report instead: an element that is not
+   rendered has no state to interpolate from, so making them reversible means
+   keeping them in the layout, which is a behaviour change and not a curve.
+
    Only the entrance animates. A removed element leaves the tree immediately;
    holding it for a fade would delay the action the user just took, which is
    always worse than the polish it buys.
@@ -31,16 +45,22 @@
    transform chain and is measured from the box, so it holds the surface still
    while it grows. Every dialog this round could reach was moved over;
    TemplatePicker.vue still centres with a transform and still drifts, and is
-   recorded as a follow-up because it lives outside these files.
+   recorded as a follow-up because it lives outside these files. The amplitude
+   is down to 1.5% now, so that drift would be under four pixels rather than
+   nine — smaller, and still the wrong number, so the rule stands.
 
    Where a surface is anchored rather than centred, its direction comes from
    `transform-origin` instead — a prompt pinned to the bottom edge scales about
    that edge, so it grows up out of the edge it belongs to rather than inflating
    from a centre it does not have.
 
-   The curve is the spring, not the state-change bezier: a surface is the one
-   thing here with enough mass for a settle to read, and it should decelerate
-   through its last pixels rather than stop on the frame the duration runs out.
+   Two animations, one surface. A spring on the movement and the state-change
+   bezier on the fade, because they are two different kinds of thing: the scale
+   has mass and should decelerate through its last pixels, while the opacity has
+   no overshoot to make — put on the spring it arrives at 42% of the timeline
+   and then sits clamped at 1 for the rest, so the fade ends long before the
+   movement does and the surface finishes appearing while it is still growing.
+   The amplitude is the token, so the next person tunes one place.
 
    No fill mode: the resting look belongs to the base rule, so a user whose
    animations are neutralised lands on the final state rather than a frame
@@ -49,9 +69,42 @@
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+@keyframes surface-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes surface-scale {
+  from { scale: var(--app-motion-scale-surface); }
+  to   { scale: 1; }
+}
+
+/* ---- The compatibility surface ------------------------------------------
+   The two keyframes below are the *old* arrival and the *old* action-row beat,
+   kept alive for the one consumer this round cannot reach. `styles/components.css`
+   restates the math and table dialog passthroughs against their own class names
+   — editor-core writes them and its own tests read them, so they cannot simply
+   wear `.dialog` — and it names these two keyframes to do it. Deleting them
+   here would leave two `animation:` shorthands pointing at nothing, and an
+   unparseable animation shorthand is dropped whole: the two dialogs would lose
+   their arrival silently, in a file this round may not write. So the names stay
+   until that file is converted, and `.dialog` no longer uses either of them.
+
+   `surface-in` keeps the combined shape purely because a single keyframe cannot
+   carry two timing functions: the passthroughs would need the same split
+   `.dialog` got, in their own file. It still takes the amplitude token, so those
+   two dialogs get the smaller scale as well — the 4% this used to be is the
+   thing the brief names by hand, and it costs nothing to fix here. What is left
+   is the spring on their opacity, which is the curve those rules name and
+   therefore theirs to change. `dialog-row-in` is the fade the action row took
+   before the beat was removed. Both are reported as the remaining work, not
+   recommended. */
 @keyframes surface-in {
-  from { opacity: 0; scale: 0.96; }
+  from { opacity: 0; scale: var(--app-motion-scale-surface); }
   to   { opacity: 1; scale: 1; }
+}
+@keyframes dialog-row-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 /* The dim behind a dialog only fades: it has no mass and nothing to settle, so
@@ -60,49 +113,29 @@
   animation: overlay-in var(--app-motion-slow) var(--app-ease);
 }
 .dialog {
-  animation: surface-in var(--app-motion-slow) var(--app-ease-surface);
+  animation:
+    surface-fade var(--app-motion-slow) var(--app-ease),
+    surface-scale var(--app-motion-slow) var(--app-ease-surface);
 }
 
-/* ---- Choreography -------------------------------------------------------
-   A dialog's contents are a group, and a group that lands as one block is what
-   reads as coarse. So the action row — the one part the hand is already
-   travelling toward — settles a beat after the content it is answering, and
-   the dialog reads as composed rather than dumped.
+/* ---- Choreography, and where it went ------------------------------------
+   A dialog's action row used to settle a beat after the content it answers,
+   and a menu's rows used to step in from the top down. Both are gone, and the
+   rule that removed them is worth stating because it is not obvious from the
+   outside: **a parent that is already fading in may not have its children fade
+   in as well.** The surface is the arrival; a child animating on top of it is
+   the same fade twice, and a group that arrives in batches reads as slow
+   rather than as composed. One interaction keeps one main animation.
 
-   `animation-delay` is the only thing that can express this, and it is keyed on
-   a *role* (`.dialog-actions`, and the editor-core passthroughs' own action
-   classes beside it in components.css) rather than on `:nth-child`. Position
-   would have been the obvious handle and is the wrong one: a dialog that
-   inserts a row later — RenameDialog's validation error is exactly that — would
-   renumber its siblings, and renumbering an `animation-delay` puts a finished
-   animation back into its delay phase, where `backwards` fill snaps it to
-   invisible and plays it again. A validation message must not make the dialog
-   flicker. A role cannot renumber, and it is also why this arrival is two beats
-   rather than a long cascade: the app names one action row per dialog, and a
-   deeper cascade would need a stable handle per beat rather than a deeper
-   guess at one.
+   It is also the half that could not be reversed. A staggered child is an
+   `animation-delay` on something that is already animating, so reversing
+   mid-flight cancels the animation and drops the child straight to its resting
+   state — the children snap while the parent eases back. There is no delay that
+   survives being interrupted, which is why nothing in this app spends one.
 
-   Only the delayed row is animated. Fading every child as well would be the
-   same fade twice, since the surface they sit on is already arriving — and it
-   would trample any child that sets an `opacity` of its own, snapping a
-   deliberately dimmed control to full and back on the way past.
-
-   The delay stays short enough that the row has landed before the surface
-   itself has (--app-motion + 2 steps ≈ 228ms against --app-motion-slow's
-   260ms), so nothing is still arriving once the dialog reads as present.
-
-   `backwards` is load-bearing: without it the row holds its final state through
-   its delay and then jumps back to the first keyframe to animate forward again.
-   The reduced-motion switch below zeroes animation-delay, so on that path the
-   fill mode never applies. */
-@keyframes dialog-row-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-.dialog > .dialog-actions {
-  animation: dialog-row-in var(--app-motion) var(--app-ease) backwards;
-  animation-delay: calc(var(--app-motion-stagger) * 2);
-}
+   The reduced-motion switch below still sweeps `animation-delay`, which now
+   guards whatever staggering a future component tries to add rather than
+   anything in this file. */
 
 /* ---- Press vocabulary ---------------------------------------------------
    A press that only changes colour reads as flat, so every control that takes a
@@ -124,27 +157,37 @@
    their own transition list, because a press that scales without one snaps
    instead of easing. `.status-btn` and `.ctx-menu-item` take the timing half
    and not the movement half until their transition lists are widened (they live
-   outside this round's writable files). */
+   outside this round's writable files).
+
+   Which controls shrink is a rule and not a list. **Only a standalone button
+   gives.** A control that sits in a row of controls has neighbours to stay
+   aligned with, and one member shrinking by 2% pulls the row's baseline out
+   from under it for as long as the press lasts: `.toolbar-btn` and
+   `.switch-option` are group members — a toolbar of icon buttons, the segments
+   of a segmented control — so they take the timing of a press and not the
+   movement. They still answer the press in colour, which is the feedback the
+   interaction actually needs; the shrink is the extra that only reads when the
+   control stands on its own. */
 :is(.btn, .toolbar-btn, .switch-option, .accent-swatch, .status-btn, .ctx-menu-item):active {
   transition-duration: var(--app-motion-micro);
 }
-:is(.btn, .toolbar-btn, .switch-option, .accent-swatch):active {
-  transform: scale(0.97);
+:is(.btn, .accent-swatch):active {
+  transform: scale(var(--app-motion-press-scale));
 }
 
-/* ---- Reveal for a region that mounts whole ------------------------------
-   The right rail is added and removed with `v-if`, so like the dialogs it
-   needs an animation rather than a transition. Fading only: the rail takes
-   part in the flex layout, so sliding it would fight the reflow that already
-   happened the instant it mounted — a spring here would just be a longer
-   version of the same fight. */
-@keyframes rail-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-.info-rail {
-  animation: rail-in var(--app-motion-slow) var(--app-ease);
-}
+/* ---- Where the rail's arrival went --------------------------------------
+   The rail used to take `rail-in` here: a fade keyframe, because it mounts with
+   `v-if` and an inserted element cannot be transitioned. That is true of the
+   *mechanism*, and it was the wrong one for the surface — a keyframe cannot be
+   reversed, so closing a half-open rail destroyed it mid-fade and the next open
+   replayed from frame 0. It is a `<Transition>` now, declared in
+   `app/appShell.css` beside the other two panels, which is also where the
+   absolute-on-leave rule lives that keeps the exit from holding the layout for
+   195ms.
+
+   What is left below is the nudge for a region *inside* a surface that is
+   already on screen, which is a different case and still a keyframe: those
+   regions mount once and are replaced whole. */
 
 /* The rail is the outer case: a whole column appearing where 300px of layout
    was not. A region *inside* a surface that is already on screen is the same
@@ -218,9 +261,20 @@
 
    `animation-delay` is swept too, and it is not a detail: a staggered child
    carries `backwards` fill, so without this it would sit *invisible* for its
-   whole delay — up to 48ms on an action row — and a reduced-motion user would
-   be handed the one thing the preference exists to prevent, content appearing
-   late for no reason. */
+   whole delay — and a reduced-motion user would be handed the one thing the
+   preference exists to prevent, content appearing late for no reason. Nothing
+   in the app spends a delay any more, so this line is a guard now rather than a
+   repair, and it stays because the failure it prevents is silent.
+
+   What is *not* swept away is meaning. A user who asked for less motion still
+   has to be able to tell that the save landed, that the palette opened, that a
+   dialog is a dialog: every rule above neutralises a duration, and every one of
+   them leaves the property it animates at its resting value, so the state the
+   motion was describing is still there — as text, as a colour, as a surface
+   that is simply present. The one thing the sweep cannot cover by itself is
+   movement that is not a property change at all (a control that shrinks for as
+   long as a finger is down has no duration to shorten), which is why the press
+   transform is switched off by name below. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -232,13 +286,12 @@
     transition-delay: 0ms !important;
     scroll-behavior: auto !important;
   }
-  /* The press movement is new this round, so it is switched off here rather
-     than merely made instant. Neutralising its duration would still land it —
-     the control would shrink under the finger and spring back with no
-     animation at all, which is exactly the movement the preference asks not to
-     have. The colour change survives, so a press still answers; it just does
-     not move. */
-  :is(.btn, .toolbar-btn, .switch-option, .accent-swatch):active {
+  /* The press movement is switched off here rather than merely made instant.
+     Neutralising its duration would still land it — the control would shrink
+     under the finger and spring back with no animation at all, which is exactly
+     the movement the preference asks not to have. The colour change survives, so
+     a press still answers; it just does not move. */
+  :is(.btn, .accent-swatch):active {
     transform: none;
   }
 }

@@ -72,7 +72,15 @@ const open = ref(false)
 const query = ref('')
 /** The row `Enter` would take, as an index into `rows`. */
 const activeIndex = ref(0)
-const pos = ref({ left: 0, top: 0, minWidth: 180 })
+/** Where the popup was put, and which way it had to open. `drop` is what tells
+ *  the stylesheet which edge of the popup touches the field, so its arrival can
+ *  come from there — see `place()`. */
+const pos = ref<{ left: number; top: number; minWidth: number; drop: 'down' | 'up' }>({
+  left: 0,
+  top: 0,
+  minWidth: 180,
+  drop: 'down',
+})
 
 const inputEl = ref<HTMLInputElement | null>(null)
 const listEl = ref<InstanceType<typeof ComboBoxList> | null>(null)
@@ -108,13 +116,19 @@ async function place(): Promise<void> {
   const height = box.height
   const below = anchor.bottom + 4
   const above = anchor.top - height - 4
+  // Which way it opened, carried through to the stylesheet: near the bottom of
+  // the window the list flips above the field, and its arrival has to flip with
+  // it. A list that sat above its field while rising into place from below would
+  // arrive from a gap it never occupied. See SelectMenu.place, which this ports.
+  const dropsDown = below + height <= window.innerHeight - pad || above < pad
   pos.value = {
     left: Math.min(Math.max(pad, anchor.left), Math.max(pad, window.innerWidth - width - pad)),
-    top: below + height <= window.innerHeight - pad || above < pad
+    top: dropsDown
       ? Math.min(below, Math.max(pad, window.innerHeight - height - pad))
       : above,
     // Never narrower than the field it belongs to, never wider than a menu.
     minWidth: floor,
+    drop: dropsDown ? 'down' : 'up',
   }
 }
 
@@ -301,6 +315,7 @@ onBeforeUnmount(() => {
           :left="pos.left"
           :top="pos.top"
           :min-width="pos.minWidth"
+          :drop="pos.drop"
           @activate="commit"
           @highlight="setActive"
         />

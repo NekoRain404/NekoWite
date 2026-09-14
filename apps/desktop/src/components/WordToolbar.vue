@@ -450,38 +450,30 @@ function runRegistry(id: string): void {
 .heading-preview[data-level="1"] { font-size: 13px; }
 .heading-preview[data-level="2"] { font-size: 12px; }
 .heading-preview[data-level="3"] { font-size: 11px; }
-/* A menu is a group, so its rows step in from the top down instead of landing
-   as one block. Each row takes --app-motion-fast — a row travels a few pixels,
-   not a region — and the delay stops growing after the fifth, because a cascade
-   that keeps stepping is a queue the user is standing in.
-   `:nth-child` is a stable handle here and is emphatically not one inside a
-   dialog: this menu is created whole and never gains a row while it is open,
-   whereas a dialog that inserts a row renumbers its siblings (see the note in
-   styles/motion.css). */
-@keyframes menu-row-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-.menu-enter-active .heading-option {
-  animation: menu-row-in var(--app-motion-fast) var(--app-ease) backwards;
-}
-.heading-menu > :nth-child(2) { animation-delay: calc(var(--app-motion-stagger) * 1); }
-.heading-menu > :nth-child(3) { animation-delay: calc(var(--app-motion-stagger) * 2); }
-.heading-menu > :nth-child(4) { animation-delay: calc(var(--app-motion-stagger) * 3); }
-.heading-menu > :nth-child(n+5) { animation-delay: calc(var(--app-motion-stagger) * 4); }
+/* The rows used to step in one after another, each with its own delay, while the
+   menu around them was already fading and scaling in. That is a second animation
+   stacked on the first — the same fade twice — and it was the half that could
+   not be reversed: a delay belongs to an animation, so a menu closed half-way
+   through lost the animations and the rows dropped to full opacity in one frame
+   while the menu itself eased back. The menu is the arrival now and the rows
+   come with it (see the note in styles/motion.css). */
 .menu-enter-active {
   /* --app-motion is the rung for a region changing state in place, and a menu
-     reveal is the case the ladder names. The spring is right here where the
-     state-change bezier was not: the menu has a corner to settle into. */
-  transition: opacity var(--app-motion) var(--app-ease-surface),
+     reveal is the case the ladder names. Two curves, because these are two
+     different properties: the movement has a corner to settle into and takes the
+     spring, while the fade has nothing above 1 to overshoot and takes the
+     state-change bezier. On one curve the opacity reaches full at 42% of the
+     timeline and the menu is still visibly growing for the rest of it. */
+  transition: opacity var(--app-motion) var(--app-ease),
               transform var(--app-motion) var(--app-ease-surface);
   will-change: opacity, transform;
 }
-/* Leaving steps down one rung and accelerates away, and it does not stagger:
-   a menu the user is done with should be gone. */
+/* Leaving takes the exit fraction of the entrance above — long enough to read
+   as a departure rather than a cut, short enough that a menu the user is done
+   with is gone — and accelerates away on the exit curve while it goes. */
 .menu-leave-active {
-  transition: opacity var(--app-motion-fast) var(--app-ease-exit),
-              transform var(--app-motion-fast) var(--app-ease-exit);
+  transition: opacity var(--app-motion-exit) var(--app-ease-exit),
+              transform var(--app-motion-exit) var(--app-ease-exit);
   will-change: opacity, transform;
 }
 .menu-enter-from,
@@ -490,7 +482,10 @@ function runRegistry(id: string): void {
   /* It grows out of the button's corner and covers the few pixels between them.
      Starting *below* the resting position — which this used to do — meant the
      menu rose into place from a gap it never occupied, arriving from nowhere;
-     the button is above the menu, so the travel has to be downward. */
-  transform: translateY(calc(var(--app-motion-travel) * -1)) scale(0.96);
+     the button is above the menu, so the travel has to be downward. The scale is
+     the anchored-popover amplitude: a menu is small furniture and 4% of a
+     140px-wide row is most of a glyph's height, which reads as a pop rather than
+     as an arrival. */
+  transform: translateY(calc(var(--app-motion-travel) * -1)) scale(var(--app-motion-scale-pop));
 }
 </style>

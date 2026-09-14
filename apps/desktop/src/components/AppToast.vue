@@ -181,7 +181,11 @@ onBeforeUnmount(() => {
   transition: transform var(--app-motion) var(--app-ease);
 }
 .toast-enter-active {
-  transition: opacity var(--app-motion) var(--app-ease-surface),
+  /* Two curves for two properties. The toast has a corner to settle into, so the
+     movement takes the spring; the fade does not, and on the spring its opacity
+     reached full at 42% of the timeline and then sat clamped at 1 while the
+     toast was still arriving. */
+  transition: opacity var(--app-motion) var(--app-ease),
               transform var(--app-motion) var(--app-ease-surface);
   /* Promotion is taken out only for as long as the transition that needs it.
      The stack itself is permanent, so a `will-change` in the base rule would
@@ -189,20 +193,19 @@ onBeforeUnmount(() => {
      note in styles/motion.css. */
   will-change: opacity, transform;
 }
-/* Leaving steps down one rung on the ladder and accelerates away: a toast that
-   takes as long to go as it took to arrive reads as lag on the next action. The
-   leave is deliberately not staggered and not slowed — a departing toast is
-   already old news. */
+/* Leaving takes the exit fraction of its own entrance and accelerates away: a
+   toast that takes as long to go as it took to arrive reads as lag on the next
+   action, and a departing toast is already old news. */
 .toast-leave-active {
-  transition: opacity var(--app-motion-fast) var(--app-ease-exit),
-              transform var(--app-motion-fast) var(--app-ease-exit);
+  transition: opacity var(--app-motion-exit) var(--app-ease-exit),
+              transform var(--app-motion-exit) var(--app-ease-exit);
   will-change: opacity, transform;
 }
 .toast-enter-from,
 .toast-leave-to {
   opacity: 0;
   /* Travel is a few pixels in from the edge the stack is anchored to, not a
-     slide across the window. */
-  transform: translateY(calc(var(--app-motion-travel) * -1)) scale(0.98);
+     slide across the window, at the anchored-popover amplitude. */
+  transform: translateY(calc(var(--app-motion-travel) * -1)) scale(var(--app-motion-scale-pop));
 }
 </style>

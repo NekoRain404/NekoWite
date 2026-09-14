@@ -20,16 +20,118 @@
   animation: surface-in var(--app-motion-slow) var(--app-ease-surface);
 }
 
-/* The sidebar and the note list arrive as columns, not as a page: the same fade
-   the right rail takes, and no slide, because both take part in the flex row and
-   a translate would fight the reflow that happened the instant they were shown.
-   `display: none` cancels an animation, so this replays on every expand — which
-   is what makes a toggle feel like the column coming back rather than the app
-   cutting to a new layout. */
-@keyframes column-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+/* ---- The three panels that open and close ---------------------------------
+
+   A keyframe entrance was the wrong mechanism for all of them, and the reason is
+   the one this whole round is about: **a keyframe restarts from its first frame,
+   and it cannot be interrupted.** Measured before this change, on the running
+   app: the sidebar caught mid-entrance at opacity 0.44, close pressed, the
+   animation cancelled, `display: none` applied in that frame and the column
+   gone; reopen and it replayed from 0. No exit at all, in either direction —
+   `v-show` writes `display: none` in the frame the state flips and `v-if`
+   destroys the element, so there was nothing left to animate. Both are
+   `<Transition>` now, which is a transition between two states: interrupting one
+   continues from the value the element is actually at.
+
+   The mechanism is the user's: 淡入淡出 + 缩放. Opacity and `scale`, no slide, no
+   width. A width or flex animation on a column re-wraps the body for the whole
+   of it — 42ms → 461ms input-to-paint in brief 62's WebKitGTK measurement
+   against 46ms → 40ms when nothing re-wrapped — and 打开侧栏不要让正文连续数十帧
+   重新换行 is the user's own sentence.
+
+   `scale` is written as its own property and never inside `transform`: the
+   columns carry no transform of their own today, and this keeps that true if one
+   ever does.
+
+   ---- Why the leave is absolute
+
+   The panel has to stay *rendered* for its exit, but it must not stay *laid
+   out* for it. If it did, the flex row would hold the collapsed width for the
+   whole exit and the content would re-wrap at the end of the animation instead
+   of at the start — the same single reflow, just 195ms later, with the text
+   visibly wrong for the whole of it. Taking the leaving panel out of flow on the
+   first frame gives both halves at once: the layout collapses in the click frame
+   exactly as it did before, so there is no new reflow, and the panel is still
+   there to fade and scale out of.
+
+   Which means the content does jump — one reflow, the same one it always had.
+   What is added back is a *translate* on the element whose origin moved, so the
+   jump is a glide (below). A translate is composited: text that moves does not
+   re-flow.
+
+   ---- What stays mounted
+
+   The sidebar and the note list were already `v-show`d, so wrapping them changes
+   nothing about their lifetime. The rail was `v-if` and stays `v-if`: with a
+   `<Transition>` around it the component lives exactly as long as its own leave
+   (195ms) and then unmounts, rather than being kept alive for the app's life —
+   which for a panel holding a chat session and a file-watch subscription is not
+   a cost worth paying for a fade. */
+
+/* Opacity only, and deliberately. All three panels are text-heavy — a file
+   tree, a note list, and a rail full of them — and a `scale` on a container is a
+   re-rasterisation of every glyph inside it for the whole of the animation.
+   That is what 文字发虚 was: not a display problem and not a curve problem, but
+   text inside a scaling surface being redrawn at a transformed size. The user's
+   own note about the dialog amplitude — 文字发虚 while 整个窗口膨胀 — is the same
+   effect one size up, and it is why `--app-motion-scale-surface` is 1.5% and not
+   the 4% it was.
+
+   So the rule this follows is: **the more text a surface holds, the less of its
+   entrance should be scale.** These three hold nothing else, so scale is out of
+   them entirely and the fade carries the whole arrival — which is also the half
+   of 淡入淡出+缩放 that is free of this cost. The dialog keeps its 1.5%, where it
+   is one small surface with a reason to have depth. */
+.col-enter-active,
+.rail-enter-active {
+  transition: opacity var(--app-motion) var(--app-ease);
 }
-.layout-col {
-  animation: column-in var(--app-motion) var(--app-ease);
+.col-leave-active,
+.rail-leave-active {
+  transition: opacity var(--app-motion-exit) var(--app-ease-exit);
+}
+.col-enter-from,
+.col-leave-to,
+.rail-enter-from,
+.rail-leave-to {
+  opacity: 0;
+}
+
+/* Out of flow for the length of the exit, and back in it on the way in. Each
+   one is put where it was standing: the sidebar against the left edge, the note
+   list after the sidebar and its handle (8px), the rail against the right. */
+.col-leave-active {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--app-sidebar-width);
+  min-width: var(--app-sidebar-width);
+}
+.note-list-col.col-leave-active {
+  left: calc(var(--app-sidebar-width) + 8px);
+  width: var(--app-notelist-width);
+  min-width: var(--app-notelist-width);
+}
+.rail-leave-active {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: var(--app-rail-width);
+  min-width: var(--app-rail-width);
+}
+
+/* ---- The content follows the panel ---------------------------------------
+   The layout collapses in the frame the user acts — unavoidable, and not what
+   they are complaining about; a single reflow is what this app always did. The
+   compensating translate that turns the teleport into a glide is measured in
+   `follow-panel-toggle.ts` and applied from there, and the reason is in that
+   file's header: a keyframe paired with a class cannot survive the toggle being
+   reversed mid-flight, and reversing mid-flight is the case this whole round
+   exists for. What is needed here is only the containing block those absolute
+   panels resolve against — a `position` with no offsets changes no layout. */
+.shell-body,
+.main {
+  position: relative;
 }

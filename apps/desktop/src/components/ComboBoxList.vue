@@ -37,6 +37,10 @@ defineProps<{
   left: number
   top: number
   minWidth: number
+  /** Which way it had to open, so the arrival comes from the field it belongs
+   *  to rather than from the gap on the other side of it. The field measured the
+   *  room, so the field decides; this only wears it. */
+  drop: 'down' | 'up'
 }>()
 
 const emit = defineEmits<{
@@ -78,6 +82,7 @@ defineExpose({ measure, scrollActiveIntoView, contains })
     :id="listId"
     ref="listEl"
     class="combo-popup"
+    :class="{ 'is-above': drop === 'up' }"
     :style="{ left: `${left}px`, top: `${top}px`, minWidth: `${minWidth}px` }"
     role="listbox"
     :aria-label="listLabel"
@@ -117,24 +122,38 @@ defineExpose({ measure, scrollActiveIntoView, contains })
   border-radius: var(--app-radius-lg);
   background: color-mix(in srgb, var(--app-elevated) 96%, var(--app-panel));
   box-shadow: var(--app-shadow-menu);
+  /* The edge the field is on is the edge it grows out of, and which edge that is
+     comes from the `drop` the field measured. On the base rule rather than on
+     the transition classes, which Vue removes a frame into the transition, where
+     the origin would snap to the centre mid-flight. */
+  transform-origin: top center;
+}
+.combo-popup.is-above {
+  transform-origin: bottom center;
 }
 /* The list is a region arriving in place, so it takes the region rung, and it
-   leaves on the next rung down, accelerating, because by then it has been read.
-   A leaving popup is on screen for a frame and must not take the dismissing
-   click. */
+   leaves on that rung's exit fraction, accelerating, because by then it has been
+   read. A leaving popup is on screen for a moment and must not take the
+   dismissing click — hence `pointer-events` below. */
 .combo-popup-enter-active {
   transition: opacity var(--app-motion) var(--app-ease),
               transform var(--app-motion) var(--app-ease);
 }
 .combo-popup-leave-active {
-  transition: opacity var(--app-motion-fast) var(--app-ease-exit),
-              transform var(--app-motion-fast) var(--app-ease-exit);
+  transition: opacity var(--app-motion-exit) var(--app-ease-exit),
+              transform var(--app-motion-exit) var(--app-ease-exit);
   pointer-events: none;
 }
 .combo-popup-enter-from,
 .combo-popup-leave-to {
   opacity: 0;
-  transform: translateY(4px) scale(0.98);
+  /* Downward: it starts a few pixels up, against the field, and travels down into
+     place. Upward the sign flips with the placement. */
+  transform: translateY(calc(var(--app-motion-travel) * -1)) scale(var(--app-motion-scale-pop));
+}
+.combo-popup.is-above.combo-popup-enter-from,
+.combo-popup.is-above.combo-popup-leave-to {
+  transform: translateY(var(--app-motion-travel)) scale(var(--app-motion-scale-pop));
 }
 
 .combo-option {
