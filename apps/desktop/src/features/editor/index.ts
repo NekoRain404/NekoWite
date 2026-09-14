@@ -84,5 +84,11 @@ export { useImageIntake } from './composables/use-image-intake'
 /* ------------------------------- the split ------------------------------- */
 
 /** The two halves' scroll pairing: which line of one sits opposite the other. */
+// The table toolbar's placement and its bookmark: mounted by `ui/TableMenu.vue`,
+// which is the toolbar's entrance, not its engine (the commands stay
+// editor-core's, and it already refuses the header row and the last row/column).
+export { useTableToolbar } from './composables/use-table-toolbar'
+export type { TableToolbar, TableToolbarOptions } from './composables/use-table-toolbar'
+
 export { useSplitScrollSync } from './composables/use-split-scroll-sync'
 export type { SplitScrollSync, SplitScrollSyncOptions } from './composables/use-split-scroll-sync'
