@@ -26,6 +26,59 @@ function unescapeCitations(text: string): string {
     .replace(/\\==/g, '==')
 }
 
+/**
+ * The canonical form every save writes, and the reason for each shape it
+ * respells. task-37 m1 measured these as byte changes nobody asked for; the
+ * point of this list is that they are decided rather than absorbed.
+ *
+ * All of them keep the PARSED document identical — an indented code block, a
+ * setext underline, a tab after a list marker and a two-space hard break are
+ * forms, not content (checked: the position-pruned mdast is equal on both sides
+ * of each respelling). What they change is what a tool reading the RAW vault
+ * sees, which is why each one is argued here instead of inherited:
+ *
+ *   - `fences: true` — an indented code block is written as a fenced one. The
+ *     respelling is this option's doing, not an intention anyone wrote down; the
+ *     decision recorded here is to KEEP it, and the case for keeping it is that
+ *     it is the only edge in the list a reader can tell apart by CONSTRUCT
+ *     rather than by spelling — a tool that looks for a fence (a highlighter, a
+ *     docs pipeline, a grep over the vault) finds code in one file and prose in
+ *     the other. The alternative is not `fences: false`: that respells the
+ *     fenced blocks the editor's own slash-command and paste paths produce as
+ *     indented ones. Preserving each block's own form needs the stringifier to
+ *     remember the source form per node — the pattern `mdx/node.ts` uses — which
+ *     is a feature rather than an option, and is priced in task-63's report
+ *     instead of smuggled in here.
+ *   - `setext` (absent, i.e. false) — a `===`/`---` underline is written as ATX.
+ *     The same heading either way; ATX is what the editor's own heading
+ *     commands write, so one file has one spelling, and setext cannot express
+ *     h3-h6 at all. Left at the default on purpose, not by accident.
+ *   - the hard break — a `break` node is written `one\` + newline, never two
+ *     trailing spaces (mdast-util-to-markdown's handler has no other spelling).
+ *     The direction to want: trailing whitespace is stripped by editors, git
+ *     hooks and formatters, and the break goes with it, while `one\` is the
+ *     spelling this parser reads back byte for byte — so the respelled file is
+ *     the stable one.
+ *   - `bullet: '-'`, and the space after a marker — a tab after `-` or `1.`
+ *     (equivalent to spaces by CommonMark's tab expansion) becomes one space,
+ *     and every bullet marker becomes `-`; `emphasis`/`strong` do the same for
+ *     `_em_` and `__strong__`, which become `*em*` and `**strong**`. All three
+ *     are invisible in the rendered document and unreadable in the source pane.
+ *   - the final newline, and the blank lines after it — the stringifier ends a
+ *     document that has content with exactly one `\n` and holds no node for a
+ *     blank line, so `one` gains a newline and `one\n\n\n` loses two. A body
+ *     with NO content is the one case this must not touch: it is restored, not
+ *     serialized (`document-envelope.ts`). The POSIX final newline
+ *     is the deliberate half (a text file that lacks one is flagged by git and
+ *     by editors); collapsing the blanks is the same mechanism, and the
+ *     alternative is worse than it looks — a file that grew a blank line per
+ *     save is the bug this shape used to be one step away from.
+ *
+ * What is NOT decided here: `normalizeNbsp` (deliberate, its own comment), the
+ * file's line ending and BOM (the envelope, `document-envelope.ts`), and a body
+ * with no content at all — where the whitespace is the file rather than form
+ * around it, and is written back (`document-envelope.ts`, `bodyToWrite`).
+ */
 const processor = unified()
   .use(remarkParse)
   .use(remarkGfm)
