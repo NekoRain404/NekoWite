@@ -156,10 +156,12 @@ describe('createEditor', () => {
    * fails leaves it holding none. `save()` answers with the document it holds or
    * refuses; it can never answer with the one it does not hold.
    *
-   * `DEEP` is the report's ~2 KB trigger (any input the parser refuses does it).
-   * If a future parser change makes it parse, the trigger has to be swapped for
-   * one the parser still refuses — the assertions are about what a refused open
-   * leaves behind, not about this particular input.
+   * `DEEP` is the report's ~2 KB trigger. Since task-53 it is refused by the
+   * open budget (open-budget.ts) before the parser is reached; the parser's own
+   * `RangeError` on this shape is what that budget replaced. The two are the
+   * same refusal as far as these tests are concerned — both throw from the same
+   * place in `open()` — and the assertions are about what a refused open leaves
+   * behind, not about which check refused it or about this particular input.
    */
   describe('a refused open', () => {
     const DEEP = '>'.repeat(2000) + ' deep\n'

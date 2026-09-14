@@ -2,13 +2,14 @@ import type { MilkdownPlugin } from '@milkdown/ctx'
 import type { Node as ProseNode } from '@milkdown/prose/model'
 import type { Parser } from '@milkdown/transformer'
 import { Editor, editorViewCtx, parserCtx, rootCtx } from '@milkdown/core'
-import { EditorState } from '@milkdown/prose/state'
 import { listenerCtx } from '@milkdown/plugin-listener'
 import type { EditorView } from '@milkdown/prose/view'
 import { getMarkdown } from '@milkdown/utils'
 
 import { basicPlugins } from './plugins/basic'
 import { createInlineBreakParser } from './plugins/remark'
+import { assertRenderable } from './open-budget'
+import { openState } from './open-state'
 import { isMdxDocument } from './mdx/document'
 import { readDocumentEnvelope, writeDocumentEnvelope } from './document-envelope'
 import { createDocumentHolder } from './held-document'
@@ -40,7 +41,9 @@ export interface NekoEditor {
    *
    *  Rejects when the document cannot be read, and the editor then holds NO
    *  document: whatever the model still has belongs to the file that was open
-   *  before it, so `save()` refuses until a later `open()` succeeds. */
+   *  before it, so `save()` refuses until a later `open()` succeeds. A document
+   *  beyond what the rendered view can open rejects the same way, without
+   *  parsing it first — see `open-budget.ts`. */
   open(content: string, path?: string | null): Promise<void>
   /** The open document, serialized. Throws `NoDocumentLoadedError` when the
    *  editor is holding none (see `open`). */
@@ -76,32 +79,6 @@ export function createEditor(
   // The document this editor is holding — the model's frontmatter, line ending,
   // BOM and kind — or the fact that it is holding none (held-document.ts).
   const held = createDocumentHolder()
-
-  /**
-   * Load `doc` as a brand-new editor state.
-   *
-   * The load is applied to an EMPTY document first, purely to let ProseMirror
-   * place the caret: `replaceWith` maps the selection to the end of the inserted
-   * content, so the caret ends up where a normal "open a note" leaves it (after
-   * the last character of the first line for a one-line note) without this code
-   * having to reason about node sizes. The resulting state is then rebuilt from
-   * scratch, which is the point: dispatching the replace with
-   * `addToHistory: false` kept the PREVIOUS note's edits on the undo stack, so the
-   * first Cmd+Z after switching notes consumed one of those stale events —
-   * `undoDepth` went from 1 to 0 while the new note did not change, which reads as
-   * "undo is broken". `EditorState.create` starts with an empty history.
-   */
-  const openState = (prev: EditorState, doc: ProseNode): EditorState => {
-    const seed = EditorState.create({ doc: prev.schema.topNodeType.createAndFill() ?? doc, plugins: prev.plugins })
-    const seeded = seed.tr.replaceWith(0, seed.doc.content.size, doc)
-    const selection = seeded.selection
-    return EditorState.create({
-      doc,
-      selection,
-      storedMarks: seed.storedMarks ?? undefined,
-      plugins: prev.plugins,
-    })
-  }
 
   /**
    * The inline-break-repairing parser for a document of kind `mdx`, or the
@@ -178,13 +155,18 @@ export function createEditor(
   return {
     async open(content: string, path?: string | null) {
       await ready
-      // Read off the SOURCE and kept local until the load has succeeded: a parse
-      // that throws must not leave the previous document wearing this file's
-      // frontmatter, line ending and kind (task-37 C1).
-      const envelope = readDocumentEnvelope(content)
-      const asMdx = isMdxDocument(path)
       const created = await editor
       try {
+        // First, before anything reads the document: one the rendered view
+        // cannot open must not freeze the window on the way to being refused
+        // (open-budget.ts). Inside the try on purpose — it is a load that
+        // failed, so it drops whatever was held, exactly like a parse that threw.
+        assertRenderable(content)
+        // Read off the SOURCE and kept local until the load has succeeded: a parse
+        // that throws must not leave the previous document wearing this file's
+        // frontmatter, line ending and kind (task-37 C1).
+        const envelope = readDocumentEnvelope(content)
+        const asMdx = isMdxDocument(path)
         created.action((ctx) => {
           const v = ctx.get(editorViewCtx)
           const node = parserFor(ctx, asMdx)(normalizeNbsp(envelope.body))
