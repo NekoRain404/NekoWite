@@ -63,12 +63,26 @@ const mdHighlight = HighlightStyle.define([
 
 // Every value goes through --app-* tokens: the editor follows data-theme
 // (light/dark) with no reconfiguration.
+//
+// The two that did not — `fontSize: '13.5px'` and `lineHeight: '1.7'` — are
+// gone, because this comment was already claiming they could not exist. The
+// source pane read 13.5px against the rendered pane's 15px (an 11 % gap the user
+// could see and could not name), and both numbers now come from the same tokens
+// as the rendered pane: `features/editor/styles/sourcePane.css` sets
+// `font-size: var(--app-body-size)` on `.cm-editor` and
+// `line-height: var(--app-line-height)` on `.cm-scroller`.
+//
+// In the stylesheet rather than here on purpose: a CSS variable is live, so a
+// body-size change reaches this editor with no reconfiguration and no view
+// rebuild at all — the pane only has to ask CodeMirror to re-measure, which is
+// what `SourcePane` does when the setting changes. The face stays monospace:
+// unifying the SIZE must not unify the family, and the mono face is what the
+// source pane is for.
 const sourceTheme = EditorView.theme({
   '&': {
     height: '100%',
     backgroundColor: 'var(--app-canvas)',
     color: 'var(--app-text)',
-    fontSize: '13.5px',
   },
   '.cm-scroller': {
     height: '100%',
@@ -76,7 +90,6 @@ const sourceTheme = EditorView.theme({
     overflowAnchor: 'none',
     overscrollBehavior: 'contain',
     fontFamily: 'var(--app-mono-font)',
-    lineHeight: '1.7',
   },
   '.cm-content': {
     padding: '24px 24px 48px',

@@ -13,6 +13,23 @@
   background: var(--app-canvas);
 }
 
+/* The body size, from the SAME tokens the rendered pane reads
+   (`editor-content.css`), so the two panes are one setting rather than two
+   numbers kept in step by hand. They live here rather than in the CodeMirror
+   theme so that a change is a CSS variable change: nothing reconfigures, nothing
+   rebuilds, and the pane asks CodeMirror to re-measure (its line heights are
+   cached, and the caret, selection, undo history and scroll position all have to
+   survive the change — a reconfigure would drop them).
+
+   The FAMILY stays monospace (`--app-mono-font`, in the theme above): one size,
+   two faces, which is what the source pane is for. */
+.source-pane :deep(.cm-editor) {
+  font-size: var(--app-body-size);
+}
+.source-pane :deep(.cm-scroller) {
+  line-height: var(--app-line-height);
+}
+
 /* The panel's trailing space, set by `useEditorTailSpace` from the panel's own
    height (80 % of it). Padding on CodeMirror's content box, never a blank line:
    padding is not document content, so nothing about it can be saved, exported
