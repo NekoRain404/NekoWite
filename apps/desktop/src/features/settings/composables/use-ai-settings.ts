@@ -78,8 +78,9 @@ export function useAiSettings(): AiSettingsModel {
    * own: it was drawn around a Base URL that every provider shared and whose
    * stored default is a localhost address only a local model server can mean,
    * so showing it under `anthropic` would have said the Anthropic key goes
-   * there. The store keeps that field per provider now (see
-   * `stores/settings.ts`), which is what makes the field honest everywhere.
+   * there. The store keeps that field per provider now (the map and its legacy
+   * scalar are in `stores/provider-urls.ts`, wired by `stores/settings-ai.ts`),
+   * which is what makes the field honest everywhere.
    */
   const showBaseUrl = computed(() => true)
 

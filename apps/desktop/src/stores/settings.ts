@@ -25,7 +25,8 @@
  * compatibility-surface rule: an import of `stores/settings` keeps resolving,
  * unchanged. The one thing the star exports add is the four `createXSettings`
  * factories, which are internals — calling one outside the store gives a second
- * set of refs writing the same keys.
+ * set of refs writing the same keys. `stores/settings-boundary.test.ts` is what
+ * holds that shut: it fails if any other file in the tree names one.
  */
 
 import { defineStore } from 'pinia'
