@@ -8,6 +8,7 @@ import { selectedRect } from '@milkdown/prose/tables'
 import { basicPlugins, createEditor } from '../editor'
 import {
   addColumnAfter,
+  addColumnBefore,
   addRowAfter,
   deleteColumnAtCursor,
   deleteRowAtCursor,
@@ -81,6 +82,41 @@ function cellType(view: EditorView, row: number, col: number): string | null {
   return view.state.doc.nodeAt(cellPos)?.type.name ?? null
 }
 
+
+/**
+ * Open a real Markdown table, the way a note reaches the editor.
+ *
+ * The `makeTable` harness above builds cells from the schema instead, and
+ * `createAndFill()` takes the schema's `alignment` DEFAULT (`'left'`, not
+ * null) — so every column of a schema-built table already carries an explicit
+ * left marker and there is no unmarked column left to tell a stray write
+ * apart from. A table parsed from Markdown is what the user has.
+ */
+async function openTable(md: string): Promise<Harness> {
+  const el = document.createElement('div')
+  document.body.appendChild(el)
+  const editor = createEditor(el, { plugins: basicPlugins })
+  await editor.open(md)
+  return { editor, view: editor.getView() }
+}
+
+/**
+ * The saved delimiter row as one colon shape per column: `:-` left, `-:`
+ * right, `:-:` center, `-` neither. Runs of hyphens collapse to one, because
+ * how MANY hyphens a column gets is remark-stringify's re-padding and belongs
+ * to `serialize-fuzz.test.ts`; what this file is about is the colons — which
+ * column got them, and which side of the hyphens they sit on.
+ */
+async function delimiterColons(editor: Harness['editor']): Promise<string[]> {
+  return (await editor.save())
+    .trim()
+    .split('\n')[1]
+    .split('|')
+    .map((cell) => cell.trim())
+    .filter((cell) => cell !== '')
+    .map((cell) => cell.replace(/-+/g, '-'))
+}
+
 describe('table structural ops', () => {
   it('addRowAfter grows the table by one data row, single undo', async () => {
     const { editor, view } = await makeTable(3, 3)
@@ -138,6 +174,40 @@ describe('table structural ops', () => {
     editor.destroy()
   })
 
+  it('addColumnAfter and addColumnBefore leave the new column unaligned', async () => {
+    // `addColumn` fills the new column through `createAndFill()` (the schema's
+    // `'left'` default) or copies a neighbouring cell's attrs, so a column added
+    // to the right of `| - | - | - |` came out `:---` while the columns either
+    // side stayed `-`. A column the author has not marked has to look like one.
+    // Both ends as well as the middle: at a table edge `addColumn` takes its
+    // OTHER branch (`refColumn == null`, a bare `createAndFill()`), and it is
+    // that branch the reported `:-----` came out of.
+    for (const [add, col, expected] of [
+      [addColumnAfter, 0, ['-', '-', '-', '-']],
+      [addColumnAfter, 2, ['-', '-', '-', '-']],
+      [addColumnBefore, 0, ['-', '-', '-', '-']],
+      [addColumnBefore, 2, ['-', '-', '-', '-']],
+    ] as const) {
+      const { editor, view } = await openTable('| A | B | C |\n| - | - | - |\n| 1 | 2 | 3 |\n')
+      placeCursor(view, 1, col)
+      expect(add(view)).toBe(true)
+      expect(await delimiterColons(editor)).toEqual(expected)
+      editor.destroy()
+    }
+  })
+
+  it('an added column inherits no alignment from its neighbour either', async () => {
+    // The middle-insert path copies a reference cell's attrs, so this is the
+    // other half: a right-aligned neighbour must not donate its alignment to a
+    // column the author has not marked.
+    const { editor, view } = await openTable('| A | B | C |\n| --- | ---: | :-: |\n| 1 | 2 | 3 |\n')
+    placeCursor(view, 1, 1)
+
+    expect(addColumnAfter(view)).toBe(true)
+    expect(await delimiterColons(editor)).toEqual(['-', '-:', '-', ':-:'])
+    editor.destroy()
+  })
+
   it('deleteColumnAtCursor removes a column but never the last', async () => {
     const { editor, view } = await makeTable(3, 3)
     placeCursor(view, 1, 1)
@@ -172,39 +242,6 @@ describe('table structural ops', () => {
     expect(await editor.save()).toContain('|')
     editor.destroy()
   })
-
-  /**
-   * Open a real Markdown table, the way a note reaches the editor.
-   *
-   * The `makeTable` harness above builds cells from the schema instead, and
-   * `createAndFill()` takes the schema's `alignment` DEFAULT (`'left'`, not
-   * null) — so every column of a schema-built table already carries an explicit
-   * left marker and there is no unmarked column left to tell a stray write
-   * apart from. A table parsed from Markdown is what the user has.
-   */
-  async function openTable(md: string): Promise<Harness> {
-    const el = document.createElement('div')
-    document.body.appendChild(el)
-    const editor = createEditor(el, { plugins: basicPlugins })
-    await editor.open(md)
-    return { editor, view: editor.getView() }
-  }
-
-  /**
-   * The saved delimiter row as one colon shape per column: `:-` left, `-:`
-   * right, `:-:` center, `-` neither. Runs of hyphens collapse to one, because
-   * how MANY hyphens a column gets is remark-stringify's re-padding and belongs
-   * to `serialize-fuzz.test.ts`; what this file is about is the colons — which
-   * column got them, and which side of the hyphens they sit on.
-   */
-  const delimiterColons = async (editor: Harness['editor']): Promise<string[]> =>
-    (await editor.save())
-      .trim()
-      .split('\n')[1]
-      .split('|')
-      .map((cell) => cell.trim())
-      .filter((cell) => cell !== '')
-      .map((cell) => cell.replace(/-+/g, '-'))
 
   /**
    * Which COLUMN the alignment landed on, and which way its colons lean.

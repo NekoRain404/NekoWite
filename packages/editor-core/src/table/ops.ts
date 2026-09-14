@@ -11,6 +11,7 @@
 
 import type { EditorView } from '@milkdown/prose/view'
 import type { Node } from '@milkdown/prose/model'
+import type { Transaction } from '@milkdown/prose/state'
 import {
   addColumnAfter as pmAddColumnAfter,
   addColumnBefore as pmAddColumnBefore,
@@ -21,6 +22,7 @@ import {
   findTable,
   isInTable,
   selectedRect,
+  TableMap,
 } from '@milkdown/prose/tables'
 
 /** The number of columns in the table under the selection (0 if none). */
@@ -60,16 +62,71 @@ export function deleteRowAtCursor(view: EditorView): boolean {
   return pmDeleteRow(view.state, view.dispatch)
 }
 
-/** Add a column to the right of the current column. Single undo. */
-export function addColumnAfter(view: EditorView): boolean {
-  if (!isInTable(view.state)) return false
-  return pmAddColumnAfter(view.state, view.dispatch)
+/**
+ * Clear the alignment on every cell of one column of the table in `tr`.
+ *
+ * `setNodeMarkup` changes attrs and not sizes, so the positions `TableMap`
+ * gives for `table` stay valid for every row of the loop.
+ */
+function clearColumnAlignment(tr: Transaction, table: Node, tableStart: number, col: number): void {
+  const map = TableMap.get(table)
+  for (let row = 0; row < map.height; row++) {
+    const cellPos = tableStart + map.positionAt(row, col, table)
+    const cell = tr.doc.nodeAt(cellPos)
+    if (!cell) continue
+    if (cell.type.name !== 'table_cell' && cell.type.name !== 'table_header') continue
+    if (cell.attrs.alignment === null) continue
+    tr.setNodeMarkup(cellPos, undefined, { ...cell.attrs, alignment: null })
+  }
 }
 
-/** Add a column to the left of the current column. Single undo. */
-export function addColumnBefore(view: EditorView): boolean {
+/**
+ * Add a column beside the current one, carrying no alignment.
+ *
+ * `addColumn` fills the new column through `createAndFill()` — or copies the
+ * attrs of a neighbouring cell — so the column arrived either explicitly
+ * left-aligned (the schema's default, where a parsed table holds `null`) or
+ * wearing a neighbour's alignment. The delimiter row is derived from these
+ * attrs, so a column added to the right of `| - | - | - |` was written
+ * `:---` while the columns either side stayed `-`: syntax in the user's file
+ * for an alignment nobody chose, and an inconsistency that reads in a diff as
+ * though the author had meant it. A new column starts unmarked, like a new
+ * table (`createTableNode`), and the author marks it if they want to.
+ *
+ * `addColumn`'s transaction is captured rather than dispatched so the clearing
+ * lands in the SAME one: adding a column stays a single undo step, which is
+ * this module's contract for every structural operation.
+ */
+function addColumnWithNoAlignment(view: EditorView, side: 'before' | 'after'): boolean {
   if (!isInTable(view.state)) return false
-  return pmAddColumnBefore(view.state, view.dispatch)
+  const rect = selectedRect(view.state)
+  const command = side === 'after' ? pmAddColumnAfter : pmAddColumnBefore
+  let captured: Transaction | null = null
+  command(view.state, (tr) => {
+    captured = tr
+  })
+  if (!captured) return false
+  const tr: Transaction = captured
+  const found = findTable(tr.doc.resolve(tr.selection.from))
+  if (!found) return false
+  // The new column's index is the edge the command inserted at, read off the
+  // pre-insert rect the command itself used: `addColumnAfter` inserts at
+  // `rect.right`, `addColumnBefore` at `rect.left`.
+  const col = side === 'after' ? rect.right : rect.left
+  if (col >= TableMap.get(found.node).width) return false
+  clearColumnAlignment(tr, found.node, found.start, col)
+  view.dispatch(tr.scrollIntoView())
+  return true
+}
+
+/** Add a column to the right of the current column, unaligned. Single undo. */
+export function addColumnAfter(view: EditorView): boolean {
+  return addColumnWithNoAlignment(view, 'after')
+}
+
+/** Add a column to the left of the current column, unaligned. Single undo. */
+export function addColumnBefore(view: EditorView): boolean {
+  return addColumnWithNoAlignment(view, 'before')
 }
 
 /** Delete the current column (refuses to delete the only column). Single undo. */
