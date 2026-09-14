@@ -1,0 +1,259 @@
+/* The other half of the shared component layer: the surfaces, the marks on them,
+   and the editor-core dialog passthroughs.
+
+   Split out of `components.css`, which had reached 493 lines against §13.1's
+   500-line hard stop. What separates the halves is not rule size, it is whether
+   the user OPERATES the thing: everything in `components.css` carries a hover,
+   active or focus state of its own and nothing here does. A panel, a chip, a
+   save dot and a dialog are looked at, and at most animated as they arrive —
+   the controls inside them (`.btn` and its variants) are declared in
+   `components.css`, which loads first.
+
+   The two are one layer to every guard that reads them, and that is deliberate:
+   `components.test.ts` read a single path until this split, and several of its
+   assertions are *negative* — "no bare hex", "no per-theme `.dialog` override"
+   — which pass while checking nothing when run against the half that no longer
+   holds the selector. So both sheets are named in that file's `SHEETS`,
+   `motion.test.ts`'s `MOTION_SURFACE` lists both, and the file order is checked
+   against main.ts's imports. */
+/* ============ Panel ============ */
+.panel {
+  background: var(--app-elevated);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+}
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--app-border);
+}
+.panel-title {
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  color: var(--app-text);
+}
+
+/* ============ Chip / Tag ============ */
+.chip,
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 550;
+  letter-spacing: -0.012em;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--app-muted);
+  background: color-mix(in srgb, var(--app-panel) 55%, var(--app-canvas));
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+}
+
+/* ============ Dialog ============ */
+/* Z-index scale (low → high):
+     50    (unused, legacy)
+    100    .settings-panel  (fixed right drawer)
+   1000   (unused, legacy — math overlay previously)
+   9999   .float-toolbar    (transient)
+  10000   modal overlays (.dialog-overlay, .math-overlay)
+          — cover the float toolbar and the settings drawer.
+  11000   .toast-stack      (transient)
+          — the top-most layer, above an open modal.
+   The toast is deliberately the only thing allowed above a modal: it reports
+   failures, including failures of the dialog that is open, and the modal
+   overlays blur what is behind them — so a toast underneath was unreadable.
+   Anything else that needs to be above a modal has to be a modal itself. */
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--app-canvas) 55%, transparent);
+  z-index: 10000;
+}
+/* Every dialog surface — the shared class, the editor-core passthroughs
+   (.math-dialog/.table-dialog) and anything added later — takes the same
+   radius rung and the same elevation token. A dialog that restates either one
+   locally is a second visual language for the same object: this class used to
+   carry an 8px corner and a hand-written shadow (plus a [data-theme=dark]
+   override of it), which made a dialog built on .dialog read a step cheaper
+   than the prompts that had already moved to "dialog 14". The elevation token
+   already resolves per theme, palette and contrast level, so there is nothing
+   left for a per-theme override to do. */
+.dialog {
+  background: var(--app-elevated);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-xl);
+  box-shadow: var(--app-shadow-dialog);
+  transition: background var(--app-motion-fast) var(--app-ease),
+              box-shadow var(--app-motion-fast) var(--app-ease);
+}
+/* Action-row convention for EVERY dialog in the app — the AI/plugin prompts,
+   RenameDialog, ConflictDialog and the editor-core dialogs all read the same
+   way, left to right:
+       [destructive]   [dismissive / neutral]   [affirmative]
+   The rightmost slot is the one a hand heads for without reading the labels —
+   muscle memory from every other confirm button on the platform. So the
+   affirmative action owns it, and a destructive action never may: it is
+   styled .btn-danger and sits leftmost, furthest from that slot. The dismissive
+   control (Cancel / Deny / Later) is also what Escape means, so the safest
+   answer is the one the keyboard already reaches.
+   A new dialog inherits this by putting its buttons in that DOM order and
+   letting justify-content: flex-end place them. */
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ============ Save dot (three-state) ============ */
+.save-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  transition: opacity var(--app-motion-fast) var(--app-ease),
+              background var(--app-motion-fast) var(--app-ease);
+}
+.save-dot[data-state="saved"] {
+  background: var(--app-muted);
+  opacity: 0;
+}
+.save-dot[data-state="saved"].is-shown {
+  opacity: 1;
+}
+.save-dot[data-state="dirty"] {
+  background: var(--app-danger);
+}
+.save-dot[data-state="saving"] {
+  background: var(--app-accent);
+  /* Was --app-motion-fast: a 140ms cycle is ~7Hz, which reads as a strobe
+     rather than a status. It breathes now — and on the attention curve rather
+     than the arriving one. A cycle is symmetric by definition, so easing into
+     its resting look with a curve whose whole job is to *arrive* gave it a fast
+     half and a slow half, which is what a lopsided breath looks like. */
+  animation: save-dot-pulse var(--app-motion-pulse) var(--app-ease-attention) infinite;
+}
+@keyframes save-dot-pulse {
+  0%   { transform: scale(1);    opacity: 1;    }
+  50%  { transform: scale(0.82); opacity: 0.45; }
+  100% { transform: scale(1);    opacity: 1;    }
+}
+
+/* ============ Math dialog passthrough ============ */
+/* editor-core renders .math-overlay/.math-dialog (class names kept for its tests);
+   align their surface to the shared dialog variants — and their *arrival* too.
+   These are the same object as .dialog, so a surface that fades and scales in
+   while these two cut in would read as a bug rather than as a shortcut.
+   They cannot wear `.dialog` itself: editor-core writes these class names and
+   its own tests read them. Neither can they take the shared choreography, which
+   is keyed on `.dialog-actions` — theirs are named separately — so the three
+   rules are restated against their own names, here and nowhere else.
+   Safe to scale because these centre with flexbox rather than a `transform`,
+   which is the trap the shared arrival documents. */
+.math-overlay {
+  background: color-mix(in srgb, var(--app-canvas) 55%, transparent);
+  animation: overlay-in var(--app-motion-slow) var(--app-ease);
+}
+.math-dialog {
+  background: var(--app-elevated);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-xl);
+  box-shadow: var(--app-shadow-dialog);
+  animation: surface-in var(--app-motion-slow) var(--app-ease-surface);
+}
+.math-dialog > .math-actions {
+  animation: dialog-row-in var(--app-motion) var(--app-ease) backwards;
+  animation-delay: calc(var(--app-motion-stagger) * 2);
+}
+
+/* ============ Table insert dialog passthrough ============ */
+/* editor-core renders .table-overlay/.table-dialog (inserting a custom rows×cols
+   GFM table); align their surface to the shared dialog variants. */
+.table-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--app-canvas) 55%, transparent);
+  backdrop-filter: blur(2px);
+  /* Same object, same arrival — see the note on the math passthrough above. */
+  animation: overlay-in var(--app-motion-slow) var(--app-ease);
+}
+.table-dialog {
+  min-width: 260px;
+  padding: 16px 18px;
+  background: var(--app-elevated);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-xl);
+  box-shadow: var(--app-shadow-dialog);
+  animation: surface-in var(--app-motion-slow) var(--app-ease-surface);
+}
+.table-dialog > .table-dialog-actions {
+  animation: dialog-row-in var(--app-motion) var(--app-ease) backwards;
+  animation-delay: calc(var(--app-motion-stagger) * 2);
+}
+.table-dialog-title {
+  margin-bottom: 12px;
+  font-weight: 650;
+  color: var(--app-text);
+}
+.table-dialog-grid {
+  display: flex;
+  gap: 16px;
+}
+.table-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--app-muted);
+}
+.table-dialog-stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.table-dialog-stepper button {
+  width: 26px;
+  height: 26px;
+  border: 1px solid color-mix(in srgb, var(--app-border) 80%, transparent);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-panel);
+  color: var(--app-text);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.table-dialog-stepper span {
+  min-width: 32px;
+  text-align: center;
+  color: var(--app-text);
+  font-variant-numeric: tabular-nums;
+}
+.table-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.table-dialog-actions button {
+  padding: 6px 14px;
+  border: 1px solid color-mix(in srgb, var(--app-border) 80%, transparent);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-panel);
+  color: var(--app-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.table-dialog-actions button.primary {
+  background: var(--app-accent);
+  border-color: var(--app-accent);
+  color: var(--app-accent-contrast);
+}
