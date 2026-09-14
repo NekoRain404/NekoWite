@@ -12,6 +12,14 @@ export * from './link'
 export * from './plugins/basic'
 export * from './math'
 export * from './mdx'
+// A refusal the host has to explain (`open-budget.ts`): the rendered view
+// declines the document, the source pane opens it, and the app's own wording
+// for a parse failure does not describe that.
+export {
+  DocumentTooComplexToRenderError,
+  MAX_CONTAINER_WEIGHT,
+  MAX_RENDERABLE_CHARACTERS,
+} from './open-budget'
 export * from './registry'
 export * from './slugify'
 export * from './suggest'
