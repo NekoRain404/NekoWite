@@ -5,11 +5,12 @@
  * from, so these cases pin what the panel shows: which notes survive the filter
  * and the query, in what order, and the count the meta row reports. They are the
  * same rules the store's own `visibleNotes` was built on — both delegate to the
- * shared `services/noteMeta` primitives — which is what makes the panel's move
+ * shared `note-query` primitives — which is what makes the panel's move
  * to its own projection behaviour-preserving.
  */
 import { describe, expect, it } from 'vitest'
-import type { FilterOptions, NoteSummary } from '../../../services/note-meta'
+import type { FilterOptions } from './note-query'
+import type { NoteSummary } from './note-summary'
 import { count, filter, sort } from './note-list-query'
 
 function note(path: string, over: Partial<NoteSummary> = {}): NoteSummary {

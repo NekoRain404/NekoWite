@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import type { LibraryCounts, LibraryFilter, NoteSummary, SortBy } from '../services/note-meta'
-import type { IndexState } from '../services/search-index'
+import type { LibraryCounts, LibraryFilter, NoteSummary, SortBy } from '../features/notes'
+import type { IndexState } from '../features/search'
 import { queryCounts, queryTagCounts, queryVisibleNotes } from '../features/vault/services/library-queries'
 import { persistence } from '../services/persistence'
 

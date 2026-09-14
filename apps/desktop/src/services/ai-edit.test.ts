@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { buildEditPrompt, rewriteSelection } from './ai-edit'
 import type { AiEditDeps, EditView } from './ai-edit'
-import type { ChatStreamHandlers } from './ai'
+import type { ChatStreamHandlers } from '../features/ai'
 
 function fakeView(): EditView & {
   dispatch: ReturnType<typeof vi.fn>

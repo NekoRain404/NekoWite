@@ -20,8 +20,8 @@ import {
   resolveLinkTarget,
   serializeFrontmatter,
   splitFrontmatterRaw,
-} from './note-meta'
-import type { NoteSummary } from './note-meta'
+} from '../features/notes'
+import type { NoteSummary } from '../features/notes'
 
 function note(overrides: Partial<NoteSummary> & { path: string }): NoteSummary {
   return {

@@ -1,4 +1,4 @@
-import { parseFrontmatterForPanel, replaceFrontmatter, splitFrontmatterRaw } from './note-meta'
+import { parseFrontmatterForPanel, replaceFrontmatter, splitFrontmatterRaw } from '../features/notes'
 
 /** Normalize a single tag: strip surrounding whitespace and leading `#`s, then
  * collapse inner runs of whitespace. Empty results are dropped by callers. */

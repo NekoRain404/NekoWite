@@ -22,8 +22,9 @@ import type { ListView, PanelMode } from '../../../stores/document-list'
 import { useFileTreeStore } from '../../../stores/file-tree'
 import { useTabsStore } from '../../../stores/tabs'
 import { useVaultSessionStore } from '../../../stores/vault-session'
-import { dirRelativeToVault } from '../../../services/note-meta'
-import type { MdLink, NoteSummary, SortBy } from '../../../services/note-meta'
+import { dirRelativeToVault } from '../services/note-paths'
+import type { MdLink, NoteSummary } from '../services/note-summary'
+import type { SortBy } from '../services/note-query'
 import { parseOutline, type OutlineItem } from '../../../services/outline'
 import { baseName } from '../../../services/paths'
 import {
@@ -32,7 +33,7 @@ import {
   type ContentMatch,
   type ContentSearchCandidate,
 } from '../../../services/content-search'
-import type { IndexState } from '../../../services/search-index'
+import type { IndexState } from '../../search'
 import { inlinksOf, outlinksOf } from '../../vault'
 import { t } from '../../../i18n'
 import { filter, sort } from '../services/note-list-query'

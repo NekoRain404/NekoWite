@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryEventAdapter, createMemoryFsGateway } from './memory'
 import type { FsChangeEvent } from './contracts'
 import { getSharedGateways, resetSharedGateways } from '../runtime/gateway-runtime'
-import { startChatCompletion } from '../../services/ai'
+import { startChatCompletion } from '../../features/ai'
 
 describe('memoryFsGateway', () => {
   it('reads and writes to an in-memory map', async () => {

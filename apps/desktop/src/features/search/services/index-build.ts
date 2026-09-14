@@ -8,7 +8,12 @@
  * storage: the caller loads and saves around a build.
  */
 
-import { parseNoteMeta } from '../../../services/note-meta'
+// Cycle-blocked deep import (§13.11): `features/notes` pulls in NoteListPanel and
+// useNoteList, and the path from there back here runs through the vault session
+// and this feature's own entry. `note-summary` reaches nothing but i18n and the
+// path helpers, so reading it directly is the one edge that does not close the
+// loop.
+import { parseNoteMeta } from '../../notes/services/note-summary'
 import type { FileStat } from '../../../platform/gateways/contracts'
 import { INDEX_VERSION, type IndexedDoc, type StoredIndex } from './index-model'
 

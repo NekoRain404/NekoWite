@@ -18,13 +18,13 @@ import {
   loadIndex,
   saveIndex,
   type AsyncIndexStorage,
-} from '../../../services/search-index'
+} from '../../search'
 import { vaultFileIndex } from '../../../services/vault-files'
 import {
   createVaultIndexCoordinator,
   type VaultIndexCoordinator,
   type VaultIndexCoordinatorCallbacks,
-} from './vault-index-coordinator'
+} from './vault-index'
 
 /** True when running under Tauri (the fs-backed `.nekowite/index/` store is then
  *  the authoritative shard source). In the browser demo / memory tests the shard

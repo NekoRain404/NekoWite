@@ -24,7 +24,12 @@
 
 import type { ContentCache } from '../../../services/content-cache'
 import type { FileStat } from '../../../platform/gateways/contracts'
-import { parseNoteMeta, relPathOf, type NoteSummary } from '../../../services/note-meta'
+// Cycle-blocked deep imports (§13.11): `features/notes` pulls in useNoteList,
+// which reaches back here through the vault session and the index coordinator.
+// The summary and path modules reach nothing but i18n and the path helpers, so
+// reading them directly is the one edge that does not close the loop.
+import { parseNoteMeta, type NoteSummary } from '../../notes/services/note-summary'
+import { relPathOf } from '../../notes/services/note-paths'
 import { stripVaultPrefix } from '../../../services/paths'
 
 /** Maximum number of note reads running concurrently during a full index. */

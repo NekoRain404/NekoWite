@@ -12,7 +12,8 @@ import SelectMenu, { type SelectOption } from '../../../components/SelectMenu.vu
 import { t } from '../../../i18n'
 // Type-only, so the template's `as UiFontId` casts are checked against the same
 // union the composable's setters take (§13.9); nothing is imported at runtime.
-import type { ContentDirection, EditorFontId, MonoFontId, UiFontId } from '../../../stores/appearance'
+import type { ContentDirection } from '../../../stores/appearance-schema'
+import type { EditorFontId, MonoFontId, UiFontId } from '../../../stores/appearance-fonts'
 import { useAppearanceSettings } from '../composables/use-appearance-settings'
 
 const {

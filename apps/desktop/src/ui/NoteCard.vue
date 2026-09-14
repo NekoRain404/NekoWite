@@ -17,8 +17,12 @@ export interface NoteCardContextTarget {
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Code2, FileText, Star } from 'lucide-vue-next'
-import { formatRelativeTime } from '../services/note-meta'
-import type { NoteSummary } from '../services/note-meta'
+// Cycle-blocked deep imports (§13.11): `features/notes` pulls in NoteListPanel,
+// which reaches back here through NoteListContent. The service modules reach
+// nothing but i18n and the path helpers, so reading them directly is the one
+// edge that does not close the loop.
+import { formatRelativeTime } from '../features/notes/services/relative-time'
+import type { NoteSummary } from '../features/notes/services/note-summary'
 import { t } from '../i18n'
 
 const props = defineProps<{

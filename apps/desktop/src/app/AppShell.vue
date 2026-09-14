@@ -29,8 +29,8 @@ import {
   SIDEBAR_WIDTH_DEFAULT,
   SIDEBAR_WIDTH_MAX,
   SIDEBAR_WIDTH_MIN,
-  useAppearanceStore,
-} from '../stores/appearance'
+} from '../stores/appearance-schema'
+import { useAppearanceStore } from '../stores/appearance'
 import type { PluginIntegrityRequest, PluginPermissionRequest } from '../services/plugins'
 import { getLocale, t } from '../i18n'
 

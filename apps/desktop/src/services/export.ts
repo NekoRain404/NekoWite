@@ -2,7 +2,11 @@ import type { ExportImageTarget, ExportRef, RenderDocumentOptions } from '@nekow
 import { fsService } from '../platform/gateways/fs'
 import { buildComponentRenderers } from './export-renderers'
 import { createImageSrcResolver } from './attachments'
-import { splitFrontmatterRaw } from './note-meta'
+// Cycle-blocked deep import (§13.11): `features/notes` pulls in useNoteActions,
+// which reaches back here through useNoteExport. The scan module reaches nothing
+// but i18n and the path helpers, so reading it directly is the one edge that
+// does not close the loop.
+import { splitFrontmatterRaw } from '../features/notes/services/frontmatter-scan'
 import { useTabsStore } from '../stores/tabs'
 import { useSettingsStore } from '../stores/settings'
 import type { ExportPdfPageSize, ExportPdfOrientation } from '../stores/settings'

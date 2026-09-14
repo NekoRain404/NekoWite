@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import type { NoteSummary } from '../services/note-meta'
+import type { NoteSummary } from '../features/notes'
 import { useDocumentListStore } from './document-list'
 
 /**

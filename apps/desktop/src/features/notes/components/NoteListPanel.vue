@@ -15,7 +15,7 @@
  */
 import AttachmentsPanel from '../../../ui/AttachmentsPanel.vue'
 import ContextMenu from '../../../ui/ContextMenu.vue'
-import GraphPanel from '../../../ui/GraphPanel.vue'
+import { GraphPanel } from '../../graph'
 import { FileTree } from '../../vault'
 import LinkList from './LinkList.vue'
 import NoteListContent from './NoteListContent.vue'

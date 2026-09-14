@@ -14,7 +14,7 @@
  * budget the user did not set for the app.
  */
 
-import { startChatCompletion } from './ai'
+import { startChatCompletion } from '../features/ai'
 import { useSettingsStore } from '../stores/settings'
 import { useAiPermissionStore } from '../stores/ai-permission'
 import { recordAiAudit } from './ai-audit'

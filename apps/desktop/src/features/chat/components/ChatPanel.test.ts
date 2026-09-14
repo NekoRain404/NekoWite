@@ -5,8 +5,9 @@ import ChatPanel from './ChatPanel.vue'
 import { onNotify } from '../../../services/errors'
 import { formatAttachmentBytes, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE } from '../../../services/attachments'
 import { t } from '../../../i18n'
-import { aiService, startChatCompletion, type ChatStreamHandlers } from '../../../services/ai'
-import { CHAT_SESSIONS_KEY, useChatSessionStore } from '../../../stores/chat-session'
+import { aiService, startChatCompletion, type ChatStreamHandlers } from '../../ai'
+import { useChatSessionStore } from '../../../stores/chat-session'
+import { CHAT_SESSIONS_KEY } from '../services/chat-session-storage'
 import { useTabsStore } from '../../../stores/tabs'
 import { useSettingsStore } from '../../../stores/settings'
 import { persistence } from '../../../services/persistence'
@@ -21,10 +22,10 @@ vi.mock('../../../platform/gateways/fs', () => ({
   fsService: { read: readMock },
 }))
 
-vi.mock('../../../services/ai', async (importOriginal) => ({
+vi.mock('../../ai', async (importOriginal) => ({
   // The panel also renders the token count, so the real helper is kept: a
   // stub here would make the display path untested.
-  ...(await importOriginal<typeof import('../../../services/ai')>()),
+  ...(await importOriginal<typeof import('../../ai')>()),
   startChatCompletion: vi.fn(),
   aiService: { cancelStream: vi.fn() },
 }))

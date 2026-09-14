@@ -1,5 +1,5 @@
 import { onBeforeUnmount, onMounted } from 'vue'
-import { aiService } from '../services/ai'
+import { aiService } from '../features/ai'
 import { editorSessionManager } from '../features/editor'
 import { isComposingKey } from '../services/key-guard'
 import { isAiConfigured } from '../services/ai-readiness'

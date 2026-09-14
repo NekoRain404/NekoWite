@@ -19,7 +19,7 @@
 
 import type { FileStat } from '../../../platform/gateways/contracts'
 import type { IndexLookupResult } from '../../../services/content-search'
-import type { IndexState, StoredIndex } from '../../../services/search-index'
+import type { IndexState, StoredIndex } from '../../search'
 import { createIndexPersistence, type IndexPersistence } from './index-persistence'
 import type { NoteStat } from './vault-note-index'
 
