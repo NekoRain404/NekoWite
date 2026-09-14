@@ -54,11 +54,20 @@ export function setSuggestion(text: string | null, view: EditorView): void {
   view.dispatch(view.state.tr.setMeta(SUGGESTION_META, text))
 }
 
+/**
+ * Accept the suggestion by inserting it where the ghost was drawn.
+ *
+ * The preview is an INSERTION mark at the selection's head (`makeGhostWidget`
+ * above), so the accepted text has to land there. Replacing the selection
+ * instead deleted the selected text under a preview that read as "this will
+ * appear here", and the two only disagreed when a selection was active — which
+ * is exactly when the user is reading the ghost to decide.
+ */
 export function acceptSuggestion(view: EditorView): string | null {
   const text = SUGGESTION_KEY.getState(view.state)?.text ?? null
   if (!text) return null
-  const { from, to } = view.state.selection
-  view.dispatch(view.state.tr.insertText(text, from, to).setMeta(SUGGESTION_META, null))
+  const { head } = view.state.selection
+  view.dispatch(view.state.tr.insertText(text, head, head).setMeta(SUGGESTION_META, null))
   return text
 }
 

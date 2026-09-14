@@ -1,5 +1,7 @@
 import { $remark } from '@milkdown/utils'
 
+import { escapedMatchIndexes } from '../source-offsets'
+
 interface MdNode {
   type: string
   value?: string
@@ -14,38 +16,10 @@ const CITE_RE = /(?<!\\)\[@([^\]]+)\]/g
 // remark-parse consumes `\[` escapes before citeRemark sees the tree, so the
 // mdast value no longer carries the backslash. To tell an escaped `\[@foo]`
 // from a real `[@foo]` we consult the raw markdown (the `file` argument) and
-// map each text node's value index back to a source offset.
+// map each text node's value index back to a source offset — the mapping, and
+// why it has to cope with more than escapes, lives in `source-offsets.ts`.
 function escapedCiteIndexes(source: string, node: MdNode): Set<number> {
-  const escaped = new Set<number>()
-  const pos = node.position
-  const value = node.value
-  if (!pos || typeof value !== 'string' || source.length === 0) return escaped
-  const start = pos.start.offset
-  const end = pos.end.offset
-  if (typeof start !== 'number' || typeof end !== 'number' || start < 0 || end > source.length) {
-    return escaped
-  }
-  const valueToSource = new Map<number, number>()
-  let vi = 0
-  let si = start
-  while (si < end && vi < value.length) {
-    const ch = source[si]
-    if (ch === '\\' && si + 1 < end) {
-      valueToSource.set(vi, si)
-      si += 2
-    } else {
-      valueToSource.set(vi, si)
-      si += 1
-    }
-    vi++
-  }
-  CITE_RE.lastIndex = 0
-  let m: RegExpExecArray | null
-  while ((m = CITE_RE.exec(value)) !== null) {
-    const so = valueToSource.get(m.index)
-    if (so !== undefined && source[so] === '\\') escaped.add(m.index)
-  }
-  return escaped
+  return escapedMatchIndexes(CITE_RE, source, node)
 }
 
 function splitCite(value: string, escaped: Set<number>): MdNode[] {

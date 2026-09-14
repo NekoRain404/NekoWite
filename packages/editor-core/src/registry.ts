@@ -10,9 +10,19 @@ export interface RegistrationBatch {
 
 export class DuplicateRegistrationError extends Error {}
 
+/**
+ * Who registered a toolbar item. `''` is the host's own namespace — the
+ * editor's built-in features, which own their ids for the life of the process.
+ * A plugin passes its plugin id, so its button is keyed (owner, id) rather than
+ * by id alone.
+ */
+type ToolbarOwner = string
+
+const HOST: ToolbarOwner = ''
+
 const commands = new Map<string, EditorCommand>()
 const components = new Map<string, Component>()
-const toolbar: ToolbarItem[] = []
+const toolbar: Array<{ owner: ToolbarOwner; item: ToolbarItem }> = []
 
 export function registerCommand(cmd: EditorCommand): void {
   if (commands.has(cmd.id)) throw new DuplicateRegistrationError(`command ${cmd.id} already registered`)
@@ -31,13 +41,33 @@ export function registerComponent(name: string, component: Component): void {
 export function getComponent(name: string): Component | undefined {
   return components.get(name)
 }
-export function registerToolbar(item: ToolbarItem): void {
-  const index = toolbar.findIndex((entry) => entry.id === item.id)
-  if (index >= 0) toolbar[index] = item
-  else toolbar.push(item)
+/**
+ * Register a toolbar item for `owner` (a plugin id; omitted for the editor's
+ * own features and the host).
+ *
+ * The key is (owner, id), because the same id from a DIFFERENT owner is a
+ * different button, not a replacement: an id-keyed registry let plugin B take
+ * over plugin A's button in place, and then — `unregisterToolbar` being
+ * id-keyed too — delete it on deactivate, so the loser's button vanished with
+ * no error and nothing to show A. A foreign id now throws, the way a duplicate
+ * command or component already does, and a plugin's teardown can only reach its
+ * own items. The SAME owner re-registering its own id still overwrites in
+ * place: the features re-run per editor and plugins re-register on activation,
+ * so that path must stay an upsert and must keep the toolbar's order.
+ */
+export function registerToolbar(item: ToolbarItem, owner: ToolbarOwner = HOST): void {
+  const index = toolbar.findIndex((entry) => entry.owner === owner && entry.item.id === item.id)
+  if (index >= 0) {
+    toolbar[index] = { owner, item }
+    return
+  }
+  if (toolbar.some((entry) => entry.item.id === item.id)) {
+    throw new DuplicateRegistrationError(`toolbar ${item.id} is already registered by its owner`)
+  }
+  toolbar.push({ owner, item })
 }
 export function getToolbar(): ToolbarItem[] {
-  return [...toolbar]
+  return toolbar.map((entry) => entry.item)
 }
 export function unregisterCommand(id: string): void {
   commands.delete(id)
@@ -45,8 +75,12 @@ export function unregisterCommand(id: string): void {
 export function unregisterComponent(name: string): void {
   components.delete(name)
 }
-export function unregisterToolbar(id: string): void {
-  const index = toolbar.findIndex((item) => item.id === id)
+/**
+ * Remove `owner`'s item with this id. Another owner's item with the same id is
+ * left alone — that is the point of the owner key (see `registerToolbar`).
+ */
+export function unregisterToolbar(id: string, owner: ToolbarOwner = HOST): void {
+  const index = toolbar.findIndex((entry) => entry.owner === owner && entry.item.id === id)
   if (index >= 0) toolbar.splice(index, 1)
 }
 /** A command's Markdown-level equivalent, used when the text editor (rather
@@ -79,8 +113,8 @@ export function unregisterMarkdownCommand(id: string): void {
   markdownCommands.delete(id)
 }
 
-export function registerAll(batch: RegistrationBatch): void {
+export function registerAll(batch: RegistrationBatch, owner?: ToolbarOwner): void {
   for (const [name, comp] of Object.entries(batch.components ?? {})) registerComponent(name, comp)
-  for (const item of batch.toolbar ?? []) registerToolbar(item)
+  for (const item of batch.toolbar ?? []) registerToolbar(item, owner)
   for (const cmd of batch.commands ?? []) registerCommand(cmd)
 }
