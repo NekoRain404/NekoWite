@@ -1,17 +1,13 @@
 import { headingAnchorIds, type NekoEditor } from '@nekowite/editor-core'
-import { TextSelection } from '@milkdown/prose/state'
 import { useTabsStore } from '../../../stores/tabs'
 import { useViewStore } from '../../../stores/view'
 import { parseOutline } from '../../../services/outline'
-import { renderedModelRefused } from '../../../services/editor-ownership'
 import {
   anchorHeadingIndex,
   countDocumentLines,
   lineRatio,
 } from '../../../services/scroll-sync-anchors'
-import { renderedLineOrRatio, renderedTopFor } from './pane-scroll-mapping'
-
-type EditorView = NonNullable<ReturnType<NekoEditor['getView']>>
+import { createEditorCaret, type RenderedGeometry } from './editor-caret'
 
 export interface EditorScrollSyncDeps {
   getScrollEl: () => HTMLElement | null
@@ -20,6 +16,15 @@ export interface EditorScrollSyncDeps {
    *  that drive them) keep working without one; every caret call answers "no
    *  line" rather than guessing when it is absent. */
   getEditor?: () => NekoEditor | null
+  /**
+   * The trailing space padding the pane's content box, in px.
+   *
+   * It is space, not document: the range this module reports is the one the
+   * mapping works in (two panes lay the same note out at different heights and
+   * meet only through the document's own coordinates), so a panel-sized pad
+   * folded into it would move every ratio position and misalign the panes.
+   */
+  getTailSpace?: () => number
 }
 
 export interface EditorScrollSync {
@@ -51,6 +56,16 @@ export interface EditorScrollSync {
    * it too would fight that.
    */
   setCaretLine(line: number): void
+  /** Put the caret at the document's very end, without moving the pane. */
+  setCaretAtEnd(): void
+  /**
+   * The model has just been given a document: record the selection it came with.
+   *
+   * Everything the user does afterwards is a caret they placed; the selection
+   * ProseMirror chooses on load (the end of the document) is not, and a mode
+   * switch must not carry it — see {@link getCaretLine}.
+   */
+  markDocumentLoaded(): void
   /** Drop any pending write record (used on teardown). */
   cancel(): void
 }
@@ -78,7 +93,7 @@ export function createEditorScrollSync(deps: EditorScrollSyncDeps): EditorScroll
   function scrollRange(): number {
     const el = deps.getScrollEl()
     if (!el) return 0
-    return Math.max(0, el.scrollHeight - el.clientHeight)
+    return Math.max(0, el.scrollHeight - el.clientHeight - (deps.getTailSpace?.() ?? 0))
   }
 
   function onScroll(): boolean {
@@ -134,26 +149,10 @@ export function createEditorScrollSync(deps: EditorScrollSyncDeps): EditorScroll
     return getHeadingEls().map((heading) => heading.getBoundingClientRect().top - origin)
   }
 
-  /** The live ProseMirror view, or null before the editor is ready — the
-   *  editor's own `getView()` throws until then (`editor-controller.getView`
-   *  guards the same way). */
-  function editorView(): EditorView | null {
-    try {
-      return deps.getEditor?.()?.getView() ?? null
-    } catch {
-      return null
-    }
-  }
-
   /** Everything the line↔offset mapping needs, read live from the document, the
    *  DOM and the pane. Shared by the three callers so none of them can disagree
    *  with the others about which heading sits where. */
-  function renderedGeometry(): {
-    items: ReturnType<typeof parseOutline>
-    tops: number[] | null
-    totalLines: number
-    renderedRange: number
-  } {
+  function renderedGeometry(): RenderedGeometry {
     const content = tabs.activeTab?.content ?? ''
     const items = parseOutline(content)
     const tops = getHeadingTops()
@@ -167,133 +166,13 @@ export function createEditorScrollSync(deps: EditorScrollSyncDeps): EditorScroll
     }
   }
 
-  /** Content-space top of the caret, or null when it cannot be measured. */
-  function caretTop(): number | null {
-    const el = deps.getScrollEl()
-    const view = editorView()
-    if (!el || !view) return null
-    // The model holds no document of the open tab: its caret is a position in
-    // whatever it was holding before, and every line this could be converted to
-    // belongs to that other document. The automatic switch to source after a
-    // failed parse is exactly when that is true, and it is the moment this is
-    // read.
-    //
-    // A READ of `renderedModelRefused` and nothing more. The publish gate that
-    // decides whether a serialization may reach `tab.content` is
-    // `editor-persistence`'s, and this must stay a consumer of that fact rather
-    // than a second place that acts on it — if the flag is stale it costs
-    // precision here (the handoff falls back to the viewport line) and must not
-    // cost anything else.
-    if (renderedModelRefused()) return null
-    try {
-      const coords = view.coordsAtPos(view.state.selection.head)
-      if (!coords) return null
-      return coords.top - el.getBoundingClientRect().top + el.scrollTop
-    } catch {
-      // A selection with no position in this document (a model swap caught
-      // mid-flight) is not a line, and guessing one would move the caret.
-      return null
-    }
-  }
-
-  function getCaretLine(): number | null {
-    const top = caretTop()
-    if (top === null) return null
-    return renderedLineOrRatio(top, renderedGeometry())
-  }
-
-  /**
-   * The document position of the text `offset` px down the rendered content, at
-   * block granularity and interpolated across the block's own text.
-   *
-   * A binary search over the top-level blocks rather than `posAtCoords`: that
-   * one hit-tests the viewport, so a position outside it answers null — and the
-   * whole point of carrying a caret is the case where the caret is NOT where the
-   * viewport is (`coordsAtPos` reports layout coordinates for any position,
-   * on-screen or not). Each probe is one measurement of one block, so the walk
-   * costs log(blocks) rather than a layout read per paragraph in the note.
-   *
-   * The interpolation is the same model the line↔offset mapping uses — a
-   * block's rendered height against its text — so a caret restored from a line
-   * lands within the paragraph that line names rather than at its start.
-   */
-  function posForOffset(view: EditorView, el: HTMLElement, offset: number): number | null {
-    const doc = view.state.doc
-    const count = doc.childCount
-    if (count === 0) return null
-
-    const starts: number[] = new Array<number>(count)
-    let at = 0
-    for (let i = 0; i < count; i += 1) {
-      starts[i] = at
-      at += doc.child(i).nodeSize
-    }
-    const origin = el.getBoundingClientRect().top - el.scrollTop
-    const topOf = (index: number): number | null => {
-      try {
-        const coords = view.coordsAtPos(starts[index])
-        return coords ? coords.top - origin : null
-      } catch {
-        return null
-      }
-    }
-
-    let low = 0
-    let high = count - 1
-    let found = -1
-    while (low <= high) {
-      const mid = (low + high) >> 1
-      const top = topOf(mid)
-      if (top === null) return null
-      if (top <= offset) {
-        found = mid
-        low = mid + 1
-      } else {
-        high = mid - 1
-      }
-    }
-    // Above the first block (the pane's own top padding): the document starts
-    // there, and the first block is the nearest position to it.
-    const index = found >= 0 ? found : 0
-    const start = starts[index]
-    const node = doc.child(index)
-    const element = view.nodeDOM(start)
-    if (!(element instanceof HTMLElement) || node.content.size === 0) return start + 1
-    const rect = element.getBoundingClientRect()
-    const textLength = node.textContent.length
-    if (textLength === 0 || rect.height <= 0) return start + 1
-    const progress = Math.max(0, Math.min((offset - (rect.top - origin)) / rect.height, 1))
-    return start + 1 + Math.round(progress * textLength)
-  }
-
-  function setCaretLine(line: number): void {
-    const el = deps.getScrollEl()
-    const view = editorView()
-    if (!el || !view) return
-    const geometry = renderedGeometry()
-    const offset = renderedTopFor(
-      line,
-      geometry.items,
-      geometry.tops,
-      geometry.totalLines,
-      geometry.renderedRange,
-    )
-    const pos = posForOffset(view, el, offset)
-    if (pos === null) return
-    const resolved = Math.max(0, Math.min(pos, view.state.doc.content.size))
-    view.dispatch(
-      view.state.tr
-        .setSelection(TextSelection.near(view.state.doc.resolve(resolved)))
-        // Placing the caret is not an edit — it must not be a step the user
-        // presses Ctrl+Z through (the source pane's `setCaretLine` carries the
-        // same annotation). The property is named as a string on purpose, which
-        // is how proseMirror-history reads it (`tr.getMeta("addToHistory")`) and
-        // the form the docs specify: `Transaction.addToHistory` — the key the
-        // proseMirror-state helper would name — is dropped by this package's
-        // re-export, so reaching for it throws at the dispatch.
-        .setMeta('addToHistory', false),
-    )
-  }
+  /** The caret half of "where the user is" (see `editor-caret`): a different
+   *  question from the viewport's, asked against the same geometry. */
+  const caret = createEditorCaret({
+    getScrollEl: deps.getScrollEl,
+    getEditor: deps.getEditor,
+    geometry: renderedGeometry,
+  })
 
   function setScrollToLine(line: number, token: number): void {
     const el = deps.getScrollEl()
@@ -343,8 +222,10 @@ export function createEditorScrollSync(deps: EditorScrollSyncDeps): EditorScroll
     getHeadingTops,
     setScrollToLine,
     scrollToHeading,
-    getCaretLine,
-    setCaretLine,
+    getCaretLine: caret.getCaretLine,
+    setCaretLine: caret.setCaretLine,
+    setCaretAtEnd: caret.setCaretAtEnd,
+    markDocumentLoaded: caret.markDocumentLoaded,
     cancel,
   }
 }

@@ -12,7 +12,7 @@ import { dirRelativeToVault } from '../features/notes'
 import RenderSearchPanel from './RenderSearchPanel.vue'
 import ImagePanel from '../ui/ImagePanel.vue'
 import TableMenu from '../ui/TableMenu.vue'
-import { useRenderedEditorStack } from '../features/editor'
+import { useEditorTailSpace, useRenderedEditorStack } from '../features/editor'
 
 const tabs = useTabsStore()
 const view = useViewStore()
@@ -22,6 +22,14 @@ const appearance = useAppearanceStore()
 
 const scrollEl = ref<HTMLElement | null>(null)
 const editorEl = ref<HTMLElement | null>(null)
+
+// Trailing space: the last line can be scrolled up to a comfortable place. The
+// pad lives on the content container (never in the document) and is subtracted
+// from the range the split sync reads.
+const { tailSpacePx } = useEditorTailSpace({
+  getScrollEl: () => scrollEl.value,
+  apply: (px) => editorEl.value?.style.setProperty('--nkw-tail-space', `${px}px`),
+})
 
 // Reported to the pane's parent (the editor pane), which owns the split-view
 // scroll coordinator. Only the user's own scrolls are reported: the echo of a
@@ -41,6 +49,7 @@ const renderDir = computed(() => resolveDirection(appearance.contentDirection, t
 // they go on with the rest of the mount (see the composable).
 const {
   editorForPanel,
+  documentVersion,
   searchOpen,
   spellPopup,
   searchOverlay,
@@ -54,6 +63,7 @@ const {
   getScrollEl: () => scrollEl.value,
   getEditorEl: () => editorEl.value,
   handlers: { onEditorClick, onKeydown },
+  getTailSpace: () => tailSpacePx.value,
 })
 
 function onScroll(): void {
@@ -126,6 +136,20 @@ async function openLinkedNote(href: string): Promise<void> {
   if (resolved) await tabs.openTab(resolved)
 }
 
+/**
+ * A click in the trailing space — the content container's own padding, below
+ * the last block — puts the caret at the document's end.
+ *
+ * The padding is outside `.ProseMirror`, so a click there reaches no editor
+ * handler at all and the space would be dead: a patch of the panel that looks
+ * like the note and swallows the click. `.self` is what keeps this off the
+ * text: a click on a block has that block as its target, not the container.
+ */
+function onTailClick(): void {
+  scrollSync.setCaretAtEnd()
+  focus()
+}
+
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape' && floatStore.selectedId) {
     floatStore.select(null)
@@ -153,7 +177,9 @@ function onKeydown(e: KeyboardEvent): void {
 // both: the pane keeps its model across a switch, so a caret the source pane
 // moved is a caret the rendered pane has to be told about.
 defineExpose({
+  getDocumentVersion: () => documentVersion.value,
   getScrollTop: scrollSync.getScrollTop,
+  setCaretAtEnd: scrollSync.setCaretAtEnd,
   getScrollRange: scrollSync.getScrollRange,
   setScrollTop: scrollSync.setScrollTop,
   getHeadingTops: scrollSync.getHeadingTops,
@@ -195,6 +221,7 @@ defineExpose({
     <div
       ref="editorEl"
       class="editor-container"
+      @click.self="onTailClick"
     >
       <ImagePanel
         v-if="editorForPanel"

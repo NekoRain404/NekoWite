@@ -4,12 +4,13 @@ import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import SourcePane from './SourcePane.vue'
 import { useAppearanceStore } from '../stores/appearance'
 import { useTabsStore } from '../stores/tabs'
+import { mirrorChange } from '../features/editor/model/mirror-change'
 
 // The pane's job here is only to publish a direction; CodeMirror itself is
 // exercised elsewhere, and its real host cannot run in happy-dom.
 const hostMock = vi.hoisted(() => ({
   mount: vi.fn(),
-  getView: (): null => null,
+  getView: vi.fn((): unknown => null),
   setText: vi.fn(),
   flush: vi.fn(),
   reconfigure: vi.fn(),
@@ -19,6 +20,9 @@ const hostMock = vi.hoisted(() => ({
 
 vi.mock('../services/code-mirror-host', () => ({
   createCodeMirrorHost: () => hostMock,
+  // The real one is a CodeMirror annotation; the pane only has to hand it to a
+  // dispatch, so a stand-in with the same surface is enough here.
+  ExternalChange: { of: (value: boolean) => ({ isExternalChange: value }) },
 }))
 
 const readMock = vi.hoisted(() => vi.fn())
@@ -58,6 +62,7 @@ beforeEach(() => {
   readMock.mockResolvedValue('# hello')
   hostMock.setText.mockClear()
   hostMock.resetHistory.mockClear()
+  hostMock.getView.mockReturnValue(null)
   document.body.innerHTML = ''
   mounted = []
 })
@@ -105,6 +110,69 @@ describe('SourcePane content direction', () => {
     useAppearanceStore().setContentDirection('auto')
     await nextTick()
     expect(pane.getAttribute('dir')).toBe('ltr')
+  })
+
+  describe('mirroring the tab text', () => {
+    /** The live CodeMirror view the pane would be holding, as far as the pane's
+     *  own code is concerned: a document it can read and a dispatch it makes. */
+    function stubView(doc: string) {
+      const dispatch = vi.fn()
+      return {
+        dispatch,
+        view: {
+          state: { doc: { toString: () => doc } },
+          dispatch,
+          // The pane's teardown detaches its scroll listener from the view.
+          scrollDOM: { addEventListener: vi.fn(), removeEventListener: vi.fn(), scrollTop: 0 },
+        },
+      }
+    }
+
+    it('applies an edit of the same note as the smallest change, never a whole-document replacement', async () => {
+      // Measured defect (browser, 9000px note, split mode): the host's setText
+      // replaces the whole document, CodeMirror maps its scroll anchor to
+      // position 0 for that, and the pane collapses from 4145px to 115px — which
+      // the split sync then reads as a scroll the user made and drags the other
+      // pane to the top with it. A minimal change maps every position through
+      // itself, so nothing moves.
+      await openDoc('# Note\n\nfirst line\n')
+      const stub = stubView('# Note\n\nfirst line\n')
+      hostMock.getView.mockReturnValue(stub.view)
+      mountPane()
+      await flush()
+      await nextTick()
+
+      const tabs = useTabsStore()
+      tabs.activeTab!.content = '# Note\n\nfirst line EDITED\n'
+      await nextTick()
+      await flush()
+
+      expect(stub.dispatch).toHaveBeenCalledTimes(1)
+      const spec = stub.dispatch.mock.calls[0]![0] as { changes: { from: number; to: number; insert: string } }
+      expect(spec.changes).toEqual(mirrorChange('# Note\n\nfirst line\n', '# Note\n\nfirst line EDITED\n'))
+      // The whole document is NOT the range: that is the defect this pins.
+      expect(spec.changes.to - spec.changes.from).toBeLessThan('# Note\n\nfirst line\n'.length)
+      // The host is still told, so its snapshot bookkeeping stays its own; the
+      // document already holds the text, which is its documented no-op path.
+      expect(hostMock.setText).toHaveBeenCalledWith('# Note\n\nfirst line EDITED\n')
+      expect(hostMock.resetHistory).toHaveBeenCalled()
+    })
+
+    it('falls back to the host when the view does not exist yet', async () => {
+      await openDoc('# Note\n')
+      hostMock.getView.mockReturnValue(null)
+      mountPane()
+      await flush()
+      await nextTick()
+      hostMock.setText.mockClear()
+
+      const tabs = useTabsStore()
+      tabs.activeTab!.content = '# Note edited\n'
+      await nextTick()
+      await flush()
+
+      expect(hostMock.setText).toHaveBeenCalledWith('# Note edited\n')
+    })
   })
 
   it('drops the CodeMirror undo stack when the mirrored tab changes', async () => {

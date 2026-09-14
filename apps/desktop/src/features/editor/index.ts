@@ -54,6 +54,12 @@ export type { EditorSessionManager } from './session-manager'
 export { useRenderedEditorStack } from './composables/use-rendered-editor-stack'
 export type { RenderedEditorStackOptions } from './composables/use-rendered-editor-stack'
 
+// The panes' trailing space: measured from the panel's own height, applied to
+// the pane's content box by the pane, and excluded from the scroll range the
+// split sync reads. Mounted by both panes, so it is part of this API.
+export { useEditorTailSpace, TAIL_SPACE_RATIO } from './composables/use-editor-tail-space'
+export type { EditorTailSpace, EditorTailSpaceOptions } from './composables/use-editor-tail-space'
+
 /** The writing surface's right-click menu, items and dispatch. */
 export { useEditorContextMenu } from './composables/editor-context-menu'
 export type {

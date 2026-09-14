@@ -50,6 +50,9 @@ function makeRenderedPane() {
   const writes: Array<{ line: number; token: number }> = []
   const caretWrites: number[] = []
   const pane: RenderedPaneHandoff = {
+    // A note switch would restore a remembered line on this signal; the jumps
+    // this file drives are not note switches, so it never counts one.
+    getDocumentVersion: () => 0,
     getHeadingTops: () => [0, 400, 900],
     getScrollRange: () => 2000,
     getScrollTop: () => 0,
@@ -99,6 +102,11 @@ function makeSourcePane() {
     getScrollRange: () => view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight,
     setScrollTop: (top: number) => {
       view.scrollDOM.scrollTop = top
+    },
+    // The pane's measured write. happy-dom lays nothing out, so there is no
+    // measure cycle to wait for: the double's offset is already final.
+    setScrollTopForLine: (line: number) => {
+      view.scrollDOM.scrollTop = (line - 1) * LINE_PX
     },
     setCaretLine: (line) => {
       caretLines.push(line)

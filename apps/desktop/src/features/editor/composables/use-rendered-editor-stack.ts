@@ -1,4 +1,4 @@
-import { onBeforeUnmount, onMounted, shallowRef, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { emitLifecycle } from '@nekowite/plugin-host'
 import { configureTaskChecklistRendering } from '@nekowite/editor-core'
 import type { NekoEditor } from '@nekowite/editor-core'
@@ -31,6 +31,9 @@ export interface RenderedEditorStackOptions {
   /** The editor's mount element, inside that container. */
   getEditorEl: () => HTMLElement | null
   handlers: RenderedEditorStackHandlers
+  /** The panel's trailing space, in px (see `useEditorTailSpace`): space, not
+   *  document, so the scroll range the split sync reads excludes it. */
+  getTailSpace?: () => number
 }
 
 /**
@@ -69,6 +72,13 @@ export function useRenderedEditorStack(options: RenderedEditorStackOptions) {
   /** The live editor, for the panels that decorate the document (image, table).
    *  Shallow: the editor is a large non-reactive object it must not be walked. */
   const editorForPanel = shallowRef<NekoEditor | null>(null)
+  /** How many documents this pane's model has been given. Non-zero only while
+   *  the apply landed for the tab that is still active: an apply that lost a
+   *  race with a tab switch describes a document no tab is showing, and a
+   *  position written on the strength of it would be a line of the wrong note.
+   *  Published through the pane (see `RenderedPaneHandoff`) because the reading
+   *  position cannot be written until the model holds the note. */
+  const documentVersion = ref(0)
 
   const editorController = createEditorController({
     session,
@@ -83,6 +93,12 @@ export function useRenderedEditorStack(options: RenderedEditorStackOptions) {
     session,
     getEditor: () => session.editor,
     scheduleOverlayRefresh: () => searchOverlay.scheduleRefresh(),
+    onDocumentApplied: (content) => {
+      // The selection the model came with is not a caret the user placed (see
+      // `getCaretLine`): recorded here, at the one moment that is true.
+      scrollSync.markDocumentLoaded()
+      if (tabs.activeTab?.content === content) documentVersion.value += 1
+    },
   })
   const scrollSync = createEditorScrollSync({
     getScrollEl: () => options.getScrollEl(),
@@ -90,6 +106,7 @@ export function useRenderedEditorStack(options: RenderedEditorStackOptions) {
     // The caret lives in the model, not in the scroll box: the pane's own
     // line↔offset mapping needs the view to read one and place the other.
     getEditor: () => session.editor,
+    getTailSpace: () => options.getTailSpace?.() ?? 0,
   })
   const selection = createEditorSelection({ getEditor: () => session.editor })
 
@@ -224,6 +241,7 @@ export function useRenderedEditorStack(options: RenderedEditorStackOptions) {
 
   return {
     editorForPanel,
+    documentVersion,
     searchOpen,
     spellPopup,
     searchOverlay,
