@@ -113,6 +113,37 @@ describe('useAiSettings', () => {
     expect(mocks.listModels).toHaveBeenCalledTimes(1)
   })
 
+  it('fetches for the provider the user switched TO, and never leaves the old provider’s list on screen', async () => {
+    // Switching provider and then picking a model is the ordinary path through
+    // this screen. The refresh the switch starts used to be dropped whenever one
+    // was already running, so the FIRST request's models landed in a cache that
+    // now belonged to the second provider: the field offered anthropic's model
+    // ids while every request went to gemini, and the user picked one of them.
+    const m = mountModel()
+    const settings = useSettingsStore()
+    let releaseFirst: () => void = () => undefined
+    const first = new Promise<string[]>((resolve) => {
+      releaseFirst = () => resolve(['claude-3-5-sonnet'])
+    })
+    mocks.listModels.mockImplementationOnce(() => first)
+    mocks.listModels.mockResolvedValue(['gemini-2.0-flash'])
+
+    settings.provider = 'anthropic'
+    await flush()
+    settings.provider = 'gemini'
+    await flush()
+    // The first endpoint answers only now, after the app has moved on.
+    releaseFirst()
+    await flush()
+
+    expect(mocks.listModels).toHaveBeenCalledTimes(2)
+    expect(m.modelOptions.value).toContain('gemini-2.0-flash')
+    expect(m.modelOptions.value).not.toContain('claude-3-5-sonnet')
+    expect(settings.modelsCache).not.toContain('claude-3-5-sonnet')
+    // ...and the field is not left waiting behind a request that already ended.
+    expect(m.modelLoading.value).toBe(false)
+  })
+
   it('keeps the configured model selectable even when the provider does not list it', () => {
     const m = mountModel()
     const settings = useSettingsStore()

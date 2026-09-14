@@ -2,11 +2,15 @@ import { computed, onMounted, ref, type ComputedRef, type Ref } from 'vue'
 import { isPluginImportAllowedByCsp, listVaultPlugins, setVaultPluginDisabled } from '../../../services/plugins'
 import type { VaultPluginSummary } from '../../../services/plugins'
 import { useVaultSessionStore } from '../../../stores/vault-session'
+import { notifyError } from '../../../services/errors'
+import { t } from '../../../i18n'
 
 export interface PluginSettingsModel {
   /** Whether THIS build can run plugin code at all. */
   runnable: boolean
   loading: Ref<boolean>
+  /** Set when the last read of the plugins folder FAILED. */
+  loadFailed: Ref<boolean>
   vaultPath: ComputedRef<string>
   rows: Ref<VaultPluginSummary[]>
   togglePlugin: (row: VaultPluginSummary, enabled: boolean) => Promise<void>
@@ -27,6 +31,16 @@ export function usePluginSettings(): PluginSettingsModel {
   const vaultPath = computed(() => (vaultSession.vault ?? '').trim())
 
   const rows = ref<VaultPluginSummary[]>([])
+  /**
+   * Set when the last read of the plugins folder FAILED.
+   *
+   * "This library has no plugins" and "the plugins folder could not be read"
+   * must never render the same: the second is what a permission problem looks
+   * like, and telling the user nothing is installed sends them looking for a
+   * problem they do not have. Same policy as the history panel's `loadFailed`
+   * and the trash section's `trashUnreadable`.
+   */
+  const loadFailed = ref(false)
   /** Whether THIS build can run plugin code at all. The list below reads the
    *  plugins folder either way, so a released build would otherwise show a tidy
    *  list of plugins with working-looking switches and never run one. */
@@ -41,13 +55,20 @@ export function usePluginSettings(): PluginSettingsModel {
     const vault = vaultPath.value
     if (!vault) {
       rows.value = []
+      loadFailed.value = false
       return
     }
     loading.value = true
     try {
       rows.value = await listVaultPlugins(vault)
-    } catch {
+      loadFailed.value = false
+    } catch (e) {
+      // The list is unknown, not empty. The toast carries the backend reason
+      // (which folder, what the OS said); the flag is what the section renders
+      // instead of "no plugins in this library".
+      notifyError(t('settings.plugins.readFailed', { msg: e instanceof Error ? e.message : String(e) }))
       rows.value = []
+      loadFailed.value = true
     } finally {
       loading.value = false
     }
@@ -64,5 +85,5 @@ export function usePluginSettings(): PluginSettingsModel {
     void refreshPluginRows()
   })
 
-  return { runnable, loading, vaultPath, rows, togglePlugin, refreshPluginRows }
+  return { runnable, loading, loadFailed, vaultPath, rows, togglePlugin, refreshPluginRows }
 }

@@ -102,6 +102,28 @@ export function useChatCommands(options: UseChatCommandsOptions): ChatCommandsMo
     const text = options.prompt.value.trim()
     if (!text && options.attachments.value.length === 0) return
 
+    /** The conversation this question was written for, read before the first
+     *  await: both the panel's working copy and the store's active session move
+     *  under a send that is still preparing. */
+    const startedIn = chatSessions.activeId
+
+    /** Refuse a send whose conversation has moved under it, and say so.
+     *
+     *  `switchToSession` REPLACES the panel's working copy and moves the store's
+     *  active session, so a send that resumes afterwards would append the
+     *  question, the assistant placeholder and the streamed answer to a
+     *  transcript the user is not looking at, persist that whole thing under the
+     *  other conversation, and `forgetDraft` the OTHER conversation's parked
+     *  draft while its own composer copy had already been cleared. The question
+     *  is not lost by refusing: the switch parked it - with its images - under
+     *  the conversation it was written for, so going back finds it in the
+     *  composer, editable, and it is never filed anywhere else. */
+    function abandoned(): boolean {
+      if (chatSessions.activeId === startedIn) return false
+      notifyError(t('chat.sessionMoved'))
+      return true
+    }
+
     let context = ''
     let imageDataUrls: ChatImage[]
     try {
@@ -112,6 +134,9 @@ export function useChatCommands(options: UseChatCommandsOptions): ChatCommandsMo
           return
         }
         context = await options.buildActiveContext()
+        // Before the images of the conversation the user moved to are encoded
+        // for a question that is no longer going there.
+        if (abandoned()) return
         // An EMPTY note is not a missing document. Refusing to send here blocked
         // exactly the scenario the feature is for — "help me outline this" on a
         // note you just created — with a message claiming no document was open
@@ -132,6 +157,9 @@ export function useChatCommands(options: UseChatCommandsOptions): ChatCommandsMo
     // starting now would leave a request running with no panel left to show or
     // cancel it (onBeforeUnmount has already made its own pass).
     if (disposed) return
+    // The last check before anything is written: every await above may have
+    // carried the app into another conversation.
+    if (abandoned()) return
 
     const userMessage: ChatMessage = { role: 'user', content: text, images: imageDataUrls }
     const history = [...options.messages.value, userMessage]
@@ -139,8 +167,10 @@ export function useChatCommands(options: UseChatCommandsOptions): ChatCommandsMo
     options.syncSession()
     options.prompt.value = ''
     options.clearAttachments()
-    const sentFrom = chatSessions.activeId
-    if (sentFrom) options.forgetDraft(sentFrom)
+    // `startedIn`, not the store's active id: the two are equal here (that is
+    // what the check above established), and naming the session the question
+    // was written for is the one that cannot go wrong later.
+    if (startedIn) options.forgetDraft(startedIn)
 
     const chatPrompt = buildChatPrompt(history.map((m) => ({ role: m.role, content: m.content })), { context })
     const assistant: ChatMessage = { role: 'assistant', content: '', streaming: true }

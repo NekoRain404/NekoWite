@@ -10,6 +10,7 @@ import { createApp, nextTick, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { usePluginSettings, type PluginSettingsModel } from './use-plugin-settings'
 import { useVaultSessionStore } from '../../../stores/vault-session'
+import { onNotify } from '../../../services/errors'
 import type { VaultPluginSummary } from '../../../services/plugins'
 
 const mocks = vi.hoisted(() => ({
@@ -84,13 +85,36 @@ describe('usePluginSettings', () => {
     expect(m.rows.value).toEqual([])
   })
 
-  it('shows an empty list when the read fails, not a stale one', async () => {
+  it('shows an empty list when the read fails, not a stale one — and says that is what happened', async () => {
+    // "This library has no plugins" and "the folder could not be read" are two
+    // different states, and the user's remedy differs completely: one is
+    // "install a plugin", the other is "fix what is hiding the folder". A flag
+    // is what lets the section tell them apart; the toast carries the reason.
     useVaultSessionStore().vault = '/vault'
-    mocks.listVaultPlugins.mockRejectedValue(new Error('unreadable'))
+    const messages: string[] = []
+    const off = onNotify((msg) => messages.push(msg))
+    mocks.listVaultPlugins.mockRejectedValue(new Error('EACCES: permission denied'))
     const m = await mountModel()
+    off()
 
     expect(m.rows.value).toEqual([])
     expect(m.loading.value).toBe(false)
+    expect(m.loadFailed.value).toBe(true)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toContain('EACCES')
+  })
+
+  it('clears the failure once a read succeeds', async () => {
+    useVaultSessionStore().vault = '/vault'
+    mocks.listVaultPlugins.mockRejectedValue(new Error('unreadable'))
+    const m = await mountModel()
+    expect(m.loadFailed.value).toBe(true)
+
+    mocks.listVaultPlugins.mockResolvedValue([ALFA])
+    await m.refreshPluginRows()
+
+    expect(m.loadFailed.value).toBe(false)
+    expect(m.rows.value).toEqual([ALFA])
   })
 
   it('re-reads after a toggle, so the row reports the outcome and not the click', async () => {

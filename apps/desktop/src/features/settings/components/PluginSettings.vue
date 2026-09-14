@@ -10,7 +10,7 @@
 import { t } from '../../../i18n'
 import { usePluginSettings } from '../composables/use-plugin-settings'
 
-const { runnable, loading, vaultPath, rows, togglePlugin } = usePluginSettings()
+const { runnable, loading, loadFailed, vaultPath, rows, togglePlugin } = usePluginSettings()
 </script>
 
 <template>
@@ -30,6 +30,11 @@ const { runnable, loading, vaultPath, rows, togglePlugin } = usePluginSettings()
       v-else-if="!vaultPath"
       class="settings-note"
     >{{ t('settings.plugins.vaultMissing') }}</span>
+    <span
+      v-else-if="loadFailed"
+      class="settings-note"
+      data-test="plugins-unreadable"
+    >{{ t('settings.plugins.unreadable') }}</span>
     <span
       v-else-if="!rows.length"
       class="settings-note"

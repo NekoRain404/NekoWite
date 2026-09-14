@@ -58,7 +58,11 @@ import {
 import { askPluginPermission, signalUnsandboxedCapabilities } from './permissions'
 import { askReapproveIntegrity } from './integrity'
 import { decidePluginTrust } from './trust-policy'
-import { activateVaultPlugins, deactivateVaultPlugins } from './vault-plugin-activate'
+import {
+  activateVaultPlugins,
+  deactivateVaultPlugins,
+  getVaultPluginClaim,
+} from './vault-plugin-activate'
 
 /**
  * Scan `vault/plugins/<id>/` for user plugins and activate each one.
@@ -93,6 +97,10 @@ import { activateVaultPlugins, deactivateVaultPlugins } from './vault-plugin-act
  */
 export async function loadVaultPlugins(vault: string): Promise<void> {
   deactivateVaultPlugins()
+  // This scan's claim on the plugin set. Every await below (a read, a consent
+  // dialog, a digest, an import) can be overtaken by a vault switch, which starts
+  // a new claim (see `getVaultPluginClaim`).
+  const claim = getVaultPluginClaim()
   // On every vault load, dispose the previous vault's audit-log sink and clear the
   // audit ring: a stale sink (closure over a prior vault) must never write into
   // this vault, and events must not leak across a vault switch. A fresh log is
@@ -373,7 +381,11 @@ export async function loadVaultPlugins(vault: string): Promise<void> {
   }
 
   // Phase 3 — activation of the consented plugins (./vaultPluginActivate owns
-  // the host call, the failure mapping and the active-set bookkeeping).
+  // the host call, the failure mapping and the active-set bookkeeping). Nothing
+  // may be activated under a superseded claim: another vault's load has already
+  // installed its own set, and this one's would land on top of it with nothing
+  // left to take it down again.
+  if (claim !== getVaultPluginClaim()) return
   await activateVaultPlugins(consented)
 
   // Flush the audit log to its file (best-effort) so the activate/deactivate/

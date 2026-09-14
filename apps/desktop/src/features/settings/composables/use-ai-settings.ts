@@ -90,16 +90,52 @@ export function useAiSettings(): AiSettingsModel {
     return [current, ...list]
   })
 
-  async function refreshModels(): Promise<void> {
-    if (modelLoading.value) return
-    modelLoading.value = true
-    try {
-      await settings.listModels()
-    } catch (e) {
-      notifyError(t('aiSettings.getModelsFailed', { msg: providerFailureMessage(e) }))
-    } finally {
-      modelLoading.value = false
+  /**
+   * The refresh in flight, if any. A second call for the SAME provider shares
+   * this promise - it is the same request, and the button is disabled while it
+   * runs anyway. A provider switch during one is a different request: the switch
+   * clears the cache, so the running refresh's answer is about an endpoint the
+   * app has left, and the round below fetches for the provider that is current
+   * now. Dropping that second request (which is what returning here used to do)
+   * left the field offering the old provider's model ids while every request
+   * went to the new one - on the ordinary path through this screen, since
+   * switching provider and then picking a model is how a provider is set up.
+   */
+  let inFlight: Promise<void> | null = null
+
+  function refreshModels(): Promise<void> {
+    if (inFlight) return inFlight
+    const run = async (): Promise<void> => {
+      modelLoading.value = true
+      try {
+        for (;;) {
+          /** The provider this request is being made for. Its answer belongs to
+           *  it, and only to it: `listModels` writes whatever comes back into a
+           *  cache that now belongs to whoever is current. */
+          const provider = settings.provider
+          try {
+            await settings.listModels()
+          } catch (e) {
+            // A failure of a request the user has already left says nothing
+            // about the provider they chose; the round below reports that one's
+            // own failure, with its own reason.
+            if (provider === settings.provider) {
+              notifyError(t('aiSettings.getModelsFailed', { msg: providerFailureMessage(e) }))
+            }
+          }
+          if (provider === settings.provider) return
+          // The answer that just landed was fetched for the provider the user
+          // left: drop it before it can be picked from. The loop then fetches
+          // for the current one.
+          settings.clearModelsCache()
+        }
+      } finally {
+        modelLoading.value = false
+        inFlight = null
+      }
     }
+    inFlight = run()
+    return inFlight
   }
 
   // Each provider has its own endpoint and credentials, so refetch (and clear the

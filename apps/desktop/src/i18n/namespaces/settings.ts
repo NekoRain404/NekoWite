@@ -17,6 +17,8 @@ export const settings = {
       plugins: {
         hint: 'Plugins are loaded from this library\'s plugins/ folder. Switching one off unloads it now and keeps it off: its code is not read or run again until you switch it back on, and no permission prompt appears while it is off.',
         empty: 'No plugins in this library.',
+        unreadable: 'The plugins folder could not be read, so this list is not the library\'s contents. It may still have plugins installed.',
+        readFailed: 'Could not read the plugins folder: {msg}',
         loading: 'Reading the plugins folder...',
         vaultMissing: 'Open a library first - plugins live inside it.',
         enabled: 'Enabled',
@@ -144,6 +146,8 @@ export const settings = {
       plugins: {
         hint: '插件从当前知识库的 plugins/ 目录加载。关掉一个插件会立即卸载它并保持关闭：在你重新打开之前，它的代码不会被读取或执行，也不会弹出权限询问。',
         empty: '当前知识库里没有插件。',
+        unreadable: '无法读取插件目录，下面的列表并不代表知识库中的内容——其中可能仍有插件。',
+        readFailed: '无法读取插件目录：{msg}',
         loading: '正在读取插件目录…',
         vaultMissing: '请先打开一个知识库——插件就在其中。',
         enabled: '启用',
