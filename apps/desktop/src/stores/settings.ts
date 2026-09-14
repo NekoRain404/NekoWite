@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import { getSharedGateways } from '../platform/runtime/gateway-runtime'
 import { persistence } from '../services/persistence'
+import { EXPORT_MARGIN_MM_DEFAULT, clampMarginMm } from '../services/export-page'
 import {
   readBaseUrls,
   readModelsUrls,
@@ -44,8 +45,16 @@ export interface AIConfig {
 }
 
 export type AutosaveInterval = 'off' | 5000 | 15000 | 30000 | 60000
-export type ExportPdfPageSize = 'A4' | 'Letter'
+/** Paper sizes the office-format export offers. Wider than it was — A4 and
+ *  Letter were the only two — but still a closed list: `@page{size:…}` accepts
+ *  these five natively, and a free-text field would let a typo through to the
+ *  print dialog as a silently ignored rule. */
+export type ExportPdfPageSize = 'A3' | 'A4' | 'A5' | 'Letter' | 'Legal'
 export type ExportPdfOrientation = 'portrait' | 'landscape'
+/** The long image's format. WebP is deliberately absent: this webview's canvas
+ *  cannot encode it — `toDataURL('image/webp')` answers with a PNG — so
+ *  offering it would write a PNG under a `.webp` name. */
+export type ExportImageFormat = 'png' | 'jpeg'
 
 const LS_PROVIDER = 'nekowite.ai.provider'
 const LS_MODEL = 'nekowite.ai.model'
@@ -63,6 +72,9 @@ const LS_MAXHISTORY = 'nekowite.settings.maxHistory'
 const LS_EXPORT_FRONTMATTER = 'nekowite.settings.exportFrontmatter'
 const LS_EXPORT_PDF_PAGE = 'nekowite.settings.exportPageSize'
 const LS_EXPORT_PDF_ORIENT = 'nekowite.settings.exportOrientation'
+const LS_EXPORT_MARGIN_MM = 'nekowite.settings.exportMarginMm'
+const LS_EXPORT_IMAGE_FORMAT = 'nekowite.settings.exportImageFormat'
+const LS_EXPORT_IMAGE_QUALITY = 'nekowite.settings.exportImageQuality'
 const LS_CONTEXT_CHARS = 'nekowite.ai.contextChars'
 const LS_DISABLED_PROMPTS = 'nekowite.ai.disabledPrompts'
 
@@ -119,6 +131,23 @@ function readNumber(key: string, fallback: number): number {
   if (!v || v.length === 0) return fallback
   const n = Number(v)
   return Number.isFinite(n) ? n : fallback
+}
+
+/** JPEG's quality knob. The bounds are the ones the encoder is worth using
+ *  inside: below 0.5 a page of 16px text is visibly soft, and 1.0 disables the
+ *  quantisation that is the only reason to choose JPEG over PNG at all — for a
+ *  document image it is both larger and worse than the PNG. */
+export const EXPORT_JPEG_QUALITY_MIN = 0.5
+export const EXPORT_JPEG_QUALITY_MAX = 1
+/** The default is the one the format's own documentation uses for "visually
+ *  indistinguishable", and it is a compromise rather than a preference: a long
+ *  image of a text note is legible at 0.8 and enormous at 1.0, and the user can
+ *  see the size it produces next to the control before they commit to it. */
+export const EXPORT_JPEG_QUALITY_DEFAULT = 0.92
+
+function readQuality(key: string): number {
+  const n = readNumber(key, EXPORT_JPEG_QUALITY_DEFAULT)
+  return Math.min(EXPORT_JPEG_QUALITY_MAX, Math.max(EXPORT_JPEG_QUALITY_MIN, n))
 }
 
 function readAutosaveInterval(fallback: AutosaveInterval): AutosaveInterval {
@@ -233,8 +262,18 @@ export const useSettingsStore = defineStore('settings', () => {
     readEnum(LS_REASONING_EFFORT, REASONING_EFFORTS, ''),
   )
   const exportIncludeFrontmatter = ref<boolean>(readBool(LS_EXPORT_FRONTMATTER, true))
-  const exportPdfPageSize = ref<ExportPdfPageSize>(readEnum(LS_EXPORT_PDF_PAGE, ['A4', 'Letter'], 'A4'))
+  // The values array is the widened one, but an install that stored 'A4' or
+  // 'Letter' before still reads back its own choice — the union grew, the two
+  // spellings it already held did not change.
+  const exportPdfPageSize = ref<ExportPdfPageSize>(
+    readEnum(LS_EXPORT_PDF_PAGE, ['A3', 'A4', 'A5', 'Letter', 'Legal'], 'A4'),
+  )
   const exportPdfOrientation = ref<ExportPdfOrientation>(readEnum(LS_EXPORT_PDF_ORIENT, ['portrait', 'landscape'], 'portrait'))
+  // The paper margin, in millimetres, uniform on all four sides. See
+  // `services/export-page.ts` for why one number and why millimetres.
+  const exportMarginMm = ref<number>(clampMarginMm(readNumber(LS_EXPORT_MARGIN_MM, EXPORT_MARGIN_MM_DEFAULT)))
+  const exportImageFormat = ref<ExportImageFormat>(readEnum(LS_EXPORT_IMAGE_FORMAT, ['png', 'jpeg'], 'png'))
+  const exportImageQuality = ref<number>(readQuality(LS_EXPORT_IMAGE_QUALITY))
   /** The models-URL override of the provider selected RIGHT NOW — a view onto
    *  `modelsUrls`, so the field is a plain two-way binding while the value
    *  stays scoped to one provider. */
@@ -265,6 +304,9 @@ export const useSettingsStore = defineStore('settings', () => {
   watch(exportIncludeFrontmatter, (v) => persistence.set(LS_EXPORT_FRONTMATTER, String(v)))
   watch(exportPdfPageSize, (v) => persistence.set(LS_EXPORT_PDF_PAGE, v))
   watch(exportPdfOrientation, (v) => persistence.set(LS_EXPORT_PDF_ORIENT, v))
+  watch(exportMarginMm, (v) => persistence.set(LS_EXPORT_MARGIN_MM, String(clampMarginMm(v))))
+  watch(exportImageFormat, (v) => persistence.set(LS_EXPORT_IMAGE_FORMAT, v))
+  watch(exportImageQuality, (v) => persistence.set(LS_EXPORT_IMAGE_QUALITY, String(v)))
 
   async function saveKey(): Promise<void> {
     await getSharedGateways().keys.storeAiKey(provider.value, apiKey.value)
@@ -323,5 +365,5 @@ export const useSettingsStore = defineStore('settings', () => {
     modelsCache.value = []
   }
 
-  return { provider, model, baseUrl, modelsUrl, apiKey, temperature, maxTokens, systemPrompt, systemPromptOn, allowPrivate, reasoningEffort, autosaveInterval, maxHistory, contextChars, disabledPrompts, modelsCache, exportIncludeFrontmatter, exportPdfPageSize, exportPdfOrientation, saveKey, loadKey, config, listModels, clearModelsCache }
+  return { provider, model, baseUrl, modelsUrl, apiKey, temperature, maxTokens, systemPrompt, systemPromptOn, allowPrivate, reasoningEffort, autosaveInterval, maxHistory, contextChars, disabledPrompts, modelsCache, exportIncludeFrontmatter, exportPdfPageSize, exportPdfOrientation, exportMarginMm, exportImageFormat, exportImageQuality, saveKey, loadKey, config, listModels, clearModelsCache }
 })
