@@ -28,12 +28,24 @@ export function tableMarkdown(rows: number, cols: number): string {
   return body ? `${header}\n${sep}\n${body}` : `${header}\n${sep}`
 }
 
+/**
+ * Build the rows of a fresh GFM table.
+ *
+ * Every cell is created with an EXPLICIT `alignment: null` rather than left to
+ * `createAndFill()`. The schema's default for that attribute is `'left'`, which
+ * is not the same fact: the delimiter row is derived from these attrs, so a
+ * table inserted from the toolbar, the slash command or the size dialog was
+ * written `| :--- | :--- | :--- |` — explicit left alignment on every column of
+ * a table nobody had aligned. A column the author has not marked parses as
+ * `null` and is written `| --- |`, and a new table has to match that, or the
+ * app is writing syntax into the file that its own author never chose.
+ */
 export function createTableNode(schema: Schema, rows: number, cols: number): Node {
   const ns = schema.nodes
-  const cells = Array.from({ length: cols }, () => ns.table_cell.createAndFill()).filter(
+  const cells = Array.from({ length: cols }, () => ns.table_cell.createAndFill({ alignment: null })).filter(
     (n): n is Node => n !== null
   )
-  const headerCells = Array.from({ length: cols }, () => ns.table_header.createAndFill()).filter(
+  const headerCells = Array.from({ length: cols }, () => ns.table_header.createAndFill({ alignment: null })).filter(
     (n): n is Node => n !== null
   )
   const rowNodes = Array.from({ length: rows }, (_, i) =>
