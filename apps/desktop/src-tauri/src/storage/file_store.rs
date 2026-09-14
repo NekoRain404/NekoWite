@@ -30,6 +30,7 @@ use crate::domain::path_policy::{resolve_within, resolve_within_rel};
 use crate::domain::vault::{is_mdx_path, should_skip_entry};
 use crate::errors::{file_exists_error, fs_error};
 use crate::storage::atomic_write::{create_new_bytes, write_lock, CreateFileError};
+use crate::storage::destination_file;
 use crate::storage::metadata_store::DEFAULT_MAX_HISTORY;
 use crate::storage::temp_files::STALE_TMP_MAX_AGE;
 
@@ -117,6 +118,14 @@ pub fn write_file(
     // the async executor; it just windows two concurrent saves apart.
     let _guard = write_lock().lock().map_err(|e| e.to_string())?;
     let resolved = resolve_within(vault_root, path)?;
+    // Refused before the read and the snapshot below, which is the point of
+    // asking here as well as at the publish (which stays the authority): those
+    // two steps are work done FOR a write that is not going to happen, and the
+    // snapshot spends a history slot. A user typing into a read-only note saves
+    // on every burst, so five refused saves would otherwise fill the ten-slot
+    // history with duplicates of a version that never changed and evict the
+    // older ones the panel exists to offer.
+    destination_file::refuse_if_read_only(&resolved)?;
     if let Some(parent) = resolved.parent() {
         let _ = cleanup_stale_tmp(parent, STALE_TMP_MAX_AGE);
     }
