@@ -53,6 +53,14 @@ export function createAppLifecycle(deps: {
   const appearance = useAppearanceStore()
   let unlistenMedia: (() => void) | null = null
   let unlistenCloseRequested: (() => void) | null = null
+  /**
+   * Bumped by every mount and every unmount. `onCloseRequested` resolves after
+   * an await, and a teardown — or a later mount — can overtake it; the
+   * registration that lands then belongs to a cycle that is over, and only the
+   * continuation holding it can release it (unmount() sees whatever the
+   * variable holds, which is nothing or a newer one).
+   */
+  let closeRegistrationSeq = 0
   let blurSaving = false
   let closing = false
   let mounted = false
@@ -145,6 +153,8 @@ export function createAppLifecycle(deps: {
   function mount(): void {
     if (mounted) return
     mounted = true
+    closeRegistrationSeq += 1
+    const registration = closeRegistrationSeq
     if (typeof window.matchMedia === 'function') {
       const mq = window.matchMedia('(prefers-color-scheme: dark)')
       const onChange = (): void => {
@@ -161,11 +171,20 @@ export function createAppLifecycle(deps: {
       void (async () => {
         try {
           const win = getCurrentWindow()
-          unlistenCloseRequested = await win.onCloseRequested(onCloseRequested)
+          const off = await win.onCloseRequested(onCloseRequested)
+          // The registration settles after an await: a teardown that already
+          // ran must release it here, because nothing else holds its
+          // unsubscriber (the `disposed` shape `useNoteGraph` uses).
+          if (registration !== closeRegistrationSeq) {
+            off()
+            return
+          }
+          unlistenCloseRequested = off
         } catch {
           // A missing/broken Tauri bridge must not break the app; the browser
-          // `beforeunload` confirm remains the fallback.
-          unlistenCloseRequested = null
+          // `beforeunload` confirm remains the fallback. Only clear what this
+          // cycle owns — a newer one may have registered meanwhile.
+          if (registration === closeRegistrationSeq) unlistenCloseRequested = null
         }
       })()
     }
@@ -183,6 +202,9 @@ export function createAppLifecycle(deps: {
     deps.disposeRuntime?.()
     unlistenMedia?.()
     unlistenMedia = null
+    // Any close registration still in flight is now superseded, and will
+    // release itself when it lands.
+    closeRegistrationSeq += 1
     unlistenCloseRequested?.()
     unlistenCloseRequested = null
     window.removeEventListener('blur', onWindowBlur)

@@ -105,7 +105,24 @@ export function useHistoryPanel(): HistoryPanelModel {
     }
   }
 
+  /**
+   * Every read takes a ticket; only the newest one may write.
+   *
+   * A read is overtaken while it is in flight whenever the note changes, a save
+   * lands (`savedTick`) or the user presses Refresh, and the reads do not have
+   * to settle in the order they started. Without the ticket the later-RESOLVING
+   * list won, so note A's versions could render under note B — every Restore in
+   * that list then aimed A's version id at B's file, and the panel looked
+   * entirely normal while describing another document.
+   *
+   * Same policy as `openCompare` below, which re-checks the note it started for
+   * after its await; a ticket also covers A → B → A, where re-checking the note
+   * alone would let the first A read overwrite the second.
+   */
+  let loadSeq = 0
+
   async function load(): Promise<void> {
+    const seq = ++loadSeq
     const tab = tabs.activeTab
     // The note changed: any open comparison describes a document that is no longer
     // on screen, so drop it rather than render (and act on) a mixed diff.
@@ -115,10 +132,18 @@ export function useHistoryPanel(): HistoryPanelModel {
       loadFailed.value = false
       return
     }
+    const path = tab.path
+    const vault = tabs.vault
     try {
-      entries.value = await fsService.listHistory(tabs.vault, tab.path)
+      const list = await fsService.listHistory(vault, path)
+      if (seq !== loadSeq) return
+      entries.value = list
       loadFailed.value = false
     } catch (e) {
+      // A read the user has already left behind reports nothing: its failure is
+      // about a document that is no longer open, and the newer read says what
+      // this note's state actually is.
+      if (seq !== loadSeq) return
       // The toast carries the backend reason (which folder, what the OS said);
       // the inline hint below stops the panel from claiming there is no history.
       notifyError(t('history.readFailed', { msg: e instanceof Error ? e.message : String(e) }))

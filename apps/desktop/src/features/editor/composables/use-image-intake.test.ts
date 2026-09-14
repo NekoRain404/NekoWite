@@ -14,6 +14,7 @@ import {
 } from '../../../platform/gateways/memory'
 
 const importAttachmentMock = vi.hoisted(() => vi.fn())
+const saveAttachmentMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../../../platform/gateways/fs', () => ({
   fsService: {
@@ -24,7 +25,7 @@ vi.mock('../../../platform/gateways/fs', () => ({
     deleteFile: vi.fn(),
     stat: vi.fn(),
     listHistory: vi.fn().mockResolvedValue([]),
-    saveAttachment: vi.fn(),
+    saveAttachment: saveAttachmentMock,
     importAttachment: importAttachmentMock,
     resolveMediaPath: vi.fn(),
     onFsChange: vi.fn(),
@@ -50,6 +51,10 @@ function makeSourceView(doc: string) {
 }
 
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+
+function png(name: string): File {
+  return new File([new Uint8Array([137, 80])], name, { type: 'image/png' })
+}
 
 let pinia: Pinia
 let mounted: VueApp[] = []
@@ -86,6 +91,8 @@ describe('useImageIntake picker flow', () => {
     resetMemoryPickedFiles()
     importAttachmentMock.mockReset()
     importAttachmentMock.mockResolvedValue('attachments/2026-09/cat.png')
+    saveAttachmentMock.mockReset()
+    saveAttachmentMock.mockResolvedValue('attachments/2026-09/paste.png')
     useTabsStore().setVault('/vault')
     void useTabsStore().openTab('notes/a.md')
     mountHarness()
@@ -160,6 +167,27 @@ describe('useImageIntake picker flow', () => {
 
     expect(source.doc()).toBe('raw\n')
     expect(notifications).toHaveLength(1)
+  })
+
+  it('settles a pending rename prompt when its host unmounts', async () => {
+    // The dialog can only answer while the pane that renders it exists. A
+    // prompt whose host unmounted could neither resolve nor reject, so the
+    // awaiting intake was suspended forever: the pasted image was dropped with
+    // no toast and nothing logged. It now settles as a cancel — what Escape
+    // does — and the loop that awaits it has that branch already.
+    let settled = false
+    const pending = intake!.insertImageFiles([png('one.png'), png('two.png')])
+    void pending.then(() => {
+      settled = true
+    })
+    await flush()
+
+    mounted.forEach((app) => app.unmount())
+    mounted = []
+    await flush()
+
+    expect(settled).toBe(true)
+    expect(saveAttachmentMock).not.toHaveBeenCalled()
   })
 
   it('stays quiet when no vault is open', async () => {

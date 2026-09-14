@@ -265,6 +265,36 @@ describe('memoryFsGateway event simulation', () => {
     await events.emit('fs-change', { path: 'b.md', kind: 'removed' })
     expect(count).toBe(1)
   })
+
+  it('counts a registration per on() call, exactly as listen() does', async () => {
+    // Keying by callback identity folded a duplicate `on` into the first and
+    // let one `off` remove it, so "subscribed twice, unlistened once" could not
+    // be observed in any test using this adapter — while the Tauri adapter
+    // installs its own wrapper per `listen` and leaves a genuinely independent
+    // second listener behind.
+    const events = createMemoryEventAdapter()
+    let hits = 0
+    const cb = (): void => {
+      hits++
+    }
+    const first = await events.on('fs-change', cb)
+    const second = await events.on('fs-change', cb)
+
+    expect(events.listenerCount('fs-change')).toBe(2)
+    await events.emit('fs-change', { path: 'a.md', kind: 'created' })
+    expect(hits).toBe(2)
+
+    // Releasing one leaves the other live.
+    first()
+    expect(events.listenerCount('fs-change')).toBe(1)
+    await events.emit('fs-change', { path: 'b.md', kind: 'removed' })
+    expect(hits).toBe(3)
+
+    second()
+    expect(events.listenerCount('fs-change')).toBe(0)
+    await events.emit('fs-change', { path: 'c.md', kind: 'created' })
+    expect(hits).toBe(3)
+  })
 })
 
 describe('memoryGateways drive an AI stream', () => {

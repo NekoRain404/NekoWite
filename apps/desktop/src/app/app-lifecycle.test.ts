@@ -53,6 +53,8 @@ vi.mock('../i18n', () => ({
 
 import { createAppLifecycle } from './app-lifecycle'
 
+const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+
 type CloseHandler = (e: { preventDefault: () => void }) => Promise<void>
 
 function registeredCloseHandler(): CloseHandler {
@@ -205,6 +207,39 @@ describe('createAppLifecycle', () => {
     lifecycle.unmount()
     expect(h.tabsMock.captureSession).toHaveBeenCalled()
     expect(h.windowTracking.dispose).toHaveBeenCalled()
+  })
+
+  it('releases a close-requested registration that lands after the app unmounted', async () => {
+    // `onCloseRequested` resolves after an await, and a teardown can overtake
+    // it. The registration that lands afterwards is unreachable from unmount(),
+    // so the continuation that owns it has to release it.
+    let settleRegistration: (off: () => void) => void = () => {}
+    h.windowMock.onCloseRequested.mockReturnValue(
+      new Promise<() => void>((resolve) => {
+        settleRegistration = resolve
+      }),
+    )
+    const off = vi.fn()
+    const lifecycle = createAppLifecycle({ windowTracking: h.windowTracking })
+    lifecycle.mount()
+
+    lifecycle.unmount()
+    settleRegistration(off)
+    await flush()
+
+    expect(off).toHaveBeenCalled()
+  })
+
+  it('keeps the close-requested registration unmount() owns', async () => {
+    const off = vi.fn()
+    h.windowMock.onCloseRequested.mockResolvedValue(off)
+    const lifecycle = createAppLifecycle({ windowTracking: h.windowTracking })
+    lifecycle.mount()
+    await flush()
+
+    lifecycle.unmount()
+
+    expect(off).toHaveBeenCalled()
   })
 
   it('unmount disposes the runtime (the composition root) and removes window listeners', async () => {

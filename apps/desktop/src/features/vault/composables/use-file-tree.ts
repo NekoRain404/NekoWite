@@ -53,7 +53,11 @@ export function useFileTree(options: UseFileTreeOptions) {
   const appearance = useAppearanceStore()
 
   const root = ref<FileTreeNode | null>(null)
-  const unlisten = ref<(() => void) | null>(null)
+  /** The live fs-change subscription, or null when none is installed. Not a ref:
+   *  only this composable reads it, and it must be reachable from the
+   *  continuation that owns it (a registration can land after an await). */
+  let unlisten: (() => void) | null = null
+  let unmounted = false
   const confirmPath = ref<string | null>(null)
   const activePath = computed(() => tabs.activeTab?.path ?? null)
   const selectedDirPath = ref<string | null>(null)
@@ -287,6 +291,33 @@ export function useFileTree(options: UseFileTreeOptions) {
     }
   }
 
+  /**
+   * Subscribe to fs changes for `vault`, or release the registration again if
+   * the tree has moved on before it landed.
+   *
+   * `onFsChange` resolves after an await, and both a vault switch and an unmount
+   * can overtake it: each `listen()` installs its own backend subscription, so a
+   * registration that lands after either is a second, genuinely independent
+   * listener that only this continuation can reach (nothing else holds its
+   * unsubscriber). Left alone it kept calling `refreshAncestors` against the
+   * vault that is no longer open, for the rest of the session — and leaving the
+   * Folders view happens on every rail switch, so it is not a one-time cost.
+   * The same disposal shape as `useNoteGraph`'s `disposed` and
+   * `appBootstrap`'s `isStale()` re-check after `onFsChange`.
+   */
+  async function subscribeToFsChanges(vault: string): Promise<void> {
+    const off = await fsService.onFsChange(handleFsChange)
+    if (unmounted || options.vault() !== vault) {
+      off()
+      return
+    }
+    // Whatever an earlier continuation may have installed: at most one
+    // subscription belongs to the open vault (`/a` → `/b` → `/a` can leave an
+    // older `/a` registration in place when the listings settle out of order).
+    unlisten?.()
+    unlisten = off
+  }
+
   onMounted(async () => {
     resetRoot()
     await listChildren(root.value!)
@@ -294,25 +325,27 @@ export function useFileTree(options: UseFileTreeOptions) {
     // (appBootstrap), NOT here: the tree only exists while the Folders panel is
     // shown, so arming it here left the default Notes panel unwatched. What is
     // left for this side is reacting to the events, to refresh its rows.
-    unlisten.value = await fsService.onFsChange(handleFsChange)
+    await subscribeToFsChanges(options.vault())
   })
 
   onBeforeUnmount(() => {
-    unlisten.value?.()
+    unmounted = true
+    unlisten?.()
+    unlisten = null
   })
 
   watch(
     () => options.vault(),
-    async () => {
+    async (vault) => {
       // Drop the previous fs-change subscription before re-subscribing on a
       // vault switch so handlers don't stack across vaults.
-      unlisten.value?.()
-      unlisten.value = null
+      unlisten?.()
+      unlisten = null
       confirmPath.value = null
       selectedDirPath.value = null
       resetRoot()
       await listChildren(root.value!)
-      unlisten.value = await fsService.onFsChange(handleFsChange)
+      await subscribeToFsChanges(vault)
     },
   )
 

@@ -105,6 +105,54 @@ describe('setupWindowTracking capture', () => {
   })
 })
 
+describe('setupWindowTracking listener registration', () => {
+  it('releases the listeners that did register when a later registration rejects', async () => {
+    // Three sequential awaits: a rejection partway through used to drop the
+    // handles that had already come back, leaving those listeners attached with
+    // nothing left to remove them (dispose() only sees what is still stored).
+    const resizeOff = vi.fn()
+    h.win.onResized.mockResolvedValue(resizeOff)
+    h.win.onMoved.mockRejectedValue(new Error('no bridge'))
+
+    const tracking = setupWindowTracking()
+    await tracking.start()
+
+    expect(resizeOff).toHaveBeenCalledTimes(1)
+  })
+
+  it('releases every listener that registered when the last one rejects', async () => {
+    const resizeOff = vi.fn()
+    const movedOff = vi.fn()
+    h.win.onResized.mockResolvedValue(resizeOff)
+    h.win.onMoved.mockResolvedValue(movedOff)
+    h.win.onScaleChanged.mockRejectedValue(new Error('no bridge'))
+
+    const tracking = setupWindowTracking()
+    await tracking.start()
+
+    expect(resizeOff).toHaveBeenCalledTimes(1)
+    expect(movedOff).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves dispose() as the only remover when every registration succeeds', async () => {
+    const resizeOff = vi.fn()
+    const movedOff = vi.fn()
+    const scaleOff = vi.fn()
+    h.win.onResized.mockResolvedValue(resizeOff)
+    h.win.onMoved.mockResolvedValue(movedOff)
+    h.win.onScaleChanged.mockResolvedValue(scaleOff)
+
+    const tracking = setupWindowTracking()
+    await tracking.start()
+    expect(resizeOff).not.toHaveBeenCalled()
+
+    tracking.dispose()
+    expect(resizeOff).toHaveBeenCalledTimes(1)
+    expect(movedOff).toHaveBeenCalledTimes(1)
+    expect(scaleOff).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('setupWindowTracking restore', () => {
   it('applies the stored logical geometry through LogicalSize/LogicalPosition', async () => {
     saveWindowState({ width: 1600, height: 1000, x: 200, y: 120, maximized: false })
