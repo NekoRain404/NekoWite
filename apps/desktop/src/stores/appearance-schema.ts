@@ -1,0 +1,184 @@
+/**
+ * The persisted appearance document: its shape, its defaults, the bounds its
+ * numbers are held to, and the validation that turns a stored blob back into
+ * settings.
+ *
+ * This module owns the storage key and the schema version, so the store never
+ * repeats them. Reading is total: a missing, corrupt or older blob resolves to
+ * the defaults rather than throwing, because appearance is loaded while the
+ * window is still coming up and a bad value must not be able to stop that.
+ */
+
+import { createDomainPersister, persistence } from '../services/persistence'
+import { ACCENTS, COLOR_SCHEMES } from './appearance-palette'
+import type { Accent, ColorScheme } from './appearance-palette'
+import { EDITOR_FONT_IDS, MONO_FONT_IDS, UI_FONT_IDS } from './appearance-fonts'
+import type { EditorFontId, MonoFontId, UiFontId } from './appearance-fonts'
+
+export type Theme = 'light' | 'dark' | 'system'
+export type ContentDirection = 'auto' | 'ltr' | 'rtl'
+
+export const SIDEBAR_WIDTH_MIN = 160
+export const SIDEBAR_WIDTH_MAX = 520
+export const SIDEBAR_WIDTH_DEFAULT = 232
+export const RAIL_WIDTH_MIN = 220
+export const RAIL_WIDTH_MAX = 640
+export const RAIL_WIDTH_DEFAULT = 300
+export const NOTELIST_WIDTH_MIN = 200
+export const NOTELIST_WIDTH_MAX = 520
+export const NOTELIST_WIDTH_DEFAULT = 280
+
+export const WORD_GOAL_MAX = 100000
+
+export interface AppearanceSettings {
+  theme: Theme
+  colorScheme: ColorScheme
+  accent: Accent
+  bodyFontSize: number
+  lineHeight: number
+  sidebarWidth: number
+  railWidth: number
+  notelistWidth: number
+  uiFont: UiFontId
+  editorFont: EditorFontId
+  monoFont: MonoFontId
+  focusMode: boolean
+  wordGoal: number
+  spellCheckEnabled: boolean
+  softWrap: boolean
+  lineNumbers: boolean
+  autosaveOnBlur: boolean
+  statusBarWords: boolean
+  followSystemAccent: boolean
+  renderTaskChecklist: boolean
+  autoSyncScroll: boolean
+  confirmBeforeDelete: boolean
+  highContrast: boolean
+  contentDirection: ContentDirection
+}
+
+const LS_KEY = 'nekowite.appearance'
+
+/** The fresh-install values, and the fallback the setters clamp towards: a
+ *  rejected value (NaN, a corrupt stored number) must land on the default this
+ *  document declares, not on a second copy of it kept by the store. */
+export const APPEARANCE_DEFAULTS: AppearanceSettings = {
+  theme: 'system',
+  colorScheme: 'default',
+  accent: 'ink',
+  bodyFontSize: 15,
+  lineHeight: 1.8,
+  sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
+  railWidth: RAIL_WIDTH_DEFAULT,
+  notelistWidth: NOTELIST_WIDTH_DEFAULT,
+  uiFont: 'system',
+  editorFont: 'system',
+  monoFont: 'mono',
+  focusMode: false,
+  wordGoal: 0,
+  spellCheckEnabled: true,
+  softWrap: true,
+  lineNumbers: true,
+  autosaveOnBlur: true,
+  statusBarWords: true,
+  followSystemAccent: false,
+  renderTaskChecklist: true,
+  autoSyncScroll: true,
+  confirmBeforeDelete: true,
+  highContrast: false,
+  contentDirection: 'auto',
+}
+
+const CONTENT_DIRECTIONS: ContentDirection[] = ['auto', 'ltr', 'rtl']
+
+function pickFont<T extends string>(value: unknown, valid: T[], fallback: T): T {
+  return typeof value === 'string' && (valid as string[]).includes(value) ? (value as T) : fallback
+}
+
+function readBool(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback
+}
+
+/** The shared numeric guard for every bounded setting: a stored or set value
+ *  that is not a finite number falls back to the default, and a finite one is
+ *  rounded and clamped into range. */
+export function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  const numeric = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(numeric)) return fallback
+  return Math.round(Math.min(max, Math.max(min, numeric)))
+}
+
+/** Parse a stored appearance blob with field-by-field validation, returning null
+ *  when it is corrupt (the domain persister then falls back to `defaults`). */
+function parseStored(raw: string): AppearanceSettings | null {
+  const parsed = JSON.parse(raw) as Partial<AppearanceSettings>
+  return {
+    theme:
+      parsed.theme === 'light' || parsed.theme === 'dark' || parsed.theme === 'system'
+        ? parsed.theme
+        : APPEARANCE_DEFAULTS.theme,
+    accent: typeof parsed.accent === 'string' && ACCENTS.includes(parsed.accent as Accent)
+      ? (parsed.accent as Accent)
+      : APPEARANCE_DEFAULTS.accent,
+    colorScheme: typeof parsed.colorScheme === 'string' && COLOR_SCHEMES.includes(parsed.colorScheme as ColorScheme)
+      ? (parsed.colorScheme as ColorScheme)
+      : APPEARANCE_DEFAULTS.colorScheme,
+    bodyFontSize: parsed.bodyFontSize ?? APPEARANCE_DEFAULTS.bodyFontSize,
+    lineHeight: parsed.lineHeight ?? APPEARANCE_DEFAULTS.lineHeight,
+    sidebarWidth: clampInt(parsed.sidebarWidth ?? APPEARANCE_DEFAULTS.sidebarWidth, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX, APPEARANCE_DEFAULTS.sidebarWidth),
+    railWidth: clampInt(parsed.railWidth ?? APPEARANCE_DEFAULTS.railWidth, RAIL_WIDTH_MIN, RAIL_WIDTH_MAX, APPEARANCE_DEFAULTS.railWidth),
+    notelistWidth: clampInt(parsed.notelistWidth ?? APPEARANCE_DEFAULTS.notelistWidth, NOTELIST_WIDTH_MIN, NOTELIST_WIDTH_MAX, APPEARANCE_DEFAULTS.notelistWidth),
+    uiFont: pickFont(parsed.uiFont, UI_FONT_IDS, APPEARANCE_DEFAULTS.uiFont),
+    editorFont: pickFont(parsed.editorFont, EDITOR_FONT_IDS, APPEARANCE_DEFAULTS.editorFont),
+    monoFont: pickFont(parsed.monoFont, MONO_FONT_IDS, APPEARANCE_DEFAULTS.monoFont),
+    focusMode: readBool(parsed.focusMode, APPEARANCE_DEFAULTS.focusMode),
+    wordGoal: clampInt(parsed.wordGoal ?? APPEARANCE_DEFAULTS.wordGoal, 0, WORD_GOAL_MAX, APPEARANCE_DEFAULTS.wordGoal),
+    spellCheckEnabled: readBool(parsed.spellCheckEnabled, APPEARANCE_DEFAULTS.spellCheckEnabled),
+    softWrap: readBool(parsed.softWrap, APPEARANCE_DEFAULTS.softWrap),
+    lineNumbers: readBool(parsed.lineNumbers, APPEARANCE_DEFAULTS.lineNumbers),
+    autosaveOnBlur: readBool(parsed.autosaveOnBlur, APPEARANCE_DEFAULTS.autosaveOnBlur),
+    statusBarWords: readBool(parsed.statusBarWords, APPEARANCE_DEFAULTS.statusBarWords),
+    followSystemAccent: readBool(parsed.followSystemAccent, APPEARANCE_DEFAULTS.followSystemAccent),
+    renderTaskChecklist: readBool(parsed.renderTaskChecklist, APPEARANCE_DEFAULTS.renderTaskChecklist),
+    autoSyncScroll: readBool(parsed.autoSyncScroll, APPEARANCE_DEFAULTS.autoSyncScroll),
+    confirmBeforeDelete: readBool(parsed.confirmBeforeDelete, APPEARANCE_DEFAULTS.confirmBeforeDelete),
+    highContrast: readBool(parsed.highContrast, APPEARANCE_DEFAULTS.highContrast),
+    contentDirection:
+      typeof parsed.contentDirection === 'string' &&
+      (CONTENT_DIRECTIONS as string[]).includes(parsed.contentDirection)
+        ? (parsed.contentDirection as ContentDirection)
+        : APPEARANCE_DEFAULTS.contentDirection,
+  }
+}
+
+/** Versioned appearance domain (schema `version: 1`). A corrupt/missing blob
+ *  yields `defaults`; a future schema bump registers a `migrations` chain that
+ *  runs on load before parsing. */
+const appearanceDomain = createDomainPersister<AppearanceSettings>(persistence, {
+  key: LS_KEY,
+  version: 1,
+  // A fresh object per load: the caller's settings must never alias the
+  // defaults table, or one edited field would rewrite the defaults for the
+  // whole session.
+  defaults: () => ({ ...APPEARANCE_DEFAULTS }),
+  parse: (raw) => {
+    try {
+      return parseStored(raw)
+    } catch {
+      return null
+    }
+  },
+  serialize: (value) => JSON.stringify(value),
+})
+
+/** The stored settings, or the defaults when nothing valid was stored. */
+export function readStoredAppearance(): AppearanceSettings {
+  return appearanceDomain.load()
+}
+
+/** Write the settings; a storage that refuses (quota, unavailable webview) is
+ *  swallowed by the domain persister, since losing a preference is not worth
+ *  breaking the interaction that set it. */
+export function saveStoredAppearance(value: AppearanceSettings): void {
+  appearanceDomain.save(value)
+}
