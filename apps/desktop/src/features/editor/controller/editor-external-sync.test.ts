@@ -23,7 +23,12 @@ import { notifyError } from '../../../services/errors'
 import { useTabsStore } from '../../../stores/tabs'
 import { useViewStore } from '../../../stores/view'
 import { armSuppressReapply, shouldSuppressReapply } from '../../../services/suppress-reapply'
-import { markSourceAuthored } from '../../../services/editor-ownership'
+import {
+  clearRefusedDocument,
+  isRefusedDocument,
+  markSourceAuthored,
+  renderedModelRefused,
+} from '../../../services/editor-ownership'
 import { createDocumentSession, type DocumentSession } from '../model/document-session'
 import { createExternalDocSync } from '../../../services/external-doc-sync'
 import type { FsChangeEvent } from '../../../platform/gateways/contracts'
@@ -102,6 +107,12 @@ describe('editorExternalSync', () => {
     session = createDocumentSession()
     await tabs.openTab(null, '# Initial\n')
     vi.resetAllMocks()
+  })
+
+  afterEach(() => {
+    // Module state, shared with the write path; a case that arms it must not
+    // leave it armed for the next one.
+    clearRefusedDocument()
   })
 
   it('adopts an external content change while the editor is idle', async () => {
@@ -282,6 +293,51 @@ describe('editorExternalSync', () => {
     expect(setCalloutView).not.toHaveBeenCalled()
     // The finally still runs: no pending write, so the overlay is refreshed.
     expect(scheduler).toHaveBeenCalled()
+  })
+
+  // C1: the save path cannot see this session, so the refusal has to be
+  // published, with the text that failed, for it to refuse anything.
+  it('publishes the refused document, and clears it when an open succeeds', async () => {
+    const editor = makeEditor({
+      save: '# Canonical\n',
+      open: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('bad mdx'))
+        .mockResolvedValue(undefined) as NekoEditor['open'],
+    })
+    session.editor = editor
+    const { sync } = makeSync(session)
+
+    await sync.applyContent('# Unknown\n')
+
+    expect(renderedModelRefused()).toBe(true)
+    expect(isRefusedDocument('# Unknown\n')).toBe(true)
+    expect(isRefusedDocument('# Something else\n')).toBe(false)
+
+    // The user switches back to a rendered view: the re-parse succeeds.
+    view.setMode('source')
+    view.setMode('rendered')
+    sync.onModeChanged('rendered')
+    await flush()
+
+    expect(renderedModelRefused()).toBe(false)
+    expect(isRefusedDocument('# Unknown\n')).toBe(false)
+  })
+
+  // The document IS loaded here — what failed is installing the callout view.
+  // Arming the write guard would refuse saves of a note the model holds.
+  it('does not publish a refusal when only the callout install failed', async () => {
+    vi.mocked(setCalloutView).mockImplementationOnce(() => {
+      throw new Error('editor view is not ready')
+    })
+    const editor = makeEditor({ save: '# Canonical\n' })
+    session.editor = editor
+    const { sync } = makeSync(session)
+
+    await sync.applyContent('# Loaded\n')
+
+    expect(session.parseFailed).toBe(true)
+    expect(renderedModelRefused()).toBe(false)
   })
 
   it('retries the failed content when the user switches back to rendered', async () => {

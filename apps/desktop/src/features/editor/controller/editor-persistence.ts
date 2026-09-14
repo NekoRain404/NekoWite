@@ -1,7 +1,11 @@
 import { emitLifecycle } from '@nekowite/plugin-host'
 import { debounce } from '../../../services/timing'
 import { useTabsStore } from '../../../stores/tabs'
-import { clearSourceAuthored, isSourceAuthored } from '../../../services/editor-ownership'
+import {
+  clearSourceAuthored,
+  isSourceAuthored,
+  renderedModelRefused,
+} from '../../../services/editor-ownership'
 import { getSourceViewHandle } from '../../../services/source-view'
 import type { DocumentSession } from '../model/document-session'
 
@@ -49,6 +53,14 @@ export function createEditorPersistence(deps: EditorPersistenceDeps): EditorPers
   async function persistMarkdown(): Promise<void> {
     const editor = deps.session.editor
     if (!editor) return
+    // The model holds no document of the open tab: the last open() threw, so
+    // everything it can serialize belongs to the document it was loaded with
+    // before — or to nothing, in a session that had not loaded one. Publishing
+    // that here is the damage of C1, not a side effect of it: the serialization
+    // lands in `active.content`, and the next save writes the tab to disk. It
+    // therefore covers every caller of this path, the debounced one included,
+    // until the model holds a document again (a rendered view re-parses it).
+    if (renderedModelRefused()) return
     const active = tabs.activeTab
     if (!active) return
     // Capture generation BEFORE the await: a reloadFromDisk during the save

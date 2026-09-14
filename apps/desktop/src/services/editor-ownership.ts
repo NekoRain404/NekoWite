@@ -116,6 +116,47 @@ export function isSourceAuthored(content: string | null | undefined): boolean {
 }
 
 /**
+ * The document the rendered model failed to load, or null while it holds one.
+ *
+ * `open()` commits the new file's frontmatter and *then* parses; when the parse
+ * throws, the model is left holding the PREVIOUS document — or nothing at all,
+ * in a session that had not loaded one yet — while the tab holds the text that
+ * failed. Nothing the model can serialize then belongs to the file on screen:
+ * in a fresh session it serializes to "", with another note open it serializes
+ * to that note's body. Writing either over the open file destroys it (C1, and
+ * the save reports success while it happens).
+ *
+ * Both halves of that need this fact and they live in different layers: the
+ * rendered pane (which must not publish such a serialization into the tab) is a
+ * controller over the session, while the write path is the tab store and cannot
+ * reach the session at all. So it is published here, the way `sourceAuthored`
+ * and the rendered flush hook are, and the session is the only writer.
+ */
+let refusedDocument: string | null = null
+
+/** `open()` threw on `content`: the model does not hold it. */
+export function markRefusedDocument(content: string): void {
+  refusedDocument = content
+}
+
+/** The model holds a document again (a successful open), or there is no pane
+ *  left to hold one (teardown) — either way nothing is refused any more. */
+export function clearRefusedDocument(): void {
+  refusedDocument = null
+}
+
+/** True while the rendered model holds none of the documents on screen: every
+ *  serialization it produces belongs to another document, or to none. */
+export function renderedModelRefused(): boolean {
+  return refusedDocument !== null
+}
+
+/** True when `content` is the exact text the rendered model failed to load. */
+export function isRefusedDocument(content: string | null | undefined): boolean {
+  return content != null && content === refusedDocument
+}
+
+/**
  * Publish the rendered pane's pending serialization.
  *
  * Registered by the rendered pane (the same way the source pane registers its

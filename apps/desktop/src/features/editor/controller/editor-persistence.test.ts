@@ -4,6 +4,7 @@ import { useTabsStore } from '../../../stores/tabs'
 import { useSettingsStore } from '../../../stores/settings'
 import { createDocumentSession, type DocumentSession } from '../model/document-session'
 import { createEditorPersistence } from './editor-persistence'
+import { clearRefusedDocument, markRefusedDocument } from '../../../services/editor-ownership'
 import type { NekoEditor } from '@nekowite/editor-core'
 
 vi.mock('../../../platform/gateways/fs', () => ({
@@ -48,6 +49,9 @@ describe('editorPersistence', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    // The refusal is module state (the write path has no way to reach this
+    // session); a case that arms it must not leave it armed for the next one.
+    clearRefusedDocument()
   })
 
   it('marks the tab dirty and schedules autosave on a model change', () => {
@@ -75,6 +79,42 @@ describe('editorPersistence', () => {
     expect(tabs.activeTab?.content).toBe('# Canonical\n')
     expect(session.lastLocalMarkdown).toBe('# Canonical\n')
     unsub()
+  })
+
+  // C1: the model holds the PREVIOUS document when open() throws — nothing at
+  // all in a fresh session — so its serialization is not this file's text.
+  // Publishing it put that text into the tab, and the next save wrote the tab.
+  it('publishes nothing while the model refused this document', async () => {
+    vi.useFakeTimers()
+    const { editor } = makeFakeEditor('')
+    session.editor = editor as unknown as NekoEditor
+    markRefusedDocument('# Raw source of the file that failed\n')
+    tabs.activeTab!.content = '# Raw source of the file that failed\n'
+    const persistence = createEditorPersistence({ session })
+
+    persistence.scheduleSerialize()
+    await vi.advanceTimersByTimeAsync(200)
+
+    // Not even serialized: the whole-document round trip has no purpose while
+    // the answer would be thrown away.
+    expect(editor.save).not.toHaveBeenCalled()
+    expect(tabs.activeTab?.content).toBe('# Raw source of the file that failed\n')
+  })
+
+  it('publishes again once the model holds a document', async () => {
+    vi.useFakeTimers()
+    const { editor } = makeFakeEditor('# Canonical\n')
+    session.editor = editor as unknown as NekoEditor
+    markRefusedDocument('# Raw source of the file that failed\n')
+    tabs.activeTab!.content = '# Raw source of the file that failed\n'
+    const persistence = createEditorPersistence({ session })
+
+    // The user switched back to a rendered view and the re-parse succeeded.
+    clearRefusedDocument()
+    persistence.scheduleSerialize()
+    await vi.advanceTimersByTimeAsync(200)
+
+    expect(tabs.activeTab?.content).toBe('# Canonical\n')
   })
 
   it('cancel() drops a pending serialization before it fires', async () => {

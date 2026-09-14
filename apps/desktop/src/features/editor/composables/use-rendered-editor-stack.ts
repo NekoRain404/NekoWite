@@ -5,7 +5,7 @@ import type { NekoEditor } from '@nekowite/editor-core'
 import { useAppearanceStore } from '../../../stores/appearance'
 import { useTabsStore } from '../../../stores/tabs'
 import { useViewStore } from '../../../stores/view'
-import { setRenderedFlush } from '../../../services/editor-ownership'
+import { clearRefusedDocument, setRenderedFlush } from '../../../services/editor-ownership'
 import { createDocumentSession } from '../model/document-session'
 import { createEditorController } from '../controller/editor-controller'
 import { createEditorExternalSync } from '../controller/editor-external-sync'
@@ -175,6 +175,11 @@ export function useRenderedEditorStack(options: RenderedEditorStackOptions) {
   onBeforeUnmount(() => {
     try {
       setRenderedFlush(null)
+      // The session dies with this mount; a refusal it published must die with
+      // it too, or the write path would keep refusing saves of a document no
+      // editor is holding any more (the vault-switch teardown, where the tab
+      // set is replaced and the next mount is a different vault).
+      clearRefusedDocument()
       persistence.cancel()
       searchOverlay.cancelRefresh()
       cancelFocusRaf()

@@ -30,6 +30,12 @@ export const documents = {
       crashRecoveryMsg: 'It looks like the app was interrupted last time. Unsaved changes detected ({time}) — restore the latest version?',
       saveAttachmentFailed: 'Failed to save attachment; the image remains in the temp folder',
       saveFailed: 'Save failed; content is kept in the editor, please retry',
+      // Not `saveFailed`: that one says "please retry", and a retry here is
+      // refused again for the same document until it renders. The cause is the
+      // point — otherwise the user retries, sees the same toast, and concludes
+      // the app is broken rather than the note unreadable to it.
+      saveBlockedUnrenderable:
+        'Not saved: this note could not be rendered, so the editor cannot vouch for what it would write. Your text is unchanged.',
       deleteFailed: 'Delete failed',
       deleteAssetsFailed: 'The note was deleted, but its image folder could not be moved to the trash.',
       watchFailed: 'External file changes cannot be tracked right now, so this list may not follow what happens outside the app. Rebuilding the index retries it.',
@@ -87,6 +93,8 @@ export const documents = {
       crashRecoveryMsg: '检测到上次程序中断，检测到未保存的更改（{time}），恢复最近版本？',
       saveAttachmentFailed: '保存附件失败，图片仍保留在临时目录',
       saveFailed: '保存失败，内容已保留在编辑器中，请重试',
+      saveBlockedUnrenderable:
+        '未保存：这篇笔记无法被渲染，编辑器无法为将要写入的内容担保。你的文字未改动。',
       deleteFailed: '删除失败',
       deleteAssetsFailed: '笔记已删除，但其图片文件夹未能移入回收站。',
       watchFailed: '当前无法跟踪外部文件变化，列表可能不会随应用外的改动更新。重建索引会重试。',
