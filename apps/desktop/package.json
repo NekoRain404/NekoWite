@@ -14,7 +14,7 @@
     "typecheck": "vue-tsc -b",
     "lint": "eslint src perf e2e playwright.config.ts vitest.perf.config.ts",
     "perf": "vitest run --config vitest.perf.config.ts",
-    "e2e": "playwright test"
+    "e2e": "node scripts/run-e2e.mjs"
   },
   "dependencies": {
     "@citation-js/core": "^0.7",
