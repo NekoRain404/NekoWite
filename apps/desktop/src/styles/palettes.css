@@ -131,20 +131,41 @@
    Driven by `data-contrast="high"` on the shell (see appearance.highContrast).
    Pushes text/background/border/muted to true black & white, eliminates the
    washed-out translucency while keeping the --app-* semantics, and lifts the
-   accent to a saturated value. These rules sit AFTER the theme/accent blocks so
-   they win the cascade. */
+   accent to a saturated value.
+
+   High contrast is an accessibility setting — the user asked for it. A colour
+   scheme is a preference about hue. So where the two disagree, high contrast
+   wins, and it wins by SPECIFICITY, not by coming later in the file: a scheme
+   block carries at most two attribute selectors ([data-color-scheme=…] light,
+   [data-theme="dark"][data-color-scheme=…] dark) and the surface blocks below
+   carry three. The bare [data-color-scheme] in them is there to be counted, not
+   read — AppShell sets it with data-theme and data-contrast on the same element,
+   so it is always present where data-contrast is. Do not drop it, and keep a new
+   scheme to the same two-selector shape: order alone decided this once and light
+   lost — with high contrast on and a scheme picked, light resolved --app-canvas
+   to that palette's own value (#fbfaf6 for `default`) while dark resolved
+   #000000. A scheme appended after the last rule, a move of these blocks or an
+   added @import must not be able to bring that back (highContrast.test.ts).
+
+   The accent is the user's hue and a scheme never declares it, so the accent
+   tokens keep their own blocks at the specificity the accent rules below
+   expect: they have nothing to outrank, and must keep losing to the saturated
+   per-accent values. */
 
 [data-contrast="high"] {
   color-scheme: light;
+  --app-accent: #000000;
+  --app-accent-soft: #d9d9d9;
+  --app-accent-contrast: #ffffff;
+}
+
+[data-theme="light"][data-color-scheme][data-contrast="high"] {
   --app-canvas: #ffffff;
   --app-panel: #ffffff;
   --app-elevated: #ffffff;
   --app-border: #000000;
   --app-text: #000000;
   --app-muted: #1e1e1e;
-  --app-accent: #000000;
-  --app-accent-soft: #d9d9d9;
-  --app-accent-contrast: #ffffff;
   --app-danger: #c00000;
   --app-danger-contrast: #ffffff;
   --app-success: #0b6b30;
@@ -213,15 +234,18 @@
 
 [data-theme="dark"][data-contrast="high"] {
   color-scheme: dark;
+  --app-accent: #ffffff;
+  --app-accent-soft: #2a2a2a;
+  --app-accent-contrast: #000000;
+}
+
+[data-theme="dark"][data-color-scheme][data-contrast="high"] {
   --app-canvas: #000000;
   --app-panel: #000000;
   --app-elevated: #0c0c0c;
   --app-border: #ffffff;
   --app-text: #ffffff;
   --app-muted: #d8d8d8;
-  --app-accent: #ffffff;
-  --app-accent-soft: #2a2a2a;
-  --app-accent-contrast: #000000;
   --app-danger: #ff4d4d;
   --app-danger-contrast: #000000;
   --app-success: #4dde85;
