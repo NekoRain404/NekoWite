@@ -18,9 +18,13 @@ export interface DocumentSession {
   gen: number
   /** Markdown last produced by (or applied to) the editor. */
   lastLocalMarkdown: string | null
-  /** The exact content currently loaded into the editor. Used to make
-   *  external-sync re-open idempotent so a watcher echo or a duplicate open
-   *  never replaces the live model (which resets caret/undo/scroll). */
+  /** The exact content the editor is HOLDING, null while it holds none: a
+   *  failed `open()` disowns the document it was asked for, and this claim has
+   *  to be dropped with it. Used to make external-sync re-open idempotent so a
+   *  watcher echo or a duplicate open never replaces the live model (which
+   *  resets caret/undo/scroll) — so it must never outlive the load it
+   *  describes, or the guard that reads it skips the very re-open that makes
+   *  the editor hold a document again (C1, brief 58). */
   appliedContent: string | null
   /** True while an `open()` is applying externally-supplied content. */
   applyingExternal: boolean

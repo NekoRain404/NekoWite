@@ -324,6 +324,46 @@ describe('editorExternalSync', () => {
     expect(isRefusedDocument('# Unknown\n')).toBe(false)
   })
 
+  // C1, brief 58 (task-56 report). `appliedContent` is a claim that the editor
+  // HOLDS that text, and a failed load drops the claim (held-document.ts) while
+  // leaving the model showing the previous document. Keeping the claim let the
+  // idempotence guard above skip the re-open on the strength of it, so the
+  // editor held nothing while the refusal stayed armed — for every note the
+  // user switched to afterwards, not just the one that failed.
+  it('drops the applied-content claim with the failed load, so coming back re-opens', async () => {
+    const openMock = vi.fn(async () => undefined)
+    const editor = makeEditor({ save: '# Held\n', open: openMock })
+    session.editor = editor
+    const { sync } = makeSync(session)
+    tabs.activeTab!.content = '# Held\n'
+
+    await sync.applyContent('# Held\n')
+    // The state the guard compares: both fields name the text the editor holds.
+    expect(session.appliedContent).toBe('# Held\n')
+    expect(session.lastLocalMarkdown).toBe('# Held\n')
+
+    // The user opens a file whose parse throws.
+    openMock.mockRejectedValueOnce(new Error('bad mdx'))
+    await sync.applyContent('# Unknown\n')
+    expect(renderedModelRefused()).toBe(true)
+    expect(session.appliedContent).toBeNull()
+
+    // They come back to the note the editor was holding, and switch to the
+    // rendered view.
+    tabs.activeTab!.content = '# Held\n'
+    view.setMode('source')
+    view.setMode('rendered')
+    sync.onModeChanged('rendered')
+    await flush()
+
+    // The open ran instead of being skipped as already-applied: the editor
+    // holds a document again, which is what clears the refusal.
+    expect(editor.open).toHaveBeenCalledTimes(3)
+    expect(editor.open).toHaveBeenLastCalledWith('# Held\n', null)
+    expect(renderedModelRefused()).toBe(false)
+    expect(session.appliedContent).toBe('# Held\n')
+  })
+
   // The document IS loaded here — what failed is installing the callout view.
   // Arming the write guard would refuse saves of a note the model holds.
   it('does not publish a refusal when only the callout install failed', async () => {
