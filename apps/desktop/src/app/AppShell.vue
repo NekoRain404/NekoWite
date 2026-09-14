@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { FolderOpen, PanelRightClose, PanelRightOpen, Settings } from 'lucide-vue-next'
 import TitleBar from '../ui/TitleBar.vue'
 import { AppSidebar } from '../features/sidebar'
 import { NoteListPanel } from '../features/notes'
-import InfoRail from '../ui/InfoRail.vue'
+import InfoRail, { type RailTab } from '../ui/InfoRail.vue'
 import TabBar from '../ui/TabBar.vue'
 import StatusBar from '../ui/StatusBar.vue'
 import { SettingsPanel } from '../features/settings'
@@ -73,6 +73,11 @@ const emit = defineEmits<{
 
 const appearance = useAppearanceStore()
 
+// The rail is mounted only while it is open, so which panel it shows has to
+// outlive it: held here, closing the rail and reopening it puts the user back on
+// the panel they were reading instead of resetting to the chat (D1).
+const railTab = ref<RailTab>('ai')
+
 const theme = computed<string>(() => {
   void appearance.systemRevision
   return appearance.effectiveTheme()
@@ -110,36 +115,49 @@ const shellStyle = computed<Record<string, string>>(() => ({
     />
 
     <div class="shell-body">
-      <AppSidebar
-        v-if="vaultPath && sidebarVisible"
-        :vault="vaultPath"
-        @open-folder="(p: string) => emit('open-folder', p)"
-        @open-settings="emit('open-settings')"
-      />
-      <LayoutResizeHandle
-        v-if="vaultPath && sidebarVisible"
-        :label="t('layout.resizeSidebar')"
-        :min="SIDEBAR_WIDTH_MIN"
-        :max="SIDEBAR_WIDTH_MAX"
-        :value="appearance.sidebarWidth"
-        :default-value="SIDEBAR_WIDTH_DEFAULT"
-        @change="appearance.setSidebarWidth"
-      />
-      <NoteListPanel
-        v-if="vaultPath && sidebarVisible"
-        class="note-list-col"
-      />
-      <LayoutResizeHandle
-        v-if="vaultPath && sidebarVisible"
-        :label="t('layout.resizeNotelist')"
-        :min="NOTELIST_WIDTH_MIN"
-        :max="NOTELIST_WIDTH_MAX"
-        :value="appearance.notelistWidth"
-        :default-value="NOTELIST_WIDTH_DEFAULT"
-        @change="appearance.setNotelistWidth"
-      />
+      <!-- Having a vault open and having the sidebar shown are two different
+           things, and only the first of them should build the columns. They used
+           to share one `v-if`, so collapsing the sidebar unmounted the sidebar
+           and the note list: the list came back at the top of a long scroll and
+           the References/Trash groups closed themselves, because both are local
+           state that went with the unmount. Mounted once per vault, the toggle
+           only hides the columns — so the scroll position, the open groups and
+           the fetched lists all survive, and a column coming back from
+           `display: none` replays its CSS animation, which is what gives the
+           arriving one its fade. -->
+      <template v-if="vaultPath">
+        <AppSidebar
+          v-show="sidebarVisible"
+          class="layout-col"
+          :vault="vaultPath"
+          @open-folder="(p: string) => emit('open-folder', p)"
+          @open-settings="emit('open-settings')"
+        />
+        <LayoutResizeHandle
+          v-if="sidebarVisible"
+          :label="t('layout.resizeSidebar')"
+          :min="SIDEBAR_WIDTH_MIN"
+          :max="SIDEBAR_WIDTH_MAX"
+          :value="appearance.sidebarWidth"
+          :default-value="SIDEBAR_WIDTH_DEFAULT"
+          @change="appearance.setSidebarWidth"
+        />
+        <NoteListPanel
+          v-show="sidebarVisible"
+          class="note-list-col layout-col"
+        />
+        <LayoutResizeHandle
+          v-if="sidebarVisible"
+          :label="t('layout.resizeNotelist')"
+          :min="NOTELIST_WIDTH_MIN"
+          :max="NOTELIST_WIDTH_MAX"
+          :value="appearance.notelistWidth"
+          :default-value="NOTELIST_WIDTH_DEFAULT"
+          @change="appearance.setNotelistWidth"
+        />
+      </template>
       <div
-        v-else-if="!vaultPath"
+        v-else
         class="onboard"
       >
         <div class="onboard-card">
@@ -183,6 +201,7 @@ const shellStyle = computed<Record<string, string>>(() => ({
         />
         <InfoRail
           v-if="railOpen"
+          v-model:tab="railTab"
           @close="emit('toggle-rail')"
         />
       </section>
@@ -362,4 +381,6 @@ html, body, #app { margin: 0; padding: 0; height: 100%; width: 100%; }
   color: var(--app-muted);
 }
 </style>
+
+<style src="./appShell.css"></style>
 

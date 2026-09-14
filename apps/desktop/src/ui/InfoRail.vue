@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { X } from 'lucide-vue-next'
 import ReferencesPanel from './ReferencesPanel.vue'
 import HistoryPanel from './HistoryPanel.vue'
@@ -11,7 +11,15 @@ import { t } from '../i18n'
 
 const emit = defineEmits<{ (e: 'close'): void }>()
 
-const activeTab = ref<'ai' | 'outline' | 'refs' | 'history' | 'meta' | 'stats'>('ai')
+export type RailTab = 'ai' | 'outline' | 'refs' | 'history' | 'meta' | 'stats'
+
+// The rail is mounted with `v-if="railOpen"`, so a ref of its own would not
+// survive being closed: every reopen constructed a fresh `'ai'`, and a user who
+// had been reading the outline was thrown back to the chat each time they took
+// the width back. The tab belongs to whoever decides whether the rail is open,
+// so it is a model rather than local state — and the close that unmounts the
+// rail already stops any chat stream on the way out.
+const activeTab = defineModel<RailTab>('tab', { default: 'ai' })
 
 const TABS = computed(() => [
   { id: 'ai', label: t('rail.ai') },
@@ -81,7 +89,10 @@ const TABS = computed(() => [
   align-items: center;
   justify-content: space-between;
   gap: 4px;
-  height: 38px;
+  /* The rail header sits at the top of the same row as the tab bar, so it takes
+     the same rung instead of a height of its own — it stood 3px shorter than the
+     bar beside it, which reads as a misalignment across the editor/rail seam. */
+  height: var(--app-toolbar-height);
   flex: none;
   padding: 0 8px 0 8px;
   border-bottom: 1px solid var(--app-border);
@@ -144,5 +155,26 @@ const TABS = computed(() => [
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  /* Switching from a panel with a list to one without drops this body's
+     scrollbar, and its 10px gutter (src/style.css) then comes out of the content
+     box — so every panel shifted 10px sideways on a tab click, which is the half
+     of the "jump" a fade cannot hide. Reserving the gutter keeps the column
+     still. Engines without `scrollbar-gutter` keep today's behaviour. */
+  scrollbar-gutter: stable;
+}
+/* The six panels are kept mounted and switched with `v-show`, and that is what
+   makes this a one-rule cross-fade: an element coming back from `display: none`
+   restarts its CSS animations, so the arriving panel replays this on every tab
+   click. No <Transition> and no `v-if` — the display flip is what keeps the chat
+   session and the panels' loaded lists alive (see useSectionShown). Purely
+   opacity: the body must not move, and nothing here may touch its height — the
+   panels differ by hundreds of pixels and animating a scroll container's height
+   would thrash the scrollbar the rule above just stabilised. */
+@keyframes rail-panel-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.rail-body > :deep(*) {
+  animation: rail-panel-in var(--app-motion) var(--app-ease);
 }
 </style>
