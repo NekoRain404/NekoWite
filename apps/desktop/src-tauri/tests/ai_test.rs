@@ -1,19 +1,18 @@
 use nekowite_lib::providers::ai::client::{
-    accumulate_usage, ai_done_payload, ai_id_for, build_prompt, default_base_url,
-    encode_request_body, error_detail_from_body, http_error_message,
-    http_error_message_with_detail, list_models, next_ai_id, normalize_reasoning_effort,
-    parse_model_ids, parse_sse_event, parse_sse_line, resolve_endpoint, validate_base_url,
-    validate_request_inputs, AIConfig, CompletionStream, SseBuffer, StreamEvent, TokenUsage,
-    MAX_ANSWER_BYTES, MAX_IMAGES_PER_REQUEST, MAX_IMAGE_DATA_URL_BYTES, MAX_MODELS_RESPONSE_BYTES,
-    MAX_PROMPT_BYTES, MAX_REQUEST_BODY_BYTES, MAX_SSE_LINE_BYTES,
+    accumulate_usage, ai_done_payload, ai_id_for, default_base_url, encode_request_body,
+    error_detail_from_body, http_error_message, http_error_message_with_detail, list_models,
+    next_ai_id, normalize_reasoning_effort, parse_model_ids, parse_sse_event, parse_sse_line,
+    resolve_endpoint, validate_base_url, validate_request_inputs, AIConfig, CompletionStream,
+    SseBuffer, StreamEvent, TokenUsage, MAX_ANSWER_BYTES, MAX_IMAGES_PER_REQUEST,
+    MAX_IMAGE_DATA_URL_BYTES, MAX_MODELS_RESPONSE_BYTES, MAX_PROMPT_BYTES, MAX_REQUEST_BODY_BYTES,
+    MAX_SSE_LINE_BYTES,
 };
 
-#[test]
-fn prompt_continues_cursor() {
-    let p = build_prompt("The quick brown");
-    assert!(p.contains("The quick brown"));
-    assert!(p.ends_with('\n'));
-}
+// `prompt_continues_cursor` used to live here, asserting that `build_prompt`
+// carried the prefix and ended in a newline. `build_prompt` had no caller —
+// the frontend builds the prompt (see `providers/ai/request.rs`'s header) — so
+// both the function and its only test are gone. The instruction the model
+// actually receives is pinned in `features/ai/index.test.ts`.
 
 /// The endpoint of a provider that HAS one. These tests are about the body and
 /// the path a provider produces, so every config here names a provider with a
