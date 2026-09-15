@@ -75,6 +75,19 @@ export interface RenderedPaneHandoff {
   focus(): void
 }
 
+/** What the handoff publishes for the other things that carry a position.
+ *
+ *  `documentSwitched` is true only during the flush after an `activeId` change:
+ *  `App.vue` puts the live mode back to its stored default on every newly
+ *  opened document, so a mode watcher fires on a note switch the user did not
+ *  ask for, and any coordinate measured in the note being left is meaningless
+ *  in the one arriving. The handoff guards its own carry with it; the split
+ *  align carries the same coordinates and asks the same question here, rather
+ *  than keeping a second variable that could answer it differently. */
+export interface PaneHandoff {
+  documentSwitched(): boolean
+}
+
 export interface PaneHandoffOptions {
   /** The source pane, or null while it is not mounted (it is loaded on demand). */
   getSourcePane: () => SourcePaneHandoff | null
@@ -119,7 +132,7 @@ const SWITCH_CONTROL = '[data-view-switch]'
  * the panes themselves as they scroll (see `PaneScrollState`), which is what a
  * restore that has to wait for the source pane's chunk can still read.
  */
-export function usePaneHandoff(options: PaneHandoffOptions): void {
+export function usePaneHandoff(options: PaneHandoffOptions): PaneHandoff {
   const view = useViewStore()
   const tabs = useTabsStore()
 
@@ -355,4 +368,12 @@ export function usePaneHandoff(options: PaneHandoffOptions): void {
       })
     },
   )
+
+  // Exposed as a reader, not moved: `documentSwitched` is true only for the one
+  // flush that follows an `activeId` change, so it is a transient fact rather
+  // than state — a store would have to carry the same `nextTick` clearing it
+  // here, across two modules, with two places able to get it wrong. The split
+  // align carries the same coordinates this flag guards and needs to ask the
+  // same question; asking the owner keeps one variable with one owner.
+  return { documentSwitched: () => documentSwitched }
 }

@@ -101,7 +101,8 @@ export function useSplitScrollSync(options: SplitScrollSyncOptions): SplitScroll
   // Switching modes changes the surface, not the document: the keyboard follows
   // into the pane now shown, and the place the user was reading is carried across
   // as a source line (a pixel offset from one pane means nothing in the other).
-  usePaneHandoff({
+  // The return value is the flag the align below asks about this same flush.
+  const handoff = usePaneHandoff({
     getSourcePane: () => options.getSourcePane(),
     getRenderedPane: () => options.getRenderedPane(),
     getPanesEl: () => options.getPanesEl(),
@@ -242,7 +243,11 @@ export function useSplitScrollSync(options: SplitScrollSyncOptions): SplitScroll
     (mode, prev) => {
       // Whatever the coordinator was moving belongs to the layout being left.
       scrollCoordinator.cancel()
-      if (mode !== 'split' || prev === 'split') return
+      // An OPEN, not a pane switch: `App.vue` puts the live mode back to its
+      // default on every newly opened document, and the align below would then
+      // mix two notes — the outline from the arriving one, the offsets from the
+      // one being left — over the position the restore just put back.
+      if (mode !== 'split' || prev === 'split' || handoff.documentSwitched()) return
       pendingSplitAlignFrom = prev
       void nextTick(() => {
         if (view.mode !== 'split') return
