@@ -27,9 +27,11 @@ export interface DesktopRuntime {
   vaultPath: Ref<string | null>
   /** Window size/position persistence, shared with the lifecycle module. */
   windowTracking: WindowTracking
-  /** Switch the app to a new vault, flushing dirty tabs and authorizing the
-   *  root with the backend before any path-confined command. Registration failure
-   *  (missing/permission) does not switch; the switch stays on the current vault. */
+  /** Switch the app to a new vault: reconcile the tabs whose first read has not
+   *  landed (their typing moves to a tab of its own), flush the dirty tabs, and
+   *  authorize the root with the backend before any path-confined command.
+   *  Registration failure (missing/permission) does not switch; the switch stays
+   *  on the current vault. */
   applyVault(path: string): Promise<void>
   /** Open and switch to the chosen vault. Used by the sidebar and the settings
    *  "vault saved" flow. The vault is recorded only once applyVault commits. */
@@ -169,6 +171,18 @@ export function createDesktopRuntime(): DesktopRuntime {
     // leaving. Flush the current dirty tabs first; if one fails to save, block
     // the switch so the work is lost to a pending autosave timer that will
     // never fire on the new vault.
+    //
+    // A tab whose first read has not landed is a placeholder — an EMPTY document
+    // wearing the note's path — and no write can settle it (`tab-write-
+    // preconditions.ts` refuses every write while `loading`), so `flushDirty()`
+    // answers false for as long as that read is pending: forever, if it never
+    // lands, and nothing else on this path can settle it. What the user typed
+    // into such a tab is not the note's text and cannot be written to the note,
+    // so it moves to a tab of its own FIRST — before the flush, and before the
+    // untitled prompt below, which is what offers it back to the user before
+    // `removeAllTabs()` takes the tab set away. The same step, in the same
+    // place, as the two closes (`tab-close.ts`): one function, three routes.
+    await tabs.reconcilePlaceholders()
     const flushed = await tabs.flushDirty()
     if (isStale()) return
     if (!flushed) {

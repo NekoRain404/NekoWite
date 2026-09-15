@@ -27,6 +27,7 @@ const h = vi.hoisted(() => {
   const tabsMock = {
     openTab: vi.fn(),
     flushDirty: vi.fn(),
+    reconcilePlaceholders: vi.fn(),
     untitledDirtyTabs: vi.fn(),
     saveTab: vi.fn(),
     removeTab: vi.fn(),
@@ -185,6 +186,11 @@ describe('createDesktopRuntime', () => {
       // While the vault switch is still pending, restoreSession must NOT run.
       expect(h.tabsMock.restoreSession).not.toHaveBeenCalled()
 
+      // The switch reaches its flush a step in (the placeholder reconciliation
+      // runs first), so resolve it only once it is actually parked there — and
+      // check again that nothing has been restored meanwhile.
+      await vi.waitFor(() => expect(h.tabsMock.flushDirty).toHaveBeenCalled())
+      expect(h.tabsMock.restoreSession).not.toHaveBeenCalled()
       resolveFlush()
       await vi.waitFor(() => expect(h.tabsMock.restoreSession).toHaveBeenCalled())
 
@@ -367,6 +373,22 @@ describe('createDesktopRuntime', () => {
       expect(h.tmpRecovery.scan).toHaveBeenCalledWith('/vault')
     })
 
+    it('reconciles the still-loading tabs before the flush and before the untitled prompt', async () => {
+      // The order the placeholder step depends on, and the same order the two
+      // closes run it in (`tab-close.ts`, `app-lifecycle.ts`): the tabs this
+      // creates are untitled and dirty, so the prompt below the flush is what
+      // offers them back to the user before `removeAllTabs()` — and the flush
+      // must never be asked about a placeholder, which nothing can write.
+      const runtime = createDesktopRuntime()
+      await runtime.applyVault('/vault')
+
+      const reconciled = h.tabsMock.reconcilePlaceholders.mock.invocationCallOrder[0]
+      const flushed = h.tabsMock.flushDirty.mock.invocationCallOrder[0]
+      const asked = h.tabsMock.untitledDirtyTabs.mock.invocationCallOrder[0]
+      expect(reconciled).toBeLessThan(flushed)
+      expect(flushed).toBeLessThan(asked)
+    })
+
     it('blocks the switch when a dirty save fails', async () => {
       h.tabsMock.flushDirty.mockResolvedValue(false)
       const runtime = createDesktopRuntime()
@@ -535,6 +557,10 @@ describe('createDesktopRuntime', () => {
       )
       h.tabsMock.flushDirty.mockResolvedValue(true)
       const p = runtime.applyVault('/vault2')
+      // Park it ON the flush before tearing down: the switch reaches its flush a
+      // step in (the placeholder reconciliation runs first), and the assertion
+      // below is about a switch that is genuinely in flight.
+      await vi.waitFor(() => expect(h.tabsMock.flushDirty).toHaveBeenCalled())
       runtime.dispose()
 
       // Every runtime-owned resource is torn down.
