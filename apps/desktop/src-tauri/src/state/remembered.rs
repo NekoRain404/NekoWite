@@ -15,8 +15,15 @@ use tauri::Manager;
 /// File under the app's config directory holding the vault root that was opened
 /// last. It exists so a restart can reopen that vault without asking the user
 /// to pick it again, while still refusing a root the window announces on its
-/// own: nothing but a successful `register` writes this file, and the renderer
-/// has no IPC path to the config directory.
+/// own: nothing but a successful `register` writes this file, and no
+/// path-confined command serves a path inside the config directory — the vault
+/// the user opened may contain that folder, and a file in it is still not the
+/// user's ([`crate::domain::app_owned`], applied in `resolve_within_rel`).
+///
+/// The second half is what the first half is worth anything on: a record is
+/// authority only while the window cannot write one, and this comment used to
+/// claim the config directory was out of the renderer's reach while nothing
+/// enforced it.
 const REMEMBERED_VAULT_FILE: &str = "last-vault";
 
 /// Read the recorded root. A missing, unreadable or unusable record simply
@@ -42,11 +49,18 @@ pub fn write_remembered_vault(file: &Path, root: &Path) -> std::io::Result<()> {
     std::fs::write(file, format!("{}\n", root.display()))
 }
 
+/// The config directory the record is written in.
+///
+/// Exported so that `run()` installs the folder this module actually writes the
+/// record in, rather than a second guess at where the app's files live: a rule
+/// that refuses "the app's config directory" is only worth what the agreement
+/// between those two answers is worth.
+pub fn remembered_vault_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    app.path().app_config_dir().ok()
+}
+
 fn remembered_vault_file(app: &tauri::AppHandle) -> Option<PathBuf> {
-    app.path()
-        .app_config_dir()
-        .ok()
-        .map(|dir| dir.join(REMEMBERED_VAULT_FILE))
+    remembered_vault_dir(app).map(|dir| dir.join(REMEMBERED_VAULT_FILE))
 }
 
 /// The vault root the backend recorded last, if any.

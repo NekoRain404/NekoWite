@@ -27,6 +27,8 @@ use std::path::Path;
 
 use tauri::Manager;
 
+use crate::domain::app_owned::AppDir;
+
 pub use state::VaultRegistry;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -57,7 +59,22 @@ pub fn run() {
             // is already running, so this `argv` is where the file is. It used to
             // be thrown away here, and with it every double-click made while the
             // app was open.
-            open_file::handle_launch(app, args, Path::new(&cwd));
+            //
+            // It is NOT this process's `argv`, though, and the difference is the
+            // whole of what the arguments may do. The plugin serves
+            // `ExecuteCallback(argv, cwd)` at the session bus with no
+            // peer-credential check, so any process running as this user can call
+            // it with any path at all — an assertion by the caller, where the
+            // command line below is a fact about what launched this process.
+            // `SessionBus` says exactly that: a file inside a vault the user has
+            // already authorised opens, and one from outside every vault is
+            // refused rather than adopting its folder as a new root.
+            open_file::handle_launch(
+                app,
+                args,
+                Path::new(&cwd),
+                open_file::LaunchChannel::SessionBus,
+            );
         }))
         .plugin(tauri_plugin_dialog::init())
         .manage(open_file::PendingOpen::default())
@@ -66,6 +83,30 @@ pub fn run() {
         .manage(state::AiState::default())
         .manage(state::KeyVault::default())
         .setup(|app| {
+            // The folders the app's own files live in, before a window exists
+            // to ask for them: the config directory the remembered-vault record
+            // is written in, and the data directory the key files are written
+            // in. Each is named by the module that owns it rather than by a
+            // second list here — a vault can CONTAIN either (the folder dialog
+            // returns `~/.config` as readily as a notes directory), and every
+            // path-confined command serves whatever lies inside the vault it was
+            // given, so those two files would be ordinary vault files to a
+            // window that went looking for them. `domain::app_owned` is where
+            // they are refused.
+            let mut owned = Vec::new();
+            match state::remembered_vault_dir(app.handle()) {
+                Some(dir) => owned.push((AppDir::Configuration, dir)),
+                // Reported rather than swallowed: a folder that does not make
+                // it into this list is not refused. The app is already degraded
+                // without it — the record cannot be read or written either — but
+                // which of the two happened is worth a line in the log.
+                None => eprintln!("could not resolve the app configuration directory"),
+            }
+            match storage::key_store::data_dir(app.handle()) {
+                Ok(dir) => owned.push((AppDir::Data, dir)),
+                Err(e) => eprintln!("could not resolve the app data directory: {e}"),
+            }
+            domain::app_owned::install(owned);
             // The windows `run` above took over from Tauri's own pass, built
             // from their config so nothing about them is duplicated here.
             for config in app.config().app.windows.iter().filter(|w| !w.create) {
@@ -78,11 +119,19 @@ pub fn run() {
                     .build()?;
             }
             // `nekowite notes.md`: the first launch's file arrives in our own
-            // `argv`, before any window or listener exists. It is resolved and
+            // `argv`, before any window or listener exists. That is this
+            // process's own command line — evidence only whatever started this
+            // process could have produced — which is what makes it enough to
+            // adopt an outside file's folder as the vault. It is resolved and
             // left in managed state — which is also where a later launch's file
             // goes — for the window to collect once its startup has settled.
             let cwd = std::env::current_dir().unwrap_or_default();
-            open_file::handle_launch(app.handle(), std::env::args_os(), &cwd);
+            open_file::handle_launch(
+                app.handle(),
+                std::env::args_os(),
+                &cwd,
+                open_file::LaunchChannel::CommandLine,
+            );
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

@@ -360,3 +360,42 @@ fn the_remembered_vault_record_round_trips_and_rejects_junk() {
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// The case the test above does not cover, and the one the Rust audit named: a
+/// WELL-FORMED record — an absolute path to a folder that exists, exactly what
+/// [`write_remembered_vault`] writes — naming a directory the user never chose.
+///
+/// It is honoured, deliberately. The record is the second of the two things
+/// that vouch for a root (`register`'s `recalled`), and the restore it serves
+/// is load-bearing: a session starts on the vault the user was in yesterday
+/// without a dialog. What made it a hole was never the trust — it was that the
+/// file was writable from inside a vault that CONTAINS the config directory, so
+/// the window could manufacture a record naming any absolute path at all, and
+/// `register_vault` then accepted it for that session and the next one.
+///
+/// That write is what is refused now, whatever command attempts it and whether
+/// it reads or writes: [`crate::domain::app_owned`], applied in
+/// `resolve_within_rel`, the one function every path-confined command's target
+/// goes through. `tests/app_owned_dirs_test.rs` performs the forgery and
+/// watches it be refused; this test pins what is left of the mechanism, so the
+/// boundary is visible instead of looking like a gap.
+#[test]
+fn a_well_formed_record_is_the_authority_it_looks_like() {
+    let never_chosen = temp_vault("record-names-a-stranger");
+    let record_file = temp_vault("record-file").join("last-vault");
+    let forged = never_chosen.canonicalize().unwrap();
+    write_remembered_vault(&record_file, &forged).unwrap();
+
+    let recorded = read_remembered_vault(&record_file).expect("a well-formed record reads back");
+    assert_eq!(recorded, forged);
+
+    let reg = VaultRegistry::default();
+    assert!(
+        reg.register(as_str(&forged), Some(&recorded)).is_ok(),
+        "the record vouches for the root it names: the refusal is at the write"
+    );
+    assert!(reg.authorize(as_str(&forged)).is_ok());
+
+    std::fs::remove_dir_all(&never_chosen).unwrap();
+    std::fs::remove_dir_all(record_file.parent().unwrap()).unwrap();
+}

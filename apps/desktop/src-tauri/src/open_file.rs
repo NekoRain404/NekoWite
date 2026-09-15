@@ -1,17 +1,22 @@
 //! Opening a file the operating system handed this process.
 //!
 //! `nekowite notes.md`, and a `.md` double-clicked in a file manager, arrive the
-//! same way: as a path in this process's `argv` — on the first launch from
-//! `std::env::args`, on every later one from the single-instance plugin's
-//! callback, which is where a second launch's arguments end up.
+//! same way on the surface — as a path among this process's arguments, on the
+//! first launch from `std::env::args` and on every later one from the
+//! single-instance plugin's callback. They are not the same evidence, and
+//! treating them as one is how a hole opens. [`LaunchChannel`] is that
+//! distinction spelled out, and it is a parameter rather than a convention
+//! because only the caller knows which channel it is holding.
 //!
-//! Neither is a path the window asked for, and that is the point. A path the OS
-//! handed the process is a fact the renderer cannot manufacture, which is the
-//! same standing a folder-dialog pick has; so it is vouched for through the same
-//! gate ([`VaultRegistry::approve_launch_root`]) instead of one of its own. The
-//! window never receives a bare path to open: "which vault does this belong to,
-//! and may we serve it?" is answered here, where the evidence is, and the window
-//! is handed the answer.
+//! A path from [`LaunchChannel::CommandLine`] is a fact the renderer cannot
+//! manufacture, the same standing a folder-dialog pick has, so it is vouched for
+//! through the same gate ([`VaultRegistry::approve_launch_root`]) instead of one
+//! of its own. A path from [`LaunchChannel::SessionBus`] is an assertion by
+//! whoever called the bus method, and can never create a root.
+//!
+//! Either way the window never receives a bare path to open: "which vault does
+//! this belong to, and may we serve it?" is answered here, where the evidence
+//! is, and the window is handed the answer.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -42,9 +47,9 @@ pub enum OpenFileRequest {
         /// Absolute, canonical path of the file to open.
         path: String,
         /// The vault root it belongs to. Always a root the backend vouches for:
-        /// one this session already opened, or — for a file inside none of them
-        /// — the file's own folder, recorded as the user's choice by
-        /// [`VaultRegistry::approve_launch_root`].
+        /// one this session already opened, or one the backend recorded last —
+        /// or, and only for a first launch, the file's own folder, recorded as
+        /// the user's choice by [`VaultRegistry::approve_launch_root`].
         root: String,
         /// The file already belongs to the vault the window has open, or to the
         /// one startup is about to restore. Nothing about the vault changes, so
@@ -87,6 +92,42 @@ impl PendingOpen {
     }
 }
 
+/// Which channel a launch's arguments arrived on, which is the whole of what
+/// they are worth.
+///
+/// It is passed in rather than inferred, because nothing downstream can tell the
+/// two apart — the arguments look identical — and only the caller that received
+/// them knows whether they were read from this process's own command line or
+/// sent to it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LaunchChannel {
+    /// `std::env::args_os()`, read by `setup` on the launch that starts this
+    /// process. Only whatever started this process could have set these, so a
+    /// file from outside every vault may adopt its folder as the vault — the
+    /// same evidence a folder-dialog pick is, and the same gate.
+    CommandLine,
+    /// The single-instance plugin's callback, which is where a second launch's
+    /// arguments end up. The plugin serves `ExecuteCallback(argv, cwd)` at the
+    /// session bus with no peer-credential check, so ANY process running as this
+    /// user can call it with any arguments. Those are an assertion by the
+    /// caller, not a record of anything a person did, so they may open a file
+    /// inside a root the user has already authorised and may never create one:
+    /// `VaultRegistry::chosen` is what stands between a caller and every
+    /// path-confined command, and a bus peer cannot be allowed to write to it.
+    SessionBus,
+}
+
+impl LaunchChannel {
+    /// Whether a file from outside every known vault may adopt its folder as a
+    /// vault root here.
+    fn may_create_root(self) -> bool {
+        match self {
+            Self::CommandLine => true,
+            Self::SessionBus => false,
+        }
+    }
+}
+
 /// Handle one launch: resolve the file those arguments name, leave the request
 /// for the window and ring the doorbell. A launch that names no markdown file —
 /// the ordinary case — does nothing at all.
@@ -94,8 +135,9 @@ pub fn handle_launch<S: AsRef<OsStr>>(
     app: &AppHandle,
     args: impl IntoIterator<Item = S>,
     cwd: &Path,
+    channel: LaunchChannel,
 ) {
-    let Some(request) = request_for(app, args, cwd) else {
+    let Some(request) = request_for(app, args, cwd, channel) else {
         return;
     };
     app.state::<PendingOpen>().store(request);
@@ -107,9 +149,10 @@ pub fn request_for<S: AsRef<OsStr>>(
     app: &AppHandle,
     args: impl IntoIterator<Item = S>,
     cwd: &Path,
+    channel: LaunchChannel,
 ) -> Option<OpenFileRequest> {
     let file = markdown_arg(args, cwd)?;
-    Some(match resolve(app, &file) {
+    Some(match resolve(app, &file, channel) {
         Ok((path, root, same_vault)) => OpenFileRequest::Open {
             path,
             root,
@@ -160,10 +203,31 @@ fn has_markdown_extension(path: &Path) -> bool {
         })
 }
 
+/// [`resolve_launch`] against the app's own state: the roots this session has
+/// open, and the root the backend recorded last.
+fn resolve(
+    app: &AppHandle,
+    file: &Path,
+    channel: LaunchChannel,
+) -> Result<(String, String, bool), String> {
+    let registry = app.state::<VaultRegistry>();
+    let remembered = remembered_vault(app);
+    resolve_launch(&registry, remembered.as_deref(), file, channel)
+}
+
 /// Which vault `file` belongs to, and the canonical path to open.
 ///
+/// Both things that can vouch for a root are passed in rather than read from an
+/// app — the registry, and the record startup restores — so what the decision
+/// does for either channel can be asked without an app to run it in.
+///
 /// Returns `(path, root, same_vault)` in the same spelling the window is given.
-fn resolve(app: &AppHandle, file: &Path) -> Result<(String, String, bool), String> {
+pub fn resolve_launch(
+    registry: &VaultRegistry,
+    remembered: Option<&Path>,
+    file: &Path,
+    channel: LaunchChannel,
+) -> Result<(String, String, bool), String> {
     // Canonicalizing is what makes the containment check below mean anything:
     // `..`, a symlinked home and a second spelling of one folder all have to
     // collapse to one answer before a root can be compared against the file.
@@ -176,18 +240,43 @@ fn resolve(app: &AppHandle, file: &Path) -> Result<(String, String, bool), Strin
             ipc_path(&canonical)
         ));
     }
-    if let Some(root) = vault_already_holding(app, &canonical) {
+    if let Some(root) = vault_already_holding(registry, remembered, &canonical) {
         return Ok((ipc_path(&canonical), ipc_path(&root), true));
     }
-    // Outside every vault we know: the file's own folder becomes the vault, so
-    // the document opens in the folder it lives in rather than nowhere.
+    // Outside every vault we know. Whether that may BECOME one is the one thing
+    // the two channels disagree about, so it is decided here, beside the gate it
+    // guards, rather than left to a caller to remember: the folder's path is the
+    // caller's, and on the bus the caller is anyone of this user.
     let parent = canonical
         .parent()
         .ok_or_else(|| format!("{} has no folder to open as a vault", ipc_path(&canonical)))?;
-    let root = app
-        .state::<VaultRegistry>()
-        .approve_launch_root(&ipc_path(parent))?;
+    if !channel.may_create_root() {
+        return Err(unservable_bus_launch(&canonical, parent));
+    }
+    // A first launch: the file's own folder becomes the vault, so the document
+    // opens in the folder it lives in rather than nowhere.
+    let root = registry.approve_launch_root(&ipc_path(parent))?;
     Ok((ipc_path(&canonical), ipc_path(&root), false))
+}
+
+/// The refusal a second launch gets for a file outside every known vault.
+///
+/// The request is a legitimate one made through a channel that cannot vouch for
+/// it, so the message names both ways to have it served: the folder dialog,
+/// whose pick the backend does accept, and a launch that starts the process,
+/// whose own `argv` is the evidence this channel never is.
+fn unservable_bus_launch(file: &Path, folder: &Path) -> String {
+    format!(
+        "refusing to open {}: it is not inside a vault NekoWite has open or \
+         remembers, and a file named by a second launch cannot open a new one — \
+         those arguments arrive over the session bus, where any program running \
+         as you can send anything. Open {} with \"Open folder\" to make it the \
+         vault, or quit NekoWite and open the file again: a launch that starts \
+         the app reads the path from its own command line, and may adopt the \
+         folder.",
+        ipc_path(file),
+        ipc_path(folder)
+    )
 }
 
 /// The vault root `file` already sits inside, if the backend knows one.
@@ -197,12 +286,18 @@ fn resolve(app: &AppHandle, file: &Path) -> Result<(String, String, bool), Strin
 /// which is what startup restores, so a file inside it must not move the vault
 /// the user was already working in. Both sides are canonical here, so a
 /// symlinked home or a trailing slash does not turn one folder into two.
-fn vault_already_holding(app: &AppHandle, file: &Path) -> Option<PathBuf> {
-    let registry = app.state::<VaultRegistry>();
+///
+/// It is also the whole of what a second launch is allowed to do, which is why
+/// it takes no channel: every root it can reach is one that already exists.
+fn vault_already_holding(
+    registry: &VaultRegistry,
+    remembered: Option<&Path>,
+    file: &Path,
+) -> Option<PathBuf> {
     if let Some(root) = registry.containing_opened_vault(file) {
         return Some(root);
     }
-    let remembered = remembered_vault(app)?.canonicalize().ok()?;
+    let remembered = remembered?.canonicalize().ok()?;
     (remembered.is_dir() && file.starts_with(&remembered)).then_some(remembered)
 }
 
