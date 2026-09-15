@@ -22,6 +22,16 @@ export const TABLE_MAX_ROWS = 50
 export const TABLE_MIN_COLS = 1
 export const TABLE_MAX_COLS = 30
 
+/**
+ * What the dialog says when `insertTable` refuses.
+ *
+ * The refusal is a caret inside a table cell, where a second table would be
+ * lifted out by the fitter and split the host table in two, so the message names
+ * the case and the way out instead of being a generic "could not insert".
+ */
+const REFUSED_IN_CELL =
+  '不能在表格单元格内插入表格——它会把当前表格拆成两半。请关闭本对话框，把光标移到表格外，再插入。'
+
 const clamp = (v: number, min: number, max: number): number =>
   Math.max(min, Math.min(Math.round(Number.isFinite(v) ? v : min), max))
 
@@ -36,6 +46,9 @@ export function openTableDialog(view: EditorView, opts: TableDialogOptions = {})
   document.body.appendChild(overlay)
 
   let app: App | null = null
+  // The dialog's own message area, filled in only by a refused insert — the one
+  // outcome that keeps the dialog open.
+  const refusal = ref<string | null>(null)
 
   const cleanup = (): void => {
     app?.unmount()
@@ -50,11 +63,18 @@ export function openTableDialog(view: EditorView, opts: TableDialogOptions = {})
     // `insertTable` replaces the selection, which is what "insert a table"
     // means everywhere else (and matches the same command's behavior when the
     // caret is merely collapsed).
-    insertTable(
+    const inserted = insertTable(
       view,
       clamp(rows, TABLE_MIN_ROWS, TABLE_MAX_ROWS),
       clamp(cols, TABLE_MIN_COLS, TABLE_MAX_COLS),
     )
+    // A refusal (the caret is in a cell) used to be discarded: the dialog closed
+    // on a document that had not changed and the user was told nothing. The
+    // answer is now the reason the dialog stays up.
+    if (!inserted) {
+      refusal.value = REFUSED_IN_CELL
+      return
+    }
     cleanup()
   }
 
@@ -92,6 +112,11 @@ export function openTableDialog(view: EditorView, opts: TableDialogOptions = {})
               ]),
             ]),
           ]),
+          // `role="alert"` so the refusal is announced, not just painted: the
+          // dialog is not a native modal and focus does not move.
+          refusal.value
+            ? h('div', { class: 'table-dialog-refusal', role: 'alert' }, refusal.value)
+            : null,
           h('div', { class: 'table-dialog-actions' }, [
             h('button', { onClick: () => cleanup() }, '取消'),
             h('button', { class: 'primary', onClick: () => onConfirm(rows.value, cols.value) }, '确定'),

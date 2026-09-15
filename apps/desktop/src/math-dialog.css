@@ -51,6 +51,19 @@
   font-size: 14px;
 }
 
+/* A refused insert keeps this dialog alive and says why. The engine answers
+   every mutation with a boolean and this dialog used to discard it, so 确定
+   closed the overlay and inserted nothing — and took the typed formula with
+   it, since the dialog disposes its own editor on the way out. The message is
+   the reason the work survives, so it is styled as a message rather than as
+   incidental text. `--app-danger` matches `AppToast.vue`'s refusal colour. */
+.math-dialog-refusal {
+  margin: 0 0 12px;
+  color: var(--app-danger);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .math-actions {
   display: flex;
   justify-content: flex-end;
