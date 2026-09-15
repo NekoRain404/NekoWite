@@ -31,9 +31,6 @@ export interface RenderedEditorStackOptions {
   /** The editor's mount element, inside that container. */
   getEditorEl: () => HTMLElement | null
   handlers: RenderedEditorStackHandlers
-  /** The panel's trailing space, in px (see `useEditorTailSpace`): space, not
-   *  document, so the scroll range the split sync reads excludes it. */
-  getTailSpace?: () => number
 }
 
 /**
@@ -112,7 +109,6 @@ export function useRenderedEditorStack(options: RenderedEditorStackOptions) {
     // The caret lives in the model, not in the scroll box: the pane's own
     // line↔offset mapping needs the view to read one and place the other.
     getEditor: () => session.editor,
-    getTailSpace: () => options.getTailSpace?.() ?? 0,
   })
   const selection = createEditorSelection({ getEditor: () => session.editor })
 

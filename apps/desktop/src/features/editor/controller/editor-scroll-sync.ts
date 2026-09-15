@@ -16,28 +16,6 @@ export interface EditorScrollSyncDeps {
    *  that drive them) keep working without one; every caret call answers "no
    *  line" rather than guessing when it is absent. */
   getEditor?: () => NekoEditor | null
-  /**
-   * The trailing space padding this pane's content box, in px.
-   *
-   * No longer read here, on purpose. The range this module reports is the
-   * pane's own scrollable extent, and that extent INCLUDES the space: it is
-   * padding on the content box, so it is inside the scroller, which is how the
-   * last line can be raised off the bottom edge at all — it is part of what a
-   * wheel reaches.
-   *
-   * Subtracting it back out (which is what this dep used to be for) made the
-   * range the sync writes inside one tail SHORTER than the range the user can
-   * scroll to. The sync clamped every write to its own range, so the pane it
-   * moved could not follow the pane the user was holding into the trailing
-   * space: the held pane showed the space below the last line and its
-   * neighbour showed none — in whichever direction the scroll came from, which
-   * is the flip the reader reported.
-   *
-   * Kept in the signature because `use-rendered-editor-stack` still passes it
-   * (that file is outside this change); nothing in this module reads it, so a
-   * caller that omits it loses nothing.
-   */
-  getTailSpace?: () => number
 }
 
 export interface EditorScrollSync {
