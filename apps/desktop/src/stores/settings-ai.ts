@@ -111,6 +111,18 @@ export function createAiSettings() {
   const baseUrl = scopedUrl(baseUrls, provider)
   const modelsUrls = ref<Record<string, string>>(readModelsUrls())
   const apiKey = ref('')
+  /**
+   * Whether a credential is *stored* for the current provider — the vault's
+   * answer to `loadKey()`, published as state of its own.
+   *
+   * It cannot be read off `apiKey`, and that is the whole point of it existing.
+   * The field is deliberately emptied when a stored key arrives (see `loadKey`:
+   * the mask must never be sent back as a credential), so after every restart
+   * and every provider switch it is empty for a provider that is perfectly
+   * configured. "Has the user typed a key" and "is one in the vault" are two
+   * questions, and this is the only place the second is answered.
+   */
+  const keyConfigured = ref(false)
   const modelsCache = ref<string[]>([])
   // AI tuning knobs persist per-session like provider/model/baseUrl. The
   // system prompt is empty by default so existing installs see no behaviour
@@ -150,7 +162,18 @@ export function createAiSettings() {
   watch(reasoningEffort, (v) => persistence.set(LS_REASONING_EFFORT, v))
 
   async function saveKey(): Promise<void> {
-    await getSharedGateways().keys.storeAiKey(provider.value, apiKey.value)
+    // Both are read before the await: the write is about the key and the
+    // provider the button was pressed for, and the user can change either while
+    // it is in flight.
+    const askedFor = provider.value
+    const key = apiKey.value
+    await getSharedGateways().keys.storeAiKey(askedFor, key)
+    // The save settles the vault's answer for this provider, and it is the
+    // answer the field states: what was just stored. An answer about the
+    // provider the user has since left is not this provider's (the switch
+    // started its own load, which owns the flag from here).
+    if (provider.value !== askedFor) return
+    keyConfigured.value = key.trim().length > 0
   }
 
   async function loadKey(): Promise<void> {
@@ -164,6 +187,12 @@ export function createAiSettings() {
     const before = apiKey.value
     const stored = await getSharedGateways().keys.loadAiKey(askedFor)
     if (provider.value !== askedFor || apiKey.value !== before) return
+    // "A key is stored for this provider" is answered right here — the mask IS
+    // that answer — and it is also the one fact the blanking below throws away.
+    // Publish it before the field overwrites the evidence: `isAiConfigured`
+    // reads it from state instead of trying to read it off an emptied field.
+    // A blank or absent value is not a credential, so it is not a yes.
+    keyConfigured.value = stored !== null && stored !== ''
     // The backend never returns the raw key to the window — only a fixed mask
     // when a key is configured (and null when not). Never treat the mask as a
     // real key: feed an empty value into the live state so config() does not
@@ -221,6 +250,7 @@ export function createAiSettings() {
     baseUrl,
     modelsUrl,
     apiKey,
+    keyConfigured,
     temperature,
     maxTokens,
     systemPrompt,
