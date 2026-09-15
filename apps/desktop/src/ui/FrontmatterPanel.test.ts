@@ -132,6 +132,9 @@ describe('FrontmatterPanel', () => {
     const xBtn = mathChip.querySelector<HTMLButtonElement>('.fm-chip-x')
     expect(xBtn).toBeTruthy()
     xBtn?.click()
+    // The write publishes the pane the user is typing in before it transforms
+    // the document, so it lands a microtask after the click rather than in it.
+    await flush()
 
     const s = useTabsStore()
     expect(s.activeTab?.content).toBe('---\ntitle: t\ntags:\n  - 随笔\n---\n\nBody')
@@ -147,6 +150,8 @@ describe('FrontmatterPanel', () => {
     expect(tagInput).toBeTruthy()
     setInputValue(tagInput!, 'math')
     tagInput!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    // Same reason as the chip's × above: the write flushes both panes first.
+    await flush()
 
     const s = useTabsStore()
     expect(s.activeTab?.content).toContain('tags:\n  - math')
@@ -160,6 +165,8 @@ describe('FrontmatterPanel', () => {
     const titleInput = host.querySelector<HTMLInputElement>('input.fm-input')
     setInputValue(titleInput!, 'new')
     titleInput!.dispatchEvent(new Event('blur'))
+    // Same reason as the chip's × above: the write flushes both panes first.
+    await flush()
 
     const s = useTabsStore()
     expect(s.activeTab?.content).toContain('title: new')

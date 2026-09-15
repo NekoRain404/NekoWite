@@ -7,10 +7,12 @@
  * work on, which is why it is a composable rather than a service, and why the
  * panel SFC is left with its markup and its event wiring.
  *
- * Every write goes through `flushSourceEdits` first. The panel edits one block
- * of a document the source pane may be holding unsaved keystrokes for, and a
+ * Every write goes through `flushEdits` first. The panel edits one block of a
+ * document a pane may be holding unpublished keystrokes for, and a
  * whole-document read-modify-write against the stale text would drop them — and
- * then mirror the stale version back into the pane it just ignored.
+ * then mirror the stale version back into the pane it just ignored. Both panes
+ * have to be flushed, not just CodeMirror: the rendered pane publishes through a
+ * trailing debounce and is the one the user types into by default.
  *
  * Two watchers keep the fields in step with the document, and they look at
  * different things on purpose: `content` follows the text (an edit made in a
@@ -21,7 +23,7 @@
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import { useTabsStore } from '../../../stores/tabs'
 import { useDocumentListStore } from '../../../stores/document-list'
-import { flushSourceEdits } from '../../../services/source-view'
+import { flushEdits } from '../../../services/editor-ownership'
 import { baseName } from '../../../services/paths'
 import { isComposingKey } from '../../../services/key-guard'
 import { normalizeTag, normalizeTags } from '../../../services/tags'
@@ -50,10 +52,13 @@ export interface FrontmatterPanelModel {
   otherEntries: ComputedRef<Array<[string, string]>>
   /** True when the fields differ from the block in the document. */
   isDirty: ComputedRef<boolean>
-  addProperties: () => void
-  commit: () => void
-  addTagRaw: (raw: string) => void
-  removeTag: (tag: string) => void
+  /** The writes are async: each one publishes the pane the user is typing in
+   *  before it transforms the document (see `writeContent`), and a caller that
+   *  needs the document to hold the result must await the returned promise. */
+  addProperties: () => Promise<void>
+  commit: () => Promise<void>
+  addTagRaw: (raw: string) => Promise<void>
+  removeTag: (tag: string) => Promise<void>
   onTagKeydown: (e: KeyboardEvent) => void
   onTitleKeydown: (e: KeyboardEvent) => void
 }
@@ -100,13 +105,21 @@ export function useFrontmatterPanel(): FrontmatterPanelModel {
     },
   )
 
-  function writeContent(fields: FrontmatterFields): void {
+  async function writeContent(fields: FrontmatterFields): Promise<void> {
+    // Read BEFORE the flush below, which awaits: the edit belongs to the document
+    // the panel is showing, and a tab switch landing mid-flush must not move the
+    // write onto the note the user went to.
     const active = tab.value
     if (!active) return
-    // Whole-document read-modify-write: publish the source pane's pending
-    // keystrokes first so the edit applies to the live text (and the source pane
-    // is not then mirrored back to a stale version).
-    flushSourceEdits()
+    // Whole-document read-modify-write: publish the pane the user is typing in
+    // first so the edit applies to the live text (and neither pane is then
+    // mirrored back to a version a debounce window out of date).
+    //
+    // `flushEdits()` and not the synchronous `flushSourceEdits()` this used to
+    // call: that one covers only the CodeMirror pane, which in rendered mode —
+    // where the panel is normally edited — is not mounted at all, so anything
+    // typed into the rendered pane was dropped by the rewrite that followed.
+    await flushEdits()
     const { content, changed } = replaceFrontmatter(active.content, fields)
     if (!changed) return
     active.content = content
@@ -115,35 +128,41 @@ export function useFrontmatterPanel(): FrontmatterPanelModel {
     syncFromContent(content)
   }
 
-  function commit(): void {
+  async function commit(): Promise<void> {
+    // The fields are read HERE, before the write's flush await: the content
+    // watcher re-syncs `form` when the flush publishes the live text, and a
+    // re-read after it would replace the user's edit with the document's own
+    // frontmatter — the edit they are committing.
     const fields: FrontmatterFields = { ...form.value, tags: normalizeTags(form.value.tags) }
-    writeContent(fields)
+    await writeContent(fields)
   }
 
-  function addProperties(): void {
+  async function addProperties(): Promise<void> {
     const active = tab.value
     if (!active) return
     const name = active.path ? baseName(active.path) : ''
     const h1 = /^#\s+(.+?)\s*#*\s*$/m.exec(active.content)
     const title = fileNameTitle(name) || h1?.[1]?.trim() || ''
     const next: FrontmatterFields = { title, tags: [], date: '', created: '', updated: '', other: {}, rawSegments: [] }
-    writeContent(next)
+    await writeContent(next)
   }
 
-  function addTagRaw(raw: string): void {
+  async function addTagRaw(raw: string): Promise<void> {
     const pieces = raw.split(',').map(normalizeTag).filter(Boolean)
     tagInput.value = ''
     if (pieces.length === 0) return
     const next = normalizeTags([...form.value.tags, ...pieces])
-    commitTags(next)
+    await commitTags(next)
   }
 
-  function commitTags(next: string[]): void {
-    writeContent({ ...form.value, tags: next })
+  async function commitTags(next: string[]): Promise<void> {
+    // The rest of the form is captured here, before `writeContent` awaits its
+    // flush, for the reason `commit` gives.
+    await writeContent({ ...form.value, tags: next })
   }
 
-  function removeTag(tag: string): void {
-    commitTags(normalizeTags(form.value.tags.filter((x) => x !== tag)))
+  async function removeTag(tag: string): Promise<void> {
+    await commitTags(normalizeTags(form.value.tags.filter((x) => x !== tag)))
   }
 
   function onTagKeydown(e: KeyboardEvent): void {
@@ -152,12 +171,14 @@ export function useFrontmatterPanel(): FrontmatterPanelModel {
     if (isComposingKey(e)) return
     if (e.key === 'Enter' || e.key === ',') {
       e.preventDefault()
-      addTagRaw(tagInput.value)
+      // A DOM handler cannot be awaited; the write lands on its own, and the
+      // input's value is cleared synchronously inside `addTagRaw`.
+      void addTagRaw(tagInput.value)
       return
     }
     if (e.key === 'Backspace' && tagInput.value === '') {
       const next = form.value.tags.slice(0, -1)
-      if (next.length !== form.value.tags.length) commitTags(next)
+      if (next.length !== form.value.tags.length) void commitTags(next)
     }
   }
 
@@ -168,7 +189,7 @@ export function useFrontmatterPanel(): FrontmatterPanelModel {
     if (e.key === 'Enter') {
       e.preventDefault()
       ;(e.target as HTMLInputElement).blur()
-      commit()
+      void commit()
     }
   }
 

@@ -12,7 +12,7 @@
 import { computed } from 'vue'
 import { parseFrontmatterForPanel, splitFrontmatterRaw } from '../../notes'
 import { removeTagFromContent } from '../../../services/tags'
-import { flushSourceEdits } from '../../../services/source-view'
+import { flushEdits } from '../../../services/editor-ownership'
 import { useDocumentListStore } from '../../../stores/document-list'
 import { useTabsStore } from '../../../stores/tabs'
 
@@ -42,14 +42,24 @@ export function useSidebarTags() {
   /** Remove `tag` from the CURRENTLY OPEN document's frontmatter. The library
    *  wide rename/remove is intentionally out of scope: it would need to rewrite
    *  every note's file (riskier, deferred). The index refreshes after the save. */
-  function removeCurrentTag(tag: string, e: MouseEvent): void {
+  async function removeCurrentTag(tag: string, e: MouseEvent): Promise<void> {
     e.stopPropagation()
+    // Read BEFORE the flush below, which awaits: the row belongs to the document
+    // that was open when the user clicked it, and a switch landing mid-flush
+    // must not move the removal onto the note they went to.
     const tab = tabs.activeTab
     if (!tab) return
-    // Whole-document read-modify-write: publish the source pane's pending
-    // keystrokes first, or this would transform (and then mirror back) text that
-    // is a debounce window out of date.
-    flushSourceEdits()
+    // Whole-document read-modify-write: publish the pane the user is typing in
+    // first, or this would transform (and then mirror back) text that is a
+    // debounce window plus a serialization out of date — and the autosave the
+    // write-back arms would then put that truncated text on disk.
+    //
+    // `flushEdits()` and not the synchronous `flushSourceEdits()` this used to
+    // call: that one covers only the CodeMirror pane, which in rendered mode is
+    // not mounted at all, so it published nothing and the tag removal read the
+    // stale text. It IS the right call in source mode — which is the mode the
+    // reasoning above was written from, and why this went unnoticed.
+    await flushEdits()
     const next = removeTagFromContent(tab.content, tag)
     if (next === tab.content) return
     tab.content = next
