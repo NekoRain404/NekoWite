@@ -18,7 +18,7 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use chrono::Local;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::domain::path_policy::{resolve_within, resolve_within_rel};
 use crate::errors::fs_error;
@@ -92,24 +92,7 @@ pub fn import_attachment(vault_root: &str, source_path: &str, dir: &str) -> Resu
     // can never steer the destination out of the target directory.
     let name = sanitize_attachment_name(file_name)?;
 
-    let _root = resolve_within(vault_root, ".")?;
-    let dir = dir.trim();
-    if Path::new(dir).is_absolute() {
-        return Err("attachment dir must be vault-relative".into());
-    }
-    let dir = if dir.is_empty() || dir == "." {
-        ""
-    } else {
-        dir.trim_matches('/')
-    };
-    let (dir_abs, dir_rel) = if dir.is_empty() {
-        let month = attachment_month_dir();
-        let rel = format!("attachments/{month}");
-        let abs = resolve_within(vault_root, &rel)?;
-        (abs, rel)
-    } else {
-        resolve_within_rel(vault_root, dir)?
-    };
+    let (dir_abs, dir_rel) = resolve_attachment_dir(vault_root, dir)?;
     std::fs::create_dir_all(&dir_abs).map_err(|e| fs_error("create the folder", &dir_abs, e))?;
     // Bound the READ, not just the `metadata` check above: the file can be
     // replaced or grown in between, and `fs::read` would then pull an unbounded
@@ -128,7 +111,61 @@ pub fn import_attachment(vault_root: &str, source_path: &str, dir: &str) -> Resu
         ));
     }
     let unique = publish_attachment(&dir_abs, &name, &bytes)?;
-    Ok(format!("{dir_rel}/{unique}"))
+    Ok(attachment_rel_path(&dir_rel, &unique))
+}
+
+/// `dir` value meaning "the vault root itself" — the mirror of `VAULT_ROOT_DIR`
+/// in `platform/gateways/contracts.ts`, which is where the frontend reads it.
+///
+/// A destination AT the root has no directory part, and every spelling of "no
+/// directory" already means the legacy layout below: `""`, `"."` and `"/"` all
+/// normalize to the same empty string, so none of them can be borrowed to mean
+/// the root. Slash-free on purpose, so the normalization leaves it alone.
+pub const VAULT_ROOT_DIR: &str = ":vault-root:";
+
+/// Where an attachment write lands: the resolved absolute directory, and the
+/// vault-relative form the returned path is built from.
+///
+/// This is the ONE place that decides what `dir` means, so `save_attachment`
+/// and `import_attachment` cannot drift apart on it: empty (or `"."`) is "no
+/// directory was chosen" and gets the legacy `attachments/{YYYY-MM}` layout,
+/// any other value is a vault-relative directory, and [`VAULT_ROOT_DIR`] is the
+/// vault root.
+fn resolve_attachment_dir(vault_root: &str, dir: &str) -> Result<(PathBuf, String), String> {
+    // The path-confinement guard, and the root's own absolute path as well:
+    // this is the resolved base every branch below stays inside.
+    let base = resolve_within(vault_root, ".")?;
+    let dir = dir.trim();
+    if Path::new(dir).is_absolute() {
+        return Err("attachment dir must be vault-relative".into());
+    }
+    if dir == VAULT_ROOT_DIR {
+        return Ok((base, String::new()));
+    }
+    let dir = if dir.is_empty() || dir == "." {
+        ""
+    } else {
+        dir.trim_matches('/')
+    };
+    if dir.is_empty() {
+        let month = attachment_month_dir();
+        let rel = format!("attachments/{month}");
+        return Ok((resolve_within(vault_root, &rel)?, rel));
+    }
+    resolve_within_rel(vault_root, dir)
+}
+
+/// The path an attachment write answers with: the directory's vault-relative
+/// form joined onto the name [`publish_attachment`] claimed. The root's
+/// relative form is empty, and a bare `format!("{dir_rel}/{unique}")` leaves a
+/// leading `/` there — an absolute path, which is not what a vault-relative
+/// path is, and the exact shape a caller feeds back into markdown references.
+fn attachment_rel_path(dir_rel: &str, unique: &str) -> String {
+    if dir_rel.is_empty() {
+        unique.to_string()
+    } else {
+        format!("{dir_rel}/{unique}")
+    }
 }
 
 /// Reduce a pasted/typed attachment name to a bare `stem.ext` file name.
@@ -237,6 +274,12 @@ fn publish_attachment(dir_abs: &Path, preferred: &str, bytes: &[u8]) -> Result<S
 /// (e.g. `notes/foo_assets` or `.tmp`) and the file is written there; when it
 /// is empty the legacy `attachments/{YYYY-MM}` layout is used. Traversal and
 /// symlink escapes in `dir` are rejected by [`resolve_within_rel`].
+///
+/// [`VAULT_ROOT_DIR`] is the vault root itself. It has to be a value of its
+/// own: the empty string is "no directory was chosen" and means the legacy
+/// month folder, so an export that let the user pick the root — the native save
+/// dialog's own default — was written to `attachments/{YYYY-MM}` instead, with
+/// both gateways agreeing on the wrong answer.
 pub fn save_attachment(
     vault_root: &str,
     file_name: &str,
@@ -273,35 +316,17 @@ pub fn save_attachment(
     if !is_importable_image(Path::new(&name)) {
         return Err(format!("attachment type is not an allowed image: {name}"));
     }
-    // Path-confinement guard: validates the vault base resolves inside the
-    // vault; the binding is unused (the target dir is resolved below via dir_abs).
-    let _root = resolve_within(vault_root, ".")?;
-    let dir = dir.trim();
-    if Path::new(dir).is_absolute() {
-        return Err("attachment dir must be vault-relative".into());
-    }
-    let dir = if dir.is_empty() || dir == "." {
-        ""
-    } else {
-        dir.trim_matches('/')
-    };
-    let (dir_abs, dir_rel) = if dir.is_empty() {
-        let month = attachment_month_dir();
-        let rel = format!("attachments/{month}");
-        let abs = resolve_within(vault_root, &rel)?;
-        (abs, rel)
-    } else {
-        resolve_within_rel(vault_root, dir)?
-    };
+    let (dir_abs, dir_rel) = resolve_attachment_dir(vault_root, dir)?;
     std::fs::create_dir_all(&dir_abs).map_err(|e| fs_error("create the folder", &dir_abs, e))?;
     let unique = publish_attachment(&dir_abs, &name, &bytes)?;
-    Ok(format!("{dir_rel}/{unique}"))
+    Ok(attachment_rel_path(&dir_rel, &unique))
 }
 
 #[cfg(test)]
 mod create_only_write_tests {
+    // `PathBuf` comes in through `super::*` (the module imports it for
+    // `resolve_attachment_dir`), so it is not imported again here.
     use super::*;
-    use std::path::PathBuf;
 
     fn scratch(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
