@@ -15,20 +15,27 @@ import { createApp, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { useExportSettings, type ExportSettingsModel } from './use-export-settings'
 import { useSettingsStore } from '../../../stores/settings'
+import type { ExportImageFormat } from '../../../stores/settings'
 import { useTabsStore } from '../../../stores/tabs'
 import type { OpenTab } from '../../../stores/tabs'
 import { onNotify } from '../../../services/errors'
+import type { ExportUiOptions, ExportImageResult } from '../../../services/export'
+import { VAULT_ROOT_DIR } from '../../../platform/gateways/contracts'
 
+// Every mock declares what it answers with: an inferred return type here is how
+// a gateway double ends up able to answer only `null`, and the test that reads
+// a path through it passes while proving nothing about the path.
 const mocks = vi.hoisted(() => ({
-  exportHtml: vi.fn(),
-  exportToPdf: vi.fn(),
-  exportImage: vi.fn(),
-  renderPlainText: vi.fn(),
-  renderCsv: vi.fn(),
-  flushEdits: vi.fn(),
-  saveFileDialog: vi.fn(),
-  write: vi.fn(),
-  saveAttachment: vi.fn(),
+  exportHtml: vi.fn<(source: string, vault: string, savePath: string, opts: ExportUiOptions) => Promise<void>>(),
+  exportToPdf: vi.fn<(source: string, opts: ExportUiOptions) => Promise<void>>(),
+  exportImage: vi.fn<(source: string, format: ExportImageFormat, quality: number, opts: ExportUiOptions) => Promise<ExportImageResult>>(),
+  renderPlainText: vi.fn<(source: string, opts: ExportUiOptions) => Promise<string>>(),
+  renderCsv: vi.fn<(source: string, opts: ExportUiOptions) => Promise<string | null>>(),
+  flushEdits: vi.fn<() => Promise<void>>(),
+  saveFileDialog: vi.fn<(defaultName: string, startDir?: string) => Promise<string | null>>(),
+  write: vi.fn<(vault: string, path: string, content: string) => Promise<string | null>>(),
+  saveAttachment: vi.fn<(vault: string, fileName: string, base64: string, dir?: string) => Promise<string>>(),
+  announce: vi.fn<(text: string) => void>(),
 }))
 
 vi.mock('../../../services/export', () => ({
@@ -39,6 +46,7 @@ vi.mock('../../../services/export', () => ({
   renderCsv: mocks.renderCsv,
 }))
 vi.mock('../../../services/editor-ownership', () => ({ flushEdits: mocks.flushEdits }))
+vi.mock('../../../services/announcer', () => ({ announce: mocks.announce }))
 vi.mock('../../../platform/gateways/fs', () => ({
   fsService: {
     saveFileDialog: mocks.saveFileDialog,
@@ -97,6 +105,7 @@ beforeEach(() => {
   mocks.saveFileDialog.mockReset().mockResolvedValue(null)
   mocks.write.mockReset().mockResolvedValue(null)
   mocks.saveAttachment.mockReset().mockResolvedValue('notes/alpha.png')
+  mocks.announce.mockReset()
   mounted = []
 })
 
@@ -282,6 +291,39 @@ describe('useExportSettings', () => {
 
     expect(mocks.flushEdits).toHaveBeenCalledTimes(1)
     expect(mocks.saveAttachment).toHaveBeenCalledWith('/vault', 'alpha.png', 'AAAA', 'notes')
+    expect(mocks.announce).toHaveBeenCalledWith(expect.stringContaining('notes/alpha-1.png'))
+  })
+
+  it('saves an image the user put at the vault root INTO the vault root', async () => {
+    const m = mountModel()
+    openTab()
+    // The dialog OPENS in the vault root (`pickSavePath` passes it as
+    // `startDir`) and Save without navigating is its default answer, so this is
+    // the ordinary case and not a corner: the user chose `/vault/alpha.png`.
+    mocks.saveFileDialog.mockResolvedValue('/vault/alpha.png')
+    // No directory part, so the gateway answers with the bare name.
+    mocks.saveAttachment.mockResolvedValue('alpha.png')
+
+    await m.exportImageFile()
+
+    // Asserted on the argument rather than only through `toHaveBeenCalledWith`,
+    // so a regression reads as `expected '' to be ':vault-root:'` — the defect
+    // in one line. The literal is no lazier than the constant here: it is a
+    // wire value the Rust side spells independently in `attachment_store`, so
+    // this is the only place that can catch the two drifting apart.
+    const [, name, , dir] = mocks.saveAttachment.mock.calls[0]!
+    expect(name).toBe('alpha.png')
+    // Before the fix this was `''`. Empty is not "the root" at either gateway
+    // — it is "no directory was chosen" and gets the legacy layout — so the
+    // dialog said `/vault` and the file was written to
+    // `attachments/2026-09/alpha.png`: the destination the user did not pick,
+    // with both gateways agreeing on it and only the toast admitting it.
+    expect(dir).toBe(':vault-root:')
+    expect(mocks.saveAttachment).toHaveBeenCalledWith('/vault', 'alpha.png', 'AAAA', VAULT_ROOT_DIR)
+    // ...and the toast names the place the user chose: the path the gateway
+    // returned (`alpha.png`), not the one the suite defaults to
+    // (`notes/alpha.png`) and not a folder the user never opened.
+    expect(mocks.announce).toHaveBeenCalledWith(expect.stringContaining('alpha.png'))
   })
 
   it('refuses an image over the vault\'s own size limit before shipping it', async () => {

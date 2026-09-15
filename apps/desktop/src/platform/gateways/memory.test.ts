@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryEventAdapter, createMemoryFsGateway } from './memory'
+import { VAULT_ROOT_DIR } from './contracts'
 import type { FsChangeEvent } from './contracts'
 import { getSharedGateways, resetSharedGateways } from '../runtime/gateway-runtime'
 import { startChatCompletion } from '../../features/ai'
@@ -178,6 +179,39 @@ describe('memoryFsGateway', () => {
     expect(path).toBe('notes/a_assets/pic.png')
     await expect(fs.resolveMediaPath('memoir://demo', path)).resolves.toBe(
       'data:image/png;base64,QUJD',
+    )
+    vi.useRealTimers()
+  })
+
+  it('saveAttachment at the vault root stores at the root, not the month folder', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 8, 3))
+    const fs = createMemoryFsGateway()
+    // The export's destination when the user saves where the native dialog
+    // opened. `''` is "no directory was chosen" and answers with
+    // `attachments/2026-09/pic.png` — a place the user did not pick.
+    const path = await fs.saveAttachment('memoir://demo', 'pic.png', 'QUJD', VAULT_ROOT_DIR)
+    expect(path).toBe('pic.png')
+    // The path it hands back resolves, and has no leading `/` to send a later
+    // reader looking outside the vault.
+    await expect(fs.resolveMediaPath('memoir://demo', path)).resolves.toBe(
+      'data:image/png;base64,QUJD',
+    )
+    const root = await fs.list('memoir://demo', '.')
+    expect(root.map((e) => e.name)).toContain('pic.png')
+    vi.useRealTimers()
+  })
+
+  it('saveAttachment at the vault root dedupes there like any other directory', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 8, 3))
+    const fs = createMemoryFsGateway()
+    const first = await fs.saveAttachment('memoir://demo', 'pic.png', 'AAA', VAULT_ROOT_DIR)
+    const second = await fs.saveAttachment('memoir://demo', 'pic.png', 'BBB', VAULT_ROOT_DIR)
+    expect(first).toBe('pic.png')
+    expect(second).toBe('pic-1.png')
+    await expect(fs.resolveMediaPath('memoir://demo', second)).resolves.toBe(
+      'data:image/png;base64,BBB',
     )
     vi.useRealTimers()
   })

@@ -92,6 +92,19 @@ export interface FileStat {
   mtime: number
 }
 
+/**
+ * The `dir` value that means "the vault root itself".
+ *
+ * A destination AT the root has no directory part, and every spelling of "no
+ * directory" already means something else at both gateways: `''` and `'.'` are
+ * the legacy `attachments/{YYYY-MM}` layout (the pasted-image default that
+ * `use-image-intake` relies on), and `'/'` is stripped to `''` before either of
+ * them reads it. So the root is NAMED rather than spelled with nothing — one
+ * value, one fact. Slash-free on purpose: both gateways normalize leading and
+ * trailing slashes away first, and this has to survive that untouched.
+ */
+export const VAULT_ROOT_DIR = ':vault-root:'
+
 /** Filesystem operations, confined to an authorized vault root. */
 export interface FsPort {
   /** Authorize a vault root with the backend before issuing any path-confined
@@ -118,12 +131,16 @@ export interface FsPort {
   /** Persist attachment bytes (base64) and return the vault-relative path it
    * was stored at. `dir` is an optional vault-relative target directory (e.g.
    * `notes/foo_assets` or `.tmp`); when omitted the legacy
-   * `attachments/{YYYY-MM}` layout is used. */
+   * `attachments/{YYYY-MM}` layout is used.
+   *
+   * A destination at the vault ROOT is {@link VAULT_ROOT_DIR}, not `''` — see
+   * that constant for why the two cannot be the same value. */
   saveAttachment(vault: string, fileName: string, base64: string, dir?: string): Promise<string>
   /** Copy an image the user picked from disk into the vault, returning its
    * vault-relative path. `sourcePath` is an absolute path returned by
    * {@link DialogPort.pickImageFiles}; the bytes never cross the IPC boundary.
-   * `dir` is the optional vault-relative target directory. */
+   * `dir` is the optional vault-relative target directory, and
+   * {@link VAULT_ROOT_DIR} names the vault root here too. */
   importAttachment(vault: string, sourcePath: string, dir?: string): Promise<string>
   /** Turn a vault-relative attachment path into a URL usable as <img src>. */
   resolveMediaPath(vault: string, relPath: string): Promise<string>

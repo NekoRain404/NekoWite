@@ -12,6 +12,7 @@ import { exportBaseName, exportFileName, forceExportExtension } from '../../../s
 import type { ExportFileFormat } from '../../../services/export-name'
 import { toExportRefs } from '../../../services/export-refs'
 import { fsService } from '../../../platform/gateways/fs'
+import { VAULT_ROOT_DIR } from '../../../platform/gateways/contracts'
 import { flushEdits } from '../../../services/editor-ownership'
 import { describeExportError, notifyError } from '../../../services/errors'
 import { announce } from '../../../services/announcer'
@@ -48,12 +49,19 @@ export interface ExportSettingsModel {
  *  accepted, split into the directory the export writes into and the file name
  *  it asks for. `saveAttachment` takes the two separately — it resolves the
  *  directory through its own traversal guard and sanitizes the name itself, so
- *  handing it an absolute path is not an option. */
+ *  handing it an absolute path is not an option.
+ *
+ *  A destination AT the vault root has no directory part, and `''` must not be
+ *  sent for it: empty already means "no directory was chosen" at both gateways
+ *  and files the image under the legacy `attachments/{YYYY-MM}` — the native
+ *  dialog opens in the vault root and Save-without-navigating is its default
+ *  answer, so that case wrote the file where the user did not put it. The root
+ *  gets its own value instead; see {@link VAULT_ROOT_DIR}. */
 function splitVaultPath(vault: string, savePath: string): { dir: string; name: string } {
   const rel = savePath.replace(/\\/g, '/').slice(vault.replace(/\\/g, '/').replace(/\/+$/, '').length)
   const parts = rel.replace(/^\/+/, '').split('/').filter(Boolean)
   const name = parts.pop() ?? ''
-  return { dir: parts.join('/'), name }
+  return { dir: parts.length > 0 ? parts.join('/') : VAULT_ROOT_DIR, name }
 }
 
 /**
@@ -182,6 +190,9 @@ export function useExportSettings(): ExportSettingsModel {
         }))
         return
       }
+      // `dir` is `VAULT_ROOT_DIR` when the destination is the vault root
+      // itself — the one value that says "here", not "nowhere" (see
+      // `splitVaultPath`).
       const { dir, name } = splitVaultPath(target.vault, target.path)
       // `saveAttachment` is the vault's only binary write path (`fs.write`
       // takes a string, and a data URL in a `.png` is not a PNG), and it

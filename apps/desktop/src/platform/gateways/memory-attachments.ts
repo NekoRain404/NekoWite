@@ -17,7 +17,7 @@
  * payload vs. the demo pick registry) and in how the file is named.
  */
 
-import type { FsPort } from './contracts'
+import { VAULT_ROOT_DIR, type FsPort } from './contracts'
 import { pickedFilePayload } from './memory-picked-files'
 
 /** The three {@link FsPort} members this area implements. */
@@ -60,18 +60,26 @@ export function createAttachmentArea(deps: AttachmentAreaDeps): AttachmentArea {
   /** Put `payload` in the vault under `dir` (or the legacy `attachments/{YYYY-MM}`
    *  layout when none is given), returning the vault-relative path. An existing
    *  name is never overwritten: the first free `-N` suffix wins, so importing the
-   *  same file twice keeps both copies — the same rule the Rust command applies. */
+   *  same file twice keeps both copies — the same rule the Rust command applies.
+   *
+   *  `dir` may also be {@link VAULT_ROOT_DIR}, which the empty string cannot
+   *  stand in for: `''` is "no directory was chosen" and gets the legacy month
+   *  folder, so the root needs a value of its own. At the root the path has no
+   *  directory part at all — the join below must not leave a leading `/`. */
   function store(dir: string | undefined, fileName: string, payload: string): string {
     const cleanDir = dir && dir.trim() ? dir.trim().replace(/^\/+|\/+$/g, '') : ''
-    const targetDir = cleanDir || `attachments/${attachmentMonthDir()}`
+    const targetDir = cleanDir === VAULT_ROOT_DIR ? '' : cleanDir || `attachments/${attachmentMonthDir()}`
+    // The root's target dir is empty, so the join needs the slash to go with
+    // it — `'/' + name` would be an absolute path, not a vault-relative one.
+    const prefix = targetDir ? `${targetDir}/` : ''
     const dot = fileName.lastIndexOf('.')
     const stem = dot > 0 ? fileName.slice(0, dot) : fileName
     const ext = dot > 0 ? fileName.slice(dot) : ''
-    let relPath = `${targetDir}/${fileName}`
+    let relPath = `${prefix}${fileName}`
     let n = 0
     while (deps.files.has(relPath) || deps.attachments.has(relPath)) {
       n += 1
-      relPath = `${targetDir}/${stem}-${n}${ext}`
+      relPath = `${prefix}${stem}-${n}${ext}`
     }
     deps.files.set(relPath, payload)
     deps.attachments.set(relPath, payload)
