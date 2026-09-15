@@ -29,6 +29,7 @@ import { createTabPersistence } from './tab-persistence'
 import { createTabRecovery } from './tab-recovery'
 import { createTabLifecycle } from './tab-lifecycle'
 import type { UntitledCloseChoice } from './tab-lifecycle'
+import { createUnflushableRescue } from './unflushable-rescue'
 import { createTabFileOperations } from './tab-file-operations'
 import type { ExternalConflict } from './tab-write-preconditions'
 
@@ -133,6 +134,25 @@ export const useTabsStore = defineStore('tabs', () => {
     noteSelfWrite: save.noteSelfWrite,
   })
 
+  /**
+   * The route out of a close a refused save would otherwise block: a copy of the
+   * stuck tab's text under a name the user picks (`unflushable-rescue.ts`, where
+   * the one loop lives). Built here because this is where the save transaction
+   * and the notification channel meet — the two things the route asks for — and
+   * handed to the closes through the lifecycle below.
+   *
+   * The window close wires the same factory to the same store for its own route
+   * (`app-lifecycle.ts`): one implementation, one place to change, and the two
+   * controls cannot drift apart again.
+   */
+  const rescueUnflushableTabs = createUnflushableRescue({
+    listTabs: () => tabs.value,
+    t: i18nT,
+    notifyRecovery,
+    saveTab: (id, opts) => save.saveTab(id, opts),
+    saveUntilSettled: save.saveUntilSettled,
+  })
+
   const lifecycle = createTabLifecycle({
     tabs,
     activeId,
@@ -143,6 +163,7 @@ export const useTabsStore = defineStore('tabs', () => {
     notifyRecovery,
     saveUntilSettled: save.saveUntilSettled,
     flushDirty: save.flushDirty,
+    rescueUnflushableTabs,
     noteEdit: save.noteEdit,
     untitledDirtyTabs: persistence.untitledDirtyTabs,
     captureSession: persistence.captureSession,

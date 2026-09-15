@@ -38,6 +38,12 @@ export interface TabCloseDeps {
    *  write could not carry. */
   saveUntilSettled(id: string): Promise<boolean>
   flushDirty(): Promise<boolean>
+  /** The route out of a flush that a refused write blocked: a copy of the text
+   *  under a name the user picks, for a file that will refuse every retry. The
+   *  loop is `unflushable-rescue.ts` and the window close asks the same factory
+   *  for the same route — the two controls differ, the question a refusal asks
+   *  does not, and a second copy of it is how they came to differ. */
+  rescueUnflushableTabs(): Promise<boolean>
   /** Ask the user what to do with `count` untitled dirty tabs before a bulk
    *  close. Injected because the app-layer prompt lives in
    *  `app/recoveryClosedLoop` — see `tab-lifecycle.ts`'s module header.
@@ -64,6 +70,7 @@ export function createTabClose(deps: TabCloseDeps) {
     notifyError,
     saveUntilSettled,
     flushDirty,
+    rescueUnflushableTabs,
     requestUntitledClose,
     untitledDirtyTabs,
     captureSession,
@@ -196,6 +203,34 @@ export function createTabClose(deps: TabCloseDeps) {
    * are flushed first, untitled dirty ones get the keep-or-discard prompt, and a
    * failed save aborts the whole thing instead of dropping what it could not
    * write. Returns false when the close did not happen.
+   *
+   * The steps are the window close's, in the window close's order —
+   * `reconcilePlaceholders`, `flushDirty`, and, when the flush was refused rather
+   * than failed, `rescueUnflushableTabs`, which offers the text a copy under a
+   * name the user picks (`unflushable-rescue.ts`: one loop, both controls). A
+   * file that refuses the write refuses every retry of it, so without that step
+   * a read-only note — a note restored from the trash carries the bit, and the
+   * user need never have set it — left "Close all" with no move at all while the
+   * window's X offered one.
+   *
+   * The question is asked until no tab is left unasked, because that is what
+   * `removeAllTabs` needs: it takes the set as it stands THEN, while everything
+   * above it is user time. The prompt is a corner toast with no focus trap, so
+   * the app stays live behind it and a tab can arrive while the user is
+   * deciding — two routes do it: the + button (`TabBar.vue` → `openTab(null)`),
+   * and a read that lands on a placeholder they typed into
+   * (`rescuePlaceholderTyping`). Both produce an UNTITLED DIRTY tab, which is
+   * exactly what a snapshot taken before the prompt does not contain. Asking
+   * once and then looping over that snapshot skipped every one of them on
+   * `!tab.path`, and `removeAllTabs` took them: autosave timer cancelled, text
+   * in no file and in no prompt.
+   *
+   * `answered` is how the re-check avoids asking twice about a tab the user has
+   * already ruled on. Ids come from the lifecycle's monotonic counter, so one id
+   * is one tab for the whole of this close, and a set of them is exactly "the
+   * tabs a prompt has already named". `discard` is a ruling too: such a tab is
+   * not offered again, which is what keeps a user who said discard from being
+   * asked about the same tab on every later pass.
    */
   async function closeAll(): Promise<boolean> {
     if (tabs.value.length === 0) return true
@@ -204,35 +239,55 @@ export function createTabClose(deps: TabCloseDeps) {
     // this whole close — `flushDirty` can never settle one, and the sentence the
     // user got for it was about a vault switch.
     await reconcilePlaceholders()
-    if (!(await flushDirty())) {
-      notifyError(t('tabs.unsavedWorkBlocker'))
+    const flushed = await flushDirty()
+    if (!flushed && !(await rescueUnflushableTabs())) {
+      // A close, not a vault switch: `unsavedWorkBlocker` says the vault was not
+      // switched, which is an action a user closing every tab never took. This
+      // path has wording of its own for the same reason the window close has
+      // its: `unsavedWorkBlockerClose` names the WINDOW, and what stays open
+      // here is the tabs.
+      notifyError(t('tabs.unsavedWorkBlockerCloseAll'))
       return false
     }
-    const untitled = untitledDirtyTabs()
-    if (untitled.length > 0) {
-      const choice = await requestUntitledClose(untitled.length)
-      if (choice === 'save') {
-        for (const tab of untitled) {
-          if (!(await saveUntilSettled(tab.id))) {
-            notifyError(t('tabs.unsavedWorkBlocker'))
-            return false
+    // The flush is behind us, so a refusal here is one the user's answer to the
+    // copy route did not settle — leaving the close where it was, with the text
+    // still in the editor, and the same sentence as above.
+    const answered = new Set<string>()
+    for (;;) {
+      const untitled = untitledDirtyTabs().filter((tab) => !answered.has(tab.id))
+      if (untitled.length > 0) {
+        const choice = await requestUntitledClose(untitled.length)
+        // Recorded before the saves below and before the loop goes round again:
+        // this answer is the user's ruling on exactly these tabs, and nothing
+        // that follows it may re-open the question about one of them.
+        for (const tab of untitled) answered.add(tab.id)
+        if (choice === 'save') {
+          for (const tab of untitled) {
+            if (!(await saveUntilSettled(tab.id))) {
+              notifyError(t('tabs.unsavedWorkBlockerCloseAll'))
+              return false
+            }
           }
         }
+        // A tab can arrive during the saves too, and the next pass is what asks
+        // about it.
+        continue
       }
-    }
-    // `flushDirty` settles what it touched, so a tab that is dirty HERE is one
-    // that became dirty after that flush — the prompt above is user time, with
-    // the editor still live behind it, and a keystroke typed into it is in no
-    // write yet. The bulk close therefore asks the same question the single
-    // close does, at the last moment it can be asked: `removeAllTabs` would
-    // otherwise discard exactly that text. Untitled tabs are not revisited: the
-    // prompt owns them, and one the user chose to discard has no path to save
-    // to.
-    for (const tab of [...tabs.value]) {
-      if (!tab.path || !tab.dirty) continue
-      if (!(await saveUntilSettled(tab.id))) {
-        notifyError(t('tabs.unsavedWorkBlocker'))
-        return false
+      // `flushDirty` settles what it touched, so a tab that is dirty HERE is one
+      // that became dirty after that flush — the prompt above is user time, with
+      // the editor still live behind it, and a keystroke typed into it is in no
+      // write yet. The bulk close therefore asks the same question the single
+      // close does, at the last moment it can be asked: `removeAllTabs` would
+      // otherwise discard exactly that text. Untitled tabs are not revisited:
+      // the prompt owns them, and one the user chose to discard has no path to
+      // save to.
+      const late = [...tabs.value].filter((tab) => tab.path && tab.dirty)
+      if (late.length === 0) break
+      for (const tab of late) {
+        if (!(await saveUntilSettled(tab.id))) {
+          notifyError(t('tabs.unsavedWorkBlockerCloseAll'))
+          return false
+        }
       }
     }
     removeAllTabs()

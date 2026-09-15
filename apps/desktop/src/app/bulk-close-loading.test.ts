@@ -353,7 +353,14 @@ describe('a bulk close with a tab whose first read has not landed', () => {
 
     expect(tabs.tabs).toHaveLength(1)
     expect(tabs.tabs[0].dirty).toBe(true)
-    expect(notices).toContain('tabs.unsavedWorkBlocker')
+    // The copy route was offered first — the same one the window's X offers — and
+    // this user declined it (`collectNotices` dismisses every non-untitled
+    // prompt). What is reported after that is the close-all wording: not the
+    // vault switch the user never asked for, and not the window close's sentence,
+    // which names the window.
+    expect(notices).toContain('tabs.unsavedWorkRescue')
+    expect(notices).toContain('tabs.unsavedWorkBlockerCloseAll')
+    expect(notices).not.toContain('tabs.unsavedWorkBlocker')
     expect(atUntitledPrompt).toHaveLength(0)
   })
 

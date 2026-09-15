@@ -239,7 +239,7 @@ describe('closeAll never silently discards unsaved work', () => {
     expect(s.tabs).toHaveLength(0)
   })
 
-  it('aborts the close when a flush fails, keeping the tab', async () => {
+  it('aborts the close when a flush fails and the copy route is declined, keeping the tab', async () => {
     readMock.mockResolvedValue('on disk')
     writeMock.mockRejectedValue(new Error('disk full'))
     const s = useTabsStore()
@@ -248,7 +248,13 @@ describe('closeAll never silently discards unsaved work', () => {
     s.tabs[0].content = 'precious'
     s.markDirty(s.tabs[0].id)
     const seen: string[] = []
-    const off = onRecovery((p) => seen.push(p.message))
+    // The refusal offers the way out before the close gives up
+    // (`tabs.unsavedWorkRescue`), the same route the window close offers. This
+    // user declines it, so the close is refused with their text still in the tab.
+    const off = onRecovery((p) => {
+      seen.push(p.message)
+      p.onDismiss()
+    })
     onNotify((m) => seen.push(m))
 
     await expect(s.closeAll()).resolves.toBe(false)

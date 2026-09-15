@@ -45,6 +45,13 @@ export interface TabLifecycleDeps {
    *  write could not carry. */
   saveUntilSettled(id: string): Promise<boolean>
   flushDirty(): Promise<boolean>
+  /** The route out of a close a refused save would otherwise block forever: a
+   *  copy of every stuck tab's text under a name the user picks. The loop itself
+   *  is `unflushable-rescue.ts`, wired here from the one place the save
+   *  transaction and the notification channel meet (`tabs.ts`) — the window close
+   *  asks the same factory for the same route, which is what keeps the two
+   *  controls from answering a refusal differently. */
+  rescueUnflushableTabs(): Promise<boolean>
   /** Record one edit of `id`'s text, at the keystroke rather than at the
    *  publish. A save reads the revision before its write and clears the tab's
    *  `dirty` flag only if it has not moved — see `tab-save.ts`'s
@@ -75,6 +82,7 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
     notifyRecovery,
     saveUntilSettled,
     flushDirty,
+    rescueUnflushableTabs,
     noteEdit,
     untitledDirtyTabs,
     captureSession,
@@ -340,6 +348,7 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
     notifyError,
     saveUntilSettled,
     flushDirty,
+    rescueUnflushableTabs,
     requestUntitledClose,
     untitledDirtyTabs,
     captureSession,
