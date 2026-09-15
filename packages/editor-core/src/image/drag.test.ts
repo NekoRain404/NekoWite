@@ -155,6 +155,113 @@ describe('resize drag undo coalescing (editor)', () => {
 })
 
 /**
+ * A Shift drag on an image whose size cannot be established AT ALL.
+ *
+ * `resizeBasis` answers "no ratio" when the document states neither dimension
+ * and the element reports no pixels (0/0 — not loaded, failed, CSP-blocked, or
+ * a source-less image), or when it states one dimension and the element reports
+ * none. The drag used to answer that with a stand-in pair — `{1, 1}`, or
+ * `{width, round(width * 0.75)}` — and pointer-up wrote the size that came out
+ * of it: `{1,1}` squares the picture, the 0.75 writes a 4:3, and both belong to
+ * no image. The gesture may run (it is not the document), but the COMMIT is
+ * where such a size reached the note, and that is where it must not.
+ */
+describe('a Shift drag with no ratio to hold', () => {
+  /** An editor holding `md`, with the node view's `<img>` reporting 0/0 — an
+   *  element that never loaded, which is what "no size" means. */
+  async function openUnmeasurable(md: string): Promise<{
+    editor: ReturnType<typeof createEditor>
+    view: EditorView
+    img: HTMLImageElement
+    pos: number
+  }> {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open(md)
+    const img = el.querySelector('img') as HTMLImageElement
+    const view = editor.getView()
+    let pos: number | null = null
+    view.state.doc.descendants((n, p) => {
+      if (pos === null && n.type.name === 'image') pos = p
+      return true
+    })
+    if (pos === null) throw new Error('no image node')
+    return { editor, view, img, pos }
+  }
+
+  it('writes nothing when nothing states a size, instead of squaring the picture', async () => {
+    const { editor, view, img, pos } = await openUnmeasurable('![a](attachments/a.png)')
+    const before = undoDepth(view.state)
+
+    simulateDrag(img, [5, 30], true)
+
+    // Before: the stand-in pair was { width: 1, height: 1 }, so the commit was
+    // proportionalSize(1, 1, 31) -> { width: 31, height: 31 }, saved as
+    // `![a](attachments/a.png){width=31 height=31}`.
+    const node = view.state.doc.nodeAt(pos)
+    expect({ width: node?.attrs.width, height: node?.attrs.height }).toEqual({
+      width: null,
+      height: null,
+    })
+    expect(undoDepth(view.state)).toBe(before)
+    expect(await editor.save()).not.toContain('{width')
+    // The preview declines too: the element is left exactly as the document
+    // renders it, which is what keeps it from showing a square that nothing
+    // committed.
+    expect(img.style.width).toBe('')
+    expect(img.style.height).toBe('')
+    editor.destroy()
+  })
+
+  it('writes nothing when only the width is stored, instead of inventing a 4:3', async () => {
+    const { editor, view, img, pos } = await openUnmeasurable('![a](attachments/a.png){width=300}')
+
+    simulateDrag(img, [5, 30], true)
+
+    // Before: a stored width paired with the stand-in height made { 300, 225 },
+    // so the commit was proportionalSize(300, 225, 330) -> { width: 330,
+    // height: 248 } — a 4:3 belonging to no image. One stored dimension is not
+    // a ratio.
+    const node = view.state.doc.nodeAt(pos)
+    expect({ width: node?.attrs.width, height: node?.attrs.height }).toEqual({
+      width: 300,
+      height: null,
+    })
+    expect(await editor.save()).not.toContain('height=')
+    // The element still shows the size the document states for it — the drag
+    // does not preview a pair it is not going to write.
+    expect(img.style.width).toBe('300px')
+    editor.destroy()
+  })
+
+  it('puts the element back when Shift arrives only at the end of the drag', async () => {
+    // Shift is read per move, so it can be held for the last one only: the
+    // moves before it previewed a plain width, and the mode at pointer-up is
+    // what decides the commit. With no ratio to hold the document keeps its
+    // size — and a preview the drag will not commit must not outlive it.
+    const { editor, view, img, pos } = await openUnmeasurable('![a](attachments/a.png){width=300}')
+    const at = (type: string, clientX: number, shiftKey: boolean): MouseEvent =>
+      new MouseEvent(type, { clientX, clientY: 0, shiftKey, bubbles: true })
+
+    img.dispatchEvent(at('pointerdown', 0, false))
+    window.dispatchEvent(at('pointermove', 40, false))
+    expect(img.style.width).toBe('340px') // the plain step from 300, previewed
+
+    window.dispatchEvent(at('pointermove', 40, true))
+    window.dispatchEvent(at('pointerup', 40, true))
+
+    expect(img.style.width).toBe('300px')
+    const node = view.state.doc.nodeAt(pos)
+    expect({ width: node?.attrs.width, height: node?.attrs.height }).toEqual({
+      width: 300,
+      height: null,
+    })
+    editor.destroy()
+  })
+})
+
+/**
  * The drag's ratio has to be the FILE's, exactly as the keymap's is.
  *
  * With a width stored and no height, the drag formed its ratio from the stored
@@ -298,5 +405,28 @@ describe('a Shift resize, dragged or pressed, lands on the same picture', () => 
 
     expect(dragged).toEqual(pressed)
     expect(dragged).toEqual({ width: 610, height: 153 })
+  })
+
+  it('agrees when no size is stored and the picture reports no pixels', async () => {
+    // The case every test above excludes by its own fixture: `pixels: [1200,
+    // 300]` means `lock` is never null, so the drag's stand-in pair — the exact
+    // thing the agreement exists to remove — was never entered. `[0, 0]` is an
+    // element that never loaded: neither path has a ratio, so both must leave
+    // the document alone. Before: the drag committed { width: 11, height: 11 },
+    // the invented {1,1} squared, where Shift+→ changed nothing.
+    const { dragged, pressed } = await resizeBothWays('![a](attachments/a.png)', [0, 0])
+
+    expect(dragged).toEqual(pressed)
+    expect(dragged).toEqual({ width: null, height: null })
+  })
+
+  it('agrees when only the width is stored and the picture reports no pixels', async () => {
+    // Before: the drag committed { width: 310, height: 233 } — the 0.75
+    // stand-in's 4:3 — where Shift+→ refused. A stored width on its own is not
+    // a ratio for either path to hold.
+    const { dragged, pressed } = await resizeBothWays('![a](attachments/a.png){width=300}', [0, 0])
+
+    expect(dragged).toEqual(pressed)
+    expect(dragged).toEqual({ width: 300, height: null })
   })
 })
