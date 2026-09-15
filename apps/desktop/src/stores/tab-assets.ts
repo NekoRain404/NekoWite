@@ -34,10 +34,18 @@
  * move on its first save came back with a body still saying `.tmp/…` and a list
  * saying there was nothing to do — and since the save path called this only when
  * the list was non-empty, an empty list meant "do not look" and nothing ever
- * repaired it. It is derived from the note now (`outstandingTmpPaths`), by the
- * same rule the recovery GC uses to decide a temp file is not an orphan. The
+ * repaired it. It is derived from the note now (`outstandingTmpPaths`). The
  * list is not persisted instead: a persisted list and a body can disagree, and
  * then there are two authorities — and the one on disk is the body.
+ *
+ * The first derivation of that read the body as a string and took any `.tmp/…`
+ * substring in it for a reference, so a note of ordinary prose about the feature
+ * — "images live in `.tmp/` until you save" — renamed a file on every save: the
+ * `endsWith('/')` test written for exactly that sentence was defeated by the
+ * backtick around it, and the rename target became a file named `` ` ``. A
+ * mention is not a reference. What the body must carry is the syntax the app's
+ * own writer emits, `![alt](.tmp/…)` (`markdownImageBlock`), and that is what
+ * `tmpRefsInContent` reads.
  *
  * And a throw from `renameEntry` was taken as proof the file had not moved. It
  * is an IPC command: a rename that landed and whose response was lost rejects
@@ -75,38 +83,74 @@ export interface TabAssetFilePort {
 }
 
 /**
- * The `.tmp/…` paths a note body references.
+ * A markdown image, and the destination of one: `![alt](dest)`, with the
+ * optional `<…>` wrapper CommonMark allows and an optional title after the
+ * destination (`![alt](dest "title")` — the destination ends at the first
+ * whitespace or `)`).
  *
- * The pattern is the one `tab-persistence.ts#referencedTmpPaths` — the recovery
- * GC's "not orphaned" predicate — has always used, and this is now the single
- * definition of it. The two have to agree about what a reference IS, or one of
- * them acts on a file the other believes is still in use: the GC deleting an
- * asset this relocation was about to move, or this one moving a file the GC is
- * still treating as live.
+ * This is a SYNTAX test, not a substring one, and that is the bound. Every
+ * `.tmp/…` reference the app itself writes has this shape — an untitled note's
+ * paste inserts exactly `![alt](.tmp/…)`, because `relativePathFromNoteVault`
+ * of a note with no path is the staged path verbatim — while everything else a
+ * note might carry is a mention: inline code, a bare path in a sentence, a URL,
+ * prose about the feature. The pattern this replaces was the substring alone
+ * (`/\.tmp\/[^\s"')\]>,]+/`), so a mention was indistinguishable from a
+ * reference, and the `endsWith('/')` guard that was supposed to catch the
+ * sentence "images live in `.tmp/` until you save" was defeated by the backtick
+ * around `.tmp/` — not excluded by the character class, so the match ran on into
+ * it and the rename target became a file named `` ` ``. A guard that depends on
+ * which characters a regex happens to exclude is defeated by the next
+ * character; one that depends on the shape the app writes cannot be.
  *
- * A ref ending in `/` names a directory rather than a staged asset and is left
- * out: `moveAttachments` refuses a pair whose file name would be empty, and a
- * throw from that is a throw out of the save that called it.
+ * The known residual, and what it costs: a COMPLETE image line inside a fenced
+ * block is still matched, because telling a sample from a use needs a document
+ * parse rather than a pattern. It is left as it is rather than fenced off
+ * because the app's own insert can land inside a fence (the caret was there),
+ * and `pendingAssetPaths` does not survive a restart — excluding fences would
+ * strand exactly the pair this derivation exists to repair. The cost of the
+ * other choice is bounded: it is a file the app staged, moved for a note whose
+ * text carries the app's own insert form.
  */
-const TMP_REF_RE = /\.tmp\/[^\s"')\]>,]+/g
+const MD_IMAGE_DEST_RE = /!\[[^\]]*\]\(\s*(<[^<>\n]*>|[^()\s]*)/g
 
+/**
+ * The `.tmp/…` paths a note body REFERENCES — its markdown image destinations,
+ * not the places its text happens to mention the temp directory.
+ *
+ * A destination ending in `/` names a directory rather than a staged asset and
+ * is still left out: `moveAttachments` refuses a pair whose file name would be
+ * empty, and a throw from that is a throw out of the save that called it.
+ */
 export function tmpRefsInContent(content: string): string[] {
   const refs: string[] = []
-  for (const match of content.matchAll(TMP_REF_RE)) {
-    if (!match[0].endsWith('/')) refs.push(match[0])
+  for (const match of content.matchAll(MD_IMAGE_DEST_RE)) {
+    const raw = match[1]
+    const dest = raw.startsWith('<') ? raw.slice(1, -1) : raw
+    if (!dest.startsWith('.tmp/') || dest.endsWith('/')) continue
+    refs.push(dest)
   }
   return refs
 }
 
 /**
  * What a relocation pass still has to do, derived from the note rather than
- * remembered: the tab's staged list unioned with the `.tmp/…` refs in its body.
+ * remembered: the tab's staged list unioned with the `.tmp/…` paths its body
+ * references.
  *
  * The body is the half that survives a restart and the authority for the
  * question; the list is the fresher one, because a paste stages its file before
  * the insert can reference it — an insert that never happened (`the editor was
  * not ready`) leaves a staged file with no ref anywhere. So the answer is the
- * union, which is exactly the set `referencedTmpPaths` protects from the GC.
+ * union.
+ *
+ * It is deliberately NOT the set `referencedTmpPaths` hands the recovery GC.
+ * That one is every `.tmp/…` reference AND every mention, because its two
+ * mistakes do not cost the same: a file the GC spares on the strength of a
+ * mention is a stale file left in `.tmp`, while a file this relocation moved on
+ * the strength of one is somebody's image, renamed out from under the note that
+ * pasted it. The GC's set is therefore the wider of the two, which is the safe
+ * direction — every file this pass is about to move is one the GC is already
+ * protecting.
  *
  * Deduplicated: a path in both halves is one file to move, and a second rename
  * of it would fail on a source the first one took.
@@ -140,10 +184,13 @@ export function createTabAssets(deps: TabAssetDeps) {
    * filesystem at all, and one that still has work re-attempts only that work.
    */
   async function relocate(tab: OpenTab, vaultPath: string, notePath: string): Promise<boolean> {
-    // Before any port call, so an ordinary note — nothing staged, no `.tmp/…`
-    // ref in the body — does no filesystem work at all. That is what the guard
-    // this replaces was for; what it must not be is the ANSWER, which is what an
-    // empty `pendingAssetPaths` was allowed to stand for.
+    // Before any port call, so an ordinary note — nothing staged, and no
+    // `![alt](.tmp/…)` in the body — does no filesystem work at all: no rename,
+    // no rewrite, no toast, and no `<note>_assets/` directory. Prose that
+    // mentions the temp directory is an ordinary note, and `outstandingTmpPaths`
+    // is where that is decided. That early exit is what the guard this replaces
+    // was for; what it must not be is the ANSWER, which is what an empty
+    // `pendingAssetPaths` was allowed to stand for.
     const outstanding = outstandingTmpPaths(tab)
     if (outstanding.length === 0) return false
     const assetsDir = assetsDirForNote(notePath, vaultPath)

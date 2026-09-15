@@ -21,10 +21,20 @@ import { stripVaultPrefix } from './paths'
  *  large vault must not fire thousands of IPC reads in one burst. */
 const READ_CONCURRENCY = 8
 
-/** Identical to the pattern `stores/tabs.ts#referencedTmpPaths` uses, on
- *  purpose: the open-tab half and the vault-wide half of the referenced set must
- *  agree on what counts as a reference, or one half could call a file referenced
- *  while the other calls it crash litter. */
+/** Broader than the pattern the relocation uses, and deliberately so.
+ *
+ *  `stores/tab-assets.ts#outstandingTmpPaths` — which the open-tab half
+ *  (`tab-persistence.ts#referencedTmpPaths`) now delegates to — derives only
+ *  from real markdown image destinations, because a false positive there moves
+ *  somebody else's file. This half is a scan of every note in the vault, where a
+ *  false positive costs a temp file that is not collected this time; the two
+ *  errors are not the same size, so the two patterns are not the same width.
+ *
+ *  The relationship worth keeping is the direction, not the equality: this set
+ *  must be a SUPERSET of the relocation's, so a file the relocation still means
+ *  to move is never collected as litter out from under it. It was written as an
+ *  equality when both were the same regex; widening this one and narrowing that
+ *  one left the containment intact and the comment wrong. */
 const TMP_REFERENCE_RE = /\.tmp\/[^\s"')\]>,]+/g
 
 /** `.md`/`.mdx` only: the index also lists attachments, and reading a binary or
