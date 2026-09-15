@@ -12,6 +12,9 @@ const h = vi.hoisted(() => {
     reconcilePlaceholders: vi.fn(),
     untitledDirtyTabs: vi.fn(),
     saveTab: vi.fn(),
+    /** The gate the close asks instead of `saveTab`: one landed write is not a
+     *  saved tab (`tab-settle.ts`). */
+    saveUntilSettled: vi.fn(),
     removeTab: vi.fn(),
     saveActive: vi.fn(),
     captureSession: vi.fn(),
@@ -83,6 +86,7 @@ describe('createAppLifecycle', () => {
     h.tabsMock.flushDirty.mockResolvedValue(true)
     h.tabsMock.untitledDirtyTabs.mockReturnValue([])
     h.tabsMock.saveTab.mockResolvedValue(true)
+    h.tabsMock.saveUntilSettled.mockResolvedValue(true)
     h.tabsMock.removeTab.mockImplementation(() => {})
     h.tabsMock.saveActive.mockResolvedValue(undefined)
     h.tabsMock.captureSession.mockImplementation(() => {})
@@ -193,6 +197,9 @@ describe('createAppLifecycle', () => {
 
     expect(h.tabsMock.saveTab).toHaveBeenCalledWith('tab-ro', { offerCopy: true })
     expect(h.tabsMock.saveTab).toHaveBeenCalledTimes(1)
+    // The copy is the first attempt, not the whole answer: the text is settled
+    // where the copy put it before this route lets the window go.
+    expect(h.tabsMock.saveUntilSettled).toHaveBeenCalledWith('tab-ro')
     expect(h.windowMock.close).toHaveBeenCalled()
   })
 
@@ -242,7 +249,10 @@ describe('createAppLifecycle', () => {
     expect(h.requestUntitledVaultSwitch).toHaveBeenCalledWith(
       expect.objectContaining({ count: 1, notify: h.notifyRecovery }),
     )
-    expect(h.tabsMock.saveTab).toHaveBeenCalledWith('tab-untitled')
+    // Through the gate, not `saveTab`: this IS the close, so the autosave timer
+    // a keystroke armed is cancelled by it and the write has to carry the newer
+    // text itself (`tab-settle.ts`).
+    expect(h.tabsMock.saveUntilSettled).toHaveBeenCalledWith('tab-untitled')
     expect(h.windowMock.close).toHaveBeenCalled()
   })
 
@@ -260,6 +270,7 @@ describe('createAppLifecycle', () => {
     expect(preventDefault).toHaveBeenCalled()
     expect(h.tabsMock.removeTab).toHaveBeenCalledWith('tab-untitled')
     expect(h.tabsMock.saveTab).not.toHaveBeenCalled()
+    expect(h.tabsMock.saveUntilSettled).not.toHaveBeenCalled()
     expect(h.windowMock.close).toHaveBeenCalled()
   })
 

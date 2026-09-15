@@ -200,9 +200,16 @@ export function createDesktopRuntime(): DesktopRuntime {
       if (isStale()) return
       if (choice === 'save') {
         for (const tab of untitled) {
-          const saved = await tabs.saveTab(tab.id)
+          // The gate, not `saveTab`: an untitled tab is saved here by the
+          // Save-As write, and that write's `true` says only that the text it
+          // captured landed. `removeAllTabs()` below is the point of no return
+          // for the tab set, and a keystroke during the write would go with it —
+          // the write path's own comment promises the newer text a pending
+          // autosave timer of its own (see `tab-settle.ts`), and this switch is
+          // where that promise stops being keepable.
+          const settled = await tabs.saveUntilSettled(tab.id)
           if (isStale()) return
-          if (!saved) {
+          if (!settled) {
             notifyError(t('tabs.unsavedWorkBlocker'))
             return
           }

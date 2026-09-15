@@ -34,7 +34,7 @@ const h = vi.hoisted(() => {
     restoreHistory: vi.fn(async () => ''),
     createDir: vi.fn(async () => ''),
     renameEntry: vi.fn(async () => ''),
-    saveFileDialog: vi.fn(async () => null),
+    saveFileDialog: vi.fn(async (): Promise<string | null> => null),
     registerVault: vi.fn(async () => undefined),
     onFsChange: vi.fn(async () => () => {}),
   }
@@ -308,5 +308,51 @@ describe('a vault switch whose flush is overtaken by a keystroke', () => {
     expect(tabs.vault).toBe('/vaultA')
     expect(h.notifyError).toHaveBeenCalledWith('tabs.unsavedWorkBlocker')
     expect(written).toHaveLength(3)
+  })
+
+  it('writes an untitled tab\'s newer text before the switch drops the tab set', async () => {
+    const tabs = useTabsStore()
+    const runtime = createDesktopRuntime()
+    tabs.setVault('/vaultA')
+    await tabs.openTab(null, 'untitled body')
+    const tab = tabs.tabs[0]
+    const editor = fakeEditor('untitled body')
+    await attachPane(editor, 'untitled body', '/vaultA', tab.id)
+
+    // An untitled tab never reaches `flushDirty` (it would need a Save-As dialog
+    // a bulk flush must not open), so it is saved by the prompt's own loop.
+    const write = parkedWrite()
+    h.fs.read.mockImplementation(
+      async () => write.written[write.written.length - 1] ?? 'untitled body',
+    )
+    h.fs.saveFileDialog.mockResolvedValue('/vaultA/picked.md')
+    h.requestUntitledVaultSwitch.mockResolvedValue('save')
+    tabs.markDirty(tab.id)
+    vi.useFakeTimers()
+
+    const dirtyAtRemoval: number[] = []
+    const removeAllTabs = tabs.removeAllTabs
+    vi.spyOn(tabs, 'removeAllTabs').mockImplementation(() => {
+      dirtyAtRemoval.push(tabs.tabs.filter((t) => t.dirty).length)
+      removeAllTabs()
+    })
+
+    const switching = runtime.applyVault('/vaultB')
+    await vi.waitFor(() => expect(write.started).toBe(true))
+
+    // Typed while the picked file is being written: the tab has a path by now,
+    // so the newer text needs no second dialog — only a second write.
+    editor.type(' MORE')
+    await vi.advanceTimersByTimeAsync(150)
+    expect(tab.dirty).toBe(true)
+    expect(tab.content).toBe('untitled body MORE')
+
+    write.release()
+    write.landFromNowOn()
+    await switching
+
+    expect(dirtyAtRemoval).toEqual([0])
+    expect(write.written).toEqual(['untitled body', 'untitled body MORE'])
+    expect(runtime.vaultPath.value).toBe('/vaultB')
   })
 })
