@@ -9,6 +9,7 @@ const h = vi.hoisted(() => {
     tabs: [] as Array<{ id: string; path: string | null; dirty: boolean }>,
     hasUnsavedWork: vi.fn(),
     flushDirty: vi.fn(),
+    reconcilePlaceholders: vi.fn(),
     untitledDirtyTabs: vi.fn(),
     saveTab: vi.fn(),
     removeTab: vi.fn(),

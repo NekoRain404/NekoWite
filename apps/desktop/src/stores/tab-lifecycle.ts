@@ -156,6 +156,20 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
     }
     tabs.value.push(rescued)
     markDirty(rescued.id)
+    // The flag means "this tab holds text no disk has", and after the move it
+    // does not: the only thing it was recording is now in the tab above. What
+    // protects the note's FILE was never this flag — it is the write path's
+    // `loading` guard (`tab-write-preconditions.ts`), untouched by this and by
+    // the move alike, so a placeholder still cannot be written whatever its
+    // `dirty` says. Leaving it set bought exactly two things: a refusal that
+    // read as "unsafe to close" on every bulk route (`flushDirty` answers false
+    // for a tab nothing can write), and a SECOND rescue of the same words when
+    // the user retried the close, since a retry finds the tab dirty again and
+    // nothing else has a record that the text left. So the rescue is the place
+    // that clears it — the single place that knows the text has left the tab.
+    // `commitRead` must not: a tab it commits into may still hold text of the
+    // user's, and clearing the flag there would drop the only record of it.
+    from.dirty = false
     emitLifecycle('onOpenDocument', { id: rescued.id, path: null })
     notifyError(notice)
   }

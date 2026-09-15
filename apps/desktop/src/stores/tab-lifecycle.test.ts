@@ -44,6 +44,11 @@ function resetFsMocks(): void {
   saveFileDialogMock.mockReset()
 }
 
+/** Let an in-flight close reach the prompt it raises. A macrotask boundary is
+ *  past every await on the way (the placeholder step, then the flush), so a
+ *  close that gains one does not fail these tests for the wrong reason. */
+const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+
 describe('useTabsStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -266,7 +271,7 @@ describe('closeAll never silently discards unsaved work', () => {
     expect(s.untitledDirtyTabs()).toHaveLength(1)
 
     const closing = s.closeAll()
-    await Promise.resolve()
+    await flush()
     expect(prompt).not.toBeNull()
     prompt!.onRestore()
     await expect(closing).resolves.toBe(true)
@@ -285,7 +290,7 @@ describe('closeAll never silently discards unsaved work', () => {
     const off = onRecovery((p) => { prompt = p })
 
     const closing = s.closeAll()
-    await Promise.resolve()
+    await flush()
     prompt!.onDismiss()
     await expect(closing).resolves.toBe(true)
 
