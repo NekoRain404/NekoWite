@@ -41,9 +41,11 @@ const { prompts, isOn, setOn } = useAiPromptSettings()
 
 <style scoped>
 /* The same shape as the settings toggles around it — a checkbox, then its
-   label — but wrapping in two columns rather than one per row: eight prompts as
+   label — but wrapping in two columns rather than one per row: the shelf as
    full-width rows would be most of the section's height, and every one of them
-   is a single short word. */
+   is a single short word. Deliberately no count here: the number changed when
+   the shelf grew, and a comment that has to be edited every time the shelf does
+   is the reason the last one was wrong. */
 .prompt-switches {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
