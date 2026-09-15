@@ -51,6 +51,13 @@ export const documents = {
       // to know why a dialog appeared, and that the note itself is unchanged.
       saveBlockedReadOnlyCopy:
         'Not saved: {path} is read-only on disk, so the note was left untouched. Choose where to keep a copy of your text.',
+      // Also not `saveFailed`: nothing failed, and the retry it advises means
+      // something here the user has to be told — their own save is the answer to
+      // this question, and it is the only thing that can replace the file. The
+      // CAUSE is the sentence, because a bare "not saved" sends them back to a
+      // save that refuses again for a reason they cannot see.
+      saveBlockedExternalChange:
+        'Not saved: {path} changed on disk since this tab read it, and writing now would replace that change. Your text is kept and still unsaved — save it again (Ctrl+S) to replace the file with your version.',
       savedAsCopy: 'Saved as {path}',
       deleteFailed: 'Delete failed',
       deleteAssetsFailed: 'The note was deleted, but its image folder could not be moved to the trash.',
@@ -130,6 +137,8 @@ export const documents = {
         '未保存：{path} 在磁盘上是只读的，笔记未被改动。你的文字仍保留在编辑器中。',
       saveBlockedReadOnlyCopy:
         '未保存：{path} 在磁盘上是只读的，笔记未被改动。请选择位置保存一份副本。',
+      saveBlockedExternalChange:
+        '未保存：{path} 自本标签读取后已在磁盘上被修改，现在写入会覆盖那处改动。你的文字已保留且仍未保存——再次保存（Ctrl+S）即可用你的版本替换该文件。',
       savedAsCopy: '已另存为 {path}',
       deleteFailed: '删除失败',
       deleteAssetsFailed: '笔记已删除，但其图片文件夹未能移入回收站。',

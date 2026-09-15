@@ -11,6 +11,7 @@ defineProps<{ tabId: string; path: string }>()
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'reload-disk'): void
+  (e: 'keep-local'): void
 }>()
 
 const active = ref(true)
@@ -45,10 +46,15 @@ function reloadFromDisk(): void {
   emit('reload-disk')
 }
 
+// `keep-local` and not `close`, because this is an ANSWER and the dialog's third
+// button is not: the caller records it on the tab, so the next save writes
+// through instead of putting the same question again — which is what the two
+// sharing one event used to make impossible (the decision left with the dialog).
 function keepLocal(): void {
-  emit('close')
+  emit('keep-local')
 }
 
+// "Later" keeps the question open, so it reports nothing but the prompt closing.
 function later(): void {
   emit('close')
 }

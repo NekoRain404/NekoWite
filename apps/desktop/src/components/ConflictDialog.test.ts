@@ -9,6 +9,7 @@ let mounted: VueApp[] = []
 interface Handlers {
   onClose: () => void
   onReloadDisk: () => void
+  onKeepLocal: () => void
 }
 
 function mountDialog(tabId: string, handlers: Handlers): HTMLElement {
@@ -24,10 +25,15 @@ function mountDialog(tabId: string, handlers: Handlers): HTMLElement {
   return host
 }
 
-function handlers(): Handlers & { close: ReturnType<typeof vi.fn>; reloadDisk: ReturnType<typeof vi.fn> } {
+function handlers(): Handlers & {
+  close: ReturnType<typeof vi.fn>
+  reloadDisk: ReturnType<typeof vi.fn>
+  keepLocal: ReturnType<typeof vi.fn>
+} {
   const close = vi.fn()
   const reloadDisk = vi.fn()
-  return { close, reloadDisk, onClose: close, onReloadDisk: reloadDisk }
+  const keepLocal = vi.fn()
+  return { close, reloadDisk, keepLocal, onClose: close, onReloadDisk: reloadDisk, onKeepLocal: keepLocal }
 }
 
 // "Use disk" is the destructive answer and carries the danger styling; the
@@ -37,6 +43,9 @@ function reloadBtn(): HTMLButtonElement {
 }
 function keepLocalBtn(): HTMLButtonElement {
   return document.body.querySelector<HTMLButtonElement>('.conflict-dialog .btn-primary')!
+}
+function laterBtn(): HTMLButtonElement {
+  return document.body.querySelector<HTMLButtonElement>('.conflict-dialog .btn-ghost')!
 }
 function dialogEl(): HTMLElement {
   return document.body.querySelector<HTMLElement>('.conflict-dialog')!
@@ -135,13 +144,33 @@ describe('ConflictDialog', () => {
     expect(h.close).not.toHaveBeenCalled()
   })
 
-  it('keepLocal closes without asking for a reload', () => {
+  it('reports "keep local" as its own answer, not as the prompt closing', () => {
+    // The three answers are not the same answer: "Use disk" asks for the reload,
+    // "Later" defers, and "Keep local" is a DECISION the caller has to keep — it
+    // records it on the tab so the next save writes through instead of asking
+    // the same question again. While both of the last two emitted `close`, the
+    // decision was indistinguishable from the deferral and was thrown away with
+    // the dialog.
     const h = handlers()
     mountDialog('tab-1', h)
 
     keepLocalBtn().click()
 
+    expect(h.keepLocal).toHaveBeenCalledTimes(1)
+    expect(h.close).not.toHaveBeenCalled()
+    expect(h.reloadDisk).not.toHaveBeenCalled()
+  })
+
+  it('reports "later" as the prompt closing, not as an answer', () => {
+    // The other side of the same line: deferring leaves the question open, so it
+    // must NOT reach whatever records the user's answer.
+    const h = handlers()
+    mountDialog('tab-1', h)
+
+    laterBtn().click()
+
     expect(h.close).toHaveBeenCalledTimes(1)
+    expect(h.keepLocal).not.toHaveBeenCalled()
     expect(h.reloadDisk).not.toHaveBeenCalled()
   })
 
@@ -151,6 +180,7 @@ describe('ConflictDialog', () => {
     const overlay = document.body.querySelector('.dialog-overlay') as HTMLElement
     overlay.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     expect(h.close).toHaveBeenCalled()
+    expect(h.keepLocal).not.toHaveBeenCalled()
     expect(h.reloadDisk).not.toHaveBeenCalled()
   })
 })

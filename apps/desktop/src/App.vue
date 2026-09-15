@@ -83,6 +83,16 @@ async function onReloadConflictFromDisk(tabId: string): Promise<void> {
   dialogs.close()
 }
 
+// The prompt's other answer, and the one that has to outlive the prompt: "Keep
+// local" records on the tab that the user has seen the file's bytes and decided
+// their own text wins, so the next save writes through instead of asking the
+// same question again. Closing after the answer lands, exactly as the reload
+// above does — the prompt must not be gone before the choice took effect.
+async function onKeepLocalConflict(tabId: string): Promise<void> {
+  await tabs.keepLocalConflict(tabId)
+  dialogs.close()
+}
+
 // External-edit detection lives at the app level, NOT in the file tree: the
 // tree only exists while the Folders panel is shown, so a note opened from the
 // Notes panel (the default view) had nobody watching the disk. An external edit
@@ -148,6 +158,7 @@ onBeforeUnmount(() => {
     @close-settings="showSettings = false"
     @close-conflict="dialogs.close"
     @reload-conflict-disk="onReloadConflictFromDisk"
+    @keep-local-conflict="onKeepLocalConflict"
     @respond-ai-write="(approved: boolean, remember: boolean) => aiPermission.respond(approved, remember)"
     @resolve-permission="dialogs.resolvePermission"
     @resolve-integrity="dialogs.resolveIntegrity"

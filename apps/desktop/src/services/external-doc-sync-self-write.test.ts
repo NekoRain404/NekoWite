@@ -62,6 +62,14 @@ function harness(dirty: boolean, opts: { failWrite?: boolean } = {}): Harness {
     vault,
     settings: { maxHistory: 10 },
     files: {
+      // The same one-value disk the sync above reads and `commitWrite` moves. A
+      // save reads the file before it writes (L05's save-time half), and this
+      // harness is the one place the real write path and the real watcher
+      // handler meet, so the read has to answer the disk rather than nothing:
+      // the save in `harness(true)` starts from a file that agrees with
+      // `savedContent` (ON_DISK), which is what lets the claim be what is under
+      // test here.
+      read: async () => disk.value,
       write: (_v, _p, content: string) =>
         new Promise<string | null>((resolve, reject) => {
           written.push(content)

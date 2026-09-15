@@ -62,6 +62,7 @@ const emit = defineEmits<{
   (e: 'close-settings'): void
   (e: 'close-conflict'): void
   (e: 'reload-conflict-disk', tabId: string): void
+  (e: 'keep-local-conflict', tabId: string): void
   (e: 'respond-ai-write', approved: boolean, remember: boolean): void
   (e: 'resolve-permission', allowed: boolean): void
   (e: 'resolve-integrity', reapprove: boolean): void
@@ -280,6 +281,7 @@ const shellStyle = computed<Record<string, string>>(() => ({
       @open-folder="(p: string) => emit('open-folder', p)"
       @close-conflict="emit('close-conflict')"
       @reload-conflict-disk="(tabId: string) => emit('reload-conflict-disk', tabId)"
+      @keep-local-conflict="(tabId: string) => emit('keep-local-conflict', tabId)"
       @respond-ai-write="(approved: boolean, remember: boolean) => emit('respond-ai-write', approved, remember)"
       @resolve-permission="(allowed: boolean) => emit('resolve-permission', allowed)"
       @resolve-integrity="(reapprove: boolean) => emit('resolve-integrity', reapprove)"

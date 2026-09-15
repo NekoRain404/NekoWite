@@ -52,6 +52,7 @@ const emit = defineEmits<{
   (e: 'open-folder', path: string): void
   (e: 'close-conflict'): void
   (e: 'reload-conflict-disk', tabId: string): void
+  (e: 'keep-local-conflict', tabId: string): void
   (e: 'respond-ai-write', approved: boolean, remember: boolean): void
   (e: 'resolve-permission', allowed: boolean): void
   (e: 'resolve-integrity', reapprove: boolean): void
@@ -91,6 +92,7 @@ const emit = defineEmits<{
       :path="conflict.path"
       @close="emit('close-conflict')"
       @reload-disk="emit('reload-conflict-disk', conflict.tabId)"
+      @keep-local="emit('keep-local-conflict', conflict.tabId)"
     />
   </Transition>
 
