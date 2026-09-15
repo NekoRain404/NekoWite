@@ -15,6 +15,7 @@ import type { ComputedRef, Ref } from 'vue'
 import { persistence } from '../services/persistence'
 import { parseSession, SESSION_KEY, serializeSession } from '../services/session'
 import { samePath } from '../services/paths'
+import { outstandingTmpPaths } from './tab-assets'
 import type { OpenTab } from './tabs'
 
 /**
@@ -206,16 +207,18 @@ export function createTabPersistence(deps: TabPersistenceDeps) {
   /** Vault-relative `.tmp` paths still referenced by any open tab — either a
    *  staged asset awaiting relocation (`pendingAssetPaths`) or a live `![alt](
    *  .tmp/… )` ref in the note body. The recovery closed-loop uses this as the
-   *  "not orphaned" predicate so a still-referenced temp file is never GC'd. */
+   *  "not orphaned" predicate so a still-referenced temp file is never GC'd.
+   *
+   *  The set itself is `tab-assets.ts#outstandingTmpPaths`, and that is on
+   *  purpose: it is also what the relocation moves files for. "Which `.tmp`
+   *  files is this app still using" is one question with two readers, and a
+   *  second definition of it here would eventually answer differently — one
+   *  reader protecting a file the other had already moved, or the relocation
+   *  abandoning a file the GC still treats as live. */
   function referencedTmpPaths(): Set<string> {
     const referenced = new Set<string>()
     for (const tab of tabs.value) {
-      for (const path of tab.pendingAssetPaths) referenced.add(path)
-      if (tab.content) {
-        for (const match of tab.content.matchAll(/\.tmp\/[^\s"')\]>,]+/g)) {
-          referenced.add(match[0])
-        }
-      }
+      for (const path of outstandingTmpPaths(tab)) referenced.add(path)
     }
     return referenced
   }

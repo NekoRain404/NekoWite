@@ -17,6 +17,7 @@
  */
 
 import type { ComputedRef, Ref } from 'vue'
+import type { FileStat } from '../platform/gateways/contracts'
 import { emitLifecycle, getActiveEditor } from '@nekowite/plugin-host'
 import { armSuppressReapply } from '../services/suppress-reapply'
 import { flushEdits } from '../services/editor-ownership'
@@ -42,6 +43,9 @@ export interface TabSaveFilePort {
   saveFileDialog(defaultName: string, startDir?: string): Promise<string | null>
   createDir(vault: string, path: string): Promise<string>
   renameEntry(vault: string, from: string, to: string): Promise<string>
+  /** The asset relocation's existence check (`tab-assets.ts`): optional only
+   *  because a hand-rolled harness may not model it — the app's gateway has it. */
+  stat?(vault: string, path: string): Promise<FileStat>
 }
 
 export interface TabSaveDeps {
@@ -208,9 +212,11 @@ export function createTabSave(deps: TabSaveDeps) {
       markSaved(tab.id)
       return false
     }
-    if (tab.pendingAssetPaths.length > 0) {
-      await assets.relocate(tab, vault.value, path)
-    }
+    // Unconditional, and that is the change: the guard that stood here —
+    // `pendingAssetPaths.length > 0` — made an empty list mean "do not look",
+    // and the list does not survive a restart, so a note restored by path could
+    // never repair an image its first save left in `.tmp` (see `tab-assets.ts`).
+    await assets.relocate(tab, vault.value, path)
     // The flush and the asset relocation are both awaits, so the world can have
     // changed under us. Writing now would put this note into a vault it does not
     // belong to; leaving the tab dirty is the honest outcome (the user can save
