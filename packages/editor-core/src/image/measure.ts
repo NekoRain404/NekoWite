@@ -15,6 +15,10 @@
  * size. What a caller does with "unknown" is its own call: the drag must stay
  * usable mid-gesture and keeps its stand-in, while the keyboard resize refuses
  * (a no-op the reader can see beats a document quietly reshaped).
+ *
+ * `resizeBasis` at the end is where both of them come for it: the width a
+ * gesture starts from and the pair a Shift lock holds to, so one gesture cannot
+ * form two ratios.
  */
 
 import type { EditorView } from '@milkdown/prose/view'
@@ -77,4 +81,62 @@ export function lockPair(
   if (width !== null && height !== null) return { width, height }
   if (natural) return { width: natural.width, height: natural.height }
   return null
+}
+
+/**
+ * A dimension as the document states it, or null — absent, 0 and NaN all mean
+ * "the document states no size" (the schema's default is null, not 0). Both
+ * resize paths normalise through here rather than each deciding for itself what
+ * `Number(undefined)` is.
+ */
+export function statedDimension(value: unknown): number | null {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/** The fields of an `<img>` a resize reads: the file's pixels, and the width
+ *  the browser laid the element out at. */
+export type ResizeSource = IntrinsicSource & Pick<HTMLImageElement, 'clientWidth'>
+
+export interface ResizeBasis {
+  /** The width a gesture steps from, or null when nothing states one. */
+  baseWidth: number | null
+  /** The pair an aspect-locked resize holds to (see `lockPair`), or null. */
+  lock: ImageSize | null
+}
+
+/**
+ * Where a resize gesture starts: the width it steps from, and the pair a Shift
+ * (aspect) lock holds to.
+ *
+ * Both paths need both answers before they change anything, and answering them
+ * separately is how the drag came to form the ratio `300/300` for a 1200x300
+ * file stored as `{width=300}` — a stored (CSS) width over the file's PIXEL
+ * height, a ratio belonging to no image — while the keymap formed `1200/300`
+ * for that very same state. One operation, two ratios, and the drag's was
+ * persisted as a real height. So there is one of each, here:
+ *
+ *  - the start width is what the document states, else what the browser draws,
+ *    else the file's own pixels — the order that makes a step or a drag match
+ *    the picture the reader is looking at;
+ *  - the lock pair is `lockPair`'s, so a document stating only half a size
+ *    locks the file's own ratio instead of mixing that half with a pixel
+ *    dimension of the other kind.
+ *
+ * Null is "cannot be established", and what a caller does with it is its own
+ * call: the keymap refuses the resize, the drag keeps a stand-in so a gesture
+ * already in flight stays usable.
+ */
+export function resizeBasis(
+  attrs: { width?: unknown; height?: unknown },
+  img: ResizeSource | null,
+): ResizeBasis {
+  const storedWidth = statedDimension(attrs.width)
+  const storedHeight = statedDimension(attrs.height)
+  const natural = intrinsicSize(img)
+  const drawn = img !== null && img.clientWidth > 0 ? img.clientWidth : null
+  return {
+    baseWidth: storedWidth ?? drawn ?? natural?.width ?? null,
+    lock: lockPair(storedWidth, storedHeight, natural),
+  }
 }

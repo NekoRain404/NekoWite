@@ -10,7 +10,7 @@ import {
 import { imageNodeMessages, isRemoteHttpSrc } from './messages'
 import { imageDimSchema } from './schema'
 import { nextWidth, proportionalSize } from './resize'
-import { intrinsicSize } from './measure'
+import { resizeBasis } from './measure'
 import { advanceResizeDrag, beginResizeDrag, commitResizeDrag } from './drag'
 import { commitImageResize } from './resize-commit'
 
@@ -236,16 +236,15 @@ export const makeImageNodeView: NodeViewConstructor = (node, view, getPos) => {
     if (event.button !== 0) return
     event.preventDefault()
     event.stopPropagation()
-    // Both resize paths measure the file's pixels through ./measure, so "how
-    // big is this really" has one answer. `startHeight` is only ever the aspect
-    // lock's denominator, and with a width stored but no height it is the
-    // file's PIXEL height — not the ratio the file has. The keyboard path
-    // refuses that pairing (lockPair); a drag cannot refuse mid-gesture, so the
-    // 0.75 stays as its last resort.
-    const w = Number(node.attrs.width) || img.clientWidth || 0
-    const natural = intrinsicSize(img)
-    const startWidth = w || natural?.width || 1
-    const startHeight = Number(node.attrs.height) || natural?.height || Math.round(startWidth * 0.75)
+    // Both resize paths take their start width AND their ratio from
+    // ./measure's `resizeBasis`, so "how big is this really" has one answer and
+    // a Shift gesture locks the file's ratio rather than pairing a stored width
+    // with a pixel height (300/300 for a 1200x300 file: a square belonging to
+    // no image). A drag cannot refuse mid-gesture the way a keypress can, so an
+    // unmeasurable picture keeps the 0.75 stand-in.
+    const { baseWidth, lock } = resizeBasis(node.attrs, img)
+    const startWidth = baseWidth ?? 1
+    const aspect = lock ?? { width: startWidth, height: Math.round(startWidth * 0.75) }
     const startX = event.clientX
     let drag = beginResizeDrag(startWidth)
     let proportional = event.shiftKey
@@ -255,7 +254,7 @@ export const makeImageNodeView: NodeViewConstructor = (node, view, getPos) => {
       const target = nextWidth(startWidth, ev.clientX - startX)
       proportional = ev.shiftKey
       if (ev.shiftKey) {
-        const { width, height } = proportionalSize(startWidth, startHeight, target)
+        const { width, height } = proportionalSize(aspect.width, aspect.height, target)
         drag = advanceResizeDrag(drag, pos, width)
         img.style.width = `${width}px`
         img.style.height = `${height}px`
@@ -272,7 +271,7 @@ export const makeImageNodeView: NodeViewConstructor = (node, view, getPos) => {
       if (commit) {
         const attrs: Record<string, unknown> = { ...node.attrs, width: commit.width }
         if (proportional) {
-          const { height } = proportionalSize(startWidth, startHeight, commit.width)
+          const { height } = proportionalSize(aspect.width, aspect.height, commit.width)
           attrs.height = height
         } else {
           attrs.height = null
