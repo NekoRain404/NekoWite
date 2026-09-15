@@ -19,7 +19,8 @@ mod vault_confinement;
 
 pub use app_state::{AiState, KeyVault, WatcherState};
 pub use remembered::{
-    read_remembered_vault, remember_vault, remembered_vault, write_remembered_vault,
+    read_remembered_vault, remember_vault, remembered_vault, remembered_vault_dir,
+    write_remembered_vault,
 };
 pub use vault_confinement::{require_opened_vault, VaultRegistry};
 

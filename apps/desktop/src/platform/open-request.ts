@@ -3,11 +3,20 @@
  *
  * `nekowite notes.md` on the command line, and a `.md` double-clicked in the
  * file manager, both reach the backend as arguments — and the backend is the
- * only party that can turn them into an answer, because a path from `argv` is
- * evidence the renderer cannot produce. What arrives here is that answer: the
- * canonical file and the vault root it belongs to, already decided and already
- * vouched for on the Rust side (`open_file.rs`). Nothing in this layer may take
- * a path from anywhere else and call it one of these.
+ * only party that can turn them into an answer. What arrives here is that
+ * answer: the canonical file and the vault root it belongs to, already decided
+ * and already vouched for on the Rust side (`open_file.rs`). Nothing in this
+ * layer may take a path from anywhere else and call it one of these.
+ *
+ * **The two arguments are not equally trustworthy, and the Rust side now says
+ * so** (`open_file::LaunchChannel`). The first launch's come from this process's
+ * own command line, which only whatever launched it could have set — the
+ * renderer cannot produce one, and a file outside every vault may adopt its own
+ * folder as the root. The second launch's arrive over the single-instance
+ * plugin's session-bus method, which any process running as this user can call:
+ * they are an assertion by whoever called, not evidence of something a person
+ * did, so they may open a file inside a root the user already authorised and
+ * may never create one.
  *
  * Two calls, and the split between them is the whole point. The request lives in
  * backend state until `takePendingOpen` collects it, so a first launch's

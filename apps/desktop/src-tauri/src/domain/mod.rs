@@ -6,6 +6,7 @@
 //! adapter (roadmap §10.2 module ownership, §13.11). The key-file port
 //! [`key_files::KeyFileIo`] is the one the crash-safe recovery sequence uses.
 
+pub mod app_owned;
 pub mod key_files;
 pub mod path_encoding;
 pub mod path_policy;

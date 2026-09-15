@@ -65,7 +65,12 @@ pub fn validate_stored_api_key(key: &str) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 /// Resolve the app data dir without panicking.
-fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+///
+/// `pub(crate)` for `run()`'s install of the app's own directories
+/// ([`crate::domain::app_owned`]): the folder the master key and the snapshot
+/// are written in is the folder no vault command may serve, and naming it here
+/// keeps the two from drifting apart.
+pub(crate) fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_data_dir()
         .map_err(|e| format!("cannot resolve app data dir: {e}"))

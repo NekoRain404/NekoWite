@@ -5,7 +5,11 @@
 //! verified here before any file-system access. There is no other place in the
 //! crate that decides whether a path stays inside a vault; storage modules
 //! (`file_store`, `trash_store`, ...) resolve paths through these functions and
-//! are therefore traceable to a vault root. NOT pure, and one path writes:
+//! are therefore traceable to a vault root. The app's own directories are
+//! refused here too, for the same reason — one decision, one place — even
+//! though they are the app's and not the vault's ([`app_owned`]).
+//!
+//! NOT pure, and one path writes:
 //! `resolve_within` / `resolve_within_rel` and `canonicalize_vault_root`
 //! canonicalize, and the former also `lstat`s every component in between
 //! (`reject_symlink_components`, `canonicalize_loose`);
@@ -59,6 +63,12 @@ pub fn resolve_within(base: &str, requested: &str) -> Result<PathBuf, String> {
 /// canonical (no `.`/`..` components, symlinks resolved away), so an absolute
 /// spelling (what `list_dir` entries carry) and a relative spelling of the
 /// same file always produce the same key.
+///
+/// The app's own directories are refused too ([`super::app_owned`]): a vault
+/// may CONTAIN them — the folder dialog returns `~/.config` as readily as a
+/// notes directory — and being inside the vault is not what makes a path the
+/// user's. This is also the one place every path-confined command's target
+/// passes through, which is what makes it the place for that rule.
 pub fn resolve_within_rel(base: &str, requested: &str) -> Result<(PathBuf, String), String> {
     let base_path = Path::new(base);
     if !base_path.is_absolute() {
@@ -90,6 +100,10 @@ pub fn resolve_within_rel(base: &str, requested: &str) -> Result<(PathBuf, Strin
         return Err(format!("path escapes vault: {requested}"));
     }
     reject_symlink_components(&canonical_base, &canonical)?;
+    // Inside the vault is not the same as the user's: see `super::app_owned`
+    // for what a served app directory — the remembered-vault record above all —
+    // would let the window do.
+    super::app_owned::refuse(&canonical)?;
     let relative = canonical
         .strip_prefix(&canonical_base)
         .map_err(|_| format!("path escapes vault: {requested}"))?
@@ -144,7 +158,12 @@ fn reject_symlink_components(base: &Path, path: &Path) -> Result<(), String> {
 /// Canonicalize `path` even when its final segment does not exist yet (e.g.
 /// a file about to be written): canonicalize the nearest existing ancestor
 /// and re-append the missing tail so symlinks can still be resolved.
-fn canonicalize_loose(path: &Path) -> io::Result<PathBuf> {
+///
+/// `pub(crate)` because [`super::app_owned`] canonicalizes the app's own
+/// directories the same way: the configuration directory need not exist yet,
+/// and a comparison against it is only meaningful once both sides have
+/// resolved their symlinks.
+pub(crate) fn canonicalize_loose(path: &Path) -> io::Result<PathBuf> {
     if let Ok(canonical) = path.canonicalize() {
         return Ok(canonical);
     }
