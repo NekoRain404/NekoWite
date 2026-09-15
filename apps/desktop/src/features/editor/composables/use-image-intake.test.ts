@@ -203,3 +203,102 @@ describe('useImageIntake picker flow', () => {
     expect(notifications).toHaveLength(1)
   })
 })
+
+/**
+ * The paste/drop path runs with the UI live: the rename dialog, the base64
+ * encode and the attachment write all await, and the user can click another
+ * note during any of them. The note the image belongs to is therefore captured
+ * when the paste happens — not read back from `tabs.activeTab` afterwards.
+ */
+describe('useImageIntake against a note switch mid-paste', () => {
+  let aTab: string
+  let bTab: string
+  let views: Record<string, ReturnType<typeof makeSourceView>>
+  let release: (path: string) => void
+
+  async function twoNotesOpenWithAInFront(): Promise<void> {
+    const tabs = useTabsStore()
+    await flush()
+    aTab = tabs.tabs.find((t) => t.path === 'notes/a.md')!.id
+    await tabs.openTab('notes/b.md')
+    bTab = tabs.tabs.find((t) => t.path === 'notes/b.md')!.id
+    tabs.setActive(aTab)
+    views = {
+      'notes/a.md': makeSourceView('A body\n'),
+      'notes/b.md': makeSourceView('B body\n'),
+    }
+    // The pane shows the active tab's document, so the insertion lands in
+    // whichever note is in front when it runs.
+    setSourceViewHandle({
+      getView: () => views[useTabsStore().activeTab!.path!].view,
+      flush: () => undefined,
+    })
+    useViewStore().setMode('source')
+  }
+
+  beforeEach(async () => {
+    pinia = createPinia()
+    setActivePinia(pinia)
+    intake = null
+    notifications = []
+    setSourceViewHandle(null)
+    resetMemoryPickedFiles()
+    importAttachmentMock.mockReset()
+    saveAttachmentMock.mockReset()
+    saveAttachmentMock.mockImplementation(
+      () => new Promise<string>((resolve) => { release = resolve }),
+    )
+    useTabsStore().setVault('/vault')
+    void useTabsStore().openTab('notes/a.md')
+    mountHarness()
+    await twoNotesOpenWithAInFront()
+  })
+
+  afterEach(() => {
+    mounted.forEach((app) => app.unmount())
+    mounted = []
+    document.body.innerHTML = ''
+    setSourceViewHandle(null)
+    resetMemoryPickedFiles()
+  })
+
+  it('writes the file into the note the paste was made in, not the one in front when the encode ends', async () => {
+    const off = onNotify((msg) => notifications.push(msg))
+    const pending = intake!.insertImageFiles([png('paste.png')])
+    await flush()
+    intake!.onRenameConfirm('cat.png')
+    // The switch happens while the encode's continuation is still queued: this
+    // is the window between the dialog closing and the attachment write.
+    useTabsStore().setActive(bTab)
+    await flush()
+    off()
+
+    expect(saveAttachmentMock).toHaveBeenCalledTimes(1)
+    // A's assets directory, because A is the note the image was pasted into.
+    expect(saveAttachmentMock.mock.calls[0][3]).toBe('notes/a_assets')
+
+    release('notes/a_assets/cat.png')
+    await pending
+  })
+
+  it('does not insert the block into whichever note is open when the write lands', async () => {
+    const off = onNotify((msg) => notifications.push(msg))
+    const pending = intake!.insertImageFiles([png('paste.png')])
+    await flush()
+    intake!.onRenameConfirm('cat.png')
+    await flush()
+    expect(saveAttachmentMock).toHaveBeenCalledTimes(1)
+
+    useTabsStore().setActive(bTab)
+    release('notes/a_assets/cat.png')
+    await pending
+    await flush()
+    off()
+
+    // B never saw the paste: nothing of it may appear in B's document.
+    expect(views['notes/b.md'].doc()).toBe('B body\n')
+    // And the user is told where the image went instead of it vanishing.
+    expect(notifications).toHaveLength(1)
+    expect(notifications[0]).toContain('cat.png')
+  })
+})

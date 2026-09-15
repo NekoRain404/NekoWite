@@ -20,6 +20,26 @@ interface RenamePrompt {
 }
 
 /**
+ * The note a paste or drop belongs to, captured before the flow's first await.
+ *
+ * Everything here reads `tabs.activeTab`, which follows the user's clicks. A
+ * paste awaits the rename dialog, the base64 encode and the attachment write,
+ * all with the UI live, so reading the active tab *after* them lands the image
+ * in whatever note is open when the last one finishes — a different note from
+ * the one the image was pasted into. The identity is the tab `id` (a note can
+ * gain a path mid-paste, via Save As) and the path is what the Markdown
+ * reference is measured from.
+ */
+interface IntakeTarget {
+  /** The tab that was active, or null when no note was open at all. */
+  id: string | null
+  path: string | null
+  /** The assets directory that note resolves to, or undefined for the legacy
+   *  `attachments/YYYY-MM` layout. `.tmp` means the note had no path yet. */
+  dir: string | undefined
+}
+
+/**
  * Image intake for the editor pane.
  *
  * Owns the whole "an image arrives" flow for both panes: intercept a paste or
@@ -73,13 +93,51 @@ export function useImageIntake() {
 
   /** The vault-relative destination for new assets, or undefined for the
    *  legacy attachments/YYYY-MM layout when the note has no usable path. */
-  function assetsDir(): string | undefined {
-    return assetsDirForNote(tabs.activeTab?.path ?? null, tabs.vault ?? '') || undefined
+  function assetsDirFor(notePath: string | null): string | undefined {
+    return assetsDirForNote(notePath, tabs.vault ?? '') || undefined
+  }
+
+  /** Bind the flow to the note that is in front right now. */
+  function captureTarget(): IntakeTarget {
+    const tab = tabs.activeTab
+    return {
+      id: tab?.id ?? null,
+      path: tab?.path ?? null,
+      dir: assetsDirFor(tab?.path ?? null),
+    }
   }
 
   /**
-   * Insert the Markdown for one newly stored asset, recording the path when it
-   * was staged in `.tmp` so it can be relocated on first save.
+   * True while the note the paste was made in is still the one in front.
+   *
+   * No note at capture time means there was nothing to bind to (the paste
+   * arrived with no tab open), so the flow keeps its old behaviour and lets the
+   * insert report that no editor can take it.
+   */
+  function targetIsInFront(target: IntakeTarget): boolean {
+    return target.id === null || tabs.activeTab?.id === target.id
+  }
+
+  /** Record a `.tmp`-staged asset on the tab it was staged FOR — the paste's
+   *  own tab, which may no longer be the active one. This list is what stops
+   *  the recovery pass collecting the staged file as an orphan
+   *  (`referencedTmpPaths`) and what moves it into the note's assets directory
+   *  on that note's first save. */
+  function noteStagedAsset(target: IntakeTarget, savedPath: string): void {
+    if (target.dir !== '.tmp') return
+    tabs.tabs.find((tab) => tab.id === target.id)?.pendingAssetPaths.push(savedPath)
+  }
+
+  /** Tell the user their image was stored but not placed — once per batch, so
+   *  a ten-image paste does not stack ten copies of the same sentence. */
+  function reportNotInserted(name: string, already: { done: boolean }): void {
+    if (already.done) return
+    already.done = true
+    notifyError(t('attachments.pasteNotInserted', { name }))
+  }
+
+  /**
+   * Insert the Markdown for one newly stored asset.
    *
    * `alt` is the name the user is thinking in (the one they typed, or the one
    * the file had on disk) rather than the stored name: a collision suffix the
@@ -87,12 +145,10 @@ export function useImageIntake() {
    */
   async function insertSavedAsset(
     savedPath: string,
-    dir: string | undefined,
+    target: IntakeTarget,
     alt: string,
   ): Promise<void> {
-    const tab = tabs.activeTab
-    if (tab && dir === '.tmp') tab.pendingAssetPaths.push(savedPath)
-    const ref = relativePathFromNoteVault(tab?.path ?? '', tabs.vault ?? '', savedPath)
+    const ref = relativePathFromNoteVault(target.path ?? '', tabs.vault ?? '', savedPath)
     const inserted = await insertMarkdownAtCursor(markdownImageBlock(escapeMarkdownAlt(alt), ref))
     if (inserted === false) notifyError(t('attachments.editorNotReady'))
   }
@@ -104,14 +160,22 @@ export function useImageIntake() {
       notifyError(t('rendered.saveImageNoVault'))
       return
     }
+    // One paste is one note's paste: the destination is decided once, before
+    // the first await, so a later note switch cannot move the batch with it.
+    const target = captureTarget()
+    const reported = { done: false }
     for (const file of files) {
       try {
         const choice = await promptRename(file)
         if (!choice.ok) continue
         const base64 = await fileToBase64(file)
-        const dir = assetsDir()
-        const savedPath = await fsService.saveAttachment(vault, choice.name, base64, dir)
-        await insertSavedAsset(savedPath, dir, choice.name)
+        const savedPath = await fsService.saveAttachment(vault, choice.name, base64, target.dir)
+        noteStagedAsset(target, savedPath)
+        if (!targetIsInFront(target)) {
+          reportNotInserted(choice.name, reported)
+          continue
+        }
+        await insertSavedAsset(savedPath, target, choice.name)
       } catch {
         notifyError(t('attachments.insertFailed'))
       }
@@ -139,11 +203,23 @@ export function useImageIntake() {
       notifyError(t('attachments.pickFailed'))
       return
     }
+    // Bound to the note the same way a paste is: the import copies a file of
+    // any size, and the picker's own await is not the last one.
+    const target = captureTarget()
+    const reported = { done: false }
     for (const sourcePath of paths) {
       try {
-        const dir = assetsDir()
-        const savedPath = await fsService.importAttachment(vault, sourcePath, dir)
-        await insertSavedAsset(savedPath, dir, sourcePath.replace(/\\/g, '/').split('/').pop() ?? savedPath)
+        const savedPath = await fsService.importAttachment(vault, sourcePath, target.dir)
+        noteStagedAsset(target, savedPath)
+        if (!targetIsInFront(target)) {
+          reportNotInserted(sourcePath.replace(/\\/g, '/').split('/').pop() ?? savedPath, reported)
+          continue
+        }
+        await insertSavedAsset(
+          savedPath,
+          target,
+          sourcePath.replace(/\\/g, '/').split('/').pop() ?? savedPath,
+        )
       } catch {
         notifyError(t('attachments.importFailed'))
       }
