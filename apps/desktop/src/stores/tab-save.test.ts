@@ -197,6 +197,12 @@ describe('lifecycle broadcast from tabs store', () => {
     const tabB = s.tabs[1]
     expect(s.activeId).toBe(tabB.id)
 
+    // A save reads the file before it writes (L05's save-time half), so the
+    // fixture has to keep the vault per path: one answer for every path would
+    // hand A's save B's bytes and call that an external edit.
+    readMock.mockImplementation(async (_vault: string, path: string) =>
+      path === '/vault/a.md' ? 'aaa' : 'bbb',
+    )
     // The background tab A is saved (its autosave timer fired, or a vault switch
     // flushed it) and the onSave plugin rewrote its text.
     await s.saveTab(tabA.id)

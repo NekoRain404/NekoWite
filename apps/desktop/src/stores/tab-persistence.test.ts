@@ -143,7 +143,16 @@ describe('autosave debounce', () => {
   }
 
   it('saves during continuous typing, at the ceiling', async () => {
-    readMock.mockResolvedValue('abc')
+    // The file holds what our own writes put there. A save reads the disk before
+    // it writes (L05's save-time half), so a read fixed at the content the tab
+    // was OPENED from would report this save's own previous write as somebody
+    // else's edit and refuse the second one.
+    let onDisk = 'abc'
+    readMock.mockImplementation(async () => onDisk)
+    writeMock.mockImplementation(async (_vault: string, _path: string, content: string) => {
+      onDisk = content
+      return null
+    })
     const s = useTabsStore()
     s.setVault('/vault')
     await s.openTab('/vault/a.md')

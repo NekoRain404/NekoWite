@@ -30,6 +30,7 @@ import { createTabRecovery } from './tab-recovery'
 import { createTabLifecycle } from './tab-lifecycle'
 import type { UntitledCloseChoice } from './tab-lifecycle'
 import { createTabFileOperations } from './tab-file-operations'
+import type { ExternalConflict } from './tab-write-preconditions'
 
 export interface OpenTab {
   id: string
@@ -50,6 +51,20 @@ export interface OpenTab {
    * "not loading".
    */
   loading?: boolean
+  /**
+   * The file changed on disk under this tab, and what the user has been told
+   * about it.
+   *
+   * The save path is where an external edit is actually overwritten, and it is
+   * reached by callers with no user in front of them (the autosave timer, a bulk
+   * flush, a window close) — so the answer to "the file holds somebody else's
+   * bytes, do you want to replace them?" has to live somewhere the next save
+   * reads. Absent means nothing is outstanding; see
+   * `tab-write-preconditions.ts` for the two answers and what clears them.
+   *
+   * Optional so that fixtures built beside this store need not name it.
+   */
+  externalConflict?: ExternalConflict | null
   /** Vault-relative asset paths still staged in `.tmp` that must move into the
    * note's assets dir once the note gets a real path on first save. */
   pendingAssetPaths: string[]
@@ -185,6 +200,9 @@ export const useTabsStore = defineStore('tabs', () => {
     isSelfWrite: save.isSelfWrite,
     saveActive: save.saveActive,
     saveTab: save.saveTab,
+    /** The conflict prompt's "Keep local": the user's answer, recorded on the
+     *  tab where the next save reads it (see `tab-write-preconditions.ts`). */
+    keepLocalConflict: save.keepLocalConflict,
     flushDirty: save.flushDirty,
     // persistence
     scheduleAutosave: persistence.scheduleAutosave,
