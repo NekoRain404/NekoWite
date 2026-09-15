@@ -18,7 +18,16 @@ import { markThinking } from './ai-thinking'
 
 type ListenerCleanup = () => void
 
-let cleanups: ListenerCleanup[] = []
+/** One registered listener, and the generation of the request that registered
+ *  it. The generation is the OWNERSHIP mark: it is what lets that request
+ *  detach its own later without touching anyone else's (see
+ *  [`cleanupListeners`]). */
+interface TrackedListener {
+  generation: number
+  off: ListenerCleanup
+}
+
+let cleanups: TrackedListener[] = []
 
 /**
  * Ids of the requests this window has started and not yet finished.
@@ -78,20 +87,66 @@ export function isSuperseded(generation: number): boolean {
 
 /** Track a registered listener as it goes in, so a mid-registration rejection
  *  (e.g. the event system failing on `ai-done`) still cleans up the ones that
- *  already registered — no partially-registered listener leaks. */
-export function trackListener(off: ListenerCleanup): void {
-  cleanups.push(off)
+ *  already registered — no partially-registered listener leaks.
+ *
+ *  `generation` is the value [`bumpStreamGeneration`] handed the request doing
+ *  the registering. It is recorded, not checked: the check happens when the
+ *  listeners come out again. */
+export function trackListener(off: ListenerCleanup, generation: number): void {
+  cleanups.push({ generation, off })
 }
 
-export function cleanupListeners(): void {
-  cleanups.forEach((fn) => {
+/**
+ * Detach the listeners of ONE request — the ones that went in under
+ * `generation` — and nobody else's.
+ *
+ * The registry is single-owner by construction: every lifecycle starts by
+ * cancelling what was running and bumping the generation, so its contents at
+ * any moment are the CURRENT request's listeners. That is why a request that
+ * fails after it has been replaced must not sweep the registry: by then those
+ * entries belong to its successor, and the sweep detached the live request's
+ * listeners — the answer the user was watching stopped arriving, with no error
+ * and nothing to explain it. Naming a generation that registered nothing is a
+ * no-op, which is what makes this safe to call from an already-replaced
+ * request.
+ */
+export function cleanupListeners(generation: number): void {
+  const remaining: TrackedListener[] = []
+  for (const entry of cleanups) {
+    if (entry.generation !== generation) {
+      remaining.push(entry)
+      continue
+    }
     try {
-      fn()
+      entry.off()
     } catch {
       // ignore teardown failures
     }
-  })
+  }
+  cleanups = remaining
+}
+
+/**
+ * Detach every listener this window is holding, whatever generation it belongs
+ * to.
+ *
+ * Only the app-level cancel may do this, and only because it is the one path
+ * that ALSO bumps the generation: nothing that was relying on these listeners
+ * is still running by the time they go. [`cancelStream`] is its only caller —
+ * a lifecycle detaching its own uses [`cleanupListeners`] with its generation,
+ * which is why the dangerous sweep is not the same function name a caller can
+ * reach for by accident.
+ */
+function detachAllListeners(): void {
+  const all = cleanups
   cleanups = []
+  for (const entry of all) {
+    try {
+      entry.off()
+    } catch {
+      // ignore teardown failures
+    }
+  }
 }
 
 export function cancelStream(): void {
@@ -104,6 +159,6 @@ export function cancelStream(): void {
     void Promise.resolve(getSharedGateways().ai.cancel(id)).catch(() => undefined)
   }
   activeIds.clear()
-  cleanupListeners()
+  detachAllListeners()
   markThinking(false)
 }

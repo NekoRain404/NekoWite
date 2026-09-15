@@ -153,7 +153,7 @@ export function startChatCompletion(
     bumpStreamGeneration()
     releaseRequest(myId)
     void Promise.resolve(getSharedGateways().ai.cancel(myId)).catch(() => undefined)
-    cleanupListeners()
+    cleanupListeners(mySeq)
     markThinking(false)
   }
 
@@ -169,11 +169,11 @@ export function startChatCompletion(
         offChunk()
         return false
       }
-      trackListener(offChunk)
+      trackListener(offChunk, mySeq)
       const offDone = await getSharedGateways().events.on<AiDonePayload>('ai-done', (e) => {
         if (superseded() || e.id !== myId) return
         releaseRequest(myId)
-        cleanupListeners()
+        cleanupListeners(mySeq)
         markThinking(false)
         handlers.onDone(e.full, parseTokenUsage(e.usage))
       })
@@ -182,7 +182,7 @@ export function startChatCompletion(
         offDone()
         return false
       }
-      trackListener(offDone)
+      trackListener(offDone, mySeq)
       const offError = await getSharedGateways().events.on<{ id: string; message: string }>('ai-error', (e) => {
         if (superseded() || e.id !== myId) return
         // Skip a duplicate onError if the raw rejection already handled it
@@ -192,7 +192,7 @@ export function startChatCompletion(
           handlers.onError(e.message)
         }
         releaseRequest(myId)
-        cleanupListeners()
+        cleanupListeners(mySeq)
         markThinking(false)
       })
       if (superseded()) {
@@ -201,7 +201,7 @@ export function startChatCompletion(
         offError()
         return false
       }
-      trackListener(offError)
+      trackListener(offError, mySeq)
       // Same ordering rule as the ghost writer: progress last.
       const offReasoning = await getSharedGateways().events.on<{ id: string; text: string }>('ai-reasoning', (e) => {
         if (superseded() || e.id !== myId) return
@@ -212,10 +212,10 @@ export function startChatCompletion(
         offReasoning()
         return false
       }
-      trackListener(offReasoning)
+      trackListener(offReasoning, mySeq)
       return true
     } catch (e) {
-      cleanupListeners()
+      cleanupListeners(mySeq)
       releaseRequest(myId)
       handlers.onError(e instanceof Error ? e.message : String(e))
       return false
@@ -228,7 +228,7 @@ export function startChatCompletion(
     try {
       await getSharedGateways().ai.complete(config, prompt, images, myId)
     } catch (e) {
-      cleanupListeners()
+      cleanupListeners(mySeq)
       releaseRequest(myId)
       // Mark errorNotified even here so a late ai-error event does not call
       // onError a second time (reject arriving before the event).
