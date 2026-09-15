@@ -31,6 +31,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "Productivity",
+    "shortDescription": "A local-first knowledge base for Markdown and MDX",
+    "longDescription": "NekoWite brings the control of Markdown and MDX to a writing experience as natural as a word processor: the files stay plain Markdown, and what you edit is what you see. Source and preview sit side by side, mathematics and citations render in place, and documents export with page size, orientation and margin control. Everything is plain text on your own disk.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
