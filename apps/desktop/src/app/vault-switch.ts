@@ -25,6 +25,7 @@ import type { FsPort } from '../platform/gateways/contracts'
 // instance type, so this dependency cannot drift from the store. The tabs store
 // is constructed by the composition root, which passes the instance in.
 import { useTabsStore } from '../stores/tabs'
+import { createUnflushableRescue } from '../stores/unflushable-rescue'
 import { invalidateImageResolution } from '@nekowite/editor-core'
 import { notifyError, notifyRecovery } from '../services/errors'
 import { persistence } from '../services/persistence'
@@ -87,6 +88,29 @@ export function createVaultSwitch(deps: VaultSwitchDeps): VaultSwitch {
     return { seq: ++vaultSwitchSeq, signal: controller.signal }
   }
 
+  /**
+   * The route out of a switch a refused save would otherwise block forever: a
+   * copy of the stuck tab's text under a name the user picks, from the one loop
+   * the window close and "Close all" already ask for
+   * (`stores/unflushable-rescue.ts`). A note restored from the trash carries the
+   * read-only bit, so the user need never have set it — and without this, "the
+   * vault was not switched" left them with no move that did not cost them either
+   * the edits or a trip out of the app to `chmod` the file.
+   *
+   * A third instantiation of the same stateless factory, not a fourth copy of
+   * the loop: `128` established that one instance registered in the store would
+   * make a route depend on mount order, so each control builds its own from this
+   * factory — the app layer building one is what the extraction was for. This is
+   * the app layer's second (the window close is `app-lifecycle.ts`'s).
+   */
+  const rescueUnflushableTabs = createUnflushableRescue({
+    listTabs: () => tabs.tabs,
+    t,
+    notifyRecovery,
+    saveTab: (id, opts) => tabs.saveTab(id, opts),
+    saveUntilSettled: (id) => tabs.saveUntilSettled(id),
+  })
+
   async function apply(path: string, options: VaultSwitchOptions = {}): Promise<void> {
     const { remember = true } = options
     const { seq, signal } = startVaultSwitch()
@@ -113,8 +137,36 @@ export function createVaultSwitch(deps: VaultSwitchDeps): VaultSwitch {
     const flushed = await tabs.flushDirty()
     if (isStale()) return
     if (!flushed) {
-      notifyError(t('tabs.unsavedWorkBlocker'))
-      return
+      // A save did not land, and for a file that REFUSES the write it will not
+      // land however many times it is retried (`refused-save.ts`). Refusing the
+      // switch is still right — `removeAllTabs()` below takes the tab set — but
+      // a refusal with no move behind it is how a user who typed into a
+      // protected note ended up choosing between their edits and `chmod`. Offer
+      // the copy route, the same one the two closes offer, and go on once the
+      // text is somewhere the user chose.
+      //
+      // HERE, and not one line later: `registerVault` below REPLACES the
+      // authorized root, and a copy is written through the vault-tagged write
+      // path, so a rescue below that line would aim the Save-As at the vault
+      // being switched TO — the wrong vault to file it in, and a root the
+      // backend refuses anyway once the new one is registered. This is the same
+      // ordering `521a0d4` established for `reconcilePlaceholders` above:
+      // everything that writes into the OUTGOING vault happens while it is still
+      // the open one.
+      //
+      // AFTER the flush, and not before it: the flush is what decides which tabs
+      // the route is even about. A tab the gate settled is not one to offer a
+      // copy of, and asking about it would put a Save-As dialog in front of a
+      // user whose save had just landed.
+      const rescued = await rescueUnflushableTabs()
+      // The route is user time — the dialog stays open for as long as they take
+      // — so this is a completion point like the flush above, and the switch is
+      // judged stale by the same rule.
+      if (isStale()) return
+      if (!rescued) {
+        notifyError(t('tabs.unsavedWorkBlocker'))
+        return
+      }
     }
     // Unnamed dirty docs have no path, so `flushDirty` skipped them (a Save-As
     // dialog is too interactive for a background/bulk flush). A switch must not

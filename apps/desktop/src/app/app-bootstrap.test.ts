@@ -25,6 +25,11 @@ const h = vi.hoisted(() => {
     keys: { storeAiKey: vi.fn(), loadAiKey: vi.fn() },
   }
   const tabsMock = {
+    /** The open tab set, as the store exposes it (the store returns its own ref,
+     *  unwrapped). The switch's copy route reads it — `unflushable-rescue.ts`
+     *  asks the list which tabs a refused flush left stuck — so a store stub
+     *  without it is a stub the switch cannot be run against. */
+    tabs: [] as { path: string | null; dirty: boolean }[],
     openTab: vi.fn(),
     flushDirty: vi.fn(),
     reconcilePlaceholders: vi.fn(),
