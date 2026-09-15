@@ -103,14 +103,14 @@ async function triggerSuggestion(
     // Track each listener as it registers so a mid-registration rejection
     // (e.g. the event system failing on `ai-done`) still cleans up the ones
     // that already went in — no partially-registered listener leaks.
-    trackListener(offChunk)
+    trackListener(offChunk, mySeq)
     // Only this stream's own id finalizes it: a done/error event from another
     // request (e.g. one that was cancelled while its chunks were still in
     // flight) must not tear down this stream's listeners.
     const offDone = await getSharedGateways().events.on<{ id: string; full: string }>('ai-done', (e) => {
       if (superseded() || e.id !== myId) return
       releaseRequest(myId)
-      cleanupListeners()
+      cleanupListeners(mySeq)
       markThinking(false)
     })
     if (superseded()) {
@@ -118,7 +118,7 @@ async function triggerSuggestion(
       offDone()
       return
     }
-    trackListener(offDone)
+    trackListener(offDone, mySeq)
     const offError = await getSharedGateways().events.on<{ id: string; message: string }>('ai-error', (e) => {
       if (superseded() || e.id !== myId) return
       // If the raw invoke rejection was delivered before this event (and the
@@ -129,7 +129,7 @@ async function triggerSuggestion(
         notifyError(t('error.aiGenFailed', { msg: e.message }))
       }
       releaseRequest(myId)
-      cleanupListeners()
+      cleanupListeners(mySeq)
       markThinking(false)
     })
     if (superseded()) {
@@ -138,7 +138,7 @@ async function triggerSuggestion(
       offError()
       return
     }
-    trackListener(offError)
+    trackListener(offError, mySeq)
     // Registered LAST on purpose: chunk/done/error are a stream's terminal
     // events and must never be missed, while reasoning is progress-only
     // (losing its first tick costs nothing, the next one shows it).
@@ -150,9 +150,9 @@ async function triggerSuggestion(
       offReasoning()
       return
     }
-    trackListener(offReasoning)
+    trackListener(offReasoning, mySeq)
   } catch (e) {
-    cleanupListeners()
+    cleanupListeners(mySeq)
     releaseRequest(myId)
     notifyError(e instanceof Error ? e.message : String(e))
     return
@@ -163,7 +163,7 @@ async function triggerSuggestion(
   try {
     await getSharedGateways().ai.complete(config, prompt, undefined, myId)
   } catch (e) {
-    cleanupListeners()
+    cleanupListeners(mySeq)
     releaseRequest(myId)
     // Rust emits ai-error AND rejects the invoke; the event handler owns the
     // toast, so swallow the raw rejection when an ai-error event was seen.
