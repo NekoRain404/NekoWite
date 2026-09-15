@@ -54,6 +54,11 @@
  * user can neither act on nor stop, once per save. The disk is asked instead
  * (`movedDespiteTheError`), in that branch only.
  *
+ * Asking it about the two paths was still not evidence: "the source is gone and
+ * the destination is there" is equally true of a stale reference whose basename
+ * an unrelated file already holds, and that pair was dropped with no toast and
+ * rewired onto it. The inference rests on the source's identity now.
+ *
  * It edits `tab.content` in place, which is why it takes the tab rather than a
  * string: the rewrite has to land on the same object the editor's publish
  * writes to, or the next keystroke would put the `.tmp/` paths back.
@@ -73,12 +78,11 @@ import type { OpenTab } from './tabs'
 export interface TabAssetFilePort {
   createDir(vault: string, path: string): Promise<string>
   renameEntry(vault: string, from: string, to: string): Promise<string>
-  /** Whether a path is there (`FsPort.stat`, which rejects when it is not) — the
-   *  only way to tell a move that did not happen from one that did and was not
-   *  reported. Optional because the app's gateway always has it while a
-   *  hand-rolled harness may not, and a port that cannot answer has to mean
-   *  "assume it did not move": the direction that keeps a pair outstanding
-   *  rather than dropping one on a guess. */
+  /** `FsPort.stat`, which rejects when the path is not there — the evidence the
+   *  failure branch reads (see `movedDespiteTheError`). Optional because the
+   *  app's gateway always has it while a hand-rolled harness may not, and a port
+   *  that cannot answer means "assume it did not move": the direction that keeps
+   *  a pair outstanding rather than dropping one on a guess. */
   stat?(vault: string, path: string): Promise<FileStat>
 }
 
@@ -168,6 +172,18 @@ export interface TabAssetDeps {
 export function createTabAssets(deps: TabAssetDeps) {
   const { files, t, notifyError } = deps
 
+  /** The port's answer about one path, or null. "Not there" and "this port
+   *  cannot be asked" are the same answer here, and neither is evidence. */
+  async function statOrNull(vaultPath: string, path: string): Promise<FileStat | null> {
+    const stat = files.stat
+    if (!stat) return null
+    try {
+      return await stat(vaultPath, path)
+    } catch {
+      return null
+    }
+  }
+
   /**
    * Move the tab's staged assets into `notePath`'s assets dir and rewire the
    * body. Returns true when the content was rewritten.
@@ -203,6 +219,11 @@ export function createTabAssets(deps: TabAssetDeps) {
     const stillStaged: string[] = []
     let rewritten = false
     for (const m of moves) {
+      // Taken while the source is still there to be looked at, and read only by
+      // the failure branch below, which needs it to tell a move that landed from
+      // a destination that already held somebody else's file. One extra `stat`
+      // per pair: the attempt cannot be asked afterwards what it saw.
+      const stamp = await statOrNull(vaultPath, m.from)
       try {
         await files.renameEntry(vaultPath, m.from, m.to)
       } catch {
@@ -215,7 +236,7 @@ export function createTabAssets(deps: TabAssetDeps) {
         // in the branch where the rename did not resolve, is deliberate — the
         // pair that did move still reaches its rewrite below with no await
         // between the two (see the module note on adjacency).
-        if (!(await movedDespiteTheError(vaultPath, m))) {
+        if (!(await movedDespiteTheError(vaultPath, m, stamp))) {
           stillStaged.push(m.from)
           continue
         }
@@ -234,35 +255,42 @@ export function createTabAssets(deps: TabAssetDeps) {
   }
 
   /**
-   * Whether a pair whose rename REJECTED moved anyway.
+   * Whether a pair whose rename REJECTED moved anyway — decided by the
+   * destination's IDENTITY rather than by its existence.
    *
-   * The source gone with the destination present is a move that landed and was
-   * not reported. Everything else is not one: the source still there is a
-   * transient, or a destination the backend refuses to replace, and it keeps
-   * its place in the outstanding set.
+   * The throw is not the verdict: `renameEntry` is an IPC command, so a rename
+   * that landed and whose response was lost rejects like any other failure. But
+   * existence is not the verdict either — a stale reference whose basename an
+   * unrelated file already holds also has a gone source and a present
+   * destination, and rewiring onto it shows a picture nobody pasted.
    *
-   * A ref that is at NEITHER end is a reference to nothing, and it is
-   * deliberately not treated as a move. The note keeps its `.tmp/…` ref, the
-   * pair stays outstanding, and the save says so again — the user can put the
-   * file back where the note says it is, or remove the reference from the note,
-   * and both end it. Deleting their prose about an image that is gone would be
-   * the other way to stop repeating ourselves, and it is the worse answer.
+   * `stamp` is the evidence, and it is why this is not a WINDOW around the
+   * attempt: it is what the source looked like immediately before the attempt,
+   * which the destination must still be carrying. The backend moves a file by
+   * hard-linking it and unlinking the source (`move_no_clobber`), so the
+   * destination IS the source's inode and the mtime crosses with it — a move
+   * does not restamp what it moves, so "written inside the attempt" describes no
+   * move, and a source gone before the attempt yields no stamp at all.
+   *
+   * Not "equal" on the mtime: a filesystem with no hard links takes `copy_new`,
+   * which writes the bytes afresh and stamps the destination during the attempt.
+   *
+   * A destination of another size, or older than the source we saw a moment ago,
+   * is somebody else's file: the pair stays outstanding and the save says so
+   * again. A toast they can act on beats a note quietly showing a wrong picture.
    */
-  async function movedDespiteTheError(vaultPath: string, move: AssetMove): Promise<boolean> {
-    // Bound before the guard: TypeScript does not carry the narrowing into the
-    // closure below, and the port may genuinely be without a stat.
-    const stat = files.stat
-    if (!stat) return false
-    const exists = async (path: string): Promise<boolean> => {
-      try {
-        await stat(vaultPath, path)
-        return true
-      } catch {
-        return false
-      }
-    }
-    const [source, destination] = await Promise.all([exists(move.from), exists(move.to)])
-    return !source && destination
+  async function movedDespiteTheError(
+    vaultPath: string,
+    move: AssetMove,
+    stamp: FileStat | null,
+  ): Promise<boolean> {
+    if (!stamp) return false
+    const [source, destination] = await Promise.all([
+      statOrNull(vaultPath, move.from),
+      statOrNull(vaultPath, move.to),
+    ])
+    if (source || !destination) return false
+    return destination.size === stamp.size && destination.mtime >= stamp.mtime
   }
 
   return { relocate }
