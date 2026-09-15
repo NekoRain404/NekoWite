@@ -12,6 +12,7 @@
 
 import type { Ref } from 'vue'
 import { emitLifecycle } from '@nekowite/plugin-host'
+import { flushEdits } from '../services/editor-ownership'
 import { pruneSuppressReapply } from '../services/suppress-reapply'
 import type { HistoryEntry } from '../platform/gateways/contracts'
 import type { RecoveryPrompt } from '../services/errors'
@@ -128,6 +129,11 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
    * them answers a different question), marked dirty (nothing of it is on disk
    * anywhere) and announced, because a tab appearing beside theirs is not
    * something to discover later.
+   *
+   * `from.content` is only the typing once the pane holding it has published
+   * — see `commitRead`, which flushes before calling this. Reading the field
+   * without that flush is how this handed the user an empty tab under a toast
+   * saying their text was in it.
    */
   function rescuePlaceholderTyping(from: OpenTab): void {
     const rescued: OpenTab = {
@@ -161,18 +167,38 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
    * activeTab.content, and a raw-object write would bypass Vue's reactivity and
    * leave the editor permanently empty.
    */
-  function commitRead(id: string, content: string | null, failed: boolean): void {
+  async function commitRead(id: string, content: string | null, failed: boolean): Promise<void> {
     const stored = tabs.value.find((x) => x.id === id)
     if (!stored || !stored.loading) return
-    if (stored.dirty) rescuePlaceholderTyping(stored)
+    // The tab as it stands NOW — re-read below, because the flush is an await.
+    let tab = stored
+    if (stored.dirty) {
+      // `dirty` is set at the KEYSTROKE, so at this moment the typing is in the
+      // pane and the tab still holds the text from before it: both panes
+      // serialize asynchronously (the rendered one — the default mode — on a
+      // 120ms debounce, `editor-persistence.ts`), and `tab.content` is a field
+      // read that only sees them once they publish. Flushing is what makes it
+      // hold what the user typed, and the rescue below is a one-shot read of
+      // exactly that field: without this it copies the empty placeholder into
+      // the new tab and tells the user their text is safe. The same flush the
+      // save path takes before it writes (`tab-save.ts`), for the same reason.
+      await flushEdits()
+      // Everything above is stale after that await — it is where a close, a
+      // `closeAll` or a vault switch's `removeAllTabs` lands. A read that
+      // resolves afterwards owns no tab, and must not resurrect one.
+      const current = tabs.value.find((x) => x.id === id)
+      if (!current || !current.loading) return
+      tab = current
+      rescuePlaceholderTyping(current)
+    }
     // A failed read commits no text: the note has none to show, and the tab
     // goes away with the message that says so. The typing above is rescued
     // first — `removeTab` would take it with the tab.
     if (!failed) {
-      stored.content = content!
-      stored.savedContent = content!
+      tab.content = content!
+      tab.savedContent = content!
     }
-    stored.loading = false
+    tab.loading = false
   }
 
   async function openTab(path: string | null, initial = ''): Promise<void> {
@@ -205,11 +231,14 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
       emitLifecycle('onOpenDocument', { id: tab.id, path: tab.path })
       try {
         const content = await files.read(vault.value!, path)
-        commitRead(tab.id, content, false)
+        // Awaited, both ways: the commit publishes the placeholder's typing
+        // through a pane flush first, and the rescues below have to have
+        // happened before anything reads the tab set again.
+        await commitRead(tab.id, content, false)
       } catch {
         // The typing goes first: `removeTab` would take it with the tab, and it
         // is not this failed read's to discard.
-        commitRead(tab.id, null, true)
+        await commitRead(tab.id, null, true)
         removeTab(tab.id)
         notifyError(t('tabs.readFileFailed', { path }))
         return
