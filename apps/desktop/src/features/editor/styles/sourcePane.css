@@ -30,13 +30,22 @@
   line-height: var(--app-line-height);
 }
 
-/* The panel's trailing space, set by `useEditorTailSpace` from the panel's own
-   height (80 % of it). Padding on CodeMirror's content box, never a blank line:
-   padding is not document content, so nothing about it can be saved, exported
-   or counted, and the pane subtracts it from the scroll range it reports to the
-   split sync. CodeMirror reads this box during its own measure, so the space is
-   part of the layout it measures — which is what lets the last line sit in the
-   middle of the panel rather than against its bottom edge. */
+/* The panel's trailing space, measured once by `useEditorTailSpace` from the
+   panel's own height (80 % of it) and applied here by the pane, both panes
+   taking the same number. Padding on CodeMirror's content box, never a blank
+   line: padding is not document content, so nothing about it can be saved,
+   exported or counted.
+
+   It is INSIDE the scroller, and that is what it is for — it is the space the
+   last line is raised over — so it is part of the pane's scrollable extent, and
+   the extent is what the pane reports to the split sync and lets the sync write
+   into. Subtracting the space back out (which is what this pane used to report)
+   left the sync one tail short of everywhere a wheel could go: the pane the
+   user held showed the space below the last line and the pane being driven
+   could not be moved into its own, in whichever direction the scroll came from.
+   CodeMirror reads this box during its own measure, so the space is part of the
+   layout it measures — which is what lets the last line sit in the middle of
+   the panel rather than against its bottom edge. */
 /* `.cm-editor` in the selector is load-bearing: CodeMirror injects its own base
    theme into the document head when the view is created — AFTER this stylesheet
    — and its `.cm-content { padding: 4px 0 }` has the same specificity as

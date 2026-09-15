@@ -14,6 +14,7 @@ import {
   editorSessionManager,
   useClipboardFidelity,
   useEditorContextMenu,
+  useEditorTailSpace,
   useImageIntake,
   usePaneInput,
   useSourcePaneSlot,
@@ -42,6 +43,13 @@ const hasTab = computed(() => tabs.activeTab !== null)
 const { sourcePane, awaitingSource } = useSourcePaneSlot()
 const renderedPane = ref<InstanceType<typeof RenderedPane> | null>(null)
 const panesEl = ref<HTMLElement | null>(null)
+
+// The trailing space below the last line: ONE number, measured here on the box
+// the panes are laid out in and handed to both of them. That box is the only
+// height they share — measured per pane, each on its own scroller, the source
+// pane came out a scrollbar short of the rendered pane and the two spaced the
+// same last line differently (see `useEditorTailSpace`).
+const { tailSpacePx } = useEditorTailSpace({ getPanelEl: () => panesEl.value })
 
 // Split-view scroll sync, the divider's drag handling and the pane widths: the
 // pane they belong to is the layout, and the layout is this component's. What
@@ -170,6 +178,7 @@ onBeforeUnmount(() => {
           ref="sourcePane"
           class="pane source"
           :style="sourceStyle"
+          :tail-space-px="tailSpacePx"
           @user-scroll="onUserScroll('source')"
         />
         <LayoutResizeHandle
@@ -191,6 +200,7 @@ onBeforeUnmount(() => {
           ref="renderedPane"
           class="pane rendered"
           :style="renderedStyle"
+          :tail-space-px="tailSpacePx"
           @user-scroll="onUserScroll('rendered')"
         />
         <!-- The toolbar is presentational: this pane owns the float store, so

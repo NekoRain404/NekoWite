@@ -12,7 +12,11 @@ import { dirRelativeToVault } from '../features/notes'
 import RenderSearchPanel from './RenderSearchPanel.vue'
 import ImagePanel from '../ui/ImagePanel.vue'
 import TableMenu from '../ui/TableMenu.vue'
-import { useEditorTailSpace, useRenderedEditorStack } from '../features/editor'
+import { useRenderedEditorStack } from '../features/editor'
+// The same deep path `SourcePane` takes to this module: the feature's barrel is
+// not part of this change, and both panes have to apply the one number the
+// panel measured rather than each measuring its own scroller.
+import { useTailSpaceApplication } from '../features/editor/composables/use-editor-tail-space'
 
 const tabs = useTabsStore()
 const view = useViewStore()
@@ -23,13 +27,17 @@ const appearance = useAppearanceStore()
 const scrollEl = ref<HTMLElement | null>(null)
 const editorEl = ref<HTMLElement | null>(null)
 
-// Trailing space: the last line can be scrolled up to a comfortable place. The
-// pad lives on the content container (never in the document) and is subtracted
-// from the range the split sync reads.
-const { tailSpacePx } = useEditorTailSpace({
-  getScrollEl: () => scrollEl.value,
-  apply: (px) => editorEl.value?.style.setProperty('--nkw-tail-space', `${px}px`),
-})
+const props = defineProps<{
+  /** The panel's trailing space in px, measured once on the box both panes are
+   *  laid out in (see `useEditorTailSpace`) — one number for both panes, rather
+   *  than each measuring its own scroller. */
+  tailSpacePx: number
+}>()
+
+// On the content container, which is the box `renderedPane.css` pads and the
+// one number it reads. The space is padding, never a paragraph, so nothing of
+// it can reach the document.
+useTailSpaceApplication(() => editorEl.value, () => props.tailSpacePx)
 
 // Reported to the pane's parent (the editor pane), which owns the split-view
 // scroll coordinator. Only the user's own scrolls are reported: the echo of a
@@ -63,7 +71,6 @@ const {
   getScrollEl: () => scrollEl.value,
   getEditorEl: () => editorEl.value,
   handlers: { onEditorClick, onKeydown },
-  getTailSpace: () => tailSpacePx.value,
 })
 
 function onScroll(): void {
