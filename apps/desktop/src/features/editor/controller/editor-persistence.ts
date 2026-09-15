@@ -8,6 +8,7 @@ import {
   renderedModelRefused,
 } from '../../../services/editor-ownership'
 import { getSourceViewHandle } from '../../../services/source-view'
+import { documentKey } from '../model/document-session'
 import type { DocumentSession } from '../model/document-session'
 
 export interface EditorPersistenceDeps {
@@ -62,8 +63,18 @@ export function createEditorPersistence(deps: EditorPersistenceDeps): EditorPers
     // therefore covers every caller of this path, the debounced one included,
     // until the model holds a document again (a rendered view re-parses it).
     if (renderedModelRefused()) return
-    const active = tabs.activeTab
-    if (!active) return
+    // WHICH document this serialization is about — the one the MODEL is holding,
+    // not `tabs.activeTab`. Those are two different tabs for as long as a
+    // document switch takes to reach the model, and the difference is exactly
+    // the text a switch must not drop: armed by a keystroke in the note being
+    // left, fired after the switch, and published to whichever tab happens to
+    // be active. The identity binds it to its own tab instead (L04), and it is
+    // also what lets the hand-off publish the leaving note's tail before the
+    // model is given the next one.
+    const key = deps.session.appliedKey
+    const target =
+      key === null ? null : tabs.tabs.find((t) => documentKey(tabs.vault, t.id) === key)
+    if (!target) return
     // Capture generation BEFORE the await: a reloadFromDisk during the save
     // bumps gen, and the stale markdown must not win.
     const myGen = deps.session.gen
@@ -85,7 +96,11 @@ export function createEditorPersistence(deps: EditorPersistenceDeps): EditorPers
       if (error instanceof NoDocumentLoadedError) return
       throw error
     }
-    if (tabs.activeTab?.id !== active.id) return
+    // The model was given another document while this ran: the text in hand is
+    // no longer the target's, whoever the target is. (`tabs.activeTab?.id` used
+    // to be the check here, which also threw away the leaving document's own
+    // tail — the finding above.)
+    if (deps.session.appliedKey !== key) return
     if (myGen !== deps.session.gen) return
     // Publish anything the source pane is still coalescing before reading the
     // tab. Without this a keystroke that has not cleared the host's debounce
@@ -97,7 +112,7 @@ export function createEditorPersistence(deps: EditorPersistenceDeps): EditorPers
     // replace the raw Markdown under the user's caret. Note this is about the
     // text, not the mode — a rendered-pane edit still in flight when the view
     // switches to source must land, or that edit would be lost.
-    if (isSourceAuthored(active.content)) return
+    if (isSourceAuthored(target.content)) return
     // The model has not moved since the last snapshot (a re-open / external
     // apply only re-loaded the same text) — there is nothing new to persist.
     // Writing it back here would push the serializer's canonical form into the
@@ -105,7 +120,7 @@ export function createEditorPersistence(deps: EditorPersistenceDeps): EditorPers
     // resetting its caret.
     if (markdown === deps.session.lastLocalMarkdown) return
     deps.session.lastLocalMarkdown = markdown
-    active.content = markdown
+    target.content = markdown
     deps.session.lastDoc = markdown
     if (deps.session.docChangeTimer) return
     deps.session.docChangeTimer = setTimeout(() => {

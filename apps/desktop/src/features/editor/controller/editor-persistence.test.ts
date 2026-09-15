@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useTabsStore } from '../../../stores/tabs'
 import { useSettingsStore } from '../../../stores/settings'
-import { createDocumentSession, type DocumentSession } from '../model/document-session'
+import { createDocumentSession, documentKey, type DocumentSession } from '../model/document-session'
 import { createEditorPersistence } from './editor-persistence'
 import { clearRefusedDocument, markRefusedDocument } from '../../../services/editor-ownership'
 import { NoDocumentLoadedError, type NekoEditor } from '@nekowite/editor-core'
@@ -45,6 +45,10 @@ describe('editorPersistence', () => {
     tabs.setVault('/vault')
     await tabs.openTab('notes/a.md')
     session = createDocumentSession()
+    // The document the model would be holding once the pane has opened it: the
+    // publish path asks the session WHICH document a serialization belongs to,
+    // so a session without this publishes nothing (L04).
+    session.appliedKey = documentKey(tabs.vault, tabs.activeTab!.id)
   })
 
   afterEach(() => {

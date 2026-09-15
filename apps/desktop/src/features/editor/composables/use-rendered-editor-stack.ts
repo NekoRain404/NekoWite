@@ -93,6 +93,12 @@ export function useRenderedEditorStack(options: RenderedEditorStackOptions) {
     session,
     getEditor: () => session.editor,
     scheduleOverlayRefresh: () => searchOverlay.scheduleRefresh(),
+    // The document switch's hand-off: a whole-document serialization of the
+    // document the model is still holding, published to that document's tab
+    // before `open()` replaces the model. The persistence layer owns both
+    // halves (what the model holds, and where a serialization may land), so it
+    // is handed over rather than reimplemented here.
+    handOffPendingEdits: () => persistence.flush(),
     onDocumentApplied: (content) => {
       // The selection the model came with is not a caret the user placed (see
       // `getCaretLine`): recorded here, at the one moment that is true.
@@ -226,8 +232,14 @@ export function useRenderedEditorStack(options: RenderedEditorStackOptions) {
   })
 
   watch(
-    () => tabs.activeTab?.content,
-    (content) => {
+    // The document, not just its text (L06/L04): `activeId` moves when the user
+    // switches notes, and two notes can hold identical text — for those the
+    // content watcher alone never fires, so the model kept the note being left
+    // (undo history included) and the switch's hand-off had no boundary to run
+    // at. The array is re-created per evaluation, which is exactly what makes a
+    // change to either half fire it.
+    () => [tabs.activeId, tabs.activeTab?.content] as const,
+    ([, content]) => {
       externalSync.onContentChanged(content)
     },
   )
