@@ -29,7 +29,7 @@ import {
   markSourceAuthored,
   renderedModelRefused,
 } from '../../../services/editor-ownership'
-import { createDocumentSession, type DocumentSession } from '../model/document-session'
+import { createDocumentSession, documentKey, type DocumentSession } from '../model/document-session'
 import { createExternalDocSync } from '../../../services/external-doc-sync'
 import type { FsChangeEvent } from '../../../platform/gateways/contracts'
 import {
@@ -70,11 +70,16 @@ function makeEditor(opts: {
   } as unknown as NekoEditor
 }
 
-function makeSync(session: DocumentSession, scheduler = vi.fn()) {
+function makeSync(
+  session: DocumentSession,
+  scheduler = vi.fn(),
+  handOff?: () => Promise<void>,
+) {
   const deps: EditorExternalSyncDeps = {
     session,
     getEditor: () => session.editor,
     scheduleOverlayRefresh: scheduler,
+    handOffPendingEdits: handOff,
   }
   return { sync: createEditorExternalSync(deps), scheduler }
 }
@@ -169,6 +174,47 @@ describe('editorExternalSync', () => {
     // showing the discarded version.
     expect(editor.open).toHaveBeenCalledTimes(2)
     expect(editor.open).toHaveBeenLastCalledWith('# One\n', null)
+  })
+
+  /**
+   * The hand-off a document switch runs is a whole-document serialization, so a
+   * second switch can arrive while the first is still switching. The first must
+   * not then open its document over the newer one — the pane would be left on a
+   * note the user had already switched away from.
+   */
+  it('does not open the document a switch was interrupted away from', async () => {
+    const tabs = useTabsStore()
+    await tabs.openTab(null, '# A\n')
+    await tabs.openTab(null, '# B\n')
+    await tabs.openTab(null, '# C\n')
+    const [a, b, c] = tabs.tabs
+    const editor = makeEditor({ save: '# Canonical\n' })
+    session.editor = editor
+    // The model holds A's document.
+    session.appliedKey = documentKey(tabs.vault, a!.id)
+    session.appliedContent = '# A\n'
+    session.lastLocalMarkdown = '# A\n'
+
+    const gate = deferred()
+    const { sync } = makeSync(session, vi.fn(), () => gate.promise)
+
+    // The user switches to B, whose hand-off has not come back yet...
+    tabs.setActive(b!.id)
+    sync.onContentChanged('# B\n')
+    await flush()
+    expect(editor.open).not.toHaveBeenCalled()
+
+    // ...and switches on to C before it does. Both hand-offs are the same one.
+    tabs.setActive(c!.id)
+    sync.onContentChanged('# C\n')
+    await flush()
+    gate.resolve()
+    await flush()
+
+    expect(editor.open).toHaveBeenCalledTimes(1)
+    expect(editor.open).toHaveBeenCalledWith('# C\n', null)
+    expect(session.appliedContent).toBe('# C\n')
+    expect(tabs.tabs.find((t) => t.id === c!.id)?.dirty).toBe(false)
   })
 
   it('still skips a duplicate of the content the editor already holds', async () => {

@@ -7,6 +7,7 @@ import { clearRefusedDocument, isSourceAuthored, markRefusedDocument } from '../
 import { consumeSuppressReapply } from '../../../services/suppress-reapply'
 import { debounce } from '../../../services/timing'
 import { t } from '../../../i18n'
+import { documentKey } from '../model/document-session'
 import type { DocumentSession } from '../model/document-session'
 
 export interface EditorExternalSyncDeps {
@@ -14,6 +15,17 @@ export interface EditorExternalSyncDeps {
   getEditor: () => DocumentSession['editor']
   /** Ask the search overlay to re-scan the model after a content swap. */
   scheduleOverlayRefresh: () => void
+  /**
+   * The document switch's hand-off boundary: publish the model's pending
+   * serialization to the document it is HOLDING, before the model is given
+   * another one (see `applyContent`).
+   *
+   * Nothing else can do this: the pending text lives in the model, and the
+   * model is the one thing a switch replaces. It must run to completion before
+   * `open()`, which is why it is awaited here rather than fired and forgotten —
+   * the publish reads the document through the same editor.
+   */
+  handOffPendingEdits?: () => Promise<void>
   /**
    * The model has just been given `content` — this pane is holding that
    * document now (only the successful path: a refused parse holds nothing).
@@ -73,6 +85,18 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
   const view = useViewStore()
   const floatStore = useFloatStore()
 
+  /** The document the ACTIVE tab names, or null when there is no tab. */
+  function activeDocumentKey(): string | null {
+    const tab = tabs.activeTab
+    return tab ? documentKey(tabs.vault, tab.id) : null
+  }
+
+  /** True while the model is holding the document `key` names. Text alone
+   *  cannot answer this: two notes can hold the same bytes. */
+  function modelHolds(key: string | null): boolean {
+    return key !== null && key === deps.session.appliedKey
+  }
+
   /** The rendered pane only edits the document while it is actually visible.
    *  In source mode it stays mounted (v-show) but is hidden, and the source
    *  pane owns the text — feeding its edits through the Markdown serializer
@@ -101,8 +125,12 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
     }
     // The echo of an editor-originated update: content was set from the
     // editor's own serialization, so re-opening would re-parse the whole
-    // document (wiping undo history and stored positions) for no change.
-    if (content === deps.session.lastLocalMarkdown) return
+    // document (wiping undo history and stored positions) for no change. Bound
+    // to the DOCUMENT as well as the text (L06): the text is not enough to say
+    // which note it is the echo of, and two notes can hold identical text — a
+    // switch between those two used to be read here as an echo and skipped, so
+    // the model kept the note being left, its undo history included.
+    if (modelHolds(activeDocumentKey()) && content === deps.session.lastLocalMarkdown) return
     if (deps.session.parseFailed) return
     // Supersede any in-flight applyContent: bump gen so its stale serialization
     // (captured before the await) cannot overwrite this newer content.
@@ -114,7 +142,10 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
    *  mode only — see {@link PREVIEW_RESYNC_DEBOUNCE_MS}). */
   const pendingPreviewResync = debounce(applyExternal, PREVIEW_RESYNC_DEBOUNCE_MS)
 
-  async function applyContent(content: string): Promise<void> {
+  async function applyContent(
+    content: string,
+    key: string | null = activeDocumentKey(),
+  ): Promise<void> {
     // An immediate apply supersedes a deferred one: the deferred text describes
     // a document that is no longer the one being loaded (the user switched
     // notes, a disk reload arrived), and landing it afterwards would replace
@@ -122,10 +153,24 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
     pendingPreviewResync.cancel()
     const editor = deps.getEditor()
     if (!editor) return
-    // Idempotence guard: the editor already holds this exact canonical text.
-    // Re-opening it now would replace the live model, wiping undo history,
-    // stored caret/scroll and interrupting typing. A failed parse stays
-    // eligible so switching back to rendered mode can retry.
+    // Captured before the hand-off below, which is the only await this function
+    // has before it takes charge of the model. The hand-off is a whole-document
+    // serialization, so a second switch can arrive while it runs, and without
+    // this the interrupted one would open its document AFTER the newer one had
+    // — leaving the pane on a note the user had already switched away from.
+    // Any later content write bumps gen (see `applyExternal`), so an apply that
+    // finds it moved stands down and leaves the model to the newer one.
+    const myGen = deps.session.gen
+    // Idempotence guard: the editor already holds this exact canonical text OF
+    // THIS DOCUMENT. Re-opening it now would replace the live model, wiping
+    // undo history, stored caret/scroll and interrupting typing. A failed parse
+    // stays eligible so switching back to rendered mode can retry.
+    //
+    // The document is part of the guard, not just the text (L06): two notes can
+    // hold identical text — most obviously two empty ones — and for those the
+    // text says nothing about whether this is a re-open or a switch. The model
+    // then kept the note being left, undo history and all, so Ctrl+Z in the new
+    // note inverted an edit made in the old one.
     //
     // `appliedContent` alone is not enough to say the editor HOLDS it: it is the
     // text the editor was last OPENED with, and any typing since then replaced
@@ -146,8 +191,33 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
     // stayed armed, so the rendered pane published nothing and a save of the
     // note in front of the user wrote the text from before their keystroke.
     const editorStillHoldsApplied = deps.session.lastLocalMarkdown === deps.session.appliedContent
-    if (content === deps.session.appliedContent && editorStillHoldsApplied && !deps.session.parseFailed) {
+    if (
+      modelHolds(key) &&
+      content === deps.session.appliedContent &&
+      editorStillHoldsApplied &&
+      !deps.session.parseFailed
+    ) {
       return
+    }
+    // The hand-off boundary (L04), and it has to be HERE: the text a switch
+    // drops is not lost when the tab changes, it is lost when the model is
+    // replaced — the publish armed by the last keystroke fires later, serializes
+    // whatever document is open by then, and is discarded as stale. So the
+    // leaving document's pending text is published to ITS tab (the model's own
+    // identity, see `persistMarkdown`) while the model still holds it. A longer
+    // debounce was considered and rejected: the window was argued on its own
+    // merits, and moving it only moves the switch that loses the tail.
+    if (deps.session.appliedKey !== null && !modelHolds(key)) {
+      await deps.handOffPendingEdits?.()
+      // The world moved while that ran, in either of the two ways it can: a
+      // newer content write arrived for this document (gen), or the user is
+      // looking at a different document now. The second one is why the key is
+      // checked as well — a switch to a note whose text the model still holds
+      // takes the echo shortcut above and bumps nothing this apply can see, so
+      // without this it would land its document over the note the user went
+      // back to.
+      if (deps.session.gen !== myGen) return
+      if (key !== activeDocumentKey()) return
     }
     deps.session.applyingExternal = true
     try {
@@ -164,6 +234,9 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
       // editor model is now loaded; another open of this same source must be
       // skipped or it would reset the user's selection/undo/scroll.
       deps.session.appliedContent = content
+      // ...and WHICH document that content belongs to, committed with it: the
+      // pair is what the guards above ask about.
+      deps.session.appliedKey = key
       // Published with the text it holds: the pane's record that this document
       // is measurable now, which is what a position waiting for a document
       // (the reading position of a note being switched to) waits for.
@@ -232,6 +305,10 @@ export function createEditorExternalSync(deps: EditorExternalSyncDeps): EditorEx
       // leaving the editor holding nothing for every note they switch to (C1,
       // brief 58).
       deps.session.appliedContent = null
+      // Dropped with it, for the same reason: "the model holds this document"
+      // is one claim, and half of it left standing would let the guards skip
+      // the re-open that re-establishes it.
+      deps.session.appliedKey = null
       // `error` is bound for the brief that must tell a document too large to
       // render (`DocumentTooComplexToRenderError`) apart from a genuine parse
       // failure. Nothing reads it yet, so it is discarded rather than carried.
