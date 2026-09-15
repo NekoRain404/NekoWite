@@ -25,6 +25,7 @@ const h = vi.hoisted(() => {
     keys: { storeAiKey: vi.fn(), loadAiKey: vi.fn() },
   }
   const tabsMock = {
+    openTab: vi.fn(),
     flushDirty: vi.fn(),
     untitledDirtyTabs: vi.fn(),
     saveTab: vi.fn(),
@@ -60,6 +61,8 @@ const h = vi.hoisted(() => {
     editorSessionManager: { destroyAll: vi.fn(), destroySession: vi.fn() },
     notifyError: vi.fn(),
     notifyRecovery: vi.fn(),
+    takePendingOpen: vi.fn(),
+    onOpenFileRequest: vi.fn(),
   }
 })
 
@@ -106,6 +109,12 @@ vi.mock('@nekowite/plugin-host', () => ({
 
 vi.mock('../features/editor/session-manager', () => ({
   editorSessionManager: h.editorSessionManager,
+}))
+
+vi.mock('../platform/open-request', () => ({
+  takePendingOpen: h.takePendingOpen,
+  onOpenFileRequest: h.onOpenFileRequest,
+  OPEN_FILE_EVENT: 'open-file-request',
 }))
 
 vi.mock('../stores/tabs', () => ({ useTabsStore: () => h.tabsMock }))
@@ -156,6 +165,9 @@ describe('createDesktopRuntime', () => {
     h.editorSessionManager.destroyAll.mockImplementation(() => {})
     h.createTmpRecovery.mockReturnValue(h.tmpRecovery)
     h.vaultFileIndex.get.mockResolvedValue([])
+    // The ordinary launch names no file; a test that wants one says so.
+    h.takePendingOpen.mockResolvedValue(null)
+    h.onOpenFileRequest.mockResolvedValue(() => {})
   })
 
   describe('start (startup ordering)', () => {
@@ -210,10 +222,125 @@ describe('createDesktopRuntime', () => {
     it('does not apply a vault when none was saved, but still restores the session', async () => {
       const runtime = createDesktopRuntime()
       runtime.start()
-      await vi.waitFor(() => expect(h.tabsMock.restoreSession).toHaveBeenCalled())
+      // Window tracking is armed in `runStartup`'s `finally`, i.e. after the
+      // session restore AND after the launch request has been drained — so it is
+      // the end of startup, and the thing to wait for.
+      await vi.waitFor(() => expect(h.windowTracking.start).toHaveBeenCalled())
+      expect(h.tabsMock.restoreSession).toHaveBeenCalled()
       expect(h.gateways.fs.registerVault).not.toHaveBeenCalled()
       expect(runtime.vaultPath.value).toBeNull()
-      expect(h.windowTracking.start).toHaveBeenCalled()
+    })
+  })
+
+  describe('the file the OS launched the app with', () => {
+    const INSIDE = {
+      kind: 'open' as const,
+      path: '/vault/notes/a.md',
+      root: '/vault',
+      same_vault: true,
+    }
+    const OUTSIDE = {
+      kind: 'open' as const,
+      path: '/elsewhere/b.md',
+      root: '/elsewhere',
+      same_vault: false,
+    }
+
+    it('opens it once the vault startup restores is in place', async () => {
+      h.takePendingOpen.mockResolvedValue(INSIDE)
+      localStorage.setItem(VAULT_LS_KEY, '/vault')
+
+      const runtime = createDesktopRuntime()
+      runtime.start()
+
+      await vi.waitFor(() => expect(h.tabsMock.openTab).toHaveBeenCalledWith('/vault/notes/a.md'))
+      // The request meets a fully-started app: the remembered vault is open and
+      // the last session is back, so the file joins that session instead of
+      // replacing it.
+      expect(h.gateways.fs.registerVault).toHaveBeenCalledWith('/vault')
+      expect(h.tabsMock.restoreSession).toHaveBeenCalled()
+    })
+
+    it('moves the vault when the file lives in another folder, and opens it there', async () => {
+      h.takePendingOpen.mockResolvedValue(OUTSIDE)
+      localStorage.setItem(VAULT_LS_KEY, '/vault')
+
+      const runtime = createDesktopRuntime()
+      runtime.start()
+
+      await vi.waitFor(() => expect(h.tabsMock.openTab).toHaveBeenCalledWith('/elsewhere/b.md'))
+      // Through the ordinary switch: the same one the sidebar and the settings
+      // panel use, which is what flushes dirty tabs and re-arms the index.
+      expect(h.gateways.fs.registerVault).toHaveBeenCalledWith('/elsewhere')
+      expect(runtime.vaultPath.value).toBe('/elsewhere')
+      expect(h.tabsMock.setVault).toHaveBeenLastCalledWith('/elsewhere')
+      // The restored tabs belong to the vault we left.
+      expect(h.tabsMock.removeAllTabs).toHaveBeenCalled()
+    })
+
+    it('does not open the file when the switch is blocked by unsaved work', async () => {
+      // The one refusal this brief allows: a dirty tab that will not save stops
+      // the switch, `applyVault` says so in its own words, and the file must not
+      // open — under the vault we are still on its path is outside the root.
+      h.takePendingOpen.mockResolvedValue(OUTSIDE)
+      h.tabsMock.flushDirty.mockResolvedValue(false)
+
+      const runtime = createDesktopRuntime()
+      runtime.start()
+
+      await vi.waitFor(() => expect(h.notifyError).toHaveBeenCalled())
+      expect(h.tabsMock.openTab).not.toHaveBeenCalled()
+      expect(runtime.vaultPath.value).toBeNull()
+    })
+
+    it('opens a file that arrives while the app is running', async () => {
+      // The second entry point: `nekowite other.md` with a window already open,
+      // or a double-click. The backend rings; nothing was waiting at startup.
+      const runtime = createDesktopRuntime()
+      runtime.start()
+      await vi.waitFor(() => expect(h.onOpenFileRequest).toHaveBeenCalled())
+      h.takePendingOpen.mockResolvedValue(INSIDE)
+      await runtime.applyVault('/vault')
+
+      const doorbell = h.onOpenFileRequest.mock.calls[0][0] as () => void
+      doorbell()
+
+      await vi.waitFor(() => expect(h.tabsMock.openTab).toHaveBeenCalledWith('/vault/notes/a.md'))
+    })
+
+    it('carries out a request that arrives while startup is still running, once', async () => {
+      // A double-click during startup rings the doorbell before the startup pull
+      // has happened. Both triggers go through the same `takePendingOpen`, which
+      // empties the backend's slot (faithfully doubled here), so the file opens
+      // once rather than once per trigger.
+      let waiting: typeof INSIDE | null = INSIDE
+      h.takePendingOpen.mockImplementation(async () => {
+        const request = waiting
+        waiting = null
+        return request
+      })
+
+      const runtime = createDesktopRuntime()
+      runtime.start()
+      await vi.waitFor(() => expect(h.onOpenFileRequest).toHaveBeenCalled())
+      const doorbell = h.onOpenFileRequest.mock.calls[0][0] as () => void
+      doorbell()
+
+      await vi.waitFor(() => expect(h.tabsMock.openTab).toHaveBeenCalledWith('/vault/notes/a.md'))
+      await vi.waitFor(() => expect(h.tabsMock.restoreSession).toHaveBeenCalled())
+      expect(h.tabsMock.openTab).toHaveBeenCalledTimes(1)
+    })
+
+    it('releases the launch listener on teardown', async () => {
+      const off = vi.fn()
+      h.onOpenFileRequest.mockResolvedValue(off)
+      const runtime = createDesktopRuntime()
+      runtime.start()
+      await vi.waitFor(() => expect(h.onOpenFileRequest).toHaveBeenCalled())
+
+      runtime.dispose()
+
+      expect(off).toHaveBeenCalled()
     })
   })
 

@@ -104,6 +104,44 @@ impl VaultRegistry {
         Ok(())
     }
 
+    /// Record a vault root the USER pointed at by launching the app with a file
+    /// inside it (`nekowite notes.md`, or a `.md` double-clicked in the file
+    /// manager), the way [`approve_pick`](Self::approve_pick) records a folder
+    /// dialog choice.
+    ///
+    /// The evidence is the same kind: the path reached this process through its
+    /// own `argv`, which is something no renderer can manufacture. It goes in
+    /// through `approve_pick`, so it passes exactly the validations a dialog
+    /// pick passes and lands in the same set — a gate of its own beside
+    /// `approve_pick`/`register` would be a hole, not a feature.
+    ///
+    /// The extra check is the one thing a dialog pick can defer and a launch
+    /// cannot: a picked root is re-checked by `register` when the switch
+    /// commits, but a launch has no second chance, so a root that could never
+    /// be served is refused here where the user can still be told why.
+    pub fn approve_launch_root(&self, root: &str) -> Result<PathBuf, String> {
+        // Canonicalized before the refusal so the message names the same path
+        // `approve_pick` would record; that call canonicalizes again, and stays
+        // the only place a root is remembered.
+        let canonical = canonicalize_vault_root(root)?;
+        if let Some(refusal) = vault_root_structural_refusal(&canonical) {
+            return Err(refusal);
+        }
+        self.approve_pick(root)
+    }
+
+    /// The opened root that contains `path`, if any — "is this file already
+    /// inside a vault we serve?".
+    ///
+    /// `Path::starts_with` compares whole components, so `/notes-archive` is
+    /// not reported as being inside `/notes`. Callers pass a canonical path:
+    /// a root is stored canonical, and a comparison against a path that still
+    /// carries `..` or a symlink would answer a question nobody asked.
+    pub fn containing_opened_vault(&self, path: &Path) -> Option<PathBuf> {
+        let set = self.opened.lock().ok()?;
+        set.iter().find(|root| path.starts_with(root)).cloned()
+    }
+
     /// Prove `root` was opened by the user. Returns the canonicalized root or
     /// an error with a recovery hint when the root was never authorized.
     pub fn authorize(&self, root: &str) -> Result<PathBuf, String> {

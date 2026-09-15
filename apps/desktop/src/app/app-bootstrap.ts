@@ -13,6 +13,8 @@ import { t } from '../i18n'
 import { setupWindowTracking, type WindowTracking } from './window-state'
 import { persistence } from '../services/persistence'
 import { createTmpRecovery, requestUntitledVaultSwitch } from './recovery-closed-loop'
+import { createOpenFileHandler } from './open-file'
+import { onOpenFileRequest, takePendingOpen } from '../platform/open-request'
 import { setActiveEditor } from '@nekowite/plugin-host'
 import { editorBridge } from '../services/editor-bridge'
 import { invalidateImageResolution, refreshCiteChips, setCiteKeyResolver } from '@nekowite/editor-core'
@@ -130,6 +132,17 @@ export function createDesktopRuntime(): DesktopRuntime {
       return null
     }
   }
+  // The file the OS asked us to open (`nekowite notes.md`, a double-clicked
+  // `.md`). It rides on the vault switch above rather than beside it — see
+  // `open-file.ts`.
+  const openFiles = createOpenFileHandler({
+    vaultPath,
+    applyVault,
+    openTab: (path) => tabs.openTab(path),
+    notifyError,
+    takePendingOpen,
+    onOpenFileRequest,
+  })
   let started = false
   let disposed = false
   // App-level latest-wins guard for vault switches. Each switch bumps the
@@ -352,6 +365,11 @@ export function createDesktopRuntime(): DesktopRuntime {
   function start(): void {
     if (started) return
     started = true
+    // Subscribe BEFORE the pending request is collected, so a file that arrives
+    // while startup is still running is neither missed by a window that is not
+    // listening yet nor collected twice: whichever trigger gets there first
+    // takes the request, and the slot is empty for the other.
+    openFiles.subscribe()
     // Restore window geometry before the vault is opened so the layout is in
     // place while the editor initializes.
     void windowTracking.restore()
@@ -377,6 +395,14 @@ export function createDesktopRuntime(): DesktopRuntime {
       // matching session). Runs after the vault is applied so restoreSession sees
       // the correct vault and its duplicate guard can focus existing tabs.
       await tabs.restoreSession()
+      // LAST, and deliberately so: the file the OS launched us with is the one
+      // thing here that came from outside the app, and a request the backend
+      // marked `same_vault` is only true once the vault it is speaking of is
+      // actually applied — which is what the two lines above just did. A file
+      // from another folder moves the vault through `applyVault`, closing the
+      // restored tabs, which is the right outcome: the user asked for that file,
+      // not for yesterday's session.
+      await openFiles.drain()
     } catch (e) {
       // An unexpected startup error must not hang (or reject) the mount: applyVault
       // already swallows path-confined failures, so surface anything else and let
@@ -391,6 +417,9 @@ export function createDesktopRuntime(): DesktopRuntime {
     // Mark the runtime as torn down so every fire-and-forget completion point
     // (plugin/ref/index/tmp-recovery) bails instead of re-launching or writing.
     disposed = true
+    // Release the launch listener too: a request that arrives after teardown
+    // must not start a vault switch in a runtime that is going away.
+    openFiles.dispose()
     // Cancel any in-flight vault switch so a superseded switch can never touch
     // state after teardown (its controller is aborted; all completion points bail).
     vaultSwitchController?.abort()

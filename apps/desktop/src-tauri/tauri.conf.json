@@ -41,6 +41,22 @@
       "icons/icon.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown"],
+        "mimeType": "text/markdown",
+        "name": "Markdown document",
+        "description": "Markdown document",
+        "role": "Editor"
+      },
+      {
+        "ext": ["mdx"],
+        "mimeType": "text/mdx",
+        "name": "MDX document",
+        "description": "MDX document",
+        "role": "Editor"
+      }
     ]
   }
 }
