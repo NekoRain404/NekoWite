@@ -136,7 +136,10 @@ onBeforeUnmount(() => {
   /* Above the modal layer (10000), not below it. A toast reports a failure —
      often a failure of the very dialog that is open — and the modal overlays
      carry `backdrop-filter: blur(2px)`, so a toast underneath was both hidden
-     and smeared into an unreadable smudge. See the scale in components.css. */
+     and smeared into an unreadable smudge. The scale meant here is the z-index
+     scale, which lives in styles/surfaces.css — its `11000 .toast-stack` entry
+     restates this reason. It is not the button rungs in the sheet this comment
+     used to name: that pointer went stale when components.css was split. */
   z-index: 11000;
   display: flex;
   flex-direction: column;
