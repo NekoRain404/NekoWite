@@ -52,11 +52,14 @@
       },
       {
         "ext": ["mdx"],
-        "mimeType": "text/mdx",
         "name": "MDX document",
         "description": "MDX document",
         "role": "Editor"
       }
-    ]
+    ],
+    "linux": {
+      "deb": { "desktopTemplate": "linux/nekowite.desktop.hbs" },
+      "rpm": { "desktopTemplate": "linux/nekowite.desktop.hbs" }
+    }
   }
 }

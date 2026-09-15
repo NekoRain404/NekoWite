@@ -1,0 +1,43 @@
+[Desktop Entry]
+# Custom template — registered by `bundle.linux.deb.desktopTemplate` and
+# `bundle.linux.rpm.desktopTemplate` in tauri.conf.json, and read by the deb,
+# rpm and AppImage bundlers.
+#
+# It exists for one line. The CLI's built-in template renders the exec key with
+# no field code, and it adds none for `bundle.fileAssociations`: the only thing
+# deep-link protocols change is the mime type. Per the Desktop Entry
+# specification a path reaches the process only through %f/%F/%u/%U, so a file
+# manager launched this app as argv == ["nekowite"], the path arrived nowhere,
+# and the association was inert in every bundle built before this template.
+# %F rather than %f because a file manager may pass a whole selection; the app
+# takes the first markdown argument and ignores the rest, which is the same
+# answer either way.
+#
+# Everything below is the built-in template verbatim, placeholders included, so
+# the rest of the entry keeps matching what the CLI would have emitted and this
+# file stays a diff of one line.
+Categories={{categories}}
+{{#if comment}}
+Comment={{comment}}
+{{/if}}
+Exec={{exec}} %F
+StartupWMClass={{exec}}
+Icon={{icon}}
+Name={{name}}
+Terminal=false
+Type=Application
+#
+# No `text/mdx`, deliberately. It is a type no Linux system has — `xdg-mime
+# query filetype x.mdx` answers `application/x-genesis-32x-rom`, because `*.mdx`
+# belongs to 32X ROM images in /usr/share/mime/globs. Declaring it advertised
+# this app as a handler for a file it cannot read and pointed the extension at a
+# ROM handler instead, so the `.mdx` association in tauri.conf.json carries no
+# mime type and this line carries only what the system can match.
+#
+# `.mdx` still opens: `nekowite note.mdx` reaches the app through argv, which
+# needs no MIME routing, and `MARKDOWN_EXTENSIONS` keeps it for that reason.
+# Winning it back here would take the extension away from 32X ROM images, which
+# is a side effect outside this repository, so it is not attempted.
+{{#if mime_type}}
+MimeType={{mime_type}}
+{{/if}}
