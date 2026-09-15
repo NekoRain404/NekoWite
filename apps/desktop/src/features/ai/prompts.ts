@@ -10,9 +10,30 @@
  * every one of these is a different question to ask *about* it.
  *
  * **Curated, not enumerated.** The user asked for a set to be added; a shelf of
- * thirty is a menu. Ten were considered and eight kept (the two that were not
- * are named in the report — translating, which already exists as a selection
- * command, and prose-to-table, which is rarer than the rest).
+ * thirty is a menu. The first round considered ten and kept eight (the two that
+ * were not are named in its report — translating, which already exists as a
+ * selection command, and prose-to-table, which is rarer than the rest, a reason
+ * this round restated rather than inherited: see below). This round added the
+ * two the user named and the neighbours they implied, and the shelf stands at
+ * twelve. **What each round rejected is named in the report beside this file,
+ * and that is the part worth reading before adding a thirteenth.**
+ *
+ * **An instruction names tics, not adjectives.** "Write less like an AI" and
+ * "make it more academic" both produce something worse than the text they were
+ * given, in opposite directions: the first flattens the prose, the second
+ * reaches for a thesaurus. So the two prompts built from those requests name
+ * what actually changes — the three-part sentence, the "not X, but Y" flip, the
+ * connective that explains what the reader already read, the hedge that softens
+ * every claim; the claim that needs its evidence, the source that needs naming,
+ * the term that needs a fancier synonym. The lexicon is not invented here: it
+ * comes from the writing-craft skills this round was pointed at, which is why
+ * the tics are named rather than gestured at.
+ *
+ * **The same tic can belong to two prompts from two sides.** 「值得注意的是」
+ * sits in the de-AI prompt as an announcement and in the academic one as what
+ * "sounds academic" reaches for. That overlap is deliberate — the phrase is
+ * genuinely both — and it is the meeting point of two prompts that would
+ * otherwise pull against each other.
  *
  * **Where each string comes from is the i18n decision, and it is split by who
  * reads it.** A `labelKey` is UI copy and follows the interface language, like
@@ -50,15 +71,22 @@ export interface ChatPrompt {
  * The shelf, in the order the composer shows it.
  *
  * Ordered by roughly how often a person reaches for them rather than
- * alphabetically: the three that are about *the whole note* come first, then
- * the ones about a passage, then the two that produce something new.
+ * alphabetically: the five that ask a question of *the whole note* come first,
+ * then the four that rewrite a passage, then the three that produce something
+ * new. Adding an id here is all it takes for the prompt to appear — in the
+ * composer and in the settings list, switched on — because the store persists
+ * the ids that are **off**.
  */
 export const CHAT_PROMPTS: readonly ChatPrompt[] = [
   { id: 'summarize', labelKey: 'aiSettings.prompt.summarize.label', instructionKey: 'aiSettings.prompt.summarize.text' },
   { id: 'actionItems', labelKey: 'aiSettings.prompt.actionItems.label', instructionKey: 'aiSettings.prompt.actionItems.text' },
   { id: 'outline', labelKey: 'aiSettings.prompt.outline.label', instructionKey: 'aiSettings.prompt.outline.text' },
+  { id: 'evidence', labelKey: 'aiSettings.prompt.evidence.label', instructionKey: 'aiSettings.prompt.evidence.text' },
+  { id: 'critique', labelKey: 'aiSettings.prompt.critique.label', instructionKey: 'aiSettings.prompt.critique.text' },
   { id: 'tighten', labelKey: 'aiSettings.prompt.tighten.label', instructionKey: 'aiSettings.prompt.tighten.text' },
   { id: 'proofread', labelKey: 'aiSettings.prompt.proofread.label', instructionKey: 'aiSettings.prompt.proofread.text' },
+  { id: 'soundHuman', labelKey: 'aiSettings.prompt.soundHuman.label', instructionKey: 'aiSettings.prompt.soundHuman.text' },
+  { id: 'academic', labelKey: 'aiSettings.prompt.academic.label', instructionKey: 'aiSettings.prompt.academic.text' },
   { id: 'title', labelKey: 'aiSettings.prompt.title.label', instructionKey: 'aiSettings.prompt.title.text' },
   { id: 'tags', labelKey: 'aiSettings.prompt.tags.label', instructionKey: 'aiSettings.prompt.tags.text' },
   { id: 'continue', labelKey: 'aiSettings.prompt.continue.label', instructionKey: 'aiSettings.prompt.continue.text' },

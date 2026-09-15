@@ -116,23 +116,39 @@ export const ai = {
       prompt: {
         summarize: {
           label: 'Summarise',
-          text: 'Summarise the note above. Lead with what it is about in one sentence, then the main points as a short list. Write in the same language as the note.',
+          text: 'Summarise the note above. Lead with what it is about in one sentence, then the main points as a short list. Stop when the points run out; do not close with a line about what it all means. Write in the same language as the note.',
         },
         actionItems: {
           label: 'Action items',
-          text: 'Pull every task, decision and open question out of the note above as a checklist. Quote the line each one came from when it is not obvious. Do not invent tasks that are not there; say so if there are none.',
+          text: 'Pull every task, decision and open question out of the note above as a checklist. Quote the line each one came from when it is not obvious. List all of them, without trailing off into "and so on". Do not invent tasks that are not there; say so if there are none.',
         },
         outline: {
           label: 'Outline',
           text: 'Propose an outline for this note: the sections it needs, in order, and one line each on what belongs in them. Base it on what is already written and mark anything the note does not cover yet.',
         },
+        evidence: {
+          label: 'Check the evidence',
+          text: 'Read the note above and mark the line between what it states and what you would be supplying. Quote the line each claim comes from. Where the note asserts something without saying where it came from, say so. Where you would need a fact, a number or a date the note does not give, write "not in the note" and stop there instead of filling it in from memory. If you do add something of your own, label it as yours. Do not answer a question the note leaves open. List only what is unsupported or missing; do not summarise the note back to me.',
+        },
+        critique: {
+          label: 'Critique',
+          text: 'Read the note above as the reader who is going to disagree with it. Name what would not survive that reading: a conclusion that does not follow from what comes before, a question the note raises and leaves open, a term used before it is defined, the counter-position the note does not consider. Quote the sentence each one is in, and say what would fix it. Separate the ones that change what the note concludes from the ones that are only wording. Do not rewrite the note, and do not pad the list with things that are already sound.',
+        },
         tighten: {
           label: 'Tighten',
-          text: 'Tighten the selected passage or, if nothing is selected, the note above. Cut filler and repetition, keep every fact and every piece of markup, and do not change the tone. Output only the tightened text.',
+          text: 'Tighten the selected passage or, if nothing is selected, the note above. Cut filler and repetition, keep every fact and every piece of markup, and do not change the tone. Cutting every sentence down to its shortest form leaves an outline, so keep the words a sentence needs in order to stay a sentence. Output only the tightened text.',
         },
         proofread: {
           label: 'Proofread',
-          text: 'Proofread the selected passage or, if nothing is selected, the note above. Fix spelling, grammar, punctuation and awkward phrasing, and list what you changed in one line each. Do not rewrite passages that are already correct.',
+          text: 'Proofread the selected passage or, if nothing is selected, the note above. Fix spelling, grammar, punctuation and awkward phrasing, and list what you changed in one line each. Do not rewrite passages that are already correct, and leave a term or a name you do not recognise alone: unfamiliar is not the same as wrong.',
+        },
+        soundHuman: {
+          label: 'Sound human',
+          text: 'Rewrite the selected passage or, if nothing is selected, the note above, so it reads as something a person wrote. Take these out, deleting rather than rewording wherever a deletion will do: a closing paragraph that repeats the text; a sentence explaining what the one before it already said; a bullet list standing where a paragraph belonged; three near-synonyms where one word is meant; "to some extent" softening a claim; "it is worth noting" in front of a point that needs no announcement; a sentence balanced in three parts because three parts sound finished; the "not X, but Y" flip; the em dash used as a break. Change as little as you can, and keep the note\'s own terms, names, numbers, links and markup. If every sentence comes out short and nothing joins them, you have written an outline, which is the other way to sound like a machine. Do not add typos or shuffle punctuation to look human. Output only the rewritten text.',
+        },
+        academic: {
+          label: 'Academic',
+          text: 'Rewrite the selected passage or, if nothing is selected, the note above, for a reader who expects the register of a paper or a professional report. Match each claim to what supports it, and do not hedge a fact. Where the evidence is partial, say what the claim holds over. Where a claim rests on a source, name it; where nothing supports it, mark it as the author\'s own reading rather than asserting it. Keep the precise term instead of reaching for a fancier one, and define a term at its first use. Use the connectives an argument runs on (because, therefore, whereas), write out the contractions, and keep the active voice unless the actor genuinely does not matter. Drop the phrases that only sound academic, such as "it is clear that" and "it is worth noting". A limitation that affects the conclusion stays, stated once. Keep it formal, short of the stiffness of a legal document. Keep every fact and every piece of markup. Output only the rewritten text.',
         },
         title: {
           label: 'Title',
@@ -261,23 +277,39 @@ export const ai = {
       prompt: {
         summarize: {
           label: '总结笔记',
-          text: '总结上面的笔记。先用一句话说清它讲的是什么，再用简短的列表列出要点。请用与笔记相同的语言作答。',
+          text: '总结上面的笔记。先用一句话说清它讲的是什么，再用简短的列表列出要点。要点说完就停，不要再用一句话总结全文的意义。请用与笔记相同的语言作答。',
         },
         actionItems: {
           label: '提取待办',
-          text: '把上面笔记里的任务、决定和悬而未决的问题提取成一份清单。来源不明显的条目请附上它出自哪一句。不要编造笔记里没有的任务；如果没有，就直接说明。',
+          text: '把上面笔记里的任务、决定和悬而未决的问题提取成一份清单。来源不明显的条目请附上它出自哪一句。要全部列出，不要只列几条就用“等等”收尾。不要编造笔记里没有的任务；如果没有，就直接说明。',
         },
         outline: {
           label: '生成大纲',
           text: '为这篇笔记提出一份大纲：需要哪些小节、按什么顺序、每节写什么，各用一句话说明。以已写的内容为依据，并标出笔记目前还没有覆盖的部分。',
         },
+        evidence: {
+          label: '核对依据',
+          text: '读上面的笔记，把它自己说了什么、和你正要补进去什么分开。每条判断都引出它出自哪一句。笔记里没有交代来源的说法，指出来。需要笔记没有给出的事实、数字或日期时，写“笔记里没有”，不要用记忆里的内容补上。如果确实补了，标明那是你补的。笔记留着没回答的问题，不要替它回答。只列出没有依据和没有交代的地方，不要把笔记再复述一遍。',
+        },
+        critique: {
+          label: '挑毛病',
+          text: '读上面的笔记，但站在一个准备反驳它的读者的角度。指出经不起这种读法的地方：和前面的内容接不上的结论，笔记自己提出却没有回答的问题，用之前没有定义过的术语，笔记没有考虑到的相反立场。每条都引出原句，并说明怎么改。把会影响结论的和只是措辞的分开说。不要改写笔记，也不要把本来就站得住的地方拿来凑数。',
+        },
         tighten: {
           label: '精简文字',
-          text: '精简选中的段落；如果没有选中内容，就精简上面的笔记。删掉冗词和重复，保留全部事实与标记格式，不要改变语气。只输出精简后的正文。',
+          text: '精简选中的段落；如果没有选中内容，就精简上面的笔记。删掉冗词和重复，保留全部事实与标记格式，不要改变语气。把每句话都压到最短就成了提纲，句子该有的连接词要留下。只输出精简后的正文。',
         },
         proofread: {
           label: '校对',
-          text: '校对选中的段落；如果没有选中内容，就校对上面的笔记。修正错别字、语法、标点和别扭的表达，并逐条说明改了什么。本来就正确的地方不要改写。',
+          text: '校对选中的段落；如果没有选中内容，就校对上面的笔记。修正错别字、语法、标点和别扭的表达，并逐条说明改了什么。本来就正确的地方不要改写。不认识的术语或专有名词不要动：没见过不等于写错了。',
+        },
+        soundHuman: {
+          label: '去 AI 味',
+          text: '改写选中的段落；如果没有选中内容，就改写上面的笔记，让它读起来像人写的。下面这些都要去掉，能删就删，不要改成另一种说法：结尾把前文复述一遍；用一句话解释前一句已经说清的东西；本该成段的地方拆成列表；三个近义词堆在一起而其实一个就够；“一定程度上”给判断留退路；“值得注意的是”这种打招呼式的开场；三个分句凑成一句话，只为听起来完整；“不是 A，而是 B”这种先否定再抬高的句式；用破折号代替断句。改得越少越好，笔记里的术语、人名、数字、链接和标记格式都保留。如果改完每句都很短、句与句之间什么也没有，那就是提纲，属于另一种机器腔。不要为了像人写的就故意写错字、打乱标点。只输出改写后的正文。',
+        },
+        academic: {
+          label: '学术化',
+          text: '改写选中的段落；如果没有选中内容，就改写上面的笔记，让它的写法配得上一篇论文或一份专业报告。判断和依据要对得上：有证据就直说，不要给事实加一层“可能”；证据只支持一部分，就说明它在什么范围内成立。有出处的判断写明出处；没有出处的，说明这是作者自己的看法，不要当成事实陈述。该用哪个术语就用哪个，不要为了显得更专业换一个更拗口的说法；术语第一次出现时先交代它指什么。连接词用论证本身在用的那套（因为、因此、而），口语的说法都还原成书面语，能主动句就不要被动句，除非确实不知道是谁做的。删掉那些只是听起来学术的话，例如“不难看出”“显而易见”“值得注意的是”。影响结论的局限要留下，说一次就够。要正式，但别写成法律条文那种僵硬。事实和标记格式全部保留。只输出改写后的正文。',
         },
         title: {
           label: '起标题',
