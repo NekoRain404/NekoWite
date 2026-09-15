@@ -289,6 +289,28 @@ describe('createDesktopRuntime', () => {
       expect(h.tabsMock.removeAllTabs).toHaveBeenCalled()
     })
 
+    it('serves an outside file without repointing the vault the next launch opens on', async () => {
+      // The defect, end to end. Opening a file outside every vault went through
+      // the ordinary switch, which records the root: one double-click on
+      // `~/Downloads/report.md` made that folder the vault from then on, and the
+      // session keyed to the real vault could not be restored — the next launch
+      // never came back to it. The document still opens; the workspace does not
+      // move.
+      h.takePendingOpen.mockResolvedValue(OUTSIDE)
+      localStorage.setItem(VAULT_LS_KEY, '/vault')
+
+      const runtime = createDesktopRuntime()
+      runtime.start()
+
+      await vi.waitFor(() => expect(h.tabsMock.openTab).toHaveBeenCalledWith('/elsewhere/b.md'))
+      // The file is served from a root the backend vouched for for it...
+      expect(h.gateways.fs.registerVault).toHaveBeenCalledWith('/elsewhere')
+      expect(runtime.vaultPath.value).toBe('/elsewhere')
+      // ...and the record still names the vault the user was working in, so the
+      // launch after this one comes back to it — and to its session.
+      expect(localStorage.getItem(VAULT_LS_KEY)).toBe('/vault')
+    })
+
     it('does not open the file when the switch is blocked by unsaved work', async () => {
       // The one refusal this brief allows: a dirty tab that will not save stops
       // the switch, `applyVault` says so in its own words, and the file must not
@@ -340,6 +362,45 @@ describe('createDesktopRuntime', () => {
       await vi.waitFor(() => expect(h.tabsMock.openTab).toHaveBeenCalledWith('/vault/notes/a.md'))
       await vi.waitFor(() => expect(h.tabsMock.restoreSession).toHaveBeenCalled())
       expect(h.tabsMock.openTab).toHaveBeenCalledTimes(1)
+    })
+
+    it('holds a request that arrives mid-startup out of the way of the restore', async () => {
+      // The defect (c), at the level where it did its damage. `start()` arms the
+      // launch listener BEFORE the startup pull, so a double-click while startup
+      // was still switching ran its own `applyVault` concurrently with the one
+      // restoring the user's vault. The switch is latest-wins, so the startup one
+      // was aborted where it stood: the restored tab set was never reopened, and
+      // the new root committed while the restore loop was still reading the old
+      // vault's paths.
+      let resolveFlush: () => void = () => {}
+      h.tabsMock.flushDirty.mockImplementationOnce(
+        () => new Promise<boolean>((r) => { resolveFlush = () => r(true) }),
+      )
+      h.tabsMock.flushDirty.mockResolvedValue(true)
+      localStorage.setItem(VAULT_LS_KEY, '/vault')
+      h.takePendingOpen.mockResolvedValue(OUTSIDE)
+
+      const runtime = createDesktopRuntime()
+      runtime.start()
+      await vi.waitFor(() => expect(h.tabsMock.flushDirty).toHaveBeenCalled())
+      const doorbell = h.onOpenFileRequest.mock.calls[0][0] as () => void
+
+      // The double-click lands while the startup switch is parked on its flush.
+      doorbell()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      // Nothing about the new file yet: no second switch, no vault moved, and
+      // the startup's own switch is still the one in flight.
+      expect(runtime.vaultPath.value).toBeNull()
+      expect(h.tabsMock.openTab).not.toHaveBeenCalled()
+      expect(h.gateways.fs.registerVault).not.toHaveBeenCalled()
+
+      // Once startup settles, the request is carried out — from the session the
+      // restore just put in place, which is the order the startup drain has
+      // always used for the first launch's file.
+      resolveFlush()
+      await vi.waitFor(() => expect(h.tabsMock.openTab).toHaveBeenCalledWith('/elsewhere/b.md'))
+      expect(h.tabsMock.restoreSession).toHaveBeenCalled()
     })
 
     it('releases the launch listener on teardown', async () => {
