@@ -89,6 +89,31 @@ export { useImageIntake } from './composables/use-image-intake'
 // editor-core's, and it already refuses the header row and the last row/column).
 export { useTableToolbar } from './composables/use-table-toolbar'
 
+// The image property panel's placement, on the same rAF-coalesced contract and
+// for a different anchor: a selected node's own box rather than the caret's
+// table. `model/image-panel-placement.ts` itself stays unexported — the
+// composable is its only caller (§13.11).
+export { useImagePanelAnchor } from './composables/use-image-panel-anchor'
+export type { ImagePanelAnchor, ImagePanelAnchorOptions } from './composables/use-image-panel-anchor'
+
+// The panel's form: its selection subscription, its one-transaction writes and
+// its size lock. Split out of `ui/ImagePanel.vue`, which was over §13.1's 400
+// lines with the form and the markup in one file — the component is now wiring
+// and markup, and this is the half that has to be right.
+export { useImagePanelForm } from './composables/use-image-panel-form'
+export type { ImagePanelForm, ImagePanelFormOptions } from './composables/use-image-panel-form'
+
+// The panel's form arithmetic: what size to print, and the ratio a locked resize
+// holds to. It is read by `ui/ImagePanel.vue`, which lives outside this feature.
+export {
+  displaySize,
+  intrinsicSize,
+  lockRatio,
+  pairForHeight,
+  pairForWidth,
+} from './model/image-panel-metrics'
+export type { PanelSize, PanelSizePair } from './model/image-panel-metrics'
+
 // Copy/Cut fidelity for the rendered pane (see the composable for what the
 // engine's own serialisation loses).
 export { useClipboardFidelity } from './composables/use-clipboard-fidelity'

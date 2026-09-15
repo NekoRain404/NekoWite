@@ -1,42 +1,53 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { NodeSelection } from '@milkdown/prose/state'
-import {
-  getImageAttrs,
-  deleteImageNode,
-  onImageSelectionChange,
-  restoreImageSize,
-  updateImageAttrs,
-  clearImageSelection,
-} from '@nekowite/editor-core'
-import type { NekoEditor, ImageSelectionState } from '@nekowite/editor-core'
+import { computed, ref, watch } from 'vue'
+import type { NekoEditor } from '@nekowite/editor-core'
 import { useFocusTrap } from '../composables/use-focus-trap'
+import { useImagePanelAnchor, useImagePanelForm } from '../features/editor'
 import { t } from '../i18n'
 import { isComposingKey } from '../services/key-guard'
 import SelectMenu from '../components/SelectMenu.vue'
 
 const props = defineProps<{ editor: NekoEditor | null }>()
 
-const selected = ref<ImageSelectionState | null>(null)
-const alt = ref('')
-const title = ref('')
-const link = ref('')
-const width = ref('')
-// `'left'`, not `''`: the control below is a SelectMenu, which shows the option
-// matching its value and nothing when none does. An empty value is only ever
-// reachable before the first sync, and a blank control in that window reads as
-// a bug rather than as "unset".
-const align = ref('left')
+// The form is the feature's (its selection subscription, the one-transaction
+// writes, the lock); this component is its wiring and its markup.
+const form = useImagePanelForm({ getEditor: () => props.editor })
+const { alt, title, link, width, height, align, locked, lockAvailable, natural, shownSize, visible } =
+  form
+
 /** The three alignments the editor's schema understands (see the `patch` call
- *  in the `align` watcher, which is what rejects anything else). */
+ *  the form's `align` watcher makes, which is what rejects anything else). */
 const alignOptions = computed(() => [
   { value: 'left', label: t('imagePanel.alignLeft') },
   { value: 'center', label: t('imagePanel.alignCenter') },
   { value: 'right', label: t('imagePanel.alignRight') },
 ])
-const natural = ref<{ width: number; height: number } | null>(null)
 
-const visible = computed(() => selected.value !== null)
+// Where the panel goes: next to the image it edits, inside its own pane,
+// recomputed as coordinates only (§ the anchor composable). It used to be
+// `absolute; top: 0` in the column's stylesheet — the top of the DOCUMENT,
+// which on any note longer than a screen is nowhere near the selected image.
+const anchor = useImagePanelAnchor({
+  getEditor: () => props.editor,
+  pos: computed(() => form.selected.value?.pos ?? null),
+})
+const panelStyle = computed(() => ({
+  top: `${anchor.top.value}px`,
+  left: `${anchor.left.value}px`,
+}))
+
+/** `auto` is the panel's word for "no number is stored" — the half the browser
+ *  works out for itself. A dash is the word for "not known at all". */
+const half = (n: number | null): string => (n === null ? t('imagePanel.auto') : String(n))
+const currentSizeText = computed(() => {
+  const size = shownSize.value
+  return size ? `${half(size.width)}×${half(size.height)}` : '—'
+})
+const originalSizeText = computed(() =>
+  natural.value ? `${natural.value.width}×${natural.value.height}` : '—',
+)
+
+const panelEl = ref<HTMLElement | null>(null)
 
 // Non-modal property panel focus management (reuses the app's focus-trap
 // pattern, same as the ConflictDialog): on open, focus moves to the first
@@ -44,8 +55,19 @@ const visible = computed(() => selected.value !== null)
 // (Escape or a deselection), focus returns to whatever had it before — typically
 // the editor. It stays non-modal (`aria-modal="false"`) but is focus-contained
 // only while it is open so a keyboard user can edit an image without a mouse.
-const panelEl = ref<HTMLElement | null>(null)
 useFocusTrap(panelEl, visible)
+
+// The panel is placed from its own measured box, and that box only exists once
+// it has been painted: `measure` reads it and re-places synchronously.
+watch(panelEl, (el) => anchor.measure(el))
+
+// A different editor on the same selection (a tab switch) re-reads the node.
+watch(
+  () => props.editor,
+  () => {
+    if (form.selected.value) form.syncFromNode()
+  },
+)
 
 function onKeydown(e: KeyboardEvent): void {
   // Escape dismisses the IME candidate list first; the panel has inputs.
@@ -53,155 +75,9 @@ function onKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') {
     e.preventDefault()
     e.stopPropagation()
-    clearImageSelection()
+    form.dismiss()
   }
 }
-
-let unlisten: (() => void) | null = null
-let naturalRev = 0
-// True while populating the form from the node; watchers skip during sync so
-// selecting an image never emits a spurious (no-change) transaction/undo step.
-let syncing = false
-
-function currentAttrs(): ReturnType<typeof getImageAttrs> {
-  const sel = selected.value
-  if (!sel || !props.editor) return null
-  return getImageAttrs(props.editor.getView(), sel.pos)
-}
-
-function syncFromNode(): void {
-  const sel = selected.value
-  if (!sel || !props.editor) return
-  const attrs = getImageAttrs(props.editor.getView(), sel.pos)
-  if (!attrs) return
-  syncing = true
-  alt.value = attrs.alt ?? ''
-  title.value = attrs.title ?? ''
-  link.value = attrs.src ?? ''
-  width.value = attrs.width != null ? String(attrs.width) : ''
-  align.value = attrs.align ?? 'left'
-  syncing = false
-  // Load the intrinsic size so the panel can show "original" dimensions.
-  const rev = ++naturalRev
-  natural.value = null
-  const probe = new Image()
-  probe.onload = () => {
-    if (rev !== naturalRev) return
-    natural.value = { width: probe.naturalWidth, height: probe.naturalHeight }
-  }
-  probe.onerror = () => {
-    if (rev !== naturalRev) return
-    natural.value = null
-  }
-  if (attrs.src) probe.src = attrs.src
-}
-
-/**
- * `updateImageAttrs` writes the new attrs with a `setNodeMarkup` transaction.
- * On a leaf node that is a ReplaceStep at the selection anchor, and
- * ProseMirror's mapping treats the anchor boundary of such a replace as
- * "deleted" — so the NodeSelection is remapped to a text caret, the image
- * selection plugin emits null, and the panel would close itself after every
- * single field edit (typing one character in Alt would dismiss the panel;
- * a multi-field edit was impossible). Restoring the NodeSelection with a
- * selection-only transaction (no doc change, no undo step) keeps the panel
- * open across a series of edits. The same repair belongs in editor-core's
- * attribute writers — this panel-level repair is the contract the UI needs.
- */
-function reselectImage(view: ReturnType<NekoEditor['getView']>, pos: number): void {
-  const node = view.state.doc.nodeAt(pos)
-  if (!node || node.type.name !== 'image') return
-  view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, pos)))
-}
-
-const patch = (p: Record<string, unknown>): void => {
-  const sel = selected.value
-  if (!sel || !props.editor || syncing) return
-  const view = props.editor.getView()
-  updateImageAttrs(view, sel.pos, p as never)
-  reselectImage(view, sel.pos)
-}
-
-// `flush: 'sync'` is essential: without it Vue fires these watchers
-// asynchronously, AFTER `syncFromNode()` has already reset the `syncing` guard,
-// so the initial field population would re-patch the node with identical values
-// and dispatch a spurious no-change transaction — resetting the NodeSelection
-// and closing the panel the moment it opens. Synchronous flush runs the watcher
-// while `syncing` is still true, so the guard is honored.
-watch(align, (v) => {
-  if (!visible.value) return
-  patch({ align: v === 'left' || v === 'center' || v === 'right' ? v : null })
-}, { flush: 'sync' })
-watch(width, (v) => {
-  if (!visible.value) return
-  const n = Number(v)
-  patch({ width: Number.isFinite(n) && n > 0 ? n : null })
-}, { flush: 'sync' })
-watch(alt, (v) => {
-  if (!visible.value) return
-  patch({ alt: v })
-}, { flush: 'sync' })
-watch(title, (v) => {
-  if (!visible.value) return
-  patch({ title: v })
-}, { flush: 'sync' })
-watch(link, (v) => {
-  if (!visible.value) return
-  const attrs = currentAttrs()
-  if (attrs && v !== attrs.src) patch({ src: v })
-}, { flush: 'sync' })
-
-function onRestore(): void {
-  const sel = selected.value
-  if (!sel || !props.editor) return
-  const view = props.editor.getView()
-  restoreImageSize(view, sel.pos)
-  reselectImage(view, sel.pos)
-  width.value = ''
-  syncFromNode()
-}
-function onReplace(): void {
-  const sel = selected.value
-  if (!sel || !props.editor) return
-  const view = props.editor.getView()
-  const src = link.value.trim()
-  if (src) {
-    updateImageAttrs(view, sel.pos, { src })
-    reselectImage(view, sel.pos)
-  }
-}
-function onDelete(): void {
-  const sel = selected.value
-  if (!sel || !props.editor) return
-  deleteImageNode(props.editor.getView(), sel.pos)
-  selected.value = null
-}
-
-const onSelection = (info: ImageSelectionState | null): void => {
-  if (info && props.editor) {
-    selected.value = info
-    syncFromNode()
-  } else {
-    selected.value = null
-    natural.value = null
-  }
-}
-
-// Subscribe once on mount; the module-level listener set dedups.
-unlisten = onImageSelectionChange(onSelection)
-
-watch(
-  () => props.editor,
-  () => {
-    if (selected.value) syncFromNode()
-  },
-)
-
-onBeforeUnmount(() => {
-  naturalRev += 1
-  unlisten?.()
-  unlisten = null
-})
 </script>
 
 <template>
@@ -209,6 +85,7 @@ onBeforeUnmount(() => {
     v-if="visible"
     ref="panelEl"
     class="neko-image-panel"
+    :style="panelStyle"
     role="dialog"
     aria-modal="false"
     :aria-label="t('imagePanel.aria')"
@@ -274,7 +151,23 @@ onBeforeUnmount(() => {
         >
       </label>
       <label
-        class="neko-image-field"
+        class="neko-image-field neko-image-width"
+        for="neko-image-height"
+      >
+        <span class="neko-image-field-label">{{ t('imagePanel.height') }}</span>
+        <input
+          id="neko-image-height"
+          v-model="height"
+          type="number"
+          min="1"
+          class="neko-image-input"
+        >
+      </label>
+    </div>
+
+    <div class="neko-image-row">
+      <label
+        class="neko-image-field neko-image-align"
         for="neko-image-align"
       >
         <span class="neko-image-field-label">{{ t('imagePanel.align') }}</span>
@@ -287,17 +180,38 @@ onBeforeUnmount(() => {
       </label>
     </div>
 
+    <!-- The lock holds the width/height pair together. It is disabled rather
+         than hidden when there is no ratio to hold (neither attribute set and
+         the file's own size not known yet), because a control that silently
+         does nothing reads as broken. -->
+    <label
+      class="neko-image-lock"
+      for="neko-image-lock"
+      :title="lockAvailable ? undefined : t('imagePanel.lockUnavailable')"
+    >
+      <input
+        id="neko-image-lock"
+        v-model="locked"
+        type="checkbox"
+        :disabled="!lockAvailable"
+      >
+      <span>{{ t('imagePanel.lockRatio') }}</span>
+    </label>
+
     <div class="neko-image-size">
       <div class="neko-image-size-line">
         <span class="neko-image-field-label">{{ t('imagePanel.currentSize') }}</span>
         <span class="neko-image-size-value">
-          {{ width || 'auto' }}{{ width && natural ? '×' + natural.height : '' }}
+          {{ currentSizeText }}
         </span>
       </div>
       <div class="neko-image-size-line">
         <span class="neko-image-field-label">{{ t('imagePanel.originalSize') }}</span>
-        <span class="neko-image-size-value">
-          {{ natural ? `${natural.width}×${natural.height}` : '—' }}
+        <span
+          class="neko-image-size-value"
+          :title="natural ? undefined : t('imagePanel.originalUnknown')"
+        >
+          {{ originalSizeText }}
         </span>
       </div>
     </div>
@@ -306,21 +220,21 @@ onBeforeUnmount(() => {
       <button
         type="button"
         class="neko-image-btn"
-        @click="onRestore"
+        @click="form.restore"
       >
         {{ t('imagePanel.restoreSize') }}
       </button>
       <button
         type="button"
         class="neko-image-btn"
-        @click="onReplace"
+        @click="form.replace"
       >
         {{ t('imagePanel.replace') }}
       </button>
       <button
         type="button"
         class="neko-image-btn neko-image-btn-danger"
-        @click="onDelete"
+        @click="form.remove"
       >
         {{ t('imagePanel.delete') }}
       </button>
@@ -330,9 +244,13 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .neko-image-panel {
-  position: absolute;
-  top: 0;
-  right: 8px;
+  /* Fixed, because the placement is in viewport coordinates and the pane it is
+     clamped to scrolls underneath it — the same contract the table toolbar
+     holds. Never `absolute` at the column's top: that is where this panel used
+     to open, a screen away from the image being edited. No transition sits on
+     the follow: a panel that eases across the pane reads as lag on the thing
+     the pointer is holding. */
+  position: fixed;
   z-index: 40;
   width: 240px;
   padding: 10px 12px;
@@ -378,8 +296,29 @@ onBeforeUnmount(() => {
 .neko-image-width {
   flex: 1;
 }
+.neko-image-align {
+  flex: 1;
+}
 .neko-image-row .neko-image-field-label {
   width: 44px;
+}
+.neko-image-lock {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  color: var(--app-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.neko-image-lock input:disabled {
+  cursor: default;
+}
+/* The disabled control and its label dim together: a box that stayed at full
+   strength while its label greyed out reads as two different states. */
+.neko-image-lock:has(input:disabled) {
+  opacity: 0.6;
+  cursor: default;
 }
 .neko-image-size {
   margin: 8px 0;

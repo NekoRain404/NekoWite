@@ -86,12 +86,23 @@ export const editor = {
       titleField: 'Title',
       link: 'Link',
       width: 'Width',
+      height: 'Height',
+      /** The panel's word for "no number is stored" — the half the browser works
+       *  out for itself. It reads in the size row and in the empty fields. */
+      auto: 'auto',
       align: 'Align',
       alignLeft: 'Left',
       alignCenter: 'Center',
       alignRight: 'Right',
+      lockRatio: 'Lock ratio',
+      /** Said when the lock has no ratio to hold: neither attribute is set and
+       *  the file's own size is not known yet. */
+      lockUnavailable: 'Not available yet — this image’s own size is not known',
       currentSize: 'Current',
       originalSize: 'Original',
+      /** The dash in the Original row, which for a vault image is what the
+       *  panel used to show for every picture (it probed the raw src). */
+      originalUnknown: 'Not known — the image has not loaded',
       restoreSize: 'Restore size',
       replace: 'Replace',
       delete: 'Delete',
@@ -198,12 +209,20 @@ export const editor = {
       titleField: '标题',
       link: '链接',
       width: '宽度',
+      height: '高度',
+      /** 「没有存数字」的说法——那一半由浏览器自己算。尺寸行与空输入框都用它。 */
+      auto: '自动',
       align: '对齐',
       alignLeft: '左对齐',
       alignCenter: '居中',
       alignRight: '右对齐',
+      lockRatio: '锁定比例',
+      /** 没有比例可锁时（两个属性都没设、也还不知道图片本身尺寸）的说明。 */
+      lockUnavailable: '暂不可用——尚不知道该图片本身的尺寸',
       currentSize: '当前尺寸',
       originalSize: '原始尺寸',
+      /** 原始尺寸里的那个「—」：vault 图片以前每一张都是这个（探测的是原始 src）。 */
+      originalUnknown: '未知——图片尚未加载',
       restoreSize: '恢复尺寸',
       replace: '替换图片',
       delete: '删除图片',
