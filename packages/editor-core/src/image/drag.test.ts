@@ -84,4 +84,32 @@ describe('resize drag undo coalescing (editor)', () => {
 
     expect(undoDepth(view.state)).toBe(before)
   })
+
+  it('a drag without Shift clears the height it finds', async () => {
+    // The commit is the drag's whole output, and `height = null` is what "the
+    // file draws it" means: the pair the reader sees is gone, so a later
+    // keyboard resize has to re-derive the ratio from the file's own pixels.
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open('![a](attachments/a.png){width=400 height=300}')
+
+    const img = el.querySelector('img') as HTMLImageElement
+    const view = editor.getView()
+    let pos: number | null = null
+    view.state.doc.descendants((n, p) => {
+      if (n.type.name === 'image') {
+        pos = p
+        return false
+      }
+      return true
+    })
+    if (pos === null) throw new Error('no image node')
+
+    simulateDrag(img, [5, 30])
+
+    const node = view.state.doc.nodeAt(pos)
+    expect(node?.attrs.width).toBe(430) // 400 + 30px of travel
+    expect(node?.attrs.height).toBeNull()
+  })
 })
