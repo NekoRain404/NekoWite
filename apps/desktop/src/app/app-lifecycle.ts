@@ -2,6 +2,7 @@ import { getCurrentWindow, type CloseRequestedEvent } from '@tauri-apps/api/wind
 import { useTabsStore } from '../stores/tabs'
 import { useAppearanceStore } from '../stores/appearance'
 import { createUnflushableRescue } from '../stores/unflushable-rescue'
+import { createUntitledRescue } from '../stores/untitled-rescue'
 import type { WindowTracking } from './window-state'
 import { notifyError, notifyRecovery } from '../services/errors'
 import { requestUntitledVaultSwitch } from './recovery-closed-loop'
@@ -105,6 +106,35 @@ export function createAppLifecycle(deps: {
     saveUntilSettled: (id) => tabs.saveUntilSettled(id),
   })
 
+  /**
+   * The question this close asks about untitled dirty tabs, at the moment the
+   * window actually goes (`stores/untitled-rescue.ts`, where the loop lives —
+   * "Close all" and the vault switch ask the same factory for it).
+   *
+   * It is asked HERE, and not of a snapshot taken before the prompt, because the
+   * prompt is a corner toast with no focus trap: the app stays live while the
+   * user reads it, and every tab they can type into is one they can type into
+   * DURING it. `getCurrentWindow().close()` below ends the process, and with it
+   * every autosave timer the typing armed.
+   */
+  const rescueUntitledTabs = createUntitledRescue({
+    listUntitledDirty: () => tabs.untitledDirtyTabs(),
+    listTabs: () => tabs.tabs,
+    ask: (count) =>
+      requestUntitledVaultSwitch({
+        count,
+        notify: notifyRecovery,
+        // The close-all wording: the default names a vault switch, which is not
+        // what this user is doing.
+        messageKey: 'tabs.untitledCloseAllMsg',
+      }),
+    settle: (id) => tabs.saveUntilSettled(id),
+    // A tab the user chose to discard leaves the set as the answer arrives, as
+    // it always did: a later refusal can still keep the window open, and a tab
+    // they ruled on must not be waiting behind it.
+    onDiscard: (tab) => tabs.removeTab(tab.id),
+  })
+
   // With autosave on, a dirty tab's pending timer may never fire if the window
   // is closed first. Rather than silently losing those edits, prompt the user
   // (the webview surfaces the native "leave?" confirm); the crash-recovery
@@ -156,33 +186,12 @@ export function createAppLifecycle(deps: {
       }
       // Unnamed dirty docs need a Save-As dialog a background flush must not open,
       // so route them through the existing keep-or-discard prompt, saving each (or
-      // discarding) before the window closes. The wording is the close-all one:
-      // the default names a vault switch, which is not what this user is doing.
-      const untitled = tabs.untitledDirtyTabs()
-      if (untitled.length > 0) {
-        const choice = await requestUntitledVaultSwitch({
-          count: untitled.length,
-          notify: notifyRecovery,
-          messageKey: 'tabs.untitledCloseAllMsg',
-        })
-        if (choice === 'save') {
-          for (const tab of untitled) {
-            // The gate, not `saveTab`: an untitled tab is saved here by the
-            // Save-As write, and that write's `true` says only that the text it
-            // captured landed. This IS the close — the timer a keystroke armed
-            // is cancelled by it — so nothing else can carry the newer text, and
-            // a keystroke during the write would be destroyed rather than
-            // deferred (see `tab-settle.ts`). The gate retries through
-            // `saveTab(id)`, by which time the tab has the picked path, so the
-            // dialog opens once.
-            if (!(await tabs.saveUntilSettled(tab.id))) {
-              notifyError(t('tabs.unsavedWorkBlockerClose'))
-              return
-            }
-          }
-        } else {
-          for (const tab of untitled) tabs.removeTab(tab.id)
-        }
+      // discarding) before the window closes. Asked at the moment the window goes
+      // rather than at the moment the set was first read, and repeated while the
+      // flush's answer is overtaken by typing — see `rescueUntitledTabs`.
+      if (!(await rescueUntitledTabs())) {
+        notifyError(t('tabs.unsavedWorkBlockerClose'))
+        return
       }
       // All work is on disk (or explicitly discarded): capture + flush, then close.
       tabs.captureSession()

@@ -86,7 +86,16 @@ describe('createAppLifecycle', () => {
     h.tabsMock.flushDirty.mockResolvedValue(true)
     h.tabsMock.untitledDirtyTabs.mockReturnValue([])
     h.tabsMock.saveTab.mockResolvedValue(true)
-    h.tabsMock.saveUntilSettled.mockResolvedValue(true)
+    // The gate's answer, modelled as the gate defines it: `true` is "this tab
+    // holds nothing that is not on disk" (`tab-settle.ts`), so the fixture tab it
+    // answers for stops being dirty. The close reads both halves of that — it
+    // settles the tabs the answer above was overtaken by, and a stub that says
+    // true while the tab stays dirty is a tab no close can ever finish with.
+    h.tabsMock.saveUntilSettled.mockImplementation(async (id: string) => {
+      const tab = h.tabsMock.tabs.find((t) => t.id === id)
+      if (tab) tab.dirty = false
+      return true
+    })
     h.tabsMock.removeTab.mockImplementation(() => {})
     h.tabsMock.saveActive.mockResolvedValue(undefined)
     h.tabsMock.captureSession.mockImplementation(() => {})

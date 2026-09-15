@@ -26,6 +26,7 @@ import type { FsPort } from '../platform/gateways/contracts'
 // is constructed by the composition root, which passes the instance in.
 import { useTabsStore } from '../stores/tabs'
 import { createUnflushableRescue } from '../stores/unflushable-rescue'
+import { createUntitledRescue } from '../stores/untitled-rescue'
 import { invalidateImageResolution } from '@nekowite/editor-core'
 import { notifyError, notifyRecovery } from '../services/errors'
 import { persistence } from '../services/persistence'
@@ -173,30 +174,34 @@ export function createVaultSwitch(deps: VaultSwitchDeps): VaultSwitch {
     // silently discard them either — surface a keep-or-discard prompt and block
     // the switch until the user chooses: save-as each (restore) and proceed, or
     // discard them (dismiss) and proceed.
-    const untitled = tabs.untitledDirtyTabs()
-    if (untitled.length > 0) {
-      const choice = await requestUntitledVaultSwitch({ count: untitled.length, notify: notifyRecovery })
-      if (isStale()) return
-      if (choice === 'save') {
-        for (const tab of untitled) {
-          // The gate, not `saveTab`: an untitled tab is saved here by the
-          // Save-As write, and that write's `true` says only that the text it
-          // captured landed. `removeAllTabs()` below is the point of no return
-          // for the tab set, and a keystroke during the write would go with it —
-          // the write path's own comment promises the newer text a pending
-          // autosave timer of its own (see `tab-settle.ts`), and this switch is
-          // where that promise stops being keepable.
-          const settled = await tabs.saveUntilSettled(tab.id)
-          if (isStale()) return
-          if (!settled) {
-            notifyError(t('tabs.unsavedWorkBlocker'))
-            return
-          }
-        }
-      } else {
-        for (const tab of untitled) tabs.removeTab(tab.id)
-        if (isStale()) return
-      }
+    //
+    // Asked at the moment the set actually goes — `removeAllTabs()` below — and
+    // not of a snapshot taken here, because the prompt is a corner toast with no
+    // focus trap: the app stays live while the user reads it and every tab they
+    // can type into is one they can type into DURING it, which the set then takes
+    // with its autosave timers (`stores/untitled-rescue.ts`: one loop, three
+    // routes). Built per switch rather than beside `rescueUnflushableTabs` above
+    // because one of its ports is this switch's own `isStale`.
+    const rescueUntitledTabs = createUntitledRescue({
+      listUntitledDirty: () => tabs.untitledDirtyTabs(),
+      listTabs: () => tabs.tabs,
+      ask: (count) => requestUntitledVaultSwitch({ count, notify: notifyRecovery }),
+      // The gate, not `saveTab`: an untitled tab is saved here by the Save-As
+      // write, and that write's `true` says only that the text it captured
+      // landed. `removeAllTabs()` below is the point of no return for the tab
+      // set, and a keystroke during the write would go with it — the write
+      // path's own comment promises the newer text a pending autosave timer of
+      // its own (see `tab-settle.ts`), and this switch is where that promise
+      // stops being keepable.
+      settle: (id) => tabs.saveUntilSettled(id),
+      onDiscard: (tab) => tabs.removeTab(tab.id),
+      isStale,
+    })
+    if (!(await rescueUntitledTabs())) {
+      // A superseded switch says nothing: the refusal is a stale reason, and the
+      // switch that replaced this one is the one the user is looking at.
+      if (!isStale()) notifyError(t('tabs.unsavedWorkBlocker'))
+      return
     }
     // Authorize the vault root with the backend BEFORE any path-confined command:
     // the Rust commands now reject any root the user did not open this session.
