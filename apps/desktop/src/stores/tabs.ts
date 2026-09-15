@@ -207,6 +207,10 @@ export const useTabsStore = defineStore('tabs', () => {
     /** The conflict prompt's "Keep local": the user's answer, recorded on the
      *  tab where the next save reads it (see `tab-write-preconditions.ts`). */
     keepLocalConflict: save.keepLocalConflict,
+    /** The per-tab gate the closes ask, and the app's own close/vault-switch
+     *  routes with them: write until the tab holds nothing that is not on disk
+     *  (`tab-settle.ts`). One landed write is not a saved tab. */
+    saveUntilSettled: save.saveUntilSettled,
     flushDirty: save.flushDirty,
     // persistence
     scheduleAutosave: persistence.scheduleAutosave,

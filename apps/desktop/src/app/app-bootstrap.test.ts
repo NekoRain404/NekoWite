@@ -30,6 +30,10 @@ const h = vi.hoisted(() => {
     reconcilePlaceholders: vi.fn(),
     untitledDirtyTabs: vi.fn(),
     saveTab: vi.fn(),
+    /** The gate the switch asks for a tab with no path yet: the Save-As write's
+     *  `true` says one write landed, and `removeAllTabs()` follows immediately
+     *  (`tab-settle.ts`). */
+    saveUntilSettled: vi.fn(),
     removeTab: vi.fn(),
     removeAllTabs: vi.fn(),
     setVault: vi.fn(),
@@ -144,6 +148,7 @@ describe('createDesktopRuntime', () => {
     h.tabsMock.flushDirty.mockResolvedValue(true)
     h.tabsMock.untitledDirtyTabs.mockReturnValue([])
     h.tabsMock.saveTab.mockResolvedValue(true)
+    h.tabsMock.saveUntilSettled.mockResolvedValue(true)
     h.tabsMock.removeTab.mockImplementation(() => {})
     h.tabsMock.removeAllTabs.mockImplementation(() => {})
     h.tabsMock.setVault.mockImplementation(() => {})
@@ -397,6 +402,33 @@ describe('createDesktopRuntime', () => {
       expect(runtime.vaultPath.value).toBeNull()
       expect(h.tabsMock.setVault).not.toHaveBeenCalled()
       expect(h.notifyError).toHaveBeenCalled()
+    })
+
+    it('saves an untitled tab through the settle gate, not a single write', async () => {
+      // An untitled tab never reaches `flushDirty` (it would need a Save-As
+      // dialog a bulk flush must not open), so the prompt's own loop saves it —
+      // and the gate is what that loop asks, because `removeAllTabs()` follows
+      // immediately and a keystroke during the Save-As write would go with it.
+      h.tabsMock.untitledDirtyTabs.mockReturnValue([{ id: 'tab-untitled', path: null }])
+      h.requestUntitledVaultSwitch.mockResolvedValue('save')
+      const runtime = createDesktopRuntime()
+      await runtime.applyVault('/vault')
+
+      expect(h.tabsMock.saveUntilSettled).toHaveBeenCalledWith('tab-untitled')
+      expect(h.tabsMock.saveTab).not.toHaveBeenCalled()
+      expect(h.tabsMock.setVault).toHaveBeenCalledWith('/vault')
+    })
+
+    it('blocks the switch when an untitled tab cannot be settled', async () => {
+      h.tabsMock.untitledDirtyTabs.mockReturnValue([{ id: 'tab-untitled', path: null }])
+      h.requestUntitledVaultSwitch.mockResolvedValue('save')
+      h.tabsMock.saveUntilSettled.mockResolvedValue(false)
+      const runtime = createDesktopRuntime()
+      await runtime.applyVault('/vault')
+
+      expect(h.notifyError).toHaveBeenCalledWith('tabs.unsavedWorkBlocker')
+      expect(h.tabsMock.setVault).not.toHaveBeenCalled()
+      expect(runtime.vaultPath.value).toBeNull()
     })
 
     it('does not switch when the vault root fails to register; stays on the current vault and surfaces an error', async () => {

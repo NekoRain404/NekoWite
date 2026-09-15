@@ -119,6 +119,20 @@ export function createAppLifecycle(deps: {
       // name. A cancelled dialog, or a copy that was refused in turn, leaves
       // this false and the window open, with the text still in the editor.
       if (!(await tabs.saveTab(tab.id, { offerCopy: true }))) return false
+      // That true is "the text this save captured is on disk", not "this tab is
+      // saved": a keystroke landing while the copy was written leaves the tab
+      // dirty holding text no file has, and the `close()` this rescue exists to
+      // let through cancels the autosave timer the keystroke armed — so the
+      // "own save" the write path relies on can never happen on this route.
+      // Settle it where the copy put it, with the gate the closes use.
+      //
+      // The copy option does not survive the first attempt, by construction:
+      // `saveUntilSettled` retries through `saveTab(id)`, and a retry that still
+      // offered a copy would re-open a dialog for a tab that has a path now. A
+      // tab nobody typed into during the copy is settled already, and asking the
+      // gate again would write the same bytes a second time.
+      const copied = tabs.tabs.find((x) => x.id === tab.id)
+      if (copied?.dirty && !(await tabs.saveUntilSettled(tab.id))) return false
     }
     return true
   }
@@ -185,8 +199,15 @@ export function createAppLifecycle(deps: {
         })
         if (choice === 'save') {
           for (const tab of untitled) {
-            const saved = await tabs.saveTab(tab.id)
-            if (!saved) {
+            // The gate, not `saveTab`: an untitled tab is saved here by the
+            // Save-As write, and that write's `true` says only that the text it
+            // captured landed. This IS the close — the timer a keystroke armed
+            // is cancelled by it — so nothing else can carry the newer text, and
+            // a keystroke during the write would be destroyed rather than
+            // deferred (see `tab-settle.ts`). The gate retries through
+            // `saveTab(id)`, by which time the tab has the picked path, so the
+            // dialog opens once.
+            if (!(await tabs.saveUntilSettled(tab.id))) {
               notifyError(t('tabs.unsavedWorkBlockerClose'))
               return
             }

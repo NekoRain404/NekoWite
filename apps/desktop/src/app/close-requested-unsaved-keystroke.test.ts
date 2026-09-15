@@ -36,7 +36,7 @@ const h = vi.hoisted(() => {
     restoreHistory: vi.fn(async () => ''),
     createDir: vi.fn(async () => ''),
     renameEntry: vi.fn(async () => ''),
-    saveFileDialog: vi.fn(async () => null),
+    saveFileDialog: vi.fn(async (): Promise<string | null> => null),
   }
   return {
     windowMock,
@@ -71,6 +71,46 @@ vi.mock('../i18n', () => ({ t: (key: string): string => key }))
 
 import { createAppLifecycle } from './app-lifecycle'
 import { useTabsStore } from '../stores/tabs'
+import { READ_ONLY_PREFIX } from '../stores/write-refusal'
+
+const RO = '/vault/ro.md'
+const COPY = '/vault/ro (copy).md'
+
+/** The refusal the backend returns for a protected file, token and all. */
+function readOnlyRefusal(path: string): Error {
+  return new Error(`${READ_ONLY_PREFIX}could not replace ${path}: the file is read-only`)
+}
+
+/** The fs as the backend behaves for a protected note: the note's own file
+ *  refuses every write, a copy under another name takes it, and the FIRST
+ *  accepted write is held open — the interleaving is controllable rather than
+ *  timed. */
+function protectedNote(protectedPath: string) {
+  const accepted: Array<{ path: string; content: string }> = []
+  let parked: Array<(fail: boolean) => void> = []
+  let holdNext = true
+  h.fs.write.mockImplementation((_v: string, path: string, content: string) => {
+    if (path === protectedPath) return Promise.reject(readOnlyRefusal(path))
+    accepted.push({ path, content })
+    if (!holdNext) return Promise.resolve(null)
+    holdNext = false
+    return new Promise<string | null>((resolve, reject) =>
+      parked.push((fail) => (fail ? reject(new Error('disk full')) : resolve(null))),
+    )
+  })
+  return {
+    accepted,
+    get started() {
+      return accepted.length > 0
+    },
+    release: () => {
+      holdNext = false
+      const waiting = parked
+      parked = []
+      waiting.forEach((go) => go(false))
+    },
+  }
+}
 
 type CloseHandler = (e: { preventDefault: () => void }) => Promise<void>
 
@@ -274,5 +314,179 @@ describe('a window close whose flush is overtaken by a keystroke', () => {
     expect(editor.doc).toBe(`${tabs.tabs[0].content}!`)
     expect(tabs.tabs[0].dirty).toBe(true)
     expect(written).toHaveLength(3)
+  })
+
+  it('carries a keystroke typed during the rescue copy, before the window closes', async () => {
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    await tabs.openTab(RO)
+    const tab = tabs.tabs[0]
+    const editor = fakeEditor('v1')
+    await attachPane(editor, 'v1', '/vault', tab.id)
+
+    // The file refuses every write, so `flushDirty()` can never settle this tab
+    // and the close has to take the copy route the user is offered.
+    const write = protectedNote(RO)
+    h.fs.read.mockImplementation(
+      async () => write.accepted[write.accepted.length - 1]?.content ?? 'v1',
+    )
+    h.fs.saveFileDialog.mockResolvedValue(COPY)
+    h.notifyRecovery.mockImplementation((p: { onRestore: () => void }) => p.onRestore())
+    tabs.markDirty(tab.id)
+    vi.useFakeTimers()
+
+    const closedWhileDirty: boolean[] = []
+    h.windowMock.close.mockImplementation(() => {
+      closedWhileDirty.push(tabs.tabs.some((t) => t.dirty))
+      return Promise.resolve()
+    })
+
+    const lifecycle = createAppLifecycle({ windowTracking: h.windowTracking })
+    await lifecycle.mount()
+
+    const preventDefault = vi.fn()
+    const closing = registeredCloseHandler()({ preventDefault })
+    await vi.waitFor(() => expect(write.started).toBe(true))
+
+    // The keystroke lands while the COPY is being written. The copy carries the
+    // text as it was when the write started; the tab keeps the newer text and
+    // stays dirty, so the close that follows is the only thing that can still
+    // lose it.
+    editor.type(' NEW TEXT')
+    await vi.advanceTimersByTimeAsync(150)
+    expect(tab.dirty).toBe(true)
+    expect(tab.content).toBe('v1 NEW TEXT')
+
+    write.release()
+    await closing
+
+    expect(preventDefault).toHaveBeenCalled()
+    expect(closedWhileDirty).toEqual([false])
+    // The copy, and then the newer text under the copy's own name: the close
+    // cancelled the autosave timer the keystroke armed, so this route is the
+    // only one that could have carried it.
+    expect(write.accepted.map((w) => w.content)).toEqual(['v1', 'v1 NEW TEXT'])
+    expect(write.accepted.map((w) => w.path)).toEqual([COPY, COPY])
+  })
+
+  it('takes the copy route in ONE write when nobody types during it', async () => {
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    await tabs.openTab(RO)
+    const tab = tabs.tabs[0]
+    tabs.markDirty(tab.id)
+    vi.useFakeTimers()
+
+    const write = protectedNote(RO)
+    write.release()
+    h.fs.read.mockResolvedValue('v1')
+    h.fs.saveFileDialog.mockResolvedValue(COPY)
+    h.notifyRecovery.mockImplementation((p: { onRestore: () => void }) => p.onRestore())
+
+    const lifecycle = createAppLifecycle({ windowTracking: h.windowTracking })
+    await lifecycle.mount()
+
+    await registeredCloseHandler()({ preventDefault: vi.fn() })
+
+    // A settled tab needs no second (or third) write of the same bytes — one
+    // history snapshot per attempt is what a settle loop that always retries
+    // would cost every ordinary close.
+    expect(write.accepted.map((w) => w.content)).toEqual(['v1'])
+    expect(h.windowMock.close).toHaveBeenCalled()
+  })
+
+  it('writes an untitled tab\'s newer text before closing over it', async () => {
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    await tabs.openTab(null, 'untitled body')
+    const tab = tabs.tabs[0]
+    const editor = fakeEditor('untitled body')
+    await attachPane(editor, 'untitled body', '/vault', tab.id)
+
+    const write = parkedWrite()
+    // The disk a save reads before it writes, as the landed write leaves it.
+    h.fs.read.mockImplementation(
+      async () => write.written[write.written.length - 1] ?? 'untitled body',
+    )
+    h.fs.saveFileDialog.mockResolvedValue('/vault/picked.md')
+    h.requestUntitledVaultSwitch.mockResolvedValue('save')
+    tabs.markDirty(tab.id)
+    vi.useFakeTimers()
+
+    const closedWhileDirty: boolean[] = []
+    h.windowMock.close.mockImplementation(() => {
+      closedWhileDirty.push(tabs.tabs.some((t) => t.dirty))
+      return Promise.resolve()
+    })
+
+    const lifecycle = createAppLifecycle({ windowTracking: h.windowTracking })
+    await lifecycle.mount()
+
+    const preventDefault = vi.fn()
+    const closing = registeredCloseHandler()({ preventDefault })
+    await vi.waitFor(() => expect(write.started).toBe(true))
+
+    // Typed while the picked file is being written: the tab has a path by now,
+    // so the newer text needs no second dialog — only a second write.
+    editor.type(' MORE')
+    await vi.advanceTimersByTimeAsync(150)
+    expect(tab.dirty).toBe(true)
+    expect(tab.content).toBe('untitled body MORE')
+
+    write.release()
+    write.landFromNowOn()
+    await closing
+
+    expect(preventDefault).toHaveBeenCalled()
+    expect(closedWhileDirty).toEqual([false])
+    expect(write.written).toEqual(['untitled body', 'untitled body MORE'])
+  })
+
+  it('settles an untitled tab nobody typed into in ONE write', async () => {
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    await tabs.openTab(null, 'untitled body')
+    const tab = tabs.tabs[0]
+
+    const write = parkedWrite()
+    write.release()
+    write.landFromNowOn()
+    h.fs.saveFileDialog.mockResolvedValue('/vault/picked.md')
+    h.requestUntitledVaultSwitch.mockResolvedValue('save')
+    tabs.markDirty(tab.id)
+    vi.useFakeTimers()
+
+    const lifecycle = createAppLifecycle({ windowTracking: h.windowTracking })
+    await lifecycle.mount()
+
+    await registeredCloseHandler()({ preventDefault: vi.fn() })
+
+    // The gate the close now asks retries on `dirty`, not on principle: a tab
+    // that was clean when the write landed is settled, and asking again would
+    // write the same bytes a second and third time.
+    expect(write.written).toEqual(['untitled body'])
+    expect(h.windowMock.close).toHaveBeenCalled()
+  })
+
+  it('keeps the window open when an untitled tab\'s save fails', async () => {
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    await tabs.openTab(null, 'untitled body')
+    const tab = tabs.tabs[0]
+
+    h.fs.write.mockRejectedValue(new Error('disk full'))
+    h.fs.saveFileDialog.mockResolvedValue('/vault/picked.md')
+    h.requestUntitledVaultSwitch.mockResolvedValue('save')
+    tabs.markDirty(tab.id)
+    vi.useFakeTimers()
+
+    const lifecycle = createAppLifecycle({ windowTracking: h.windowTracking })
+    await lifecycle.mount()
+
+    await registeredCloseHandler()({ preventDefault: vi.fn() })
+
+    expect(h.windowMock.close).not.toHaveBeenCalled()
+    expect(h.notifyError).toHaveBeenCalledWith('tabs.unsavedWorkBlockerClose')
+    expect(tab.dirty).toBe(true)
   })
 })
