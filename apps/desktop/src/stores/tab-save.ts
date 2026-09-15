@@ -96,6 +96,12 @@ export function createTabSave(deps: TabSaveDeps) {
   const now = deps.now ?? (() => Date.now())
   // Which writes are ours (see `self-writes.ts`).
   const selfWrites = createSelfWrites(now)
+  // What this path remembers about each tab — a write in flight, its edit
+  // revision, the state the status line reads (see `tab-save-state.ts`). Made
+  // before the refusal route below, which decides whether the user typed with
+  // this same revision: one question, one kind of evidence.
+  const saveState = createTabSaveState({ tabs })
+  const { markSaving, markSaved, stateOf, noteEdit, revisionOf } = saveState
   // What a rejected write tells the user, and the route out of a refusal: the
   // text goes to a name they pick, and the tab follows it there.
   const refusedSave = createRefusedSaveAnswer({
@@ -104,6 +110,7 @@ export function createTabSave(deps: TabSaveDeps) {
     t,
     notifyError,
     announce,
+    revisionOf,
     noteSelfWrite: (path) => selfWrites.note(path),
   })
 
@@ -114,11 +121,6 @@ export function createTabSave(deps: TabSaveDeps) {
   // Whether a write may happen at all, including the read that tells an edit
   // somebody else made from our own saved text; see the module note.
   const preconditions = createWritePreconditions({ files, vault, t, notifyError })
-
-  // What this path remembers about each tab — a write in flight, its edit
-  // revision, the state the status line reads (see `tab-save-state.ts`).
-  const saveState = createTabSaveState({ tabs })
-  const { markSaving, markSaved, stateOf, noteEdit, revisionOf } = saveState
 
   /**
    * Saves that have not settled yet, keyed by tab id.
@@ -226,7 +228,9 @@ export function createTabSave(deps: TabSaveDeps) {
     const contentAtStart = tab.content
     // The evidence that decides whether this save may call the tab saved, read
     // BEFORE the write (see `tab-save-state.ts`): the revision moves at the
-    // keystroke, and the write spans an await the user can type across.
+    // keystroke, and the write spans an await the user can type across. It
+    // travels with the refused write as well — a save that ends in a copy
+    // answers the same question across its own awaits (`refused-save.ts`).
     const revisionAtStart = revisionOf(tab.id)
     // What is at the path is somebody else's edit unless it still holds the bytes
     // this tab last read or wrote (L05's save-time half; the read and the policy
@@ -324,7 +328,7 @@ export function createTabSave(deps: TabSaveDeps) {
       return await refusedSave.answer(
         e,
         tab,
-        { vaultPath: vaultAtStart, path, content, contentAtStart, editor },
+        { vaultPath: vaultAtStart, path, content, contentAtStart, revisionAtStart, editor },
         opts.offerCopy === true,
       )
     } finally {

@@ -52,25 +52,36 @@ export interface RefusedSaveCopyDeps {
   notifyError(message: string): void
   /** Screen-reader status channel ("the text went to another file"). */
   announce(message: string): void
+  /** A tab's edit revision (`tab-save-state.ts`): one bump per doc-changing
+   *  keystroke, taken at the keystroke rather than at the pane's publish.
+   *  Whether the user typed across this route is asked of the LIVE value, long
+   *  after `where` was filled in, so it arrives as the reader and not as a
+   *  number — the same evidence, read the same way, as `runSaveTab`'s. */
+  revisionOf(id: string): number
   /** Arms the self-write window for the copy's path, so the watcher does not
    *  read our own new file back as an external change. */
   noteSelfWrite(path: string): void
 }
 
 /** The write that was refused: what it would have carried, and where it was
- *  aimed. `contentAtStart` is the tab's text when the save began — the
- *  difference between it and `content` is what the user typed while the write
- *  was in flight. */
+ *  aimed.
+ *
+ *  Both of the "when the save began" fields are snapshots of the same moment,
+ *  and they answer different halves of it. `contentAtStart` is the text the
+ *  write carried, so the plugin's rewrite is `content !== contentAtStart`;
+ *  `revisionAtStart` is the evidence that the USER moved, because the text can
+ *  be a debounce window behind them. */
 export interface RefusedWrite {
   vaultPath: string
   path: string
   content: string
   contentAtStart: string
+  revisionAtStart: number
   editor: unknown
 }
 
 export function createRefusedSaveAnswer(deps: RefusedSaveCopyDeps) {
-  const { files, settings, t, notifyError, announce, noteSelfWrite } = deps
+  const { files, settings, t, notifyError, announce, revisionOf, noteSelfWrite } = deps
 
   /**
    * Answer a write that did not land. Returns true only once the text is on
@@ -130,7 +141,19 @@ export function createRefusedSaveAnswer(deps: RefusedSaveCopyDeps) {
     // Same three cases as an ordinary save, in the same order of precedence: the
     // text on disk is `content`, and the tab is clean only while nothing has
     // moved since that text was captured.
-    const userTyped = tab.content !== where.contentAtStart
+    //
+    // "Nothing has moved" is asked of the edit revision, which is what
+    // `runSaveTab` asks it of and for the reason its comment gives: the revision
+    // moves AT the keystroke, while `tab.content` moves only when the rendered
+    // pane's 120 ms publish debounce fires. Compared against the text, a
+    // keystroke typed across this route's awaits (the refused write, the dialog,
+    // the copy's write) is invisible — it is still the text the save captured —
+    // and the tab was marked clean while holding text that was on no disk.
+    // `dirty` is the only record that such text exists, and every protection for
+    // unsaved work reads it: the autosave timer, `hasUnsavedWork()`, the
+    // window-close flush and the close-tab save all skip the work, so the text
+    // sat in the editor looking saved until the tab or the app closed.
+    const userTyped = revisionOf(tab.id) !== where.revisionAtStart
     tab.path = copyPath
     if (!userTyped) {
       if (where.content !== where.contentAtStart) armSuppressReapply(tab.id)
