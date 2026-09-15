@@ -12,6 +12,17 @@ export interface OpenMathOptions {
   schema?: Schema
 }
 
+/**
+ * What the dialog says when `insertMath` refuses.
+ *
+ * The only refusal reachable from here is display math inside a table cell
+ * (`insertMath` has no other reason to say no, and this dialog is only opened
+ * from a caret), so the message can name the case and the way out instead of
+ * being a generic "could not insert".
+ */
+const REFUSED_IN_CELL =
+  '表格单元格内不能插入块级公式 $$…$$——它会把表格拆成两半。请改用行内公式 $…$，或在表格外的位置插入。'
+
 export function openMathDialog(view: EditorView, opts: OpenMathOptions): void {
   warmMathLive()
   const overlay = document.createElement('div')
@@ -21,6 +32,9 @@ export function openMathDialog(view: EditorView, opts: OpenMathOptions): void {
   let mf: MathEditorHandle | null = null
   let resolved: 'inline' | 'display' = opts.mode
   let app: App | null = null
+  // The dialog's own message area, filled in only by a refused insert — the one
+  // outcome that keeps the dialog open.
+  const refusal = ref<string | null>(null)
   // Set once the dialog is closed, so an upgrade that resolves late does not
   // attach a MathLive field to a host that is already detached.
   let closed = false
@@ -67,12 +81,16 @@ export function openMathDialog(view: EditorView, opts: OpenMathOptions): void {
   }
 
   const onConfirm = (): void => {
+    // `dispose` stays false for exactly one outcome: a refused insert. The
+    // dialog is the only place the typed LaTeX exists, so closing it would
+    // destroy the user's work and any message afterwards would be an apology for
+    // a loss. Every other outcome — an insert that landed, an empty field, a
+    // throw from the dispatch — disposes, as it always has; a dialog that never
+    // closes would be its own defect.
+    let dispose = true
     try {
       const latex = mf?.getValue() ?? ''
-      if (!latex.trim()) {
-        cleanup()
-        return
-      }
+      if (!latex.trim()) return
       const nodeMode = isEditingExisting ? opts.mode : resolved
       if (opts.existingPos != null && opts.schema) {
         const tr = view.state.tr
@@ -80,11 +98,12 @@ export function openMathDialog(view: EditorView, opts: OpenMathOptions): void {
           nodeMode === 'inline' ? opts.schema.nodes.math_inline : opts.schema.nodes.math_display
         const node = nodeType.create({ latex })
         view.dispatch(tr.replaceWith(opts.existingPos, opts.existingPos + 1, node))
-      } else {
-        insertMath(view, latex, nodeMode)
+      } else if (!insertMath(view, latex, nodeMode)) {
+        refusal.value = REFUSED_IN_CELL
+        dispose = false
       }
     } finally {
-      cleanup()
+      if (dispose) cleanup()
     }
   }
 
@@ -99,6 +118,9 @@ export function openMathDialog(view: EditorView, opts: OpenMathOptions): void {
         if (isEditingExisting) return
         resolved = m
         mode.value = m
+        // The message describes the mode just left. Keeping it while the user
+        // picks the one that would work would accuse the wrong action.
+        refusal.value = null
       }
       return () =>
         h('div', { class: 'math-dialog', onClick: (e: MouseEvent) => e.stopPropagation() }, [
@@ -131,6 +153,11 @@ export function openMathDialog(view: EditorView, opts: OpenMathOptions): void {
               ' 块级 $$..$$',
             ]),
           ]),
+          // `role="alert"` so the refusal is announced, not just painted: the
+          // dialog is not a native modal and focus does not move.
+          refusal.value
+            ? h('div', { class: 'math-dialog-refusal', role: 'alert' }, refusal.value)
+            : null,
           h('div', { class: 'math-actions' }, [
             h('button', { onClick: onCancel }, '取消'),
             h('button', { class: 'primary', onClick: onConfirm }, '确定'),

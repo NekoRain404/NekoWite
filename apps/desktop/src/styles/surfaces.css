@@ -204,6 +204,15 @@
   font-weight: 650;
   color: var(--app-text);
 }
+/* The table dialog's half of the refusal message — see the note on
+   `.math-dialog-refusal` in `math-dialog.css`, and brief 112. It lives here
+   because this file, not that one, is where `.table-dialog` is styled. */
+.table-dialog-refusal {
+  margin: 0 0 12px;
+  color: var(--app-danger);
+  font-size: 13px;
+  line-height: 1.5;
+}
 .table-dialog-grid {
   display: flex;
   gap: 16px;

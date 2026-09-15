@@ -1,6 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { basicPlugins, createEditor } from '../editor'
 import { getCommand, getToolbar } from '../registry'
+import { docCheck, placeCursor, tableCount, withTable } from '../testkit'
 import { MATH_COMMAND_ID, insertMath } from './feature'
 import { openMathDialog } from './dialog'
 
@@ -174,6 +176,121 @@ describe('openMathDialog', () => {
 
     expect(host?.getAttribute('contenteditable')).toBeNull()
     editor.destroy()
+  })
+})
+
+/**
+ * A refused insert must not take the dialog with it.
+ *
+ * `insertMath` refuses display math inside a table cell — a block there is lifted
+ * out by the fitter and SPLITS the table in two, the defect commit `6aefb19`
+ * fixed. The refusal is right; what was wrong is that the dialog discarded the
+ * answer and ran `cleanup()` in a `finally`, so a refusal was indistinguishable
+ * from a success: the dialog closed, the document was unchanged, nothing was
+ * said, and the LaTeX the user had just typed left with the disposed editor.
+ *
+ * What the fix owes the user is the formula, not an apology: the dialog stays
+ * open with the text still in it and says why.
+ */
+describe('openMathDialog: a refused insert keeps the dialog and the formula', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  /** The dialog's 确定 button. */
+  const confirmIn = (overlay: Element): HTMLButtonElement | undefined =>
+    Array.from(overlay.querySelectorAll('button')).find((b) => b.textContent === '确定')
+
+  /** Type into the dialog's field the way the fallback editor exposes its value. */
+  const typeInto = (overlay: Element, latex: string): HTMLElement => {
+    const host = overlay.querySelector('.math-field-host') as HTMLElement
+    host.textContent = latex
+    return host
+  }
+
+  it('keeps the dialog, the typed latex and the table when 块级 math is refused in a cell', async () => {
+    const h = await withTable([
+      ['H1', 'H2'],
+      ['a', 'b'],
+    ])
+    try {
+      placeCursor(h.view, 1, 0)
+      const before = await h.ed.save()
+
+      openMathDialog(h.view, { mode: 'inline' })
+      const overlay = document.querySelector('.math-overlay') as HTMLElement
+      // 块级 is live: the dialog was opened with no `existingPos`, so `setMode`
+      // does not return early and the radios are not locked.
+      const radios = Array.from(overlay.querySelectorAll<HTMLInputElement>('input[type=radio]'))
+      radios[1].dispatchEvent(new MouseEvent('change', { bubbles: true }))
+      typeInto(overlay, 'x^2')
+
+      confirmIn(overlay)?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      // The message is state, so it reaches the DOM on Vue's next flush.
+      await nextTick()
+
+      // Before the fix the overlay was already detached here, `x^2` was inside
+      // it, and neither the document nor the user had heard anything.
+      expect(overlay.isConnected, 'the dialog must survive a refused insert').toBe(true)
+      expect(
+        (overlay.querySelector('.math-field-host') as HTMLElement).textContent,
+        'the typed latex is the whole point: it must still be there',
+      ).toBe('x^2')
+      expect(
+        (overlay.querySelector('.math-dialog-refusal')?.textContent ?? '').trim(),
+        'a refusal the user cannot see is the defect, not the fix',
+      ).not.toBe('')
+      expect(tableCount(h.view)).toBe(1)
+      expect(await h.ed.save()).toBe(before)
+      expect(() => docCheck(h.view), 'document must stay valid').not.toThrow()
+    } finally {
+      document.querySelector('.math-overlay')?.remove()
+      h.destroy()
+    }
+  })
+
+  it('still inserts 行内 math from the same cell and disposes (the success path is unchanged)', async () => {
+    const h = await withTable([
+      ['H1', 'H2'],
+      ['a', 'b'],
+    ])
+    try {
+      placeCursor(h.view, 1, 0)
+      openMathDialog(h.view, { mode: 'inline' })
+      const overlay = document.querySelector('.math-overlay') as HTMLElement
+      typeInto(overlay, 'c+d')
+
+      confirmIn(overlay)?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+      expect(document.querySelector('.math-overlay')).toBeNull()
+      expect(tableCount(h.view)).toBe(1)
+      expect(await h.ed.save()).toContain('$c+d$')
+      expect(() => docCheck(h.view), 'document must stay valid').not.toThrow()
+    } finally {
+      document.querySelector('.math-overlay')?.remove()
+      h.destroy()
+    }
+  })
+
+  it('still inserts 块级 math outside a table and disposes', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open('')
+    const view = editor.getView()
+
+    openMathDialog(view, { mode: 'display' })
+    const overlay = document.querySelector('.math-overlay') as HTMLElement
+    typeInto(overlay, 'y^2')
+
+    confirmIn(overlay)?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+    expect(document.querySelector('.math-overlay')).toBeNull()
+    const md = await editor.save()
+    expect(md).toContain('$$')
+    expect(md).toContain('y^2')
+    editor.destroy()
+    el.remove()
   })
 })
 
