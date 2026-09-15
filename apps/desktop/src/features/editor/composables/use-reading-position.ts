@@ -102,7 +102,11 @@ export function useReadingPosition(options: ReadingPositionOptions): void {
    * remembered line travels by, and for the same reason:
    * `model/reading-position`'s rule is that only an activation re-places a pane
    * — a disk reload or a history restore leaves it where the reader put it, and
-   * a top written for those would be a placement nobody asked for.
+   * a top written for those would be a placement nobody asked for. An
+   * activation that never hands the note over arms nothing either (see
+   * `handsTheNoteToTheRenderedPane`): a top it could not deliver would be that
+   * same placement, written later, over the position the switch that finally
+   * delivered the note had already carried.
    */
   let startsAtTopFor: string | null = null
 
@@ -158,6 +162,35 @@ export function useReadingPosition(options: ReadingPositionOptions): void {
     source.setScrollTopForLine(line, options.nextToken())
   }
 
+  /**
+   * Whether this activation will hand the note to the rendered pane at all.
+   *
+   * It is the apply path's own first gate (`editor-external-sync`'s
+   * `renderedPaneOwnsText`): in source mode the source pane owns the text, the
+   * model is deliberately never given the document, and `documentVersion` is
+   * never bumped — so no arrival can come, and nothing can consume a top armed
+   * for one. Armed anyway, the flag outlives the activation it was armed for
+   * and waits for the next document this pane is given: the one the switch to
+   * rendered hands it. The top then lands AFTER the handoff's carry of the
+   * reader's line and wins over it — a reader scrolled to line N in source is
+   * thrown to the top of the note.
+   *
+   * So the flag is armed only where an arrival is owed, which is
+   * `model/reading-position`'s own rule — only an activation re-places a pane —
+   * read one step earlier: an activation that never delivers the note is not one
+   * that may place it. Asked HERE, at the arming, and not at the write: at the
+   * write the mode is already the one being switched to, so it answers a
+   * question about the wrong moment and lets the leak through.
+   *
+   * The mode read here is the one the note is being OPENED in — App.vue puts the
+   * live mode back to its stored default on every document it opens, and its
+   * watcher on the same id is created before this one. The apply path above
+   * depends on that same ordering.
+   */
+  function handsTheNoteToTheRenderedPane(): boolean {
+    return view.mode !== 'source'
+  }
+
   watch(
     () => tabs.activeId,
     (id, prevId) => {
@@ -172,8 +205,10 @@ export function useReadingPosition(options: ReadingPositionOptions): void {
       // place: a note the memory has nothing for is the note this pane has to
       // open at its own top. Both ask `model/reading-position` the one question
       // — "was this note left anywhere?" — rather than either caching an answer
-      // the other could then disagree with.
-      startsAtTopFor = id !== null && readingLineOf(id) === null ? id : null
+      // the other could then disagree with. What can consume the top, though, is
+      // only an arrival, so an activation that hands nothing over arms nothing.
+      startsAtTopFor =
+        id !== null && handsTheNoteToTheRenderedPane() && readingLineOf(id) === null ? id : null
       void nextTick(() => {
         if (id) restoreSourcePane(id)
       })
