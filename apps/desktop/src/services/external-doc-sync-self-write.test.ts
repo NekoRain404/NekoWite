@@ -89,13 +89,12 @@ function harness(dirty: boolean, opts: { failWrite?: boolean } = {}): Harness {
       }
     },
     getVault: () => vault.value,
-    getActiveTab: () => ({
-      id: tab.id,
-      path: tab.path,
-      dirty: tab.dirty,
-      savedContent: tab.savedContent,
-    }),
-    getOpenTabs: () => tabs.value.map((t) => ({ id: t.id, path: t.path })),
+    getOpenTabs: () => tabs.value.map((t) => ({
+      id: t.id,
+      path: t.path,
+      dirty: t.dirty,
+      savedContent: t.savedContent,
+    })),
     isSelfWrite: (path, contents) => save.isSelfWrite(path, contents),
     isPendingMove: () => false,
     reload: async (id) => {

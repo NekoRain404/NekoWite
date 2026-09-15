@@ -29,6 +29,14 @@
  *     point at (a delete, a rename). Those have no settle moment to bind to, so
  *     they keep a clock.
  *
+ * The shape IS the lifetime, and it is fixed when the claim is made. A named
+ * claim has no clock to run out: nothing in this module can end it except the
+ * write it belongs to. That is the whole point of the split — the prune used to
+ * sweep every claim on the timed rule, so a `note` for an unrelated path, taken
+ * while a slow save was still running, quietly ended that save's claim, and the
+ * app read its own echo as a change nobody had made. A rule that a claim was
+ * not made under must not be able to expire it.
+ *
  * Split out of `tab-save.ts` for the line budget (§13.1) and because it is a
  * question with one answer that two modules ask.
  */
@@ -39,12 +47,16 @@
  */
 export const SELF_WRITE_MS = 2000
 
-interface Claim {
-  /** When the claim was made, for the timed kind. */
-  at: number
-  /** The bytes this app is writing, or null for a claim that names none. */
-  content: string | null
-}
+/**
+ * A claim, in one of the two shapes the module note describes.
+ *
+ * `named` carries no timestamp and `timed` carries no content, so neither can
+ * be held to the other's rule: "may this still be honoured?" has one answer per
+ * shape, and the type says which.
+ */
+type Claim =
+  | { kind: 'named'; content: string }
+  | { kind: 'timed'; at: number }
 
 export interface SelfWrites {
   /**
@@ -77,15 +89,21 @@ export interface SelfWrites {
 export function createSelfWrites(now: () => number = () => Date.now()): SelfWrites {
   const claims = new Map<string, Claim>()
 
+  /** Drop the claims that have run out of time — the timed ones, and only
+   *  those. A named claim's lifetime is the write it was made for, so it is
+   *  `settle` that ends it, never a sweep taken while some other write runs. */
   function prune(at = now()): void {
     for (const [path, claim] of claims) {
-      if (at - claim.at > SELF_WRITE_MS) claims.delete(path)
+      if (claim.kind === 'timed' && at - claim.at > SELF_WRITE_MS) claims.delete(path)
     }
   }
 
   function note(path: string, content?: string): void {
     prune()
-    claims.set(path, { at: now(), content: content ?? null })
+    claims.set(
+      path,
+      content === undefined ? { kind: 'timed', at: now() } : { kind: 'named', content },
+    )
   }
 
   function settle(path: string): void {
@@ -95,7 +113,7 @@ export function createSelfWrites(now: () => number = () => Date.now()): SelfWrit
   function isSelfWrite(path: string, disk?: string | null): boolean {
     const claim = claims.get(path)
     if (claim === undefined) return false
-    if (claim.content !== null) {
+    if (claim.kind === 'named') {
       // A named write is in flight: ours only when what the watcher found is
       // what we are writing. No bytes to compare — an unreadable path, which is
       // what our own delete leaves behind — still counts as ours.

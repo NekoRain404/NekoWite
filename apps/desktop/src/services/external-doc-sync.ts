@@ -1,5 +1,5 @@
 /**
- * App-level "the file changed on disk" handling for the OPEN document.
+ * App-level "the file changed on disk" handling for every OPEN document.
  *
  * This used to live in `FileTree.vue`, which is only mounted while the sidebar
  * shows the Folders panel. Opening a note from the Notes panel (the DEFAULT
@@ -8,6 +8,16 @@
  * program's change. External-edit reload is a headline capability, so the
  * subscription belongs to the app, not to one panel.
  *
+ * And it belongs to every open document, not only the one on screen (L05). An
+ * open tab is not a saved copy of anything: a comparison against the active tab
+ * alone let the others hold text the file no longer had, with nothing on screen
+ * to say so. The tab the user then switched to showed that text with the caret
+ * in it, and the edit they made on top of it was saved over the version they
+ * never saw. Switching back re-points `activeId` and nothing else, so the stale
+ * text survived even a deliberate look at the note. The decision is therefore
+ * made per PATH, for every tab holding the changed file, using exactly the same
+ * rules for a background tab as for the visible one.
+ *
  * The service owns only the decision + reload. Surfaces that need to react
  * visually (the file tree refreshing its rows) subscribe to `onChange`.
  */
@@ -15,10 +25,23 @@
 import { decideConflict } from './errors'
 import type { FsChangeEvent } from '../platform/gateways/contracts'
 
+/** One open document, as the decision needs it: what it is, and what it
+ *  believes is on disk. Structural on purpose — the tab store's `OpenTab`
+ *  satisfies it, and nothing here imports the store. */
+export interface OpenDocTab {
+  id: string
+  path: string | null
+  dirty: boolean
+  /** The bytes this tab last wrote or read: what the disk is compared
+   *  against. */
+  savedContent: string
+}
+
 export interface ExternalDocSyncDeps {
-  /** Every open tab, so a change to a FOLDER can be checked against the notes
-   *  that live inside it (see `onMissing`). */
-  getOpenTabs(): ReadonlyArray<{ id: string; path: string | null }>
+  /** Every open tab. A change to a FOLDER is checked against the notes that
+   *  live inside it, and a change to a NOTE is decided for every tab holding
+   *  it — not only the one on screen (see the module note). */
+  getOpenTabs(): ReadonlyArray<OpenDocTab>
   /**
    * Called when a tab's file no longer exists — its folder was renamed or
    * deleted outside the app, for instance. The app must stop writing to that
@@ -32,8 +55,6 @@ export interface ExternalDocSyncDeps {
   onFsChange(cb: (e: FsChangeEvent) => void): Promise<() => void>
   /** The vault to read through, or null when none is open. */
   getVault(): string | null
-  /** The tab currently shown, or null. */
-  getActiveTab(): { id: string; path: string | null; dirty: boolean; savedContent: string } | null
   /**
    * True when an fs change for `path` is this app's own write.
    *
@@ -82,48 +103,92 @@ export function createExternalDocSync(deps: ExternalDocSyncDeps): ExternalDocSyn
   }
 
   /**
-   * A FOLDER that lost or gained an entry only reports the folder itself, so a
-   * note inside it can disappear without any event naming the note. Ask the disk
-   * about every tab under that path and report the ones that are actually gone.
+   * Read `tab`'s file and act on what is there.
+   *
+   * The read DOUBLES as the existence probe, and that is deliberate: a path the
+   * disk will not give us is the folder-renamed-or-deleted-outside-the-app case
+   * this service exists to catch. Asking "is it there?" and then reading it
+   * again to compare gave two answers to one question, and on a read failure
+   * they disagreed — the probe said the file was gone while the comparison said
+   * to carry on and decide anyway. One read, one answer, one decision.
+   *
+   * The bytes come BEFORE the decision, because they are what the decision is
+   * made of: our own write echoes back through the watcher, and treating it as
+   * external would reload the document and drop the caret on every save — and
+   * on a tab with unsaved edits it would ask a keep-or-reload question about a
+   * change the app made itself, whose "use the disk version" answer discards
+   * every keystroke typed since the save began.
    */
-  async function checkTabsUnder(vault: string, folder: string): Promise<void> {
-    for (const tab of deps.getOpenTabs()) {
-      if (!tab.path || !isUnder(tab.path, folder)) continue
-      // A rename the app is running makes the tab's own path disappear for as
-      // long as the move takes - `renamePathInTabs` only runs once the disk work
-      // is done. Reading it here finds nothing and the tab gets detached as a
-      // file "moved outside the app": the tab turns into "Untitled" and the next
-      // Ctrl+S asks for a new location instead of saving to the note the user
-      // just renamed. The move itself owns the path until it finishes.
-      if (deps.isPendingMove?.(tab.path)) continue
-      try {
-        await deps.read(vault, tab.path)
-      } catch {
-        deps.onMissing(tab.id, tab.path)
-      }
+  async function examine(vault: string, tab: OpenDocTab, path: string): Promise<void> {
+    let disk: string
+    try {
+      disk = await deps.read(vault, path)
+    } catch {
+      deps.onMissing(tab.id, path)
+      return
+    }
+    if (deps.isSelfWrite(path, disk)) return
+    // An identical file is a no-op touch (or our own write that raced the
+    // claim) and must not reload — that would replace the live model and reset
+    // undo/caret.
+    if (disk === tab.savedContent) return
+
+    const decision = decideConflict({ dirty: tab.dirty, hasDiskChange: true })
+    if (decision === 'reload') {
+      await deps.reload(tab.id)
+    } else if (decision === 'ask') {
+      deps.onConflict({ tabId: tab.id, path })
     }
   }
 
   /**
+   * Decide every open tab whose path `inScope` accepts — the same rules for all
+   * of them, whatever is on screen.
+   *
+   * A tab the APP is renaming is skipped rather than read. Its path is
+   * momentarily absent on disk while the move runs — `renamePathInTabs` only
+   * updates the tabs once the disk work is done — so reading it finds nothing
+   * and the tab is detached as a file "moved outside the app": it turns into
+   * "Untitled" and the next Ctrl+S asks for a new location instead of saving to
+   * the note the user just renamed. The move owns the path until it finishes.
+   */
+  async function examineEach(
+    vault: string,
+    inScope: (path: string) => boolean,
+  ): Promise<void> {
+    for (const tab of deps.getOpenTabs()) {
+      if (!tab.path || !inScope(tab.path)) continue
+      if (deps.isPendingMove?.(tab.path)) continue
+      await examine(vault, tab, tab.path)
+    }
+  }
+
+  /**
+   * A FOLDER event names only the folder, so a note inside it can disappear —
+   * or change — with no event naming the note. The kind is not a reliable
+   * signal either: renaming a folder on Windows reports `modified` for BOTH
+   * names, not `removed` + `created` (measured), so gating on `removed` meant
+   * the common case went unnoticed and the next save silently recreated the old
+   * path.
+   *
+   * The check is cheap and self-limiting: only tabs living under the changed
+   * path are examined, and each costs one read. A file event matches at most
+   * the tabs holding that file, so ordinary note/image writes stay no-ops.
+   */
+  async function examineTabsUnder(vault: string, path: string): Promise<void> {
+    await examineEach(vault, (open) => isUnder(open, path))
+  }
+
+  /**
    * The watcher lost events (see `FsChangeKind.resync`), so the per-path checks
-   * below cannot be trusted: a change to the open note may never have been
+   * below cannot be trusted: a change to any open note may never have been
    * reported. Re-check every open tab against the disk instead of waiting for an
    * event that will not come — the cost is one read per open tab, and the
    * alternative is a silent divergence that ends with the user's save
    * overwriting someone else's edit.
    */
   async function resyncAll(vault: string): Promise<void> {
-    for (const tab of deps.getOpenTabs()) {
-      if (!tab.path) continue
-      try {
-        await deps.read(vault, tab.path)
-      } catch {
-        deps.onMissing(tab.id, tab.path)
-        continue
-      }
-      // A file that still exists may still have changed underneath us.
-      await handle({ path: tab.path, kind: 'modified' })
-    }
+    await examineEach(vault, () => true)
   }
 
   async function handle(e: FsChangeEvent): Promise<void> {
@@ -136,46 +201,7 @@ export function createExternalDocSync(deps: ExternalDocSyncDeps): ExternalDocSyn
       await resyncAll(vault)
       return
     }
-    // A folder change can take open notes with it and no event will name them
-    // individually — and the kind is not a reliable signal: renaming a folder on
-    // Windows reports `modified` for BOTH names, not `removed` + `created`
-    // (measured), so gating on `removed` meant the common case went unnoticed
-    // and the next save silently recreated the old path.
-    //
-    // The check is cheap and self-limiting: only tabs living under the changed
-    // path are examined, and each costs one read that doubles as the existence
-    // probe. A file event matches no tab (a file path cannot be a note's
-    // ancestor), so ordinary note/image writes stay no-ops.
-    await checkTabsUnder(vault, e.path)
-
-    const activeTab = deps.getActiveTab()
-    if (!activeTab || !activeTab.path || activeTab.path !== e.path) return
-
-    // Read the bytes BEFORE deciding, because they are what the decision is
-    // made of: our own write echoes back through the watcher, and treating it
-    // as external would reload the document and drop the caret on every save —
-    // and on a dirty tab it would ask a keep-or-reload question about a change
-    // the app made itself, whose "use the disk version" answer discards every
-    // keystroke typed since the save began.
-    let disk: string | null = null
-    try {
-      disk = await deps.read(vault, activeTab.path)
-    } catch {
-      // A read failure still falls through to the normal conflict decision.
-    }
-
-    if (deps.isSelfWrite(e.path, disk)) return
-    // An identical file is a no-op touch (or our own write that raced the
-    // claim) and must not reload — that would replace the live model and reset
-    // undo/caret.
-    if (disk !== null && disk === activeTab.savedContent) return
-
-    const decision = decideConflict({ dirty: activeTab.dirty, hasDiskChange: true })
-    if (decision === 'reload') {
-      await deps.reload(activeTab.id)
-    } else if (decision === 'ask') {
-      deps.onConflict({ tabId: activeTab.id, path: e.path })
-    }
+    await examineTabsUnder(vault, e.path)
   }
 
   return {
