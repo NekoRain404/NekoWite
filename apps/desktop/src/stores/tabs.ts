@@ -141,7 +141,7 @@ export const useTabsStore = defineStore('tabs', () => {
     t: i18nT,
     notifyError,
     notifyRecovery,
-    saveTab: save.saveTab,
+    saveUntilSettled: save.saveUntilSettled,
     flushDirty: save.flushDirty,
     noteEdit: save.noteEdit,
     untitledDirtyTabs: persistence.untitledDirtyTabs,
