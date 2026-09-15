@@ -35,7 +35,7 @@ vi.mock('../platform/gateways/fs', () => ({
     restoreHistory: vi.fn(async () => ''),
     createDir: vi.fn(async () => ''),
     renameEntry: vi.fn(async () => ''),
-    saveFileDialog: vi.fn(async () => null),
+    saveFileDialog: vi.fn(async (): Promise<string | null> => null),
   },
 }))
 

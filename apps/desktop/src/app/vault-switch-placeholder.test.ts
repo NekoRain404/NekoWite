@@ -37,7 +37,7 @@ const h = vi.hoisted(() => {
     restoreHistory: vi.fn(async () => ''),
     createDir: vi.fn(async () => ''),
     renameEntry: vi.fn(async () => ''),
-    saveFileDialog: vi.fn(async () => null),
+    saveFileDialog: vi.fn(async (): Promise<string | null> => null),
     registerVault: vi.fn(async () => undefined),
     onFsChange: vi.fn(async () => () => {}),
   }
