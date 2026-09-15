@@ -91,34 +91,33 @@ export function createTabClose(deps: TabCloseDeps) {
    * going to say about it. A read that never lands no longer holds the tab
    * hostage either: nothing here waits on it.
    *
-   * The flush comes first for the reason `commitRead` takes it: `dirty` is set
-   * at the KEYSTROKE, and `tab.content` holds the typing only once the pane has
-   * published it (the rendered pane is a 120 ms debounce behind — see
-   * `editor-persistence.ts`). The rescue is a one-shot read of that field, so
-   * without this it hands the user an empty tab under a message saying their
-   * text is in it.
+   * The flush comes first — unconditionally, NOT behind `dirty`. `dirty` is set
+   * at the PUBLISH and only the rendered pane publishes at the keystroke (the
+   * source pane coalesces for `SOURCE_SNAPSHOT_DEBOUNCE_MS` and marks dirty from
+   * the publish that follows — `services/code-mirror-host.ts`), so a user typing
+   * into this placeholder in source or split mode has `dirty === false` for the
+   * length of the burst: a `dirty` gate read the tab as untouched and `removeTab`
+   * dropped the typing without a word. The flush publishes what the pane is
+   * still holding, which is what makes `dirty` and `content` describe it; with
+   * nothing pending it is a no-op per pane.
    */
   async function closePlaceholder(id: string): Promise<boolean> {
-    const tab = tabs.value.find((x) => x.id === id)
-    if (tab?.dirty) {
-      await flushEdits()
-      // Everything above is stale after that await — it is where the read
-      // lands, and where a `closeAll` or a vault switch removes the tab.
-      const current = tabs.value.find((x) => x.id === id)
-      if (!current) return true
-      // The read landed during the flush: the tab holds the note again, with
-      // text of its own to save, and the typing `commitRead` just rescued is
-      // already in a tab of its own (that rescue announces itself). So this
-      // close is an ordinary one after all.
-      if (!current.loading) return false
-      // The flags are re-read after the await, and `dirty` is the one that
-      // gates the rescue: a clean placeholder has nothing of the user's in it,
-      // and copying its empty document into a new tab would hand them an empty
-      // tab under a message saying their text is safe — the defect `commitRead`
-      // was just fixed for. `closePlaceholder` is only reached for a dirty tab,
-      // so this is the interval between the keystroke and here.
-      if (current.dirty) rescuePlaceholderTyping(current, t('tabs.closeWhileLoading'))
-    }
+    await flushEdits()
+    // Everything above is stale after that await — it is where the read lands,
+    // and where a `closeAll` or a vault switch removes the tab.
+    const current = tabs.value.find((x) => x.id === id)
+    if (!current) return true
+    // The read landed during the flush: the tab holds the note again, with
+    // text of its own to save, and the typing `commitRead` just rescued is
+    // already in a tab of its own (that rescue announces itself). So this
+    // close is an ordinary one after all.
+    if (!current.loading) return false
+    // `dirty` is read AFTER the flush and not before it — that is the whole
+    // reason the flush is not gated on it. A placeholder the flush left clean
+    // has nothing of the user's in it, and copying its empty document into a
+    // new tab would hand them an empty tab under a message saying their text is
+    // safe — the defect `commitRead` was just fixed for.
+    if (current.dirty) rescuePlaceholderTyping(current, t('tabs.closeWhileLoading'))
     removeTab(id)
     captureSession()
     return true
@@ -145,16 +144,21 @@ export function createTabClose(deps: TabCloseDeps) {
    */
   async function reconcilePlaceholders(): Promise<void> {
     // Nothing to do is the common case, and it must stay cheap: this runs in
-    // front of every bulk close, and the pane flush below is global work.
-    if (!tabs.value.some((tab) => tab.loading && tab.dirty)) return
+    // front of every bulk close, and the pane flush below is global work. The
+    // scan asks whether a placeholder is OPEN, not whether one is dirty: a
+    // source burst is 50 ms behind marking its tab, so a `dirty` test here is
+    // the same gate `closePlaceholder` cannot use — it would skip the flush and
+    // let `removeAllTabs` drop the burst.
+    if (!tabs.value.some((tab) => tab.loading)) return
     // The flush comes first for the reason `closePlaceholder` and `commitRead`
-    // take it: `dirty` is set at the KEYSTROKE while `tab.content` holds the
-    // typing only once the pane has published it, and the rescue is a one-shot
-    // read of that field.
+    // take it: a pane publishes only once its own debounce has run, so
+    // `tab.content` holds the typing — and the tab is marked dirty — only after
+    // this, while the rescue is a one-shot read of that field.
     await flushEdits()
     // The flush is an await, and it is where the read lands — a tab that has
     // become a note again holds text of its own to save and belongs to the
-    // flush, not here. Both flags are re-read for that reason.
+    // flush, not here. Both flags are re-read for that reason, and `dirty` after
+    // the flush is what the burst above set.
     for (const tab of [...tabs.value]) {
       if (tab.loading && tab.dirty) rescuePlaceholderTyping(tab, t('tabs.closeWhileLoading'))
     }
