@@ -62,9 +62,16 @@
   max-width: var(--app-content-width);
   margin: 0 auto;
   /* The 96px is the read's own breathing room; `--nkw-tail-space` is the panel's
-     trailing space, set by `useEditorTailSpace` from the panel's own height.
+     trailing space, measured once by `useEditorTailSpace` from the panel's own
+     height and applied here by the pane (both panes apply the same number).
      It has to be PADDING on this box rather than a blank paragraph: padding is
-     not content, so it cannot be saved, exported or counted. */
+     not content, so it cannot be saved, exported or counted.
+
+     Being padding it is inside the scroller, so it is part of this pane's
+     scrollable extent — which is the extent the split sync positions panes in,
+     so the space below the last line is reachable by the sync and by a wheel
+     alike. A range that excluded it is what left the two panes unable to meet
+     at the bottom of a long document. */
   padding: 24px 24px calc(96px + var(--nkw-tail-space, 0px));
   min-height: 100%;
 }

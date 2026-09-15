@@ -12,7 +12,7 @@ import {
   type CodeMirrorHostHandle,
 } from '../services/code-mirror-host'
 import { mirrorChange } from '../features/editor/model/mirror-change'
-import { useEditorTailSpace } from '../features/editor/composables/use-editor-tail-space'
+import { useTailSpaceApplication } from '../features/editor/composables/use-editor-tail-space'
 import {
   sourceExtensions,
   setMeasureSuppressed as gateSetMeasureSuppressed,
@@ -35,6 +35,13 @@ const appearance = useAppearanceStore()
 // write is this pane's own echo and is consumed below.
 const emit = defineEmits<{ 'user-scroll': [] }>()
 
+const props = defineProps<{
+  /** The panel's trailing space in px, from the box both panes are laid out in
+   *  (`useEditorTailSpace`) — one number for both, where a measurement of this
+   *  pane's own scroller came out a scrollbar short of the rendered pane's. */
+  tailSpacePx: number
+}>()
+
 /**
  * The rendered pane already lays its content out from the correct edge; the
  * source pane ignored the setting entirely, so split mode showed the same
@@ -46,14 +53,9 @@ const sourceDir = computed(() => resolveDirection(appearance.contentDirection, t
 const container = ref<HTMLDivElement | null>(null)
 let host: CodeMirrorHostHandle | null = null
 
-// Trailing space, the source pane's half: the pad goes on CodeMirror's own
-// content box (`.cm-content`), which is where "below the last line" lives, and
-// it is subtracted from the scroll range this pane reports — space, not
-// document, and never part of the extent the split sync maps through.
-const { tailSpacePx, attach: attachTailSpace } = useEditorTailSpace({
-  getScrollEl: () => host?.getView()?.scrollDOM ?? null,
-  apply: (px) => container.value?.style.setProperty('--nkw-tail-space', `${px}px`),
-})
+// Onto this pane's root, where `sourcePane.css` reads it as the pad on
+// CodeMirror's content box — the box "below the last line" lives on.
+useTailSpaceApplication(() => container.value, () => props.tailSpacePx)
 // The tab whose content the CodeMirror doc currently mirrors. Local edits are
 // attributed to it, so a burst that fires right after a tab switch can never
 // land on the wrong tab.
@@ -106,9 +108,6 @@ onMounted(() => {
     },
   }
   setSourceViewHandle(sourceHandle)
-  // The scroller this measures is CodeMirror's own element, created just above:
-  // there is nothing reactive to watch, so the pane says when it exists.
-  attachTailSpace()
 })
 
 // Hot-swap the source view layout when line-number / soft-wrap toggles change.
@@ -299,10 +298,17 @@ function setScrollTopForLine(line: number, token: number): void {
   })
 }
 
+/**
+ * The pane's scrollable extent — the tail included, since it is padding inside
+ * the scroller and therefore part of what a wheel can reach. The split sync
+ * writes inside this range, so a range with the tail subtracted back out put
+ * the pane it moved one tail above the pane the user held: the two could not
+ * meet at the bottom of a long document, in either direction.
+ */
 function scrollRange(): number {
   const el = host?.getView()?.scrollDOM
   if (!el) return 0
-  return Math.max(0, el.scrollHeight - el.clientHeight - tailSpacePx.value)
+  return Math.max(0, el.scrollHeight - el.clientHeight)
 }
 
 function focus(): void {

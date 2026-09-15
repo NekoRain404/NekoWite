@@ -17,12 +17,25 @@ export interface EditorScrollSyncDeps {
    *  line" rather than guessing when it is absent. */
   getEditor?: () => NekoEditor | null
   /**
-   * The trailing space padding the pane's content box, in px.
+   * The trailing space padding this pane's content box, in px.
    *
-   * It is space, not document: the range this module reports is the one the
-   * mapping works in (two panes lay the same note out at different heights and
-   * meet only through the document's own coordinates), so a panel-sized pad
-   * folded into it would move every ratio position and misalign the panes.
+   * No longer read here, on purpose. The range this module reports is the
+   * pane's own scrollable extent, and that extent INCLUDES the space: it is
+   * padding on the content box, so it is inside the scroller, which is how the
+   * last line can be raised off the bottom edge at all — it is part of what a
+   * wheel reaches.
+   *
+   * Subtracting it back out (which is what this dep used to be for) made the
+   * range the sync writes inside one tail SHORTER than the range the user can
+   * scroll to. The sync clamped every write to its own range, so the pane it
+   * moved could not follow the pane the user was holding into the trailing
+   * space: the held pane showed the space below the last line and its
+   * neighbour showed none — in whichever direction the scroll came from, which
+   * is the flip the reader reported.
+   *
+   * Kept in the signature because `use-rendered-editor-stack` still passes it
+   * (that file is outside this change); nothing in this module reads it, so a
+   * caller that omits it loses nothing.
    */
   getTailSpace?: () => number
 }
@@ -90,10 +103,22 @@ export function createEditorScrollSync(deps: EditorScrollSyncDeps): EditorScroll
   // user's, so the record is the only thing that tells the two apart.
   let programWrite: { token: number; top: number } | null = null
 
+  /**
+   * The pane's scrollable extent: everything its scrollbar travels over, the
+   * panel's trailing space included.
+   *
+   * This is the number the split sync maps through and clamps its writes to, so
+   * it has to be the extent the user can reach by hand — the same range the
+   * pane's own scroll event reports. A range that stopped a tail short of it
+   * put every position the sync wrote above the position the user's wheel could
+   * reach, and the two panes could not meet at the bottom of a document: the
+   * one being dragged showed the space below the last line and the one being
+   * driven could not be moved into its own.
+   */
   function scrollRange(): number {
     const el = deps.getScrollEl()
     if (!el) return 0
-    return Math.max(0, el.scrollHeight - el.clientHeight - (deps.getTailSpace?.() ?? 0))
+    return Math.max(0, el.scrollHeight - el.clientHeight)
   }
 
   function onScroll(): boolean {
