@@ -404,6 +404,50 @@ describe('ChatPanel composer drafts', () => {
     expect(host.querySelector<HTMLTextAreaElement>('.chat-textarea')!.value).toBe('')
   })
 
+  it('sends one question when Enter is pressed twice', async () => {
+    // The entry points the audit names, at the layer the user touches. Both go
+    // through `canSend` - a double-click is eaten by the disabled button, and
+    // Enter by the disabled textarea - and before the fix `canSend` knew only
+    // about `streaming`, which the panel does not reach until the context and
+    // the images are done. That left the composer open for the whole
+    // preparation window, so a press during it started a request of its own,
+    // billed like the first. (The lock that refuses a second `send()` even when
+    // the composer does let one through is proved in `use-chat-commands`.)
+    vi.mocked(startChatCompletion).mockImplementation((_c, _p, _i, handlers) => {
+      handlers.onDone('ok')
+      return Promise.resolve({ cancel: vi.fn() } as never)
+    })
+    const host = mountPanel()
+    const file = fileOfSize('pic.png', 1024)
+    let finishEncode: (() => void) | null = null
+    // ONE promise for every read of this file, so releasing the encode releases
+    // whichever sends are waiting on it - and a second send that got through
+    // cannot resolve one of its own and be counted as the only one.
+    const encoding = new Promise<ArrayBuffer>((resolve) => {
+      finishEncode = () => resolve(new ArrayBuffer(4))
+    })
+    Object.defineProperty(file, 'arrayBuffer', { value: () => encoding })
+    pickFiles(host, [file])
+    const textarea = typePrompt(host, '询问')
+    await flush()
+    const pressEnter = (): void => {
+      textarea.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      )
+    }
+
+    pressEnter()
+    await flush()
+    expect(sendButton(host).disabled).toBe(true)
+    // The second Enter, while the first send is still encoding the image.
+    pressEnter()
+    finishEncode!()
+    await flush()
+
+    expect(vi.mocked(startChatCompletion)).toHaveBeenCalledTimes(1)
+    expect(host.querySelectorAll('.chat-row')).toHaveLength(2)
+  })
+
   it('forgets the draft once it has been sent', async () => {
     // `startChatCompletion` is mocked at module level; a suite that actually
     // SENDS must give it a shape `send()` can await, or the unhandled rejection
