@@ -1,5 +1,5 @@
 import { computed, onBeforeUnmount, ref, watch, type ComputedRef, type Ref } from 'vue'
-import { NodeSelection } from '@milkdown/prose/state'
+import { NodeSelection, TextSelection } from '@milkdown/prose/state'
 import {
   clearImageSelection,
   deleteImageNode,
@@ -311,6 +311,29 @@ export function useImagePanelForm(options: ImagePanelFormOptions): ImagePanelFor
     selected.value = null
   }
 
+  /**
+   * Close the panel because the reader asked it to (Escape), rather than
+   * because the selection went away on its own.
+   *
+   * `clearImageSelection` resets the tracker and leaves the editor holding a
+   * live `NodeSelection` over the image, so the plugin re-emits it on its next
+   * update and the panel comes straight back — the focus restore that follows
+   * the unmount runs ProseMirror's `updateState`, and any later transaction
+   * does it too. Moving the selection off the image first is what makes the
+   * dismissal stick, and what the reader sees: the outline and the resize
+   * handle go with the panel. `emit`'s identity guard cannot cover this — the
+   * clear is exactly what bypasses it.
+   */
+  function dismiss(): void {
+    const editor = options.getEditor()
+    const view = editor?.getView()
+    const sel = view?.state.selection
+    if (view && sel instanceof NodeSelection) {
+      view.dispatch(view.state.tr.setSelection(TextSelection.near(sel.$from, -1)))
+    }
+    clearImageSelection()
+  }
+
   const onSelection = (info: ImageSelectionState | null): void => {
     if (info && options.getEditor()) {
       selected.value = info
@@ -349,6 +372,6 @@ export function useImagePanelForm(options: ImagePanelFormOptions): ImagePanelFor
     replace: onReplace,
     remove: onDelete,
     syncFromNode,
-    dismiss: clearImageSelection,
+    dismiss,
   }
 }
