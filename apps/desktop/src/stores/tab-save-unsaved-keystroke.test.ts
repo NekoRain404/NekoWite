@@ -20,6 +20,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { setSourceViewHandle } from '../services/source-view'
+import { documentKey } from '../features/editor/model/document-session'
 import { useTabsStore } from './tabs'
 
 const readMock = vi.hoisted(() => vi.fn())
@@ -97,7 +98,12 @@ function parkedWrite() {
 
 /** The rendered pane's persistence layer, wired to `editor` and a session that
  *  already holds the note. */
-async function attachPane(editor: ReturnType<typeof fakeEditor>, content: string) {
+async function attachPane(
+  editor: ReturnType<typeof fakeEditor>,
+  content: string,
+  vault: string,
+  tabId: string,
+) {
   const { createEditorPersistence } = await import(
     '../features/editor/controller/editor-persistence'
   )
@@ -106,6 +112,7 @@ async function attachPane(editor: ReturnType<typeof fakeEditor>, content: string
       editor: editor as never,
       gen: 0,
       appliedContent: content,
+      appliedKey: documentKey(vault, tabId),
       lastLocalMarkdown: content,
       lastDoc: content,
       docChangeTimer: null,
@@ -140,7 +147,7 @@ describe('a save that races the editor publish debounce', () => {
     expect(tab.content).toBe('hello')
 
     const editor = fakeEditor('hello')
-    await attachPane(editor, 'hello')
+    await attachPane(editor, 'hello', '/vault', tab.id)
 
     const write = parkedWrite()
     // The tab is dirty from an earlier keystroke that HAS been published, which
@@ -185,7 +192,7 @@ describe('a save that races the editor publish debounce', () => {
     await tabs.openTab('/vault/a.md')
     const tab = tabs.tabs[0]
     const editor = fakeEditor('hello')
-    await attachPane(editor, 'hello')
+    await attachPane(editor, 'hello', '/vault', tab.id)
 
     const write = parkedWrite()
     tabs.markDirty(tab.id)
@@ -219,7 +226,7 @@ describe('a save that races the editor publish debounce', () => {
       await tabs.openTab('/vault/a.md')
       const tab = tabs.tabs[0]
       const editor = fakeEditor('hello')
-      await attachPane(editor, 'hello')
+      await attachPane(editor, 'hello', '/vault', tab.id)
 
       const write = parkedWrite()
       tabs.markDirty(tab.id)
@@ -272,7 +279,7 @@ describe('a save that races the editor publish debounce', () => {
     await tabs.openTab('/vault/a.md')
     const tab = tabs.tabs[0]
     const editor = fakeEditor('hello')
-    await attachPane(editor, 'hello')
+    await attachPane(editor, 'hello', '/vault', tab.id)
 
     const write = parkedWrite()
     tabs.markDirty(tab.id)

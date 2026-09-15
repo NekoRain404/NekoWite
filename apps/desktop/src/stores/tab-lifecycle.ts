@@ -109,6 +109,69 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
     noteEdit(id)
   }
 
+  /**
+   * Take text the user typed into a tab whose first read had not landed yet,
+   * and give it a document of its own.
+   *
+   * The tab was showing an EMPTY editor wearing the note's path, so the typing
+   * is the user's text and the file's text is the note's, and neither may be
+   * written over the other. Committing the file's text into the note is the
+   * read doing its job; writing the typing into the note instead would destroy
+   * the note's text on the next autosave, and dropping it is what L03 is. So it
+   * moves to an untitled tab, which is the state it is actually in — text the
+   * user typed that belongs to no file.
+   *
+   * Not focused (the user asked for a note, and a nameless document in front of
+   * them answers a different question), marked dirty (nothing of it is on disk
+   * anywhere) and announced, because a tab appearing beside theirs is not
+   * something to discover later.
+   */
+  function rescuePlaceholderTyping(from: OpenTab): void {
+    const rescued: OpenTab = {
+      id: nextId(),
+      path: null,
+      content: from.content,
+      savedContent: '',
+      dirty: false,
+      loading: false,
+      pendingAssetPaths: [],
+    }
+    tabs.value.push(rescued)
+    markDirty(rescued.id)
+    emitLifecycle('onOpenDocument', { id: rescued.id, path: null })
+    notifyError(t('tabs.loadRacedTyping'))
+  }
+
+  /**
+   * Commit a finished read into the tab that asked for it — or leave both texts
+   * alone.
+   *
+   * Guards, in order: the tab may be gone (closed, or closeAll ran, while the
+   * read was pending — never resurrect one); `loading` may already be false
+   * (this read's answer is stale); and the user may have typed into the
+   * placeholder, which is what `dirty` says — it is set at the keystroke by
+   * `markDirty`, and a keystroke is the only thing that sets it. Then the read
+   * still owns the note, but not the typing.
+   *
+   * The store's reactive proxy is what gets written (NOT a captured raw
+   * object): the read is async, so the pane may already be watch-ing
+   * activeTab.content, and a raw-object write would bypass Vue's reactivity and
+   * leave the editor permanently empty.
+   */
+  function commitRead(id: string, content: string | null, failed: boolean): void {
+    const stored = tabs.value.find((x) => x.id === id)
+    if (!stored || !stored.loading) return
+    if (stored.dirty) rescuePlaceholderTyping(stored)
+    // A failed read commits no text: the note has none to show, and the tab
+    // goes away with the message that says so. The typing above is rescued
+    // first — `removeTab` would take it with the tab.
+    if (!failed) {
+      stored.content = content!
+      stored.savedContent = content!
+    }
+    stored.loading = false
+  }
+
   async function openTab(path: string | null, initial = ''): Promise<void> {
     if (path && !vault.value) {
       notifyError(t('tabs.openVaultFirst'))
@@ -131,6 +194,7 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
         content: initial,
         savedContent: initial,
         dirty: false,
+        loading: true,
         pendingAssetPaths: [],
       }
       tabs.value.push(tab)
@@ -138,18 +202,11 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
       emitLifecycle('onOpenDocument', { id: tab.id, path: tab.path })
       try {
         const content = await files.read(vault.value!, path)
-        // The tab may have been closed (or closeAll run) while the read was
-        // pending; never refill a tab that no longer exists. Resolve the
-        // reactive proxy stored in the store (NOT the raw local `tab`): the
-        // read is async, so RenderedPane may already be watch-ing
-        // activeTab.content, and a raw-object write bypasses Vue's reactivity
-        // and never notifies it — leaving the editor permanently empty.
-        const stored = tabs.value.find((x) => x.id === tab.id)
-        if (stored) {
-          stored.content = content
-          stored.savedContent = content
-        }
+        commitRead(tab.id, content, false)
       } catch {
+        // The typing goes first: `removeTab` would take it with the tab, and it
+        // is not this failed read's to discard.
+        commitRead(tab.id, null, true)
         removeTab(tab.id)
         notifyError(t('tabs.readFileFailed', { path }))
         return
@@ -177,6 +234,8 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
       content: initial,
       savedContent: initial,
       dirty: false,
+      // Nothing to read: this tab is complete the moment it exists.
+      loading: false,
       pendingAssetPaths: [],
     }
     tabs.value.push(tab)
@@ -198,14 +257,50 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
     }
   }
 
+  /** How many writes a close may make in pursuit of one settled tab.
+   *
+   *  Each attempt carries the text as of its start and clears `dirty` only if
+   *  nothing was typed while it ran, so the loop ends as soon as the typing
+   *  does. This bound is what stops a document that keeps changing under the
+   *  close from writing round and round; reaching it keeps the tab, which is
+   *  the answer that loses nothing. */
+  const CLOSE_SAVE_ATTEMPTS = 3
+
+  /**
+   * Save `id` until a write that lands carries the tab's newest edit — or give
+   * up, having written nothing away.
+   *
+   * `saveTab` answering `true` means ONE write landed, not that the tab is
+   * saved. It reads the tab's edit revision before its write and clears `dirty`
+   * only when that revision has not moved and the tab still holds what it wrote
+   * (see `tab-save.ts`); a keystroke during the write moves the revision, so
+   * the tab stays dirty. A close that read the answer as final removed the only
+   * copy of the newer text — the tab was gone, and the write that "succeeded"
+   * had not carried it.
+   *
+   * So the gate a close needs is "is the newest revision on disk?", and `dirty`
+   * is exactly that answer: false only when a landed write carried the revision
+   * current at its end. Asking again is also what carries the keystroke, because
+   * the next attempt flushes the panes before it writes. A tab that is gone is
+   * not a failure: another close already removed it, and its own gate settled it.
+   */
+  async function saveUntilSettled(id: string): Promise<boolean> {
+    for (let attempt = 0; attempt < CLOSE_SAVE_ATTEMPTS; attempt++) {
+      if (!(await saveTab(id))) return false
+      const tab = tabs.value.find((x) => x.id === id)
+      if (!tab) return true
+      if (!tab.dirty) return true
+    }
+    return false
+  }
+
   async function closeTab(id: string): Promise<void> {
     const tab = tabs.value.find((x) => x.id === id)
     // Unsaved work is flushed, not discarded: the pending autosave timer is
     // cancelled on removal, so without this the edits would be unrecoverable.
-    if (tab?.dirty) {
-      const ok = await saveTab(id)
-      if (!ok) return // save failed — keep the tab so nothing is lost
-    }
+    // The gate is `saveUntilSettled` and not "one save succeeded" — see the
+    // helper for the keystroke that makes those two different answers.
+    if (tab?.dirty && !(await saveUntilSettled(id))) return
     removeTab(id)
     captureSession()
   }
@@ -246,11 +341,25 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
       const choice = await requestUntitledClose(untitled.length)
       if (choice === 'save') {
         for (const tab of untitled) {
-          if (!(await saveTab(tab.id))) {
+          if (!(await saveUntilSettled(tab.id))) {
             notifyError(t('tabs.unsavedWorkBlocker'))
             return false
           }
         }
+      }
+    }
+    // `flushDirty` makes one write per dirty tab, and a write overtaken by a
+    // keystroke leaves its tab dirty — so the bulk close asks the same question
+    // the single close does before it drops anything, at the last moment it
+    // can (the prompt above is user time). `removeAllTabs` would otherwise
+    // discard exactly the text those writes could not carry. Untitled tabs are
+    // not revisited: the prompt owns them, and one the user chose to discard
+    // has no path to save to.
+    for (const tab of [...tabs.value]) {
+      if (!tab.path || !tab.dirty) continue
+      if (!(await saveUntilSettled(tab.id))) {
+        notifyError(t('tabs.unsavedWorkBlocker'))
+        return false
       }
     }
     removeAllTabs()
