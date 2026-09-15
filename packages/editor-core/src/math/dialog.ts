@@ -63,9 +63,15 @@ export function openMathDialog(view: EditorView, opts: OpenMathOptions): void {
       // Read, swap, then dispose: the confirm handler reads `mf` at any moment,
       // and a window where it pointed at a disposed editor would drop the user's
       // formula on confirm.
-      const typed = mf?.getValue() ?? ''
+      //
+      // The value is not read again here — the swap already carries it.
+      // `upgradeMathEditor` read it at swap time and built this field with it,
+      // so `better` holds what the user typed. Re-reading `mf` to re-apply it
+      // asks the FALLBACK handle, whose getValue is the host's `textContent`:
+      // the upgrade has just cleared that text, and it stays empty because
+      // MathLive renders into a shadow root. The read returns '' and writing it
+      // onto `better` undoes the carry — the formula that arrived empty.
       const previous = mf
-      better.setValue(typed)
       mf = better
       previous?.dispose()
     })
