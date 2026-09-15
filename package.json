@@ -17,7 +17,8 @@
     "test:e2e": "pnpm --filter @nekowite/desktop exec playwright test",
     "perf": "pnpm --filter @nekowite/desktop perf",
     "tauri": "pnpm --filter @nekowite/desktop tauri",
-    "package:win": "bash scripts/package-win.sh"
+    "package:linux": "bash scripts/package-linux.sh",
+  "package:win": "bash scripts/package-win.sh"
   },
   "devDependencies": {
     "@eslint/js": "^9",
