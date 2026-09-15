@@ -164,7 +164,15 @@ impl Drop for PendingGuard<'_> {
 /// one streaming request. Bounded by [`CONCURRENCY_LIMIT`] in-flight permits and
 /// [`MAX_PENDING`] queued waiters; a saturated pool returns a clear "busy" error
 /// instead of spawning unbounded connections.
-pub async fn acquire_slot(state: &AiState) -> Result<tokio::sync::OwnedSemaphorePermit, String> {
+///
+/// `Ok(None)` means the wait was cancelled: the request never took a slot and
+/// must never be sent. This is the one phase where a Stop saves a provider call
+/// outright — nothing has left the machine yet — so the wait races the token
+/// rather than reaching the provider to discover the id is gone.
+pub async fn acquire_slot(
+    state: &AiState,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Result<Option<tokio::sync::OwnedSemaphorePermit>, String> {
     let guard = PendingGuard(state);
     let prev = state.pending.fetch_add(1, Ordering::SeqCst);
     if prev >= MAX_PENDING {
@@ -173,12 +181,88 @@ pub async fn acquire_slot(state: &AiState) -> Result<tokio::sync::OwnedSemaphore
     // `acquire_owned` takes an `Arc`, so the queue is the semaphore itself and
     // the permit is owned (not tied to `state`), letting it be held across the
     // whole stream without borrowing the Tauri state.
-    let permit = state
-        .semaphore
-        .clone()
-        .acquire_owned()
-        .await
-        .map_err(|_| "AI 服务不可用".to_string())?;
+    let permit = tokio::select! {
+        biased;
+        // Cancelled while queued. Before this, the token was only consulted
+        // between reads of the ANSWER, so a task the user had already stopped
+        // went on to take the next free slot and send its whole prompt to the
+        // provider — a call nobody asked for, billed like any other.
+        _ = cancel.cancelled() => return Ok(None),
+        permit = state.semaphore.clone().acquire_owned() => {
+            permit.map_err(|_| "AI 服务不可用".to_string())?
+        }
+    };
     drop(guard);
-    Ok(permit)
+    Ok(Some(permit))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::CONCURRENCY_LIMIT;
+    use tokio_util::sync::CancellationToken;
+
+    /// Every permit taken, so the next caller has to queue for one — the state
+    /// a completion is in when the pool is saturated.
+    async fn saturated() -> (AiState, Vec<tokio::sync::OwnedSemaphorePermit>) {
+        let state = AiState::default();
+        let mut held = Vec::new();
+        for _ in 0..CONCURRENCY_LIMIT {
+            held.push(
+                state
+                    .semaphore
+                    .clone()
+                    .acquire_owned()
+                    .await
+                    .expect("a free permit while filling the pool"),
+            );
+        }
+        (state, held)
+    }
+
+    /// The money half of cancellation: a request stopped while it was QUEUED had
+    /// not been sent, and must not be. It is not enough for the stream loop to
+    /// notice the id later — by then the prompt is at the provider and the call
+    /// is being billed.
+    #[tokio::test]
+    async fn a_request_cancelled_while_queued_never_takes_a_slot() {
+        let (state, _held) = saturated().await;
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+
+        let acquired = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            acquire_slot(&state, &cancel),
+        )
+        .await
+        .expect("a cancelled waiter must not keep waiting for a permit");
+
+        assert!(
+            matches!(acquired, Ok(None)),
+            "a cancelled wait is not an acquisition: {acquired:?}"
+        );
+        assert_eq!(
+            state.pending.load(Ordering::SeqCst),
+            0,
+            "its queue slot must be given back at once, not held until a permit frees"
+        );
+    }
+
+    /// The floor under the fix: an uncancelled request still takes the slot that
+    /// frees, so racing the token did not turn queueing into giving up.
+    #[tokio::test]
+    async fn a_queued_request_still_takes_the_slot_that_frees() {
+        let (state, mut held) = saturated().await;
+        let cancel = CancellationToken::new();
+
+        let (acquired, ()) = tokio::join!(acquire_slot(&state, &cancel), async {
+            held.pop();
+        });
+
+        assert!(
+            matches!(acquired, Ok(Some(_))),
+            "the waiter must take the freed permit: {acquired:?}"
+        );
+        assert_eq!(state.pending.load(Ordering::SeqCst), 0);
+    }
 }

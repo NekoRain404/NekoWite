@@ -108,9 +108,15 @@ pub async fn ai_complete(
         // saturated/over-quota request gets a clear "busy" error rather than
         // unbounded task spawning. The permit is held for the whole stream.
         let state = app.state::<AiState>();
-        let _permit = acquire_slot(&state).await.inspect_err(|e| {
+        let Some(_permit) = acquire_slot(&state, &cancel).await.inspect_err(|e| {
             emit_ai_error(&app, &id, e);
-        })?;
+        })?
+        else {
+            // Stopped while it was queued. The request never left the machine,
+            // so there is nothing to send, nothing to report and nothing to
+            // bill - the same silent exit a cancelled stream takes.
+            return Ok(());
+        };
         stream_complete(&app, &config, &prompt, &images, &id, &cancel, pin.as_ref()).await
     }
     .await;

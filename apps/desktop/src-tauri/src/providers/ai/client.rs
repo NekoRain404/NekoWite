@@ -70,6 +70,26 @@ pub use super::sse::{
 use super::transport::ai_http_client;
 pub use super::url_policy::{validate_base_url, VettedHost};
 
+/// Dispatch one request and hand back its response, or `None` when it was
+/// cancelled before the provider answered.
+///
+/// `RequestBuilder::send` resolves on the response HEADERS. A provider that has
+/// accepted the connection and is still thinking leaves it pending for as long
+/// as it likes, and nothing consulted the cancel token during that wait: Stop
+/// did nothing until the provider spoke or the read timeout expired, with the
+/// connection and the concurrency permit held the whole time. Dropping the
+/// future closes the connection instead.
+async fn send_request(
+    request: reqwest::RequestBuilder,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Result<Option<reqwest::Response>, reqwest::Error> {
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => Ok(None),
+        response = request.send() => response.map(Some),
+    }
+}
+
 /// Resolve the provider's `GET {endpoint}` for listing models through one
 /// pinned, redirect-refusing client.
 ///
@@ -138,13 +158,21 @@ pub async fn stream_complete(
         config,
     );
 
-    let response = request.send().await.map_err(|e| {
-        let _ = app.emit(
-            "ai-error",
-            serde_json::json!({ "id": id, "message": e.to_string() }),
-        );
-        e.to_string()
-    })?;
+    let response = match send_request(request, cancel).await {
+        Ok(Some(response)) => response,
+        // Cancelled before the provider answered: say nothing, emit nothing.
+        // This is the rule the stream loop already follows for a cancelled
+        // stream, and it is the same here - a cancellation is not a failure and
+        // not a completion.
+        Ok(None) => return Ok(()),
+        Err(e) => {
+            let _ = app.emit(
+                "ai-error",
+                serde_json::json!({ "id": id, "message": e.to_string() }),
+            );
+            return Err(e.to_string());
+        }
+    };
     // A 4xx/5xx must not be read as a normal SSE stream (that would surface the
     // provider's JSON error page as chunks and end in an empty `ai-done` with no
     // hint to the user). Surfacing it here mirrors the `send` failure path above:
@@ -257,4 +285,70 @@ pub async fn stream_complete(
     }
     let _ = app.emit("ai-done", ai_done_payload(id, answer, completion.usage()));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+
+    /// A server that takes the connection and then says nothing, which is the
+    /// state a provider is in while it is still working on the answer. It holds
+    /// the socket open for the rest of the run, so the request really does stay
+    /// unfinished instead of failing fast.
+    async fn silent_server() -> u16 {
+        use tokio::io::AsyncReadExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind a loopback port");
+        let port = listener.local_addr().expect("local addr").port();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    let _ = sock.read(&mut buf).await;
+                    // The prompt has arrived; the answer has not been written.
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                });
+            }
+        });
+        port
+    }
+
+    /// Stop has to work while the provider is thinking, not only between its
+    /// chunks. `send()` resolves on the response HEADERS, and a provider that
+    /// has the prompt and has not answered yet used to hold the connection, the
+    /// concurrency permit and the user's Stop for as long as it liked.
+    #[tokio::test]
+    async fn a_cancelled_request_stops_waiting_for_the_headers() {
+        let port = silent_server().await;
+        // A short read ceiling so the unfixed path surfaces as a read timeout
+        // instead of hanging the suite.
+        let client = ai_http_client(Duration::from_secs(5), Duration::from_millis(500), None)
+            .expect("client builds");
+        let cancel = CancellationToken::new();
+        let request = client
+            .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+            .body("{}");
+
+        let mut sending = Box::pin(send_request(request, &cancel));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), &mut sending)
+                .await
+                .is_err(),
+            "the silent server must not have answered inside the window"
+        );
+
+        cancel.cancel();
+        let outcome = tokio::time::timeout(Duration::from_secs(1), &mut sending)
+            .await
+            .expect("a cancelled request must not keep waiting for the headers");
+
+        assert!(
+            matches!(outcome, Ok(None)),
+            "cancelled before the headers, not answered: {outcome:?}"
+        );
+    }
 }
