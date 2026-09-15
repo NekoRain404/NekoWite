@@ -15,6 +15,7 @@
 pub mod commands;
 pub mod domain;
 pub mod errors;
+pub mod open_file;
 pub mod providers;
 pub mod state;
 pub mod storage;
@@ -22,6 +23,8 @@ pub mod storage;
 // Re-exported at the crate root for convenience/back-compat: the vault
 // registry is the authority that path-confined commands consult (and it is what
 // `tests/vault_auth_test.rs` exercises).
+use std::path::Path;
+
 use tauri::Manager;
 
 pub use state::VaultRegistry;
@@ -44,14 +47,20 @@ pub fn run() {
     }
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
             }
+            // A second launch is how a file manager opens a `.md` in an app that
+            // is already running, so this `argv` is where the file is. It used to
+            // be thrown away here, and with it every double-click made while the
+            // app was open.
+            open_file::handle_launch(app, args, Path::new(&cwd));
         }))
         .plugin(tauri_plugin_dialog::init())
+        .manage(open_file::PendingOpen::default())
         .manage(state::WatcherState::default())
         .manage(state::VaultRegistry::default())
         .manage(state::AiState::default())
@@ -68,6 +77,12 @@ pub fn run() {
                     .enable_clipboard_access()
                     .build()?;
             }
+            // `nekowite notes.md`: the first launch's file arrives in our own
+            // `argv`, before any window or listener exists. It is resolved and
+            // left in managed state — which is also where a later launch's file
+            // goes — for the window to collect once its startup has settled.
+            let cwd = std::env::current_dir().unwrap_or_default();
+            open_file::handle_launch(app.handle(), std::env::args_os(), &cwd);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -101,6 +116,7 @@ pub fn run() {
             commands::keys::set_master_password,
             commands::keys::unlock_vault,
             commands::system::system_accent_color,
+            commands::open::take_pending_open,
         ])
         .run(context)
         .expect("error while running tauri application");
