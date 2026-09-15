@@ -294,6 +294,12 @@ describe('a save after a refused parse', () => {
     readMock.mockResolvedValue(DEEP)
     await tabs.openTab('/vault/x.md')
     const refusedTab = tabs.activeTab!
+    // Each file keeps its own bytes: the save below reads y.md before it writes
+    // (L05's save-time half), and one answer for both paths would hand it the
+    // document the model refused and call that file somebody else's edit.
+    readMock.mockImplementation(async (_vault: string, path: string) =>
+      path === '/vault/y.md' ? NOTE_Y : DEEP,
+    )
     await pane.sync.applyContent(refusedTab.content)
     expect(pane.session.parseFailed).toBe(true)
     expect(renderedModelRefused()).toBe(true)

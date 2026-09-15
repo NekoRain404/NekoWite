@@ -4,22 +4,26 @@
  *
  * Split out of `tab-persistence.ts` (which keeps session + autosave) because
  * the transaction and its overlapping-save serialization do not fit under the
- * 400-line budget next to the session code. Two more slices left this file for
+ * 400-line budget next to the session code. Four more slices left this file for
  * the same reason: the staged-asset relocation a first save performs
- * (`tab-assets.ts`) and the claim that tells our own writes apart from external
- * edits (`self-writes.ts`). This module is a leaf: it depends on no other tab
- * module, and the fs port, the clock and the notification ports all arrive
- * through `deps`.
+ * (`tab-assets.ts`), the claim that tells our own writes apart from external
+ * edits (`self-writes.ts`), what a write must hold to be allowed at all
+ * (`tab-write-preconditions.ts` — the read the save now takes before it writes,
+ * which is L05's save-time half), and the per-tab records this file keeps about
+ * those writes (`tab-save-state.ts`). This module is a leaf: no other tab module
+ * imports it except the store that wires them, and the fs port, the clock and
+ * the notification ports all arrive through `deps`.
  */
 
-import { ref } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 import { emitLifecycle, getActiveEditor } from '@nekowite/plugin-host'
 import { armSuppressReapply } from '../services/suppress-reapply'
-import { flushEdits, isRefusedDocument, isSourceAuthored } from '../services/editor-ownership'
+import { flushEdits } from '../services/editor-ownership'
 import { createRefusedSaveAnswer } from './refused-save'
 import { createSelfWrites } from './self-writes'
 import { createTabAssets } from './tab-assets'
+import { createTabSaveState } from './tab-save-state'
+import { createWritePreconditions } from './tab-write-preconditions'
 import type { OpenTab } from './tabs'
 
 /** The slice of the settings store the write reads. */
@@ -29,6 +33,9 @@ export interface TabSaveSettingsPort {
 
 /** The slice of the fs gateway the write path uses. */
 export interface TabSaveFilePort {
+  /** Read the bytes a save is about to replace. Not optional: the save does not
+   *  write without looking first (see `tab-write-preconditions.ts`). */
+  read(vault: string, path: string): Promise<string>
   write(vault: string, path: string, content: string, maxHistory?: number): Promise<string | null>
   saveFileDialog(defaultName: string, startDir?: string): Promise<string | null>
   createDir(vault: string, path: string): Promise<string>
@@ -63,6 +70,19 @@ export interface TabSaveOptions {
    * (Ctrl+S, and the close path's rescue) are the ones that set it.
    */
   offerCopy?: boolean
+  /**
+   * The user asked for this save — and it is the only thing that can answer a
+   * conflict. A file that changed on disk is refused once and the user is told;
+   * a save they then ask for is their answer, so that write goes through (see
+   * `tab-write-preconditions.ts`).
+   *
+   * Set in exactly ONE place — `saveActive`, which is the Ctrl+S route. The
+   * close path's rescue also sets `offerCopy` and must not set this: the user
+   * answered "save my text as copies", and that is not consent to replace an
+   * edit somebody else made. A second caller appearing is the change to be
+   * suspicious of.
+   */
+  userAsked?: boolean
 }
 
 export function createTabSave(deps: TabSaveDeps) {
@@ -85,33 +105,14 @@ export function createTabSave(deps: TabSaveDeps) {
   // `tab.content` in place, so it is handed the tab rather than a snapshot.
   const assets = createTabAssets({ files, t, notifyError })
 
-  const savingIds = ref<Set<string>>(new Set())
+  // Whether a write may happen at all, including the read that tells an edit
+  // somebody else made from our own saved text; see the module note.
+  const preconditions = createWritePreconditions({ files, vault, t, notifyError })
 
-  /**
-   * Per-tab edit revision: one bump for every `markDirty`, which the editor
-   * panes fire on every doc-changing keystroke
-   * (`editorPersistence`'s `onContentChange`, `SourcePane`'s publish).
-   *
-   * This is the evidence a save uses to decide whether it may call a tab saved,
-   * and it exists because `tab.content` cannot answer that question. The
-   * rendered pane publishes through a 120 ms debounce, so a keystroke sets
-   * `dirty` and bumps this revision IMMEDIATELY while `tab.content` still holds
-   * the previous text — for the whole length of a write, `tab.content` is
-   * exactly what the save already wrote, and a save that compared only that
-   * text cleared `dirty` over keystrokes that were in neither the tab nor the
-   * file. A revision cannot be fooled that way: it moves at the keystroke, not
-   * at the publish.
-   *
-   * Keyed by tab id, and ids are never reused within a session (`tab-${++seq}`
-   * in `tab-lifecycle.ts`), so a recycled id cannot inherit a dead tab's
-   * revision; `resetSaveBookkeeping` still clears it with the rest.
-   */
-  const editRevisions = new Map<string, number>()
-
-  /** Record that `id`'s text changed (the caller is the text, not the publish). */
-  function noteEdit(id: string): void {
-    editRevisions.set(id, (editRevisions.get(id) ?? 0) + 1)
-  }
+  // What this path remembers about each tab — a write in flight, its edit
+  // revision, the state the status line reads (see `tab-save-state.ts`).
+  const saveState = createTabSaveState({ tabs })
+  const { markSaving, markSaved, stateOf, noteEdit, revisionOf } = saveState
 
   /**
    * Saves that have not settled yet, keyed by tab id.
@@ -135,25 +136,6 @@ export function createTabSave(deps: TabSaveDeps) {
    * something new was typed in the meantime.
    */
   const inFlightSaves = new Map<string, Promise<boolean>>()
-
-  function markSaving(id: string): void {
-    const next = new Set(savingIds.value)
-    next.add(id)
-    savingIds.value = next
-  }
-
-  function markSaved(id: string): void {
-    const next = new Set(savingIds.value)
-    next.delete(id)
-    savingIds.value = next
-  }
-
-  function stateOf(id: string): 'saved' | 'dirty' | 'saving' {
-    if (savingIds.value.has(id)) return 'saving'
-    const tab = tabs.value.find((x) => x.id === id)
-    if (tab?.dirty) return 'dirty'
-    return 'saved'
-  }
 
   /** Returns true when the file is on disk with the intended content. */
   async function saveTab(id: string, opts: TabSaveOptions = {}): Promise<boolean> {
@@ -215,28 +197,12 @@ export function createTabSave(deps: TabSaveDeps) {
     // within its debounce window used to persist the previous text and then
     // re-apply it to the model, losing the keystrokes outright.
     await flushEdits()
-    // A document the rendered model could not load must not be written. The
-    // flush above published nothing for it (editorPersistence refuses while the
-    // model is refused), so the tab still holds exactly the text that failed —
-    // and writing that is writing a document the editor could not read, on the
-    // strength of a model that holds something else. Refused, and said out
-    // loud: a save that did not happen must not come back as one. Returning
-    // false is what blocks the callers that act on the answer — the autosave,
-    // the close, the vault switch — instead of letting them treat the file as
-    // safe.
-    //
-    // Text the source pane authored is the one thing here that is the user's
-    // own writing over this file rather than the model's output, so it is
-    // theirs to save. Refusing it would strand the edits they typed to fix the
-    // document: the tab stays dirty, and a dirty tab whose save fails cannot be
-    // closed or closed over (tab-lifecycle keeps it; app-lifecycle refuses to
-    // close the window) — the user would have to make the document render
-    // again to be allowed to put their own text on disk.
-    if (isRefusedDocument(tab.content) && !isSourceAuthored(tab.content)) {
-      notifyError(t('tabs.saveBlockedUnrenderable'))
-      // The same unwinding the `finally` below does for a failed write: this
-      // refusal returns before it, and a flag left set pins the status line on
-      // "Saving…" forever.
+    // A document the rendered model could not load must not be written — the
+    // refusal, and the reason it is refused, are in
+    // `tab-write-preconditions.ts`. The `markSaved` is this module's: the refusal
+    // returns before the `finally` below, and a flag left set pins the status
+    // line on "Saving…" forever.
+    if (!preconditions.documentIsWritable(tab.content)) {
       markSaved(tab.id)
       return false
     }
@@ -251,9 +217,28 @@ export function createTabSave(deps: TabSaveDeps) {
     const editor = getActiveEditor()
     const contentAtStart = tab.content
     // The evidence that decides whether this save may call the tab saved, read
-    // BEFORE the write (see `editRevisions`): the revision moves at the
+    // BEFORE the write (see `tab-save-state.ts`): the revision moves at the
     // keystroke, and the write spans an await the user can type across.
-    const revisionAtStart = editRevisions.get(tab.id) ?? 0
+    const revisionAtStart = revisionOf(tab.id)
+    // What is at the path is somebody else's edit unless it still holds the bytes
+    // this tab last read or wrote (L05's save-time half; the read and the policy
+    // are in `tab-write-preconditions.ts`). A save that writes without looking is
+    // how another program's version disappears with nobody told, and this is the
+    // last moment the question can be asked — the flush and the relocation above
+    // are both whole-document work of their own.
+    if (
+      !(await preconditions.fileHoldsOurBytes(tab, vaultAtStart, path, {
+        pickedPath: pickedInThisSave,
+        userAsked: opts.userAsked === true,
+      }))
+    ) {
+      // Nothing was written, so nothing about a write happens: no `onSave` for a
+      // save the app refused (the unrenderable refusal above is refused the same
+      // way, for the same reason), and the flag this save raised comes back down
+      // or the status line stays pinned on "Saving…".
+      markSaved(tab.id)
+      return false
+    }
     const next = emitLifecycle('onSave', editor, tab.content)
     const content = typeof next === 'string' ? next : tab.content
     try {
@@ -276,6 +261,9 @@ export function createTabSave(deps: TabSaveDeps) {
       // write that is exactly `content` — true whatever the user typed in the
       // meantime, because those keystrokes are not on disk yet.
       tab.savedContent = content
+      // The file holds this tab's bytes again: whatever was in conflict is spent
+      // by the write that replaced it, and the next save is an ordinary one.
+      preconditions.clearConflict(tab)
       // Whether the tab may be called SAVED is a separate question, and it is
       // answered by evidence rather than by the write having completed. A
       // completed write only proves it wrote the text it captured; it says
@@ -288,7 +276,7 @@ export function createTabSave(deps: TabSaveDeps) {
       // `dirty` is the only record that such text exists: the autosave timer,
       // `hasUnsavedWork()`, the window-close flush and the close-tab save all
       // read it and all skipped the work.
-      const editedDuringWrite = (editRevisions.get(tab.id) ?? 0) !== revisionAtStart
+      const editedDuringWrite = revisionOf(tab.id) !== revisionAtStart
       const pluginRewrote = content !== contentAtStart
       if (!editedDuringWrite) {
         if (pluginRewrote) {
@@ -341,10 +329,21 @@ export function createTabSave(deps: TabSaveDeps) {
 
   /** Ctrl+S. An explicit save, so it may ask where the text should go when the
    *  file it was aimed at refuses to take it — the same latitude an untitled
-   *  tab already has. */
+   *  tab already has. And it is the ONE caller that speaks for the user: a save
+   *  they ask for again, having been told the file changed under them, is their
+   *  answer to that question (see `TabSaveOptions.userAsked`). */
   async function saveActive(): Promise<void> {
     const tab = activeTab.value
-    if (tab) await saveTab(tab.id, { offerCopy: true })
+    if (tab) await saveTab(tab.id, { offerCopy: true, userAsked: true })
+  }
+
+  /** The conflict prompt's "Keep local", recorded where the next save reads it
+   *  (see `tab-write-preconditions.ts`'s `keepLocal`). The prompt reports the
+   *  answer instead of acting on it (§10.2), and this is the app's side of that:
+   *  the same command the reload beside it takes, for the other answer. */
+  async function keepLocalConflict(id: string): Promise<void> {
+    const tab = tabs.value.find((x) => x.id === id)
+    if (tab) await preconditions.keepLocal(tab)
   }
 
   /** Best-effort save of every dirty tab that has a real path (used before a
@@ -372,9 +371,8 @@ export function createTabSave(deps: TabSaveDeps) {
    *  remnants. */
   function resetSaveBookkeeping(): void {
     inFlightSaves.clear()
-    savingIds.value = new Set()
     selfWrites.clear()
-    editRevisions.clear()
+    saveState.reset()
   }
 
   return {
@@ -386,6 +384,7 @@ export function createTabSave(deps: TabSaveDeps) {
     isSelfWrite: selfWrites.isSelfWrite,
     saveTab,
     saveActive,
+    keepLocalConflict,
     flushDirty,
     resetSaveBookkeeping,
   }
