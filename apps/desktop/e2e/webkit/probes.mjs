@@ -10,6 +10,7 @@
 import { RECT_SRC } from './probe-support.mjs'
 import { panelProbe } from './probe-panel.mjs'
 import { motionProbe } from './probe-motion.mjs'
+import { noteSwitchProbe } from './probe-note-switch.mjs'
 import { tailProbe } from './probe-tail.mjs'
 
 /** Dumps what is actually in the document, so the probes can address it. */
@@ -41,6 +42,12 @@ const inspect = {
  * document where the next expects it. `motion` needs the toolbar before an image
  * selection moves the caret into a node view, and `tail` switches the mode to
  * split, so it goes last and takes the panes with it.
+ *
+ * `note-switch` also goes last, and for a stronger reason: it changes which
+ * document is open, so anything that needs the fixture's own note must have run
+ * by then. It needs the two-note scenario (`--scenario two-notes`) and reports
+ * itself skipped under any other, which is what keeps a plain run of everything
+ * working.
  */
-export const PROBES = [motionProbe, panelProbe, tailProbe]
+export const PROBES = [motionProbe, panelProbe, tailProbe, noteSwitchProbe]
 export const ALL_PROBES = [inspect, ...PROBES]
