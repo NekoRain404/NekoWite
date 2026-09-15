@@ -15,7 +15,10 @@
  * own first. That last state is the one a close must not hand to the save gate
  * — the gate's `loading` refusal is about WRITING (the read that is still
  * running settles it), and reading it as a refusal to CLOSE left the X inert and
- * silent for as long as the read took, forever if it never landed.
+ * silent for as long as the read took, forever if it never landed. The closes
+ * that take the WHOLE set away run that move for every tab that needs it before
+ * anything else (`reconcilePlaceholders`), because the flush and the untitled
+ * prompt both come after it and both depend on it.
  */
 
 import type { Ref } from 'vue'
@@ -121,6 +124,42 @@ export function createTabClose(deps: TabCloseDeps) {
     return true
   }
 
+  /**
+   * Do what `closePlaceholder` does for one tab, for every tab that needs it:
+   * move what was typed into a tab whose first read has not landed into a tab of
+   * its own. The two bulk closes owe this step BEFORE their flush, and it is one
+   * function rather than a line in each of them because the second copy is the
+   * bug — neither route called the rescue at all, so a placeholder's `loading`
+   * refusal (a refusal about WRITING) read as "unsafe to close" and blocked both
+   * forever.
+   *
+   * Order matters both ways round. Before the flush, because `flushDirty` asks
+   * the save gate about every dirty tab with a path and a placeholder can never
+   * answer it; before the untitled prompt, because the tabs this creates are
+   * untitled and dirty, and the prompt is what offers the user their text back
+   * (save it under a name, or discard it) instead of the close taking it.
+   *
+   * The notice is the close's own (`tabs.closeWhileLoading`): the note is on its
+   * way out, so the read-commit sentence — which says the note now shows the
+   * file — would describe a tab the user will not see.
+   */
+  async function reconcilePlaceholders(): Promise<void> {
+    // Nothing to do is the common case, and it must stay cheap: this runs in
+    // front of every bulk close, and the pane flush below is global work.
+    if (!tabs.value.some((tab) => tab.loading && tab.dirty)) return
+    // The flush comes first for the reason `closePlaceholder` and `commitRead`
+    // take it: `dirty` is set at the KEYSTROKE while `tab.content` holds the
+    // typing only once the pane has published it, and the rescue is a one-shot
+    // read of that field.
+    await flushEdits()
+    // The flush is an await, and it is where the read lands — a tab that has
+    // become a note again holds text of its own to save and belongs to the
+    // flush, not here. Both flags are re-read for that reason.
+    for (const tab of [...tabs.value]) {
+      if (tab.loading && tab.dirty) rescuePlaceholderTyping(tab, t('tabs.closeWhileLoading'))
+    }
+  }
+
   async function closeTab(id: string): Promise<void> {
     const tab = tabs.value.find((x) => x.id === id)
     // A placeholder is not the save gate's to settle — see `closePlaceholder`.
@@ -156,6 +195,11 @@ export function createTabClose(deps: TabCloseDeps) {
    */
   async function closeAll(): Promise<boolean> {
     if (tabs.value.length === 0) return true
+    // The placeholder step, before the flush and before the prompt: see
+    // `reconcilePlaceholders`. Without it a tab whose read had not landed held
+    // this whole close — `flushDirty` can never settle one, and the sentence the
+    // user got for it was about a vault switch.
+    await reconcilePlaceholders()
     if (!(await flushDirty())) {
       notifyError(t('tabs.unsavedWorkBlocker'))
       return false
@@ -199,7 +243,7 @@ export function createTabClose(deps: TabCloseDeps) {
     if (tabs.value.some((x) => x.id === id)) focusTab(id)
   }
 
-  return { closeTab, closeAll, closeOthers }
+  return { closeTab, closeAll, closeOthers, reconcilePlaceholders }
 }
 
 export type TabClose = ReturnType<typeof createTabClose>

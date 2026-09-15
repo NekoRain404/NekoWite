@@ -29,13 +29,16 @@ function isTauriRuntime(): boolean {
  *
  * Close is handled two ways:
  *   - In the packaged Tauri app, the window `close-requested` listener runs the
- *     real save: when dirty tabs exist it PREVENTS the close, `flushDirty()`s
- *     them (and routes unnamed dirty tabs through the existing save-as prompt
- *     path), and only then closes. If a save fails the window stays open so the
- *     work is not lost — and when it failed because the file refuses the write,
- *     the user is offered the one route out that does not need that file (a copy
- *     under another name, `rescueUnflushableTabs`), because "some files could
- *     not be saved" on its own leaves them with an X that never works.
+ *     real save: when dirty tabs exist it PREVENTS the close, reconciles the
+ *     tabs whose first read has not landed (their typing moves to a tab of its
+ *     own, which the save-as prompt then covers — `reconcilePlaceholders` in
+ *     `tab-close.ts`), `flushDirty()`s the rest (and routes unnamed dirty tabs
+ *     through the existing save-as prompt path), and only then closes. If a save
+ *     fails the window stays open so the work is not lost — and when it failed
+ *     because the file refuses the write, the user is offered the one route out
+ *     that does not need that file (a copy under another name,
+ *     `rescueUnflushableTabs`), because "some files could not be saved" on its
+ *     own leaves them with an X that never works.
  *   - In the browser Demo (no Tauri runtime, no `close-requested`), the
  *     `beforeunload` fallback just prompts, because an async flush cannot be
  *     reliably awaited during an unload.
@@ -150,6 +153,16 @@ export function createAppLifecycle(deps: {
     e.preventDefault()
     closing = true
     try {
+      // A tab whose first read has not landed is a placeholder — an EMPTY
+      // document wearing the note's path — and nothing can write it, so the
+      // `flushDirty()` below answers false for it forever, and the copy prompt
+      // below cannot deliver either (its save is refused for the same reason).
+      // The X therefore did nothing, on every press: a user could not close the
+      // application. What the user typed into that tab is not the note's text
+      // and must not go to the note's file, so it moves to a tab of its own
+      // first — the SAME step, in the same place (before the flush and before
+      // the untitled prompt), that `closeAll` runs. One function, both routes.
+      await tabs.reconcilePlaceholders()
       const flushed = await tabs.flushDirty()
       if (!flushed && !(await rescueUnflushableTabs())) {
         // A path'd save failed, and the user did not (or could not) route the
@@ -161,10 +174,15 @@ export function createAppLifecycle(deps: {
       }
       // Unnamed dirty docs need a Save-As dialog a background flush must not open,
       // so route them through the existing keep-or-discard prompt, saving each (or
-      // discarding) before the window closes.
+      // discarding) before the window closes. The wording is the close-all one:
+      // the default names a vault switch, which is not what this user is doing.
       const untitled = tabs.untitledDirtyTabs()
       if (untitled.length > 0) {
-        const choice = await requestUntitledVaultSwitch({ count: untitled.length, notify: notifyRecovery })
+        const choice = await requestUntitledVaultSwitch({
+          count: untitled.length,
+          notify: notifyRecovery,
+          messageKey: 'tabs.untitledCloseAllMsg',
+        })
         if (choice === 'save') {
           for (const tab of untitled) {
             const saved = await tabs.saveTab(tab.id)

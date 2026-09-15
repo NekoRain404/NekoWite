@@ -189,6 +189,10 @@ export const useTabsStore = defineStore('tabs', () => {
     closeAll: lifecycle.closeAll,
     removeAllTabs: lifecycle.removeAllTabs,
     closeOthers: lifecycle.closeOthers,
+    /** The close's placeholder step, for the bulk route that is not `closeAll`:
+     *  the window close reconciles what was typed into a still-loading tab
+     *  before its own flush and untitled prompt (see `tab-close.ts`). */
+    reconcilePlaceholders: lifecycle.reconcilePlaceholders,
     removeTab: lifecycle.removeTab,
     setActive: lifecycle.setActive,
     markDirty: lifecycle.markDirty,
