@@ -10,6 +10,7 @@ import {
 import { imageNodeMessages, isRemoteHttpSrc } from './messages'
 import { imageDimSchema } from './schema'
 import { nextWidth, proportionalSize } from './resize'
+import { intrinsicSize } from './measure'
 import { advanceResizeDrag, beginResizeDrag, commitResizeDrag } from './drag'
 
 /**
@@ -234,11 +235,16 @@ export const makeImageNodeView: NodeViewConstructor = (node, view, getPos) => {
     if (event.button !== 0) return
     event.preventDefault()
     event.stopPropagation()
+    // Both resize paths measure the file's pixels through ./measure, so "how
+    // big is this really" has one answer. `startHeight` is only ever the aspect
+    // lock's denominator, and with a width stored but no height it is the
+    // file's PIXEL height — not the ratio the file has. The keyboard path
+    // refuses that pairing (lockPair); a drag cannot refuse mid-gesture, so the
+    // 0.75 stays as its last resort.
     const w = Number(node.attrs.width) || img.clientWidth || 0
-    const naturalW = img.naturalWidth || 0
-    const naturalH = img.naturalHeight || 0
-    const startWidth = w || naturalW || 1
-    const startHeight = Number(node.attrs.height) || naturalH || Math.round(startWidth * 0.75)
+    const natural = intrinsicSize(img)
+    const startWidth = w || natural?.width || 1
+    const startHeight = Number(node.attrs.height) || natural?.height || Math.round(startWidth * 0.75)
     const startX = event.clientX
     let drag = beginResizeDrag(startWidth)
     let proportional = event.shiftKey
