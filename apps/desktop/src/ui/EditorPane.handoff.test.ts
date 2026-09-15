@@ -527,6 +527,37 @@ describe('EditorPane mode handoff', () => {
       expect(cm.scrollDOM.scrollTop).toBeGreaterThan(sourceTopOfLine(HEADING_LINES[2]))
     })
 
+    /**
+     * The source line of `## Two`, the block `HEADING_TOPS[1]` anchors.
+     *
+     * Read from `BLOCK_LINES` rather than `HEADING_LINES`, which belongs to
+     * `HEADED`: that fixture joins its paragraphs with hard breaks and this one
+     * separates them with blank lines, so the two documents put their headings
+     * on different lines and only the derived list names this one's.
+     */
+    const SECOND_HEADING = 19
+
+    it('a document nobody has clicked into carries no caret', async () => {
+      const host = await mountPane('rendered', CARET_DOC)
+      installRenderedLayout(host)
+      // The user scrolls down to read and never puts the caret anywhere: the
+      // model's selection is still the one ProseMirror chose on load, which is
+      // the end of the document and not a place the user was. The switch has to
+      // hand over the reading position and nothing else.
+      const rendered = host.querySelector<HTMLElement>('.pane.rendered')!
+      userScroll(rendered, HEADING_TOPS[1])
+      await nextTick()
+
+      useViewStore().setMode('source')
+      for (let i = 0; i < 40; i += 1) {
+        await flush()
+        if (host.querySelector('.pane.source .cm-scroller')) break
+      }
+      await nextTick()
+
+      expect(caretLineOf(sourceViewOf(host))).toBe(BLOCK_LINES[SECOND_HEADING])
+    })
+
     it('源码 → 渲染 puts the caret back on the line the source caret left', async () => {
       const host = await mountPane('source', CARET_DOC)
       installRenderedLayout(host)
