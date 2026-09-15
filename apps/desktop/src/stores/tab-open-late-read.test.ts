@@ -13,9 +13,12 @@
  * moves to an untitled tab of its own, which is the state it is actually in.
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { onNotify, onRecovery } from '../services/errors'
+import { setSourceViewHandle } from '../services/source-view'
+import { setRenderedFlush } from '../services/editor-ownership'
+import { documentKey } from '../features/editor/model/document-session'
 import { useTabsStore } from './tabs'
 
 const readMock = vi.hoisted(() => vi.fn())
@@ -209,5 +212,177 @@ describe('a note opened while the user is already typing in it', () => {
 
     expect(tabs.tabs).toHaveLength(0)
     expect(prompts).toBe(0)
+  })
+})
+
+/** The editor as far as the persistence layer is concerned (the harness the
+ *  save-race tests share): one `type()` is one keystroke — it changes the
+ *  document and fires the change handlers synchronously, as ProseMirror's
+ *  markdownUpdated does. */
+function fakeEditor(initial: string) {
+  const handlers = new Set<() => void>()
+  let doc = initial
+  return {
+    get doc() {
+      return doc
+    },
+    type(text: string) {
+      doc += text
+      handlers.forEach((h) => h())
+    },
+    async save() {
+      return doc
+    },
+    onContentChange(cb: () => void) {
+      handlers.add(cb)
+      return () => handlers.delete(cb)
+    },
+  }
+}
+
+/** The rendered pane's real persistence layer over `editor`, publishing into
+ *  the open tab through the 120 ms debounce — and registered as the pane's
+ *  flush hook, which is the handle a service reaches for to publish the
+ *  keystroke NOW (see `services/editor-ownership`). */
+async function attachPane(
+  editor: ReturnType<typeof fakeEditor>,
+  content: string,
+  vault: string,
+  tabId: string,
+) {
+  const { createEditorPersistence } = await import(
+    '../features/editor/controller/editor-persistence'
+  )
+  const persistence = createEditorPersistence({
+    session: {
+      editor: editor as never,
+      gen: 0,
+      appliedContent: content,
+      appliedKey: documentKey(vault, tabId),
+      lastLocalMarkdown: content,
+      lastDoc: content,
+      docChangeTimer: null,
+      applyingExternal: false,
+      pendingExternal: null,
+      parseFailed: false,
+      calloutViewSet: true,
+    },
+  })
+  persistence.attachChangeListener()
+  setRenderedFlush(() => persistence.flush())
+  return persistence
+}
+
+/**
+ * The same rescue, driven the way the app actually publishes.
+ *
+ * `typeInto` above writes `tab.content` in the same tick as the keystroke —
+ * which is what the SOURCE pane does and what the RENDERED pane (the default
+ * mode) does not: the rendered pane serializes the whole document on a 120 ms
+ * debounce, so between the keystroke and the timer the model holds the text,
+ * `dirty` is set, and `tab.content` is still the empty placeholder. A rescue
+ * that reads the field in that window hands the user an empty tab while the
+ * toast says their typing is in it, so the tests below never touch the field:
+ * they type into the real persistence layer and let the read land inside the
+ * debounce window.
+ */
+describe('a rescue that must publish the pane before it reads the tab', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    readMock.mockReset()
+    setSourceViewHandle(null)
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    setRenderedFlush(null)
+  })
+
+  it('rescues the typing the rendered pane has not published yet', async () => {
+    const read = parkedRead()
+    const seen: string[] = []
+    const off = onNotify((m) => seen.push(m))
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+
+    const opening = tabs.openTab('/vault/a.md')
+    const placeholder = tabs.tabs[0]
+    const editor = fakeEditor('')
+    await attachPane(editor, '', '/vault', placeholder.id)
+
+    editor.type('USER TYPED')
+    // The keystroke is in the model and in `dirty` — and NOT in the tab. This
+    // is the state the old test wrote by hand, and the app never reaches it.
+    expect(placeholder.dirty).toBe(true)
+    expect(placeholder.content).toBe('')
+
+    // The read lands inside the debounce window.
+    read.resolve('DISK BEFORE')
+    await opening
+    off()
+
+    const note = tabs.tabs.find((t) => t.path === '/vault/a.md')
+    const rescued = tabs.tabs.find((t) => t.path === null)
+    // The rescue carried the text the user typed, not the empty field.
+    expect(rescued?.content).toBe('USER TYPED')
+    expect(rescued?.dirty).toBe(true)
+    // ...and the note shows the file, so neither text was written over the other.
+    expect(note?.content).toBe('DISK BEFORE')
+    expect(seen.length).toBeGreaterThan(0)
+  })
+
+  it('keeps the unpublished typing out of the note it was typed into', async () => {
+    const read = parkedRead()
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+
+    const opening = tabs.openTab('/vault/a.md')
+    const placeholder = tabs.tabs[0]
+    const editor = fakeEditor('')
+    await attachPane(editor, '', '/vault', placeholder.id)
+
+    editor.type('USER TYPED')
+    read.resolve('DISK BEFORE')
+    await opening
+
+    // The keystroke armed a serialization that was still pending when the read
+    // committed the file's text. Firing it now must not publish the typing into
+    // the note: that text belongs to the untitled tab, and landing it here
+    // would put it on disk over the note's own bytes. (`Async` so the timer's
+    // own awaits — the model's `save()` — drain before the claim is read.)
+    await vi.advanceTimersByTimeAsync(1000)
+
+    const note = tabs.tabs.find((t) => t.path === '/vault/a.md')
+    expect(note?.content).toBe('DISK BEFORE')
+    expect(note?.savedContent).toBe('DISK BEFORE')
+    expect(tabs.tabs.find((t) => t.path === null)?.content).toBe('USER TYPED')
+  })
+
+  it('rescues the unpublished typing when the read fails', async () => {
+    const read = parkedRead()
+    const seen: string[] = []
+    const off = onNotify((m) => seen.push(m))
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+
+    const opening = tabs.openTab('/vault/a.md')
+    const placeholder = tabs.tabs[0]
+    const editor = fakeEditor('')
+    await attachPane(editor, '', '/vault', placeholder.id)
+
+    editor.type('USER TYPED')
+    expect(placeholder.content).toBe('')
+    read.reject(new Error('io'))
+    await opening
+    off()
+
+    // The failed read takes its own tab away and must not take the typing with
+    // it — even though the typing is still only in the model.
+    expect(tabs.tabs.some((t) => t.path === '/vault/a.md')).toBe(false)
+    const rescued = tabs.tabs.find((t) => t.path === null)
+    expect(rescued?.content).toBe('USER TYPED')
+    expect(tabs.activeId).toBe(rescued?.id)
+    expect(seen.length).toBeGreaterThan(0)
   })
 })
