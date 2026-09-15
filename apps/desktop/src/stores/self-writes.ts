@@ -1,0 +1,110 @@
+/**
+ * Which filesystem writes are this app's own.
+ *
+ * The app writes a note and the watcher reports the write back to it. Without a
+ * claim the app reads its own save echo as an external edit: it reloads the
+ * document it just saved (dropping the caret and the live model), and on a tab
+ * with unsaved edits it asks a keep-or-reload question about a change it made
+ * itself — whose "use the disk version" answer discards every keystroke typed
+ * since the save began.
+ *
+ * The claim is therefore the CONTENT the app wrote, not a stopwatch. It used to
+ * be a fixed window measured from the START of the write, and its defect was
+ * structural rather than a matter of length: a write that outlives any fixed
+ * window falls out of it, so the app read its own echo as somebody else's. No
+ * duration fixes that — the window closes while the write is still running
+ * whatever it is set to. Naming the bytes ends the guesswork: the claim is held
+ * from before the write until the write settles, so it cannot expire underneath
+ * a slow one, and an external edit landing in the same window is still
+ * reported, because it writes different bytes.
+ *
+ * Two kinds of claim, distinguished by whether the caller has bytes to name:
+ *
+ *   - **named** (`noteSelfWrite(path, content)` … `settleSelfWrite(path)`) — the
+ *     save path. Held for exactly as long as the write runs. After it settles,
+ *     identification is by content anyway: a landed save leaves the bytes it
+ *     wrote in the tab's `savedContent`, which `externalDocSync` compares the
+ *     disk against before it decides anything.
+ *   - **timed** (`noteSelfWrite(path)`) — an operation with no single write to
+ *     point at (a delete, a rename). Those have no settle moment to bind to, so
+ *     they keep a clock.
+ *
+ * Split out of `tab-save.ts` for the line budget (§13.1) and because it is a
+ * question with one answer that two modules ask.
+ */
+
+/**
+ * How long a claim by a path with no bytes to name is honoured. Named claims
+ * do not use it — see the module note above.
+ */
+export const SELF_WRITE_MS = 2000
+
+interface Claim {
+  /** When the claim was made, for the timed kind. */
+  at: number
+  /** The bytes this app is writing, or null for a claim that names none. */
+  content: string | null
+}
+
+export interface SelfWrites {
+  /**
+   * Claim `path` as this app's own write.
+   *
+   * `content` is what is about to be written. Passing it is what makes the
+   * claim honest for the whole write; a caller with no bytes to name (a delete,
+   * a rename) omits it and gets the timed claim.
+   */
+  note(path: string, content?: string): void
+  /**
+   * The write for `path` has landed or failed: the claim ends here.
+   *
+   * A claim must not outlive the write that armed it, or a later genuine
+   * external edit to that path would be read as our echo and silently dropped.
+   * A successful save needs no claim after this — see the module note.
+   */
+  settle(path: string): void
+  /**
+   * True when an fs change reported for `path` is this app's own write.
+   *
+   * `disk` is what the watcher found at that path, or null when it could not be
+   * read at all.
+   */
+  isSelfWrite(path: string, disk?: string | null): boolean
+  /** Drop every claim (the tab set was replaced; nothing here still holds). */
+  clear(): void
+}
+
+export function createSelfWrites(now: () => number = () => Date.now()): SelfWrites {
+  const claims = new Map<string, Claim>()
+
+  function prune(at = now()): void {
+    for (const [path, claim] of claims) {
+      if (at - claim.at > SELF_WRITE_MS) claims.delete(path)
+    }
+  }
+
+  function note(path: string, content?: string): void {
+    prune()
+    claims.set(path, { at: now(), content: content ?? null })
+  }
+
+  function settle(path: string): void {
+    claims.delete(path)
+  }
+
+  function isSelfWrite(path: string, disk?: string | null): boolean {
+    const claim = claims.get(path)
+    if (claim === undefined) return false
+    if (claim.content !== null) {
+      // A named write is in flight: ours only when what the watcher found is
+      // what we are writing. No bytes to compare — an unreadable path, which is
+      // what our own delete leaves behind — still counts as ours.
+      return disk === undefined || disk === null || disk === claim.content
+    }
+    if (now() - claim.at <= SELF_WRITE_MS) return true
+    claims.delete(path)
+    return false
+  }
+
+  return { note, settle, isSelfWrite, clear: () => claims.clear() }
+}

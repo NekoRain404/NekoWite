@@ -98,7 +98,7 @@ const externalDocSync = createExternalDocSync({
     // what stops the next save from silently recreating the vanished path.
     if (tabs.detachMissingPath(tabId)) notifyError(t('tabs.missingOnDisk', { path }))
   },
-  isSelfWrite: (path) => tabs.isSelfWrite(path),
+  isSelfWrite: (path, disk) => tabs.isSelfWrite(path, disk),
   isPendingMove: (path) => tabs.isPendingMove(path),
   reload: (tabId) => tabs.reloadFromDisk(tabId),
   onConflict,

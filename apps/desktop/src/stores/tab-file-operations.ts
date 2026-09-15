@@ -187,6 +187,26 @@ export function createTabFileOperations(deps: TabFileOperationsDeps) {
    * autosave that had already been scheduled found nothing to save and the text
    * was gone with no copy anywhere.
    *
+   * **May `explicit` overwrite a dirty tab? Yes — because the user asked, and
+   * only because of that.** The overwrite is data loss the user consented to,
+   * and the consent is the whole reason this branch exists; anything that
+   * reaches it without a person having chosen it is a defect, not a policy
+   * difference. Two things hold that line, and both have to keep holding:
+   *
+   *   - **One caller.** `explicit: true` is passed from exactly one place —
+   *     the conflict prompt's reload button (`App.vue` → `ConflictDialog`),
+   *     which is also the only path that closes the dialog afterwards. A second
+   *     caller appearing is the change to be suspicious of.
+   *   - **The prompt must name a real conflict.** `ConflictDialog` styles this
+   *     answer as the danger action, puts it first rather than under the hand,
+   *     and refuses to focus it on open — so answering it is deliberate. But a
+   *     prompt raised where nothing actually changed on disk asks the user to
+   *     consent to losing work for no reason, and takes it if they do. That is
+   *     why `externalDocSync` identifies the app's own write by its content
+   *     before it decides to ask (see `services/external-doc-sync.ts` and
+   *     `stores/self-writes.ts`): a false prompt is the only way this branch can
+   *     cost the user something they did not agree to.
+   *
    * The vault is checked in both cases: the read is asynchronous, and a vault
    * switch in that window must not land another vault's bytes in this tab.
    */

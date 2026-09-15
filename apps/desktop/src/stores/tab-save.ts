@@ -1,13 +1,15 @@
 /**
- * The tab write path: the save transaction, the save-state the status line
- * reads, and the self-write window that tells our own writes apart from
- * external edits.
+ * The tab write path: the save transaction and the save-state the status line
+ * reads.
  *
  * Split out of `tab-persistence.ts` (which keeps session + autosave) because
- * the transaction, its overlapping-save serialization and its window
- * bookkeeping do not fit under the 400-line budget next to the session code.
- * This module is a leaf: it depends on no other tab module, and the fs port,
- * the clock and the notification ports all arrive through `deps`.
+ * the transaction and its overlapping-save serialization do not fit under the
+ * 400-line budget next to the session code. Two more slices left this file for
+ * the same reason: the staged-asset relocation a first save performs
+ * (`tab-assets.ts`) and the claim that tells our own writes apart from external
+ * edits (`self-writes.ts`). This module is a leaf: it depends on no other tab
+ * module, and the fs port, the clock and the notification ports all arrive
+ * through `deps`.
  */
 
 import { ref } from 'vue'
@@ -15,16 +17,10 @@ import type { ComputedRef, Ref } from 'vue'
 import { emitLifecycle, getActiveEditor } from '@nekowite/plugin-host'
 import { armSuppressReapply } from '../services/suppress-reapply'
 import { flushEdits, isRefusedDocument, isSourceAuthored } from '../services/editor-ownership'
-import {
-  assetsDirForNote,
-  moveAttachments,
-  rewireTempRefsInContent,
-} from '../services/rename-asset'
 import { createRefusedSaveAnswer } from './refused-save'
+import { createSelfWrites } from './self-writes'
+import { createTabAssets } from './tab-assets'
 import type { OpenTab } from './tabs'
-
-/** Window during which an fs-change for a path is attributed to our own save. */
-const SELF_WRITE_MS = 2000
 
 /** The slice of the settings store the write reads. */
 export interface TabSaveSettingsPort {
@@ -49,8 +45,9 @@ export interface TabSaveDeps {
   notifyError(message: string): void
   /** Screen-reader status channel ("a save round-trip landed"). */
   announce(message: string): void
-  /** Injectable clock: the self-write window is a wall-clock comparison, and
-   *  tests must be able to move it without waiting two real seconds. */
+  /** Injectable clock: a self-write claim with no bytes to name is a wall-clock
+   *  comparison, and tests must be able to move it without waiting two real
+   *  seconds. A save's own claim is decided by content, not by this. */
   now?: () => number
 }
 
@@ -71,6 +68,8 @@ export interface TabSaveOptions {
 export function createTabSave(deps: TabSaveDeps) {
   const { tabs, activeTab, vault, settings, files, t, notifyError, announce } = deps
   const now = deps.now ?? (() => Date.now())
+  // Which writes are ours (see `self-writes.ts`).
+  const selfWrites = createSelfWrites(now)
   // What a rejected write tells the user, and the route out of a refusal: the
   // text goes to a name they pick, and the tab follows it there.
   const refusedSave = createRefusedSaveAnswer({
@@ -79,11 +78,40 @@ export function createTabSave(deps: TabSaveDeps) {
     t,
     notifyError,
     announce,
-    noteSelfWrite: (path) => noteSelfWrite(path),
+    noteSelfWrite: (path) => selfWrites.note(path),
   })
 
+  // The staged-asset half of a first save (`tab-assets.ts`): it edits
+  // `tab.content` in place, so it is handed the tab rather than a snapshot.
+  const assets = createTabAssets({ files, t, notifyError })
+
   const savingIds = ref<Set<string>>(new Set())
-  const selfWrites = new Map<string, number>()
+
+  /**
+   * Per-tab edit revision: one bump for every `markDirty`, which the editor
+   * panes fire on every doc-changing keystroke
+   * (`editorPersistence`'s `onContentChange`, `SourcePane`'s publish).
+   *
+   * This is the evidence a save uses to decide whether it may call a tab saved,
+   * and it exists because `tab.content` cannot answer that question. The
+   * rendered pane publishes through a 120 ms debounce, so a keystroke sets
+   * `dirty` and bumps this revision IMMEDIATELY while `tab.content` still holds
+   * the previous text — for the whole length of a write, `tab.content` is
+   * exactly what the save already wrote, and a save that compared only that
+   * text cleared `dirty` over keystrokes that were in neither the tab nor the
+   * file. A revision cannot be fooled that way: it moves at the keystroke, not
+   * at the publish.
+   *
+   * Keyed by tab id, and ids are never reused within a session (`tab-${++seq}`
+   * in `tab-lifecycle.ts`), so a recycled id cannot inherit a dead tab's
+   * revision; `resetSaveBookkeeping` still clears it with the rest.
+   */
+  const editRevisions = new Map<string, number>()
+
+  /** Record that `id`'s text changed (the caller is the text, not the publish). */
+  function noteEdit(id: string): void {
+    editRevisions.set(id, (editRevisions.get(id) ?? 0) + 1)
+  }
 
   /**
    * Saves that have not settled yet, keyed by tab id.
@@ -125,54 +153,6 @@ export function createTabSave(deps: TabSaveDeps) {
     const tab = tabs.value.find((x) => x.id === id)
     if (tab?.dirty) return 'dirty'
     return 'saved'
-  }
-
-  function pruneSelfWrites(at = now()): void {
-    for (const [path, ts] of selfWrites) {
-      if (at - ts > SELF_WRITE_MS) selfWrites.delete(path)
-    }
-  }
-
-  function noteSelfWrite(path: string): void {
-    pruneSelfWrites()
-    selfWrites.set(path, now())
-  }
-
-  function isSelfWrite(path: string): boolean {
-    pruneSelfWrites()
-    const ts = selfWrites.get(path)
-    if (ts === undefined) return false
-    return now() - ts <= SELF_WRITE_MS
-  }
-
-  /** Move `.tmp`-staged assets into the note's assets dir on first save and
-   * rewrite the note body to reference them relatively. Returns true when the
-   * content was rewritten. Best-effort: a failure leaves the staged paths for
-   * a later retry rather than blocking the save. */
-  async function relocatePendingAssets(tab: OpenTab, vaultPath: string, notePath: string): Promise<boolean> {
-    if (tab.pendingAssetPaths.length === 0) return false
-    const assetsDir = assetsDirForNote(notePath, vaultPath)
-    if (!assetsDir || assetsDir === '.tmp') return false
-    const moves = moveAttachments('.tmp', assetsDir, tab.pendingAssetPaths)
-    try {
-      await files.createDir(vaultPath, assetsDir).catch(() => undefined)
-      for (const m of moves) {
-        await files.renameEntry(vaultPath, m.from, m.to)
-      }
-      // Rewire against the editor's LIVE content (the source of user typing)
-      // rather than the stale snapshot, so a keystroke that landed during the
-      // async relocation cannot be clobbered.
-      const next = rewireTempRefsInContent(tab.content, moves, notePath, vaultPath)
-      tab.pendingAssetPaths = []
-      if (next !== tab.content) {
-        tab.content = next
-        return true
-      }
-      return false
-    } catch {
-      notifyError(t('tabs.saveAttachmentFailed'))
-      return false
-    }
   }
 
   /** Returns true when the file is on disk with the intended content. */
@@ -261,7 +241,7 @@ export function createTabSave(deps: TabSaveDeps) {
       return false
     }
     if (tab.pendingAssetPaths.length > 0) {
-      await relocatePendingAssets(tab, vault.value, path)
+      await assets.relocate(tab, vault.value, path)
     }
     // The flush and the asset relocation are both awaits, so the world can have
     // changed under us. Writing now would put this note into a vault it does not
@@ -270,43 +250,62 @@ export function createTabSave(deps: TabSaveDeps) {
     if (vault.value !== vaultAtStart) return false
     const editor = getActiveEditor()
     const contentAtStart = tab.content
+    // The evidence that decides whether this save may call the tab saved, read
+    // BEFORE the write (see `editRevisions`): the revision moves at the
+    // keystroke, and the write spans an await the user can type across.
+    const revisionAtStart = editRevisions.get(tab.id) ?? 0
     const next = emitLifecycle('onSave', editor, tab.content)
     const content = typeof next === 'string' ? next : tab.content
     try {
-      // Arm the self-write window BEFORE the disk write: Tauri's recursive fs
-      // watcher may report the modified path while the write is still in
-      // flight. If we only marked it after the await returned, the watcher's
-      // "external change" would reload the very file we just saved, replacing
-      // the live editor content and resetting the caret (the "input jumps"
-      // symptom). The existing 2s expiration keeps normal external edits
-      // observable.
-      noteSelfWrite(path)
+      // Claim the path as ours BEFORE the disk write, naming the bytes we are
+      // about to put there: Tauri's recursive fs watcher may report the
+      // modified path while the write is still in flight. If we only claimed it
+      // after the await returned, the watcher's "external change" would reload
+      // the very file we just saved, replacing the live editor content and
+      // resetting the caret (the "input jumps" symptom). The claim is the
+      // content rather than a stopwatch, so it lasts exactly as long as the
+      // write does — see `isSelfWrite`.
+      selfWrites.note(path, content)
       // A non-null result is a warning, not a failure: the text is on disk, but
       // something optional around it was not. Most often "the previous version
       // could not be kept in history" — which the user has to hear about, because
       // the thing they trust for undo-after-the-fact is now missing.
       const writeWarning = await files.write(vaultAtStart, path, content, settings.maxHistory)
       if (writeWarning) notifyError(writeWarning)
-      // The write round-trip is a window in which the user can keep typing.
-      // Never clobber newer editor content with the captured text.
-      const userTyped = tab.content !== contentAtStart
+      // `savedContent` is what this tab believes is ON DISK, and after a landed
+      // write that is exactly `content` — true whatever the user typed in the
+      // meantime, because those keystrokes are not on disk yet.
+      tab.savedContent = content
+      // Whether the tab may be called SAVED is a separate question, and it is
+      // answered by evidence rather than by the write having completed. A
+      // completed write only proves it wrote the text it captured; it says
+      // nothing about the keystrokes the user took while it ran. The revision
+      // is the evidence: it moves at the keystroke while `tab.content` moves
+      // only when the pane's 120ms publish debounce fires, so for the whole
+      // length of a write `tab.content === content` even though the user has
+      // typed. Clearing `dirty` on that comparison is how this used to report
+      // "saved" over text that was in neither the tab nor the file — and
+      // `dirty` is the only record that such text exists: the autosave timer,
+      // `hasUnsavedWork()`, the window-close flush and the close-tab save all
+      // read it and all skipped the work.
+      const editedDuringWrite = (editRevisions.get(tab.id) ?? 0) !== revisionAtStart
       const pluginRewrote = content !== contentAtStart
-      if (!userTyped && pluginRewrote) {
-        // Adopt the onSave rewrite; suppress the re-open its content change
-        // would trigger (the model syncs, the live text/caret stay put). The arm
-        // carries THIS tab's id, so a background save cannot swallow the
-        // re-apply of the content change belonging to another (active) tab.
-        armSuppressReapply(tab.id)
-        tab.content = content
-        tab.savedContent = content
-        tab.dirty = false
-      } else if (userTyped) {
-        tab.savedContent = content
-        // dirty stays true; the newer text still needs a save.
-      } else {
-        tab.savedContent = content
-        tab.dirty = false
+      if (!editedDuringWrite) {
+        if (pluginRewrote) {
+          // Adopt the onSave rewrite; suppress the re-open its content change
+          // would trigger (the model syncs, the live text/caret stay put). The
+          // arm carries THIS tab's id, so a background save cannot swallow the
+          // re-apply of the content change belonging to another (active) tab.
+          armSuppressReapply(tab.id)
+          tab.content = content
+        }
+        // Only when the tab holds exactly what was written is there nothing
+        // left to save. Anything else — an external apply that replaced the
+        // document mid-write — leaves `dirty` alone rather than guessing.
+        if (tab.content === content) tab.dirty = false
       }
+      // Otherwise: dirty stays true, and the autosave timer the keystroke armed
+      // is still pending, so the newer text gets its own save.
       // The write did land in the right vault (guarded above), but the tab set
       // may have been replaced wholesale while it was in flight — a vault
       // switch removes every tab. Touching a removed tab is harmless, touching
@@ -334,6 +333,9 @@ export function createTabSave(deps: TabSaveDeps) {
       )
     } finally {
       markSaved(tab.id)
+      // The write is over, landed or not: the claim must not outlive it, or a
+      // later genuine external edit to this path would be read as our echo.
+      selfWrites.settle(path)
     }
   }
 
@@ -365,20 +367,23 @@ export function createTabSave(deps: TabSaveDeps) {
 
   /** Drop every fragment of save bookkeeping a removed tab could leave behind.
    *  Removing a tab only cancels its autosave timer; a closed tab's in-flight
-   *  save, saving flag and self-write window must not outlive the tab set, or a
-   *  later open (or a reused id) would inherit the stale remnants. */
+   *  save, saving flag, edit revision and self-write claim must not outlive the
+   *  tab set, or a later open (or a reused id) would inherit the stale
+   *  remnants. */
   function resetSaveBookkeeping(): void {
     inFlightSaves.clear()
     savingIds.value = new Set()
     selfWrites.clear()
+    editRevisions.clear()
   }
 
   return {
     markSaving,
     markSaved,
     stateOf,
-    noteSelfWrite,
-    isSelfWrite,
+    noteEdit,
+    noteSelfWrite: selfWrites.note,
+    isSelfWrite: selfWrites.isSelfWrite,
     saveTab,
     saveActive,
     flushDirty,

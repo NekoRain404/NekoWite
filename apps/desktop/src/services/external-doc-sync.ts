@@ -34,8 +34,15 @@ export interface ExternalDocSyncDeps {
   getVault(): string | null
   /** The tab currently shown, or null. */
   getActiveTab(): { id: string; path: string | null; dirty: boolean; savedContent: string } | null
-  /** True while a path is inside the window where we treat a write as our own. */
-  isSelfWrite(path: string): boolean
+  /**
+   * True when an fs change for `path` is this app's own write.
+   *
+   * `disk` is what was just read at that path, or null when it could not be
+   * read. It is passed because our own write is identified by its CONTENT, not
+   * by elapsed time: a claim that expired on a clock let the app read back its
+   * own save echo as an external edit whenever the write outlived the window.
+   */
+  isSelfWrite(path: string, disk: string | null): boolean
   /** True while the APP is renaming/moving this path (or a folder above it). */
   isPendingMove?(path: string): boolean
   /** Reload the tab's content from disk. */
@@ -143,19 +150,25 @@ export function createExternalDocSync(deps: ExternalDocSyncDeps): ExternalDocSyn
 
     const activeTab = deps.getActiveTab()
     if (!activeTab || !activeTab.path || activeTab.path !== e.path) return
-    // Our own write echoes back through the watcher; treating it as external
-    // would reload the document and drop the caret on every save.
-    if (deps.isSelfWrite(e.path)) return
 
+    // Read the bytes BEFORE deciding, because they are what the decision is
+    // made of: our own write echoes back through the watcher, and treating it
+    // as external would reload the document and drop the caret on every save —
+    // and on a dirty tab it would ask a keep-or-reload question about a change
+    // the app made itself, whose "use the disk version" answer discards every
+    // keystroke typed since the save began.
+    let disk: string | null = null
     try {
-      // Compare the bytes on disk with what we last persisted: an identical
-      // file is a no-op touch (or our own write that raced the marker) and must
-      // not reload — that would replace the live model and reset undo/caret.
-      const disk = await deps.read(vault, activeTab.path)
-      if (disk === activeTab.savedContent) return
+      disk = await deps.read(vault, activeTab.path)
     } catch {
       // A read failure still falls through to the normal conflict decision.
     }
+
+    if (deps.isSelfWrite(e.path, disk)) return
+    // An identical file is a no-op touch (or our own write that raced the
+    // claim) and must not reload — that would replace the live model and reset
+    // undo/caret.
+    if (disk !== null && disk === activeTab.savedContent) return
 
     const decision = decideConflict({ dirty: activeTab.dirty, hasDiskChange: true })
     if (decision === 'reload') {

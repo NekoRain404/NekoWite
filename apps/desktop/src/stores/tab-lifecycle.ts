@@ -36,6 +36,11 @@ export interface TabLifecycleDeps {
   /** Persistence commands the close flows call. */
   saveTab(id: string): Promise<boolean>
   flushDirty(): Promise<boolean>
+  /** Record one edit of `id`'s text, at the keystroke rather than at the
+   *  publish. A save reads the revision before its write and clears the tab's
+   *  `dirty` flag only if it has not moved — see `tab-save.ts`'s
+   *  `editRevisions`. */
+  noteEdit(id: string): void
   untitledDirtyTabs(): OpenTab[]
   captureSession(): void
   cancelAutosave(id: string): void
@@ -61,6 +66,7 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
     notifyRecovery,
     saveTab,
     flushDirty,
+    noteEdit,
     untitledDirtyTabs,
     captureSession,
     cancelAutosave,
@@ -89,9 +95,18 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
     focusTab(id)
   }
 
+  /** The tab's text changed: it is unsaved, and the edit is counted.
+   *
+   *  Both halves matter and both belong here rather than at the publish: a save
+   *  decides whether it may call the tab saved by comparing the revision it saw
+   *  before its write against the revision now, and `dirty` is what every
+   *  protection for unsaved text reads. A publish, by contrast, happens up to a
+   *  debounce window later and must not be the thing that records the edit. */
   function markDirty(id: string): void {
     const tab = tabs.value.find((x) => x.id === id)
-    if (tab) tab.dirty = true
+    if (!tab) return
+    tab.dirty = true
+    noteEdit(id)
   }
 
   async function openTab(path: string | null, initial = ''): Promise<void> {

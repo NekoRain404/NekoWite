@@ -115,6 +115,7 @@ export const useTabsStore = defineStore('tabs', () => {
     notifyRecovery,
     saveTab: save.saveTab,
     flushDirty: save.flushDirty,
+    noteEdit: save.noteEdit,
     untitledDirtyTabs: persistence.untitledDirtyTabs,
     captureSession: persistence.captureSession,
     cancelAutosave: persistence.cancelAutosave,
