@@ -154,7 +154,16 @@ export function createAiSettings() {
   }
 
   async function loadKey(): Promise<void> {
-    const stored = await getSharedGateways().keys.loadAiKey(provider.value)
+    // The answer is evidence about the question that was asked, and two things
+    // can have moved on by the time it lands: the provider (a switch starts its
+    // own load, and the one the user left can resolve last) and the field
+    // itself (the user is typing a key into it, via `v-model`). Writing on
+    // arrival alone therefore cleared the field the user was filling in — and a
+    // cleared field is also what `saveKey()` would then store.
+    const askedFor = provider.value
+    const before = apiKey.value
+    const stored = await getSharedGateways().keys.loadAiKey(askedFor)
+    if (provider.value !== askedFor || apiKey.value !== before) return
     // The backend never returns the raw key to the window — only a fixed mask
     // when a key is configured (and null when not). Never treat the mask as a
     // real key: feed an empty value into the live state so config() does not
