@@ -33,8 +33,11 @@ export interface TabLifecycleDeps {
   t: (key: string, params?: Record<string, unknown>) => string
   notifyError(message: string): void
   notifyRecovery(prompt: RecoveryPrompt): void
-  /** Persistence commands the close flows call. */
-  saveTab(id: string): Promise<boolean>
+  /** Persistence commands the close flows call. `saveUntilSettled` is the gate
+   *  a close asks, not `saveTab`: one landed write is not a saved tab
+   *  (`tab-settle.ts`), and a close that reads it as one drops the text the
+   *  write could not carry. */
+  saveUntilSettled(id: string): Promise<boolean>
   flushDirty(): Promise<boolean>
   /** Record one edit of `id`'s text, at the keystroke rather than at the
    *  publish. A save reads the revision before its write and clears the tab's
@@ -64,7 +67,7 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
     t,
     notifyError,
     notifyRecovery,
-    saveTab,
+    saveUntilSettled,
     flushDirty,
     noteEdit,
     untitledDirtyTabs,
@@ -257,49 +260,12 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
     }
   }
 
-  /** How many writes a close may make in pursuit of one settled tab.
-   *
-   *  Each attempt carries the text as of its start and clears `dirty` only if
-   *  nothing was typed while it ran, so the loop ends as soon as the typing
-   *  does. This bound is what stops a document that keeps changing under the
-   *  close from writing round and round; reaching it keeps the tab, which is
-   *  the answer that loses nothing. */
-  const CLOSE_SAVE_ATTEMPTS = 3
-
-  /**
-   * Save `id` until a write that lands carries the tab's newest edit — or give
-   * up, having written nothing away.
-   *
-   * `saveTab` answering `true` means ONE write landed, not that the tab is
-   * saved. It reads the tab's edit revision before its write and clears `dirty`
-   * only when that revision has not moved and the tab still holds what it wrote
-   * (see `tab-save.ts`); a keystroke during the write moves the revision, so
-   * the tab stays dirty. A close that read the answer as final removed the only
-   * copy of the newer text — the tab was gone, and the write that "succeeded"
-   * had not carried it.
-   *
-   * So the gate a close needs is "is the newest revision on disk?", and `dirty`
-   * is exactly that answer: false only when a landed write carried the revision
-   * current at its end. Asking again is also what carries the keystroke, because
-   * the next attempt flushes the panes before it writes. A tab that is gone is
-   * not a failure: another close already removed it, and its own gate settled it.
-   */
-  async function saveUntilSettled(id: string): Promise<boolean> {
-    for (let attempt = 0; attempt < CLOSE_SAVE_ATTEMPTS; attempt++) {
-      if (!(await saveTab(id))) return false
-      const tab = tabs.value.find((x) => x.id === id)
-      if (!tab) return true
-      if (!tab.dirty) return true
-    }
-    return false
-  }
-
   async function closeTab(id: string): Promise<void> {
     const tab = tabs.value.find((x) => x.id === id)
     // Unsaved work is flushed, not discarded: the pending autosave timer is
     // cancelled on removal, so without this the edits would be unrecoverable.
-    // The gate is `saveUntilSettled` and not "one save succeeded" — see the
-    // helper for the keystroke that makes those two different answers.
+    // The gate is `saveUntilSettled` and not "one save succeeded" — see
+    // `tab-settle.ts` for the keystroke that makes those two different answers.
     if (tab?.dirty && !(await saveUntilSettled(id))) return
     removeTab(id)
     captureSession()
@@ -307,7 +273,10 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
 
   /** Drop every tab WITHOUT touching the filesystem. Only for callers that have
    *  already flushed the dirty tabs and prompted for the untitled ones — see
-   *  {@link closeAll} and the vault-switch path in `appBootstrap`. */
+   *  {@link closeAll} and the vault-switch path in `appBootstrap`. "Flushed"
+   *  means settled: `flushDirty` answers true only with every path'd dirty tab
+   *  clean, because this contract named a caller that did not hold it once
+   *  already — see `tab-settle.ts`. */
   function removeAllTabs(): void {
     // Leave no tab-scoped state behind: removeTab only cancels autosave
     // timers, but a closed tab's in-flight save, saving flag and self-write
@@ -348,13 +317,14 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
         }
       }
     }
-    // `flushDirty` makes one write per dirty tab, and a write overtaken by a
-    // keystroke leaves its tab dirty — so the bulk close asks the same question
-    // the single close does before it drops anything, at the last moment it
-    // can (the prompt above is user time). `removeAllTabs` would otherwise
-    // discard exactly the text those writes could not carry. Untitled tabs are
-    // not revisited: the prompt owns them, and one the user chose to discard
-    // has no path to save to.
+    // `flushDirty` settles what it touched, so a tab that is dirty HERE is one
+    // that became dirty after that flush — the prompt above is user time, with
+    // the editor still live behind it, and a keystroke typed into it is in no
+    // write yet. The bulk close therefore asks the same question the single
+    // close does, at the last moment it can be asked: `removeAllTabs` would
+    // otherwise discard exactly that text. Untitled tabs are not revisited: the
+    // prompt owns them, and one the user chose to discard has no path to save
+    // to.
     for (const tab of [...tabs.value]) {
       if (!tab.path || !tab.dirty) continue
       if (!(await saveUntilSettled(tab.id))) {

@@ -4,15 +4,16 @@
  *
  * Split out of `tab-persistence.ts` (which keeps session + autosave) because
  * the transaction and its overlapping-save serialization do not fit under the
- * 400-line budget next to the session code. Four more slices left this file for
+ * 400-line budget next to the session code. Five more slices left this file for
  * the same reason: the staged-asset relocation a first save performs
  * (`tab-assets.ts`), the claim that tells our own writes apart from external
  * edits (`self-writes.ts`), what a write must hold to be allowed at all
  * (`tab-write-preconditions.ts` — the read the save now takes before it writes,
- * which is L05's save-time half), and the per-tab records this file keeps about
- * those writes (`tab-save-state.ts`). This module is a leaf: no other tab module
- * imports it except the store that wires them, and the fs port, the clock and
- * the notification ports all arrive through `deps`.
+ * which is L05's save-time half), the per-tab records this file keeps about
+ * those writes (`tab-save-state.ts`), and the gate that keeps writing until a
+ * tab is actually settled (`tab-settle.ts`). This module is a leaf: no other
+ * tab module imports it except the store that wires them, and the fs port, the
+ * clock and the notification ports all arrive through `deps`.
  */
 
 import type { ComputedRef, Ref } from 'vue'
@@ -23,6 +24,7 @@ import { createRefusedSaveAnswer } from './refused-save'
 import { createSelfWrites } from './self-writes'
 import { createTabAssets } from './tab-assets'
 import { createTabSaveState } from './tab-save-state'
+import { createTabSettler } from './tab-settle'
 import { createWritePreconditions } from './tab-write-preconditions'
 import type { OpenTab } from './tabs'
 
@@ -346,23 +348,11 @@ export function createTabSave(deps: TabSaveDeps) {
     if (tab) await preconditions.keepLocal(tab)
   }
 
-  /** Best-effort save of every dirty tab that has a real path (used before a
-   *  vault switch or an app close, where a pending autosave timer may never
-   *  fire). Untitled tabs are skipped: with no path they would need a save-as
-   *  dialog, which a background/bulk flush must not open — and for the same
-   *  reason a tab whose file refuses the write is left to the caller that owns
-   *  the moment (the close offers the copy route itself; see `app-lifecycle`).
-   *  Returns false when a path'd save failed so the caller can block the
-   *  potentially-lossy action. */
-  async function flushDirty(): Promise<boolean> {
-    let ok = true
-    for (const tab of tabs.value) {
-      if (!tab.dirty || !tab.path) continue
-      const saved = await saveTab(tab.id)
-      if (!saved) ok = false
-    }
-    return ok
-  }
+  /** The bulk flush and the per-tab gate behind it (see `tab-settle.ts`). Both
+   *  are created here because both need this module's `saveTab`: the store wires
+   *  the flush to the vault switch and the close, and hands the per-tab form to
+   *  `tab-lifecycle` for the closes it runs itself. */
+  const { saveUntilSettled, flushDirty } = createTabSettler({ tabs, saveTab })
 
   /** Drop every fragment of save bookkeeping a removed tab could leave behind.
    *  Removing a tab only cancels its autosave timer; a closed tab's in-flight
@@ -386,6 +376,7 @@ export function createTabSave(deps: TabSaveDeps) {
     saveActive,
     keepLocalConflict,
     flushDirty,
+    saveUntilSettled,
     resetSaveBookkeeping,
   }
 }

@@ -20,6 +20,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { setSourceViewHandle } from '../services/source-view'
+import { setRenderedFlush } from '../services/editor-ownership'
 import { documentKey } from '../features/editor/model/document-session'
 import { useTabsStore } from './tabs'
 
@@ -270,6 +271,94 @@ describe('a save that races the editor publish debounce', () => {
       await tabs.closeTab(tab.id)
       expect(write.written).toEqual(['hello', 'hello!'])
       expect(tabs.tabs).toHaveLength(0)
+    })
+  })
+
+  /**
+   * The bulk flush is the gate the two destroy-the-tab-set paths go through
+   * (`applyVault` and the window close), so its answer has to mean "the tabs are
+   * clean", not "one write per tab landed". It used to mean the latter: a
+   * keystroke during the write left the tab dirty while `flushDirty` returned
+   * true, and the caller removed the tab set — the only copy of that keystroke —
+   * on that answer.
+   */
+  describe('the bulk flush', () => {
+    afterEach(() => {
+      setRenderedFlush(null)
+      readMock.mockResolvedValue('hello')
+    })
+
+    /**
+     * A mounted pane, and the file its writes leave behind.
+     *
+     * The pane registers the flush hook a save reaches for before it writes —
+     * which is what a mounted one does in the app (`tab-close-unsaved-keystroke`
+     * wires the same). And the fake disk has to hold what the last write put
+     * there: a save reads the file before it writes
+     * (`tab-write-preconditions.ts`), so a disk frozen at 'hello' makes the
+     * second write look like somebody else's edit and refuses it — a different
+     * mechanism than the race under test.
+     */
+    async function mountPane(editor: ReturnType<typeof fakeEditor>, tabId: string, disk: string[]) {
+      const persistence = await attachPane(editor, 'hello', '/vault', tabId)
+      setRenderedFlush(() => persistence.flush())
+      readMock.mockImplementation(async () => disk[disk.length - 1] ?? 'hello')
+    }
+
+    it('carries a keystroke typed during its write instead of reporting done', async () => {
+      const tabs = useTabsStore()
+      tabs.setVault('/vault')
+      await tabs.openTab('/vault/a.md')
+      const tab = tabs.tabs[0]
+      const editor = fakeEditor('hello')
+      const write = parkedWrite()
+      await mountPane(editor, tab.id, write.written)
+      tabs.markDirty(tab.id)
+      vi.useFakeTimers()
+      const flushing = tabs.flushDirty()
+      await vi.waitFor(() => expect(write.started).toBe(true))
+
+      // The keystroke lands between the flush's write starting and resolving.
+      editor.type('!')
+      vi.advanceTimersByTime(50)
+      write.release()
+      write.landFromNowOn()
+
+      await expect(flushing).resolves.toBe(true)
+      // "true" is only honest if the text the user can see is on disk.
+      expect(write.written).toEqual(['hello', 'hello!'])
+      expect(tab.content).toBe('hello!')
+      expect(tab.dirty).toBe(false)
+      expect(tabs.hasUnsavedWork()).toBe(false)
+    })
+
+    it('gives up, bounded, when the tab never settles', async () => {
+      const tabs = useTabsStore()
+      tabs.setVault('/vault')
+      await tabs.openTab('/vault/a.md')
+      const tab = tabs.tabs[0]
+      const editor = fakeEditor('hello')
+
+      // A keystroke during EVERY write: each one lands, and each one is stale by
+      // the time it does. An unbounded loop would write until the user stopped
+      // typing — the bound is what keeps a close (or a switch) from turning into
+      // a spin, and what makes its `false` an answer the caller can act on.
+      const written: string[] = []
+      writeMock.mockImplementation((_v: string, _p: string, content: string) => {
+        written.push(content)
+        editor.type('!')
+        return Promise.resolve(null)
+      })
+      await mountPane(editor, tab.id, written)
+      tabs.markDirty(tab.id)
+      vi.useFakeTimers()
+
+      await expect(tabs.flushDirty()).resolves.toBe(false)
+      expect(written).toHaveLength(3)
+      // The text is still where the user can type it again — and still dirty, so
+      // the callers that read `dirty` (hasUnsavedWork, the close) still see it.
+      expect(tab.dirty).toBe(true)
+      expect(tabs.hasUnsavedWork()).toBe(true)
     })
   })
 
