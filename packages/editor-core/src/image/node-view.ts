@@ -9,10 +9,7 @@ import {
 } from './resolver'
 import { imageNodeMessages, isRemoteHttpSrc } from './messages'
 import { imageDimSchema } from './schema'
-import { nextWidth, proportionalSize } from './resize'
-import { resizeBasis } from './measure'
-import { advanceResizeDrag, beginResizeDrag, commitResizeDrag } from './drag'
-import { commitImageResize } from './resize-commit'
+import { startResizeDrag } from './resize-drag-node'
 
 /**
  * Node view for the commonmark `image` node.
@@ -231,56 +228,14 @@ export const makeImageNodeView: NodeViewConstructor = (node, view, getPos) => {
   // The resize handle plus the bottom-right corner of the image both initiate
   // a drag. The handle is the clear affordance; the corner keeps the legacy
   // behavior (and the existing drag test) working.
+  //
+  // The gesture itself lives in ./resize-drag-node, where the ratio rule is
+  // (a Shift lock with no ratio to hold previews nothing and commits nothing);
+  // this hands it the DOM the node view owns, and `applyDims` puts the element
+  // back when a gesture ends without a commit.
   const startDrag = (event: PointerEvent): void => {
     if (!view || typeof getPos !== 'function') return
-    if (event.button !== 0) return
-    event.preventDefault()
-    event.stopPropagation()
-    // Both resize paths take their start width AND their ratio from
-    // ./measure's `resizeBasis`, so "how big is this really" has one answer and
-    // a Shift gesture locks the file's ratio rather than pairing a stored width
-    // with a pixel height (300/300 for a 1200x300 file: a square belonging to
-    // no image). A drag cannot refuse mid-gesture the way a keypress can, so an
-    // unmeasurable picture keeps the 0.75 stand-in.
-    const { baseWidth, lock } = resizeBasis(node.attrs, img)
-    const startWidth = baseWidth ?? 1
-    const aspect = lock ?? { width: startWidth, height: Math.round(startWidth * 0.75) }
-    const startX = event.clientX
-    let drag = beginResizeDrag(startWidth)
-    let proportional = event.shiftKey
-    const onMove = (ev: PointerEvent): void => {
-      const pos = getPos()
-      if (typeof pos !== 'number') return
-      const target = nextWidth(startWidth, ev.clientX - startX)
-      proportional = ev.shiftKey
-      if (ev.shiftKey) {
-        const { width, height } = proportionalSize(aspect.width, aspect.height, target)
-        drag = advanceResizeDrag(drag, pos, width)
-        img.style.width = `${width}px`
-        img.style.height = `${height}px`
-      } else {
-        drag = advanceResizeDrag(drag, pos, target)
-        img.style.width = `${target}px`
-        img.style.height = ''
-      }
-    }
-    const onUp = (): void => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      const commit = commitResizeDrag(drag)
-      if (commit) {
-        const attrs: Record<string, unknown> = { ...node.attrs, width: commit.width }
-        if (proportional) {
-          const { height } = proportionalSize(aspect.width, aspect.height, commit.width)
-          attrs.height = height
-        } else {
-          attrs.height = null
-        }
-        commitImageResize(view, commit.pos, attrs)
-      }
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
+    startResizeDrag(event, { view, getPos, attrs: () => node.attrs, img, restore: applyDims })
   }
 
   handle.addEventListener('pointerdown', startDrag)
