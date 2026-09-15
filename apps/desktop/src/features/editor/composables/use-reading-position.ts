@@ -9,6 +9,7 @@ import {
   armReadingRestore,
   claimReadingLine,
   forgetReadingLines,
+  readingLineOf,
   rememberReadingLine,
 } from '../model/reading-position'
 
@@ -58,6 +59,14 @@ export interface RenderedReadingPane {
   /** Scrollable extent: what a rendered offset is measured against. */
   getScrollRange(): number
   getScrollTop(): number
+  /** The same token-taking writer `SourceReadingPane` declares: the pane keeps
+   *  the token so it can recognise the echo of a write it did not get from the
+   *  reader (see `ReadingPositionOptions.nextToken`, which names this method).
+   *  Declared here because the pane has always provided it
+   *  (`RenderedPane.vue`'s `setScrollTop: scrollSync.setScrollTop`) and this
+   *  module's own doc comment already assumed it — but the interface did not,
+   *  so the first call to it was a `vue-tsc` error that only the type gate saw. */
+  setScrollTop(top: number, token: number): void
   setScrollToLine(line: number, token: number): void
 }
 
@@ -72,6 +81,30 @@ export interface ReadingPositionOptions {
 export function useReadingPosition(options: ReadingPositionOptions): void {
   const tabs = useTabsStore()
   const view = useViewStore()
+
+  /**
+   * The note this activation has to open at its own top — the one arriving
+   * with no line to restore.
+   *
+   * The source pane needs nothing here: CodeMirror owns its scroller and resets
+   * it when the document is replaced (measured — see the e2e measurement this
+   * came from). The rendered pane's scroller is the app's, it is kept alive by
+   * `v-show`, and NOTHING writes its `scrollTop` on an `activeId` change; nor
+   * does the engine reset it as the content subtree is swapped (measured in
+   * Chromium and in WebKitGTK 2.52.6, the engine that ships). So without this
+   * the arriving note is left at an offset measured in the note being left.
+   *
+   * "The top" is the honest default, and it is the only one: a note nobody has
+   * read has no position to disagree with, while the offset in the element
+   * belongs to a document that is no longer on screen.
+   *
+   * Armed per activation and claimed once, the same one-shot shape the
+   * remembered line travels by, and for the same reason:
+   * `model/reading-position`'s rule is that only an activation re-places a pane
+   * — a disk reload or a history restore leaves it where the reader put it, and
+   * a top written for those would be a placement nobody asked for.
+   */
+  let startsAtTopFor: string | null = null
 
   /**
    * The line the pane on screen is showing, read while it still holds the note
@@ -135,6 +168,12 @@ export function useReadingPosition(options: ReadingPositionOptions): void {
         if (line !== null) rememberReadingLine(prevId, line)
       }
       if (id) armReadingRestore(id)
+      // The complementary half of the same activation, and read from the same
+      // place: a note the memory has nothing for is the note this pane has to
+      // open at its own top. Both ask `model/reading-position` the one question
+      // — "was this note left anywhere?" — rather than either caching an answer
+      // the other could then disagree with.
+      startsAtTopFor = id !== null && readingLineOf(id) === null ? id : null
       void nextTick(() => {
         if (id) restoreSourcePane(id)
       })
@@ -160,8 +199,19 @@ export function useReadingPosition(options: ReadingPositionOptions): void {
       const rendered = options.getRenderedPane()
       if (!id || !rendered) return
       const line = claimReadingLine(id, 'rendered')
-      if (line === null) return
-      rendered.setScrollToLine(line, options.nextToken())
+      if (line !== null) {
+        // The reader's own position, which is what a note they have been in
+        // gets — never the top.
+        rendered.setScrollToLine(line, options.nextToken())
+        return
+      }
+      // `claimReadingLine` is null both for a note with no memory and for one
+      // this pane has already taken, so it cannot answer this on its own: the
+      // arming above is what separates the two, and it is consumed here so that
+      // a mere re-apply leaves the pane where the reader put it.
+      if (startsAtTopFor !== id) return
+      startsAtTopFor = null
+      rendered.setScrollTop(0, options.nextToken())
     },
   )
 }

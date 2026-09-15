@@ -65,10 +65,29 @@
         // own pad and nothing else — which is what the tail-space probe reads.
         docs.long = [long_, '![pic](attachments/2026-09/pic.png){width=120}'].join('\n')
 
+        // Two long notes, for the one measurement a single note cannot take:
+        // whether a scroll offset survives from one document into the next. The
+        // second is the longer of the two so an offset carried out of the first
+        // is never disguised as the second one's own maximum.
+        const noteBody = (label, count) => {
+          const out = [`# Note ${label}`, '']
+          for (let i = 0; i < count; i++) out.push(PARAGRAPH + `(${label} paragraph ${i + 1})`, '')
+          return out.join('\n')
+        }
+        const twoNotes = {
+          'two-notes.md': noteBody('first', 40),
+          'second.md': noteBody('second', 80),
+        }
+
         const VAULT = 'test-fixtures'
         const NAME = `${scenario}.md`
-        const DOC = docs[scenario]
-        const fixtures = [{ name: NAME, path: `${VAULT}/${NAME}`, is_dir: false, is_mdx: true }]
+        const FILES = scenario === 'two-notes' ? twoNotes : { [NAME]: docs[scenario] }
+        const fixtures = Object.keys(FILES).map((name) => ({
+          name,
+          path: `${VAULT}/${name}`,
+          is_dir: false,
+          is_mdx: true,
+        }))
 
         let n = 0
         const registry = {}
@@ -85,7 +104,10 @@
               const path = String(args.path == null ? '' : args.path)
               return path === '' || path === VAULT ? fixtures : []
             }
-            if (cmd === 'read_file') return String(args.path || '').endsWith(NAME) ? DOC : ''
+            if (cmd === 'read_file') {
+              const name = String(args.path || '').split('/').pop()
+              return FILES[name] === undefined ? '' : FILES[name]
+            }
             if (cmd === 'stat_file') return { size: 1, mtime: 1 }
             if (cmd === 'write_file') {
               window.__saves.push(String(args.path))
