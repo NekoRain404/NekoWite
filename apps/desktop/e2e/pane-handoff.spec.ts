@@ -8,6 +8,27 @@ import { test, expect } from '@playwright/test'
  * pane that is still `display:none` (the flush that reveals it has not run yet)
  * looks fine there and lands nowhere in a real engine — that regression was
  * found by this file, not by the component tests.
+ *
+ * **Ask where the caret is with a keystroke, not with `window.getSelection()`.**
+ * This file used to read the caret out of the DOM selection and reject an empty
+ * `lineText`, on a recorded measurement that the caret "CARRIED TO THE END of
+ * the document (line 242 of 242) — measured, not inferred". It was inferred, and
+ * the inference was wrong: the assertion was red for 49 tasks over a defect the
+ * app never had (task-108). `lineText` is `''` both for the empty last line AND
+ * for a selection the DOM cannot place inside any `.cm-line`, and the second is
+ * what this pane produces. Measured: the document's selection has
+ * `anchorOffset: 0` on `.cm-content` itself with no `.cm-line` ancestor, while
+ * CodeMirror's own selection is on a real line — the caret the switch carries is
+ * written while the pane is not focused, and the document's selection describes
+ * the browser's position rather than the editor's. Through that proxy the two
+ * readings are indistinguishable, and the empty one was read for 49 tasks as the
+ * end of the note.
+ *
+ * A keystroke cannot be misread that way: CodeMirror inserts at its own
+ * selection, so where the text LANDS is where the caret was. Measured with this
+ * fixture (rendered pane scrolled to `line 21 of the note`): the keystroke lands
+ * on the line at the top of the source pane, between `line 21` and `line 22` —
+ * the carried place, not the note's first line and not its last.
  */
 
 const VAULT = 'test-fixtures'
@@ -77,31 +98,54 @@ test('渲染 → 源码 keeps the place and hands over the keyboard', async ({ p
     .evaluate((el) => Math.round(el.scrollTop))
   expect(sourceScrollTop).toBeGreaterThan(0)
 
-  const caret = await page.evaluate(() => {
-    const content = document.querySelector('[data-testid="source-pane"] .cm-content')
-    const selection = window.getSelection()
-    const line = selection?.anchorNode?.parentElement?.closest('.cm-line')
-    return {
-      inSource: !!(content && selection && content.contains(selection.anchorNode)),
-      lineText: line?.textContent ?? '',
-    }
-  })
-  expect(caret.inSource).toBe(true)
-  // On a line from the middle of the note, not the heading it starts with.
-  // LEFT RED ON PURPOSE (task-59 report §3): it fails deterministically on this
-  // tree, with the caret CARRIED TO THE END of the document (line 242 of 242,
-  // the empty last line, because this fixture ends in a newline) while the
-  // viewport lands on the mapped line and the keyboard does arrive — measured,
-  // not inferred. Whether that carry is the contract or the bug is brief 61's
-  // call; the assertion is untouched so the signal survives.
-  expect(caret.lineText).not.toBe('')
-  expect(caret.lineText).not.toContain('Welcome')
-
   // And the keys go to the document: this is what "the first keystrokes are
   // swallowed" meant.
   await page.keyboard.type('X')
   await page.waitForTimeout(200)
   await expect(page.locator('[data-testid="source-pane"] .cm-content')).toContainText('X')
+
+  // ...AND THEY GO TO THE PLACE THE READER WAS, which is what "keeps the place"
+  // means. The keystroke is the only instrument that can answer WHERE: CodeMirror
+  // inserts at its own selection, so where the text arrives IS where the caret
+  // was when the mode changed.
+  //
+  // Two readings, and neither is the DOM selection (see this file's header for
+  // why that one cannot answer this). The place: the inserted line is the one at
+  // the top of the pane the user is looking at, which is where the
+  // handoff put the carried line — a caret that had been carried from the
+  // document's end would arrive hundreds of lines below this. The content: the
+  // text around it is two consecutive paragraphs of the body, so it is not the
+  // heading the note opens with and not the empty line it ends with, which are
+  // the only two places a caret carried from a position nobody asked for can
+  // land and still be near the top of something.
+  const landing = await page.evaluate(() => {
+    const scroller = document.querySelector('[data-testid="source-pane"] .cm-scroller')
+    const text = document.querySelector('[data-testid="source-pane"] .cm-content')?.textContent ?? ''
+    const at = text.indexOf('X')
+    const marker = Array.from(scroller?.querySelectorAll('.cm-line') ?? []).find((line) =>
+      line.textContent.includes('X'),
+    )
+    const markerRect = marker?.getBoundingClientRect()
+    const viewportRect = scroller?.getBoundingClientRect()
+    return {
+      before: at < 0 ? '' : text.slice(0, at),
+      after: at < 0 ? '' : text.slice(at + 1),
+      // Where the inserted line sits relative to the top of the pane the reader
+      // is looking at. One line of slack: the carried position is a fraction of
+      // a line, so the line it floors onto can start up to a line above it.
+      fromViewportTop:
+        markerRect && viewportRect ? Math.round(markerRect.top - viewportRect.top) : null,
+    }
+  })
+  expect(landing.fromViewportTop).not.toBeNull()
+  expect(Math.abs(landing.fromViewportTop!)).toBeLessThan(30)
+  const previous = /line (\d+) of the note$/.exec(landing.before)
+  expect(previous).not.toBeNull()
+  const following = /^line (\d+) of the note/.exec(landing.after)
+  expect(following).not.toBeNull()
+  expect(Number(following![1])).toBe(Number(previous![1]) + 1)
+  expect(Number(previous![1])).toBeGreaterThan(1)
+  expect(Number(previous![1])).toBeLessThan(120)
 })
 
 test('源码 → 渲染 keeps the place and hands over the keyboard', async ({ page }) => {
