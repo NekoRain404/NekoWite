@@ -12,6 +12,10 @@
  * real size is measured off the node view's element first (see ./measure) — the
  * same source the drag reads its start width from — and a resize that cannot
  * establish it is refused rather than stepped from a stand-in.
+ *
+ * The commit itself is ./resize-commit, which keeps the image selected: without
+ * it each press ended the selection it was acting on, so only the first arrow of
+ * a selection did anything.
  */
 
 import { Plugin, NodeSelection } from '@milkdown/prose/state'
@@ -19,6 +23,7 @@ import type { EditorView } from '@milkdown/prose/view'
 
 import { KEY_STEP, proportionalSize } from './resize'
 import { imageElementAt, intrinsicSize, lockPair } from './measure'
+import { commitImageResize } from './resize-commit'
 
 export const IMAGE_KEYMAP_PLUGIN_KEY = 'nekowite.imageKeymap'
 
@@ -60,9 +65,7 @@ export const imageKeymapPlugin = new Plugin({
       const target = Math.max(1, baseWidth + dir * step)
 
       if (!event.shiftKey) {
-        view.dispatch(
-          view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, width: target }),
-        )
+        commitImageResize(view, pos, { ...node.attrs, width: target })
         return true
       }
 
@@ -73,9 +76,7 @@ export const imageKeymapPlugin = new Plugin({
       const lock = lockPair(storedWidth, stated(node.attrs.height), natural)
       if (!lock) return true
       const { width, height } = proportionalSize(lock.width, lock.height, target)
-      view.dispatch(
-        view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, width, height }),
-      )
+      commitImageResize(view, pos, { ...node.attrs, width, height })
       return true
     },
   },

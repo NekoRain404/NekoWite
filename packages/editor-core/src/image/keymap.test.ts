@@ -1,17 +1,18 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { undoDepth } from '@milkdown/prose/history'
-import { NodeSelection } from '@milkdown/prose/state'
+import { NodeSelection, TextSelection } from '@milkdown/prose/state'
 import type { EditorView } from '@milkdown/prose/view'
 
 import { basicPlugins, createEditor } from '../editor'
+import { clearImageSelection, getSelectedImage, onImageSelectionChange } from './selection'
 
+/** The FIRST image's position. (`descendants`'s `false` prunes a node's
+ *  children, it does not stop the walk — returning it here kept looking and
+ *  handed back the LAST image, which is invisible until a doc holds two.) */
 function findImagePos(doc: unknown): number {
   let pos: number | null = null
   ;(doc as import('@milkdown/prose/model').Node).descendants((n, p) => {
-    if (n.type.name === 'image') {
-      pos = p
-      return false
-    }
+    if (pos === null && n.type.name === 'image') pos = p
     return true
   })
   if (pos === null) throw new Error('no image found')
@@ -116,10 +117,6 @@ describe('image keyboard width adjust', () => {
   })
 
   it('reads ↓ and ↑ on a stored width as grow and shrink', async () => {
-    // One press per selection: a resize replaces the node's markup, so
-    // ProseMirror maps the NodeSelection away (sameMarkup is false) and falls
-    // back to a text selection at the image's edge. A second press therefore
-    // needs a fresh click on the image — pre-existing, not this fix's doing.
     const down = await makeEditor('![a](attachments/a.png){width=300}')
     const downPos = findImagePos(down.view.state.doc)
     selectImage(down.view, downPos)
@@ -280,5 +277,142 @@ describe('image keyboard resize of an image with no stored size', () => {
 
     pressArrow(view, 'ArrowRight')
     expect(imageAttrs(view, pos)).toEqual({ width: 310, height: null })
+  })
+})
+
+/**
+ * The resize is the app's own change to the image the reader selected, and it
+ * must not be what ends that selection.
+ *
+ * `setNodeMarkup` on a leaf is a ReplaceStep at the selection's anchor, which
+ * ProseMirror maps as deleted: the NodeSelection came back as `Selection.near()`
+ * — a text caret beside the picture. The first press therefore CONSUMED the
+ * selection it acted on: every further press found a caret, the keymap declined,
+ * and the reader had to click the image again for each step. The property panel
+ * was told null on the same transition and closed.
+ */
+describe('the image stays selected across a resize', () => {
+  it('presses → twice and the second press steps again', async () => {
+    const { view } = await makeEditor('![a](attachments/a.png){width=300}')
+    const pos = findImagePos(view.state.doc)
+    selectImage(view, pos)
+
+    pressArrow(view, 'ArrowRight')
+    const afterFirst = view.state.selection
+    expect(
+      afterFirst instanceof NodeSelection,
+      `after the first press the selection was ${afterFirst.constructor.name}(${afterFirst.from},${afterFirst.to})`,
+    ).toBe(true)
+    expect(imageAttrs(view, pos)).toEqual({ width: 310, height: null })
+
+    pressArrow(view, 'ArrowRight')
+    expect(imageAttrs(view, pos)).toEqual({ width: 320, height: null })
+  })
+
+  it('presses shift+→ twice and the second press steps again', async () => {
+    const { view } = await makeEditor('![a](attachments/a.png){width=400 height=300}')
+    const pos = findImagePos(view.state.doc)
+    selectImage(view, pos)
+
+    pressArrow(view, 'ArrowRight', true)
+    expect(imageAttrs(view, pos)).toEqual({ width: 410, height: 308 })
+
+    // The second step holds the ratio the first one wrote: 420 / (410/308).
+    pressArrow(view, 'ArrowRight', true)
+    expect(imageAttrs(view, pos)).toEqual({ width: 420, height: 316 })
+  })
+
+  it('keeps the property panel open: the selection never leaves the image', async () => {
+    const { view } = await makeEditor('![a](attachments/a.png){width=300}')
+    const pos = findImagePos(view.state.doc)
+    clearImageSelection()
+    const seen: Array<number | null> = []
+    const stop = onImageSelectionChange((s) => seen.push(s ? s.pos : null))
+    selectImage(view, pos)
+
+    pressArrow(view, 'ArrowRight')
+
+    stop()
+    expect(seen).not.toContain(null)
+    expect(getSelectedImage()?.pos).toBe(pos)
+  })
+
+  it('commits the resize in one transaction, so it stays one undo step', async () => {
+    const { view } = await makeEditor('![a](attachments/a.png){width=300}')
+    const pos = findImagePos(view.state.doc)
+    selectImage(view, pos)
+    let dispatches = 0
+    const dispatch = view.dispatch.bind(view)
+    view.dispatch = (tr) => {
+      dispatches += 1
+      dispatch(tr)
+    }
+    const before = undoDepth(view.state)
+
+    pressArrow(view, 'ArrowRight')
+
+    // A selection put back by a SECOND transaction would pass every other test
+    // here and double the work (and the state updates) of every keypress.
+    expect(dispatches).toBe(1)
+    expect(undoDepth(view.state)).toBe(before + 1)
+    expect(imageAttrs(view, pos)).toEqual({ width: 310, height: null })
+  })
+
+  it('leaves the selection on the image it resized, not on the next one', async () => {
+    const { editor, view } = await makeEditor(
+      '![a](attachments/a.png){width=300}\n\n![b](attachments/b.png){width=500}\n',
+    )
+    const pos = findImagePos(view.state.doc)
+    selectImage(view, pos)
+
+    pressArrow(view, 'ArrowRight')
+    pressArrow(view, 'ArrowRight')
+
+    const sel = view.state.selection
+    expect(sel instanceof NodeSelection).toBe(true)
+    expect(sel.from).toBe(pos)
+    expect(await editor.save()).toContain('{width=320}')
+    expect(await editor.save()).toContain('{width=500}')
+    editor.destroy()
+  })
+
+  it('never acts on a caret the reader moved off the image', async () => {
+    const { view } = await makeEditor('![a](attachments/a.png){width=300}')
+    const pos = findImagePos(view.state.doc)
+    selectImage(view, pos)
+    pressArrow(view, 'ArrowRight')
+    expect(imageAttrs(view, pos)).toEqual({ width: 310, height: null })
+
+    // The caret beside the picture — the very position the old remap left the
+    // selection at. It must be the browser's key again, not the image's.
+    const caret = TextSelection.create(view.state.doc, view.state.doc.content.size - 1)
+    view.dispatch(view.state.tr.setSelection(caret))
+
+    const handled = pressArrow(view, 'ArrowRight')
+
+    // The image is not re-selected on the strength of an earlier press: the key
+    // belongs to the caret again, nothing was resized, and the panel is told to
+    // close — the selection survives the resize, it does not become sticky.
+    expect(handled).toBe(false)
+    expect(view.state.selection instanceof NodeSelection).toBe(false)
+    expect(view.state.selection.from).toBe(caret.from)
+    expect(getSelectedImage()).toBeNull()
+    expect(imageAttrs(view, pos)).toEqual({ width: 310, height: null })
+  })
+
+  it('cannot carry the selection into the note that replaced it', async () => {
+    const { editor, view } = await makeEditor('![a](attachments/a.png){width=300}')
+    const pos = findImagePos(view.state.doc)
+    selectImage(view, pos)
+    pressArrow(view, 'ArrowRight')
+
+    await editor.open('# a note with no picture\n')
+
+    const handled = pressArrow(view, 'ArrowRight')
+
+    expect(handled).toBe(false)
+    expect(view.state.selection instanceof NodeSelection).toBe(false)
+    expect(await editor.save()).not.toContain('{width')
+    editor.destroy()
   })
 })

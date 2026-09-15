@@ -1,5 +1,6 @@
 /**
- * Image selection tracking for the property panel.
+ * Image selection tracking for the property panel, and the one way an image
+ * selection is made.
  *
  * The image property panel needs to know (a) that an image is selected and
  * (b) the exact ProseMirror position so attrs can be written back with a
@@ -7,6 +8,10 @@
  * transaction and push + clears state whenever a NodeSelection lands on an
  * `image` node. Subscribers in the desktop layer (the ImagePanel) react to
  * open/close the panel; the position is the source of truth for attr writes.
+ *
+ * `imageSelectionAt` is that selection, built from a document and a position:
+ * the click handler and the resize commit both use it, so every image
+ * selection in the tree comes from one place and names a real image node.
  *
  * This module is deliberately side-effect free apart from its own listener
  * set, so the open/close contract is unit-testable without a full editor.
@@ -61,6 +66,20 @@ function selectionToImage(selection: NodeSelection): ImageSelectionState | null 
 }
 
 /**
+ * A NodeSelection over the image at `pos`, or null when `doc` holds something
+ * else there.
+ *
+ * The document decides, not the caller: a position that no longer names an
+ * image (the note was re-parsed, the picture was replaced or deleted) yields
+ * null rather than a selection pointing at whatever moved into its place.
+ */
+export function imageSelectionAt(doc: Node, pos: number): NodeSelection | null {
+  const node = doc.nodeAt(pos)
+  if (!node || node.type.name !== 'image') return null
+  return NodeSelection.create(doc, pos)
+}
+
+/**
  * The ProseMirror plugin that keeps `current` (and the listener set) in sync
  * with the live selection. When the selection moves away from an image (or the
  * editor is destroyed) it emits `null` so the panel closes.
@@ -79,10 +98,9 @@ export const imageSelectionPlugin = new Plugin({
       const target = event.target as Element | null
       const figure = target?.closest?.('.neko-image')
       if (!figure) return false
-      const nodePos = view.posAtDOM(figure, 0)
-      const node = view.state.doc.nodeAt(nodePos)
-      if (!node || node.type.name !== 'image') return false
-      const tr = view.state.tr.setSelection(NodeSelection.create(view.state.doc, nodePos))
+      const selection = imageSelectionAt(view.state.doc, view.posAtDOM(figure, 0))
+      if (!selection) return false
+      const tr = view.state.tr.setSelection(selection)
       if (!tr.selection.eq(view.state.selection)) view.dispatch(tr)
       return true
     },

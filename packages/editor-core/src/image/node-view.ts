@@ -12,6 +12,7 @@ import { imageDimSchema } from './schema'
 import { nextWidth, proportionalSize } from './resize'
 import { intrinsicSize } from './measure'
 import { advanceResizeDrag, beginResizeDrag, commitResizeDrag } from './drag'
+import { commitImageResize } from './resize-commit'
 
 /**
  * Node view for the commonmark `image` node.
@@ -276,8 +277,7 @@ export const makeImageNodeView: NodeViewConstructor = (node, view, getPos) => {
         } else {
           attrs.height = null
         }
-        const tr = view.state.tr.setNodeMarkup(commit.pos, undefined, attrs)
-        view.dispatch(tr)
+        commitImageResize(view, commit.pos, attrs)
       }
     }
     window.addEventListener('pointermove', onMove)

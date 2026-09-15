@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { undoDepth } from '@milkdown/prose/history'
+import { NodeSelection } from '@milkdown/prose/state'
 
 import { advanceResizeDrag, beginResizeDrag, commitResizeDrag } from './drag'
 import { createEditor, basicPlugins } from '../editor'
@@ -111,5 +112,31 @@ describe('resize drag undo coalescing (editor)', () => {
     const node = view.state.doc.nodeAt(pos)
     expect(node?.attrs.width).toBe(430) // 400 + 30px of travel
     expect(node?.attrs.height).toBeNull()
+  })
+
+  it('a drag leaves the image selected, so the next arrow key still steps it', async () => {
+    // The drag commits with the same `setNodeMarkup` the keyboard uses, so it
+    // ended the image selection the same way — the panel closed on the resize
+    // it came from, and the reader who reached for → after a drag (the natural
+    // way to fine-tune one) found nothing selected and had to click first.
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open('![a](attachments/a.png){width=300}')
+
+    const img = el.querySelector('img') as HTMLImageElement
+    const figure = el.querySelector('.neko-image') as HTMLElement
+    const view = editor.getView()
+    const pos = view.posAtDOM(figure, 0)
+    view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, pos)))
+
+    simulateDrag(img, [5, 30])
+
+    expect(view.state.doc.nodeAt(pos)?.attrs.width).toBe(330)
+    expect(view.state.selection instanceof NodeSelection).toBe(true)
+
+    const event = new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })
+    view.someProp('handleKeyDown', (f) => f(view, event))
+    expect(view.state.doc.nodeAt(pos)?.attrs.width).toBe(340)
   })
 })
