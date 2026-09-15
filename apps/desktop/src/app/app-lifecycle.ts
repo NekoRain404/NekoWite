@@ -1,6 +1,7 @@
 import { getCurrentWindow, type CloseRequestedEvent } from '@tauri-apps/api/window'
 import { useTabsStore } from '../stores/tabs'
 import { useAppearanceStore } from '../stores/appearance'
+import { createUnflushableRescue } from '../stores/unflushable-rescue'
 import type { WindowTracking } from './window-state'
 import { notifyError, notifyRecovery } from '../services/errors'
 import { requestUntitledVaultSwitch } from './recovery-closed-loop'
@@ -37,8 +38,9 @@ function isTauriRuntime(): boolean {
  *     fails the window stays open so the work is not lost — and when it failed
  *     because the file refuses the write, the user is offered the one route out
  *     that does not need that file (a copy under another name,
- *     `rescueUnflushableTabs`), because "some files could not be saved" on its
- *     own leaves them with an X that never works.
+ *     `stores/unflushable-rescue.ts` — the same route "Close all" takes),
+ *     because "some files could not be saved" on its own leaves them with an X
+ *     that never works.
  *   - In the browser Demo (no Tauri runtime, no `close-requested`), the
  *     `beforeunload` fallback just prompts, because an async flush cannot be
  *     reliably awaited during an unload.
@@ -86,56 +88,22 @@ export function createAppLifecycle(deps: {
     })
   }
 
-  /** The user's answer to the close-blocked question below. */
-  function requestSaveCopies(count: number): Promise<boolean> {
-    return new Promise((resolve) => {
-      notifyRecovery({
-        message: t('tabs.unsavedWorkRescue', { count }),
-        onRestore: () => resolve(true),
-        onDismiss: () => resolve(false),
-      })
-    })
-  }
-
   /**
-   * The way out of a close that a refused save would otherwise block forever.
+   * The way out of a close that a refused save would otherwise block forever:
+   * the copy route, one loop for both controls that need it
+   * (`stores/unflushable-rescue.ts` — "Close all" asks the same question through
+   * the store, and a second copy of the loop is how the two came to disagree).
    *
-   * `flushDirty()` cannot put every dirty tab on disk when one of them is
-   * read-only: the backend refuses that write deliberately, and no retry of it
-   * can ever land. The window then will not close — correctly, since the text is
-   * unsaved — but a user who typed into a protected note (a note restored from
-   * the trash carries the bit, so they need never have set it) had no move left
-   * at all: Ctrl+S refused, the X refused, and the only ways out were to lose
-   * the edits or to leave the app and `chmod` the file. Offer the one route that
-   * needs neither the protected file nor a retry, and let the close go ahead
-   * once the text is somewhere the user chose.
+   * Wired to THIS store's own ports, and called at the same point it always was:
+   * `reconcilePlaceholders` → `flushDirty` → this rescue → the untitled prompt.
    */
-  async function rescueUnflushableTabs(): Promise<boolean> {
-    const stuck = tabs.tabs.filter((tab) => tab.dirty && tab.path)
-    if (stuck.length === 0) return false
-    if (!(await requestSaveCopies(stuck.length))) return false
-    for (const tab of stuck) {
-      // Resolves true only once that tab's text is on disk — under the copy's
-      // name. A cancelled dialog, or a copy that was refused in turn, leaves
-      // this false and the window open, with the text still in the editor.
-      if (!(await tabs.saveTab(tab.id, { offerCopy: true }))) return false
-      // That true is "the text this save captured is on disk", not "this tab is
-      // saved": a keystroke landing while the copy was written leaves the tab
-      // dirty holding text no file has, and the `close()` this rescue exists to
-      // let through cancels the autosave timer the keystroke armed — so the
-      // "own save" the write path relies on can never happen on this route.
-      // Settle it where the copy put it, with the gate the closes use.
-      //
-      // The copy option does not survive the first attempt, by construction:
-      // `saveUntilSettled` retries through `saveTab(id)`, and a retry that still
-      // offered a copy would re-open a dialog for a tab that has a path now. A
-      // tab nobody typed into during the copy is settled already, and asking the
-      // gate again would write the same bytes a second time.
-      const copied = tabs.tabs.find((x) => x.id === tab.id)
-      if (copied?.dirty && !(await tabs.saveUntilSettled(tab.id))) return false
-    }
-    return true
-  }
+  const rescueUnflushableTabs = createUnflushableRescue({
+    listTabs: () => tabs.tabs,
+    t,
+    notifyRecovery,
+    saveTab: (id, opts) => tabs.saveTab(id, opts),
+    saveUntilSettled: (id) => tabs.saveUntilSettled(id),
+  })
 
   // With autosave on, a dirty tab's pending timer may never fire if the window
   // is closed first. Rather than silently losing those edits, prompt the user

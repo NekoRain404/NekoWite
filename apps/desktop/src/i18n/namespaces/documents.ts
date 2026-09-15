@@ -83,6 +83,12 @@ export const documents = {
       // an action the user closing the window never took.
       unsavedWorkBlockerClose:
         'Some files could not be saved; the window stays open and your text is still in the editor.',
+      // "Close all" is the third control that can be blocked here, and it is
+      // blocked on the TABS rather than on the window: the sentence above names
+      // the window, which is the window close's own claim, and the vault-switch
+      // one describes an action this user never took either.
+      unsavedWorkBlockerCloseAll:
+        'Some files could not be saved; the tabs stay open and your text is still in the editor.',
       // The way out of a refused save at the moment the user is trying to
       // leave, where a retry they cannot carry out would strand them: the X is
       // the last thing they have left to press.
@@ -160,6 +166,7 @@ export const documents = {
       unsavedWorkPrompt: '你有未保存的更改，仍要离开吗？',
       unsavedWorkBlocker: '部分文件无法保存，未切换 vault',
       unsavedWorkBlockerClose: '部分文件无法保存；窗口保持打开，文字仍在编辑器中。',
+      unsavedWorkBlockerCloseAll: '部分文件无法保存；标签页保持打开，文字仍在编辑器中。',
       unsavedWorkRescue:
         '有文件无法保存。选择“恢复”把文字另存为副本；选择“忽略”则保持窗口打开。',
       untitledVaultSwitchMsg: '你有 {count} 个未命名的未保存文档。选择“恢复”在切换前保存；选择“忽略”则丢弃。',
