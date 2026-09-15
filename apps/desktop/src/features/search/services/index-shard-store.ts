@@ -6,6 +6,10 @@
  * shard whose checksum no longer matches the metadata is dropped from the
  * in-memory `notes` and reported as corrupt, and the incremental build step
  * re-reads exactly those notes (a targeted shard rebuild, not a full one).
+ *
+ * Because that record IS what an index is, the saves of one vault are ordered
+ * against each other (see {@link inWriteOrder}): two overlapping runs used to
+ * race for the marker, and the loser could be the newer snapshot.
  */
 
 import {
@@ -34,6 +38,43 @@ export interface IndexShardMeta {
   noteCount: number
   /** Per-shard integrity: label → `{ count, checksum }`. */
   shards: Record<string, IndexShardMetaEntry>
+}
+
+/** One writer per vault.
+ *
+ * The commit marker is what an index *is* — a load reads it and then the shards
+ * it names — so two saves of one vault race for it, and with the writes
+ * interleaved the run that reaches the marker last wins whether or not it holds
+ * the newer state. That is how a note that is on disk, in its shard, and in the
+ * in-memory mirror disappears from the persisted index: the older run's marker
+ * names the shards it wrote, and the newer note's shard is left on disk with
+ * nothing pointing at it.
+ *
+ * Ordering the writes removes the race rather than narrowing it. Each save's
+ * snapshot is taken when its own writes begin, and no other write to that vault
+ * — a save or a clear — can begin until it is done, so the last save to run is
+ * the last to commit, and the marker always describes the state at the moment
+ * its claim was earned.
+ */
+const writeChains = new Map<string, Promise<void>>()
+
+function inWriteOrder<T>(vault: string, task: () => Promise<T>): Promise<T> {
+  const previous = writeChains.get(vault) ?? Promise.resolve()
+  // A failed write must not block the next one, and must still reach its own
+  // caller: the task runs on either settle outcome, and `result` carries the
+  // failure to whoever asked for it.
+  const result = previous.then(task, task)
+  const tail = result.then(
+    () => undefined,
+    () => undefined,
+  )
+  writeChains.set(vault, tail)
+  void tail.then(() => {
+    // Nothing is queued behind us: drop the chain rather than keep an entry per
+    // vault this session has ever written.
+    if (writeChains.get(vault) === tail) writeChains.delete(vault)
+  })
+  return result
 }
 
 /** Write `value` to `key` atomically (temp key, then swap, then clean the temp),
@@ -96,8 +137,20 @@ export async function loadIndex(
 /** Save `index`, splitting its notes across path-hash shards. Each shard is
  *  written atomically under its own key with a per-shard checksum, then the
  *  metadata record is written (last) as the commit marker. Empty shards are
- *  never materialised, so a small vault only touches the shards it needs. */
-export async function saveIndex(index: StoredIndex, storage: AsyncIndexStorage = defaultAsyncIndexStorage()): Promise<void> {
+ *  never materialised, so a small vault only touches the shards it needs.
+ *
+ *  Queued behind any save or clear of the same vault already running. */
+export function saveIndex(
+  index: StoredIndex,
+  storage: AsyncIndexStorage = defaultAsyncIndexStorage(),
+): Promise<void> {
+  return inWriteOrder(index.vault, () => writeIndex(index, storage))
+}
+
+/** The ordered body of {@link saveIndex}: everything below runs while no other
+ *  write of `index.vault` can, which is also why the snapshot is taken here —
+ *  the notes are read at the moment the shards are actually written. */
+async function writeIndex(index: StoredIndex, storage: AsyncIndexStorage): Promise<void> {
   const groups = new Map<string, Record<string, IndexedDoc>>()
   for (const [path, doc] of Object.entries(index.notes)) {
     const label = shardLabelForPath(path)
@@ -124,8 +177,19 @@ export async function saveIndex(index: StoredIndex, storage: AsyncIndexStorage =
 }
 
 /** Drop `vault`'s entire sharded index (metadata + every possible shard key).
- *  Stale `.tmp` keys from an interrupted write are cleaned too. */
-export async function clearIndex(vault: string, storage: AsyncIndexStorage = defaultAsyncIndexStorage()): Promise<void> {
+ *  Stale `.tmp` keys from an interrupted write are cleaned too.
+ *
+ *  Queued with the saves rather than beside them: a rebuild starts by dropping
+ *  the index, and a save that was already in flight must not land its marker
+ *  after the drop and put back what the rebuild is about to replace. */
+export function clearIndex(
+  vault: string,
+  storage: AsyncIndexStorage = defaultAsyncIndexStorage(),
+): Promise<void> {
+  return inWriteOrder(vault, () => dropIndex(vault, storage))
+}
+
+async function dropIndex(vault: string, storage: AsyncIndexStorage): Promise<void> {
   for (const label of shardLabels()) {
     const key = indexShardKey(vault, label)
     await storage.removeItem(key)
