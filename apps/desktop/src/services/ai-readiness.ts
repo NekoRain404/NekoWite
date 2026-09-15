@@ -16,14 +16,27 @@
  *     it only needs a credential;
  *   - every other provider is a hosted API addressed by the backend itself and
  *     needs a credential.
+ *
+ * A credential counts as present either way it can be present: typed into the
+ * settings field this session (`apiKey` — a real key the backend takes as
+ * given), or stored in the vault (`keyConfigured` — the backend backfills it
+ * from there). Both arms are needed, because the store empties the field
+ * whenever a stored key arrives and only the second survives a restart.
  */
 export interface AiReadiness {
   provider: string
   baseUrl: string
   apiKey: string
-  /** The stored key is replaced by a mask when it is loaded from the vault, so
-   *  a non-empty value means "a key exists" even though the raw key is never
-   *  handed to the window. */
+  /** Whether a credential is stored for this provider — the fact the vault
+   *  answers `load_ai_key` with, published by the settings store as state of
+   *  its own.
+   *
+   *  It is not derivable from `apiKey` and must not be replaced by a test on
+   *  it. The store refuses to put the mask in the field (it would be sent back
+   *  as the credential) and empties it instead, so after a restart or a
+   *  provider switch `apiKey` is empty for a provider whose key is sitting in
+   *  the vault. The backend then backfills that key from the vault, which is
+   *  why this arm decides whether a request is worth making at all. */
   keyConfigured?: boolean
 }
 

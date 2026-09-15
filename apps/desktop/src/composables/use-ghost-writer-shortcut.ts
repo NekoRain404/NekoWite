@@ -40,7 +40,12 @@ function aiUsable(): boolean {
     provider: s.provider,
     baseUrl: s.baseUrl,
     apiKey: s.apiKey,
-    keyConfigured: s.apiKey.trim().length > 0,
+    // NOT `s.apiKey.trim().length > 0`, which is the predicate's first arm said
+    // a second time — feeding the arm the expression it was written to replace
+    // left it dead, and since the store empties the field on load, an install
+    // with a key in the vault read as unconfigured after every restart and
+    // every provider switch. The store answers "is a key stored" itself.
+    keyConfigured: s.keyConfigured,
   })
 }
 
