@@ -41,26 +41,35 @@ interface PaneScroll {
   rendered: number
   sourceRange: number
   renderedRange: number
+  sourcePad: number
+  renderedPad: number
 }
 
 /**
- * Both panes' offsets and ranges, read from the elements the app itself reads:
- * `SourcePane` scrolls CodeMirror's `.cm-scroller`, and the rendered pane is
- * its own scroll container.
+ * Both panes' offsets, ranges and trailing spaces, read from the elements the
+ * app itself reads: `SourcePane` scrolls CodeMirror's `.cm-scroller`, and the
+ * rendered pane is its own scroll container.
  *
- * Each pane's trailing space is subtracted from the range, because that is the
- * range the app reports to the sync: the space is the PANEL's (80 % of its own
- * height, so the last line can be raised off the bottom edge), not the
- * document's, and the two panes lay the document out at different heights — a
- * pad folded into both ranges is what would misalign them. The pad is read from
- * the CSS variable the pane sets (`--nkw-tail-space`), so this follows the app
- * rather than restating it.
+ * A pane's range is everything its scrollbar travels over — `scrollHeight -
+ * clientHeight` — because that is the range the app reports to the sync and
+ * clamps the sync's writes to. The trailing space is INSIDE it: the pad is on
+ * the content box, so it is part of the content the pane scrolls, which is the
+ * whole point of it (the last line can be raised off the bottom edge). It was
+ * subtracted here once, to match a range the app also subtracted it from, and
+ * that is what let the two panes part company at the bottom of a long document:
+ * the pane the sync moved could not be put where the pane the user was holding
+ * could be wheeled.
+ *
+ * The pads are read for the same reason the ranges are — they are the app's own
+ * numbers rather than a restatement of them — and because "both panes leave the
+ * same space below the last line" is a claim only a real engine can settle: the
+ * two panes' scrollers are not the same box, and one of them loses a scrollbar.
  */
 function readPanes(page: Page): Promise<PaneScroll> {
   return page.evaluate(() => {
     const source = document.querySelector('.pane.source .cm-scroller') as HTMLElement | null
     const rendered = document.querySelector('.pane.rendered') as HTMLElement | null
-    // Each pane writes the pad on its own content box: the rendered pane on
+    // Each pane applies the pad to its own content box: the rendered pane on
     // `.editor-container`, the source pane on its root. Read from there rather
     // than by walking up from the scroller (`.pane.rendered` carries an inline
     // width, so an ancestor walk would find the pane's own style attribute and
@@ -70,15 +79,15 @@ function readPanes(page: Page): Promise<PaneScroll> {
       const raw = holder?.style.getPropertyValue('--nkw-tail-space') ?? ''
       return Number.parseFloat(raw) || 0
     }
-    const sourcePad = padOf('.pane.source')
-    const renderedPad = padOf('.pane.rendered .editor-container')
-    const rangeOf = (el: HTMLElement | null, pad: number): number =>
-      el ? Math.max(0, el.scrollHeight - el.clientHeight - pad) : -1
+    const rangeOf = (el: HTMLElement | null): number =>
+      el ? Math.max(0, el.scrollHeight - el.clientHeight) : -1
     return {
       source: source?.scrollTop ?? -1,
       rendered: rendered?.scrollTop ?? -1,
-      sourceRange: rangeOf(source, sourcePad),
-      renderedRange: rangeOf(rendered, renderedPad),
+      sourceRange: rangeOf(source),
+      renderedRange: rangeOf(rendered),
+      sourcePad: padOf('.pane.source'),
+      renderedPad: padOf('.pane.rendered .editor-container'),
     }
   })
 }
@@ -239,6 +248,15 @@ test.describe('split scroll sync', () => {
     expect(start.sourceRange).toBeGreaterThan(1000)
     expect(start.renderedRange).toBeGreaterThan(1000)
 
+    // The space below the last line is ONE measurement of the panel, applied by
+    // both panes, so the two have to leave the same amount of it. Measured per
+    // pane they did not: `.cm-scroller` loses a horizontal scrollbar's height,
+    // so the source pane's came out a scrollbar short of the rendered pane's and
+    // the two spaced the same last line differently — which is what the reader
+    // saw as one pane having the space and its neighbour not.
+    expect(start.sourcePad).toBeGreaterThan(0)
+    expect(start.sourcePad).toBe(start.renderedPad)
+
     await wheelPane(page, '.pane.rendered', 300)
     await waitForScrollSettle(page)
 
@@ -319,5 +337,30 @@ test.describe('split scroll sync', () => {
     // Nothing keeps moving either.
     await page.waitForTimeout(400)
     expect(await readPanes(page)).toEqual(settled)
+  })
+
+  test('leaves both panes the same trailing space with a long unwrapped line', async ({ page }) => {
+    // Soft wrap off with a line far wider than the pane: the configuration in
+    // which the two panes' scrollers are furthest apart in what they measure —
+    // the source pane scrolls sideways, the rendered pane wraps. Both still have
+    // to be given the same space below the last line.
+    //
+    // A guard, not the measurement case: this browser reports the two scrollers
+    // as the same height even here (its scrollbars take no layout space), so a
+    // tail measured per pane would NOT come out different under it. The
+    // scrollbar's contribution is covered where it can be modelled exactly —
+    // `EditorPane.tail-space.test.ts`, whose layout fake gives the source pane's
+    // scroller a scrollbar.
+    const longLine = 'x'.repeat(1200)
+    await openNote(page, {
+      doc: `# Long\n\n${longLine}\n\nsecond paragraph\n`,
+      appearance: { softWrap: false },
+    })
+    await showSplit(page)
+    await waitForScrollSettle(page)
+
+    const panes = await readPanes(page)
+    expect(panes.sourcePad).toBeGreaterThan(0)
+    expect(panes.sourcePad).toBe(panes.renderedPad)
   })
 })
