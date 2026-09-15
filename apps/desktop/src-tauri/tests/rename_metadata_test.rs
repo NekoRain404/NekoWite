@@ -1,16 +1,19 @@
-//! Consistency of the metadata side tables (trash) and of the create-only
-//! writes that publish new files into a vault.
+//! Consistency of the metadata side tables (trash, history) and of the
+//! create-only writes that publish new files into a vault.
 //!
 //! Every test here is about the same shape: a check and the action that depends
 //! on it must be ONE step. "Is this name free?" followed by a separate write,
-//! and "is the restore target occupied?" followed by a separate rename, both
-//! leave a gap in which another writer claims the entry — which the second step
-//! then destroys while telling its caller it succeeded. The tests drive real
-//! races (threads released together, or two operations landing in the same
+//! "is the restore target occupied?" followed by a separate rename, and "is this
+//! only a change of case?" answered by lowercasing two strings, all leave a gap
+//! or a wrong answer that the second step then acts on — destroying an entry the
+//! user never touched while telling its caller it succeeded. The tests drive
+//! real races (threads released together, or two operations landing in the same
 //! clock tick) rather than asserting on a helper.
 
+use nekowite_lib::domain::path_policy::encode_rel_path;
 use nekowite_lib::storage::file_store::{
-    import_attachment, read_file, save_attachment, write_file,
+    import_attachment, list_history, read_file, read_history, rename_entry, save_attachment,
+    write_file,
 };
 use nekowite_lib::storage::trash_store::{delete_file, list_trash, restore_from_trash};
 use std::path::{Path, PathBuf};
@@ -38,6 +41,23 @@ fn tick() {
 
 fn vault_bytes(vault: &Path, rel: &str) -> Vec<u8> {
     std::fs::read(vault.join(rel)).unwrap_or_else(|e| panic!("reading {rel}: {e}"))
+}
+
+/// Whether this filesystem tells `note.md` and `Note.md` apart.
+///
+/// A case-only rename is a defect of a case-SENSITIVE filesystem: there the two
+/// spellings are two files, and one of them can be destroyed. Where the
+/// filesystem folds case they are one file, there is no second file to keep, and
+/// a test that asserted on it would be asserting on a scenario that cannot
+/// happen — so it says so instead.
+fn fs_distinguishes_case(dir: &Path) -> bool {
+    let lower = dir.join("case-probe.md");
+    let upper = dir.join("CASE-PROBE.md");
+    std::fs::write(&lower, "probe").unwrap();
+    let distinct = !upper.exists();
+    let _ = std::fs::remove_file(&lower);
+    let _ = std::fs::remove_file(&upper);
+    distinct
 }
 
 /// How many writers race for one attachment name, and how many times.
@@ -275,5 +295,284 @@ fn a_free_restore_target_is_used_as_is() {
     let restored = restore_from_trash(&root, &entry).unwrap();
     assert!(restored.ends_with("docs/a.md"), "got {restored}");
     assert_eq!(read_file(&root, "docs/a.md").unwrap(), "hello");
+    let _ = std::fs::remove_dir_all(&vault);
+}
+
+/// Renaming `note.md` onto `Note.md` must not replace the file that is already
+/// there, even though the two names differ only in case.
+///
+/// The rename used to answer "is this only a change of case?" by lowercasing the
+/// two requested spellings. That answer skipped the "target already exists"
+/// refusal and went into the two-step `fs::rename` written for a case change,
+/// and `rename` REPLACES whatever sits at the destination. On a case-sensitive
+/// filesystem the destination is a DIFFERENT file — the user's other note — so
+/// renaming the first one destroyed the second one's text, removed the source,
+/// and returned `Ok("Note.md")` over a note nobody had touched. Casing is not
+/// file identity; only the entry being its own target justifies skipping the
+/// collision check.
+#[test]
+fn a_rename_onto_a_case_variant_name_never_replaces_the_other_file() {
+    let vault = temp_vault("rename-case-clash");
+    if !fs_distinguishes_case(&vault) {
+        // One file, two spellings: this filesystem has no second file to keep.
+        let _ = std::fs::remove_dir_all(&vault);
+        return;
+    }
+    let root = vault.to_str().unwrap().to_string();
+    std::fs::write(vault.join("note.md"), "SOURCE").unwrap();
+    std::fs::write(vault.join("Note.md"), "TARGET").unwrap();
+
+    let outcome = rename_entry(&root, "note.md", "Note.md");
+
+    // The two bodies come first: THEY are what this test is about, and a run
+    // that fails on the return value alone leaves the loss unstated.
+    assert_eq!(
+        std::fs::read_to_string(vault.join("Note.md")).unwrap(),
+        "TARGET",
+        "the file the user did not ask to touch must keep its own text \
+         (the rename reported {outcome:?})"
+    );
+    assert_eq!(
+        std::fs::read_to_string(vault.join("note.md")).unwrap(),
+        "SOURCE",
+        "a refused rename leaves its own source where it was"
+    );
+    assert!(
+        outcome.is_err(),
+        "another file holds that name, so the rename must be refused, got {outcome:?}"
+    );
+
+    // The refusal is about the OCCUPIED name and not about case: an ordinary
+    // rename still moves the file, and so does a case change whose target name
+    // is genuinely free.
+    let renamed = rename_entry(&root, "note.md", "notes/kept.md").unwrap();
+    assert_eq!(renamed, "notes/kept.md");
+    assert_eq!(vault_bytes(&vault, "notes/kept.md"), b"SOURCE");
+
+    let cased = rename_entry(&root, "notes/kept.md", "notes/KEPT.md").unwrap();
+    assert_eq!(cased, "notes/KEPT.md");
+    assert_eq!(vault_bytes(&vault, "notes/KEPT.md"), b"SOURCE");
+    assert_eq!(
+        std::fs::read_to_string(vault.join("Note.md")).unwrap(),
+        "TARGET",
+        "the untouched file is still untouched after the renames around it"
+    );
+
+    let _ = std::fs::remove_dir_all(&vault);
+}
+
+/// Renaming a folder carries the history of every note inside it.
+///
+/// History is keyed by the vault-relative path, so the snapshots of
+/// `docs/sub/a.md` live under the key for `docs/sub/a.md`. The rename migrated
+/// that key for a renamed FILE only, and a folder rename was a plain move: the
+/// snapshots stayed under keys nothing looks up any more, the history panel of
+/// every note in the renamed folder came up empty, and the versions were
+/// unreachable rather than deleted — the worst of both, because the user has no
+/// way to tell them apart from lost.
+#[test]
+fn a_renamed_folder_carries_its_notes_history() {
+    let vault = temp_vault("rename-dir-history");
+    let root = vault.to_str().unwrap().to_string();
+
+    // Two levels down, three versions written so two snapshots exist.
+    write_file(&root, "docs/sub/a.md", "v1", Some(10)).unwrap();
+    tick();
+    write_file(&root, "docs/sub/a.md", "v2", Some(10)).unwrap();
+    tick();
+    write_file(&root, "docs/sub/a.md", "v3", Some(10)).unwrap();
+    let before = list_history(&root, "docs/sub/a.md").unwrap();
+    assert_eq!(before.len(), 2, "two versions of history to carry");
+    let oldest = before[1].id.clone();
+    let newest = before[0].id.clone();
+    assert_eq!(read_history(&root, "docs/sub/a.md", &oldest).unwrap(), "v1");
+    assert_eq!(read_history(&root, "docs/sub/a.md", &newest).unwrap(), "v2");
+
+    // A second note in the same folder, so the migration is not about one file.
+    write_file(&root, "docs/other.md", "o1", Some(10)).unwrap();
+    tick();
+    write_file(&root, "docs/other.md", "o2", Some(10)).unwrap();
+    assert_eq!(list_history(&root, "docs/other.md").unwrap().len(), 1);
+
+    rename_entry(&root, "docs", "archive").unwrap();
+
+    let after = list_history(&root, "archive/sub/a.md").unwrap();
+    assert_eq!(
+        after.iter().map(|e| e.id.clone()).collect::<Vec<_>>(),
+        vec![newest.clone(), oldest.clone()],
+        "every version followed the folder, newest first, under its own id"
+    );
+    assert_eq!(
+        read_history(&root, "archive/sub/a.md", &oldest).unwrap(),
+        "v1",
+        "the oldest version still reads as the text it was"
+    );
+    assert_eq!(
+        read_history(&root, "archive/sub/a.md", &newest).unwrap(),
+        "v2"
+    );
+    assert_eq!(
+        list_history(&root, "archive/other.md").unwrap().len(),
+        1,
+        "the other note in the folder kept its version too"
+    );
+    assert!(
+        list_history(&root, "docs/sub/a.md").unwrap().is_empty(),
+        "the history MOVED: a copy left at the old key would resurface if the \
+         old folder were ever created again"
+    );
+
+    let _ = std::fs::remove_dir_all(&vault);
+}
+
+/// A folder rename merges into history the destination key already holds.
+///
+/// The destination key can be occupied without the destination folder existing:
+/// a note that was saved at `archive/a.md` and then had its folder deleted
+/// leaves `.nekowite/history/archive%2Fa.md` behind. Renaming `docs` onto
+/// `archive` then has to merge the two version sets — both files of snapshots
+/// are the user's, and one of them being renamed over the other is a silent
+/// loss of history.
+#[test]
+fn a_renamed_folder_merges_the_history_the_target_already_has() {
+    let vault = temp_vault("rename-dir-history-merge");
+    let root = vault.to_str().unwrap().to_string();
+
+    write_file(&root, "archive/a.md", "x1", Some(10)).unwrap();
+    tick();
+    write_file(&root, "archive/a.md", "x2", Some(10)).unwrap();
+    // The folder goes away; its history key does not.
+    std::fs::remove_dir_all(vault.join("archive")).unwrap();
+    assert_eq!(
+        list_history(&root, "archive/a.md").unwrap().len(),
+        1,
+        "the old key still holds the version the deleted folder left"
+    );
+
+    write_file(&root, "docs/a.md", "d1", Some(10)).unwrap();
+    tick();
+    write_file(&root, "docs/a.md", "d2", Some(10)).unwrap();
+
+    rename_entry(&root, "docs", "archive").unwrap();
+
+    // Newest first, and in the order they were written: `d1` was snapshotted
+    // after `x1` was, so a merge that lost or re-stamped one of them shows up
+    // here as the wrong order and not merely as a missing entry.
+    let merged = list_history(&root, "archive/a.md").unwrap();
+    let bodies: Vec<String> = merged
+        .iter()
+        .map(|e| read_history(&root, "archive/a.md", &e.id).unwrap())
+        .collect();
+    assert_eq!(
+        bodies,
+        vec!["d1".to_string(), "x1".to_string()],
+        "the versions from both keys are all there, in time order: {merged:?}"
+    );
+    assert_eq!(
+        list_history(&root, "docs/a.md").unwrap().len(),
+        0,
+        "and nothing is left behind at the old key"
+    );
+
+    let _ = std::fs::remove_dir_all(&vault);
+}
+
+/// Two keys can hold a version with the SAME id, and the merge must keep both.
+///
+/// A snapshot id is the millisecond it was written in, so two notes can share
+/// one — and after a folder rename the two keys are in the same directory. The
+/// name the second one wants is then taken by the first, and `fs::rename`
+/// REPLACES what it finds there: the merge has to invent a second name, or one
+/// of the two versions is destroyed by the very move meant to preserve it.
+#[test]
+fn a_folder_rename_merges_two_versions_that_share_one_id() {
+    let vault = temp_vault("rename-dir-history-same-id");
+    let root = vault.to_str().unwrap().to_string();
+
+    write_file(&root, "docs/a.md", "d1", Some(10)).unwrap();
+    tick();
+    write_file(&root, "docs/a.md", "d2", Some(10)).unwrap();
+    let moved = list_history(&root, "docs/a.md").unwrap();
+    assert_eq!(moved.len(), 1);
+    let shared_id = moved[0].id.clone();
+    assert_eq!(read_history(&root, "docs/a.md", &shared_id).unwrap(), "d1");
+
+    // The key the rename is about to merge into, already holding a DIFFERENT
+    // version under that same id.
+    let history_root = vault.join(".nekowite").join("history");
+    let target_key = history_root.join(encode_rel_path("archive/a.md"));
+    std::fs::create_dir_all(&target_key).unwrap();
+    std::fs::write(target_key.join(&shared_id), "x1").unwrap();
+
+    rename_entry(&root, "docs", "archive").unwrap();
+
+    let merged = list_history(&root, "archive/a.md").unwrap();
+    let mut bodies: Vec<String> = merged
+        .iter()
+        .map(|e| read_history(&root, "archive/a.md", &e.id).unwrap())
+        .collect();
+    bodies.sort();
+    assert_eq!(
+        bodies,
+        vec!["d1".to_string(), "x1".to_string()],
+        "both versions of the shared id survived the merge: {merged:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&vault);
+}
+
+/// A history key that cannot follow the folder loses nothing.
+///
+/// The migration is best-effort by design — a rename that has already happened
+/// must not be reported as failed because a side table could not be moved — so
+/// the one thing it may never do is destroy the snapshots it could not move.
+/// Here the destination key is occupied by a FILE, which is what a permissions
+/// problem, a full disk or a foreign object under `.nekowite/history` looks like
+/// to the resolver: that note's history stays at its old key, complete, and the
+/// keys that could move still do.
+#[test]
+fn a_history_key_that_cannot_follow_the_folder_keeps_every_version() {
+    let vault = temp_vault("rename-dir-history-blocked");
+    let root = vault.to_str().unwrap().to_string();
+
+    write_file(&root, "docs/stuck.md", "s1", Some(10)).unwrap();
+    tick();
+    write_file(&root, "docs/stuck.md", "s2", Some(10)).unwrap();
+    let stuck = list_history(&root, "docs/stuck.md").unwrap();
+    assert_eq!(stuck.len(), 1);
+
+    write_file(&root, "docs/other.md", "o1", Some(10)).unwrap();
+    tick();
+    write_file(&root, "docs/other.md", "o2", Some(10)).unwrap();
+
+    // Occupy the destination key `archive/stuck.md` with a file.
+    let history_root = vault.join(".nekowite").join("history");
+    std::fs::create_dir_all(&history_root).unwrap();
+    std::fs::write(
+        history_root.join(encode_rel_path("archive/stuck.md")),
+        "blocker",
+    )
+    .unwrap();
+
+    let renamed = rename_entry(&root, "docs", "archive").unwrap();
+    assert_eq!(renamed, "archive");
+
+    // The key that could not move is untouched: same id, same text, still
+    // readable — which is what makes the failure recoverable instead of final.
+    let still = list_history(&root, "docs/stuck.md").unwrap();
+    assert_eq!(still.len(), 1, "no version was dropped by the failed move");
+    assert_eq!(still[0].id, stuck[0].id, "and it is the same version");
+    assert_eq!(
+        read_history(&root, "docs/stuck.md", &still[0].id).unwrap(),
+        "s1"
+    );
+    assert!(
+        list_history(&root, "archive/stuck.md").is_err(),
+        "the blocked key holds a file: the panel has to report that as \
+         unreadable rather than as 'this note has no versions'"
+    );
+    // The note whose key was free still followed its folder.
+    assert_eq!(list_history(&root, "archive/other.md").unwrap().len(), 1);
+
     let _ = std::fs::remove_dir_all(&vault);
 }
