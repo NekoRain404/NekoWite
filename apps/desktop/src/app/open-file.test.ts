@@ -83,7 +83,9 @@ describe('createOpenFileHandler', () => {
 
       await h.handler.handle(OPEN)
 
-      expect(h.applyVault).toHaveBeenCalledWith('/vault')
+      // `remember: true` here, because this root IS the user's vault — the one
+      // startup is restoring. Recording it is what it was already recorded as.
+      expect(h.applyVault).toHaveBeenCalledWith('/vault', { remember: true })
       expect(h.openTab).toHaveBeenCalledWith('/vault/notes/a.md')
     })
   })
@@ -95,6 +97,22 @@ describe('createOpenFileHandler', () => {
       root: '/elsewhere',
       same_vault: false,
     }
+
+    it('serves the document without making the folder the workspace', async () => {
+      // `same_vault: false` is the backend's answer that this root is NOT one
+      // of the user's: it is the file's own folder, adopted by the launch that
+      // was handed it. So the switch that serves the file must not record it —
+      // `remember: false` — or one double-click on `~/Downloads/report.md` would
+      // make `~/Downloads` the vault the next launch starts on, and take the
+      // session keyed to the real vault with it.
+      const h = harness()
+      h.vaultPath.value = '/vault'
+
+      await expect(h.handler.handle(OUTSIDE)).resolves.toBe(true)
+
+      expect(h.applyVault).toHaveBeenCalledWith('/elsewhere', { remember: false })
+      expect(h.openTab).toHaveBeenCalledWith('/elsewhere/b.md')
+    })
 
     it('moves the vault through the ordinary switch, then opens the tab', async () => {
       const h = harness()
@@ -196,8 +214,55 @@ describe('createOpenFileHandler', () => {
       h.takePendingOpen.mockResolvedValue(OPEN)
 
       h.handler.subscribe()
+      h.handler.markReady()
       h.ring()
       await vi.waitFor(() => expect(h.openTab).toHaveBeenCalledWith('/vault/notes/a.md'))
+    })
+
+    it('is held until startup has settled, and then acts', async () => {
+      // The defect this exists for. `start()` arms the listener BEFORE the
+      // startup pull, so a double-click during startup ran a second
+      // `applyVault` concurrently with the one restoring the user's vault —
+      // and the switch is latest-wins, so the restore lost: either the tab set
+      // was never reopened, or the new root committed while the restore loop was
+      // still reading the old vault's paths. It is `PendingOpen`'s problem one
+      // layer up, and it takes the same answer: the request waits in state
+      // until something can act on it.
+      const h = harness()
+      h.vaultPath.value = '/vault'
+      h.takePendingOpen.mockResolvedValue({
+        kind: 'open',
+        path: '/elsewhere/b.md',
+        root: '/elsewhere',
+        same_vault: false,
+      })
+
+      h.handler.subscribe()
+      h.ring()
+      // Every microtask the pre-fix handler needed is available here, so an
+      // unheld doorbell would have switched the vault by this line.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(h.applyVault).not.toHaveBeenCalled()
+
+      h.handler.markReady()
+      await vi.waitFor(() => expect(h.openTab).toHaveBeenCalledWith('/elsewhere/b.md'))
+      expect(h.applyVault).toHaveBeenCalledWith('/elsewhere', { remember: false })
+    })
+
+    it('does not hold the startup pull that releases it', async () => {
+      // The held doorbell must not be held by a gate only the startup drain can
+      // open: `drain` is what startup calls, and a version of it that waited on
+      // its own barrier would park the launch request forever.
+      const h = harness()
+      h.vaultPath.value = '/vault'
+      h.takePendingOpen.mockResolvedValue(OPEN)
+
+      h.handler.subscribe()
+      h.ring()
+
+      await expect(h.handler.drain()).resolves.toBe(true)
+      expect(h.openTab).toHaveBeenCalledWith('/vault/notes/a.md')
     })
 
     it('opens nothing when the request arrives after teardown', async () => {

@@ -114,13 +114,23 @@ impl VaultRegistry {
     /// cannot: a picked root is re-checked by `register` when the switch
     /// commits, but a launch has no second chance, so a root that could never
     /// be served is refused here where the user can still be told why.
-    pub fn approve_launch_root(&self, root: &str) -> Result<PathBuf, String> {
+    ///
+    /// `file` is the document the launch named, and it is a parameter for the
+    /// refusal ALONE. The rule is about the folder, but the request it refuses
+    /// is about the file: `nekowite ~/todo.md` used to be answered with a
+    /// sentence about the home directory and advice ("choose a folder inside
+    /// it") that cannot open the note the user asked for. Passing the file here
+    /// rather than back at the call site is what keeps the rule, its reason and
+    /// the sentence the user reads in one module — a caller holding only the
+    /// folder could not write that sentence, and a caller writing its own copy
+    /// of the rule would be the second place the rule lives.
+    pub fn approve_launch_root(&self, file: &Path, root: &str) -> Result<PathBuf, String> {
         // Canonicalized before the refusal so the message names the same path
         // `approve_pick` would record; that call canonicalizes again, and stays
         // the only place a root is remembered.
         let canonical = canonicalize_vault_root(root)?;
-        if let Some(refusal) = vault_root_structural_refusal(&canonical) {
-            return Err(refusal);
+        if let Some(reason) = vault_root_refusal(&canonical) {
+            return Err(unservable_launch_file(file, &canonical, reason));
         }
         self.approve_pick(root)
     }
@@ -166,8 +176,7 @@ fn unvouched_vault_root_error(root: &str) -> String {
     )
 }
 
-/// A folder that is structurally incapable of being a vault, however it was
-/// chosen.
+/// The reason a folder can never be a vault root, whichever way it was chosen.
 ///
 /// `register` is the one place that decides this, so it stays a policy about
 /// vaults rather than a list of names: `/` and the user's home are exactly the
@@ -176,35 +185,101 @@ fn unvouched_vault_root_error(root: &str) -> String {
 /// would hand every path-confined command the run of the filesystem — not
 /// because a rule failed, but because there would be no boundary left to
 /// enforce. Everything else stays a matter of the user having chosen it.
-fn vault_root_structural_refusal(path: &Path) -> Option<String> {
-    let shown = ipc_path(path);
+///
+/// It is a VALUE rather than a sentence because two readers need it. A pick and
+/// a registration are refused with a sentence about the FOLDER, which is what
+/// they asked about; a launch is refused with a sentence about the FILE it was
+/// handed, which is what its user asked about
+/// ([`unservable_launch_file`]). Both quote the clause below, so a fourth
+/// structural rule reaches both the moment it is added here.
+fn vault_root_refusal(path: &Path) -> Option<VaultRootRefusal> {
     // `/` on unix, `C:\` on windows: the only paths without a parent.
     if path.parent().is_none() {
-        return Some(format!(
-            "refusing to open {shown} as a vault: it is the filesystem root, \
-             which would put every file on the machine inside the vault. \
-             Choose the folder that holds your notes."
-        ));
+        return Some(VaultRootRefusal::FilesystemRoot);
     }
     if let Some(home) = home_dir().and_then(|home| home.canonicalize().ok()) {
         if path == home {
-            return Some(format!(
-                "refusing to open {shown} as a vault: it is your home directory, \
-                 which holds your keys, configuration and browser data. \
-                 Choose a folder inside it, such as ~/Documents/notes."
-            ));
+            return Some(VaultRootRefusal::Home);
         }
         // `starts_with` also covers equality, but the case above has its own
         // message: "you picked home itself" and "you picked a folder that
         // contains home" are different mistakes.
         if home.starts_with(path) {
-            return Some(format!(
-                "refusing to open {shown} as a vault: it contains your home directory. \
-                 Choose a folder inside your home directory."
-            ));
+            return Some(VaultRootRefusal::ContainsHome);
         }
     }
     None
+}
+
+/// Why a folder cannot be a vault, as a value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VaultRootRefusal {
+    FilesystemRoot,
+    Home,
+    ContainsHome,
+}
+
+impl VaultRootRefusal {
+    /// The rule in its own words, as a clause that completes
+    /// "… as a vault: {clause}." — or, in a launch's sentence, follows the
+    /// folder it cannot serve.
+    fn clause(self) -> &'static str {
+        match self {
+            Self::FilesystemRoot => {
+                "it is the filesystem root, which would put every file on the machine inside the vault"
+            }
+            Self::Home => {
+                "it is your home directory, which holds your keys, configuration and browser data"
+            }
+            Self::ContainsHome => "it contains your home directory",
+        }
+    }
+
+    /// What to do about the FOLDER, for the reader who named one.
+    fn advice(self) -> &'static str {
+        match self {
+            Self::FilesystemRoot => "Choose the folder that holds your notes.",
+            Self::Home => "Choose a folder inside it, such as ~/Documents/notes.",
+            Self::ContainsHome => "Choose a folder inside your home directory.",
+        }
+    }
+}
+
+/// The structural refusal as a sentence about the FOLDER — what a dialog pick
+/// and a registration are refused with.
+fn vault_root_structural_refusal(path: &Path) -> Option<String> {
+    let reason = vault_root_refusal(path)?;
+    Some(format!(
+        "refusing to open {} as a vault: {}. {}",
+        ipc_path(path),
+        reason.clause(),
+        reason.advice()
+    ))
+}
+
+/// The structural refusal as a sentence about the FILE a launch was handed.
+///
+/// The rule is unmoved — nothing here makes `$HOME`, `/` or an ancestor of home
+/// servable, and nothing makes a launch's refusal a way around it. What changes
+/// is the subject. The folder's own sentence answers "may this folder be a
+/// vault?" with no and tells the user to choose another one, which is right for
+/// a pick and useless for a launch: the folder was never the user's question.
+/// They asked for a note, and the answer they need is that the note cannot be
+/// served and what would let it be. So the file is named first, the folder's
+/// own clause gives the reason, and the remedy is the one that reaches the
+/// document — a folder the user CAN open as a vault, with the note moved into
+/// it.
+fn unservable_launch_file(file: &Path, folder: &Path, reason: VaultRootRefusal) -> String {
+    format!(
+        "cannot open {}: it is not inside a vault NekoWite has open or \
+         remembers, and a file a launch was handed is served from its own \
+         folder — so it needs {} to be a vault, and that folder cannot be one: \
+         {}. Move the note into a folder you can open as a vault, then open it \
+         from there.",
+        ipc_path(file),
+        ipc_path(folder),
+        reason.clause()
+    )
 }
 
 /// The user's home directory: the folder whose children are the user's private
