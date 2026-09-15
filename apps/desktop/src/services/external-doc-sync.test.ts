@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createExternalDocSync } from './external-doc-sync'
+import type { OpenDocTab } from './external-doc-sync'
 import type { FsChangeEvent } from '../platform/gateways/contracts'
 
 interface Harness {
@@ -14,12 +15,16 @@ interface Harness {
 
 function harness(overrides: {
   disk?: string
+  /** Bytes per path, for a tab set whose tabs hold different files. */
+  diskByPath?: Record<string, string>
   dirty?: boolean
   savedContent?: string
   selfWrite?: boolean
   path?: string | null
-  /** Extra tabs the sync should check when a folder disappears. */
-  openTabs?: Array<{ id: string; path: string | null }>
+  /** The open tab set. Defaults to one tab holding `path` — a change to a note
+   *  is decided for every tab that holds it, so a default of "no tabs" would
+   *  describe a state the app cannot be in. */
+  openTabs?: Array<Partial<OpenDocTab> & { id: string; path: string | null }>
   /** Paths whose read must fail, modelling a file that is gone. */
   unreadable?: string[]
   /** Paths the APP is renaming right now (see `beginMove`). */
@@ -32,8 +37,17 @@ function harness(overrides: {
   const onMissing = vi.fn()
   const read = vi.fn(async (_vault: string, p?: string) => {
     if (p && (overrides.unreadable ?? []).includes(p)) throw new Error('not found')
+    if (p && p in (overrides.diskByPath ?? {})) return overrides.diskByPath![p]
     return overrides.disk ?? 'disk text'
   })
+  const tabs: OpenDocTab[] = (overrides.openTabs ?? [{
+    id: 'tab-1',
+    path: overrides.path === undefined ? 'C:\\vault\\a.md' : overrides.path,
+  }]).map((tab) => ({
+    dirty: overrides.dirty ?? false,
+    savedContent: overrides.savedContent ?? 'old text',
+    ...tab,
+  }))
   const sync = createExternalDocSync({
     read,
     onFsChange: async (cb) => {
@@ -41,18 +55,12 @@ function harness(overrides: {
       return () => { handler = null }
     },
     getVault: () => 'C:\\vault',
-    getActiveTab: () => ({
-      id: 'tab-1',
-      path: overrides.path === undefined ? 'C:\\vault\\a.md' : overrides.path,
-      dirty: overrides.dirty ?? false,
-      savedContent: overrides.savedContent ?? 'old text',
-    }),
     isSelfWrite: () => overrides.selfWrite ?? false,
     isPendingMove: (p) => (overrides.pendingMove ?? []).some((from) => p === from || p.startsWith(`${from}\\`)),
     reload,
     onConflict,
     onChange,
-    getOpenTabs: () => overrides.openTabs ?? [],
+    getOpenTabs: () => tabs,
     onMissing,
   })
   return {
@@ -156,15 +164,145 @@ describe('external document sync', () => {
     h.sync.stop()
   })
 
-  it('reloads even when the disk read fails, as long as the path matches', async () => {
-    // A read failure (permissions, a transient lock) must not silently drop a
-    // real external change; the conflict decision still applies.
-    const h = harness()
-    h.read.mockRejectedValueOnce(new Error('locked'))
+  it('reports a tab whose file will not read as missing, and does not reload it', async () => {
+    // The read DOUBLES as the existence probe: the backend recreates missing
+    // parents, so a tab left on a path that no longer holds anything would
+    // silently resurrect the old location on its next save.
+    //
+    // This used to fall through to the conflict decision and reload — a branch
+    // production never reached, because the probe ran first for the same path
+    // and detached the tab before this code saw it. Two code paths answering
+    // "what is at this path" differently is the defect, not a policy choice:
+    // the read is the only thing that can answer it, and one answer is what
+    // the decision is made of.
+    const h = harness({ unreadable: ['C:\\vault\\a.md'] })
     await h.sync.start()
     h.emit(MODIFIED)
     await h.flush()
+    expect(h.onMissing).toHaveBeenCalledWith('tab-1', 'C:\\vault\\a.md')
+    expect(h.reload).not.toHaveBeenCalled()
+    h.sync.stop()
+  })
+})
+
+/**
+ * L05. A and B are both open; A is on screen. Something outside the app
+ * rewrites B and the watcher reports it.
+ *
+ * The service read B — the existence check covers every open tab — but the only
+ * content comparison was against the ACTIVE tab, so neither a reload nor a
+ * conflict happened and B kept the text it no longer had. The tab then showed
+ * stale text with no sign that anything was wrong, and editing on it and saving
+ * wrote that text over the other program's version. Switching back to B only
+ * moved `activeId`: it did not re-sync, so the overwrite was already armed by
+ * the time the user could see it.
+ */
+describe('a note that is open but not on screen', () => {
+  const A = 'C:\\vault\\a.md'
+  const B = 'C:\\vault\\b.md'
+  const B_MODIFIED: FsChangeEvent = { path: B, kind: 'modified' }
+  /** A on screen holding what the disk holds, B open behind it. */
+  const twoTabs = (b: Partial<OpenDocTab> = {}) => ({
+    openTabs: [
+      { id: 'tab-1', path: A, savedContent: 'A before' },
+      { id: 'tab-2', path: B, savedContent: 'B before', ...b },
+    ],
+    diskByPath: { [A]: 'A before', [B]: 'B external' },
+  })
+
+  it('adopts the change for a background tab that has nothing unsaved', async () => {
+    const h = harness(twoTabs())
+    await h.sync.start()
+    h.emit(B_MODIFIED)
+    await h.flush()
+    expect(h.reload).toHaveBeenCalledWith('tab-2')
+    expect(h.onConflict).not.toHaveBeenCalled()
+    h.sync.stop()
+  })
+
+  it('asks before the change reaches a background tab with unsaved edits', async () => {
+    // A dirty tab must keep the text the user typed, and the question is what
+    // gives them the choice — silently reloading would discard their edits,
+    // and silently ignoring the disk would leave them about to overwrite it.
+    const h = harness(twoTabs({ dirty: true }))
+    await h.sync.start()
+    h.emit(B_MODIFIED)
+    await h.flush()
+    expect(h.onConflict).toHaveBeenCalledWith({ tabId: 'tab-2', path: B })
+    expect(h.reload).not.toHaveBeenCalled()
+    h.sync.stop()
+  })
+
+  it('leaves both tabs alone when the disk still holds what they saved', async () => {
+    const h = harness(twoTabs({ savedContent: 'B external' }))
+    await h.sync.start()
+    h.emit(B_MODIFIED)
+    await h.flush()
+    expect(h.reload).not.toHaveBeenCalled()
+    expect(h.onConflict).not.toHaveBeenCalled()
+    h.sync.stop()
+  })
+
+  it('touches only the tabs holding the changed file', async () => {
+    // The document on screen holds a different note, whose bytes still match:
+    // deciding for every open tab must not mean reloading every open tab.
+    const h = harness(twoTabs())
+    await h.sync.start()
+    h.emit(B_MODIFIED)
+    await h.flush()
+    expect(h.reload.mock.calls).toEqual([['tab-2']])
+    h.sync.stop()
+  })
+
+  it('decides the notes inside a changed folder, not only whether they exist', async () => {
+    // A watcher that coalesces reports the DIRECTORY and nothing else (and a
+    // rename reports `modified` for both names on Windows — measured). A note
+    // inside that folder whose bytes changed is then invisible to a check that
+    // only asks whether the file is still there: the tab keeps the old text and
+    // the next save writes it over the newer one.
+    const h = harness({
+      openTabs: [{ id: 'tab-1', path: 'C:\\vault\\docs\\inside.md', savedContent: 'before' }],
+      diskByPath: { 'C:\\vault\\docs\\inside.md': 'after' },
+    })
+    await h.sync.start()
+    h.emit({ path: 'C:\\vault\\docs', kind: 'modified' })
+    await h.flush()
     expect(h.reload).toHaveBeenCalledWith('tab-1')
+    h.sync.stop()
+  })
+
+  it('asks about a dirty note inside a changed folder, rather than overwriting it', async () => {
+    const h = harness({
+      openTabs: [
+        { id: 'tab-1', path: 'C:\\vault\\docs\\inside.md', savedContent: 'before', dirty: true },
+      ],
+      diskByPath: { 'C:\\vault\\docs\\inside.md': 'after' },
+    })
+    await h.sync.start()
+    h.emit({ path: 'C:\\vault\\docs', kind: 'modified' })
+    await h.flush()
+    expect(h.onConflict).toHaveBeenCalledWith({ tabId: 'tab-1', path: 'C:\\vault\\docs\\inside.md' })
+    h.sync.stop()
+  })
+
+  it('re-checks a background tab when the watcher reports it lost events', async () => {
+    const h = harness(twoTabs())
+    await h.sync.start()
+    h.emit({ path: 'C:\\vault', kind: 'resync' })
+    await h.flush()
+    expect(h.reload).toHaveBeenCalledWith('tab-2')
+    h.sync.stop()
+  })
+
+  it('does not mistake our own background save echo for an external change', async () => {
+    // The claim is asked per path, so a background tab's save echo is covered
+    // by the same answer as the active tab's.
+    const h = harness({ ...twoTabs(), selfWrite: true })
+    await h.sync.start()
+    h.emit(B_MODIFIED)
+    await h.flush()
+    expect(h.reload).not.toHaveBeenCalled()
+    expect(h.onConflict).not.toHaveBeenCalled()
     h.sync.stop()
   })
 })
@@ -360,7 +498,6 @@ function subscriptionHarness({ defer = false }: { defer?: boolean } = {}) {
       })
     },
     getVault: () => 'C:\\vault',
-    getActiveTab: () => null,
     isSelfWrite: () => false,
     reload: async () => undefined,
     onConflict: () => undefined,

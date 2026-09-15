@@ -91,8 +91,17 @@ const externalDocSync = createExternalDocSync({
   read: (vault, path) => fsService.read(vault, path),
   onFsChange: (cb) => fsService.onFsChange(cb),
   getVault: () => tabs.vault,
-  getActiveTab: () => tabs.activeTab,
-  getOpenTabs: () => tabs.tabs.map((t) => ({ id: t.id, path: t.path })),
+  // Every open tab with what it believes is on disk, because the change is
+  // decided for every tab holding the file and not only for the one on screen
+  // (L05). A tab whose file changed behind it used to keep the stale text with
+  // nothing on screen to say so, and the edit made on top of it was saved over
+  // the version the user never saw.
+  getOpenTabs: () => tabs.tabs.map((t) => ({
+    id: t.id,
+    path: t.path,
+    dirty: t.dirty,
+    savedContent: t.savedContent,
+  })),
   onMissing: (tabId, path) => {
     // Detach first, then tell the user: the order matters because the detach is
     // what stops the next save from silently recreating the vanished path.

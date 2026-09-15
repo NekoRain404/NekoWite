@@ -34,6 +34,34 @@ describe('self-write claims', () => {
     expect(h.writes.isSelfWrite('/vault/a.md', 'their text')).toBe(false)
   })
 
+  it('is not ended by a claim on another path, however long it has been running', () => {
+    // A write outlives the window, and while it runs something else claims a
+    // path of its own — a rename, a delete, a save of another note. Each of
+    // those runs the prune, and the prune used to sweep EVERY claim on the
+    // 2000 ms rule that only a claim with no bytes to name is made under: a
+    // slow save fell out of its own claim, and the app then read its own echo
+    // as an external edit and raised a keep-or-reload question about a change
+    // it had made itself — whose "use the disk version" answer discards every
+    // keystroke typed since the save began.
+    const h = harness()
+    h.writes.note('/vault/a.md', 'our text')
+    h.advance(SELF_WRITE_MS * 3)
+
+    h.writes.note('/vault/b.md')
+
+    expect(h.writes.isSelfWrite('/vault/a.md', 'our text')).toBe(true)
+  })
+
+  it('is still ended by its own settle, and only by that', () => {
+    // The other half of the same contract: nothing else may keep a named claim
+    // alive either. It ends where the write ends.
+    const h = harness()
+    h.writes.note('/vault/a.md', 'our text')
+    h.writes.note('/vault/b.md')
+    h.writes.settle('/vault/a.md')
+    expect(h.writes.isSelfWrite('/vault/a.md', 'our text')).toBe(false)
+  })
+
   it('releases the claim when the write settles, so a later edit is reported', () => {
     const h = harness()
     h.writes.note('/vault/a.md', 'our text')
@@ -55,6 +83,19 @@ describe('self-write claims', () => {
     h.writes.note('/vault/a.md') // a rename, a delete
     expect(h.writes.isSelfWrite('/vault/a.md', 'anything')).toBe(true)
     h.advance(SELF_WRITE_MS + 1)
+    expect(h.writes.isSelfWrite('/vault/a.md', 'anything')).toBe(false)
+  })
+
+  it('still ends a timed claim on the clock, whatever else is claimed meanwhile', () => {
+    // The rule the named kind was wrongly held to still belongs to the kind it
+    // was written for: an operation with no bytes to point at (a delete, a
+    // rename) has no settle moment to bind to, so its claim is a clock.
+    const h = harness()
+    h.writes.note('/vault/a.md')
+    h.advance(SELF_WRITE_MS * 3)
+
+    h.writes.note('/vault/b.md')
+
     expect(h.writes.isSelfWrite('/vault/a.md', 'anything')).toBe(false)
   })
 

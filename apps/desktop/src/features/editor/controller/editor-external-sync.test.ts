@@ -568,10 +568,12 @@ describe('editorExternalSync', () => {
           }
         },
         getVault: () => '/vault',
-        getActiveTab: () => store.activeTab,
         isSelfWrite: () => false,
         reload,
         onConflict,
+        // The whole tab set, each tab with what it believes is on disk: the
+        // service decides for every tab holding the changed file, not only the
+        // one on screen.
         getOpenTabs: () => store.tabs,
         onMissing: vi.fn(),
       })
