@@ -181,9 +181,22 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
    * Guards, in order: the tab may be gone (closed, or closeAll ran, while the
    * read was pending — never resurrect one); `loading` may already be false
    * (this read's answer is stale); and the user may have typed into the
-   * placeholder, which is what `dirty` says — it is set at the keystroke by
-   * `markDirty`, and a keystroke is the only thing that sets it. Then the read
-   * still owns the note, but not the typing.
+   * placeholder, which is what `dirty` says once the pane holding the typing
+   * has published. Then the read still owns the note, but not the typing.
+   *
+   * The flush therefore comes BEFORE that last question rather than inside its
+   * answer. Only one of the two panes marks the tab dirty AT the keystroke: the
+   * rendered pane publishes per keystroke (`editor-persistence.ts`), while the
+   * source pane coalesces a burst for `SOURCE_SNAPSHOT_DEBOUNCE_MS` and
+   * `markDirty` runs from the publish that follows it
+   * (`services/code-mirror-host.ts`). So a user typing into a loading
+   * placeholder in source or split mode — the state this rescue exists for —
+   * has `dirty === false` for the whole burst, and asking `dirty` first read
+   * that as "nothing typed here": the read then wrote the file's text over the
+   * typing, and the pane's own content watcher called `setText`, which cancels
+   * the pending publish — so the typing reached neither the tab nor the pane.
+   * Flushing is what makes `dirty` and `content` describe the typing at all,
+   * and with nothing pending it is a no-op per pane.
    *
    * The store's reactive proxy is what gets written (NOT a captured raw
    * object): the read is async, so the pane may already be watch-ing
@@ -193,27 +206,17 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
   async function commitRead(id: string, content: string | null, failed: boolean): Promise<void> {
     const stored = tabs.value.find((x) => x.id === id)
     if (!stored || !stored.loading) return
-    // The tab as it stands NOW — re-read below, because the flush is an await.
-    let tab = stored
-    if (stored.dirty) {
-      // `dirty` is set at the KEYSTROKE, so at this moment the typing is in the
-      // pane and the tab still holds the text from before it: both panes
-      // serialize asynchronously (the rendered one — the default mode — on a
-      // 120ms debounce, `editor-persistence.ts`), and `tab.content` is a field
-      // read that only sees them once they publish. Flushing is what makes it
-      // hold what the user typed, and the rescue below is a one-shot read of
-      // exactly that field: without this it copies the empty placeholder into
-      // the new tab and tells the user their text is safe. The same flush the
-      // save path takes before it writes (`tab-save.ts`), for the same reason.
-      await flushEdits()
-      // Everything above is stale after that await — it is where a close, a
-      // `closeAll` or a vault switch's `removeAllTabs` lands. A read that
-      // resolves afterwards owns no tab, and must not resurrect one.
-      const current = tabs.value.find((x) => x.id === id)
-      if (!current || !current.loading) return
-      tab = current
-      rescuePlaceholderTyping(current, t('tabs.loadRacedTyping'))
-    }
+    // The same flush the save path takes before it writes (`tab-save.ts`), for
+    // the same reason: `tab.content` is a field read that sees a pane's edit
+    // only once that pane has published it.
+    await flushEdits()
+    // Everything above is stale after that await — it is where a close, a
+    // `closeAll` or a vault switch's `removeAllTabs` lands, and where the flush
+    // just re-marked `dirty` for a source burst. A read that resolves afterwards
+    // owns no tab, and must not resurrect one.
+    const tab = tabs.value.find((x) => x.id === id)
+    if (!tab || !tab.loading) return
+    if (tab.dirty) rescuePlaceholderTyping(tab, t('tabs.loadRacedTyping'))
     // A failed read commits no text: the note has none to show, and the tab
     // goes away with the message that says so. The typing above is rescued
     // first — `removeTab` would take it with the tab.
