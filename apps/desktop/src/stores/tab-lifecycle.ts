@@ -1,7 +1,8 @@
 /**
- * Tab lifecycle: open, focus, close and remove — plus the bulk closes
- * (`closeAll`, `closeOthers`, `removeAllTabs`) that decide what happens to
- * unsaved work before a tab disappears.
+ * Tab lifecycle: a document arriving in a tab — open, focus, the first read,
+ * and taking a tab back out of the set. The CLOSES that decide what happens to
+ * unsaved work before a tab disappears live in `tab-close.ts`, which this module
+ * composes, so `createTabLifecycle` stays the one surface a consumer wires.
  *
  * This module NEVER imports `app/recoveryClosedLoop`: the app imports this
  * store, so a store-side module reaching up to it would recreate the
@@ -16,10 +17,13 @@ import { flushEdits } from '../services/editor-ownership'
 import { pruneSuppressReapply } from '../services/suppress-reapply'
 import type { HistoryEntry } from '../platform/gateways/contracts'
 import type { RecoveryPrompt } from '../services/errors'
+import { createTabClose } from './tab-close'
+import type { UntitledCloseChoice } from './tab-close'
 import type { OpenTab } from './tabs'
 
-/** What the user chose for the untitled dirty tabs blocking a bulk close. */
-export type UntitledCloseChoice = 'save' | 'discard'
+/** Re-exported for the store that wires the untitled-close prompt; the type
+ *  belongs to the closes that consume it. */
+export type { UntitledCloseChoice }
 
 /** The slice of the fs gateway opening a tab needs. */
 export interface TabOpenFilePort {
@@ -34,7 +38,8 @@ export interface TabLifecycleDeps {
   t: (key: string, params?: Record<string, unknown>) => string
   notifyError(message: string): void
   notifyRecovery(prompt: RecoveryPrompt): void
-  /** Persistence commands the close flows call. `saveUntilSettled` is the gate
+  /** Persistence commands the close flows call — forwarded to `tab-close.ts`
+   *  with the rest of the ports. `saveUntilSettled` is the gate
    *  a close asks, not `saveTab`: one landed write is not a saved tab
    *  (`tab-settle.ts`), and a close that reads it as one drops the text the
    *  write could not carry. */
@@ -128,14 +133,18 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
    * Not focused (the user asked for a note, and a nameless document in front of
    * them answers a different question), marked dirty (nothing of it is on disk
    * anywhere) and announced, because a tab appearing beside theirs is not
-   * something to discover later.
+   * something to discover later. The sentence differs by what the user asked
+   * for — a note they OPENED is a note still in front of them, a note they
+   * CLOSED is gone (`tab-close.ts`, which is the other caller) — so the caller
+   * supplies it.
    *
    * `from.content` is only the typing once the pane holding it has published
    * — see `commitRead`, which flushes before calling this. Reading the field
    * without that flush is how this handed the user an empty tab under a toast
-   * saying their text was in it.
+   * saying their text was in it. A caller that reaches this from anywhere else
+   * owes the same flush.
    */
-  function rescuePlaceholderTyping(from: OpenTab): void {
+  function rescuePlaceholderTyping(from: OpenTab, notice: string): void {
     const rescued: OpenTab = {
       id: nextId(),
       path: null,
@@ -148,7 +157,7 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
     tabs.value.push(rescued)
     markDirty(rescued.id)
     emitLifecycle('onOpenDocument', { id: rescued.id, path: null })
-    notifyError(t('tabs.loadRacedTyping'))
+    notifyError(notice)
   }
 
   /**
@@ -189,7 +198,7 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
       const current = tabs.value.find((x) => x.id === id)
       if (!current || !current.loading) return
       tab = current
-      rescuePlaceholderTyping(current)
+      rescuePlaceholderTyping(current, t('tabs.loadRacedTyping'))
     }
     // A failed read commits no text: the note has none to show, and the tab
     // goes away with the message that says so. The typing above is rescued
@@ -289,23 +298,12 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
     }
   }
 
-  async function closeTab(id: string): Promise<void> {
-    const tab = tabs.value.find((x) => x.id === id)
-    // Unsaved work is flushed, not discarded: the pending autosave timer is
-    // cancelled on removal, so without this the edits would be unrecoverable.
-    // The gate is `saveUntilSettled` and not "one save succeeded" — see
-    // `tab-settle.ts` for the keystroke that makes those two different answers.
-    if (tab?.dirty && !(await saveUntilSettled(id))) return
-    removeTab(id)
-    captureSession()
-  }
-
   /** Drop every tab WITHOUT touching the filesystem. Only for callers that have
    *  already flushed the dirty tabs and prompted for the untitled ones — see
-   *  {@link closeAll} and the vault-switch path in `appBootstrap`. "Flushed"
-   *  means settled: `flushDirty` answers true only with every path'd dirty tab
-   *  clean, because this contract named a caller that did not hold it once
-   *  already — see `tab-settle.ts`. */
+   *  `closeAll` and the vault-switch path in `appBootstrap`. "Flushed" means
+   *  settled: `flushDirty` answers true only with every path'd dirty tab clean,
+   *  because this contract named a caller that did not hold it once already —
+   *  see `tab-settle.ts`. */
   function removeAllTabs(): void {
     // Leave no tab-scoped state behind: removeTab only cancels autosave
     // timers, but a closed tab's in-flight save, saving flag and self-write
@@ -316,62 +314,23 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
     focusTab(null)
   }
 
-  /**
-   * Close every tab the way the user means it, without losing work.
-   *
-   * "Close all" used to call `removeTab` in a loop: no flush, no prompt. Tabs
-   * with unsaved edits (autosave off, or inside the autosave window) and
-   * untitled tabs — which exist nowhere but memory — were destroyed by one menu
-   * click, on disk still holding the previous text or holding nothing at all.
-   * Closing now follows the same rule as closing a single tab: path-bearing tabs
-   * are flushed first, untitled dirty ones get the keep-or-discard prompt, and a
-   * failed save aborts the whole thing instead of dropping what it could not
-   * write. Returns false when the close did not happen.
-   */
-  async function closeAll(): Promise<boolean> {
-    if (tabs.value.length === 0) return true
-    if (!(await flushDirty())) {
-      notifyError(t('tabs.unsavedWorkBlocker'))
-      return false
-    }
-    const untitled = untitledDirtyTabs()
-    if (untitled.length > 0) {
-      const choice = await requestUntitledClose(untitled.length)
-      if (choice === 'save') {
-        for (const tab of untitled) {
-          if (!(await saveUntilSettled(tab.id))) {
-            notifyError(t('tabs.unsavedWorkBlocker'))
-            return false
-          }
-        }
-      }
-    }
-    // `flushDirty` settles what it touched, so a tab that is dirty HERE is one
-    // that became dirty after that flush — the prompt above is user time, with
-    // the editor still live behind it, and a keystroke typed into it is in no
-    // write yet. The bulk close therefore asks the same question the single
-    // close does, at the last moment it can be asked: `removeAllTabs` would
-    // otherwise discard exactly that text. Untitled tabs are not revisited: the
-    // prompt owns them, and one the user chose to discard has no path to save
-    // to.
-    for (const tab of [...tabs.value]) {
-      if (!tab.path || !tab.dirty) continue
-      if (!(await saveUntilSettled(tab.id))) {
-        notifyError(t('tabs.unsavedWorkBlocker'))
-        return false
-      }
-    }
-    removeAllTabs()
-    captureSession()
-    return true
-  }
-
-  async function closeOthers(id: string): Promise<void> {
-    for (const tab of [...tabs.value]) {
-      if (tab.id !== id) await closeTab(tab.id)
-    }
-    if (tabs.value.some((x) => x.id === id)) focusTab(id)
-  }
+  /** The closes: the primitives above, asked what they owe text that is not on
+   *  disk yet (see `tab-close.ts`). Composed here so `createTabLifecycle` — the
+   *  single surface `tabs.ts` wires — keeps its shape across the split. */
+  const close = createTabClose({
+    tabs,
+    t,
+    notifyError,
+    saveUntilSettled,
+    flushDirty,
+    requestUntitledClose,
+    untitledDirtyTabs,
+    captureSession,
+    rescuePlaceholderTyping,
+    removeTab,
+    removeAllTabs,
+    focusTab,
+  })
 
   return {
     focusTab,
@@ -379,10 +338,8 @@ export function createTabLifecycle(deps: TabLifecycleDeps) {
     markDirty,
     openTab,
     removeTab,
-    closeTab,
     removeAllTabs,
-    closeAll,
-    closeOthers,
+    ...close,
   }
 }
 
