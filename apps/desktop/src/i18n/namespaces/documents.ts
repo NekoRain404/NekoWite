@@ -27,6 +27,12 @@ export const documents = {
       saved: 'Saved',
       openVaultFirst: 'No vault is open; cannot read the file',
       readFileFailed: 'Could not read file: {path}',
+      // Not an error the user can act on, and not one they caused: the note was
+      // still loading when they typed into it, and what they typed is theirs.
+      // It says where that text went, because a tab they did not open is the
+      // part they cannot work out on their own.
+      loadRacedTyping:
+        'This note was still loading when you started typing. What you typed is in a new untitled tab; the note now shows the file as it is on disk.',
       crashRecoveryMsg: 'It looks like the app was interrupted last time. Unsaved changes detected ({time}) — restore the latest version?',
       saveAttachmentFailed: 'Failed to save attachment; the image remains in the temp folder',
       saveFailed: 'Save failed; content is kept in the editor, please retry',
@@ -113,6 +119,8 @@ export const documents = {
       saved: '已保存',
       openVaultFirst: '尚未打开 vault，无法读取文件',
       readFileFailed: '无法读取文件：{path}',
+      loadRacedTyping:
+        '这篇笔记尚未加载完成。你输入的正文已保存在新的未命名标签中；笔记现在显示的是磁盘上的内容。',
       crashRecoveryMsg: '检测到上次程序中断，检测到未保存的更改（{time}），恢复最近版本？',
       saveAttachmentFailed: '保存附件失败，图片仍保留在临时目录',
       saveFailed: '保存失败，内容已保留在编辑器中，请重试',

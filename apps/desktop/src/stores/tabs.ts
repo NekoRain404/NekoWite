@@ -37,6 +37,19 @@ export interface OpenTab {
   content: string
   savedContent: string
   dirty: boolean
+  /**
+   * The tab is waiting on its first read: true from the placeholder push until
+   * the file's text has been committed into it, false from then on.
+   *
+   * The pending read is the difference between "this tab holds the note" and
+   * "this tab holds a placeholder wearing the note's path" — for the length of
+   * that read an editor is mounted on an empty document the user can type into,
+   * and the read used to write its text straight over what they had typed
+   * (`tab-lifecycle`'s `commitRead` is what reconciles the two). Optional so
+   * that fixtures built beside this store need not name it; undefined means
+   * "not loading".
+   */
+  loading?: boolean
   /** Vault-relative asset paths still staged in `.tmp` that must move into the
    * note's assets dir once the note gets a real path on first save. */
   pendingAssetPaths: string[]
