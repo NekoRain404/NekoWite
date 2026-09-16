@@ -26,6 +26,7 @@ const {
   baseUrl,
   modelsUrl,
   apiKey,
+  keyConfigured,
   allowPrivate,
   systemPromptOn,
   systemPrompt,
@@ -51,6 +52,14 @@ const providerChoices = computed<SelectOption[]>(() =>
 const effortChoices = computed<SelectOption[]>(() =>
   effortOptions.map((option) => ({ value: option.value, label: t(option.labelKey) })),
 )
+
+// The field is empty after every load BY DESIGN (the mask must never be sent
+// back as a credential), so an empty field is exactly what a configured
+// provider looks like. The fact that tells that apart from "nothing is stored"
+// is the store's keyConfigured — never the field's own content — and while a
+// replacement is being typed the field's own dots carry the meaning instead,
+// so the note steps back then too.
+const showKeySet = computed(() => keyConfigured.value && apiKey.value === '')
 </script>
 
 <template>
@@ -153,6 +162,11 @@ const effortChoices = computed<SelectOption[]>(() =>
         spellcheck="false"
         placeholder="sk-..."
       >
+      <span
+        v-if="showKeySet"
+        data-test="ai-key-set"
+        class="settings-note"
+      >{{ t('aiSettings.keySet') }}</span>
     </label>
     <button
       class="btn btn-secondary settings-save"

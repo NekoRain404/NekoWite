@@ -144,6 +144,22 @@ describe('useAiSettings', () => {
     expect(m.modelLoading.value).toBe(false)
   })
 
+  it('exposes the stored-key fact from the store, never re-derived off the field', () => {
+    const m = mountModel()
+    const settings = useSettingsStore()
+
+    // The field is empty BY DESIGN for a configured provider (the mask must
+    // never ride back as a credential after a load), so "is a key stored"
+    // cannot be read off it. The fact is the store's keyConfigured, which
+    // loadKey/saveKey publish — and the composable's job is to hand it through.
+    settings.apiKey = ''
+    settings.keyConfigured = true
+    expect(m.keyConfigured.value).toBe(true)
+
+    settings.keyConfigured = false
+    expect(m.keyConfigured.value).toBe(false)
+  })
+
   it('keeps the configured model selectable even when the provider does not list it', () => {
     const m = mountModel()
     const settings = useSettingsStore()
