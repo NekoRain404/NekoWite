@@ -61,3 +61,27 @@ Thumbs.db
 # branch, so git sees the directory as untracked and would happily commit a
 # nested repository. They are scratch: the commits live on their own branches.
 /.worktrees/
+
+# The Zed source reference for the ACP integration (plan §2.1). Read-only
+# design reference: no .git of its own, so a stray `git add .` would commit a
+# 93 MB third-party checkout wholesale.
+#
+# It must also never reach a build input, the sidecar list or a release bundle
+# (plan §2.2): the crates we read for *design* — agent_servers, agent_ui,
+# agent_skills, acp_thread — declare GPL-3.0-or-later, while this repository is
+# MIT. Reading them for architecture is the sanctioned use; copying source into
+# product code needs a licence review first (plan §2.3, port ledger). Keeping
+# the tree untracked is what makes "it cannot be packaged" true by construction
+# rather than by remembering.
+/zed-main/
+
+# The bundled OpenCode engine (scripts/fetch-opencode-linux.sh installs it here).
+# 176 MB per release: it belongs in the packaging pipeline's output, not in a
+# commit. The path is what Tauri's `bundle.externalBin` resolves, so it must
+# exist to build a bundle — and must never be tracked.
+/apps/desktop/src-tauri/binaries/
+
+# P0 scratch: the throwaway OpenCode profile and probe scripts for the ACP
+# compatibility work. The profile must live inside the repo (plan §3.2) and must
+# never be committed — it is a test identity, not project state.
+/.tmp-p0/
