@@ -62,17 +62,12 @@ Thumbs.db
 # nested repository. They are scratch: the commits live on their own branches.
 /.worktrees/
 
-# The Zed source reference for the ACP integration (plan §2.1). Read-only
-# design reference: no .git of its own, so a stray `git add .` would commit a
-# 93 MB third-party checkout wholesale.
-#
-# It must also never reach a build input, the sidecar list or a release bundle
-# (plan §2.2): the crates we read for *design* — agent_servers, agent_ui,
-# agent_skills, acp_thread — declare GPL-3.0-or-later, while this repository is
-# MIT. Reading them for architecture is the sanctioned use; copying source into
-# product code needs a licence review first (plan §2.3, port ledger). Keeping
-# the tree untracked is what makes "it cannot be packaged" true by construction
-# rather than by remembering.
+# Third-party reference checkouts. Each is a full clone carrying its own `.git`,
+# so git would commit a gitlink to a commit this repository cannot resolve (and,
+# for the large ones, tens of megabytes of vendored source). They are read-only
+# study material: never a build input, never a sidecar, never a release bundle.
+# `/zed-main/` is the ACP design reference; `/references/` holds the others.
+/references/
 /zed-main/
 
 # The bundled OpenCode engine (scripts/fetch-opencode-linux.sh installs it here).
