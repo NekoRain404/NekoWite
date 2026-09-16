@@ -242,6 +242,22 @@ async fn an_engine_write_lands_through_the_apps_own_write_path() {
     );
     assert_eq!(fs::read_to_string(&note).expect("content"), "HELLO");
 
+    // Waiting for the engine's answer, not for the file, because only the answer implies the
+    // record. The file appears at the rename inside `atomic_write`, on the blocking-pool thread,
+    // which then still fsyncs the directory and returns before any task of the runtime's runs
+    // `FsCapability::record` — two threads, no happens-before edge between them. So the wait
+    // above can return with nothing recorded, and on a loaded runner it does: CI run
+    // 35138533900 failed here with `left: 0` while the file already held "HELLO". The reply is
+    // the signal that does imply it — `serve` records before it responds, and the frame has to
+    // cross the child's pipe into the capture file before this line can see it. Every other
+    // test in this file that has to wait on a write waits on this reply, or on the record
+    // itself; this was the one place that waited on the filesystem.
+    assert!(
+        wait_for(|| !reply(&capture).is_empty()).await,
+        "the engine must be answered, one way or the other; captured: {:?}",
+        captured(&capture)
+    );
+
     // The engine is told it succeeded, and the change is attributed.
     let changes = runtime.changes();
     assert_eq!(changes.len(), 1, "one agent write, one record");
