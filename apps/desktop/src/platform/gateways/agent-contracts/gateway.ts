@@ -35,12 +35,16 @@ export type AgentSessionState =
   | 'failed'
 
 /**
- * A model the engine offers for a session — the `configOptions` entry P0 measured
- * arriving with `session/new` (§2.2).
+ * A model the engine offers for a session — one `value`/`name` pair of a
+ * `select` config option (P0 §2.2 measured the model selector arriving as
+ * `configOptions` with `session/new`).
+ *
+ * Read-only: it is a projection of a config option, so there is nothing here that
+ * could be updated independently of the option it came from.
  */
 export interface AgentModelOption {
-  id: string
-  name: string
+  readonly id: string
+  readonly name: string
 }
 
 declare const sessionOwnership: unique symbol
@@ -57,12 +61,23 @@ declare const sessionOwnership: unique symbol
  */
 export interface AgentSession extends AgentIdentity {
   readonly [sessionOwnership]: never
-  /** The catalog the engine offered when the session opened. */
-  readonly models: AgentModelOption[]
   /**
-   * The model the session opened with. The caller tracks later changes:
-   * {@link AgentGateway.selectModel} moves the runtime's current value and nothing
-   * pushes the new one back.
+   * The session's model catalog, projected from its **config options** for the
+   * composer's selector.
+   *
+   * Derived, never independent: the `model` option the engine returns with the
+   * session is the single source of truth, and this is a read-only view of it — the
+   * same wire value `config-changed` carries. An adapter must fill both from one read
+   * so they cannot disagree, and nothing may write this: changing the model is
+   * {@link AgentGateway.selectModel}, which moves the option. A second, separately
+   * maintained copy of one wire value is the drift the plan warns about elsewhere
+   * (why a projection may not become its own state).
+   */
+  readonly models: readonly AgentModelOption[]
+  /**
+   * The option's current value when the session opened — the seed for a selector, not
+   * a place to record changes: {@link AgentGateway.selectModel} moves the option and
+   * nothing pushes the new value back here.
    */
   readonly initialModelId: string
 }

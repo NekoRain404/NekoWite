@@ -10,6 +10,7 @@ import {
 } from './agent-contracts'
 import {
   createMemoryAgentGateway,
+  MEMORY_MODEL_OPTION,
   type MemoryAgentGateway,
   type MemoryEvent,
 } from './memory-agent'
@@ -378,6 +379,18 @@ describe('memory agent gateway', () => {
         sessionId: session.sessionId,
       })
     }
+  })
+
+  it('publishes the session’s model catalog as a projection of its config option', async () => {
+    const { session } = await openAgent()
+    // One wire value, one source: the catalog is a read-only view of the `model`
+    // option, so a second copy edited by hand would fail here rather than drift away
+    // from the option the engine actually publishes.
+    const option = MEMORY_MODEL_OPTION.value
+    expect(option.kind).toBe('select')
+    const choices = option.kind === 'select' ? option.choices : []
+    expect(session.models).toEqual(choices.map((choice) => ({ id: choice.value, name: choice.name })))
+    expect(session.initialModelId).toBe(option.kind === 'select' ? option.current : '')
   })
 
   it('ends a turn as a refusal, which is a stop reason and not an error', async () => {

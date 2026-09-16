@@ -32,6 +32,7 @@ import {
 } from './agent-contracts'
 import {
   DEFAULT_REPLAY_LIMIT,
+  MEMORY_INITIAL_MODEL_ID,
   MEMORY_MODELS,
   type MemoryAgentOptions,
   type MemoryEvent,
@@ -51,6 +52,7 @@ import {
 } from './memory-agent/session'
 import { runTurn } from './memory-agent/turn'
 
+export { MEMORY_MODEL_OPTION } from './memory-agent/scenario'
 export type {
   MemoryAgentOptions,
   MemoryEvent,
@@ -181,7 +183,7 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
         sessionId: `session-${sessionCount}`,
       }
       sessions.set(identity.sessionId, createSession(identity, replayLimit))
-      return mintSession(identity, MEMORY_MODELS, MEMORY_MODELS[0].id)
+      return mintSession(identity, MEMORY_MODELS, MEMORY_INITIAL_MODEL_ID)
     },
 
     async selectModel(session: AgentSession, modelId: string): Promise<void> {
