@@ -24,14 +24,21 @@ SHORT_VERSION="$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').ve
 BIN_NAME="nekowite_${SHORT_VERSION}_x64"
 TARGET="apps/desktop/src-tauri/target/release"
 
-echo "[1/4] Tests"
+echo "[1/6] Bundled engine"
+# The sidecar is a build INPUT: `bundle.externalBin` names `binaries/opencode`, Tauri appends the
+# target triple itself, and a missing or wrong file there fails the build minutes in — or worse,
+# ships an app that has no engine. This runs the same verification P1 does, so a package is only
+# built from an artifact that is the one the release manifest pins.
+bash scripts/verify-opencode-linux.sh
+
+echo "[2/6] Tests"
 npx --yes pnpm --filter @nekowite/desktop test
 
-echo "[2/4] Typecheck + lint"
+echo "[3/6] Typecheck + lint"
 npx --yes pnpm --filter @nekowite/desktop typecheck
 npx --yes pnpm --filter @nekowite/desktop lint
 
-echo "[3/4] Build optimized executable and every bundle"
+echo "[4/6] Build optimized executable and every bundle"
 # `tauri build` already runs `beforeBuildCommand` (`pnpm build`); do not
 # pre-build Vite here or the frontend is compiled twice.
 #
@@ -91,7 +98,7 @@ if [ "$BUILD_STATUS" -ne 0 ]; then
 fi
 rm -f "$BUILD_STARTED"
 
-echo "[4/4] Copy release artifacts"
+echo "[5/6] Copy release artifacts"
 mkdir -p release
 
 # `-p`, or the mtimes below are the copy's and the closing note is a lie: plain
@@ -111,6 +118,15 @@ for f in "$TARGET/bundle/deb/"*.deb "$TARGET/bundle/rpm/"*.rpm "$TARGET/bundle/a
   sha256sum "release/$(basename "$f")"
 done
 
+echo "[6/6] Verify the engine inside each package"
+# The step the whole packaging run exists to make checkable: §3.2 says the installed layout carries
+# the engine beside the app's own executable, §3.3 says a program that does not answer the protocol
+# is not an engine, and §11.2 says neither is proven by a build succeeding. This checks each package
+# the way P1 does — a deb that shipped without its sidecar would otherwise be discovered by a user.
+for f in release/*.deb release/*.rpm release/*.AppImage; do
+  bash scripts/verify-opencode-linux.sh --bundle "$f"
+done
+
 echo
 echo "All four artifacts are from the single build above. Their mtimes in"
 echo "release/ are the build's, not the copy's: deb, rpm and the portable"
@@ -122,3 +138,10 @@ echo "For whoever tests this build: the app takes a single-instance lock, so"
 echo "launching it while an older copy is still open only raises that older"
 echo "window. Quit the running copy first, or you will be looking at the"
 echo "previous build and conclude the fixes did nothing."
+echo
+echo "Distribution obligation still open: these packages carry OpenCode"
+echo "(MIT, pinned in src/agent_runtime/update.rs), and no notice file for it"
+echo "travels with them yet — scripts/fetch-opencode-linux.sh installs the"
+echo "program and not the licence text. §3.3 forbids shipping someone else's"
+echo "program without its notices; see docs/architecture/agent-dependencies.md"
+echo "for why the licence work is deferred to the closing pass."
