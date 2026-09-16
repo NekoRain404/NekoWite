@@ -226,7 +226,7 @@ export function buildLinkGraphDetailed(notes: Array<{ path: string; content: str
         continue
       }
       if (resolved === note.path) continue
-      const key = `${note.path} ${resolved}`
+      const key = `${note.path}\x00${resolved}`
       if (edgeKeys.has(key)) continue
       edgeKeys.add(key)
       edges.push({ from: note.path, to: resolved, kind: link.kind })
@@ -300,7 +300,7 @@ export function refreshNode(
     if (!nodesById.has(path) && pathSet.has(path)) {
       nodesById.set(path, { id: path, degree: 0 })
     }
-    const edgeKeys = new Set(edges.map((e) => `${e.from} ${e.to}`))
+    const edgeKeys = new Set(edges.map((e) => `${e.from}\x00${e.to}`))
     for (const link of extractLinksDetailed(content)) {
       const resolved = resolveLinkPath(path, link.target, paths)
       if (!resolved) {
@@ -308,7 +308,7 @@ export function refreshNode(
         continue
       }
       if (resolved === path) continue
-      const key = `${path} ${resolved}`
+      const key = `${path}\x00${resolved}`
       if (edgeKeys.has(key)) continue
       edgeKeys.add(key)
       edges.push({ from: path, to: resolved, kind: link.kind })

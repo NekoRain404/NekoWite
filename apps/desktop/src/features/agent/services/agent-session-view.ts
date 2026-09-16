@@ -188,7 +188,7 @@ export function identityMismatch(
  * printable separator could also be part of one.
  */
 export function sessionKey(identity: AgentIdentity): string {
-  return IDENTITY_FIELDS.map((field) => identity[field]).join(' ')
+  return IDENTITY_FIELDS.map((field) => identity[field]).join('\x00')
 }
 
 /** The bound on ended run ids. A run that ended long ago must not be bound by a

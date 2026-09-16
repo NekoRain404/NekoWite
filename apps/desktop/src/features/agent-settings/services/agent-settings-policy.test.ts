@@ -177,7 +177,7 @@ describe('the record a form submits', () => {
 
   it('refuses an unusable provider or model name, and allows an unchosen one', () => {
     const read = readout()
-    for (const bad of [{ provider: '' }, { modelId: '   ' }, { provider: 'a b' }]) {
+    for (const bad of [{ provider: '' }, { modelId: '   ' }, { provider: 'a\x00b' }]) {
       const update = decideProfileWrite(read, profileWrite(read, fields(bad)))
       expect(update.status, JSON.stringify(bad)).toBe('refused')
       if (update.status === 'refused') expect(update.reason).toBe('field-unusable')

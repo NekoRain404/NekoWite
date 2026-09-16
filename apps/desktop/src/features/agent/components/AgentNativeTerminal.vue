@@ -174,11 +174,18 @@ const MAX_CHARS = 200_000
  */
 const COMMIT_GRACE = 60
 
+/* `no-control-regex` exists to catch a control character that slipped into a pattern by mistake.
+   These two are the opposite: ESC and BEL are the *subject* of the pattern, because matching them
+   is how the viewport removes an escape sequence instead of drawing it. The rule is disabled for
+   exactly these two lines and re-enabled after them, so a stray control character anywhere else
+   in this file is still an error. */
+/* eslint-disable no-control-regex -- ESC and BEL are what these patterns are for */
 /** Escape sequences the viewport removes rather than draws (see the header). */
 const ESCAPE_SEQUENCES =
-  /\][^]*(?:|\\)|\[[0-9;?]*[ -/]*[@-~]/g
+  /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[ -/]*[@-~]/g
 /** A sequence still arriving: held for the next chunk, the way a split character is. */
-const UNFINISHED_ESCAPE = /(?:\][^]*|\[[0-9;?]*[ -/]*)?$/
+const UNFINISHED_ESCAPE = /\x1b(?:\][^\x07\x1b]*|\[[0-9;?]*[ -/]*)?$/
+/* eslint-enable no-control-regex */
 
 const props = defineProps<{
   transport: AgentNativeTerminalTransport
@@ -414,19 +421,19 @@ function keyBytes(event: KeyboardEvent): string | null {
     case 'Enter':
       return '\r'
     case 'Backspace':
-      return ''
+      return '\x7f'
     case 'Tab':
       return '\t'
     case 'Escape':
-      return ''
+      return '\x1b'
     case 'ArrowUp':
-      return '[A'
+      return '\x1b[A'
     case 'ArrowDown':
-      return '[B'
+      return '\x1b[B'
     case 'ArrowRight':
-      return '[C'
+      return '\x1b[C'
     case 'ArrowLeft':
-      return '[D'
+      return '\x1b[D'
     default:
       return null
   }

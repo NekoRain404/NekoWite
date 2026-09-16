@@ -312,14 +312,14 @@ describe('AgentNativeTerminal — the keyboard a Chinese reader has', () => {
     // foreground process group. This is the cancel path a TUI is stopped with.
     expect(key(field, 'c', { ctrlKey: true })).toBe(true)
     await flush()
-    expect(harness.writes).toEqual(['\r', '', '[A', ''])
+    expect(harness.writes).toEqual(['\r', '\x7f', '\x1b[A', '\x03'])
 
     // Ctrl-V is this application's paste, not a control byte: the text appears in the field and
     // travels the ordinary way.
     expect(key(field, 'v', { ctrlKey: true })).toBe(false)
     type(field, '粘贴的文字')
     await flush()
-    expect(harness.writes).toEqual(['\r', '', '[A', '', '粘贴的文字'])
+    expect(harness.writes).toEqual(['\r', '\x7f', '\x1b[A', '\x03', '粘贴的文字'])
   })
 
   it('refuses to send keys at all once the program has ended', async () => {
@@ -387,9 +387,9 @@ describe('AgentNativeTerminal — what the screen draws', () => {
     await harness.emit({ kind: 'output', text: '第一行\n', elidedColumns: 0 })
     // A program that draws progress with carriage returns is redrawing one line, not adding one.
     await harness.emit({ kind: 'output', text: '10%\r100%\n', elidedColumns: 0 })
-    await harness.emit({ kind: 'output', text: '[32mgreen[0m\n', elidedColumns: 0 })
+    await harness.emit({ kind: 'output', text: '\x1b[32mgreen\x1b[0m\n', elidedColumns: 0 })
     // An escape sequence split across two chunks is held rather than printed as text.
-    await harness.emit({ kind: 'output', text: '[3', elidedColumns: 0 })
+    await harness.emit({ kind: 'output', text: '\x1b[3', elidedColumns: 0 })
     await harness.emit({ kind: 'output', text: '1mred\n', elidedColumns: 0 })
 
     expect(harness.screen()).toBe('第一行\n100%\ngreen\nred\n')
