@@ -58,6 +58,66 @@ function styleSources(dir: string): string[] {
   return out
 }
 
+/** A styleable source, with the path reported for it. */
+interface Source {
+  file: string
+  text: string
+}
+
+/** Every styleable file the app ships, read once. tokens.css is named here as
+    well as reached by the walk, on purpose: it is the one file the walk must
+    never be allowed to stop covering, and a Set keeps the deliberate duplicate
+    from being read twice. */
+function shippedStyles(): Source[] {
+  const files = new Set([resolve(__dirname, './tokens.css'), ...styleSources(SRC_DIR)])
+  return [...files].map((file) => ({
+    file: file.slice(SRC_DIR.length + 1),
+    text: readFileSync(file, 'utf8'),
+  }))
+}
+
+/** What counts as a declaration: a CSS custom property, and AppShell's inline
+    style object keys — several tokens are defined only there — which are the
+    same bytes to this pattern. */
+const DECLARES = /(--app-[a-z0-9-]+)['"]?\s*:/g
+
+/** What counts as a read, and whether the call carries a fallback: the character
+    after the name is `,` when it does and `)` when the name is read bare. */
+const READS = /var\(\s*(--app-[a-z0-9-]+)\s*([,)])/g
+
+/** What the scanner looks at: block comments removed. Prose declares nothing and
+    renders nothing, and this repository writes the shape that would otherwise
+    hide a rename — `styles/surfaces.css:134` reads "Was --app-motion-fast: …",
+    which the declaration pattern above would happily take for a declaration of a
+    name that file no longer defines. Line comments are left alone on purpose:
+    stripping `//` would eat the one in every URL the app embeds. */
+const withoutComments = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '')
+
+/** The reads in `sources` whose NAME nothing declares, so nothing can resolve them.
+
+    A fallback does not excuse the name, and this file grants no such excuse
+    anywhere: `var(--app-mono, monospace)` names a token the app has never
+    declared, so it renders in whatever `monospace` resolves to, the theme, the
+    colour scheme and the family the user picked in Appearance never reach it,
+    and nothing fails. */
+function scanTokenReads(sources: readonly Source[]): { reads: number; unresolved: string[] } {
+  const declared = new Set<string>()
+  const reads: { name: string; fallback: boolean; file: string }[] = []
+  for (const s of sources) {
+    const text = withoutComments(s.text)
+    for (const m of text.matchAll(DECLARES)) declared.add(m[1])
+    for (const m of text.matchAll(READS)) {
+      reads.push({ name: m[1], fallback: m[2] === ',', file: s.file })
+    }
+  }
+  return {
+    reads: reads.length,
+    unresolved: reads
+      .filter((r) => !declared.has(r.name))
+      .map((r) => `${r.name} (${r.fallback ? 'fallback' : 'bare'}) — ${r.file}`),
+  }
+}
+
 /** 一个块里某个 token 的原始值（可能是 var() 别名）。 */
 function rawToken(block: string, token: string): string | undefined {
   return new RegExp(`${token}:\\s*([^;]+);`).exec(block)?.[1]?.trim()
@@ -266,26 +326,62 @@ describe('tokens.css and palettes.css', () => {
     }
   })
   it('defines every --app-* token the app reads, so no var() silently resolves to nothing', () => {
-    // 一个读不到定义的 var() 不会报错，它只是让整条声明失效：写在
-    // border-radius 上就变成 0（圆角应用里冒出直角），写在 color 上就整条被
-    // 丢掉。--app-radius-md 和 --app-text-muted 都这样悄悄失效过，所以这里
-    // 逐个检查全仓（组件 <style>、样式表、拼 CSS 的 .ts）的读取点：只有带
-    // 兜底值的 var(--app-x, …) 才允许没有定义。
-    const defined = new Set<string>()
-    const reads: { token: string; file: string }[] = []
-    for (const file of [resolve(__dirname, './tokens.css'), ...styleSources(SRC_DIR)]) {
-      const text = readFileSync(file, 'utf8')
-      // 定义可能写成 CSS 声明，也可能写成 AppShell 那种内联样式对象的键。
-      for (const m of text.matchAll(/(--app-[a-z0-9-]+)['"]?\s*:/g)) defined.add(m[1])
-      for (const m of text.matchAll(/var\(\s*(--app-[a-z0-9-]+)\s*([,)])/g)) {
-        if (m[2] === ',') continue
-        reads.push({ token: m[1], file: file.slice(SRC_DIR.length + 1) })
-      }
+    // A var() whose name is declared nowhere does not fail a build, a render or
+    // a test. It makes the whole declaration invalid at computed-value time: on
+    // border-radius the corner becomes 0 — a square appears in an app of round
+    // ones — and on color the declaration is dropped entirely. --app-radius-md
+    // and --app-text-muted both failed exactly that way, in silence.
+    //
+    // The rule is about the NAME, and a fallback is not an excuse for the name.
+    // This is the half that was added: the old form reported a read with neither
+    // a definition nor a fallback, so a misspelled name carrying one was
+    // invisible. AgentNativeTerminal.vue read `var(--app-mono, monospace)` while
+    // the app declares --app-mono-font, so the terminal rendered in whatever
+    // `monospace` resolves to, the family chosen in Appearance never reached its
+    // screen, every test stayed green, and task 186 found it by hand. A fallback
+    // here is not tolerance for a missing definition; it is what turns "this
+    // token does not exist" into "render a value nobody chose", which is the
+    // same silent outranking the --app-warn case below exists to stop.
+    const sources = shippedStyles()
+    const scan = scanTokenReads(sources)
+    // Non-vacuity, because an empty result and a broken scanner look identical
+    // from here: a walk that stopped descending into components, or a read
+    // pattern that stopped matching, would both report a clean tree forever.
+    expect(sources.some((s) => s.file.endsWith('.vue')), 'the walk stopped reaching components').toBe(true)
+    expect(scan.reads, 'the read pattern stopped matching').toBeGreaterThan(0)
+    expect(scan.unresolved, 'tokens read whose name nothing declares, fallback or not').toEqual([])
+  })
+  it('reports a token read whose name is misspelled, whether or not it has a fallback', () => {
+    // The rule above is worth having only if it bites on the shape that actually
+    // shipped, and that shape has a fallback: `var(--app-mono, monospace)` is
+    // precisely the line the old exemption waved through. So the same scan runs
+    // over a synthetic source, with the typo sitting between two reads that must
+    // stay green — one bare, one carrying a fallback of its own — which is what
+    // keeps this case from passing by reporting every var() it sees.
+    //
+    // The last two lines pin the other half of "a name is declared or it is
+    // not": --app-prose appears in a comment and in a read, and prose is not a
+    // declaration. Without the comment strip the name would be declared by the
+    // sentence that mentions it, and that read would go unreported.
+    const fixture: Source = {
+      file: 'styles/__fixture__.css',
+      text: [
+        '.fixture {',
+        '  font-family: var(--app-mono, monospace);',
+        '  color: var(--app-muted);',
+        '  background: var(--app-panel, rgb(0 0 0 / 60%));',
+        '  /* --app-prose: named here, declared nowhere */',
+        '  outline-color: var(--app-prose);',
+        '}',
+      ].join('\n'),
     }
-    const unresolved = reads
-      .filter((r) => !defined.has(r.token))
-      .map((r) => `${r.token} — ${r.file}`)
-    expect(unresolved, 'tokens read with neither a definition nor a fallback').toEqual([])
+    // Only the fixture's own entries are asserted, so this case fails for a
+    // fixture reason or not at all: the tree's reads are the case above's job.
+    const unresolved = scanTokenReads([...shippedStyles(), fixture]).unresolved
+    expect(unresolved.filter((r) => r.endsWith('__fixture__.css'))).toEqual([
+      '--app-mono (fallback) — styles/__fixture__.css',
+      '--app-prose (bare) — styles/__fixture__.css',
+    ])
   })
   it('keeps --app-warn a warning, not a second danger', () => {
     // 警告和错误只差色相：danger 是红（~5°），warn 是琥珀（~36°）。钉色相而不是钉
