@@ -190,7 +190,9 @@ describe('a surface on its way out is not a target', () => {
     // would leave a visible, laid-out, permanently dead column behind.
     const hosts: Array<[string, number]> = [
       ['../app/AppShell.vue', 3],
-      ['../ui/InfoRail.vue', 6],
+      // One toggled surface left: the rail's other five sections — outline,
+      // references, history, front matter and stats — were removed from it.
+      ['../ui/InfoRail.vue', 1],
       // The settings dialog's section swap. It is not this brief's file and it
       // was measured after this guard was written: 60ms into the swap the
       // leaving page was still `pointer-events: auto` and still matched fifteen
