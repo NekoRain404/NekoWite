@@ -98,7 +98,17 @@ export interface MemoryRunScript {
    * other two states the contract keeps apart — arguments to show, and arguments the
    * host could not read — because §6.3's prompt has to say which of the two it is.
    */
-  permission?: { title: string; options: AgentPermissionOption[]; input?: AgentToolInput }
+  permission?: {
+    title: string
+    options: AgentPermissionOption[]
+    input?: AgentToolInput
+    /**
+     * The tool call this request is about. Optional so a script that does not
+     * care still gets a paired id; a script that wants to test the pairing —
+     * a prompt for a row the timeline already shows — sets it.
+     */
+    toolCallId?: string
+  }
   /**
    * Keep the turn open until it is cancelled, crashed or stopped. This is the only
    * window a scripted turn is interruptible in: without it the turn emits its

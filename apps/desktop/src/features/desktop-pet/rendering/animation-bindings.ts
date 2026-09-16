@@ -25,8 +25,16 @@
 
 /** Frame scheduling, shared by the player's frame loop and the idle playlist. */
 export interface SpriteClock {
-  setTimeout: (handler: () => void, ms: number) => number
-  clearTimeout: (handle: number) => void
+  /**
+   * The handle type is the injected clock's, not `number`: under the DOM lib
+   * `setTimeout` returns a number, under Node's it returns a `Timeout` object,
+   * and this project's tests run the same file on both sides. Naming the real
+   * return type keeps the browser clock assignable without a cast, and a fake
+   * clock in a test can be typed the same way rather than pretending to be one
+   * of the two.
+   */
+  setTimeout: (handler: () => void, ms: number) => ReturnType<typeof globalThis.setTimeout>
+  clearTimeout: (handle: ReturnType<typeof globalThis.setTimeout>) => void
 }
 
 /**
@@ -235,7 +243,9 @@ export interface IdlePlaylistDeps {
  */
 export class IdlePlaylist {
   private config: AnimationConfig
-  private timer: number | null = null
+  // The handle the clock handed back, in the clock's own type — `number` under the DOM
+  // lib, `Timeout` under Node's. `SpriteClock` above is where that is stated.
+  private timer: ReturnType<typeof globalThis.setTimeout> | null = null
   private index = 0
   private active = false
   private currentRow: number | null = null

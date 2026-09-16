@@ -41,6 +41,19 @@ function statedDetail(finding: PetCapabilityReport['finding'] | null): string {
   return finding.detail
 }
 
+/**
+ * The fallback of the same arm, reached the same way.
+ *
+ * `fallback` exists only on the three refused statuses (the union is what enforces §7.2),
+ * so it is not a property a finding can be asked for before it has been narrowed — and a
+ * test that read it off the union would be asserting that a fallback is present on a
+ * finding that is available, which is the one thing the union exists to prevent.
+ */
+function statedFallback(finding: PetCapabilityReport['finding'] | null): PetFallback {
+  if (!finding || finding.status === 'available') throw new Error('expected a stated fallback')
+  return finding.fallback
+}
+
 describe('gateRoamMode', () => {
   it('runs stay without asking any capability', () => {
     const gate = gateRoamMode('stay', [], platform())
@@ -87,7 +100,7 @@ describe('gateRoamMode', () => {
     const declared = report('window-climb', unavailable('not-offered'))
     const gate = gateRoamMode('climb', [declared], platform(windows))
     expect(gate.behaviour).toBe('stay')
-    expect(gate.finding?.fallback).toBe('not-offered')
+    expect(statedFallback(gate.finding)).toBe('not-offered')
   })
 
   it('keeps stay when a capability is only unverified', () => {

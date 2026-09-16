@@ -254,9 +254,14 @@ describe('the window close and a burst the source pane has not published', () =>
     // tab, so `dirty === false` on it is "nothing to save" for the whole
     // session. This is the state the close returned on, and the whole defect.
     const ask = vi.spyOn(tabs, 'hasUnsavedWork')
-    expect(`hasUnsavedWork=${ask()} disk=${JSON.stringify(h.disk.get(NOTE))}`).toBe(
-      'hasUnsavedWork=false disk="original\\n"',
-    )
+    // `vi.spyOn` answers a `MockInstance`, which records the calls but carries no call
+    // signature of its own (vitest 3 — `Mock` is the callable half), so the predicate is
+    // asked through the store and the answer read back off the spy's record of that call.
+    // It is the same call, and `results[0]` is the one the close below repeats.
+    tabs.hasUnsavedWork()
+    expect(
+      `hasUnsavedWork=${ask.mock.results[0]?.value} disk=${JSON.stringify(h.disk.get(NOTE))}`,
+    ).toBe('hasUnsavedWork=false disk="original\\n"')
 
     await mountLifecycle()
     const preventDefault = vi.fn()

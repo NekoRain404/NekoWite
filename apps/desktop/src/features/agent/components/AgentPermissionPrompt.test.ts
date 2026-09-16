@@ -17,25 +17,29 @@ import { createApp, defineComponent, h, nextTick, reactive, type App as VueApp }
 import AgentPermissionPrompt from './AgentPermissionPrompt.vue'
 import { t } from '../../../i18n'
 import type {
+  AgentPermissionOption,
   AgentPermissionRequest,
   AgentToolStatus,
 } from '../../../platform/gateways/agent-contracts'
 
 /**
  * The options from the frame P0 §7.1 measured on our pinned engine, as the contract
- * spells them: `kind` is `allow`/`reject` there, while the wire's `allow_once` /
- * `allow_always` survive in the engine's own ids and labels — which is what the UI
- * renders and what it answers with.
+ * spells them: `kind` is the engine's own four values, so the frame's two allows are
+ * `allow_once` / `allow_always` and its plain Reject is `reject_once`. The engine's own
+ * ids and labels are what the UI renders and what it answers with.
  */
-const MEASURED = [
-  { optionId: 'once', name: 'Allow once', kind: 'allow' },
-  { optionId: 'always', name: 'Always allow', kind: 'allow' },
-  { optionId: 'reject', name: 'Reject', kind: 'reject' },
-] as const
+const MEASURED: readonly AgentPermissionOption[] = [
+  { optionId: 'once', name: 'Allow once', kind: 'allow_once' },
+  { optionId: 'always', name: 'Always allow', kind: 'allow_always' },
+  { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+]
 
 function request(overrides: Partial<AgentPermissionRequest> = {}): AgentPermissionRequest {
   return {
     requestId: 'req-1',
+    // The contract carries it as required (`toolCallId: string`) and the reader refuses a
+    // request without one, which is also what lets the panel join a prompt to its row.
+    toolCallId: 'call-1',
     title: '/vault/probe-output.txt',
     input: { state: 'text', json: '{"filepath":"/vault/probe-output.txt"}' },
     options: MEASURED.map((option) => ({ ...option })),
@@ -43,25 +47,39 @@ function request(overrides: Partial<AgentPermissionRequest> = {}): AgentPermissi
   }
 }
 
+/**
+ * The props the panel drives, named rather than left a loose record: the object is spread
+ * into the component inside the render function, so `Record<string, unknown>` reaches `h()`
+ * as exactly that — which is not the props the prompt declares. The two handlers are the
+ * emits the harness counts, in the shape `h()` takes them.
+ */
+type PromptProps = {
+  request: AgentPermissionRequest
+  toolStatus?: AgentToolStatus | null
+  expired?: boolean
+  onAnswer?: (requestId: string, optionId: string) => void
+  onCancel?: () => void
+}
+
 interface Harness {
   host: HTMLElement
-  props: Record<string, unknown>
+  props: PromptProps
   /** Every answer the component emitted, as `[requestId, optionId]`. */
   answers: Array<[string, string]>
   /** How many times it asked for the turn to be stopped. */
   cancels: number[]
   /** The props object the panel will be driving: `request`, `toolStatus`, `expired`. */
-  set: (patch: Record<string, unknown>) => Promise<void>
+  set: (patch: Partial<PromptProps>) => Promise<void>
 }
 
 let mounted: VueApp[] = []
 
-function mount(initial: Record<string, unknown> = {}): Harness {
+function mount(initial: Partial<PromptProps> = {}): Harness {
   const host = document.createElement('div')
   document.body.appendChild(host)
   const answers: Array<[string, string]> = []
   const cancels: number[] = []
-  const props = reactive<Record<string, unknown>>({
+  const props = reactive<PromptProps>({
     request: request(),
     ...initial,
     onAnswer: (requestId: string, optionId: string) => answers.push([requestId, optionId]),
@@ -127,6 +145,29 @@ describe('AgentPermissionPrompt — the options are the request’s own', () => 
     ])
   })
 
+  it('draws the engine’s refusals apart from its allows, in all four kinds', () => {
+    // `kind` is the engine's own four values, so a refusal is `reject_once` or
+    // `reject_always`, and a comparison against a collapsed `reject` matches nothing: the
+    // class is the only thing this row changes about a refusal, so the comparison being
+    // impossible is a refusal drawn exactly like an allow.
+    const { host } = mount({
+      request: request({
+        options: [
+          { optionId: 'once', name: 'Allow once', kind: 'allow_once' },
+          { optionId: 'always', name: 'Always allow', kind: 'allow_always' },
+          { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+          { optionId: 'never', name: 'Always reject', kind: 'reject_always' },
+        ],
+      }),
+    })
+    expect(answerButtons(host).map((el) => el.className)).toEqual([
+      'btn btn-secondary',
+      'btn btn-secondary',
+      'btn btn-ghost',
+      'btn btn-ghost',
+    ])
+  })
+
   it('offers no option the request did not carry', () => {
     // The engine offers `allow_always` in the frame we measured — which is why a button
     // for it is legitimate *there* and illegitimate here. A hardcoded three-button row
@@ -134,8 +175,8 @@ describe('AgentPermissionPrompt — the options are the request’s own', () => 
     const { host } = mount({
       request: request({
         options: [
-          { optionId: 'once', name: 'Allow once', kind: 'allow' },
-          { optionId: 'reject', name: 'Reject', kind: 'reject' },
+          { optionId: 'once', name: 'Allow once', kind: 'allow_once' },
+          { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
         ],
       }),
     })

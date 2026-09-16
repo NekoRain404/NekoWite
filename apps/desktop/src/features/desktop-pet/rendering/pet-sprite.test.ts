@@ -8,7 +8,7 @@
  * an unrun test is not evidence. The component under test is the same rendering pipeline
  * these other files exercise.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { createApp, defineComponent, h, nextTick, reactive, shallowRef, type App as VueApp } from 'vue'
 import PetSprite from '../components/PetSprite.vue'
 import type { ImageFactory, LoadableImage } from './sprite-sheet'
@@ -68,7 +68,14 @@ interface Harness {
 }
 
 const apps: VueApp[] = []
-let getContextSpy: ReturnType<typeof vi.spyOn> | null = null
+// Typed against the real overloaded method rather than `vi.spyOn`'s default
+// signature: `getContext` takes `"2d" | "webgl" | …`, and the default
+// `(this: unknown, ...args: unknown[]) => unknown` is not assignable to it. The method's
+// own type is named rather than reached through `vi.spyOn<HTMLCanvasElement, 'getContext'>`:
+// that instantiation expression resolves against `spyOn`'s *first* overload — the
+// `accessType: "get"` one, whose constraint is the type's data properties — and `getContext`
+// is a method, so it fails there before reaching the overload this call actually takes.
+let getContextSpy: MockInstance<HTMLCanvasElement['getContext']> | null = null
 
 /**
  * Mounts with a recording 2D context (happy-dom implements no canvas, so the same
@@ -121,7 +128,11 @@ function mount(
           h(PetSprite, {
             ...props,
             createImage,
-            readPixels: props.readPixels ?? twoCells,
+            // `props` is a loose reactive record so a test can drive any prop,
+            // which makes every read `unknown`; `unknown ?? x` narrows to
+            // `{} | x`, and `{}` does not satisfy the reader signature. The cast
+            // restores the type the fixture deliberately gave up.
+            readPixels: (props.readPixels as SheetPixelReader | undefined) ?? twoCells,
             ref: (value: unknown) => {
               api.value = value as SpriteApi
             },

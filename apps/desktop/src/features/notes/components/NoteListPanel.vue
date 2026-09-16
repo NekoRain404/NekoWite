@@ -208,10 +208,12 @@ const docPanel = computed<Component | null>(() => DOC_PANELS[panelMode.value] ??
          describes the OPEN document and none takes a prop, so they share one
          branch — four near-identical wrappers is what would push this file past
          its line budget. `:key` mounts the element afresh on every mode change,
-         which is what the `arrives` nudge above is on. -->
+         which is what the `arrives` nudge above is on. It keys on the mode name
+         rather than on the component: Vue's `:key` takes a `PropertyKey`, and
+         the component object is not one. -->
     <div
       v-else-if="docPanel"
-      :key="docPanel"
+      :key="panelMode"
       class="nl-body nl-panel arrives"
     >
       <component :is="docPanel" />

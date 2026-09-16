@@ -130,7 +130,9 @@ export class SpritePlayer {
   private lastRow = 0
   private lastIdleGeneration = -1
   private lastKey: string | null = null
-  private timer: number | null = null
+  // The handle the clock handed back, in the clock's own type — `number` under the DOM
+  // lib, `Timeout` under Node's. `SpriteClock` names it and says why.
+  private timer: ReturnType<typeof globalThis.setTimeout> | null = null
   private destroyed = false
   private rect: Rect | null = null
   private headroomValue = 0
