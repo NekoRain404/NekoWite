@@ -51,6 +51,7 @@ import {
   JUMP,
   KEY,
   PANEL,
+  RAIL,
   RAIL_TITLES,
   RUN,
   TIMELINE,
@@ -105,7 +106,7 @@ export const agentScrollProbe = {
     if (!harness.agent) return { skipped: 'the harness is not in agent mode (run with --agent)' }
 
     const violated = violation()
-    const out = { harness, load: load(), violation: violated, boot: {}, held: {}, resume: {}, rail: {} }
+    const out = { harness, load: load(), violation: violated, boot: {}, held: {}, resume: {}, keys: {}, rail: {} }
 
     await wd.execute(INSTRUMENTS)
     // The editor's live view, so the caret can be read from the model. The module is the app's
@@ -413,6 +414,13 @@ export const agentScrollProbe = {
       }
     })
 
+    // ---- The transcript as a surface the keyboard can reach -------------------
+    //
+    // The rule the three routes above do not cover: 「用户上翻查看历史后暂停自动跟随」 presumes a
+    // reader who CAN scroll up, and until now nothing in the panel gave the keyboard one. The
+    // hint is a route to the END; the rows above the fold had no keyboard route at all.
+    out.keys = await keyboardPhase(wd, violated)
+
     // ---- The rule's second half: the rail, the body and the caret ------------
     //
     // Last, because closing the rail unmounts the panel and one of the two traces below must
@@ -452,6 +460,226 @@ export const agentScrollProbe = {
     out.rail.loadAfter = load()
     return out
   },
+}
+
+/**
+ * The transcript as a keyboard-reachable surface, measured in five parts.
+ *
+ * The gap this answers, stated as the reader's own problem: a scroll container that is not a
+ * tab stop has no keyboard route at all. The hint is a route to the END of the log; the rows
+ * above the fold — the ones a reader who has already read the recent part is going back to —
+ * had none. 「用户上翻查看历史后暂停自动跟随」 presumes the reader CAN scroll up, and by keyboard
+ * they could not.
+ *
+ * Five claims, in the order a reader would make them:
+ *
+ *  1. **the container is a tab stop**, read from the DOM, and a real Tab chord lands on it from
+ *     the stop before it — the driver's key, so the engine's own tab walk is what is measured;
+ *  2. **it is not a trap**: a real Tab from the container leaves it. A `tabindex` with a
+ *     keydown handler that swallowed Tab would show up here and nowhere else;
+ *  3. **receiving focus does not move the reader.** Focusing a scrollable box can scroll it,
+ *     and 「读者在看的那几行不能被挪动」 is a ruling this same probe measures elsewhere. Read
+ *     as an offset that did not change AND a scroll-event count that did not grow: a held
+ *     reader and a container nothing was asked of look identical in `scrollTop` alone;
+ *  4. **the keyboard scrolls it**: a real PageDown moves the container, a real End reaches its
+ *     end. This is the claim the whole phase exists for, and it is the one the probe previously
+ *     refused to make — the number was unstable (3088 … 3426 of 3427 across four runs) because
+ *     focus was on a control INSIDE the scroller, which is a different question;
+ *  5. **nothing else lost a key.** The composer is given focus and sent the same two keys: the
+ *     transcript must not move, and the field must still receive what is typed into it — the
+ *     "a new focusable region swallows keys meant for the input" failure. Then the permission
+ *     prompt, which the code calls the one thing the reader has to act on, is raised and must
+ *     take focus on arrival exactly as it did before.
+ */
+async function keyboardPhase(wd, violated) {
+  const out = { load: load() }
+  // The deliberate violation, installed before the DOM is read so the whole phase runs against
+  // the defect rather than against the fix: the tab-order reading, the Tab walk and the key
+  // scroll all go red together, and the composer and permission halves below stay as they were
+  // — which is what says the phase's red is about the tab stop and not about the panel.
+  if (violated === 'nofocus') {
+    out.injected = await wd.execute(`return window.__nkwViolateNoFocus('${TIMELINE}')`)
+  }
+  // Every key below is read through this, and it is the difference between the phase working and
+  // the phase reporting an easing curve: WebKitGTK animates a keyboard scroll, so a fixed-frame
+  // settle reads the container mid-flight. See `__nkwQuiet`.
+  //
+  // Each call is stamped with the load it ran under, and the frame deltas become the same
+  // p50/p95/max distribution every other trace in this harness reports: a settle that took
+  // seventeen frames on a machine at load 10 is a different reading from one that took
+  // seventeen frames on an idle box, and only the pair says which happened.
+  const quiet = async () => {
+    const loadBefore = load()
+    const settled = await wd.executeAsync(
+      `window.__nkwQuiet({ sel: arguments[0] }, arguments[arguments.length - 1])`,
+      [TIMELINE],
+    )
+    if (!settled?.deltas) return { ...settled, loadBefore, load: load() }
+    const stats = frameStats(settled.deltas.map((dt) => ({ dt })))
+    const { deltas, ...rest } = settled
+    return { ...rest, loadBefore, loadAfter: load(), ...stats }
+  }
+  // Where the container sits among the panel's tab stops, before any gesture: the DOM's answer
+  // to "is this reachable", which is what a browser-authored suite would assert and what this
+  // probe does not stop at.
+  out.tabOrder = await wd.execute(`return window.__nkwTabOrder('${RAIL}', '${TIMELINE}')`)
+  out.panelOrder = await wd.execute(`return window.__nkwTabOrder('${PANEL}', '${TIMELINE}')`)
+
+  // --- 1 and 2: in the tab order, and not a trap --------------------------
+  //
+  // The start of the walk is scripted and the walk is not: a Tab cannot be aimed at a selector,
+  // and tabbing an unknown number of times to reach the container would be measuring the count
+  // rather than the target. So the stop immediately BEFORE the container is focused in the
+  // page, and the driver's own Tab does the entering — the same honesty split §3.2's keyboard
+  // route uses for the hint, and `by` says which half was which.
+  const before = await wd.execute(
+    `return window.__nkwTagTabStop({ root: '${RAIL}', sel: '${TIMELINE}', step: -1 })`,
+  )
+  out.tab = { before, start: null, intoKeys: null, entered: null, leavesKeys: null, left: null }
+  if (before?.why !== undefined || before?.target === null) {
+    out.tab.failure = before?.why ?? 'the container has no tab stop before it to walk in from'
+  } else {
+    out.tab.start = await wd.execute(
+      `const el = document.querySelector('[data-nkw-tabstop]');
+       if (!el) return { ok: false, why: 'nothing tagged' };
+       el.focus();
+       return { ok: document.activeElement === el, active: window.__nkwActive() }`,
+    )
+    out.tab.intoKeys = await pressKeys(wd, [KEY.tab])
+    out.tab.entered = await wd.execute(
+      `const el = document.querySelector('${TIMELINE}');
+       return { active: window.__nkwActive(), onTimeline: document.activeElement === el }`,
+    )
+    // Read here, on the frame the real Tab landed on: this is the one moment in the run when the
+    // engine's own keyboard-focus heuristic has decided, so the ring below is the ring a keyboard
+    // reader sees and not a rule in a stylesheet.
+    out.tab.ring = await wd.execute(`return window.__nkwFocusRing('${TIMELINE}')`)
+    // The same key again, from the container. It must not land back on the container: that is
+    // what a trap looks like, and no key handler here is allowed to produce one.
+    out.tab.leavesKeys = await pressKeys(wd, [KEY.tab])
+    out.tab.left = await wd.execute(
+      `const el = document.querySelector('${TIMELINE}');
+       return { active: window.__nkwActive(), stillOnTimeline: document.activeElement === el }`,
+    )
+  }
+
+  // --- 3 and 4: focus holds the reader, then the keyboard moves them ------
+  //
+  // Parked with real wheel gestures, because the claim is about a reader who has left the end
+  // and the panel has to have learned that: an unparked container's `scrollTop` staying put
+  // while focus lands would be measuring nothing. Parked MID-DOCUMENT rather than at the top,
+  // because a container already at its own clamp cannot move and "focus did not move it" would
+  // be true for a reason that has nothing to do with focus. The Tab that follows is a real one,
+  // so what is measured is the engine's own focus behaviour and not a scripted `focus()` call.
+  out.focus = { wheelToEnd: null, wheelBack: null, parked: null, mark: null, watched: null, before: null, tab: null, after: null }
+  out.focus.wheelToEnd = await wheel(wd, TIMELINE, 6000)
+  await quiet()
+  out.focus.wheelBack = await wheel(wd, TIMELINE, -900)
+  out.focus.parked = await wd.execute(`return window.__nkwRead('${TIMELINE}')`)
+  // Re-tag: the walk above left its tag behind, and the tag is how a known element is focused
+  // before the driver's own Tab does the entering.
+  out.focus.mark = await wd.execute(`return window.__nkwTagTabStop({ root: '${RAIL}', sel: '${TIMELINE}', step: -1 })`)
+  if (out.focus.mark?.target) {
+    await wd.execute(
+      `const el = document.querySelector('[data-nkw-tabstop]'); if (el) el.focus(); return true`,
+    )
+    // Watched AFTER the wheels, so the count below is about the focus and nothing else: the
+    // park's own events are moves the reader asked for, and counting them would hide it.
+    out.focus.watched = await wd.execute(`return window.__nkwWatchScroll('${TIMELINE}')`)
+    out.focus.before = await wd.execute(`return window.__nkwRead('${TIMELINE}')`)
+    out.focus.tab = await pressKeys(wd, [KEY.tab])
+    out.focus.after = await wd.execute(`return window.__nkwRead('${TIMELINE}')`)
+  } else {
+    out.focus.failure = out.focus.mark?.why ?? 'the stop before the container could not be tagged'
+  }
+
+  // PageDown, then End: two rungs of the same gesture, so a container that only takes the
+  // larger step is measured on the smaller one too. Each is read after the box has stopped.
+  out.pageDown = { keys: null, quiet: null, before: null, after: null }
+  out.pageDown.before = await wd.execute(`return window.__nkwRead('${TIMELINE}')`)
+  out.pageDown.keys = await pressKeys(wd, [KEY.pageDown])
+  out.pageDown.quiet = await quiet()
+  out.pageDown.after = await wd.execute(`return window.__nkwRead('${TIMELINE}')`)
+  out.end = { keys: null, quiet: null, before: null, after: null, read: null }
+  out.end.before = out.pageDown.after
+  out.end.keys = await pressKeys(wd, [KEY.end])
+  out.end.quiet = await quiet()
+  out.end.after = await wd.execute(`return window.__nkwRead('${TIMELINE}')`)
+  out.end.read = out.end.after
+
+  // --- 5: the keys the composer needs still reach the composer ------------
+  //
+  // The failure a new tab stop is most likely to cause is not a trap but a leak: focus in the
+  // transcript, and a key the reader meant for the field arrives in the log instead. Both
+  // halves are measured — the transcript must not move, and the field must still take what is
+  // typed into it — because either one alone passes for the wrong reason.
+  out.composer = { field: null, click: null, focus: null, quietBefore: null, before: null, keys: null, quietAfter: null, after: null, typed: null, fieldAfter: null }
+  const fieldPoint = await wd.execute(
+    `const el = document.querySelector('.agent-composer-field');
+     if (!el) return null;
+     const box = el.getBoundingClientRect();
+     return { x: Math.round(box.left + box.width / 2), y: Math.round(box.top + Math.min(12, box.height / 2)),
+              height: Math.round(box.height), value: (el.value || '').length }`,
+  )
+  out.composer.field = fieldPoint
+  if (fieldPoint) {
+    out.composer.click = await clickAt(wd, fieldPoint.x, fieldPoint.y)
+    out.composer.focus = await wd.execute('return window.__nkwActive()')
+    // Quiet first: `End` above left the container at its end and the box may still have been
+    // moving. A baseline taken mid-animation would credit the composer's keys with the tail of
+    // the earlier gesture — which is exactly the mistake this measurement exists to avoid.
+    out.composer.quietBefore = await quiet()
+    out.composer.before = await wd.execute(`return window.__nkwRead('${TIMELINE}')`)
+    out.composer.keys = await pressKeys(wd, [KEY.pageDown, KEY.end])
+    out.composer.quietAfter = await quiet()
+    out.composer.after = await wd.execute(`return window.__nkwRead('${TIMELINE}')`)
+    // A character, through the driver's own keys: the field is where it has to land.
+    out.composer.typed = await pressKeys(wd, ['x'])
+    out.composer.fieldAfter = await wd.execute(
+      `const el = document.querySelector('.agent-composer-field');
+       if (!el) return null;
+       const box = el.getBoundingClientRect();
+       return { height: Math.round(box.height), value: (el.value || '').length, focus: window.__nkwActive() }`,
+    )
+  } else {
+    out.composer.failure = 'the composer field was not on screen'
+  }
+
+  // --- 5b: the prompt that has to be answered still takes focus -----------
+  //
+  // 「the one thing the reader has to act on」, in the code's own words. It focuses its own root
+  // on arrival, deliberately not an option button; a change that made the transcript grab focus
+  // would show up here as the focus landing anywhere but the prompt. Raised LAST, because a
+  // request puts the run into `waiting-permission` and a survey of the other surfaces is not
+  // something to perturb with it.
+  out.permission = { sent: null, mounted: null, active: null, inside: null, tab: null, afterTab: null }
+  try {
+    out.permission.sent = await wd.execute(
+      `return window.__nkwAskPermission({ requestId: 'probe-perm-1', prefix: 'perm', runId: arguments[0] })`,
+      [RUN],
+    )
+    out.permission.mounted = await until(
+      () => wd.execute(`return Boolean(document.querySelector('.agent-perm'))`),
+      { timeout: 5000, what: 'the permission prompt to mount' },
+    )
+    // One frame more than the mount: the prompt focuses itself in `nextTick`, and reading the
+    // active element in the same tick as the element appearing would read the element before.
+    await wd.executeAsync(
+      `(function (done) { let n = 0; const tick = function () { if (++n >= 3) done(true); else requestAnimationFrame(tick); }; requestAnimationFrame(tick); })(arguments[arguments.length - 1])`,
+    )
+    out.permission.active = await wd.execute('return window.__nkwActive()')
+    out.permission.inside = await wd.execute(
+      `const root = document.querySelector('.agent-perm');
+       return { exists: Boolean(root), focusInside: Boolean(root) && root.contains(document.activeElement) }`,
+    )
+    out.permission.tab = await pressKeys(wd, [KEY.tab])
+    out.permission.afterTab = await wd.execute('return window.__nkwActive()')
+  } catch (error) {
+    out.permission.failure = String(error.message || error)
+  }
+
+  out.loadAfter = load()
+  return out
 }
 
 /**

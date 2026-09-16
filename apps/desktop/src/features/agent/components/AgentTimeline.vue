@@ -111,12 +111,20 @@ if (typeof ResizeObserver !== 'undefined') {
 
 <template>
   <div class="agent-timeline-wrap">
+    <!-- `tabindex="0"`: the container scrolls, and a scroll container the keyboard cannot
+         reach is a transcript a keyboard-only reader cannot read backwards. WebKitGTK — the
+         engine this ships on — leaves a plain `div` out of the tab order, and a click on the
+         text lands on whatever control the row happens to contain, so before this the only
+         keyboard route to the end was the hint and there was no route at all to the rows above
+         the fold. Focus here is a plain tab stop: no key is intercepted on it, so keys meant
+         for the composer still arrive there, and Tab leaves the way it arrived. -->
     <div
       ref="scroller"
       class="agent-timeline"
       role="log"
       aria-live="off"
       :aria-label="labels.aria"
+      tabindex="0"
       @scroll="scroll.onScroll"
     >
       <template
@@ -213,6 +221,15 @@ if (typeof ResizeObserver !== 'undefined') {
   font-family: var(--app-font);
   font-size: 14px;
   line-height: 1.55;
+}
+/* The tab stop above needs to be visible, or a keyboard reader is moved into a region with no
+   sign they are in it. Drawn inset (`-2px`, the app's convention for a control that fills its
+   own box): an outside ring on an element that is the full size of its scroll body would be
+   clipped by the rail's own overflow, and half a ring is worse than none. `:focus-visible`
+   rather than `:focus` keeps the ring off a mouse reader's screen. */
+.agent-timeline:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: -2px;
 }
 .agent-row + .agent-row,
 .agent-row + .agent-tool,

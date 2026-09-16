@@ -409,6 +409,161 @@ export function verify(results) {
         )
       }
 
+      // ---- The transcript as a keyboard-reachable surface --------------------
+      //
+      // 「用户上翻查看历史后暂停自动跟随，回到底部才恢复」 presumes a reader who CAN scroll up,
+      // and the three routes above are three routes to the END. The rows above the fold had no
+      // keyboard route at all: in WebKitGTK a plain `div` with `overflow-y: auto` is not a tab
+      // stop, and a click on the text lands on whatever control the row happens to contain.
+      //
+      // Six checks, and the last two are the ones that make the first four safe to ship: a new
+      // focusable region is exactly the change that can swallow keys the composer needs, or take
+      // focus from the prompt the panel exists to have answered.
+      const keys = agent.keys ?? {}
+      const tab = keys.tab ?? {}
+      const tabSelf = keys.tabOrder?.self ?? null
+
+      // FAILS IF: the container is out of the tab order — the defect this was written for, and
+      // the state WebKitGTK has when nothing sets the attribute. Shown red under
+      // `--violate nofocus`, which removes exactly that attribute in the page.
+      //
+      // The ring is in this check rather than one of its own because they are one requirement:
+      // the project's rules allow no focus ring to be removed without a replacement, and a tab
+      // stop nobody can see they are on is the other half of the same defect. Measured from the
+      // computed style on the frame the real Tab landed, so it is the engine's answer and not
+      // the stylesheet's.
+      const ring = tab.ring ?? null
+      const painted = ring !== null && ring.outlineStyle !== 'none' && parseFloat(ring.outlineWidth) > 0
+      c.run(
+        'agent keyboard: the transcript is a visible, walkable tab stop',
+        `in the DOM the container is ${tabSelf ? `tabIndex ${tabSelf.tabIndex}` : 'absent'} ` +
+          `(tab stop ${keys.tabOrder?.self?.i ?? '?'} of ${keys.tabOrder?.total ?? '?'} in the rail, ` +
+          `after ${keys.tabOrder?.previous?.cls ?? 'nothing'}); a real Tab from ` +
+          `${tab.before?.target?.cls ?? 'nowhere'} landed on ` +
+          `${JSON.stringify(tab.entered?.active ?? null)} — ${JSON.stringify(tab.entered?.active?.role ?? null)} ` +
+          `labelled ${JSON.stringify(tab.entered?.active?.label ?? null)}; the engine paints ` +
+          `${ring?.outlineStyle ?? '?'} ${ring?.outlineWidth ?? '?'} ${ring?.outlineColor ?? '?'} at offset ` +
+          `${ring?.outlineOffset ?? '?'} (:focus-visible matches ${ring?.matchesFocusVisible ?? '?'}); ` +
+          `${avg(keys.load)}` +
+          (keys.injected ? `; INJECTED ${keys.injected.what}` : ''),
+        tabSelf !== null && tabSelf.tabIndex >= 0 && tab.entered?.onTimeline === true && painted,
+      )
+
+      // FAILS IF: Tab from the container comes back to the container. That is what a focus
+      // trap looks like, and it is the failure mode `tabindex` plus a key handler produces —
+      // the composer behind the log would then be unreachable by keyboard.
+      c.run(
+        'agent keyboard: the transcript’s tab stop is not a trap',
+        `a real Tab from the focused transcript went to ` +
+          `${JSON.stringify(tab.left?.active ?? null)} (still on the transcript: ${tab.left?.stillOnTimeline ?? '?'}); ` +
+          `${avg(keys.load)}`,
+        tab.left != null && tab.left.stillOnTimeline === false,
+      )
+
+      // FAILS IF: receiving focus scrolls the container. 「读者在看的那几行不能被挪动」 is the
+      // same ruling the held trace measures for arrivals, and focus is the other thing that can
+      // move a reader without their asking. Read as three numbers, because the offset alone
+      // cannot tell a held reader from a container nothing was asked of: where it was, what row
+      // the reader was on, and whether the engine delivered a scroll event at all.
+      const parked = keys.focus?.parked ?? null
+      const focusBefore = keys.focus?.before ?? null
+      const focusAfter = keys.focus?.after ?? null
+      c.run(
+        'agent keyboard: landing on the transcript does not move the reader',
+        `parked by two real wheel gestures at ${parked?.scrollTop ?? '?'} of ${parked?.max ?? '?'} ` +
+          `(${parked && parked.max !== undefined ? Math.round((parked.max - parked.scrollTop) * 100) / 100 : '?'}px from the end, ` +
+          `${parked?.scrollTop ?? '?'} from the top), focus on ${focusBefore?.focus ?? '?'} → ` +
+          `${focusAfter?.focus ?? '?'}; scrollTop ${focusBefore?.scrollTop ?? '?'} → ${focusAfter?.scrollTop ?? '?'}, ` +
+          `the reader's row offset ${focusBefore?.anchorOffset ?? '?'} → ${focusAfter?.anchorOffset ?? '?'} ` +
+          `(row ${focusAfter?.anchorId ?? '?'}), the container's own scroll events ` +
+          `${focusBefore?.scrollEvents ?? '?'} → ${focusAfter?.scrollEvents ?? '?'}; ` +
+          `wheels ${JSON.stringify(keys.focus?.wheelToEnd ?? null)} / ${JSON.stringify(keys.focus?.wheelBack ?? null)}; ` +
+          `${avg(keys.load)}`,
+        parked !== null &&
+          parked.scrollTop > 8 &&
+          parked.max - parked.scrollTop > 8 &&
+          focusAfter?.onTimeline === true &&
+          focusAfter.scrollTop === focusBefore?.scrollTop &&
+          focusAfter.anchorOffset === focusBefore?.anchorOffset &&
+          focusAfter.scrollEvents === focusBefore?.scrollEvents,
+      )
+
+      // FAILS IF: a focused transcript does not scroll. Both keys are read after the box has
+      // stopped moving — WebKitGTK ANIMATES a keyboard scroll, which is why the first version of
+      // this probe read PageDown+End at 3088, 3111, 3310 and 3426 of 3427 across four runs and
+      // refused to turn it into a verdict: those were four moments in one easing.
+      const pageDown = keys.pageDown ?? {}
+      const end = keys.end ?? {}
+      const stepped = (pageDown.after?.scrollTop ?? 0) - (pageDown.before?.scrollTop ?? 0)
+      const endGap = end.after ? end.after.max - end.after.scrollTop : null
+      // The focus is part of the claim, and it is what makes this check discriminating: with the
+      // transcript unfocusable, a keypress on whatever else holds focus can still move it — that
+      // is the instability this probe recorded and refused to judge on — and a check that passed
+      // for that reason would be crediting the panel for the engine's guess.
+      c.run(
+        'agent keyboard: PageDown and End scroll the focused transcript',
+        `PageDown: ${pageDown.before?.scrollTop ?? '?'} → ${pageDown.after?.scrollTop ?? '?'} of ` +
+          `${pageDown.after?.max ?? '?'} (moved ${Math.round(stepped * 100) / 100}px, settled ${pageDown.quiet?.settled ?? '?'} ` +
+          `after ${pageDown.quiet?.frames ?? '?'} frames / ${pageDown.quiet?.ms ?? '?'}ms, deltas p50 ` +
+          `${pageDown.quiet?.frameDeltaP50 ?? '?'}ms p95 ${pageDown.quiet?.frameDeltaP95 ?? '?'}ms max ` +
+          `${pageDown.quiet?.frameDeltaMax ?? '?'}ms); ` +
+          `End: ${end.before?.scrollTop ?? '?'} → ${end.after?.scrollTop ?? '?'} of ${end.after?.max ?? '?'} ` +
+          `(${endGap ?? '?'}px from the end, settled ${end.quiet?.settled ?? '?'} after ` +
+          `${end.quiet?.frames ?? '?'} frames / ${end.quiet?.ms ?? '?'}ms, deltas p50 ` +
+          `${end.quiet?.frameDeltaP50 ?? '?'}ms p95 ${end.quiet?.frameDeltaP95 ?? '?'}ms max ` +
+          `${end.quiet?.frameDeltaMax ?? '?'}ms); ` +
+          `${avg(pageDown.quiet?.loadBefore)} → ${avg(end.quiet?.loadAfter)}`,
+        pageDown.quiet?.settled === true &&
+          stepped > 1 &&
+          pageDown.after?.onTimeline === true &&
+          end.quiet?.settled === true &&
+          end.after?.onTimeline === true &&
+          endGap !== null &&
+          Math.abs(endGap) <= 2,
+      )
+
+      // FAILS IF: focus in the transcript leaks the composer's keys into the log — the failure
+      // a new tab stop is most likely to cause. Both halves are asserted: the transcript must
+      // not move, AND the field must still take what is typed into it. Either alone passes for
+      // the wrong reason (a dead field and a dead transcript both "did not scroll").
+      const composer = keys.composer ?? {}
+      const fieldGrew =
+        (composer.fieldAfter?.value ?? 0) > (composer.field?.value ?? 0)
+      c.run(
+        'agent keyboard: the composer keeps its own keys',
+        `focus on ${composer.focus?.cls ?? '?'} (${composer.focus?.tag ?? '?'}), PageDown+End sent there ` +
+          `left the transcript at ${composer.before?.scrollTop ?? '?'} → ${composer.after?.scrollTop ?? '?'} of ` +
+          `${composer.after?.max ?? '?'} with ${composer.before?.scrollEvents ?? '?'} → ` +
+          `${composer.after?.scrollEvents ?? '?'} of its own scroll events; a character typed next ` +
+          `reached the field: ${composer.field?.value ?? '?'} → ${composer.fieldAfter?.value ?? '?'} characters, ` +
+          `focus still ${composer.fieldAfter?.focus?.cls ?? '?'}; settled ${composer.quietBefore?.settled ?? '?'} / ` +
+          `${composer.quietAfter?.settled ?? '?'} (${composer.quietAfter?.frames ?? '?'} frames, deltas p50 ` +
+          `${composer.quietAfter?.frameDeltaP50 ?? '?'}ms p95 ${composer.quietAfter?.frameDeltaP95 ?? '?'}ms); ` +
+          `${avg(composer.quietAfter?.loadAfter ?? keys.loadAfter)}`,
+        composer.before !== null &&
+          composer.after?.scrollTop === composer.before?.scrollTop &&
+          composer.after?.scrollEvents === composer.before?.scrollEvents &&
+          composer.focus?.cls === 'agent-composer-field' &&
+          composer.fieldAfter?.focus?.cls === 'agent-composer-field' &&
+          fieldGrew,
+      )
+
+      // FAILS IF: the prompt stops taking focus when it arrives — 「the one thing the reader has
+      // to act on」, in the code's own words. A transcript that grabbed focus on mount, or a tab
+      // order that moved the prompt behind the log, would show up here and nowhere else.
+      const permission = keys.permission ?? {}
+      c.run(
+        'agent keyboard: the permission prompt still takes focus when it arrives',
+        `raised through the harness's frame source (${permission.sent ?? '?'} frames sent), mounted ` +
+          `${permission.mounted ?? '?'}; focus landed on ${JSON.stringify(permission.active ?? null)} ` +
+          `(inside the prompt: ${permission.inside?.focusInside ?? '?'}), and a real Tab from there ` +
+          `reached ${JSON.stringify(permission.afterTab ?? null)}; ${avg(keys.loadAfter)}` +
+          (permission.failure ? `; FAILED: ${permission.failure}` : ''),
+        permission.inside?.focusInside === true &&
+          permission.active?.role === 'dialog' &&
+          permission.afterTab?.cls === 'agent-perm-args',
+      )
+
       // 「面板移动、正文稳定」. FAILS IF: the rail animates its width (or anything else that
       // re-lays the body out across frames) — brief 62's instrument then reads dozens of
       // distinct widths instead of two, and `appShell.css`'s own sentence is violated.

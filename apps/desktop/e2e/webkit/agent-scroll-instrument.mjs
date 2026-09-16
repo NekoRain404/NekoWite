@@ -14,6 +14,7 @@
  * `agent-scroll-driver.mjs`, and the frame arithmetic is in `agent-scroll-readings.mjs`.
  */
 import { readFileSync } from 'node:fs'
+import { Script } from 'node:vm'
 
 /** §5.3's panel, as the running app renders it (the rail hosts it, `AgentPanel` is its root). */
 export const PANEL = '.agent-panel'
@@ -23,6 +24,16 @@ export const TIMELINE = '.agent-timeline'
 export const JUMP = '.agent-jump'
 /** The body under the rule's second half: the rendered pane's ProseMirror root. */
 export const BODY = '.pane.rendered .ProseMirror'
+/**
+ * The rail the panel is hosted in.
+ *
+ * Read as the tab order's root rather than the panel itself because the panel opens with the
+ * container: `.agent-timeline` is the FIRST tab stop inside `.agent-panel` (the session bar has
+ * no controls), so a walk that starts inside the panel has nothing before the container to walk
+ * in from. The rail's own header is where the reader's Tab actually comes from, and rooting the
+ * reading there makes the walk the one a reader performs.
+ */
+export const RAIL = '.info-rail'
 
 /**
  * The status-bar buttons that toggle the rail, by their `title`.
@@ -82,6 +93,135 @@ window.__nkwRowId = function (row, index) {
   return row.dataset.row || row.dataset.call || ('#' + index);
 };
 
+/**
+ * The tab stops inside a root, in DOM order.
+ *
+ * tabIndex is read as a property rather than as the attribute, so a native button (no
+ * attribute at all, tabIndex 0) and an explicit tabindex="0" are the same kind of thing — which
+ * they are, to the tab order, and which is exactly the confusion a dump of tabindex attributes
+ * alone would produce. Disabled controls, inert subtrees and boxes with no client rect are
+ * dropped: a stop that cannot take focus is not a stop, and leaving one in makes every index
+ * beside it wrong.
+ */
+window.__nkwTabStops = function (root) {
+  const scope = root ? document.querySelector(root) : document;
+  if (!scope) return null;
+  return Array.from(scope.querySelectorAll('a[href], button, input, textarea, select, [tabindex]')).filter(
+    function (el) {
+      if (el.disabled) return false;
+      if (el.tabIndex < 0) return false;
+      if (el.closest('[inert]')) return false;
+      if (el.getClientRects().length === 0) return false;
+      return getComputedStyle(el).visibility !== 'hidden';
+    },
+  );
+};
+
+/**
+ * Where a selector sits in a root's tab order, with a bounded sample of the order around it.
+ *
+ * A transcript is a hundred stops — one disclosure per tool row — and printing all of them
+ * buries the reading in the JSON. The index and the neighbours are what the verdict is read
+ * from; the first few are there so a wrong root is visible as a wrong root.
+ */
+window.__nkwTabOrder = function (root, sel) {
+  const stops = window.__nkwTabStops(root);
+  if (stops === null) return { why: 'no ' + root };
+  const at = function (el, i) {
+    return el === null ? null : { i: i, tag: el.tagName.toLowerCase(), cls: el.className || null,
+                                 tabIndex: el.tabIndex, text: (el.textContent || '').trim().slice(0, 20) };
+  };
+  const self = sel === undefined ? -1 : stops.findIndex(function (el) { return el.matches(sel); });
+  return {
+    root: root, total: stops.length, self: at(self === -1 ? null : stops[self], self),
+    previous: at(stops[self - 1] ?? null, self - 1), next: at(stops[self + 1] ?? null, self + 1),
+    first: stops.slice(0, 6).map(at),
+  };
+};
+
+/**
+ * Tag the tab stop 'step' places from the one matching 'sel', and say where 'sel' sits.
+ *
+ * The tag exists so the probe can put focus on a KNOWN element and then let the driver's own
+ * Tab do the walking: a Tab cannot be aimed at a selector, and tabbing an unknown number of
+ * times to reach a target is a measurement of the count, not of the target.
+ */
+window.__nkwTagTabStop = function (opts) {
+  const stops = window.__nkwTabStops(opts.root);
+  if (stops === null) return { why: 'no ' + opts.root };
+  const self = stops.findIndex(function (el) { return el.matches(opts.sel); });
+  if (self === -1) return { why: opts.sel + ' is not a tab stop in ' + opts.root, total: stops.length };
+  const target = stops[self + opts.step] || null;
+  Array.prototype.forEach.call(document.querySelectorAll('[data-nkw-tabstop]'), function (n) {
+    n.removeAttribute('data-nkw-tabstop');
+  });
+  const describe = function (el) {
+    return el === null ? null : { tag: el.tagName.toLowerCase(), cls: el.className || null, tabIndex: el.tabIndex };
+  };
+  if (target !== null) target.setAttribute('data-nkw-tabstop', '1');
+  return { self: self, total: stops.length, target: describe(target),
+           previous: describe(stops[self - 1] || null), next: describe(stops[self + 1] || null) };
+};
+
+/**
+ * One instant's reading of the container: where it is, what row the reader's eye is on, how
+ * many scroll events it has been delivered, and who holds focus.
+ *
+ * The scroll-event count is the half that makes the rest mean something: an offset that did not
+ * move because the engine never scrolled is a held reader, and an offset that did not move
+ * because nothing was asked of it is not.
+ */
+window.__nkwRead = function (sel) {
+  const el = document.querySelector(sel);
+  if (!el) return null;
+  const m = window.__nkwMetrics(sel);
+  const anchor = window.__nkwAnchor(el);
+  const active = document.activeElement;
+  return {
+    scrollTop: m.scrollTop, max: m.max, rows: m.rows, text: m.text,
+    anchorId: anchor.id,
+    anchorOffset: anchor.offset === null ? null : Math.round(anchor.offset * 100) / 100,
+    scrollEvents: el.__nkwScrollEvents === undefined ? null : el.__nkwScrollEvents,
+    focus: active ? (active.className || active.tagName) : null,
+    onTimeline: active === el,
+  };
+};
+
+/**
+ * The ring the engine is actually painting on a focused element, read from the computed style.
+ *
+ * A tab stop with no visible indicator is the second half of the defect this phase measures: the
+ * project's own rule is that a focus ring is not removed without a replacement, and "the rule
+ * exists in the stylesheet" is not the same claim as "the engine paints it". Read beside
+ * focus-visible's own verdict, because an outline painted only when the heuristic agrees is the
+ * difference between a ring on a keyboard reader's screen and a ring on everybody's.
+ */
+window.__nkwFocusRing = function (sel) {
+  const el = document.querySelector(sel);
+  if (!el) return { why: 'no ' + sel };
+  const s = getComputedStyle(el);
+  return {
+    focused: document.activeElement === el,
+    matchesFocusVisible: el.matches(':focus-visible'),
+    outlineStyle: s.outlineStyle,
+    outlineWidth: s.outlineWidth,
+    outlineColor: s.outlineColor,
+    outlineOffset: s.outlineOffset,
+  };
+};
+
+/** Which element holds focus, and what it is, without assuming a class name is there. */
+window.__nkwActive = function () {
+  const el = document.activeElement;
+  if (!el) return null;
+  return {
+    tag: el.tagName.toLowerCase(),
+    cls: el.className || null,
+    role: el.getAttribute('role'),
+    label: el.getAttribute('aria-label'),
+  };
+};
+
 /** The row the reader's eye is on: the first whose bottom edge is below the container's top. */
 window.__nkwAnchor = function (sh) {
   const top = sh.getBoundingClientRect().top;
@@ -139,6 +279,53 @@ window.__nkwSettle = function (opts, done) {
   };
   let n = 0;
   const tick = function () { if (++n >= opts.frames) report(); else requestAnimationFrame(tick); };
+  requestAnimationFrame(tick);
+};
+
+/**
+ * Wait until the container has stopped moving, and report how long that took.
+ *
+ * **A keyboard scroll in WebKitGTK is animated**, so a reading taken a fixed number of frames
+ * after the key is a reading of the easing and not of the key. This is the whole of the
+ * instability the first version of this probe recorded and refused to judge on: PageDown and End
+ * left the container at 3088, 3111, 3310 and 3426 of 3427 across four runs — four moments in the
+ * same animation, not four answers. Measured properly there is no ambiguity: the offset holds,
+ * and what it holds at is the key's whole effect.
+ *
+ * "Settled" is deliberately a claim the reading carries, not an assumption it makes: if the
+ * budget runs out with the box still moving, settled is false and the number beside it is
+ * reported as the moving target it is.
+ */
+window.__nkwQuiet = function (opts, done) {
+  const el = document.querySelector(opts.sel);
+  if (!el) { done({ why: 'no ' + opts.sel }); return; }
+  const holds = opts.holds === undefined ? 5 : opts.holds;
+  const budget = opts.budget === undefined ? 240 : opts.budget;
+  const t0 = performance.now();
+  let last = null;
+  let since = t0;
+  let steady = 0;
+  let frames = 0;
+  // The frame deltas are kept, not just the total: how fast this box managed to sample the
+  // animation is a property of the machine under whatever load it was carrying, and a frame
+  // count without its distribution is the average this harness refuses everywhere else.
+  const deltas = [];
+  const tick = function () {
+    frames += 1;
+    const now = performance.now();
+    deltas.push(Math.round((now - since) * 10) / 10);
+    since = now;
+    const top = el.scrollTop;
+    if (last !== null && Math.abs(top - last) < 0.5) steady += 1;
+    else steady = 0;
+    last = top;
+    if (steady >= holds || frames >= budget) {
+      done({ frames: frames, ms: Math.round(now - t0), settled: steady >= holds,
+             deltas: deltas, scrollTop: Math.round(top * 100) / 100 });
+      return;
+    }
+    requestAnimationFrame(tick);
+  };
   requestAnimationFrame(tick);
 };
 
@@ -317,6 +504,33 @@ window.__nkwSeed = function (opts) {
   return host.sent;
 };
 
+/**
+ * Raise a permission request through the harness's own frame source.
+ *
+ * The prompt is a surface this probe does not otherwise reach: it is mounted by the store from
+ * an event, and no scenario opens one. Pushed here rather than built by a second stand-in, so
+ * what mounts is the product's prompt answering the product's own reducer — the same seam
+ * __nkwSeed uses for tool rows. The shape is the contract's: input is a state of 'text' with a
+ * json string, or a state of 'absent', and the option kinds are the engine's own four.
+ */
+window.__nkwAskPermission = function (opts) {
+  const host = ${AGENT};
+  host.push('permission-request', {
+    requestId: opts.requestId,
+    toolCallId: opts.prefix + '-0',
+    title: 'Write to notes/2026-09/' + opts.prefix + '.md?',
+    // Built rather than spelled: this whole block is a template literal, so an escape written
+    // here is an escape the PAGE receives, and a quoted newline typed as one is a page script
+    // that dies at its own syntax before any of it runs.
+    input: { state: 'text', json: JSON.stringify({ path: 'notes/2026-09/' + opts.prefix + '.md' }, null, 2) },
+    options: [
+      { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+      { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' },
+    ],
+  }, opts.runId);
+  return host.sent;
+};
+
 /** What the panel is showing, for the guards that say a trace had something to measure. */
 window.__nkwPanelState = function () {
   const sh = document.querySelector('${TIMELINE}');
@@ -328,6 +542,7 @@ window.__nkwPanelState = function () {
     jump: Boolean(document.querySelector('${JUMP}')),
     jumpCount: count ? count.textContent.trim() : null,
     running: Boolean(document.querySelector('.agent-composer [data-action="stop"]')),
+    permission: Boolean(document.querySelector('.agent-perm')),
     rail: Boolean(document.querySelector('.info-rail')),
     sent: ${AGENT} ? ${AGENT}.sent : null,
     runId: ${AGENT} ? ${AGENT}.runId() : null
@@ -350,6 +565,25 @@ window.__nkwViolatePin = function (sel) {
   };
   requestAnimationFrame(loop);
   return { installed: true, what: 'scrollTop := scrollHeight - clientHeight, every frame' };
+};
+
+/**
+ * A deliberate violation for the keyboard checks: the container is taken back out of the tab
+ * order, in the page.
+ *
+ * This is the defect those checks exist to catch, reproduced exactly — the attribute the
+ * product now sets is the attribute removed here, and nothing else about the panel changes. Used
+ * only under --violate nofocus, so the red a keyboard check reports is demonstrably about the
+ * tab stop rather than about the weather.
+ */
+window.__nkwViolateNoFocus = function (sel) {
+  const el = document.querySelector(sel);
+  if (!el) return { why: 'no ' + sel };
+  const had = el.getAttribute('tabindex');
+  el.removeAttribute('tabindex');
+  if (document.activeElement === el) el.blur();
+  return { installed: true, removed: had, tabIndex: el.tabIndex,
+           what: 'removeAttribute("tabindex") on the transcript container' };
 };
 
 /**
@@ -379,3 +613,19 @@ window.__nkwCaret = function () {
   };
 };
 `
+
+/**
+ * Parse it, here, at import time.
+ *
+ * `INSTRUMENTS` is one template literal, so two ordinary mistakes are silent in this file and
+ * fatal in the page: a backtick in a comment (which ends the literal and turns the rest into
+ * syntax errors pointed at the wrong lines), and a `\n` written for the page's string but
+ * processed by this one, which delivers a real newline inside a quoted literal and kills the
+ * whole script before a line of it runs.
+ *
+ * Both were made, and both surfaced as `Unexpected EOF` from the WebDriver endpoint with nothing
+ * in between naming the cause — the page never got a script that parsed, so there was no error
+ * to report, only a truncated reply. A `vm.Script` here turns that into a stack trace at the
+ * moment the probe is loaded, which is where the mistake actually is.
+ */
+new Script(INSTRUMENTS)
