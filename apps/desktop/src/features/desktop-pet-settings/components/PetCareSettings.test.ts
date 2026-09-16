@@ -14,7 +14,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick, shallowRef, type App as VueApp } from 'vue'
 import PetCareSettings from './PetCareSettings.vue'
 import { t, setLocale } from '../../../i18n'
-import { PET_SETTINGS_DEFAULTS } from '../../../platform/gateways/pet-contracts'
+import {
+  PET_SETTINGS_DEFAULTS,
+  PET_SETTINGS_SCHEMA_VERSION,
+} from '../../../platform/gateways/pet-contracts'
 import {
   createMemoryPetGateway,
   type MemoryPetGateway,
@@ -189,7 +192,8 @@ describe('the care page', () => {
   it('draws no controls at all for a store a newer build wrote', async () => {
     // §10.2: the session answers a refused read with *this build's* defaults, so a form here
     // would be showing numbers the user never chose and offering to save them back.
-    const context = await makeContext({ storedSchemaVersion: 2 })
+    const context = // One past this build's own: a literal `2` was "newer" only while the build wrote 1.
+    await makeContext({ storedSchemaVersion: PET_SETTINGS_SCHEMA_VERSION + 1 })
     await context.sessions.care.load()
     await mount(context)
 

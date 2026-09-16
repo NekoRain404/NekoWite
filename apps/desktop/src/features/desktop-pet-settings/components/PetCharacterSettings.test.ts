@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, type App as VueApp } from 'vue'
 import { t } from '../../../i18n'
 import { createMemoryPetGateway, type MemoryPetGateway } from '../../../platform/gateways/memory-pet'
+import { PET_SETTINGS_DEFAULTS, PET_SETTINGS_SCHEMA_VERSION } from '../../../platform/gateways/pet-contracts'
 import type { PetSettingsDomain, PetSettingsWrite } from '../../../platform/gateways/pet-contracts'
 import DesktopPetSettings from './DesktopPetSettings.vue'
 import PetCharacterSettings from './PetCharacterSettings.vue'
@@ -278,7 +279,7 @@ describe('a write that did not happen', () => {
 
 describe('a store this build must not write', () => {
   it('replaces the controls with the notice when a newer build wrote them', async () => {
-    mount(createMemoryPetGateway({ storedSchemaVersion: 2 }))
+    mount(createMemoryPetGateway({ storedSchemaVersion: PET_SETTINGS_SCHEMA_VERSION + 1 }))
     await flush()
 
     // §10.2: the session answers a refused read with this build's defaults, so a form here would
@@ -301,7 +302,10 @@ describe('restoring this page', () => {
     press('pet-character-reset')
     await flush(DEBOUNCE_PLUS)
 
-    expect(await storedValues(gateway, 'character')).toEqual({ characterId: null, size: 160 })
+    // The schema's own defaults, not a literal: the character domain grew in D7d, and a
+    // reset that returned "the two fields this page draws" would leave the rest of the
+    // domain wherever the user had put it.
+    expect(await storedValues(gateway, 'character')).toEqual(PET_SETTINGS_DEFAULTS.character)
     // §5.3 「恢复本页默认只影响当前域」: one domain, so the character library and care progress
     // this page does not own cannot be cleared by it.
     expect([...new Set(write.mock.calls.map((call) => call[0].domain))]).toEqual(['character'])

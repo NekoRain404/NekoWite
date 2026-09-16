@@ -12,7 +12,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick, shallowRef, type App as VueApp } from 'vue'
 import PetProjectSettings from './PetProjectSettings.vue'
 import { t, setLocale } from '../../../i18n'
-import { PET_NUMBER_RULES, PET_SETTINGS_DEFAULTS } from '../../../platform/gateways/pet-contracts'
+import {
+  PET_NUMBER_RULES,
+  PET_SETTINGS_DEFAULTS,
+  PET_SETTINGS_SCHEMA_VERSION,
+} from '../../../platform/gateways/pet-contracts'
 import {
   createMemoryPetGateway,
   type MemoryPetGateway,
@@ -154,7 +158,7 @@ describe('the project page', () => {
   })
 
   it('draws no controls at all for a store a newer build wrote', async () => {
-    const context = await makeContext({ storedSchemaVersion: 2 })
+    const context = await makeContext({ storedSchemaVersion: PET_SETTINGS_SCHEMA_VERSION + 1 })
     await context.sessions.project.load()
     await mount(context)
 

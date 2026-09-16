@@ -117,7 +117,13 @@ describe('a stored object: version policy', () => {
     if (outcome.status !== 'migrated') return
     expect(outcome.fromVersion).toBe(0)
     expect(outcome.repaired).toEqual([])
-    expect(outcome.record.values).toEqual({ bubbleSeconds: 9, theme: 'dark' })
+    // The older record carried the two fields the schema had then. The fifteen it did
+    // not carry default without a report, which is what `repaired` being empty says.
+    expect(outcome.record.values).toEqual({
+      ...PET_SETTINGS_DEFAULTS.message,
+      bubbleSeconds: 9,
+      theme: 'dark',
+    })
     // The record this build hands back is *its* schema, so the write-back is an upgrade
     // rather than a migration to be replayed on every read.
     expect(outcome.record.schemaVersion).toBe(PET_SETTINGS_SCHEMA_VERSION)
@@ -202,35 +208,42 @@ describe('numeric rules: finiteness, range, integer-ness', () => {
   })
 
   it('rejects a value that is not a number at all, and one that is not finite', () => {
-    expect(petSettingsValueProblems('character', { characterId: null, size: '160' })).toEqual([
-      { path: 'character.size', kind: 'wrong-type' },
-    ])
+    expect(
+      petSettingsValueProblems('character', { ...PET_SETTINGS_DEFAULTS.character, size: '160' }),
+    ).toEqual([{ path: 'character.size', kind: 'wrong-type' }])
     for (const raw of [NaN, Infinity, -Infinity]) {
-      expect(petSettingsValueProblems('character', { characterId: null, size: raw })).toEqual([
-        { path: 'character.size', kind: 'not-finite' },
-      ])
-      expect(petSettingsValueProblems('message', { bubbleSeconds: raw, theme: 'system' })).toEqual([
-        { path: 'message.bubbleSeconds', kind: 'not-finite' },
-      ])
+      expect(
+        petSettingsValueProblems('character', { ...PET_SETTINGS_DEFAULTS.character, size: raw }),
+      ).toEqual([{ path: 'character.size', kind: 'not-finite' }])
+      expect(
+        petSettingsValueProblems('message', {
+          ...PET_SETTINGS_DEFAULTS.message,
+          bubbleSeconds: raw,
+        }),
+      ).toEqual([{ path: 'message.bubbleSeconds', kind: 'not-finite' }])
     }
   })
 
   it('accepts both ends of a range and refuses just outside it', () => {
     const rule = PET_NUMBER_RULES['character.size']
     for (const raw of [rule.min, rule.max]) {
-      expect(petSettingsValueProblems('character', { characterId: null, size: raw })).toEqual([])
+      expect(
+        petSettingsValueProblems('character', { ...PET_SETTINGS_DEFAULTS.character, size: raw }),
+      ).toEqual([])
     }
     for (const raw of [rule.min - 1, rule.max + 1]) {
-      expect(petSettingsValueProblems('character', { characterId: null, size: raw })).toEqual([
-        { path: 'character.size', kind: 'out-of-range' },
-      ])
+      expect(
+        petSettingsValueProblems('character', { ...PET_SETTINGS_DEFAULTS.character, size: raw }),
+      ).toEqual([{ path: 'character.size', kind: 'out-of-range' }])
     }
     // A fractional rule has no integer requirement, and its bounds are not integers.
     const opacity = PET_NUMBER_RULES['view.opacity']
-    expect(petSettingsValueProblems('view', { opacity: 0.5, alwaysOnTop: true, roam: 'off' })).toEqual([])
-    expect(petSettingsValueProblems('view', { opacity: opacity.min, alwaysOnTop: true, roam: 'off' })).toEqual([])
+    expect(petSettingsValueProblems('view', { ...PET_SETTINGS_DEFAULTS.view, opacity: 0.5 })).toEqual([])
+    expect(
+      petSettingsValueProblems('view', { ...PET_SETTINGS_DEFAULTS.view, opacity: opacity.min }),
+    ).toEqual([])
     for (const raw of [opacity.min - 0.01, opacity.max + 0.01]) {
-      expect(petSettingsValueProblems('view', { opacity: raw, alwaysOnTop: true, roam: 'off' })).toEqual([
+      expect(petSettingsValueProblems('view', { ...PET_SETTINGS_DEFAULTS.view, opacity: raw })).toEqual([
         { path: 'view.opacity', kind: 'out-of-range' },
       ])
     }
@@ -238,8 +251,8 @@ describe('numeric rules: finiteness, range, integer-ness', () => {
 
   it('refuses a fractional value where the rule wants an integer', () => {
     for (const [domain, values] of [
-      ['character', { characterId: null, size: 160.5 }],
-      ['message', { bubbleSeconds: 6.5, theme: 'system' }],
+      ['character', { ...PET_SETTINGS_DEFAULTS.character, size: 160.5 }],
+      ['message', { ...PET_SETTINGS_DEFAULTS.message, bubbleSeconds: 6.5 }],
       ['project', { maxCharacters: 3.5 }],
     ] as const) {
       const problems = petSettingsValueProblems(domain, values)
@@ -316,9 +329,9 @@ describe('the member fields', () => {
     // `PET_FIELD_MEMBERS` is private, so this goes through the behaviour: every declared
     // member is acceptable and the default is one of them.
     const accepted: Array<[PetSettingsDomain, Record<string, unknown>]> = [
-      ['general', { enabled: true, motion: 'reduced' }],
-      ['view', { opacity: 1, alwaysOnTop: true, roam: 'climb' }],
-      ['message', { bubbleSeconds: 6, theme: 'dark' }],
+      ['general', { ...PET_SETTINGS_DEFAULTS.general, motion: 'reduced' }],
+      ['view', { ...PET_SETTINGS_DEFAULTS.view, roam: 'climb' }],
+      ['message', { ...PET_SETTINGS_DEFAULTS.message, theme: 'dark' }],
     ]
     for (const [domain, values] of accepted) {
       expect(petSettingsValueProblems(domain, values)).toEqual([])
@@ -341,20 +354,21 @@ describe('the member fields', () => {
     // §5.2 disables the *modes* the platform cannot deliver; rewriting the stored setting
     // would move a profile between machines behind the user's back.
     for (const roam of ['off', 'stay', 'follow-pointer', 'climb']) {
-      expect(petSettingsValueProblems('view', { opacity: 1, alwaysOnTop: true, roam })).toEqual([])
+      expect(petSettingsValueProblems('view', { ...PET_SETTINGS_DEFAULTS.view, roam })).toEqual([])
     }
-    expect(petSettingsValueProblems('view', { opacity: 1, alwaysOnTop: true, roam: 'fly' })).toEqual([
+    expect(petSettingsValueProblems('view', { ...PET_SETTINGS_DEFAULTS.view, roam: 'fly' })).toEqual([
       { path: 'view.roam', kind: 'unknown-member' },
     ])
-    expect(petSettingsValueProblems('message', { bubbleSeconds: 6, theme: 'sepia' })).toEqual([
-      { path: 'message.theme', kind: 'unknown-member' },
-    ])
+    expect(
+      petSettingsValueProblems('message', { ...PET_SETTINGS_DEFAULTS.message, theme: 'sepia' }),
+    ).toEqual([{ path: 'message.theme', kind: 'unknown-member' }])
   })
 
   it('holds a character id or nothing, never a number or an object', () => {
-    expect(petSettingsValueProblems('character', { characterId: 'cat', size: 160 })).toEqual([])
-    expect(petSettingsValueProblems('character', { characterId: null, size: 160 })).toEqual([])
-    expect(petSettingsValueProblems('character', { characterId: 7, size: 160 })).toEqual([
+    const character = PET_SETTINGS_DEFAULTS.character
+    expect(petSettingsValueProblems('character', { ...character, characterId: 'cat' })).toEqual([])
+    expect(petSettingsValueProblems('character', { ...character, characterId: null })).toEqual([])
+    expect(petSettingsValueProblems('character', { ...character, characterId: 7 })).toEqual([
       { path: 'character.characterId', kind: 'wrong-type' },
     ])
   })
@@ -536,7 +550,7 @@ describe('the scoped reset', () => {
     expect(JSON.stringify(general)).not.toContain('characterId')
     // Within its own domain the reset does clear the selection, back to the default that
     // means "no character chosen".
-    expect(resetPetSettingsDomain('character', 1).values).toEqual({ characterId: null, size: 160 })
+    expect(resetPetSettingsDomain('character', 1).values).toEqual(PET_SETTINGS_DEFAULTS.character)
   })
 
   it('is a copy of the defaults, so editing a draft cannot rewrite the module constant', () => {
@@ -575,8 +589,12 @@ describe('samePetSettingsValues', () => {
 
 describe('the policy holds no state', () => {
   it('decides the same way twice, and mutates none of its inputs', () => {
-    const storedRecord = record('message', { bubbleSeconds: 6, theme: 'system' }, 2)
-    const write = petSettingsWrite('message', 2, { bubbleSeconds: 12, theme: 'dark' })
+    const storedRecord = record('message', PET_SETTINGS_DEFAULTS.message, 2)
+    const write = petSettingsWrite('message', 2, {
+      ...PET_SETTINGS_DEFAULTS.message,
+      bubbleSeconds: 12,
+      theme: 'dark',
+    })
     const snapshot = JSON.parse(JSON.stringify([storedRecord, write])) as unknown[]
     const first = decidePetSettingsWrite(storedRecord, write)
     const second = decidePetSettingsWrite(storedRecord, write)

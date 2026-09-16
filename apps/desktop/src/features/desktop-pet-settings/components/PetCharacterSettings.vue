@@ -24,11 +24,12 @@
  *    that lists one, so there is nothing to choose between. `DesktopPetRoot.vue` states the same
  *    thing from the window's side ("No character is selected.").
  *  - `ap_bind_<mood>`, `ap_idle_mode`, `ap_idle_interval` and `ap_idle_clips` belong to the
- *    animation mapping. `pet-settings-values.ts` validates four value kinds — boolean, ruled
- *    number, closed-set string, string-or-null — and the schema declares no field for a clip
- *    binding, a playlist of indices or an interval. (The ledger files `ap_idle` here too;
- *    upstream renders it on the bubble page as 「Show idle message」, `settings.html:176`.) A
- *    picker drawn here would save nothing, which is the failure this page exists to not be.
+ *    animation mapping. The schema holds all four since D7d (`character.bindings`, `idleMode`,
+ *    `idleIntervalSeconds`, `idleClips`) and the validator covers them, so what is missing is a
+ *    *reader* rather than a field: `PetSprite` takes its mapping as an `animation` prop and
+ *    nothing passes it one. A picker drawn here would save values nothing acts on, which is the
+ *    failure this page exists to not be. (The ledger files `ap_idle` here too; upstream renders
+ *    it on the bubble page as 「Show idle message」, `settings.html:176`.)
  *
  * The session is the container's (`DesktopPetSettings.vue` creates one per domain), so this page
  * never creates one and never calls `load()`: a page that is not on screen should not read. It

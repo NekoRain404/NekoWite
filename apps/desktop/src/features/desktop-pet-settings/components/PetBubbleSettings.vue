@@ -24,20 +24,24 @@
  *  - `ap_bub_mode` (`settings.html:367`), `ap_bub_max` (`:380`), `ap_bub_grouping` (`:374`),
  *    `ap_bub_sortkind` (`:382`), `ap_bub_filter` (`:383`), `ap_bub_hidden` (`:394`), `ap_bub_dot`
  *    (`:191`), `ap_bub_sep` (`:184`), `ap_bub_tokens` (`:403`), `ap_icon_<agentKind>` (`:425`):
- *    the multi-agent row. `pet-settings-values.ts` validates four value kinds — boolean, ruled
- *    number, closed-set string, string-or-null — and the schema declares no field for any of
- *    these. Two of them would not fit even then: a hidden-agent set and a token list are arrays,
- *    and §5.2 requires the visible rows to be generated 「从当前 Agent 注册表」 rather than from a
- *    fixed upstream list, which is the agent registry's data and not a settings field.
+ *    the multi-agent row. The schema holds all ten since D7d — the two that are lists and the one
+ *    that is a map included, which is the validator's structured kind — so what is missing here is
+ *    a *reader*, not a field: `PetBubble`/`PetTaskList` take their layout as a `layout` prop
+ *    (`resolvePetBubbleLayout` reads no settings) and nothing draws an agent icon at all. A
+ *    control here would save values nothing acts on. §5.2's further requirement stands as well:
+ *    the visible rows must be generated 「从当前 Agent 注册表」 rather than from a fixed upstream
+ *    list, which is the agent registry's data and not a settings field.
  *  - `ap_theme_phrases` (`settings.html:441`, a five-word vocabulary), `ap_quick_bubbles`
- *    (`:215`, free text, one bubble per line) and `ap_idle` (`:176`, the idle-chatter switch):
- *    only a closed-set string is representable, and a phrase _vocabulary_ is a set of words
- *    chosen elsewhere (`pet-message-template.ts`, D9) rather than a value this page could offer.
+ *    (`:215`, now one bubble per entry rather than free text) and `ap_idle` (`:176`, the
+ *    idle-chatter switch): the schema holds all three since D7d, and the phrase *vocabulary* is
+ *    still a set of words chosen elsewhere (`pet-message-template.ts`, D9) with no pool per theme
+ *    to choose between — so once more a stored value and nothing that reads it.
  *  - `ap_opacity` and `ap_font_size` are *migrated*, on the 常规与交互 page
- *    (`PetGeneralSettings.vue` draws `view.opacity`; `ap_font_size` is not a schema field);
- *    `ap_font_family` is read by the bubble window (`main.ts:105`) and upstream ships no control
- *    that writes it, so there is none to port. None of the four is duplicated here: one setting
- *    gets one control, and both pages share the container's single `view` session anyway.
+ *    (`PetGeneralSettings.vue` draws `view.opacity`; `ap_font_size` is `message.fontSize`, which
+ *    no bubble reads yet); `ap_font_family` is read by the bubble window (`main.ts:105`) and
+ *    upstream ships no control that writes it, so there is none to port. None of the four is
+ *    duplicated here: one setting gets one control, and both pages share the container's single
+ *    `view` session anyway.
  *
  * The session is the container's (`DesktopPetSettings.vue` creates one per domain), so this page
  * never creates one and never calls `load()`: a page that is not on screen should not read. It

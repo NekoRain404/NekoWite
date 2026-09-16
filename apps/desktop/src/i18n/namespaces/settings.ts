@@ -189,7 +189,7 @@ export const settings = {
           preset80: 'S',
           preset100: 'M',
           preset125: 'L',
-          animationsUnavailable: 'Which clip plays for each mood, and the idle playlist, are not in this build: the settings schema has no field for an animation mapping yet, so a control here would save nothing.',
+          animationsUnavailable: 'Which clip plays for each mood, and the idle playlist, are not in this build: the settings can hold them now, but the pet does not take its animation from settings, so a control here would save values nothing acts on.',
         },
         bubble: {
           theme: 'Bubble theme',
@@ -199,8 +199,8 @@ export const settings = {
           themeNote: 'The bubble follows the app\'s theme unless it is overridden here.',
           duration: 'Bubbles last {seconds}s',
           durationNote: 'How long a bubble stays on screen after it appears.',
-          layoutUnavailable: 'Row layout, grouping, sorting, filters, the separator, the state dot, the row fields and the per-agent icons are not in this build: the settings schema has no field for them yet, so a control here would save nothing.',
-          phrasesUnavailable: 'Custom phrases, quick bubbles and the idle-chatter switch are not in this build: there is no field for a word list and nothing that would read one.',
+          layoutUnavailable: 'Row layout, grouping, sorting, filters, the separator, the state dot, the row fields and the per-agent icons are not in this build: the settings can hold them now, but the bubble does not take its layout from settings, so a control here would save values nothing acts on.',
+          phrasesUnavailable: 'Custom phrases, quick bubbles and the idle-chatter switch are not in this build: there is a field for a word list now, and still nothing that reads one.',
         },
         notification: {
           events: 'Remind me when',
@@ -537,7 +537,7 @@ export const settings = {
           preset80: 'S',
           preset100: 'M',
           preset125: 'L',
-          animationsUnavailable: '每种情绪播放哪一段动画、以及待机播放列表，都不在本版本内：设置里还没有能存下动画映射的字段，所以这里放控件也保存不了任何东西。',
+          animationsUnavailable: '每种情绪播放哪一段动画、以及待机播放列表，都不在本版本内：设置现在能存下它们了，但宠物的动画并不从设置里取，所以这里放控件只会存下没人使用的东西。',
         },
         bubble: {
           theme: '气泡主题',
@@ -547,8 +547,8 @@ export const settings = {
           themeNote: '默认跟随应用主题，也可以在这里单独覆盖。',
           duration: '气泡停留 {seconds} 秒',
           durationNote: '气泡出现后在屏幕上停留多久。',
-          layoutUnavailable: '行布局、分组、排序、过滤、分隔符、状态圆点、行内字段与各 Agent 的图标都不在本版本内：设置里还没有能存下它们的字段，所以这里放控件也保存不了任何东西。',
-          phrasesUnavailable: '自定义词句、快捷气泡与待机闲聊开关都不在本版本内：既没有能存下词句的字段，也没有会读取它的地方。',
+          layoutUnavailable: '行布局、分组、排序、过滤、分隔符、状态圆点、行内字段与各 Agent 的图标都不在本版本内：设置现在能存下它们了，但气泡并不从设置里取布局，所以这里放控件只会存下没人使用的东西。',
+          phrasesUnavailable: '自定义词句、快捷气泡与待机闲聊开关都不在本版本内：现在有能存下词句的字段了，但依然没有会读取它的地方。',
         },
         notification: {
           events: '提醒时机',

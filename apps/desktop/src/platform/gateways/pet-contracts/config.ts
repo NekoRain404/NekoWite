@@ -38,6 +38,100 @@ export type PetSettingsDomain = (typeof PET_SETTINGS_DOMAINS)[number]
 /** Every roaming mode the setting may hold. §7.2 decides which ones a machine can use. */
 export type PetRoamMode = 'off' | 'stay' | 'follow-pointer' | 'climb'
 
+/**
+ * What the pet does with the idle playlist: pick any clip in it, or walk it in order
+ * (upstream `ap_idle_mode`, `settings.ts:1179`).
+ */
+export type PetIdleMode = 'random' | 'sequential'
+
+/**
+ * How the bubble arranges several tasks at once, and whether they are headed by their
+ * agent (upstream `ap_bub_mode` and `ap_bub_grouping`, `settings.html:367,374`).
+ *
+ * The member *names* are the renderer's (`features/desktop-pet/services/pet-bubble-layout.ts`
+ * draws `list`/`compact`/`carousel` and `by-agent`/`flat`), not upstream's literals
+ * (`byKind`/`all`): one choice spelled once is what keeps the control and the surface
+ * from disagreeing about what the user picked.
+ */
+export type PetBubbleMode = 'list' | 'compact' | 'carousel'
+export type PetBubbleGrouping = 'by-agent' | 'flat'
+
+/**
+ * Which tasks the bubble keeps (upstream `ap_bub_filter`, `settings.html:383`).
+ *
+ * Upstream's four options name *states* (`doneAndAbove`, `workingAndWaiting`); these name
+ * what the filter does to a row's alert, so a state added to the contract's union does not
+ * leave a filter that quietly means something else.
+ */
+export type PetBubbleFilter = 'all' | 'attention' | 'active' | 'working'
+
+/**
+ * The character drawn between a row's fields (upstream `ap_bub_sep`, `settings.html:184`).
+ *
+ * A closed set of *names* rather than the four characters themselves: upstream's fourth
+ * button is a single space, and a stored space is a separator no reader can tell from a
+ * value that was trimmed away. The name is the choice; the character it draws is the
+ * renderer's.
+ */
+export type PetBubbleSeparator = 'dot' | 'arrow' | 'bar' | 'space'
+
+/** How a row's state dot is drawn (upstream `ap_bub_dot`, `settings.html:191`). */
+export type PetBubbleDot = 'plain' | 'claude'
+
+/**
+ * The wording the pet reaches for while something is happening (upstream
+ * `ap_theme_phrases`, `settings.html:441`). A vocabulary and not a phrase: the lines
+ * themselves are the phrase pools' own (`pet-message-template.ts`), and §5.2 keeps a
+ * written line from claiming a state the row is not in.
+ */
+export type PetPhraseTheme = 'chef' | 'engineer' | 'wizard' | 'explorer' | 'scientist'
+
+/**
+ * What a left-click on the pet does (upstream `ap_left_click_action`, `settings.html:202`).
+ *
+ * `self` and `all` are upstream's 「This pet」 and 「All pets」; the distinction is a
+ * multi-character one, so both are representable before the second character lands.
+ */
+export type PetLeftClick = 'none' | 'self' | 'all'
+
+/**
+ * The sprite-sheet row the pet plays for a mood, keyed by mood (upstream `ap_bind_<mood>`,
+ * `settings.ts:1197`).
+ *
+ * The keys are open, like `stateRows`' own in `animation-bindings.ts`: the host state a
+ * binding is looked up by is a string there, and a build that closes this set here would
+ * be refusing a mood it will learn to draw next release. The *values* are the bounded
+ * side — a row both halves agree on, because an out-of-grid row is the "arbitrary frame"
+ * §5.2 says must fall back rather than be read.
+ */
+export type PetClipBindings = Readonly<Record<string, number>>
+
+/**
+ * One field of a bubble row, and whether it is shown (upstream `ap_bub_tokens`,
+ * `settings.ts:976-1010`; the renderer's `PetBubbleTokenItem` has this shape).
+ *
+ * `token` is an open name for the same reason a binding's key is: the row fields are the
+ * renderer's vocabulary (`PET_BUBBLE_TOKENS`), and a settings schema that declared its own
+ * copy of it would be the second truth §9 forbids. A name no renderer knows is dropped by
+ * the renderer, which is where the vocabulary lives.
+ */
+export interface PetBubbleTokenEntry {
+  token: string
+  visible: boolean
+}
+
+/**
+ * The icon drawn beside an agent's rows, keyed by agent id (upstream `ap_icon_<agentKind>`,
+ * `settings.ts:1092`).
+ *
+ * Keyed by agent id — an engine's own kind — so §5.2's 「兼容未知 Agent」 holds at the
+ * storage layer too: an id no registry knows is an icon for an engine this build has not
+ * heard of, not a value to reject. The value is upstream's own spec form
+ * (`brand:<kind>` or `sym:<name>`); which of them this build can draw is the renderer's
+ * question, and today's answer is that nothing draws one yet.
+ */
+export type PetAgentIcons = Readonly<Record<string, string>>
+
 /** One value per domain, and the source of the record types below. */
 export interface PetSettingsValues {
   general: {
@@ -65,6 +159,22 @@ export interface PetSettingsValues {
     characterId: string | null
     /** Rendered size in px. Upstream's unclamped `160 * size` (`main.ts:115-117`) is why this is a rule. */
     size: number
+    /** The row each mood plays, on top of the sheet's own mapping (`animation-bindings.ts`). */
+    bindings: PetClipBindings
+    /**
+     * The clips the idle mood cycles through, in order (upstream `ap_idle_clips`). Empty
+     * is a real value and not a missing one: the playlist is off, which is how upstream's
+     * `startIdleCycling` reads an empty list too (`pet.ts:215`).
+     */
+    idleClips: readonly number[]
+    idleMode: PetIdleMode
+    /**
+     * How long one idle clip stays on screen, in seconds (upstream `ap_idle_interval`,
+     * `settings.ts:1180`). Seconds and not milliseconds because that is the unit the
+     * control counts in; converting once, at the renderer's edge, is what keeps the stored
+     * value the one the user typed.
+     */
+    idleIntervalSeconds: number
   }
   view: {
     /** Window opacity. Upstream feeds a stored value straight into an `rgba` alpha (`main.ts:93`). */
@@ -83,6 +193,48 @@ export interface PetSettingsValues {
     bubbleSeconds: number
     /** The bubble's theme, following the host unless locally overridden (§5.2). */
     theme: 'system' | 'light' | 'dark'
+    /** The text size in px (upstream `ap_font_size`, three buttons at 10/12/14). */
+    fontSize: number
+    /**
+     * Whether the pet chatters while nothing is happening (upstream `ap_idle`,
+     * rendered on the bubble page as 「Show idle message」, `settings.html:176`).
+     *
+     * Filed on `message` rather than on `character`, where the ledger's table puts it:
+     * the row is a bubble-behaviour switch, and the page that draws it is 气泡与消息.
+     */
+    idle: boolean
+    layoutMode: PetBubbleMode
+    /** How many rows the surface shows at once (upstream `ap_bub_max`, `settings.html:380`). */
+    layoutMaxRows: number
+    grouping: PetBubbleGrouping
+    /** Whether the rows are ordered by their agent (upstream `ap_bub_sortkind`). */
+    sortByKind: boolean
+    filter: PetBubbleFilter
+    separator: PetBubbleSeparator
+    dot: PetBubbleDot
+    phraseTheme: PetPhraseTheme
+    leftClick: PetLeftClick
+    /**
+     * The agents whose rows are not drawn (upstream `ap_bub_hidden`, `settings.ts:962`).
+     *
+     * §5.2 requires the list to be built 「从当前 Agent 注册表」 rather than from upstream's
+     * fixed names; what is stored is the *choice*, so an id stays meaningful after the
+     * engine it names is installed again — which is why an unknown id is kept and not
+     * repaired away.
+     */
+    hiddenAgents: readonly string[]
+    /** The row's fields and their order. Empty means the renderer's own preset (§5.2's 预设). */
+    tokens: readonly PetBubbleTokenEntry[]
+    /**
+     * The pool a quick bubble is drawn from, one line each (upstream `ap_quick_bubbles`,
+     * `settings.ts:1771`).
+     *
+     * Empty by default where upstream seeds five English lines (`QUICK_DEFAULTS`): those
+     * are words the *pet* would say, and putting them in the user's mouth before they asked
+     * is not a default this schema should decide. A page may offer them as a reset.
+     */
+    quickBubbles: readonly string[]
+    agentIcons: PetAgentIcons
   }
   notification: {
     onTurnFinished: boolean
@@ -113,9 +265,37 @@ export interface PetSettingsValues {
 /** The defaults §5.3 requires each schema to state outright. */
 export const PET_SETTINGS_DEFAULTS: { [D in PetSettingsDomain]: PetSettingsValues[D] } = {
   general: { enabled: true, motion: 'system' },
-  character: { characterId: null, size: 160 },
+  character: {
+    characterId: null,
+    size: 160,
+    // Empty rather than upstream's own mapping (`STATE_ROW`): the sheet's defaults live in
+    // `animation-bindings.ts`, and a binding map that repeated them here would be a second
+    // copy of the spritesheet layout to keep in step.
+    bindings: {},
+    idleClips: [],
+    idleMode: 'random',
+    idleIntervalSeconds: 5,
+  },
   view: { opacity: 1, alwaysOnTop: true, roam: 'off' },
-  message: { bubbleSeconds: 6, theme: 'system' },
+  message: {
+    bubbleSeconds: 6,
+    theme: 'system',
+    fontSize: 12,
+    idle: true,
+    layoutMode: 'list',
+    layoutMaxRows: 5,
+    grouping: 'by-agent',
+    sortByKind: false,
+    filter: 'all',
+    separator: 'dot',
+    dot: 'plain',
+    phraseTheme: 'chef',
+    leftClick: 'none',
+    hiddenAgents: [],
+    tokens: [],
+    quickBubbles: [],
+    agentIcons: {},
+  },
   notification: {
     onTurnFinished: true,
     onStopped: true,
@@ -132,8 +312,11 @@ export const PET_SETTINGS_DEFAULTS: { [D in PetSettingsDomain]: PetSettingsValue
 /** A numeric field of {@link PetSettingsValues}, as a `domain.field` path. */
 export type PetNumberField =
   | 'character.size'
+  | 'character.idleIntervalSeconds'
   | 'view.opacity'
   | 'message.bubbleSeconds'
+  | 'message.fontSize'
+  | 'message.layoutMaxRows'
   | 'project.maxCharacters'
 
 /** What a stored number has to satisfy, and what it becomes when it does not. */
@@ -152,8 +335,18 @@ export interface PetNumberRule {
  */
 export const PET_NUMBER_RULES = {
   'character.size': { min: 64, max: 320, integer: true, fallback: 160 },
+  // Upstream's own floor and default (`MIN_IDLE_INTERVAL_MS` and `DEFAULT_IDLE_INTERVAL` in
+  // `animation-bindings.ts`), with the ceiling a minute: a clip that changes less often than
+  // that is a still image with a timer attached.
+  'character.idleIntervalSeconds': { min: 1, max: 60, integer: true, fallback: 5 },
   'view.opacity': { min: 0.15, max: 1, integer: false, fallback: 1 },
   'message.bubbleSeconds': { min: 1, max: 60, integer: true, fallback: 6 },
+  // Upstream's three buttons are 10/12/14 and it accepts any parsed integer
+  // (`settings.ts:1051`); the rule keeps upstream's span and refuses everything outside it,
+  // so the sizes between the buttons stay representable for a fine-grained control later.
+  'message.fontSize': { min: 10, max: 14, integer: true, fallback: 12 },
+  // Upstream's slider is 1–10 with a default of 5 (`settings.html:380`, `settings.ts:957`).
+  'message.layoutMaxRows': { min: 1, max: 10, integer: true, fallback: 5 },
   'project.maxCharacters': { min: 1, max: 5, integer: true, fallback: 3 },
 } satisfies Record<PetNumberField, PetNumberRule>
 
@@ -194,8 +387,16 @@ export type PetSettingsWrite = {
   }
 }[PetSettingsDomain]
 
-/** The schema version this build writes. */
-export const PET_SETTINGS_SCHEMA_VERSION = 1
+/**
+ * The schema version this build writes.
+ *
+ * 2 is 1 plus the animation, phrase and layout fields the ledger's remaining rows needed
+ * (D7d). The bump is what makes §10.2's rule do its work in the other direction: a build
+ * that only knows version 1 meets a version-2 record, reports `read-only` and leaves it
+ * alone, instead of reading the fields it recognises, defaulting the ones it does not and
+ * writing that back over the user's animation mapping.
+ */
+export const PET_SETTINGS_SCHEMA_VERSION = 2
 
 /**
  * What reading a domain produced.
