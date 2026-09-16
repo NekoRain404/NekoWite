@@ -23,6 +23,7 @@
  */
 
 import type { Ref } from 'vue'
+import { flushEdits } from '../services/editor-ownership'
 import type { OpenTab } from './tabs'
 
 /** How many writes one tab gets in pursuit of being settled.
@@ -61,10 +62,37 @@ export function createTabSettler(deps: {
    *  owns the moment (the close offers the copy route itself; see
    *  `app-lifecycle`).
    *
+   *  The flush comes first, and it is NOT behind `dirty` — that is the whole
+   *  fix. `dirty` is set at the PUBLISH, and only the rendered pane publishes at
+   *  the keystroke: the source pane coalesces a burst for
+   *  `SOURCE_SNAPSHOT_DEBOUNCE_MS` and marks the tab from the publish that
+   *  follows (`services/code-mirror-host.ts`). So a user typing into a path'd
+   *  tab in source or split mode has `dirty === false` for the length of the
+   *  burst, and the loop below read that as "nothing typed here" — the destroy
+   *  that came after it (`removeAllTabs`, or the process ending) took the
+   *  typing with no disk holding it. It is the rule `closePlaceholder` states
+   *  (`tab-close.ts`) and the one `saveTab` already applies before its own write
+   *  (`tab-save.ts:207`); this gate was the one reader that asked the flag
+   *  before anything had published. With nothing pending it is a no-op per
+   *  pane, so an ordinary clean-vs-dirty close is unchanged.
+   *
+   *  HERE, inside the gate, rather than in each route that calls it: "Close
+   *  all", the window close and a vault switch already share this one function,
+   *  so no caller can reach the loop without the flush. A flush placed beside a
+   *  caller is a rule the next caller has to remember, and that is exactly the
+   *  shape that produced this bug — one reader asking the flag for itself before
+   *  the gate (see `closeTab`, which now flushes on the same rule).
+   *
+   *  The placement also carries the untitled half of the same callers' work: the
+   *  flush marks a burst into a path-less tab dirty before the untitled prompt
+   *  reads `untitledDirtyTabs()`, which is what offers that text back instead of
+   *  destroying it.
+   *
    *  Returns false when a path'd tab could not be settled, so the caller can
    *  block the potentially-lossy action. Every tab is attempted before that
    *  answer is given: one tab's failure must not leave the others unwritten. */
   async function flushDirty(): Promise<boolean> {
+    await flushEdits()
     let ok = true
     for (const tab of tabs.value) {
       if (!tab.dirty || !tab.path) continue
