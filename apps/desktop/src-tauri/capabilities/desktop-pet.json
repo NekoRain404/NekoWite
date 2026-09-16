@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop-pet",
+  "description": "The pet character windows (§7.1) and nothing else: they may receive host events, and they may not read a file, open a dialog, raise a notification or move any window — including their own.",
+  "windows": ["pet-*"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

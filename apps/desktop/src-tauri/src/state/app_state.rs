@@ -19,6 +19,7 @@ use crate::agent_runtime::profile::{ProfileError, ProfileStore};
 use crate::agent_runtime::registry::{
     AgentInstance, AgentRegistry, RegistryError, DEFAULT_PROFILE,
 };
+use crate::desktop_pet::{Observations, PetSurfaces, PetWindowHost, TauriSurfaces};
 use crate::storage::agent_files::AgentVaultFiles;
 use crate::storage::key_store::data_dir;
 
@@ -199,6 +200,56 @@ pub struct AgentRuntimeState {
     /// ([`AgentInstance`]'s own `Drop`), so a stop is this slot being emptied —
     /// and a replacement start is it being refilled after that.
     pub instance: Mutex<Option<AgentInstance>>,
+}
+
+// ---------------------------------------------------------------------------
+// Desktop pet state
+// ---------------------------------------------------------------------------
+
+/// The desktop pet's backend, as a handle Tauri holds (§7.1, §10.1).
+///
+/// The two fields are the whole of what a pet window can reach on this side: which character
+/// windows are open and the rules about them, and what this machine has been *observed* to do
+/// (§7.2). Nothing else lives here — no vault, no session, no provider, no document — so a pet
+/// command has nothing to reach even if one were written carelessly. That absence is the
+/// module's own claim (`desktop_pet/mod.rs`) held at the managed-state level: the pet's whole
+/// world is two fields wide.
+///
+/// **Why it is built in `setup` and not by `Default`.** The host's window system is the running
+/// app — [`TauriSurfaces`] holds an `AppHandle` — and there is no `AppHandle` until `setup`
+/// runs. `with_surfaces` is the same state with the window system injected, which is how the
+/// IPC tests drive the host's rules *and the commands' identity checks* without a compositor
+/// (§10.2's injection rule, applied to the one dependency this state has).
+///
+/// **Why the observations are a separate lock.** They are written by whatever measured this
+/// machine (D13's matrix) and read by a settings page, and neither has anything to do with
+/// closing a window: one lock would make a capability report wait behind a window operation
+/// that is talking to a compositor.
+pub struct DesktopPetState {
+    /// The pet windows, and the policy about them. The rules are [`PetWindowHost`]'s; this is
+    /// only where the process keeps them.
+    pub host: Mutex<PetWindowHost>,
+    /// §7.2's evidence. Empty on a fresh install, which is why every capability reads
+    /// `unverified` there rather than "supported" or "unsupported".
+    pub observations: Mutex<Observations>,
+}
+
+impl DesktopPetState {
+    /// The state the app runs with: the real window system.
+    pub fn new(app: &tauri::AppHandle) -> Self {
+        Self::with_surfaces(Box::new(TauriSurfaces::new(app.clone())))
+    }
+
+    /// The state with a substitute window system, for tests and for nothing else.
+    ///
+    /// `PetSurfaces` is the same port the real adapter implements, so what a test substitutes
+    /// is what the product uses — not a smaller shape written to make the test easy.
+    pub fn with_surfaces(surfaces: Box<dyn PetSurfaces>) -> Self {
+        Self {
+            host: Mutex::new(PetWindowHost::new(surfaces)),
+            observations: Mutex::new(Observations::new()),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

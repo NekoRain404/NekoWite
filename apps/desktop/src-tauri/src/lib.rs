@@ -4,6 +4,9 @@
 //! - [`agent_runtime`]: the agent engine — its process, the ACP connection, the
 //!   sessions, the permission table. It knows nothing about Tauri; the commands
 //!   below are the only thing that reaches it from a window.
+//! - [`desktop_pet`]: the pet's windows and what this machine can do with them
+//!   (§7.1–7.2). Same shape as `agent_runtime`: the module's rules are Tauri-free
+//!   and the commands are the only thing that reaches them from a window.
 //! - [`commands`]: the `#[tauri::command]` IPC surface — thin args/DTO/error
 //!   mapping only.
 //! - [`domain`]: path-confinement policy, vault rules, crash recovery.
@@ -17,6 +20,7 @@
 
 pub mod agent_runtime;
 pub mod commands;
+pub mod desktop_pet;
 pub mod domain;
 pub mod errors;
 pub mod open_file;
@@ -124,11 +128,47 @@ pub fn run() {
                     // files — so nothing here has to be kept in sync with a disk that may change
                     // under it.
                     app.manage(commands::agent_settings::AgentSettingsState::new(&dir));
+                    // The character library (§8's 受管缓存) is the same shape one directory
+                    // over, and from the *same* resolved root rather than from
+                    // `app.path().app_data_dir()` a second time: two calls to one question are
+                    // two answers waiting to differ, and this is the directory
+                    // `domain::app_owned::install` marks as the app's own.
+                    //
+                    // A library that cannot be built is reported rather than fatal — the app
+                    // runs without a pet just as it runs without an engine — and the four
+                    // character commands D8 proposed are what will read this state. Nothing is
+                    // added to `tauri.conf.json`'s `assetProtocol.scope` for it: that scope is
+                    // empty on purpose, and `commands/fs.rs` already settled the rule as one
+                    // `allow_file` per resolved file and never a directory. A
+                    // `desktop-pet/characters/**` entry would hand the whole library to
+                    // `asset://` in one line, and nothing would fail — it would simply be
+                    // readable.
+                    match desktop_pet::CharacterLibrary::new(&dir) {
+                        Ok(library) => {
+                            app.manage(library);
+                        }
+                        Err(refusal) => eprintln!(
+                            "the desktop pet's character library is unavailable: {refusal:?}"
+                        ),
+                    }
                     owned.push((AppDir::Data, dir));
                 }
                 Err(e) => eprintln!("could not resolve the app data directory: {e}"),
             }
             domain::app_owned::install(owned);
+
+            // The desktop pet's backend, built here because it is the first moment an
+            // `AppHandle` exists (its window system holds one) and because `manage` sets a
+            // type's state once. What it does *not* do is build a window: §7.1 makes the pet
+            // window 按需创建, so this installs the thing that can open one and nothing is on
+            // screen until a settings page asks. That is also why `desktop-pet.html` is not in
+            // `app.windows` — the loop below builds every entry in that list unconditionally, so
+            // a config entry would be the pet existing while the feature is off. `tauri.conf.json`
+            // needs no entry for the pet at all: the page is served out of `frontendDist` like
+            // the editor's, and the pet window's permissions live in `capabilities/`, which
+            // `tauri-build` picks up by directory.
+            app.manage(state::DesktopPetState::new(app.handle()));
+
             // The windows `run` above took over from Tauri's own pass, built
             // from their config so nothing about them is duplicated here.
             for config in app.config().app.windows.iter().filter(|w| !w.create) {
@@ -211,6 +251,23 @@ pub fn run() {
             commands::agent_settings::agent_config_document,
             commands::agent_settings::agent_config_edit,
             commands::agent_settings::agent_credentials_write,
+            // The desktop pet's window surface (§7.1). Every one of these answers from
+            // `DesktopPetState`, whose host is the only thing that mints a window label — and
+            // the two that act on a window take it as the caller Tauri reports rather than as
+            // an argument, which is where §7.1's 「前端不能自选任意 label」 is enforced. The
+            // settings and task halves of D1's `PetGateway` have no command here on purpose:
+            // their backends (`settings.rs`, `task_projection.rs`) are their own tasks, and a
+            // call to one is answered by Tauri's own "command not found" rather than by a stub
+            // that would look like a host with nothing to say.
+            commands::desktop_pet::desktop_pet_state,
+            commands::desktop_pet::desktop_pet_windows,
+            commands::desktop_pet::desktop_pet_open,
+            commands::desktop_pet::desktop_pet_disable,
+            commands::desktop_pet::desktop_pet_set_visible,
+            commands::desktop_pet::desktop_pet_close_own,
+            commands::desktop_pet::desktop_pet_set_click_through,
+            commands::desktop_pet::desktop_pet_capabilities,
+            commands::desktop_pet::desktop_pet_open_settings,
         ])
         .run(context)
         .expect("error while running tauri application");

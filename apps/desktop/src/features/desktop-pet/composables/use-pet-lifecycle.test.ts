@@ -48,6 +48,7 @@ function deferred(): Deferred {
 class FakeHost implements PetGateway {
   readonly calls: string[] = []
   readonly listeners = new Set<(tasks: PetTaskProjection[]) => void>()
+  readonly featureListeners = new Set<(state: PetFeatureState) => void>()
   enabled = true
   visible = true
   featureFails: string | null = null
@@ -87,6 +88,17 @@ class FakeHost implements PetGateway {
     }
   }
 
+  async subscribeFeature(onFeature: (state: PetFeatureState) => void): Promise<() => void> {
+    this.calls.push('subscribeFeature')
+    await this.gate?.promise
+    this.featureListeners.add(onFeature)
+    onFeature({ enabled: this.enabled, visible: this.enabled && this.visible })
+    return () => {
+      this.calls.push('unsubscribeFeature')
+      this.featureListeners.delete(onFeature)
+    }
+  }
+
   // The parameters are left off rather than named and unused: this window never makes either call,
   // and a signature that could not receive one is the stronger statement.
   async readSettings(): Promise<PetSettingsLoad> {
@@ -104,6 +116,16 @@ class FakeHost implements PetGateway {
   /** Deliver the list as the host's own subscription would. */
   push(tasks: PetTaskProjection[]): void {
     for (const listener of this.listeners) listener(tasks)
+  }
+
+  /** Change what the host would answer `feature()` with, and tell the subscribers, as another
+   *  window's settings page does. */
+  pushFeature(enabled: boolean, visible: boolean): void {
+    this.enabled = enabled
+    this.visible = visible
+    for (const listener of this.featureListeners) {
+      listener({ enabled, visible: enabled && visible })
+    }
   }
 }
 
@@ -134,8 +156,8 @@ describe('what the pet window holds', () => {
 
     expect(lifecycle.state.value.enabled).toBe(true)
     expect(lifecycle.state.value.drawing).toBe(true)
-    expect(host.calls).toEqual(['feature', 'subscribe'])
-    expect(lifecycle.counts()).toEqual({ holds: 0, subscriptions: 1 })
+    expect(host.calls).toEqual(['feature', 'subscribeFeature', 'subscribe'])
+    expect(lifecycle.counts()).toEqual({ holds: 0, subscriptions: 2 })
   })
 
   it('subscribes to nothing at all when the host says the feature is off', async () => {
@@ -159,8 +181,9 @@ describe('what the pet window holds', () => {
     await lifecycle.start()
     await lifecycle.start()
 
-    expect(host.calls).toEqual(['feature', 'subscribe'])
+    expect(host.calls).toEqual(['feature', 'subscribeFeature', 'subscribe'])
     expect(host.listeners.size).toBe(1)
+    expect(host.featureListeners.size).toBe(1)
   })
 
   it('reports a host that refuses rather than drawing a pet that knows nothing', async () => {
@@ -205,7 +228,8 @@ describe('hiding stops the drawing and keeps the reminder', () => {
     // The subscription is the reminder: a hidden pet that stopped hearing about work would have
     // nothing to be un-hidden for (§7.1).
     expect(host.listeners.size).toBe(1)
-    expect(lifecycle.counts().subscriptions).toBe(1)
+    expect(host.featureListeners.size).toBe(1)
+    expect(lifecycle.counts().subscriptions).toBe(2)
   })
 
   it('keeps delivering while hidden', async () => {
@@ -234,7 +258,13 @@ describe('hiding stops the drawing and keeps the reminder', () => {
     // timers twice.
     expect(released).toBe(1)
     expect(lifecycle.state.value.drawing).toBe(true)
-    expect(host.calls).toEqual(['feature', 'subscribe', 'setVisible:false', 'setVisible:true'])
+    expect(host.calls).toEqual([
+      'feature',
+      'subscribeFeature',
+      'subscribe',
+      'setVisible:false',
+      'setVisible:true',
+    ])
   })
 
   it('reads the state the host ended up in, not the one it asked for', async () => {
@@ -265,8 +295,69 @@ describe('hiding stops the drawing and keeps the reminder', () => {
   })
 })
 
+describe('the feature state arrives without the window asking', () => {
+  it('stops drawing when the switch is moved in another window', async () => {
+    const host = new FakeHost()
+    const lifecycle = usePetLifecycle({ gateway: host })
+    await lifecycle.start()
+    let released = 0
+    lifecycle.hold({ scope: 'drawing', release: () => (released += 1) })
+
+    // The settings page lives in the main window, and §7.1 makes it the way back *and* the way
+    // out on a desktop with no tray. Without a push channel the window would learn about this on
+    // its next `feature()` call — which nothing was going to make — so the pet would keep
+    // drawing after the user hid it. This is that channel, end to end.
+    host.pushFeature(true, false)
+
+    expect(lifecycle.state.value.drawing).toBe(false)
+    expect(released).toBe(1)
+    // Nothing was asked for: the four calls are the start, and a push is not a call.
+    expect(host.calls).toEqual(['feature', 'subscribeFeature', 'subscribe'])
+  })
+
+  it('draws again when the switch is moved back, with no restart', async () => {
+    const host = new FakeHost()
+    const lifecycle = usePetLifecycle({ gateway: host })
+    await lifecycle.start()
+    host.pushFeature(true, false)
+
+    host.pushFeature(true, true)
+
+    expect(lifecycle.state.value.drawing).toBe(true)
+    // The hold released by the hide is not resurrected — the renderer replaces it, exactly as the
+    // hide/show path does — so this asserts the state rather than a count.
+    expect(lifecycle.state.value.enabled).toBe(true)
+  })
+
+  it('believes the host when the feature is switched off entirely', async () => {
+    const host = new FakeHost()
+    const lifecycle = usePetLifecycle({ gateway: host })
+    await lifecycle.start()
+
+    // Disabling closes the window as well (the host's teardown), so this is the window agreeing
+    // with a state it is about to stop existing in — not the window deciding on its own.
+    host.pushFeature(false, false)
+
+    expect(lifecycle.state.value.enabled).toBe(false)
+    expect(lifecycle.state.value.drawing).toBe(false)
+  })
+
+  it('ignores a push that arrives after the teardown', async () => {
+    const host = new FakeHost()
+    const lifecycle = usePetLifecycle({ gateway: host })
+    await lifecycle.start()
+    await lifecycle.dispose()
+
+    host.pushFeature(true, true)
+
+    // A frame in flight when the window went away is the same race the task subscription guards,
+    // and the guard is the same idea: a disposed lifecycle writes nothing.
+    expect(lifecycle.state.value.drawing).toBe(false)
+  })
+})
+
 describe('teardown gives everything back and reaches nothing else', () => {
-  it('asks the host for exactly one thing', async () => {
+  it('asks the host for nothing but the two unsubscribes', async () => {
     const host = new FakeHost()
     const lifecycle = usePetLifecycle({ gateway: host })
     await lifecycle.start()
@@ -278,9 +369,10 @@ describe('teardown gives everything back and reaches nothing else', () => {
     // The whole of "disabling the pet does not cancel agent work": there is no call here that
     // could reach a run, a note or a character, and `PetGateway` (D1) has no method that could —
     // the absence is in the interface rather than in the order of these statements.
-    expect(host.calls.slice(before)).toEqual(['unsubscribe'])
+    expect(host.calls.slice(before)).toEqual(['unsubscribe', 'unsubscribeFeature'])
     expect(lifecycle.counts()).toEqual(NOTHING_HELD)
     expect(host.listeners.size).toBe(0)
+    expect(host.featureListeners.size).toBe(0)
   })
 
   it('is idempotent, and asks twice for nothing', async () => {
@@ -292,6 +384,7 @@ describe('teardown gives everything back and reaches nothing else', () => {
     await lifecycle.dispose()
 
     expect(host.calls.filter((call) => call === 'unsubscribe')).toHaveLength(1)
+    expect(host.calls.filter((call) => call === 'unsubscribeFeature')).toHaveLength(1)
   })
 
   it('releases a hold taken during its own teardown', async () => {
@@ -324,6 +417,7 @@ describe('teardown gives everything back and reaches nothing else', () => {
     await Promise.all([starting, disposing])
 
     expect(host.listeners.size).toBe(0)
+    expect(host.featureListeners.size).toBe(0)
     expect(lifecycle.counts()).toEqual(NOTHING_HELD)
   })
 
@@ -336,6 +430,7 @@ describe('teardown gives everything back and reaches nothing else', () => {
 
     expect(host.calls).toEqual([])
     expect(host.listeners.size).toBe(0)
+    expect(host.featureListeners.size).toBe(0)
   })
 
   it('lets a caller take a hold back on its own', async () => {
@@ -366,10 +461,13 @@ describe('teardown gives everything back and reaches nothing else', () => {
       // from a clean one until it is measured, which is §12's 50-开关 acceptance.
       expect(lifecycle.counts()).toEqual(NOTHING_HELD)
       expect(host.listeners.size).toBe(0)
+      expect(host.featureListeners.size).toBe(0)
     }
 
     expect(host.calls.filter((call) => call === 'subscribe')).toHaveLength(50)
     expect(host.calls.filter((call) => call === 'unsubscribe')).toHaveLength(50)
+    expect(host.calls.filter((call) => call === 'subscribeFeature')).toHaveLength(50)
+    expect(host.calls.filter((call) => call === 'unsubscribeFeature')).toHaveLength(50)
   })
 
   it('disposes with the scope that created it', async () => {
@@ -378,6 +476,7 @@ describe('teardown gives everything back and reaches nothing else', () => {
     const lifecycle = scope.run(() => usePetLifecycle({ gateway: host }))
     await lifecycle?.start()
     expect(host.listeners.size).toBe(1)
+    expect(host.featureListeners.size).toBe(1)
 
     // An unmounted window that forgot to dispose is the leak this replaces: the composable knows
     // the scope it was created in, so the wiring in a component is a convenience and not the
@@ -385,6 +484,7 @@ describe('teardown gives everything back and reaches nothing else', () => {
     scope.stop()
 
     expect(host.listeners.size).toBe(0)
+    expect(host.featureListeners.size).toBe(0)
     expect(lifecycle?.counts()).toEqual(NOTHING_HELD)
   })
 })

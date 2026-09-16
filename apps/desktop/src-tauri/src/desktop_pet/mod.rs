@@ -27,17 +27,39 @@
 //!   shape (`pet-contracts/platform.ts:72-79`) reused rather than re-invented: an unavailable
 //!   capability that omitted its alternative would leave the user to guess.
 //!
-//! Wiring is deliberately not here. `lib.rs`, `commands/mod.rs`, `state/app_state.rs` and
-//! `commands/desktop_pet.rs` are the ACP plan's T4 files and the integrator's, so this tree is
-//! declared by path in `tests/desktop_pet_ipc_test.rs` until those land — the convention T3's
-//! tests established. The exact wiring points are listed in this task's report.
+//! Wiring is deliberately not here, and it is no longer missing either: `lib.rs` declares this
+//! module and registers its commands, `commands/desktop_pet.rs` is the only place a caller's
+//! identity is read, and `state/app_state.rs` holds [`PetWindowHost`], [`Observations`] and the
+//! character library as managed state. This file stays a list of modules and a re-export, so the
+//! isolation the header above describes is a property of the tree rather than of a paragraph.
+//!
+//! **The list grew as the pieces above landed.** Each one is declared here rather than inside
+//! another module because this is the pet's tree, and each was compiled through its own test
+//! target's `#[path]` include until this line existed — a module a test compiles and a library
+//! build has never seen is a module nobody has type-checked. The list is the pet's whole backend;
+//! a name added to it is a name every build carries.
 
+pub mod care_ledger;
+pub mod history;
 pub mod linux_capabilities;
+pub mod notification_delivery;
+pub mod notification_policy;
+pub mod resources;
+pub mod task_projection;
 pub mod window_host;
 
+pub use care_ledger::{CareLedger, CareOutcome, CareSummary, DAY_WINDOW, MEAL_XP};
+pub use history::{Decoded, DeliveryState, TaskHistory, TaskRecord, HISTORY_SCHEMA_VERSION};
 pub use linux_capabilities::{
     CapabilityReport, Desktop, DisplaySession, Finding, LinuxEnvironment, Observed, Observations,
 };
+pub use notification_delivery::{NotificationDelivery, PetNotice};
+pub use notification_policy::{
+    channel_for, NotificationChannel, NotificationOutcome, NotificationPolicy,
+    NotificationPreferences, TaskFact,
+};
+pub use resources::CharacterLibrary;
+pub use task_projection::{system_clock, PetClock, PetTaskKey, PetTaskProjection, TaskProjection};
 pub use window_host::{
     CallerWindow, Closed, HostRefusal, PetInstance, PetSurfaces, PetWindowHost, PetWindowLabel,
     Placement, TauriSurfaces, TeardownReport, WindowAction, WindowStyle, WorkArea,

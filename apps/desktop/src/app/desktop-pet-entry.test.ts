@@ -120,7 +120,27 @@ describe('the pet entry is one lightweight window and not a second application',
     // layers. D1's contract is *not* here and that is the right answer rather than a gap: this
     // window imports it with `import type` only, so the pet's runtime carries the task and setting
     // shapes as nothing at all.
+    //
+    // Three entries were added when the composition landed (D12), each with the reason the clause
+    // asks for:
+    //   - `app/desktop-pet-composition.ts` — §10.1's assembly point, and the only thing that
+    //     decides what this window talks to;
+    //   - `platform/gateways/tauri-pet.ts` — the adapter it chooses, which is `invoke`/`listen`
+    //     and no application;
+    //   - `features/desktop-pet/services/pet-menu-actions.ts` — the three menu actions.
+    //
+    // **And the feature's public entry is deliberately *not* in this list.** `features/desktop-pet/index.ts`
+    // is where outside callers go (§13.11) — the settings page takes the care panel from it — and
+    // reaching it from here would put the whole of it in this window: the care panel, its rules,
+    // and D1's contract *values* (the panel imports `PET_CARE_PANEL_LABELS` and friends by value,
+    // so the contract stops being types-only the moment the barrel is in this graph). §7.1's
+    // isolation is the stronger rule for this one page, so the entry imports the root component
+    // and the composition imports the one service, both by path, with the reason written at each
+    // import. That is the only place in this repository where a feature is reached by path, and
+    // this list is what keeps it honest: the two deep imports are *here*, in the count, rather
+    // than hidden behind a re-export.
     expect(reachableFrom(ENTRY)).toEqual([
+      'app/desktop-pet-composition.ts',
       'features/desktop-pet/components/DesktopPetRoot.vue',
       'features/desktop-pet/components/PetSprite.vue',
       'features/desktop-pet/composables/use-pet-lifecycle.ts',
@@ -129,20 +149,42 @@ describe('the pet entry is one lightweight window and not a second application',
       'features/desktop-pet/rendering/sprite-player.ts',
       'features/desktop-pet/rendering/sprite-sheet.ts',
       'features/desktop-pet/rendering/sprite-slicer.ts',
+      'features/desktop-pet/services/pet-menu-actions.ts',
+      'platform/gateways/tauri-pet.ts',
       'styles/palettes.css',
       'styles/tokens.css',
     ])
   })
 
-  it('stops at one package', () => {
+  it('does not reach the feature’s public entry, which is where the care surface lives', () => {
+    // The rule above stated as a check rather than as a paragraph, because the day somebody
+    // "tidies" the two path imports into one barrel import, this is the line that says what it
+    // cost: `features/desktop-pet/index.ts` re-exports `PetCarePanel`, and the panel pulls its
+    // rules and the contract's values in behind it.
+    const reachable = reachableFrom(ENTRY)
+
+    expect(reachable).not.toContain('features/desktop-pet/index.ts')
+    expect(reachable.filter((file) => file.includes('pet-care'))).toEqual([])
+    expect(reachable.filter((file) => file.startsWith('platform/gateways/pet-contracts'))).toEqual([])
+  })
+
+  it('stops at the Tauri client and Vue', () => {
     // The other half of the walk: `reachableFrom` ignores anything that is not a relative path, so
     // a pet entry that imported `@milkdown/core` or `pinia` would be invisible to it. This is the
     // assertion that sees those.
-    expect(packagesFrom(ENTRY)).toEqual(['vue'])
+    //
+    // `@tauri-apps/api` is the window's host connection and nothing else — `invoke` and `listen`,
+    // no plugin, no `@tauri-apps/plugin-notification`, no process control (§4 removes the second
+    // quit path, and the ledger's dependency table is where each of those was decided).
+    expect(packagesFrom(ENTRY)).toEqual(['@tauri-apps/api/core', '@tauri-apps/api/event', 'vue'])
   })
 
   it('cannot reach the application, its editor, its index or its agent client', () => {
     const reachable = reachableFrom(ENTRY)
+    // Regular expressions against the path relative to `src/`, so the three that name a
+    // *directory of the application* can be anchored at the root: the pet has a `services/`
+    // directory of its own, and `includes` would have called `features/desktop-pet/services/` the
+    // editor window's.
     const forbidden: [string, string][] = [
       ['app/app-bootstrap', 'the app runtime: vault registry, index, file watcher, AI client'],
       ['app/app-lifecycle', 'the editor window’s teardown'],
@@ -154,19 +196,38 @@ describe('the pet entry is one lightweight window and not a second application',
       ['i18n', 'the whole dictionary — §10.1 adds a pet namespace instead'],
       ['platform/gateways/index', 'every gateway, not only the pet one'],
       ['platform/gateways/memory-pet', 'the test double, which must never be a production entry'],
-      ['platform/gateways/tauri-pet', 'the host adapter, which the composition owns'],
-      ['stores/', 'the editor window’s Pinia stores'],
-      ['services/', 'the editor window’s services'],
-      ['ui/', 'the application’s component library'],
+      ['platform/gateways/memory-del', 'any other double'],
+      ['tauri-agent', 'the agent adapter — this window runs no session'],
+      ['^stores/', 'the editor window’s Pinia stores'],
+      ['^services/', 'the editor window’s services'],
+      ['^ui/', 'the application’s component library'],
     ]
     for (const [pattern, why] of forbidden) {
       expect(
-        reachable.filter((file) => file.includes(pattern)),
+        reachable.filter((file) => new RegExp(pattern).test(file)),
         `the pet entry reaches ${pattern}: ${why}`,
       ).toEqual([])
     }
     expect(packagesFrom(ENTRY)).not.toContain('@nekowite/plugin-host')
     expect(packagesFrom(ENTRY)).not.toContain('@nekowite/editor-core')
+  })
+
+  it('is a build entry, so the page exists in a packaged app', () => {
+    // §7.1's window loads this page. The dev server serves it from the project root whether or not
+    // it is an entry — which is why this is about the *build* config: only the inputs named there
+    // are emitted, and a window whose page was never emitted loads a blank frame in exactly the
+    // packaged app the pet ships in.
+    //
+    // Read as text rather than imported, because the config cannot be evaluated here: it resolves
+    // `./package.json` through `import.meta.url`, which is not a file URL under the test
+    // transform. The assertion is deliberately narrow — the input map exists, it names both pages,
+    // and the pet's page is the one the host opens — so a config that stopped declaring them fails
+    // here rather than in a release.
+    const config = readFileSync(join(APP, 'vite.config.ts'), 'utf8')
+    const input = /input:\s*\{([\s\S]*?)\n\s*\}/.exec(config)?.[1] ?? ''
+
+    expect(input).toMatch(/index:\s*fileURLToPath\(new URL\('index\.html'/)
+    expect(input).toMatch(/['"]desktop-pet['"]:\s*fileURLToPath\(new URL\('desktop-pet\.html'/)
   })
 
   it('is the entry for a page that declares exactly one mount point', () => {
@@ -219,11 +280,12 @@ describe('the entry boots only where the pet page is, and states a missing host'
     await flush()
 
     // The composition that supplies the gateway is `S/app/desktop-pet-composition.ts` (§9, §10.1)
-    // and it does not exist yet. This assertion is deliberately about the *shape* of "not wired":
-    // it fails the day a gateway arrives, which is the day the absence stops being true, and it
-    // fails just as loudly if one arrives here from somewhere that is not the host — a memory
-    // gateway in the entry would make this window look finished while every task in it came from
-    // a fixture.
+    // and it has landed — but a happy-dom page has no `__TAURI_INTERNALS__`, so there is no host
+    // to connect to and the window says so. That is the assertion: the absence this window renders
+    // is "there is no host here", which is true in a test runner and true in a browser build, and
+    // which the composition answers by returning nothing rather than by handing over D1's memory
+    // double — a fixture-backed pet would make this window look finished while every task in it
+    // came from a double.
     expect(app).not.toBeNull()
     expect(document.querySelector('.pet-root')).not.toBeNull()
     expect(document.querySelector('.pet-root__notice')?.textContent).toMatch(/host connection/i)

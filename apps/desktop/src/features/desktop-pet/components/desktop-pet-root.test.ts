@@ -19,6 +19,7 @@ import DesktopPetRoot from './DesktopPetRoot.vue'
 /** A host with one answer and a listener count, which is all this file needs. */
 class FakeHost implements PetGateway {
   readonly listeners = new Set<(tasks: PetTaskProjection[]) => void>()
+  readonly featureListeners = new Set<(state: { enabled: boolean; visible: boolean }) => void>()
   enabled = true
   visible = true
 
@@ -43,6 +44,14 @@ class FakeHost implements PetGateway {
     this.listeners.add(onTasks)
     onTasks([])
     return () => this.listeners.delete(onTasks)
+  }
+
+  async subscribeFeature(
+    onFeature: (state: { enabled: boolean; visible: boolean }) => void,
+  ): Promise<() => void> {
+    this.featureListeners.add(onFeature)
+    onFeature({ enabled: this.enabled, visible: this.enabled && this.visible })
+    return () => this.featureListeners.delete(onFeature)
   }
 
   async readSettings(): Promise<never> {

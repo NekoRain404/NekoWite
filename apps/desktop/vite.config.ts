@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
 /** This package's manifest, for the version the UI displays. */
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string }
@@ -112,6 +113,17 @@ export default defineConfig({
     // The default 4KB limit would emit them as separate /assets/ files.
     assetsInlineLimit: 1000000,
     rollupOptions: {
+      // Two pages, because §7.1 gives the pet a window that is not a second application: the
+      // pet's window loads `desktop-pet.html`, whose module graph is the pet and nothing else
+      // (`src/app/desktop-pet-entry.ts`), so it never parses the editor, the index or the agent
+      // panel. The dev server would serve the file anyway — Vite serves the project root
+      // statically — but a *build* only emits the HTML files named here, and a window whose page
+      // was missing from the bundle would load a blank frame in exactly the packaged app the
+      // pet ships in.
+      input: {
+        index: fileURLToPath(new URL('index.html', import.meta.url)),
+        'desktop-pet': fileURLToPath(new URL('desktop-pet.html', import.meta.url)),
+      },
       output: { manualChunks },
       // `remark-math` pulls in `micromark-extension-math`, whose root index
       // re-exports `lib/html.js` — a module that statically `import katex

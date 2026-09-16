@@ -655,3 +655,72 @@ describe('turning the pet off', () => {
     expect(await taskFor(pet, key)).toMatchObject({ state: 'working' })
   })
 })
+
+describe('the double publishes the feature state the way the host does', () => {
+  it('delivers the current state on subscribe, then every change', async () => {
+    const pet = createMemoryPetGateway({ visible: true })
+    const seen: string[] = []
+
+    const stop = await pet.subscribeFeature((state) => {
+      seen.push(`${state.enabled}/${state.visible}`)
+    })
+    await pet.setVisible(false)
+    await pet.setVisible(true)
+    stop()
+    await pet.setVisible(false)
+
+    // The first delivery is the state as it is, and the last push reaches nobody: an unsubscribe
+    // that only removed one of two routes would show here as a fourth entry.
+    expect(seen).toEqual(['true/true', 'true/false', 'true/true'])
+  })
+
+  it('publishes a settings write, because that is how the other window’s switch arrives', async () => {
+    const pet = createMemoryPetGateway({ visible: true })
+    const seen: boolean[] = []
+    await pet.subscribeFeature((state) => seen.push(state.enabled))
+
+    await pet.updateSettings({
+      domain: 'general',
+      revision: 1,
+      values: { ...PET_SETTINGS_DEFAULTS.general, enabled: false },
+    })
+
+    // §7.1's way back is a settings page in the main window, so the double has to publish from the
+    // write path — a pet window in another window hears about the switch here and nowhere else.
+    expect(seen).toEqual([true, false])
+    expect(await pet.feature()).toEqual({ enabled: false, visible: false })
+  })
+
+  it('publishes nothing when the write was refused', async () => {
+    const pet = createMemoryPetGateway({ visible: true })
+    const seen: boolean[] = []
+    await pet.subscribeFeature((state) => seen.push(state.enabled))
+
+    // A revision that has moved on is refused (§5.3), so the feature did not change — and telling
+    // a subscriber otherwise would have the window act on a write that never landed.
+    const refused = await pet.updateSettings({
+      domain: 'general',
+      revision: 99,
+      values: { ...PET_SETTINGS_DEFAULTS.general, enabled: false },
+    })
+
+    expect(refused.status).toBe('conflict')
+    expect(seen).toEqual([true])
+  })
+
+  it('publishes nothing for a write to another domain', async () => {
+    const pet = createMemoryPetGateway({ visible: true })
+    const seen: boolean[] = []
+    await pet.subscribeFeature((state) => seen.push(state.enabled))
+
+    // The feature switch is `general.enabled` and nothing else: a care or bubble write is not a
+    // reason to tell every pet window that the feature changed.
+    await pet.updateSettings({
+      domain: 'care',
+      revision: 1,
+      values: { ...PET_SETTINGS_DEFAULTS.care },
+    })
+
+    expect(seen).toEqual([true])
+  })
+})

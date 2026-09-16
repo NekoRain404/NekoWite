@@ -67,6 +67,7 @@ export interface PetWindowState {
  */
 export interface PetLifecycleCounts {
   holds: number
+  /** Host subscriptions — the task list and the feature state — issued but not yet stopped. */
   subscriptions: number
 }
 
@@ -103,10 +104,13 @@ export function usePetLifecycle({ gateway }: PetLifecycleOptions): PetLifecycle 
   const state = shallowRef<PetWindowState>({ ...CLOSED })
   let holds: PetHold[] = []
   let unsubscribe: (() => void) | null = null
+  let unsubscribeFeature: (() => void) | null = null
   let pending: Promise<void> | null = null
+  let pendingFeature: Promise<void> | null = null
   let issued = 0
   let stopped = 0
   let generation = 0
+  let featureGeneration = 0
   let disposed = false
   let started = false
 
@@ -182,6 +186,46 @@ export function usePetLifecycle({ gateway }: PetLifecycleOptions): PetLifecycle 
     await answer
   }
 
+  /**
+   * Listen for the feature state changing under this window.
+   *
+   * §7.1's way back: hiding stops the drawing and keeps the reminder, and on a desktop with no
+   * tray the switch that un-hides is in the settings — another window. Without this channel the
+   * window would only learn about it if something made it ask again, which nothing did, so
+   * "hidden" would have meant "hidden until the app restarts".
+   *
+   * The host's answer is the authority for both fields, `enabled` included: a pet switched off
+   * from the settings page is a pet with no window to draw in. The host closes it too — this is
+   * this window agreeing with the host about what it is, not the window deciding on its own.
+   */
+  async function subscribeFeature(): Promise<void> {
+    featureGeneration += 1
+    const mine = featureGeneration
+    issued += 1
+    let stop: (() => void) | null = null
+    const answer = gateway
+      .subscribeFeature((next) => {
+        if (disposed || mine !== featureGeneration) return
+        patch({ enabled: next.enabled, drawing: next.enabled && next.visible })
+        if (!next.enabled || !next.visible) releaseScope('drawing')
+      })
+      .then((released) => {
+        stop = once(released)
+        // The same handover race the task subscription guards: a window torn down while the host
+        // is still answering would take its subscription after the teardown had run.
+        if (disposed || mine !== featureGeneration) stop()
+        else unsubscribeFeature = stop
+      })
+      .catch((cause: unknown) => {
+        patch({ error: reason(cause) })
+      })
+      .then(() => {
+        if (pendingFeature === answer) pendingFeature = null
+      })
+    pendingFeature = answer
+    await answer
+  }
+
   async function start(): Promise<void> {
     if (disposed || started) return
     started = true
@@ -199,7 +243,12 @@ export function usePetLifecycle({ gateway }: PetLifecycleOptions): PetLifecycle 
     patch({ connecting: false, enabled: feature.enabled, drawing: feature.enabled && feature.visible })
     // A disabled feature has no window to listen from (§7.1 creates one on demand), so there is
     // nothing to subscribe to rather than a subscription worth keeping in case.
-    if (feature.enabled) await subscribe()
+    //
+    // Issued together and awaited once, because neither depends on the other: the feature channel
+    // decides whether this window draws and the task channel decides what it has to say, and a
+    // hide that lands while the task list is still being handed over is handled either way — the
+    // feature callback releases the drawing scope, which the task subscription never touches.
+    if (feature.enabled) await Promise.all([subscribeFeature(), subscribe()])
   }
 
   async function setVisible(visible: boolean): Promise<void> {
@@ -228,10 +277,13 @@ export function usePetLifecycle({ gateway }: PetLifecycleOptions): PetLifecycle 
     releaseScope('window')
     unsubscribe?.()
     unsubscribe = null
+    unsubscribeFeature?.()
+    unsubscribeFeature = null
     patch({ drawing: false, connecting: false })
     // Waits for a subscription that is still being handed over, so `counts()` is the truth as soon
     // as this resolves rather than one microtask later.
     await pending
+    await pendingFeature
   }
 
   // A window that unmounts without disposing is the leak this whole file exists to prevent, and a

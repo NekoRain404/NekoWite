@@ -83,10 +83,24 @@ export function createMemoryPetGateway(options: MemoryPetOptions = {}): MemoryPe
   const settings = createPetSettingsDouble(options)
   const declared = options.capabilities ?? {}
   const opened: PetSettingsPage[] = []
+  const featureListeners = new Set<(state: PetFeatureState) => void>()
   let visible = options.visible ?? false
 
   function featureState(): PetFeatureState {
     return { enabled: settings.enabled(), visible: settings.enabled() && visible }
+  }
+
+  /**
+   * Tell every feature subscriber what the state is now.
+   *
+   * The whole state, not a delta, for the reason the contract gives: a subscriber that missed a
+   * frame is stale rather than wrong. The double publishes from the two places a real host would
+   * — its own `setVisible`, and a settings write that landed — so a window's behaviour under a
+   * change made in another window is reachable from a test.
+   */
+  function publishFeature(): void {
+    const state = featureState()
+    for (const listener of featureListeners) listener(state)
   }
 
   return {
@@ -99,6 +113,7 @@ export function createMemoryPetGateway(options: MemoryPetOptions = {}): MemoryPe
       // either: the caller gets the resulting state back, so a request that did not
       // happen is visible as one rather than reported as success.
       visible = next
+      publishFeature()
       return featureState()
     },
 
@@ -117,12 +132,29 @@ export function createMemoryPetGateway(options: MemoryPetOptions = {}): MemoryPe
       return host.subscribe(onTasks)
     },
 
+    async subscribeFeature(onFeature: (state: PetFeatureState) => void) {
+      featureListeners.add(onFeature)
+      // Delivered now, like the task subscription's first call: the current state is complete,
+      // so there is no window between reading it and subscribing that needs a replay buffer.
+      onFeature(featureState())
+      return () => {
+        featureListeners.delete(onFeature)
+      }
+    },
+
     async readSettings(domain: PetSettingsDomain): Promise<PetSettingsLoad> {
       return settings.read(domain)
     },
 
     async updateSettings(write: PetSettingsWrite): Promise<PetSettingsUpdate> {
-      return settings.write(write)
+      const update = settings.write(write)
+      // The other window's route to the switch: a settings page that turns the pet on or off
+      // writes the `general` domain, and the pet's own window has to hear it — that write is
+      // what §7.1's way back *is*. Only an applied write publishes: a refused one left the state
+      // where it was, and telling subscribers otherwise would make the window act on a change
+      // that did not happen.
+      if (update.status === 'applied' && write.domain === 'general') publishFeature()
+      return update
     },
 
     async openSettings(page: PetSettingsPage) {

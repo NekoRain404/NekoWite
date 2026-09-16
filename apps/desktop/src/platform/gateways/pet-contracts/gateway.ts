@@ -80,6 +80,25 @@ export interface PetGateway {
   tasks(): Promise<PetTaskProjection[]>
   /** Call `onTasks` with the current list now, and on every change after that. Resolves with the unsubscribe. */
   subscribe(onTasks: (tasks: PetTaskProjection[]) => void): Promise<() => void>
+  /**
+   * Call `onFeature` with the current state now, and on every change after that. Resolves with
+   * the unsubscribe.
+   *
+   * A second channel beside {@link subscribe}, added when the window host reported the gap it
+   * closes: `feature()` answers when it is asked, and the only push channel carried tasks — so a
+   * hide performed from the settings page reached a mounted window on that window's next read,
+   * which nothing was going to make. §7.1 makes the settings page the way *back* to a hidden pet
+   * on a desktop with no tray (「无托盘的 Linux 环境仍能从主设置恢复隐藏桌宠」), and a way back
+   * that needs the window to ask again is not one.
+   *
+   * Separate from {@link subscribe} rather than merged into one callback because the two change
+   * for different reasons and at different rates: a task list moves with the agent, and the
+   * feature state moves when the user touches a switch. Both push the whole state rather than a
+   * delta, so a subscriber that missed a frame is stale for one frame and not wrong for ever —
+   * and so the first delivery, which is the current state rather than a replay, needs no special
+   * case.
+   */
+  subscribeFeature(onFeature: (state: PetFeatureState) => void): Promise<() => void>
   /** Read one domain, and the revision a write has to be based on. */
   readSettings(domain: PetSettingsDomain): Promise<PetSettingsLoad>
   /** Write one domain, refused when the revision it was based on has moved on (§5.3). */

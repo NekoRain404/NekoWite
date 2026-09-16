@@ -10,14 +10,23 @@
  * result with a list somebody chose. That test is what makes "the pet window is not a second
  * application" a fact about the build rather than a claim about the source.
  *
- * What it does import is two stylesheets and no runtime: the token scale and the palette, in
- * `main.ts`'s order, so the pet follows the host's theme and accent (§1) without carrying the
- * application's component layers. A stylesheet is not an application — the thing §7.1 forbids is
- * the *machinery*, and the graph test draws that line at the module it can see.
+ * What it does import is the pet's own public entry, the composition that decides what the pet
+ * talks to, and two stylesheets: the token scale and the palette, in `main.ts`'s order, so the pet
+ * follows the host's theme and accent (§1) without carrying the application's component layers. A
+ * stylesheet is not an application — the thing §7.1 forbids is the *machinery*, and the graph test
+ * draws that line at the module it can see. The composition's own reach is one adapter
+ * (`platform/gateways/tauri-pet.ts`, which is `invoke` and `listen`) and the feature's menu
+ * actions, and the test lists both with the reason each is there.
  */
 import { createApp } from 'vue'
+// By path, and deliberately not through `features/desktop-pet/index.ts`: that entry is the
+// feature's public API *for other callers* — the settings page mounts `PetCarePanel` through it —
+// and reaching it from here would put the whole of it in this window's source graph, the care
+// panel and D1's contract values included. §7.1's isolation is the stronger rule for this one
+// page, and `DesktopPetRoot.vue` plus the two services below are the whole of what it draws.
 import DesktopPetRoot from '../features/desktop-pet/components/DesktopPetRoot.vue'
 import type { PetGateway } from '../platform/gateways/pet-contracts'
+import { resolveDesktopPetDependencies } from './desktop-pet-composition'
 import '../styles/tokens.css'
 import '../styles/palettes.css'
 
@@ -28,9 +37,12 @@ export const DESKTOP_PET_ROOT_ID = 'desktop-pet'
  * What the pet window needs from its host.
  *
  * One field today, and a whole object rather than a bare gateway because §9 gives the pet a
- * composition of its own: `desktop-pet-composition.ts` is where the gateway, the task navigation
- * and the settings entry are assembled from `features/desktop-pet/index.ts`'s public surface, and
- * it is the integrator's file (§10.1). This is the seam it hands its work across.
+ * composition of its own: `desktop-pet-composition.ts` builds it from the feature's public entry
+ * and is where the task navigation and the settings entry are assembled (§10.1). This is the seam
+ * it hands its work across.
+ *
+ * It stays optional at the mount site because "no host" is a renderable state rather than a
+ * wiring error — see {@link resolveDesktopPetDependencies} below.
  */
 export interface DesktopPetDependencies {
   gateway: PetGateway
@@ -52,8 +64,10 @@ export type ResolveDesktopPetDependencies = () => DesktopPetDependencies | undef
  * Mount the pet into a page element, with or without a host connection.
  *
  * Without one the window renders its own state rather than a pet: see `DesktopPetRoot.vue`. That
- * is the same rule §7.2 applies to a capability — an absence is stated — and it is what makes
- * "the composition has not landed yet" visible instead of indistinguishable from a working pet.
+ * is the same rule §7.2 applies to a capability — an absence is stated — and it is the difference
+ * between a window that says "no host" and one that draws a pet whose every task came from a
+ * fixture. `resolveDesktopPetDependencies` answers `undefined` in exactly one case — a page with
+ * no Tauri host behind it — and deliberately does not fall back to D1's in-memory double.
  */
 export function mountDesktopPet(
   host: Element,
@@ -80,26 +94,6 @@ export function bootDesktopPet(
   const host = document.getElementById(DESKTOP_PET_ROOT_ID)
   if (!host) return null
   return mountDesktopPet(host, resolve())
-}
-
-/**
- * The pet's host connection, from the composition root this task stops at.
- *
- * §10.1 makes `S/app/desktop-pet-composition.ts` the integrator's, and the honest form of "not
- * wired yet" is not a gateway backed by something that is not the host: it is no gateway, which
- * the root renders as a stated absence. A `createMemoryPetGateway()` here would make the window
- * look finished while every task in it came from a fixture, which is the failure mode §7.1's
- * isolation clause exists to prevent.
- *
- * Landing the composition is one line — `return { gateway: createDesktopPetGateway() }` — and
- * `desktop-pet-entry.test.ts` asserts that this function's answer is still "no gateway", so the
- * day it lands the test fails and has to be rewritten to say which gateway arrived and from
- * where. That is deliberate: the assertion is about the absence, and an absence that stops being
- * true should be loud rather than discovered later in a window that quietly started talking to
- * something else.
- */
-function resolveDesktopPetDependencies(): DesktopPetDependencies | undefined {
-  return undefined
 }
 
 // The page this file is the entry for. Inert anywhere else — including under a test runner, where

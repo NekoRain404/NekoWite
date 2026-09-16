@@ -17,34 +17,32 @@
 //! - §7.2's 「不伪装已支持」. `window-climb` stays unavailable even when an observation claims it
 //!   worked, which is the one arm an observation may not move.
 //!
-//! Module inclusion: `lib.rs` does not declare `desktop_pet` — registering it is the integrator's
-//! serialized change — so the tree is declared here by path, the convention
-//! `agent_permission_ipc_test.rs` and `agent_registry_test.rs` established, and this target
-//! compiles exactly the source the library will build. The module list is `desktop_pet/mod.rs`'s
-//! own list: a name that drifted would fail to compile here rather than silently test something
-//! else.
+//! Module inclusion: `lib.rs` now declares `desktop_pet` (the integrator's D12 change), so this
+//! target addresses the library's own module instead of compiling the tree itself by `#[path]`.
+//! The `#[path]` form was what a test does while the file that registers a module belongs to
+//! another task; with the registration landed, `crate::desktop_pet` below is the module the app
+//! ships, and a name that drifted would fail to compile rather than test something else.
 //!
 //! The cases are divided by behaviour domain rather than kept in one file (§13.1's rule for a test
 //! that outgrows a page) — `windows` for which windows exist and what they were asked for,
 //! `access` for who is allowed to ask and what a teardown may not reach, `capabilities` for §7.2,
-//! and `support` for the window system that is not one. They are one target and one command:
+//! `commands` for the `#[tauri::command]` shims driven through Tauri's own IPC entry, and
+//! `support` for the window system that is not one. They are one target and one command:
 //! `cargo test --test desktop_pet_ipc_test` runs every one of them, because a test in a file
 //! nobody runs is not evidence.
 
-#[path = "../src/desktop_pet"]
-mod desktop_pet {
-    pub mod linux_capabilities;
-    pub mod window_host;
-}
+pub use nekowite_lib::desktop_pet;
 
 // `#[path]` rather than a bare `mod`, because this target's root is `tests/desktop_pet_ipc_test.rs`
 // and a plain `mod access;` would resolve to `tests/access.rs` — a file that cargo would then
-// discover as a *target of its own*, four of them, three of which do not compile alone. The
+// discover as a *target of its own*, six of them, five of which do not compile alone. The
 // directory holds behaviour, not targets, and there is deliberately no `main.rs` in it.
 #[path = "desktop_pet_ipc_test/access.rs"]
 mod access;
 #[path = "desktop_pet_ipc_test/capabilities.rs"]
 mod capabilities;
+#[path = "desktop_pet_ipc_test/commands.rs"]
+mod commands;
 #[path = "desktop_pet_ipc_test/support.rs"]
 mod support;
 #[path = "desktop_pet_ipc_test/teardown.rs"]

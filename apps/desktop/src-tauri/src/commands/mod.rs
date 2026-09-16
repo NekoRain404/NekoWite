@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod agent_settings;
 pub mod ai;
+pub mod desktop_pet;
 pub mod fs;
 pub mod keys;
 pub mod open;
