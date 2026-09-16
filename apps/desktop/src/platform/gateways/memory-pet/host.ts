@@ -263,11 +263,17 @@ export function createPetTaskHost(options: { epoch: string; now: () => number })
       return ingest(
         frameFor(key, 'permission-request', {
           requestId,
+          // The tool call this prompt is about: the contract carries it so a
+          // consumer can join the prompt to the row the timeline already shows.
+          toolCallId: `${key.sessionId}:tool`,
           title: 'A tool wants to run',
           input: { state: 'absent' },
           // Exactly the options the engine offered (§6.3): the double must not look like
           // an engine that invents an answer, and the pet never offers one at all.
-          options: [{ optionId: 'once', name: 'Allow once', kind: 'allow' }],
+          // The kind is the wire's own (`allow_once`), not a collapsed allow/reject —
+          // §6.3's rule that the UI uses the engine's options only means something if
+          // the difference between a one-off and a lasting grant survives the contract.
+          options: [{ optionId: 'once', name: 'Allow once', kind: 'allow_once' }],
         }),
       )
     },

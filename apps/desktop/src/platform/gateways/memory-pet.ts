@@ -39,7 +39,7 @@ import {
   type PetTaskProjection,
 } from './pet-contracts'
 import { createPetTaskHost } from './memory-pet/host'
-import { createMemoryPetSettings } from './memory-pet/settings'
+import { createPetSettingsDouble } from './memory-pet/settings'
 import {
   MEMORY_PET_EPOCH,
   unverified,
@@ -80,7 +80,7 @@ export interface MemoryPetGateway extends PetGateway {
 
 export function createMemoryPetGateway(options: MemoryPetOptions = {}): MemoryPetGateway {
   const host = createPetTaskHost({ epoch: MEMORY_PET_EPOCH, now: options.now ?? Date.now })
-  const settings = createMemoryPetSettings(options)
+  const settings = createPetSettingsDouble(options)
   const declared = options.capabilities ?? {}
   const opened: PetSettingsPage[] = []
   let visible = options.visible ?? false
