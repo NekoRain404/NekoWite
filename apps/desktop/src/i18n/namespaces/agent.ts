@@ -9,6 +9,81 @@ export const agent = {
         noMatch: 'No command matches',
         unavailable: 'The command list could not be received',
       },
+      /* The panel's own copy (T16), beside the command menu's and the permission prompt's. The
+         panel carries no sentence of its own, so every word it draws is read from here by the
+         caller that mounts it (`src/app/AgentRailBody.vue`). `state`, `result` and `status` are
+         keyed by the contract's own unions, so a state, a stop reason or a tool status added to
+         `agent-contracts` without a sentence here is a typecheck failure rather than a blank. */
+      panel: {
+        notice: {
+          gap: 'Part of this session’s record did not arrive, so what is below may be missing events.',
+          resync: 'Reload the session',
+        },
+        bar: {
+          untitled: 'New session',
+          state: {
+            idle: 'Idle',
+            starting: 'Starting',
+            ready: 'Ready',
+            running: 'Working',
+            waitingPermission: 'Waiting for you',
+            completed: 'Finished',
+            cancelled: 'Stopped',
+            failed: 'Failed',
+          },
+          result: {
+            endTurn: 'Answered',
+            maxTokens: 'Stopped at the engine’s token ceiling',
+            maxTurnRequests: 'Stopped at the engine’s request ceiling',
+            refusal: 'The engine declined to continue',
+            cancelled: 'Stopped before it finished',
+          },
+        },
+        timeline: {
+          aria: 'Agent transcript',
+          you: 'You',
+          thoughtOpen: 'Hide the reasoning',
+          thoughtClosed: 'Show the reasoning',
+          jump: 'Back to the end',
+          tool: {
+            status: {
+              pending: 'Queued',
+              inProgress: 'Running',
+              completed: 'Done',
+              failed: 'Failed',
+              cancelled: 'Cancelled',
+            },
+            expand: 'Show what this call carried',
+            collapse: 'Hide it',
+            args: 'Arguments',
+            output: 'Output',
+            argsAbsent: 'This call was made with no arguments',
+            argsUnreadable: 'The engine sent arguments this app could not read',
+            outputAbsent: 'This call produced no output',
+            outputUnreadable: 'This call produced output this app could not read',
+          },
+        },
+        composer: {
+          placeholder: 'Ask the agent to do something in this folder',
+          send: 'Send',
+          stop: 'Stop',
+          hint: 'Enter sends. The engine works inside the folder this app has open.',
+          hintBusy: 'Enter cannot send while this turn is running — the text stays here.',
+        },
+      },
+      /* The rail's own states, drawn by the shell around the panel: what it says while the
+         engine is coming up, and what it offers when it did not. The two ways out are the
+         rollback §12 asks for — ask again, or go back to the chat panel — and a refusal is shown
+         in the backend's own sentence rather than summarised into one this file invented. */
+      rail: {
+        starting: 'Starting the agent engine...',
+        noVault: 'The agent works inside one folder. Open a folder to use it.',
+        refused: 'The agent engine could not be started.',
+        retry: 'Try again',
+        useChat: 'Back to the chat panel',
+        unknownFailure: 'The request was refused without a reason this app could read.',
+        stopFailed: 'The agent engine could not be stopped: {reason}',
+      },
       permission: {
         argumentsPending: 'The engine has not sent the arguments yet',
         argumentsUnreadable: 'The engine sent arguments this app could not read',
@@ -379,6 +454,29 @@ export const agent = {
             noSilentApproval: 'A dangerous request that is never answered is never approved. Waiting is not consent, and nothing here grants a permission because a prompt was left alone.',
           },
         },
+        /* The tree's own page (T16): the one control that reaches the shell — which panel the
+           right rail shows — and the statements for the parts of this tree that have no host
+           half yet. Every absence below is named with what it is and what it would take,
+           because a page that drew a control it cannot carry out would be the one claim this
+           feature must not make (§13's rule the registry and pet-integration pages follow). */
+        agents: {
+          section: {
+            title: 'Agents',
+            hint: 'Which panel the right rail shows, and what this build cannot do with an engine yet.',
+          },
+          panel: {
+            label: 'Show the agent panel in the right rail',
+            hint: 'Off, the rail keeps the chat panel it has always had. On, the rail shows the agent panel for the folder this app has open instead — the chat panel is unmounted, so a reply still streaming is cancelled, and switching this off is how you get it back.',
+          },
+          gaps: {
+            title: 'Not connected in this build',
+            intro: 'Each of these would be a page or a control. The host half it needs does not exist yet, and a control that can only fail is not drawn:',
+            sections: 'The sections that configure an engine — runtime, provider and model, Skills, commands, MCP, permissions — each read through a host client this build has no implementation of, so none of them is reachable.',
+            registry: 'Adding, switching off or removing an engine. Nothing in a window can reach the registry: the backend has no command for it, so the engines this app may start are the ones it ships with.',
+            capabilities: 'What an engine actually supports. The negotiated half of the capability report is not joined to the declared half, so no page can say whether a model takes images or what a session may do.',
+            credentials: 'Provider credentials reaching the engine at launch. The start path builds the launch environment without them, so the engine’s own sign-in is what authenticates today.',
+          },
+        },
       },
     },
   },
@@ -390,6 +488,72 @@ export const agent = {
         empty: '本会话没有可用命令',
         noMatch: '没有匹配的命令',
         unavailable: '未能收到命令列表',
+      },
+      panel: {
+        notice: {
+          gap: '本会话的记录缺了一段，下面的内容可能缺少事件。',
+          resync: '重新载入会话',
+        },
+        bar: {
+          untitled: '新会话',
+          state: {
+            idle: '空闲',
+            starting: '正在启动',
+            ready: '就绪',
+            running: '进行中',
+            waitingPermission: '等待你的授权',
+            completed: '已结束',
+            cancelled: '已停止',
+            failed: '失败',
+          },
+          result: {
+            endTurn: '已回答',
+            maxTokens: '达到引擎的 token 上限而停止',
+            maxTurnRequests: '达到引擎的请求次数上限而停止',
+            refusal: '引擎拒绝继续',
+            cancelled: '未完成即被停止',
+          },
+        },
+        timeline: {
+          aria: '智能体记录',
+          you: '你',
+          thoughtOpen: '收起思考过程',
+          thoughtClosed: '展开思考过程',
+          jump: '回到末尾',
+          tool: {
+            status: {
+              pending: '排队中',
+              inProgress: '执行中',
+              completed: '完成',
+              failed: '失败',
+              cancelled: '已取消',
+            },
+            expand: '展开这次调用的内容',
+            collapse: '收起',
+            args: '参数',
+            output: '输出',
+            argsAbsent: '这次调用没有参数',
+            argsUnreadable: '引擎发送了本应用无法读取的参数',
+            outputAbsent: '这次调用没有输出',
+            outputUnreadable: '这次调用产生了本应用无法读取的输出',
+          },
+        },
+        composer: {
+          placeholder: '让智能体在这个文件夹里做点什么',
+          send: '发送',
+          stop: '停止',
+          hint: '回车发送。引擎在本应用打开的文件夹内工作。',
+          hintBusy: '本轮运行期间回车不会发送——文字会留在这里。',
+        },
+      },
+      rail: {
+        starting: '正在启动智能体引擎……',
+        noVault: '智能体在一个文件夹内工作。打开一个文件夹才能使用。',
+        refused: '智能体引擎未能启动。',
+        retry: '重试',
+        useChat: '回到聊天面板',
+        unknownFailure: '请求被拒绝，且没有给出本应用能读到的原因。',
+        stopFailed: '智能体引擎未能停止：{reason}',
       },
       permission: {
         argumentsPending: '引擎还没有发送参数',
@@ -756,6 +920,24 @@ export const agent = {
             noIsolation: '这套集成没有构建也没有验证过任何 Linux 沙箱，因此这里没有任何东西是被隔离的。任何相反的说法，都是在描述一个并不存在的功能。',
             staleRequests: '一次请求属于某一个运行时、库、会话与任务。回答一个已经处理过的请求，或属于已经结束会话的请求，会被拒绝，而不是套用到用户眼前的东西上。',
             noSilentApproval: '危险请求如果始终无人回答，就永远不会被批准。等待不是同意，这里也不会因为提示被放着不管就授予权限。',
+          },
+        },
+        agents: {
+          section: {
+            title: '智能体',
+            hint: '右侧栏显示哪个面板，以及当前构建在引擎上还做不到什么。',
+          },
+          panel: {
+            label: '在右侧栏显示智能体面板',
+            hint: '关闭时，右栏保留原来的聊天面板。打开后，右栏改为显示智能体面板，在本应用已打开的文件夹内工作——聊天面板会被卸载，正在流式返回的回复会被取消；关掉这个开关就能把它找回来。',
+          },
+          gaps: {
+            title: '当前构建尚未接通的部分',
+            intro: '下面每一条本来都会是一页设置或一个控件。它们需要的后端一半还不存在，而一个只能失败的控件不会被画出来：',
+            sections: '配置引擎的各页——运行时、供应商与模型、Skills、命令、MCP、权限——都通过一个宿主客户端读取，而当前构建没有任何实现，因此哪一页都进不去。',
+            registry: '添加、停用或移除引擎。窗口里没有任何东西能访问注册表：后端没有对应的命令，所以可启动的引擎就是随应用附带的那些。',
+            capabilities: '引擎实际支持什么。能力报告中协商到的那一半还没有与声明的那一半合并，因此没有哪一页能说某个模型是否接受图片、一个会话能做哪些事。',
+            credentials: '供应商凭据在启动时送达引擎。启动路径构建环境时并不带上它们；目前完成认证的是引擎自己的登录流程。',
           },
         },
       },
