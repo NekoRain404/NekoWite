@@ -86,14 +86,16 @@ pub fn run() {
         .manage(state::VaultRegistry::default())
         .manage(state::AiState::default())
         .manage(state::KeyVault::default())
-        // The agent subsystem's handle: the engine definitions and the one
-        // running engine, both empty until a session is started. Registered
-        // here rather than by whoever starts it, because this file is the app's
-        // assembly point and a second writer of it is a merge that compiles and
-        // wires the wrong thing; what a later start path does is *fill* the two
-        // slots and `manage` its own IPC state, neither of which touches this
-        // list.
+        // The agent subsystem's two handles: the engine definitions and the one
+        // running engine, and the session the commands above address. Both are
+        // empty until a session is started, and both are registered here rather
+        // than by whoever starts it: this file is the app's assembly point, and
+        // `manage` sets a type's state once — so a start path that tried to
+        // install its own would work exactly once and then have nowhere to put
+        // the second runtime. What `agent_start` does is *fill* the slots these
+        // two already have.
         .manage(state::AgentRuntimeState::default())
+        .manage(commands::agent::AgentIpcState::default())
         .setup(|app| {
             // The folders the app's own files live in, before a window exists
             // to ask for them: the config directory the remembered-vault record
@@ -115,7 +117,15 @@ pub fn run() {
                 None => eprintln!("could not resolve the app configuration directory"),
             }
             match storage::key_store::data_dir(app.handle()) {
-                Ok(dir) => owned.push((AppDir::Data, dir)),
+                Ok(dir) => {
+                    // The settings surface's store, built here because it needs the data
+                    // directory and there is exactly one moment at which that is known and a
+                    // window does not yet exist to ask. It is a path and nothing else — no open
+                    // files — so nothing here has to be kept in sync with a disk that may change
+                    // under it.
+                    app.manage(commands::agent_settings::AgentSettingsState::new(&dir));
+                    owned.push((AppDir::Data, dir));
+                }
                 Err(e) => eprintln!("could not resolve the app data directory: {e}"),
             }
             domain::app_owned::install(owned);
@@ -178,15 +188,29 @@ pub fn run() {
             commands::keys::unlock_vault,
             commands::system::system_accent_color,
             commands::open::take_pending_open,
-            // The agent commands. Both address `AgentIpcState`, which is managed
-            // by whoever starts the engine rather than here (see
-            // `state::AgentRuntimeState`), so until a runtime has been started an
-            // invoke of either is refused with Tauri's own "state not managed for
-            // field `state` on command …" — a rejected promise naming the command
-            // that is missing its state, not a silent no-op and not a panic
-            // (`tauri 2.11.5`, `src/state.rs`, `State::from_command`).
+            // The agent commands. All eight address `AgentIpcState`, whose one
+            // slot is empty until `agent_start` fills it, so an invoke before a
+            // start is refused with this side's own sentence ("no agent session
+            // is running: start one first") rather than with Tauri's missing-state
+            // error — which is why the state is managed here, at startup, and not
+            // by the start path that fills it.
+            commands::agent::agent_start,
+            commands::agent::agent_stop,
+            commands::agent::agent_open_session,
+            commands::agent::agent_set_config_option,
+            commands::agent::agent_prompt,
+            commands::agent::agent_session_snapshot,
             commands::agent::agent_permission_answer,
             commands::agent::agent_cancel_run,
+            // The configuration surface (T12): the profile a settings page manages, and the
+            // documents it edits. Registered here for the reason above — this file is the one
+            // place the handler list is written — and its state is managed in `setup`, where the
+            // data directory it is built from first exists.
+            commands::agent_settings::agent_profile_read,
+            commands::agent_settings::agent_profile_write,
+            commands::agent_settings::agent_config_document,
+            commands::agent_settings::agent_config_edit,
+            commands::agent_settings::agent_credentials_write,
         ])
         .run(context)
         .expect("error while running tauri application");

@@ -35,10 +35,12 @@ use agent_runtime::permissions::{
     ToolInput, cancel_run,
 };
 use agent_runtime::{
-    AgentEventEnvelope, AgentEventKind, AgentIdentity, AgentRuntime, EngineConnection, EngineLaunch,
-    VaultFiles,
+    AgentEventEnvelope, AgentEventKind, AgentIdentity, AgentRuntime, AgentRuntimeEvents,
+    EngineConnection, EngineLaunch, VaultFiles,
 };
 use commands::agent::{AgentIpcState, apply_permission_answer, pending_prompts, refusal_message};
+use agent_runtime::driver::Session;
+use agent_runtime::snapshot::{REPLAY_WINDOW, SessionSnapshots};
 
 /// T2's transport tests panic in a vault; this file's frame is a permission request, so the same
 /// stub holds: reaching the vault would mean the fixture sent something unexpected.
@@ -140,7 +142,7 @@ fn fixture(behaviour: &str, capture: &Path, frame: &str) -> EngineLaunch {
     }
 }
 
-async fn start(launch: &EngineLaunch) -> AgentRuntime {
+async fn start(launch: &EngineLaunch) -> (AgentRuntime, AgentRuntimeEvents) {
     let (connection, events) = EngineConnection::connect(launch)
         .await
         .expect("the fixture engine should start");
@@ -219,7 +221,12 @@ async fn refused_and_silent(capture: &Path) {
 /// One permission request, all the way through: the engine asked, this host adopted it, and the
 /// renderer has a prompt.
 struct Asked {
-    runtime: AgentRuntime,
+    /// The asking half, shared the way the IPC state shares it: every call it answers takes
+    /// `&self`, so a test can hand the state its own share and keep using the runtime.
+    runtime: Arc<AgentRuntime>,
+    /// The engine's stream. Kept beside the runtime because the runtime no longer owns it: the
+    /// one task that reads an engine owns both of its receivers by value (`driver.rs`).
+    events: AgentRuntimeEvents,
     table: Arc<PermissionTable>,
     prompt: PermissionPrompt,
     /// The envelope the prompt arrived in. The identity an answer must carry is the one the
@@ -231,6 +238,17 @@ struct Asked {
 }
 
 impl Asked {
+    /// The four fields a runtime is started with — the identity `Session` carries (the fifth, the
+    /// session id, is the engine's and arrives with `session/new`).
+    fn runtime_identity(&self) -> AgentIdentity {
+        AgentIdentity {
+            agent_id: self.envelope.agent_id.clone(),
+            profile_id: self.envelope.profile_id.clone(),
+            runtime_epoch: self.envelope.runtime_epoch.clone(),
+            vault_id: self.envelope.vault_id.clone(),
+        }
+    }
+
     fn identity(&self) -> PermissionIdentity {
         PermissionIdentity {
             agent_id: self.envelope.agent_id.clone(),
@@ -270,7 +288,7 @@ async fn ask_full(label: &str, behaviour: &str, open_run: bool, frame: Option<St
     let capture = dir.join("capture");
     let vault = temp_dir(&format!("{label}-vault"));
     let frame = frame.unwrap_or_else(|| permission_frame("ses_fake_1", &vault.join("note.md")));
-    let mut runtime = start(&fixture(behaviour, &capture, &frame)).await;
+    let (runtime, mut events) = start(&fixture(behaviour, &capture, &frame)).await;
     runtime.initialize().await.expect("initialize");
     let session = runtime
         .open_session(&vault)
@@ -283,13 +301,14 @@ async fn ask_full(label: &str, behaviour: &str, open_run: bool, frame: Option<St
             .expect("a prompt starts a run");
     }
     let prompt = table
-        .adopt_next(&mut runtime)
+        .adopt_next(&mut events)
         .await
         .expect("the engine asked for permission")
         .expect("the request belongs to a session this host opened");
-    let envelope = event_of_kind(&mut runtime, AgentEventKind::PermissionRequest).await;
+    let envelope = event_of_kind(&mut events, AgentEventKind::PermissionRequest).await;
     Asked {
-        runtime,
+        runtime: Arc::new(runtime),
+        events,
         table,
         prompt,
         envelope,
@@ -299,10 +318,10 @@ async fn ask_full(label: &str, behaviour: &str, open_run: bool, frame: Option<St
 }
 
 /// The next host event of `kind`, skipping whatever else the run produced.
-async fn event_of_kind(runtime: &mut AgentRuntime, kind: AgentEventKind) -> AgentEventEnvelope {
+async fn event_of_kind(events: &mut AgentRuntimeEvents, kind: AgentEventKind) -> AgentEventEnvelope {
     let deadline = tokio::time::Instant::now() + PATIENCE;
     loop {
-        let event = next_event(runtime, deadline).await;
+        let event = next_event(events, deadline).await;
         if event.kind == kind {
             return event;
         }
@@ -314,7 +333,7 @@ async fn event_of_kind(runtime: &mut AgentRuntime, kind: AgentEventKind) -> Agen
 async fn drain_until_text(asked: &mut Asked) {
     let deadline = tokio::time::Instant::now() + PATIENCE;
     loop {
-        let event = next_event(&mut asked.runtime, deadline).await;
+        let event = next_event(&mut asked.events, deadline).await;
         if event.kind == AgentEventKind::TextDelta {
             return;
         }
@@ -322,10 +341,10 @@ async fn drain_until_text(asked: &mut Asked) {
 }
 
 async fn next_event(
-    runtime: &mut AgentRuntime,
+    events: &mut AgentRuntimeEvents,
     deadline: tokio::time::Instant,
 ) -> AgentEventEnvelope {
-    tokio::time::timeout_at(deadline, runtime.recv_event())
+    tokio::time::timeout_at(deadline, events.next_event())
         .await
         .expect("an event should arrive")
         .expect("the runtime should still be running")
@@ -340,9 +359,19 @@ const _: fn() = || {
     assert_send_sync::<AgentRuntime>();
     assert_send_sync::<PermissionTable>();
     assert_send_sync::<AgentIpcState>();
-    let _ = AgentIpcState::new;
+    assert_send_sync::<Session>();
+    let _ = AgentIpcState::default;
+    let _ = AgentIpcState::session;
     let _ = commands::agent::agent_permission_answer;
     let _ = commands::agent::agent_cancel_run;
+    // The session half, which `generate_handler!` names: a rename that no handler noticed would
+    // otherwise only surface in `lib.rs`.
+    let _ = commands::agent::agent_start;
+    let _ = commands::agent::agent_stop;
+    let _ = commands::agent::agent_open_session;
+    let _ = commands::agent::agent_set_config_option;
+    let _ = commands::agent::agent_prompt;
+    let _ = commands::agent::agent_session_snapshot;
 };
 
 // --- The proof that our handler answered ---
@@ -515,14 +544,14 @@ async fn a_request_for_an_unknown_session_is_refused_to_the_engine() {
     let dir = temp_dir("unknown-session");
     let capture = dir.join("capture");
     let frame = permission_frame("ses_not_ours", &dir.join("note.md"));
-    let mut runtime = start(&fixture("good", &capture, &frame)).await;
+    let (runtime, mut events) = start(&fixture("good", &capture, &frame)).await;
     runtime.initialize().await.expect("initialize");
     let vault = temp_dir("unknown-session-vault");
     runtime.open_session(&vault).await.expect("a session of our own");
     let table = PermissionTable::new(identity(), &runtime);
 
     let refused = table
-        .adopt_next(&mut runtime)
+        .adopt_next(&mut events)
         .await
         .expect("the engine asked anyway")
         .expect_err("that session is not this host's");
@@ -713,25 +742,36 @@ async fn the_engine_cancelling_its_own_request_revokes_the_prompt() {
 
 #[tokio::test]
 async fn the_ipc_state_carries_the_runtime_and_the_prompt_snapshot() {
-    // The state Tauri registers, built the way `lib.rs` will build it: the runtime and the table in
-    // one state, with the sharing the commands need. §6.2's remount snapshot — taken before the
-    // subscription starts — has to see the open prompt, or a reloaded window would answer blind.
+    // The state Tauri registers, filled the way `agent_start` fills it: the session that carries
+    // the runtime, the table and the snapshots together. §6.2's remount snapshot — taken before
+    // the subscription starts — has to see the open prompt, or a reloaded window would answer
+    // blind.
     let asked = ask("ipc-state", false).await;
     assert_eq!(pending_prompts(&asked.table).len(), 1, "the open prompt is in the snapshot");
 
-    // Built the way the composition has to: the table exists *before* the runtime is shared, since
-    // the driver that feeds it takes requests off the runtime through `&mut`, and a state made by
-    // `AgentIpcState::new` would hold a second table that never saw this prompt.
-    let answer = asked.answer("once");
-    let state = AgentIpcState {
-        runtime: Arc::new(asked.runtime),
+    // The table is the one that saw this prompt. `install` builds it from the runtime before the
+    // runtime is shared, so a state holding a second table is not a state this composition can
+    // produce — the shape that made it possible (receivers reached through `&mut`, and therefore
+    // a table that had to exist before the runtime was shared) went with the reading half.
+    let state = AgentIpcState::default();
+    state.install(Session {
+        identity: asked.runtime_identity(),
+        runtime: Arc::clone(&asked.runtime),
         permissions: Arc::clone(&asked.table),
-    };
-    apply_permission_answer(&state.permissions, answer).expect("through the state's own table");
+        snapshots: Arc::new(SessionSnapshots::new(
+            asked.runtime_identity(),
+            REPLAY_WINDOW,
+        )),
+        model_option_id: Some("model".to_string()),
+    });
 
-    assert!(pending_prompts(&state.permissions).is_empty(), "answered, so nothing is pending");
+    let session = state.session().expect("a session is running");
+    apply_permission_answer(&session.permissions, asked.answer("once"))
+        .expect("through the state's own table");
+
+    assert!(pending_prompts(&session.permissions).is_empty(), "answered, so nothing is pending");
     wait_for_an_answer(&asked.capture).await;
-    state.runtime.shutdown();
+    session.runtime.shutdown();
 }
 
 // --- Watching the process itself ---

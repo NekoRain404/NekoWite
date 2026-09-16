@@ -34,7 +34,7 @@ use agent_runtime::registry::{
     AgentInstance, AgentRegistration, AgentRegistry, EnvPolicy, InstallSource,
     RegistryError,
 };
-use agent_runtime::session::AgentRuntime;
+use agent_runtime::session::AgentRuntimeEvents;
 
 /// Generous enough that a slow machine does not flake, short enough that a hang fails the run
 /// rather than the suite's timeout.
@@ -116,19 +116,19 @@ async fn started(
     vault_id: &str,
     root: &Path,
 ) -> AgentInstance {
-    let mut instance = try_start(registry, agent_id, profile_id, vault_id, root)
+    let instance = try_start(registry, agent_id, profile_id, vault_id, root)
         .await
         .expect("the fixture engine should start");
     instance
-        .runtime_mut()
+        .runtime()
         .initialize()
         .await
         .expect("the fixture engine should initialize");
     instance
 }
 
-async fn next_event(runtime: &mut AgentRuntime) -> AgentEventEnvelope {
-    tokio::time::timeout(PATIENCE, runtime.recv_event())
+async fn next_event(events: &mut AgentRuntimeEvents) -> AgentEventEnvelope {
+    tokio::time::timeout(PATIENCE, events.next_event())
         .await
         .expect("an event should arrive")
         .expect("the runtime should still be running")
@@ -137,12 +137,12 @@ async fn next_event(runtime: &mut AgentRuntime) -> AgentEventEnvelope {
 /// Reads events until `stop` says so, so a test asserts on a whole run rather than on whichever
 /// event arrived first.
 async fn events_until(
-    runtime: &mut AgentRuntime,
+    events: &mut AgentRuntimeEvents,
     mut stop: impl FnMut(&AgentEventEnvelope) -> bool,
 ) -> Vec<AgentEventEnvelope> {
     let mut collected = Vec::new();
     loop {
-        let event = next_event(runtime).await;
+        let event = next_event(events).await;
         let done = stop(&event);
         collected.push(event);
         if done {
@@ -178,7 +178,7 @@ fn register_fixture(registry: &mut AgentRegistry, agent_id: &str, profile_id: &s
 /// Opens a session on a started instance and returns the engine's own session id.
 async fn open_session(instance: &mut AgentInstance, root: &Path) -> String {
     instance
-        .runtime_mut()
+        .runtime()
         .open_session(root)
         .await
         .expect("session/new")
@@ -192,10 +192,11 @@ async fn run_to_finish(
     prompt: &str,
 ) -> Vec<AgentEventEnvelope> {
     instance
-        .runtime_mut()
+        .runtime()
         .prompt(session_id, prompt)
         .expect("prompt");
-    events_until(instance.runtime_mut(), |event| {
+    let events = instance.events_mut().expect("the fixture's reader is still here");
+    events_until(events, |event| {
         event.kind == AgentEventKind::RunFinished
     })
     .await
@@ -236,15 +237,17 @@ async fn two_engines_reporting_the_same_session_id_do_not_cross_streams() {
         "the collision is this test's premise: the id is the engine's to choose"
     );
     assert_eq!(session_a, "ses_fake_1", "and the fixture's is fixed");
-    let run_a = a.runtime_mut().prompt(&session_a, "hello").expect("prompt a");
-    let run_b = b.runtime_mut().prompt(&session_b, "hello").expect("prompt b");
-    let events_a = events_until(a.runtime_mut(), |event| {
-        event.kind == AgentEventKind::RunFinished
-    })
+    let run_a = a.runtime().prompt(&session_a, "hello").expect("prompt a");
+    let run_b = b.runtime().prompt(&session_b, "hello").expect("prompt b");
+    let events_a = events_until(
+        a.events_mut().expect("a's reader is still here"),
+        |event| event.kind == AgentEventKind::RunFinished,
+    )
     .await;
-    let events_b = events_until(b.runtime_mut(), |event| {
-        event.kind == AgentEventKind::RunFinished
-    })
+    let events_b = events_until(
+        b.events_mut().expect("b's reader is still here"),
+        |event| event.kind == AgentEventKind::RunFinished,
+    )
     .await;
     // Both engines answer with the same words, so no content tells them apart; and the host's own
     // run id is a per-instance counter, so "run-0" names two pieces of work at once.
@@ -313,14 +316,20 @@ async fn the_same_request_id_on_two_engines_stays_with_its_own_instance() {
     let session_a = open_session(&mut a, &root).await;
     let session_b = open_session(&mut b, &root).await;
     assert_eq!(session_a, session_b);
-    let asked_a = tokio::time::timeout(PATIENCE, a.runtime_mut().recv_permission())
-        .await
-        .expect("a asks")
-        .expect("a is running");
-    let asked_b = tokio::time::timeout(PATIENCE, b.runtime_mut().recv_permission())
-        .await
-        .expect("b asks")
-        .expect("b is running");
+    let asked_a = tokio::time::timeout(
+        PATIENCE,
+        a.events_mut().expect("a's reader is still here").next_permission(),
+    )
+    .await
+    .expect("a asks")
+    .expect("a is running");
+    let asked_b = tokio::time::timeout(
+        PATIENCE,
+        b.events_mut().expect("b's reader is still here").next_permission(),
+    )
+    .await
+    .expect("b asks")
+    .expect("b is running");
     assert_eq!(asked_a.request.session_id.to_string(), "ses_fake_1");
     assert_eq!(asked_b.request.session_id.to_string(), "ses_fake_1");
     assert_eq!(
@@ -340,12 +349,12 @@ async fn an_engine_that_crashes_leaves_another_running() {
     let mut registry = AgentRegistry::with_bundled("/opt/nekowite/opencode");
     register_fixture(&mut registry, "doomed", "p-doomed", "mid-request-exit");
     register_fixture(&mut registry, "survivor", "p-survivor", "good");
-    let mut doomed = try_start(&registry, "doomed", "p-doomed", "vault-1", &root)
+    let doomed = try_start(&registry, "doomed", "p-doomed", "vault-1", &root)
         .await
         .expect("the process starts");
     let mut survivor = started(&registry, "survivor", "p-survivor", "vault-1", &root).await;
     // The fixture exits without answering the handshake: a crash, not a refusal.
-    let crashed = doomed.runtime_mut().initialize().await;
+    let crashed = doomed.runtime().initialize().await;
     assert!(crashed.is_err(), "a dead engine cannot answer: {crashed:?}");
     // §3.4.8: 各引擎故障互不传播 — the other engine never noticed.
     let session = open_session(&mut survivor, &root).await;
@@ -438,7 +447,7 @@ async fn a_live_instance_keeps_its_registration_from_being_disabled() {
     register_fixture(&mut registry, "fake-a", "prof-a", "stream");
     let mut instance = started(&registry, "fake-a", "prof-a", "vault-1", &root).await;
     let session = open_session(&mut instance, &root).await;
-    instance.runtime_mut().prompt(&session, "hello").expect("prompt");
+    instance.runtime().prompt(&session, "hello").expect("prompt");
     let error = registry.set_enabled("fake-a", false);
     assert!(
         matches!(error, Err(RegistryError::InstanceRunning { .. })),

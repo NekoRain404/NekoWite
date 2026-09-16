@@ -29,7 +29,7 @@ use agent_runtime::registry::{
     redacted_env, AgentInstance, AgentRegistration, AgentRegistry, EnvPolicy, InstallSource,
     ProgramState, RegistryError, UpdatePolicy, DEFAULT_PROFILE,
 };
-use agent_runtime::session::AgentRuntime;
+use agent_runtime::session::AgentRuntimeEvents;
 
 /// Generous enough that a slow machine does not flake, short enough that a hang fails the run
 /// rather than the suite's timeout.
@@ -100,19 +100,19 @@ async fn started(
     vault_id: &str,
     root: &Path,
 ) -> AgentInstance {
-    let mut instance = try_start(registry, agent_id, profile_id, vault_id, root)
+    let instance = try_start(registry, agent_id, profile_id, vault_id, root)
         .await
         .expect("the fixture engine should start");
     instance
-        .runtime_mut()
+        .runtime()
         .initialize()
         .await
         .expect("the fixture engine should initialize");
     instance
 }
 
-async fn next_event(runtime: &mut AgentRuntime) -> AgentEventEnvelope {
-    tokio::time::timeout(PATIENCE, runtime.recv_event())
+async fn next_event(events: &mut AgentRuntimeEvents) -> AgentEventEnvelope {
+    tokio::time::timeout(PATIENCE, events.next_event())
         .await
         .expect("an event should arrive")
         .expect("the runtime should still be running")
@@ -121,12 +121,12 @@ async fn next_event(runtime: &mut AgentRuntime) -> AgentEventEnvelope {
 /// Reads events until `stop` says so, so a test asserts on a whole run rather than on whichever
 /// event arrived first.
 async fn events_until(
-    runtime: &mut AgentRuntime,
+    events: &mut AgentRuntimeEvents,
     mut stop: impl FnMut(&AgentEventEnvelope) -> bool,
 ) -> Vec<AgentEventEnvelope> {
     let mut collected = Vec::new();
     loop {
-        let event = next_event(runtime).await;
+        let event = next_event(events).await;
         let done = stop(&event);
         collected.push(event);
         if done {
@@ -154,7 +154,7 @@ fn refused<T>(result: Result<T, RegistryError>) -> RegistryError {
 /// Opens a session on a started instance and returns the engine's own session id.
 async fn open_session(instance: &mut AgentInstance, root: &Path) -> String {
     instance
-        .runtime_mut()
+        .runtime()
         .open_session(root)
         .await
         .expect("session/new")
@@ -168,10 +168,11 @@ async fn run_to_finish(
     prompt: &str,
 ) -> Vec<AgentEventEnvelope> {
     instance
-        .runtime_mut()
+        .runtime()
         .prompt(session_id, prompt)
         .expect("prompt");
-    events_until(instance.runtime_mut(), |event| {
+    let events = instance.events_mut().expect("the fixture's reader is still here");
+    events_until(events, |event| {
         event.kind == AgentEventKind::RunFinished
     })
     .await

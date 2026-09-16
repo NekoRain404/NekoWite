@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use agent_runtime::{
     AgentEventEnvelope, AgentEventKind, AgentFailureCode, AgentIdentity, AgentRuntime,
-    EngineConnection, EngineLaunch, VaultFiles, isolated_profile_env,
+    AgentRuntimeEvents, EngineConnection, EngineLaunch, VaultFiles, isolated_profile_env,
 };
 
 /// The transport tests touch no vault: the fixture engine sends no `fs/*`
@@ -90,7 +90,7 @@ fn fixture(behaviour: &str, capture: Option<&Path>) -> EngineLaunch {
     }
 }
 
-async fn start(launch: &EngineLaunch) -> AgentRuntime {
+async fn start(launch: &EngineLaunch) -> (AgentRuntime, AgentRuntimeEvents) {
     let (connection, events) = EngineConnection::connect(launch)
         .await
         .expect("the fixture engine should start");
@@ -98,8 +98,8 @@ async fn start(launch: &EngineLaunch) -> AgentRuntime {
 }
 
 /// The next host event, failing the test rather than hanging.
-async fn next_event(runtime: &mut AgentRuntime) -> AgentEventEnvelope {
-    tokio::time::timeout(PATIENCE, runtime.recv_event())
+async fn next_event(events: &mut AgentRuntimeEvents) -> AgentEventEnvelope {
+    tokio::time::timeout(PATIENCE, events.next_event())
         .await
         .expect("an event should arrive")
         .expect("the runtime should still be running")
@@ -108,12 +108,12 @@ async fn next_event(runtime: &mut AgentRuntime) -> AgentEventEnvelope {
 /// Reads events until `stop` says so, so a test can assert on a whole run
 /// instead of on whichever event happened to arrive first.
 async fn events_until(
-    runtime: &mut AgentRuntime,
+    events: &mut AgentRuntimeEvents,
     mut stop: impl FnMut(&AgentEventEnvelope) -> bool,
 ) -> Vec<AgentEventEnvelope> {
     let mut collected = Vec::new();
     loop {
-        let event = next_event(runtime).await;
+        let event = next_event(events).await;
         let done = stop(&event);
         collected.push(event);
         if done {
@@ -123,10 +123,10 @@ async fn events_until(
 }
 
 /// Collects everything that arrives within `within`, then stops.
-async fn events_for(runtime: &mut AgentRuntime, within: Duration) -> Vec<AgentEventEnvelope> {
+async fn events_for(events: &mut AgentRuntimeEvents, within: Duration) -> Vec<AgentEventEnvelope> {
     let mut collected = Vec::new();
     let deadline = tokio::time::Instant::now() + within;
-    while let Ok(Some(event)) = tokio::time::timeout_at(deadline, runtime.recv_event()).await {
+    while let Ok(Some(event)) = tokio::time::timeout_at(deadline, events.next_event()).await {
         collected.push(event);
     }
     collected
@@ -146,7 +146,7 @@ fn texts(events: &[AgentEventEnvelope]) -> Vec<String> {
 
 #[tokio::test]
 async fn initialize_negotiates_the_measured_protocol_version() {
-    let mut runtime = start(&fixture("good", None)).await;
+    let (runtime, _events) = start(&fixture("good", None)).await;
 
     let response = runtime.initialize().await.expect("initialize");
 
@@ -164,11 +164,11 @@ async fn two_frames_in_one_write_are_both_handled() {
     // write — the sequence P0 §2.2 measured. A reader that treats one read as
     // one message loses the second frame; the SDK's line framing must split
     // them, and both must be acted on.
-    let mut runtime = start(&fixture("two-in-one", None)).await;
+    let (runtime, mut events) = start(&fixture("two-in-one", None)).await;
     runtime.initialize().await.expect("initialize");
 
     let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
-    let event = next_event(&mut runtime).await;
+    let event = next_event(&mut events).await;
 
     assert_eq!(event.kind, AgentEventKind::CommandsChanged);
     assert_eq!(event.session_id, session.session_id);
@@ -179,7 +179,7 @@ async fn two_frames_in_one_write_are_both_handled() {
 async fn utf8_split_across_reads_is_reassembled() {
     // The fixture writes half of a three-byte character, waits, then writes the
     // rest. Nothing may be decoded before the frame is whole.
-    let mut runtime = start(&fixture("split-utf8", None)).await;
+    let (runtime, _events) = start(&fixture("split-utf8", None)).await;
 
     let response = runtime.initialize().await.expect("initialize");
 
@@ -199,7 +199,7 @@ async fn a_line_that_is_not_json_does_not_end_the_session() {
     // stdout is protocol, so a non-JSON line there is a real violation; what it
     // must not be is fatal to the connection, which is still perfectly able to
     // answer the request that follows.
-    let mut runtime = start(&fixture("malformed", None)).await;
+    let (runtime, _events) = start(&fixture("malformed", None)).await;
 
     let response = runtime.initialize().await.expect("initialize");
 
@@ -212,7 +212,7 @@ async fn a_response_for_an_unknown_id_is_discarded() {
     // A frame whose id matches no outstanding request (the SDK numbers its
     // requests with UUID strings) must not be delivered anywhere, and must not
     // end the connection: the request that follows is still answered.
-    let mut runtime = start(&fixture("unknown-id", None)).await;
+    let (runtime, _events) = start(&fixture("unknown-id", None)).await;
 
     let response = runtime.initialize().await.expect("initialize");
 
@@ -230,7 +230,7 @@ async fn a_child_that_dies_mid_request_does_not_park_it_forever() {
     // What is asserted is only that the call ENDS. Which of the two guards ends
     // it — the SDK noticing the closed transport, or our own per-call bound —
     // is printed, because it is what T3 needs to know it is proving.
-    let mut runtime = start(&fixture("mid-request-exit", None)).await;
+    let (runtime, _events) = start(&fixture("mid-request-exit", None)).await;
     let started = std::time::Instant::now();
 
     let outcome = tokio::time::timeout(PATIENCE, runtime.initialize()).await;
@@ -253,7 +253,7 @@ async fn an_endless_frame_aborts_the_run_and_reports_the_bound() {
     // run and report it, never buffer without limit and never drop the frame
     // quietly. The bound is ours, because `agent-client-protocol`'s `Lines` has
     // no maximum anywhere and its splitter grows until it finds a newline.
-    let mut runtime = start(&fixture("oversized", None)).await;
+    let (runtime, _events) = start(&fixture("oversized", None)).await;
 
     let outcome = tokio::time::timeout(PATIENCE, runtime.initialize()).await;
 
@@ -281,7 +281,7 @@ async fn the_engine_is_started_with_the_ca_bundle() {
     // whose chain is missing from the engine's store fails as an opaque TLS
     // error, which P0 §2.4 measured and §2.4 requires the runtime to prevent.
     let capture = temp_dir("ca").join("capture");
-    let mut runtime = start(&fixture("good", Some(&capture))).await;
+    let (runtime, _events) = start(&fixture("good", Some(&capture))).await;
     runtime.initialize().await.expect("initialize");
 
     let recorded = fs::read_to_string(&capture).expect("the fixture should have reported its env");
@@ -302,7 +302,7 @@ async fn a_certificate_failure_is_classified_and_reworded() {
     // The measured shape (P0 §2.4): the engine reports an untrusted certificate
     // as a generic -32603 whose message is the only evidence of the real
     // condition, and §2.4 forbids showing that message to a user.
-    let mut runtime = start(&fixture("cert-fail", None)).await;
+    let (runtime, _events) = start(&fixture("cert-fail", None)).await;
 
     let error = runtime.initialize().await.expect_err("this fixture fails");
 
@@ -322,7 +322,7 @@ async fn a_certificate_failure_is_classified_and_reworded() {
 
 #[tokio::test]
 async fn a_session_reports_the_command_list_before_any_run() {
-    let mut runtime = start(&fixture("good", None)).await;
+    let (runtime, mut events) = start(&fixture("good", None)).await;
     runtime.initialize().await.expect("initialize");
 
     let session = runtime
@@ -332,7 +332,7 @@ async fn a_session_reports_the_command_list_before_any_run() {
 
     // P0 §2.2: the command list follows as a notification, not in the response,
     // and it arrives with no run open.
-    let event = next_event(&mut runtime).await;
+    let event = next_event(&mut events).await;
     assert_eq!(event.kind, AgentEventKind::CommandsChanged);
     assert_eq!(event.session_id, session.session_id);
     assert!(event.run_id.is_none(), "a session event carries no run id");
@@ -341,12 +341,12 @@ async fn a_session_reports_the_command_list_before_any_run() {
 
 #[tokio::test]
 async fn a_prompt_streams_text_and_ends_with_the_measured_stop_reason() {
-    let mut runtime = start(&fixture("good", None)).await;
+    let (runtime, mut events) = start(&fixture("good", None)).await;
     runtime.initialize().await.expect("initialize");
     let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
 
     let run_id = runtime.prompt(&session.session_id, "hello").expect("prompt");
-    let events = events_until(&mut runtime, |event| {
+    let events = events_until(&mut events, |event| {
         event.kind == AgentEventKind::RunFinished
     })
     .await;
@@ -367,12 +367,12 @@ async fn a_thought_chunk_never_reaches_the_host_as_an_unknown() {
     // The fixture emits an `agent_thought_chunk` between the text chunks. It
     // has no host kind (a decision the contract owns, see `events`), and the
     // one thing it must not do is arrive as a mystery payload.
-    let mut runtime = start(&fixture("good", None)).await;
+    let (runtime, mut events) = start(&fixture("good", None)).await;
     runtime.initialize().await.expect("initialize");
     let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
 
     runtime.prompt(&session.session_id, "hello").expect("prompt");
-    let events = events_until(&mut runtime, |event| {
+    let events = events_until(&mut events, |event| {
         event.kind == AgentEventKind::RunFinished
     })
     .await;
@@ -389,7 +389,7 @@ async fn a_thought_chunk_never_reaches_the_host_as_an_unknown() {
 
 #[tokio::test]
 async fn a_second_prompt_while_running_is_refused() {
-    let mut runtime = start(&fixture("stream", None)).await;
+    let (runtime, _events) = start(&fixture("stream", None)).await;
     runtime.initialize().await.expect("initialize");
     let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
     let run_id = runtime.prompt(&session.session_id, "first").expect("prompt");
@@ -410,18 +410,18 @@ async fn a_second_prompt_while_running_is_refused() {
 
 #[tokio::test]
 async fn a_cancelled_run_drops_its_late_text_and_finishes_once() {
-    let mut runtime = start(&fixture("stream", None)).await;
+    let (runtime, mut events) = start(&fixture("stream", None)).await;
     runtime.initialize().await.expect("initialize");
     let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
 
     let run_id = runtime.prompt(&session.session_id, "hello").expect("prompt");
     // The fixture sends "first", then waits for the cancel before sending
     // "late" — the text that must not revive a stopped run (§6.2).
-    let first = events_until(&mut runtime, |event| event.kind == AgentEventKind::TextDelta).await;
+    let first = events_until(&mut events, |event| event.kind == AgentEventKind::TextDelta).await;
     assert_eq!(texts(&first), vec!["first"]);
 
     runtime.cancel(&session.session_id).await.expect("cancel");
-    let after = events_for(&mut runtime, Duration::from_millis(1200)).await;
+    let after = events_for(&mut events, Duration::from_millis(1200)).await;
 
     assert_eq!(
         texts(&after),
@@ -442,7 +442,7 @@ async fn a_cancelled_run_drops_its_late_text_and_finishes_once() {
 async fn cancelling_an_idle_session_is_not_an_error() {
     // Stop can be pressed in the same instant the answer lands; reporting that
     // race as a fault would be reporting the user's own click as a bug.
-    let mut runtime = start(&fixture("good", None)).await;
+    let (runtime, _events) = start(&fixture("good", None)).await;
     runtime.initialize().await.expect("initialize");
     let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
 
@@ -461,7 +461,7 @@ async fn shutdown_takes_the_whole_process_group_with_it() {
     // handed leaves that grandchild running after the app closes, which §6.2
     // forbids; the group kill the SDK performs is what prevents it.
     let capture = temp_dir("tree").join("capture");
-    let runtime = start(&fixture("tree", Some(&capture))).await;
+    let (runtime, _events) = start(&fixture("tree", Some(&capture))).await;
     // No initialize: this behaviour never answers one, and the point is the
     // process tree it leaves behind.
     let pids = wait_for_pids(&capture).await;
@@ -485,7 +485,7 @@ async fn shutdown_gives_the_engine_time_to_exit_on_its_own() {
     // connection dropped — which is what I first reported, from reading
     // `ChildGuard` alone — this file would never be written.
     let capture = temp_dir("grace").join("capture");
-    let runtime = start(&fixture("slow-exit", Some(&capture))).await;
+    let (runtime, _events) = start(&fixture("slow-exit", Some(&capture))).await;
     runtime.initialize().await.expect("initialize");
 
     runtime.shutdown();
@@ -575,7 +575,7 @@ async fn the_real_engine_negotiates_protocol_version_one() {
         env: isolated_profile_env(&profile),
         ca_bundle: None,
     };
-    let mut runtime = start(&launch).await;
+    let (runtime, _events) = start(&launch).await;
 
     // Nothing past the handshake: `initialize` costs nothing and needs no
     // credentials, so this stays a test and not a bill.

@@ -137,26 +137,85 @@ impl Emitter {
             kind,
             payload,
         };
-        // The receiver is the IPC bridge (T4). A send that fails means the
-        // bridge is gone, which is the shutdown path, not an event to report.
+        // The receiver is [`AgentRuntimeEvents`], held by the one task that drives the runtime.
+        // A send that fails means that task is gone, which is the shutdown path, not an event to
+        // report.
         let _ = self.events.send(envelope);
     }
 }
 
+/// The reading half of one runtime: the streams the engine writes on.
+///
+/// Split from [`AgentRuntime`] at construction, exactly as [`EngineConnection::connect`] hands
+/// back an [`EngineEvents`] beside the connection — and for the reason that split's own doc
+/// gives, one layer up: asking takes `&self`, reading takes `&mut`, and the object every caller
+/// asks through must not be the object the reader is parked on.
+///
+/// Two accessors on one `&mut self` cannot be held at once, and the driver needs both: while it
+/// waits for a `session/update`, a permission request may arrive, and answering a permission is a
+/// command that must not be blocked behind the wait. One task owning both receivers by value is
+/// the shape that has no lock to hold across a wait, and therefore no way for the stop §6.2
+/// requires to be stuck behind a pending request (T3 found the shape this replaces).
+///
+/// **It ends on its own.** Both channels are the runtime's: when the runtime goes, both `recv`s
+/// answer `None`, so a driver ends with the incarnation it feeds and needs no handle to be
+/// aborted through — which is also why nothing here carries a generation counter.
+pub struct AgentRuntimeEvents {
+    incoming: mpsc::UnboundedReceiver<AgentEventEnvelope>,
+    permissions: mpsc::UnboundedReceiver<PermissionRequest>,
+}
+
+/// What the runtime hands its reader: either stream, whichever has something.
+pub enum RuntimeEvent {
+    Event(AgentEventEnvelope),
+    Permission(PermissionRequest),
+}
+
+impl AgentRuntimeEvents {
+    /// The next host event, or `None` once the runtime has stopped.
+    pub async fn next_event(&mut self) -> Option<AgentEventEnvelope> {
+        self.incoming.recv().await
+    }
+
+    /// The next engine→client request waiting for an answer.
+    ///
+    /// Nothing answers it here: §6.3 requires the engine's own option ids to be what the user is
+    /// offered, and choosing between them is T3/T7's. What this guarantees is only that the
+    /// request is not lost, which §6.2 demands in as many words.
+    pub async fn next_permission(&mut self) -> Option<PermissionRequest> {
+        self.permissions.recv().await
+    }
+
+    /// Whichever of the two arrives first.
+    ///
+    /// One method rather than a `select!` at every call site, because two `&mut self` borrows of
+    /// this type cannot be held at once — the property the split exists for: exactly one loop
+    /// reads the engine. Both `recv`s are cancel-safe, so the arm that does not win loses nothing,
+    /// and `select!` picks among ready arms at random rather than starving one of them.
+    pub async fn next(&mut self) -> Option<RuntimeEvent> {
+        tokio::select! {
+            event = self.incoming.recv() => event.map(RuntimeEvent::Event),
+            permission = self.permissions.recv() => permission.map(RuntimeEvent::Permission),
+        }
+    }
+}
+
 /// One engine process, driven as sessions and runs.
+///
+/// Every method here takes `&self`: what is left of the runtime after [`AgentRuntime::new`] is
+/// the asking half, so it can be shared (`Arc`) across the IPC layer and reached from a command
+/// without a lock. The reading half is [`AgentRuntimeEvents`], and it has one owner.
 pub struct AgentRuntime {
     pub(super) connection: Arc<EngineConnection>,
     pub(super) sessions: Arc<Mutex<HashMap<String, SessionSlot>>>,
-    permissions: mpsc::UnboundedReceiver<PermissionRequest>,
     pub(super) fs: Arc<FsCapability>,
     pub(super) emitter: Emitter,
-    incoming: mpsc::UnboundedReceiver<AgentEventEnvelope>,
     pub(super) run_counter: AtomicU64,
 }
 
 impl AgentRuntime {
-    /// Takes ownership of a live connection and starts reading it. Must be
-    /// called from a Tokio runtime.
+    /// Takes ownership of a live connection and starts reading it, returning the two halves.
+    /// Must be called from a Tokio runtime.
     /// `files` is the app's own file path. It is a parameter rather than a call
     /// because this module must not reach into the app's storage by absolute
     /// path; see [`VaultFiles`] for why the tests hand in the real one.
@@ -165,7 +224,7 @@ impl AgentRuntime {
         connection: EngineConnection,
         events: EngineEvents,
         files: Arc<dyn VaultFiles>,
-    ) -> Self {
+    ) -> (Self, AgentRuntimeEvents) {
         let connection = Arc::new(connection);
         let sessions: Arc<Mutex<HashMap<String, SessionSlot>>> =
             Arc::new(Mutex::new(HashMap::new()));
@@ -188,15 +247,19 @@ impl AgentRuntime {
             Arc::clone(&fs),
         ));
 
-        Self {
-            connection,
-            sessions,
-            permissions: events.permissions,
-            fs,
-            emitter,
-            incoming,
-            run_counter: AtomicU64::new(0),
-        }
+        (
+            Self {
+                connection,
+                sessions,
+                fs,
+                emitter,
+                run_counter: AtomicU64::new(0),
+            },
+            AgentRuntimeEvents {
+                incoming,
+                permissions: events.permissions,
+            },
+        )
     }
 
     /// Negotiates the protocol and returns the engine's answer.
@@ -267,21 +330,6 @@ impl AgentRuntime {
             slot.config_options = config_options.clone();
         }
         Ok(config_options)
-    }
-
-    /// The next host event, or `None` once the runtime has stopped.
-    pub async fn recv_event(&mut self) -> Option<AgentEventEnvelope> {
-        self.incoming.recv().await
-    }
-
-    /// The next engine→client request waiting for an answer.
-    ///
-    /// Nothing answers it here: §6.3 requires the engine's own option ids to be
-    /// what the user is offered, and choosing between them is T3/T7's. What
-    /// this guarantees is only that the request is not lost, which §6.2 demands
-    /// in as many words.
-    pub async fn recv_permission(&mut self) -> Option<PermissionRequest> {
-        self.permissions.recv().await
     }
 
     /// The changes this runtime performed on the agent's behalf, oldest first.

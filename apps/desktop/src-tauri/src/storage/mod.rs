@@ -48,15 +48,18 @@
 //! predecessor.
 //!
 //! [`key_file_io::DiskKeyFiles`] adapts the key files for the port
-//! `domain::recovery` declares. That direction is the point: the crash-safe
-//! swap is domain policy, so the domain takes the trait and storage supplies
-//! the implementation, never the other way round.
+//! `domain::recovery` declares, and [`agent_files::AgentVaultFiles`] does the
+//! same for the one `agent_runtime::fs_capability` declares. That direction is
+//! the point: the crash-safe swap, and the agent's confinement and history, are
+//! policies of the modules that declare the traits, so those take the trait and
+//! storage supplies the implementation, never the other way round.
 //!
 //! [`key_file_store`] is the master key file itself — format, KDF, and the
 //! state a missing file puts the vault in — and [`key_store`] is the vault
 //! lifecycle it opens plus the provider-key store, re-exporting the file half
 //! so no consumer of the key store had to move with the split.
 
+pub mod agent_files;
 pub mod atomic_write;
 pub mod attachment_store;
 pub mod destination_file;

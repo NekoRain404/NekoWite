@@ -9,7 +9,8 @@
 //! The implementation is split by concern across three private submodules —
 //! `vault_confinement` (the registry and the rules a root must pass),
 //! `remembered` (the root that survives a restart) and `app_state` (the
-//! watcher, key, AI and agent handles) — and re-exported below. They stay
+//! watcher, key, AI and agent handles, and the start path that fills the
+//! agent's) — and re-exported below. They stay
 //! private so `crate::state::NAME` remains the only way in: the split moved the
 //! code, not the surface, and no caller had to be edited for it.
 
@@ -17,7 +18,9 @@ mod app_state;
 mod remembered;
 mod vault_confinement;
 
-pub use app_state::{AgentRuntimeState, AiState, KeyVault, WatcherState};
+pub use app_state::{
+    program_to_launch, start_session, AgentRuntimeState, AiState, KeyVault, WatcherState,
+};
 pub use remembered::{
     read_remembered_vault, remember_vault, remembered_vault, remembered_vault_dir,
     write_remembered_vault,

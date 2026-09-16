@@ -25,7 +25,7 @@ use super::adapters::{self, AgentAdapter, Capability, HostFeature};
 use super::events::{AgentIdentity, TransportError};
 use super::fs_capability::VaultFiles;
 use super::process::{EngineLaunch, isolated_profile_env};
-use super::session::AgentRuntime;
+use super::session::{AgentRuntime, AgentRuntimeEvents};
 
 /// The profile the first-run flow uses, before T12's settings pages exist (§8.1's
 /// app-managed profile, under the name it has until a UI can choose another).
@@ -660,23 +660,37 @@ impl AgentRegistry {
             runtime_epoch: epoch,
             vault_id: vault_id.to_string(),
         };
+        let (runtime, events) = AgentRuntime::new(identity.clone(), connection, events, files);
         Ok(AgentInstance {
-            identity: identity.clone(),
+            identity,
             adapter,
-            runtime: AgentRuntime::new(identity, connection, events, files),
+            // `Arc` rather than a value, and only because of what the IPC layer has to do with
+            // it: the commands that answer a session take the runtime out of a managed state on
+            // another task, so they must hold a share of it rather than the thing itself. The
+            // instance stays the owner of the *incarnation* — the epoch claim below — and
+            // [`AgentInstance::shutdown`] (and [`Drop`]) still tear the process down.
+            runtime: Arc::new(runtime),
+            events: Some(events),
             live: Arc::clone(&self.live),
         })
     }
 }
 
-/// One running engine, as this host knows it. Dropping one tears its engine down: no other handle
-/// to the process exists once the runtime inside goes, so an instance the Rust side no longer holds
-/// is exactly the case where nobody else could stop it — and §6.2's rule is that this host cleans
-/// up the processes it started, and only those.
+/// One running engine, as this host knows it. Dropping one tears its engine down — the epoch is
+/// released *and* the engine is asked to exit — so an instance the Rust side no longer holds is
+/// exactly the case where nobody else could stop it, and §6.2's rule is that this host cleans up
+/// the processes it started, and only those.
+///
+/// The runtime inside is shared with the IPC layer, so the engine has two owners while a session
+/// is live. That is why the teardown hangs off this type's [`Drop`] as well as off `shutdown`:
+/// dropping the instance cannot rely on the last `Arc` going with it.
 pub struct AgentInstance {
     identity: AgentIdentity,
     adapter: &'static dyn AgentAdapter,
-    runtime: AgentRuntime,
+    runtime: Arc<AgentRuntime>,
+    /// The reading half, until the driver takes it. `None` afterwards — see
+    /// [`AgentInstance::take_events`].
+    events: Option<AgentRuntimeEvents>,
     live: Arc<Mutex<LiveInstances>>,
 }
 
@@ -686,8 +700,25 @@ impl AgentInstance {
         &self.identity
     }
 
-    pub fn runtime_mut(&mut self) -> &mut AgentRuntime {
-        &mut self.runtime
+    /// The asking half: every call that issues a request takes `&self`, so this is all a command
+    /// needs, and it is a share rather than a borrow because the command runs on another task.
+    pub fn runtime(&self) -> &Arc<AgentRuntime> {
+        &self.runtime
+    }
+
+    /// The reading half, taken once, by whoever drives this runtime.
+    ///
+    /// `None` means it was taken already. Nothing hands it back, deliberately: two readers of one
+    /// engine would each see half the stream — and the whole point of moving the receivers out of
+    /// [`AgentRuntime`] is that the reading half has exactly one owner.
+    pub fn take_events(&mut self) -> Option<AgentRuntimeEvents> {
+        self.events.take()
+    }
+
+    /// The same half, borrowed rather than taken, for a caller that reads it in place and never
+    /// hands the ownership on (a test, in practice). `None` means the driver has it.
+    pub fn events_mut(&mut self) -> Option<&mut AgentRuntimeEvents> {
+        self.events.as_mut()
     }
 
     /// What this engine advertises — and only while this instance is the live one.
@@ -715,10 +746,12 @@ impl AgentInstance {
 }
 
 impl Drop for AgentInstance {
+    /// The same two steps as [`AgentInstance::shutdown`], because an instance the host has let go
+    /// of must not leave a process behind: releasing the epoch alone would free the registration
+    /// while the engine was still running, which is two engines for one (agent, profile, vault)
+    /// the moment a start takes the freed slot. Both steps are idempotent — the epoch is a map
+    /// entry, and the connection's stop senders are taken once.
     fn drop(&mut self) {
-        self.live
-            .lock()
-            .unwrap()
-            .release(&self.identity.runtime_epoch);
+        self.shutdown();
     }
 }

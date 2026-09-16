@@ -32,7 +32,7 @@ use tokio::sync::oneshot;
 
 use super::acp_transport::PermissionRequest;
 use super::events::{AgentEventKind, AgentIdentity};
-use super::session::{AgentRuntime, Emitter, SessionError, SessionSlot};
+use super::session::{AgentRuntime, AgentRuntimeEvents, Emitter, SessionError, SessionSlot};
 
 /// How long a request may wait for the session it names to appear. The same window, for the same
 /// measured reason, as `runs::dispatch_fs`: the engine may use a session the instant it receives
@@ -384,20 +384,34 @@ impl PermissionTable {
         Ok(prompt)
     }
 
-    /// Takes the next request off the runtime and records it — what a driver loop calls. The
-    /// runtime hands permission requests over one at a time (they are read through `&mut`): this is
-    /// the line connecting the engine's question to this table.
-    pub async fn adopt_next(
+    /// Records one request the driver has already read off the runtime.
+    ///
+    /// The wait is the reason this is not simply [`PermissionTable::adopt`]: the engine may use a
+    /// session the instant it receives `session/new`'s answer, while this host registers it on the
+    /// task that issued the call — so for a moment "not known yet" and "never ours" look the same,
+    /// and waiting briefly is what separates them (`runs::dispatch_fs` waits for the same measured
+    /// reason).
+    pub async fn adopt_known(
         self: &Arc<Self>,
-        runtime: &mut AgentRuntime,
-    ) -> Option<Result<PermissionPrompt, PermissionRefusal>> {
-        let request = runtime.recv_permission().await?;
+        request: PermissionRequest,
+    ) -> Result<PermissionPrompt, PermissionRefusal> {
         let session_id = request.request.session_id.to_string();
         let deadline = Instant::now() + REGISTRATION_WINDOW;
         while !self.sessions.lock().unwrap().contains_key(&session_id) && Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        Some(self.adopt(request))
+        self.adopt(request)
+    }
+
+    /// Takes the next request off the runtime and records it — the single-request form, which a
+    /// caller that is not itself driving the event stream uses (the driver takes both streams at
+    /// once, and calls [`PermissionTable::adopt_known`] with what it reads).
+    pub async fn adopt_next(
+        self: &Arc<Self>,
+        events: &mut AgentRuntimeEvents,
+    ) -> Option<Result<PermissionPrompt, PermissionRefusal>> {
+        let request = events.next_permission().await?;
+        Some(self.adopt_known(request).await)
     }
 
     /// Answers one pending request.

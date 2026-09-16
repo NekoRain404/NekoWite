@@ -107,7 +107,10 @@ async fn start(vault: &Path, capture: &Path, fs_request: Option<String>) -> Agen
     let (connection, events) = EngineConnection::connect(&launch)
         .await
         .expect("the fixture engine should start");
-    let runtime = AgentRuntime::new(identity(), connection, events, Arc::new(RealVault));
+    // The reading half is dropped: these tests assert on what the engine *received* (the capture
+    // file) and on what the runtime recorded, not on the host's event stream — and the file
+    // requests are served by the dispatcher `AgentRuntime::new` starts, not by the reader.
+    let (runtime, _events) = AgentRuntime::new(identity(), connection, events, Arc::new(RealVault));
     runtime.initialize().await.expect("initialize");
     runtime.open_session(vault).await.expect("session/new");
     runtime

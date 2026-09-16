@@ -6,12 +6,21 @@
 //! they interact. Nothing here knows about paths, roots or confinement.
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::{Arc, Mutex};
 
 use tauri_plugin_stronghold::stronghold::Stronghold;
 
-use crate::agent_runtime::registry::{AgentInstance, AgentRegistry};
+use crate::agent_runtime::binary_registry::{self, BinaryRegistry};
+use crate::agent_runtime::driver::{self, Session};
+use crate::agent_runtime::events::AgentEventEnvelope;
+use crate::agent_runtime::profile::{ProfileError, ProfileStore};
+use crate::agent_runtime::registry::{
+    AgentInstance, AgentRegistry, RegistryError, DEFAULT_PROFILE,
+};
+use crate::storage::agent_files::AgentVaultFiles;
+use crate::storage::key_store::data_dir;
 
 // ---------------------------------------------------------------------------
 // Watcher state
@@ -172,11 +181,209 @@ pub struct AgentRuntimeState {
     /// Which engines this app knows and which profile belongs to which — the
     /// definitions, not the processes. `Mutex` because adding, disabling and
     /// removing a definition all take `&mut`; starting one takes `&self`.
-    pub registry: Mutex<Option<AgentRegistry>>,
+    ///
+    /// Shared (`Arc`) rather than owned, and only because a start *awaits*:
+    /// `AgentRegistry::start` spawns the engine and completes its handshake on
+    /// the caller's task, and a `MutexGuard` held across that await would make
+    /// every Tauri command that starts an engine unsendable. A holder clones the
+    /// `Arc` and drops the guard. A mutation path — none exists yet: no task owns
+    /// the registry's settings IPC — takes the value back out with
+    /// `Arc::try_unwrap`, which succeeds exactly when no start is in flight, and
+    /// that is the state in which a definition may be changed at all (§3.4.7).
+    pub registry: Mutex<Option<Arc<AgentRegistry>>>,
     /// The engine that is running, if one is. One at a time: §6.1 requires a
     /// single session writer per vault, and a second instance for the same
     /// (agent, profile, vault) is refused by the registry rather than kept here.
+    ///
+    /// Dropping the value is what stops the engine and frees the registration
+    /// ([`AgentInstance`]'s own `Drop`), so a stop is this slot being emptied —
+    /// and a replacement start is it being refilled after that.
     pub instance: Mutex<Option<AgentInstance>>,
+}
+
+// ---------------------------------------------------------------------------
+// Starting the agent subsystem
+// ---------------------------------------------------------------------------
+
+/// Starts the engine for `vault_id`, fills the instance slot, and answers the
+/// session the IPC layer addresses.
+///
+/// Everything a start needs comes from the app's own places: the program from
+/// §3.2's managed layout or the sidecar beside the executable ([`program_to_launch`]),
+/// the engine's roots from the profile (§8.1), the file capability from the
+/// app's own write path (`storage::agent_files`). None of that can be resolved
+/// before a window exists — which is why both slots above are empty until this
+/// call, and why Tauri cannot simply build the subsystem at startup.
+///
+/// `sink` is where the runtime's published envelopes go — the window's event
+/// channel, in the app. It arrives as a closure so that this file, and
+/// [`driver`], need no knowledge of Tauri's event API.
+///
+/// The refusals are sentences rather than T3a's data-only `RegistryError`,
+/// because of what reads them: a start failure reaches the user as the
+/// rejection of the promise `agent_start` returned, with no form and no mapper
+/// in between, while `RegistryError`'s own vocabulary is what T13a's settings
+/// page maps for a registration form. Where the two overlap (a program that is
+/// not there) the sentence names the path and the state, which is what the form
+/// needs to say too.
+pub async fn start_session(
+    state: &AgentRuntimeState,
+    app: &tauri::AppHandle,
+    vault_id: &str,
+    sink: impl Fn(AgentEventEnvelope) + Send + 'static,
+) -> Result<Session, String> {
+    let managed = data_dir(app)?;
+    let registry = registry_for(state, &managed)?;
+    let agent_id = registry.default_agent_id().to_string();
+    // §8.1: opening the profile is what creates and binds it on first use, and
+    // its root is the engine's `HOME` and its XDG roots.
+    let profile = ProfileStore::new(&managed)
+        .open(&agent_id, DEFAULT_PROFILE)
+        .map_err(|error| profile_refusal(&error))?;
+    let mut instance = registry
+        .start(
+            &agent_id,
+            DEFAULT_PROFILE,
+            vault_id,
+            profile.root(),
+            Arc::new(AgentVaultFiles),
+        )
+        .await
+        .map_err(|error| start_refusal(&error))?;
+    // §3.4's last line: which config option selects the model is the adapter's
+    // answer, and the renderer is *told* it rather than looking for an option
+    // whose name suggests a model.
+    let model_option_id = registry
+        .get(&agent_id)
+        .and_then(|registration| registration.adapter())
+        .and_then(|adapter| adapter.model_option_id())
+        .map(str::to_string);
+    let session = driver::install(&mut instance, model_option_id, sink)?;
+    // The instance is the incarnation — it holds the epoch claim and it is what
+    // tears the engine down when it goes — so it is stored *after* the session
+    // is built. A previous instance, if one was still there, is dropped by the
+    // assignment, which is the same teardown `agent_stop` performs.
+    let mut slot = state
+        .instance
+        .lock()
+        .map_err(|_| "the agent runtime state was poisoned by a panic".to_string())?;
+    *slot = Some(instance);
+    Ok(session)
+}
+
+/// This app's agent definitions, built on first use.
+fn registry_for(state: &AgentRuntimeState, managed: &Path) -> Result<Arc<AgentRegistry>, String> {
+    let mut slot = state
+        .registry
+        .lock()
+        .map_err(|_| "the agent registry state was poisoned by a panic".to_string())?;
+    if let Some(registry) = slot.as_ref() {
+        return Ok(Arc::clone(registry));
+    }
+    let beside = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+        .unwrap_or_default();
+    let registry = Arc::new(AgentRegistry::with_bundled(program_to_launch(
+        managed, &beside,
+    )?));
+    *slot = Some(Arc::clone(&registry));
+    Ok(registry)
+}
+
+/// The program this host launches, from the two places §3.2 allows.
+///
+/// A promoted release wins when the pointer names a launchable one — that is
+/// what §3.3's update path is for — and anything else falls back to the sidecar
+/// shipped beside the executable, which §3.1.1 makes this app's verified base.
+/// A pointer that cannot be read is reported and *not* a refusal: the bundled
+/// engine is what a start would have used anyway, and refusing to start over a
+/// diagnostic would turn a settings-page symptom into a dead session.
+///
+/// Nothing is searched for on `PATH`: the engine this app runs is the one it
+/// ships or installed itself, never one it found.
+///
+/// `beside` is the directory of the running executable, passed in rather than
+/// derived so that the resolution can be exercised without an app bundle.
+pub fn program_to_launch(managed: &Path, beside: &Path) -> Result<PathBuf, String> {
+    let layout = BinaryRegistry::new(managed).map_err(|error| format!("{error:?}"))?;
+    match layout.active_program() {
+        Ok(Some(program)) => return Ok(program.path),
+        Ok(None) => {}
+        Err(error) => eprintln!("nekowite: could not read the agent release pointer: {error:?}"),
+    }
+    binary_registry::bundled_program(beside)
+        .map(|program| program.path)
+        .ok_or_else(|| {
+            format!(
+                "the bundled engine was not found beside {}. It is installed with the app, so \
+                 this points at a build or a package that did not carry it.",
+                beside.display()
+            )
+        })
+}
+
+/// Why a start was refused, in the words of the thing that refused it.
+fn start_refusal(error: &RegistryError) -> String {
+    match error {
+        RegistryError::Program { program, state } => {
+            format!("the agent's program is not launchable: {} ({state:?})", program.display())
+        }
+        RegistryError::Disabled { agent_id } => {
+            format!("the agent {agent_id} is switched off in settings")
+        }
+        RegistryError::ProfileUnbound {
+            profile_id,
+            agent_id,
+            owner,
+        } => match owner {
+            Some(owner) => format!("the profile {profile_id} belongs to {owner}, not to {agent_id}"),
+            None => format!("no profile {profile_id} is bound to {agent_id}"),
+        },
+        RegistryError::AlreadyRunning { agent_id, epoch } => format!(
+            "an engine for {agent_id} is already running in this vault ({epoch})"
+        ),
+        RegistryError::LaunchFailed { agent_id, error } => {
+            format!("{agent_id} could not be started: {}", error.failure_message())
+        }
+        RegistryError::UnknownAgent { agent_id } => format!("no agent named {agent_id}"),
+        RegistryError::Id { field, value } => {
+            format!("{value} cannot be used as {field}: it is not a name this app accepts")
+        }
+        RegistryError::Argument { index } => {
+            format!("argument {index} of the agent's command line cannot be passed to a process")
+        }
+        RegistryError::Environment { name } => {
+            format!("the environment variable {name} cannot be passed to a process")
+        }
+        RegistryError::UnknownAdapter { adapter_id } => {
+            format!("no verified adapter for the engine {adapter_id}")
+        }
+        RegistryError::DuplicateAgent { agent_id } => format!("{agent_id} is registered twice"),
+        RegistryError::InstanceRunning { agent_id, epoch } => {
+            format!("{agent_id} still has a running engine ({epoch})")
+        }
+        RegistryError::IsDefault { agent_id } => {
+            format!("{agent_id} is the default agent and cannot be removed")
+        }
+    }
+}
+
+/// Why the profile could not be opened.
+fn profile_refusal(error: &ProfileError) -> String {
+    match error {
+        ProfileError::AgentMismatch {
+            profile_id, bound, ..
+        } => format!("the profile {profile_id} was created for {bound}, not for this agent"),
+        ProfileError::Unreadable { path, message } => {
+            format!("the profile record {} cannot be read: {message}", path.display())
+        }
+        ProfileError::ReadOnly => {
+            "this profile follows the user's own configuration and is not written by the app"
+                .to_string()
+        }
+        other => format!("the agent profile could not be opened: {other:?}"),
+    }
 }
 
 #[cfg(test)]
