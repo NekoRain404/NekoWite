@@ -27,6 +27,9 @@ export async function runTurn(
       'permission-request',
       {
         requestId: `${run.runId}:permission`,
+        // The double pairs the prompt with a tool row the same way the engine
+        // does, so a consumer that relates the two has something real to relate.
+        toolCallId: script.permission.toolCallId ?? `${run.runId}:tool`,
         title: script.permission.title,
         input: script.permission.input ?? { state: 'absent' },
         options: script.permission.options,

@@ -84,11 +84,24 @@ export type AgentToolInput =
  * inventing one: §6.3 forbids the host from adding an "always allow" the engine
  * never offered, and `optionId` — the engine's own id — is what an answer is
  * validated against.
+ *
+ * It carries the engine's own four kinds rather than a collapsed allow/reject
+ * pair, because the difference between them is the difference the user is being
+ * asked to weigh. `allow_always` remembers the choice and `allow_once` does not;
+ * a surface that draws them the same cannot warn about the lasting one, and a
+ * consumer that cannot tell them apart cannot honestly emphasise either. The
+ * values match the wire (`PermissionOptionKind` in the v1 schema).
  */
+export type AgentPermissionKind =
+  | 'allow_once'
+  | 'allow_always'
+  | 'reject_once'
+  | 'reject_always'
+
 export interface AgentPermissionOption {
   optionId: string
   name: string
-  kind: 'allow' | 'reject'
+  kind: AgentPermissionKind
 }
 
 export interface AgentPermissionRequest {
@@ -99,6 +112,14 @@ export interface AgentPermissionRequest {
    * the permission that would be granted.
    */
   requestId: string
+  /**
+   * The tool call this request is about. Carried because a permission prompt is
+   * about a *row* the user can already see in the timeline, and without this the
+   * two cannot be related: the prompt would sit there asking to approve something
+   * the transcript shows no trace of, and a tool row would show as pending with
+   * nothing on screen saying why.
+   */
+  toolCallId: string
   /** What the user is being asked to allow, in the engine's own wording. */
   title: string
   /**
