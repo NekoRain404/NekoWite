@@ -243,6 +243,14 @@ const emit = defineEmits<{
   background: color-mix(in srgb, var(--app-panel) 55%, var(--app-canvas));
   border-radius: var(--app-radius-sm);
 }
+/* Both of the tab stops above, made visible. Measured in WebKitGTK, the engine's own
+   `outline: auto` on these elements paints one five-pixel bar down the left edge and nothing
+   along the other three. Same rule as the permission prompt's arguments and the change view's
+   buffer text; INSET because each element is the full size of its scroll body. */
+.agent-conflict-text:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: -2px;
+}
 .agent-conflict-kept {
   margin: 0;
   color: var(--app-muted);

@@ -13,6 +13,7 @@
  * absolute number pins the fixture (the document, the scroll offset, the
  * engine's font metrics) while a delta pins the behaviour.
  */
+import { verifyKeyboard } from './verify-keyboard.mjs'
 
 const TOLERANCE = 0.5
 
@@ -35,6 +36,10 @@ const inside = (r) => r.insidePane && Object.values(r.insidePane).every(Boolean)
 
 export function verify(results) {
   const c = new Checks()
+  // One spelling of the load average for every check that carries one: this box is
+  // shared with unrelated work, and a frame count or a screenshot without the load it
+  // was taken under is a number nothing can be compared with.
+  const avg = (l) => (l ? `load ${l.one}/${l.five}/${l.fifteen}` : 'load unknown')
   const panel = results.probes['image-panel']
   const tail = results.probes['split-tail-space']
   const motion = results.probes['motion-surface']
@@ -308,7 +313,6 @@ export function verify(results) {
       false,
     )
   } else if (agent) {
-    const avg = (l) => (l ? `load ${l.one}/${l.five}/${l.fifteen}` : 'load unknown')
     // A `--violate` run breaks one property on purpose and stops there, so the phases after it
     // were never measured. They still FAIL — an unmeasured check is not a pass — and this is
     // what tells that failure apart from one the product produced.
@@ -605,6 +609,12 @@ export function verify(results) {
       )
     }
   }
+
+  // The chat panel's keyboard surface and every focus indicator on the page. Split out at the
+  // line budget (§13.1's 800 for a test), and along the seam the file already had: everything above
+  // decides the surfaces the existing probes measure, and this decides the two this task added —
+  // which share nothing with them but the collector.
+  verifyKeyboard(c, results, avg)
 
   return {
     passed: c.results.filter((r) => r.holds).length,

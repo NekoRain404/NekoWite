@@ -20,6 +20,7 @@
  *   node e2e/webkit/measure.mjs --only panel    # one probe
  *   node e2e/webkit/measure.mjs --scenario plain
  *   node e2e/webkit/measure.mjs --agent         # the harness stands in for the agent IPC too
+ *   node e2e/webkit/measure.mjs --chat          # the rail gets a seeded chat conversation
  *
  * `--agent` is the one flag that changes the page rather than the run: the harness's `?agent=1`
  * installs the IPC stand-in the agent panel needs and switches the rail to it. It is a flag and
@@ -27,9 +28,15 @@
  * that do not care about the panel must keep measuring the same page they always did — with it
  * absent, `harness.html` is byte for byte the document it was.
  *
- * The run records whether it was asked for the panel (`results.agent`), so a skipped
- * agent-panel probe can be told apart from a run that asked and got nothing: the first claims
- * nothing, the second is the failure this whole file is arranged to make visible.
+ * `--chat` is the same contract for the other body the rail can host: `?chat=1` seeds a
+ * conversation through the product's own stored document, which is what the chat transcript
+ * needs in order to overflow. The two are separate flags because they are mutually exclusive on
+ * the page — the agent panel takes the rail over — and each probe reports itself skipped under
+ * the other's flag rather than measuring a panel that is not there.
+ *
+ * The run records whether it was asked for the panel (`results.agent`, `results.chat`), so a
+ * skipped agent-panel probe can be told apart from a run that asked and got nothing: the first
+ * claims nothing, the second is the failure this whole file is arranged to make visible.
  *
  * `MiniBrowser` opens a window on the user's real desktop, because WebKitGTK
  * has no headless mode (2.52's MiniBrowser takes no `--headless` and
@@ -149,6 +156,11 @@ async function main() {
   // Presence, not a value: `arg` reads the token AFTER a flag, so `--agent --only x` would hand
   // back `--only` and a switch spelled this way would silently be off.
   const agent = process.argv.includes('--agent')
+  // The chat panel's half of the same idea, and the reason it is a second flag rather than one
+  // with two values: the agent panel takes the rail over, so a page prepared for one is a page
+  // that cannot host the other. A run asks for at most one of them, and the one it did not ask
+  // for reports itself skipped.
+  const chat = process.argv.includes('--chat')
 
   const vitePort = await freePort()
   const driverPort = await freePort()
@@ -168,7 +180,7 @@ async function main() {
   })
 
   const wd = new WebDriver(driverPort)
-  const results = { engine: null, viewport: null, scenario, agent, probes: {} }
+  const results = { engine: null, viewport: null, scenario, agent, chat, probes: {} }
   watchdog(Number(arg('watchdog', '300000')))
   try {
     stage('session')
@@ -181,7 +193,8 @@ async function main() {
 
     const url =
       `http://127.0.0.1:${vitePort}/e2e/webkit/harness.html?scenario=${scenario}` +
-      (agent ? '&agent=1' : '')
+      (agent ? '&agent=1' : '') +
+      (chat ? '&chat=1' : '')
     stage(`navigate ${url}`)
     await wd.navigate(url)
 

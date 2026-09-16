@@ -14,6 +14,8 @@ import { dialogProbe } from './probe-dialog.mjs'
 import { noteSwitchProbe } from './probe-note-switch.mjs'
 import { tailProbe } from './probe-tail.mjs'
 import { agentScrollProbe } from './probe-agent-scroll.mjs'
+import { chatScrollProbe } from './probe-chat-scroll.mjs'
+import { focusRingProbe } from './probe-focus-ring.mjs'
 
 /** Dumps what is actually in the document, so the probes can address it. */
 const inspect = {
@@ -61,6 +63,18 @@ const inspect = {
  * leaves the agent panel mounted in it, which is a page no probe after it could
  * be measured on. Under a run that did not ask for the agent it reports itself
  * skipped, the way `note-switch` does under a scenario with one note.
+ *
+ * `chat-scroll` is last and is the mirror image of the one before it: it needs the
+ * rail showing the CHAT panel, which is what `?chat=1` seeds and what `--agent`
+ * takes away. Neither can run on the other's page, so each reports itself skipped
+ * under the other's flag — and a run that asked for one and got a skip is the
+ * failure `measure.mjs` records `results.agent` / `results.chat` to make visible.
+ *
+ * `focus-ring` goes last of all because it is the only probe that puts NEW DOM into
+ * the page: it mounts four components nothing in the application hosts yet, in fixed
+ * overlays over the top-left corner. A probe after it would be measuring a page with
+ * four foreign panels on it, so nothing goes after it. The surfaces it reads on the
+ * product's own page are read before it mounts anything.
  */
-export const PROBES = [motionProbe, panelProbe, tailProbe, noteSwitchProbe, dialogProbe, agentScrollProbe]
+export const PROBES = [motionProbe, panelProbe, tailProbe, noteSwitchProbe, dialogProbe, agentScrollProbe, chatScrollProbe, focusRingProbe]
 export const ALL_PROBES = [inspect, ...PROBES]

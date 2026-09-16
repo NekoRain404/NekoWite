@@ -73,12 +73,21 @@ defineExpose({
 
 <template>
   <div class="chat-transcript">
+    <!-- `tabindex="0"`: the container scrolls, and a scroll container the keyboard cannot reach
+         is a transcript whose earlier turns are reachable by pointer only. The agent panel's
+         transcript is the same surface with the same rule and got the same attribute, but the
+         measurement behind it was taken on THAT panel and does not carry over: this is a
+         different container, in a different feature, inside a different composer's tab order.
+         `use-chat-scroll.ts` already names "a keyboard scroll" as a way back to the end of the
+         log; before this attribute there was no key that meant it. `probe-chat-scroll.mjs`
+         measures this container in WebKitGTK — the tab walk in, the ring, the keys. -->
     <div
       ref="scrollEl"
       class="chat-scroll"
       role="log"
       aria-live="off"
       :aria-label="t('chat.transcript')"
+      tabindex="0"
       @scroll="scroll.onScroll"
     >
       <div
@@ -153,6 +162,18 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+/* The tab stop above, made visible. `tabindex` alone would move a keyboard reader into a region
+   with no sign they are in it, which is the other half of the same defect. Measured in
+   WebKitGTK: the engine's own `outline: auto` is thrown away by the scroll container it would
+   have to be drawn on — `.chat-scroll` is the full size of its own scroll body, so a ring outside
+   it is drawn over the composer and the session bar — hence INSET, the same choice
+   `AgentTimeline`'s container makes for the same reason. `:focus-visible` rather than `:focus`
+   keeps it off a mouse reader's screen, and the contrast of `--app-accent` against this panel is
+   what the probe reports beside the ring. */
+.chat-scroll:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: -2px;
 }
 .chat-empty {
   display: flex;

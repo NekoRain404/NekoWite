@@ -162,6 +162,27 @@ export class WebDriver {
     return this.#request('POST', this.#path('/window/rect'), rect)
   }
 
+  /**
+   * The viewport as a base64 PNG, or null when this driver will not produce one.
+   *
+   * The harness's probes return numbers and never screenshots, and that rule is kept: this exists
+   * so a screenshot can be turned into a number IN THE PAGE — drawn into a canvas and sampled —
+   * for the one question geometry cannot answer. A computed `outline: auto 5px` says what the
+   * engine would draw; it does not say that anything appeared on screen, and the difference
+   * between those two is the whole of what a focus indicator is.
+   *
+   * A driver without the endpoint is reported as null rather than thrown: "this driver cannot
+   * take a screenshot" is a finding about the instrument, and the caller decides what to do with
+   * a reading it could not take.
+   */
+  async screenshot() {
+    try {
+      return await this.#request('GET', this.#path('/screenshot'))
+    } catch {
+      return null
+    }
+  }
+
   /** The page's own console, so a startup failure is visible as a message. */
   async logs() {
     try {

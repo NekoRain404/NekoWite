@@ -351,6 +351,17 @@ nextTick(() => rootEl.value?.focus())
   background: color-mix(in srgb, var(--app-panel) 55%, var(--app-canvas));
   border-radius: var(--app-radius-sm);
 }
+/* The tab stop above is a stop a keyboard reader has to be able to see they are on, and the
+   engine's own ring is not enough of an answer: measured in WebKitGTK, `outline: auto` on this
+   element paints a five-pixel bar down its left edge and nothing along the other three — a
+   fragment of an indicator, not one. This is the rule the agent transcript's container already
+   carries (§7: the same defect, the same fix), and it is drawn INSET for the same reason: the
+   element is the full size of its scroll body, so a ring outside it would be drawn over the
+   prompt's own card and clipped by it at the edges. */
+.agent-perm-args:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: -2px;
+}
 /* Not the same state, not the same look: nothing sent yet is drawn quietly, something
    sent that this host could not read is drawn in the warning colour. The two states
    stand where the arguments would be, so this box shares the arguments' geometry

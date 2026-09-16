@@ -395,6 +395,14 @@ function offer(row: AgentChangeRow, offer: AgentChangeOffer): void {
   background: color-mix(in srgb, var(--app-panel) 55%, var(--app-canvas));
   border-radius: var(--app-radius-sm);
 }
+/* The tab stop above, made visible. Measured in WebKitGTK, the engine's own `outline: auto` on
+   this element paints one five-pixel bar down its left edge and nothing along the other three —
+   a fragment rather than an indicator. Same rule as the permission prompt's arguments and the
+   agent transcript's container; INSET because the element is the full size of its scroll body. */
+.agent-changes-text:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: -2px;
+}
 .agent-changes-text-none {
   margin: 0;
   color: var(--app-muted);

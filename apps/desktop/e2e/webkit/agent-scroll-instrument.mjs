@@ -22,6 +22,18 @@ export const PANEL = '.agent-panel'
 export const TIMELINE = '.agent-timeline'
 /** The affordance the panel offers a reader who has left the end. */
 export const JUMP = '.agent-jump'
+/**
+ * The chat panel's own three addresses, measured by `probe-chat-scroll.mjs`.
+ *
+ * A second surface, in the same rail, with the same rule — and the reason they are named here
+ * rather than in that probe is the same reason `TIMELINE` is here: the instrument is what
+ * addresses the page, and a selector written twice is a selector that can disagree with itself.
+ */
+export const CHAT = '.chat-scroll'
+export const CHAT_PANEL = '.chat-panel'
+export const CHAT_FIELD = '.chat-textarea'
+/** The chat composer's send button: a stop that has painted a ring since before this task. */
+export const CHAT_SEND = '.chat-send'
 /** The body under the rule's second half: the rendered pane's ProseMirror root. */
 export const BODY = '.pane.rendered .ProseMirror'
 /**
@@ -600,6 +612,148 @@ window.__nkwViolateWidth = function () {
   return { installed: true, what: 'a width animation on the rendered body, one re-wrap per frame' };
 };
 
+/**
+ * The second deliberate violation: the container keeps its tab stop and loses its ring.
+ *
+ * This is the other half of the same defect, and the half a hand survey walks past — an element
+ * that can receive focus and shows nothing. The violation above reproduces the first half; this
+ * reproduces this one, by injecting the rule that suppresses the indicator rather than by
+ * editing a stylesheet. It is the polarity that proves the sweep's method answers both ways in
+ * one run: the witness still paints and the container does not.
+ */
+window.__nkwViolateNoRing = function (sel, mode) {
+  const style = document.createElement('style');
+  style.setAttribute('data-nkw-violation', 'no-ring-' + (mode === undefined ? 'none' : mode));
+  // Two polarities, because they answer two different questions.
+  //
+  //  - 'none' removes the indicator outright. That is the defect stated plainly, and it is what a
+  //    check that has to go red under the worst case is shown with.
+  //  - 'revert' rolls the author's declaration back to the USER-AGENT origin, which is the state
+  //    these surfaces were in before the rule existed: the engine's own outline: auto ring and
+  //    nothing else. revert is exactly that operation and no other way of writing it is: a
+  //    later author rule cannot un-declare an earlier one, but this keyword rolls the cascade
+  //    back past the author origin entirely.
+  style.textContent =
+    sel + ':focus, ' + sel + ':focus-visible, ' + sel + ':focus-within' +
+    (mode === 'revert'
+      ? ' { outline: revert !important; outline-offset: revert !important; box-shadow: revert !important; }'
+      : ' { outline: none !important; box-shadow: none !important; }');
+  document.head.appendChild(style);
+  return { installed: true, selector: sel, mode: mode === undefined ? 'none' : mode,
+           what: mode === 'revert'
+             ? 'a stylesheet rolling the focus indicator back to the engine default on ' + sel
+             : 'a stylesheet suppressing the focus indicator on ' + sel };
+};
+
+/**
+ * Whether anything actually appeared on screen around an element, read from a screenshot.
+ *
+ * **This is the only reading in this file that is not a computed style**, and it exists because
+ * for one question the computed style is not the answer. outline: auto 5px is what WebKit says
+ * it WOULD draw for a default focus ring; whether a reader sees a ring is a claim about pixels,
+ * and an engine, a theme and a clipping ancestor all sit between the two. A page cannot read its
+ * own rendered pixels, so the screenshot is taken by the driver and decoded here — in the page,
+ * where a canvas can decode a PNG natively and hand back numbers.
+ *
+ * The reading is a horizontal scanline through the element's top edge, plus one through its
+ * middle, counting the runs of pixels that differ from the backdrop by more than a channel delta
+ * of 24. What it returns is the count, the longest run, and the largest delta — so a ring that is
+ * drawn reads as a run of two or more pixels on BOTH sides, and a ring that is not reads as zero
+ * runs. The element's own border box is skipped, because the question is what is drawn AROUND it.
+ */
+window.__nkwPixelDiff = function (opts, done) {
+  const el = document.querySelector(opts.sel);
+  if (!el) { done({ why: 'no ' + opts.sel }); return; }
+  const box = el.getBoundingClientRect();
+  const load = function (src) {
+    return new Promise(function (resolve, reject) {
+      const img = new Image();
+      img.onload = function () {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width; canvas.height = img.height;
+        canvas.getContext('2d').drawImage(img, 0, 0);
+        resolve(canvas);
+      };
+      img.onerror = function () { reject(new Error('the screenshot could not be decoded')); };
+      img.src = 'data:image/png;base64,' + src;
+    });
+  };
+  Promise.all([load(opts.before), load(opts.after)]).then(function (both) {
+    const a = both[0], b = both[1];
+    if (a.width !== b.width || a.height !== b.height) {
+      done({ why: 'the two screenshots are not the same size' }); return;
+    }
+    const ctxA = a.getContext('2d'), ctxB = b.getContext('2d');
+    const bw = 12;
+    const x0 = Math.max(0, Math.floor(box.left) - bw);
+    const y0 = Math.max(0, Math.floor(box.top) - bw);
+    const x1 = Math.min(a.width, Math.ceil(box.right) + bw);
+    const y1 = Math.min(a.height, Math.ceil(box.bottom) + bw);
+    if (x1 <= x0 || y1 <= y0) { done({ why: 'the box is off screen' }); return; }
+    const da = ctxA.getImageData(x0, y0, x1 - x0, y1 - y0).data;
+    const db = ctxB.getImageData(x0, y0, x1 - x0, y1 - y0).data;
+    const left = Math.round(box.left) - x0, top = Math.round(box.top) - y0;
+    const right = Math.round(box.right) - x0, bottom = Math.round(box.bottom) - y0;
+    const width = x1 - x0;
+    const band = { outside: 0, inside: 0, outsideDelta: 0, insideDelta: 0, sample: [],
+                   strip: { left: 0, right: 0, top: 0, bottom: 0 },
+                   extent: { minX: 1e9, maxX: -1e9, minY: 1e9, maxY: -1e9 } };
+    for (let py = 0; py < y1 - y0; py += 1) {
+      for (let px = 0; px < width; px += 1) {
+        const i = (py * width + px) * 4;
+        const d = Math.max(Math.abs(da[i] - db[i]), Math.abs(da[i + 1] - db[i + 1]), Math.abs(da[i + 2] - db[i + 2]));
+        if (d <= 16) continue;
+        const inside = px >= left && px < right && py >= top && py < bottom;
+        if (inside) { band.inside += 1; band.insideDelta = Math.max(band.insideDelta, d); }
+        else {
+          band.outside += 1; band.outsideDelta = Math.max(band.outsideDelta, d);
+          if (band.sample.length < 6) band.sample.push({
+            at: [x0 + px, y0 + py], delta: d,
+            was: [da[i], da[i + 1], da[i + 2]], now: [db[i], db[i + 1], db[i + 2]] });
+          // Where those pixels are, edge by edge and as a bounding box. A count alone cannot tell
+          // a ring drawn all the way round from one arc of it, and the difference between those
+          // two is the difference between an indicator and half an indicator.
+          if (px < left) band.strip.left += 1;
+          else if (px >= right) band.strip.right += 1;
+          if (py < top) band.strip.top += 1;
+          else if (py >= bottom) band.strip.bottom += 1;
+          if (px < band.extent.minX) band.extent.minX = px;
+          if (px > band.extent.maxX) band.extent.maxX = px;
+          if (py < band.extent.minY) band.extent.minY = py;
+          if (py > band.extent.maxY) band.extent.maxY = py;
+        }
+      }
+    }
+    // A coarse picture of where the changed pixels are, four pixels to a cell. Numbers say how
+    // many; this says WHERE, and "a ring all the way round" and "one edge of a ring" are the same
+    // number and two different findings. The box's own outline is drawn into the map as # so the
+    // indicator can be read against the thing it is supposed to surround.
+    const cols = Math.ceil((x1 - x0) / 4), rows = Math.ceil((y1 - y0) / 4);
+    const cells = [];
+    for (let r = 0; r < rows; r += 1) cells.push(new Array(cols).fill(' '));
+    for (let r = 0; r < rows; r += 1) for (let c = 0; c < cols; c += 1) {
+      const onBoxEdge = (r * 4 >= top - 1 && r * 4 <= bottom + 1 && (c * 4 <= left + 1 || c * 4 >= right - 1)) ||
+                        (c * 4 >= left - 1 && c * 4 <= right + 1 && (r * 4 <= top + 1 || r * 4 >= bottom - 1));
+      if (onBoxEdge) cells[r][c] = '#';
+    }
+    for (let py = 0; py < y1 - y0; py += 1) for (let px = 0; px < width; px += 1) {
+      const i = (py * width + px) * 4;
+      const d = Math.max(Math.abs(da[i] - db[i]), Math.abs(da[i + 1] - db[i + 1]), Math.abs(da[i + 2] - db[i + 2]));
+      if (d > 16) cells[Math.floor(py / 4)][Math.floor(px / 4)] = 'o';
+    }
+    band.map = cells.map(function (row) { return row.join(''); });
+
+    band.band = { x0: x0, y0: y0, x1: x1, y1: y1 };
+    band.box = { left: Math.round(box.left), top: Math.round(box.top), right: Math.round(box.right), bottom: Math.round(box.bottom) };
+    band.relative = {
+      dx: [Math.round(band.extent.minX) - left, Math.round(band.extent.maxX) - right],
+      dy: [Math.round(band.extent.minY) - top, Math.round(band.extent.maxY) - bottom],
+      boxWidth: width, boxHeight: y1 - y0
+    };
+    done(band);
+  }).catch(function (error) { done({ why: String(error && error.message ? error.message : error) }); });
+};
+
 /** The caret, as the model has it, plus who holds focus — read at one instant. */
 window.__nkwCaret = function () {
   const view = window.__nkwEditor ? window.__nkwEditor.getView() : null;
@@ -611,6 +765,236 @@ window.__nkwCaret = function () {
       ? (document.activeElement.className || document.activeElement.tagName || null)
       : null
   };
+};
+
+/**
+ * The ring the engine paints on an element the moment it holds focus — the sweep's one question.
+ *
+ * The instrument above reads whatever is on screen NOW, which is what a check wants when a real
+ * Tab has just landed. This is for the other direction: focus the element, read, put focus back,
+ * so a list of a hundred and fifty stops can be asked one at a time. Focus is restored to where
+ * it was, because a sweep that left the page focused on its last candidate would be a gesture
+ * the phases after it did not ask for.
+ *
+ * **It is a method with a failure mode of its own**, and that is why it returns
+ * matchesFocusVisible beside the outline: WebKitGTK decides :focus-visible from the modality
+ * of the last input, so a programmatic focus after a pointer gesture legitimately paints nothing
+ * and every reading below would be a false accusation. The caller establishes modality with a
+ * real key first and proves the method against a witness element known to paint — see
+ * __nkwFocusSweep's witness.
+ */
+window.__nkwFocusPaint = function (sel) {
+  const el = document.querySelector(sel);
+  if (!el) return null;
+  const before = document.activeElement;
+  el.focus({ preventScroll: true });
+  const s = getComputedStyle(el);
+  const out = {
+    sel: sel,
+    tag: el.tagName.toLowerCase(),
+    cls: el.className || null,
+    tookFocus: document.activeElement === el,
+    matchesFocusVisible: el.matches(':focus-visible'),
+    matchesFocus: el.matches(':focus'),
+    outlineStyle: s.outlineStyle,
+    outlineWidth: s.outlineWidth,
+    outlineColor: s.outlineColor,
+    outlineOffset: s.outlineOffset,
+    boxShadow: s.boxShadow
+  };
+  if (before && before !== el && before.focus) before.focus({ preventScroll: true });
+  else if (!before) el.blur();
+  // A ring is "painted" only when the engine says so on both counts: an outline it is actually
+  // drawing, of a nonzero width. outline: auto and -webkit-focus-ring-color are the engine's
+  // own defaults and count — the question is whether a reader sees something, not which words
+  // produced it. A box-shadow is accepted as well, because the UI kit's inputs draw their
+  // indicator that way and a sweep that called those ringless would be wrong about a surface
+  // nobody disputes.
+  out.painted =
+    out.matchesFocus === true &&
+    ((out.outlineStyle !== 'none' && parseFloat(out.outlineWidth) > 0) ||
+      (out.boxShadow !== 'none' && out.boxShadow !== '') ||
+      window.__nkwPseudoIndicator(el) !== null);
+  out.pseudo = window.__nkwPseudoIndicator(el);
+  // Contrast, because an indicator a reader cannot see against what is behind it is the defect
+  // wearing a fix's clothes: the project's own standards put a floor under the indicator's size
+  // and its contrast, and "there is an outline" answers neither. The ring is drawn OUTSIDE the
+  // element's own background in the offset case and INSIDE it in the inset case, so both are
+  // reported and the caller judges; the arithmetic is WCAG's relative-luminance ratio.
+  if (out.painted && out.outlineStyle !== 'none') {
+    const backdrop = window.__nkwBackdrop(el);
+    out.backdrop = backdrop;
+    out.backdropContrast = window.__nkwContrast(out.outlineColor, backdrop.color);
+    out.ownContrast = window.__nkwContrast(out.outlineColor, s.backgroundColor);
+    out.outlineWidthPx = parseFloat(out.outlineWidth);
+  }
+  if (before && before !== el && before.focus) before.focus({ preventScroll: true });
+  else if (!before) el.blur();
+  return out;
+};
+
+/**
+ * The colour a reader sees behind an element: the first opaque ancestor background.
+ *
+ * Walks up rather than assuming the element's own background is what is behind the ring, because
+ * the rings this codebase draws sit at -2px (inside the element) and at +1/+2px (outside it, over
+ * the parent). Both are reported by the caller; this is the "outside it" half.
+ */
+window.__nkwBackdrop = function (el) {
+  let node = el.parentElement;
+  while (node) {
+    const bg = getComputedStyle(node).backgroundColor;
+    const m = bg && bg.match(/rgba?\\(([^)]+)\\)/);
+    if (m) {
+      const parts = m[1].split(',').map(function (v) { return parseFloat(v); });
+      if (parts.length < 4 || parts[3] >= 0.999) return { color: bg, from: node.className || node.tagName };
+    }
+    node = node.parentElement;
+  }
+  return { color: 'rgb(255,255,255)', from: 'nothing (the document default)' };
+};
+
+/**
+ * WCAG's contrast ratio between two colours, as a number with two decimals.
+ *
+ * The ratio the standards name for a focus indicator is 3:1 against the adjacent colour, and the
+ * only honest way to check it is to resolve both colours in the engine and do the arithmetic on
+ * what it returns. A colour it cannot parse comes back null, which is reported rather than
+ * rounded to a pass.
+ */
+window.__nkwContrast = function (a, b) {
+  const parse = function (value) {
+    const m = value && value.match(/rgba?\\(([^)]+)\\)/);
+    if (!m) return null;
+    const parts = m[1].split(',').map(function (v) { return parseFloat(v); });
+    if (parts.length < 3 || parts.some(function (v) { return !isFinite(v); })) return null;
+    // The RGB is used as it is, without compositing a translucent indicator over what is behind
+    // it. That is stated rather than hidden: outlineColor's own alpha is reported beside the
+    // ratio, so a reader can see that a 58%-alpha ring's ratio is about the colour it is mixed
+    // FROM. The colours this codebase paints a focus ring with are opaque, and the mixed ones are
+    // filled surfaces rather than outlines.
+    return parts.slice(0, 3);
+  };
+  const lum = function (rgb) {
+    const channel = function (v) {
+      const c = v / 255;
+      return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2]);
+  };
+  const ca = parse(a), cb = parse(b);
+  if (!ca || !cb) return null;
+  const la = lum(ca), lb = lum(cb);
+  const hi = Math.max(la, lb), lo = Math.min(la, lb);
+  return Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100;
+};
+
+/**
+ * Every tab stop under a root that takes focus and shows nothing, asked of the engine.
+ *
+ * This is the systematic half of the two surfaces this harness measures one at a time: a
+ * container that is a tab stop with no ring is the same defect as a container that is no tab
+ * stop at all, and fixing the instances a reviewer happened to walk past is how the class
+ * survives. The list is read from the live DOM through the same __nkwTabStops the tab-order
+ * reading uses, and each stop's ring is PAINTED and read back — not grepped out of a stylesheet,
+ * which is the difference between "a rule exists" and "a reader sees it".
+ *
+ * witness is not optional and is not decoration. One element known to paint is measured through
+ * the same code path in the same call; when the witness comes back ringless, the whole sweep is
+ * reported blind and the caller is told not to read the rest — because a method that cannot
+ * see a ring will report every stop as ringless, which is exactly the wrong conclusion and looks
+ * exactly like right.
+ */
+/**
+ * An indicator drawn on a pseudo-element, which getComputedStyle(el) cannot see at all.
+ *
+ * LayoutResizeHandle in this app draws its focus indicator as a two-pixel ::after bar that
+ * gains a background on :focus-visible, and it is not alone: an element that reveals a control,
+ * lifts an overlay or fills a bar when focused is a pattern this codebase uses deliberately. A
+ * sweep that only read the element's own outline would call every one of those ringless, and a
+ * false accusation in a list of defects is worse than a missing one — it sends the next reader to
+ * change something that is not broken, and it is how the list stops being believed.
+ *
+ * The test is narrow on purpose: the pseudo-element must have a box, be visible, and carry a
+ * background, a border or an outline of its own. opacity: 0 counts as invisible, because a bar
+ * that is transparent is the pre-focus state of the very thing being looked for.
+ */
+window.__nkwPseudoIndicator = function (el) {
+  const parts = ['::after', '::before'];
+  for (let i = 0; i < parts.length; i++) {
+    const s = getComputedStyle(el, parts[i]);
+    if (!s || s.content === 'none') continue;
+    if (s.visibility === 'hidden' || s.display === 'none') continue;
+    if (parseFloat(s.opacity) === 0) continue;
+    // No size test. getComputedStyle reports a pseudo-element's box in the computed form, so a
+    // bar positioned with top: 0; bottom: 0 reads height: auto while it is on screen at its
+    // parent's full height — the first version demanded a numeric width AND height, called the
+    // three resize handles in this page ringless, and put three false accusations in the list.
+    // What is asked instead is only that the pseudo-element is drawn and that it paints.
+    const hasPaint =
+      (s.backgroundColor !== 'rgba(0, 0, 0, 0)' && s.backgroundColor !== 'transparent') ||
+      (s.outlineStyle !== 'none' && parseFloat(s.outlineWidth) > 0) ||
+      s.boxShadow !== 'none';
+    if (hasPaint) {
+      return { part: parts[i], width: s.width, height: s.height,
+               background: s.backgroundColor, outline: s.outlineStyle + ' ' + s.outlineWidth };
+    }
+  }
+  return null;
+};
+
+window.__nkwFocusSweep = function (opts, done) {
+  const stops = window.__nkwTabStops(opts.root === undefined ? null : opts.root);
+  if (stops === null) { done({ why: 'no ' + opts.root }); return; }
+  const witness = window.__nkwFocusPaint(opts.witness);
+  if (!witness || witness.painted !== true) {
+    done({ blind: true, witness: witness, total: stops.length,
+           why: 'the witness ' + opts.witness + ' painted no ring under this method' });
+    return;
+  }
+  const offenders = [];
+  const unaddressable = [];
+  let i = 0;
+  // **One frame per stop, and it is not politeness.** Several of this app's focus indicators
+  // arrive on a transition — LayoutResizeHandle fades a two-pixel bar in over --app-motion-fast
+  // — and a computed style read in the same task as the focus samples that transition at t=0,
+  // where the colour is still transparent. The first version read all hundred and sixty stops
+  // synchronously and named those three handles as ringless; they paint, 150ms later. A sweep that
+  // has to be told which of its findings are real is not a sweep.
+  const step = function () {
+    if (i >= stops.length) {
+      done({
+        root: opts.root === undefined ? null : opts.root,
+        total: stops.length, witness: witness, blind: false,
+        offenders: offenders, unaddressable: unaddressable,
+        clean: stops.length - offenders.length - unaddressable.length
+      });
+      return;
+    }
+    const el = stops[i];
+    const box = el.getBoundingClientRect();
+    const index = i;
+    i += 1;
+    if (box.width < 2 || box.height < 2) { requestAnimationFrame(step); return; }
+    el.setAttribute('data-nkw-sweep', String(index));
+    const reading = window.__nkwFocusPaint('[data-nkw-sweep="' + index + '"]');
+    el.removeAttribute('data-nkw-sweep');
+    // Restored, because the next stop's reading must not be taken with the previous one still
+    // focused: __nkwFocusPaint puts focus back where it found it, and this makes sure it has
+    // somewhere to go back to.
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    if (!reading) { unaddressable.push(index); requestAnimationFrame(step); return; }
+    if (!reading.painted) {
+      offenders.push({
+        i: index, tag: reading.tag, cls: reading.cls, tookFocus: reading.tookFocus,
+        outline: reading.outlineStyle + ' ' + reading.outlineWidth,
+        focusVisible: reading.matchesFocusVisible, focus: reading.matchesFocus,
+        pseudo: reading.pseudo
+      });
+    }
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
 };
 `
 

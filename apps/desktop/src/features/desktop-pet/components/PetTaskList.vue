@@ -318,6 +318,17 @@ const surfaceStyle = { maxWidth: `${PET_BUBBLE_MAX_WIDTH}px`, boxSizing: 'border
 </template>
 
 <style scoped>
+/* The rows' box is a tab stop and has to show it. Everything above this element is styled from
+   `PET_BUBBLE_SCROLL_STYLE` and this file has never carried a rule for it, so the indicator the
+   engine drew was its own `outline: auto` — which is the accented blue of the engine's theme and
+   not this app's, and would be the one control in the pet's window that speaks a different focus
+   language from `.pet-task__row` a line below it. INSET, like the other scroll containers in this
+   app: the box is bounded to `PET_BUBBLE_MAX_HEIGHT` and an outside ring would be drawn over the
+   bubble it sits in. */
+.pet-task__scroll:focus-visible {
+  outline: 2px solid var(--app-accent, #6aa3ff);
+  outline-offset: -2px;
+}
 .pet-task {
   display: flex;
   flex-direction: column;

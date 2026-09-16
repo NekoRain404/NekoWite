@@ -806,6 +806,17 @@ onBeforeUnmount(() => {
   white-space: pre-wrap;
   word-break: break-all;
 }
+/* The screen is `tabindex="0"` — it is the element a keyboard reaches the terminal's own
+   scrollback through — and the engine's default ring on it is a fragment: measured in
+   WebKitGTK, `outline: auto` paints five pixels down its left edge and nothing on the other
+   three. A terminal has no other focus affordance to fall back on (the sink field is off the
+   layout by design), so this is the only thing that says where the keyboard is. Same rule as
+   the agent transcript's container; INSET because the screen is the full size of the viewport
+   it scrolls, and an outside ring would be clipped by the panel around it. */
+.agent-native-screen:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: -2px;
+}
 .agent-native-field {
   position: absolute;
   width: 1px;

@@ -34,7 +34,12 @@
         ?agent=1     switches the right rail to the agent panel and stands in
                      for the agent IPC — the commands `tauri-agent/ipc.ts`
                      calls and the `agent-event` channel it listens on — so a
-                     streamed answer can be driven into the real panel.
+                     streamed answer can be driven into the real panel;
+        ?chat=1      seeds a conversation long enough to overflow the rail's
+                     transcript, through the same stored document the product
+                     reads. The two are mutually exclusive in practice: the
+                     agent panel takes the rail over, so a run that asks for
+                     both measures the agent panel.
     -->
     <script>
       ;(function () {
@@ -319,6 +324,49 @@
         }
         window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: function () {} }
 
+        // ---- The chat transcript's fixture ---------------------------------
+        //
+        // `?chat=1` seeds a conversation through the STORED DOCUMENT the product
+        // itself reads (`nekowite.chat.sessions`, written by
+        // `chat-session-storage.ts` and sanitised on the way back in), so what
+        // mounts is the app's own panel over the app's own state rather than a
+        // panel a probe built. A probe that injected messages by calling a store
+        // would be measuring its own injection.
+        //
+        // The length is the point. A transcript that does not overflow cannot
+        // answer a single question a scroll probe asks, and "nothing moved" is
+        // what an empty one says to all of them — the pass-for-the-wrong-reason
+        // shape every trace in this harness refuses. Enough turns to be several
+        // screens deep, each a few lines, so the container's maximum is well
+        // clear of its viewport whatever the rail's width is set to.
+        const chatOn = params.get('chat') === '1'
+        if (chatOn) {
+          const turns = []
+          for (let i = 0; i < 40; i++) {
+            turns.push({ role: 'user', content: `Question ${i + 1}: ${PARAGRAPH.replace(/\s+/g, ' ').trim()}` })
+            turns.push({
+              role: 'assistant',
+              content: `Answer ${i + 1}: ${PARAGRAPH.replace(/\s+/g, ' ').trim()}${PARAGRAPH.replace(/\s+/g, ' ').trim()}`,
+            })
+          }
+          localStorage.setItem(
+            'nekowite.chat.sessions',
+            JSON.stringify({
+              v: 1,
+              activeId: 'probe-session',
+              sessions: [
+                {
+                  id: 'probe-session',
+                  title: 'Probe conversation',
+                  created: 1,
+                  updated: 2,
+                  messages: turns,
+                },
+              ],
+            }),
+          )
+        }
+
         localStorage.setItem('nekowite.vault', VAULT)
         localStorage.setItem('nekowite.locale', 'en')
         localStorage.setItem('nekowite.settings.autosaveInterval', 'off')
@@ -331,6 +379,7 @@
           note: NAME,
           vault: VAULT,
           agent: agentOn,
+          chat: chatOn,
           document: scenario === 'doc' ? sized : null,
         }
       })()

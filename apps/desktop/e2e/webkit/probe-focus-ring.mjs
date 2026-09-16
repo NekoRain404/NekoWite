@@ -1,0 +1,545 @@
+/**
+ * The focus indicator of every tab stop this task owns, painted by the engine and read back.
+ *
+ * ---- Why this file exists
+ *
+ * Four tab stops in this product carry a comment saying why they are focusable and no rule that
+ * draws a focus ring, and a hand survey found four of them where there are five. Two halves of one
+ * defect — a scroll container the keyboard cannot reach, and a tab stop a reader cannot see — and
+ * only the first half had a probe. The second half cannot be measured the way the first was: a
+ * ring is not a number in a stylesheet, it is what the engine paints when the heuristic agrees,
+ * and `probe-agent-scroll.mjs` established the only honest reading of that (a real Tab, then
+ * `getComputedStyle` on the frame focus lands).
+ *
+ * `AgentChangesView`, `AgentEditConflictView` and `AgentNativeTerminal` are **not mounted
+ * anywhere in the running application**. Nothing hosts them yet — the wiring is a separate task —
+ * so no page the product can open will ever show their tab stops, and a probe that only visited
+ * the product's own screens could never measure them. This one mounts them, from the running
+ * dev server, the way `e2e/agent-changes.spec.ts` and `e2e/desktop-pet-tasks.spec.ts` mount theirs
+ * in Chromium: the component is the application's own, compiled by the application's own Vite,
+ * against the application's own Vue instance, resolved out of `main.ts`'s transform. What is
+ * rebuilt here is the mounting site and nothing else, and every reading below says which element
+ * it was taken on.
+ *
+ * ---- How a reading here is made worth having
+ *
+ *  - **The ring is painted, not asserted.** Nothing in this file reads a stylesheet. The element
+ *    is focused and `getComputedStyle` answers, which is the same answer a keyboard reader gets.
+ *  - **The method is proved in the run, against a witness.** `:focus-visible` is a heuristic on
+ *    the LAST INPUT's kind, so a programmatic focus after a pointer gesture legitimately paints
+ *    nothing and every reading below would be a false accusation. A real Tab is pressed first and
+ *    a control known to paint (`.switch-option`, which has had its ring since the UI kit) is
+ *    measured through the same code path. When the witness comes back dark the run reports itself
+ *    blind and claims nothing.
+ *  - **Contrast is arithmetic on what the engine returned**, not a claim: the indicator's colour
+ *    against the surface behind it, by WCAG's ratio, with the number printed beside every verdict.
+ *    An indicator that paints and cannot be seen is the defect wearing a fix's clothes.
+ *  - **The sweep.** The five stops are the ones that were reported; the question is whether the
+ *    list is complete. Every tab stop the page has is focused and read the same way, and the ones
+ *    that show nothing are named. That is the reading no amount of grepping produces, and it is
+ *    printed rather than asserted — it covers surfaces outside this task's reach, and a gate that
+ *    can only go green by editing files it may not open is not a gate.
+ */
+import { until } from './webdriver.mjs'
+import { INSTRUMENTS, KEY, RAIL_TITLES, load } from './agent-scroll-instrument.mjs'
+import { clickStatusButton, pressKeys } from './agent-scroll-driver.mjs'
+
+/** `--violate ringless`: the indicator suppressed in the page, so the checks can be shown red. */
+const VIOLATION = 'ringless'
+
+function violation() {
+  const i = process.argv.indexOf('--violate')
+  if (i === -1) return null
+  const value = process.argv[i + 1]
+  return value === undefined || value.startsWith('--') ? null : value
+}
+
+/**
+ * The surfaces, and where each one's indicator has to appear.
+ *
+ * `page` entries are already on screen — the reading is taken on the product's own DOM, in the
+ * product's own rail, and those are the strongest readings this file produces. `mount` entries
+ * are the ones nothing hosts yet; the component URL is what the dev server serves.
+ */
+const PAGE_SURFACES = [
+  { name: 'agent transcript', sel: '.agent-timeline', page: 'agent' },
+  { name: 'permission arguments', sel: '.agent-perm-args', page: 'agent' },
+  { name: 'chat transcript', sel: '.chat-scroll', page: 'chat' },
+]
+
+/**
+ * The mounts, one per surface nothing hosts.
+ *
+ * Each entry carries only what the component needs to DRAW its target element. The fixtures are
+ * deliberately thin, and a fixture that goes stale — a prop renamed, an element moved behind
+ * another condition — is not a silent pass: the mount either throws or leaves no target on screen,
+ * and both are reported as failures that name the surface.
+ */
+const MOUNTS = [
+  {
+    name: 'changes buffer text',
+    url: '/src/features/agent/components/AgentChangesView.vue',
+    sel: '.agent-changes-text',
+    props: {
+      rows: [
+        {
+          path: 'notes/probe.md',
+          attribution: 'agent',
+          toolCallId: 'probe-call-1',
+          tool: 'edit',
+          status: 'completed',
+          verdict: {
+            kind: 'unsaved-edits',
+            bufferText: '# probe\n\nthe unsaved buffer, which is the element under measurement',
+            diskText: '# probe\n\nwhat the file holds',
+          },
+          offers: ['view', 'merge', 'recover'],
+          refused: null,
+        },
+      ],
+      labels: {
+        title: 'Changes',
+        empty: 'Nothing has changed yet',
+        close: 'Close',
+        attribution: {
+          agent: 'The agent changed this file',
+          external: 'This file changed outside the agent',
+          reported: 'The engine reported this file',
+        },
+        verdict: { followsDisk: 'No unsaved edits', unsavedEdits: 'This note has unsaved edits' },
+        offer: { view: 'View', merge: 'Merge', recover: 'Recover' },
+        refused: {
+          notAgentChange: 'Nothing recorded a change to put back',
+          writeInFlight: 'The agent is still writing this file',
+          unsavedEdits: 'Deal with the unsaved edits first',
+        },
+        unsavedBuffer: 'Your unsaved text',
+        diskUnread: 'The file was not read',
+      },
+    },
+  },
+  {
+    name: 'conflict texts',
+    url: '/src/features/agent/components/AgentEditConflictView.vue',
+    sel: '.agent-conflict-text',
+    all: true,
+    props: {
+      conflicts: [
+        {
+          status: 'conflict',
+          path: 'notes/probe.md',
+          agentText: '# probe\n\nrewritten by the agent',
+          noteText: '# probe\n\nwhat was typed while it thought',
+          baselineRevision: 'r1',
+          currentRevision: 'r7',
+        },
+      ],
+      labels: {
+        title: 'This note changed while the agent was working',
+        moved: 'was edited after the request went out',
+        agentText: 'What the agent produced',
+        noteText: 'What the note holds now',
+        apply: 'Use the agent version',
+        discard: 'Keep my version',
+        kept: 'Your text is kept when you apply.',
+      },
+    },
+  },
+  {
+    name: 'native terminal screen',
+    url: '/src/features/agent/components/AgentNativeTerminal.vue',
+    sel: '.agent-native-screen',
+    props: {
+      session: {
+        sessionId: 'probe-terminal',
+        program: 'opencode',
+        args: [],
+        install: 'bundled',
+        state: 'running',
+      },
+      // Built in the page, not passed in: WebDriver serializes the fixture as JSON, and the
+      // functions a transport is made of do not survive the trip — the first run of this probe
+      // reported `props.transport.subscribe is not a function` and mounted nothing. `stubTransport`
+      // is the page's own no-op, so the component still draws its screen and the reading is about
+      // the screen rather than about a transport that was never there.
+      stubTransport: true,
+      labels: {
+        title: 'Terminal',
+        program: 'Program',
+        profile: 'Profile',
+        state: { running: 'Running', exited: 'Exited', failed: 'Failed' },
+        ended: { code: 'exit code', signal: 'signal', unknown: 'no status' },
+        rights: 'This runs with your own rights.',
+        managed: 'Managed by this app.',
+        elided: 'Part of a line was cut',
+        dropped: 'Earlier output was dropped',
+        copy: 'Copy',
+        copied: 'Copied',
+        copyFailed: 'Copy failed',
+        close: 'Close',
+        confirm: { title: 'Close?', body: 'It is still running.', keep: 'Keep', confirm: 'Close' },
+        unavailable: 'The host refused',
+        refusal: {},
+      },
+    },
+  },
+  {
+    name: 'pet task rows box',
+    url: '/src/features/desktop-pet/components/PetTaskList.vue',
+    sel: '.pet-task__scroll',
+    // Enough rows to put something below the fold, which is the reason the box is focusable at
+    // all: a box that fits its content is a tab stop nothing needs.
+    props: {
+      now: 1_700_000_000_000,
+      tasks: Array.from({ length: 12 }, (_, i) => ({
+        key: {
+          agentId: 'probe-agent',
+          profileId: 'probe-profile',
+          runtimeEpoch: 'probe-epoch-1',
+          vaultId: 'probe-vault',
+          sessionId: `probe-session-${i}`,
+          runId: `probe-run-${i}`,
+        },
+        state: i % 3 === 0 ? 'working' : i % 3 === 1 ? 'waiting-input' : 'turn-finished',
+        permissionRequestId: null,
+        updatedAt: 1_700_000_000_000 - i * 1000,
+      })),
+    },
+  },
+]
+
+/**
+ * The mount script, run in the page.
+ *
+ * Vue comes from the dev server's own transform of `main.ts` rather than from a URL written here,
+ * which is the existing specs' device and is load-bearing: a second copy of Vue would compile the
+ * SFCs against a different runtime and the components would silently not be the ones the app
+ * ships.
+ */
+const MOUNT_SCRIPT = `
+const done = arguments[arguments.length - 1];
+const spec = arguments[0];
+(async function () {
+  const source = await (await fetch('/src/main.ts')).text();
+  const found = source.match(/["']([^"']*[/]deps[/]vue[.]js[^"']*)["']/);
+  if (!found) { done({ why: 'the dev server serves no vue dependency' }); return; }
+  const vue = await import(found[1]);
+  try {
+    const mod = await import(spec.url);
+    const host = document.createElement('div');
+    host.className = 'nkw-focus-host';
+    host.setAttribute('data-nkw-focus-host', spec.name);
+    // **One at a time, and one host on the page.** A fixed overlay big enough to draw the
+    // component in is also big enough to cover the next one: the first version mounted all four
+    // at once, offset by eight pixels each, and every surface but the last read as a sliver of
+    // itself — the ring of the one underneath was painted and then hidden behind the one on top,
+    // and the pixel diff called that "no indicator". The reading was the instrument's, not the
+    // engine's, and it took a control whose ring is not in question (the last host, the pet rows
+    // box, the only one nothing covered) to see it.
+    host.style.cssText =
+      'position: fixed; top: 40px; left: 40px; width: 420px; z-index: 40;' +
+      'background: var(--app-canvas, #ffffff);';
+    // **Inside the themed root, not beside it.** AppShell carries data-theme on its own
+    // element and palettes.css keys every colour off it, so a host appended to document.body
+    // renders under the :root default while the app renders under the chosen theme — the first
+    // version measured every ring in the LIGHT accent while the rail it was comparing against was
+    // in the dark one, and the two readings were not the same reading.
+    const themed = document.querySelector('[data-theme]') || document.body;
+    themed.append(host);
+    const props = Object.assign({}, spec.props);
+    // The one fixture that cannot come through the wire, built here. A terminal with no transport
+    // cannot draw, and the component is right to refuse rather than pretend.
+    if (props.stubTransport) {
+      delete props.stubTransport;
+      props.transport = {
+        write: function () { return Promise.resolve(); },
+        resize: function () { return Promise.resolve(); },
+        close: function () { return Promise.resolve(); },
+        subscribe: function () { return function () {}; }
+      };
+    }
+    const app = vue.createApp({ render: function () { return vue.h(mod.default, props); } });
+    app.mount(host);
+    window.__nkwFocusHost = { app: app, host: host };
+    done({ name: spec.name, url: spec.url, ok: true, stubbed: Boolean(spec.props.stubTransport) });
+  } catch (error) {
+    done({ name: spec.name, url: spec.url, ok: false, why: String(error && error.message ? error.message : error) });
+  }
+})();
+`
+
+/** Take the previous host off the page, so the next reading has the screen to itself. */
+const UNMOUNT_SCRIPT = `
+const held = window.__nkwFocusHost;
+if (!held) return { unmounted: false };
+held.app.unmount();
+held.host.remove();
+window.__nkwFocusHost = null;
+return { unmounted: true, left: document.querySelectorAll('.nkw-focus-host').length };
+`
+
+export const focusRingProbe = {
+  name: 'focus-ring',
+
+  async run(wd) {
+    const harness = await wd.execute('return window.__NEKO_HARNESS__ ?? null')
+    if (!harness) return { skipped: 'the page is not the WebKit harness' }
+
+    const out = { harness, load: load(), surfaces: [], sweep: null }
+    await wd.execute(INSTRUMENTS)
+
+    // --- the surfaces already on the product's own screens ------------------
+    //
+    // The rail is mounted with v-if, so either panel is absent from the document until the reader
+    // opens it — and whether that has already happened is read from the DOM rather than assumed,
+    // because a second click on the toggle would CLOSE the rail the reading needs open. This runs
+    // BEFORE the witness, because the click is a pointer gesture and a pointer gesture is exactly
+    // what turns `:focus-visible` off for everything measured after it.
+    const panelSel = harness.agent ? '.agent-panel' : '.chat-panel'
+    const alreadyOpen = await wd.execute(`return Boolean(document.querySelector('${panelSel}'))`)
+    out.rail = alreadyOpen ? { ok: true, alreadyOpen: true } : await clickStatusButton(wd, RAIL_TITLES)
+    try {
+      await until(() => wd.execute(`return Boolean(document.querySelector('${panelSel}'))`), {
+        timeout: 20_000,
+        what: 'the rail panel to mount',
+      })
+    } catch (error) {
+      out.railFailure = String(error.message || error)
+    }
+
+    // Keyboard modality, re-established after every pointer gesture and read as a measurement
+    // rather than assumed. `:focus-visible` is the heuristic on the LAST INPUT's kind, so a
+    // programmatic focus after a click legitimately paints nothing — and a run that read the
+    // surfaces under that modality would report every one of them as ringless and every reading
+    // below would be a false accusation. This line is re-run before each group of readings that a
+    // click precedes, and the witness is measured under the SAME modality as the subjects.
+    await pressKeys(wd, [KEY.tab])
+    out.witness = await wd.execute(
+      `const el = document.querySelector('.switch-option') || document.querySelector('.status-btn');
+       if (!el) return null;
+       el.setAttribute('data-nkw-witness', '1');
+       const reading = window.__nkwFocusPaint('[data-nkw-witness="1"]');
+       el.removeAttribute('data-nkw-witness');
+       return reading;`,
+    )
+    out.blind = !out.witness || out.witness.painted !== true
+    if (out.blind) return out
+    // The witness's own pixels: the method's ground truth. It is a control whose ring is not in
+    // question, so a number here proves the pixel reader can see a ring at all — without it, a
+    // zero on a surface below would be as likely to be a broken screenshot as a missing ring.
+    await wd.execute(`const el = document.querySelector('.switch-option'); if (el) el.focus(); return true`)
+    out.witnessPixels = await pixelsAround(wd, '.switch-option', false)
+
+    // **The deliberate violation, installed here.** After the witness and before every subject, so
+    // the whole run measures the defect rather than the fix and the witness is still measured
+    // clean — it is not in the injected selector, and it must keep painting for the run to be
+    // read at all. The red this produces is the "the engine's own ring is not this app's ring"
+    // state, which is what the surfaces below were in before the rule was added.
+    if (violation() === VIOLATION) {
+      out.injected = await wd.execute(`return window.__nkwViolateNoRing(arguments[0], arguments[1])`, [
+        MOUNTS.map((m) => m.sel).concat(PAGE_SURFACES.map((s) => s.sel)).join(', '),
+        process.argv.includes('--revert') ? 'revert' : 'none',
+      ])
+    }
+
+    for (const surface of PAGE_SURFACES) {
+      const wanted = surface.page === 'agent' ? harness.agent === true : harness.agent !== true
+      const chatSeeded = surface.page === 'chat' && harness.chat === true
+      if (!wanted || (surface.page === 'chat' && !chatSeeded)) {
+        out.surfaces.push({ name: surface.name, sel: surface.sel, on: 'the product page', present: false,
+                            why: surface.page === 'agent' ? 'this run is not the agent run' : 'this run did not seed a conversation' })
+        continue
+      }
+      const present = await wd.execute(`return Boolean(document.querySelector('${surface.sel}'))`)
+      if (!present) {
+        out.surfaces.push({ name: surface.name, sel: surface.sel, on: 'the product page', present: false,
+                            why: 'the element is not in the document on this page' })
+        continue
+      }
+      await pressKeys(wd, [KEY.tab])
+      const reading = await wd.execute(`return window.__nkwFocusPaint('${surface.sel}')`)
+      out.surfaces.push({
+        name: surface.name,
+        sel: surface.sel,
+        on: 'the product page',
+        present: true,
+        entered: 'a programmatic focus under keyboard modality',
+        reading,
+        pixels: await pixelsAround(wd, surface.sel, false),
+      })
+    }
+
+    // --- the surfaces nothing hosts yet --------------------------------------
+    //
+    // Mounted ONE AT A TIME and taken off the page between readings. Not tidiness: the overlay a
+    // component has to be drawn in is big enough to cover the next one, and the first version
+    // measured every surface but the last through the one stacked on top of it.
+    out.mounts = []
+    for (const spec of MOUNTS) {
+      const mounted = await wd.executeAsync(MOUNT_SCRIPT, [spec])
+      out.mounts.push(mounted)
+      // A few frames for the mount's own stylesheet to land: a SFC's style is injected by the dev
+      // server's module, and a ring read in the same task as the import would be read before the
+      // rule existed.
+      await frames(wd, 3)
+      if (mounted?.ok !== true) {
+        out.surfaces.push({ name: spec.name, sel: spec.sel, on: 'mounted by this probe', present: false,
+                            why: mounted?.why ?? 'the mount was not attempted' })
+        await wd.execute(UNMOUNT_SCRIPT)
+        continue
+      }
+      const found = await wd.execute(
+        `const nodes = Array.from(document.querySelectorAll(arguments[0]));
+         return { count: nodes.length, first: nodes[0] ? (nodes[0].className || nodes[0].tagName) : null }`,
+        [spec.sel],
+      )
+      if (found.count === 0) {
+        out.surfaces.push({ name: spec.name, sel: spec.sel, on: 'mounted by this probe', present: false,
+                            why: 'the mount rendered no ' + spec.sel })
+        await wd.execute(UNMOUNT_SCRIPT)
+        continue
+      }
+      // Every one of these is a tab stop with `tabindex="0"`, so there is a way to reach it that
+      // leaves no question about the heuristic: tag the stop before it, focus that, and let the
+      // driver's own Tab do the entering — the same walk `probe-agent-scroll.mjs` uses. Where the
+      // target IS the first stop in its host there is nothing to walk in from, and the reading
+      // says so and falls back to the method the witness proved.
+      const walk = await wd.execute(
+        `return window.__nkwTagTabStop({ root: arguments[0], sel: arguments[1], step: -1 })`,
+        [`[data-nkw-focus-host="${spec.name}"]`, spec.sel],
+      )
+      let reading = null
+      if (walk?.target) {
+        // The tagged stop is focused and the driver's own Tab does the entering; the reading is
+        // taken with focus already on the target, so nothing in it moved focus there.
+        await wd.execute(`const el = document.querySelector('[data-nkw-tabstop]'); if (el) el.focus(); return true`)
+        await pressKeys(wd, [KEY.tab])
+        reading = await wd.execute(`return window.__nkwFocusPaint(arguments[0])`, [spec.sel])
+      } else {
+        await pressKeys(wd, [KEY.tab])
+        reading = await wd.execute(`return window.__nkwFocusPaint(arguments[0])`, [spec.sel])
+      }
+      // The pixels, while focus is still on it. Every surface mounted here ends with focus on it
+      // or nothing, so the screenshot is taken before anything else runs.
+      const pixels = await pixelsAround(wd, spec.sel, false)
+      out.surfaces.push({
+        name: spec.name,
+        sel: spec.sel,
+        on: 'mounted by this probe',
+        present: true,
+        count: found.count,
+        entered: walk?.target ? 'a real Tab from the stop before it' : 'a programmatic focus under keyboard modality',
+        reading,
+        pixels,
+      })
+      await wd.execute(UNMOUNT_SCRIPT)
+    }
+
+    // --- the sweep: every tab stop the page has ------------------------------
+    out.sweep = await wd.executeAsync(
+      `window.__nkwFocusSweep({ root: null, witness: '.switch-option' }, arguments[arguments.length - 1])`,
+    )
+    out.loadAfter = load()
+    return out
+  },
+}
+
+/**
+ * The pixels, for one surface: the same band around the same box, before and after focus.
+ *
+ * A computed style says what the engine would draw. This says what changed on screen when focus
+ * arrived. The two screenshots are taken by the driver and diffed by the page's own canvas, which
+ * is the only thing in this repository that can read a rendered pixel — and what comes back is
+ * counts and deltas, so no image leaves this function.
+ *
+ * **Both halves are taken, and the difference is the reading.** Whatever repainted inside a 12px
+ * band around the element's box when it took focus IS its focus indicator, whatever produced it —
+ * an author outline, the engine's own default ring, a box-shadow, a background swap. Neither
+ * screenshot alone can tell an indicator from the element's own border, a neighbouring panel's
+ * edge, or a decode that failed. The band is split into "outside the box" and "inside the box"
+ * because this codebase draws both: an inset ring on a full-bleed scroll container is inside it,
+ * and every other rule puts the ring outside.
+ */
+export async function pixelsAround(wd, sel, pressTabFirst) {
+  if (pressTabFirst) await pressKeys(wd, [KEY.tab])
+  // Focus is put on `<body>` before the first screenshot, and it is not tidiness: a caller that
+  // reached the element with a real Tab has focus ON it already, and a "before" screenshot taken
+  // then is a screenshot of the focused state — the diff comes back empty and the element reads
+  // as ringless for the one reason that has nothing to do with the ring. Found by taking exactly
+  // that reading on a control whose ring is not in question.
+  await wd.execute(`if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+                    return document.activeElement ? document.activeElement.tagName : null`)
+  await frames(wd, 2)
+  const before = await wd.screenshot()
+  if (!before) return { sel, why: 'this driver produces no screenshot' }
+  await wd.execute(`const el = document.querySelector(arguments[0]); if (el) el.focus(); return true`, [sel])
+  // **The paint is quiesced before it is read, and it has to be.** The first version took one
+  // screenshot two frames after the focus and diffed: a control whose ring is a complete 5px
+  // perimeter came back with a ten-pixel arc on one edge in one run and nothing at all in the
+  // next. That is not a ring that comes and goes — it is MiniBrowser repainting the focus ring
+  // in tiles, and a screenshot taken while it is still going is a screenshot of part of it. The
+  // fix is the same one `__nkwQuiet` applies to a keyboard scroll: read it when it has stopped.
+  const settle = await settleScreenshot(wd, 5)
+  const after = settle.png
+  if (!after) return { sel, why: 'this driver produces no screenshot' }
+  const diff = await decode(wd, sel, before, after)
+  return {
+    sel,
+    diff,
+    settled: settle.settled,
+    shots: settle.tries,
+    painted: (diff?.outside ?? 0) + (diff?.inside ?? 0) > 0,
+    where: (diff?.outside ?? 0) > 0 ? 'around the box' : (diff?.inside ?? 0) > 0 ? 'inside the box' : 'nowhere',
+  }
+}
+
+/**
+ * Screenshots until two in a row are identical, and says whether that happened.
+ *
+ * `settled: false` is reported rather than assumed away: a page that never stops repainting (a
+ * caret, a spinner, an animation) is a reading that cannot be taken this way, and the count
+ * beside it is a lower bound rather than an answer.
+ */
+async function settleScreenshot(wd, budget) {
+  let previous = null
+  let tries = 0
+  for (let i = 0; i < budget; i += 1) {
+    tries += 1
+    const png = await wd.screenshot()
+    if (!png) return { png: null, settled: false, tries }
+    if (previous !== null) {
+      if (png === previous) return { png, settled: true, tries }
+    }
+    previous = png
+    await frames(wd, 2)
+  }
+  return { png: previous, settled: false, tries }
+}
+
+async function frames(wd, n) {
+  await wd.executeAsync(
+    // The IIFE's own `arguments` is why the count and the callback are both passed in by position:
+    // naming one of them inside a function whose arguments the driver fills in is how this hung
+    // for thirty seconds the first time it ran — `arguments[0]` was the CALLBACK, `--left` was
+    // NaN, and `NaN <= 0` is false for as long as the driver is willing to wait.
+    `(function () {
+       let left = arguments[0];
+       const done = arguments[arguments.length - 1];
+       const tick = function () { if (--left <= 0) done(true); else requestAnimationFrame(tick); };
+       requestAnimationFrame(tick);
+     })(arguments[0], arguments[arguments.length - 1])`,
+    [n],
+  )
+}
+
+async function decode(wd, sel, before, after) {
+  try {
+    return await wd.executeAsync(
+      `window.__nkwPixelDiff({ sel: arguments[0], before: arguments[1], after: arguments[2] }, arguments[arguments.length - 1])`,
+      [sel, before, after],
+    )
+  } catch (error) {
+    return { why: String(error.message || error) }
+  }
+}
+
