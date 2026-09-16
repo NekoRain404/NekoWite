@@ -42,7 +42,7 @@ export interface MemoryPetSettingsOptions {
   writeFailures?: number
 }
 
-export function createMemoryPetSettings(
+export function createPetSettingsDouble(
   options: MemoryPetSettingsOptions = {},
 ): MemoryPetSettings {
   const values: { [D in PetSettingsDomain]: PetSettingsValues[D] } = { ...PET_SETTINGS_DEFAULTS }
