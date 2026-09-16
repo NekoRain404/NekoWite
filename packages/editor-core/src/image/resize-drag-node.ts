@@ -5,11 +5,14 @@
  *
  * The width the gesture starts from and the pair a Shift (aspect) lock holds to
  * both come from ./measure's `resizeBasis` — the same call ./keymap makes, so
- * one operation cannot form two ratios. And where there is no ratio to hold,
+ * one operation cannot form two ratios. And where there is nothing to hold,
  * this gesture refuses exactly as the keymap refuses: it neither previews nor
  * commits. Both of its old stand-ins wrote a size belonging to no image —
  * `{1,1}` squared the picture when nothing was measurable, the 0.75 one wrote a
- * 4:3 — and the commit is where such a size reached the note.
+ * 4:3, and the plain drag stepped from that same invented `1` — and the commit
+ * is where such a size reached the note. No start width settles it at
+ * pointer-down: an image that has not loaded (or failed) has no size for either
+ * gesture to change.
  *
  * Declining the PREVIEW too is deliberate: the element is not the document, so
  * the refusal costs the reader a gesture that visibly does nothing, where
@@ -50,7 +53,18 @@ export function startResizeDrag(event: PointerEvent, host: ResizeDragHost): void
   event.stopPropagation()
   const { view, getPos, attrs, img, restore } = host
   const { baseWidth, lock } = resizeBasis(attrs(), img)
-  const startWidth = baseWidth ?? 1
+
+  // No width to step from: the same refusal the keymap gives an image it cannot
+  // measure. Neither the element nor the recorder is touched, so a gesture that
+  // cannot write a size cannot show one either. The plain drag used to step
+  // from an invented 1 and pointer-up wrote `{width: 1 + dx, height: null}`
+  // into the note; with no start width the Shift lock cannot have a ratio
+  // either, so this one check refuses both. `resizeBasis` reads the element at
+  // pointer-down, so an image that loads mid-gesture was unmeasurable when the
+  // gesture began — exactly as it was for the keystroke that same moment.
+  if (baseWidth === null) return
+
+  const startWidth = baseWidth
   const startX = event.clientX
   let drag = beginResizeDrag(startWidth)
   let proportional = event.shiftKey
