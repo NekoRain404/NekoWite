@@ -50,11 +50,22 @@ export function htmlToPlainText(html: string): string {
   const body = parseBody(html)
   if (!body) return ''
   const out: string[] = []
+  // A task item's marker opens the item's own line, and the renderer wraps every
+  // item body in a `<p>` whose opening break would otherwise strand the marker
+  // on the line above the text it belongs to. So the break that follows a marker
+  // is spent rather than emitted — by one push only, since whatever is emitted
+  // next either spends it or ends that line by being on it.
+  let markerLine = false
+  const push = (piece: string): void => {
+    const spendsLine = markerLine && piece === '\n'
+    markerLine = false
+    if (!spendsLine) out.push(piece)
+  }
 
   const walk = (node: Node, verbatim: boolean): void => {
     if (node.nodeType === 3 /* text */) {
       const text = node.nodeValue ?? ''
-      out.push(verbatim ? text : text.replace(/\s+/g, ' '))
+      push(verbatim ? text : text.replace(/\s+/g, ' '))
       return
     }
     if (node.nodeType !== 1 /* element */) return
@@ -62,7 +73,7 @@ export function htmlToPlainText(html: string): string {
     const tag = el.tagName.toUpperCase()
     if (SKIPPED.has(tag)) return
     if (tag === 'BR') {
-      out.push('\n')
+      push('\n')
       return
     }
     if (tag === 'IMG') {
@@ -70,18 +81,29 @@ export function htmlToPlainText(html: string): string {
       // than the document without saying so. Its alt text is what the document
       // itself falls back to.
       const alt = el.getAttribute('alt')?.trim()
-      if (alt) out.push(`[${alt}]`)
+      if (alt) push(`[${alt}]`)
+      return
+    }
+    if (tag === 'INPUT' && el.getAttribute('type') === 'checkbox') {
+      // A task item's state is an attribute on a void element, so it reaches the
+      // text only here: unread, the item's body survives the walk and its state
+      // does not, and a reader of the .txt cannot tell a done item from a
+      // pending one — the same silence the IMG branch above refuses. `[x]`/`[ ]`
+      // is GFM's own spelling for it, so the line reads as the document's source
+      // does and a round trip back through Markdown still carries the state.
+      push(el.hasAttribute('checked') ? '[x] ' : '[ ] ')
+      markerLine = true
       return
     }
     const isBlock = BLOCK.has(tag)
     const isCell = CELL.has(tag)
     const inner = verbatim || VERBATIM.has(tag)
-    if (isBlock) out.push('\n')
+    if (isBlock) push('\n')
     for (const child of Array.from(el.childNodes)) walk(child, inner)
     // After the cell, not before it: a leading space would survive the
     // per-line trim below and indent every row.
-    if (isCell) out.push(' ')
-    if (isBlock) out.push('\n')
+    if (isCell) push(' ')
+    if (isBlock) push('\n')
   }
 
   walk(body, false)

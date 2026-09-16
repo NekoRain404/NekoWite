@@ -48,6 +48,57 @@ describe('htmlToPlainText', () => {
     expect(htmlToPlainText(doc('<ul><li>一</li><li>two</li></ul>'))).toBe('一\n\ntwo')
   })
 
+  it('keeps a task item\'s state, which the renderer wrote as an attribute', () => {
+    // The state is all a task checkbox says, and it sits on a void element: the
+    // item's text survives the walk and the state does not, so nothing in the
+    // .txt tells a done item from a pending one.
+    const html = doc(
+      '<ul class="contains-task-list">' +
+        '<li class="task-list-item"><input type="checkbox" disabled checked>' +
+        '<span class="task-list-item-body"><p>shipped</p></span></li>' +
+        '<li class="task-list-item"><input type="checkbox" disabled>' +
+        '<span class="task-list-item-body"><p>not yet</p></span></li>' +
+        '</ul>',
+    )
+    expect(htmlToPlainText(html)).toBe('[x] shipped\n\n[ ] not yet')
+  })
+
+  it('keeps both states when a task item is nested in another', () => {
+    const html = doc(
+      '<ul class="contains-task-list">' +
+        '<li class="task-list-item"><input type="checkbox" disabled checked>' +
+        '<span class="task-list-item-body"><p>parent</p>' +
+        '<ul class="contains-task-list"><li class="task-list-item">' +
+        '<input type="checkbox" disabled>' +
+        '<span class="task-list-item-body"><p>child</p></span></li></ul>' +
+        '</span></li></ul>',
+    )
+    expect(htmlToPlainText(html)).toBe('[x] parent\n\n[ ] child')
+  })
+
+  it('marks the item\'s first line, not every paragraph in it', () => {
+    // A second paragraph in the same item is still the same item: one checkbox,
+    // one marker, and the paragraph break between them as it was.
+    const html = doc(
+      '<ul class="contains-task-list"><li class="task-list-item">' +
+        '<input type="checkbox" disabled checked>' +
+        '<span class="task-list-item-body"><p>first</p><p>second</p></span></li></ul>',
+    )
+    expect(htmlToPlainText(html)).toBe('[x] first\n\nsecond')
+  })
+
+  it('marks only the items that carry state', () => {
+    // The renderer emits a plain `<li>` for a list item with no checkbox, and it
+    // must not pick up a marker the moment a sibling has one.
+    const html = doc(
+      '<ul class="contains-task-list">' +
+        '<li class="task-list-item"><input type="checkbox" disabled>' +
+        '<span class="task-list-item-body"><p>item one</p></span></li>' +
+        '<li><p>no box here</p></li></ul>',
+    )
+    expect(htmlToPlainText(html)).toBe('[ ] item one\n\nno box here')
+  })
+
   it('renders a table as one line per row, cells separated by a space', () => {
     // The line has to stay the row: a cell break that became a newline would
     // leave a reader unable to tell which cell belonged to which row.
