@@ -1,0 +1,25 @@
+<!doctype html>
+<!--
+  The pet window's page (§9).
+
+  It is a page of its own rather than a route in `index.html` because §7.1 asks for a window that
+  is not a second application: 「入口只初始化桌宠，不挂载 AppShell、编辑器、整套索引和 Agent 客户
+  端」. A URL in the editor's own page would make that a condition inside a bundle that already
+  contains all four, and a condition that is merely true today is exactly what
+  `src/app/desktop-pet-entry.test.ts` refuses to rely on.
+
+  The body is transparent: the window is frameless and unbacked (§7.2), so anything painted here
+  would be a rectangle around the pet. `DesktopPetRoot.vue` owns that rule together with the rest
+  of the window's layout.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NekoWite</title>
+  </head>
+  <body>
+    <div id="desktop-pet"></div>
+    <script type="module" src="/src/app/desktop-pet-entry.ts"></script>
+  </body>
+</html>
