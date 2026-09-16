@@ -7,7 +7,6 @@ import { NoteListPanel } from '../features/notes'
 import InfoRail, { type RailTab } from '../ui/InfoRail.vue'
 import TabBar from '../ui/TabBar.vue'
 import StatusBar from '../ui/StatusBar.vue'
-import { useFollowPanel } from './follow-panel-toggle'
 import { markArrived, markLeaving } from '../composables/surface-leave'
 import AppDialogs from './AppDialogs.vue'
 import EditorPane from '../ui/EditorPane.vue'
@@ -40,7 +39,10 @@ import { getLocale, t } from '../i18n'
 // editor region is a default slot so the shell stays composable, with the
 // standard TabBar+EditorPane as the fallback.
 
-const props = defineProps<{
+// Not assigned to a local: nothing in this script reads a prop any more (the
+// template reads them by name, which `<script setup>` exposes without it), and
+// the only reader used to be the content glide's `props.sidebarVisible`.
+defineProps<{
   sidebarVisible: boolean
   vaultPath: string | null
   railOpen: boolean
@@ -77,10 +79,18 @@ const appearance = useAppearanceStore()
 // the panel they were reading instead of resetting to the chat (D1).
 const railTab = ref<RailTab>('ai')
 
-// The content glides with the columns rather than teleporting when they give
-// their width back; see the module for the measurement and why.
-const mainEl = ref<HTMLElement | null>(null)
-useFollowPanel(mainEl, () => props.sidebarVisible)
+// The left cluster's toggle does NOT animate the content, deliberately. It used
+// to: a compensating translate was written to `.main` on every toggle, because
+// the collapsing columns move the content's origin and the layout collapse is
+// visible. The cost was the whole editor — the largest subtree in the app —
+// carried through a 300ms transform, with two forced synchronous layouts of it
+// per toggle to measure and commit the compensation. The user reported what
+// that looks like from the outside: 点击左上角的抽屉图标,整个页面都会被改动,
+// 而点击右下角的抽屉就不会这样 — jank and flicker on a control whose motion
+// should be the panel's alone. The rail is the control that already behaves:
+// it fades and translates itself (styles/appShell.css) while the content takes
+// the space in the click frame, one reflow, nothing animated. Both toggles now
+// do that, so the two halves of the same gesture feel the same.
 
 const theme = computed<string>(() => {
   void appearance.systemRevision
@@ -195,10 +205,7 @@ const shellStyle = computed<Record<string, string>>(() => ({
         </div>
       </div>
 
-      <section
-        ref="mainEl"
-        class="main"
-      >
+      <section class="main">
         <div class="main-content">
           <slot>
             <TabBar />

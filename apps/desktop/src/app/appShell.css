@@ -55,9 +55,16 @@
    there to fade and scale out of.
 
    Which means the content does jump — one reflow, the same one it always had.
-   What is added back is a *translate* on the element whose origin moved, so the
-   jump is a glide (below). A translate is composited: text that moves does not
-   re-flow.
+   That jump is where it ends, deliberately. A compensating `translate` on the
+   element whose origin moved (`follow-panel-toggle.ts`, until it was deleted)
+   masked the jump and cost the app its largest subtree: the whole editor
+   carried through a 300ms transform, with two forced synchronous layouts of it
+   per toggle, and the text inside a transformed layer losing its subpixel
+   antialiasing for the length of the animation. The user's report is what that
+   is worth: 点击左上角的抽屉图标,整个页面都会被改动,而点击右下角的抽屉就不会这样.
+   The rail never did any of it — it animates itself and the content simply
+   takes the space — so the left cluster now matches the rail rather than the
+   other way round. One reflow in the click frame, no animation on the content.
 
    ---- What stays mounted
 
@@ -111,10 +118,9 @@
    centre with `elementFromPoint` frame by frame, the element on top during the
    first frames of the entrance is an element **inside the editor** — the
    opacity was walking 0 → 0.439 → 0.717 → 1 exactly as intended, underneath
-   `.main`, which had already taken the full width and was gliding back over the
-   sidebar's own box. The sidebar spends most of its fade behind an opaque
-   surface and the user watches the content move, which is why they described a
-   drawer with no fade.
+   `.main`, which had already taken the full width in the click frame. The
+   sidebar spends most of its fade behind an opaque surface and the user watches
+   the content move, which is why they described a drawer with no fade.
 
    So the panel paints above the content while it is animating, and the decision
    is this: **the thing arriving or leaving is the thing the eye is on, and the
@@ -214,15 +220,17 @@
   pointer-events: none;
 }
 
-/* ---- The content follows the panel ---------------------------------------
-   The layout collapses in the frame the user acts — unavoidable, and not what
-   they are complaining about; a single reflow is what this app always did. The
-   compensating translate that turns the teleport into a glide is measured in
-   `follow-panel-toggle.ts` and applied from there, and the reason is in that
-   file's header: a keyframe paired with a class cannot survive the toggle being
-   reversed mid-flight, and reversing mid-flight is the case this whole round
-   exists for. What is needed here is only the containing block those absolute
-   panels resolve against — a `position` with no offsets changes no layout. */
+/* ---- The content is not animated at all -----------------------------------
+   The layout collapses in the frame the user acts — unavoidable, and a single
+   reflow is what this app always did. What used to sit here was a compensating
+   translate on `.main`, so the collapse read as a glide instead of a teleport.
+   It is gone on the user's report: it moved the whole editor, forced two
+   synchronous layouts of it per toggle, and left text without subpixel
+   antialiasing for the length of the animation — 整个页面都会被改动 where the
+   rail's toggle changed nothing outside the panel. Both clusters now behave
+   like the rail: the panel fades and translates, the content takes the space in
+   the click frame. All this needs is the containing block those absolute panels
+   resolve against — a `position` with no offsets changes no layout. */
 .shell-body,
 .main {
   position: relative;
