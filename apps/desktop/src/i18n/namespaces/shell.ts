@@ -23,13 +23,9 @@ export const shell = {
     rail: {
       bodyAria: 'Panels',
       ai: 'AI',
-      outline: 'Outline',
-      refs: 'References',
-      history: 'History',
-      meta: 'Props',
       close: 'Close',
-      collapse: 'Collapse document info',
-      expand: 'Document info (references / history)',
+      collapse: 'Collapse the panel',
+      expand: 'AI assistant',
     },
 
     layout: {
@@ -72,13 +68,9 @@ export const shell = {
     rail: {
       bodyAria: '侧栏面板',
       ai: 'AI',
-      outline: '大纲',
-      refs: '引用',
-      history: '历史',
-      meta: '属性',
       close: '关闭',
-      collapse: '收起文档信息',
-      expand: '文档信息（引用 / 历史）',
+      collapse: '收起面板',
+      expand: 'AI 助手',
     },
 
     layout: {
