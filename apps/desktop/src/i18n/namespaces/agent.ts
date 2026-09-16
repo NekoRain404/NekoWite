@@ -20,7 +20,10 @@ export const agent = {
           resync: 'Reload the session',
         },
         bar: {
-          untitled: 'New session',
+          /* The title until the engine names the session. `{engine}` is the registration's own
+             `displayName`, or the agent id when the registry has not answered: the engine's name
+             is a fact the backend owns, so this sentence carries it rather than a constant. */
+          untitled: 'New {engine} session',
           state: {
             idle: 'Idle',
             starting: 'Starting',
@@ -38,6 +41,14 @@ export const agent = {
             refusal: 'The engine declined to continue',
             cancelled: 'Stopped before it finished',
           },
+        },
+        /* The transcript's first line, drawn only while the transcript is empty. It names the
+           engine and offers the one mechanism this panel really has: `/` opens the engine's own
+           command list (T8). There is deliberately no `@` clause - `prompt()` takes no context
+           slot and nothing in the composer triggers `@`, and a sentence about a feature that
+           cannot be reached is the one thing this tree must not carry. */
+        empty: {
+          line: 'Message {engine} — / for commands',
         },
         timeline: {
           aria: 'Agent transcript',
@@ -67,7 +78,11 @@ export const agent = {
           placeholder: 'Ask the agent to do something in this folder',
           send: 'Send',
           stop: 'Stop',
-          hint: 'Enter sends. The engine works inside the folder this app has open.',
+          /* Shortened for the one-row composer bar (T16). Both facts stay: the reference editor's
+             bar has no sentence because its left side carries attachment and search controls,
+             which this app does not have - so the space holds what this app can honestly say
+             instead of being emptied to look like a layout it cannot fill. */
+          hint: 'Enter sends. The engine works inside the folder you opened.',
           hintBusy: 'Enter cannot send while this turn is running — the text stays here.',
         },
       },
@@ -158,6 +173,9 @@ export const agent = {
           creates: 'A new session will be started on {engine}. The open session keeps its engine, its authorization and its history.',
           keeps: '{engine} is already the engine of the open session.',
           start: 'Start a new session on {engine}',
+          /* Drawn when the caller has no gateway to open a session with: the same facts, and no
+             select or button whose click nothing answers. */
+          elsewhere: 'A new session is opened from the agent panel, which is where its engine is chosen. This page can register engines and switch them off; it has no session, and no gateway to open one with.',
         },
       },
       /* The agent settings tree (T13), beside the panel's commandMenu/permission and the registry
@@ -462,19 +480,27 @@ export const agent = {
         agents: {
           section: {
             title: 'Agents',
-            hint: 'Which panel the right rail shows, and what this build cannot do with an engine yet.',
+            hint: 'Which panel the right rail shows, the engines this app may start and the profile of the one it starts, and what this build cannot do with an engine yet.',
           },
           panel: {
             label: 'Show the agent panel in the right rail',
             hint: 'Off, the rail keeps the chat panel it has always had. On, the rail shows the agent panel for the folder this app has open instead — the chat panel is unmounted, so a reply still streaming is cancelled, and switching this off is how you get it back.',
           },
+          /* The pair the mounted pages are about, stated on the page: the registry readout is the
+             only thing that pairs a profile with an engine, so when it cannot be read the profile
+             page is not drawn — and that absence is said here rather than left as a gap. */
+          profile: {
+            showing: 'The pages below are about {agent} and its profile {profile}.',
+            unknown: 'The engine registry could not be read, so the profile of the engine this app starts is not shown here. The registry above says why.',
+          },
           gaps: {
             title: 'Not connected in this build',
-            intro: 'Each of these would be a page or a control. The host half it needs does not exist yet, and a control that can only fail is not drawn:',
-            sections: 'The sections that configure an engine — runtime, provider and model, Skills, commands, MCP, permissions — each read through a host client this build has no implementation of, so none of them is reachable.',
-            registry: 'Adding, switching off or removing an engine. The backend can do this now — the registry is readable and writable over IPC — but the page that drives it is one of the six above, so a window still cannot reach it.',
+            intro: 'Each of these would be a page. The half it needs is missing, and a control that can only fail is not drawn:',
+            sections: 'The runtime, commands, MCP and permission sections. Each reads through a host client this build has no implementation of, and the backend answers no read for any of them: process state, authorization and the negotiated protocol have no source, a session’s commands reach the panel as they arrive rather than through a settings read, and nothing was built for MCP in this build at all.',
+            registry: 'Choosing the engine a new session starts on. Engines can be added and switched off above, but a session always starts on the default one: the backend’s start call takes a folder and nothing else, so nothing in this window can open a session on another engine yet.',
+            skills: 'Skills. `skills.rs` is the closest of the five to existing — it discovers, previews and imports them, and its rules have tests — but nothing builds a library from it and no command exposes one, so there is no state to read and no way to install a skill from a window.',
             capabilities: 'What an engine actually supports. The negotiated half of the capability report is not joined to the declared half, so no page can say whether a model takes images or what a session may do.',
-            credentials: 'Provider credentials reaching the engine at launch. This part is wired: a profile’s credentials are carried as redacted values into the launch environment — never on a command line, which is world-readable — and a test drives that path and reads the value back out of the child’s own environment. What is missing is the page that would let you type them in, and that is the provider section above, so today the engine’s own sign-in is what authenticates.',
+            credentials: 'Provider credentials reaching the engine at launch. The profile above shows which credentials exist, where they are stored and that they are not encrypted; typing one in is what is missing — the backend has a command to write them and the page has no field to send it.',
           },
         },
       },
@@ -495,7 +521,7 @@ export const agent = {
           resync: '重新载入会话',
         },
         bar: {
-          untitled: '新会话',
+          untitled: '新建 {engine} 会话',
           state: {
             idle: '空闲',
             starting: '正在启动',
@@ -513,6 +539,9 @@ export const agent = {
             refusal: '引擎拒绝继续',
             cancelled: '未完成即被停止',
           },
+        },
+        empty: {
+          line: '给 {engine} 发消息——输入 / 查看命令',
         },
         timeline: {
           aria: '智能体记录',
@@ -542,7 +571,7 @@ export const agent = {
           placeholder: '让智能体在这个文件夹里做点什么',
           send: '发送',
           stop: '停止',
-          hint: '回车发送。引擎在本应用打开的文件夹内工作。',
+          hint: '回车发送。引擎在你打开的文件夹内工作。',
           hintBusy: '本轮运行期间回车不会发送——文字会留在这里。',
         },
       },
@@ -629,6 +658,7 @@ export const agent = {
           creates: '将在 {engine} 上新建一个会话。当前会话仍保留它自己的引擎、授权与历史。',
           keeps: '{engine} 已经是当前会话使用的引擎。',
           start: '在 {engine} 上新建会话',
+          elsewhere: '新会话由智能体面板打开，引擎也在那里选择。本页可以注册引擎、停用引擎；它没有会话，也没有可以用来打开会话的网关。',
         },
       },
       /* 智能体设置树（T13），与面板的 commandMenu/permission、注册表页自己的键并列。`origin` 与
@@ -925,19 +955,24 @@ export const agent = {
         agents: {
           section: {
             title: '智能体',
-            hint: '右侧栏显示哪个面板，以及当前构建在引擎上还做不到什么。',
+            hint: '右侧栏显示哪个面板、本应用可以启动哪些引擎以及所启动引擎的配置档案，还有当前构建在引擎上还做不到什么。',
           },
           panel: {
             label: '在右侧栏显示智能体面板',
             hint: '关闭时，右栏保留原来的聊天面板。打开后，右栏改为显示智能体面板，在本应用已打开的文件夹内工作——聊天面板会被卸载，正在流式返回的回复会被取消；关掉这个开关就能把它找回来。',
           },
+          profile: {
+            showing: '下面各页讲的是 {agent} 及其配置档案 {profile}。',
+            unknown: '未能读取引擎注册表，因此本应用所启动引擎的配置档案不在这里显示。上面的注册表页说明了原因。',
+          },
           gaps: {
             title: '当前构建尚未接通的部分',
-            intro: '下面每一条本来都会是一页设置或一个控件。它们需要的后端一半还不存在，而一个只能失败的控件不会被画出来：',
-            sections: '配置引擎的各页——运行时、供应商与模型、Skills、命令、MCP、权限——都通过一个宿主客户端读取，而当前构建没有任何实现，因此哪一页都进不去。',
-            registry: '添加、停用或移除引擎。后端现在能做了——注册表已可经 IPC 读写——但驱动它的是上面六页之一，所以窗口仍然够不到。',
+            intro: '下面每一条本来都会是一页设置。它们需要的那一半还不存在，而一个只能失败的控件不会被画出来：',
+            sections: '运行时、命令、MCP 与权限这四页。它们都通过宿主客户端读取，而当前构建没有任何实现，后端也不为其中任何一页提供读取：进程状态、授权与协商出的协议都没有来源；会话的命令由引擎发布后直接到达面板，不经过设置页的读取；而 MCP 在当前构建里完全没有实现。',
+            registry: '选择新会话使用哪个引擎。上面已经可以添加引擎、停用引擎，但会话总是启动在默认引擎上：后端的启动调用只接收一个文件夹，因此这个窗口目前无法在另一个引擎上打开会话。',
+            skills: 'Skills。五页之中 `skills.rs` 离能用最近——它能发现、预览并导入 Skills，规则也有测试——但没有任何地方用它建起库，也没有命令暴露它，因此既没有可读的状态，也无法从窗口里安装一个 Skill。',
             capabilities: '引擎实际支持什么。能力报告中协商到的那一半还没有与声明的那一半合并，因此没有哪一页能说某个模型是否接受图片、一个会话能做哪些事。',
-            credentials: '供应商凭据在启动时送达引擎。这一段已经接通：profile 的凭据以脱敏类型进入启动环境——不走命令行，那是全世界可读的——并有测试走完整条路径、从子进程自己的环境里把值读回来。缺的是让你输入它们的那一页，也就是上面的供应商页；所以今天完成认证的仍是引擎自己的登录流程。',
+            credentials: '供应商凭据在启动时送达引擎。上面的配置档案页会显示有哪些凭据、存在哪里、以及它们并未加密；缺的是把凭据输进去——后端有写入凭据的命令，而页面上没有可以把它发出去的输入框。',
           },
         },
       },

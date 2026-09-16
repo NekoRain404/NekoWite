@@ -6,11 +6,13 @@
 export interface AgentComposerLabels {
   /** The field's placeholder. */
   placeholder: string
-  /** The send button's accessible name: it is an arrow and nothing else (§5.3). */
+  /** The send button's accessible name: it is a paper plane and nothing else (§5.3). */
   send: string
   /** The stop button's, likewise a square. */
   stop: string
-  /** The line under the field: what Enter does, and that a run in flight keeps the text. */
+  /** The sentence at the left of the button's own row: what Enter does, and that a run in
+   *  flight keeps the text. It shares one row with the button rather than taking a line of its
+   *  own, so what sits between the field and the reader's hand is a single strip. */
   hint: string
   /** The same line while a run is in flight, when Enter cannot send. */
   hintBusy: string
@@ -46,7 +48,7 @@ export interface AgentComposerLabels {
  * outgrow — and not from the window, because the panel is not always the window.
  */
 import { computed, nextTick, ref, watch } from 'vue'
-import { ArrowUp, Square } from 'lucide-vue-next'
+import { Send, Square } from 'lucide-vue-next'
 
 const props = defineProps<{
   /** A run is in flight: the button is a stop, and Enter will not send. */
@@ -190,7 +192,7 @@ defineExpose({ focus })
       <p class="agent-composer-hint">
         {{ running ? labels.hintBusy : labels.hint }}
       </p>
-      <!-- An arrow to send, a square to stop (§5.3), and never both at once: a run in
+      <!-- A paper plane to send, a square to stop (§5.3), and never both at once: a run in
            flight is the one state in which the reader's next action is not a send. -->
       <button
         v-if="running"
@@ -216,7 +218,7 @@ defineExpose({ focus })
         :disabled="blank || !canSend"
         data-action="send"
       >
-        <ArrowUp
+        <Send
           :size="14"
           :stroke-width="2"
           aria-hidden="true"
@@ -292,10 +294,15 @@ defineExpose({ focus })
 .agent-composer-action:hover:not(:disabled) {
   background: color-mix(in srgb, var(--app-elevated) 84%, var(--app-accent-soft));
 }
+/* A field with nothing in it shows a dimmed plane rather than a missing one: the button keeps
+   its place, its border and its hit area, so the row does not reflow when the reader types the
+   first character — what changes is that the mark is muted and has nothing behind it. */
 .agent-composer-action:disabled {
+  border-color: color-mix(in srgb, var(--app-border) 55%, transparent);
+  background: transparent;
   color: var(--app-muted);
   cursor: default;
-  opacity: 0.6;
+  opacity: 0.55;
 }
 .agent-composer-action:focus-visible {
   outline: 2px solid var(--app-accent);

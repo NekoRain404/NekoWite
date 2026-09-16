@@ -6,7 +6,9 @@
 import type { AgentSessionState, AgentStopReason } from '../../../platform/gateways/agent-contracts'
 
 export interface AgentSessionBarLabels {
-  /** Shown until the engine names the session. */
+  /** Shown until the engine names the session. It carries the engine's own name — the caller
+   *  fills the slot from the registry's registration (see `AgentRailBody`), so the title says
+   *  which engine is running instead of a word this app chose for all of them. */
   untitled: string
   /** One word per session state, keyed by the contract's own states: a state added later
    *  fails to typecheck here rather than rendering as a blank. */

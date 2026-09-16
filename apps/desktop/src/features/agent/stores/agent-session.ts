@@ -101,6 +101,30 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
   /** The subscriptions, one per session. Not reactive: these are handles, not state. */
   const subscriptions = new Map<string, AgentSubscription>()
 
+  /**
+   * The frames this store applied, frame by frame, to whoever needs the events themselves.
+   *
+   * A listener hears an event only after the reducer has applied it to the record it belongs to,
+   * so nothing downstream can run ahead of the panel. Nothing else is reported: a frame for a
+   * session this store is not holding, and one the reducer refused, are not delivered at all —
+   * two consumers disagreeing about what happened is the failure this avoids.
+   *
+   * It exists because one fact is not derivable from the view. T8's `/` menu tells "this session
+   * has published nothing yet" apart from "the engine published an empty list", and the view
+   * reports both as an empty `commands` array; feeding the menu the frames keeps that distinction
+   * where the composable already models it, instead of adding a second flag to the view and a
+   * second reading of the same event.
+   */
+  const eventListeners = new Set<(event: AgentEvent) => void>()
+
+  /** Hear every event this store applies. The answer is the unsubscribe. */
+  function observeEvents(listener: (event: AgentEvent) => void): () => void {
+    eventListeners.add(listener)
+    return () => {
+      eventListeners.delete(listener)
+    }
+  }
+
   const activeRecord = computed(() =>
     activeKey.value === null ? null : (records.value[activeKey.value] ?? null),
   )
@@ -160,6 +184,9 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
       return
     }
     if (key !== activeKey.value) record.unread = true
+    // Copied before the walk: a listener that unsubscribed while another was being called would
+    // otherwise change the set under the iteration.
+    for (const listener of [...eventListeners]) listener(event)
     if (reduced.outcome.status === 'aborted') {
       // §6.2: over a bound the run is aborted *and reported*. The view is reported already
       // — the reducer closed it — and this is the engine being stopped, so the abort is not
@@ -327,6 +354,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     activeState,
     canSend,
     recordFor,
+    observeEvents,
     attach,
     detach,
     detachAll,

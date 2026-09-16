@@ -24,6 +24,11 @@ export interface AgentPanelLabels {
     /** Take a fresh snapshot and carry on from it. */
     resync: string
   }
+  /** The transcript's first line, drawn only while the transcript is empty. It is one sentence
+   *  with the engine's name in it, so it arrives assembled rather than in parts. */
+  empty: {
+    line: string
+  }
 }
 </script>
 
@@ -47,20 +52,29 @@ export interface AgentPanelLabels {
  *    the session's record, and the one honest thing to offer is a resync rather than a
  *    silent partial answer.
  *
- * It also *places* the two components the neighbouring tasks own, because putting them in the
+ * It also *places* the three components the neighbouring tasks own, because putting them in the
  * session's life is the part that is this file's business: the permission prompt (T7) is
- * rendered for the request the run is waiting on, and the `/` menu (T8) sits over the composer
- * whose keys and text it needs. Both are answered from the binding above — the prompt's answer
- * is the store's own action, and the menu's selection is written back into the draft because
- * §4.1 sends a command as an ordinary prompt. What is deliberately *not* here is the composer's
- * attachment, mode and model controls: the store has no action that could set a model or a
- * mode, so a control for one would be a button that cannot act.
+ * rendered for the request the run is waiting on, the `/` menu (T8) sits over the composer whose
+ * keys and text it needs, and the transcript's first line is drawn here while the transcript is
+ * empty. Both answers are the store's own actions — the prompt's answer, and the menu's
+ * selection written back into the draft, because §4.1 sends a command as an ordinary prompt.
+ *
+ * What is deliberately *not* here is the composer's attachment, mode and model controls. That is
+ * not a preference about layout: **no layer produces the engine's option list for a session in
+ * this build.** The contract has the event kind (`config-changed`), the reducer has the arm, and
+ * the view carries `config` — but the host vocabulary in `src-tauri/src/agent_runtime/events.rs`
+ * has no kind for it, `normalize_update` drops `SessionUpdate::ConfigOptionUpdate`, and
+ * `agent_set_config_option` answers with nothing while throwing away the option list the engine
+ * returned. So `view.config` is empty in the running app, and a selector drawn from it would be a
+ * control that never appears — or, drawn from `session.models` alone, one whose current value the
+ * host would have to shadow because nothing ever pushes the engine's answer back. Both are worse
+ * than the gap, and the exact edit each one needs is in this task's report.
  *
  * The session arrives as a prop and is read once: a panel is mounted *per session*, so the
  * composition site keys it (or remounts it) rather than re-pointing it at another session —
  * a store binding cannot be moved to a session the panel was not mounted for.
  */
-import { computed } from 'vue'
+import { computed, onBeforeUnmount } from 'vue'
 import type {
   AgentCommand,
   AgentGateway,
@@ -170,18 +184,26 @@ const expired = computed(() => view.value === null || !isRunLive(view.value))
  * deciding what Enter means; the command's name is written back into the draft, because §4.1
  * sends a command as an ordinary prompt rather than running anything on this side.
  *
- * **The list it filters cannot arrive yet, and this is the one wiring point inside the panel.**
- * `useAgentCommands` is fed the engine's frames through its `accept(event)`; those frames belong
- * to the store, the binding exposes only the *reduced* list (`view.commands`), and there is no
- * event feed to hand over. Until the store offers one — or T8's composable gains an entry point
- * that takes the reduced list — the menu renders its own `waiting` arm, which is honest about
- * what it has been given and is one line from working.
+ * **The list it filters arrives here frame by frame**, through the store's own feed
+ * (`store.observeEvents`): `useAgentCommands` is fed the engine's events through its
+ * `accept(event)`, and those frames belong to the store. The reduced view is deliberately not the
+ * source — it reports "nothing published yet" and "the engine published an empty list" as the same
+ * empty `commands` array, and T8's menu tells those apart because the user's next move differs.
+ * Feeding it the frames keeps that distinction where it is already modelled, and it is what makes
+ * the empty state's `/ for commands` a true sentence rather than an offer of a menu that would
+ * never fill.
  */
 const commands = useAgentCommands({
   identity: () => view.value?.identity ?? null,
   text: () => draft.value,
   select: chooseCommand,
 })
+
+// The feed is released with the panel: a listener left behind would keep filtering frames for a
+// session whose menu is not on screen any more. Registered at setup rather than on mount, because
+// the events of the very first frame must not be missed between the two.
+const stopObserving = store.observeEvents((event) => commands.accept(event))
+onBeforeUnmount(stopObserving)
 
 /**
  * What settling on a menu row means: the command's name replaces the token, and everything the
@@ -232,6 +254,17 @@ function onSend(text: string): void {
       >
         {{ labels.notice.resync }}
       </button>
+    </p>
+    <!-- The transcript's first line, and only while there is no transcript: directly under the
+         title rule, in the panel's own monospace, so an empty session reads as the beginning of a
+         conversation rather than as an illustration. It is `aria-live="off"` like the transcript
+         beside it — it says nothing that changes per token. -->
+    <p
+      v-if="timeline.length === 0"
+      class="agent-panel-empty"
+      data-agent-empty
+    >
+      {{ labels.empty.line }}
     </p>
     <!-- Keyed by the session: the timeline remembers where the reader was for one session's
          rows, and a switch is a different transcript rather than the same one re-pointed. -->
@@ -333,6 +366,21 @@ function onSend(text: string): void {
 .agent-panel-resync:focus-visible {
   outline: 2px solid var(--app-accent);
   outline-offset: 1px;
+}
+/* The empty transcript's line. Monospace and muted, at the top of the transcript area rather
+   than centred in it: it is the first line of a conversation, not an illustration of one, and
+   the transcript below keeps the room it will need when the first row arrives. */
+.agent-panel-empty {
+  flex: none;
+  margin: 0;
+  padding: 10px 12px 0;
+  color: var(--app-muted);
+  font-family: var(--app-mono-font);
+  font-size: 12px;
+  line-height: 1.5;
+  /* One long sentence in a narrow rail may not fit; it wraps rather than disappearing into an
+     ellipsis, because every clause of it names something the reader can do. */
+  overflow-wrap: anywhere;
 }
 /* The pending request sits above the input, in its own padding, and takes only the height it
    needs: §5.1 asks that waiting for authorization not lock the editor, and a block that grew

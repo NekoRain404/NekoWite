@@ -116,6 +116,34 @@ describe('the session store', () => {
     expect(record().view.state).toBe('cancelled')
   })
 
+  it('hands the frames it applied to a listener, and nothing else', async () => {
+    const { store, gateway, session, record } = await attached()
+    const seen: string[] = []
+    const stop = store.observeEvents((event) => seen.push(event.kind))
+
+    // T8's `/` menu is the caller: it distinguishes "nothing published yet" from "published an
+    // empty list", which the reduced view reports as the same empty array. Feeding it the frames
+    // keeps the two callers reading one stream rather than two that could disagree.
+    gateway.emit(session, { kind: 'commands-changed', payload: { commands: [{ name: 'review' }] } })
+    expect(seen).toEqual(['commands-changed'])
+
+    // A frame this store refuses is not a frame anybody downstream hears: an event that was not
+    // applied to the view is not one a menu may draw a row from.
+    gateway.emit(session, {
+      kind: 'commands-changed',
+      payload: { commands: [{ name: 'elsewhere' }] },
+      identity: { vaultId: 'vault-elsewhere' },
+    })
+    expect(seen).toEqual(['commands-changed'])
+    expect(store.unattributed).toBe(1)
+
+    stop()
+    gateway.emit(session, { kind: 'commands-changed', payload: { commands: [] } })
+    // The listener was released; the session was not. The store keeps reducing what it is sent.
+    expect(seen).toEqual(['commands-changed'])
+    expect(record().view.commands).toEqual([])
+  })
+
   it('refuses a frame from a runtime instance that is over, and one from another vault', async () => {
     const store = useAgentSessionStore()
     const { gateway, session } = await opened()

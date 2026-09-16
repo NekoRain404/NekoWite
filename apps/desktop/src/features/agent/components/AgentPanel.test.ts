@@ -33,8 +33,13 @@ import { useAgentSessionStore } from '../stores/agent-session'
  * the interface, so a missing sentence is a compile error rather than a blank line.
  */
 const LABELS: AgentPanelLabels = {
+  // Pre-substituted, because the caller builds these with `t`: the engine's own name arrives
+  // from the registry, and the catalogue's `{engine}` slot is filled where the sentence is.
+  empty: {
+    line: 'Message Memory — / for commands',
+  },
   bar: {
-    untitled: 'New session',
+    untitled: 'New Memory session',
     state: {
       idle: 'Idle',
       starting: 'Starting',
@@ -108,6 +113,8 @@ interface Harness {
   options: () => string[]
   /** Type a message and press send, through the panel's own field and button. */
   send: (text: string) => Promise<void>
+  /** Put text in the field without sending it, the way a reader typing a `/token` would. */
+  type: (text: string) => Promise<void>
   click: (selector: string) => Promise<void>
   settle: () => Promise<void>
   /** The store's word for the session's state. */
@@ -181,11 +188,15 @@ async function mountPanel(script: MemoryRunScript): Promise<Harness> {
       Array.from(host.querySelectorAll<HTMLElement>('.agent-perm-options button')).map(
         (button) => button.textContent?.trim() ?? '',
       ),
-    send: async (text) => {
+    type: async (text) => {
       const field = host.querySelector<HTMLTextAreaElement>('.agent-composer-field')
       if (field === null) throw new Error('the panel has no composer field')
       field.value = text
       field.dispatchEvent(new Event('input'))
+      await settle()
+    },
+    send: async (text) => {
+      await harness.type(text)
       await nextTick()
       const button = host.querySelector<HTMLButtonElement>('.agent-composer [data-action="send"]')
       if (button === null) throw new Error('the composer is not offering a send')
@@ -273,5 +284,51 @@ describe('AgentPanel — the authorization a run waits on', () => {
     // press, and the text waits in the field rather than being sent beside the running turn.
     expect(harness.state()).toBe('running')
     expect(harness.prompts).toEqual(['first'])
+  })
+})
+
+describe('AgentPanel — the transcript before it has a row', () => {
+  it('draws the engine’s own line while nothing has happened, and drops it on the first row', async () => {
+    const harness = await mountPanel({ chunks: ['Reading. '] })
+
+    // The engine's name is in the sentence rather than the word "session": the line says who is
+    // being addressed, and the panel gets the name from the registry (see `AgentRailState`).
+    expect(harness.text('[data-agent-empty]')).toBe('Message Memory — / for commands')
+
+    await harness.send('hello')
+
+    // The first row is the reader's own; the line belongs to an empty transcript and goes with
+    // it, rather than sitting above the conversation for the rest of the session.
+    expect(harness.el('[data-agent-empty]')).toBeNull()
+  })
+
+  it('fills the `/` menu from the engine’s frames, which is what makes `/ for commands` true', async () => {
+    const harness = await mountPanel({ chunks: ['ok. '] })
+
+    // What the engine publishes after a session opens (P0 §2.2). It reaches the menu through
+    // the store's own feed, not through the reduced view: the view cannot tell "nothing
+    // published yet" from "published an empty list", and the menu says different things for the
+    // two.
+    gateway.emit(session, {
+      kind: 'commands-changed',
+      payload: { commands: [{ name: 'review', description: 'Review what changed' }] },
+    })
+    await harness.settle()
+
+    await harness.type('/rev')
+
+    expect(harness.el('.agent-command-menu')?.getAttribute('data-view')).toBe('rows')
+    expect(harness.text('.agent-command-item')).toContain('/review')
+  })
+
+  it('says it is still waiting when the engine has published nothing, rather than showing a stale list', async () => {
+    const harness = await mountPanel({ chunks: ['ok. '] })
+
+    await harness.type('/')
+
+    // The fourth state of the menu, and the reason the feed could not simply be the view's list:
+    // an empty list here means "not yet", which is worth waiting for and does not look the same
+    // as an engine that has nothing to offer.
+    expect(harness.el('.agent-command-menu')?.getAttribute('data-view')).toBe('waiting')
   })
 })
