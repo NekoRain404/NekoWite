@@ -14,7 +14,7 @@
 //!   all: XP comes from completions, so the two ledgers below differ in everything except progress.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::json;
 
@@ -40,20 +40,43 @@ fn the_module_cannot_reach_a_network_a_process_or_a_file() {
         "Bearer",
     ];
 
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/desktop_pet/care_ledger.rs");
-    let text = fs::read_to_string(&path).unwrap_or_else(|error| panic!("{path:?}: {error}"));
-    let code = code_only(&text);
+    // Every file the module is built from, not one of them: since the import merge moved to
+    // `care_ledger/import.rs`, a scan of the module root alone would be a claim about half a module —
+    // and the half nobody re-reads is where a network client would sit unnoticed.
+    let files = module_files();
+    assert!(files.len() >= 2, "the ledger is more than one file now: {files:?}");
 
-    for token in FORBIDDEN {
-        assert!(
-            !code.contains(token),
-            "care_ledger.rs names {token} in its code; progress is local and must stay local"
-        );
+    let mut whole = String::new();
+    for path in &files {
+        let text = fs::read_to_string(path).unwrap_or_else(|error| panic!("{path:?}: {error}"));
+        let code = code_only(&text);
+
+        for token in FORBIDDEN {
+            assert!(
+                !code.contains(token),
+                "{} names {token} in its code; progress is local and must stay local",
+                path.display()
+            );
+        }
+        // A check on nothing is not a check: the headers this strips are what carry the reasoning,
+        // so a scanner that found an empty file would pass everything above.
+        assert!(text.len() > code.len(), "nothing was stripped from {}", path.display());
+        whole.push_str(&text);
     }
-    // A check on nothing is not a check: the header this strips is what carries the reasoning, so a
-    // scanner that found an empty file would pass everything above.
-    assert!(code.contains("pub fn settle"), "the scanner read nothing");
-    assert!(text.len() > code.len(), "nothing was stripped");
+    assert!(whole.contains("pub fn settle"), "the scanner read nothing");
+}
+
+/// Every source file the `care_ledger` module is compiled from: its root and the children beside it.
+fn module_files() -> Vec<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/desktop_pet");
+    let mut files = vec![root.join("care_ledger.rs")];
+    for entry in fs::read_dir(root.join("care_ledger")).expect("the module's child directory") {
+        let path = entry.expect("a readable entry").path();
+        if path.extension().is_some_and(|extension| extension == "rs") {
+            files.push(path);
+        }
+    }
+    files
 }
 
 #[test]
