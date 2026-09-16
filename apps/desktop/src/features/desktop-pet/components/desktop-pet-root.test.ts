@@ -294,6 +294,24 @@ describe('the pet window draws, or says why it cannot', () => {
     expect(noticeText()).toMatch(/did not load/i)
   })
 
+  it("states the loader's first report, because the retry never gets to make one", async () => {
+    // The loader reports the `crossOrigin` attempt and *then* retries plain; this window refuses
+    // the sprite branch on that report, which unmounts the sprite and destroys the loader before
+    // the retry's callbacks land (`sprite-sheet.ts`'s `retryPlain`). The fixture fails both
+    // attempts, so a window that reported the second one would say `(plain)` here. Asserted
+    // because the retry has its own case in `rendering/sprite-player.test.ts`, and that green must
+    // not be readable as a window that retries.
+    const host = new FakeHost()
+    mount({ gateway: host, imageUrl: '/missing.png', createImage: failingImage })
+    // Twice: a window that let the second report through would say `(plain)` only once the retry
+    // had failed too, and reading before that would pass for the wrong reason.
+    await flush()
+    await flush()
+
+    expect(noticeText()).toMatch(/\(cors\)/)
+    expect(document.querySelector('.pet-sprite')).toBeNull()
+  })
+
   it('states a canvas it cannot paint on, rather than nothing at all', async () => {
     // The engine's own answer, not a mocked one: `PetSprite` reports this state rather than
     // throwing (D2's deviation 2), and a window that does not pass `onUnavailable` leaves the state

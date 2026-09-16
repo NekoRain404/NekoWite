@@ -42,7 +42,12 @@ export interface LoadableImage extends SpriteImageLike {
 
 export type ImageFactory = () => LoadableImage
 
-/** A sheet that could not be loaded. `cors` is the first attempt, `plain` the retry. */
+/**
+ * A sheet that could not be loaded. `cors` is the first attempt, `plain` the retry.
+ *
+ * Both are reported; which one a caller acts on is the caller's. The pet window acts on the first
+ * - see `retryPlain` for what that leaves the retry with.
+ */
 export interface LoadFailure {
   url: string
   phase: 'cors' | 'plain'
@@ -135,6 +140,8 @@ export class SheetLoader {
     }
     img.onerror = () => {
       if (!this.isCurrent(epoch)) return
+      // Reported *before* the retry starts, so a caller that acts on this report takes the loader
+      // (and with it the retry) with it, and the retry then has nobody left to commit to.
       this.deps.onLoadError?.({ url, phase: 'cors' })
       this.retryPlain(url, epoch, hadSheet)
     }
@@ -146,6 +153,25 @@ export class SheetLoader {
    * Upstream's retry (177-192): a pre-CORS cached copy makes the `crossOrigin` load fail,
    * and the plain load succeeds - displayable, but its pixels are unreadable, so slicing
    * is skipped (`clips = []`) and the caller draws from the fixed grid.
+   *
+   * It is for a sheet the webview fetches itself over `http(s)`: a server that sends no
+   * `Access-Control-Allow-Origin`, or a cache entry from before it did. The product has no such
+   * sheet - the host hands over an absolute path, the adapter turns that into `asset://`, and
+   * `cacheBustedUrl` leaves a non-`http(s)` URL alone - so there the two attempts are the same
+   * request and the second cannot win what the first lost. (Measured in WebKitGTK 2.52.6: a
+   * `crossOrigin` load of a registered scheme succeeds when the handler answers with that header,
+   * which Tauri's asset protocol always does - `tauri-2.11.5/src/protocol/asset.rs:39` - and fails
+   * when it does not, so an `asset://` failure is one this repeats rather than one it repairs.)
+   *
+   * It cannot commit in the pet window either: `DesktopPetRoot` refuses the sprite branch on the
+   * report above, which unmounts the sprite and destroys this loader (epoch and `destroyed`) before
+   * the retry's callbacks land. Nothing repaints, so what a user loses by that refusal is the
+   * sentence's arrival time, not a character that would have drawn. The one mount site that could
+   * reach it is `PetFloatingBall.vue`, which passes no `on-load-error` and which nothing mounts.
+   *
+   * Kept because it is upstream's behaviour for a URL this loader is still willing to be given, and
+   * because `LoadFailure.phase` - which the window's sentence prints - would have one arm without
+   * it.
    */
   private retryPlain(url: string, epoch: number, hadSheet: boolean): void {
     const plain = this.deps.createImage?.() ?? createBrowserImage()

@@ -89,6 +89,10 @@ export function usePetDrawingFailure(options: PetDrawingFailureOptions): PetDraw
     // that choosing another character will not help.
     notice: computed(() => canvasFailure.value ?? sheetFailure.value),
     onLoadError: (failure) => {
+      // The phase names which of the loader's two attempts gave up; in this window it is always
+      // `cors`, because the branch is refused here and that unmounts the loader before its retry
+      // can report (`sprite-sheet.ts`'s `retryPlain`). The union stays because the loader has two
+      // attempts and this is the sentence for both of them.
       sheetFailure.value = `The character's spritesheet did not load (${failure.phase}).`
     },
     // The reason is in the sentence's own words rather than interpolated: the union has one member

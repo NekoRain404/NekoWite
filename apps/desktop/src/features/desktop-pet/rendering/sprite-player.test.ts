@@ -373,7 +373,11 @@ describe('SpritePlayer sheet loading', () => {
     expect(player.spriteRect).toEqual({ x: 68, y: 36, w: 24, h: 144 })
   })
 
-  it('retries with the plain URL after a CORS failure, disabling the cache-bust', () => {
+  // The loader's contract, and not a thing the pet window does: `DesktopPetRoot` refuses the
+  // sprite branch on the first report, which unmounts the loader before the retry's callbacks
+  // land (`sprite-sheet.ts`'s `retryPlain`). What this case drives is an `http(s)` sheet - the
+  // only kind the retry can rescue, and a kind no product path produces.
+  it('retries an http(s) sheet with the plain URL after a CORS failure, disabling the cache-bust', () => {
     const { player, frames, created, failures } = build()
     player.load('https://example.test/pet.png')
     expect(created[0].crossOrigin).toBe('anonymous')
