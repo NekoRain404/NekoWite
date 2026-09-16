@@ -4,6 +4,7 @@ import { useAppearanceStore } from '../stores/appearance'
 import { createUnflushableRescue } from '../stores/unflushable-rescue'
 import { createUntitledRescue } from '../stores/untitled-rescue'
 import type { WindowTracking } from './window-state'
+import { flushSourceEdits } from '../services/source-view'
 import { notifyError, notifyRecovery } from '../services/errors'
 import { requestUntitledVaultSwitch } from './recovery-closed-loop'
 import { t } from '../i18n'
@@ -29,9 +30,12 @@ function isTauriRuntime(): boolean {
  * appBootstrap; this module is only about the browser/window listeners and the
  * closure save.
  *
- * Close is handled two ways:
+ * Close is handled two ways, and both ask the same question the same way — the
+ * source pane is flushed BEFORE it, because `dirty` is set at the publish and a
+ * burst still inside its debounce window is exactly the case that would be lost
+ * (`hasUnsavedWorkAfterFlush`):
  *   - In the packaged Tauri app, the window `close-requested` listener runs the
- *     real save: when dirty tabs exist it PREVENTS the close, reconciles the
+ *     real save: when unsaved work exists it PREVENTS the close, reconciles the
  *     tabs whose first read has not landed (their typing moves to a tab of its
  *     own, which the save-as prompt then covers — `reconcilePlaceholders` in
  *     `tab-close.ts`), `flushDirty()`s the rest (and routes unnamed dirty tabs
@@ -135,13 +139,45 @@ export function createAppLifecycle(deps: {
     onDiscard: (tab) => tabs.removeTab(tab.id),
   })
 
+  /**
+   * Is anything unsaved — asked about text the panes have actually published?
+   *
+   * Both routes below ask this for one purpose, "is the work about to be lost",
+   * and both used to ask it of `dirty` alone. `dirty` is set at the PUBLISH, and
+   * the source pane coalesces a burst for `SOURCE_SNAPSHOT_DEBOUNCE_MS`
+   * (`services/code-mirror-host.ts`), so while the user is typing every tab
+   * reads clean and the answer was "nothing to lose" about the sentence in front
+   * of them: the window went over it, and the Demo confirm was never raised.
+   *
+   * The flush is the SOURCE pane's, the one pane that can be behind the flag —
+   * the rendered pane marks its tab at the keystroke
+   * (`features/editor/controller/editor-persistence.ts`), so a tab it holds text
+   * in is already dirty, and the save that follows flushes it before its own
+   * write (`tab-save.ts`).
+   *
+   * One function for both callers because the rule IS "flush, then ask", and a
+   * second copy of a rule is how two routes come to disagree. Not inside
+   * `hasUnsavedWork()`: that is a query, and a predicate that publishes a pane
+   * behind the caller's back is the coupling §10.3 keeps out of the store. And
+   * not an await — `flushSourceEdits()` is synchronous, which is what lets the
+   * `beforeunload` route, that cannot await at all, have it.
+   */
+  function hasUnsavedWorkAfterFlush(): boolean {
+    flushSourceEdits()
+    return tabs.hasUnsavedWork()
+  }
+
   // With autosave on, a dirty tab's pending timer may never fire if the window
   // is closed first. Rather than silently losing those edits, prompt the user
   // (the webview surfaces the native "leave?" confirm); the crash-recovery
   // history path still preserves the last autosaved snapshot on reopen. Kept as
   // the browser-Demo fallback where an async flush cannot be awaited.
   function onBeforeUnload(e?: BeforeUnloadEvent): void {
-    if (tabs.hasUnsavedWork()) {
+    // The flush is all this route can do: it publishes the pending burst into
+    // the tab (and arms that tab's autosave), but the save itself is an await
+    // and an unload has nowhere to put one. It is what makes the question below
+    // about the text the user can see, and the confirm is what saves it.
+    if (hasUnsavedWorkAfterFlush()) {
       e?.preventDefault()
       if (e) e.returnValue = t('tabs.unsavedWorkPrompt')
     }
@@ -155,7 +191,10 @@ export function createAppLifecycle(deps: {
     // The `win.close()` we issue to finish a prevented close re-fires this event;
     // let that second request through without preventing it again.
     if (closing) return
-    if (!tabs.hasUnsavedWork()) {
+    // Before the question, not after it: this read is in FRONT of the
+    // `flushDirty()` that would otherwise have flushed, so a gate answered on
+    // the flag alone returns here over a burst nothing has published.
+    if (!hasUnsavedWorkAfterFlush()) {
       // Nothing to save: capture session/geometry and allow the native close.
       tabs.captureSession()
       deps.windowTracking.flush()
