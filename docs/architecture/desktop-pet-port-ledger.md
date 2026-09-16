@@ -56,10 +56,12 @@
 | 上游依赖 | 本项目现状 | 用途 | 处置 |
 | --- | --- | --- | --- |
 | `@tauri-apps/api` | **已有** | — | 直接用 |
-| `@tauri-apps/plugin-notification` | **缺** | D5 系统通知投递 | 需评审。§7.2 要求「无动作能力不显示无效按钮」；Linux 通知可用性本身待实测 |
-| `@tauri-apps/plugin-process` | **缺** | 生命周期/退出 | 需评审。§7.1 要求托盘与退出语义并入宿主，**不创建第二个退出菜单** |
-| `@tauri-apps/plugin-autostart` | **缺** | 开机启动 | §5.2：使用宿主现有能力；**没有现成能力则独立立项，不能注册第二套启动项** |
-| `@tauri-apps/plugin-updater` | **缺** | 独立更新器 | §4：**不移植独立更新器**，合并进 NekoWite 更新流程 |
+| `@tauri-apps/plugin-notification` | **缺** | D5 系统通知投递 | **唯一可能需要的**。但 §7.2 要求「无动作能力不显示无效按钮」，且 Linux 通知依赖 XDG portal/libnotify，**在 AppImage/deb/rpm 与无 portal 环境下是否可用必须实测**；不可用时的降级是「未读任务入口始终可用」。未验证前不引入 |
+| `@tauri-apps/plugin-process` | **缺** | 生命周期/退出（上游用 `exit()`/`restart()`） | **不建议引入**。§7.1 要求退出语义并入宿主、由主窗口决定，桌宠不得改变退出行为；宿主已有退出流程，再加一个进程控制面正是「第二个退出菜单」的成因 |
+| `@tauri-apps/plugin-autostart` | **缺** | 开机启动 | **不建议引入**。§5.2 明确「使用宿主现有能力；**没有现成能力则独立立项，不能注册第二套启动项**」。宿主若无此能力，这是一个独立功能，不是桌宠的附属品 |
+| `@tauri-apps/plugin-updater` | **缺** | 独立更新器 | **明确不引入**。§4 把「独立更新器」列入不移植的重复外壳，更新合并进 NekoWite 现有流程 |
+
+**结论：四个插件里最多引入一个（notification），且要先实测。** 引入任何插件都会改动 `R/Cargo.toml` 与前端清单——按 §10.1 由集成者串行处理，**不得与 ACP 的依赖改动并发**。
 
 上游用 Vite 5 + Vitest 4；本项目是 Vite + Vitest 3.2.7，**不复制上游 lockfile 或 vite/tsconfig 配置**。上游 `windows/src/catalog.test.ts` 是唯一现存测试（76 行），可作为迁移参考但不构成我们的测试覆盖。
 
