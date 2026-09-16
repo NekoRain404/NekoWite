@@ -1,11 +1,13 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
-import { createApp, defineComponent, nextTick, type App as VueApp } from 'vue'
+import { createApp, defineComponent, effectScope, nextTick, type App as VueApp, type EffectScope } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { useAppearanceStore } from '../../../stores/appearance'
 import { useTabsStore } from '../../../stores/tabs'
 import { useViewStore } from '../../../stores/view'
+import { useNoteList } from '../../notes'
+import type { OutlineItem } from '../../../services/outline'
 import { useSplitScrollSync } from './use-split-scroll-sync'
 import type { RenderedPaneHandoff } from './use-pane-handoff'
 import type { SourcePaneExpose } from './use-source-pane-slot'
@@ -29,6 +31,15 @@ vi.mock('../../../platform/gateways/fs', () => ({
  */
 const DOC = '# One\n\n## Two\n\n## Three\n\nbody\n'
 const HEADING_LINES_0B = [0, 2, 4]
+
+/**
+ * The note the outline defect was reported on, and the line it has to land on:
+ * a four-line frontmatter block, then `# Beta` as line 5 of the FILE. The two
+ * are 1 apart for a body-relative index, which is what makes a wrong producer's
+ * jump land on the opening `---` rather than near the heading.
+ */
+const FRONTMATTER_DOC = '---\ntitle: x\ntags: [a]\n---\n# Beta\n'
+const BETA_LINE = 5
 
 /**
  * The rendered pane's handoff surface, recording what it is asked to do.
@@ -131,11 +142,16 @@ function makeSourcePane() {
 const SOURCE_VIEWPORT_PX = 90
 
 let mounted: VueApp[] = []
+/** The scopes the notes panel's producer was read inside, stopped with the test
+ *  — its watchers need an owner (the idiom `use-frontmatter-panel-flush.test.ts`
+ *  uses for a composable with no component of its own). */
+let scopes: EffectScope[] = []
 
 describe('useSplitScrollSync outline jumps', () => {
   beforeEach(async () => {
     setActivePinia(createPinia())
     mounted = []
+    scopes = []
     const tabs = useTabsStore()
     tabs.setVault('/vault')
     await tabs.openTab('notes/a.md')
@@ -146,6 +162,8 @@ describe('useSplitScrollSync outline jumps', () => {
   afterEach(() => {
     mounted.forEach((app) => app.unmount())
     mounted = []
+    scopes.forEach((scope) => scope.stop())
+    scopes = []
     document.body.innerHTML = ''
   })
 
@@ -177,6 +195,17 @@ describe('useSplitScrollSync outline jumps', () => {
     mounted.push(app)
     if (!harness.api) throw new Error('the pane did not mount')
     return { api: harness.api, rendered, source }
+  }
+
+  /** The notes panel's own outline of the document the tabs store holds — the
+   *  producer the app's jump is fed from. Read through the feature's public API
+   *  and inside a scope, because it is a composable over the tabs store rather
+   *  than a free function: a copy of its arithmetic here is the very thing that
+   *  drifted and caused the defect. */
+  function notesPanelOutline(): OutlineItem[] {
+    const scope = effectScope()
+    scopes.push(scope)
+    return scope.run(() => useNoteList().outlineItems.value) ?? []
   }
 
   it('jumps the rendered pane to the heading that was picked, not the one above it', async () => {
@@ -226,5 +255,36 @@ describe('useSplitScrollSync outline jumps', () => {
     // browser: `document.activeElement` stayed on the outline button).
     expect(source.caretLines).toEqual([5])
     expect(source.focusCount).toBe(1)
+  })
+
+  it('lands the source caret on the heading the notes panel named, not in the YAML', async () => {
+    useTabsStore().activeTab!.content = FRONTMATTER_DOC
+    const { source } = mount('source')
+    const [beta] = notesPanelOutline()
+    expect(beta.text).toBe('Beta')
+
+    // The target is the notes panel's own answer, so this is the whole chain:
+    // the row's line became the caret's line. The panel's index was
+    // body-relative, which made this 1 — the opening `---`, the line a
+    // keystroke would then be inserted into.
+    useViewStore().requestOutlineTarget({ line: beta.line, index: beta.index })
+    await nextTick()
+    await nextTick()
+
+    expect(source.caretLines).toEqual([BETA_LINE])
+  })
+
+  it('lands the rendered caret on the heading the notes panel named, not in the YAML', async () => {
+    useTabsStore().activeTab!.content = FRONTMATTER_DOC
+    const { rendered } = mount('rendered')
+    const [beta] = notesPanelOutline()
+    expect(beta.text).toBe('Beta')
+
+    useViewStore().requestOutlineTarget({ line: beta.line, index: beta.index })
+    await nextTick()
+    await nextTick()
+
+    expect(rendered.writes.map((w) => w.line)).toEqual([BETA_LINE])
+    expect(rendered.caretWrites).toEqual([BETA_LINE])
   })
 })
