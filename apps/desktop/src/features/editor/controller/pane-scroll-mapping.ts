@@ -117,16 +117,31 @@ function blockTop(items: OutlineItem[], tops: number[], index: number): number {
 }
 
 /** The rendered offset that puts `line` (possibly fractional, 1-based) at the top
- *  of the rendered pane.
+ *  of the rendered pane, or — for a caret — at the position in the document its
+ *  line names.
  *
- *  The last block is stretched onto the pane's end so a document whose panes are
- *  laid out at different heights still lines up when it runs out. */
+ *  The last block has no heading below it to be bounded by, so its span ends at
+ *  the end the caller supplies. Two callers want two different ends there, and
+ *  they are not the same quantity: a pane being scrolled wants the furthest
+ *  position it can REACH (`range`) so a document whose panes are laid out at
+ *  different heights still lines up when it runs out, and a caret wants where
+ *  the CONTENT actually stops. `range` is `scrollHeight - clientHeight`, which
+ *  is the content's end only while the content overflows the pane: on a note
+ *  shorter than its pane it is 0, above the last heading's own top, and the span
+ *  runs the line BACKWARDS — every line from that heading collapses onto the
+ *  heading, which is where a caret in the final section used to land. */
 export function renderedTopFor(
   line: number,
   items: OutlineItem[],
   tops: number[] | null,
   totalLines: number,
   range: number,
+  /** Where the rendered content actually ends, in the same space as `tops`. The
+   *  span never ends below `range` — a pane cannot travel past its own content,
+   *  so a caller whose pane reports no end (hidden, not laid out, or a scroll
+   *  caller with no document measurement to offer) keeps the travel it always
+   *  had. */
+  contentEnd?: number,
 ): number {
   if (items.length === 0 || !tops) return clampRatio(lineRatio(line, totalLines)) * range
   const firstLine = items[0].line + 1
@@ -141,7 +156,9 @@ export function renderedTopFor(
   const startLine = items[index].line + 1
   const startTop = blockTop(items, tops, index)
   const next = items[index + 1]
-  if (!next) return between(line, startLine, totalLines + 1, startTop, range)
+  if (!next) {
+    return between(line, startLine, totalLines + 1, startTop, Math.max(range, contentEnd ?? 0))
+  }
   return between(line, startLine, next.line + 1, startTop, tops[index + 1])
 }
 

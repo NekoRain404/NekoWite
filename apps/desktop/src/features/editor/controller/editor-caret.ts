@@ -248,16 +248,39 @@ export function createEditorCaret(deps: EditorCaretDeps): EditorCaret {
     dispatchCaret(view, end)
   }
 
+  /**
+   * Where the rendered content actually ends, in the space the heading offsets
+   * and `posForOffset`'s block tops are measured in: the LAST block's own
+   * bottom, measured the way this file measures `tops` rather than deriving it.
+   *
+   * Neither number the pane already has is that end. `renderedRange` is a
+   * quantity of the pane's SCROLLING (`scrollHeight - clientHeight`), which is 0
+   * for a note shorter than its pane; and the content box is not it either,
+   * because the pane keeps a tail of empty space below the note (80% of the
+   * panel's height, so the last line can be scrolled up) inside that box. What
+   * cannot be measured falls back to the box — a node mid-render, a pane no
+   * engine has laid out — and the mapping keeps the pane's travel when that is 0
+   * too.
+   */
+  function contentEnd(view: EditorView, el: HTMLElement): number {
+    const last = view.state.doc.lastChild
+    const element = last ? view.nodeDOM(view.state.doc.content.size - last.nodeSize) : null
+    if (!(element instanceof HTMLElement)) return el.scrollHeight
+    const rect = element.getBoundingClientRect()
+    if (rect.height <= 0) return el.scrollHeight
+    return rect.bottom - (el.getBoundingClientRect().top - el.scrollTop)
+  }
+
   function setCaretLine(line: number): void {
     const el = deps.getScrollEl()
     const view = editorView()
     if (!el || !view) return
     const geometry = deps.geometry()
-    // A note WITH headings keeps the anchored mapping exactly as it was. Without
-    // them the line is placed through the note's own blocks, whose answer does
-    // not depend on how much of the pane the note fills; the pixel route stays
-    // as the fallback for the case the two readings of the note are out of step
-    // (see `document-caret`).
+    // A note WITH headings keeps the anchored route. Without them the line is
+    // placed through the note's own blocks, whose answer does not depend on how
+    // much of the pane the note fills; the pixel route stays as the fallback for
+    // the case the two readings of the note are out of step (see
+    // `document-caret`).
     const byBlock = hasAnchors(geometry) ? null : documentPositionFor(view, noteText(), line)
     const pos =
       byBlock ??
@@ -270,6 +293,10 @@ export function createEditorCaret(deps: EditorCaretDeps): EditorCaret {
           geometry.tops,
           geometry.totalLines,
           geometry.renderedRange,
+          // The anchor path's last block ends in DOCUMENT space, which is where a
+          // caret's offset lives — not at the pane's travel, which is 0 for a
+          // note that fits its pane and runs the span back onto its own heading.
+          contentEnd(view, el),
         ),
       )
     if (pos === null) return
