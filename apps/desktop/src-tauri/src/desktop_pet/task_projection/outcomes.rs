@@ -85,6 +85,10 @@ pub(super) fn outcome_of(envelope: &AgentEventEnvelope) -> Option<Outcome> {
         AgentEventKind::TextDelta
         | AgentEventKind::ToolUpdate
         | AgentEventKind::CommandsChanged
+        // A session's option list says what the engine offers, not what a task is doing: the
+        // model a turn ran with is not a state of the turn, and reading one as progress would
+        // be the percentage §6.2 forbids this table from guessing.
+        | AgentEventKind::ConfigChanged
         | AgentEventKind::FilesChanged => None,
     }
 }

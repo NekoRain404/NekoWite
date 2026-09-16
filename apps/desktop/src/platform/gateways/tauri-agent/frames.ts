@@ -135,10 +135,15 @@ function mapPayload(
     case 'run-finished':
       return mapRunResult(payload)
     default:
-      // `text-delta`, `commands-changed`, `permission-request`, `run-failed` and the kinds the
-      // runtime does not produce are already the contract's shape — the host's payloads were
-      // built against this contract for exactly that reason — so they go to the validator
-      // untouched rather than through a mapping that could only re-spell them.
+      // `text-delta`, `commands-changed`, `config-changed`, `permission-request`, `run-failed`
+      // and the kinds the runtime does not produce are already the contract's shape — the host's
+      // payloads were built against this contract for exactly that reason — so they go to the
+      // validator untouched rather than through a mapping that could only re-spell them.
+      //
+      // `config-changed` is the one of those whose wire shape is *not* the contract's: the
+      // translation happens a layer below, in `agent_runtime::events::normalize_update`, so what
+      // reaches here is already `{ options: [...] }`. Doing it there is what keeps a second
+      // reader of the schema's `type`/`currentValue` from existing in this window.
       return payload
   }
 }

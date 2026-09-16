@@ -10,9 +10,10 @@ use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{SessionId, SessionNotification, StopReason};
+use agent_client_protocol::schema::v1::{SessionId, SessionNotification, SessionUpdate, StopReason};
 use serde_json::{Value, json};
 
+use super::capabilities::SessionCapabilities;
 use super::events::{AgentEventKind, normalize_update};
 use super::fs_capability::{FsCapability, FsRequest};
 use super::session::{AgentRuntime, Emitter, RunState, SessionError, SessionSlot};
@@ -196,22 +197,47 @@ fn finish_run(
 }
 
 /// Turns the engine's updates into host envelopes, one at a time and in order.
+///
+/// `reported` is the runtime's capability store, reached directly rather than through
+/// [`AgentRuntime`] because this task is spawned *by* that runtime's constructor — the map is the
+/// one thing that exists before the runtime does. It is the same map [`AgentRuntime::capabilities`]
+/// answers from, so what is recorded here is what a report reads.
 pub(super) async fn dispatch_updates(
     mut updates: tokio::sync::mpsc::UnboundedReceiver<SessionNotification>,
     sessions: std::sync::Arc<Mutex<HashMap<String, SessionSlot>>>,
+    reported: std::sync::Arc<Mutex<HashMap<String, SessionCapabilities>>>,
     emitter: Emitter,
 ) {
     while let Some(notification) = updates.recv().await {
-        forward_update(&sessions, &emitter, &notification);
+        forward_update(&sessions, &reported, &emitter, &notification);
     }
 }
 
 /// Turns one `session/update` into a host envelope — or does not.
 fn forward_update(
     sessions: &Mutex<HashMap<String, SessionSlot>>,
+    reported: &Mutex<HashMap<String, SessionCapabilities>>,
     emitter: &Emitter,
     notification: &SessionNotification,
 ) {
+    // Recorded before any of the early returns below, because this update is a capability fact as
+    // well as an event: §3.4's row makes the published list what `/` is available on, and P0 §2.2
+    // measured it arriving the instant `session/new` returns — which is *before* the host has
+    // registered the session, the ordering the `None` arm below is about. A list dropped here is a
+    // `/` menu the panel would be told does not exist.
+    //
+    // The list replaces the previous one whole (§4.1); what is kept is its size, because the
+    // commands themselves reach the `/` menu as events and a capability answer only needs to know
+    // whether the engine answered.
+    if let SessionUpdate::AvailableCommandsUpdate(update) = &notification.update {
+        reported
+            .lock()
+            .unwrap()
+            .entry(notification.session_id.to_string())
+            .or_default()
+            .commands_published(update.available_commands.len());
+    }
+
     // `None` is the deliberate drop documented in `events` — a thought chunk,
     // or an update this host has no kind for. Neither reaches a component as an
     // unknown.
@@ -220,7 +246,36 @@ fn forward_update(
     };
     let session_id = notification.session_id.to_string();
 
-    let run_id = {
+    let run_id = if is_session_scoped(kind) {
+        // Decided before the run is looked at, because these kinds describe the session
+        // rather than one of its turns: the engine's command list and its option list are
+        // facts about what it offers, and they stay true whatever became of a run — the
+        // window's reducer says so in its own words ("everything describing the *session* …
+        // stays true after a cancel, and is applied exactly as before").
+        //
+        // **Their `runId` is therefore null, always.** §6.2's envelope defines that field as
+        // the generation an event belongs to (see `AgentEventEnvelope`), and these belong to
+        // none — P0 §2.2 measured the command list arriving that way. Which also means a
+        // session-scoped frame that arrives mid-turn is *not* stamped with that run: the
+        // stamp would say the fact belongs to a turn it would outlive, and it would make an
+        // unreadable payload fail that turn — `tauri-agent/frames.ts` reports a frame it
+        // cannot read as `run-failed` when the frame names a run. An engine's config change
+        // must never be able to end a run.
+        //
+        // **And the run guard below does not apply to them.** That guard exists to stop a
+        // dead run's *content* from reviving the answer it wrote; a session-scoped frame is
+        // not that content. Gating them there instead dropped every one that arrived after a
+        // session's first turn — which is exactly when an engine answers a config change —
+        // leaving a panel with the list it saw at `session/new` and nothing after it.
+        //
+        // Nor is the session's registration required, which is why this branch never reads
+        // the session table: the engine sends the command list the instant `session/new`
+        // returns, and that can be *before* the host has inserted the session (measured
+        // ordering). Requiring registration here would drop a session-scoped frame on an
+        // ordering that is the normal one, not an exceptional one. The id being the engine's
+        // own, on a connection this host opened, is what makes stamping it honest.
+        None
+    } else {
         let sessions = sessions.lock().unwrap();
         let run = sessions.get(&session_id).and_then(|slot| slot.run.as_ref());
         match run {
@@ -230,13 +285,6 @@ fn forward_update(
             // which §6.2 rules out in as many words.
             Some(run) if run.cancelled || run.finished => return,
             Some(run) => Some(run.run_id.clone()),
-            // Session-scoped rather than run-scoped (P0 §2.2 measured the
-            // command list arriving this way), and not gated on the host having
-            // finished registering the session: the engine sends it the instant
-            // `session/new` returns, which can be before that insert happens.
-            // Requiring registration here would drop it on an ordering that is
-            // the normal one, not an exceptional one.
-            None if kind == AgentEventKind::CommandsChanged => None,
             // A run-scoped update with no run to belong to: either the session
             // is one this host never opened, or its run never started. §6.1
             // forbids stamping a session id this host never received, and text
@@ -246,6 +294,28 @@ fn forward_update(
     };
 
     emitter.emit(&session_id, run_id, kind, payload);
+}
+
+/// Whether a kind describes the session rather than one of its turns.
+///
+/// The same line the window's reducer draws when it decides what a cancelled run may still
+/// be told about (`agent-event-reducer.ts`: its `RUN_CONTENT` and `RUN_END` are the
+/// turn-scoped kinds, and everything else is a session fact). Kept as a `match` with no
+/// wildcard on purpose: a kind added to the vocabulary has to be classified here rather than
+/// falling into whichever branch happens to be the default.
+///
+/// `FilesChanged` is on this side of the line because the reducer puts it there (touched
+/// files stay true after a cancel). Nothing produces one yet, so the classification is a
+/// statement about the kind rather than about traffic.
+fn is_session_scoped(kind: AgentEventKind) -> bool {
+    match kind {
+        AgentEventKind::CommandsChanged | AgentEventKind::ConfigChanged | AgentEventKind::FilesChanged => true,
+        AgentEventKind::TextDelta
+        | AgentEventKind::ToolUpdate
+        | AgentEventKind::PermissionRequest
+        | AgentEventKind::RunFinished
+        | AgentEventKind::RunFailed => false,
+    }
 }
 
 /// How long a file request may wait for the session it names to be registered.

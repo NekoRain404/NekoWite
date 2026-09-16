@@ -22,7 +22,10 @@
 //! plan's field list — the list here is that contract, kept in step by hand,
 //! and NOT an import.
 
-use agent_client_protocol::schema::v1::{ContentBlock, ContentChunk, SessionUpdate};
+use agent_client_protocol::schema::v1::{
+    ContentBlock, ContentChunk, SessionConfigKind, SessionConfigOption, SessionConfigSelectOption,
+    SessionConfigSelectOptions, SessionUpdate,
+};
 use serde::Serialize;
 
 use super::process::{FRAME_TOO_LARGE_MARKER, MAX_FRAME_BYTES};
@@ -30,8 +33,17 @@ use serde_json::{Value, json};
 
 /// What an envelope means to the app.
 ///
-/// The plan's list, plus nothing: a kind is a promise that a component can
-/// render it. `PermissionRequest` is present but is not emitted from here —
+/// A kind is a promise that a component can render it, so one appears here exactly
+/// when the host has a *producer* for it: `normalize_update` below, the emitter the
+/// runtime publishes through, and the permission tables are the whole of what
+/// publishes on this enum. The plan's §6.2 list is the floor and the frozen contract
+/// (`agent-contracts/payloads.ts`) is the ceiling — the contract owns the spelling,
+/// and it is wider than this enum on purpose, carrying a kind for every stable
+/// `SessionUpdate` the pinned schema names. `ConfigChanged` is the first kind here
+/// that the plan's list does not name: the engine can send one, so the host can
+/// forward one, and both vocabularies already declared it.
+///
+/// `PermissionRequest` is the one kind that is not emitted from here —
 /// engine→client permission requests are answered through the transport, and
 /// no such frame has ever been observed (P0 §4, confirmed by §6.2), so the kind
 /// exists to fix its spelling before T3/T7 find out what one looks like.
@@ -42,6 +54,7 @@ pub enum AgentEventKind {
     ToolUpdate,
     PermissionRequest,
     CommandsChanged,
+    ConfigChanged,
     FilesChanged,
     RunFinished,
     RunFailed,
@@ -231,8 +244,8 @@ pub struct AgentEventEnvelope {
 ///   cannot put a fake "thinking" line in front of a user if the contract never
 ///   grows a place for it; adding the kind later is one arm here.
 /// - **everything else the schema can name** — user echoes, plan frames, mode
-///   and config-option updates, compaction, and the `Other` escape hatch. §6.2
-///   requires that `unknown` never reaches a component, so an update this host
+///   updates, session metadata and usage, compaction, and the `Other` escape hatch.
+///   §6.2 requires that `unknown` never reaches a component, so an update this host
 ///   has no kind for is not forwarded as a mystery blob to be guessed at.
 pub fn normalize_update(update: &SessionUpdate) -> Option<(AgentEventKind, Value)> {
     match update {
@@ -258,7 +271,101 @@ pub fn normalize_update(update: &SessionUpdate) -> Option<(AgentEventKind, Value
             AgentEventKind::CommandsChanged,
             json!({ "commands": commands.available_commands }),
         )),
+        // The engine's own option list — the model selector among its entries, plus
+        // whatever else the engine offers — as the full set with its current values.
+        // The same kind of fact as the command list above (the engine telling the
+        // session what it now offers), and forwarded for the same reason: the
+        // contract declares the kind, the window's reducer keeps `view.config` from
+        // it, and a frame dropped here is the one thing that keeps the panel from
+        // ever showing an engine's own options.
+        //
+        // **The payload is mapped, not passed through.** The schema and the contract
+        // do not share a shape for this one (see `config_options` below), and the
+        // contract is the frozen side: `readConfigChanged` reads `{ options: [{ id,
+        // name, description?, value }] }` and nothing else.
+        SessionUpdate::ConfigOptionUpdate(update) => Some((
+            AgentEventKind::ConfigChanged,
+            json!({ "options": config_options(&update.config_options) }),
+        )),
         _ => None,
+    }
+}
+
+/// The schema's option list, in the contract's shape.
+///
+/// Three differences, and each one is a reason this is a mapping rather than a
+/// pass-through:
+///
+///  - the discriminator. The contract tags the *value* (`value.kind`), the wire
+///    flattens a `type` onto the option itself (`select` / `boolean`) — the two do
+///    not even agree on how to spell "kind" (`toggle` and `boolean`);
+///  - the current value: `value.current` against the wire's `currentValue`;
+///  - a select's choices: an untagged union on the wire (a flat list, or a list of
+///    *groups* of them) and a flat list in the contract. The grouped case is
+///    flattened here, which loses the group's name — `AgentConfigChoice` has nowhere
+///    to put it. That is the residual T4b §7 reported (the same flattening
+///    `tauri-agent/session.ts` does for the catalog), not a decision taken here.
+///
+/// An option whose type this host cannot express is left out rather than sent as
+/// something it is not: the contract's reader refuses a whole payload containing one
+/// entry it cannot read, so a single unreadable option would cost the engine's entire
+/// list. Nothing reaches that arm from the wire today — the schema skips an option it
+/// cannot deserialize — which is why leaving it out is a floor rather than a policy.
+fn config_options(options: &[SessionConfigOption]) -> Vec<Value> {
+    options.iter().filter_map(config_option).collect()
+}
+
+/// One option, or `None` for a kind the contract has no arm for.
+fn config_option(option: &SessionConfigOption) -> Option<Value> {
+    let value = match &option.kind {
+        SessionConfigKind::Select(select) => json!({
+            "kind": "select",
+            "current": select.current_value.to_string(),
+            "choices": config_choices(&select.options),
+        }),
+        SessionConfigKind::Boolean(toggle) => json!({
+            "kind": "toggle",
+            "current": toggle.current_value,
+        }),
+        // `SessionConfigKind` is `#[non_exhaustive]`: a type the pinned schema does not
+        // name yet is a shape this host cannot put in the contract's two arms.
+        _ => return None,
+    };
+    let mut mapped = json!({
+        "id": option.id.to_string(),
+        "name": option.name,
+        "value": value,
+    });
+    // Absent and empty differ: the contract's `description` is optional, and an engine
+    // that sent none did not send an empty one.
+    if let Some(description) = &option.description {
+        mapped["description"] = json!(description);
+    }
+    Some(mapped)
+}
+
+/// A select's choices, in one flat list, in the engine's order.
+fn config_choices(options: &SessionConfigSelectOptions) -> Vec<Value> {
+    fn choice(option: &SessionConfigSelectOption) -> Value {
+        let mut mapped = json!({
+            "value": option.value.to_string(),
+            "name": option.name,
+        });
+        if let Some(description) = &option.description {
+            mapped["description"] = json!(description);
+        }
+        mapped
+    }
+
+    match options {
+        SessionConfigSelectOptions::Ungrouped(values) => values.iter().map(choice).collect(),
+        SessionConfigSelectOptions::Grouped(groups) => groups
+            .iter()
+            .flat_map(|group| group.options.iter().map(choice))
+            .collect(),
+        // `#[non_exhaustive]`, as above: a grouping this host has never seen is not a
+        // set of choices it may invent.
+        _ => Vec::new(),
     }
 }
 
