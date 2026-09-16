@@ -10,23 +10,26 @@
  *   lands — a save is what writes a version — or when the user asks. It does NOT
  *   change when the text changes: reacting per keystroke meant a `listHistory`
  *   IPC read per typing pause.
- * - The section is only read while it is actually on screen. The info rail keeps
- *   every section mounted and hides them with `v-show`, so a hidden panel used to
- *   issue that IPC read too. A hidden section reads nothing, and reads as soon
- *   as it is shown, so what it displays is current.
+ * - The section is only read while it is actually on screen, and the note list
+ *   is what enforces that now: it switches sections with a `v-else-if` chain, so
+ *   this panel exists only while its mode is the one showing — mounting IS the
+ *   read, and switching away unmounts the watchers with it. Until this panel
+ *   moved into that column it lived in the info rail, which kept every section
+ *   mounted and hid them with `v-show`; there a hidden panel went on issuing
+ *   that IPC read, and `useSectionShown` (a MutationObserver on the section's
+ *   inline `display`) was what stopped it. With no host left that hides without
+ *   unmounting, that composition had nothing to gate and is gone: a gate that
+ *   is always true is a comment pretending to be a mechanism.
  */
 
 import { computed, onMounted, ref, watch, type Ref } from 'vue'
 import { fsService } from '../platform/gateways/fs'
 import { notifyError } from '../services/errors'
 import { useTabsStore } from '../stores/tabs'
-import { useSectionShown, type SectionShown } from './use-section-shown'
 import type { HistoryEntry } from '../platform/gateways/contracts'
 import { t } from '../i18n'
 
 export interface HistoryPanelModel {
-  /** Bind to the section's root element: `<section :ref="sectionRef">`. */
-  sectionRef: SectionShown['sectionRef']
   entries: Ref<HistoryEntry[]>
   /** True when the last read failed (the panel must not say "no history"). */
   loadFailed: Ref<boolean>
@@ -47,7 +50,6 @@ export interface HistoryPanelModel {
 
 export function useHistoryPanel(): HistoryPanelModel {
   const tabs = useTabsStore()
-  const { sectionRef, shown } = useSectionShown()
 
   const entries = ref<HistoryEntry[]>([])
   /**
@@ -157,13 +159,11 @@ export function useHistoryPanel(): HistoryPanelModel {
   // section happens to be on screen.
   watch(docKey, dropForeignCompare)
 
-  // When the list has to be re-read, in one place: the section is on screen
-  // (`shown`), the note changed (`docKey`), or a save landed (`savedTick`).
-  // Deliberately NOT the content — typing that has not been saved cannot change
-  // the answer, and the restore path reloads explicitly.
-  watch([shown, docKey, savedTick], ([isShown]) => {
-    if (isShown) void load()
-  })
+  // When the list has to be re-read, in one place: the note changed (`docKey`)
+  // or a save landed (`savedTick`). Deliberately NOT the content — typing that
+  // has not been saved cannot change the answer, and the restore path reloads
+  // explicitly.
+  watch([docKey, savedTick], () => { void load() })
 
   async function restore(entry: HistoryEntry): Promise<void> {
     const tab = tabs.activeTab
@@ -215,14 +215,11 @@ export function useHistoryPanel(): HistoryPanelModel {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   }
 
-  // `useSectionShown` registers its own onMounted hook before this one, so a panel
-  // that mounts hidden (the rail opening on another tab) does not read at all.
-  onMounted(() => {
-    if (shown.value) void load()
-  })
+  // The panel only exists while its mode is the one on screen, so mounting is
+  // the section being shown: this reads once, there and not before.
+  onMounted(() => { void load() })
 
   return {
-    sectionRef,
     entries,
     loadFailed,
     comparing,

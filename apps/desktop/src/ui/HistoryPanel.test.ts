@@ -5,8 +5,6 @@ import {
   h,
   nextTick,
   ref,
-  vShow,
-  withDirectives,
   type App as VueApp,
   type Ref,
 } from 'vue'
@@ -306,14 +304,15 @@ describe('HistoryPanel', () => {
   })
 })
 
-/** Mounts the panel the way InfoRail does: mounted, hidden with `v-show` while
- *  another rail section has the tab. */
+/** Mounts the panel the way the note list does: its sections are a `v-else-if`
+ *  chain, so the section that is not the one on screen is unmounted rather than
+ *  hidden with `v-show`. `shown` is that chain. */
 function mountSection(shown: Ref<boolean>): HTMLElement {
   const host = document.createElement('div')
   document.body.appendChild(host)
   const app = createApp(
     defineComponent({
-      render: () => withDirectives(h(HistoryPanel), [[vShow, shown.value]]),
+      render: () => (shown.value ? h(HistoryPanel) : null),
     }),
   )
   app.use(pinia)
@@ -382,7 +381,16 @@ describe('reading the history only when it can have changed', () => {
     expect(historyCallCount()).toBeGreaterThan(afterTyping)
   })
 
-  it('does not read while its rail section is hidden, and reads when it is shown', async () => {
+  it('reads nothing while it is not the section on screen, and reads when it is', async () => {
+    // The note list switches sections with a `v-else-if` chain, so while another
+    // mode has the column this panel does not exist: there is nothing left to
+    // watch and nothing to read. `useSectionShown` used to enforce that (the
+    // rail kept every section mounted and hid them with `v-show`, and a hidden
+    // history panel issued a `listHistory` read per typing pause); with the
+    // unmounting host the composition is gone and this is the seam that has to
+    // hold — see the host's own test in `NoteListPanel.test.ts` for the other
+    // half (a note switch while the section is off screen reads nothing).
+    //
     // Both notes are opened before the panel mounts: `openTab` reads the
     // version list itself (crash recovery), and counting its reads would hide
     // what the panel does. Switching the active tab has no such side effect.
@@ -394,10 +402,10 @@ describe('reading the history only when it can have changed', () => {
 
     const shown = ref(false)
     listHistoryMock.mockClear()
-    mountSection(shown)
+    const host = mountSection(shown)
     await flush()
-    // Mounting hidden is the rail's normal case (it opens on its AI tab): it
-    // must not read either.
+    // Not the section on screen: it is not there, and it has read nothing.
+    expect(host.querySelector('.history-panel')).toBeNull()
     expect(historyCallCount()).toBe(0)
 
     tabs.activeId = idFor('/vault/b.md')
@@ -406,9 +414,12 @@ describe('reading the history only when it can have changed', () => {
     expect(historyCallCount()).toBe(0)
 
     shown.value = true
+    await nextTick()
     await flush()
     await flush()
     expect(historyCallCount()).toBe(1)
+    // Shown means current: the list it renders is the one read on the way in.
+    expect(renderedIds(host)).toEqual(['ver-1'])
   })
 
   it('still re-reads for the note switch while it is on screen', async () => {

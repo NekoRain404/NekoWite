@@ -5,6 +5,7 @@ import NoteListPanel from './NoteListPanel.vue'
 import { FileTree } from '../../vault'
 import { useFileTreeStore } from '../../../stores/file-tree'
 import { useDocumentListStore } from '../../../stores/document-list'
+import type { PanelMode } from '../../../stores/document-list'
 import { useTabsStore } from '../../../stores/tabs'
 import { useViewStore } from '../../../stores/view'
 import { t } from '../../../i18n'
@@ -131,6 +132,173 @@ describe('NoteListPanel outline rows', () => {
     row!.click()
     await flush()
     expect(useViewStore().pendingOutlineTarget).toEqual({ line: BETA_LINE - 1, index: 0 })
+  })
+})
+
+describe('the document panels the mode switch adds to the column', () => {
+  /** Every mode the rail gave up, with the panel it has to show. */
+  const PANELS: ReadonlyArray<[PanelMode, string]> = [
+    ['references', '.references-panel'],
+    ['history', '.history-panel'],
+    ['frontmatter', '.frontmatter-panel'],
+    ['stats', '.doc-stats-panel'],
+  ]
+
+  beforeEach(() => {
+    pinia = createPinia()
+    setActivePinia(pinia)
+    document.body.innerHTML = ''
+    mounted = []
+    fsMocks.listHistory.mockReset()
+    fsMocks.listHistory.mockResolvedValue([{ id: 'ver-1', size: 100, mtime: 100 }])
+    fsMocks.read.mockReset()
+    fsMocks.read.mockResolvedValue('# a')
+    // Two notes open, the first active: the host test below switches between
+    // them, and `openTab` is deliberately not used to do it (it reads the
+    // version list itself, which would be counted as the panel's doing).
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    tabs.tabs.push({
+      id: 't1',
+      path: '/vault/a.md',
+      content: '# a',
+      savedContent: '# a',
+      dirty: false,
+      pendingAssetPaths: [],
+    })
+    tabs.tabs.push({
+      id: 't2',
+      path: '/vault/b.md',
+      content: '# b',
+      savedContent: '# b',
+      dirty: false,
+      pendingAssetPaths: [],
+    })
+    tabs.setActive('t1')
+  })
+
+  afterEach(() => {
+    mounted.forEach((app) => app.unmount())
+    mounted = []
+    host?.remove()
+    host = null
+  })
+
+  it('shows the panel of the mode that was chosen, and unmounts the others', async () => {
+    mountPanel()
+    await flush()
+    // The column opens on the note list: none of the four is mounted.
+    for (const [, selector] of PANELS) expect(host!.querySelector(selector)).toBeNull()
+
+    for (const [mode, selector] of PANELS) {
+      useDocumentListStore().setPanelMode(mode)
+      await flush()
+      expect(host!.querySelector(selector), `${mode} shows ${selector}`).not.toBeNull()
+      for (const [other, otherSelector] of PANELS) {
+        if (other === mode) continue
+        expect(
+          host!.querySelector(otherSelector),
+          `${mode} must not also show ${otherSelector}`,
+        ).toBeNull()
+      }
+    }
+
+    // And back out again: the chain unmounts rather than hides, which is what
+    // keeps a hidden panel from reading (see the history test below).
+    useDocumentListStore().setPanelMode('notes')
+    await flush()
+    for (const [, selector] of PANELS) expect(host!.querySelector(selector)).toBeNull()
+  })
+
+  it('offers every mode in the switch, each still named for the user', async () => {
+    // The switch is icons only — seven labelled buttons measure ~600px and the
+    // column can be dragged to 200px — so the label lives in the tooltip and the
+    // accessible name, and this switcher is the only way in to any of these
+    // panels. A mode that loses its name here has lost its only handle.
+    mountPanel()
+    await flush()
+    const buttons = [...host!.querySelectorAll<HTMLButtonElement>('.nl-mode-btn')]
+
+    expect(buttons.map((b) => b.getAttribute('aria-label'))).toEqual([
+      t('notelist.notes'),
+      t('notelist.outline'),
+      t('notelist.links'),
+      t('references.title'),
+      t('history.title'),
+      t('frontmatter.title'),
+      t('docstats.title'),
+    ])
+    // The wiki-links entry and the citations entry are different features with
+    // names that sound alike, so they must not resolve to the same label.
+    expect(t('references.title')).not.toBe(t('notelist.links'))
+
+    // And the last of them reaches its own mode.
+    buttons[3].click()
+    await flush()
+    expect(useDocumentListStore().panelMode).toBe('references')
+    expect(host!.querySelector('.references-panel')).not.toBeNull()
+  })
+
+  it('keeps the citations panel and the wiki links apart', async () => {
+    // `links` is wiki links between notes; `references` is the bibliography of
+    // the open note's `@cite` keys. Two different features whose names sound
+    // alike — the column must never show one where the other belongs.
+    mountPanel()
+    await flush()
+    useDocumentListStore().setPanelMode('links')
+    await flush()
+    expect(host!.querySelector('.references-panel')).toBeNull()
+
+    useDocumentListStore().setPanelMode('references')
+    await flush()
+    expect(host!.querySelector('.references-panel')).not.toBeNull()
+    expect(host!.querySelectorAll('.nl-group-label')).toHaveLength(0)
+  })
+
+  it('reads the history only while its mode is the one on screen', async () => {
+    // The regression this guards was measured, not theoretical: a history panel
+    // left mounted behind another section issued a `listHistory` IPC read per
+    // typing pause. The column unmounts what is not on screen — that is what
+    // replaced `useSectionShown`'s gate — so a mode that is not showing must
+    // touch the filesystem not at all, and the panel still looks right either
+    // way.
+    mountPanel()
+    await flush()
+    expect(fsMocks.listHistory).not.toHaveBeenCalled()
+
+    useDocumentListStore().setPanelMode('history')
+    await flush()
+    expect(fsMocks.listHistory).toHaveBeenCalledTimes(1)
+    expect(host!.querySelector('.history-panel')).not.toBeNull()
+
+    // Typing is not a reason to read: a version only appears when a save writes
+    // one. (`HistoryPanel.test.ts` owns this half of the policy.)
+    const tabs = useTabsStore()
+    tabs.tabs[0].content = '# typed'
+    tabs.markDirty('t1')
+    await flush()
+    await flush()
+    expect(fsMocks.listHistory).toHaveBeenCalledTimes(1)
+
+    // Away from the mode the section is gone, so neither a note switch nor more
+    // typing asks for anything.
+    useDocumentListStore().setPanelMode('notes')
+    await flush()
+    expect(host!.querySelector('.history-panel')).toBeNull()
+    tabs.setActive('t2')
+    await flush()
+    await flush()
+    tabs.tabs[1].content = '# typed as well'
+    tabs.markDirty('t2')
+    await flush()
+    await flush()
+    expect(fsMocks.listHistory).toHaveBeenCalledTimes(1)
+
+    // Coming back shows what is current: mounting is the read.
+    useDocumentListStore().setPanelMode('history')
+    await flush()
+    expect(fsMocks.listHistory).toHaveBeenCalledTimes(2)
+    expect(host!.querySelectorAll('.history-item')).toHaveLength(1)
   })
 })
 
