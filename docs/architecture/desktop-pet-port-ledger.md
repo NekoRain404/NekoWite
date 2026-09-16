@@ -160,7 +160,30 @@
 
 **未验证：** 真实 Linux/WebKitGTK 下的渲染与命中（happy-dom 无 canvas，测试用记录的假 context）；`releaseUrl` 目前无真实调用者，要等 D8 接上才真正回收 Object URL。
 
-### 6.2 其他任务
+### 6.2 D11a — 漫游运动（`references/desktop-pet/windows/src/roam/`）
+
+| 项 | 值 |
+| --- | --- |
+| 源提交 | `be171a01273a1ed92a27bcdf72f8a58768bac421` |
+| 源文件 | `windows/src/roam/{engine,environment,modes,physics,window,types}.ts` |
+| 许可证 | MIT |
+| 目标 | `apps/desktop/src/features/desktop-pet/motion/{pet-motion,pet-physics,pet-platform,pet-modes,pet-motion-types,pet-mode-gate}.ts` |
+| 测试证据 | `npx vitest run src/features/desktop-pet/motion --passWithNoTests=false` → 5 files / **108 tests** |
+
+| 上游文件 | 目标 |
+| --- | --- |
+| `roam/physics.ts` | `pet-physics.ts`（300） |
+| `roam/window.ts` + `roam/environment.ts` | `pet-platform.ts`（226）——窗口/指针/屏幕坐标成为**注入的平台能力** |
+| `roam/modes.ts` | `pet-modes.ts`（227） |
+| `roam/types.ts` | `pet-motion-types.ts`（133） |
+| `roam/engine.ts` | `pet-motion.ts`（372） |
+| **无对应** | `pet-mode-gate.ts`（109）——§7.2 的降级列，上游没有 |
+
+**设计产物（本次最重要的结构决定）：** 「不可用的能力**在结构上无法被伪装**」——`gateRoamMode` 有三条路通向 `stay`，且 `pointer-follow`/`window-climb` 是**可选**平台方法，所以「声称支持却无实现」时桌宠只会站着不动，不会假装移动。
+
+**待决缺口（D11a 上报，需后续任务处理）：** ① `PetRoamMode` 缺 `wander`——那是**上游的默认模式**，也是唯一不需要桌面支持的模式；缺了它，在 `pointer-follow` 未验证的环境里**桌宠根本无法移动**（已有测试在该值出现时失败，缺口不会静默扩大）。② 契约没有漫游速度字段或数值规则，移植的规则暂存在 `motionSpeed`，**应由 D6 接管**。③ D1 的能力词汇里没有「应用可自行定位窗口」（§7.2 的「主动定位」），故 `wander` 逐步尝试移动并逐步上报拒绝，不声称能力。④ **真实 Linux 桌面未验证**，指针/工作区/窗口位置/DPI 换算全部只在替身中演练。
+
+### 6.3 其他任务
 
 尚无其余代码移植。ACP 侧的 Rust 运行时（`agent_runtime/`）为独立实现，不涉及 Zed 源码复制，其 SDK 依赖见 `docs/architecture/agent-dependencies.md`。
 
