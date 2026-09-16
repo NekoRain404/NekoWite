@@ -10,13 +10,14 @@ use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{SessionId, SessionNotification, SessionUpdate, StopReason};
+use agent_client_protocol::schema::v1::{SessionId, SessionNotification, SessionUpdate};
 use serde_json::{Value, json};
 
 use super::capabilities::SessionCapabilities;
 use super::events::{AgentEventKind, normalize_update};
 use super::fs_capability::{FsCapability, FsRequest};
 use super::session::{AgentRuntime, Emitter, RunState, SessionError, SessionSlot};
+use super::usage::PromptStopReason;
 
 /// A generation gets its own, much longer bound than any control call, and §6.2
 /// asks for that separation by name: one short timer for everything kills a
@@ -76,7 +77,7 @@ impl AgentRuntime {
                 Ok(response) => (
                     AgentEventKind::RunFinished,
                     json!({
-                        "stopReason": wire_stop_reason(response.stop_reason),
+                        "stopReason": wire_stop_reason(&response.stop_reason),
                         "usage": response.usage,
                     }),
                 ),
@@ -153,15 +154,27 @@ impl AgentRuntime {
 /// Mechanical rather than a `match`, for the reason `frames.ts` gives about the same value: a table
 /// here would be a second copy of the protocol's enum, and a sixth reason would silently fall out
 /// of it. The replacement is total — the protocol's names separate words with `_` and use no other
-/// ones — and a reason this host does not know still reaches the contract's validator unaltered,
-/// where an unreadable ending fails loudly rather than being read as a completed turn.
-fn wire_stop_reason(reason: StopReason) -> Value {
-    match serde_json::to_value(reason) {
-        Ok(Value::String(name)) => Value::String(name.replace('_', "-")),
-        // Not reachable for the schema's unit enum. Deliberately not repaired either: a value that
-        // is not a name is passed through rather than replaced by one the engine never sent.
-        Ok(other) => other,
-        Err(_) => Value::Null,
+/// ones — and the same replacement is applied to a reason this host does not know, so that the wire
+/// carries one spelling whatever the engine sent.
+///
+/// An unfamiliar reason is published as **the engine's own word**, never as a name this host
+/// invented and never as `unrecognised`: the contract's `readEnding` reads a non-empty string its
+/// list does not hold as an ending this version does not know, keeping that word in
+/// `unrecognisedReason`, so the two halves agree by the contract's own reading rather than by this
+/// side borrowing the contract's word for it (`payloads.ts`, `AGENT_STOP_REASONS`'s doc says why
+/// the spelling is deliberately not in the wire's list). No variant is faked in either direction:
+/// this side reports what the engine said.
+fn wire_stop_reason(reason: &PromptStopReason) -> Value {
+    match reason {
+        PromptStopReason::Known(reason) => match serde_json::to_value(reason) {
+            Ok(Value::String(name)) => Value::String(name.replace('_', "-")),
+            // Not reachable for the schema's unit enum. Deliberately not repaired either: a value
+            // that is not a name is passed through rather than replaced by one the engine never
+            // sent.
+            Ok(other) => other,
+            Err(_) => Value::Null,
+        },
+        PromptStopReason::Unrecognised(word) => Value::String(word.replace('_', "-")),
     }
 }
 
@@ -311,6 +324,7 @@ fn is_session_scoped(kind: AgentEventKind) -> bool {
     match kind {
         AgentEventKind::CommandsChanged | AgentEventKind::ConfigChanged | AgentEventKind::FilesChanged => true,
         AgentEventKind::TextDelta
+        | AgentEventKind::ThoughtDelta
         | AgentEventKind::ToolUpdate
         | AgentEventKind::PermissionRequest
         | AgentEventKind::RunFinished

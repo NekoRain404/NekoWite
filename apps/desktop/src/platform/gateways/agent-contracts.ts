@@ -40,6 +40,7 @@ export type {
   AgentPermissionOption,
   AgentPermissionRequest,
   AgentPlanEntry,
+  AgentRunEnding,
   AgentRunResult,
   AgentStopReason,
   AgentToolInput,

@@ -30,6 +30,11 @@ vi.mock('../../ai', async (importOriginal) => ({
   aiService: { cancelStream: vi.fn() },
 }))
 
+// The completed turn is announced through the app's shared status region. Its
+// own behaviour is asserted in `use-chat-commands.test.ts`; here it is mocked so
+// a real hidden region is not left in the document between tests.
+vi.mock('../../../services/announcer', () => ({ announce: vi.fn() }))
+
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
 
 /** A File whose `size` is faked so the 10 MiB cap can be probed cheaply. */

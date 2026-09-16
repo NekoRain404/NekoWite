@@ -42,6 +42,11 @@ export const editor = {
       tasks: '{done}/{total} tasks done',
       saving: 'Saving',
       dirty: 'Unsaved',
+      // The last save attempt did not land. A statement of what happened, not
+      // advice: the reason (read-only, a full disk, a file that changed under
+      // the tab) is said once in the toast, and "please retry" is wrong for the
+      // refusals a retry cannot fix.
+      failed: 'Save failed',
       saved: 'Saved',
       source: 'Source',
       rendered: 'Rendered',
@@ -165,6 +170,8 @@ export const editor = {
       tasks: '已完成 {done}/{total} 任务',
       saving: '保存中',
       dirty: '未保存',
+      // See the English entry: the state, not the reason and not the advice.
+      failed: '保存失败',
       saved: '已保存',
       source: '源码',
       rendered: '渲染',

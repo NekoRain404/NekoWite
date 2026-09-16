@@ -26,25 +26,37 @@ import { describe, expect, it, vi } from 'vitest'
 import { createAgentRegistryClient, type AgentRegistryWire } from './agent-registry-ipc'
 import type { AgentDraft } from './agent-registry-policy'
 
+/**
+ * One entry, spelled the way the Rust side serializes it: `RegistryEntry` in
+ * `commands/agent_registry.rs`.
+ *
+ * A function rather than a constant, so a case that changes one field gets the rest of the shape
+ * as the backend's own — and so the cases below can reach a field that is *inside* the entry
+ * without an indexed read of an `unknown`. Reaching it through the readout's own JSON is what
+ * those cases used to do, and what made them spread a value the checker can only call `unknown`.
+ */
+function entry(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    agentId: 'opencode',
+    displayName: 'OpenCode',
+    source: 'bundled',
+    program: '/usr/bin/opencode',
+    args: ['acp'],
+    env: 'profile-isolated',
+    envExtra: [{ name: 'ANTHROPIC_API_KEY', value: '<redacted>' }],
+    enabled: true,
+    adapterId: 'opencode',
+    reportedVersion: '1.18.29',
+    programState: 'launchable',
+    ...overrides,
+  }
+}
+
 /** One readout, spelled the way the Rust side serializes it. */
 function readout(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     defaultAgentId: 'opencode',
-    entries: [
-      {
-        agentId: 'opencode',
-        displayName: 'OpenCode',
-        source: 'bundled',
-        program: '/usr/bin/opencode',
-        args: ['acp'],
-        env: 'profile-isolated',
-        envExtra: [{ name: 'ANTHROPIC_API_KEY', value: '<redacted>' }],
-        enabled: true,
-        adapterId: 'opencode',
-        reportedVersion: '1.18.29',
-        programState: 'launchable',
-      },
-    ],
+    entries: [entry()],
     adapterIds: ['opencode', 'generic-acp'],
     runningAgentIds: [],
     profileOwners: { default: 'opencode' },
@@ -107,11 +119,7 @@ describe('what the backend answers with', () => {
   })
 
   it('a reported version the backend does not know is null and stays null', async () => {
-    const { port } = wire({
-      read: readout({
-        entries: [{ ...(readout()['entries'] as unknown[])[0], reportedVersion: null }],
-      }),
-    })
+    const { port } = wire({ read: readout({ entries: [entry({ reportedVersion: null })] }) })
     const answer = await createAgentRegistryClient(port).read()
     expect(answer.entries[0]?.reportedVersion).toBeNull()
   })
@@ -187,18 +195,18 @@ describe('an answer this window cannot read', () => {
     const { port } = wire({
       read: readout({
         entries: [
-          {
-            ...(readout()['entries'] as unknown[])[0],
-            envExtra: [{ name: 'ANTHROPIC_API_KEY', value: secret }],
-            enabled: 'yes',
-          },
+          entry({ envExtra: [{ name: 'ANTHROPIC_API_KEY', value: secret }], enabled: 'yes' }),
         ],
       }),
     })
 
+    // The rejection itself, or a failure that says the read resolved instead — which is a claim
+    // about what a refused read does, and the one thing this case depends on. `read()` answers
+    // with a readout on success, so the union is narrowed rather than asserted away.
     const failure = await createAgentRegistryClient(port)
       .read()
-      .catch((error: unknown) => error as Error)
+      .catch((error: unknown) => error)
+    if (!(failure instanceof Error)) throw new Error('the unreadable answer did not reject')
     expect(failure.message).toContain('entries[0].enabled')
     // The value that failed the check is `enabled`'s, and even that is not printed — the rule is
     // about every field, because which field holds the unknown is what the check just disproved.
@@ -210,20 +218,12 @@ describe('an answer this window cannot read', () => {
     const unknownKind = wire({ add: { kind: 'new-arm-from-a-newer-backend', agentId: 'acme' } })
     await expect(createAgentRegistryClient(unknownKind.port).add(draft)).rejects.toThrow(/kind/)
 
-    const unknownState = wire({
-      read: readout({
-        entries: [{ ...(readout()['entries'] as unknown[])[0], programState: 'maybe' }],
-      }),
-    })
+    const unknownState = wire({ read: readout({ entries: [entry({ programState: 'maybe' })] }) })
     await expect(createAgentRegistryClient(unknownState.port).read()).rejects.toThrow(
       /programState/,
     )
 
-    const unknownSource = wire({
-      read: readout({
-        entries: [{ ...(readout()['entries'] as unknown[])[0], source: 'vendored' }],
-      }),
-    })
+    const unknownSource = wire({ read: readout({ entries: [entry({ source: 'vendored' })] }) })
     await expect(createAgentRegistryClient(unknownSource.port).read()).rejects.toThrow(/source/)
   })
 

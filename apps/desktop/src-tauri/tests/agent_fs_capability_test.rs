@@ -2,12 +2,15 @@
 //!
 //! The write half is tested against the app's REAL write path —
 //! `nekowite_lib::storage::save_store::write_file`, the same function the
-//! `write_file` command calls — because the whole point of the capability is
-//! that an agent write goes through that function rather than around it. A stub
-//! here would prove the wiring and nothing about the guarantee.
+//! `write_file` command calls — because what the capability buys is that a
+//! **delegated** agent write goes through that function rather than around it. A
+//! stub here would prove the wiring and nothing about the guarantee.
 //!
-//! The engine half is the fixture (`tests/fixtures/agent/fake_agent.sh`), which
-//! sends a `fs/*` request verbatim from the environment.
+//! What this file cannot say is anything about which writes the engine delegates.
+//! The fixture below sends one `fs/*` request verbatim from the environment and
+//! has no write path of its own to fall back to, so a green run here is a
+//! statement about this host — never about the engine's routing. That question
+//! needs the real engine and lives in `agent_fs_write_refusal_test.rs`.
 
 // The library declares the runtime now (`lib.rs`: `pub mod agent_runtime;`), so
 // this imports the tree the app ships instead of including a copy of it by path.
@@ -18,6 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use agent_runtime::live_notes::{LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes};
 use agent_runtime::{
     AgentIdentity, AgentRuntime, EngineConnection, EngineLaunch, VaultFiles, client_capabilities,
     env_pairs, slice_lines,
@@ -29,11 +33,27 @@ const PATIENCE: Duration = Duration::from_secs(10);
 struct RealVault;
 
 impl VaultFiles for RealVault {
+    fn frontend_path(&self, vault_root: &str, path: &str) -> Result<String, String> {
+        let (resolved, _relative) = nekowite_lib::domain::path_policy::resolve_within_rel(vault_root, path)?;
+        Ok(nekowite_lib::domain::path_policy::ipc_path(&resolved))
+    }
     fn read(&self, vault_root: &str, path: &str) -> Result<String, String> {
         nekowite_lib::storage::file_store::read_file(vault_root, path)
     }
     fn write(&self, vault_root: &str, path: &str, content: &str) -> Result<Option<String>, String> {
         nekowite_lib::storage::save_store::write_file(vault_root, path, content, None)
+    }
+}
+
+/// The window side, for the tests in this file that are not about reads: no window is
+/// registered for any vault, so a read is refused rather than served from disk. What a read
+/// serves is `agent_live_note_test.rs`'s subject, and this file says only that a host with no
+/// window answers nothing — the direction the seam is built to fail in.
+struct NoWindow;
+
+impl LiveNoteWindows for NoWindow {
+    fn ask(&self, _question: &LiveNoteQuestion) -> usize {
+        0
     }
 }
 
@@ -110,7 +130,13 @@ async fn start(vault: &Path, capture: &Path, fs_request: Option<String>) -> Agen
     // The reading half is dropped: these tests assert on what the engine *received* (the capture
     // file) and on what the runtime recorded, not on the host's event stream — and the file
     // requests are served by the dispatcher `AgentRuntime::new` starts, not by the reader.
-    let (runtime, _events) = AgentRuntime::new(identity(), connection, events, Arc::new(RealVault));
+    let (runtime, _events) = AgentRuntime::new(
+        identity(),
+        connection,
+        events,
+        Arc::new(RealVault),
+        LiveNotes::new(Arc::new(LiveNoteTable::new()), Arc::new(NoWindow)),
+    );
     runtime.initialize().await.expect("initialize");
     runtime.open_session(vault).await.expect("session/new");
     runtime
@@ -148,9 +174,9 @@ fn reply(capture: &Path) -> String {
 #[test]
 fn the_capability_declaration_advertises_both_fs_methods() {
     // What actually goes on the wire in `initialize`. P0 §7.2 measured the
-    // engine sending `fs/write_text_file` under an EMPTY capability set; this
-    // is what turns the host into the writer by contract rather than by the
-    // engine's fallback.
+    // engine sending `fs/write_text_file` under an EMPTY capability set, so this
+    // is not what makes the engine delegate — it is what gives the delegated
+    // request a handler. Unclaimed, the SDK answers `-32601` instead.
     let sent = serde_json::to_value(client_capabilities()).expect("serializes");
 
     assert_eq!(sent["fs"]["readTextFile"], true, "as sent: {sent}");
@@ -211,7 +237,7 @@ async fn an_engine_write_lands_through_the_apps_own_write_path() {
 
     assert!(
         wait_for(|| note.is_file()).await,
-        "the engine's write must be performed by the host, not by the engine"
+        "a write the engine DELEGATED must be performed by the host, not answered and dropped"
     );
     assert_eq!(fs::read_to_string(&note).expect("content"), "HELLO");
 
@@ -303,7 +329,58 @@ async fn a_write_outside_the_vault_is_refused_and_writes_nothing() {
         reply.contains("\"error\""),
         "a refused write must answer with an error, got: {reply}"
     );
+    // The exact path, and the rule that refused it. "An error came back" is not
+    // enough on its own: the unknown-session branch answers with an error too, and so
+    // does a join failure — and a refusal aimed at the wrong path, or made before the
+    // path was ever resolved, would look identical from here. Naming both is what
+    // separates "the app's own confinement refused this write" from the three other
+    // ways this request could have failed, and it is the strongest assertion available
+    // without the real engine, which is the only thing that can say whether the engine
+    // went on to write the file itself.
+    assert!(
+        reply.contains("path escapes vault") && reply.contains(&outside.to_string_lossy().to_string()),
+        "the refusal must come from the vault's own path policy and name the path it refused, \
+         got: {reply}"
+    );
     assert!(!outside.exists(), "a path outside the session's vault must not be created");
+    assert!(runtime.changes().is_empty());
+    runtime.shutdown();
+}
+
+#[tokio::test]
+async fn a_traversal_spelling_is_refused_before_it_is_resolved() {
+    // The refusal above hands the engine a path that is ALREADY outside the root, so
+    // what catches it is `resolve_within`'s prefix check on the canonical result. This
+    // one spells the same destination with a parent component, which is a different arm
+    // of the same function: `Component::ParentDir` is rejected outright, before
+    // anything is canonicalized (`domain/path_policy.rs:89-95`). That arm had no
+    // end-to-end coverage — nothing else in the suite sends a `..`, so an engine that
+    // spelt a path this way would have been met by a branch no test watched, and a
+    // prefix check alone would let it through whenever the resolved target still
+    // started with the vault's own root.
+    let scratch = temp_dir("traversal");
+    let vault = scratch.join("vault");
+    fs::create_dir_all(&vault).expect("the session root");
+    // What `vault/..` resolves to. Kept unique per process: asserting on a shared
+    // location would make this test's verdict depend on what else is on the machine.
+    let outside = scratch.join("escape.txt");
+    let _ = fs::remove_file(&outside);
+    let traversing = vault.join("..").join("escape.txt");
+
+    let capture = scratch.join("capture");
+    let runtime = start(&vault, &capture, Some(write_request(&traversing))).await;
+
+    assert!(wait_for(|| !reply(&capture).is_empty()).await);
+    let reply = reply(&capture);
+    assert!(
+        reply.contains("\"error\"") && reply.contains("path escapes vault"),
+        "a traversal spelling must be refused by the vault's own path policy, got: {reply}"
+    );
+    assert!(
+        !outside.exists(),
+        "the traversal was resolved and written: {} exists",
+        outside.display()
+    );
     assert!(runtime.changes().is_empty());
     runtime.shutdown();
 }
@@ -339,27 +416,45 @@ async fn a_request_for_an_unknown_session_is_refused() {
 // The read, over the wire
 // ---------------------------------------------------------------------------
 
+// What a read *serves* has moved: it is the window's buffer when a window holds the note, and
+// the disk only when a window holding the vault says no tab holds this path. That behaviour and
+// its refusals are `agent_live_note_test.rs`'s subject, end to end; what stays here is the one
+// thing this file is about — the slice, applied to whichever text won, through the real request
+// path.
+//
+// The two tests that used to live here asserted that a read serves the DISK. One of them
+// (`a_read_serves_the_disk_and_not_a_windows_buffer`) pinned the very defect the seam removes,
+// and the seam's own report said so: serving a buffer instead is a change that has to be made
+// deliberately, with the test and the module header changed with it. This is that change.
+// The host this file builds has no window registered, so a read is refused rather than served
+// from disk — see `NoWindow`, and `agent_live_note_test.rs` for the served case.
+
 #[tokio::test]
-async fn a_read_returns_the_lines_the_engine_asked_for() {
-    let vault = temp_dir("read");
+async fn a_read_this_host_cannot_ask_a_window_about_is_refused_rather_than_guessed() {
+    let vault = temp_dir("no-window");
     let capture = vault.join("capture");
     let note = vault.join("note.md");
-    fs::write(&note, "one\ntwo\nthree\nfour\n").expect("seed the file");
+    fs::write(&note, "ON DISK\n").expect("seed the file");
 
-    // Second line, two lines long: "two\nthree\n" — the 1-based start and the
-    // count-over-index reading, exercised through the real request path.
-    let runtime = start(&vault, &capture, Some(read_request(&note, Some(2), Some(2)))).await;
+    let runtime = start(&vault, &capture, Some(read_request(&note, None, None))).await;
 
     assert!(
         wait_for(|| !reply(&capture).is_empty()).await,
-        "the read must be answered; captured: {:?}",
+        "the read must be answered, one way or the other; captured: {:?}",
         captured(&capture)
     );
     let reply = reply(&capture);
     assert!(
-        reply.contains(r#""content":"two\nthree\n""#),
-        "the reply must carry exactly lines 2 and 3, got: {reply}"
+        reply.contains("\"error\""),
+        "with no window to ask, the read is refused: {reply}"
     );
-    assert!(!reply.contains("\"error\""), "a readable file is not an error");
+    // The assertion that matters most in this file: the file's bytes are NOT in the reply. A
+    // read that silently falls back to disk is indistinguishable from one that reached the
+    // buffer, which is why the fallback is forbidden even as a "safe" default.
+    let on_disk = serde_json::to_string("ON DISK\n").expect("a JSON string");
+    assert!(
+        !reply.contains(&format!("\"content\":{on_disk}")),
+        "the disk must not be served when the window could not be asked: {reply}"
+    );
     runtime.shutdown();
 }

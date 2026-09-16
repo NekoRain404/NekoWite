@@ -41,6 +41,20 @@ export type {
   PetWindowState,
 } from './composables/use-pet-lifecycle'
 
+// The character library's reading (D8), for the settings page that chooses one: `readPetLibrary`
+// turns the host's list and the user's stored choice into the rows, the selection and the notices
+// a page draws. It is here for the same reason the care surface is: its caller is outside this
+// feature, and §13.11 sends that caller through this module rather than through a path.
+export { PET_CHARACTER_NAME_LIMIT, readPetLibrary } from './services/pet-library-policy'
+export type {
+  PetInstalledCharacter,
+  PetLibraryNotice,
+  PetLibraryReading,
+  PetLibraryRow,
+  PetLibraryState,
+  PetSelection,
+} from './services/pet-library-policy'
+
 export { PET_MENU_PAD, placePetMenu } from './services/pet-context-menu'
 export type {
   PetMenuAction,

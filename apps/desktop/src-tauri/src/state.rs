@@ -6,15 +6,17 @@
 //! roots the user actually opened, and [`require_opened_vault`] is the guard
 //! every path-confined command calls before touching a file.
 //!
-//! The implementation is split by concern across three private submodules —
+//! The implementation is split by concern across four private submodules —
 //! `vault_confinement` (the registry and the rules a root must pass),
-//! `remembered` (the root that survives a restart) and `app_state` (the
-//! watcher, key, AI, agent and desktop-pet handles, and the start path that
-//! fills the agent's) — and re-exported below. They stay
-//! private so `crate::state::NAME` remains the only way in: the split moved the
-//! code, not the surface, and no caller had to be edited for it.
+//! `remembered` (the root that survives a restart), `live_note_windows` (the
+//! window side of the live-buffer seam: the one place a window is asked what a
+//! note holds) and `app_state` (the watcher, key, AI, agent and desktop-pet
+//! handles, and the start path that fills the agent's) — and re-exported below.
+//! They stay private so `crate::state::NAME` remains the only way in: the split
+//! moved the code, not the surface, and no caller had to be edited for it.
 
 mod app_state;
+mod live_note_windows;
 mod remembered;
 mod vault_confinement;
 
@@ -22,6 +24,7 @@ pub use app_state::{
     edit_registry, program_to_launch, registry_of, start_session, AgentRuntimeState, AiState,
     DesktopPetState, KeyVault, WatcherState,
 };
+pub use live_note_windows::live_notes;
 pub use remembered::{
     read_remembered_vault, remember_vault, remembered_vault, remembered_vault_dir,
     write_remembered_vault,

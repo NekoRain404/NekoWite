@@ -121,9 +121,43 @@ describe('a save over an edit somebody else made', () => {
     // a document that is no longer being written)...
     expect(b.content).toBe('B before plus my edit')
     expect(b.dirty).toBe(true)
-    expect(tabs.saveStateOf(b.id)).toBe('dirty')
+    // `failed`, not `dirty`: the tab is unsaved AND a save was just refused for
+    // it. Plain `dirty` is the state of a tab nothing has tried to save yet, and
+    // the sentence that says which of the two this is lives in a toast that is
+    // gone in three seconds.
+    expect(tabs.saveStateOf(b.id)).toBe('failed')
     // ...and the save did not stop silently.
     expect(seen.join(' ')).toContain('/vault/b.md')
+  })
+
+  it('forgets the refusal once the tab has taken the file\'s version', async () => {
+    // The record is about the bytes the tab believed were on disk when the write
+    // was refused, so it is spent by the tab changing its mind — not by a list of
+    // places that must remember to clear it. Otherwise: the user takes the disk
+    // version, types one word, and the status line says a save failed over text
+    // no save has ever been attempted for.
+    disk.set('/vault/b.md', 'B before')
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    await tabs.openTab('/vault/b.md')
+    const b = tabs.tabs[0]
+    disk.set('/vault/b.md', 'B external')
+    b.content = 'B before plus my edit'
+    tabs.markDirty(b.id)
+
+    await tabs.saveActive()
+    expect(tabs.saveStateOf(b.id)).toBe('failed')
+
+    // The conflict prompt's "use the disk version" — an explicit answer, so it
+    // wins over the edits even though the tab is dirty.
+    await tabs.reloadFromDisk(b.id, { explicit: true })
+    expect(b.dirty).toBe(false)
+    expect(tabs.saveStateOf(b.id)).toBe('saved')
+
+    // What they type next is text no refusal was ever about.
+    b.content = 'B external plus my edit'
+    tabs.markDirty(b.id)
+    expect(tabs.saveStateOf(b.id)).toBe('dirty')
   })
 
   it('writes the tab text once the user asks again, having been told', async () => {

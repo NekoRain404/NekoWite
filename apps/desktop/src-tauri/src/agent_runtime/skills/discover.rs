@@ -67,6 +67,15 @@ pub struct SkillView {
     /// for what was observed of this version.
     pub conflicts: Vec<PathBuf>,
     pub surface: SkillSurface,
+    /// The engine's switch that is on for this row's scope, if one is: the **scope's** state,
+    /// carried beside [`SkillSurface`] rather than read out of it.
+    ///
+    /// A page asks two questions a row answers differently — "would the engine use this skill" and
+    /// "is this directory read at all" — and they come apart exactly where it matters: a skill
+    /// whose frontmatter is broken is [`SkillSurface::Unusable`], which says nothing about whether
+    /// the scope is read, and a page inferring suppression from the surface would then tell the
+    /// user the launch does not set a switch that it does. Two facts, two fields.
+    pub suppressed_by: Option<&'static str>,
     pub disable: DisableMechanism,
 }
 
@@ -123,6 +132,7 @@ impl SkillLibrary {
                     owner: scope.owner,
                     conflicts: Vec::new(),
                     surface: SkillSurface::Disabled,
+                    suppressed_by: scope.suppressed_by,
                     disable: scope.disable,
                 });
             }
@@ -181,6 +191,7 @@ fn describe(scope: &SkillScope, directory: &Path, seen: &mut Vec<(String, PathBu
         owner: scope.owner,
         conflicts: Vec::new(),
         surface,
+        suppressed_by: scope.suppressed_by,
         disable: scope.disable,
     }
 }

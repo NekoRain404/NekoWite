@@ -13,6 +13,7 @@ import type {
   PetSettingsUpdate,
   PetSettingsWrite,
 } from './config'
+import type { PetAppearance, PetCharacterEntry, PetSettingsChange } from './appearance'
 import type { PetCareRead } from './care'
 import type { PetCapabilityReport } from './platform'
 import type { PetTaskKey, PetTaskState } from './task'
@@ -123,4 +124,68 @@ export interface PetGateway {
    * window identity, and a front end that could choose one could choose the wrong one.
    */
   openSettings(page: PetSettingsPage): Promise<void>
+  /**
+   * What the pet window draws, and the `character` domain's values it draws it with (§5.1's
+   * 角色与动画).
+   *
+   * One read rather than a settings read plus a library read, because the window needs them
+   * *together* to draw one frame and because the spritesheet's path has to be handed out by the
+   * host that granted it to `asset://` — a window that resolved a path itself would be a window
+   * that could ask for any file.
+   *
+   * The three arms are the three things to draw: nothing (a choice nobody made), the reason a
+   * chosen character cannot be produced, or the sheet and the values.
+   */
+  appearance(): Promise<PetAppearance>
+  /**
+   * Every character the library holds (§8).
+   *
+   * Read-only, and the list is the library's own: the *choice* is a settings value the page is
+   * already editing, so this never reports which one is selected. An empty list is an empty
+   * library — a host that could not read one rejects, which is a different thing to say.
+   */
+  library(): Promise<PetCharacterEntry[]>
+  /**
+   * Import one character pack the user picks (§8's 导入).
+   *
+   * No path crosses this boundary: the host opens the dialog, which is a gesture by the user, and
+   * resolves the source itself — the rule `commands/fs.rs`'s dialogs already keep. `null` is the
+   * user closing the dialog, which is not an error.
+   */
+  importCharacter(): Promise<PetCharacterEntry | null>
+  /**
+   * Send a click on a task back to the session it belongs to (§6.2's 点击返回任务).
+   *
+   * The key and nothing else: no URL, no path, no window label, no command. §6.3 requires a
+   * notification's action to be a limited target the host issued, and this is that target — the
+   * key the window read from {@link PetGateway.tasks}. What the main window does with a key it no
+   * longer recognises is that window's business.
+   */
+  openTask(key: PetTaskKey): Promise<void>
+}
+
+/**
+ * The host surface the pet *window* draws and routes with, and nothing more.
+ *
+ * The same object as {@link PetGateway} plus the one channel a window needs and a settings page
+ * does not: {@link PetWindowGateway.subscribeSettings}. It is declared here rather than beside the
+ * code that first used it because three layers name it and they may not all reach each other —
+ * the entry (app), the window's composable and root (feature), and the double (platform). A port
+ * declared in a feature would have the platform's double importing a feature to implement it,
+ * which is the direction §9 forbids; a port declared in the contract is a shape all three can see.
+ *
+ * It is narrower than the composition's own object (`PetHostConnection`, which adds the window
+ * lifecycle: open, disable, close-own, click-through). That is the point: the entry holds one of
+ * these, so the teardown stays one call away from the window that must not reach it.
+ */
+export interface PetWindowGateway extends PetGateway {
+  /**
+   * Hear that a settings domain was written, wherever the write came from.
+   *
+   * The window draws from settings and the settings page is another window; without this the only
+   * way to learn that the character changed would be to ask again on a timer. A change carries the
+   * domain and the revision, so a listener re-reads what it draws and nothing else — and it is a
+   * pure notification rather than a state, so there is no first delivery to make.
+   */
+  subscribeSettings(onChange: (change: PetSettingsChange) => void): Promise<() => void>
 }

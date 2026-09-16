@@ -5,9 +5,9 @@ use serde_json::{json, Map, Value};
 
 use nekowite_lib::desktop_pet::settings::values::defaults;
 use nekowite_lib::desktop_pet::settings::{
-    decide_write, read_domain, DefaultsReason, PetSettingsDomain, PetSettingsLoad,
-    PetSettingsRecord, PetSettingsUpdate, PetSettingsWrite, ReadOnlyReason, RefusalReason,
-    PET_SETTINGS_INITIAL_REVISION, PET_SETTINGS_SCHEMA_VERSION,
+    decide_write, notification_preferences, read_domain, DefaultsReason, PetSettingsDomain,
+    PetSettingsLoad, PetSettingsRecord, PetSettingsUpdate, PetSettingsWrite, ReadOnlyReason,
+    RefusalReason, PET_SETTINGS_INITIAL_REVISION, PET_SETTINGS_SCHEMA_VERSION,
 };
 
 /// A stored record, as a file would hold it.
@@ -389,4 +389,59 @@ fn a_write_whose_values_are_unusable_is_refused_with_the_problem_list() {
     assert!(message.contains("character.size:out-of-range"), "{message}");
     assert!(message.contains("character.idleMode:unknown-member"), "{message}");
     assert!(message.contains("character.characterId:missing"), "{message}");
+}
+
+/// The notification domain's one consumer, and the reason its record is not an inert file.
+///
+/// §5.2 forbids a control that does nothing, and the four page switches plus the three that shape how
+/// a notice arrives are §6.3's ledger's own preferences. The mapping is the schema's deserialization
+/// rather than seven field lookups, so a field renamed on either side cannot become a switch that
+/// silently stopped deciding — and the two cases that follow are the two ways a record can fail to
+/// be a source of switches, both of which keep what the caller already had rather than deciding a
+/// notice from half a record.
+#[test]
+fn a_notification_record_reads_as_the_ledgers_switches() {
+    let stored = record(
+        PetSettingsDomain::Notification,
+        2,
+        1,
+        json!({
+            "onTurnFinished": false,
+            "onStopped": true,
+            "onFailed": false,
+            "onWaitingInput": true,
+            "sound": false,
+            "doNotDisturb": true,
+            "showTaskTitle": true,
+        }),
+    );
+
+    let switches = notification_preferences(&stored).expect("the domain's own record maps");
+    assert!(!switches.on_turn_finished);
+    assert!(switches.on_stopped);
+    assert!(!switches.on_failed);
+    assert!(switches.on_waiting_input);
+    assert!(!switches.sound);
+    assert!(switches.do_not_disturb);
+    assert!(switches.show_task_title);
+
+    // A record of another domain is not a source of switches, whatever names its fields share.
+    assert!(notification_preferences(&PetSettingsRecord::defaults(PetSettingsDomain::Care)).is_none());
+
+    // A field the record does not carry takes its default — the same answer the settings page gives
+    // for it (§10.2's migration rule), rather than failing the read and silencing every switch.
+    let partial = record(PetSettingsDomain::Notification, 2, 1, json!({ "doNotDisturb": true }));
+    let switches = notification_preferences(&partial).expect("the missing fields default");
+    assert!(switches.do_not_disturb);
+    assert!(switches.on_turn_finished, "the shipped default, not false");
+    assert!(!switches.show_task_title, "§6.3's privacy default");
+
+    // And a record whose values are not switches at all is refused rather than half-read.
+    let broken = record(
+        PetSettingsDomain::Notification,
+        2,
+        1,
+        json!({ "onTurnFinished": "yes" }),
+    );
+    assert!(notification_preferences(&broken).is_none());
 }

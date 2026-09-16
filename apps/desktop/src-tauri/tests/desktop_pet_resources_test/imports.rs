@@ -12,7 +12,7 @@
 use std::path::Path;
 
 use crate::desktop_pet::resources::{
-    CreateRequest, EntryState, ResourceRefusal, INSTALLED_MANIFEST,
+    CreateRequest, EntryState, PackageProblem, ResourceRefusal, INSTALLED_MANIFEST,
 };
 use crate::support::{gif, install_request, library, listing, ogg, pack_dir, pet_json, png, write};
 
@@ -128,6 +128,136 @@ fn importing_the_same_id_twice_is_refused_rather_than_replacing_the_first() {
         std::fs::read(library.root().join("cat/sheet.png")).expect("readable"),
         sheet_before
     );
+}
+
+/// A pack from a Chinese-language user: the folder is named in Chinese, the sheet inside it is
+/// named in Chinese, and the character is a character.
+///
+/// This is the case D12's report named — 「中文文件夹名会被拒绝」 — and it is the whole reason the
+/// name rule is a filesystem rule rather than an ASCII one. Nothing here is special-cased: the id
+/// the importer derives *is* the folder's name, the sheet keeps the name it had, and every read
+/// afterwards addresses both by the same strings.
+#[test]
+fn a_pack_named_in_chinese_is_a_character_like_any_other() {
+    let (library, _data) = library("import-cjk");
+    let source = pack_dir("import-cjk");
+    write(&source, "精灵图.png", &png(1536, 1872));
+    write(&source, "pet.json", &pet_json(",\"displayName\":\"喵喵\""));
+
+    // The id `character_view::free_character_id` derives from a folder named 喵喵 — asserted
+    // where it is derived. What is under test here is the library: that the same string it hands
+    // out is one it will hold a character under.
+    let installed = library
+        .install(&install_request("喵喵", &source))
+        .expect("a pack whose names are Chinese");
+
+    assert_eq!(installed.character_id, "喵喵");
+    assert_eq!(installed.sheet.file, "精灵图.png");
+    // The directory is the id, the sheet inside it kept its own name, and the pack's own manifest
+    // was carried as data beside it.
+    let mut published = listing(&library.root().join("喵喵"));
+    published.retain(|name| name != INSTALLED_MANIFEST);
+    assert_eq!(published, vec!["pet.json", "精灵图.png"]);
+    assert!(library.root().join("喵喵").join(INSTALLED_MANIFEST).is_file());
+
+    // The reads a settings page makes all address it by that same string — the listing, and the
+    // digest pass, which is the one that reads every file back by the name in the manifest.
+    let entries = library.list().expect("a library that was just written to");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].character_id, "喵喵");
+    assert_eq!(entries[0].state, EntryState::Intact);
+    assert!(library.verify("喵喵").expect("read back by name").is_empty());
+}
+
+/// The second import of one folder is a second character, and the first one is untouched.
+#[test]
+fn a_chinese_name_that_is_taken_is_refused_rather_than_overwritten() {
+    let (library, _data) = library("import-cjk-twice");
+    let source = pack_dir("import-cjk-twice");
+    write(&source, "精灵图.png", &png(64, 64));
+
+    library.install(&install_request("喵喵", &source)).expect("the first import");
+    let sheet_before =
+        std::fs::read(library.root().join("喵喵").join("精灵图.png")).expect("readable");
+
+    // The generator suffixes a taken id (`喵喵-2`, asserted with the generator), and the library
+    // refuses one that is taken however it arrived: no import can replace a character a user
+    // already has (§8's 重名覆盖), in any script.
+    let refusal = library
+        .install(&install_request("喵喵", &source))
+        .expect_err("the id is taken");
+    assert_eq!(
+        refusal,
+        ResourceRefusal::AlreadyInstalled {
+            character_id: "喵喵".to_string()
+        }
+    );
+    assert_eq!(
+        std::fs::read(library.root().join("喵喵").join("精灵图.png")).expect("readable"),
+        sheet_before,
+        "the character that was there is byte-for-byte what it was"
+    );
+}
+
+/// One name typed two ways: two byte sequences, two directories on Linux, and two characters.
+///
+/// The library is byte-exact, like the filesystem it lives on — the rule is stated on
+/// `resources::is_path_component`, and this is what it means at the library's own level. What the
+/// case pins is that the decision is not *silent*: neither spelling overwrites the other, and the
+/// collision the generator resolves by suffixing is resolved by looking, never by folding. Hangul
+/// is the pair where both spellings are made of letters (`각` and `각`), so nothing about the two
+/// names differs except their bytes.
+#[test]
+fn two_spellings_of_one_name_are_two_characters_and_neither_overwrites_the_other() {
+    let (library, _data) = library("import-nfc");
+    let source = pack_dir("import-nfc");
+    write(&source, "sheet.png", &png(64, 64));
+
+    // U+AC01 (precomposed) and U+1100 U+1161 U+11A8 (jamo): NFC and NFD of the same syllable.
+    let composed = "\u{ac01}";
+    let decomposed = "\u{1100}\u{1161}\u{11a8}";
+    assert_ne!(composed, decomposed);
+
+    library.install(&install_request(composed, &source)).expect("the first spelling");
+    library.install(&install_request(decomposed, &source)).expect("the second spelling");
+
+    let mut ids: Vec<String> = library
+        .list()
+        .expect("readable")
+        .into_iter()
+        .map(|entry| entry.character_id)
+        .collect();
+    ids.sort();
+    let mut expected = vec![composed.to_string(), decomposed.to_string()];
+    expected.sort();
+    assert_eq!(ids, expected, "both are installed, and neither replaced the other");
+    assert_eq!(listing(library.root()).len(), 2);
+}
+
+#[test]
+fn a_pack_entry_named_for_the_librarys_own_namespace_is_refused_with_its_reason() {
+    let (library, _data) = library("import-hidden");
+    let source = pack_dir("import-hidden");
+    write(&source, "sheet.png", &png(64, 64));
+    // A name a user really has on disk (`macOS` writes these), and the one prefix the library
+    // mints its own directories under — so it is refused, and refused for that reason.
+    write(&source, ".DS_Store", b"\x00\x00\x00\x01Bud1");
+
+    let refusal = library
+        .install(&install_request("cat", &source))
+        .expect_err("a hidden file");
+    let ResourceRefusal::Package {
+        name,
+        problem,
+        detail,
+    } = &refusal
+    else {
+        panic!("a pack entry is refused as a package problem: {refusal:?}");
+    };
+    assert_eq!(name, ".DS_Store");
+    assert_eq!(*problem, PackageProblem::UnusableName);
+    assert!(detail.contains("leading dot"), "{detail}");
+    assert!(listing(library.root()).is_empty());
 }
 
 #[test]

@@ -57,13 +57,43 @@ export interface AgentLiveNote {
   vaultId: string
   path: string
   /**
-   * The revision the buffer was last synced with — for a dirty buffer, the revision its unsaved edits
-   * sit on top of. Captured even though such a buffer is ahead of it, because it is what a later disk
-   * edit is judged against (§7.2), and a revision read later would be the *next* one.
+   * The document-INSTANCE revision as the editor holds it **now** — the live one, not the one the
+   * buffer was last synced with.
+   *
+   * This sentence used to read "the revision the buffer was last synced with — for a dirty buffer,
+   * the revision its unsaved edits sit on top of", and the reading was wrong in the one place it
+   * mattered: `agent-edit-apply.ts` judges a write against it and leans on it having moved with the
+   * user's typing, and a lookup that answered with the synced revision would let an unsaved edit
+   * pass for the state the request was made against. The two readings agree for a clean buffer —
+   * there, the synced revision IS the live one — and the live one is the reading that makes both
+   * consumers correct, so it is the one this field means.
+   *
+   * Two properties are the editor's to keep, and `stores/tabs.ts`'s `lookUpLiveNote` is where they
+   * are kept: it changes when the text changes, including edits that never reached the disk, and it
+   * changes when the document INSTANCE changes — a note closed and reopened at the same path is a
+   * different document even when its bytes came back identical.
    */
   revision: string
   buffer: AgentLiveNoteBuffer
 }
+
+/**
+ * What one lookup of a path answers, in full.
+ *
+ * Three arms rather than `AgentLiveNote | null`, because the two ways of not having a note are not
+ * the same fact and only one of them may become disk. `not-held` is "no tab holds this path", and it
+ * is the one arm a caller may answer from the file; `cannot-answer` is "a tab holds it and cannot
+ * say what is in it yet" — a note still on its first read, whose tab holds a placeholder wearing the
+ * note's path — and serving disk for it would serve the text the user is no longer looking at, which
+ * is the silent failure this whole area keeps producing.
+ *
+ * {@link AgentLiveNote} is the `held` arm, not a sibling of this type: the conflict baseline and the
+ * SVG insertion both take a note, and neither can act on a refusal.
+ */
+export type LiveNoteLookup =
+  | { readonly kind: 'held'; readonly note: AgentLiveNote }
+  | { readonly kind: 'not-held' }
+  | { readonly kind: 'cannot-answer'; readonly reason: string }
 
 /**
  * A selection as the editor has it.

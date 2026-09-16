@@ -83,6 +83,9 @@ pub(super) fn outcome_of(envelope: &AgentEventEnvelope) -> Option<Outcome> {
             permission_request_id: None,
         }),
         AgentEventKind::TextDelta
+        // A thought chunk is the engine's reasoning about a turn, not a state of it: §6.2 has no
+        // row for "the model is thinking", and one would be the percentage this table forbids.
+        | AgentEventKind::ThoughtDelta
         | AgentEventKind::ToolUpdate
         | AgentEventKind::CommandsChanged
         // A session's option list says what the engine offers, not what a task is doing: the

@@ -24,6 +24,9 @@ export const documents = {
       untitled: 'Untitled',
       saving: 'Saving…',
       dirty: 'Unsaved',
+      // The tab dot's tooltip for the fourth state (`status.failed` carries the
+      // same word in the bar): the last save attempt did not land.
+      failed: 'Save failed',
       saved: 'Saved',
       openVaultFirst: 'No vault is open; cannot read the file',
       readFileFailed: 'Could not read file: {path}',
@@ -136,6 +139,7 @@ export const documents = {
       untitled: '未命名',
       saving: '保存中…',
       dirty: '未保存',
+      failed: '保存失败',
       saved: '已保存',
       openVaultFirst: '尚未打开 vault，无法读取文件',
       readFileFailed: '无法读取文件：{path}',

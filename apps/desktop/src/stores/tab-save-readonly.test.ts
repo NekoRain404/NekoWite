@@ -119,6 +119,11 @@ describe('a save refused because the file is read-only', () => {
     expect(written).toEqual([])
     expect(s.tabs[0].content).toBe('typed while the file was protected')
     expect(s.tabs[0].dirty).toBe(true)
+    // ...and "still unsaved" is not the whole truth after a refusal. The sentence
+    // above is a toast, and it is gone in three seconds; what is left has to say
+    // that a save was attempted and did not land, or the user cannot tell this
+    // state from one where nothing was ever tried.
+    expect(s.saveStateOf(s.tabs[0].id)).toBe('failed')
   })
 
   it('an autosave reports the same reason without opening a dialog', async () => {
@@ -131,6 +136,9 @@ describe('a save refused because the file is read-only', () => {
     expect(notifyErrorMock).toHaveBeenCalledWith(t('tabs.saveBlockedReadOnly', { path: RO }))
     expect(saveFileDialogMock).not.toHaveBeenCalled()
     expect(s.tabs[0].dirty).toBe(true)
+    // The background path refuses silently, so the tab's own state is the only
+    // thing that carries the refusal once the toast is gone.
+    expect(s.saveStateOf(s.tabs[0].id)).toBe('failed')
   })
 
   it('offers a copy instead, and leaves the protected file alone', async () => {
@@ -148,6 +156,9 @@ describe('a save refused because the file is read-only', () => {
     expect(s.tabs[0].path).toBe(COPY)
     expect(s.tabs[0].savedContent).toBe('typed while the file was protected')
     expect(s.tabs[0].dirty).toBe(false)
+    // A copy the user chose that landed IS a save: the refused attempt before it
+    // must not leave the tab wearing "failed" over text that is on disk.
+    expect(s.saveStateOf(s.tabs[0].id)).toBe('saved')
     expect(announceMock).toHaveBeenCalledWith(t('tabs.savedAsCopy', { path: COPY }))
   })
 

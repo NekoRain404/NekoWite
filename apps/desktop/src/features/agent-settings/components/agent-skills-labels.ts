@@ -81,6 +81,8 @@ export interface AgentSkillsLabels {
     disable: string
     noSwitch: string
     engineSwitch: string
+    /** The same scope when the launch *has* set the engine's variable — see the component. */
+    engineSwitchSet: string
   }
   disabledList: { title: string; hint: string }
   import: {
@@ -163,6 +165,7 @@ export function skillsLabels(): AgentSkillsLabels {
       disable: t('agent.settings.skills.disable.disable'),
       noSwitch: t('agent.settings.skills.disable.noSwitch'),
       engineSwitch: template('agent.settings.skills.disable.engineSwitch'),
+      engineSwitchSet: template('agent.settings.skills.disable.engineSwitchSet'),
     },
     disabledList: {
       title: t('agent.settings.skills.disabledList.title'),

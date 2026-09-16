@@ -10,6 +10,7 @@
 import { RECT_SRC } from './probe-support.mjs'
 import { panelProbe } from './probe-panel.mjs'
 import { motionProbe } from './probe-motion.mjs'
+import { dialogProbe } from './probe-dialog.mjs'
 import { noteSwitchProbe } from './probe-note-switch.mjs'
 import { tailProbe } from './probe-tail.mjs'
 
@@ -48,6 +49,11 @@ const inspect = {
  * by then. It needs the two-note scenario (`--scenario two-notes`) and reports
  * itself skipped under any other, which is what keeps a plain run of everything
  * working.
+ *
+ * `motion-dialog` is last of all, and it is the only probe that opens an overlay
+ * over the whole window and takes focus into it. Everything above wants the
+ * editor addressable, so the probe that covers the window goes after all of
+ * them; it closes the dialog again before it returns either way.
  */
-export const PROBES = [motionProbe, panelProbe, tailProbe, noteSwitchProbe]
+export const PROBES = [motionProbe, panelProbe, tailProbe, noteSwitchProbe, dialogProbe]
 export const ALL_PROBES = [inspect, ...PROBES]

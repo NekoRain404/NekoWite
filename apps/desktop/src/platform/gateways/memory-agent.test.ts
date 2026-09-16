@@ -217,14 +217,41 @@ describe('readAgentEvent', () => {
       ['usage-changed', { usedTokens: 1, contextTokens: 'big', cost: null }],
       ['usage-changed', { usedTokens: 1, contextTokens: 10, cost: { amount: 'much', currency: 'USD' } }],
       ['files-changed', { paths: ['ok.md', 7] }],
-      ['run-finished', { stopReason: 'finished', usage: null }],
-      ['run-finished', { stopReason: 'end-turn', usage: { inputTokens: 1 } }],
+      // A `run-finished` that states no reason at all. This row used to hold an unfamiliar
+      // *value* (`'finished'`), and that is no longer a malformed frame: the protocol's
+      // `StopReason` is `#[non_exhaustive]`, so a reason this version does not know is read as
+      // its own arm (the test below) rather than refused. What stays refused is a payload that
+      // answers nothing, which is what this row is.
+      ['run-finished', { usage: null }],
+      // A `usage` that is not an object or null. A usage object *missing* fields is not here:
+      // P0 §6.3 measured the field set changing between turns, so the fields are optional and a
+      // partial one is a well-formed frame.
+      ['run-finished', { stopReason: 'end-turn', usage: 'lots' }],
       ['run-failed', { code: 'exploded', message: 'x' }],
     ]
 
     for (const [kind, payload] of malformed) {
       expect(rejectionReason(frame({ kind, payload }))).toContain(`malformed ${kind} payload`)
     }
+  })
+
+  it('reads an ending whose reason it has never seen as unrecognised, not as malformed', () => {
+    // The boundary the list above stops at, stated from the other side. A reason the contract
+    // does not name is *not* a field it does not name: the protocol's `StopReason` is
+    // `#[non_exhaustive]`, and the frame is a completed turn's ending, so refusing it would
+    // report a turn the engine finished as a failure of this window's reading. The reading
+    // degrades instead — `unrecognised`, with the reason's own wording kept beside it so the
+    // condition is diagnosable rather than merely visible.
+    const read = readAgentEvent(
+      frame({ kind: 'run-finished', payload: { stopReason: 'finished', usage: null } }),
+    )
+
+    expect(read).not.toBeInstanceOf(AgentFailure)
+    expect((read as AgentEvent).payload).toEqual({
+      stopReason: 'unrecognised',
+      unrecognisedReason: 'finished',
+      usage: null,
+    })
   })
 
   it('accepts one well-formed frame of every kind the contract names', () => {

@@ -101,7 +101,7 @@ export function createTabSave(deps: TabSaveDeps) {
   // before the refusal route below, which decides whether the user typed with
   // this same revision: one question, one kind of evidence.
   const saveState = createTabSaveState({ tabs })
-  const { markSaving, markSaved, stateOf, noteEdit, revisionOf } = saveState
+  const { markSaving, markSaved, markFailed, stateOf, noteEdit, revisionOf } = saveState
   // What a rejected write tells the user, and the route out of a refusal: the
   // text goes to a name they pick, and the tab follows it there.
   const refusedSave = createRefusedSaveAnswer({
@@ -207,11 +207,12 @@ export function createTabSave(deps: TabSaveDeps) {
     await flushEdits()
     // A document the rendered model could not load must not be written — the
     // refusal, and the reason it is refused, are in
-    // `tab-write-preconditions.ts`. The `markSaved` is this module's: the refusal
-    // returns before the `finally` below, and a flag left set pins the status
-    // line on "Saving…" forever.
+    // `tab-write-preconditions.ts`. The state this sets is this module's: the
+    // refusal returns before the `finally` below, and a flag left set pins the
+    // status line on "Saving…" forever. `markFailed`, not `markSaved`: a save
+    // did not happen here, which is a different claim (see `tab-save-state.ts`).
     if (!preconditions.documentIsWritable(tab.content)) {
-      markSaved(tab.id)
+      markFailed(tab.id)
       return false
     }
     // Unconditional, and that is the change: the guard that stood here —
@@ -247,8 +248,8 @@ export function createTabSave(deps: TabSaveDeps) {
       // Nothing was written, so nothing about a write happens: no `onSave` for a
       // save the app refused (the unrenderable refusal above is refused the same
       // way, for the same reason), and the flag this save raised comes back down
-      // or the status line stays pinned on "Saving…".
-      markSaved(tab.id)
+      // or the status line stays pinned on "Saving…"; `markFailed` as above.
+      markFailed(tab.id)
       return false
     }
     const next = emitLifecycle('onSave', editor, tab.content)
@@ -325,12 +326,16 @@ export function createTabSave(deps: TabSaveDeps) {
       // What the user is told, and the way out, belong to the refusal itself:
       // see `refused-save.ts`. A refusal is not a failure, and `saveFailed`'s
       // "please retry" is advice a read-only file never lets them carry out.
-      return await refusedSave.answer(
+      const landed = await refusedSave.answer(
         e,
         tab,
         { vaultPath: vaultAtStart, path, content, contentAtStart, revisionAtStart, editor },
         opts.offerCopy === true,
       )
+      // `failed` says a save was attempted and did not land — unless the copy
+      // the user chose landed, which is a save, and the tab follows it there.
+      if (!landed) markFailed(tab.id)
+      return landed
     } finally {
       markSaved(tab.id)
       // The write is over, landed or not: the claim must not outlive it, or a
@@ -380,6 +385,9 @@ export function createTabSave(deps: TabSaveDeps) {
     markSaved,
     stateOf,
     noteEdit,
+    // The store's one live-note lookup spells a document identity with this; see
+    // `tab-save-state.ts` for the counter and why it is not re-derived anywhere else.
+    revisionOf,
     noteSelfWrite: selfWrites.note,
     isSelfWrite: selfWrites.isSelfWrite,
     saveTab,

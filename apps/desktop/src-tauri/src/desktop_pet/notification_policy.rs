@@ -94,8 +94,13 @@ pub fn channel_for(state: PetTaskState) -> Option<NotificationChannel> {
 /// `@serde(rename_all = "camelCase")` — and a test reads `pet-contracts/config.ts` and checks both
 /// the fields and the defaults against it, because a switch the settings page writes and this file
 /// does not read would be a control that does nothing.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
+///
+/// `Deserialize` as well as `Serialize`, because a stored `notification` record is read back into
+/// this shape (`settings::notification_preferences`): a struct-level `default` is what lets a field
+/// the record does not carry take its shipped default instead of failing the whole read, which is
+/// the same answer the settings page gives for that field.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct NotificationPreferences {
     pub on_turn_finished: bool,
     pub on_stopped: bool,
@@ -261,15 +266,24 @@ impl NotificationPolicy {
     /// One fact from the host, and what to do about it.
     pub fn observe(&mut self, fact: TaskFact) -> NotificationOutcome {
         let session = fact.key.session();
-        match self
-            .history
-            .observe_stream(&session, fact.sequence, fact.at_ms)
-        {
-            MarkOutcome::Replay => {
-                return NotificationOutcome::Silent(SilenceReason::Replay);
+        // A fact the host reports from its own view rather than from a frame — a run's start, an
+        // answered permission, a run restated because the runtime that was running it went away —
+        // carries `FrameOrder::off_stream`'s zero, the sequence no runtime assigns. It is neither a
+        // replay nor a gap, and it must not move the mark: the number would be one the engine never
+        // sent, and the next real frame would then be reported as following a hole that never
+        // existed. Zero is the whole of the distinction, which is why the projection mints it for
+        // exactly these facts and for nothing else.
+        if fact.sequence != 0 {
+            match self
+                .history
+                .observe_stream(&session, fact.sequence, fact.at_ms)
+            {
+                MarkOutcome::Replay => {
+                    return NotificationOutcome::Silent(SilenceReason::Replay);
+                }
+                MarkOutcome::Gap { missed } => self.note_gap(&session, missed, fact.at_ms),
+                MarkOutcome::Fresh | MarkOutcome::Advanced => {}
             }
-            MarkOutcome::Gap { missed } => self.note_gap(&session, missed, fact.at_ms),
-            MarkOutcome::Fresh | MarkOutcome::Advanced => {}
         }
 
         // The request id a repeat has to be compared by. §6.2 allows a waiting-input frame to arrive
@@ -351,6 +365,16 @@ impl NotificationPolicy {
         );
         let keys = [fact.key];
         self.deliver(notice, &keys)
+    }
+
+    /// When the gathering burst will be due, if one is gathering.
+    ///
+    /// The host asks this to know when to come back: [`Self::flush_due`] says *what* to deliver and
+    /// this says *when*, so a caller that schedules a wake reads one number from the ledger instead
+    /// of keeping a second copy of `COALESCE_WINDOW_MS` and a second opinion about when a burst
+    /// began. `None` means no burst is gathering — nothing to wake up for, and no due time to hold.
+    pub fn pending_due(&self) -> Option<i64> {
+        self.pending.as_ref().map(|pending| pending.due_at_ms)
     }
 
     /// Deliver whatever has finished gathering, if its window has closed.

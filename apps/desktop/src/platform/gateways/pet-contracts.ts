@@ -10,6 +10,7 @@
  *  - `pet-contracts/config.ts`     the seven settings schemas, versioned and defaulted
  *  - `pet-contracts/platform.ts`   what this machine can do, and what is done instead
  *  - `pet-contracts/care.ts`       what the ledger settled, and the two answers a read has
+ *  - `pet-contracts/appearance.ts` the character: what the library holds, and what is drawn
  *  - `pet-contracts/gateway.ts`    the calls the app makes, and the shapes it reads back
  *
  * It is a *projection* contract, not a second source of truth. The ACP contract is where
@@ -44,6 +45,7 @@
 export {
   PET_ALERT_BY_STATE,
   PET_TASK_STATES,
+  isPetTaskKey,
   isPetTaskSettled,
   petKeyToken,
   petTaskToken,
@@ -104,4 +106,16 @@ export type {
 
 export type { PetCareDay, PetCareRead, PetCareSummary } from './pet-contracts/care'
 
-export type { PetFeatureState, PetGateway, PetTaskProjection } from './pet-contracts/gateway'
+export { isPetAppearance } from './pet-contracts/appearance'
+export type {
+  PetAppearance,
+  PetCharacterEntry,
+  PetSettingsChange,
+} from './pet-contracts/appearance'
+
+export type {
+  PetFeatureState,
+  PetGateway,
+  PetTaskProjection,
+  PetWindowGateway,
+} from './pet-contracts/gateway'

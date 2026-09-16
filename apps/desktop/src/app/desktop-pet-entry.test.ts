@@ -117,9 +117,7 @@ describe('the pet entry is one lightweight window and not a second application',
     // Written out because the list is the contract. The root, the sprite it draws, the rendering
     // pipeline D2 ported, the lifecycle that owns what the window holds, and the two stylesheets
     // that make it follow the host's theme (§1) without carrying the application's component
-    // layers. D1's contract is *not* here and that is the right answer rather than a gap: this
-    // window imports it with `import type` only, so the pet's runtime carries the task and setting
-    // shapes as nothing at all.
+    // layers.
     //
     // Three entries were added when the composition landed (D12), each with the reason the clause
     // asks for:
@@ -128,6 +126,30 @@ describe('the pet entry is one lightweight window and not a second application',
     //   - `platform/gateways/tauri-pet.ts` — the adapter it chooses, which is `invoke`/`listen`
     //     and no application;
     //   - `features/desktop-pet/services/pet-menu-actions.ts` — the three menu actions.
+    //
+    // **Nine more landed with the window's own wiring, and one of them changes a claim this test
+    // used to make.** The window now draws the character the settings name and the reminder a
+    // finished task produces, so what it carries is:
+    //   - the task surface — `PetBubble.vue`, `PetTaskList.vue`, `PetTaskRow.vue`,
+    //     `PetContextMenu.vue` and the three services behind them (`pet-bubble-layout`,
+    //     `pet-message-template`, `pet-context-menu`), which is D9's port of the bubble. Without
+    //     it a task could arrive and have nowhere to appear;
+    //   - `composables/use-pet-window.ts` and `services/pet-appearance.ts` — the appearance read
+    //     and the aggregate mood, which are this window's own wiring and nothing else's;
+    //   - **`platform/gateways/pet-contracts*` — the five contract modules, by value.** This is
+    //     the change: the window used to import the contract with `import type` only, so it
+    //     carried the shapes as nothing at all. The mood is `pet-task-view.ts`'s, and it is *not*
+    //     restated here: it reads the contract's own `PET_ALERT_BY_STATE` and `isPetTaskSettled`,
+    //     which is what keeps a state added to D1's union from leaving a display rule that means
+    //     something else (§9's one-truth rule). What that costs is three small constant tables in
+    //     a window that has no editor, index or agent client — and what the alternative costs is a
+    //     second copy of the state table, which is the defect this repository names everywhere
+    //     else. The bubble's layout reads `PET_SETTINGS_DEFAULTS.message` for the same reason.
+    //   - `pet-contracts/appearance.ts` joined the runtime half with the window's own read:
+    //     `isPetAppearance` is a value, and it is the check that keeps an answer which is not an
+    //     appearance — a browser build's `undefined` for a command its stub does not know — from
+    //     being read for a `status` while the window renders. It lives in the contract because the
+    //     adapter and the window both need it, and `platform/` may not reach into `features/`.
     //
     // **And the feature's public entry is deliberately *not* in this list.** `features/desktop-pet/index.ts`
     // is where outside callers go (§13.11) — the settings page takes the care panel from it — and
@@ -142,14 +164,30 @@ describe('the pet entry is one lightweight window and not a second application',
     expect(reachableFrom(ENTRY)).toEqual([
       'app/desktop-pet-composition.ts',
       'features/desktop-pet/components/DesktopPetRoot.vue',
+      'features/desktop-pet/components/PetBubble.vue',
+      'features/desktop-pet/components/PetContextMenu.vue',
       'features/desktop-pet/components/PetSprite.vue',
+      'features/desktop-pet/components/PetTaskList.vue',
+      'features/desktop-pet/components/PetTaskRow.vue',
       'features/desktop-pet/composables/use-pet-lifecycle.ts',
+      'features/desktop-pet/composables/use-pet-window.ts',
       'features/desktop-pet/rendering/animation-bindings.ts',
       'features/desktop-pet/rendering/sprite-hit-test.ts',
       'features/desktop-pet/rendering/sprite-player.ts',
       'features/desktop-pet/rendering/sprite-sheet.ts',
       'features/desktop-pet/rendering/sprite-slicer.ts',
+      'features/desktop-pet/services/pet-appearance.ts',
+      'features/desktop-pet/services/pet-bubble-layout.ts',
+      'features/desktop-pet/services/pet-context-menu.ts',
       'features/desktop-pet/services/pet-menu-actions.ts',
+      'features/desktop-pet/services/pet-message-template.ts',
+      'features/desktop-pet/services/pet-task-view.ts',
+      'platform/gateways/pet-contracts.ts',
+      'platform/gateways/pet-contracts/appearance.ts',
+      'platform/gateways/pet-contracts/config.ts',
+      'platform/gateways/pet-contracts/events.ts',
+      'platform/gateways/pet-contracts/platform.ts',
+      'platform/gateways/pet-contracts/task.ts',
       'platform/gateways/tauri-pet.ts',
       'styles/palettes.css',
       'styles/tokens.css',
@@ -158,14 +196,20 @@ describe('the pet entry is one lightweight window and not a second application',
 
   it('does not reach the feature’s public entry, which is where the care surface lives', () => {
     // The rule above stated as a check rather than as a paragraph, because the day somebody
-    // "tidies" the two path imports into one barrel import, this is the line that says what it
+    // "tidies" the path imports into one barrel import, this is the line that says what it
     // cost: `features/desktop-pet/index.ts` re-exports `PetCarePanel`, and the panel pulls its
-    // rules and the contract's values in behind it.
+    // rules in behind it.
+    //
+    // The *contract* modules are deliberately not refused here any more — the list above names
+    // them and the reason they are carried. `care.ts` and `gateway.ts` are the two that stay out:
+    // both are re-exported as types only, so the care surface's shape reaches this window as
+    // nothing at all.
     const reachable = reachableFrom(ENTRY)
 
     expect(reachable).not.toContain('features/desktop-pet/index.ts')
     expect(reachable.filter((file) => file.includes('pet-care'))).toEqual([])
-    expect(reachable.filter((file) => file.startsWith('platform/gateways/pet-contracts'))).toEqual([])
+    expect(reachable).not.toContain('platform/gateways/pet-contracts/care.ts')
+    expect(reachable).not.toContain('platform/gateways/pet-contracts/gateway.ts')
   })
 
   it('stops at the Tauri client and Vue', () => {
@@ -261,8 +305,14 @@ describe('the entry boots only where the pet page is, and states a missing host'
     const module = await entry()
     document.body.innerHTML = `<div id="${DESKTOP_PET_ROOT_ID}"></div>`
 
+    // The dependency is the *window's* port — the gateway half, the appearance read, the click
+    // route and the settings subscription — and the double implements all of it, so this is the
+    // same object the composition hands over rather than a smaller one written here. (It used to
+    // be `{ gateway }`: that was the shape before the window's own surface existed, and a double
+    // that no longer satisfies the interface is the drift this project has been bitten by — it
+    // kept passing because vitest strips types.)
     const app = module.bootDesktopPet(() => ({
-      gateway: createMemoryPetGateway({ visible: true }),
+      connection: createMemoryPetGateway({ visible: true }),
     }))
     await flush()
 

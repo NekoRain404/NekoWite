@@ -43,7 +43,10 @@ describe('the pet runs on the host or on nothing', () => {
     // One connection per window, not one per call: a settings section remounting must not build a
     // second host connection, and the adapter is the object the section is handed.
     expect(createDesktopPetConnection()).toBe(connection)
-    expect(resolveDesktopPetDependencies()).toEqual({ gateway: connection })
+    // The dependencies carry the connection itself — one object, which the root hands to its
+    // lifecycle as a `PetGateway` and to its own wiring as the wider surface. A `{ gateway }` here
+    // would be a second field for the same value, and the entry would have to pass it twice.
+    expect(resolveDesktopPetDependencies()).toEqual({ connection })
   })
 
   it('answers nothing at all where there is no host', async () => {
@@ -89,6 +92,25 @@ describe('what a menu item does', () => {
 
     async subscribeFeature(): Promise<() => void> {
       return () => {}
+    }
+
+    // One of the four calls `PetGateway` gained when the window's own surface landed. A menu item
+    // reaches none of them — §4's three actions are `openSettings`, `setVisible` and the list this
+    // window draws — so a call here is a wiring mistake rather than a state to model.
+    async appearance(): Promise<never> {
+      throw new Error('a menu item does not read the appearance')
+    }
+
+    async library(): Promise<never> {
+      throw new Error('a menu item does not read the character library')
+    }
+
+    async importCharacter(): Promise<never> {
+      throw new Error('a menu item does not import characters')
+    }
+
+    async openTask(): Promise<never> {
+      throw new Error('a menu item does not route a task')
     }
 
     async readSettings(): Promise<never> {

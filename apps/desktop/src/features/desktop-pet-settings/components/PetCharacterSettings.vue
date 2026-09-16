@@ -3,33 +3,27 @@
  * §5.1's 角色与动画 — the character on screen, its size, and nothing this build cannot save.
  *
  * The ledger's inventory for this page is nine keys (`docs/architecture/desktop-pet-port-ledger.md`
- * §5, the 角色与动画 rows). Exactly two of them are reachable through this build's settings schema,
- * and this page renders those two and no others:
+ * §5, the 角色与动画 rows). Four of them are reachable now, and this page renders those:
  *
  *  - `ap_pet_size` → the size slider. Upstream's control is a 70–130% slider with S/M/L presets
  *    (`settings.html:129-130`, `settings.ts:1063-1077`); the schema stores px in a ruled range
  *    (`PET_NUMBER_RULES['character.size']`), so the slider is drawn in the stored unit and the
  *    presets are upstream's percentages of the schema's default. Its ends come from the rule, so
  *    the control can only produce a value the write accepts (§5.3 「界面和后端使用同一规则」).
- *  - `ap_pet_url` / `ap_pet_custom` → `character.characterId`. Upstream's `pet-deselect` link
- *    (`settings.html:62`, first `display:none` until a pet is chosen) clears the chosen pet; this
- *    page does the same and shows it under the same condition, which is the whole of the
- *    selection this build can offer.
+ *  - `ap_pet_url` / `ap_pet_custom` → `character.characterId`, chosen from the host's library.
+ *    Upstream's `pet-deselect` link (`settings.html:62`, first `display:none` until a pet is
+ *    chosen) clears the choice; this page does the same and shows it under the same condition.
+ *  - `ap_library`, and the import behind it → the rows below, read from `PetGateway.library()` and
+ *    imported through `PetGateway.importCharacter()`. The rows, the selection and the notices come
+ *    from `pet-library-policy.ts` (D8) rather than from this component, so the page cannot form a
+ *    second opinion about what the library holds.
  *
- * The other seven are *stated* rather than drawn — §5.2's 「不可用选项要说明原因，不显示可点击但无
- * 效果的控件」, and the reason this page has no placeholder picker:
- *
- *  - `ap_library` and the browse/create/rename actions belong to the character library, which is
- *    `pet-library-policy.ts` plus the managed resource directory (D8). `PetGateway` has no method
- *    that lists one, so there is nothing to choose between. `DesktopPetRoot.vue` states the same
- *    thing from the window's side ("No character is selected.").
- *  - `ap_bind_<mood>`, `ap_idle_mode`, `ap_idle_interval` and `ap_idle_clips` belong to the
- *    animation mapping. The schema holds all four since D7d (`character.bindings`, `idleMode`,
- *    `idleIntervalSeconds`, `idleClips`) and the validator covers them, so what is missing is a
- *    *reader* rather than a field: `PetSprite` takes its mapping as an `animation` prop and
- *    nothing passes it one. A picker drawn here would save values nothing acts on, which is the
- *    failure this page exists to not be. (The ledger files `ap_idle` here too; upstream renders
- *    it on the bubble page as 「Show idle message」, `settings.html:176`.)
+ * What is still *stated* rather than drawn is the animation mapping — `ap_bind_<mood>`,
+ * `ap_idle_mode`, `ap_idle_interval` and `ap_idle_clips`. The schema holds all four since D7d, and
+ * the pet window now draws from them (`pet-appearance.ts` passes them to the sprite), so what is
+ * missing here is only this page's own controls; the sentence below says that, which is §5.2's
+ * 「不可用选项要说明原因」 with the reason it actually has. (The ledger files `ap_idle` here too;
+ * upstream renders it on the bubble page as 「Show idle message」, `settings.html:176`.)
  *
  * The session is the container's (`DesktopPetSettings.vue` creates one per domain), so this page
  * never creates one and never calls `load()`: a page that is not on screen should not read. It
@@ -41,9 +35,14 @@
  * *this build's* defaults, so the controls are replaced by the container's sentence rather than
  * drawn: a form here would show numbers the user never chose and offer to save them.
  */
-import { computed, onBeforeUnmount } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { t } from '../../../i18n'
 import { PET_NUMBER_RULES, PET_SETTINGS_DEFAULTS } from '../../../platform/gateways/pet-contracts'
+import type { PetCharacterEntry } from '../../../platform/gateways/pet-contracts'
+// The library's reading and its shapes come from the feature's public entry (§13.11): this page is
+// outside the pet feature, and reaching into `services/` by path is what the barrel exists to
+// stop.
+import { readPetLibrary, type PetLibraryState } from '../../desktop-pet'
 import type { PetSettingsSaveStatus } from '../composables/use-pet-settings'
 import type { PetSettingsContext } from './DesktopPetSettings.vue'
 
@@ -57,6 +56,79 @@ const character = props.context.sessions.character
 const values = computed(() => character.values.value)
 const status = computed(() => character.status.value)
 const locked = computed(() => status.value === 'read-only')
+
+/**
+ * The library, as the host answered it — `null` until it has been asked, which is a different
+ * state from an empty library and is said differently.
+ */
+const installed = shallowRef<PetCharacterEntry[] | null>(null)
+const libraryError = ref<string | null>(null)
+const importing = ref(false)
+const importError = ref<string | null>(null)
+
+/**
+ * What the page shows, derived by the library's own policy rather than by this component.
+ *
+ * The state it is handed is the host's list plus *this page's draft* selection, which is what
+ * makes the row light up the moment the user clicks it — before the debounced write — without the
+ * page keeping a second copy of the choice. `names` is empty because this build has no rename
+ * surface; a row therefore shows the pack's own name.
+ */
+const reading = computed(() =>
+  readPetLibrary({
+    installed: installed.value ?? [],
+    names: {},
+    selectedId: values.value.characterId,
+  } satisfies PetLibraryState),
+)
+
+/**
+ * The notices this page draws, out of the ones the policy reports.
+ *
+ * Deliberately three of them: `no-characters`, `selection-missing` and `characters-damaged` are
+ * about *this app's* library, which is what this page is for. The catalogue notices belong to the
+ * advanced page's subject — an online gallery this build has no endpoint for — and drawing them
+ * here would put a sentence about the network on the page a user opens to pick a character.
+ */
+const notices = computed(() =>
+  reading.value.notices.filter((notice) =>
+    notice === 'no-characters' || notice === 'selection-missing' || notice === 'characters-damaged',
+  ),
+)
+
+async function readLibrary(): Promise<void> {
+  try {
+    installed.value = await props.context.gateway.library()
+    libraryError.value = null
+  } catch (cause) {
+    libraryError.value = cause instanceof Error ? cause.message : String(cause)
+  }
+}
+
+/**
+ * Import one pack, then select what arrived.
+ *
+ * The selection is the *reason* the user imported one, so it follows the import rather than
+ * leaving them to click the row that just appeared. `null` is the picker being closed, which is
+ * not an outcome to report.
+ */
+async function importCharacter(): Promise<void> {
+  importing.value = true
+  importError.value = null
+  try {
+    const entry = await props.context.gateway.importCharacter()
+    await readLibrary()
+    if (entry !== null) character.edit('characterId', entry.characterId)
+  } catch (cause) {
+    importError.value = cause instanceof Error ? cause.message : String(cause)
+  } finally {
+    importing.value = false
+  }
+}
+
+// Read when the page opens, and only then: a page that is not on screen has nothing to show, and
+// the container mounts a page when it is opened (`DesktopPetSettings.vue`).
+onMounted(() => void readLibrary())
 
 /**
  * The save states a page states in words, by the codes the session reports — the same table the
@@ -147,12 +219,70 @@ defineExpose({ settle })
       >
         {{ t('settings.pet.character.clear') }}
       </button>
+
+      <!-- The library. Every row is a real choice: it writes `character.characterId`, which is the
+           value the pet window reads. A character whose files are not what the host recorded is
+           listed and *not* selectable — it is the user's, and hiding it would make one that needs
+           attention look like one that was never installed (D8's policy). -->
+      <span class="settings-label">{{ t('settings.pet.character.library') }}</span>
       <p
+        v-if="libraryError !== null"
         class="settings-note pet-absent"
+        data-test="pet-character-library-error"
+      >
+        {{ t('settings.pet.character.libraryUnreadable', { msg: libraryError }) }}
+      </p>
+      <div
+        v-else
+        class="library"
         data-test="pet-character-library"
       >
-        {{ t('settings.pet.character.libraryUnavailable') }}
+        <button
+          v-for="row in reading.characters"
+          :key="row.characterId"
+          class="library__row"
+          :class="{ 'library__row--selected': row.selected }"
+          type="button"
+          :aria-pressed="row.selected"
+          :disabled="!row.usable"
+          :title="row.usable ? undefined : t('settings.pet.character.damaged')"
+          :data-test="`pet-character-row-${row.characterId}`"
+          :data-usable="row.usable"
+          @click="character.edit('characterId', row.characterId)"
+        >
+          <span class="library__name">{{ row.name }}</span>
+          <span class="library__id">{{ row.characterId }}</span>
+          <span
+            v-if="!row.usable"
+            class="library__flag"
+          >{{ t('settings.pet.character.damaged') }}</span>
+        </button>
+      </div>
+      <p
+        v-for="notice in notices"
+        :key="notice"
+        class="settings-note pet-absent"
+        :data-test="`pet-character-notice-${notice}`"
+      >
+        {{ t(`settings.pet.character.notice.${notice}`) }}
       </p>
+      <button
+        class="btn btn-secondary btn-sm library__import"
+        type="button"
+        :disabled="importing"
+        data-test="pet-character-import"
+        @click="importCharacter"
+      >
+        {{ importing ? t('settings.pet.character.importing') : t('settings.pet.character.import') }}
+      </button>
+      <p
+        v-if="importError !== null"
+        class="settings-note pet-absent"
+        data-test="pet-character-import-error"
+      >
+        {{ t('settings.pet.character.importFailed', { msg: importError }) }}
+      </p>
+      <span class="settings-note">{{ t('settings.pet.character.libraryNote') }}</span>
 
       <span class="settings-label">{{ t('settings.pet.character.size', { px: values.size }) }}</span>
       <input
@@ -232,6 +362,42 @@ defineExpose({ settle })
 .settings-section .settings-label:first-child { margin-top: 0; }
 
 .size-presets { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* The library rows. A grid of one column, so a long pack name and its id wrap rather than push
+   the row wider than the panel. */
+.library { display: flex; flex-direction: column; gap: 4px; }
+.library__row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius, 6px);
+  background: var(--app-panel);
+  color: var(--app-text);
+  font-family: var(--app-font);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.library__row:hover:not(:disabled) { border-color: var(--app-accent); }
+.library__row:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 1px; }
+.library__row:disabled { cursor: not-allowed; opacity: 0.6; }
+.library__row--selected {
+  border-color: var(--app-accent);
+  background: color-mix(in srgb, var(--app-accent-soft) 70%, var(--app-panel));
+}
+.library__name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.library__id {
+  flex: 0 1 auto;
+  min-width: 0;
+  color: var(--app-muted);
+  font-family: var(--app-mono, monospace);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.library__flag { flex: 0 0 auto; color: var(--app-warn); font-size: 10px; }
+.library__import { align-self: flex-start; }
 
 .pet-character__state { min-height: 16px; }
 .pet-character__retry,

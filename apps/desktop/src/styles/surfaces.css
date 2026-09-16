@@ -110,7 +110,7 @@
   gap: 8px;
 }
 
-/* ============ Save dot (three-state) ============ */
+/* ============ Save dot (four-state) ============ */
 .save-dot {
   width: 8px;
   height: 8px;
@@ -128,6 +128,15 @@
 }
 .save-dot[data-state="dirty"] {
   background: var(--app-danger);
+}
+/* Not saved, and not the plain "unsaved" dot either: this text has been offered
+   to the disk and did not get there. The ring says the extra thing without a
+   second colour — `--app-danger` is the one "not on disk" colour the palettes
+   carry, and a hollow centre is what tells the two apart at 8px. Static on
+   purpose: the dot that moves is the write that is running. */
+.save-dot[data-state="failed"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--app-danger);
 }
 .save-dot[data-state="saving"] {
   background: var(--app-accent);
@@ -154,7 +163,23 @@
    is keyed on `.dialog-actions` — theirs are named separately — so the three
    rules are restated against their own names, here and nowhere else.
    Safe to scale because these centre with flexbox rather than a `transform`,
-   which is the trap the shared arrival documents. */
+   which is the trap the shared arrival documents.
+
+   **Two animations, one surface**, which is the half these two did not have.
+   They used to name `surface-in`: one keyframe that moved opacity *and* scale on
+   one curve, because a single keyframe cannot carry two timing functions. So the
+   whole arrival — fade and movement alike — ran on the spring, and the fade paid
+   for a settle it has no room for: an opacity is the same 1 either way, reaches
+   it at 42% of that curve, and then sits clamped while the movement is still
+   going. The surface finished *appearing* while it was still visibly growing.
+
+   The split is the one `.dialog` wears and the one the tokens already name, and
+   the two halves have different budgets on purpose. The fade takes the *fade*
+   rung — a surface's opacity is finished long before its movement is — and the
+   movement takes the slow rung, on the spring, because the scale has mass and
+   has a last per cent to creep home. `--app-motion-slow` is that rung's ceiling
+   of 500ms for a surface arriving, and the same number `.dialog` moves by, so a
+   math prompt and a rename prompt still arrive as one object. */
 .math-overlay {
   background: color-mix(in srgb, var(--app-canvas) 55%, transparent);
   animation: overlay-in var(--app-motion-slow) var(--app-ease);
@@ -164,7 +189,9 @@
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-xl);
   box-shadow: var(--app-shadow-dialog);
-  animation: surface-in var(--app-motion-slow) var(--app-ease-surface);
+  animation:
+    surface-fade var(--app-motion-fade) var(--app-ease),
+    surface-scale var(--app-motion-slow) var(--app-ease-surface);
 }
 .math-dialog > .math-actions {
   animation: dialog-row-in var(--app-motion) var(--app-ease) backwards;
@@ -193,7 +220,9 @@
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-xl);
   box-shadow: var(--app-shadow-dialog);
-  animation: surface-in var(--app-motion-slow) var(--app-ease-surface);
+  animation:
+    surface-fade var(--app-motion-fade) var(--app-ease),
+    surface-scale var(--app-motion-slow) var(--app-ease-surface);
 }
 .table-dialog > .table-dialog-actions {
   animation: dialog-row-in var(--app-motion) var(--app-ease) backwards;

@@ -6,7 +6,7 @@
 //!
 //! - **A pack is a flat set of names, so there is no path to traverse.** Every source is read as
 //!   one level of entries in a directory (or one file), each name is checked against
-//!   [`pack::is_component`], and a subdirectory is refused rather than walked. A traversal is not
+//!   [`pack::is_path_component`], and a subdirectory is refused rather than walked. A traversal is not
 //!   detected and refused — it is *unrepresentable*, because nothing here ever joins a name from
 //!   the pack onto a path.
 //! - **An install's commit point is a single rename.** Everything an import does happens inside
@@ -27,6 +27,27 @@
 //!   written and tested rather than left to the task that configures an endpoint, because
 //!   "HTTPS only, no private address, bounded size, bounded time" is a specification that belongs
 //!   beside the thing it constrains.
+//!
+//! **The name rule, and the rule that is not one.** Two facts about a character are easy to run
+//! together and are kept apart here, because running them together is what made a Chinese folder
+//! name unimportable:
+//!
+//! - **A name that becomes a path component** — a character's directory, a file inside one — is
+//!   checked by [`pack::is_path_component`], and that rule is about the *filesystem*: no
+//!   separators, no `.`/`..`, no leading dot, nothing invisible or reordering, a bounded length.
+//!   It has no opinion about which alphabet, and neither does the filesystem: `喵喵` is a
+//!   directory name and `精灵图.png` is a file name exactly as `kitty` and `sheet.png` are.
+//! - **The id the app invents for an imported folder** is a *generator's policy*, not a
+//!   validation rule, and it lives where it is generated
+//!   ([`super::character_view::free_character_id`]): lowercased, separator-free, and inside the
+//!   generator's own length bound. A caller that supplies an id of its own is bound by
+//!   `is_path_component` and by nothing else — which is why a pack folder named in Chinese gets
+//!   an id in Chinese rather than a refusal.
+//!
+//! **What neither rule does is normalise.** The directory is the identity here (see the manifest
+//! rule above), and NFC and NFD are two different byte sequences and therefore two different
+//! directories on Linux — see [`pack::is_path_component`]'s own note for why this library does
+//! not fold them.
 //!
 //! What is *not* here: pixels. [`media::image_size`] establishes a sheet's size from its own header and
 //! refuses a format whose header it cannot read, so the allow-list is derived from what can be
@@ -58,7 +79,7 @@ pub mod pack;
 pub mod remote;
 
 pub use library::CharacterLibrary;
-pub use pack::is_component;
+pub use pack::{is_path_component, name_problem};
 pub use remote::{
     remote_fetch_plan, RemoteRefusal, LIBRARY_ENDPOINT, REMOTE_CONTENT_TYPES, REMOTE_MAX_BYTES,
     REMOTE_TIMEOUT_MS,
@@ -78,9 +99,17 @@ pub const PACK_MANIFEST: &str = "pet.json";
 pub const INSTALLED_MANIFEST: &str = "manifest.json";
 /// What a reserved entry in the library starts with (staging and removal debris).
 ///
-/// It is also why [`pack::is_component`] refuses a leading dot: the ids a character may carry and the
-/// names this module reserves are disjoint, so a character can never be mistaken for debris.
+/// It is also why [`pack::is_path_component`] refuses a leading dot: the ids a character may carry
+/// and the names this module reserves are disjoint, so a character can never be mistaken for
+/// debris.
 const RESERVED_PREFIX: char = '.';
+/// How many bytes one name in the library may have — a character's directory, or a file in one.
+///
+/// Bytes rather than characters, because that is the unit the filesystem measures in: the same
+/// bound holds 64 ASCII characters and at most 21 of a Chinese name. It is well inside NAME_MAX
+/// (255), and far past anything a person names a folder, so a name that meets it is one the
+/// filesystem will take and the settings page can draw.
+pub const MAX_COMPONENT_BYTES: usize = 64;
 /// How many staging names one install will try before giving up. See [`Staging::open`].
 const STAGING_ATTEMPTS: u32 = 10;
 
@@ -129,10 +158,22 @@ pub enum ResourceRefusal {
     /// A root the app does not own (§3.3's rule, reached from the resource side).
     OutsideManagedScope { root: PathBuf, detail: String },
     /// A name that cannot be a path component: traversal dressed as configuration.
-    InvalidName { field: &'static str, value: String },
+    ///
+    /// `detail` is [`pack::name_problem`]'s own sentence for the clause that refused, so the
+    /// reason reaches the user instead of a restatement of the field's name — and it is the same
+    /// function that made the decision, so the two cannot disagree.
+    InvalidName {
+        field: &'static str,
+        value: String,
+        detail: String,
+    },
     /// The source named does not exist, or is neither a file nor a directory.
     NoSource { path: PathBuf },
     /// One file of the pack cannot be carried over. The `problem` is the vocabulary a page maps.
+    ///
+    /// Also raised when a name read *back* out of a manifest turns out to be a link: the fact is
+    /// the same one — a link is not followed — and it has the same consequence, except that what
+    /// would depend on a target outside the character is the read rather than the copy.
     Package { name: String, problem: PackageProblem, detail: String },
     /// A file whose type could not be established from its own bytes.
     Unrecognized { name: String },
@@ -165,10 +206,17 @@ pub enum PackageProblem {
     /// unpack. Absent rather than supported on faith — §8 is explicit that ordinary file import
     /// does not oblige anyone to add an archive dependency.
     Archive,
-    /// A link. Following one would make what gets copied depend on something outside the pack.
+    /// A link. Following one would make what gets copied depend on something outside the pack — and
+    /// what gets *read*, when the link is one a manifest names and `verify` hashes.
     Symlink,
-    /// A name with a separator, a `.`/`..`, or a leading dot: a path where a file name belongs.
-    NestedPath,
+    /// A name that cannot be one file name inside the character's directory: a separator, a
+    /// `.`/`..`, a leading dot, something invisible that reorders it, or no name at all.
+    ///
+    /// The `detail` beside it is [`pack::name_problem`]'s sentence for the clause that refused —
+    /// this arm is the *category* a page groups by, and it is deliberately not the whole story:
+    /// a name refused for having a separator and one refused for being over-long are one thing to
+    /// a page and two different things to the person who has to rename a folder.
+    UnusableName,
     /// A subdirectory. A pack is files.
     Directory,
     /// A file whose bytes an engine would execute or parse as a document — `svg` above all,
@@ -272,6 +320,18 @@ pub enum EntryState {
     Incomplete { missing: Vec<String> },
     /// A file is there and is not the size the manifest recorded.
     Resized { changed: Vec<String> },
+    /// The manifest names something this library will not open inside the character's directory: a
+    /// name that is not a path component (a `..`, an absolute path, a separator, an empty name), or
+    /// a link.
+    ///
+    /// A state of its own rather than one of the three above, because each of those is a claim
+    /// about a file somebody looked at, and nothing here looked: the name is refused before any
+    /// stat is made. The names are carried so a user can see which entry to fix, and `verify` raises
+    /// the reason rather than restating it — [`ResourceRefusal::InvalidName`] carrying
+    /// [`pack::name_problem`]'s own sentence for a name that rule refused, and
+    /// [`ResourceRefusal::Package`] with [`PackageProblem::Symlink`] for a link, which is a name the
+    /// rule accepts and a file the library will not open.
+    OutsideDirectory { names: Vec<String> },
     /// The manifest itself could not be read as one.
     UnreadableManifest { detail: String },
     /// A directory in the library with no manifest. Reported, never adopted and never removed:

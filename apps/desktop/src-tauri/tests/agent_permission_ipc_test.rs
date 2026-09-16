@@ -34,6 +34,7 @@ use agent_runtime::permissions::{
     PermissionAnswer, PermissionIdentity, PermissionPrompt, PermissionRefusal, PermissionTable,
     ToolInput, cancel_run,
 };
+use agent_runtime::live_notes::{LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes};
 use agent_runtime::{
     AgentEventEnvelope, AgentEventKind, AgentIdentity, AgentRuntime, AgentRuntimeEvents,
     EngineConnection, EngineLaunch, VaultFiles, env_pairs,
@@ -46,7 +47,21 @@ use agent_runtime::snapshot::{REPLAY_WINDOW, SessionSnapshots};
 /// stub holds: reaching the vault would mean the fixture sent something unexpected.
 struct NoVault;
 
+/// The window side, for a test that never reads a note: no window is registered for any vault,
+/// so a read would be refused rather than served from disk — which is the direction the seam
+/// is built to fail in, and which keeps a test that does not exercise reads honest about it.
+struct NoWindow;
+
+impl LiveNoteWindows for NoWindow {
+    fn ask(&self, _question: &LiveNoteQuestion) -> usize {
+        0
+    }
+}
+
 impl VaultFiles for NoVault {
+    fn frontend_path(&self, _: &str, _: &str) -> Result<String, String> {
+        panic!("a permission test must not ask a window about a note")
+    }
     fn read(&self, _: &str, _: &str) -> Result<String, String> {
         panic!("a permission test must not read a vault")
     }
@@ -146,7 +161,13 @@ async fn start(launch: &EngineLaunch) -> (AgentRuntime, AgentRuntimeEvents) {
     let (connection, events) = EngineConnection::connect(launch)
         .await
         .expect("the fixture engine should start");
-    AgentRuntime::new(identity(), connection, events, Arc::new(NoVault))
+    AgentRuntime::new(
+        identity(),
+        connection,
+        events,
+        Arc::new(NoVault),
+        LiveNotes::new(Arc::new(LiveNoteTable::new()), Arc::new(NoWindow)),
+    )
 }
 
 // --- What the engine received ---
@@ -362,15 +383,20 @@ const _: fn() = || {
     assert_send_sync::<Session>();
     let _ = AgentIpcState::default;
     let _ = AgentIpcState::session;
-    let _ = commands::agent::agent_permission_answer;
+    // Monomorphised over a concrete runtime, because the command gained the `R: tauri::Runtime`
+    // parameter the pet's commands already carry: it takes an `AppHandle` so the pet's task list
+    // can follow an answer, and a signature naming `AppHandle<Wry>` cannot be driven from a
+    // `MockRuntime` test. Naming `Wry` here keeps the claim this block is making — that the entry
+    // point exists under the runtime the app ships.
+    let _ = commands::agent::agent_permission_answer::<tauri::Wry>;
     let _ = commands::agent::agent_cancel_run;
     // The session half, which `generate_handler!` names: a rename that no handler noticed would
     // otherwise only surface in `lib.rs`.
     let _ = commands::agent::agent_start;
-    let _ = commands::agent::agent_stop;
+    let _ = commands::agent::agent_stop::<tauri::Wry>;
     let _ = commands::agent::agent_open_session;
     let _ = commands::agent::agent_set_config_option;
-    let _ = commands::agent::agent_prompt;
+    let _ = commands::agent::agent_prompt::<tauri::Wry>;
     let _ = commands::agent::agent_session_snapshot;
 };
 

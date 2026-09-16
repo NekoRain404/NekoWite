@@ -42,6 +42,13 @@ import type { MemoryAgentGateway, MemoryRunScript } from '/src/platform/gateways
  * tooltip.
  */
 const LABELS: AgentPanelLabels = {
+  // The transcript's first line, drawn while the transcript is empty. It arrived with the panel's
+  // engine sentence and was not carried over here, so this spec was mounting a panel whose empty
+  // transcript drew nothing — the browser run had no assertion on that line, which is why only the
+  // checker noticed.
+  empty: {
+    line: 'Message Memory — / for commands',
+  },
   bar: {
     untitled: 'New session',
     state: {
@@ -60,6 +67,7 @@ const LABELS: AgentPanelLabels = {
       'max-turn-requests': 'Request limit',
       refusal: 'Refused',
       cancelled: 'Stopped',
+      unrecognised: 'Unrecognised ending',
     },
   },
   timeline: {

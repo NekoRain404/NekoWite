@@ -20,6 +20,7 @@
 //!   snapshot's own sequence and tail are asserted against the frames the sink received.
 
 use nekowite_lib::agent_runtime;
+use nekowite_lib::agent_runtime::live_notes::{LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes};
 use nekowite_lib::commands;
 use nekowite_lib::state;
 
@@ -48,11 +49,25 @@ use state::AgentRuntimeState;
 struct NoVault;
 
 impl VaultFiles for NoVault {
+    fn frontend_path(&self, _: &str, _: &str) -> Result<String, String> {
+        panic!("this test must not ask a window about a note")
+    }
     fn read(&self, _: &str, _: &str) -> Result<String, String> {
         panic!("this test must not read a vault")
     }
     fn write(&self, _: &str, _: &str, _: &str) -> Result<Option<String>, String> {
         panic!("this test must not write a vault")
+    }
+}
+
+/// The window side, for a test that never reads a note: no window is registered for any vault,
+/// so a read would be refused rather than served from disk — the direction the seam is built to
+/// fail in, which keeps a test that does not exercise reads honest about it.
+struct NoWindow;
+
+impl LiveNoteWindows for NoWindow {
+    fn ask(&self, _question: &LiveNoteQuestion) -> usize {
+        0
     }
 }
 
@@ -183,6 +198,7 @@ async fn wired(label: &str, behaviour: &str, fs_frame: Option<String>) -> Wired 
             &dir,
             &agent_runtime::profile::Credentials::default(),
             Arc::new(NoVault),
+            LiveNotes::new(Arc::new(LiveNoteTable::new()), Arc::new(NoWindow)),
         )
         .await
         .expect("the fixture engine starts");
@@ -313,7 +329,7 @@ async fn a_window_opens_a_session_and_reads_the_turn_it_runs() {
     assert_eq!(before.identity.vault_id, "vault-1");
     assert!(!before.identity.runtime_epoch.is_empty(), "the epoch is minted, not guessed");
 
-    let run_id = agent_prompt(wired.ipc(), opened.session_id.clone(), "hello".to_string())
+    let run_id = agent_prompt(wired.app.handle().clone(), wired.ipc(), opened.session_id.clone(), "hello".to_string())
         .await
         .expect("a prompt starts a turn");
     assert_eq!(run_id, "run-0", "the host's own name for the work");
@@ -362,7 +378,7 @@ async fn every_frame_a_window_receives_is_in_the_snapshot_or_newer_than_it() {
         .expect("snapshot");
     let replayed: Vec<u64> = before.events.iter().map(|event| event.sequence).collect();
 
-    agent_prompt(wired.ipc(), opened.session_id.clone(), "hello".to_string())
+    agent_prompt(wired.app.handle().clone(), wired.ipc(), opened.session_id.clone(), "hello".to_string())
         .await
         .expect("prompt");
     wait_for_state(wired.ipc(), &opened.session_id, SessionState::Completed).await;
@@ -393,7 +409,7 @@ async fn the_engines_own_options_reach_both_the_caller_and_the_window() {
     // and switching a model between turns is exactly when a user does it.
     let wired = wired("config", "config-update", None).await;
     let opened = open(&wired).await;
-    agent_prompt(wired.ipc(), opened.session_id.clone(), "hello".to_string())
+    agent_prompt(wired.app.handle().clone(), wired.ipc(), opened.session_id.clone(), "hello".to_string())
         .await
         .expect("a turn");
     wait_for_state(wired.ipc(), &opened.session_id, SessionState::Completed).await;
@@ -439,7 +455,7 @@ async fn a_config_change_during_a_turn_belongs_to_the_session_not_the_turn() {
     let wired = wired("mid-run", "config-mid-run", None).await;
     let opened = open(&wired).await;
 
-    let run_id = agent_prompt(wired.ipc(), opened.session_id.clone(), "hello".to_string())
+    let run_id = agent_prompt(wired.app.handle().clone(), wired.ipc(), opened.session_id.clone(), "hello".to_string())
         .await
         .expect("a turn");
 
@@ -562,7 +578,7 @@ async fn stopping_empties_the_state_and_ends_the_session() {
     let opened = open(&wired).await;
     assert!(wired.ipc().session().is_ok(), "a session is running");
 
-    agent_stop(wired.runtime(), wired.ipc())
+    agent_stop(wired.app.handle().clone(), wired.runtime(), wired.ipc())
         .await
         .expect("stopping a running session is not an error");
 

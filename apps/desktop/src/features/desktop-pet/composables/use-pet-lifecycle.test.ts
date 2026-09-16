@@ -92,6 +92,25 @@ class FakeHost implements PetGateway {
     }
   }
 
+  // The character read and the click route are the pet *window's* surface, not the lifecycle's:
+  // this file's subject is what a window holds and gives back, and a call to one of these here is
+  // a wiring mistake rather than a state to model.
+  async appearance(): Promise<never> {
+    throw new Error('the lifecycle does not read the appearance in these tests')
+  }
+
+  async library(): Promise<never> {
+    throw new Error('the lifecycle does not read the character library in these tests')
+  }
+
+  async importCharacter(): Promise<never> {
+    throw new Error('the lifecycle does not import characters in these tests')
+  }
+
+  async openTask(): Promise<never> {
+    throw new Error('the lifecycle does not route a task in these tests')
+  }
+
   async subscribeFeature(onFeature: (state: PetFeatureState) => void): Promise<() => void> {
     this.calls.push('subscribeFeature')
     await this.gate?.promise

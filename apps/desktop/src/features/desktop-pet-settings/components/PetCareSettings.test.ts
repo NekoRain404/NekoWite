@@ -27,6 +27,7 @@ import {
   PET_SETTINGS_DEFAULTS,
   PET_SETTINGS_SCHEMA_VERSION,
   type PetCareSummary,
+  type PetGateway,
 } from '../../../platform/gateways/pet-contracts'
 import { PET_CARE_PANEL_LABELS } from '../../desktop-pet'
 import {
@@ -101,8 +102,15 @@ async function mount(context: PetSettingsContext): Promise<void> {
   await settle()
 }
 
-/** What the store holds for care, read the way a caller has to read it. */
-async function storedCare(gateway: MemoryPetGateway): Promise<typeof PET_SETTINGS_DEFAULTS.care> {
+/**
+ * What the store holds for care, read the way a caller has to read it.
+ *
+ * The parameter is the port, not the double: this reads and nothing else, and the same object the
+ * store hands back through `context.gateway` is the one a page reaches. Asking for the double
+ * would be asking for seven methods this helper never calls — which is what it did, and why it
+ * stopped accepting the context's own gateway.
+ */
+async function storedCare(gateway: PetGateway): Promise<typeof PET_SETTINGS_DEFAULTS.care> {
   const loaded = await gateway.readSettings('care')
   if (loaded.status !== 'current') throw new Error(`expected current, got ${loaded.status}`)
   const record = petSettingsRecordFor(loaded.record, 'care')

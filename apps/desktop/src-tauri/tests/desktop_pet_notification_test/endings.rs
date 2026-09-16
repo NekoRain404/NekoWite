@@ -25,10 +25,19 @@ fn stop_reason_table() -> Vec<(String, String)> {
         "PET_STATE_BY_STOP_REASON",
         "\n}",
     ));
+    // Six rows, and the sixth is a *decision* made here rather than inherited from the contract:
+    // `AgentRunEnding` is wider than the protocol's `StopReason` by one arm — "the engine ended a
+    // turn for a reason this version has never heard of" — and `events.ts` maps it to `unknown`.
+    // That is the arm §6.2 admits and no other is available: `turn-finished` asserts a normal
+    // ending, `failed`/`interrupted`/`refused` each name a cause that did not happen, and
+    // `unknown` is the one state that claims no ending at all — which is why it is not settled and
+    // a later frame that does know can replace it. The alternative, leaving the arm out, is not a
+    // quieter contract: `PET_STATE_BY_STOP_REASON` is total over `AgentRunEnding`, so the frame
+    // would stop compiling rather than stop being mapped.
     assert_eq!(
         table.len(),
-        5,
-        "the protocol has five stop reasons; the contract table lost one"
+        6,
+        "the protocol has five stop reasons and the contract one arm for an unknown one"
     );
     table
 }
@@ -101,6 +110,28 @@ fn the_five_stop_reasons_do_not_collapse_into_success_and_failure() {
                 assert!(
                     notice.is_none(),
                     "{reason} is quiet: the user is the one who stopped it"
+                );
+            }
+            "unknown" => {
+                let notice = notice.expect("an ending this version cannot read is still announced");
+                assert_eq!(notice.state, PetTaskState::Unknown, "{reason}");
+                // §6.2: the ending is a fact — the run *did* end — and only its reason is
+                // unreadable, so the notice may not be silent about it either.
+                assert_ne!(notice.state, PetTaskState::TurnFinished, "{reason}");
+                assert_ne!(notice.state, PetTaskState::Failed, "{reason}");
+                // And the sentence is the whole point of this arm existing: `unknown` has two
+                // producers — a host that cannot reach the runtime, and this one — so a notice that
+                // named only the first would be untrue here, which is exactly the state this case
+                // was added to pin.
+                assert!(
+                    notice.body().contains("unknown"),
+                    "{}",
+                    notice.body()
+                );
+                assert!(
+                    notice.body().contains("reason this version"),
+                    "the message must say that the ending's reason is what is unreadable: {}",
+                    notice.body()
                 );
             }
             other => panic!("{reason} maps to {other}, which this build does not know"),

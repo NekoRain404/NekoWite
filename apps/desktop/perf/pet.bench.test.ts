@@ -229,10 +229,16 @@ describe('the pet window: opening and closing it', () => {
     const off = createMemoryPetGateway({ visible: true })
     const loaded = await off.readSettings('general')
     if (loaded.status !== 'current') throw new Error('the double would not read its own record')
+    // `PetSettingsRecord` is a union correlated on `domain`, so the record the read answered with
+    // is checked to be the one that was asked for before its values are spread into a `general`
+    // write. It is the same check `petSettingsRecordFor` makes; stating it here is what lets the
+    // write be built from the record rather than from the union of all seven domains' values.
+    const { record } = loaded
+    if (record.domain !== 'general') throw new Error('the double answered for another domain')
     await off.updateSettings({
       domain: 'general',
-      revision: loaded.record.revision,
-      values: { ...loaded.record.values, enabled: false },
+      revision: record.revision,
+      values: { ...record.values, enabled: false },
     })
     expect(await off.feature()).toEqual({ enabled: false, visible: false })
 

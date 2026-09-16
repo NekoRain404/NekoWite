@@ -15,7 +15,7 @@ import {
 } from '../../../stores/chat-session'
 import type { ChatSession, ChatSessionMessage } from '../services/chat-session-model'
 import { t } from '../../../i18n'
-import type { ChatAttachment, PanelMessage } from '../types'
+import { nextMessageId, type ChatAttachment, type PanelMessage } from '../types'
 
 export interface UseChatSessionOptions {
   /** The composer's half-written question. A draft parks it under the session
@@ -63,7 +63,7 @@ function toSessionMessage(m: PanelMessage): ChatSessionMessage {
 }
 
 function fromSessionMessage(m: ChatSessionMessage): PanelMessage {
-  const msg: PanelMessage = { role: m.role, content: m.content }
+  const msg: PanelMessage = { id: nextMessageId(), role: m.role, content: m.content }
   if (m.images && m.images.length) msg.images = m.images
   // The store explains here why an image is missing ("too large", "removed,
   // storage limit"). Dropping the notice - which this did - turned a refused

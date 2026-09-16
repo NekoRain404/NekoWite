@@ -12,12 +12,24 @@
    a curve in a file this shell does not own, the two class names the panel
    already renders are handed the shared entrance from styles/motion.css. The
    dialog centres itself with flexbox, so the arrival's `scale` is free to
-   compose with it; a dialog that centred with a `transform` would drift. */
+   compose with it; a dialog that centred with a `transform` would drift.
+
+   Two animations, and the two have different budgets — which is the half this
+   rule was missing. It used to name `surface-in`, one keyframe carrying opacity
+   *and* scale, so the one curve had to serve both and the fade ran the
+   movement's length on the movement's spring. This is the largest surface in the
+   app: at 460ms the fade it was spending is more than twice the fade rung, and
+   the surface went on appearing for the whole of a movement the reader was
+   already reading. The fade takes the fade rung now, the movement keeps the slow
+   one and the spring, and the opacity is in place at 200ms of the 460ms the
+   scale takes to settle. */
 .settings-overlay {
   animation: overlay-in var(--app-motion-slow) var(--app-ease);
 }
 .settings-dialog {
-  animation: surface-in var(--app-motion-slow) var(--app-ease-surface);
+  animation:
+    surface-fade var(--app-motion-fade) var(--app-ease),
+    surface-scale var(--app-motion-slow) var(--app-ease-surface);
 }
 
 /* ---- The three panels that open and close ---------------------------------

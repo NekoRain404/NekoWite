@@ -25,13 +25,13 @@ use std::time::Duration;
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
     CancelNotification, ContentBlock, InitializeRequest, InitializeResponse, NewSessionRequest,
-    NewSessionResponse, PromptRequest, PromptResponse, RequestPermissionRequest,
-    ReadTextFileRequest, ReadTextFileResponse, RequestPermissionResponse, SessionConfigValueId,
-    SessionId, SessionNotification, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
-    TextContent, WriteTextFileRequest, WriteTextFileResponse,
+    NewSessionResponse, PromptRequest, RequestPermissionRequest, ReadTextFileRequest,
+    ReadTextFileResponse, RequestPermissionResponse, SessionConfigValueId, SessionId,
+    SessionNotification, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, TextContent,
+    WriteTextFileRequest, WriteTextFileResponse,
 };
 use agent_client_protocol::{
-    AcpAgent, Agent, ByteStreams, Client, ConnectionTo, JsonRpcRequest, Responder,
+    AcpAgent, Agent, ByteStreams, Client, ConnectionTo, JsonRpcRequest, Responder, UntypedMessage,
     on_receive_notification, on_receive_request,
 };
 use tokio::sync::{mpsc, oneshot};
@@ -42,6 +42,7 @@ use super::process::{
     BoundedFrameReader, EngineLaunch, FRAME_TOO_LARGE_MARKER, MAX_FRAME_BYTES, SHUTDOWN_GRACE,
     StderrLog, pump_stderr, secrets_of, signal_group,
 };
+use super::usage::{self, PromptEnding};
 
 /// An engine→client request waiting for an answer.
 ///
@@ -256,8 +257,11 @@ impl EngineConnection {
     pub async fn initialize(&self, bound: Duration) -> Result<InitializeResponse, TransportError> {
         // The capability is declared here and nowhere else. P0 §7.2 measured the
         // engine sending `fs/write_text_file` even under an empty capability
-        // set; advertising it is what makes the write go through this host by
-        // contract rather than by the engine's fallback.
+        // set; advertising it is what makes a *delegated* write one this host
+        // performs, through the app's own write path. It is not exclusivity: P0
+        // §7's default-configuration probe measured the same engine writing a
+        // file through its own tools with zero reverse requests, so what arrives
+        // here is a write the engine handed over, not a gate every write must pass.
         let initialize =
             InitializeRequest::new(ProtocolVersion::V1).client_capabilities(fs_capability::client_capabilities());
         let response = self.request("initialize", initialize, bound).await?;
@@ -300,16 +304,35 @@ impl EngineConnection {
     }
 
     /// Starts a generation. The answer arrives as updates and finally as this
-    /// response, which carries the stop reason and the usage.
+    /// ending, which carries the stop reason and the usage.
+    ///
+    /// The request is sent untyped — `UntypedMessage` carries the SDK's own
+    /// [`PromptRequest`] as its params, so the engine sees the frame it always
+    /// saw — and the response is read by [`usage::ending`] rather than by the
+    /// SDK's router, for two reasons that are one measurement: `PromptResponse`
+    /// holds usage as `Option<Usage>`, `Usage` requires `totalTokens`,
+    /// `inputTokens` and `outputTokens` as non-optional `u64`s, and P0 §6.3
+    /// measured the engine omitting one of them; and its `stopReason` is the
+    /// pinned schema's five variants with no arm for a sixth, which §6.3's
+    /// moving protocol surface makes a frame to read rather than to refuse.
+    /// Nothing else about the response changes: a frame that reader will not
+    /// read fails through `classify` exactly as the SDK's router would have
+    /// failed it.
     pub async fn prompt(
         &self,
         session_id: SessionId,
         text: &str,
         bound: Duration,
-    ) -> Result<PromptResponse, TransportError> {
+    ) -> Result<PromptEnding, TransportError> {
         let prompt = vec![ContentBlock::Text(TextContent::new(text))];
-        self.request("session/prompt", PromptRequest::new(session_id, prompt), bound)
-            .await
+        let request = UntypedMessage::new("session/prompt", PromptRequest::new(session_id, prompt))
+            .map_err(classify)?;
+        // The method the request itself carries, so the timeout this call may
+        // report names the same call the engine was sent.
+        let method = request.method().to_string();
+        let raw: serde_json::Value = self.request(&method, request, bound).await?;
+
+        usage::ending(&method, &raw).map_err(classify)
     }
 
     /// Asks the engine to stop the generation running on a session.

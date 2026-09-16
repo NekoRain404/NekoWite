@@ -15,9 +15,9 @@ import type {
   AgentEventKind,
   AgentFailureCode,
   AgentPayloads,
+  AgentRunEnding,
   AgentSessionSnapshot,
   AgentSessionState,
-  AgentStopReason,
 } from '../agent-contracts'
 import type { PetTaskOutcome, PetTaskState } from './task'
 
@@ -42,13 +42,22 @@ export function petStateFromFailure(code: AgentFailureCode): PetTaskState {
   return 'failed'
 }
 
-/** §6.2's stop-reason table, total so a new stop reason cannot go unclassified. */
-const PET_STATE_BY_STOP_REASON: { [S in AgentStopReason]: PetTaskState } = {
+/**
+ * §6.2's stop-reason table, total over every ending the contract can report — the five reasons,
+ * and the one arm for an ending whose reason this version does not know.
+ *
+ * That arm is `unknown`, never `turn-finished`: §6.2 forbids asserting a normal ending for a turn
+ * whose ending is not known. The host's own projection makes the same call on the same frame
+ * (`desktop_pet::task_projection::outcomes`, `state_from_stop_reason`), and `unknown` is
+ * deliberately not settled, so a later frame that does know can still replace it.
+ */
+const PET_STATE_BY_STOP_REASON: { [S in AgentRunEnding]: PetTaskState } = {
   'end-turn': 'turn-finished',
   'max-tokens': 'stopped',
   'max-turn-requests': 'stopped',
   refusal: 'refused',
   cancelled: 'cancelled',
+  unrecognised: 'unknown',
 }
 
 /**

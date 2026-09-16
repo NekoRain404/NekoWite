@@ -18,7 +18,7 @@
  *    replaced, because the contract folds the two into one kind for exactly that reason.
  */
 
-import type { AgentEvent, AgentStopReason } from '../../../platform/gateways/agent-contracts'
+import type { AgentEvent, AgentRunEnding } from '../../../platform/gateways/agent-contracts'
 import {
   appendTimelineEntry,
   continuesLast,
@@ -51,8 +51,14 @@ function writeText(view: AgentSessionView, entry: AgentTextEntryInput): AgentApp
  *  token ceiling and a refusal — ended the way the turn was always going to end, and
  *  `run-finished` never produces `failed`: a run is failed only when the runtime could not
  *  carry it out at all, which is `run-failed`. The reason itself is kept in `lastResult`,
- *  so "completed" does not flatten them into one thing. */
-function endStateFor(stopReason: AgentStopReason): 'completed' | 'cancelled' {
+ *  so "completed" does not flatten them into one thing.
+ *
+ *  `unrecognised` is an ordinary end too, and that is the point of the arm: the run *finished*
+ *  — the frame says so — and only this window's reading of *why* is incomplete. Mapping it to
+ *  `failed` here would report a decode problem as a fault of the turn, which is the one thing
+ *  the ending's own reader is written to prevent; the state says the run is over and
+ *  `lastResult` carries the reason's own state. */
+function endStateFor(stopReason: AgentRunEnding): 'completed' | 'cancelled' {
   return stopReason === 'cancelled' ? 'cancelled' : 'completed'
 }
 

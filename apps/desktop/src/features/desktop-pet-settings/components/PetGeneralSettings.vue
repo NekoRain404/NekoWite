@@ -25,6 +25,7 @@ import { t } from '../../../i18n'
 import { PET_NUMBER_RULES } from '../../../platform/gateways/pet-contracts'
 import type { PetCapability, PetRoamMode } from '../../../platform/gateways/pet-contracts'
 import type { PetSettingsContext } from './DesktopPetSettings.vue'
+import { reportedCapabilities } from '../services/pet-capability-report'
 
 const props = defineProps<{
   /** The container's sessions. This page never creates one of its own. */
@@ -82,7 +83,9 @@ const MODE_CAPABILITY: { [M in PetRoamMode]?: PetCapability } = {
  * Both refuse the control; only the words differ, and the words come from the host.
  */
 function unavailability(capability: PetCapability): string | null {
-  const finding = props.context.capabilities.value.find((entry) => entry.capability === capability)
+  // Through the shared reader, because a host that answered something which is not a report has
+  // reported nothing — and "nothing" is the arm below, not a throw while the page renders.
+  const finding = reportedCapabilities(props.context).find((entry) => entry.capability === capability)
   if (finding === undefined) return t('settings.pet.capabilityUnknown')
   if (finding.finding.status === 'available') return null
   return t('settings.pet.unavailable', { detail: finding.finding.detail })

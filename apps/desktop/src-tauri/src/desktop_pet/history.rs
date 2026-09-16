@@ -30,6 +30,12 @@
 //! edits one of them — the bug that produces is an identity bug, which is the class this whole
 //! module exists to make impossible.
 //!
+//! **The file half is [`store`].** `encode`/`decode` were written before anything called them,
+//! which is the state this repository keeps finding: a record with a shape and no reader.
+//! [`store::HistoryStore`] is the path, the atomic replacement, and the two rules a ledger read back
+//! from a previous run has to obey — a mark from another process is not a mark, and a reminder older
+//! than a day is not a reminder.
+//!
 //! What stays here is what the ledger *adds* to them: the token both keys are encoded with, the row
 //! that records a state — plus the two methods the ledger is the reason for
 //! ([`PetTaskKey::session`], [`SessionKey::token`]).
@@ -37,6 +43,10 @@
 use serde::{Deserialize, Serialize};
 
 use super::task_projection::{PetTaskKey, PetTaskState, SessionKey};
+
+pub mod store;
+
+pub use store::{HistoryStore, Loaded, SaveOutcome, LEDGER_FILE, UNREAD_MAX_AGE_MS};
 
 /// Every state the pet can show, in the contract's order (`pet-contracts/task.ts:69-84`).
 ///
@@ -322,6 +332,30 @@ impl TaskHistory {
             }
             None => false,
         }
+    }
+
+    /// Forget every stream mark, answering how many were forgotten.
+    ///
+    /// For a ledger that has just been read back from a file, and for one reason: a mark is a
+    /// position in a runtime's stream, keyed by an epoch that carries the process that minted it, so
+    /// no mark written by a previous run can be matched by this one — and a recycled process id
+    /// would make one *mismatch*, turning this run's first frames into replays and swallowing the
+    /// reminder they carry. `store`'s own header is where that rule is argued in full.
+    pub fn forget_marks(&mut self) -> usize {
+        let forgotten = self.marks.len();
+        self.marks.clear();
+        forgotten
+    }
+
+    /// Drop the rows the user never looked at that are older than `cutoff_ms`, answering how many.
+    ///
+    /// Only unread rows: a read row is the dedup memory §6.3 asks a restart to keep, and it costs a
+    /// slot in a bounded index rather than a claim on the user's attention. An unread row is a
+    /// reminder, and a reminder older than the bound in `store` is one the user can no longer act on.
+    pub fn drop_unread_before(&mut self, cutoff_ms: i64) -> usize {
+        let before = self.records.len();
+        self.records.retain(|row| !row.unread || row.at_ms >= cutoff_ms);
+        before - self.records.len()
     }
 
     /// Note where a session's stream has reached, and say what the frame in hand was.

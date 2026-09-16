@@ -39,6 +39,9 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use nekowite_lib::agent_runtime::VaultFiles;
+use nekowite_lib::agent_runtime::live_notes::{
+    LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes,
+};
 use nekowite_lib::agent_runtime::adapters;
 use nekowite_lib::agent_runtime::profile::Credentials;
 use nekowite_lib::agent_runtime::registry::{
@@ -57,11 +60,25 @@ use nekowite_lib::state::{AgentRuntimeState, edit_registry};
 struct NoVault;
 
 impl VaultFiles for NoVault {
+    fn frontend_path(&self, _: &str, _: &str) -> Result<String, String> {
+        panic!("this test must not ask a window about a note")
+    }
     fn read(&self, _: &str, _: &str) -> Result<String, String> {
         panic!("this test must not read a vault")
     }
     fn write(&self, _: &str, _: &str, _: &str) -> Result<Option<String>, String> {
         panic!("this test must not write a vault")
+    }
+}
+
+/// The window side, for a test that never reads a note: no window is registered for any vault,
+/// so a read would be refused rather than served from disk — the direction the seam is built to
+/// fail in, which keeps a test that does not exercise reads honest about it.
+struct NoWindow;
+
+impl LiveNoteWindows for NoWindow {
+    fn ask(&self, _question: &LiveNoteQuestion) -> usize {
+        0
     }
 }
 
@@ -371,6 +388,7 @@ async fn started(
             root,
             credentials,
             Arc::new(NoVault),
+            LiveNotes::new(Arc::new(LiveNoteTable::new()), Arc::new(NoWindow)),
         )
         .await
         .expect("the fixture engine starts");

@@ -15,10 +15,15 @@ export function asRecord(raw: unknown): Record<string, unknown> | null {
     : null
 }
 
+/** A value that is a usable string: a string with something in it. The rule {@link str}
+ *  applies to a named field, for a value already in hand. */
+export function nonEmpty(raw: unknown): string | null {
+  return typeof raw === 'string' && raw.length > 0 ? raw : null
+}
+
 /** A required, non-empty string field of `raw`, or null when it is missing. */
 export function str(raw: Record<string, unknown>, key: string): string | null {
-  const value = raw[key]
-  return typeof value === 'string' && value.length > 0 ? value : null
+  return nonEmpty(raw[key])
 }
 
 /** A count that could have come from the engine: a non-negative safe integer. */

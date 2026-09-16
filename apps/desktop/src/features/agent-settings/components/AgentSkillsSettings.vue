@@ -31,6 +31,12 @@ export type { AgentSkillsLabels, SkillRefusalKind } from './agent-skills-labels'
  *    and two of them draw text instead of a switch: one names the engine's own variable, the other
  *    states that no such switch exists. §8.2: 「不能仅隐藏 UI 项目而声称已禁用」 — a checkbox that
  *    only hid a row would be exactly that, so there is nothing to hide.
+ *  - **A configured directory is not a contributing one.** A scope the engine's rules name can be
+ *    one this launch does not read — that is what the app-managed launch's own switch does to
+ *    `.claude` and `.agents` — so every row carries the scope's state ({@link SkillEntryView.suppressedBy})
+ *    beside what the engine would do with the skill itself. The two answer different questions and
+ *    the page asks both: §8.2 wants the 来源目录 and the 实际权限状态, and a row that merged them
+ *    would have to drop one.
  *
  * The conflict line is the third thing worth reading. What was observed of the pinned engine is
  * that two skills with one name both load and whichever wins is not settled by anything this host
@@ -75,6 +81,9 @@ export interface SkillEntryView {
   owner: 'managed' | 'engine' | 'foreign'
   conflicts: string[]
   surface: SkillSurfaceView
+  /** The engine's switch that is on for this row's *scope*, or `null` if none is (see the file
+      comment: a directory that is configured and one that contributes are two facts). */
+  suppressedBy: string | null
   disable: SkillDisableView
 }
 
@@ -156,10 +165,22 @@ function surfaceText(entry: SkillEntryView): string {
   }
 }
 
-/** Whether this row gets a control at all, and which sentence stands in its place when it does not. */
+/**
+ * Whether this row gets a control at all, and which sentence stands in its place when it does not.
+ *
+ * Two sentences rather than one, because the scope has two states and the sentence written for the
+ * other one is false in each: a launch that sets the engine's variable is *not* reading this
+ * directory — the app-managed launch sets it, so that is the ordinary case — and telling a user
+ * there that "this launch does not set that variable" would be the flattering-direction claim the
+ * whole readout exists to prevent. The switch is read off `suppressedBy`, the scope's own fact,
+ * rather than inferred from `surface`: a row whose frontmatter is unusable has a surface that says
+ * nothing about whether its directory is read.
+ */
 function switchNote(entry: SkillEntryView): string {
   if (entry.disable.kind === 'engine-switch') {
-    return fill(labels.value.disable.engineSwitch, { variable: entry.disable.variable })
+    return entry.suppressedBy === null
+      ? fill(labels.value.disable.engineSwitch, { variable: entry.disable.variable })
+      : fill(labels.value.disable.engineSwitchSet, { variable: entry.suppressedBy })
   }
   return labels.value.disable.noSwitch
 }

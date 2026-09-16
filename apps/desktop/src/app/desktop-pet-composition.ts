@@ -30,11 +30,12 @@ import { createTauriPetConnection, type PetHostConnection } from '../platform/ga
 // The feature's public entry would carry the same cost here as it would in the entry above: this
 // file is in the pet window, and `features/desktop-pet/index.ts` re-exports the care surface. The
 // menu actions are one service, so they are imported where they live.
-import {
-  actOnPetMenu,
-  type PetMenuAction,
-  type PetMenuOutcome,
-} from '../features/desktop-pet/services/pet-menu-actions'
+import { actOnPetMenu, type PetMenuOutcome } from '../features/desktop-pet/services/pet-menu-actions'
+// `PetMenuAction` is `pet-context-menu.ts`'s declaration, and `pet-menu-actions.ts` takes it as a
+// parameter without re-exporting it — so it is imported from the module that declares it. A second
+// spelling of the import would be a re-export to keep in step with the first, and this window is
+// the one place that cannot afford the feature's public entry (see above).
+import type { PetMenuAction } from '../features/desktop-pet/services/pet-context-menu'
 import type { DesktopPetDependencies } from './desktop-pet-entry'
 
 /** Whether this window is the app's, or a browser/test page with no host behind it. */
@@ -68,7 +69,7 @@ export function createDesktopPetConnection(): PetHostConnection | null {
  */
 export function resolveDesktopPetDependencies(): DesktopPetDependencies | undefined {
   const connection = createDesktopPetConnection()
-  return connection ? { gateway: connection } : undefined
+  return connection ? { connection } : undefined
 }
 
 /**

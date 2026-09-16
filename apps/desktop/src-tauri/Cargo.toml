@@ -40,6 +40,17 @@ rust-argon2 = "2"
 # `usage` on a prompt response — P0 §2.3 measured the engine returning usage on
 # every turn, and the field would otherwise be invisible to us.
 agent-client-protocol = { version = "=2.1.0", features = ["unstable"] }
+# The single-instance guard is a D-Bus well-known name on the session bus, and the bus is the
+# only place its outcome can be read: the plugin records a *successful* claim in a private state
+# type of its own, and every other failure disappears into a silent match arm
+# (`tauri-plugin-single-instance 2.4.4`, `platform_impl/linux.rs:88`). `src/instance_guard.rs`
+# asks the bus the question the plugin asked, so "two instances are sharing this profile and
+# nothing anywhere says so" stops being possible. `zbus` is already in the lock file at 5.19.0
+# as that plugin's own Linux dependency, default features and all, so this makes an existing
+# crate direct rather than adding one — the same move `libc` above already made. Linux-only,
+# like the plugin's use of it.
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = "5"
 # A native terminal (§4.3) needs a pty, and a pty is a pair of descriptors only the kernel can
 # make: `posix_openpt`/`grantpt`/`unlockpt`/`ptsname_r`, one `TIOCSWINSZ`, `setsid` +
 # `TIOCSCTTY` in the child, and `kill(-pgid)` to end the group. `libc` is already in the lock

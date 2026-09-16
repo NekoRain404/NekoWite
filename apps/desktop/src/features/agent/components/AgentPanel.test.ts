@@ -56,6 +56,7 @@ const LABELS: AgentPanelLabels = {
       'max-turn-requests': 'Request limit',
       refusal: 'Refused',
       cancelled: 'Stopped',
+      unrecognised: 'Unrecognised ending',
     },
   },
   timeline: {

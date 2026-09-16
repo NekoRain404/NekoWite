@@ -22,6 +22,7 @@
 import { computed } from 'vue'
 import { t } from '../../../i18n'
 import type { PetSettingsContext } from './DesktopPetSettings.vue'
+import { reportedCapabilities } from '../services/pet-capability-report'
 
 const props = defineProps<{
   /** The container's sessions. This page never creates one of its own. */
@@ -60,7 +61,7 @@ function setField(field: NotificationField, value: boolean): void {
  * been checked, which is the truth on a machine D13 has not measured yet.
  */
 const deliveryNotice = computed(() => {
-  const report = props.context.capabilities.value.find(
+  const report = reportedCapabilities(props.context).find(
     (entry) => entry.capability === 'system-notification',
   )
   if (report === undefined) return t('settings.pet.capabilityUnknown')

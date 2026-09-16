@@ -110,7 +110,12 @@ pub enum PetTaskState {
     Failed,
     /// The runtime went away mid-run. Never read as done, and never re-sent.
     Interrupted,
-    /// The host cannot be reached, so it cannot say what the task is doing.
+    /// The host cannot say what the task is doing, for either of two reasons: it cannot reach the
+    /// runtime, or the run ended for a reason this version does not know (`outcomes.rs`'s
+    /// `state_from_stop_reason`). One state rather than two because the two are the same *fact* —
+    /// no ending can be stated — and because neither is a success, a failure or an interruption:
+    /// a state added for the second would be a tenth arm every total table would have to decide
+    /// about, including the contract's own.
     Unknown,
 }
 

@@ -177,6 +177,798 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the agent_cancel_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-cancel-run",
+          "markdownDescription": "Enables the agent_cancel_run command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_config_document command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-config-document",
+          "markdownDescription": "Enables the agent_config_document command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_config_edit command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-config-edit",
+          "markdownDescription": "Enables the agent_config_edit command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_credentials_write command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-credentials-write",
+          "markdownDescription": "Enables the agent_credentials_write command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_open_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-open-session",
+          "markdownDescription": "Enables the agent_open_session command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_permission_answer command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-permission-answer",
+          "markdownDescription": "Enables the agent_permission_answer command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_profile_read command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-profile-read",
+          "markdownDescription": "Enables the agent_profile_read command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_profile_write command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-profile-write",
+          "markdownDescription": "Enables the agent_profile_write command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_prompt command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-prompt",
+          "markdownDescription": "Enables the agent_prompt command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_registry_add command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-registry-add",
+          "markdownDescription": "Enables the agent_registry_add command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_registry_read command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-registry-read",
+          "markdownDescription": "Enables the agent_registry_read command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_registry_set_enabled command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-registry-set-enabled",
+          "markdownDescription": "Enables the agent_registry_set_enabled command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_session_capabilities command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-session-capabilities",
+          "markdownDescription": "Enables the agent_session_capabilities command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_session_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-session-snapshot",
+          "markdownDescription": "Enables the agent_session_snapshot command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_set_config_option command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-set-config-option",
+          "markdownDescription": "Enables the agent_set_config_option command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_something_unregistered command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-something-unregistered",
+          "markdownDescription": "Enables the agent_something_unregistered command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-start",
+          "markdownDescription": "Enables the agent_start command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-stop",
+          "markdownDescription": "Enables the agent_stop command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the ai_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-ai-cancel",
+          "markdownDescription": "Enables the ai_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the ai_complete command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-ai-complete",
+          "markdownDescription": "Enables the ai_complete command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the ai_list_models command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-ai-list-models",
+          "markdownDescription": "Enables the ai_list_models command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the clear_trash command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-clear-trash",
+          "markdownDescription": "Enables the clear_trash command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-create-dir",
+          "markdownDescription": "Enables the create_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_new_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-create-new-file",
+          "markdownDescription": "Enables the create_new_file command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-delete-file",
+          "markdownDescription": "Enables the delete_file command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_pet_appearance command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-appearance",
+          "markdownDescription": "Enables the desktop_pet_appearance command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_pet_capabilities command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-capabilities",
+          "markdownDescription": "Enables the desktop_pet_capabilities command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_pet_care_read command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-care-read",
+          "markdownDescription": "Enables the desktop_pet_care_read command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_pet_close_own command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-close-own",
+          "markdownDescription": "Enables the desktop_pet_close_own command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_pet_disable command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-disable",
+          "markdownDescription": "Enables the desktop_pet_disable command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_pet_import_character command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-import-character",
+          "markdownDescription": "Enables the desktop_pet_import_character command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_pet_library command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-library",
+          "markdownDescription": "Enables the desktop_pet_library command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_pet_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-open",
+          "markdownDescription": "Enables the desktop_pet_open command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_pet_open_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-open-settings",
+          "markdownDescription": "Enables the desktop_pet_open_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_pet_open_task command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-open-task",
+          "markdownDescription": "Enables the desktop_pet_open_task command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_pet_read_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-read-settings",
+          "markdownDescription": "Enables the desktop_pet_read_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_pet_set_click_through command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-set-click-through",
+          "markdownDescription": "Enables the desktop_pet_set_click_through command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_pet_set_visible command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-set-visible",
+          "markdownDescription": "Enables the desktop_pet_set_visible command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_pet_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-state",
+          "markdownDescription": "Enables the desktop_pet_state command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_pet_tasks command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-tasks",
+          "markdownDescription": "Enables the desktop_pet_tasks command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_pet_update_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-update-settings",
+          "markdownDescription": "Enables the desktop_pet_update_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_pet_windows command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-windows",
+          "markdownDescription": "Enables the desktop_pet_windows command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the import_attachment command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-import-attachment",
+          "markdownDescription": "Enables the import_attachment command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-dir",
+          "markdownDescription": "Enables the list_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-history",
+          "markdownDescription": "Enables the list_history command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_trash command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-trash",
+          "markdownDescription": "Enables the list_trash command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the load_ai_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-load-ai-key",
+          "markdownDescription": "Enables the load_ai_key command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_folder_dialog command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-folder-dialog",
+          "markdownDescription": "Enables the open_folder_dialog command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pick_image_files command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pick-image-files",
+          "markdownDescription": "Enables the pick_image_files command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the read_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-read-file",
+          "markdownDescription": "Enables the read_file command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the read_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-read-history",
+          "markdownDescription": "Enables the read_history command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the register_vault command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-register-vault",
+          "markdownDescription": "Enables the register_vault command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the rename_entry command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-rename-entry",
+          "markdownDescription": "Enables the rename_entry command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the resolve_media_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-resolve-media-path",
+          "markdownDescription": "Enables the resolve_media_path command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the restore_from_trash command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-restore-from-trash",
+          "markdownDescription": "Enables the restore_from_trash command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the restore_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-restore-history",
+          "markdownDescription": "Enables the restore_history command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_attachment command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-attachment",
+          "markdownDescription": "Enables the save_attachment command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_file_dialog command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-file-dialog",
+          "markdownDescription": "Enables the save_file_dialog command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_master_password command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-master-password",
+          "markdownDescription": "Enables the set_master_password command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the stat_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-stat-file",
+          "markdownDescription": "Enables the stat_file command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the store_ai_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-store-ai-key",
+          "markdownDescription": "Enables the store_ai_key command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the system_accent_color command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-system-accent-color",
+          "markdownDescription": "Enables the system_accent_color command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the take_pending_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-take-pending-open",
+          "markdownDescription": "Enables the take_pending_open command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the unlock_vault command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-unlock-vault",
+          "markdownDescription": "Enables the unlock_vault command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the watch_folder command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-watch-folder",
+          "markdownDescription": "Enables the watch_folder command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the write_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-write-file",
+          "markdownDescription": "Enables the write_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_cancel_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-cancel-run",
+          "markdownDescription": "Denies the agent_cancel_run command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_config_document command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-config-document",
+          "markdownDescription": "Denies the agent_config_document command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_config_edit command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-config-edit",
+          "markdownDescription": "Denies the agent_config_edit command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_credentials_write command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-credentials-write",
+          "markdownDescription": "Denies the agent_credentials_write command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_open_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-open-session",
+          "markdownDescription": "Denies the agent_open_session command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_permission_answer command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-permission-answer",
+          "markdownDescription": "Denies the agent_permission_answer command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_profile_read command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-profile-read",
+          "markdownDescription": "Denies the agent_profile_read command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_profile_write command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-profile-write",
+          "markdownDescription": "Denies the agent_profile_write command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_prompt command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-prompt",
+          "markdownDescription": "Denies the agent_prompt command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_registry_add command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-registry-add",
+          "markdownDescription": "Denies the agent_registry_add command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_registry_read command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-registry-read",
+          "markdownDescription": "Denies the agent_registry_read command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_registry_set_enabled command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-registry-set-enabled",
+          "markdownDescription": "Denies the agent_registry_set_enabled command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_session_capabilities command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-session-capabilities",
+          "markdownDescription": "Denies the agent_session_capabilities command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_session_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-session-snapshot",
+          "markdownDescription": "Denies the agent_session_snapshot command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_set_config_option command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-set-config-option",
+          "markdownDescription": "Denies the agent_set_config_option command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_something_unregistered command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-something-unregistered",
+          "markdownDescription": "Denies the agent_something_unregistered command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-start",
+          "markdownDescription": "Denies the agent_start command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-stop",
+          "markdownDescription": "Denies the agent_stop command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the ai_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-ai-cancel",
+          "markdownDescription": "Denies the ai_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the ai_complete command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-ai-complete",
+          "markdownDescription": "Denies the ai_complete command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the ai_list_models command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-ai-list-models",
+          "markdownDescription": "Denies the ai_list_models command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the clear_trash command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-clear-trash",
+          "markdownDescription": "Denies the clear_trash command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-create-dir",
+          "markdownDescription": "Denies the create_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_new_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-create-new-file",
+          "markdownDescription": "Denies the create_new_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-delete-file",
+          "markdownDescription": "Denies the delete_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_pet_appearance command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-appearance",
+          "markdownDescription": "Denies the desktop_pet_appearance command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_pet_capabilities command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-capabilities",
+          "markdownDescription": "Denies the desktop_pet_capabilities command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_pet_care_read command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-care-read",
+          "markdownDescription": "Denies the desktop_pet_care_read command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_pet_close_own command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-close-own",
+          "markdownDescription": "Denies the desktop_pet_close_own command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_pet_disable command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-disable",
+          "markdownDescription": "Denies the desktop_pet_disable command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_pet_import_character command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-import-character",
+          "markdownDescription": "Denies the desktop_pet_import_character command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_pet_library command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-library",
+          "markdownDescription": "Denies the desktop_pet_library command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_pet_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-open",
+          "markdownDescription": "Denies the desktop_pet_open command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_pet_open_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-open-settings",
+          "markdownDescription": "Denies the desktop_pet_open_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_pet_open_task command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-open-task",
+          "markdownDescription": "Denies the desktop_pet_open_task command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_pet_read_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-read-settings",
+          "markdownDescription": "Denies the desktop_pet_read_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_pet_set_click_through command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-set-click-through",
+          "markdownDescription": "Denies the desktop_pet_set_click_through command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_pet_set_visible command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-set-visible",
+          "markdownDescription": "Denies the desktop_pet_set_visible command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_pet_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-state",
+          "markdownDescription": "Denies the desktop_pet_state command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_pet_tasks command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-tasks",
+          "markdownDescription": "Denies the desktop_pet_tasks command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_pet_update_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-update-settings",
+          "markdownDescription": "Denies the desktop_pet_update_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_pet_windows command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-windows",
+          "markdownDescription": "Denies the desktop_pet_windows command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the import_attachment command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-import-attachment",
+          "markdownDescription": "Denies the import_attachment command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-dir",
+          "markdownDescription": "Denies the list_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-history",
+          "markdownDescription": "Denies the list_history command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_trash command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-trash",
+          "markdownDescription": "Denies the list_trash command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the load_ai_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-load-ai-key",
+          "markdownDescription": "Denies the load_ai_key command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_folder_dialog command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-folder-dialog",
+          "markdownDescription": "Denies the open_folder_dialog command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pick_image_files command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pick-image-files",
+          "markdownDescription": "Denies the pick_image_files command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the read_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-read-file",
+          "markdownDescription": "Denies the read_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the read_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-read-history",
+          "markdownDescription": "Denies the read_history command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the register_vault command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-register-vault",
+          "markdownDescription": "Denies the register_vault command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the rename_entry command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-rename-entry",
+          "markdownDescription": "Denies the rename_entry command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the resolve_media_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-resolve-media-path",
+          "markdownDescription": "Denies the resolve_media_path command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the restore_from_trash command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-restore-from-trash",
+          "markdownDescription": "Denies the restore_from_trash command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the restore_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-restore-history",
+          "markdownDescription": "Denies the restore_history command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_attachment command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-attachment",
+          "markdownDescription": "Denies the save_attachment command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_file_dialog command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-file-dialog",
+          "markdownDescription": "Denies the save_file_dialog command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_master_password command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-master-password",
+          "markdownDescription": "Denies the set_master_password command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stat_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-stat-file",
+          "markdownDescription": "Denies the stat_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the store_ai_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-store-ai-key",
+          "markdownDescription": "Denies the store_ai_key command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the system_accent_color command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-system-accent-color",
+          "markdownDescription": "Denies the system_accent_color command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the take_pending_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-take-pending-open",
+          "markdownDescription": "Denies the take_pending_open command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the unlock_vault command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-unlock-vault",
+          "markdownDescription": "Denies the unlock_vault command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the watch_folder command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-watch-folder",
+          "markdownDescription": "Denies the watch_folder command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the write_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-write-file",
+          "markdownDescription": "Denies the write_file command without any pre-configured scope."
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",

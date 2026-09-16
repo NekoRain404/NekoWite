@@ -18,11 +18,12 @@
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { aiService, startChatCompletion, usageTotal } from '../../ai'
 import { notifyError } from '../../../services/errors'
+import { announce } from '../../../services/announcer'
 import { useSettingsStore } from '../../../stores/settings'
 import { useChatSessionStore } from '../../../stores/chat-session'
 import { t } from '../../../i18n'
-import { buildChatPrompt, type ChatImage, type ChatMessage } from '../services/chat-logic'
-import type { ChatAttachment, PanelMessage } from '../types'
+import { buildChatPrompt, type ChatImage } from '../services/chat-logic'
+import { nextMessageId, type ChatAttachment, type PanelMessage } from '../types'
 import { encodeAttachments } from './use-chat-attachments'
 
 export interface ChatSendOptions {
@@ -44,8 +45,11 @@ export interface ChatSendOptions {
   hasActiveTab: ComputedRef<boolean>
   /** The context block for the active note, and how much of it was left out. */
   buildActiveContext(): Promise<{ text: string; omitted: number }>
-  /** Keep the transcript pinned to its newest turn. */
-  scrollToBottom(): void
+  /** Follow the newest turn. Whether that means *moving* is the transcript's
+   *  decision, not this module's: a reader who has scrolled up to re-read an
+   *  earlier answer keeps their place while the next one streams in (see
+   *  `useChatScroll`). */
+  followNewest(): void
 }
 
 export interface ChatSendModel {
@@ -212,7 +216,12 @@ export function useChatSend(options: ChatSendOptions): ChatSendModel {
       return
     }
 
-    const userMessage: ChatMessage = { role: 'user', content: text, images: imageDataUrls }
+    const userMessage: PanelMessage = {
+      id: nextMessageId(),
+      role: 'user',
+      content: text,
+      images: imageDataUrls,
+    }
     const history = [...options.messages.value, userMessage]
     options.messages.value = [...options.messages.value, userMessage]
     options.syncSession()
@@ -226,7 +235,7 @@ export function useChatSend(options: ChatSendOptions): ChatSendModel {
     const chatPrompt = buildChatPrompt(history.map((m) => ({ role: m.role, content: m.content })), { context })
     options.messages.value = [
       ...options.messages.value,
-      { role: 'assistant', content: '', streaming: true },
+      { id: nextMessageId(), role: 'assistant', content: '', streaming: true },
     ]
     // The placeholder as the PANEL holds it, read back out of the list rather
     // than kept from the push above: `messages` is a reactive ref, so what went
@@ -237,7 +246,7 @@ export function useChatSend(options: ChatSendOptions): ChatSendModel {
     phase.value = 'streaming'
     live = reply
     cancelFn = null
-    options.scrollToBottom()
+    options.followNewest()
 
     const config = settings.config()
     const imageUrls = imageDataUrls.map((img) => img.dataUrl)
@@ -247,14 +256,23 @@ export function useChatSend(options: ChatSendOptions): ChatSendModel {
     void startChatCompletion(config, chatPrompt, imageUrls, {
       onChunk: (chunk) => {
         reply.content = chunk
-        options.scrollToBottom()
+        options.followNewest()
       },
       onDone: (full, usage) => {
         const total = usageTotal(usage)
         if (total !== null) reply.usageTotal = total
         reply.content = full || reply.content
         finalize(mySend, reply, true)
-        options.scrollToBottom()
+        options.followNewest()
+        // The one moment this panel has something to say to a screen reader. The
+        // transcript is `aria-live="off"` - a log whose text grows per chunk must
+        // not be announced token by token (§5.2 「不能每 token 都触发朗读」) - so the
+        // completed turn is announced from here instead, once, by the module that
+        // knows it completed. Only for the send the panel is still on: an outcome
+        // that arrived after the conversation moved is not an answer anyone is
+        // waiting on. Failure needs nothing here, the error toast already
+        // announces itself.
+        if (mySend === sendSeq) announce(t('chat.answerComplete'))
       },
       onError: (msg) => {
         // An answer that already streamed text before the connection died is a

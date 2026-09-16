@@ -21,38 +21,27 @@
 //!   which is the restart §6.3 requires — and reads `pet-contracts/task.ts` and `config.ts` rather
 //!   than a copy of either, so a vocabulary that drifted on the TypeScript side fails here.
 //!
-//! Module inclusion: `desktop_pet/mod.rs` is the integrator's file, so the tree is declared by path
-//! here, the convention `desktop_pet_ipc_test.rs` established, and this target compiles exactly the
-//! source the library will build. `#[path]` on the inline block makes its children resolve inside
-//! `src/desktop_pet/` — the same file's directory, which is the trap worth naming: pointing this at
-//! `desktop_pet/mod.rs` instead would send the children looking for `src/desktop_pet/desktop_pet/`.
+//! Module inclusion: this target binds `desktop_pet` to the **library's** module, so what it
+//! exercises is the tree the app builds rather than a list of files kept in step by hand. It used to
+//! declare that tree by path, and the day `history` gained a child that reaches `crate::storage` was
+//! the day the hand list stopped being able to compile it — the same lesson
+//! `desktop_pet_settings_test.rs` records one target over.
 //!
 //! The cases are divided by behaviour rather than kept in one file (§13.1) — `endings`, `dedup`,
 //! `quiet`, `delivery`, `history` — and they are one target and one command, because a test in a
 //! file nobody runs is not evidence.
 
-// `use nekowite_lib::agent_runtime` is what the projection reaches its own types through while it
-// is compiled outside the library, for the reason `desktop_pet_task_projection_test.rs` states: the
-// same module either way, bound under the path the source already names.
+// The library's own tree, and not a copy of it assembled here. This target used to declare the
+// modules by path — the convention `desktop_pet_ipc_test.rs` established — and that convention has
+// a cost this change ran into: `history` gained a child (`history::store`) that reaches
+// `crate::storage`, which exists in the library and not in a test crate compiling five source files
+// by hand. A target that compiles its own tree is a target that has to be told about every module
+// the tree grows, and it can compile a file the library never does — the defect `module_tree_test`
+// and `desktop_pet_settings_test.rs`'s own header both describe. `use` rather than `pub use`: the
+// name is bound here, under the path every case below already writes, and nothing outside this
+// crate can reach it.
 use nekowite_lib::agent_runtime;
-
-#[path = "../src/desktop_pet"]
-mod desktop_pet {
-    pub mod history;
-    pub mod notification_delivery;
-    pub mod notification_policy;
-    // `history` reads `PetTaskKey`, `PetTaskState` and the `SessionKey` its marks are filed under
-    // from here — one definition of each rather than a copy in every file that indexes a task — so
-    // this target compiles the module too, exactly as the library will.
-    //
-    // The `allow` is this target's and not the module's: a projection is not what the ledger's
-    // tests exercise, so every item in that file is unreachable *here* and the dead-code lint would
-    // name all of them. What it must not be is a `pub use` of the three types or a second copy of
-    // them under a private path: the library reads them through `task_projection`, and a test that
-    // reached a different door would be testing a shape the app does not build.
-    #[allow(dead_code)]
-    pub mod task_projection;
-}
+use nekowite_lib::desktop_pet;
 
 // `#[path]` rather than a bare `mod`, for the reason `desktop_pet_ipc_test.rs` gives: this target's
 // root is `tests/desktop_pet_notification_test.rs`, so a plain `mod endings;` would resolve to

@@ -23,27 +23,35 @@
 //! not settled by anything this host can see. That is why the conflict test asserts that *both*
 //! directories are reported and that neither is nominated as the winner.
 //!
-//! Module inclusion: `agent_runtime/mod.rs` does not declare `skills` — that registration belongs to
-//! whoever next owns that file — so the module is declared here by path. It is included on its own,
-//! with no sibling modules, because `skills.rs` reaches for nothing but `std`: the profile and
-//! adapter layers are not this file's dependencies, and a module that needs no tree is a module a
-//! test cannot accidentally test a different copy of.
+//! Where a scope is found, whether this launch reads it, and what the engine does with a skill in
+//! it is `agent_skills_scope_test.rs`'s. That is one of `skills.rs`'s three responsibilities —
+//! scope, discovery, import — and it moved out when this file reached the 800-line budget for a test
+//! target (§13.1: 按行为域拆分). The tree below is still the whole of `skills.rs`; only the tests
+//! about *which directories are sources* live next door.
+//!
+//! Module inclusion: the module is declared here by path rather than through `agent_runtime/mod.rs`,
+//! which is the convention every target in this directory uses. It is included on its own, with no
+//! sibling modules, because `skills.rs` reaches for nothing but `std`: the profile and adapter
+//! layers are not this file's dependencies, and a module that needs no tree is a module a test
+//! cannot accidentally test a different copy of.
 //!
 //! Scratch directories live under this crate's `target/`, which is inside the repository and
 //! git-ignored: §3.2 forbids a development profile from being the developer's own, and `$HOME` is
 //! never read anywhere in this file.
 
+// The re-exports `skills.rs` writes for the library are unused in a copy that reaches only part of
+// it, which is what a `#[path]`-included module looks like from one target's side.
 #[path = "../src/agent_runtime/skills.rs"]
+#[allow(unused_imports)]
 mod skills;
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use skills::{
-    opencode_scopes, DisableMechanism, Overwrite, ScopeOwner, SkillError, SkillLibrary, SkillScope,
-    SkillImport, SkillPreview, SkillSurface, SkillView, DISABLE_CLAUDE_CODE_SKILLS,
-    DISABLE_EXTERNAL_SKILLS,
-    MAX_DESCRIPTION_CHARS, MAX_IMPORTED_FILE_BYTES, SKILL_FILE_NAME,
+    DisableMechanism, Overwrite, ScopeOwner, SkillError, SkillLibrary, SkillScope, SkillImport,
+    SkillPreview, SkillSurface, SkillView, DISABLE_CLAUDE_CODE_SKILLS, MAX_DESCRIPTION_CHARS,
+    MAX_IMPORTED_FILE_BYTES, SKILL_FILE_NAME,
 };
 
 /// A scratch tree inside the repository. Removed on entry, so a previous run's leftovers cannot be
@@ -634,6 +642,7 @@ fn an_action_outside_the_scope_it_names_is_refused() {
         owner: ScopeOwner::Managed,
         conflicts: Vec::new(),
         surface: SkillSurface::Offered,
+        suppressed_by: None,
         disable: DisableMechanism::PerSkill,
     };
     assert_eq!(
@@ -643,99 +652,7 @@ fn an_action_outside_the_scope_it_names_is_refused() {
     assert!(elsewhere.is_dir(), "a refused action moved nothing");
 }
 
-// ── 发现：来源、作用范围与冲突 ───────────────────────────────────────────────────────────────
-
-/// The scope list is the engine's own, and it is built from the roots a caller has rather than from
-/// a hard-coded home. A `user-config` profile has no configuration root to point at, and `None`
-/// says so rather than an empty path that would scan the filesystem's root.
-#[test]
-fn the_engine_scopes_are_built_from_the_roots_a_caller_has() {
-    let roots = scratch("scopes");
-    let home = roots.join("home");
-    let project = roots.join("project");
-    let declared = vec![roots.join("declared")];
-
-    let owned = opencode_scopes(Some(&roots.join("config")), &home, &project, &declared, &[]);
-    assert_eq!(
-        owned.iter().map(|scope| scope.id.as_str()).collect::<Vec<_>>(),
-        vec![
-            "engine-global",
-            "engine-project",
-            "claude-code",
-            "agents-directory",
-            "declared-0"
-        ]
-    );
-    assert_eq!(owned[0].root, roots.join("config/skills"));
-    assert_eq!(owned[0].owner, ScopeOwner::Managed);
-    assert_eq!(owned[1].root, project.join(".opencode/skills"));
-    assert_eq!(owned[2].root, home.join(".claude/skills"));
-    assert_eq!(owned[3].root, home.join(".agents/skills"));
-    assert_eq!(owned[4].root, roots.join("declared"));
-    // Nothing this host can throw for the two it does not own: no per-skill switch, and the two
-    // foreign directories have only the engine's own.
-    assert_eq!(owned[1].disable, DisableMechanism::None);
-    assert_eq!(owned[4].disable, DisableMechanism::None);
-
-    // The library is built from exactly this list and keeps the store it was given, which is what
-    // the IPC layer reads when it answers the page.
-    let library = SkillLibrary::new(owned.clone(), roots.join("store")).expect("library");
-    assert_eq!(library.scopes().len(), 5);
-    assert_eq!(library.store(), roots.join("store"));
-
-    let reused = opencode_scopes(None, &home, &project, &[], &[]);
-    assert_eq!(
-        reused.iter().map(|scope| scope.id.as_str()).collect::<Vec<_>>(),
-        vec!["engine-project", "claude-code", "agents-directory"],
-        "a profile reusing the user's configuration has no global directory this host may write in"
-    );
-}
-
-/// The engine's own switches, as facts a row can carry: `OPENCODE_DISABLE_EXTERNAL_SKILLS` stops
-/// both foreign directories being read, the narrower one only `.claude`.
-#[test]
-fn the_engine_switches_decide_which_foreign_directories_are_read() {
-    let roots = scratch("suppressed");
-    let home = roots.join("home");
-    let project = roots.join("project");
-    for (name, description) in [("from-claude", "d"), ("from-agents", "d")] {
-        let root = if name == "from-claude" {
-            home.join(".claude/skills")
-        } else {
-            home.join(".agents/skills")
-        };
-        write_skill(&root, name, name, Some(description));
-    }
-
-    let both = opencode_scopes(None, &home, &project, &[], &[DISABLE_EXTERNAL_SKILLS]);
-    let library = SkillLibrary::new(both, roots.join("store")).expect("library");
-    let found = library.discover().expect("discover");
-    assert_eq!(found.len(), 2);
-    for view in &found {
-        assert_eq!(
-            view.surface,
-            SkillSurface::Suppressed {
-                variable: DISABLE_EXTERNAL_SKILLS
-            },
-            "{}",
-            view.name
-        );
-    }
-
-    // The narrow switch: `.claude` is not read, `.agents` still is.
-    let narrow = opencode_scopes(None, &home, &project, &[], &[DISABLE_CLAUDE_CODE_SKILLS]);
-    let library = SkillLibrary::new(narrow, roots.join("store")).expect("library");
-    let found = library.discover().expect("discover");
-    let claude = found.iter().find(|view| view.name == "from-claude").expect("claude");
-    let agents = found.iter().find(|view| view.name == "from-agents").expect("agents");
-    assert_eq!(
-        claude.surface,
-        SkillSurface::Suppressed {
-            variable: DISABLE_CLAUDE_CODE_SKILLS
-        }
-    );
-    assert_eq!(agents.surface, SkillSurface::Offered);
-}
+// ── 发现：冲突 ───────────────────────────────────────────────────────────────────────────────
 
 /// Two skills with one name are a conflict and nothing more.
 ///

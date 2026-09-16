@@ -24,6 +24,17 @@
 
       Scenario is chosen by `?scenario=`, because the document has to exist
       before the app reads it and a WebDriver client cannot hand one in later.
+
+      Two further query parameters, both additive (absent, the page behaves
+      exactly as it did before they existed):
+
+        ?words=<n>   sizes the `doc` scenario's document by word count, so the
+                     same probe can be run at several sizes and the result read
+                     as a curve rather than a point;
+        ?agent=1     switches the right rail to the agent panel and stands in
+                     for the agent IPC — the commands `tauri-agent/ipc.ts`
+                     calls and the `agent-event` channel it listens on — so a
+                     streamed answer can be driven into the real panel.
     -->
     <script>
       ;(function () {
@@ -32,7 +43,8 @@
         // measurement, which is the failure `vite.frozen.config.ts` exists to
         // prevent on the server side.
         localStorage.clear()
-        const scenario = new URLSearchParams(location.search).get('scenario') || 'long'
+        const params = new URLSearchParams(location.search)
+        const scenario = params.get('scenario') || 'long'
 
         const PARAGRAPH =
           'The quick brown fox jumps over the lazy dog, and the measurement it leaves behind ' +
@@ -43,8 +55,34 @@
         const long = ['---', 'title: Long', '---', '', '# Note with a picture far down the page', '']
         for (let i = 0; i < 90; i++) long.push(PARAGRAPH + `(paragraph ${i + 1})`, '')
 
+        /**
+         * A document of a given size, built by WORD COUNT rather than by
+         * paragraph count: "长文档" is measured in words, and a fixture that
+         * hits its target by counting paragraphs would drift from the number it
+         * claims the moment the paragraph text changed.
+         *
+         * Headings every 24 paragraphs and a fenced code block now and then, so
+         * the document is a document and not 3 000 identical lines — the
+         * rendered parser's cost depends on the node mix, and a fixture that is
+         * one node type measures one node type.
+         */
+        function documentOfWords(target) {
+          const perParagraph = PARAGRAPH.trim().split(/\s+/).length
+          const count = Math.max(1, Math.round(target / perParagraph))
+          const out = ['---', 'title: Long document', '---', '', `# Long document (${target} words)`, '']
+          for (let i = 0; i < count; i++) {
+            if (i > 0 && i % 24 === 0) out.push(`## Section ${i / 24 + 1}`, '')
+            out.push(PARAGRAPH + `(paragraph ${i + 1})`, '')
+            if (i > 0 && i % 48 === 0) {
+              out.push('```ts', `const marker${i} = ${i}`, '```', '')
+            }
+          }
+          return { text: out.join('\n'), paragraphs: count, words: count * perParagraph }
+        }
+
+        const long_ = long.join('\n')
         const docs = {
-          long: long.join('\n'),
+          long: long_,
           plain: [
             '---',
             'title: Plain',
@@ -60,10 +98,14 @@
             '![pic](attachments/2026-09/pic.png){width=120}',
           ].join('\n'),
         }
-        const long_ = docs.long
         // The image is the LAST node, so the tail space below it is the pane's
         // own pad and nothing else — which is what the tail-space probe reads.
         docs.long = [long_, '![pic](attachments/2026-09/pic.png){width=120}'].join('\n')
+
+        // The sized document. `words` is absent in every pre-existing run, so
+        // this scenario is only ever reached when a caller asks for it.
+        const sized = documentOfWords(Number(params.get('words') || '2000'))
+        docs.doc = sized.text
 
         // Two long notes, for the one measurement a single note cannot take:
         // whether a scroll offset survives from one document into the next. The
@@ -93,6 +135,71 @@
         const registry = {}
         window.__saves = []
         window.__NEKO_PICK_QUEUE__ = []
+
+        // ---- The agent IPC stand-in ----------------------------------------
+        //
+        // Built only when `?agent=1`. It is the smallest thing that satisfies
+        // `tauri-agent/ipc.ts` and `agent-rail.ts`: a runtime handle, a session,
+        // an empty snapshot, and a live `agent-event` channel. The frames that
+        // stream into the panel are written by `__NEKO_AGENT__.push`, which is
+        // how a probe drives the panel without a Rust process — the mapping,
+        // the reducer, the store and the DOM are all the app's own.
+        const agentOn = params.get('agent') === '1'
+        const AGENT = {
+          agentId: 'probe-agent',
+          profileId: 'probe-profile',
+          runtimeEpoch: 'probe-epoch-1',
+          sessionId: 'probe-session-1',
+        }
+        /** Registered `agent-event` handlers, keyed by the id
+         *  `transformCallback` answered with. The app registers exactly one. */
+        const agentListeners = new Map()
+        let agentEventSeq = 0
+        let agentRun = null
+
+        const agentIdentity = () => ({
+          agentId: AGENT.agentId,
+          profileId: AGENT.profileId,
+          runtimeEpoch: AGENT.runtimeEpoch,
+          vaultId: VAULT,
+          sessionId: AGENT.sessionId,
+        })
+
+        window.__NEKO_AGENT__ = {
+          identity: agentIdentity,
+          /** Every frame this page pushed, so a probe can report what it sent. */
+          sent: 0,
+          /**
+           * One host frame, in the shape `readFrameShape` validates and
+           * `mapHostFrame` maps. `kind` and `payload` are the contract's, not
+           * the runtime's: this stands in for the Rust side, which is what
+           * normalizes.
+           */
+          push: function (kind, payload, runId) {
+            agentEventSeq += 1
+            const frame = {
+              ...agentIdentity(),
+              runId: runId === undefined ? agentRun : runId,
+              sequence: agentEventSeq,
+              kind: kind,
+              payload: payload,
+            }
+            window.__NEKO_AGENT__.sent += 1
+            for (const id of agentListeners.values()) {
+              registry[id]({ event: 'agent-event', id: agentEventSeq, payload: frame })
+            }
+            return agentEventSeq
+          },
+          /** The host's run id, once a prompt has been answered. */
+          runId: function () {
+            return agentRun
+          },
+          /**
+           * The word a chunk carries. Constant, so a chunk's own size is not a
+           * variable in a measurement of how the panel handles chunks.
+           */
+          chunk: 'streaming ',
+        }
 
         window.__TAURI_INTERNALS__ = {
           invoke: async function (cmd, args) {
@@ -129,7 +236,61 @@
             if (cmd === 'open_folder_dialog') return null
             if (cmd === 'save_file_dialog') return `${VAULT}/untitled.md`
             if (cmd === 'list_trash') return []
-            if (cmd === 'plugin:event|listen') return ++n
+            if (cmd === 'plugin:event|listen') {
+              // `listen()` passes the id `transformCallback` minted, and the
+              // host answers an event id. Only the agent channel is kept: the
+              // app's other listeners are not this harness's business, and the
+              // existing probes depend on `plugin:event|listen` being inert.
+              const eventId = ++n
+              if (agentOn && args.event === 'agent-event') agentListeners.set(eventId, args.handler)
+              return eventId
+            }
+            if (cmd === 'plugin:event|unlisten') {
+              agentListeners.delete(args.eventId)
+              return undefined
+            }
+            if (!agentOn) return undefined
+            if (cmd === 'agent_start') {
+              return {
+                agentId: AGENT.agentId,
+                profileId: AGENT.profileId,
+                runtimeEpoch: AGENT.runtimeEpoch,
+              }
+            }
+            if (cmd === 'agent_open_session') {
+              return { sessionId: AGENT.sessionId, configOptions: [], modelOptionId: null }
+            }
+            if (cmd === 'agent_session_snapshot') {
+              return {
+                identity: agentIdentity(),
+                state: 'ready',
+                runId: null,
+                sequence: 0,
+                events: [],
+                permissions: [],
+              }
+            }
+            if (cmd === 'agent_prompt') {
+              agentRun = 'probe-run-1'
+              return agentRun
+            }
+            if (cmd === 'agent_cancel_run') return undefined
+            if (cmd === 'agent_permission_answer') return undefined
+            if (cmd === 'agent_set_config_option') return undefined
+            if (cmd === 'agent_session_capabilities') return []
+            if (cmd === 'agent_stop') return undefined
+            if (cmd === 'agent_registry_read') {
+              return {
+                entries: [
+                  {
+                    agentId: AGENT.agentId,
+                    displayName: 'Probe engine',
+                    enabled: true,
+                    profileId: AGENT.profileId,
+                  },
+                ],
+              }
+            }
             return undefined
           },
           convertFileSrc: function (p) {
@@ -146,7 +307,17 @@
         localStorage.setItem('nekowite.vault', VAULT)
         localStorage.setItem('nekowite.locale', 'en')
         localStorage.setItem('nekowite.settings.autosaveInterval', 'off')
-        window.__NEKO_HARNESS__ = { scenario: scenario, note: NAME, vault: VAULT }
+        // The rail's switch. Off by default in the product (an engine has to be
+        // there for the panel to be honest about), on here because the panel is
+        // what this scenario is measuring.
+        if (agentOn) localStorage.setItem('nekowite.agent.panel', 'true')
+        window.__NEKO_HARNESS__ = {
+          scenario: scenario,
+          note: NAME,
+          vault: VAULT,
+          agent: agentOn,
+          document: scenario === 'doc' ? sized : null,
+        }
       })()
     </script>
   </head>

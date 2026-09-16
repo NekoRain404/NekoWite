@@ -33,6 +33,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use super::notification_policy::NotificationPreferences;
+
 pub mod fields;
 pub mod store;
 pub mod values;
@@ -201,6 +203,26 @@ impl PetSettingsLoad {
             PetSettingsLoad::ReadOnly { .. } => None,
         }
     }
+}
+
+/// The notification switches a stored record holds, as §6.3's ledger reads them.
+///
+/// The mapping is a serde round-trip rather than seven `value("…")` calls, because the field names
+/// have exactly one spelling — `NotificationPreferences`'s own rename, which
+/// `desktop_pet_notification_test` pins against `pet-contracts/config.ts` — and a second spelling
+/// written out by hand here would be a switch that silently stopped deciding the day one of the two
+/// moved. The types do the rest: this is the one place the settings schema and the ledger meet, and
+/// neither side has to name the other's shape.
+///
+/// `None` when the record is not the notification domain's, or when its values are not switches
+/// this build can read — a file a user edited into a different shape. The caller keeps the switches
+/// it has rather than deciding a notice from half a record, which is the same choice `read_domain`
+/// makes one layer down when it answers `unreadable` instead of a record.
+pub fn notification_preferences(record: &PetSettingsRecord) -> Option<NotificationPreferences> {
+    if record.domain != PetSettingsDomain::Notification {
+        return None;
+    }
+    serde_json::from_value(Value::Object(record.values.clone())).ok()
 }
 
 /// Why a read answered with this build's defaults rather than a record.

@@ -36,7 +36,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::config_edit::{self, ConfigDocument, ConfigEdit, ConfigError, Revision, WriteOutcome};
@@ -170,10 +170,45 @@ pub enum ConfigSource {
     /// A root this host sets, derived from what the launch environment actually gets rather than
     /// from a list kept beside it.
     Injected { variable: String, path: PathBuf },
-    /// A source this host does not set and does not claim to have closed. The engine's own
-    /// discovery rules are the engine's (§8.1: `OPENCODE_CONFIG_DIR` is not a complete isolation
-    /// switch, and pretending otherwise is the claim the plan forbids).
-    EngineDiscovery { what: &'static str },
+    /// A merge this host does not set and does not claim to have closed. The engine's own discovery
+    /// rules are the engine's (§8.1: `OPENCODE_CONFIG_DIR` is not a complete isolation switch, and
+    /// pretending otherwise is the claim the plan forbids).
+    EngineDiscovery { what: DiscoverySurface },
+}
+
+/// Which of the engine's own merges this profile still takes.
+///
+/// Named one at a time rather than summed up in a sentence, because the sentence this replaces grew
+/// false the moment the isolation was measured. It said the engine's own discovery was 「not claimed
+/// to have been turned off」 — true of the configuration roots, and untrue of the two compatible
+/// `skills` directories, which the app-managed launch had by then stopped reading. A page that
+/// renders a summary cannot be corrected when one clause of it changes; a page that renders a list
+/// of surfaces can, and each arm here is one that was measured.
+///
+/// **The wording is not here.** Each arm serializes to a key the page's own copy is looked up by
+/// (carried across the boundary as `what`, the field name from when it held prose — see
+/// `commands/agent_settings.rs`), so the sentences a user reads live in the i18n catalogue with
+/// every other sentence, and a second English wording in Rust cannot drift from them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+// The kebab-case spelling `ConfigMode::id` uses, so every id that crosses this boundary is written
+// the one way; the field keeps `commands/agent_settings.rs` unchanged by serializing *into* the
+// shape it already sends.
+#[serde(rename_all = "kebab-case")]
+pub enum DiscoverySurface {
+    /// Nothing narrower is worth naming: this profile *is* the user's own installation, so the
+    /// engine reads what it always reads and this host enumerates none of it.
+    Reused,
+    /// The configuration of the folder a session runs in and of every folder above it — a vault's
+    /// own providers and permission rules, merged into this profile (measured). The engine honours
+    /// `OPENCODE_DISABLE_PROJECT_CONFIG` for exactly this merge and this host does not set it:
+    /// which project configuration an engine reads is a fact about that engine (§3.4), and reading
+    /// the vault's own configuration may be wanted. Reported, not decided here.
+    Project,
+    /// Linux's managed configuration root, `/etc/opencode`, merged at global precedence: a system
+    /// administrator's providers and permission rules reach every profile, and no supported switch
+    /// closes it. Reported because a page that drew only what this host sets would leave a reader
+    /// to assume nothing else was there.
+    Managed,
 }
 
 /// Where a profile's credentials are, stated rather than implied.
@@ -529,13 +564,26 @@ impl Profile {
     /// The sources the engine will actually read, as far as this host knows them.
     ///
     /// The injected half is derived from [`isolated_profile_env`] — the same function the launch
-    /// uses — so the report cannot drift from what the engine is given, and the second entry is the
-    /// part §8.1 requires be said out loud: these roots are what this host sets, and they do not
-    /// close the engine's own discovery.
+    /// uses — so the report cannot drift from what the engine is given, and the rest is the part
+    /// §8.1 requires be said out loud: these roots are what this host sets, and they do not close
+    /// the engine's own discovery.
+    ///
+    /// What the launch injects and what this lists are not quite the same set, and the difference
+    /// is stated rather than smoothed over: [`isolated_profile_env`] also carries one *switch* —
+    /// `OPENCODE_DISABLE_EXTERNAL_SKILLS=1`, the engine's own way of stopping its path-driven scan
+    /// of `.claude` and `.agents` — and a switch is not a source. [`ConfigSource::Injected`] is a
+    /// root, a page renders it as a directory, and reporting `1` as one would be the kind of
+    /// confident nonsense §8.1 is about. A switch is a fact about a *scope* rather than about a
+    /// configuration root, and the readout that carries it is the skills one
+    /// (`skills::SkillScope::suppressed_by`); this list keeps the roots, and names the merges that
+    /// remain below rather than summarizing them.
     pub fn sources(&self) -> Vec<ConfigSource> {
         let mut sources: Vec<ConfigSource> = match self.fields.mode {
             ConfigMode::AppManaged => isolated_profile_env(&self.root)
                 .into_iter()
+                // An absolute path is what a root is; everything else the launch carries is a
+                // value, and the readout has no place to put one.
+                .filter(|(_, value)| Path::new(value).is_absolute())
                 .map(|(variable, path)| ConfigSource::Injected {
                     variable,
                     path: PathBuf::from(path),
@@ -543,11 +591,27 @@ impl Profile {
                 .collect(),
             ConfigMode::UserConfig => Vec::new(),
         };
-        sources.push(ConfigSource::EngineDiscovery {
-            what: "the engine's own project-level and global configuration, which this host does \
-                   not set and does not claim to have turned off",
-        });
+        sources.extend(
+            self.discovery_surfaces()
+                .iter()
+                .map(|surface| ConfigSource::EngineDiscovery { what: *surface }),
+        );
         sources
+    }
+
+    /// The engine's own merges this profile still takes, one per surface (see
+    /// [`DiscoverySurface`]).
+    ///
+    /// An isolated profile narrows the engine's discovery to exactly the merges no injected root
+    /// reaches, and those are the ones a page has to state — leaving them out is what would let a
+    /// reader take the injected list for the whole of it. A profile reusing the user's own
+    /// installation narrows nothing, and naming two of the merges *it* keeps would read as though
+    /// the rest had been closed.
+    fn discovery_surfaces(&self) -> &'static [DiscoverySurface] {
+        match self.fields.mode {
+            ConfigMode::AppManaged => &[DiscoverySurface::Project, DiscoverySurface::Managed],
+            ConfigMode::UserConfig => &[DiscoverySurface::Reused],
+        }
     }
 
     fn credential_storage(&self) -> CredentialStorage {

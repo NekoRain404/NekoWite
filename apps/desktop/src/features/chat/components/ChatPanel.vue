@@ -13,7 +13,7 @@
  *
  * Store access lives in the composables, never here (§10.2).
  */
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import ChatComposer from './ChatComposer.vue'
 import ChatSessionBar from './ChatSessionBar.vue'
 import ChatTranscript from './ChatTranscript.vue'
@@ -39,12 +39,20 @@ const session = useChatSession({
 
 const note = useChatContext()
 
-/** The transcript owns the scroll element and pins it to the newest turn; the
- *  send path asks it to through `scrollToBottom`. */
+/** The transcript owns the scroll element and the reader's place in it; the send
+ *  path asks it to follow through `followNewest`, and the moves that replace the
+ *  conversation ask it for `jumpToEnd` (see `useChatScroll`). */
 const transcript = ref<InstanceType<typeof ChatTranscript> | null>(null)
 
-function scrollToBottom(): void {
-  transcript.value?.scrollToBottom()
+function followNewest(): void {
+  transcript.value?.follow()
+}
+
+/** Show a transcript at its newest turn. Only for a conversation that is being
+ *  opened or replaced - a reader who scrolled up inside the one they are reading
+ *  stays where they are. */
+function jumpToEnd(): void {
+  transcript.value?.jumpToEnd()
 }
 
 const commands = useChatCommands({
@@ -57,7 +65,7 @@ const commands = useChatCommands({
   attachContext: note.attachContext,
   hasActiveTab: note.hasActiveTab,
   buildActiveContext: note.buildActiveContext,
-  scrollToBottom,
+  followNewest,
 })
 
 const { messages, sessions, activeId, storageWarningText, releaseDrafts } = session
@@ -88,7 +96,7 @@ const hasMessages = computed(() => messages.value.length > 0)
 function leaveTo(id: string | null): void {
   stopIfStreaming()
   session.switchToSession(id)
-  scrollToBottom()
+  jumpToEnd()
 }
 
 function newSession(): void {
@@ -104,7 +112,7 @@ function onSessionChange(id: string): void {
 function deleteActiveSession(): void {
   stopIfStreaming()
   session.deleteActiveSession()
-  scrollToBottom()
+  jumpToEnd()
 }
 
 function onComposerKeydown(e: KeyboardEvent): void {
@@ -116,6 +124,15 @@ function onComposerKeydown(e: KeyboardEvent): void {
     void send()
   }
 }
+
+/** Opening the rail mounts this panel fresh (`v-if` in the shell), so the
+ *  transcript starts at the top of whatever conversation is being restored.
+ *  Registered after `useChatSession`, whose own mount hook is what loads those
+ *  turns, and after the child that owns the scroll element - so by here there is
+ *  a transcript to move and something in it to move to. */
+onMounted(() => {
+  jumpToEnd()
+})
 
 onBeforeUnmount(() => {
   // A stream can still be running when the rail closes (`v-if` in AppShell

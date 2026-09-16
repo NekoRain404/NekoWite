@@ -13,7 +13,11 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, type App as VueApp } from 'vue'
-import { PET_SETTINGS_PAGES, type PetGateway } from '../../../platform/gateways/pet-contracts'
+import {
+  PET_SETTINGS_PAGES,
+  type PetGateway,
+  type PetSettingsPage,
+} from '../../../platform/gateways/pet-contracts'
 import { createMemoryPetGateway } from '../../../platform/gateways/memory-pet'
 import DesktopPetSettingsSection from './DesktopPetSettingsSection.vue'
 
@@ -41,8 +45,17 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-/** Mount the section the way a settings panel would: one element, one gateway prop. */
-async function mountSection(properties: { gateway: PetGateway | null; page?: string }): Promise<VueApp> {
+/**
+ * Mount the section the way a settings panel would: one element, one gateway prop.
+ *
+ * `page` is §5.1's own union rather than `string` — the same one the container's prop is declared
+ * with — because a mount that could name any string would be a mount that proves nothing about
+ * the pages this build offers.
+ */
+async function mountSection(properties: {
+  gateway: PetGateway | null
+  page?: PetSettingsPage
+}): Promise<VueApp> {
   const host = document.createElement('div')
   document.body.appendChild(host)
   const app = createApp(() => h(DesktopPetSettingsSection, properties))
@@ -69,7 +82,7 @@ async function open(page: string): Promise<void> {
   await nextTick()
 }
 
-function section(page?: string): { gateway: PetGateway; page?: string } {
+function section(page?: PetSettingsPage): { gateway: PetGateway; page?: PetSettingsPage } {
   return page
     ? { gateway: createMemoryPetGateway({ visible: true }), page }
     : { gateway: createMemoryPetGateway({ visible: true }) }
@@ -121,7 +134,7 @@ describe('every page of §5.1 is reachable through this one element', () => {
     const app = createApp(() =>
       h(DesktopPetSettingsSection, {
         ...section(),
-        'onUpdate:page': (page: string) => moved.push(page),
+        'onUpdate:page': (page: PetSettingsPage) => moved.push(page),
       }),
     )
     app.mount(host)

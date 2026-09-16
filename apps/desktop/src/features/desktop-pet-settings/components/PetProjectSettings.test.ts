@@ -16,6 +16,7 @@ import {
   PET_NUMBER_RULES,
   PET_SETTINGS_DEFAULTS,
   PET_SETTINGS_SCHEMA_VERSION,
+  type PetGateway,
 } from '../../../platform/gateways/pet-contracts'
 import {
   createMemoryPetGateway,
@@ -71,9 +72,11 @@ async function mount(context: PetSettingsContext): Promise<void> {
   await settle()
 }
 
-async function storedProject(
-  gateway: MemoryPetGateway,
-): Promise<typeof PET_SETTINGS_DEFAULTS.project> {
+/**
+ * The parameter is the port rather than the double, for the reason `storedCare` in the care
+ * page's suite states: this reads one domain and never reaches for the double's own protocol.
+ */
+async function storedProject(gateway: PetGateway): Promise<typeof PET_SETTINGS_DEFAULTS.project> {
   const loaded = await gateway.readSettings('project')
   if (loaded.status !== 'current') throw new Error(`expected current, got ${loaded.status}`)
   const record = petSettingsRecordFor(loaded.record, 'project')

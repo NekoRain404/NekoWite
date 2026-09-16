@@ -165,11 +165,66 @@ pub fn env_pairs(pairs: impl IntoIterator<Item = (String, String)>) -> Vec<(Stri
 }
 
 /// The environment an engine gets when it must not touch the developer's own
-/// profile: `HOME` and the XDG roots all point into `root`.
+/// profile: `HOME` and the four XDG roots all point into `root`.
 ///
 /// Plan §10.4 forbids exercising the real OpenCode profile, and the engine
 /// writes config, state and logs under these roots the moment it starts. Used
 /// by the real-engine test, where there is a real profile to protect.
+///
+/// # What this closes, and what it does not (measured)
+///
+/// §8.1 refused to let 「所有全局发现已关闭」 be asserted without evidence, and P0
+/// §4 listed the profile's isolation as unverified. It has now been measured
+/// against the pinned engine, by planting a decoy provider in every place the
+/// engine's discovery looks and reading back what `session/new` advertised —
+/// `tests/agent_profile_isolation_test.rs` is that measurement, and it fails if
+/// either half of what follows changes.
+///
+/// **Closed, and by these roots.** The engine resolves its own home from
+/// `$HOME`, so `$HOME/.config/opencode`, `$HOME/.opencode`, `$HOME/.claude` and
+/// `$HOME/.agents` are all read from inside `root`; `XDG_CONFIG_HOME` moves the
+/// global configuration root with them. The decoys planted at those relative
+/// paths are discovered, which is the positive control — the same files at the
+/// same paths stop being reachable when `HOME` is left alone. The developer's
+/// real profile, real configuration and real compatible-tool directories are
+/// therefore not read by an engine launched this way.
+///
+/// **Closed a second time, because the roots alone did not close it.**
+/// `OPENCODE_DISABLE_EXTERNAL_SKILLS=1` is set here for one measured reason:
+/// the engine reaches `.claude` and `.agents` by a *second* route that no
+/// environment root can move. Alongside reading them under `$HOME`, it walks up
+/// from the working directory — to the worktree, and past it where there is
+/// none — and reads `skills/**` from every `.claude` and `.agents` it passes.
+/// That walk is driven by the path, not by the environment, so a vault anywhere
+/// under the user's home directory drags the user's real `~/.claude/skills` into
+/// this profile as agent commands: measured, the same launch discovered 9
+/// commands from a working directory inside a checkout and 43 (3 built in, 38
+/// the developer's own, in-profile decoys beside them) from one under the home
+/// directory, with nothing changed but the path. This is the leak the README of
+/// this module is about — it is the developer's *own profile* being read, not a
+/// project's configuration — which is why the switch is here and not in an
+/// adapter. The engine's own documentation names it for exactly this, and
+/// `skills.rs` already records it as the one whole-scope switch that exists.
+///
+/// **Open, and deliberately not closed here.** The same walk also reads a
+/// project's `opencode.json` and `.opencode/` directories, and every decoy
+/// planted along it is discovered: a vault contributes its providers and its
+/// permission rules to this profile. `OPENCODE_DISABLE_PROJECT_CONFIG=1` closes
+/// that, and is not set here for §3.4's reason rather than for convenience —
+/// which project configuration an engine merges is a fact about that engine, so
+/// it belongs in `AgentRegistration::env_extra` and `adapters/opencode.rs`,
+/// beside the invocation and the config format. Nothing about the user's own
+/// profile is at stake in it, which is what separates it from the switch above.
+///
+/// **Open, and not closable by any supported variable.** On Linux the engine
+/// merges `opencode.json`/`opencode.jsonc` from its managed configuration root,
+/// `/etc/opencode`, at global precedence. Nothing turns that off. The engine's
+/// one way to move it is `OPENCODE_TEST_MANAGED_CONFIG_DIR`, a hook named for
+/// the engine's own test suite; pointing it elsewhere from this app would
+/// override a system administrator's policy rather than protect a user's
+/// profile, and a machine with no `/etc/opencode` has nothing to close. So this
+/// surface is left where the engine put it and named here instead of being
+/// implied shut.
 pub fn isolated_profile_env(root: &std::path::Path) -> Vec<(String, String)> {
     let at = |name: &str| (name.to_string(), root.join(name).to_string_lossy().into_owned());
     vec![
@@ -177,7 +232,23 @@ pub fn isolated_profile_env(root: &std::path::Path) -> Vec<(String, String)> {
         at("XDG_CONFIG_HOME"),
         at("XDG_DATA_HOME"),
         at("XDG_CACHE_HOME"),
+        // Where the engine's `locks/` directory lands (`<this>/opencode/locks/`). The name
+        // promises a lock and the thing is not one, which matters here because this line is
+        // what decides where it lands: each entry is a directory holding a `meta.json` (token,
+        // pid, hostname) and an empty `heartbeat`, taken with no kernel lock and refused by
+        // nobody. Two instances share one profile root, so they share this directory too —
+        // measured in `two-instances-shared-state.md` §2, where two and at one point three
+        // engines ran on one root with a marker present and a `SIGKILL`ed engine left one
+        // behind with its dead pid. The only mutual exclusion between two engines is SQLite's
+        // own, inside the database; nothing may be read out of this directory as protection.
         at("XDG_STATE_HOME"),
+        // The one entry here that is not a root, and the only one that could be:
+        // see the doc comment. It is what stops the engine's path-driven walk
+        // from reaching the user's real `.claude` and `.agents` directories.
+        (
+            "OPENCODE_DISABLE_EXTERNAL_SKILLS".to_string(),
+            "1".to_string(),
+        ),
     ]
 }
 

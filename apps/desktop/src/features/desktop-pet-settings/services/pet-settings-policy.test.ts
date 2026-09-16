@@ -428,8 +428,12 @@ describe('the write decision: revision', () => {
   })
 
   it('refuses a write presented against a record of another domain', () => {
+    // A record the store could actually hold for `character`: the *domain* is what this case is
+    // about, so the values are the character defaults with one changed rather than the two fields
+    // that happened to be enough to say "a character record" — a stored record missing five of
+    // its seven fields is not one any read of this build produces.
     const outcome = decidePetSettingsWrite(
-      record('character', { characterId: null, size: 160 }, 1),
+      record('character', { ...PET_SETTINGS_DEFAULTS.character, size: 160 }, 1),
       petSettingsWrite('view', 1, view),
     )
     expect(outcome.status).toBe('refused')

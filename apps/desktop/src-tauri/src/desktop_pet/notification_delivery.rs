@@ -17,11 +17,19 @@
 //! name neither a note nor a path, and the action to be a host-issued target rather than a URL, a
 //! command or a file path. There is no field here for any of those three.
 //!
-//! **No channel is implemented in this module.** The only way to reach a Linux notification daemon
-//! from this crate is Tauri's notification plugin, and the ledger (§3) holds it back until it has
-//! been measured on AppImage/deb/rpm and on a session with no portal — adding it is the integrator's
-//! dep change, not this task's. {@link NoChannel} is what the app runs with until then: it fails
-//! visibly, which is the one behaviour §7.2's `unread-list` fallback needs from the channel.
+//! **No channel is implemented in this module, and {@link NoChannel} is the one the app runs
+//! with.** It is not a stand-in for something that exists: it is the port's only implementation in
+//! this build, constructed where the pet's state is (`PetTaskFeed::new`), and every notice the
+//! ledger decides on therefore fails — visibly, with the row kept unread and marked `failed`, which
+//! is the one behaviour §7.2's `unread-list` fallback needs from the channel.
+//!
+//! What is missing is the *dependency*, not the wiring: the only way to reach a Linux notification
+//! daemon from this crate is Tauri's notification plugin, and the ledger (§3) holds it back until
+//! it has been measured on AppImage/deb/rpm and on a session with no portal. Adding it is the
+//! integrator's dep change — one `tauri-plugin-notification` entry here, one capability line, one
+//! `NotificationDelivery` implementation — and until then a reader who wants to know whether the
+//! app can raise a toast should read this doc comment, not a report: the answer is no, and the
+//! code says so by running the failing channel.
 
 use serde::Serialize;
 
@@ -88,8 +96,17 @@ impl PetNotice {
                  is unknown."
                     .to_string()
             }
+            // Two situations reach this state and they are not the same one: a host that cannot
+            // reach the runtime knows nothing at all, and a run that ended for a reason this
+            // version does not know has *ended* — only its ending is unreadable. The sentence
+            // used to name the first alone, which was untrue of the second and therefore of every
+            // notice this ledger can actually produce (the projection reaches `Unknown` from an
+            // unrecognised stop reason, not from a lost connection, which is `Interrupted`). A
+            // state two causes reach cannot pick one of them, so it names both and claims neither.
             PetTaskState::Unknown => {
-                "The host cannot reach the runtime, so this task's state is unknown.".to_string()
+                "This task's state is unknown. The host cannot reach the runtime, or the run \
+                 ended for a reason this version does not recognise."
+                    .to_string()
             }
         }
     }
@@ -121,6 +138,17 @@ impl DeliveryFailure {
             Self::Channel { .. } => "channel",
         }
     }
+
+    /// What actually happened, for the report — never for the user's next step.
+    ///
+    /// Kept next to [`Self::kind`] so a caller that reports a failed notice (the host's log line,
+    /// and the diagnostics surface a later task may add) has one accessor per field rather than a
+    /// match that would have to be repeated, and extended, wherever a failure is written down.
+    pub fn detail(&self) -> &str {
+        match self {
+            Self::NoChannel { detail } | Self::Refused { detail } | Self::Channel { detail } => detail,
+        }
+    }
 }
 
 /// The notification channel, as the app sees it.
@@ -135,7 +163,8 @@ pub trait NotificationDelivery: Send {
 
 /// The channel that is not one: every delivery fails, visibly.
 ///
-/// This is what the app runs with today, and the failure is the point. §7.2's row for system
+/// This is what the app runs with — `PetTaskFeed::new` is the construction site, one line, so the
+/// claim is checkable rather than asserted — and the failure is the point. §7.2's row for system
 /// notifications lists the fallback as 「未读任务入口始终可用」, and that fallback only works if the
 /// missing channel is *stated*: the row stays unread, the ledger records `failed`, and the settings
 /// page can say why no toast appeared. A silent success here would be the one thing worse than no

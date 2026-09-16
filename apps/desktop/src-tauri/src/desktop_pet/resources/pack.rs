@@ -13,9 +13,9 @@ use super::media::{audio_format, image_size, looks_like_a_document};
 use super::{
     display_name, io_refusal, PackageProblem, PackageRefusal, ResourceRefusal, SheetRecord,
     BUDGET_RULES,
-    DEFAULT_SHEET_COLUMNS, DEFAULT_SHEET_ROWS, MAX_AUDIO_BYTES, MAX_FRAMES, MAX_IMAGE_EDGE,
-    MAX_IMAGE_PIXELS, MAX_METADATA_DEPTH, MAX_PACKAGE_BYTES, MAX_PACKAGE_FILES, PACK_MANIFEST,
-    RESERVED_PREFIX,
+    DEFAULT_SHEET_COLUMNS, DEFAULT_SHEET_ROWS, MAX_AUDIO_BYTES, MAX_COMPONENT_BYTES, MAX_FRAMES,
+    MAX_IMAGE_EDGE, MAX_IMAGE_PIXELS, MAX_METADATA_DEPTH, MAX_PACKAGE_BYTES, MAX_PACKAGE_FILES,
+    PACK_MANIFEST, RESERVED_PREFIX,
 };
 
 pub(super) struct RawFile {
@@ -86,13 +86,11 @@ pub(super) fn read_pack(source: &Path) -> Result<Vec<RawFile>, ResourceRefusal> 
             )
             .into_refusal());
         }
-        if !is_component(&name) {
-            return Err(PackageRefusal::new(
-                &name,
-                PackageProblem::NestedPath,
-                "a pack entry's name has to be a plain file name",
-            )
-            .into_refusal());
+        // `name_problem` rather than `is_path_component`, so the sentence a user reads is the
+        // rule that actually refused: a name refused for one reason and explained by another is
+        // worse than one refused without a sentence at all.
+        if let Some(problem) = name_problem(&name) {
+            return Err(PackageRefusal::new(&name, PackageProblem::UnusableName, problem).into_refusal());
         }
         if files.len() >= MAX_PACKAGE_FILES {
             return Err(budget("file-count", MAX_PACKAGE_FILES as u64, (files.len() + 1) as u64));
@@ -269,15 +267,124 @@ fn json_depth(value: &serde_json::Value) -> usize {
     }
 }
 
-pub fn is_component(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 64
-        && value != "."
-        && value != ".."
-        && !value.starts_with(RESERVED_PREFIX)
-        && value
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+/// Whether `value` may be one name inside the library: a character's directory, or a file in one.
+///
+/// This is a *filesystem* rule and the whole of it. Every caller is the same fact — a string that
+/// is about to become one path component (`root.join(name)`) — and at every one of them the
+/// string can come from outside the app: a pack folder the user picked, a manifest on disk that a
+/// user can edit, a value that crossed the IPC boundary. What it refuses is what the filesystem,
+/// the library's own namespace, or the page that shows the name back would take exception to:
+///
+/// - empty, or padded with whitespace, which is a name a user cannot see they have;
+/// - `.` and `..`, which name directories rather than entries inside one;
+/// - a leading `.` — `RESERVED_PREFIX`'s namespace, where this module mints the staging and
+///   removal directories, so a character can never be mistaken for the library's own debris;
+/// - `/` (the kernel's separator) and `\` (a separator to every other system this data can be
+///   copied through);
+/// - control characters, invisible in a listing and, for NUL, the end of the path at the syscall;
+/// - the characters that let one name *render* as a different one (bidi overrides and isolates,
+///   zero-width marks, line separators, a mid-word BOM, the soft hyphen): a name the library
+///   shows back to a user is a name it has to be able to describe truthfully;
+/// - U+FFFD, which is what a lossy read of a directory name that is not UTF-8 produces. A `�`
+///   that is really a failed decode is a name this build cannot tell from one it never received,
+///   and the library never builds a path out of an answer it did not get;
+/// - more than [`MAX_COMPONENT_BYTES`] bytes.
+///
+/// **It is not an ASCII rule and not a naming convention.** Any letter of any script is a name
+/// here: `喵喵` is a directory and `精灵图.png` is a file in one, because the filesystem has no
+/// opinion about which alphabet a byte belongs to and this library's rule is that the directory
+/// *is* the character. The portable-looking id the app invents when a user imports a folder is a
+/// different fact, and it lives where it is invented — `character_view::free_character_id`.
+///
+/// **It does not normalise, and that is a decision.** NFC and NFD are different byte sequences and
+/// on Linux two different names: `é` typed as one code point and as `e` plus a combining acute are
+/// two directories, and this library treats them as two characters — the same way every other
+/// program on the platform does. Folding them would need a Unicode table this build does not carry,
+/// and it would make the library unable to name back a directory it holds, which is the one thing
+/// the manifest rule above forbids. The consequences are real and are not silent: an import of the
+/// second spelling does not overwrite the first (`AlreadyInstalled`, and `move_no_clobber` at the
+/// commit point), a generated id that would collide is suffixed (`free_character_id`), and two
+/// spellings of one name appear as two rows, each of which is a directory that exists.
+pub fn is_path_component(value: &str) -> bool {
+    name_problem(value).is_none()
+}
+
+/// Why `value` is not a name the library can hold, in the library's own words, or `None`.
+///
+/// The check and the sentence are one function rather than two lists that have to agree: a caller
+/// that refuses a name shows this string, so a rule that grew a clause without a sentence, or a
+/// sentence without a rule, is not a state this module can be in.
+pub fn name_problem(value: &str) -> Option<String> {
+    if value.is_empty() {
+        return Some("a name cannot be empty".to_string());
+    }
+    if value.len() > MAX_COMPONENT_BYTES {
+        return Some(format!(
+            "a name is at most {MAX_COMPONENT_BYTES} bytes long, and this one is {}",
+            value.len()
+        ));
+    }
+    if value == "." || value == ".." {
+        return Some("\".\" and \"..\" name directories, not entries inside one".to_string());
+    }
+    if value.starts_with(RESERVED_PREFIX) {
+        return Some(
+            "a leading dot belongs to the library itself: this is where its staging and removal \
+             directories are named"
+                .to_string(),
+        );
+    }
+    if value.trim() != value {
+        return Some(
+            "whitespace at either end of a name is invisible in a listing, so it may not be there"
+                .to_string(),
+        );
+    }
+    let refused = value.chars().find(|c| !is_name_character(*c))?;
+    Some(match refused {
+        '/' => "a name may not contain \"/\": that is the separator between path components"
+            .to_string(),
+        '\\' => "a name may not contain \"\\\": another system reads it as a separator"
+            .to_string(),
+        '\u{fffd}' => "a name may not contain U+FFFD: that is what a name this build could not \
+                       read decodes to, and the library does not act on an answer it did not get"
+            .to_string(),
+        c if c.is_control() => {
+            format!("a name may not contain the control character U+{:04X}", c as u32)
+        }
+        c => format!(
+            "a name may not contain U+{:04X}: it can make a name render as a different one",
+            c as u32
+        ),
+    })
+}
+
+/// Whether one character may appear in a name the library holds.
+fn is_name_character(c: char) -> bool {
+    if c == '/' || c == '\\' {
+        return false;
+    }
+    if c.is_control() {
+        return false;
+    }
+    // A name that is not UTF-8 arrives as U+FFFD, because that is what a lossy read of a
+    // directory entry produces. Refusing it is not about the character — it can be written on a
+    // filesystem like any other — but about the two being indistinguishable: a library that
+    // accepted it would be building paths out of names it may never have received.
+    if c == '\u{fffd}' {
+        return false;
+    }
+    !matches!(
+        c,
+        // The soft hyphen, the zero-width marks and joiners, the bidi embeddings and overrides,
+        // the bidi isolates, the line and paragraph separators, and a byte-order mark anywhere
+        // but the start of a file: every one of them is invisible or reorders what is around it.
+        '\u{00ad}'
+            | '\u{200b}'..='\u{200f}'
+            | '\u{2028}'..='\u{202e}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{feff}'
+    )
 }
 
 /// The size of an image, from its header, or `None` when this build cannot read it.

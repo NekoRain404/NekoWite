@@ -2,22 +2,63 @@
 //!
 //! P0 §7.2 measured the engine sending `fs/write_text_file` — asking the HOST to
 //! perform a write — even though our handshake advertised `clientCapabilities:
-//! {}`. So the mechanism was already live and simply had no handler, which meant
-//! the engine fell back to writing by itself.
+//! {}`. So an undeclared capability is not a mechanism that stops the request —
+//! it was never one — and a request nobody claims is answered `-32601` by the SDK
+//! (`Error::method_not_found`, the SDK's own default for an unhandled method).
 //!
-//! Declaring the capability is what turns §7.2 from「观察并归因」into「写入必经
-//! 宿主」: an agent edit stops being something we reconstruct from a watcher
-//! afterwards and becomes something we perform, so the baseline and the
-//! attribution are exact instead of inferred.
+//! Declaring the capability is what makes a **delegated** write ours. An edit the
+//! engine hands over stops being something we reconstruct from a watcher
+//! afterwards and becomes something this host performs, so the baseline and the
+//! attribution are exact instead of inferred. That is the whole of what the
+//! declaration buys, and what follows is what it does not buy.
+//!
+//! **It does not make this host the only writer, and nothing here may be read as
+//! saying it does.** P0 §7's default-configuration probe measured the same engine
+//! writing a file through its own tools with **zero reverse requests** — no
+//! permission frame and no `fs/write_text_file` (the measurement is in §7's preamble,
+//! not in §7.1, which records a different run) — so the engine has a write path that
+//! does not involve us, and used it. What has never been measured is what
+//! the engine does *after* the capability is declared and one of its requests is
+//! refused; `tests/agent_fs_write_refusal_test.rs` is the experiment that would
+//! settle it, and it needs the real engine. Until it has been run: the capability
+//! is an **opportunity the engine may take, not a gate every write must pass**. A
+//! conflict-detection design built on "every agent write reaches this module"
+//! rests on something this code cannot support.
+//!
+//! **The read half is a buffer read, and the window is asked for it.** `fs/read_text_file` is
+//! described by ACP as access to "unsaved editor state" and Zed answers it from the open
+//! buffer (`project.open_buffer`, `acp_thread.rs:4595`); this host used to answer it from
+//! `std::fs::read_to_string` (`storage/file_store.rs`), which meant an agent reading a note
+//! the user was mid-edit in received the older, saved text and proposed against a version they
+//! had already moved past. The direction that closes it is [`super::live_notes`]: the read
+//! resolves the path inside the session root, asks the windows holding that vault what the
+//! path holds, and serves the buffer.
+//!
+//! **The disk is served in exactly one case, and it is one that was ASKED FOR.** A window must
+//! answer "no tab holds this path" for the file to be read, and only that arm may reach
+//! `VaultFiles::read`. Everything else — no window registered for the vault, a window that
+//! went away, a window that says it cannot answer yet, the ten-second bound, two windows
+//! disagreeing — is an error the model can act on, and the file is not consulted. The wrong
+//! version of this is the one that looks finished: ask with a short timeout and return disk on
+//! timeout, on a dropped sender and on every error. It never fails visibly and it is *less*
+//! correct than doing nothing, because it converts "we know we serve disk" into "we may serve
+//! disk and say nothing about it" — and a stale read that silently succeeds is
+//! indistinguishable from a correct one.
+//!
+//! **The path is confined before the question is asked**, not after: a window must never be
+//! asked about a path the write path would refuse, and the key it is asked with has to be the
+//! spelling the editor uses for an open tab (see [`super::live_notes::LiveNoteQuestion::path`]).
 //!
 //! Two rules shape everything here, and both are about not being able to lie:
 //!
-//! - **A write goes through the app's write path, never a raw `fs::write`.** That
-//!   is the entire point of the decision. [`VaultFiles`] is the seam: the real
-//!   implementation is `storage::save_store::write_file`, which already resolves
-//!   the path inside the vault, takes the write lock that serializes it against
-//!   restores and renames, refuses a destination the user made read-only, and
-//!   snapshots history. A second path to the filesystem would bypass all four.
+//! - **A delegated write goes through the app's write path, never a raw
+//!   `fs::write`.** That is the entire point of the decision, and it binds this
+//!   module rather than the engine: nothing here can compel a write the engine
+//!   performs itself. [`VaultFiles`] is the seam: the real implementation is
+//!   `storage::save_store::write_file`, which already resolves the path inside
+//!   the vault, takes the write lock that serializes it against restores and
+//!   renames, refuses a destination the user made read-only, and snapshots
+//!   history. A second path to the filesystem would bypass all four.
 //! - **A refusal is an error, never silence.** A success response for a write
 //!   that did not happen lets the model believe it edited a file it never
 //!   touched — the same failure class as a guard that cannot fail.
@@ -46,6 +87,8 @@ use agent_client_protocol::schema::v1::{
 };
 use sha2::{Digest, Sha256};
 
+use super::live_notes::{LiveNoteAnswer, LiveNotes};
+
 /// How many agent-attributed changes are kept for review (T10).
 ///
 /// Bounded because this is a review aid, not a ledger: the history snapshots
@@ -68,6 +111,27 @@ const MAX_RECORDS: usize = 200;
 /// written even if this layer were wrong about it. That is the second line of
 /// defence, not the first: the first is that nothing here builds a path at all.
 pub trait VaultFiles: Send + Sync + 'static {
+    /// The path as the FRONTEND spells it for an open tab: confined to the vault, resolved, and
+    /// rendered the way the app renders every path it hands a window.
+    ///
+    /// This is the key a live-note question is asked with, and it has to be exactly the spelling
+    /// `OpenTab.path` holds — `file_store::list_dir_entries` renders every entry through
+    /// `domain::path_policy::ipc_path`, so a question asked with anything else would never match
+    /// a tab. A lookup that never matches answers "no tab holds this path", which serves the
+    /// disk: the silent failure this whole arm exists to remove. It is a method on this port
+    /// rather than a call from here because confinement is the app's policy and it lives with
+    /// the app's paths — a second implementation of it in this module is how two answers to
+    /// "is this path inside the vault" appear.
+    ///
+    /// Refusing is part of the answer: a path that escapes the vault is refused here, before
+    /// any question is asked, so a window is never asked about a path the write path would
+    /// refuse.
+    fn frontend_path(&self, vault_root: &str, path: &str) -> Result<String, String>;
+    /// The file **as it is on disk**.
+    ///
+    /// Reached by a read only after a window holding the vault has answered that no tab holds
+    /// this path ([`super::live_notes`]) — so this is the file's text *because it was asked
+    /// for*, never because nothing answered. Nothing else in the read path may call it.
     fn read(&self, vault_root: &str, path: &str) -> Result<String, String>;
     /// Writes and returns `Some(warning)` when the text landed but something
     /// optional around it (the history snapshot) did not.
@@ -81,8 +145,12 @@ pub trait VaultFiles: Send + Sync + 'static {
 
 /// What the host advertises in the handshake.
 ///
-/// Zed's shape, and the reason this task exists: without it the engine writes
-/// by itself and we only get to observe the result.
+/// Zed's shape, and the one place the declaration is made. What it buys is that
+/// a delegated request has a handler at all — unclaimed, the SDK answers the
+/// engine `-32601` when the request arrives and nobody is listening for it. What it
+/// does not buy is exclusivity: P0 §7's default-configuration probe measured this
+/// engine writing a file through its own tools with zero reverse requests, so
+/// declaring this does not make the host the only writer. See the module header.
 pub fn client_capabilities() -> ClientCapabilities {
     ClientCapabilities::new().fs(
         FileSystemCapabilities::new()
@@ -151,10 +219,14 @@ impl FsRequest {
 
 /// One agent-attributed change, as §7.2 requires it to be recorded.
 ///
-/// 「记录基线哈希、结果哈希、来源、会话和时间」 — and because we are now the
-/// writer, the baseline is taken from the real pre-write bytes instead of being
-/// reconstructed from a watcher's diff later, which is the difference the
+/// 「记录基线哈希、结果哈希、来源、会话和时间」 — and because this host performed
+/// the write, the baseline is taken from the real pre-write bytes instead of
+/// being reconstructed from a watcher's diff later, which is the difference the
 /// capability buys.
+///
+/// It records the changes the engine **delegated** and no others. A change the
+/// engine made with its own tools produces no record here, which is the "only
+/// the watcher saw it" case §7.2 gives its own treatment to.
 #[derive(Debug, Clone)]
 pub struct ChangeRecord {
     pub session_id: String,
@@ -169,16 +241,21 @@ pub struct ChangeRecord {
     pub at: String,
 }
 
-/// Serves the engine's file requests against the app's write path.
+/// Serves the engine's file requests against the app's write path, and its reads against the
+/// window that holds the note.
 pub struct FsCapability {
     files: Arc<dyn VaultFiles>,
+    /// The same seam the edit-conflict baseline reads through, reached from the other side:
+    /// one table, one lookup, one definition of what "the same version of the note" means.
+    live_notes: LiveNotes,
     changes: Mutex<VecDeque<ChangeRecord>>,
 }
 
 impl FsCapability {
-    pub fn new(files: Arc<dyn VaultFiles>) -> Self {
+    pub fn new(files: Arc<dyn VaultFiles>, live_notes: LiveNotes) -> Self {
         Self {
             files,
+            live_notes,
             changes: Mutex::new(VecDeque::new()),
         }
     }
@@ -201,33 +278,71 @@ impl FsCapability {
 
         match request {
             FsRequest::Read { request, responder } => {
-                let files = Arc::clone(&self.files);
                 let root = vault_root.to_string();
                 let path = request.path.to_string_lossy().into_owned();
-                // Off the async worker: the app's read is blocking, and this
-                // task is shared with everything else the runtime is doing.
-                let read = tokio::task::spawn_blocking(move || files.read(&root, &path)).await;
-                match read {
-                    Ok(Ok(content)) => {
-                        // The slice is the host's business, not the engine's:
-                        // `line` and `limit` are applied here so the engine
-                        // never receives more of a note than it asked for.
-                        match slice_lines(&content, request.line, request.limit) {
-                            Ok(content) => {
-                                let _ = responder.respond(ReadTextFileResponse::new(content));
-                            }
-                            Err(message) => {
+                // Confinement first, and before any question: the window must never be asked
+                // about a path the write path would refuse, and the key it is asked with has to
+                // be the spelling the editor has for an open tab. Both are the app's path
+                // policy's answer, so both come from the port that owns it — see
+                // [`VaultFiles::frontend_path`].
+                let key = match self.files.frontend_path(&root, &path) {
+                    Ok(key) => key,
+                    Err(message) => {
+                        let _ = responder
+                            .respond_with_error(Error::invalid_params().data(message));
+                        return;
+                    }
+                };
+
+                // The one lookup. `Held` is the buffer; `NotHeld` is the ONLY arm that may
+                // become disk, and it is the only one a window answered on purpose; every
+                // `Unknown` is an error, so a read that could not reach the live buffer can
+                // never be mistaken for one that did.
+                let content = match self.live_notes.ask(&root, &key).await {
+                    LiveNoteAnswer::Held(note) => note.text,
+                    LiveNoteAnswer::NotHeld => {
+                        let files = Arc::clone(&self.files);
+                        let disk_root = root.clone();
+                        let disk_path = path.clone();
+                        // Off the async worker: the app's read is blocking, and this task is
+                        // shared with everything else the runtime is doing.
+                        match tokio::task::spawn_blocking(move || {
+                            files.read(&disk_root, &disk_path)
+                        })
+                        .await
+                        {
+                            Ok(Ok(content)) => content,
+                            Ok(Err(message)) => {
                                 let _ = responder
                                     .respond_with_error(Error::invalid_params().data(message));
+                                return;
+                            }
+                            Err(join) => {
+                                let _ = responder.respond_with_internal_error(join.to_string());
+                                return;
                             }
                         }
                     }
-                    Ok(Err(message)) => {
-                        let _ = responder
-                            .respond_with_error(Error::invalid_params().data(message));
+                    LiveNoteAnswer::Unknown(reason) => {
+                        // Loudly, with the vault and the path named, and with the disk NOT
+                        // consulted: the engine can act on an error — it can ask again, and it
+                        // has tools of its own — while it cannot act on a silent lie.
+                        let _ = responder.respond_with_error(Error::internal_error().data(format!(
+                            "could not read the live buffer of {key} in {root}: {reason}"
+                        )));
+                        return;
                     }
-                    Err(join) => {
-                        let _ = responder.respond_with_internal_error(join.to_string());
+                };
+
+                // The slice is the host's business, not the engine's: `line` and `limit` are
+                // applied here, to whichever text won, so the engine never receives more of a
+                // note than it asked for.
+                match slice_lines(&content, request.line, request.limit) {
+                    Ok(content) => {
+                        let _ = responder.respond(ReadTextFileResponse::new(content));
+                    }
+                    Err(message) => {
+                        let _ = responder.respond_with_error(Error::invalid_params().data(message));
                     }
                 }
             }

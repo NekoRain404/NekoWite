@@ -37,10 +37,17 @@ const saveState = computed(() => {
   return tabs.saveStateOf(tab.id)
 })
 
+/**
+ * The state, and only the state: `failed` says a save did not land, never why
+ * and never what to do about it. The reason belongs to the toast that reported
+ * it (`refused-save.ts` tells a refusal from a failure there), because a status
+ * line that advised a retry would be lying about a read-only file.
+ */
 const saveLabel = computed(() => {
   switch (saveState.value) {
     case 'saving': return t('status.saving')
     case 'dirty': return t('status.dirty')
+    case 'failed': return t('status.failed')
     case 'saved': return t('status.saved')
     default: return ''
   }

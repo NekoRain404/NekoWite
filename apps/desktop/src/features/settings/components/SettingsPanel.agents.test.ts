@@ -65,7 +65,13 @@ function profileReadout(revision: string): unknown {
     provider: 'iapp',
     modelId: 'iapp/deepseek-v4-flash',
     editable: true,
-    sources: [{ kind: 'injected', variable: 'OPENCODE_CONFIG_DIR', path: '/tmp/profile' }],
+    // The injected roots, then one row per merge this app does not close — the shape
+    // `profile.rs`'s `sources()` answers an app-managed profile with, written out by hand.
+    sources: [
+      { kind: 'injected', variable: 'OPENCODE_CONFIG_DIR', path: '/tmp/profile' },
+      { kind: 'engine-discovery', what: 'project' },
+      { kind: 'engine-discovery', what: 'managed' },
+    ],
     credentials: [{ name: 'ANTHROPIC_API_KEY', value: '<redacted>' }],
     credentialStorage: { kind: 'none' },
   }
@@ -239,6 +245,25 @@ describe('the agents section in the settings dialog', () => {
 
     // The exact set, so a page that starts asking for a command nobody registered fails here.
     expect([...new Set(asked)].sort()).toEqual(['agent_profile_read', 'agent_registry_read'])
+  })
+
+  it('states the merges it does not close, one named surface per row', async () => {
+    await openAgents()
+    await untilDom(() => el('provider-source-engine-discovery') !== null, 'the sources list')
+
+    const rows = [...section().querySelectorAll<HTMLElement>('[data-test^="provider-source-"]')]
+    const discovery = rows.filter((row) => row.dataset.test === 'provider-source-engine-discovery')
+    // Two rows, and they are the two merges this app cannot close: the folder the session runs in
+    // (with every folder above it) and the machine's managed root. Each carries its own sentence,
+    // and neither is drawn as though it were closed — the page states them and claims nothing.
+    expect(discovery).toHaveLength(2)
+    const text = discovery.map((row) => row.textContent ?? '').join('\n')
+    expect(text).toContain('opencode.json')
+    expect(text).toContain('/etc/opencode')
+    // And the half that *is* set: one row per injected root, with the variable that carries it.
+    const injected = rows.filter((row) => row.dataset.test === 'provider-source-injected')
+    expect(injected).toHaveLength(1)
+    expect(injected[0].textContent).toContain('OPENCODE_CONFIG_DIR = /tmp/profile')
   })
 
   it('says which engine and profile the mounted pages are about', async () => {

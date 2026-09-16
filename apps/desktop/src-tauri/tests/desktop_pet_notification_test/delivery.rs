@@ -118,9 +118,10 @@ fn a_channel_that_starts_failing_is_reported_from_then_on() {
 
 #[test]
 fn the_build_with_no_channel_fails_visibly_rather_than_pretending() {
-    // The channel the app actually runs with today (the ledger holds the notification plugin back
-    // until it has been measured), and the point is that a build without one behaves like a channel
-    // that failed rather than like a notification that was shown.
+    // The channel the app actually runs with — `PetTaskFeed::new` is the construction site, and the
+    // ledger holds the notification plugin back until it has been measured — and the point is that a
+    // build without one behaves like a channel that failed rather than like a notification that was
+    // shown.
     let mut channel = NoChannel::new();
     let notice = PetNotice {
         state: PetTaskState::TurnFinished,
@@ -136,7 +137,7 @@ fn the_build_with_no_channel_fails_visibly_rather_than_pretending() {
         .expect_err("a build with no channel cannot deliver");
     assert_eq!(failure.kind(), "no-channel");
     assert!(
-        failure_detail(&failure).contains("unread"),
+        failure.detail().contains("unread"),
         "§7.2: an unavailable capability states what happens instead — {failure:?}"
     );
 }
@@ -221,10 +222,3 @@ fn the_three_ways_a_channel_can_fail_are_told_apart() {
     assert_eq!(channel.count(), 1, "the channel is believed again once it answers");
 }
 
-fn failure_detail(failure: &DeliveryFailure) -> &str {
-    match failure {
-        DeliveryFailure::NoChannel { detail }
-        | DeliveryFailure::Refused { detail }
-        | DeliveryFailure::Channel { detail } => detail,
-    }
-}

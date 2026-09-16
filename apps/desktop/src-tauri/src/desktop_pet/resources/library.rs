@@ -17,9 +17,9 @@ use sha2::{Digest, Sha256};
 
 use super::pack::{classify_pack, read_pack, Grid, RawFile};
 use super::{
-    hex, io_refusal, is_component, CharacterKind, CreateRequest, InstallRequest,
-    InstalledCharacter, InstalledFile, Removal, ResourceRefusal, CHARACTERS_DIR,
-    CHARACTER_SCHEMA_VERSION, INSTALLED_MANIFEST, LIBRARY_DIR, RESERVED_PREFIX, STAGING_ATTEMPTS,
+    hex, io_refusal, name_problem, CharacterKind, CreateRequest, InstallRequest, InstalledCharacter,
+    InstalledFile, Removal, ResourceRefusal, CHARACTERS_DIR, CHARACTER_SCHEMA_VERSION,
+    INSTALLED_MANIFEST, LIBRARY_DIR, RESERVED_PREFIX, STAGING_ATTEMPTS,
 };
 use crate::storage::atomic_write::{atomic_write, move_no_clobber};
 
@@ -70,7 +70,7 @@ impl CharacterLibrary {
         &self.root
     }
 
-    /// Where one character would live, for an id already checked by [`is_component`].
+    /// Where one character would live, for an id already checked by [`is_path_component`].
     ///
     /// Not public, and every caller validates first: a public `directory(id)` would be a way to
     /// turn an unchecked string into a path, which is the one operation this module exists to not
@@ -101,10 +101,11 @@ impl CharacterLibrary {
     /// the manifest and the commit point are the same code rather than a parallel implementation
     /// that drifts.
     pub fn create(&self, request: &CreateRequest) -> Result<InstalledCharacter, ResourceRefusal> {
-        if !is_component(&request.sheet_name) {
+        if let Some(detail) = name_problem(&request.sheet_name) {
             return Err(ResourceRefusal::InvalidName {
                 field: "sheetName",
                 value: request.sheet_name.clone(),
+                detail,
             });
         }
         let files = vec![RawFile {
@@ -150,10 +151,11 @@ impl CharacterLibrary {
         files: Vec<RawFile>,
         grid: Option<Grid>,
     ) -> Result<InstalledCharacter, ResourceRefusal> {
-        if !is_component(character_id) {
+        if let Some(detail) = name_problem(character_id) {
             return Err(ResourceRefusal::InvalidName {
                 field: "characterId",
                 value: character_id.to_string(),
+                detail,
             });
         }
         let destination = self.directory(character_id);
@@ -220,10 +222,11 @@ impl CharacterLibrary {
     /// something it cannot name back to the user, which is the class of deletion §4 rules out —
     /// and an unmanaged directory is exactly what a character from an older build looks like.
     pub fn remove(&self, character_id: &str) -> Result<Removal, ResourceRefusal> {
-        if !is_component(character_id) {
+        if let Some(detail) = name_problem(character_id) {
             return Err(ResourceRefusal::InvalidName {
                 field: "characterId",
                 value: character_id.to_string(),
+                detail,
             });
         }
         let directory = self.directory(character_id);

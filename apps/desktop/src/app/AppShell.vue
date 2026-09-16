@@ -34,6 +34,7 @@ import { notifyError } from '../services/errors'
 import { getLocale, t } from '../i18n'
 import { attachAgentRail, failureSentence } from './agent-rail'
 import { attachPetSettingsLink } from './pet-settings-link'
+import { attachPetTaskLink } from './pet-task-link'
 import AgentRailBody from './AgentRailBody.vue'
 
 // AppShell is the presentational root layout only. It owns no Tauri calls, no
@@ -142,6 +143,21 @@ const agentOn = computed<boolean>(() => settings.agentPanel)
 const { target: petSettingsTarget } = attachPetSettingsLink({
   open: () => props.showSettings,
   onOpen: () => emit('open-settings'),
+})
+
+// ---- The pet's click on a task (§6.2's 点击返回任务) -------------------------
+//
+// The other half of the same flow: the pet's row calls `desktop_pet_open_task`, the host raises
+// this window and emits D1's key, and the link focuses the session it names and asks for the rail
+// — which may be collapsed, since the flow this exists for is 收起面板 → 完成提醒 → 返回. The
+// listener, the rule about which sessions a click may address and the release are
+// `pet-task-link.ts`'s; the shell supplies the reading only it has and the panel it wants shown.
+attachPetTaskLink({
+  railOpen: () => props.railOpen,
+  onOpenRail: () => {
+    railTab.value = 'ai'
+    if (!props.railOpen) emit('toggle-rail')
+  },
 })
 
 const shellStyle = computed<Record<string, string>>(() => ({

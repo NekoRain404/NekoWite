@@ -22,7 +22,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import type { PetCareRead, PetFeatureState, PetSettingsLoad, PetTaskProjection } from './pet-contracts'
+import type {
+  PetAppearance,
+  PetCareRead,
+  PetCharacterEntry,
+  PetFeatureState,
+  PetSettingsChange,
+  PetSettingsLoad,
+  PetTaskKey,
+  PetTaskProjection,
+} from './pet-contracts'
 import {
   createTauriPetIpc,
   createTauriPetConnection,
@@ -35,14 +44,38 @@ import {
 
 /** `@tauri-apps/api`, replaced. `vi.hoisted` because `vi.mock` is lifted above the imports. */
 const tauri = vi.hoisted(() => ({
-  // No parameters of their own: what these record is decided by the caller, and the `_`-prefixed
-  // placeholders that used to be here were lint errors rather than documentation.
-  invoke: vi.fn(async (): Promise<unknown> => undefined),
-  listen: vi.fn(async (): Promise<() => void> => () => {}),
+  // The parameters are declared even though neither implementation reads one, because the
+  // *record* is what these two are for: `mock.calls` is `[]` for every call of a zero-parameter
+  // mock, so the command name and the argument object below had no types to be read from and the
+  // two assertions that read them stopped compiling — while still passing, since Vitest runs the
+  // file with the types stripped. Declaring the port's own shape is what makes the recording
+  // legible to the checker rather than only to the runtime.
+  invoke: vi.fn<(command: string, args?: unknown) => Promise<unknown>>(async () => undefined),
+  listen: vi.fn<(event: string, handler: (event: unknown) => void) => Promise<() => void>>(
+    async () => () => {},
+  ),
+  // The one place a host path becomes a URL. Recorded rather than stubbed to a constant, because
+  // what is under test is *that* the sheet's path is converted and that the other arms are not
+  // touched — a conversion applied to a `missing` arm would produce a URL to a file nobody
+  // granted.
+  convertFileSrc: vi.fn<(path: string) => string>((path) => `asset://localhost/${path}`),
 }))
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: tauri.invoke }))
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: tauri.invoke,
+  convertFileSrc: tauri.convertFileSrc,
+}))
 vi.mock('@tauri-apps/api/event', () => ({ listen: tauri.listen }))
+
+/** One task key, spelled as D1 declares it — six fields and no encoding of its own. */
+const PET_TASK_KEY = {
+  agentId: 'opencode',
+  profileId: 'default',
+  runtimeEpoch: 'epoch-1',
+  vaultId: 'vault-a',
+  sessionId: 'ses-1',
+  runId: 'run-0',
+} as const
 
 /**
  * The wire, call by call.
@@ -70,6 +103,13 @@ const WIRE: [
   // is no window, character or domain to name — and the absent argument is what says so.
   ['desktop_pet_care_read', (ipc) => ipc.care(), undefined],
   ['desktop_pet_tasks', (ipc) => ipc.tasks(), undefined],
+  // The window's own two reads, and the one route back. `openTask` carries the whole key under
+  // `task` — the Rust parameter's name — and nothing else: §6.3's limited target crosses this
+  // wire as data, never as a URL or a window name.
+  ['desktop_pet_appearance', (ipc) => ipc.appearance(), undefined],
+  ['desktop_pet_library', (ipc) => ipc.library(), undefined],
+  ['desktop_pet_import_character', (ipc) => ipc.importCharacter(), undefined],
+  ['desktop_pet_open_task', (ipc) => ipc.openTask(PET_TASK_KEY), { task: PET_TASK_KEY }],
   ['desktop_pet_read_settings', (ipc) => ipc.readSettings('general'), { domain: 'general' }],
   [
     'desktop_pet_update_settings',
@@ -89,7 +129,7 @@ describe('the adapter speaks the backend’s own argument shapes', () => {
     await call(createTauriPetIpc())
 
     expect(tauri.invoke).toHaveBeenCalledTimes(1)
-    const [sent, sentArgs] = tauri.invoke.mock.calls[0] as [string, unknown]
+    const [sent, sentArgs] = tauri.invoke.mock.calls[0]
     expect(sent).toBe(command)
     // The second argument is the object the Rust parameters deserialize from — and it is absent,
     // not an empty object, for a command that takes none: a stray key is an "unexpected argument"
@@ -203,6 +243,7 @@ class FakeIpc implements PetIpc {
   readonly calls: Call[] = []
   readonly featureListeners = new Set<(state: PetFeatureState) => void>()
   readonly taskListeners = new Set<(tasks: PetTaskProjection[]) => void>()
+  readonly settingsListeners = new Set<(change: PetSettingsChange) => void>()
   taskReadFails: string | null = null
   /**
    * What the host answers for care. The empty arm by default, because that is what a host that has
@@ -268,6 +309,27 @@ class FakeIpc implements PetIpc {
     return []
   }
 
+  async appearance(): Promise<PetAppearance> {
+    this.record('appearance')
+    // `unset` is the arm a fresh install answers, and the arm that has nothing to convert — so a
+    // pass-through test below can assert the read reached the connection unchanged.
+    return { status: 'unset' }
+  }
+
+  async library(): Promise<PetCharacterEntry[]> {
+    this.record('library')
+    return []
+  }
+
+  async importCharacter(): Promise<PetCharacterEntry | null> {
+    this.record('importCharacter')
+    return null
+  }
+
+  async openTask(key: PetTaskKey): Promise<void> {
+    this.record('openTask', key)
+  }
+
   async readSettings(domain: string): Promise<PetSettingsLoad> {
     this.record('readSettings', domain)
     return { status: 'read-only', reason: 'schema-newer', foundVersion: 9 }
@@ -293,6 +355,15 @@ class FakeIpc implements PetIpc {
     return () => {
       this.record('offTasks')
       this.taskListeners.delete(onTasks)
+    }
+  }
+
+  async onSettingsChanged(onChange: (change: PetSettingsChange) => void): Promise<() => void> {
+    this.record('onSettingsChanged')
+    this.settingsListeners.add(onChange)
+    return () => {
+      this.record('offSettingsChanged')
+      this.settingsListeners.delete(onChange)
     }
   }
 
@@ -335,6 +406,50 @@ describe('a subscription gives back its own removal', () => {
     await expect(connection.subscribe(() => {})).rejects.toThrow('not found')
     expect(ipc.taskListeners.size).toBe(0)
     expect(ipc.calls.map(([name]) => name)).toEqual(['onTasks', 'tasks', 'offTasks'])
+  })
+
+  it('passes the window’s own reads through, and converts nothing but a ready sheet', async () => {
+    const ipc = new FakeIpc()
+    const connection = createTauriPetConnection({ ipc })
+
+    // The four calls the window and the settings page make beside D1's surface: each is handed to
+    // the port unchanged, which is what makes the *adapter* the only place the wire is spelled.
+    await expect(connection.appearance()).resolves.toEqual({ status: 'unset' })
+    await expect(connection.library()).resolves.toEqual([])
+    await expect(connection.importCharacter()).resolves.toBeNull()
+    const key = {
+      agentId: 'a',
+      profileId: 'p',
+      runtimeEpoch: 'epoch-1',
+      vaultId: 'v',
+      sessionId: 'ses-1',
+      runId: 'run-0',
+    }
+    await connection.openTask(key)
+
+    expect(ipc.calls.map(([name]) => name)).toEqual([
+      'appearance',
+      'library',
+      'importCharacter',
+      'openTask',
+    ])
+    expect(ipc.calls[3][1]).toEqual([key])
+  })
+
+  it('listens for a settings change without a first read, and stops on unsubscribe', async () => {
+    const ipc = new FakeIpc()
+    const connection = createTauriPetConnection({ ipc })
+    const seen: PetSettingsChange[] = []
+
+    // A change is a notification, not a state: there is no "current value" to deliver first, and
+    // the state a listener wants is the one its own `appearance` read already answers.
+    const stop = await connection.subscribeSettings((change) => seen.push(change))
+    for (const listener of ipc.settingsListeners) listener({ domain: 'character', revision: 2 })
+    stop()
+
+    expect(seen).toEqual([{ domain: 'character', revision: 2 }])
+    expect(ipc.calls.map(([name]) => name)).toEqual(['onSettingsChanged', 'offSettingsChanged'])
+    expect(ipc.settingsListeners.size).toBe(0)
   })
 
   it('keeps each subscription’s removal to itself', async () => {

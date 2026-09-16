@@ -27,6 +27,14 @@
  * out of date. Applying first also means an event that races the call lands in a view that
  * already knows a run is in flight, which is what stops the run's opening frames from being
  * refused as an illegal transition.
+ *
+ * The handshake is held to the same rule, from the other side: it publishes the snapshot it
+ * was given *before* the subscription that continues from it exists, so the frames the
+ * subscription delivers land on top of it. See `agent-session-subscription.ts`, which owns
+ * that order — and the other half of it, that a retired attempt registers nothing and releases
+ * whatever the host hands it. What this file owes it is the view as it is *now*:
+ * {@link handshakeOn} reads the record at the moment of the write, never one captured before
+ * an await.
  */
 
 import { computed, ref } from 'vue'
@@ -44,6 +52,7 @@ import {
   createSubscription,
   describeFailure,
   openSubscription,
+  type AgentHandshakeTarget,
   type AgentSubscription,
 } from '../services/agent-session-subscription'
 import {
@@ -55,6 +64,12 @@ import {
   startAgentRun,
   type AgentSessionView,
 } from '../services/agent-session-view'
+import type { AgentLiveNote } from '../services/agent-context-snapshot'
+import {
+  captureEditBaselines,
+  type AgentEditBaseline,
+  type AgentEditRefusal,
+} from '../services/agent-edit-apply'
 
 /**
  * Everything the panel knows about one session.
@@ -76,12 +91,24 @@ export interface AgentSessionRecord {
   unread: boolean
   dropped: number
   lastDrop: AgentDropReason | null
+  /**
+   * The version each note the request names held when the request was submitted.
+   *
+   * Read at the send — not when the answer arrives, and not when the note was attached to the
+   * prompt — because that is the document the run is answering about, and an answer that lands
+   * over anything newer is the silent overwrite `agent-edit-apply.ts` exists to prevent. The
+   * list belongs to the run that was dispatched and outlives it: a run that has finished is
+   * still one whose result may be applied minutes later.
+   */
+  edits: readonly AgentEditBaseline[]
 }
 
 /** What became of a send. A refusal is a value rather than a throw: the caller has
  *  something to do with it — keep the text. */
 export type AgentSendOutcome =
-  | { accepted: true }
+  /** `refusedEdits` is per target, not per send: a note from another vault is not context this
+   *  session can see (§6.2), and the prompt itself is the user's and goes out either way. */
+  | { accepted: true; refusedEdits: readonly AgentEditRefusal[] }
   | { accepted: false; reason: 'run-in-flight' | 'no-session' }
 
 /** What became of an answer to a permission request. */
@@ -151,6 +178,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
       unread: false,
       dropped: 0,
       lastDrop: null,
+      edits: Object.freeze([]),
     }
     records.value[key] = record
     return record
@@ -196,10 +224,35 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
   }
 
   /**
-   * Subscribe to a session: snapshot, adopt, subscribe.
+   * Where a handshake reads the view it is re-establishing, and where its result goes.
+   *
+   * The record is captured, its view is not: a handshake must decide against the view as it
+   * is when the snapshot lands, because frames that arrived while it was waiting were applied
+   * to that view and an older snapshot must not overwrite them. The record itself is stable —
+   * a detached session keeps its record so the panel can still show what it last knew.
+   */
+  function handshakeOn(record: AgentSessionRecord): AgentHandshakeTarget {
+    return {
+      view: () => record.view,
+      commit: (view) => {
+        record.view = view
+      },
+    }
+  }
+
+  /**
+   * Subscribe to a session: snapshot, publish, subscribe.
    *
    * The handshake itself is in `services/agent-session-subscription.ts`; what is left here is
-   * which record it belongs to and where the result goes.
+   * which record it belongs to. `detach` first, because subscribing is one attempt per
+   * session: whatever was being listened to — or was still being established — is retired
+   * before this attempt begins, so the two can never both be applied.
+   *
+   * It does not reject. What the host refuses is recorded on the view, and an attempt the
+   * store retires while it waits publishes nothing; one retired while the host is answering
+   * releases the listener it was handed rather than installing it. A caller is a component's
+   * mount (`useAgentSession` fires it with no reader for a rejection), and the panel closing is
+   * an ordinary way for an attempt to end.
    */
   async function attach(gateway: AgentGateway, session: AgentSession): Promise<void> {
     const key = sessionKey(session)
@@ -207,14 +260,16 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     const record = ensureRecord(session)
     const subscription = createSubscription(gateway, session)
     subscriptions.set(key, subscription)
-    record.view = await openSubscription(subscription, record.view, 'adopt', onEvent)
+    await openSubscription(subscription, handshakeOn(record), onEvent)
   }
 
   function subscriptionFor(key: string | null): AgentSubscription | null {
     return key === null ? null : (subscriptions.get(key) ?? null)
   }
 
-  /** Stop receiving one session's events. */
+  /** Stop receiving one session's events — including one still being established: closing
+   *  the subscription retires the attempt, so a handshake waiting on a host that is no longer
+   *  wanted publishes nothing and releases whatever it was handed. */
   function detach(key: string): void {
     const subscription = subscriptions.get(key)
     if (subscription === undefined) return
@@ -226,11 +281,13 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     for (const key of [...subscriptions.keys()]) detach(key)
   }
 
+  /** Re-establish a session's state from a fresh snapshot, keeping what the reader is reading.
+   *  The subscription continues: this is the repair for a hole in the stream, not a remount. */
   async function resync(key: string): Promise<void> {
     const record = recordFor(key)
     const subscription = subscriptionFor(key)
     if (record === null || subscription === null) return
-    record.view = await openSubscription(subscription, record.view, 'repair', onEvent)
+    await openSubscription(subscription, handshakeOn(record), onEvent)
   }
 
   /** Run one gateway call against a record, and record a rejection as the failure it is.
@@ -255,8 +312,16 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
    * Refused while a run is live, and the text is kept as the draft rather than queued into
    * the engine — §6.2 allows one active generation per session, and quietly calling the
    * same session twice is exactly what it forbids.
+   *
+   * `targets` are the notes this request is about, as the editor holds them *now* — the
+   * caller's lookup, by path, and never "whatever is open" (§7.1 forbids resolving the active
+   * note at any later moment). They are plain data rather than a lookup function for the same
+   * reason the context snapshot is a value: the version that matters is the one at this
+   * instant, and a function would let a later reader answer with a version read later. A
+   * *refused* send captures nothing — the run it would have belonged to never started, and the
+   * one in flight keeps the baselines its own request was made against.
    */
-  async function send(text: string): Promise<AgentSendOutcome> {
+  async function send(text: string, targets: readonly AgentLiveNote[] = []): Promise<AgentSendOutcome> {
     const key = activeKey.value
     const live = subscriptionFor(key)
     const record = recordFor(key)
@@ -267,6 +332,8 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
       return { accepted: false, reason: 'run-in-flight' }
     }
     record.view = started.view
+    const captured = captureEditBaselines(targets, record.identity)
+    record.edits = captured.baselines
     // The text has moved into the timeline as the user's own row, so the composer's copy
     // goes. A *refused* send above leaves the draft exactly where it was.
     record.draft = ''
@@ -281,7 +348,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
       // newer than this message and must not be overwritten.
       if (record.draft === '') record.draft = text
     }
-    return { accepted: true }
+    return { accepted: true, refusedEdits: captured.refused }
   }
 
   /**
@@ -324,6 +391,22 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     return { accepted: true }
   }
 
+  /**
+   * The version `path` held when this session's current run was submitted, or null when the
+   * request did not name that note.
+   *
+   * Null is a refusal and not a default: a proposal for a note no request named has nothing to
+   * be checked against, and `applyAgentEdit` refuses rather than writing on a guess. It is the
+   * reason this returns a baseline rather than a revision — what the apply path needs is the
+   * whole of what the request was made against, and half of it would be a second thing to keep
+   * in step.
+   */
+  function editBaseline(key: string, path: string): AgentEditBaseline | null {
+    const record = recordFor(key)
+    if (record === null) return null
+    return record.edits.find((baseline) => baseline.path === path) ?? null
+  }
+
   /** Put a session's record on screen. Reading it is what clears its unread flag. */
   function focus(key: string | null): void {
     activeKey.value = key
@@ -354,6 +437,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     activeState,
     canSend,
     recordFor,
+    editBaseline,
     observeEvents,
     attach,
     detach,

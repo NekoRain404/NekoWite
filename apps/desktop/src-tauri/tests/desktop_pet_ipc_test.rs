@@ -49,3 +49,7 @@ mod support;
 mod teardown;
 #[path = "desktop_pet_ipc_test/windows.rs"]
 mod windows;
+// The two commands that join this window surface to the agent runtime: the task list a window
+// reads, and the click that goes back to a session.
+#[path = "desktop_pet_ipc_test/wiring.rs"]
+mod wiring;

@@ -20,6 +20,7 @@ import { useChatSessionStore } from '../../../stores/chat-session'
 import { onNotify } from '../../../services/errors'
 import { t } from '../../../i18n'
 import { startChatCompletion, type ChatStreamHandlers } from '../../ai'
+import { announce } from '../../../services/announcer'
 import { encodeAttachments } from './use-chat-attachments'
 import type { ChatAttachment } from '../types'
 
@@ -39,6 +40,12 @@ vi.mock('./use-chat-attachments', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./use-chat-attachments')>()),
   encodeAttachments: vi.fn(),
 }))
+
+// The completed answer is announced through the app's shared status region
+// (`services/announcer`), which is what the transcript's `aria-live="off"` leaves
+// room for. Mocked so the assertion is about *when* the panel speaks; the region
+// itself is that service's own business.
+vi.mock('../../../services/announcer', () => ({ announce: vi.fn() }))
 
 interface Harness {
   commands: ChatCommandsModel
@@ -95,7 +102,7 @@ function mountHarness(): Harness {
             contextBuilds += 1
             contexts.push(resolve)
           }),
-        scrollToBottom: () => undefined,
+        followNewest: () => undefined,
       })
       created = { commands, session }
       return () => null
@@ -480,5 +487,71 @@ describe('an outcome that arrives after the panel moved on', () => {
     expect(h.session.messages.value.at(-1)).toMatchObject({ role: 'assistant', streaming: true })
     // ...and the late failure did not write itself into the transcript.
     expect(messagesOf(aId)).toEqual(['second question'])
+  })
+})
+
+/**
+ * What a screen reader hears when an answer arrives.
+ *
+ * The transcript is `aria-live="off"` — a log whose text grows per chunk must
+ * not speak per chunk (§5.2 「不能每 token 都触发朗读」, the same answer the agent
+ * timeline gives) — so the completed turn is announced once, from the send path,
+ * through the app's shared status region. The announcement is a *status* and not
+ * the answer: the reader is told it is there to read, and reads it in the log at
+ * their own pace.
+ */
+describe('the completed turn, announced once', () => {
+  /** A request the test drives by hand: chunks, then the finish. */
+  function heldRequest(): ChatStreamHandlers[] {
+    const requests: ChatStreamHandlers[] = []
+    vi.mocked(startChatCompletion).mockImplementation((_c, _p, _i, handlers) => {
+      requests.push(handlers)
+      return Promise.resolve({ cancel: vi.fn() } as never)
+    })
+    return requests
+  }
+
+  it('is silent for every chunk and speaks once at the finish', async () => {
+    seedSessions()
+    const h = mountHarness()
+    await nextTick()
+    const requests = heldRequest()
+
+    h.prompt.value = 'a question'
+    const sending = h.commands.send()
+    h.releaseContext(0, 'the note as it stands')
+    await sending
+
+    // Three chunks, three writes into the log the reader is watching.
+    requests[0]!.onChunk('Half')
+    requests[0]!.onChunk('Half an')
+    requests[0]!.onChunk('Half an answer')
+    await nextTick()
+    expect(announce, 'the streaming text must pass through unannounced').not.toHaveBeenCalled()
+
+    requests[0]!.onDone('Half an answer')
+    await nextTick()
+    expect(announce).toHaveBeenCalledTimes(1)
+    expect(announce).toHaveBeenCalledWith(t('chat.answerComplete'))
+  })
+
+  it('says nothing about an answer nobody is waiting on', async () => {
+    seedSessions()
+    const h = mountHarness()
+    await nextTick()
+    const requests = heldRequest()
+
+    h.prompt.value = 'a question'
+    const sending = h.commands.send()
+    h.releaseContext(0, 'the note as it stands')
+    await sending
+
+    // The conversation the answer belonged to is gone — the reader has moved on
+    // to an empty panel — and the answer finishes into nothing.
+    h.commands.clearAll()
+    requests[0]!.onDone('an answer for a conversation that is closed')
+    await nextTick()
+
+    expect(announce).not.toHaveBeenCalled()
   })
 })

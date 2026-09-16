@@ -8,7 +8,7 @@
  * test has to walk a real interaction and then show that nothing else on the host was touched.
  * A reminder that appeared from a settings page would be the second authority §6.3 rules out.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { createApp, h, nextTick, type App as VueApp } from 'vue'
 import { t } from '../../../i18n'
 import { createMemoryPetGateway, type MemoryPetGateway } from '../../../platform/gateways/memory-pet'
@@ -87,8 +87,16 @@ async function storedValues(
   return loaded.record.values as unknown as Record<string, unknown>
 }
 
-/** Every gateway method that is not a settings read or write, so the page's reach is assertable. */
-function watchTheRest(gateway: MemoryPetGateway): ReturnType<typeof vi.fn>[] {
+/**
+ * Every gateway method that is not a settings read or write, so the page's reach is assertable.
+ *
+ * The six have six signatures, and the type they are collected under says so: `Mock<Procedure>`
+ * — what `ReturnType<typeof vi.fn>` names — is a mock of *some* procedure, and Vitest's
+ * `MockInstance<T>` is not assignable to it, because a mock of a specific signature is not a
+ * value that can be re-declared for any other one. The parameter list is the widest a function of
+ * these signatures can be read as, and the assertions below only ever ask whether one was called.
+ */
+function watchTheRest(gateway: MemoryPetGateway): MockInstance<(...args: never[]) => unknown>[] {
   return [
     vi.spyOn(gateway, 'feature'),
     vi.spyOn(gateway, 'setVisible'),

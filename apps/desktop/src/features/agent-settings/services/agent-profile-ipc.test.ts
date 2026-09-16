@@ -40,7 +40,8 @@ function record(overrides: Record<string, unknown> = {}): Record<string, unknown
     editable: true,
     sources: [
       { kind: 'injected', variable: 'OPENCODE_CONFIG_DIR', path: '/tmp/profile' },
-      { kind: 'engine-discovery', what: 'the project .opencode directory' },
+      { kind: 'engine-discovery', what: 'project' },
+      { kind: 'engine-discovery', what: 'managed' },
     ],
     credentials: [{ name: 'ANTHROPIC_API_KEY', value: '<redacted>' }],
     credentialStorage: { kind: 'host-file', path: '/tmp/profile/auth.json', mode: '600', encrypted: false, keychain: false },
@@ -75,9 +76,12 @@ describe('the readout', () => {
       provider: 'iapp',
       modelId: 'iapp/deepseek-v4-flash',
       editable: true,
+      // The two merges an app-managed profile still takes, as `profile.rs`'s `DiscoverySurface`
+      // serializes them: keys, not sentences — the sentence is the page's own copy.
       sources: [
         { kind: 'injected', variable: 'OPENCODE_CONFIG_DIR', path: '/tmp/profile' },
-        { kind: 'engine-discovery', what: 'the project .opencode directory' },
+        { kind: 'engine-discovery', what: 'project' },
+        { kind: 'engine-discovery', what: 'managed' },
       ],
       credentials: [{ name: 'ANTHROPIC_API_KEY', value: '<redacted>' }],
       credentialStorage: { kind: 'host-file', path: '/tmp/profile/auth.json', mode: '600', encrypted: false, keychain: false },
@@ -108,6 +112,18 @@ describe('the readout', () => {
     const { port } = wire({ read: record({ sources: [{ kind: 'environment', what: 'x' }] }) })
     await expect(createAgentProviderClient(port).read('opencode', 'default')).rejects.toThrow(
       /sources\[0\]\.kind/,
+    )
+  })
+
+  it('refuses a discovery surface it has no sentence for, rather than drawing a blank row', async () => {
+    // A row with no sentence reads as "nothing is there", and this list exists to deny exactly
+    // that. A surface a newer backend names is a rejection with a retry — the same treatment an
+    // unknown mode gets, and for the same reason.
+    const { port } = wire({
+      read: record({ sources: [{ kind: 'engine-discovery', what: 'somewhere-else' }] }),
+    })
+    await expect(createAgentProviderClient(port).read('opencode', 'default')).rejects.toThrow(
+      /sources\[0\]\.what/,
     )
   })
 

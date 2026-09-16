@@ -47,12 +47,16 @@
 //! the app would do anyway, and nothing in these bodies is Wry-specific — the one Wry-specific
 //! thing in the pet's backend is `TauriSurfaces`, and it lives in `PetWindowHost`, not here.
 
+use std::path::Path;
+
 use serde::Serialize;
 
+use crate::desktop_pet::settings::DefaultsReason;
 use crate::desktop_pet::{
-    CallerWindow, CapabilityReport, CareSummary, Closed, HostRefusal, LinuxEnvironment,
-    PetInstance, PetSettingsDomain, PetSettingsLoad, PetSettingsRecord, PetSettingsStore,
-    PetSettingsUpdate, PetSettingsWrite, PetWindowHost, TeardownReport, WindowAction,
+    CallerWindow, CapabilityReport, CareSummary, CharacterKind, CharacterLibrary, Closed,
+    HostRefusal, InstallRequest, LinuxEnvironment, PetInstance, PetSettingsDomain, PetSettingsLoad,
+    PetSettingsRecord, PetSettingsStore, PetSettingsUpdate, PetSettingsWrite, PetTaskFeed,
+    PetWindowHost, TeardownReport, WindowAction,
 };
 use crate::state::DesktopPetState;
 
@@ -69,11 +73,42 @@ pub const PET_FEATURE_CHANNEL: &str = "pet-feature";
 
 /// The channel a pet window's 设置 opens the main window on (§5.1).
 ///
-/// The main window's listener is the integrator's other half (reported, not written: it lands
-/// with the `desktop-pet` settings section). The payload is a page and nothing else — no section
-/// id, no window label, no URL — so the section this app opens is named once, in TypeScript, by
-/// `PET_SETTINGS_SECTION`.
+/// The main window's listener is `platform/pet-settings-request.ts`, which `app/pet-settings-link.ts`
+/// attaches from the shell — written, and no longer reported. The payload is a page and nothing
+/// else — no section id, no window label, no URL — so the section this app opens is named once, in
+/// TypeScript, by `PET_SETTINGS_SECTION`.
 pub const PET_SETTINGS_CHANNEL: &str = "pet-open-settings";
+
+/// The channel the host publishes the task list on (§6).
+///
+/// Declared in `desktop_pet/task_feed.rs`, where the list is published, and re-exported here
+/// because this module is where a channel's *name* lives for the two sides to agree on. The window
+/// that reads it is `tauri-pet.ts`'s `PET_TASKS_CHANNEL`.
+pub use crate::desktop_pet::PET_TASKS_CHANNEL;
+
+/// The channel the pet's click on a task reaches the main window on (§6.2's 点击返回任务).
+///
+/// The payload is D1's `PetTaskKey` and nothing else — no session URL, no path, no command. §6.3
+/// requires a notification's action to be a host-issued, limited target, and the key is exactly
+/// that: the main window re-validates it against the sessions it holds, and the pet cannot name
+/// anything the host did not mint. Both halves of that sentence are now code rather than intent —
+/// `platform/pet-task-request.ts` reads the payload and refuses what is not a key, and
+/// `app/pet-task-link.ts` focuses the session only when this window is holding it.
+pub const PET_TASK_OPEN_CHANNEL: &str = "pet-open-task";
+
+/// The channel a *settings write* is published on, so a window drawing from settings hears it.
+///
+/// The gap it closes is the same shape as the one D3 reported about the feature state: the pet
+/// window draws the character the `character` domain names, and a user changing that character in
+/// the main window's settings had no way to reach a window that was already open — the window
+/// would have had to poll a file for a change it can be *told* about. Published from
+/// [`desktop_pet_update_settings`] after a write is applied, with the domain and the revision, so
+/// a listener re-reads only what it draws.
+///
+/// A separate name from [`PET_SETTINGS_CHANNEL`], which is the deep link *into* the main window:
+/// one is a request a pet window makes, this is news a pet window receives, and one channel
+/// carrying both would be a listener that cannot tell which it is holding.
+pub const PET_SETTINGS_CHANGED_CHANNEL: &str = "pet-settings-changed";
 
 /// The main window's label, as the app builds it from `tauri.conf.json`.
 ///
@@ -141,6 +176,18 @@ impl PetFeatureState {
 #[serde(rename_all = "camelCase")]
 struct SettingsRequest {
     page: String,
+}
+
+/// One applied settings write, as a window that draws from settings hears about it.
+///
+/// The domain and the revision and nothing else: a listener decides for itself whether it draws
+/// from this domain, and shipping the values too would make each subscriber a second copy of the
+/// record §5.3 keeps in exactly one place.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsChanged {
+    domain: &'static str,
+    revision: i64,
 }
 
 /// What the care ledger settled, or the fact that it settled nothing (§8).
@@ -359,6 +406,198 @@ pub fn desktop_pet_care_read(
     })
 }
 
+/// What the runtime is doing, as this window may be told (§6).
+///
+/// D1's `PetTaskProjection` list, read from the projection D4's state machine built and this
+/// process now holds (`desktop_pet/task_feed.rs`). The window's subscription is listen-then-read,
+/// so this is both the answer to its first read and what it re-reads on a push — and because the
+/// list is complete every time, a push that never arrived costs freshness rather than the task.
+///
+/// **This command had no backend until the feed landed.** Its absence was not a missing first
+/// payload: `tauri-pet.ts`'s `subscribe` releases the listener when the first read rejects, so a
+/// window mounted against a host that could not answer this looked exactly like a pet with no
+/// work — a quiet subscription rather than a stated failure. The read is now a real one, and the
+/// refusal a poisoned lock produces is the caller's to state rather than a silence.
+#[tauri::command]
+pub fn desktop_pet_tasks(
+    state: tauri::State<'_, DesktopPetState>,
+) -> Result<Vec<crate::desktop_pet::PetTaskProjection>, String> {
+    state.tasks.read()
+}
+
+/// What the pet window draws, or why it draws nothing (§5.1's 角色与动画).
+///
+/// The whole of the window's appearance in one read: which character the `character` settings
+/// domain names, where its spritesheet is, the grid to slice it on, and the domain's own values
+/// (size, animation mapping, idle playlist) as the store read them. One call rather than four,
+/// because the window needs them together to draw one frame, and because the sheet path must be
+/// *granted* — [`allow_character_sheet`] below extends the asset protocol by exactly this file,
+/// which is the rule `commands/fs.rs` settled for the vault's images: one `allow_file` per
+/// resolved file, never a directory, and never a scope entry for the library.
+#[tauri::command]
+pub fn desktop_pet_appearance<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<crate::desktop_pet::PetAppearance, String> {
+    use tauri::Manager;
+    let store = settings_store(&app)?;
+    let record = match store.read(PetSettingsDomain::Character) {
+        PetSettingsLoad::Current { record } | PetSettingsLoad::Migrated { record, .. } => record,
+        // No record: a fresh install. Nothing is chosen, which is a state the window draws as a
+        // sentence — and deliberately not an error.
+        PetSettingsLoad::Defaults {
+            reason: DefaultsReason::Absent,
+            ..
+        } => return Ok(crate::desktop_pet::PetAppearance::Unset),
+        // There is a file and it is not a record this build can read. Reported rather than read as
+        // "nothing chosen": a corrupt record is not an empty one, and drawing nothing for one
+        // would hide the corruption behind a state the user could not tell from a fresh install.
+        PetSettingsLoad::Defaults {
+            reason: DefaultsReason::Unreadable,
+            ..
+        } => {
+            return Err(
+                "the pet's character settings are there and are not readable as a record".to_string(),
+            )
+        }
+        // §10.2: written by a newer build, so this one reads it and does not touch it. There is no
+        // record to draw from, and pretending there is would be reading a future schema's fields
+        // by guess.
+        PetSettingsLoad::ReadOnly {
+            found_version, ..
+        } => {
+            return Err(format!(
+                "the pet's character settings are at schema {found_version}, which this build \
+                 cannot read"
+            ))
+        }
+    };
+    let library = app.try_state::<CharacterLibrary>();
+    let appearance = crate::desktop_pet::appearance(&record, library.as_deref());
+    if let crate::desktop_pet::PetAppearance::Ready { sheet_path, .. } = &appearance {
+        allow_character_sheet(&app, Path::new(sheet_path));
+    }
+    Ok(appearance)
+}
+
+/// One character's spritesheet, and nothing else, through `asset://`.
+///
+/// The scope cannot be narrowed — `allow_file` only ever appends — so it is never widened by a
+/// directory: `commands/fs.rs`'s header is where that rule is argued, and a
+/// `desktop-pet/characters/**` entry would hand the whole library to a protocol with no IPC guard
+/// in front of it. The residue is the sheets of characters that have been drawn this session,
+/// which is exactly what the user was looking at.
+fn allow_character_sheet<R: tauri::Runtime>(app: &tauri::AppHandle<R>, path: &Path) {
+    use tauri::Manager;
+    let _ = app.asset_protocol_scope().allow_file(path);
+}
+
+/// Every character the library holds (§8), for the settings page that chooses one.
+///
+/// Read-only and deliberately not "the chosen one, plus the rest": the page compares this list
+/// with the `character` domain's own value (which it is already editing), so the choice stays one
+/// fact in one place rather than being reported twice.
+#[tauri::command]
+pub fn desktop_pet_library<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<Vec<crate::desktop_pet::PetCharacterEntry>, String> {
+    use tauri::Manager;
+    let library = app.try_state::<CharacterLibrary>();
+    match library.as_deref() {
+        // An app whose library could not be opened at startup (`lib.rs` reports it and carries
+        // on). An empty list would be a lie about a library that may hold characters, so the
+        // caller is told which of the two it is.
+        None => Err("this build has no character library to read".to_string()),
+        Some(library) => crate::desktop_pet::entries(library),
+    }
+}
+
+/// Import one character pack the user picks in the OS dialog (§8's 导入).
+///
+/// The path is never a parameter: it comes from the dialog, which is a gesture by the user, and
+/// nothing here joins a string the renderer sent onto a path — §8's rule for the resource side,
+/// and the same shape `commands/fs.rs`'s dialogs have. `Ok(None)` is the user closing the dialog,
+/// which is not an error.
+///
+/// The id and the name are derived from the folder the user picked (`character_view`), because a
+/// pack folder is named by a human and an id has to be a path component. A pack that is already
+/// installed is suffixed rather than refused — the alternative would be telling a user to delete
+/// the character they are importing.
+#[tauri::command]
+pub async fn desktop_pet_import_character<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<Option<crate::desktop_pet::PetCharacterEntry>, String> {
+    use tauri::Manager;
+    use tauri_plugin_dialog::DialogExt;
+    let Some(source) = app
+        .dialog()
+        .file()
+        .blocking_pick_folder()
+        .and_then(|picked| picked.into_path().ok())
+    else {
+        return Ok(None);
+    };
+    let library = app
+        .try_state::<CharacterLibrary>()
+        .ok_or_else(|| "this build has no character library to import into".to_string())?;
+    let name = source
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "character".to_string());
+    let character_id = crate::desktop_pet::free_character_id(&library, &name)?;
+    let request = InstallRequest {
+        character_id,
+        name,
+        kind: CharacterKind::Imported,
+        source,
+        installed_at_ms: now_ms(),
+    };
+    let installed = library
+        .install(&request)
+        .map_err(|refusal| crate::desktop_pet::refusal_sentence(&refusal))?;
+    Ok(Some(crate::desktop_pet::PetCharacterEntry {
+        character_id: installed.character_id.clone(),
+        // What the library wrote, read back rather than echoed: the entry and the manifest are one
+        // fact, and a second spelling of the name here could differ from the one on disk.
+        pack_name: installed.name,
+        kind: installed.kind,
+        files: crate::desktop_pet::PetCharacterFiles::Intact,
+        installed_at_ms: installed.installed_at_ms,
+    }))
+}
+
+/// Now, in epoch milliseconds, for a manifest's install time.
+///
+/// Read here rather than injected because there is nothing to test about it at this layer: the
+/// value is *recorded*, and every rule about it lives with the library that reads it back.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Bring the main window up on the session one task belongs to (§6.2's 点击返回任务).
+///
+/// The same two-step shape as [`desktop_pet_open_settings`], and for the same reason: the window
+/// is raised first, so the request lands on a listener that is mounted. What crosses is D1's
+/// `PetTaskKey` — the six fields that name one run — and nothing else: no URL, no command, no
+/// path, and no window label. §6.3 requires a notification's action to be a limited target the
+/// host issued, and the host issued this one (the window read it from `desktop_pet_tasks`).
+///
+/// The key is *not* validated against the projection here, and that is a decision: a run that has
+/// been retired still has a session the main window may want to show last known state for, and
+/// "this session is gone" is a fact the window that holds sessions can state and this one cannot.
+/// What the main window does with a key it does not recognise is that window's business.
+#[tauri::command]
+pub fn desktop_pet_open_task<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    task: crate::desktop_pet::PetTaskKey,
+) -> Result<(), String> {
+    raise_main(&app)?;
+    tauri::Emitter::emit_to(&app, MAIN_WINDOW, PET_TASK_OPEN_CHANNEL, task)
+        .map_err(|error| format!("the task request could not be delivered: {error}"))
+}
+
 /// One settings domain, as a record, a default, or the reason this build will not read it (§5.3).
 ///
 /// The four arms are four things the caller does with the answer — `defaults` and `migrated` may
@@ -403,6 +642,21 @@ pub fn desktop_pet_update_settings<R: tauri::Runtime>(
 ) -> Result<PetSettingsUpdate, String> {
     let store = settings_store(&app)?;
     let outcome = store.apply(&write);
+    // The window that draws from settings hears about the write here, and only here: a window with
+    // a spritesheet on screen has no way to notice that the `character` domain moved, and a poll
+    // is the thing §7.3's budget and this feature's own rule both refuse. Published after the
+    // store applied it, so a listener that re-reads sees the new record rather than the old one
+    // twice — the ordering the reference client's archive store uses, read the other way round.
+    if let PetSettingsUpdate::Applied { record } = &outcome {
+        let _ = tauri::Emitter::emit(
+            &app,
+            PET_SETTINGS_CHANGED_CHANNEL,
+            SettingsChanged {
+                domain: record.domain.id(),
+                revision: record.revision,
+            },
+        );
+    }
     if let PetSettingsUpdate::Applied { record } = &outcome {
         // A poisoned window lock does not turn a saved setting into a failed one: the write did
         // happen, and this call's answer is what the caller asked for. What could not be applied
@@ -416,6 +670,10 @@ pub fn desktop_pet_update_settings<R: tauri::Runtime>(
         if let Some(feature) = feature {
             publish_feature(&app, feature);
         }
+        // The other reader of a saved setting, and the one that is not a window: §6.3's ledger
+        // decides a notice from the switches, and it is the only place they can be applied while
+        // the app runs. A write to another domain answers `false` here and changes neither.
+        apply_notification_switch(&state.tasks, record);
     }
     Ok(outcome)
 }
@@ -463,6 +721,38 @@ pub fn apply_feature_switch(
         }
     }
     Some(PetFeatureState::of(host))
+}
+
+/// The notification switches, as an applied write delivers them to the ledger that reads them.
+///
+/// The same gap [`apply_feature_switch`] closes, one domain over and one layer down: the eight
+/// switches on the notification page are written by `desktop_pet_update_settings`, and the thing
+/// they decide — whether a notice is attempted at all — is §6.3's ledger, which
+/// `state::DesktopPetState::new` reads them into exactly once, at startup, because a file read on
+/// the driver's task for every frame is what that read exists to avoid. An applied write is the
+/// *other* moment the answer is known to this process, and without this hook a switch flipped by
+/// the user took effect at the next start: §5.3's 「保存后立即生效」, on the page whose every control
+/// is a switch.
+///
+/// A record that is not the notification domain's, or whose values are not switches this build can
+/// read, changes nothing and says so by answering `false` — the ledger keeps the switches it has,
+/// for the reason [`settings::notification_preferences`] gives about deciding a notice from half a
+/// record. A poisoned lock is logged and never returned: the setting *was* saved, and a user whose
+/// preference did not take is better told by the page's own state than by a refusal invented here.
+pub fn apply_notification_switch(tasks: &PetTaskFeed, record: &PetSettingsRecord) -> bool {
+    let Some(preferences) = crate::desktop_pet::settings::notification_preferences(record) else {
+        return false;
+    };
+    match tasks.notifications() {
+        Ok(mut policy) => {
+            policy.set_preferences(preferences);
+            true
+        }
+        Err(detail) => {
+            eprintln!("nekowite: a saved notification switch did not reach the pet's ledger: {detail}");
+            false
+        }
+    }
 }
 
 /// The pet's settings, resolved for one call.

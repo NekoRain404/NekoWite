@@ -87,32 +87,30 @@
 }
 
 /* ---- The compatibility surface ------------------------------------------
-   The two keyframes below are the *old* arrival and the *old* action-row beat,
-   kept alive for the one consumer the motion round could not reach.
+   Two keyframes used to sit here, both kept alive for the one consumer the
+   motion round could not reach. One of them is gone and one is not, and the
+   difference is worth the paragraph.
+
    `styles/surfaces.css` restates the math and table dialog passthroughs against
    their own class names — editor-core writes them and its own tests read them,
-   so they cannot simply wear `.dialog` — and it names these two keyframes to do
-   it. (They were in `styles/components.css` until the component layer was split;
-   only the path changed, and the reason they are still unconverted is
-   editor-core's, not the split's.) Deleting them here would leave two
-   `animation:` shorthands pointing at nothing, and an unparseable animation
-   shorthand is dropped whole: the two dialogs would lose their arrival
-   silently. So the names stay until those rules are converted, and `.dialog` no
-   longer uses either of them.
+   so they cannot simply wear `.dialog`. Those passthroughs named both keyframes
+   here, and the reason the names stayed is the shorthand: an `animation:`
+   pointing at keyframes nothing defines is dropped WHOLE, so deleting a name out
+   from under a live rule costs that rule its animation in silence. That is still
+   true of `dialog-row-in`, which two action rows name, so it stays.
 
-   `surface-in` keeps the combined shape purely because a single keyframe cannot
-   carry two timing functions: the passthroughs would need the same split
-   `.dialog` got, in their own file. It still takes the amplitude token, so those
-   two dialogs get the smaller scale as well — the 4% this used to be is the
-   thing the brief names by hand, and it costs nothing to fix here. What is left
-   is the spring on their opacity, which is the curve those rules name and
-   therefore theirs to change. `dialog-row-in` is the fade the action row took
-   before the beat was removed. Both are reported as the remaining work, not
-   recommended. */
-@keyframes surface-in {
-  from { opacity: 0; scale: var(--app-motion-scale-surface); }
-  to   { opacity: 1; scale: 1; }
-}
+   `surface-in` is the one that went, and it went for the reason it existed. It
+   was the *old* arrival: one keyframe carrying opacity and scale together,
+   because a keyframe cannot carry two timing functions — so one curve had to
+   serve two kinds of thing, and the curve it served them on was the movement's
+   spring. An opacity has nothing to settle on that curve: it is the same 1
+   either way, it reaches 1 about 42% of the way along, and it then sits clamped
+   while the movement is still going. The three rules that named it — the two
+   passthroughs and the shell's settings dialog — now wear the two-animation
+   split `.dialog` wears, and each one's own comment names the budget its half
+   takes. Nothing names it now, and the guard in `motion.test.ts` resolves
+   keyframes across the whole layer, so an arrival that cannot be read fails
+   instead of passing quietly. */
 @keyframes dialog-row-in {
   from { opacity: 0; }
   to   { opacity: 1; }

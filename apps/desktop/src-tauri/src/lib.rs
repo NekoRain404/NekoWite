@@ -9,6 +9,9 @@
 //!   and the commands are the only thing that reaches them from a window.
 //! - [`commands`]: the `#[tauri::command]` IPC surface — thin args/DTO/error
 //!   mapping only.
+//! - [`instance_guard`]: whether this process's single-instance guard actually armed — the
+//!   plugin's D-Bus name either exists or it does not, and the launch that has none is the one
+//!   that used to say nothing at all.
 //! - [`domain`]: path-confinement policy, vault rules, crash recovery.
 //! - [`storage`]: file, trash, index and key stores.
 //! - [`providers`]: the AI providers (client, Gemini, OpenAI-compatible).
@@ -23,6 +26,8 @@ pub mod commands;
 pub mod desktop_pet;
 pub mod domain;
 pub mod errors;
+#[cfg(target_os = "linux")]
+pub mod instance_guard;
 pub mod open_file;
 pub mod providers;
 pub mod state;
@@ -101,6 +106,15 @@ pub fn run() {
         .manage(state::AgentRuntimeState::default())
         .manage(commands::agent::AgentIpcState::default())
         .setup(|app| {
+            // The single-instance plugin has already made its claim by the time this runs — the
+            // builder initializes plugins, and Tauri calls this hook later, on `RunEvent::Ready`
+            // — so "the guard did not arm" is a fact to report here and not a guess. It comes
+            // first in this hook on purpose: the window loop below returns early with `?` when a
+            // window cannot be built, and of everything this hook does, this is the one line
+            // nothing else in the app records. When the guard held, it says nothing.
+            #[cfg(target_os = "linux")]
+            instance_guard::report(app.handle());
+
             // The folders the app's own files live in, before a window exists
             // to ask for them: the config directory the remembered-vault record
             // is written in, and the data directory the key files are written
@@ -196,6 +210,14 @@ pub fn run() {
             );
             Ok(())
         })
+        // Registering a command here is half of what makes it callable. The other half is
+        // `build.rs`'s app manifest, which declares the command to Tauri's ACL so that a window
+        // has to be *given* it by a capability file — and a command that is not declared there has
+        // no `allow-` permission for any capability to name, so no window can reach it however it
+        // is registered here. §7.1's 「后端 IPC 验证调用窗口身份」 is enforced at that layer, and
+        // `tests/command_authorisation_test.rs` is where both halves are asserted. So a command
+        // added below is a command added in two places, and the failure mode of stopping at one is
+        // a refusal at the invoke rather than a window that should not have had it.
         .invoke_handler(tauri::generate_handler![
             commands::fs::read_file,
             commands::fs::stat_file,
@@ -264,15 +286,22 @@ pub fn run() {
             // `DesktopPetState`, whose host is the only thing that mints a window label — and
             // the two that act on a window take it as the caller Tauri reports rather than as
             // an argument, which is where §7.1's 「前端不能自选任意 label」 is enforced. The
-            // settings half of D1's `PetGateway` is served by the two commands below, and
+            // settings half of D1's `PetGateway` is served by the two commands below,
             // `desktop_pet_care_read` answers from the ledger, which is not a file but the
-            // process's own state — so that read is an answer this build can give in full.
+            // process's own state — so that read is an answer this build can give in full — and
+            // the other three of its calls are answered here too rather than refused: the
+            // **task** half is `desktop_pet_tasks`, which reads the projection the runtime's own
+            // frames feed (`desktop_pet/task_feed.rs`) instead of the "command not found" it
+            // used to be; `desktop_pet_appearance` is what the window draws, and it grants the
+            // one sheet file it resolves rather than a directory; and `desktop_pet_open_task`
+            // raises `main` and publishes the key the window read from the list above.
+            // `desktop_pet_library` and `desktop_pet_import_character` are the settings page's
+            // character picker. Nothing the pet's own contract asks for is unanswered now.
             //
-            // The **task** half still has no command, and that is deliberate rather than
-            // pending: `task_projection.rs` has no managed state to answer from, so a call
-            // is refused by Tauri's own "command not found" rather than by a stub that would
-            // look like a host with nothing to say. `desktop_pet_tasks` is the one call a
-            // window can still make that nothing answers.
+            // Which of them a given window may actually call is not decided here and not by
+            // this list. Registering a command is what makes it callable at all; the
+            // capability files are what hand it out, and the pet window holds eight — the
+            // three added to this list with the task feed, the five it already had, and no more.
             //
             // `desktop_pet_update_settings` is the pet's switch: writing `general.enabled`
             // is what opens and closes the window, which is why `desktop_pet_open` — which
@@ -286,6 +315,11 @@ pub fn run() {
             commands::desktop_pet::desktop_pet_set_click_through,
             commands::desktop_pet::desktop_pet_capabilities,
             commands::desktop_pet::desktop_pet_care_read,
+            commands::desktop_pet::desktop_pet_tasks,
+            commands::desktop_pet::desktop_pet_appearance,
+            commands::desktop_pet::desktop_pet_library,
+            commands::desktop_pet::desktop_pet_import_character,
+            commands::desktop_pet::desktop_pet_open_task,
             commands::desktop_pet::desktop_pet_read_settings,
             commands::desktop_pet::desktop_pet_update_settings,
             commands::desktop_pet::desktop_pet_open_settings,

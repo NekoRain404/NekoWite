@@ -462,32 +462,16 @@ test('occlusion: the two columns against the content that glides over them', asy
   report('OCCLUSION note-list column — close', b)
 })
 
-test('rail sections: the leaver, the arriver, and which one is on top', async ({ page }) => {
-  const toggle = page.locator('.status-btn').nth(0)
-  await toggle.click()
-  await page.waitForTimeout(700)
-
-  // Outline (2nd tab) → Stats (6th) swaps the rail body while all six sections
-  // stay mounted, so the leaver and the arriver are in the DOM together.
-  await page.locator('.rail-tab').nth(1).click()
-  await page.waitForTimeout(600)
-  await ensureProbe(page)
-  const leaver = probe(page, '.rail-body > *:nth-child(2)', 700)
-  await page.locator('.rail-tab').nth(5).click()
-  const leavingFrames = await leaver()
-  report('rail section 2 (outline) — leaving', leavingFrames)
-  expect(fadedOut(leavingFrames), 'the section fades rather than disappearing').toBe(true)
-  expect(untouched(leavingFrames), 'and the exit takes the pointer off it').toBeGreaterThan(2)
-  await page.waitForTimeout(400)
-
-  // The same swap, reading paint order with the interactivity guards lifted.
-  await page.locator('.rail-tab').nth(1).click()
-  await page.waitForTimeout(600)
-  await ensureProbe(page)
-  const occluded = probe(page, '.rail-body > *:nth-child(2)', 700, true)
-  await page.locator('.rail-tab').nth(5).click()
-  report('OCCLUSION rail section 2 (outline) — leaving', await occluded())
-})
+// A case for the rail's section swap stood here and is gone with the surface it measured.
+//
+// It drove `.rail-tab` nth(1) → nth(5) — outline → stats — over a rail whose six sections stayed
+// mounted at once so that a leaver and an arriver were in the DOM together. `afd0b89` reduced that
+// rail to the chat alone, at the user's decision, and nothing replaced the mechanism: the four
+// panels moved into the note-list column as modes of a `v-else-if` chain keyed on the mode, so a
+// switch there unmounts the leaver instead of fading it, and there is no second rail section to
+// swap to. The concern the case existed for — a leaving section fades, and the exit takes the
+// pointer off it while the arriver is already beneath — is still asserted, on the surface that
+// still has it: `the settings section swap, and what the leaving page still exposes`, below.
 
 // ---------------------------------------------------------------------------
 // The popups: two surfaces whose exit was never measured, because the

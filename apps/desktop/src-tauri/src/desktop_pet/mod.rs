@@ -9,6 +9,9 @@
 //!   created on demand and torn down, and which window is allowed to ask for any of it (§7.1).
 //! - [`linux_capabilities`] — what this machine has been *observed* to do, with what happens
 //!   where it has not, so a missing capability is stated rather than substituted (§7.2).
+//! - [`task_feed`] — the one place a runtime frame becomes a task a window can read, and the one
+//!   place a window is told the list moved (§6). Without it `desktop_pet_tasks` had no state to
+//!   answer from, which is the whole of why the pet could not remind anybody about anything.
 //!
 //! Three rules are structural here rather than documented, because a rule that lives only in
 //! prose is a rule the next component can forget:
@@ -30,7 +33,8 @@
 //! Wiring is deliberately not here, and it is no longer missing either: `lib.rs` declares this
 //! module and registers its commands, `commands/desktop_pet.rs` is the only place a caller's
 //! identity is read, and `state/app_state.rs` holds [`PetWindowHost`], [`Observations`] and the
-//! character library as managed state. This file stays a list of modules and a re-export, so the
+//! care ledger as managed state — with [`PetTaskFeed`] beside them, which is what gives
+//! `desktop_pet_tasks` a state to answer from. This file stays a list of modules and a re-export, so the
 //! isolation the header above describes is a property of the tree rather than of a paragraph.
 //!
 //! **The list grew as the pieces above landed.** Each one is declared here rather than inside
@@ -40,17 +44,22 @@
 //! a name added to it is a name every build carries.
 
 pub mod care_ledger;
+pub mod character_view;
 pub mod history;
 pub mod linux_capabilities;
 pub mod notification_delivery;
 pub mod notification_policy;
 pub mod resources;
 pub mod settings;
+pub mod task_feed;
 pub mod task_projection;
 pub mod window_host;
 
 pub use care_ledger::{CareLedger, CareOutcome, CareSummary, DAY_WINDOW, MEAL_XP};
-pub use history::{Decoded, DeliveryState, TaskHistory, TaskRecord, HISTORY_SCHEMA_VERSION};
+pub use history::{
+    Decoded, DeliveryState, HistoryStore, Loaded, SaveOutcome, TaskHistory, TaskRecord,
+    HISTORY_SCHEMA_VERSION, LEDGER_FILE, UNREAD_MAX_AGE_MS,
+};
 pub use linux_capabilities::{
     CapabilityReport, Desktop, DisplaySession, Finding, LinuxEnvironment, Observed, Observations,
 };
@@ -59,12 +68,19 @@ pub use notification_policy::{
     channel_for, NotificationChannel, NotificationOutcome, NotificationPolicy,
     NotificationPreferences, TaskFact,
 };
-pub use resources::CharacterLibrary;
+pub use character_view::{
+    appearance, entries, free_character_id, refusal_sentence, PetAppearance, PetCharacterEntry,
+    PetCharacterFiles,
+};
+pub use resources::{
+    is_path_component, CharacterKind, CharacterLibrary, EntryState, InstallRequest, LibraryEntry,
+};
 pub use settings::{
     decide_write, read_domain, PetSettingsDomain, PetSettingsLoad, PetSettingsRecord,
     PetSettingsStore, PetSettingsUpdate, PetSettingsWrite, PET_SETTINGS_INITIAL_REVISION,
     PET_SETTINGS_SCHEMA_VERSION,
 };
+pub use task_feed::{publish_tasks, PetTaskFeed, PET_TASKS_CHANNEL};
 pub use task_projection::{system_clock, PetClock, PetTaskKey, PetTaskProjection, TaskProjection};
 pub use window_host::{
     CallerWindow, Closed, HostRefusal, PetInstance, PetSurfaces, PetWindowHost, PetWindowLabel,

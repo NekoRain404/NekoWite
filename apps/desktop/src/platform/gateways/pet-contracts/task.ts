@@ -27,6 +27,39 @@ export interface PetTaskKey extends AgentIdentity {
   runId: string
 }
 
+/** The fields a key is made of, named once so the reader below and the type cannot drift. */
+const TASK_KEY_FIELDS = [
+  'agentId',
+  'profileId',
+  'runtimeEpoch',
+  'vaultId',
+  'sessionId',
+  'runId',
+] as const
+
+/**
+ * Whether an answer is one of these keys.
+ *
+ * The receiving half of §6.2's 点击返回任务 runs this before it does anything with a payload, and
+ * it is not a formality: the main window focuses a session by the key it is handed, and the store's
+ * `focus` takes any string. A payload with a missing field would stringify into a key no session
+ * answers to and quietly make the session actually on screen *unread* for every frame that arrives
+ * after it — the one failure a receiver with no check can produce, and one that looks like a
+ * feature working. Six non-empty strings is the whole of the check: which session they name is the
+ * host's question (it minted the key), and this side only refuses what is not a key at all.
+ *
+ * It lives in the contract because the key is defined here and both sides of the wire need it —
+ * the pet window's adapter builds one, the main window's listener reads one — and `platform/` may
+ * not reach into `features/` for it.
+ */
+export function isPetTaskKey(value: unknown): value is PetTaskKey {
+  if (typeof value !== 'object' || value === null) return false
+  const key = value as Record<string, unknown>
+  return TASK_KEY_FIELDS.every(
+    (field) => typeof key[field] === 'string' && (key[field] as string).length > 0,
+  )
+}
+
 /** Whether two keys name the same run. Compared field by field, never by a suffix. */
 export function samePetTask(a: PetTaskKey, b: PetTaskKey): boolean {
   return (
@@ -77,7 +110,12 @@ export const PET_TASK_STATES = [
   'failed',
   /** The runtime went away mid-run. Never a terminal *success*, and not re-sent. */
   'interrupted',
-  /** The host cannot be reached, so it cannot say what the task is doing. */
+  /**
+   * The host cannot say what the task is doing, for either of two reasons: it cannot reach the
+   * runtime, or the run ended for a reason this version does not know. Both are the same fact —
+   * no ending can be stated — and neither is a success, a failure or an interruption, so the
+   * state is one and the notice it produces names both rather than picking one of them.
+   */
   'unknown',
 ] as const
 

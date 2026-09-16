@@ -197,7 +197,12 @@ describe('the structured kind: corrupt shape', () => {
 })
 
 describe('the structured kind: oversized', () => {
-  const oversized: Array<[PetSettingsDomain, string, unknown, number]> = [
+  // The raw value is one of the two structured shapes and never anything else: the case below
+  // asks which of them it is in order to cut it down, and `unknown` cannot be asked — `Array.isArray`
+  // narrows a union and leaves `unknown` alone.
+  const oversized: Array<
+    [PetSettingsDomain, string, unknown[] | Record<string, unknown>, number]
+  > = [
     ['character', 'idleClips', lines(CAPS['character.idleClips']! + 1, (i) => i), CAPS['character.idleClips']!],
     ['character', 'bindings', mapOf(CAPS['character.bindings']! + 1), CAPS['character.bindings']!],
     ['message', 'hiddenAgents', lines(CAPS['message.hiddenAgents']! + 1), CAPS['message.hiddenAgents']!],

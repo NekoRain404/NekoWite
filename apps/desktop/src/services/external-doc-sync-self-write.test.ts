@@ -28,6 +28,11 @@ interface Harness {
   releaseWrite(): void
   advance(ms: number): void
   deliver(): Promise<void>
+  /** Hold the watcher's next read open, so a test can move the world inside it
+   *  (a save settling, a keystroke) before the bytes are handed back. */
+  holdNextRead(): void
+  releaseRead(): void
+  settle(): Promise<void>
   conflicts: Array<{ tabId: string; path: string }>
   reloads: string[]
 }
@@ -88,8 +93,19 @@ function harness(dirty: boolean, opts: { failWrite?: boolean } = {}): Harness {
   const conflicts: Array<{ tabId: string; path: string }> = []
   const reloads: string[] = []
   let deliver: (() => void) | null = null
+  let holding = false
+  let openGate: (() => void) | null = null
   const sync = createExternalDocSync({
-    read: async () => disk.value,
+    // The watcher's read, and only the watcher's: the save path reads the same
+    // disk through its own port, so holding this one open does not stall the
+    // write whose race is under test.
+    read: async () => {
+      if (holding) {
+        holding = false
+        await new Promise<void>((resolve) => { openGate = resolve })
+      }
+      return disk.value
+    },
     onFsChange: async (cb) => {
       deliver = () => cb({ path: '/vault/a.md', kind: 'modified' })
       return () => {
@@ -124,6 +140,17 @@ function harness(dirty: boolean, opts: { failWrite?: boolean } = {}): Harness {
     deliver: async () => {
       await sync.start()
       deliver?.()
+      await new Promise((r) => setTimeout(r, 0))
+      await new Promise((r) => setTimeout(r, 0))
+    },
+    holdNextRead: () => {
+      holding = true
+    },
+    releaseRead: () => {
+      openGate?.()
+      openGate = null
+    },
+    settle: async () => {
       await new Promise((r) => setTimeout(r, 0))
       await new Promise((r) => setTimeout(r, 0))
     },
@@ -185,6 +212,73 @@ describe('the save echo of a write that outlives its claim', () => {
 
     h.releaseWrite()
     await saving
+  })
+
+  it('is not read back as somebody else\'s edit when the write settles mid-read', async () => {
+    // The window neither guard covers on its own. The event arrives while the
+    // write is still in flight and is read AFTER it has settled: by then the
+    // claim is released (so `isSelfWrite` says no) and the tab has recorded what
+    // it wrote (so the bytes read are not the ones a handler that took its copy
+    // before the read is comparing against). Both lookups miss by one time
+    // slice, and what the user got was the keep-or-reload dialog raised by the
+    // app's own autosave — on a tab with nothing unsaved, with the status line
+    // beside it reading "saved".
+    const h = harness(true)
+    const saving = h.save.saveTab('tab-1')
+    await vi.waitFor(() => expect(h.written).toEqual([IN_TAB]))
+
+    // Our bytes are on disk and the watcher is reading them back...
+    commitWrite(h)
+    h.holdNextRead()
+    await h.deliver()
+
+    // ...and while that read is open the write settles: the claim goes, the tab
+    // records the bytes it wrote, and it stops being dirty.
+    h.releaseWrite()
+    await saving
+    h.releaseRead()
+    await h.settle()
+
+    expect(h.conflicts).toEqual([])
+    expect(h.reloads).toEqual([])
+  })
+
+  it('still reports a real external edit that lands right after the save', async () => {
+    const h = harness(false)
+    const saving = h.save.saveTab('tab-1')
+    await vi.waitFor(() => expect(h.written).toEqual([IN_TAB]))
+    commitWrite(h)
+    h.releaseWrite()
+    await saving
+
+    // No pause between our save and their write. The claim is gone and the tab
+    // is clean, so nothing about this is ours — and a rule that ignored events
+    // for a while after a save would swallow exactly this one, leaving the
+    // editor showing text the file no longer has.
+    h.disk.value = 'their text'
+    await h.deliver()
+
+    expect(h.reloads).toEqual(['tab-1'])
+    expect(h.conflicts).toEqual([])
+  })
+
+  it('still asks when their edit lands right after a save the user typed across', async () => {
+    const h = harness(true)
+    const saving = h.save.saveTab('tab-1')
+    await vi.waitFor(() => expect(h.written).toEqual([IN_TAB]))
+    // A keystroke while the write ran. The tab stays dirty when it lands,
+    // because what is on disk is not what the user is looking at.
+    h.save.noteEdit('tab-1')
+    commitWrite(h)
+    h.releaseWrite()
+    await saving
+    expect(h.tab.dirty).toBe(true)
+
+    h.disk.value = 'their text'
+    await h.deliver()
+
+    expect(h.conflicts).toEqual([{ tabId: 'tab-1', path: '/vault/a.md' }])
+    expect(h.reloads).toEqual([])
   })
 
   it('does not let a failed write keep claiming the path', async () => {

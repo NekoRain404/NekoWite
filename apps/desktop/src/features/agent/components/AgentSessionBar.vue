@@ -3,7 +3,10 @@
  * The bar's copy, handed in rather than reached for — see {@link AgentToolLabels} for why, and
  * for what happens when the catalogue grows keys.
  */
-import type { AgentSessionState, AgentStopReason } from '../../../platform/gateways/agent-contracts'
+import type {
+  AgentRunEnding,
+  AgentSessionState,
+} from '../../../platform/gateways/agent-contracts'
 
 export interface AgentSessionBarLabels {
   /** Shown until the engine names the session. It carries the engine's own name — the caller
@@ -13,10 +16,11 @@ export interface AgentSessionBarLabels {
   /** One word per session state, keyed by the contract's own states: a state added later
    *  fails to typecheck here rather than rendering as a blank. */
   state: Record<AgentSessionState, string>
-  /** How a run ended, per stop reason. `end-turn` is the ordinary ending and is never shown;
-   *  the other four say something a reader wants to know — a ceiling was hit, the engine
-   *  refused, or the run was stopped. */
-  result: Record<AgentStopReason, string>
+  /** How a run ended, per ending the contract can report. `end-turn` is the ordinary ending and
+   *  is never shown; the other four say something a reader wants to know — a ceiling was hit, the
+   *  engine refused, the run was stopped — and so does an ending whose reason this version does
+   *  not know, which is a fact about the engine rather than a failure of the turn. */
+  result: Record<AgentRunEnding, string>
 }
 </script>
 
@@ -83,11 +87,21 @@ const spinning = computed(() => props.state !== null && SPINNING.includes(props.
 
 /** The second half of the line: why, when there is a why. A failure carries the engine's own
  *  message; an ordinary ending says nothing, and the four that are not ordinary say which one
- *  they were (§5.1: a token ceiling is not a failure and must not read as one). */
+ *  they were (§5.1: a token ceiling is not a failure and must not read as one).
+ *
+ *  An ending this version does not know is one of the four that say something, and it carries
+ *  the engine's own word in brackets when there is one. That word is the whole of what a reader
+ *  — or a bug report — can act on: the sentence says the reason was not recognised, and the word
+ *  says which reason it was. */
 const detail = computed(() => {
   if (props.failure !== null) return props.failure.message
-  const reason = props.result?.stopReason
-  if (reason === undefined || reason === 'end-turn') return null
+  const result = props.result
+  if (result === null) return null
+  const reason = result.stopReason
+  if (reason === 'end-turn') return null
+  if (reason === 'unrecognised' && result.unrecognisedReason !== undefined) {
+    return `${props.labels.result[reason]} (${result.unrecognisedReason})`
+  }
   return props.labels.result[reason]
 })
 </script>

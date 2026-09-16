@@ -36,6 +36,15 @@ export type AgentSnapshotOutcome =
   | { status: 'refused'; reason: 'unreachable-state'; state: AgentSessionState }
   | { status: 'refused'; reason: 'rewind'; held: number; offered: number }
 
+/**
+ * A refusal, on its own.
+ *
+ * The three are one answer to the handshake — it cannot continue from this snapshot — but
+ * each carries which refusal it was, and a caller that reports the outcome rather than
+ * collapsing it to "no" passes this through rather than restating the reasons.
+ */
+export type AgentSnapshotRefusal = Extract<AgentSnapshotOutcome, { status: 'refused' }>
+
 export interface AgentSnapshotResult {
   view: AgentSessionView
   outcome: AgentSnapshotOutcome

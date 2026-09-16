@@ -259,6 +259,78 @@ fn a_merged_notice_stands_for_no_single_task_but_every_row_is_kept() {
 }
 
 #[test]
+fn the_ledger_says_when_its_burst_is_due() {
+    // The host wakes itself from this number instead of keeping a second copy of the coalescing
+    // window, so it has to be the same number the notice is sent at: a host that woke on its own
+    // arithmetic would deliver early (before the burst closed) or late (after the user had looked
+    // away), and the rule about when a burst closes is this module's alone.
+    let channel = RecordingChannel::new();
+    let mut policy = policy(&channel);
+    let stream = Stream::new();
+    let task = key("run-1");
+
+    assert_eq!(policy.pending_due(), None, "nothing is gathering yet");
+
+    let (_, due_at_ms) = gathering(&policy.observe(stream.at(&task, PetTaskState::TurnFinished, 1_000)));
+    assert_eq!(policy.pending_due(), Some(due_at_ms));
+
+    let _ = flush(&mut policy, due_at_ms);
+    assert_eq!(policy.pending_due(), None, "the burst is closed and owes nobody a wake");
+}
+
+#[test]
+fn a_fact_the_host_reports_off_the_stream_is_not_a_replay() {
+    // §6.1's host-reported facts — a run's start, an answered permission, a run restated because the
+    // runtime that was running it went away — come off no frame, and the projection stamps them with
+    // `FrameOrder::off_stream`'s zero. Reading that zero as a sequence would make every one of them a
+    // replay the moment a session has any frames at all, and the restatement after a lost runtime is
+    // exactly the notice §6.2's last row is about: below is a session whose stream has already
+    // carried a frame, and the loss that follows it.
+    let channel = RecordingChannel::new();
+    let mut policy = policy(&channel);
+    let stream = Stream::new();
+    let task = key("run-1");
+
+    let _ = policy.observe(stream.at(&task, PetTaskState::Working, 1_000));
+    let lost = delivered(&policy.observe(
+        stream.numbered(&task, PetTaskState::Interrupted, 0, 2_000),
+    ));
+
+    assert_eq!(lost.state, PetTaskState::Interrupted);
+    assert_eq!(channel.count(), 1);
+    assert_eq!(policy.unread().len(), 1, "the row survives a toast that may not");
+}
+
+#[test]
+fn an_off_stream_fact_leaves_every_stream_position_where_it_was() {
+    // The other half of the rule, and the half that is a *report* rather than a silence: the mark
+    // moves only for frames. Moving it for a host-reported fact would file a number the engine never
+    // sent, and the next real frame — sequence 2 here — would be announced as following a hole that
+    // never existed. `gaps` is what the diagnostics surface draws, so a fabricated one is a
+    // permanent false statement about the user's runtime.
+    let channel = RecordingChannel::new();
+    let mut policy = policy(&channel);
+    let stream = Stream::new();
+    let task = key("run-1");
+
+    let _ = policy.observe(stream.at(&task, PetTaskState::Working, 1_000));
+    let asked = delivered(&policy.observe(stream.numbered(
+        &task,
+        PetTaskState::WaitingInput,
+        0,
+        1_500,
+    )));
+    let next = policy.observe(stream.at(&task, PetTaskState::Working, 2_000));
+
+    assert_eq!(asked.state, PetTaskState::WaitingInput);
+    assert_eq!(silent(&next), SilenceReason::NothingToSay);
+    assert!(
+        policy.gaps().is_empty(),
+        "a fact off the stream cannot have left a hole in it"
+    );
+}
+
+#[test]
 fn a_run_that_moved_to_another_ending_is_told_again() {
     // Two different facts about one run are two facts, even when both are terminal: a run that
     // reported a lost runtime and was later found to have failed has changed what the user needs to

@@ -1,7 +1,11 @@
-//! The permission boundary: the engine asks, the user decides, and this module is the only place an
-//! answer may come from. `session/request_permission` is the one reverse request where the engine
-//! *blocks* instead of degrading, so a lost or invented answer stops work; §6.3's rules are
-//! enforced here, and three of them are deliberately **stricter than Zed** (porting spec §3.4/§3.5):
+//! The permission boundary: the engine asks when it is configured to, the user decides, and this
+//! module is the only place an answer may come from. P0 §7's preamble measured the default
+//! configuration asking nothing — a write landed with `reverse requests seen: 0` — and §7.1 saw the
+//! frame only after `permission: {edit:"ask"}` was set, so this is the flow once a request arrives,
+//! not a gate every tool call passes. `session/request_permission` is the one reverse request where
+//! the engine *blocks* instead of degrading, so a lost or invented answer stops work; §6.3's rules
+//! are enforced here, and three of them are deliberately **stricter than Zed** (porting spec
+//! §3.4/§3.5):
 //!
 //! - **The option ids are the engine's**, and a response naming an id it did not offer is refused.
 //!   Zed forwards whatever id it is handed — its conversion keeps only the id and trusts the caller

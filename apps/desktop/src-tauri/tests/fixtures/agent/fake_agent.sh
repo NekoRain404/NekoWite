@@ -36,6 +36,32 @@ SET='{"configOptions":[{"id":"model","name":"Model","type":"select","currentValu
 # be wrong against the other.
 CFG='{"sessionId":"ses_fake_1","update":{"sessionUpdate":"config_option_update","configOptions":[{"id":"model","name":"Model","type":"select","currentValue":"fake/model-b","options":[{"value":"fake/model-a","name":"Model A"},{"value":"fake/model-b","name":"Model B"}]}]}}'
 DONE='{"stopReason":"end_turn","usage":{"inputTokens":11,"outputTokens":2,"totalTokens":13,"thoughtTokens":1}}'
+# P0 §6.3's *other* measured shape, from the same engine, model and script: `thoughtTokens` is
+# gone, `cachedReadTokens` has appeared, and `totalTokens` (8895) is not the sum of input+output
+# (1727). The numbers are the engine's own, transcribed from the scan; a host that computed or
+# defaulted one would answer different ones.
+DONE_CACHED='{"stopReason":"end_turn","usage":{"inputTokens":1721,"outputTokens":6,"totalTokens":8895,"cachedReadTokens":7168}}'
+# A usage object missing one of the three fields the pinned schema requires (`totalTokens`),
+# while carrying an optional counter. This is the shape P0 §6.3's warning is about — the schema
+# refuses the object whole, taking the counters it *did* send with it — and the fixture sends it
+# so the host's behaviour on it is measured rather than assumed. `cachedReadTokens` is here so
+# that recovering only the two required counts is not enough to pass: a host that reads the
+# object field by field keeps it, and `totalTokens` is absent, so no sum can stand in for it.
+DONE_THIN_USAGE='{"stopReason":"end_turn","usage":{"inputTokens":1721,"outputTokens":6,"cachedReadTokens":7168}}'
+# A turn that ends for a reason the pinned schema does not enumerate. `#[non_exhaustive]` is the
+# protocol's own promise that variants may be added, and P0 §6.3 measured this engine's surface
+# moving between two identical turns (there in the usage field set), so this is a frame a real
+# engine can send — and the one a host that reads `stopReason` through the schema refuses whole,
+# reporting a turn the engine finished as a failure. The usage is deliberately P0 §2.3's own
+# numbers, so what the host does with the counters beside an unfamiliar word is measured too.
+DONE_UNKNOWN='{"stopReason":"budget_exceeded","usage":{"inputTokens":11,"outputTokens":2,"totalTokens":13,"thoughtTokens":1}}'
+# P0 §6.1's three frames for one tool call: a `tool_call` (pending, a title, no locations, empty
+# input), then two `tool_call_update`s carrying only what changed — the second has no title, the
+# third no locations and no rawInput. One `toolCallId` across all three is the key a consumer
+# correlates them by; the statuses run pending → in_progress → completed in that order.
+TOOL_CALL='{"sessionId":"ses_fake_1","update":{"sessionUpdate":"tool_call","toolCallId":"call_fake_1","title":"read","kind":"read","status":"pending","locations":[],"rawInput":{}}}'
+TOOL_IN_PROGRESS='{"sessionId":"ses_fake_1","update":{"sessionUpdate":"tool_call_update","toolCallId":"call_fake_1","status":"in_progress","locations":[{"path":"/tmp/note.md"}],"rawInput":{"filePath":"/tmp/note.md"}}}'
+TOOL_COMPLETED='{"sessionId":"ses_fake_1","update":{"sessionUpdate":"tool_call_update","toolCallId":"call_fake_1","status":"completed","title":"note.md","content":[{"type":"content","content":{"type":"text","text":"# fake workspace"}}],"rawOutput":{"output":"<path>note.md</path>"}}}'
 CMDS='{"sessionId":"ses_fake_1","update":{"sessionUpdate":"available_commands_update","availableCommands":[{"name":"init","description":"Start a session"},{"name":"review","description":"Review the working tree"}]}}'
 
 # `id_of` reads the JSON-RPC id out of a request and keeps it as it arrived,
@@ -48,6 +74,17 @@ reply() { printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$1" "$2"; }
 fail() { printf '{"jsonrpc":"2.0","id":%s,"error":%s}\n' "$1" "$2"; }
 notify() { printf '{"jsonrpc":"2.0","method":"session/update","params":%s}\n' "$1"; }
 chunk() { notify "{\"sessionId\":\"$SESSION\",\"update\":{\"sessionUpdate\":\"agent_message_chunk\",\"content\":{\"type\":\"text\",\"text\":\"$1\"}}}"; }
+
+# The ending this behaviour answers the prompt with. Every behaviour that predates the usage
+# measurements, `good` included, keeps P0 §2.3's own numbers, so no existing test's frame changes.
+ending() {
+    case "$BEHAVIOUR" in
+        cached-usage) printf '%s' "$DONE_CACHED" ;;
+        thin-usage) printf '%s' "$DONE_THIN_USAGE" ;;
+        unknown-stop-reason) printf '%s' "$DONE_UNKNOWN" ;;
+        *) printf '%s' "$DONE" ;;
+    esac
+}
 
 # A process cannot read its parent's spawn environment back, so the test has to
 # be told: the capture file is where this process reports what it was started
@@ -174,9 +211,27 @@ while IFS= read -r line; do
         *'"method":"session/prompt"'*)
             PROMPT_ID=$id
             chunk "first"
-            # A thought chunk is part of the measured stream (P0 §2.3) and has
-            # no host kind; the test asserts it does not reach the host.
+            # A thought chunk is part of the measured stream (P0 §2.3) and now has a host kind
+            # of its own; under every behaviour it arrives between the answer's chunks, which is
+            # the order the engine sends it in and the one a consumer has to keep apart.
             notify "{\"sessionId\":\"$SESSION\",\"update\":{\"sessionUpdate\":\"agent_thought_chunk\",\"content\":{\"type\":\"text\",\"text\":\"thinking\"}}}"
+            if [ "$BEHAVIOUR" = unknown-update ]; then
+                # A `sessionUpdate` this version's schema does not name, mid-turn: what an engine
+                # that grew a variant sends, which P0 §6.3's measurement of the same engine's
+                # moving surface makes a normal frame rather than a corrupt one. The pinned
+                # schema's `SessionUpdate` is `#[non_exhaustive]` with no `Other` arm, so whether
+                # this frame reaches the host at all is the schema's decision and not this
+                # fixture's — what the host must do about it is measured, not assumed: §6.2
+                # forbids handing it to a component as a mystery blob, and it must not take the
+                # turn down with it either.
+                notify "{\"sessionId\":\"$SESSION\",\"update\":{\"sessionUpdate\":\"some_future_update\",\"detail\":\"whatever the engine meant\"}}"
+            fi
+            if [ "$BEHAVIOUR" = tools ]; then
+                # P0 §6.1's measured sequence, in its measured order, inside one open run.
+                notify "$TOOL_CALL"
+                notify "$TOOL_IN_PROGRESS"
+                notify "$TOOL_COMPLETED"
+            fi
             if [ "$BEHAVIOUR" = config-mid-run ]; then
                 # A config change the host did not ask for, while a turn is in flight: the run
                 # is still open when this frame arrives, which is the case the host has to
@@ -195,13 +250,13 @@ while IFS= read -r line; do
                     case "$later" in
                         *'"method":"session/cancel"'*)
                             chunk "late"
-                            reply "$PROMPT_ID" "$DONE"
+                            reply "$PROMPT_ID" "$(ending)"
                             break
                             ;;
                     esac
                 done
             else
-                reply "$id" "$DONE"
+                reply "$id" "$(ending)"
             fi
             ;;
         *'"method":"session/cancel"'*)

@@ -8,8 +8,10 @@
 //! the trait exists at all — and it must not re-implement reading or writing for
 //! the same reason.
 //!
-//! So this adapter forwards and decides nothing. Every property the agent's writes
-//! need is already in the two functions it calls:
+//! So this adapter forwards and decides nothing. Every property a **delegated**
+//! agent write needs is already in the two functions it calls — the writes this
+//! adapter sees, and no others: a write the engine performs with its own tools
+//! never reaches here, so none of the four below is a claim about it:
 //!
 //! - the path is resolved inside the vault (`resolve_within`), so a request that
 //!   escapes the root is refused rather than performed;
@@ -22,6 +24,13 @@
 //!
 //! A second path to the filesystem would silently discard all four, which is what
 //! T2b's §8.1 warning is about: 「直接访问文件系统会静默丢弃限制、写锁与历史」.
+//!
+//! The read is a DISK read: it forwards to the vault's own `read_file` and consults
+//! no window's buffer, so it serves the file's saved text even while the user has
+//! that note open with unsaved edits. `agent_runtime::fs_capability`'s module header
+//! is where that divergence is stated in full, and this is a pointer rather than a
+//! second account of it — a reader who needs the reasoning, and the one shared lookup
+//! a fix would have to go through, should read it there.
 
 use crate::agent_runtime::VaultFiles;
 use crate::storage::{file_store, save_store};
@@ -30,6 +39,14 @@ use crate::storage::{file_store, save_store};
 pub struct AgentVaultFiles;
 
 impl VaultFiles for AgentVaultFiles {
+    fn frontend_path(&self, vault_root: &str, path: &str) -> Result<String, String> {
+        // The app's own confinement, and the app's own rendering of a path for a window: the
+        // same two calls `list_dir_entries` makes, which is what makes a live-note question's
+        // key and an open tab's path one spelling rather than two that must be kept in step.
+        let (resolved, _relative) = crate::domain::path_policy::resolve_within_rel(vault_root, path)?;
+        Ok(crate::domain::path_policy::ipc_path(&resolved))
+    }
+
     fn read(&self, vault_root: &str, path: &str) -> Result<String, String> {
         file_store::read_file(vault_root, path)
     }

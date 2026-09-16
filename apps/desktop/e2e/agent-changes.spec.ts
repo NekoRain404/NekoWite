@@ -87,16 +87,6 @@ declare global {
   }
 }
 
-/** The dev server's URL for the Vue the page's modules already use. */
-async function viewUrl(page: Page): Promise<string> {
-  return page.evaluate(async () => {
-    const source = await (await fetch('/src/main.ts')).text()
-    const match = source.match(/["']([^"']*\/deps\/vue\.js[^"']*)["']/)
-    if (match === null) throw new Error('the dev server serves no vue dependency')
-    return match[1]
-  })
-}
-
 /**
  * Put the change view on screen against a live session.
  *
@@ -105,9 +95,15 @@ async function viewUrl(page: Page): Promise<string> {
  * disagree.
  */
 async function open(page: Page): Promise<void> {
-  const vueUrl = await viewUrl(page)
   await page.evaluate(
     async ({ url, serviceUrl, labels, hostId }) => {
+      // The Vue the page's own modules already use, discovered from the dev server's transform of
+      // `main.ts` rather than passed in: the URL has to be resolved in the realm that will import
+      // it, and a value computed outside `page.evaluate` is not in scope here — the function is
+      // serialised and run in the browser, so a closure variable is a ReferenceError, not a URL.
+      const source = await (await fetch('/src/main.ts')).text()
+      const vueUrl = source.match(/["']([^"']*\/deps\/vue\.js[^"']*)["']/)?.[1]
+      if (vueUrl === undefined) throw new Error('the dev server serves no vue dependency')
       const vue = (await import(/* @vite-ignore */ vueUrl)) as typeof import('vue')
       const { default: AgentChangesView } = (await import(/* @vite-ignore */ url)) as {
         default: Component

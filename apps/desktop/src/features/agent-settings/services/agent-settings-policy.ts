@@ -39,10 +39,23 @@ export type ConfigMode = 'app-managed' | 'user-config'
 
 export const CONFIG_MODES: readonly ConfigMode[] = ['app-managed', 'user-config']
 
+/**
+ * One merge the engine makes that this app does not set, as `profile.rs`'s `DiscoverySurface`
+ * serializes it.
+ *
+ * A key rather than a sentence, so the page's own copy is where the wording lives and a translator
+ * never sees a path or a switch name. `reused` is the profile that narrows nothing; `project` is
+ * the folder a session runs in as well as every folder above it, and `managed` is the machine's
+ * `/etc/opencode`.
+ */
+export type DiscoverySurface = 'reused' | 'project' | 'managed'
+
+export const DISCOVERY_SURFACES: readonly DiscoverySurface[] = ['reused', 'project', 'managed']
+
 /** One configuration source, as `profile.rs` reports it — including what it does *not* control. */
 export type ConfigSourceView =
   | { kind: 'injected'; variable: string; path: string }
-  | { kind: 'engine-discovery'; what: string }
+  | { kind: 'engine-discovery'; what: DiscoverySurface }
 
 /** A credential as the backend reports it: a name, and never a value. */
 export interface CredentialView {

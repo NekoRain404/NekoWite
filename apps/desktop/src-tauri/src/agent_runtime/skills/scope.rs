@@ -12,11 +12,18 @@
 //! off even mean", with an arm for the case where the honest answer is nothing. §8.2's
 //! 「不能仅隐藏 UI 项目而声称已禁用」 is enforced by that arm existing, because a page rendering a
 //! control for a scope in it is a page the backend refuses.
+//!
+//! Three facts, not two, and the third is the one a readout gets wrong by omission: a scope can be
+//! **configured** — the engine's rules name it, and a page should show its root and its owner —
+//! while this launch's switches stop the engine reading it, so it **contributes** nothing.
+//! [`SkillScope::suppressed_by`] is that third fact, derived by [`launch_switches`] from the very
+//! environment the engine is started with, and a scope in that state stays in the list with its
+//! reason attached rather than disappearing.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{DISABLE_CLAUDE_CODE_SKILLS, DISABLE_EXTERNAL_SKILLS};
+use super::{DISABLE_CLAUDE_CODE, DISABLE_CLAUDE_CODE_SKILLS, DISABLE_EXTERNAL_SKILLS};
 
 /// What kind of place a scope is, and therefore what this host may do inside it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +70,43 @@ pub struct SkillScope {
     pub disable: DisableMechanism,
 }
 
+/// The engine's whole-scope skill switches that one launch has actually turned on.
+///
+/// **Read out of the environment the engine is started with, never handed over as a list.** A
+/// launch that sets a switch and a scope list somebody remembered to tell about it are two facts
+/// that can drift, and they did: setting `OPENCODE_DISABLE_EXTERNAL_SKILLS` in the app-managed
+/// launch stopped the engine reading `.claude` and `.agents` while the scope list still described
+/// those directories as sources of skills. `process::isolated_profile_env` is what an app-managed
+/// launch is built from, so the vector it returns is what decides `suppressed_by` below, and the
+/// readout and the launch cannot disagree.
+///
+/// **The value decides, not the presence.** The engine reads these variables through Effect's
+/// `Config.boolean` (`RuntimeFlags` in the pinned bundle,
+/// `apps/desktop/src-tauri/binaries/opencode-x86_64-unknown-linux-gnu`), and the isolation test
+/// measures the difference end to end: with `OPENCODE_DISABLE_EXTERNAL_SKILLS=0` the decoys come
+/// back. So a variable that is present and *off* must not be reported as a scope the engine has
+/// stopped reading, and the spellings that mean off are treated as off here.
+pub fn launch_switches(env: &[(String, String)]) -> Vec<&'static str> {
+    [DISABLE_EXTERNAL_SKILLS, DISABLE_CLAUDE_CODE_SKILLS, DISABLE_CLAUDE_CODE]
+        .into_iter()
+        .filter(|variable| {
+            env.iter()
+                .find(|(name, _)| name == variable)
+                .is_some_and(|(_, value)| is_on(value))
+        })
+        .collect()
+}
+
+/// Whether one flag's value is read as on. `""` and the parser's own false spellings are off;
+/// every other value is on, which is the direction that cannot leave a page claiming a directory
+/// is being read when the engine has stopped reading it.
+fn is_on(value: &str) -> bool {
+    !matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "" | "0" | "false" | "no" | "off"
+    )
+}
+
 /// The scopes the pinned engine reads, built from the roots a caller actually has.
 ///
 /// The list, the globs and the switches are measured from that artifact, which is why this function
@@ -75,15 +119,27 @@ pub struct SkillScope {
 /// `home` is where `.claude` and `.agents` live; `project` is the working directory a session runs
 /// in. The engine also walks *up* from the project for those two; this list names the project
 /// directory itself, and a caller wanting the ancestors adds them — the worktree root is a fact
-/// about the engine's session that this module cannot see. `switches` are the engine variables
-/// currently set in its launch environment, which is what decides `suppressed_by`.
+/// about the engine's session that this module cannot see.
+///
+/// `env` is the environment that launch is given — `process::isolated_profile_env`'s own vector
+/// for an app-managed profile, and nothing at all for one reusing the user's configuration, which
+/// this host injects nothing into. It is a parameter rather than a reach for the process
+/// environment because a readout is built for one launch and must describe *that* one; an empty
+/// slice is how "this host sets no switch" is said.
+///
+/// Every scope carries both facts a page has to keep apart: it is **configured** — a directory the
+/// engine's rules name, with a root, an owner and a label — and it either **contributes** or does
+/// not, which is `suppressed_by`. A scope the launch's switches stop the engine reading is still
+/// listed, because §8.2 asks for the 来源目录 and the 实际权限状态 rather than for a list with the
+/// unusable entries removed.
 pub fn opencode_scopes(
     config_root: Option<&Path>,
     home: &Path,
     project: &Path,
     declared: &[PathBuf],
-    switches: &[&'static str],
+    env: &[(String, String)],
 ) -> Vec<SkillScope> {
+    let switches = launch_switches(env);
     let mut scopes = Vec::new();
     if let Some(config_root) = config_root {
         // The engine's own global directory. `Managed` because §8.1's app-managed profile puts it
@@ -113,20 +169,25 @@ pub fn opencode_scopes(
             "claude-code",
             ".claude",
             DISABLE_CLAUDE_CODE_SKILLS,
-            DISABLE_EXTERNAL_SKILLS,
+            &[DISABLE_EXTERNAL_SKILLS, DISABLE_CLAUDE_CODE] as &[&str],
         ),
-        ("agents-directory", ".agents", DISABLE_EXTERNAL_SKILLS, ""),
+        (
+            "agents-directory",
+            ".agents",
+            DISABLE_EXTERNAL_SKILLS,
+            &[] as &[&str],
+        ),
     ] {
         scopes.push(SkillScope {
             id: id.to_string(),
             label: format!("Another tool's directory ({directory})"),
             root: home.join(directory).join("skills"),
             owner: ScopeOwner::Foreign,
-            // The engine skips both directories when the external switch is set, and `.claude`
-            // alone under the narrower one — its own nesting, not two independent flags.
-            suppressed_by: [variable, also]
-                .into_iter()
-                .filter(|candidate| !candidate.is_empty())
+            // The engine skips both directories when the external switch is on, and `.claude`
+            // alone under either Claude-Code switch — the bundle's own nesting
+            // (`disableClaudeCodeSkills: broad || direct`), not three independent flags.
+            suppressed_by: std::iter::once(variable)
+                .chain(also.iter().copied())
                 .find(|candidate| switches.contains(candidate)),
             disable: DisableMechanism::EngineSwitch { variable },
         });

@@ -229,24 +229,125 @@ describe('the mapping from the runtime’s frames to the contract', () => {
     }
   })
 
-  it('carries the usage the engine reported, with the optional fields dropped', () => {
-    const event = mappedEvent('run-finished', RUN_FINISHED)
+  it('accepts an ending whose reason this version has never heard of, rather than failing the turn', () => {
+    // The protocol's `StopReason` is `#[non_exhaustive]` and the engine's surface is not fixed
+    // (P0 §6.3 measured the usage field set moving between two identical turns), so a reason this
+    // version does not know is a frame to read rather than one to refuse. Refusing it is the
+    // expensive direction: this frame is a *completed turn's* ending, `mapHostFrame` turns an
+    // unreadable payload into `run-failed` on the run it names, and the user is then told that a
+    // turn the engine finished failed. So the reading degrades instead — the ending arrives as
+    // `unrecognised`, carrying the engine's own word, which is neither a success nor a failure.
+    const event = mappedEvent('run-finished', { stopReason: 'budget_exceeded', usage: null })
+
+    expect(event.kind).toBe('run-finished')
     expect(event.payload).toEqual({
-      stopReason: 'end-turn',
-      usage: { inputTokens: 11, outputTokens: 2, totalTokens: 13 },
+      stopReason: 'unrecognised',
+      // The word the frame reached the contract under: `mapRunResult` respells the engine's `_`
+      // before the validator sees the value (the same mechanical transform that turns `end_turn`
+      // into `end-turn`), so what is kept is the reason's own wording and not an invented one.
+      unrecognisedReason: 'budget-exceeded',
+      usage: null,
     })
   })
 
-  it('answers null — not a number — when the engine’s usage is missing the fields', () => {
-    // P0 §6.3: the field set varies between turns and `totalTokens` is not the sum, so a
-    // defaulted or computed number would be a wrong number shown as fact (§5.1).
-    const partial = mappedEvent('run-finished', {
+  it('still refuses an ending that states no reason at all', () => {
+    // The line the tolerance above must not cross, and the reason it is drawn at the *type* of
+    // the value rather than at membership of a list: a reason that is missing, empty or not a
+    // string is a producer that did not answer the question, not a word this version has yet to
+    // learn. Reading it as an ending would invent one, and a frame whose damaged part could be
+    // restored here is exactly what `invalid-response` is for.
+    for (const stopReason of [undefined, null, '', 7, ['end-turn'], { reason: 'end-turn' }]) {
+      const refused = eventOf(
+        mapHostFrame(frame('run-finished', { stopReason, usage: null }), new ToolProjection()),
+      )
+      expect(refused.kind, `stopReason: ${JSON.stringify(stopReason)}`).toBe('run-failed')
+      expect((refused.payload as { code: string }).code).toBe('invalid-response')
+    }
+  })
+
+  it('carries every counter the engine reported, the optional ones included', () => {
+    // P0 §2.3's measured turn: `thoughtTokens` is there and `cachedReadTokens` is not, which is
+    // half of §6.3's point. A host that keeps only three numbers loses counters the engine did
+    // send, and the contract carries them per field for exactly that reason.
+    const event = mappedEvent('run-finished', RUN_FINISHED)
+    expect(event.payload).toEqual({
+      stopReason: 'end-turn',
+      usage: { inputTokens: 11, outputTokens: 2, totalTokens: 13, thoughtTokens: 1 },
+    })
+  })
+
+  it('keeps the numbers a partial usage did send and leaves the missing field out', () => {
+    // §6.3's warning as a case: `totalTokens` is simply absent, and neither of the two numbers
+    // that did arrive may become a default, a sum, or a zero. An absent field is "not provided",
+    // which is a different thing from a reported `0` — see the test below.
+    const event = mappedEvent('run-finished', {
       stopReason: 'end_turn',
       usage: { inputTokens: 1721, outputTokens: 6 },
     })
-    expect((partial.payload as { usage: unknown }).usage).toBeNull()
-    const absent = mappedEvent('run-finished', { stopReason: 'end_turn' })
-    expect((absent.payload as { usage: unknown }).usage).toBeNull()
+    expect(event.payload).toEqual({
+      stopReason: 'end-turn',
+      usage: { inputTokens: 1721, outputTokens: 6 },
+    })
+  })
+
+  it('passes the second measured field set through unchanged, `cachedReadTokens` and all', () => {
+    // The same engine, model and script as the turn above, one turn later: `thoughtTokens` is
+    // gone, `cachedReadTokens` has appeared, and `totalTokens` (8895) is not the sum of the two
+    // it sits beside (1721 + 6 = 1727). A host that computed the total would show 1727 as fact.
+    const event = mappedEvent('run-finished', {
+      stopReason: 'end_turn',
+      usage: { inputTokens: 1721, outputTokens: 6, totalTokens: 8895, cachedReadTokens: 7168 },
+    })
+    expect((event.payload as { usage: unknown }).usage).toEqual({
+      inputTokens: 1721,
+      outputTokens: 6,
+      totalTokens: 8895,
+      cachedReadTokens: 7168,
+    })
+  })
+
+  it('keeps a reported zero apart from a field nobody reported', () => {
+    // Why the fields are optional rather than defaulted: `0` is a fact the engine stated and an
+    // absent field is not, and §5.1 forbids one rendering as the other.
+    const event = mappedEvent('run-finished', {
+      stopReason: 'end_turn',
+      usage: { inputTokens: 0, outputTokens: 3 },
+    })
+    expect((event.payload as { usage: Record<string, unknown> }).usage).toEqual({
+      inputTokens: 0,
+      outputTokens: 3,
+    })
+    expect('totalTokens' in (event.payload as { usage: object }).usage).toBe(false)
+  })
+
+  it('drops a counter that is not a count rather than failing the turn that finished', () => {
+    // A count this window cannot read is one it cannot show. Refusing the whole frame would turn
+    // a completed turn into a failed one over a decorative number — `run-finished` names a run,
+    // so an unreadable payload becomes `run-failed` on the turn that just succeeded.
+    const event = mappedEvent('run-finished', {
+      stopReason: 'end_turn',
+      usage: { inputTokens: 'many', outputTokens: -1, totalTokens: 13 },
+    })
+    expect((event.payload as { usage: unknown }).usage).toEqual({ totalTokens: 13 })
+  })
+
+  it('answers null — not a number — when the engine reported no usage at all', () => {
+    for (const payload of [
+      { stopReason: 'end_turn' },
+      { stopReason: 'end_turn', usage: null },
+      { stopReason: 'end_turn', usage: {} },
+    ]) {
+      const event = mappedEvent('run-finished', payload)
+      expect((event.payload as { usage: unknown }).usage).toBeNull()
+    }
+    // A `usage` that is not an object is the one container this refuses: reading it as "no
+    // usage" would be the silent repair, and the run's ending is where that would hurt most.
+    // The frame names a run, so the refusal arrives as that run's ending (`mapHostFrame`).
+    const refused = eventOf(
+      mapHostFrame(frame('run-finished', { stopReason: 'end_turn', usage: 'lots' }), new ToolProjection()),
+    )
+    expect(refused.kind).toBe('run-failed')
+    expect((refused.payload as { code: string }).code).toBe('invalid-response')
   })
 
   it('passes through the kinds the runtime already speaks in the contract’s shape', () => {
@@ -290,7 +391,12 @@ describe('the mapping from the runtime’s frames to the contract', () => {
     // The failure this adapter exists to prevent. The envelope is good, the payload is not,
     // and the frame belongs to a run: the run's ending arrives as an event, so a frame
     // dropped quietly would leave `prompt` waiting forever with nothing on screen.
-    const event = eventOf(mapHostFrame(frame('run-finished', { stopReason: 'a_new_reason' }), new ToolProjection()))
+    //
+    // The example is a payload that states no ending at all rather than one with an unfamiliar
+    // reason: a reason this version does not know is read as its own arm now (the test above),
+    // and what stays refused is what cannot be read *as* an ending — the line the two tests
+    // together draw.
+    const event = eventOf(mapHostFrame(frame('run-finished', { stopReason: '', usage: null }), new ToolProjection()))
     expect(event.kind).toBe('run-failed')
     expect(event.runId).toBe('run-0')
     expect((event.payload as { code: string; message: string }).code).toBe('invalid-response')
@@ -549,7 +655,7 @@ describe('the real gateway', () => {
     ipc.push(frame('run-finished', RUN_FINISHED))
     await expect(pending).resolves.toEqual({
       stopReason: 'end-turn',
-      usage: { inputTokens: 11, outputTokens: 2, totalTokens: 13 },
+      usage: { inputTokens: 11, outputTokens: 2, totalTokens: 13, thoughtTokens: 1 },
     })
   })
 

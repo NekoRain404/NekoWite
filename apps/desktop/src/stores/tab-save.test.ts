@@ -83,7 +83,7 @@ describe('save state indicator', () => {
     expect(s.saveStateOf(tab.id)).toBe('dirty')
   })
 
-  it('falls back to dirty (not stuck saving) when the write fails', async () => {
+  it('reports a failed write as failed, not as merely unsaved', async () => {
     writeMock.mockRejectedValueOnce(new Error('disk full'))
     readMock.mockResolvedValue('abc')
     const s = useTabsStore()
@@ -92,7 +92,37 @@ describe('save state indicator', () => {
     const tab = s.tabs[0]
     s.markDirty(tab.id)
     await s.saveActive()
-    expect(s.saveStateOf(tab.id)).toBe('dirty')
+    // Not `saving` (the write came down), and not `dirty` either: `dirty` is the
+    // state of a tab nothing has tried to save yet. This one was offered to the
+    // disk and did not get there, and after the toast that said so has gone the
+    // status line is the only thing left that can tell the two apart.
+    expect(s.saveStateOf(tab.id)).toBe('failed')
+    // The text is still the user's, whatever the state is called.
+    expect(tab.dirty).toBe(true)
+  })
+
+  it('reports the retry as saving, then the landed write as saved', async () => {
+    // The failure is not sticky: a state that outlived the attempt replacing it
+    // would say "the save failed" over a save that is being made — or over one
+    // that has landed.
+    writeMock.mockRejectedValueOnce(new Error('disk full'))
+    readMock.mockResolvedValue('abc')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    const tab = s.tabs[0]
+    s.markDirty(tab.id)
+    await s.saveActive()
+    expect(s.saveStateOf(tab.id)).toBe('failed')
+
+    let resolveWrite: () => void = () => {}
+    writeMock.mockImplementation(() => new Promise<void>((r) => { resolveWrite = r }))
+    const pending = s.saveActive()
+    expect(s.saveStateOf(tab.id)).toBe('saving')
+    await vi.waitFor(() => expect(writeMock).toHaveBeenCalledTimes(2))
+    resolveWrite()
+    await pending
+    expect(s.saveStateOf(tab.id)).toBe('saved')
   })
 })
 

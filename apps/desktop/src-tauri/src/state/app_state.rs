@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::{Arc, Mutex};
 
+use tauri::Manager;
 use tauri_plugin_stronghold::stronghold::Stronghold;
 
 use crate::agent_runtime::binary_registry::{self, BinaryRegistry};
@@ -19,7 +20,10 @@ use crate::agent_runtime::profile::{ProfileError, ProfileStore};
 use crate::agent_runtime::registry::{
     AgentInstance, AgentRegistry, RegistryError, DEFAULT_PROFILE,
 };
-use crate::desktop_pet::{CareLedger, Observations, PetSurfaces, PetWindowHost, TauriSurfaces};
+use crate::desktop_pet::{
+    system_clock, CareLedger, Observations, PetSurfaces, PetTaskFeed, PetWindowHost, TauriSurfaces,
+};
+use crate::state::live_note_windows::live_notes;
 use crate::storage::agent_files::AgentVaultFiles;
 use crate::storage::key_store::data_dir;
 
@@ -200,6 +204,18 @@ pub struct AgentRuntimeState {
     /// ([`AgentInstance`]'s own `Drop`), so a stop is this slot being emptied —
     /// and a replacement start is it being refilled after that.
     pub instance: Mutex<Option<AgentInstance>>,
+    /// The window side of the live-buffer seam: which windows can be asked what a
+    /// note holds, and the questions outstanding.
+    ///
+    /// `None` until a start has happened, because reaching a window needs an
+    /// `AppHandle` and there is none before `setup` — the reason the desktop pet's
+    /// state is built there rather than by `Default`. Built on the first start and
+    /// then **kept**, which is the property that makes it worth storing here: a
+    /// window registers once and stays registered across a vault switch or a
+    /// restart of the engine, so a new runtime does not begin with a window that
+    /// can no longer be asked about the note on screen. A registration carries no
+    /// document — see `state/live_note_windows.rs` for what travels and why.
+    pub live_notes: Mutex<Option<crate::agent_runtime::LiveNotes>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -208,12 +224,20 @@ pub struct AgentRuntimeState {
 
 /// The desktop pet's backend, as a handle Tauri holds (§7.1, §10.1).
 ///
-/// The three fields are the whole of what a pet window can reach on this side: which character
+/// The four fields are the whole of what a pet window can reach on this side: which character
 /// windows are open and the rules about them, what this machine has been *observed* to do
-/// (§7.2), and what the care ledger has settled (§8). Nothing else lives here — no vault, no
-/// session, no provider, no document — so a pet command has nothing to reach even if one were
-/// written carelessly. That absence is the module's own claim (`desktop_pet/mod.rs`) held at
-/// the managed-state level: the pet's whole world is three fields wide.
+/// (§7.2), what the care ledger has settled (§8), and what the agent runtime is doing, projected
+/// down to what a window may be told (§6). Nothing else lives here — no vault, no session owned
+/// by this struct, no provider, no document — so a pet command has nothing to reach even if one
+/// were written carelessly. That absence is the module's own claim (`desktop_pet/mod.rs`) held at
+/// the managed-state level: the pet's whole world is four fields wide.
+///
+/// **The task feed is here for the reason the ledger is.** §6.1 makes the host the single source
+/// of truth for a task, and a projection is host state: the frames arrive on the driver's task,
+/// which is not a window, and a window that held its own copy of them would be a second answer.
+/// `PetTaskFeed` is the one place a frame is applied (`desktop_pet/task_feed.rs`), so this field
+/// is what makes the pet's 任务提醒 reachable at all — without it the window's subscription died
+/// on its first read and a pet that could not see work looked exactly like one with none.
 ///
 /// **The ledger is the pet's own progress and not a fourth kind of thing.** It is not a
 /// document, it has no path, and it belongs to no vault: it is the totals the pet earned, which
@@ -243,12 +267,45 @@ pub struct DesktopPetState {
     /// §8's local progress. One for the process (§6.3's 「一份后端提醒账本」, read at this layer
     /// as: not one per window), and empty at every start until something settles into it.
     pub ledger: Mutex<CareLedger>,
+    /// §6's tasks, as the runtime's own frames left them. One for the process, and the only
+    /// place a frame is applied (`desktop_pet/task_feed.rs`), so a window that reads it and a
+    /// command that answers from it cannot disagree.
+    pub tasks: PetTaskFeed,
 }
 
 impl DesktopPetState {
-    /// The state the app runs with: the real window system.
+    /// The state the app runs with: the real window system, the stored notification switches, and
+    /// the one thing the task feed cannot give itself — a way back to a gathering burst.
+    ///
+    /// The two additions are here rather than in `with_surfaces` because both need something that
+    /// only a running app has. The **waker** needs an `AppHandle` to reach the async runtime and,
+    /// three seconds later, the managed state again; the **switches** need the data directory the
+    /// settings store lives in. A feed built without either is a feed whose bursts never close,
+    /// which is what the tests that are not about notices run with.
     pub fn new(app: &tauri::AppHandle) -> Self {
-        Self::with_surfaces(Box::new(TauriSurfaces::new(app.clone())))
+        // §6.3's 「一份后端提醒账本」 is the policy's, and it starts from three things this moment
+        // is the only one that has all of: the switches the notification page writes, the rows the
+        // last run left in the file, and the channel this build runs with. Read once, at the one
+        // moment an app data directory exists and no window does, because the alternative is a file
+        // read on the driver's task for every frame. What that costs is stated rather than hidden:
+        // a switch flipped in the settings page is applied by
+        // `commands::desktop_pet::apply_notification_switch`, on the write path — which is where a
+        // *saved* setting becomes a running behaviour, and the only other moment the answer is known
+        // to this process.
+        // The feed's own assembly (`PetTaskFeed::for_app`) is the pet module's, not this file's: it
+        // reads the settings store, the ledger's file and the one channel this build implements,
+        // and all three are the pet's. What is here is the one thing it cannot have of its own —
+        // the directory the app keeps its files in.
+        let tasks = match data_dir(app) {
+            Ok(directory) => PetTaskFeed::for_app(&directory, system_clock()() as i64),
+            Err(detail) => {
+                eprintln!("nekowite: the pet's reminders have no data directory: {detail}");
+                PetTaskFeed::new()
+            }
+        };
+        let state = Self::with_tasks(Box::new(TauriSurfaces::new(app.clone())), tasks);
+        state.tasks.set_notice_waker(notice_waker(app));
+        state
     }
 
     /// The state with a substitute window system, for tests and for nothing else.
@@ -256,11 +313,52 @@ impl DesktopPetState {
     /// `PetSurfaces` is the same port the real adapter implements, so what a test substitutes
     /// is what the product uses — not a smaller shape written to make the test easy.
     pub fn with_surfaces(surfaces: Box<dyn PetSurfaces>) -> Self {
+        Self::with_tasks(surfaces, PetTaskFeed::new())
+    }
+
+    /// The state with both substitutes: the port, and the feed a test built itself.
+    fn with_tasks(surfaces: Box<dyn PetSurfaces>, tasks: PetTaskFeed) -> Self {
         Self {
             host: Mutex::new(PetWindowHost::new(surfaces)),
             observations: Mutex::new(Observations::new()),
             ledger: Mutex::new(CareLedger::new()),
+            // The feed builds its own clock (`system_clock`): the projection stamps `updated_at`
+            // with it, and the display subtracts it from the same epoch milliseconds, which is the
+            // one thing about the unit a test can get wrong (`task_projection/outcomes.rs`).
+            tasks,
         }
+    }
+}
+
+/// The way back to a completion burst whose window has closed (§6.3's 「3 秒内多个完成合并」).
+///
+/// The ledger merges a burst of completions into one notice and knows when that notice is due; what
+/// it cannot do is *come back* then, because it has no timer and no runtime and a tick would be a
+/// poll running all day for a notice that happens a few times an hour. This is the one shot: the
+/// feed asks once per due time, the wait is the difference between that time and the clock, and the
+/// flush is handed the due time rather than reading a clock of its own — the ledger takes a time as
+/// a parameter (§10.2's injected clock), and a wake that ran late must not become a second opinion
+/// about when the window closed.
+///
+/// The state is reached through `try_state` at the moment of the wake rather than held here, for the
+/// reason `start_session`'s sink gives: this closure is built *while* that state is being assembled,
+/// so it cannot capture what it belongs to — and a wake that fires after the app is gone finds
+/// nothing to do instead of a dangling handle.
+fn notice_waker(app: &tauri::AppHandle) -> impl Fn(i64) + Send + Sync + 'static {
+    let app = app.clone();
+    move |due_at_ms: i64| {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let now = crate::desktop_pet::system_clock()() as i64;
+            let wait = due_at_ms.saturating_sub(now).max(0) as u64;
+            tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+            let Some(pet) = app.try_state::<DesktopPetState>() else {
+                return;
+            };
+            if let Err(detail) = pet.tasks.flush_notices(due_at_ms) {
+                eprintln!("nekowite: the pet's notice could not be delivered: {detail}");
+            }
+        });
     }
 }
 
@@ -295,6 +393,31 @@ pub async fn start_session(
     vault_id: &str,
     sink: impl Fn(AgentEventEnvelope) + Send + 'static,
 ) -> Result<Session, String> {
+    // The pet hears the runtime's own frames from *this* point rather than from a subscription of
+    // its own: §6.1's single task fact source is the stream the driver reads, and a second reader
+    // would see half of it (its own doc says so). The projection is fed before the window's sink
+    // is called, so the task a frame is about is recorded by the time anything a user sees exists
+    // — a window that mounted in that instant reads the list, not the frame.
+    let sink = {
+        let pet = app.clone();
+        move |envelope: AgentEventEnvelope| {
+            // A poisoned lock or a feed that cannot answer costs the *push*, never the frame: the
+            // window's own read, and the event below, still happen.
+            // A build without the pet's state (this crate's own test apps) has no list to feed:
+            // the frame still reaches the window's sink below, which is what it is for. `try_state`
+            // rather than `state`, because a panic on the driver's task would end the event loop.
+            if let Some(state) = pet.try_state::<DesktopPetState>() {
+                match state.tasks.apply(&envelope) {
+                    Ok(Some(tasks)) => crate::desktop_pet::publish_tasks(&pet, &tasks),
+                    Ok(None) => {}
+                    Err(detail) => {
+                        eprintln!("nekowite: the pet's task list did not follow a frame: {detail}")
+                    }
+                }
+            }
+            sink(envelope);
+        }
+    };
     let managed = data_dir(app)?;
     let registry = registry_for(state, &managed)?;
     let agent_id = registry.default_agent_id().to_string();
@@ -315,6 +438,11 @@ pub async fn start_session(
             // this agent, so nothing here is a credential borrowed from another engine.
             profile.credentials(),
             Arc::new(AgentVaultFiles),
+            // The other half of the file capability: a *read* serves the buffer the user is
+            // typing into, which means asking the window holding the vault. Same shape as
+            // `AgentVaultFiles` and same reason — the runtime declares the port, the app
+            // supplies the end that reaches its own surfaces.
+            live_notes(state, app)?,
         )
         .await
         .map_err(|error| start_refusal(&error))?;
@@ -335,6 +463,20 @@ pub async fn start_session(
         .instance
         .lock()
         .map_err(|_| "the agent runtime state was poisoned by a panic".to_string())?;
+    // The epoch is installed *before* the instance is stored, so the first frame of the new
+    // incarnation is never refused as foreign while the old one is still on the feed. Installing
+    // a different epoch is the projection's proof that the previous one is over, which is what
+    // restates anything it had in flight as `interrupted` (§6.2's last row) — so a restart is a
+    // reminder about work that was cut off, and never a run left saying `working` for ever.
+    if let Some(pet) = app.try_state::<DesktopPetState>() {
+        match pet.tasks.install(&session.identity) {
+            Ok(Some(tasks)) => crate::desktop_pet::publish_tasks(app, &tasks),
+            Ok(None) => {}
+            Err(detail) => {
+                eprintln!("nekowite: the pet's task list did not follow a start: {detail}")
+            }
+        }
+    }
     *slot = Some(instance);
     Ok(session)
 }

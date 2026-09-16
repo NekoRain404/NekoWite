@@ -52,11 +52,23 @@ mod agent_runtime {
     pub mod events;
     #[allow(dead_code)]
     pub mod fs_capability;
+    // Included because `fs_capability`'s read arm names it through `super::`: what a read
+    // serves, and what it refuses to serve, are one question now.
+    #[allow(dead_code)]
+    pub mod live_notes;
     #[allow(dead_code)]
     pub mod permissions;
     #[allow(dead_code)]
     pub mod process;
     pub mod profile;
+    // Included because the profile's readout and the skills scope list answer one question between
+    // them — which directories this launch really reads. `boundary.rs` feeds the launch's own
+    // environment through both, so it needs the scope list compiled against the same tree the
+    // library builds rather than against a hand-written copy of it. `unused_imports` is allowed
+    // with `dead_code` because this target reaches the tree through the names its tests use, while
+    // `skills.rs` re-exports the rest for the library.
+    #[allow(dead_code, unused_imports)]
+    pub mod skills;
     #[allow(dead_code)]
     pub mod registry;
     // Included because `process` and `profile` both name it through `super::`: the launch
@@ -72,6 +84,10 @@ mod agent_runtime {
     pub mod acp_transport;
     #[allow(dead_code)]
     pub mod runs;
+    // Included because `acp_transport` names it through `super::`: the counters a turn reported,
+    // read where the schema's own `Usage` cannot hold the partial object P0 §6.3 measured.
+    #[allow(dead_code)]
+    pub mod usage;
 }
 
 #[path = "../src/commands/agent_settings.rs"]

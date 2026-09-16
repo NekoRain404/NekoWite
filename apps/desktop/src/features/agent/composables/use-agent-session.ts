@@ -20,6 +20,7 @@
 import { computed, onBeforeUnmount, onMounted, type ComputedRef, type WritableComputedRef } from 'vue'
 import type { AgentGateway, AgentSession, AgentSessionState } from '../../../platform/gateways/agent-contracts'
 import { isRunLive, sessionKey, type AgentSessionView } from '../services/agent-session-view'
+import type { AgentLiveNote } from '../services/agent-context-snapshot'
 import {
   useAgentSessionStore,
   type AgentAnswerOutcome,
@@ -53,7 +54,10 @@ export interface AgentSessionBinding {
   /** §6.2's one active generation: false while a run is in flight, so the composer offers
    *  stop instead of send. */
   canSend: ComputedRef<boolean>
-  send(text: string): Promise<AgentSendOutcome>
+  /** Send one turn. `targets` are the notes the request is about, as the editor holds them at
+   *  this instant — they are what an accepted answer is later checked against, so they have to
+   *  be read here rather than when the reply arrives (`stores/agent-session.ts`). */
+  send(text: string, targets?: readonly AgentLiveNote[]): Promise<AgentSendOutcome>
   stop(): Promise<void>
   answer(requestId: string, optionId: string): Promise<AgentAnswerOutcome>
   /** Re-establish the state from a fresh snapshot, keeping the timeline. */
@@ -98,7 +102,7 @@ export function useAgentSession(options: UseAgentSessionOptions): AgentSessionBi
     draft,
     unread: computed(() => record.value?.unread ?? false),
     canSend: computed(() => view.value !== null && !isRunLive(view.value)),
-    send: (text: string) => store.send(text),
+    send: (text: string, targets: readonly AgentLiveNote[] = []) => store.send(text, targets),
     stop: () => store.cancel(key),
     answer: (requestId: string, optionId: string) => store.answer(requestId, optionId),
     resync: () => store.resync(key),

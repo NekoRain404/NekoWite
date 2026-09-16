@@ -39,9 +39,16 @@ use serde_json::{Value, json};
 /// publishes on this enum. The plan's §6.2 list is the floor and the frozen contract
 /// (`agent-contracts/payloads.ts`) is the ceiling — the contract owns the spelling,
 /// and it is wider than this enum on purpose, carrying a kind for every stable
-/// `SessionUpdate` the pinned schema names. `ConfigChanged` is the first kind here
-/// that the plan's list does not name: the engine can send one, so the host can
-/// forward one, and both vocabularies already declared it.
+/// `SessionUpdate` the pinned schema names. `ConfigChanged` and `ThoughtDelta` are
+/// the kinds here the plan's list does not name: the engine sends both, so the host
+/// forwards both, and both vocabularies already declared them.
+///
+/// The two lists are not the same size and must not be forced to be. The contract
+/// carries kinds this host has no producer for (`user-delta`, `plan-changed`,
+/// `mode-changed`, `session-changed`, `usage-changed`), and an enum arm with no
+/// producer would be a promise nothing keeps. The direction that must stay empty is
+/// the other one: a kind here that the contract cannot read is a frame the window
+/// refuses, so every variant below has a spelling in `payloads.ts`.
 ///
 /// `PermissionRequest` is the one kind that is not emitted from here —
 /// engine→client permission requests are answered through the transport, and
@@ -51,6 +58,15 @@ use serde_json::{Value, json};
 #[serde(rename_all = "kebab-case")]
 pub enum AgentEventKind {
     TextDelta,
+    /// The engine's own disclosed reasoning (`agent_thought_chunk`), which P0 §2.3 measured on the
+    /// wire beside the answer.
+    ///
+    /// A kind of its own rather than text: §5.1 forbids showing *invented* reasoning, not reasoning
+    /// the engine chose to disclose, and the contract settled the same question the same way
+    /// (`agent-contracts/payloads.ts`'s `'thought-delta'`, T1's §2). Folding it into `TextDelta`
+    /// would put "thinking" on the answer's side of the timeline, which is the one outcome §5.1
+    /// cannot allow.
+    ThoughtDelta,
     ToolUpdate,
     PermissionRequest,
     CommandsChanged,
@@ -125,12 +141,29 @@ impl TransportError {
     /// §2.4 forbids passing that string on. Every other engine message is kept
     /// as it is — it is the engine's own words about its own failure, and this
     /// layer has nothing better to say.
+    ///
+    /// The certificate sentence claims nothing the evidence cannot support, and
+    /// the measurement that forced that is the live run's §5: the condition
+    /// arrived once from a transient network fault, on a machine whose `curl`
+    /// and `openssl` verified cleanly against the same CA bundle immediately
+    /// before and after, and the two identical runs around it succeeded. The
+    /// engine gives the transient case no code to tell it apart from a missing
+    /// CA store — the same `-32603`/"unknown certificate verification error" is
+    /// the whole of the evidence (see `certificate_failure` below) — so the
+    /// sentence names the retry first, offers the CA cause as a likelihood
+    /// *if the failure repeats*, and names the variable that addresses it. A
+    /// confident diagnosis would send a user to change a CA configuration that
+    /// was never wrong, which is a worse outcome than the opaque original.
     pub fn failure_message(&self) -> String {
         if self.failure_code() == AgentFailureCode::CertificateUntrusted {
-            return "the engine could not verify the server's certificate. The server's chain \
-                    may be issued by an authority the engine's CA store does not contain — an \
-                    internal or brand-new root — or the system CA store may be missing or out \
-                    of date. The connection was not attempted insecurely."
+            return "the engine could not verify the server's certificate. That is not proof of \
+                    a CA problem: a transient network or TLS failure reports the same thing, so \
+                    a retry is a reasonable first step. If it repeats, the likely cause is a \
+                    chain the engine's CA store does not know — an internal or brand-new root, \
+                    or a system store that is missing or out of date. NODE_EXTRA_CA_CERTS names \
+                    an extra bundle the engine trusts; the app already passes the system store \
+                    through it, so anything set there should include it. The connection was not \
+                    attempted insecurely."
                 .to_string();
         }
         match self {
@@ -178,6 +211,14 @@ pub(super) fn classify(error: agent_client_protocol::Error) -> TransportError {
 /// kept narrow for that reason: it must contain `certificate` and one of the
 /// phrasings the TLS libraries actually use, so that an unrelated internal
 /// error is not relabelled as a trust problem and sent down the wrong advice.
+///
+/// What is recognised is the *condition* — an engine that could not verify a
+/// certificate — and deliberately not its cause, which this frame cannot
+/// establish: the live run's §5 measured a transient network fault producing
+/// the same sentence, on a healthy store, and nothing in the frame separates
+/// the two. The matcher is unchanged by that finding and unchanged by the
+/// wording work in [`TransportError::failure_message`]; what changed is the
+/// claim the reworded sentence makes about the cause.
 fn certificate_failure(message: &str) -> bool {
     let message = message.to_ascii_lowercase();
     message.contains("certificate")
@@ -236,13 +277,13 @@ pub struct AgentEventEnvelope {
 /// `None` means "deliberately not forwarded", and the reasons are different
 /// enough to name:
 ///
-/// - **`AgentThoughtChunk`** — measured in P0 §2.3 and absent from the plan's
-///   kind list. The plan forbids showing *invented* reasoning (§5.1) and this
-///   channel is not invented, so it is a real decision rather than an
-///   oversight — but it is the contract's decision (T1 was asked to make it),
-///   and this layer must not make it by accident. Dropping is the choice that
-///   cannot put a fake "thinking" line in front of a user if the contract never
-///   grows a place for it; adding the kind later is one arm here.
+/// - **`AgentThoughtChunk`** was in this list and is no longer. P0 §2.3 measured
+///   it on the wire; the contract was asked to decide and decided to keep it
+///   (`payloads.ts`'s `'thought-delta'`, with a reducer arm, a collapsed timeline
+///   row and its own copy), carrying the mapping forward to this layer in as many
+///   words: 「the gap is in the mapping」 (T1 §2). A drop here would leave a kind
+///   the whole window is built to render with no producer, which is the defect
+///   §6.2's rule exists to prevent — reversed.
 /// - **everything else the schema can name** — user echoes, plan frames, mode
 ///   updates, session metadata and usage, compaction, and the `Other` escape hatch.
 ///   §6.2 requires that `unknown` never reaches a component, so an update this host
@@ -252,6 +293,14 @@ pub fn normalize_update(update: &SessionUpdate) -> Option<(AgentEventKind, Value
         SessionUpdate::AgentMessageChunk(chunk) => {
             let text = text_of(chunk)?;
             Some((AgentEventKind::TextDelta, json!({ "text": text })))
+        }
+        // The engine's reasoning channel, forwarded in the contract's shape for `thought-delta`
+        // (`{ text }`) — the same shape as the answer's, and the same `text_of` reason for
+        // refusing a chunk that carries no text: an image or a resource link is not an empty
+        // thought.
+        SessionUpdate::AgentThoughtChunk(chunk) => {
+            let text = text_of(chunk)?;
+            Some((AgentEventKind::ThoughtDelta, json!({ "text": text })))
         }
         // P0 §6.1: a tool call is a `ToolCall` followed by `ToolCallUpdate`
         // frames whose `status` runs pending → in_progress → completed, with
@@ -379,5 +428,117 @@ fn text_of(chunk: &ContentChunk) -> Option<String> {
     match &chunk.content {
         ContentBlock::Text(text) => Some(text.text.clone()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// P0 §2.4's measured frame, verbatim, as the engine sends it.
+    fn measured() -> TransportError {
+        TransportError::Engine {
+            message: "Internal error: unknown certificate verification error".to_string(),
+        }
+    }
+
+    /// The half that must not weaken. Recognition is what keeps the condition
+    /// legible; without it this arrives as an unrecognised internal error, which
+    /// is exactly what §2.4 measured and rejected.
+    #[test]
+    fn the_measured_frame_is_still_classified_and_still_reworded() {
+        assert_eq!(
+            measured().failure_code(),
+            AgentFailureCode::CertificateUntrusted
+        );
+        let message = measured().failure_message();
+        assert!(
+            !message.contains("unknown certificate verification error"),
+            "the engine's own words must not reach the user: {message}"
+        );
+        assert!(
+            message.contains("certificate"),
+            "the condition is still named: {message}"
+        );
+    }
+
+    /// The honesty of the sentence, as properties rather than as prose.
+    ///
+    /// The live run's §5 measured this exact condition arriving from a transient
+    /// network fault and then succeeding twice with identical inputs, so a
+    /// message that offers only the CA explanation sends a user to change a
+    /// configuration that was never wrong. Three claims are required: the
+    /// failure may be transient (a retry instruction), the CA cause is offered
+    /// as a likelihood, and `NODE_EXTRA_CA_CERTS` is named so the cause is
+    /// actionable. Reverting the wording to the confident diagnosis fails on the
+    /// first, and the ordering assertion keeps a rewrite from burying the retry
+    /// after the CA advice.
+    #[test]
+    fn the_certificate_message_offers_the_retry_before_the_ca_advice() {
+        let message = measured().failure_message();
+        assert!(
+            message.contains("NODE_EXTRA_CA_CERTS"),
+            "the variable that addresses a CA problem must be named: {message}"
+        );
+        assert!(
+            message.to_lowercase().contains("transient"),
+            "the message must say the failure can arrive from something that is not the \
+             certificate at all: {message}"
+        );
+        // Any of these words is unambiguously a retry instruction, and the wording
+        // this replaces contained none of them.
+        let retry = ["retry", "try again", "it again"]
+            .iter()
+            .filter_map(|anchor| message.find(anchor))
+            .min()
+            .unwrap_or_else(|| {
+                panic!("the message must say running the failure again is worth trying: {message}")
+            });
+        let cause = message
+            .find("CA store")
+            .unwrap_or_else(|| panic!("the message must still name the cause: {message}"));
+        assert!(
+            retry < cause,
+            "the retry comes first, so a transient failure does not send the reader into \
+             their CA configuration: {message}"
+        );
+    }
+
+    /// What the matcher fires on, and what it does not — unchanged by the wording
+    /// work, and pinned because a classification that cannot state its own
+    /// boundary is the thing §2.4's "opaque error" complaint was about.
+    ///
+    /// Fires on: a message that contains `certificate` *and* one of the phrasings
+    /// the TLS libraries use. Does not fire on: an internal error that merely
+    /// mentions a certificate, a phrasing without a certificate, and the generic
+    /// `-32603` with neither — those stay `invalid-response`, or reach the user
+    /// as the engine's own words.
+    #[test]
+    fn the_match_covers_the_measured_phrasings_and_nothing_else() {
+        for message in [
+            "Internal error: unknown certificate verification error",
+            "certificate verify failed: unable to get local issuer certificate",
+            "certificate verify failed: self-signed certificate in certificate chain",
+            "certificate verify failed: self signed certificate",
+            "certificate verify failed: certificate has expired",
+            "error:0A000086:SSL routines::certificate verify failed, depth lookup: self signed",
+        ] {
+            assert!(
+                certificate_failure(message),
+                "a measured certificate phrasing must match: {message}"
+            );
+        }
+        for message in [
+            "Internal error",
+            "-32603 Internal error: an unexpected failure occurred",
+            "certificate request rejected by policy",
+            "unable to verify the workspace root",
+            "the session has expired",
+        ] {
+            assert!(
+                !certificate_failure(message),
+                "this is not a certificate failure and must not be reworded as one: {message}"
+            );
+        }
     }
 }

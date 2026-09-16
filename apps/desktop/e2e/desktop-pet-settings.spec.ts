@@ -128,11 +128,17 @@ async function openPetSection(page: Page, options: MountOptions = {}): Promise<v
       if (opts.characterId !== undefined) {
         const loaded = await real.readSettings('character')
         if (loaded.status === 'current' || loaded.status === 'migrated') {
-          await real.updateSettings({
-            domain: 'character',
-            revision: loaded.record.revision,
-            values: { ...loaded.record.values, characterId: opts.characterId },
-          })
+          // `PetSettingsRecord` is a union correlated on `domain`, and the value a *read* answers
+          // with is the whole union: the domain is checked rather than assumed, which is what
+          // makes the record's own values the `character` ones this write spreads.
+          const { record } = loaded
+          if (record.domain === 'character') {
+            await real.updateSettings({
+              domain: 'character',
+              revision: record.revision,
+              values: { ...record.values, characterId: opts.characterId },
+            })
+          }
         }
       }
 

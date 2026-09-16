@@ -165,6 +165,29 @@ describe('the states §6.2 maps runs onto', () => {
     expect(new Set(Object.values(expected)).size).toBe(4)
   })
 
+  it('reads an ending whose reason it does not know as unknown, not as a finished turn', async () => {
+    // The reason is one this version has never seen, which P0 §6.3's measurement of the same
+    // engine's changing protocol surface makes a normal frame rather than a corrupt one. Neither
+    // wrong reading may happen: refusing the frame reports the engine's finished turn as a
+    // failure, and `turn-finished` asserts an ending nobody established (§6.2). It lands on
+    // `unknown` — and `unknown` is deliberately not settled, so a later frame that does know wins.
+    const pet = createMemoryPetGateway()
+    const key = pet.startRun()
+
+    const outcome = applied(
+      pet.ingest(frame({ payload: { stopReason: 'budget_exceeded', usage: null } })),
+    )
+    expect(outcome.state).toBe('unknown')
+    expect(PET_ALERT_BY_STATE.unknown).toBe('needs-attention')
+    expect(isPetTaskSettled('unknown')).toBe(false)
+
+    const informed = pet.ingest(
+      frame({ sequence: 2, payload: { stopReason: 'refusal', usage: null } }),
+    )
+    expect(informed.status).toBe('applied')
+    expect((await taskFor(pet, key)).state).toBe('refused')
+  })
+
   it('shows a cancelled run as cancelled, whether it ended or failed that way', async () => {
     const ended = createMemoryPetGateway()
     const endedKey = ended.startRun()
@@ -740,6 +763,48 @@ describe('the double publishes the feature state the way the host does', () => {
 
     expect(refused.status).toBe('conflict')
     expect(seen).toEqual([true])
+  })
+
+  it('publishes every applied write on the settings channel, with the revision it landed on', async () => {
+    const pet = createMemoryPetGateway({ visible: true })
+    const seen: { domain: string; revision: number }[] = []
+    const stop = await pet.subscribeSettings((change) => seen.push(change))
+
+    await pet.updateSettings({
+      domain: 'character',
+      revision: 1,
+      values: { ...PET_SETTINGS_DEFAULTS.character, characterId: 'kitty' },
+    })
+    await pet.updateSettings({
+      domain: 'character',
+      revision: 2,
+      values: { ...PET_SETTINGS_DEFAULTS.character, characterId: null },
+    })
+    stop()
+    await pet.updateSettings({
+      domain: 'character',
+      revision: 3,
+      values: { ...PET_SETTINGS_DEFAULTS.character, characterId: 'kitty' },
+    })
+
+    // The channel the pet window draws from (§5.1's 角色与动画): a character chosen in the main
+    // window's settings has to reach a window that is already open, and this is the write path
+    // that carries it — a *character* write, unlike the feature channel, which only fires for
+    // `general`. The revision is the record's own, so a listener can tell which state to re-read.
+    expect(seen).toEqual([
+      { domain: 'character', revision: 2 },
+      { domain: 'character', revision: 3 },
+    ])
+
+    // And a write that was refused says nothing, for the reason the feature channel says nothing:
+    // the store did not move, so a listener that re-read would be re-reading the same record.
+    const refused = await pet.updateSettings({
+      domain: 'character',
+      revision: 1,
+      values: { ...PET_SETTINGS_DEFAULTS.character },
+    })
+    expect(refused.status).toBe('conflict')
+    expect(seen).toHaveLength(2)
   })
 
   it('publishes nothing for a write to another domain', async () => {

@@ -32,6 +32,10 @@ mod agent_runtime {
     // than being dead.
     #[allow(dead_code)]
     pub mod fs_capability;
+    // Included because `fs_capability`'s read arm names it through `super::`: what a read serves
+    // and what it refuses to serve are one question now.
+    #[allow(dead_code)]
+    pub mod live_notes;
     pub mod recovery;
 }
 
@@ -48,6 +52,10 @@ use agent_runtime::recovery::{Baseline, Recovery, RecoveryPlan, RecoveryRefusal}
 struct RealVault;
 
 impl VaultFiles for RealVault {
+    fn frontend_path(&self, vault_root: &str, path: &str) -> Result<String, String> {
+        let (resolved, _relative) = nekowite_lib::domain::path_policy::resolve_within_rel(vault_root, path)?;
+        Ok(nekowite_lib::domain::path_policy::ipc_path(&resolved))
+    }
     fn read(&self, vault_root: &str, path: &str) -> Result<String, String> {
         nekowite_lib::storage::file_store::read_file(vault_root, path)
     }

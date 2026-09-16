@@ -17,6 +17,7 @@ import type {
   AgentContextUsage,
   AgentCost,
   AgentPayloads,
+  AgentRunEnding,
   AgentRunResult,
   AgentUsage,
 } from '../payloads'
@@ -29,7 +30,7 @@ import type {
 } from '../gateway'
 import { AGENT_CAPABILITY_FEATURES } from '../gateway'
 import { isAgentFailureCode } from '../failure'
-import { asRecord, count, maybeStr, member, str } from './fields'
+import { asRecord, count, maybeStr, member, nonEmpty, str } from './fields'
 
 export function readModeChanged(raw: unknown): AgentPayloads['mode-changed'] | null {
   const record = asRecord(raw)
@@ -136,14 +137,39 @@ export function readContextUsage(raw: unknown): AgentContextUsage | null {
   return cost ? { usedTokens, contextTokens, cost } : null
 }
 
-function readUsage(raw: unknown): AgentUsage | null {
-  const record = asRecord(raw)
-  if (!record) return null
-  const inputTokens = count(record.inputTokens)
-  const outputTokens = count(record.outputTokens)
-  const totalTokens = count(record.totalTokens)
-  if (inputTokens === null || outputTokens === null || totalTokens === null) return null
-  return { inputTokens, outputTokens, totalTokens }
+/** The counters a usage object can carry, in the schema's own order. Listed rather than written
+ *  out per field so the reader below cannot read five of six and look complete. */
+const USAGE_FIELDS: readonly (keyof AgentUsage)[] = [
+  'inputTokens',
+  'outputTokens',
+  'totalTokens',
+  'thoughtTokens',
+  'cachedReadTokens',
+  'cachedWriteTokens',
+]
+
+/**
+ * A turn's usage, field by field — the one shape P0 §6.3 leaves open.
+ *
+ * The measured field sets differ between two identical turns, so **every field stands alone**:
+ * one that is not there stays absent (a surface renders "not provided"), and one that is there
+ * is kept as the engine's own number, zero included. Nothing is summed and nothing is defaulted
+ * (§5.1: an unknown cost is not zero).
+ *
+ * A field that is present but is not a plausible count — a string, a negative, a fraction — is
+ * left out rather than refused. It is the same thing an absent field means, and refusing the
+ * whole payload would be worse than that: `run-finished` names a run, so a frame this window
+ * cannot read becomes a `run-failed` on the turn it just completed, which is a decorative count
+ * deciding that a finished turn failed. An object with no readable count at all is `null`: it
+ * reported no usage this window can show, which is what `null` already means.
+ */
+function readUsage(record: Record<string, unknown>): AgentUsage | null {
+  const usage: AgentUsage = {}
+  for (const field of USAGE_FIELDS) {
+    const value = count(record[field])
+    if (value !== null) usage[field] = value
+  }
+  return Object.keys(usage).length > 0 ? usage : null
 }
 
 /**
@@ -152,17 +178,52 @@ function readUsage(raw: unknown): AgentUsage | null {
  * because a token ceiling or a refusal is how the turn ended, not a failure of the
  * runtime to run it.
  *
- * `usage` has to be present — numbers or an explicit null — for the same reason as
- * the cost above.
+ * The stop reason is read by {@link readEnding}: a word this version has never seen is an ending
+ * it reports as unrecognised rather than one it refuses, because the alternative is a completed
+ * turn shown as a failure. Everything else about the payload is strict.
+ *
+ * `usage` is absent, explicitly null, or an object, and all three are things the engine can say:
+ * the schema makes the field optional, so requiring the key would refuse a legitimate ending,
+ * and `null` is the contract's own spelling for "reported nothing". A `usage` that is neither
+ * object nor null is the one case refused — that is a producer sending something this window
+ * cannot read at all, and reading it as "no usage" would be the silent repair the container rule
+ * exists to prevent. Inside the object, the rule is {@link readUsage}'s.
  */
 export function readRunResult(raw: unknown): AgentRunResult | null {
   const record = asRecord(raw)
   if (!record) return null
-  const stopReason = member(AGENT_STOP_REASONS, record.stopReason)
-  if (!stopReason) return null
-  if (record.usage === null) return { stopReason, usage: null }
-  const usage = readUsage(record.usage)
-  return usage ? { stopReason, usage } : null
+  const ending = readEnding(record.stopReason)
+  if (!ending) return null
+  if (record.usage === null || record.usage === undefined) return { ...ending, usage: null }
+  const reported = asRecord(record.usage)
+  if (!reported) return null
+  return { ...ending, usage: readUsage(reported) }
+}
+
+/**
+ * Why the turn ended, in the two shapes the contract has for it — or null for a frame that did
+ * not answer the question.
+ *
+ * The boundary is between *not saying* and *saying something new*, and it is drawn at the type
+ * of the value rather than at its membership: a reason that is missing, empty or not a string is
+ * a producer which did not answer, and stays a malformed frame (an engine that sends no reason
+ * has not reported an ending this window may invent). A present non-empty string that is not one
+ * of the five is an answer in a word this version has never seen — a case the protocol itself
+ * allows, since its `StopReason` is `#[non_exhaustive]` — so it is read as
+ * {@link AgentRunEnding}'s own arm and the engine's word is kept with it.
+ *
+ * This is the one place that line is drawn, and drawing it further out — accepting any JSON, or
+ * repairing a missing reason into an ordinary one — is the trade §6.2 forbids: a catch-all read
+ * as a fact. Drawing it tighter is the failure that made this arm necessary: `run-finished` names
+ * a run, so a refusal here becomes a failure on the turn the engine just finished.
+ */
+function readEnding(
+  raw: unknown,
+): { stopReason: AgentRunEnding; unrecognisedReason?: string } | null {
+  const known = member(AGENT_STOP_REASONS, raw)
+  if (known) return { stopReason: known }
+  const word = nonEmpty(raw)
+  return word ? { stopReason: 'unrecognised', unrecognisedReason: word } : null
 }
 
 /**

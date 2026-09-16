@@ -53,6 +53,25 @@ class FakeHost implements PetGateway {
     return () => this.listeners.delete(onTasks)
   }
 
+  // The four calls this window makes *when it is given a connection* — an appearance to draw and
+  // a key to route. This file's cases pass a bare gateway, so the window is never handed the wider
+  // surface and a call here is a wiring mistake rather than a state to model.
+  async appearance(): Promise<never> {
+    throw new Error('this window was not given a connection to read its appearance from')
+  }
+
+  async library(): Promise<never> {
+    throw new Error('this window has no library page')
+  }
+
+  async importCharacter(): Promise<never> {
+    throw new Error('this window does not import characters')
+  }
+
+  async openTask(): Promise<never> {
+    throw new Error('this window was not given a connection to route a task through')
+  }
+
   async subscribeFeature(
     onFeature: (state: { enabled: boolean; visible: boolean }) => void,
   ): Promise<() => void> {

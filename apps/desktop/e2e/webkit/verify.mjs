@@ -161,13 +161,30 @@ export function verify(results) {
       motion.support.resolvedSurfaceEase.slice(0, 60),
       motion.support.isSpring,
     )
+    // The applied curve, read off an element wearing the menu's own arrival
+    // classes — so it is the cascade at the POINT OF USE and not the token in
+    // isolation. FAILS IF: anything outranks the spring for the `transform`
+    // transition on this surface, which is the one failure the token check
+    // above cannot see and the frame trace can only catch by luck. This is the
+    // reading that does not depend on a frame landing anywhere.
+    c.run(
+      'motion: the arrival MOVES on the spring, and only the movement does',
+      `transform ${String(motion.applied.movementEasing).slice(0, 44)} | opacity ${String(motion.applied.fadeEasing).slice(0, 32)}`,
+      motion.applied.movementIsSpring && motion.applied.movementPeak > 1,
+    )
     // The spring's whole point is the single overshoot. FAILS IF: the curve is
     // replaced by a monotone ease — the scale would top out AT 1 and never pass
     // it (motion-surface.spec.ts's frame delta is why "it moved" is not enough).
+    //
+    // `holds` here is decided in `probe-motion.mjs` and may defer to the applied
+    // curve when the trace had no frame inside the excursion — a 300ms animation
+    // sampled by rAF on a loaded box can miss a 120ms window outright, and the
+    // one run that did recorded a correct curve as a monotone one. The detail
+    // always names which of the three instruments answered.
     c.run(
       'motion: the arrival overshoots once and settles',
-      `scale min ${motion.arrival.scale.min} max ${motion.arrival.scale.max}`,
-      motion.arrival.scale.max > 1 && motion.arrival.scale.min < 1,
+      motion.arrival.overshoot.detail,
+      motion.arrival.overshoot.holds,
     )
     // The two assertions motion-surfaces.spec.ts makes of every surface.
     c.run(
@@ -179,6 +196,87 @@ export function verify(results) {
       'motion: the exit takes the pointer off the leaver',
       `${motion.exit.untouchedFrames} frames with pointer-events: none (spec wants > 3)`,
       motion.exit.untouchedFrames > 3,
+    )
+  }
+
+  // The dialog half, in the engine rather than in a text scan. The rule the
+  // whole harness is about — a surface's opacity has nothing to settle, so the
+  // spring goes on the movement — is stated about dialogs, and until this probe
+  // the one surface it is stated about was the one surface nothing measured.
+  const dialog = results.probes['motion-dialog']
+  if (dialog) {
+    const applied = dialog.applied
+    // FAILS IF: the arrival goes back to one keyframe carrying opacity and
+    // scale, which is a shape that cannot give the two halves two curves — the
+    // state the three editor-core and shell dialogs were in until they were
+    // split. One name here is the whole defect, whatever the curves say.
+    c.run(
+      'motion: the dialog arrives on two animations, one per property',
+      `${applied.animationName} (${applied.animationDuration})`,
+      applied.animations.length >= 2 &&
+        applied.animations.some((a) => a.moves !== null && a.moves.includes('scale')) &&
+        applied.animations.some((a) => a.moves !== null && a.moves.includes('opacity')),
+    )
+    // FAILS IF: anything whose curve is the spring moves an opacity. This is the
+    // rule `motion.test.ts` states and could not see, read here off the live
+    // element with the keyframe bodies the engine itself holds. A keyframe whose
+    // name resolved to nothing counts as a failure rather than as clean.
+    c.run(
+      'motion: nothing on the dialog puts the spring on an opacity',
+      applied.animations
+        .map((a) => `${a.name} ${String(a.moves).slice(0, 34)} on ${String(a.easing).slice(0, 20)}`)
+        .join(' | '),
+      applied.springOnAnOpacity === false,
+    )
+    // FAILS IF: the movement stops taking the spring, or takes a curve that is
+    // not the one the token resolves to — a fallback bezier arrives without the
+    // settle and every property name still looks right.
+    c.run(
+      'motion: the dialog MOVES on the spring the token names',
+      `scale on ${String(applied.animations.find((a) => a.name === 'surface-scale')?.easing).slice(0, 44)}`,
+      applied.movementIsSpring === true,
+    )
+    // FAILS IF: the two halves go back to one duration. 「透明度先到位、位移随后
+    // 收尾」 is a budget split, not a preference: the fade spends the fade rung
+    // and the movement spends the slow one, so a single 460ms arrival fails here
+    // even though it fades on the right curve.
+    c.run(
+      'motion: the dialog fade has its own budget, and it is the shorter one',
+      `fade ${applied.fadeMs}ms (rung ${applied.fadeRungMs}) vs movement ${applied.movementMs}ms (rung ${applied.slowRungMs})`,
+      applied.fadeMs !== null &&
+        applied.movementMs !== null &&
+        applied.fadeMs < applied.movementMs &&
+        applied.fadeMs === applied.fadeRungMs &&
+        applied.movementMs === applied.slowRungMs,
+    )
+    // The ruling's ordering 「透明度先到位、位移随后收尾」, read off the
+    // animation's own clock rather than off frames, because frames are a
+    // function of the machine: on the run that produced this check the first
+    // painted frame of the arrival already read opacity 0.998 — the whole 200ms
+    // fade had gone by in one frame, and a trace like that makes the ordering
+    // true on a t=0 that is not the arrival's first frame. FAILS IF: the two
+    // halves go back to one duration, or the fade is given the movement's
+    // budget — the scale is then at rest the instant the opacity is, and the
+    // surface finishes appearing and moving together.
+    const sweep = dialog.sweep ?? {}
+    c.run(
+      'motion: the dialog finishes fading while it is still moving',
+      `${JSON.stringify(sweep.readings)} (peak at ${sweep.peakMs}ms)`,
+      // The self-check first: a scrub the engine does not reflect would answer
+      // every instant with the same frame and look exactly like a result.
+      sweep.reflected === true &&
+        sweep.opacityFinalWhenFadeEnds === true &&
+        sweep.movementStillGoingWhenFadeEnds === true,
+    )
+    // FAILS IF: the movement curve arrives monotone. The trace is used when it
+    // covered the arrival and the held peak when it did not, and the detail says
+    // which answered — the scale amplitude here is 1.5%, so the excursion is
+    // three-quarters of the menu's and a blind trace is likelier, not less.
+    c.run(
+      'motion: the dialog scale passes 1 and comes back',
+      `sampled ${JSON.stringify(dialog.arrival.scale)}; held at the peak ${sweep.scaleAtThePeak}; trace covered the arrival: ${dialog.arrival.coveredTheArrival} (first frame ${JSON.stringify(dialog.arrival.firstFrame)}, deltas ${JSON.stringify(dialog.arrival.frameDeltaHistogram)})`,
+      (dialog.arrival.scale?.max ?? null) > 1 ||
+        (sweep.scaleAtThePeak !== null && sweep.scaleAtThePeak > 1),
     )
   }
 

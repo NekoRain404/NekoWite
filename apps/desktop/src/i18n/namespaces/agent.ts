@@ -40,6 +40,7 @@ export const agent = {
             maxTurnRequests: 'Stopped at the engine’s request ceiling',
             refusal: 'The engine declined to continue',
             cancelled: 'Stopped before it finished',
+            unrecognised: 'Ended for a reason this version does not know',
           },
         },
         /* The transcript's first line, drawn only while the transcript is empty. It names the
@@ -283,6 +284,11 @@ export const agent = {
             hint: 'Every source that actually takes effect, including the ones this app does not set - it cannot claim to have closed a search path it does not own.',
             injected: 'Set by this app',
             engineDiscovery: 'The engine’s own discovery',
+            discovery: {
+              reused: 'This profile is your own installation, so the engine reads everything it normally would. Nothing here narrows it.',
+              project: 'The folder you open contributes its own configuration: an opencode.json or an .opencode directory in it, and in every folder above it, is merged into this profile - providers, permission rules and more. This app leaves that merge on.',
+              managed: 'The machine’s managed configuration folder, /etc/opencode, is merged into this profile as well, and a system administrator may have put providers, models or permission rules there. No supported switch turns that off.',
+            },
           },
           credentials: {
             title: 'Credentials',
@@ -324,7 +330,8 @@ export const agent = {
             enable: 'Switch on',
             disable: 'Switch off',
             noSwitch: 'There is no switch this app can throw for this directory. Any control here would only hide the row, so there is none.',
-            engineSwitch: 'Only the engine can stop reading this directory: it skips it when {variable} is set in its own environment. This app does not set that variable.',
+            engineSwitch: 'Only the engine can stop reading this directory: it skips it when {variable} is set in its own environment. This launch does not set that variable.',
+            engineSwitchSet: 'There is no control here: {variable} belongs to the environment the engine is launched in, and this launch sets it. The row above is what that means for this skill; it is not a setting this page can change.',
           },
           disabledList: {
             title: 'Switched off',
@@ -546,6 +553,7 @@ export const agent = {
             maxTurnRequests: '达到引擎的请求次数上限而停止',
             refusal: '引擎拒绝继续',
             cancelled: '未完成即被停止',
+            unrecognised: '以本版本未知的原因结束',
           },
         },
         empty: {
@@ -771,6 +779,11 @@ export const agent = {
             hint: '每一处真正生效的来源，也包括本应用没有设置的那些——它不能声称关掉了自己不拥有的搜索路径。',
             injected: '由本应用设置',
             engineDiscovery: '引擎自己的发现',
+            discovery: {
+              reused: '该配置档就是你自己的安装，引擎会照常读取它平时读取的一切。这里没有任何收窄。',
+              project: '你打开的文件夹也会提供配置：该文件夹及其每一级上级目录里的 opencode.json 或 .opencode 目录都会合并进此配置档——包括供应商、权限规则等。本应用不关闭这一合并。',
+              managed: '这台机器的受管配置目录 /etc/opencode 同样会合并进此配置档，系统管理员可能在其中放置了供应商、模型或权限规则。没有任何受支持的开关能关闭它。',
+            },
           },
           credentials: {
             title: '凭据',
@@ -812,7 +825,8 @@ export const agent = {
             enable: '启用',
             disable: '停用',
             noSwitch: '对那个目录，本应用没有任何开关可扳。这里的任何控件都只会把这一行藏起来，所以干脆没有。',
-            engineSwitch: '只有引擎自己能停止读取该目录：在它自己的环境里设置 {variable} 时它会跳过。本应用不会去设置那个变量。',
+            engineSwitch: '只有引擎自己能停止读取该目录：在它自己的环境里设置 {variable} 时它会跳过。本次启动没有设置那个变量。',
+            engineSwitchSet: '这里没有控件：{variable} 属于启动引擎时使用的环境，而本次启动设置了它。上一行写的就是它对这条技能的影响；它不是此页面能更改的设置。',
           },
           disabledList: {
             title: '已停用',

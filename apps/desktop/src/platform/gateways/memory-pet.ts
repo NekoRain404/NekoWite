@@ -15,6 +15,7 @@
  *  - `memory-pet/scenario.ts`   what a test asks for and gets back, and §7.2's fallbacks
  *  - `memory-pet/host.ts`       the tasks it tracks and the frames it receives
  *  - `memory-pet/settings.ts`   the one path that writes a settings domain
+ *  - `memory-pet/characters.ts` the library it holds, and what a window would draw from it
  *
  * What is left here is the composition and the surface: the double's own protocol, on
  * top of the `PetGateway` the real adapter also implements, so the two stay
@@ -26,11 +27,13 @@ import type {
 } from './agent-contracts'
 import {
   PET_CAPABILITIES,
+  type PetAppearance,
   type PetCapabilityReport,
   type PetCareRead,
+  type PetCharacterEntry,
   type PetFeatureState,
-  type PetGateway,
   type PetRuntimeLoss,
+  type PetSettingsChange,
   type PetSettingsDomain,
   type PetSettingsLoad,
   type PetSettingsPage,
@@ -38,8 +41,10 @@ import {
   type PetSettingsWrite,
   type PetTaskKey,
   type PetTaskProjection,
+  type PetWindowGateway,
 } from './pet-contracts'
 import { createPetTaskHost } from './memory-pet/host'
+import { createPetCharacterDouble } from './memory-pet/characters'
 import { createPetSettingsDouble } from './memory-pet/settings'
 import {
   MEMORY_PET_EPOCH,
@@ -58,7 +63,7 @@ export {
 } from './memory-pet/scenario'
 export type { MemoryPetOptions, MemoryRunOptions, PetFrameOrder, PetIngestOutcome }
 
-export interface MemoryPetGateway extends PetGateway {
+export interface MemoryPetGateway extends PetWindowGateway {
   /** Begin a run the host is tracking; resolves to the key it is filed under. */
   startRun(options?: MemoryRunOptions): PetTaskKey
   /** End the run in flight the way the engine's `run-finished` does. */
@@ -77,14 +82,22 @@ export interface MemoryPetGateway extends PetGateway {
   ingest(frame: unknown): PetIngestOutcome
   /** The pages `openSettings` was asked for, so the routing §5.1 requires is assertable. */
   openedSettings(): readonly PetSettingsPage[]
+  /** The tasks `openTask` was sent, so §6.2's click-to-the-session route is assertable. */
+  openedTasks(): readonly PetTaskKey[]
 }
 
 export function createMemoryPetGateway(options: MemoryPetOptions = {}): MemoryPetGateway {
   const host = createPetTaskHost({ epoch: MEMORY_PET_EPOCH, now: options.now ?? Date.now })
   const settings = createPetSettingsDouble(options)
+  // The library shares the settings double, so a page that chooses a character through the
+  // gateway's own `updateSettings` is choosing the character the next `appearance()` answers with
+  // — the flow this read exists for, and the one a test of "chosen, then drawn" drives.
+  const characters = createPetCharacterDouble(options, settings)
   const declared = options.capabilities ?? {}
   const opened: PetSettingsPage[] = []
+  const openedTasks: PetTaskKey[] = []
   const featureListeners = new Set<(state: PetFeatureState) => void>()
+  const settingsListeners = new Set<(change: PetSettingsChange) => void>()
   let visible = options.visible ?? false
 
   function featureState(): PetFeatureState {
@@ -102,6 +115,11 @@ export function createMemoryPetGateway(options: MemoryPetOptions = {}): MemoryPe
   function publishFeature(): void {
     const state = featureState()
     for (const listener of featureListeners) listener(state)
+  }
+
+  /** One applied settings write, as the window that draws from settings hears it. */
+  function publishSettingsChanged(change: PetSettingsChange): void {
+    for (const listener of settingsListeners) listener(change)
   }
 
   return {
@@ -162,12 +180,51 @@ export function createMemoryPetGateway(options: MemoryPetOptions = {}): MemoryPe
       // what §7.1's way back *is*. Only an applied write publishes: a refused one left the state
       // where it was, and telling subscribers otherwise would make the window act on a change
       // that did not happen.
-      if (update.status === 'applied' && write.domain === 'general') publishFeature()
+      if (update.status === 'applied') {
+        // The window that draws from settings hears every applied write, whatever the domain —
+        // the real host publishes the same frame (`commands/desktop_pet.rs`), and a subscriber
+        // decides for itself which domains it draws from. Only an *applied* write: a refused or
+        // conflicted one left the store where it was, and telling a listener otherwise would have
+        // it re-read for a change that did not happen. The revision is the record's own, so a
+        // listener sees the number the store is at rather than one this file computed.
+        publishSettingsChanged({
+          domain: update.record.domain,
+          revision: update.record.revision,
+        })
+        if (write.domain === 'general') publishFeature()
+      }
       return update
+    },
+
+    async subscribeSettings(onChange: (change: PetSettingsChange) => void) {
+      settingsListeners.add(onChange)
+      // Listen-only, exactly as the adapter is: a *change* has no current value to deliver, and
+      // the state a subscriber wants is the one its own read already answers.
+      return () => {
+        settingsListeners.delete(onChange)
+      }
     },
 
     async openSettings(page: PetSettingsPage) {
       opened.push(page)
+    },
+
+    async appearance(): Promise<PetAppearance> {
+      return characters.appearance()
+    },
+
+    async library(): Promise<PetCharacterEntry[]> {
+      return characters.library()
+    },
+
+    async importCharacter(): Promise<PetCharacterEntry | null> {
+      // `null` is the user closing the picker, which no test drives: what it drives is an import
+      // that happened, and an import the library refused (the option's sentence).
+      return characters.importCharacter()
+    },
+
+    async openTask(key: PetTaskKey) {
+      openedTasks.push(key)
     },
 
     startRun: host.startRun,
@@ -179,6 +236,10 @@ export function createMemoryPetGateway(options: MemoryPetOptions = {}): MemoryPe
 
     openedSettings() {
       return opened
+    },
+
+    openedTasks() {
+      return openedTasks
     },
   }
 }

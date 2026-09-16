@@ -28,6 +28,10 @@ function baseName(path: string | null): string {
 function dotTitle(id: string): string {
   const state = tabs.saveStateOf(id)
   if (state === 'saving') return t('tabs.saving')
+  // `failed` before the fallback, not after: the fallback is "saved", and a tab
+  // wearing that title over a save that did not land is the claim this state
+  // exists to stop making.
+  if (state === 'failed') return t('tabs.failed')
   if (state === 'dirty') return t('tabs.dirty')
   return t('tabs.saved')
 }

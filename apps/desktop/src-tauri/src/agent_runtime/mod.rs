@@ -15,12 +15,26 @@
 //!   because the join is the *whole* of it — neither half may be answered from here.
 //! - [`events`] — the host envelope and failure vocabulary: the one place
 //!   protocol frames become the app's language, including what went wrong.
-//! - [`fs_capability`] — the client's file-system capability, so an agent write
-//!   goes through this app's own write path instead of around it.
+//! - [`fs_capability`] — the client's file-system capability: a write the engine
+//!   delegates meets this app's own write path — its path confinement, write
+//!   lock, read-only refusal and history snapshot — and it is not a gate on the
+//!   writes the engine makes itself (P0 §7's preamble measured one that never
+//!   asked us).
+//! - [`live_notes`] — the direction the fs capability cannot reach on its own:
+//!   asking a WINDOW what a note holds right now, so that a read serves the
+//!   buffer the user is typing into instead of the disk. It is its own module
+//!   because it is a port with two ends — the table the runtime asks through and
+//!   the window side whoever owns the IPC surface implements — and because the
+//!   value it carries is the one `fs/read_text_file` and the edit-conflict
+//!   baseline must agree about.
 //! - [`driver`] — the one task that reads what the engine sends: both of a
 //!   runtime's streams, into the snapshot store and the permission table.
 //! - [`snapshot`] — §6.2's bounded replay: what a window that mounts late is
 //!   given, and the little state the view draws from it.
+//! - [`usage`] — what a turn's usage is: the counters the engine sent, each
+//!   standing alone. Its own module because P0 §6.3 measured that field set
+//!   changing, and the schema's `Usage` — three non-optional counts — cannot
+//!   carry a partial object while the window has to be able to render one.
 //! - [`config_edit`] — the document layer: a JSONC edit that keeps the fields
 //!   it did not name, and the revision it was made against.
 //! - [`registry`] — the agent *definitions*: which engines may be started, and
@@ -64,6 +78,7 @@ pub mod config_edit;
 pub mod driver;
 pub mod events;
 pub mod fs_capability;
+pub mod live_notes;
 pub mod native_terminal;
 pub mod permissions;
 pub mod profile;
@@ -73,6 +88,7 @@ pub mod session;
 pub mod skills;
 pub mod snapshot;
 pub mod update;
+pub mod usage;
 
 mod acp_transport;
 mod process;
@@ -84,6 +100,11 @@ pub use events::{
 };
 pub use fs_capability::{
     ChangeRecord, FsCapability, FsRequest, VaultFiles, client_capabilities, slice_lines,
+};
+pub use live_notes::{
+    LIVE_NOTE_ANSWER_CHANNEL, LIVE_NOTE_ATTACH_CHANNEL, LIVE_NOTE_BOUND, LIVE_NOTE_REQUEST_CHANNEL,
+    LiveNote, LiveNoteAnswer, LiveNoteAnswerPayload, LiveNoteQuestion, LiveNoteRefusal,
+    LiveNoteReply, LiveNoteTable, LiveNoteWindows, LiveNotes,
 };
 pub use process::{env_pairs, EngineLaunch, isolated_profile_env, SYSTEM_CA_BUNDLE};
 pub use session::{

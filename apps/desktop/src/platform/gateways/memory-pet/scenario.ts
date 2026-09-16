@@ -15,6 +15,7 @@ import type {
   PetCapability,
   PetCapabilityFinding,
   PetCareSummary,
+  PetCharacterEntry,
   PetFallback,
   PetTaskKey,
   PetTaskProjection,
@@ -147,4 +148,13 @@ export interface MemoryPetOptions {
    * settled into answers, and a summary means it answers `current` with exactly those totals.
    */
   care?: PetCareSummary
+  /**
+   * The characters the double's library holds, and the sentence an import is refused with.
+   *
+   * The library is what `library()` answers and what `appearance()` resolves the stored
+   * `characterId` against, so the three arms of an appearance — nothing chosen, a choice that
+   * cannot be honoured, a sheet to draw — are all reachable by what a test installs and selects.
+   */
+  characters?: readonly PetCharacterEntry[]
+  importRefusal?: string
 }

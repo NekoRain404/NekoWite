@@ -48,7 +48,9 @@ use super::adapters::{Capability, HostFeature};
 /// arrived — ACP v1 defaults each missing field to `false`, which is the engine saying no.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Handshake {
-    /// `agentCapabilities.loadSession`: the engine serves `session/load` (§6.2's resume).
+    /// `agentCapabilities.loadSession`: the engine's own report that it serves `session/load`
+    /// (§6.2's resume) — advertised rather than measured (P0 §4 lists `session/load` as never
+    /// exercised).
     pub load_session: bool,
     /// `agentCapabilities.promptCapabilities`: the content a prompt may carry.
     pub prompt: PromptCapabilities,

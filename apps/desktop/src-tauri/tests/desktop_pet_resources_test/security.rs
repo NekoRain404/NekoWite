@@ -10,9 +10,9 @@
 use std::path::Path;
 
 use crate::desktop_pet::resources::{
-    is_component, CharacterLibrary, PackageProblem, ResourceRefusal, BUDGET_RULES,
-    DEFAULT_SHEET_COLUMNS, DEFAULT_SHEET_ROWS, MAX_AUDIO_BYTES, MAX_FRAMES, MAX_IMAGE_EDGE,
-    MAX_IMAGE_PIXELS, MAX_PACKAGE_FILES, PACK_MANIFEST,
+    is_path_component, CharacterLibrary, PackageProblem, ResourceRefusal, BUDGET_RULES,
+    DEFAULT_SHEET_COLUMNS, DEFAULT_SHEET_ROWS, MAX_AUDIO_BYTES, MAX_COMPONENT_BYTES, MAX_FRAMES,
+    MAX_IMAGE_EDGE, MAX_IMAGE_PIXELS, MAX_PACKAGE_FILES, PACK_MANIFEST,
 };
 use crate::support::{
     gif, install_request, jpeg, library, listing, ogg, pack_dir, pet_json, png, webp, write,
@@ -31,24 +31,107 @@ fn a_character_id_that_could_be_a_path_names_nothing() {
     let source = pack_dir("security-id");
     write(&source, "sheet.png", &png(64, 64));
 
-    let overlong = "x".repeat(65);
-    for id in ["..", ".", "a/b", "../etc", ".hidden", "", "cat\0", overlong.as_str()] {
+    let overlong = "x".repeat(MAX_COMPONENT_BYTES + 1);
+    // The same ceiling in a script that costs three bytes a character, so a rule that counted
+    // characters and called them bytes would pass the first case and fail this one.
+    let overlong_cjk = "猫".repeat(MAX_COMPONENT_BYTES / 3 + 1);
+    let cases: [(&str, &str); 17] = [
+        ("..", "name directories"),
+        (".", "name directories"),
+        ("a/b", "separator between path components"),
+        ("a\\b", "another system reads it as a separator"),
+        ("../etc", "leading dot belongs to the library itself"),
+        (".hidden", "leading dot belongs to the library itself"),
+        ("", "cannot be empty"),
+        ("cat\0", "control character"),
+        ("ca\tx", "control character"),
+        ("cat\n", "whitespace at either end"),
+        (" lead", "whitespace at either end"),
+        ("trail ", "whitespace at either end"),
+        ("   ", "whitespace at either end"),
+        ("cat\u{fffd}", "U+FFFD"),
+        ("cat\u{202e}gnp", "render as a different one"),
+        (overlong.as_str(), "at most 64 bytes"),
+        (overlong_cjk.as_str(), "at most 64 bytes"),
+    ];
+    for (id, why) in cases {
         let refusal = library
             .install(&install_request(id, &source))
             .expect_err("an id that is not a path component");
+        // The refusal names the *rule that refused*, not only the field: this sentence is what a
+        // user reads, and "cannot be used as characterId" is not something anyone can act on.
+        let ResourceRefusal::InvalidName { field, detail, .. } = &refusal else {
+            panic!("{id:?} was refused as something other than a name: {refusal:?}");
+        };
+        assert_eq!(*field, "characterId", "{id:?}");
         assert!(
-            matches!(refusal, ResourceRefusal::InvalidName { field: "characterId", .. }),
-            "{id:?} was not refused as a name"
+            detail.contains(why),
+            "{id:?} was refused with a sentence that does not name why ({why}): {detail}"
         );
     }
-    assert!(!is_component(".."));
-    assert!(!is_component("sibling/.."));
-    assert!(is_component("local-1700000000000"));
-    assert!(is_component("shiba-inu_2"));
+    assert!(!is_path_component(".."));
+    assert!(!is_path_component("sibling/.."));
+    assert!(is_path_component("local-1700000000000"));
+    assert!(is_path_component("shiba-inu_2"));
 
     // Nothing was created anywhere: not for the traversal, not for the empty id, not for the
     // hidden one — a reserved name is a name this module owns, not a character.
     assert!(listing(library.root()).is_empty());
+}
+
+#[test]
+fn every_letter_of_every_script_is_a_name_and_only_the_hostile_ones_are_not() {
+    // The rule is a filesystem rule: what the kernel takes, and what a page can draw back. It is
+    // not an alphabet, and this is the case D12 reported — a Chinese-language user's folders are
+    // named in Chinese.
+    for name in [
+        "喵喵",
+        "我的猫-2",
+        "猫 猫",
+        "日本語のキャラ",
+        "한글 캐릭터",
+        "café",
+        "Ω-3",
+        "精灵图.png",
+        "a b.png",
+        "猫（素材）",
+    ] {
+        assert!(is_path_component(name), "{name:?} is a name the filesystem holds");
+    }
+    // And what is refused is refused for something the filesystem or the page objects to, never
+    // for being in the wrong alphabet.
+    for name in ["喵/喵", "喵\n喵", ".喵喵", "..", "", "\u{fffd}", "喵\u{202e}喵"] {
+        assert!(!is_path_component(name), "{name:?} is not a name this library takes");
+    }
+}
+
+#[test]
+fn a_refused_name_and_an_unreadable_pack_are_two_different_answers() {
+    // §13's 「没收到报告不等于报告没有」, applied to error copy: "this name is not allowed" and "this
+    // character could not be read" are different claims, and a page that showed one for the other
+    // would be telling a user to rename a folder that is already fine. The two arms are what makes
+    // that possible — the sentence each one becomes is written in `character_view`.
+    let (library, _data) = library("security-sentences");
+
+    let named = library
+        .install(&install_request("喵/喵", &pack_dir("security-sentences-name")))
+        .expect_err("a name that is a path");
+    assert!(
+        matches!(&named, ResourceRefusal::InvalidName { field: "characterId", detail, .. }
+            if detail.contains("separator")),
+        "a name that is a path is refused as a name, with the rule that refused: {named:?}"
+    );
+
+    // A source that is not there — and deliberately not one this helper created, because "the
+    // folder is empty" and "the folder could not be read" are different answers too.
+    let absent = std::env::temp_dir().join(format!("nkw-pet-absent-{}", std::process::id()));
+    let missing = library
+        .install(&install_request("cat", &absent))
+        .expect_err("a source that was never there");
+    assert!(
+        matches!(&missing, ResourceRefusal::NoSource { path } if path == &absent),
+        "a source that could not be read is refused as a source, not as a name: {missing:?}"
+    );
 }
 
 #[test]

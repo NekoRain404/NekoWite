@@ -66,9 +66,12 @@
 //!   and a rule stated here would become confidently wrong the day the engine grows one. So
 //!   [`SkillView::conflicts`] names every other directory and nominates no winner.
 //! - **Switching off (measured).** The engine reads `OPENCODE_DISABLE_EXTERNAL_SKILLS` and
-//!   `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` from its own environment; with either set it does not
+//!   `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` from its own environment; with either on it does not
 //!   scan the corresponding directories at all. Those are the only whole-scope switches that exist,
-//!   they belong to the engine, and all this host may do is put one in a launch environment.
+//!   they belong to the engine, and all this host may do is put one in a launch environment. Its
+//!   `RuntimeFlags` also nests the wide `OPENCODE_DISABLE_CLAUDE_CODE` under the `.claude` scan,
+//!   and it reads each of them as a *boolean*, so a variable that is set to something off leaves
+//!   the scan on — which is why [`launch_switches`] reads values rather than presence.
 //! - **Everything else is this host's**, and is labelled as such: the import limits
 //!   ([`MAX_IMPORTED_FILE_BYTES`] and friends) are ours, because the engine's own limits are not
 //!   documented and "no limit we could find" is not a limit to import under.
@@ -90,10 +93,15 @@ pub const SKILL_FILE_NAME: &str = "SKILL.md";
 /// engine's environment, it stops that engine reading them at all.
 pub const DISABLE_EXTERNAL_SKILLS: &str = "OPENCODE_DISABLE_EXTERNAL_SKILLS";
 
-/// The narrower of the two: set it and `.claude` is skipped while `.agents` is still read. The
-/// engine also honours the wider `OPENCODE_DISABLE_CLAUDE_CODE`, which is why a caller says which
-/// variables are set rather than this module deciding for it.
+/// The narrower of the two: set it and `.claude` is skipped while `.agents` is still read.
 pub const DISABLE_CLAUDE_CODE_SKILLS: &str = "OPENCODE_DISABLE_CLAUDE_CODE_SKILLS";
+
+/// The widest of the three, and not a skill switch of its own: the pinned bundle's `RuntimeFlags`
+/// computes `disableClaudeCodeSkills` as `OPENCODE_DISABLE_CLAUDE_CODE ||
+/// OPENCODE_DISABLE_CLAUDE_CODE_SKILLS`, so this one stops the `.claude` scan by covering the whole
+/// Claude Code compatibility. Named here because [`launch_switches`] reads a launch's environment
+/// and has to recognize it; no caller sets it.
+pub const DISABLE_CLAUDE_CODE: &str = "OPENCODE_DISABLE_CLAUDE_CODE";
 
 /// The engine's own limit on a skill's `name` (measured).
 pub const MAX_NAME_BYTES: usize = 64;
@@ -310,7 +318,7 @@ mod scope;
 
 pub use discover::{SkillSurface, SkillView};
 pub use import::{Overwrite, SkillImport, SkillPreview};
-pub use scope::{opencode_scopes, DisableMechanism, ScopeOwner, SkillScope};
+pub use scope::{launch_switches, opencode_scopes, DisableMechanism, ScopeOwner, SkillScope};
 
 use scope::{contains, resolve};
 /// The one place a filesystem error becomes this module's own, so every refusal carries the path it

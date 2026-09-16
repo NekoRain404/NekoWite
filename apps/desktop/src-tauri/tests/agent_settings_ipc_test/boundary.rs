@@ -11,7 +11,14 @@ use std::fs;
 use serde_json::{json, Value};
 
 use crate::agent_runtime::config_edit::{self, Revision};
-use crate::agent_runtime::profile::{ConfigMode, ConfigSource, CredentialStorage, ProfileStore};
+use crate::agent_runtime::process::isolated_profile_env;
+use crate::agent_runtime::profile::{
+    ConfigMode, ConfigSource, CredentialStorage, DiscoverySurface, ProfileStore,
+};
+use crate::agent_runtime::skills::{
+    opencode_scopes, DisableMechanism, ScopeOwner, SkillError, SkillLibrary, SkillSurface,
+    DISABLE_CLAUDE_CODE_SKILLS, DISABLE_EXTERNAL_SKILLS,
+};
 use crate::agent_settings::{
     read_profile, submit_credentials, submit_document, submit_profile, EditSubmission,
     ProfileSubmission,
@@ -120,6 +127,10 @@ fn a_profile_that_reuses_the_users_own_configuration_refuses_writes() {
     let sources = view["sources"].as_array().unwrap();
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0]["kind"], "engine-discovery");
+    // One surface, and the one that says the narrowing is the *mode's*: a profile reusing the
+    // user's own installation narrows nothing, so naming a merge or two would read as though the
+    // rest had been closed by somebody.
+    assert_eq!(sources[0]["what"], "reused");
 }
 
 #[test]
@@ -128,7 +139,6 @@ fn the_injected_roots_the_readout_reports_are_the_ones_the_launch_uses() {
     let store = ProfileStore::new(&managed);
     let profile = store.open("engine-alpha", "alpha").unwrap();
 
-    let expected = crate::agent_runtime::process::isolated_profile_env(profile.root());
     let reported: Vec<(String, String)> = profile
         .sources()
         .into_iter()
@@ -141,14 +151,135 @@ fn the_injected_roots_the_readout_reports_are_the_ones_the_launch_uses() {
         .collect();
     // Derived from the launch's own function, so a report that claimed isolation the launch does
     // not provide would be a compile-level difference rather than a documentation one.
+    //
+    // The two are not the same vector, and the difference is a fact about the readout rather than
+    // a gap in it: `isolated_profile_env` also carries one entry that is a *switch*, not a root —
+    // the engine's own way of stopping its path-driven `.claude`/`.agents` scan — and a page
+    // renders `ConfigSource::Injected` as a directory, so a source list that reported `1` as a
+    // path would be the confident nonsense §8.1 is against. A root is an absolute path; the
+    // filter below is that sentence, and it is the one thing this test states in two places.
+    let expected: Vec<(String, String)> =
+        crate::agent_runtime::process::isolated_profile_env(profile.root())
+            .into_iter()
+            .filter(|(_, value)| std::path::Path::new(value).is_absolute())
+            .collect();
     assert_eq!(reported, expected);
     assert!(reported.iter().all(|(_, path)| path.starts_with(&profile.root().to_string_lossy().to_string())));
 
-    // And the honest half §8.1 requires: the list says what this host does *not* close.
-    assert!(matches!(
-        profile.sources().last(),
-        Some(ConfigSource::EngineDiscovery { .. })
-    ));
+    // And the honest half §8.1 requires: the list says what this host does *not* close — one
+    // surface at a time, so a reader can count the merges that remain instead of taking a summary
+    // for an answer. Both of these are measured open (`agent_profile_isolation_test.rs`), and the
+    // managed root is the one no supported switch closes at all.
+    let open: Vec<DiscoverySurface> = profile
+        .sources()
+        .into_iter()
+        .filter_map(|source| match source {
+            ConfigSource::EngineDiscovery { what } => Some(what),
+            ConfigSource::Injected { .. } => None,
+        })
+        .collect();
+    assert_eq!(open, vec![DiscoverySurface::Project, DiscoverySurface::Managed]);
+}
+
+/// The other half of the same claim: what a Skills page would list is built from the launch the
+/// profile really gets, so a directory the launch has stopped reading cannot arrive there as a
+/// live source.
+///
+/// It is a test rather than a comment because the two facts live in two files: the launch
+/// environment is `process::isolated_profile_env`, and the scopes §8.2's page renders are
+/// `skills::opencode_scopes`. A scope list taking a hand-kept list of "switches we believe are
+/// set" is exactly how the page came to name `.claude` and `.agents` as sources of skills after
+/// the app-managed launch had stopped scanning them; feeding it the launch's own vector is the
+/// fix, and this is where the two are held together.
+#[test]
+fn the_scope_readout_reads_the_launch_the_profile_gets() {
+    let managed = scratch("scope-readout");
+    let store = ProfileStore::new(&managed);
+    let profile = store.open("engine-alpha", "alpha").unwrap();
+
+    // Laid out the way the launch's own environment says: `HOME` inside the profile root, one
+    // skill in each compatible-tool directory under it, and one the engine could not use — the row
+    // whose surface says the least about the scope.
+    let home = profile.root().join("HOME");
+    let project = managed.join("vault");
+    for (directory, body) in [
+        (".claude/skills/planted", "---\nname: planted\ndescription: d\n---\n"),
+        (".claude/skills/broken", "no frontmatter at all\n"),
+        (".agents/skills/planted", "---\nname: planted\ndescription: d\n---\n"),
+    ] {
+        let skill = home.join(directory);
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(skill.join("SKILL.md"), body).unwrap();
+    }
+    let in_project = project.join(".opencode/skills/mine");
+    fs::create_dir_all(&in_project).unwrap();
+    fs::write(in_project.join("SKILL.md"), "---\nname: mine\ndescription: d\n---\n").unwrap();
+
+    let scopes = opencode_scopes(
+        Some(&profile.root().join("XDG_CONFIG_HOME/opencode")),
+        &home,
+        &project,
+        &[],
+        &isolated_profile_env(profile.root()),
+    );
+    let library =
+        SkillLibrary::new(scopes, managed.join("skill-store")).expect("library outside the scopes");
+    let found = library.discover().expect("discover");
+
+    // Configured, and not contributing. Both foreign directories are *listed* — §8.2 asks for the
+    // 来源目录 and the 实际权限状态, not for a shorter list — and neither contributes anything to
+    // this launch.
+    let foreign: Vec<_> = found.iter().filter(|view| view.owner == ScopeOwner::Foreign).collect();
+    assert_eq!(foreign.len(), 3, "{found:?}");
+    for view in &foreign {
+        assert_eq!(
+            view.suppressed_by,
+            Some(DISABLE_EXTERNAL_SKILLS),
+            "{} is configured but must not be described as contributing",
+            view.directory.display()
+        );
+        // And the switch that *would* close it, kept apart from the one that has: a page draws the
+        // second as "why there is no control here" and the first as "why the engine is not reading
+        // it", and a scope reporting neither would be the one §8.2 refuses.
+        let would_close = if view.scope == "claude-code" {
+            DISABLE_CLAUDE_CODE_SKILLS
+        } else {
+            DISABLE_EXTERNAL_SKILLS
+        };
+        assert_eq!(
+            view.disable,
+            DisableMechanism::EngineSwitch {
+                variable: would_close
+            },
+            "{}",
+            view.scope
+        );
+    }
+    // The row's own surface is a different fact, and it is why `suppressed_by` is a field of its
+    // own: this skill's frontmatter is unusable, so a page reading suppression out of the surface
+    // would find `Unusable` and have nothing to say about the directory.
+    let broken = foreign
+        .iter()
+        .find(|view| view.name == "broken")
+        .expect("the unreadable row is kept rather than dropped");
+    assert!(
+        matches!(broken.surface, SkillSurface::Unusable { .. }),
+        "{:?}",
+        broken.surface
+    );
+
+    // The engine's own project directory is a different scope and is still read: the switch that
+    // closed the two compatible-tool scans does not touch a vault's `.opencode`.
+    let mine = found.iter().find(|view| view.name == "mine").expect("project row");
+    assert_eq!(mine.suppressed_by, None);
+    assert_eq!(mine.surface, SkillSurface::Offered);
+    assert_eq!(
+        library.set_enabled(mine, false).expect_err("a vault is not this host's to move"),
+        SkillError::NoSwitch {
+            scope: "engine-project".to_string(),
+            variable: None,
+        }
+    );
 }
 
 #[test]

@@ -25,6 +25,7 @@ use tokio::sync::mpsc;
 use super::acp_transport::{EngineConnection, EngineEvents, PermissionRequest};
 use super::capabilities::{Handshake, SessionCapabilities};
 use super::fs_capability::{ChangeRecord, FsCapability, VaultFiles};
+use super::live_notes::LiveNotes;
 use super::events::{
     AgentEventEnvelope, AgentEventKind, AgentFailureCode, AgentIdentity, TransportError,
 };
@@ -233,11 +234,17 @@ impl AgentRuntime {
     /// `files` is the app's own file path. It is a parameter rather than a call
     /// because this module must not reach into the app's storage by absolute
     /// path; see [`VaultFiles`] for why the tests hand in the real one.
+    ///
+    /// `live_notes` is the other port, and it is a parameter for the same reason in the other
+    /// direction: asking a window is Tauri's surface, which this module must not know about,
+    /// so whoever owns that surface supplies the end that reaches a window. One value rather
+    /// than two because a table and the windows it asks are one mechanism — see [`LiveNotes`].
     pub fn new(
         identity: AgentIdentity,
         connection: EngineConnection,
         events: EngineEvents,
         files: Arc<dyn VaultFiles>,
+        live_notes: LiveNotes,
     ) -> (Self, AgentRuntimeEvents) {
         let connection = Arc::new(connection);
         let sessions: Arc<Mutex<HashMap<String, SessionSlot>>> =
@@ -257,7 +264,7 @@ impl AgentRuntime {
             Arc::clone(&reported),
             emitter.clone(),
         ));
-        let fs = Arc::new(FsCapability::new(files));
+        let fs = Arc::new(FsCapability::new(files, live_notes));
         tokio::spawn(super::runs::dispatch_fs(
             events.fs,
             Arc::clone(&sessions),

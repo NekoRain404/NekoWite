@@ -57,10 +57,8 @@ function readout(overrides: Partial<AgentProfileReadout> = {}): AgentProfileRead
     editable: true,
     sources: [
       { kind: 'injected', variable: 'HOME', path: '/profiles/default/HOME' },
-      {
-        kind: 'engine-discovery',
-        what: "the engine's own project-level and global configuration",
-      },
+      { kind: 'engine-discovery', what: 'project' },
+      { kind: 'engine-discovery', what: 'managed' },
     ],
     credentials: [{ name: 'ANTHROPIC_API_KEY', value: REDACTED_CREDENTIAL }],
     credentialStorage: {

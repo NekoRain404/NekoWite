@@ -16,6 +16,7 @@
 //! imported below are the library's own.
 
 use nekowite_lib::agent_runtime;
+use nekowite_lib::agent_runtime::live_notes::{LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -42,11 +43,25 @@ const PATIENCE: Duration = Duration::from_secs(10);
 struct NoVault;
 
 impl VaultFiles for NoVault {
+    fn frontend_path(&self, _: &str, _: &str) -> Result<String, String> {
+        panic!("this test must not ask a window about a note")
+    }
     fn read(&self, _: &str, _: &str) -> Result<String, String> {
         panic!("this test must not read a vault")
     }
     fn write(&self, _: &str, _: &str, _: &str) -> Result<Option<String>, String> {
         panic!("this test must not write a vault")
+    }
+}
+
+/// The window side, for a test that never reads a note: no window is registered for any vault,
+/// so a read would be refused rather than served from disk — the direction the seam is built to
+/// fail in, which keeps a test that does not exercise reads honest about it.
+struct NoWindow;
+
+impl LiveNoteWindows for NoWindow {
+    fn ask(&self, _question: &LiveNoteQuestion) -> usize {
+        0
     }
 }
 
@@ -97,6 +112,7 @@ async fn try_start(
             root,
             &Credentials::default(),
             Arc::new(NoVault),
+            LiveNotes::new(Arc::new(LiveNoteTable::new()), Arc::new(NoWindow)),
         )
         .await
 }

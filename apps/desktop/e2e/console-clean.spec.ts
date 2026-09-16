@@ -78,6 +78,13 @@ async function label(page: Page, key: string): Promise<string> {
 }
 
 test('every toolbar button is clean in every view mode', async ({ page }) => {
+  // Three modes x every toolbar button in each, each one clicked, then an overlay cleared and an
+  // Escape sent: the walk is ~3x14 interactions and each has its own 3s click budget. The default
+  // 30s test timeout is smaller than the sum of the budgets the walk itself asks for, so a slow
+  // click or two — not a defect in the app — ends the run as a timeout instead of a result. The
+  // budget is raised here rather than the per-click one lowered: a click that is genuinely stuck
+  // still fails, at 3s, with the button's own title in the message.
+  test.setTimeout(180_000)
   const issues = watchConsole(page)
   await openNote(page, { doc: '# Title\n\nbody text\n' })
 
@@ -203,7 +210,12 @@ test('the settings dialog survives a walk over every control', async ({ page }) 
     const boxes = await page.locator('.settings-overlay .settings-section .checkbox').count()
     for (let b = 0; b < boxes; b += 1) {
       const box = page.locator('.settings-overlay .settings-section .checkbox').nth(b)
-      if (await box.isVisible()) {
+      // Enabled as well as visible. A disabled control cannot be operated by the user, so clicking
+      // it is not part of "every control was exercised" — and Playwright's click waits for
+      // actionability, so asking for one is not a skipped step but a hang: the walk sat on a
+      // `disabled` checkbox until the test's own timeout ended the run, which reports an app
+      // problem where there was only a control that is deliberately inert.
+      if ((await box.isVisible()) && (await box.isEnabled())) {
         await box.click()
         await page.waitForTimeout(20)
       }
@@ -254,8 +266,13 @@ test('the tab bar, rail sections, templates and list views are clean', async ({ 
   await page.locator(`.status-btn[title="${expand}"], .status-btn[title="${collapse}"]`).first().click()
   await page.locator('.info-rail').waitFor({ state: 'visible', timeout: 3000 })
 
+  // One section, not four: `afd0b89` reduced the rail to the chat alone at the user's decision, so
+  // the rail's strip is 1 tab wide now. The guard is here to keep the walk below from being
+  // vacuous — a rail with no tab at all would otherwise pass this test by clicking nothing — and
+  // that job is done by "at least one", not by "more than three", which was true of the six-section
+  // rail this replaced.
   const railCount = await page.locator('.rail-tab').count()
-  expect(railCount, 'info rail sections').toBeGreaterThan(3)
+  expect(railCount, 'info rail sections').toBeGreaterThan(0)
   for (let i = 0; i < railCount; i += 1) {
     const tab = page.locator('.rail-tab').nth(i)
     const name = (await tab.textContent())?.trim() ?? String(i)

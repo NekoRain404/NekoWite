@@ -18,10 +18,15 @@ import { PET_SETTINGS_CHANNEL } from './gateways/tauri-pet'
 
 describe('the pet’s settings request', () => {
   it('listens on the pet’s channel and hands over the page it named', async () => {
-    let delivered: ((event: { payload: { page: string } }) => void) | null = null
+    // The listener the module registered, in a list rather than a `let` — a variable assigned
+    // inside the mock's callback and read here is a variable control-flow analysis still sees as
+    // its initial value, and the call below would be typed as a call on `never`.
+    const delivered: Array<(event: { payload: { page: string } }) => void> = []
     const release = vi.fn()
-    listenMock.mockImplementation(async (_event: string, cb: (e: unknown) => void) => {
-      delivered = cb as typeof delivered
+    listenMock.mockImplementation(async (_event: string, cb: (event: unknown) => void) => {
+      // A handler that takes `unknown` is one this caller can drive: the module's own callback is
+      // narrower, which is the direction that matters, so no cast is needed to call it below.
+      delivered.push(cb)
       return release
     })
     const seen: string[] = []
@@ -33,7 +38,7 @@ describe('the pet’s settings request', () => {
     // The payload the host emits is `{ page }` and nothing else (`commands/desktop_pet.rs`
     // validates the page against its own list before emitting), so the caller is handed the page
     // rather than the envelope.
-    delivered?.({ payload: { page: 'care' } })
+    delivered[0]?.({ payload: { page: 'care' } })
     expect(seen).toEqual(['care'])
 
     expect(stop).toBe(release)

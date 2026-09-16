@@ -219,14 +219,105 @@ describe('the chosen character', () => {
   })
 })
 
-describe('what this page cannot offer, and says so', () => {
-  it('states the character library and the animation mapping instead of drawing dead controls', async () => {
+describe('the character library, and what is still only stated', () => {
+  it('offers the installed characters, and what choosing one writes', async () => {
+    const gateway = createMemoryPetGateway({
+      characters: [
+        { characterId: 'kitty', packName: 'Kitty', kind: 'imported', files: 'intact', installedAtMs: 1 },
+        {
+          characterId: 'broken',
+          packName: 'Broken',
+          kind: 'imported',
+          files: 'damaged',
+          installedAtMs: 2,
+        },
+      ],
+    })
+    mount(gateway)
+    await flush()
+
+    // A damaged character is listed and cannot be chosen (§8/D8's rule: it is the user's, and
+    // hiding it would make one that needs attention look like one that was never installed).
+    const row = document.querySelector<HTMLButtonElement>('[data-test="pet-character-row-kitty"]')
+    expect(row?.textContent).toContain('Kitty')
+    const broken = document.querySelector<HTMLButtonElement>('[data-test="pet-character-row-broken"]')
+    expect(broken?.disabled).toBe(true)
+    expect(broken?.title).toBe(t('settings.pet.character.damaged'))
+
+    row?.click()
+    await flush(DEBOUNCE_PLUS)
+    // The write goes through the session to the store, which is what the pet window reads: a row
+    // that lit up without writing would be a choice that never reaches the character.
+    expect((await storedValues(gateway, 'character')).characterId).toBe('kitty')
+  })
+
+  it('offers a character whose id and name are Chinese, and writes it back unchanged', async () => {
+    // The library holds what the filesystem holds, so an id is a folder name and a Chinese folder
+    // is a character like any other (D8's `resources::is_path_component`, and the gap a Chinese
+    // folder name used to meet). The page's half of that is *not* to have an opinion: the id it
+    // draws is the id it writes, byte for byte, because the value in the settings is how the pet
+    // window finds the directory again.
+    const gateway = createMemoryPetGateway({
+      characters: [
+        {
+          characterId: '喵喵',
+          packName: '喵喵',
+          kind: 'imported',
+          files: 'intact',
+          installedAtMs: 1,
+        },
+      ],
+    })
+    mount(gateway)
+    await flush()
+
+    const row = document.querySelector<HTMLButtonElement>('[data-test="pet-character-row-喵喵"]')
+    expect(row?.textContent).toContain('喵喵')
+    expect(row?.disabled).toBe(false)
+
+    row?.click()
+    await flush(DEBOUNCE_PLUS)
+
+    expect((await storedValues(gateway, 'character')).characterId).toBe('喵喵')
+  })
+
+  it('imports a character and selects what arrived', async () => {
+    const gateway = createMemoryPetGateway()
+    mount(gateway)
+    await flush()
+    expect(text('pet-character-notice-no-characters')).toBe(
+      t('settings.pet.character.notice.no-characters'),
+    )
+
+    press('pet-character-import')
+    await flush()
+    await flush(DEBOUNCE_PLUS)
+
+    expect((await storedValues(gateway, 'character')).characterId).toBe('imported-1')
+    expect(document.querySelector('[data-test="pet-character-row-imported-1"]')).not.toBeNull()
+  })
+
+  it('says what an import refused, in the host\'s words', async () => {
+    const gateway = createMemoryPetGateway({ importRefusal: 'the pack holds no spritesheet' })
+    mount(gateway)
+    await flush()
+
+    press('pet-character-import')
+    await flush()
+
+    expect(text('pet-character-import-error')).toBe(
+      t('settings.pet.character.importFailed', { msg: 'the pack holds no spritesheet' }),
+    )
+  })
+
+  it('states the animation mapping rather than drawing a control that acts on nothing', async () => {
     mount(createMemoryPetGateway())
     await flush()
 
-    // §5.2 「不可用选项要说明原因，不显示可点击但无效果的控件」. Both statements are asserted as
-    // catalogue text, so a page that lost its words fails here rather than rendering a raw key.
-    expect(text('pet-character-library')).toBe(t('settings.pet.character.libraryUnavailable'))
+    // §5.2 「不可用选项要说明原因，不显示可点击但无效果的控件」. The reason this one is still only a
+    // sentence is the page's own: the pet draws from these values now, and the controls that would
+    // set them do not exist yet. Asserted as catalogue text, so a page that lost its words fails
+    // here rather than rendering a raw key.
     expect(text('pet-character-animations')).toBe(t('settings.pet.character.animationsUnavailable'))
   })
 

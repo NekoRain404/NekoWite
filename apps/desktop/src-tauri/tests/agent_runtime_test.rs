@@ -26,22 +26,33 @@ use std::time::Duration;
 
 use std::sync::Arc;
 
-use agent_client_protocol::schema::v1::SessionUpdate;
-use serde_json::json;
-
-use agent_runtime::events::normalize_update;
 use agent_runtime::{
     AgentEventEnvelope, AgentEventKind, AgentFailureCode, AgentIdentity, AgentRuntime,
     AgentRuntimeEvents, EngineConnection, EngineLaunch, VaultFiles, env_pairs,
     isolated_profile_env,
 };
+use agent_runtime::live_notes::{LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes};
 
 /// The transport tests touch no vault: the fixture engine sends no `fs/*`
 /// request, so reaching here would mean something unexpected was being served
 /// rather than that a stub needs filling in.
 struct NoVault;
 
+/// The window side, for a test that never reads a note: no window is registered for any vault,
+/// so a read would be refused rather than served from disk — which is the direction the seam
+/// is built to fail in, and which keeps a test that does not exercise reads honest about it.
+struct NoWindow;
+
+impl LiveNoteWindows for NoWindow {
+    fn ask(&self, _question: &LiveNoteQuestion) -> usize {
+        0
+    }
+}
+
 impl VaultFiles for NoVault {
+    fn frontend_path(&self, _: &str, _: &str) -> Result<String, String> {
+        panic!("a transport test must not ask a window about a note")
+    }
     fn read(&self, _: &str, _: &str) -> Result<String, String> {
         panic!("a transport test must not read a vault")
     }
@@ -99,7 +110,13 @@ async fn start(launch: &EngineLaunch) -> (AgentRuntime, AgentRuntimeEvents) {
     let (connection, events) = EngineConnection::connect(launch)
         .await
         .expect("the fixture engine should start");
-    AgentRuntime::new(identity(), connection, events, Arc::new(NoVault))
+    AgentRuntime::new(
+        identity(),
+        connection,
+        events,
+        Arc::new(NoVault),
+        LiveNotes::new(Arc::new(LiveNoteTable::new()), Arc::new(NoWindow)),
+    )
 }
 
 /// The next host event, failing the test rather than hanging.
@@ -370,10 +387,51 @@ async fn a_prompt_streams_text_and_ends_with_the_measured_stop_reason() {
 }
 
 #[tokio::test]
-async fn a_thought_chunk_never_reaches_the_host_as_an_unknown() {
-    // The fixture emits an `agent_thought_chunk` between the text chunks. It
-    // has no host kind (a decision the contract owns, see `events`), and the
-    // one thing it must not do is arrive as a mystery payload.
+async fn a_turn_that_ends_for_a_reason_this_version_does_not_know_is_not_a_failure() {
+    // The Rust half of the contract's tolerance for an unfamiliar ending, at the door a live
+    // engine actually comes through. The fixture answers `budget_exceeded`, which the pinned
+    // schema's `StopReason` does not enumerate: read through that enum alone the whole response is
+    // refused, and the `Err` arm above publishes `run-failed`/`invalid-response` — a finished turn
+    // shown to the user as a failure, the one outcome the ruling for this area forbids. What must
+    // arrive instead is the ending the engine sent, under the contract's one spelling, carrying a
+    // word the window reads as `unrecognised` rather than as a reason either side invented.
+    let (runtime, mut events) = start(&fixture("unknown-stop-reason", None)).await;
+    runtime.initialize().await.expect("initialize");
+    let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
+
+    let run_id = runtime.prompt(&session.session_id, "hello").expect("prompt");
+    let events = events_until(&mut events, |event| {
+        event.kind == AgentEventKind::RunFinished || event.kind == AgentEventKind::RunFailed
+    })
+    .await;
+
+    let last = events.last().expect("one ending");
+    assert_eq!(
+        last.kind,
+        AgentEventKind::RunFinished,
+        "an unfamiliar reason must not be reported as a failed turn: {:?}",
+        last.payload
+    );
+    assert_eq!(last.run_id.as_deref(), Some(run_id.as_str()));
+    // The engine's own word, respelled `_` → `-` exactly as the five enumerated names are
+    // (`wire_stop_reason`), so one spelling crosses the wire whatever the engine sent.
+    assert_eq!(last.payload["stopReason"], "budget-exceeded");
+    // And the counters it arrived with are not dropped with the word: P0 §2.3's own numbers.
+    assert_eq!(last.payload["usage"]["inputTokens"], 11);
+    assert!(
+        events.iter().all(|event| event.kind != AgentEventKind::RunFailed),
+        "nothing about this turn may be published as a failure"
+    );
+    runtime.shutdown();
+}
+
+#[tokio::test]
+async fn a_thought_chunk_reaches_the_host_as_its_own_kind() {
+    // The fixture emits an `agent_thought_chunk` between the text chunks — P0 §2.3's measured
+    // order. It arrives as `thought-delta`, the contract's own kind for it, and *not* as answer
+    // text: §5.1 forbids inventing reasoning, and folding the engine's own disclosure into
+    // `text-delta` would put "thinking" on the answer's side of the timeline, which is the one
+    // thing the separation exists to prevent.
     let (runtime, mut events) = start(&fixture("good", None)).await;
     runtime.initialize().await.expect("initialize");
     let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
@@ -384,13 +442,196 @@ async fn a_thought_chunk_never_reaches_the_host_as_an_unknown() {
     })
     .await;
 
+    let thoughts: Vec<&str> = events
+        .iter()
+        .filter(|event| event.kind == AgentEventKind::ThoughtDelta)
+        .filter_map(|event| event.payload.get("text")?.as_str())
+        .collect();
+    assert_eq!(thoughts, vec!["thinking"], "the engine's reasoning channel arrives");
     assert!(
         !texts(&events).iter().any(|text| text.contains("thinking")),
         "reasoning must not be rendered as answer text"
     );
+    // And nothing arrived as a kind the contract cannot read: the full set of what this turn
+    // published is these four, which is what a component switches on.
     assert!(events.iter().all(|event| event.kind == AgentEventKind::TextDelta
+        || event.kind == AgentEventKind::ThoughtDelta
         || event.kind == AgentEventKind::CommandsChanged
         || event.kind == AgentEventKind::RunFinished));
+    runtime.shutdown();
+}
+
+#[tokio::test]
+async fn an_update_with_no_kind_here_is_dropped_rather_than_failing_the_turn() {
+    // The engine sends a `sessionUpdate` this version's schema does not name, in the middle of a
+    // turn. Two rules have to hold at once, and §6.2 states both: the frame must not reach a
+    // component as a mystery blob (`normalize_update`'s `_` arm is where that is decided), and it
+    // must not take the turn down with it — the turn is the engine's, the frame is one this host
+    // has no kind for, and a reader that fails a run over a frame it does not understand reports
+    // the engine's work as this window's fault.
+    //
+    // What the frame *does* on the way in is the pinned schema's decision, not this fixture's:
+    // `SessionUpdate` has no `Other` arm, so the SDK refuses to deserialize the notification at
+    // all. Both routes end in the same place for the host — nothing published for it — and the
+    // assertion that matters is the same either way: the turn ends exactly where the fixture
+    // always ends it, and every kind that reached the window is one a component can render.
+    let (runtime, mut events) = start(&fixture("unknown-update", None)).await;
+    runtime.initialize().await.expect("initialize");
+    let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
+
+    let run_id = runtime.prompt(&session.session_id, "hello").expect("prompt");
+    let events = events_until(&mut events, |event| event.kind == AgentEventKind::RunFinished)
+        .await;
+
+    assert_eq!(texts(&events), vec!["first"], "the turn is the one the fixture plays");
+    let last = events.last().expect("a run-finished event");
+    assert_eq!(last.run_id.as_deref(), Some(run_id.as_str()));
+    assert_eq!(
+        last.payload["stopReason"], "end-turn",
+        "an update with no kind here is not a reason to fail the turn"
+    );
+    assert!(
+        events.iter().all(|event| event.kind == AgentEventKind::TextDelta
+            || event.kind == AgentEventKind::ThoughtDelta
+            || event.kind == AgentEventKind::CommandsChanged
+            || event.kind == AgentEventKind::RunFinished),
+        "only kinds a component can render reached the window: {:?}",
+        events.iter().map(|event| event.kind).collect::<Vec<_>>()
+    );
+    runtime.shutdown();
+}
+
+#[tokio::test]
+async fn a_tool_calls_three_frames_arrive_correlated_and_in_order() {
+    // P0 §6.1's measured sequence, through the whole runtime: a `tool_call` (pending) and two
+    // `tool_call_update`s (in_progress, completed) for one `toolCallId`. Three claims, and each
+    // one is a requirement the scan states rather than a detail of the fixture:
+    //
+    //  - all three reach the host (neither wire type falls into a catch-all),
+    //  - they are one host kind, `tool-update`, so a consumer updates a row instead of adding one,
+    //  - the id that correlates them and the status order that says how the call progressed are
+    //    both intact, which is what lets the panel draw one evolving row.
+    let (runtime, mut events) = start(&fixture("tools", None)).await;
+    runtime.initialize().await.expect("initialize");
+    let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
+
+    let run_id = runtime.prompt(&session.session_id, "hello").expect("prompt");
+    let events = events_until(&mut events, |event| event.kind == AgentEventKind::RunFinished).await;
+
+    let calls: Vec<&serde_json::Value> = events
+        .iter()
+        .filter(|event| event.kind == AgentEventKind::ToolUpdate)
+        .map(|event| event.payload.get("update").expect("the schema's frame, wrapped"))
+        .collect();
+    assert_eq!(calls.len(), 3, "one frame per measured update, none dropped");
+
+    let ids: Vec<&str> = calls
+        .iter()
+        .filter_map(|call| call.get("toolCallId")?.as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        vec!["call_fake_1"; 3],
+        "toolCallId is the key that ties the three frames to one call"
+    );
+    let statuses: Vec<Option<&str>> = calls
+        .iter()
+        .map(|call| call.get("status").and_then(|status| status.as_str()))
+        .collect();
+    // The engine's own statuses, in the order it sent them — `None` for the first one because
+    // `pending` is the schema's default and serde skips a default when the frame is re-encoded
+    // (`ToolCallStatus::is_default`, `skip_serializing_if`). That absence is not a hole: the
+    // schema's own default is what it means, and the window reads it that way (`tauri-agent/
+    // tools.ts`: `toolStatus(...) ?? prior?.status ?? 'pending'`). Pinned here because it is the
+    // reason that fallback is load-bearing rather than decorative.
+    assert_eq!(
+        statuses,
+        vec![None, Some("in_progress"), Some("completed")],
+        "pending → in_progress → completed, with `pending` spelled as the schema's default"
+    );
+    assert_eq!(
+        calls[0].get("locations"),
+        None,
+        "the first frame's empty location list is skipped the same way (`Vec::is_empty`)"
+    );
+
+    // Every one of the three belongs to the turn that started the call, which is what stamps the
+    // row's run and what lets only that turn's frames settle it.
+    assert!(events
+        .iter()
+        .filter(|event| event.kind == AgentEventKind::ToolUpdate)
+        .all(|event| event.run_id.as_deref() == Some(run_id.as_str())));
+    runtime.shutdown();
+}
+
+#[tokio::test]
+async fn the_usage_the_engine_reported_is_published_field_by_field() {
+    // P0 §6.3's second measured turn: `cachedReadTokens` where the first turn had
+    // `thoughtTokens`, and a `totalTokens` (8895) that is not the sum of input + output. Neither
+    // number is ours to compute or to default, so what the host publishes is the engine's object,
+    // in the engine's own numbers.
+    let (runtime, mut events) = start(&fixture("cached-usage", None)).await;
+    runtime.initialize().await.expect("initialize");
+    let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
+
+    runtime.prompt(&session.session_id, "hello").expect("prompt");
+    let events = events_until(&mut events, |event| event.kind == AgentEventKind::RunFinished).await;
+
+    let usage = &events.last().expect("a run-finished event").payload["usage"];
+    assert_eq!(usage["inputTokens"], 1721);
+    assert_eq!(usage["outputTokens"], 6);
+    assert_eq!(usage["totalTokens"], 8895, "the engine's own total, never a sum");
+    assert_eq!(usage["cachedReadTokens"], 7168);
+    assert!(
+        usage.get("thoughtTokens").is_none(),
+        "the field the engine did not send must not appear with a made-up value: {usage}"
+    );
+    runtime.shutdown();
+}
+
+#[tokio::test]
+async fn a_usage_missing_a_core_field_still_reports_the_counters_it_sent() {
+    // The pinned schema's own `Usage` is what P0 §6.3 warns about: `totalTokens`, `inputTokens`
+    // and `outputTokens` are non-optional `u64`s there, and `PromptResponse.usage` is read with
+    // `DefaultOnError`, so an engine that sends a thinner object has the whole usage dropped
+    // during deserialization. The fixture's object omits `totalTokens` and keeps the rest, and
+    // what this pins is both halves of the rule that governs it:
+    //
+    //  - the counters the engine *did* send are published as the engine's own numbers, which is
+    //    the half that used to be thrown away — `usage: null` said "not provided" about usage
+    //    that was provided in part;
+    //  - the field it did not send stays absent — never `0`, and never a sum standing in for a
+    //    total the engine never reported (1721 + 6 is not a number this host may publish here);
+    //  - and the turn still ends normally either way: a decorative count never decides that a
+    //    finished turn failed.
+    let (runtime, mut events) = start(&fixture("thin-usage", None)).await;
+    runtime.initialize().await.expect("initialize");
+    let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
+
+    runtime.prompt(&session.session_id, "hello").expect("prompt");
+    let events = events_until(&mut events, |event| event.kind == AgentEventKind::RunFinished).await;
+
+    let last = events.last().expect("a run-finished event");
+    assert_eq!(last.payload["stopReason"], "end-turn", "the turn still ended normally");
+    let usage = &last.payload["usage"];
+    assert_eq!(
+        usage["inputTokens"], 1721,
+        "a counter the engine sent must reach the window, not be dropped with the object"
+    );
+    assert_eq!(usage["outputTokens"], 6);
+    assert_eq!(
+        usage["cachedReadTokens"], 7168,
+        "an optional counter travels the same way: reading only the schema's three required \
+         fields is not enough to keep what the engine reported"
+    );
+    assert!(
+        usage.get("totalTokens").is_none(),
+        "the field the engine did not send must not appear with a made-up value: {usage}"
+    );
+    assert!(
+        usage.get("thoughtTokens").is_none(),
+        "nor may a counter this behaviour never sends be invented: {usage}"
+    );
     runtime.shutdown();
 }
 
@@ -440,8 +681,15 @@ async fn a_cancelled_run_drops_its_late_text_and_finishes_once() {
         .filter(|event| event.kind == AgentEventKind::RunFinished)
         .count();
     assert_eq!(endings, 1, "a run ends exactly once");
-    assert_eq!(after[0].run_id.as_deref(), Some(run_id.as_str()));
-    assert_eq!(after[0].payload["stopReason"], "cancelled");
+    // Read off the ending rather than off the first frame: the thought chunk the engine sends
+    // between the answer's chunks is a host event of its own now, and it is delivered before the
+    // cancel (it is not text, so the assertion above is about the answer alone).
+    let ending = after
+        .iter()
+        .find(|event| event.kind == AgentEventKind::RunFinished)
+        .expect("the cancelled run still ends");
+    assert_eq!(ending.run_id.as_deref(), Some(run_id.as_str()));
+    assert_eq!(ending.payload["stopReason"], "cancelled");
     runtime.shutdown();
 }
 
@@ -455,161 +703,6 @@ async fn cancelling_an_idle_session_is_not_an_error() {
 
     runtime.cancel(&session.session_id).await.expect("cancel");
     runtime.shutdown();
-}
-
-// ---------------------------------------------------------------------------
-// The engine's own options
-// ---------------------------------------------------------------------------
-
-/// One `session/update` as the pinned schema sends it.
-///
-/// Deserialized from JSON rather than built from Rust structs on purpose: what the mapping
-/// below has to survive is the *wire's* shape (`agent-client-protocol-schema` 1.7.0, v1), and
-/// a struct literal would agree with this crate's reading of that shape by construction.
-fn wire_update(frame: serde_json::Value) -> SessionUpdate {
-    serde_json::from_value(frame).expect("the pinned schema reads its own frame")
-}
-
-/// The engine's option list, as the contract's reader takes it (`readers/session.ts`,
-/// `readConfigChanged`): the discriminator on the *value* (`kind`), the current value under
-/// `current`, and a select's choices a flat list.
-#[test]
-fn a_config_option_update_is_mapped_into_the_contracts_payload() {
-    let update = wire_update(json!({
-        "sessionUpdate": "config_option_update",
-        "configOptions": [
-            {
-                "id": "model",
-                "name": "Model",
-                "description": "Which model answers",
-                "type": "select",
-                "currentValue": "fake/model-b",
-                "options": [
-                    { "value": "fake/model-a", "name": "Model A" },
-                    { "value": "fake/model-b", "name": "Model B", "description": "the fast one" }
-                ]
-            },
-            {
-                "id": "fast",
-                "name": "Fast mode",
-                "type": "boolean",
-                "currentValue": true
-            }
-        ]
-    }));
-
-    let (kind, payload) = normalize_update(&update).expect("an option list must be forwarded");
-
-    assert_eq!(kind, AgentEventKind::ConfigChanged);
-    assert_eq!(
-        payload,
-        json!({
-            "options": [
-                {
-                    "id": "model",
-                    "name": "Model",
-                    "description": "Which model answers",
-                    "value": {
-                        "kind": "select",
-                        "current": "fake/model-b",
-                        "choices": [
-                            { "value": "fake/model-a", "name": "Model A" },
-                            { "value": "fake/model-b", "name": "Model B", "description": "the fast one" }
-                        ]
-                    }
-                },
-                {
-                    "id": "fast",
-                    "name": "Fast mode",
-                    "value": { "kind": "toggle", "current": true }
-                }
-            ]
-        }),
-        "the window's reader accepts this shape and no other"
-    );
-}
-
-#[test]
-fn grouped_config_choices_are_flattened_in_the_engines_order() {
-    // The wire's choices are an untagged union — a flat list, or a list of groups of them —
-    // and the contract's `AgentConfigChoice` is one flat list. Flattening keeps the values and
-    // their order; the group's *name* has nowhere to go, which is the residual T4b §7 reported
-    // rather than something this mapping can decide.
-    let update = wire_update(json!({
-        "sessionUpdate": "config_option_update",
-        "configOptions": [{
-            "id": "model",
-            "name": "Model",
-            "type": "select",
-            "currentValue": "a",
-            "options": [
-                { "group": "anthropic", "name": "Anthropic", "options": [
-                    { "value": "a", "name": "A" },
-                    { "value": "b", "name": "B" }
-                ]},
-                { "group": "local", "name": "Runs here", "options": [
-                    { "value": "c", "name": "C" }
-                ]}
-            ]
-        }]
-    }));
-
-    let (kind, payload) = normalize_update(&update).expect("an option list must be forwarded");
-
-    assert_eq!(kind, AgentEventKind::ConfigChanged);
-    let choices = payload["options"][0]["value"]["choices"]
-        .as_array()
-        .expect("a select's choices are a list");
-    let values: Vec<&str> = choices
-        .iter()
-        .filter_map(|choice| choice["value"].as_str())
-        .collect();
-    assert_eq!(values, vec!["a", "b", "c"], "in the engine's own order");
-    assert!(
-        choices.iter().all(|choice| choice.get("group").is_none()),
-        "the group's name has nowhere to go in the contract's choice: {choices:?}"
-    );
-}
-
-#[test]
-fn an_option_list_with_no_options_is_still_a_list() {
-    // An engine may withdraw every option it offered, and the contract replaces the previous
-    // set wholesale: an empty list is a fact (`readConfigChanged` accepts it), while a missing
-    // one is a payload the window cannot read.
-    let update = wire_update(json!({
-        "sessionUpdate": "config_option_update",
-        "configOptions": []
-    }));
-
-    let (_, payload) = normalize_update(&update).expect("an empty list is still forwarded");
-
-    assert_eq!(payload, json!({ "options": [] }));
-}
-
-#[test]
-fn every_kind_is_spelled_the_way_the_contract_spells_it() {
-    // The envelope's `kind` is a *string* on the wire: serde renders it from the variant name
-    // (`#[serde(rename_all = "kebab-case")]`) while the contract's union is written out by hand
-    // in `agent-contracts/payloads.ts`, so the two can drift apart with both suites green — which
-    // is the failure this task's own predecessor found for `stopReason` (`runs.rs`,
-    // `wire_stop_reason`), one field over. This is the whole enum in one place, against the
-    // contract's own spellings; a kind added without its string fails here.
-    for (kind, spelling) in [
-        (AgentEventKind::TextDelta, "text-delta"),
-        (AgentEventKind::ToolUpdate, "tool-update"),
-        (AgentEventKind::PermissionRequest, "permission-request"),
-        (AgentEventKind::CommandsChanged, "commands-changed"),
-        (AgentEventKind::ConfigChanged, "config-changed"),
-        (AgentEventKind::FilesChanged, "files-changed"),
-        (AgentEventKind::RunFinished, "run-finished"),
-        (AgentEventKind::RunFailed, "run-failed"),
-    ] {
-        assert_eq!(
-            serde_json::to_value(kind).expect("a kind is a name"),
-            json!(spelling),
-            "{kind:?} must cross the wire under the contract's own name"
-        );
-    }
 }
 
 // ---------------------------------------------------------------------------

@@ -20,37 +20,39 @@
  *
  * ## Which of these the backend has
  *
- * Every call here has a `#[tauri::command]` behind it except the task list. The window half of
- * §7.1 (state, the window list, open, disable, show/hide, close-own, click-through), the settings
- * deep link, the care read and the settings read and write all exist on the Rust side; the two
- * channels are `listen` registrations rather than calls. What does not exist is
- * `desktop_pet_tasks`: no state in this process holds D4's projection yet, so no command is
- * invented for it, and a window that calls it is answered by Tauri itself — "command
- * desktop_pet_tasks not found" — which names the call that is missing and needs no error code
- * invented to say so.
+ * Every call here has a `#[tauri::command]` behind it. The window half of §7.1 (state, the window
+ * list, open, disable, show/hide, close-own, click-through), the settings deep link, the care
+ * read, the settings read and write, the task list and the appearance read all exist on the Rust
+ * side; the three channels are `listen` registrations rather than calls.
  *
- * The settings pair used to be the same answer arriving from the other end — the commands were
- * written and their two lines in `lib.rs`'s handler list were owed — and those lines have since
- * landed, so `desktop_pet_read_settings` and `desktop_pet_update_settings` answer. What that buys
- * the user is the master switch: an applied `general.enabled` is what opens the pet's window
- * (`commands/desktop_pet.rs`'s `apply_feature_switch`). This file does not paper over the one
- * remaining gap — the seam is the seam, and a call nothing answers is left to be refused by Tauri
- * rather than given a stub. That is the same choice `tauri-agent/ipc.ts` documents for the session
- * half of the agent's IPC.
+ * **`desktop_pet_tasks` was the one call that had nothing behind it, and that is why this file is
+ * the place the failure was found.** A rejected read here is not a missing first payload: the
+ * subscription releases its listener and rethrows, so a window mounted against a host that could
+ * not answer looked like a pet with no work rather than a pet that could not see. The state it
+ * reads now exists (`desktop_pet/task_feed.rs`), fed from the runtime's own frames, and the two
+ * lines it needs in `lib.rs` are reported rather than assumed — a command that is not registered
+ * is answered by Tauri itself with "command … not found", which names the missing call without an
+ * error code invented to say so. That is the same choice `tauri-agent/ipc.ts` documents for the
+ * session half of the agent's IPC.
  */
 
-import { invoke } from '@tauri-apps/api/core'
+import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { isPetAppearance } from './pet-contracts'
 import type {
+  PetAppearance,
   PetCapabilityReport,
   PetCareRead,
+  PetCharacterEntry,
   PetFeatureState,
   PetGateway,
+  PetSettingsChange,
   PetSettingsDomain,
   PetSettingsLoad,
   PetSettingsPage,
   PetSettingsUpdate,
   PetSettingsWrite,
+  PetTaskKey,
   PetTaskProjection,
 } from './pet-contracts'
 
@@ -67,8 +69,31 @@ import type {
  */
 export const PET_FEATURE_CHANNEL = 'pet-feature'
 
-/** The channel the host publishes the task list on. D4's Rust side is its publisher. */
+/** The channel the host publishes the task list on. `desktop_pet/task_feed.rs` is its publisher. */
 export const PET_TASKS_CHANNEL = 'pet-task'
+
+/**
+ * The channel an applied settings write is published on.
+ *
+ * The gap it closes is the same shape as the one the feature channel closed: the pet window draws
+ * the character the `character` domain names, and a user changing that character in the main
+ * window's settings had no way to reach a window that was already open. It is *not* the same
+ * channel as `PET_SETTINGS_CHANNEL` below, which is the deep link the other way — one is a
+ * request a pet window makes, this is news it receives.
+ */
+export const PET_SETTINGS_CHANGED_CHANNEL = 'pet-settings-changed'
+
+/**
+ * The channel a click on a task reaches the main window on (§6.2's 点击返回任务).
+ *
+ * Emitted by `desktop_pet_open_task` to the `main` window, carrying D1's `PetTaskKey` and nothing
+ * else. The receiving half is `platform/pet-task-request.ts`, and it was *not* when this comment
+ * first said so: the path did not exist, so a click raised the window and emitted an event nobody
+ * heard — a name asserting a wiring state that was not so, which this repository keeps finding. It
+ * is now a file that exists and a listener `app/pet-task-link.ts` attaches, which is the difference
+ * between the two ways of closing the gap.
+ */
+export const PET_TASK_OPEN_CHANNEL = 'pet-open-task'
 
 /**
  * The channel a pet window's 设置 lands on in the main window.
@@ -135,11 +160,16 @@ export interface PetIpc {
   openSettings(page: PetSettingsPage): Promise<void>
   care(): Promise<PetCareRead>
   tasks(): Promise<PetTaskProjection[]>
+  appearance(): Promise<PetAppearance>
+  library(): Promise<PetCharacterEntry[]>
+  importCharacter(): Promise<PetCharacterEntry | null>
+  openTask(key: PetTaskKey): Promise<void>
   readSettings(domain: PetSettingsDomain): Promise<PetSettingsLoad>
   updateSettings(write: PetSettingsWrite): Promise<PetSettingsUpdate>
   /** Register a listener. Resolves with the removal of *that* registration. */
   onFeature(onState: (state: PetFeatureState) => void): Promise<() => void>
   onTasks(onTasks: (tasks: PetTaskProjection[]) => void): Promise<() => void>
+  onSettingsChanged(onChange: (change: PetSettingsChange) => void): Promise<() => void>
 }
 
 export function createTauriPetIpc(): PetIpc {
@@ -156,12 +186,29 @@ export function createTauriPetIpc(): PetIpc {
     openSettings: (page) => invoke<void>('desktop_pet_open_settings', { page }),
     care: () => invoke<PetCareRead>('desktop_pet_care_read'),
     tasks: () => invoke<PetTaskProjection[]>('desktop_pet_tasks'),
+    appearance: async () => {
+      const read = await invoke<PetAppearance>('desktop_pet_appearance')
+      // The one place a host path becomes a URL, and it is here rather than in a component for
+      // the reason every other argument shape is: `asset://` is how a webview reads a file the
+      // host granted, and a component that built one would be a second way to name a file. A
+      // `ready` read is the only arm that has a path at all — and the only one this touches: an
+      // answer that is not an appearance is handed on as it came, for the caller to state, rather
+      // than read here for a `status` it does not have.
+      return isPetAppearance(read) && read.status === 'ready'
+        ? { ...read, sheetPath: convertFileSrc(read.sheetPath) }
+        : read
+    },
+    library: () => invoke<PetCharacterEntry[]>('desktop_pet_library'),
+    importCharacter: () => invoke<PetCharacterEntry | null>('desktop_pet_import_character'),
+    openTask: (key) => invoke<void>('desktop_pet_open_task', { task: key }),
     readSettings: (domain) => invoke<PetSettingsLoad>('desktop_pet_read_settings', { domain }),
     updateSettings: (write) => invoke<PetSettingsUpdate>('desktop_pet_update_settings', { write }),
     onFeature: (onState) =>
       listen<PetFeatureState>(PET_FEATURE_CHANNEL, (event) => onState(event.payload)),
     onTasks: (onTasks) =>
       listen<PetTaskProjection[]>(PET_TASKS_CHANNEL, (event) => onTasks(event.payload)),
+    onSettingsChanged: (onChange) =>
+      listen<PetSettingsChange>(PET_SETTINGS_CHANGED_CHANNEL, (event) => onChange(event.payload)),
   }
 }
 
@@ -189,6 +236,19 @@ export interface PetHostConnection extends PetGateway {
   closeOwn(): Promise<PetClosedWindow>
   /** §7.2's pass-through, system half, on the window that is calling. */
   setClickThrough(ignore: boolean): Promise<void>
+  /**
+   * Hear that a settings domain was written, wherever the write came from.
+   *
+   * The pet window draws from settings, and the settings page is another window: without this the
+   * only way to learn that the character changed would be to ask again on a timer, which is the
+   * polling this feature's own rule refuses. A change carries the domain and the revision, so a
+   * listener re-reads what it draws and nothing else.
+   *
+   * Deliberately *not* on `PetGateway`, unlike `subscribeFeature`: a settings page already holds
+   * the record it is editing, and the only consumer of this channel is the window that has no
+   * other way to hear.
+   */
+  subscribeSettings(onChange: (change: PetSettingsChange) => void): Promise<() => void>
 }
 
 export interface TauriPetOptions {
@@ -211,9 +271,19 @@ export function createTauriPetConnection(options: TauriPetOptions = {}): PetHost
     capabilities: () => ipc.capabilities(),
     care: () => ipc.care(),
     tasks: () => ipc.tasks(),
+    appearance: () => ipc.appearance(),
+    library: () => ipc.library(),
+    importCharacter: () => ipc.importCharacter(),
+    openTask: (key) => ipc.openTask(key),
     readSettings: (domain) => ipc.readSettings(domain),
     updateSettings: (write) => ipc.updateSettings(write),
     openSettings: (page) => ipc.openSettings(page),
+
+    // A pure notification, and the one subscription with no first read: a *change* has no current
+    // value to deliver, and the state a listener would want is the one its own `appearance` read
+    // already answers. Listen-only is therefore not an omission here, the way it would be for the
+    // task list.
+    subscribeSettings: (onChange) => ipc.onSettingsChanged(onChange),
 
     async subscribe(onTasks: (tasks: PetTaskProjection[]) => void) {
       // Listen first, then read, so a frame that lands between the two is delivered twice rather

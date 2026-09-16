@@ -143,6 +143,18 @@ export default defineConfig({
     environment: 'happy-dom',
     setupFiles: ['./src/test-setup.ts'],
     include: ['src/**/*.test.ts'],
+    // `dangerouslyIgnoreUnhandledErrors` is NOT set, deliberately, and setting it would be the one
+    // change that makes this suite lie: vitest exits non-zero on an unhandled error only while this
+    // stays unset, so the flag is the switch that turns "every assertion passed" into a green
+    // report over a run that also threw. The gate is red on unhandled errors today; keep it that
+    // way.
+    //
+    // The second reporter classifies those errors — product / test-harness / third-party — beside
+    // vitest's own flat list, because the ruling is that a broken test script and a product defect
+    // are managed apart. It reads vitest's list; it cannot change the verdict, and it must not be
+    // replaced by a `process.on('unhandledRejection')` listener, which would silence vitest's
+    // capture entirely. See `vitest.unhandled-reporter.ts`.
+    reporters: ['default', './vitest.unhandled-reporter.ts'],
   },
 })
 

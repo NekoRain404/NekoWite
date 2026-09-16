@@ -35,6 +35,7 @@
 
 import {
   CONFIG_MODES,
+  DISCOVERY_SURFACES,
   type AgentProfileReadout,
   type ConfigMode,
   type ConfigSourceView,
@@ -150,7 +151,14 @@ function readout(value: unknown): AgentProfileReadout {
   }
 }
 
-/** One configuration source: the host's injection (named) or the engine's own discovery. */
+/**
+ * One configuration source: the host's injection (named) or one of the engine's own merges.
+ *
+ * The discovery arm is narrowed to the surfaces this build has copy for, exactly as `kind` is. A
+ * newer backend naming a surface this window does not know would otherwise render a row whose
+ * sentence is missing — and a missing sentence reads as "nothing is there", which is the one thing
+ * this list exists to deny.
+ */
 function source(value: unknown, index: number): ConfigSourceView {
   const record = asRecord(value, `sources[${index}]`)
   const kind = asString(record['kind'], `sources[${index}].kind`)
@@ -162,7 +170,10 @@ function source(value: unknown, index: number): ConfigSourceView {
     }
   }
   if (kind === 'engine-discovery') {
-    return { kind, what: asString(record['what'], `sources[${index}].what`) }
+    return {
+      kind,
+      what: oneOf(record['what'], DISCOVERY_SURFACES, `sources[${index}].what`),
+    }
   }
   return malformed(`sources[${index}].kind`)
 }

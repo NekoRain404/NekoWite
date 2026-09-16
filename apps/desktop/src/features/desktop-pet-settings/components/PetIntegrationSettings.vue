@@ -39,6 +39,7 @@ import type {
   PetFallback,
 } from '../../../platform/gateways/pet-contracts'
 import type { PetSettingsContext } from './DesktopPetSettings.vue'
+import { reportedCapabilities } from '../services/pet-capability-report'
 
 const props = defineProps<{
   /** The container's context. This page reads the capability report it carries and nothing else. */
@@ -61,7 +62,7 @@ interface CapabilityRow {
 
 const rows = computed<CapabilityRow[]>(() =>
   PET_CAPABILITIES.map((capability) => {
-    const finding = props.context.capabilities.value.find(
+    const finding = reportedCapabilities(props.context).find(
       (entry) => entry.capability === capability,
     )?.finding
     if (finding === undefined) return { capability, status: null, fallback: null, detail: '' }
@@ -78,7 +79,7 @@ const rows = computed<CapabilityRow[]>(() =>
 )
 
 /** An empty report is "the host has not answered", never "none of these work". */
-const nothingReported = computed(() => props.context.capabilities.value.length === 0)
+const nothingReported = computed(() => reportedCapabilities(props.context).length === 0)
 
 /**
  * §5.2's 高级与集成 rows, in the order they are read, each with the reason it is not offered.

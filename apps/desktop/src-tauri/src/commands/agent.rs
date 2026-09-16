@@ -17,8 +17,10 @@
 //! assert: [`AgentIpcState`] holds the one session this app started, and every command here
 //! answers from it. The vault a session works in is the root the *user* opened — checked against
 //! [`VaultRegistry`], not taken from the request — because the engine's file capability confines
-//! every read and write to that root, so a root a renderer invented would be a confinement drawn
-//! around a directory the user never chose.
+//! every read and write it *delegates* to that root, so a root a renderer invented would be a
+//! confinement drawn around a directory the user never chose. Delegated traffic is all it covers:
+//! P0 §7's preamble measured the same engine writing a file through its own tools with zero
+//! reverse requests, and no root chosen here confines those.
 //!
 //! The wording lives here too, for the reason the permission half's `refusal_message` does: it is
 //! about what the user's click did, while the layer below answers with the fact.
@@ -26,6 +28,7 @@
 use std::sync::Mutex;
 
 use serde::Serialize;
+use tauri::Manager;
 
 use crate::agent_runtime::driver::Session;
 use crate::agent_runtime::events::AgentIdentity;
@@ -128,13 +131,58 @@ pub fn refusal_message(refusal: &PermissionRefusal) -> String {
 }
 
 #[tauri::command]
-pub fn agent_permission_answer(
+pub fn agent_permission_answer<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: tauri::State<'_, AgentIpcState>,
     answer: PermissionAnswer,
 ) -> Result<(), String> {
     let session = state.session()?;
+    // Read out before the answer is consumed, because the pet's list has to follow *this* answer:
+    // a run the user is no longer being asked about must stop saying `waiting-input` (§6.2), and
+    // the only place that knows the host answered is here.
+    let identity = AgentIdentity {
+        agent_id: answer.session.agent_id.clone(),
+        profile_id: answer.session.profile_id.clone(),
+        runtime_epoch: answer.session.runtime_epoch.clone(),
+        vault_id: answer.session.vault_id.clone(),
+    };
+    let (answered_session, request_id) = (answer.session.session_id.clone(), answer.request_id.clone());
     apply_permission_answer(&session.permissions, answer)
-        .map_err(|refusal| refusal_message(&refusal))
+        .map_err(|refusal| refusal_message(&refusal))?;
+    report_pet_tasks(
+        &app,
+        |state| state.tasks.answered(&identity, &answered_session, &request_id),
+        "an answer",
+    );
+    Ok(())
+}
+
+/// Hand the pet's projection whatever a moment in the runtime's life means for a task.
+///
+/// One helper for the four places a task changes without a frame (a start, a stop, a prompt, an
+/// answer), so the three things each of them has to get right are written once: the feed is
+/// reached through the managed state, a change is published on the channel the window listens on,
+/// and a feed that cannot answer costs the push rather than the command — none of these calls is
+/// what the user asked for, and turning one into a rejected promise would report a pet problem as
+/// a failed prompt.
+fn report_pet_tasks<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    fact: impl FnOnce(
+        &crate::state::DesktopPetState,
+    ) -> Result<Option<Vec<crate::desktop_pet::PetTaskProjection>>, String>,
+    what: &str,
+) {
+    // `try_state` rather than `state`: a build without the pet's state installed — this crate's
+    // own test apps, and any launch where `setup` could not build it — has no list to feed, and a
+    // command that panicked over it would turn a missing pet into a rejected prompt.
+    let Some(pet) = app.try_state::<crate::state::DesktopPetState>() else {
+        return;
+    };
+    match fact(&pet) {
+        Ok(Some(tasks)) => crate::desktop_pet::publish_tasks(app, &tasks),
+        Ok(None) => {}
+        Err(detail) => eprintln!("nekowite: the pet's task list did not follow {what}: {detail}"),
+    }
 }
 
 /// The prompts still awaiting an answer, for a UI that is remounting.
@@ -230,15 +278,25 @@ pub async fn agent_start(
 
 /// Stops the engine, and every turn it was carrying.
 #[tauri::command]
-pub async fn agent_stop(
+pub async fn agent_stop<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     runtime_state: tauri::State<'_, AgentRuntimeState>,
     ipc: tauri::State<'_, AgentIpcState>,
 ) -> Result<(), String> {
     // The prompts first, then the engine: a pending request belongs to a turn that is about to
     // end, and the engine is blocking on it — so it is answered `cancelled` while there is still
     // a connection to answer on (§6.2's 旧授权按钮失效, on the process-exit route).
-    if let Some(session) = ipc.clear() {
+    let session = ipc.clear();
+    if let Some(session) = &session {
         session.permissions.revoke_all();
+    }
+    // The pet's tasks are restated before the instance goes: `retire` is the host saying "nothing
+    // this instance was running can still be running", which §6.2 maps to `interrupted` and never
+    // to a completion. Done while the identity is still in hand, because the instance's `Drop` is
+    // what ends the incarnation and it takes the epoch with it.
+    if let Some(session) = &session {
+        let identity = session.identity.clone();
+        report_pet_tasks(&app, |state| state.tasks.retire(&identity), "a stop");
     }
     // Taking the instance out of the slot is what stops the engine: its own `Drop` releases the
     // registration and asks the process to exit. Doing it here rather than leaving it to the
@@ -319,7 +377,8 @@ pub async fn agent_set_config_option(
 
 /// Sends a turn. The answer is the host's run id; the turn's *ending* arrives as an event.
 #[tauri::command]
-pub async fn agent_prompt(
+pub async fn agent_prompt<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     ipc: tauri::State<'_, AgentIpcState>,
     session_id: String,
     text: String,
@@ -333,6 +392,14 @@ pub async fn agent_prompt(
     // own answer is the run id, and a window that mounts while a turn is running has to be told
     // which turn it is looking at.
     session.snapshots.started(&session_id, &run_id);
+    // The pet's list follows the same fact, for the same reason (§6.1): a pet that only learned
+    // about work when the work was over could not show it as running at all.
+    let identity = session.identity.clone();
+    report_pet_tasks(
+        &app,
+        |state| state.tasks.started(&identity, &session_id, &run_id),
+        "a prompt",
+    );
     Ok(run_id)
 }
 

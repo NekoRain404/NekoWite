@@ -38,7 +38,7 @@ import {
   type PetSettingsDomain,
 } from '../../../platform/gateways/pet-contracts'
 import type { SettingsOpenTarget } from '../types'
-import { setLocale } from '../../../i18n'
+import { setLocale, t } from '../../../i18n'
 
 const invokeMock = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
@@ -235,6 +235,38 @@ describe('the pet’s settings are reachable from the dialog', () => {
     expect(petCommands().filter((c) => c === 'desktop_pet_read_settings')).toHaveLength(4)
   })
 
+  it('states a capability report that never arrived instead of crashing on the answer', async () => {
+    // The browser build answers every command its stub does not know with `undefined`, and the e2e
+    // stub has no case for `desktop_pet_capabilities` — which is how this was found: a fixed
+    // `console-clean` walk reached the pet section and the page threw while rendering. A report
+    // this build did not receive is *not* a capability reported missing (§7.2, and
+    // `unavailability`'s own comment), so the page must render and say the first thing rather than
+    // treat the host's silence as a finding.
+    invokeMock.mockImplementation(async (command: string, args?: unknown) =>
+      command === 'desktop_pet_capabilities' ? undefined : answerHost(command, args),
+    )
+    mountPanel()
+    await nextTick()
+    petRow().click()
+    await until(() => document.querySelector('.pet-settings') !== null, 'the pet section')
+    await vi.advanceTimersByTimeAsync(50)
+    await nextTick()
+
+    // The page rendered at all, which is the half that used to throw.
+    const roam = [...document.querySelectorAll<HTMLElement>('.pet-settings label')].find((label) =>
+      label.textContent?.includes('Roaming'),
+    )
+    expect(roam, 'the roaming control is on the general page').not.toBeUndefined()
+
+    // And it said the *right* thing: the "nobody has looked" sentence, never the "reported
+    // unavailable" one — a host that said nothing has no finding and no detail to give, and
+    // presenting one as the other is what §7.2 forbids. The stem is read off the catalogue rather
+    // than written here, so this assertion cannot drift from the wording it is about.
+    const body = document.querySelector('.pet-settings')?.textContent ?? ''
+    expect(body).toContain(t('settings.pet.capabilityUnknown'))
+    expect(body).not.toContain(t('settings.pet.unavailable', { detail: 'X' }).split('X')[0])
+  })
+
   it('asks this host for four things and never for the one with no backend', async () => {
     mountPanel()
     await nextTick()
@@ -258,6 +290,10 @@ describe('the pet’s settings are reachable from the dialog', () => {
       'desktop_pet_care_read',
       'desktop_pet_read_settings',
       'desktop_pet_update_settings',
+      // The character page's picker, which reads what the library holds so there is something to
+      // choose between. It is a *read*: installing a character is the import button's call
+      // (`desktop_pet_import_character`), and it is not made until the user clicks it.
+      'desktop_pet_library',
     ])
     expect([...new Set(petCommands())].filter((command) => !allowed.has(command))).toEqual([])
   })
@@ -450,6 +486,7 @@ describe('the dialog carries the pet’s pages, and what comes with them', () =>
       'features/desktop-pet-settings/components/pet-care-labels.ts',
       'features/desktop-pet-settings/composables/use-pet-settings.ts',
       'features/desktop-pet-settings/index.ts',
+      'features/desktop-pet-settings/services/pet-capability-report.ts',
       'features/desktop-pet-settings/services/pet-settings-policy.ts',
       'features/desktop-pet-settings/services/pet-settings-values.ts',
     ])
@@ -461,21 +498,46 @@ describe('the dialog carries the pet’s pages, and what comes with them', () =>
     // with it. None of them is mounted in this window, and nothing was measuring that until this
     // list. The fix, if it is ever wanted, is in `features/desktop-pet/index.ts` (a care-only
     // entry, or a deep import with its reason written at the import) rather than here.
+    //
+    // **Ten more modules joined it when the window's own wiring landed**, and they are three
+    // different costs worth telling apart:
+    //   - `services/pet-library-policy.ts` and `services/pet-catalogue.ts` are the *character
+    //     page's* — the picker reads the library through `readPetLibrary`, which this entry
+    //     re-exports for it. That is the barrel doing its job, and the two modules are a policy
+    //     and a catalogue constant.
+    //   - the rest came with `DesktopPetRoot.vue`, which the entry re-exports and this window
+    //     links: the root now draws the task surface (`PetBubble.vue`, `PetTaskList.vue`,
+    //     `PetTaskRow.vue`, `PetContextMenu.vue`), reads its appearance (`pet-appearance.ts`,
+    //     `use-pet-window.ts`) and derives its mood (`pet-task-view.ts`, `pet-bubble-layout.ts`).
+    //     None of it is mounted here — the settings window has no character — so this is the
+    //     pre-existing barrel cost, grown. If it ever matters, the seam is the same one named
+    //     above: nothing in this window needs `DesktopPetRoot`, and the export that carries it is
+    //     what makes the extra modules reachable.
     expect(surface).toEqual([
       'features/desktop-pet/components/DesktopPetRoot.vue',
+      'features/desktop-pet/components/PetBubble.vue',
       'features/desktop-pet/components/PetCarePanel.vue',
+      'features/desktop-pet/components/PetContextMenu.vue',
       'features/desktop-pet/components/PetSprite.vue',
+      'features/desktop-pet/components/PetTaskList.vue',
+      'features/desktop-pet/components/PetTaskRow.vue',
       'features/desktop-pet/composables/use-pet-lifecycle.ts',
+      'features/desktop-pet/composables/use-pet-window.ts',
       'features/desktop-pet/index.ts',
       'features/desktop-pet/rendering/animation-bindings.ts',
       'features/desktop-pet/rendering/sprite-hit-test.ts',
       'features/desktop-pet/rendering/sprite-player.ts',
       'features/desktop-pet/rendering/sprite-sheet.ts',
       'features/desktop-pet/rendering/sprite-slicer.ts',
+      'features/desktop-pet/services/pet-appearance.ts',
+      'features/desktop-pet/services/pet-bubble-layout.ts',
       'features/desktop-pet/services/pet-care-rules.ts',
+      'features/desktop-pet/services/pet-catalogue.ts',
       'features/desktop-pet/services/pet-context-menu.ts',
+      'features/desktop-pet/services/pet-library-policy.ts',
       'features/desktop-pet/services/pet-menu-actions.ts',
       'features/desktop-pet/services/pet-message-template.ts',
+      'features/desktop-pet/services/pet-task-view.ts',
     ])
   })
 

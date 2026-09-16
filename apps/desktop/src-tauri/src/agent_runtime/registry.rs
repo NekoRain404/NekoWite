@@ -24,6 +24,7 @@ use super::acp_transport::EngineConnection;
 use super::adapters::{self, AgentAdapter, Capability, HostFeature};
 use super::events::{AgentIdentity, TransportError};
 use super::fs_capability::VaultFiles;
+use super::live_notes::LiveNotes;
 use super::process::{env_pairs, EngineLaunch, isolated_profile_env};
 use super::profile::Credentials;
 use super::secret::Secret;
@@ -678,6 +679,11 @@ impl AgentRegistry {
     /// user's own. `credentials` is what that profile authenticates with (§8.1), and it reaches the
     /// engine through the environment — the channel P0 §3 names — by way of
     /// [`AgentRegistration::launch`].
+    ///
+    /// `files` and `live_notes` are the two ports the runtime cannot build for itself: where a
+    /// delegated write goes, and how a window is asked what a note holds. Both arrive from the
+    /// app, for the same reason the registry does not read a file of its own — this module
+    /// knows about engines, not about the surfaces that answer for them.
     pub async fn start(
         &self,
         agent_id: &str,
@@ -686,6 +692,7 @@ impl AgentRegistry {
         managed_root: &Path,
         credentials: &Credentials,
         files: Arc<dyn VaultFiles>,
+        live_notes: LiveNotes,
     ) -> Result<AgentInstance, RegistryError> {
         let registration = self
             .get(agent_id)
@@ -744,7 +751,7 @@ impl AgentRegistry {
             runtime_epoch: epoch,
             vault_id: vault_id.to_string(),
         };
-        let (runtime, events) = AgentRuntime::new(identity.clone(), connection, events, files);
+        let (runtime, events) = AgentRuntime::new(identity.clone(), connection, events, files, live_notes);
         Ok(AgentInstance {
             identity,
             adapter,

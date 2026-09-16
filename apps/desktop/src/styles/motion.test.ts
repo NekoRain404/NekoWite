@@ -142,6 +142,41 @@ function vueFiles(dir: string): string[] {
   return out
 }
 
+/**
+ * Every `@keyframes` the motion layer defines, keyed by name, resolved across
+ * the whole listed set rather than one file at a time.
+ *
+ * Resolving a name against the file the *rule* lives in was a real hole and not
+ * a hypothetical one. `@keyframes surface-in` is defined exactly once, in
+ * `surface-motion.css`, and named by three rules that live in other files:
+ * `surfaces.css`'s two editor-core passthroughs and `appShell.css`'s settings
+ * dialog. Looked up per-file, every one of those answered `undefined`, the body
+ * read as `''`, and the property loop iterated zero times — so the three rules
+ * that spend the arrival curve on an opacity, which is the one thing the guard
+ * below exists to catch, were precisely the three it could not see. A lookup
+ * that misses is not a guard that passes; it is a guard that is not there.
+ *
+ * The map is built from the same list the guard scans, so a keyframe is
+ * resolvable exactly where it is checkable, and the guard turns a missed lookup
+ * into a failure rather than into silence. An `animation:` shorthand naming a
+ * keyframe nothing in the layer defines is not a rule to check — it is a rule
+ * the engine will drop whole.
+ *
+ * First definition wins. A second `@keyframes` under the same name is a defect
+ * of its own, and silently keeping the last one would let the two disagree about
+ * which body this guard is reading.
+ */
+function keyframesAcross(files: readonly string[]): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const file of files) {
+    const css = declarations(read(file), file)
+    for (const [, name, body] of css.matchAll(/@keyframes\s+([\w-]+)\s*\{([\s\S]*?)\n\}/g)) {
+      if (!out.has(name)) out.set(name, body)
+    }
+  }
+  return out
+}
+
 /** The spring, which is declared under its @supports guard rather than in :root. */
 const guardedCurve = (token: string): string => {
   // Read from the comment-stripped text all the way through: the prose above
@@ -226,6 +261,24 @@ const MOTION_SURFACE = [
   '../features/chat/components/ChatComposer.vue',
   '../features/chat/components/ChatMessageRow.vue',
   '../features/chat/components/ChatSessionBar.vue',
+  // The two transcripts, and they were the third instance of the same failure
+  // in one day: a guard that is green because it is not looking. Both had
+  // gained an animated element — the 「N new messages」 jump control, one each in
+  // the chat transcript and the agent timeline — and neither file was on this
+  // list, so every per-file guard below ran over a set that did not contain
+  // them and the animation's only cover was the global reduced-motion sweep.
+  // Adding the file is the whole fix: the rules they are now held to are the
+  // ones every other entry is held to, and none of them had to bend. Both
+  // declare one arrival, an opacity keyframe on the fade rung and the
+  // state-change curve, which is what `animates only through tokens`, the raw
+  // duration scan, the fill-mode rule and the caret rule have to say about a
+  // surface that fades where it lands and moves nothing.
+  '../features/chat/components/ChatTranscript.vue',
+  // The agent panel's transcript, the sibling surface with the same control.
+  // It is the chat transcript's twin down to the curve, which is the other
+  // reason to hold them to the same list: the two arrive on one vocabulary or
+  // they drift apart one file at a time.
+  '../features/agent/components/AgentTimeline.vue',
   // The palette's shell, likewise: its motion moved out of `ui/CommandPalette.vue`
   // into the feature's stylesheet, and the mount point that is left keeps none
   // of its own. The chat split made the same move when the panel was split.
@@ -253,7 +306,11 @@ const MOTION_SURFACE = [
   '../ui/TemplatePicker.vue',
   '../features/notes/components/NoteListPanel.vue',
   '../features/settings/components/SettingsPanel.vue',
-  '../features/sidebar/components/SidebarGroup.vue',
+  // `../features/sidebar/components/SidebarGroup.vue` was listed a second time
+  // here and is not any more. A path that appears twice is the milder end of the
+  // same failure this list keeps producing: the entry buys nothing the first one
+  // did not, and it hides the fact that the group is accounted for under the
+  // sidebar's own heading, where the guard's error message points.
   '../features/vault/components/FileTree.vue',
   '../features/vault/components/FileTreeRow.vue',
 ]
@@ -571,19 +628,27 @@ describe('choreography', () => {
     // and an `animation` names the keyframes, whose body has to be read to find
     // out what moves. (A surface arrival is two animations for exactly this
     // reason — the fade on `--app-ease`, the movement on `--app-ease-surface`.)
+    //
+    // The keyframe bodies are resolved over the WHOLE listed set, which is a fix
+    // and not a detail: this guard used to read them out of the file the rule
+    // lived in, and `@keyframes surface-in` lived in a third file. Three dialogs
+    // named it, the lookup answered `undefined`, the body read as `''`, and the
+    // property loop ran zero times — so the guard's one job, on the three rules
+    // that were doing the thing it forbids, was silently not done. Worse than
+    // silent: they still incremented `checked` below, so they also helped prove
+    // the guard was checking something. See `keyframesAcross`.
     const arrival = `var(${CURVE_SURFACE})`
     // Commas inside `rgb(...)`/`var(--x, y)` are not separators.
     const parts = (value: string) => value.split(/,(?![^(]*\))/).map((p) => p.trim())
     const NON_SPATIAL = ['opacity', 'background', 'color', 'border-color', 'box-shadow', 'caret-color']
     let checked = 0
+    // `animation` comes in two halves that live in different files — the rule
+    // names the keyframes, the keyframes say what moves — and a dialog is a
+    // third file away from both. So the bodies are resolved across the whole
+    // listed set, once, before any rule is read. See `keyframesAcross`.
+    const keyframes = keyframesAcross(MOTION_SURFACE)
     for (const file of MOTION_SURFACE) {
       const css = declarations(read(file), file)
-      const keyframes = new Map(
-        [...css.matchAll(/@keyframes\s+([\w-]+)\s*\{([\s\S]*?)\n\}/g)].map(([, name, body]) => [
-          name,
-          body,
-        ]),
-      )
       for (const [, shorthand, value] of css.matchAll(
         // The shorthands only: `transition-duration: 90ms` carries no curve.
         /(?:^|[;{\s])(transition|animation)\s*:\s*([^;}]+)/g,
@@ -600,8 +665,20 @@ describe('choreography', () => {
           // `animation: <name> <duration> <curve>`. Whatever the keyframes move
           // is what the curve is being spent on.
           const name = part.split(/\s+/)[0]
+          // Before anything is asked about the body: was there a body to ask
+          // about? This is the assertion whose absence made the guard vacuous —
+          // every check below it is inside a loop that a missing body runs zero
+          // times, and an empty loop cannot fail.
+          expect(
+            keyframes.has(name),
+            `${file}: animation ${part} names @keyframes ${name}, which no listed file defines`,
+          ).toBe(true)
           const body = keyframes.get(name) ?? ''
           const properties = [...body.matchAll(/([\w-]+)\s*:/g)].map(([, p]) => p)
+          expect(
+            properties.length,
+            `${file}: @keyframes ${name} declares nothing to move, so nothing was checked`,
+          ).toBeGreaterThan(0)
           for (const property of properties) {
             expect(NON_SPATIAL, `${file}: @keyframes ${name} moves ${property} on the arrival curve`).not.toContain(
               property,

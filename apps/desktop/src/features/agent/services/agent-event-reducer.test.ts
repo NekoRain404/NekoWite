@@ -462,6 +462,31 @@ describe('the state machine', () => {
     })
   }
 
+  it('ends the run as completed when the ending’s reason is one this version does not know', () => {
+    // The arm `AGENT_STOP_REASONS` deliberately does not contain: the frame is a completed turn's
+    // ending with a reason the contract has never seen, and the run is over either way. It is a
+    // `completed` run and not a `failed` one — reporting a decode problem as a fault of the turn
+    // is the outcome the whole arm exists to prevent — and the reason keeps its own state in
+    // `lastResult`, so nothing here reads as an ordinary `end-turn`.
+    const ended = reduceAgentEvent(
+      liveRun(),
+      frame(
+        'run-finished',
+        { stopReason: 'unrecognised', unrecognisedReason: 'budget_exceeded', usage: null },
+        { sequence: 2, runId: 'run-1' },
+      ),
+    )
+
+    expect(ended.outcome).toEqual({ status: 'applied' })
+    expect(ended.view.state).toBe('completed')
+    expect(ended.view.failure).toBeNull()
+    expect(ended.view.lastResult).toEqual({
+      stopReason: 'unrecognised',
+      unrecognisedReason: 'budget_exceeded',
+      usage: null,
+    })
+  })
+
   it('fails the run through run-failed, and drops the questions it left', () => {
     const asked = reduceAgentEvent(
       liveRun(),

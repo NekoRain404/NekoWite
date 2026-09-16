@@ -38,9 +38,15 @@ export interface OpenDocTab {
 }
 
 export interface ExternalDocSyncDeps {
-  /** Every open tab. A change to a FOLDER is checked against the notes that
-   *  live inside it, and a change to a NOTE is decided for every tab holding
-   *  it — not only the one on screen (see the module note). */
+  /**
+   * Every open tab, answered from LIVE state rather than from a copy taken
+   * earlier. A change to a FOLDER is checked against the notes that live inside
+   * it, and a change to a NOTE is decided for every tab holding it — not only
+   * the one on screen (see the module note).
+   *
+   * Called once for the tab set to visit and again, per tab, after each read
+   * (see `currentTab`), so a provider that memoizes this answer would put the
+   * stale comparison back. */
   getOpenTabs(): ReadonlyArray<OpenDocTab>
   /**
    * Called when a tab's file no longer exists — its folder was renamed or
@@ -103,7 +109,29 @@ export function createExternalDocSync(deps: ExternalDocSyncDeps): ExternalDocSyn
   }
 
   /**
-   * Read `tab`'s file and act on what is there.
+   * The tab's state as it is NOW, by id — never the copy the loop was holding.
+   *
+   * The read below is an await, and a read is an IPC round trip: long enough for
+   * the world to move under it. The case that proves it is our OWN save. The
+   * write lands, the save records the bytes it wrote and clears `dirty`, and the
+   * claim it held is settled — all while the read is still in flight. What comes
+   * back is then the bytes the app just wrote, and the snapshot the loop took
+   * disagrees with them twice over: `isSelfWrite` is asked about a claim the
+   * save has already released, and the content comparison is asked about a
+   * `savedContent` the tab has already replaced. Both guards miss by one time
+   * slice, and the user is asked whether to keep or reload their own autosave —
+   * about a tab with nothing unsaved, while the status line beside it reads
+   * "saved".
+   *
+   * A tab that is gone by now is not decided at all: there is nothing to reload
+   * and nobody to ask.
+   */
+  function currentTab(id: string): OpenDocTab | null {
+    return deps.getOpenTabs().find((t) => t.id === id) ?? null
+  }
+
+  /**
+   * Read `id`'s file and act on what is there.
    *
    * The read DOUBLES as the existence probe, and that is deliberate: a path the
    * disk will not give us is the folder-renamed-or-deleted-outside-the-app case
@@ -118,16 +146,24 @@ export function createExternalDocSync(deps: ExternalDocSyncDeps): ExternalDocSyn
    * on a tab with unsaved edits it would ask a keep-or-reload question about a
    * change the app made itself, whose "use the disk version" answer discards
    * every keystroke typed since the save began.
+   *
+   * Both guards are asked of the LIVE tab (see `currentTab`): the tab is not a
+   * parameter, because a tab read before the await is a snapshot, and every
+   * comparison this function makes is one the snapshot gets wrong.
    */
-  async function examine(vault: string, tab: OpenDocTab, path: string): Promise<void> {
+  async function examine(vault: string, id: string, path: string): Promise<void> {
     let disk: string
     try {
       disk = await deps.read(vault, path)
     } catch {
-      deps.onMissing(tab.id, path)
+      deps.onMissing(id, path)
       return
     }
     if (deps.isSelfWrite(path, disk)) return
+    // Asked AFTER the await and only for this tab: what the decision needs is
+    // what the tab holds now, not what the loop saw when it started.
+    const tab = currentTab(id)
+    if (!tab) return
     // An identical file is a no-op touch (or our own write that raced the
     // claim) and must not reload — that would replace the live model and reset
     // undo/caret.
@@ -159,7 +195,9 @@ export function createExternalDocSync(deps: ExternalDocSyncDeps): ExternalDocSyn
     for (const tab of deps.getOpenTabs()) {
       if (!tab.path || !inScope(tab.path)) continue
       if (deps.isPendingMove?.(tab.path)) continue
-      await examine(vault, tab, tab.path)
+      // Only the id and the path travel: the tab itself is read again inside,
+      // after the read, because this loop's copy is stale by then.
+      await examine(vault, tab.id, tab.path)
     }
   }
 

@@ -206,7 +206,12 @@ onMounted(() => {
   if (context === null) return
   for (const domain of PREVIEW_DOMAINS) ensureLoaded(domain)
   context.gateway.capabilities().then(
-    (report) => { capabilities.value = report },
+    // An answer that is not an array is not a report: a host that resolved `undefined` — which is
+    // what a stub that has no case for this command does, and how the crash below was found —
+    // reported nothing, and storing that answer as-is is what made every page that reads this ref
+    // throw while rendering. The empty list is the truth here, and it is rendered as "nothing was
+    // reported" rather than as "none of these work" (§7.2).
+    (report) => { capabilities.value = Array.isArray(report) ? report : [] },
     () => { capabilities.value = [] },
   )
 })

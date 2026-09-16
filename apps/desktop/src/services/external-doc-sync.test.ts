@@ -29,7 +29,11 @@ function harness(overrides: {
   unreadable?: string[]
   /** Paths the APP is renaming right now (see `beginMove`). */
   pendingMove?: string[]
-} = {}): Harness & { onMissing: ReturnType<typeof vi.fn> } {
+  /** Run while a read is in flight, on the test's own `tabs` — the world moving
+   *  under the await. This is how a save that lands, or a keystroke that arrives,
+   *  gets into the window the read leaves open. */
+  duringRead?: () => void
+} = {}): Harness & { onMissing: ReturnType<typeof vi.fn>; tabs: OpenDocTab[] } {
   let handler: ((e: FsChangeEvent) => void) | null = null
   const reload = vi.fn(async () => undefined)
   const onConflict = vi.fn()
@@ -37,8 +41,13 @@ function harness(overrides: {
   const onMissing = vi.fn()
   const read = vi.fn(async (_vault: string, p?: string) => {
     if (p && (overrides.unreadable ?? []).includes(p)) throw new Error('not found')
-    if (p && p in (overrides.diskByPath ?? {})) return overrides.diskByPath![p]
-    return overrides.disk ?? 'disk text'
+    const bytes = p && p in (overrides.diskByPath ?? {})
+      ? overrides.diskByPath![p]
+      : (overrides.disk ?? 'disk text')
+    // Before the answer is handed back, so what the caller does next happens
+    // after the change — the same order the app's own save produces.
+    overrides.duringRead?.()
+    return bytes
   })
   const tabs: OpenDocTab[] = (overrides.openTabs ?? [{
     id: 'tab-1',
@@ -60,11 +69,17 @@ function harness(overrides: {
     reload,
     onConflict,
     onChange,
-    getOpenTabs: () => tabs,
+    // A fresh copy per call, exactly as App.vue builds it. Handing back the same
+    // objects would let a stale copy look live and hide the defect these tests
+    // exist to pin: the service reads the tab set AGAIN after each read, and
+    // only a provider that answers from state answers differently the second
+    // time.
+    getOpenTabs: () => tabs.map((t) => ({ ...t })),
     onMissing,
   })
   return {
     onMissing,
+    tabs,
     emit: (e) => handler?.(e),
     reload,
     onConflict,
@@ -181,6 +196,132 @@ describe('external document sync', () => {
     await h.flush()
     expect(h.onMissing).toHaveBeenCalledWith('tab-1', 'C:\\vault\\a.md')
     expect(h.reload).not.toHaveBeenCalled()
+    h.sync.stop()
+  })
+})
+
+/**
+ * The read is an await, and the tab set the loop walks was read BEFORE it.
+ *
+ * What `examine` decides from — `dirty`, `savedContent` — has to be what the tab
+ * holds when the bytes come back, not what it held when the loop started. Decided
+ * from the snapshot, the app's OWN autosave reads as an external edit: the write
+ * lands and the tab records what it wrote while the read is in flight, so the
+ * bytes that come back are ours and the snapshot says they are somebody else's.
+ * `isSelfWrite` is asked about a claim the save has already released, and the
+ * content comparison about a `savedContent` the tab has already replaced — both
+ * guards miss by one time slice, and the user gets a keep-or-reload question
+ * about their own autosave, on a tab with nothing unsaved, while the status line
+ * beside it reads "saved".
+ *
+ * The cases below share one window and must come out different ways. The third
+ * and fourth are the ones a blanket "ignore changes for a while after a save"
+ * would break: a real external edit lands in that same window, and it has to be
+ * reported exactly as it would be any other time.
+ */
+describe('the tab set moving under a read', () => {
+  it('does not ask about our own save that landed while the event was read', async () => {
+    const h = harness({
+      dirty: true,
+      savedContent: 'before the save',
+      disk: 'what the save wrote',
+      selfWrite: false,
+      duringRead: () => {
+        h.tabs[0].savedContent = 'what the save wrote'
+        h.tabs[0].dirty = false
+      },
+    })
+    await h.sync.start()
+    h.emit(MODIFIED)
+    await h.flush()
+    expect(h.onConflict).not.toHaveBeenCalled()
+    expect(h.reload).not.toHaveBeenCalled()
+    h.sync.stop()
+  })
+
+  it('asks instead of reloading when the user typed while the read was in flight', async () => {
+    // The snapshot's other half. A copy that said "clean" while the first
+    // keystroke of the next sentence was landing, and a reload decided from it
+    // replaces the live model with the disk's version: that is the one reload
+    // allowed to discard unsaved work.
+    const h = harness({
+      dirty: false,
+      savedContent: 'old text',
+      disk: 'changed externally',
+      duringRead: () => {
+        h.tabs[0].dirty = true
+      },
+    })
+    await h.sync.start()
+    h.emit(MODIFIED)
+    await h.flush()
+    expect(h.reload).not.toHaveBeenCalled()
+    expect(h.onConflict).toHaveBeenCalledWith({ tabId: 'tab-1', path: 'C:\\vault\\a.md' })
+    h.sync.stop()
+  })
+
+  it('still reloads a clean tab when a real external edit lands behind our own save', async () => {
+    // Somebody else wrote the file moments after our save settled. The bytes are
+    // not ours, the tab is clean, and the reload is the correct answer — a rule
+    // that ignored events for a while after a save would swallow this one and
+    // leave the editor showing text the file no longer has.
+    const h = harness({
+      dirty: true,
+      savedContent: 'before the save',
+      disk: 'their text',
+      duringRead: () => {
+        h.tabs[0].savedContent = 'what the save wrote'
+        h.tabs[0].dirty = false
+      },
+    })
+    await h.sync.start()
+    h.emit(MODIFIED)
+    await h.flush()
+    expect(h.onConflict).not.toHaveBeenCalled()
+    // Once, and only once: the read makes a second decision possible, and a
+    // duplicate reload throws away the model the first one just built.
+    expect(h.reload.mock.calls).toEqual([['tab-1']])
+    h.sync.stop()
+  })
+
+  it('still asks when a real external edit lands behind our own save on a dirty tab', async () => {
+    // The user typed across the save, so their text is newer than the file and
+    // the disk holds somebody else's: the question is the only answer that
+    // keeps both, and no window after a save may suppress it.
+    const h = harness({
+      dirty: true,
+      savedContent: 'before the save',
+      disk: 'their text',
+      duringRead: () => {
+        h.tabs[0].savedContent = 'what the save wrote'
+        h.tabs[0].dirty = true
+      },
+    })
+    await h.sync.start()
+    h.emit(MODIFIED)
+    await h.flush()
+    expect(h.reload).not.toHaveBeenCalled()
+    expect(h.onConflict).toHaveBeenCalledWith({ tabId: 'tab-1', path: 'C:\\vault\\a.md' })
+    h.sync.stop()
+  })
+
+  it('decides nothing for a tab that was closed while its read was in flight', async () => {
+    // The tab set is a live thing: a closed tab has no content to replace and no
+    // user to ask, and a reload or a dialog for it would act on a document that
+    // is no longer open.
+    const h = harness({
+      disk: 'changed externally',
+      savedContent: 'old text',
+      duringRead: () => {
+        h.tabs.length = 0
+      },
+    })
+    await h.sync.start()
+    h.emit(MODIFIED)
+    await h.flush()
+    expect(h.reload).not.toHaveBeenCalled()
+    expect(h.onConflict).not.toHaveBeenCalled()
+    expect(h.onMissing).not.toHaveBeenCalled()
     h.sync.stop()
   })
 })

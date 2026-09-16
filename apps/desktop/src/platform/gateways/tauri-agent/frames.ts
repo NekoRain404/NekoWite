@@ -19,10 +19,11 @@
  *     than to this window and either spelling goes to the same validator.
  *  3. **`usage` is the engine's object, and its field set is not fixed.** P0 §6.3 measured
  *     `thoughtTokens` in one turn and `cachedReadTokens` in another, neither summing to
- *     `totalTokens` (1721 + 6 ≠ 8895). The contract's three numbers are kept, the optional ones
- *     are dropped (it has nowhere to put them), and `null` is answered when any of the three is
- *     missing — never a computed or defaulted number, because §5.1's rule is that an unknown
- *     cost is not zero.
+ *     `totalTokens` (1721 + 6 ≠ 8895). The engine's object is *already* the contract's shape —
+ *     the same camelCase field names, each optional — so it is passed through untouched and the
+ *     contract's reader is the one place that decides what a missing or unreadable field means.
+ *     A mapper here would be a second rule for one fact, and the rule it used to hold ("all
+ *     three or nothing") dropped numbers the engine had actually sent.
  *
  * ## What this file does about a frame it cannot read
  *
@@ -40,9 +41,8 @@ import {
   AgentFailure,
   readAgentEvent,
   type AgentEvent,
-  type AgentUsage,
 } from '../agent-contracts'
-import { count, invalid, isRecord, nonEmpty } from './fields'
+import { invalid, isRecord, nonEmpty } from './fields'
 import { mapToolUpdate, type ToolProjection } from './tools'
 
 /** The envelope fields `readAgentEvent` validates, read here as well so a frame that cannot be
@@ -150,12 +150,18 @@ function mapPayload(
 
 /**
  * The engine's answer to a turn: the stop reason in the contract's spelling, and the usage.
+ *
+ * `usage` is passed through as the engine sent it, which is also how the contract states it
+ * (camelCase, every field optional). The reader is where a missing field becomes "not provided"
+ * and an unreadable one is left out, so this side has nothing to decide — and `undefined` is
+ * normalized to `null` so the key is always present: `null` is the contract's own spelling for
+ * "the engine reported no usage at all".
  */
 function mapRunResult(payload: unknown): unknown {
   if (!isRecord(payload)) return payload
   const stopReason = mapStopReason(payload.stopReason)
   if (stopReason === null) return payload
-  return { stopReason, usage: mapUsage(payload.usage) }
+  return { stopReason, usage: payload.usage ?? null }
 }
 
 /**
@@ -174,26 +180,4 @@ function mapRunResult(payload: unknown): unknown {
  */
 function mapStopReason(raw: unknown): string | null {
   return nonEmpty(raw) ? raw.replaceAll('_', '-') : null
-}
-
-/**
- * The engine's `Usage`, as the contract's three numbers — or null.
- *
- * `totalTokens` is passed through as the engine reported it and never computed: P0 §6.3 measured
- * that it is not `input + output` (1721 + 6 = 1727 against a reported 8895), which is the whole
- * reason the shape is three numbers from the source rather than a sum of two.
- *
- * A usage object missing any of the three answers null, and that is a decision rather than a
- * loss: §5.1 allows usage to be shown only when its source is reliable, and those three fields
- * are what the ACP `Usage` struct requires — an object without them is one the SDK could not
- * have deserialized, so what would arrive here is a shape from some other producer. `null`
- * renders as "not provided"; a defaulted 0 would render as a free turn.
- */
-function mapUsage(raw: unknown): AgentUsage | null {
-  if (!isRecord(raw)) return null
-  const inputTokens = count(raw.inputTokens)
-  const outputTokens = count(raw.outputTokens)
-  const totalTokens = count(raw.totalTokens)
-  if (inputTokens === null || outputTokens === null || totalTokens === null) return null
-  return { inputTokens, outputTokens, totalTokens }
 }

@@ -28,8 +28,9 @@
 //!
 //! The cases are divided by behaviour domain rather than kept in one file (§13.1's rule for a test
 //! that outgrows a page): `imports` for the transaction, `security` for what a pack may not carry,
-//! `cache` for the manifest-against-directory rule, `removal` for the one deletion this module
-//! performs, and `offline` for §8's network half. They are one target and one command —
+//! `cache` for the manifest-against-directory rule, `confinement` for what a manifest on disk may
+//! name when the library reads it back, `removal` for the one deletion this module performs, and
+//! `offline` for §8's network half. They are one target and one command —
 //! `cargo test --test desktop_pet_resources_test` — because a test in a file nobody runs is not
 //! evidence.
 //!
@@ -77,6 +78,8 @@ mod desktop_pet {
 // behaviour, not targets, and there is deliberately no `main.rs` in it.
 #[path = "desktop_pet_resources_test/cache.rs"]
 mod cache;
+#[path = "desktop_pet_resources_test/confinement.rs"]
+mod confinement;
 #[path = "desktop_pet_resources_test/imports.rs"]
 mod imports;
 #[path = "desktop_pet_resources_test/offline.rs"]

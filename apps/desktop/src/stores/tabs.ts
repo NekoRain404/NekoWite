@@ -32,6 +32,7 @@ import type { UntitledCloseChoice } from './tab-lifecycle'
 import { createUnflushableRescue } from './unflushable-rescue'
 import { createTabFileOperations } from './tab-file-operations'
 import type { ExternalConflict } from './tab-write-preconditions'
+import type { AgentLiveNote, LiveNoteLookup } from '../features/agent/services/agent-context-snapshot'
 
 export interface OpenTab {
   id: string
@@ -71,8 +72,26 @@ export interface OpenTab {
   pendingAssetPaths: string[]
 }
 
-export const useTabsStore = defineStore('tabs', () => {
-  const tabs = ref<OpenTab[]>([])
+/**
+ * A value that is different every time this module graph is built.
+ *
+ * `crypto.randomUUID` where the webview has it — the same guarded call
+ * `features/chat/services/chat-session-model.ts` makes, and for the same reason: it is a newer
+ * API than the oldest engine this app supports, and a fallback that is still unique per page is
+ * better than a throw at module load.
+ */
+function mintPageNonce(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID()
+    }
+  } catch {
+    /* fall through */
+  }
+  return `page-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+export const useTabsStore = defineStore('tabs', () => {  const tabs = ref<OpenTab[]>([])
   const activeId = ref<string | null>(null)
   const vault = ref<string | null>(null)
   const activeTab = computed(
@@ -190,6 +209,75 @@ export const useTabsStore = defineStore('tabs', () => {
     vault.value = v
   }
 
+  /**
+   * The page-load term of a document identity, minted once per module graph.
+   *
+   * `tab.id` is `tab-${++seq}` from a counter `tab-lifecycle.ts` owns, so it restarts with the
+   * page: reload the webview and the counter hands out the same ids again while the host process
+   * — and its runtime epoch — survives. Two different documents would then spell the same
+   * revision, and a conflict baseline captured before a reload would compare equal against a
+   * document it was never taken from. Nothing else in the identity catches that: the epoch did not
+   * move and the path is the same. A fresh nonce per page load is the smallest honest term, and
+   * making `seq` non-restartable instead would need a source of uniqueness the window does not
+   * have.
+   *
+   * Minted at module load, which is once per window per page: each webview has its own module
+   * graph, so two windows cannot mint the same one.
+   */
+  const pageNonce = mintPageNonce()
+
+  /**
+   * One note, as this editor has it — the ONE lookup the agent feature reads a document through.
+   *
+   * Three callers depend on that word "one": the `fs/read_text_file` answer the host serves, the
+   * edit-conflict baseline `send` captures, and the SVG-insertion anchor. They must agree about
+   * what "the same version of this note" means, so they read the same value from the same place
+   * rather than three spellings of it.
+   *
+   * `revision` is composed of three terms and each answers a different way for two documents to
+   * be the same: the page-load nonce (a reload is not the same editor), the tab id (a reopened
+   * note is not the same document), and the editor's own per-tab edit count, which moves at the
+   * keystroke rather than at the publish. It is an INSTANCE identity, not a digest of the text: a
+   * content hash cannot tell a reopened note from an untouched one, which is the case
+   * `judgeAgentEdit` is tested against.
+   *
+   * `tab.content` lags a keystroke by up to 120ms while that count does not (`tab-save-state.ts`
+   * says why), so an answer can pair revision R+1 with the text of R. Both callers are safe
+   * against it — the read serves buffer text rather than disk text, and the conflict judgement
+   * refuses when EITHER witness moved — so the lag is documented here rather than "fixed" by
+   * delaying the count, which would break the save path that reads it.
+   *
+   * A `loading` tab is `cannot-answer`, not `not-held`: for the length of the first read it holds
+   * a placeholder that wears the note's path, and `not-held` would serve the disk text for a note
+   * the user is looking at.
+   */
+  function lookUpLiveNote(path: string): LiveNoteLookup {
+    const root = vault.value
+    if (root === null) {
+      return { kind: 'cannot-answer', reason: 'this window has no vault open' }
+    }
+    const tab = tabs.value.find((t) => t.path === path)
+    if (!tab) return { kind: 'not-held' }
+    if (tab.loading) {
+      return {
+        kind: 'cannot-answer',
+        reason: `the tab for ${path} is still reading the file`,
+      }
+    }
+    // The `diskText` arm answers "the file was not read", which is true: this lookup reads the
+    // buffer and nothing else, and the file's saved text a tab remembers is what that tab
+    // believed was on disk, not a fresh read of it.
+    const note: AgentLiveNote = {
+      vaultId: root,
+      path,
+      revision: `${pageNonce}:${tab.id}:${save.revisionOf(tab.id)}`,
+      buffer: tab.dirty
+        ? { state: 'dirty', text: tab.content, diskText: null }
+        : { state: 'clean', text: tab.content },
+    }
+    return { kind: 'held', note }
+  }
+
   /** Restore the stored session. The paths are replayed through the lifecycle
    *  `openTab` (duplicate guard + async content refill), so the two modules are
    *  joined here rather than one importing the other. */
@@ -204,6 +292,11 @@ export const useTabsStore = defineStore('tabs', () => {
     activeTab,
     vault,
     setVault,
+    /** The agent feature's one lookup of a note by path — see {@link lookUpLiveNote} for what its
+     *  three arms mean and why `revision` is spelled the way it is. Not a general-purpose
+     *  accessor: it exists so that the read path, the conflict baseline and the insertion anchor
+     *  read one value rather than three spellings of it. */
+    lookUpLiveNote,
     // lifecycle
     openTab: lifecycle.openTab,
     closeTab: lifecycle.closeTab,

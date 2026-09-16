@@ -132,10 +132,17 @@ test.describe('save round trips', () => {
 
   test('a frontmatter field written from the panel reaches disk', async ({ page }) => {
     await openNote(page, { doc: '# Title\n\nbody\n' })
-    // Frontmatter is created through the rail's document-info section.
-    await page.locator(`.status-btn[title="${await label(page, 'rail.expand')}"], .status-btn[title="${await label(page, 'rail.collapse')}"]`).first().click()
-    await page.locator('.info-rail').waitFor({ state: 'visible', timeout: 3000 })
-    await page.locator('.rail-tab', { hasText: await label(page, 'rail.meta') }).click()
+    // Frontmatter is created through the document-properties panel. It used to be a section of the
+    // right rail; `afd0b89` reduced the rail to the chat alone and the panel became a mode of the
+    // note-list column (see `NoteListToolbar`'s `MODES`). Two consequences shape the driving below,
+    // and both are the product's shape rather than this test's choosing: the mode strip only exists
+    // while that column is showing the note list — `openNote` leaves it on the folder tree — and
+    // its buttons are icon-only, named by `title` and `aria-label`, so there is no text to match.
+    // Driving the rail's old tab would wait for a control this product no longer has.
+    await page.locator('.nav-item', { hasText: await label(page, 'nav.all') }).click()
+    await page
+      .locator(`.nl-mode-btn[title="${await label(page, 'frontmatter.title')}"]`)
+      .click()
     await page.waitForTimeout(150)
 
     const addProps = page.getByRole('button', { name: await label(page, 'frontmatter.addProps') })

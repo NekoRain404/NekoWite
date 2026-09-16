@@ -50,10 +50,17 @@ function unmountAll(): void {
   document.body.innerHTML = ''
 }
 
-function mount(
-  properties: Record<string, unknown>,
-  slots?: Record<string, () => unknown>,
-): void {
+/**
+ * A slot fill, as the container renders it.
+ *
+ * It takes props: §5.1's slot content is handed the container's own context — the sessions the
+ * page and the preview have to share — so a fill declared as a no-argument function is a fill
+ * that cannot be handed anything. That declaration is what the checker was reading when it
+ * refused the fill below, and the runtime had been handing the props over all along.
+ */
+type SlotFill = (slotProps: { context: Record<string, unknown> }) => unknown
+
+function mount(properties: Record<string, unknown>, slots?: Record<string, SlotFill>): void {
   const host = document.createElement('div')
   document.body.appendChild(host)
   const app = createApp(() => h(DesktopPetSettings, properties, slots))
@@ -106,11 +113,14 @@ describe('which pages the container offers', () => {
   })
 
   it('hosts a page another task fills in, and hands it the container’s own sessions', async () => {
-    let captured: { sessions?: Record<string, unknown> } | null = null
+    // What the container handed the slot, in a container of its own: a `let` assigned inside the
+    // stub's `setup` and read after `mount` is one control-flow analysis still reads as its
+    // initial value, so `captured?.sessions` below would be a property read of `never`.
+    const captured: { context?: { sessions?: Record<string, unknown> } } = {}
     const SlotStub = defineComponent({
       props: { context: { type: Object, required: true } },
       setup(pageProps) {
-        captured = pageProps.context as { sessions?: Record<string, unknown> }
+        captured.context = pageProps.context
         return () => h('div', { class: 'slot-stub' })
       },
     })
@@ -118,7 +128,7 @@ describe('which pages the container offers', () => {
     // needs — and a filler that forgets it is loud rather than silent: the page's `context`
     // prop is required, so Vue names the missing prop.
     mount({ gateway: createMemoryPetGateway() }, {
-      character: (slotProps: Record<string, unknown>) => h(SlotStub, slotProps),
+      character: (slotProps) => h(SlotStub, slotProps),
     })
     await flush()
 
@@ -127,7 +137,7 @@ describe('which pages the container offers', () => {
     await flush()
     expect(document.querySelector('.slot-stub')).not.toBeNull()
     // Not a context of its own: the page reads the same session the preview will.
-    expect(Object.keys(captured?.sessions ?? {}).sort()).toEqual([
+    expect(Object.keys(captured.context?.sessions ?? {}).sort()).toEqual([
       'care',
       'character',
       'general',

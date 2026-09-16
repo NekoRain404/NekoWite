@@ -19,13 +19,16 @@
  * actions, and the test lists both with the reason each is there.
  */
 import { createApp } from 'vue'
+import type { PetWindowGateway } from '../platform/gateways/pet-contracts'
+import type { ImageFactory } from '../features/desktop-pet/rendering/sprite-sheet'
+import type { SheetPixelReader } from '../features/desktop-pet/rendering/sprite-slicer'
+import type { SpriteClock } from '../features/desktop-pet/rendering/animation-bindings'
 // By path, and deliberately not through `features/desktop-pet/index.ts`: that entry is the
 // feature's public API *for other callers* — the settings page mounts `PetCarePanel` through it —
 // and reaching it from here would put the whole of it in this window's source graph, the care
 // panel and D1's contract values included. §7.1's isolation is the stronger rule for this one
 // page, and `DesktopPetRoot.vue` plus the two services below are the whole of what it draws.
 import DesktopPetRoot from '../features/desktop-pet/components/DesktopPetRoot.vue'
-import type { PetGateway } from '../platform/gateways/pet-contracts'
 import { resolveDesktopPetDependencies } from './desktop-pet-composition'
 import '../styles/tokens.css'
 import '../styles/palettes.css'
@@ -36,16 +39,31 @@ export const DESKTOP_PET_ROOT_ID = 'desktop-pet'
 /**
  * What the pet window needs from its host.
  *
- * One field today, and a whole object rather than a bare gateway because §9 gives the pet a
- * composition of its own: `desktop-pet-composition.ts` builds it from the feature's public entry
- * and is where the task navigation and the settings entry are assembled (§10.1). This is the seam
- * it hands its work across.
+ * One field, and it is typed as **what this entry uses** rather than as the composition's own
+ * object: the entry reads `appearance`, `openTask` and `subscribeSettings` off it, plus the
+ * gateway half the lifecycle and the bubble already take — which is `PetWindowGateway`, the
+ * window's own port. `PetHostConnection` is wider (open, disable, close-own, click-through): those
+ * are the *composition's* to hold, and a dependency declared as that would be this file asking for
+ * the teardown it never performs — the same "asks for more than it uses" the composition's own
+ * header argues against from the other side.
  *
  * It stays optional at the mount site because "no host" is a renderable state rather than a
  * wiring error — see {@link resolveDesktopPetDependencies} below.
  */
 export interface DesktopPetDependencies {
-  gateway: PetGateway
+  connection: PetWindowGateway
+  /**
+   * The sprite's resources, injected (§10.2's 注入……资源 rule).
+   *
+   * A test cannot decode a PNG and cannot make an `Image` load, so the window's own drawing is
+   * only reachable end to end if the loader is a parameter. The product passes nothing, which is
+   * what keeps the browser's own `Image`, `setTimeout` and canvas the ones the window uses.
+   */
+  sprite?: {
+    clock?: SpriteClock
+    createImage?: ImageFactory
+    readPixels?: SheetPixelReader
+  }
 }
 
 export interface DesktopPetApp {
@@ -68,12 +86,26 @@ export type ResolveDesktopPetDependencies = () => DesktopPetDependencies | undef
  * between a window that says "no host" and one that draws a pet whose every task came from a
  * fixture. `resolveDesktopPetDependencies` answers `undefined` in exactly one case — a page with
  * no Tauri host behind it — and deliberately does not fall back to D1's in-memory double.
+ *
+ * The dependencies carry the *connection*, not a gateway and an appearance separately: with the
+ * host's own surface the root reads what it draws (§5.1's 角色与动画) and routes a click on a task
+ * back to its session (§6.2) — the two things whose absence made this window open and draw
+ * nothing, and open and never be told about work.
  */
 export function mountDesktopPet(
   host: Element,
   dependencies?: DesktopPetDependencies,
 ): DesktopPetApp {
-  const app = createApp(DesktopPetRoot, { gateway: dependencies?.gateway ?? null })
+  const connection = dependencies?.connection ?? null
+  const sprite = dependencies?.sprite ?? {}
+  const app = createApp(DesktopPetRoot, {
+    // The same object twice, and deliberately: the root draws its lifecycle from the narrow
+    // contract and its character from the wider one, and each consumer is handed only what it
+    // uses. A second connection here would be a second cached adapter.
+    gateway: connection,
+    connection,
+    ...sprite,
+  })
   app.mount(host)
   return {
     dispose: () => app.unmount(),

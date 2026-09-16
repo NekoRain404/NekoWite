@@ -60,6 +60,10 @@ export function agentPanelLabels(engineName: string): AgentPanelLabels {
         'max-turn-requests': t('agent.panel.bar.result.maxTurnRequests'),
         refusal: t('agent.panel.bar.result.refusal'),
         cancelled: t('agent.panel.bar.result.cancelled'),
+        // An ending whose reason this version does not know. It has a sentence of its own rather
+        // than reusing one of the five: none of them is true, and the state line is where a
+        // reader would go looking for what happened.
+        unrecognised: t('agent.panel.bar.result.unrecognised'),
       },
     },
     timeline: {

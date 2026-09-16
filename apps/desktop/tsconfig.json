@@ -37,6 +37,7 @@
     // which say nothing about the script.
     "scripts/**/*.ts",
     "vite.config.ts",
+    "vitest.unhandled-reporter.ts",
     "vitest.perf.config.ts",
     "playwright.config.ts"
   ]

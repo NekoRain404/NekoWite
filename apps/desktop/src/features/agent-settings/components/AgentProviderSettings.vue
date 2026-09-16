@@ -15,7 +15,7 @@
  * without a sentence here is a missing key rather than a line that goes blank.
  */
 import { t } from '../../../i18n'
-import type { ModeChange } from '../services/agent-settings-policy'
+import type { DiscoverySurface, ModeChange } from '../services/agent-settings-policy'
 
 export interface AgentProviderLabels {
   section: { title: string; hint: string }
@@ -30,7 +30,15 @@ export interface AgentProviderLabels {
   action: { save: string; applied: string; failed: string; unsaved: string }
   switchPlan: { title: string; movesNothing: string }
   changes: Record<ModeChange, string>
-  sources: { title: string; hint: string; injected: string; engineDiscovery: string }
+  sources: {
+    title: string
+    hint: string
+    injected: string
+    engineDiscovery: string
+    /** One sentence per merge the engine makes and this app does not set, keyed by the backend's
+        own surface id — so a merge the backend adds without copy here is a missing key. */
+    discovery: Record<DiscoverySurface, string>
+  }
   credentials: {
     title: string
     hint: string
@@ -88,6 +96,13 @@ export function providerLabels(): AgentProviderLabels {
       hint: t('agent.settings.provider.sources.hint'),
       injected: t('agent.settings.provider.sources.injected'),
       engineDiscovery: t('agent.settings.provider.sources.engineDiscovery'),
+      // Literal keys, one per arm: `i18n.test.ts` reads `t('…')` out of the source, and a key built
+      // from a variable would render as the raw key rather than fail a test.
+      discovery: {
+        reused: t('agent.settings.provider.sources.discovery.reused'),
+        project: t('agent.settings.provider.sources.discovery.project'),
+        managed: t('agent.settings.provider.sources.discovery.managed'),
+      },
     },
     credentials: {
       title: t('agent.settings.provider.credentials.title'),
@@ -113,6 +128,15 @@ export function providerLabels(): AgentProviderLabels {
  * moves from the user. §8.1 states the requirement as 「列出实际生效源」 and names the mistake it
  * prevents — `OPENCODE_CONFIG_DIR` is not a complete isolation switch, so a page showing only the
  * injected roots would be describing a world with nothing else in it.
+ *
+ * The sources list is where the last clause is kept honest, and it is deliberately all one list: the
+ * injected roots first, then one row per merge the engine makes that this app does not set. Two of
+ * those rows are open on purpose — the folder a session runs in merges its own opencode.json and
+ * `.opencode`, and the machine's /etc/opencode merges at global precedence — and neither is this
+ * page's to close: whether a vault's own configuration should apply is a product decision, and the
+ * managed root has no supported switch at all. So the page states them and claims nothing about
+ * them. What it must never do is the opposite, which is to look like the injected roots are the
+ * whole list.
  *
  * Three rules come from the policy module rather than from here, and this page does not re-derive
  * any of them:
@@ -393,7 +417,10 @@ onMounted(load)
             <span v-if="source.kind === 'injected'" class="provider-path">
               {{ source.variable }} = {{ source.path }}
             </span>
-            <span v-else class="settings-note">{{ source.what }}</span>
+            <!-- One named merge per row rather than a summary: what this host set is above, and
+                 what it does not close is here, said one surface at a time so a reader can count
+                 them. The sentence is the page's copy and the surface is the backend's id. -->
+            <span v-else class="settings-note">{{ labels.sources.discovery[source.what] }}</span>
           </li>
         </ul>
       </div>
