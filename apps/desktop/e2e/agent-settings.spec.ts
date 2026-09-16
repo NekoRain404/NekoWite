@@ -232,7 +232,11 @@ test.describe('where a model comes from', () => {
       editable: true,
       sources: [
         { kind: 'injected', variable: 'XDG_CONFIG_HOME', path: '/home/someone/.config' },
-        { kind: 'engine-discovery', what: 'the engine also reads ancestor .opencode directories' },
+        // A `DiscoverySurface` id, not a sentence: the page's own copy is where the wording
+        // lives, and the IPC layer refuses anything outside `DISCOVERY_SURFACES` before it could
+        // reach the component. `project` is the surface this one is about — the folder a session
+        // runs in and every folder above it.
+        { kind: 'engine-discovery', what: 'project' },
       ],
       credentials: [{ name: 'NWK_TEST_KEY', value: 'sk-live-NEVER-PRINTED' }],
       credentialStorage: {
@@ -249,8 +253,11 @@ test.describe('where a model comes from', () => {
     await expect(row(page, '[data-test="provider-source-injected"]')).toContainText(
       'XDG_CONFIG_HOME = /home/someone/.config',
     )
+    // The engine-discovery row draws the surface's own sentence, and the assertion is on the file
+    // name in it — a fact, the way the row above is a variable and a path — not on the wording
+    // around it.
     await expect(row(page, '[data-test="provider-source-engine-discovery"]')).toContainText(
-      'ancestor .opencode',
+      'opencode.json',
     )
     // §8.1: the storage is stated rather than implied — a file, with a mode, and not a keychain.
     await expect(row(page, '[data-test="provider-credential-storage"]')).toContainText('600')
@@ -427,9 +434,12 @@ test.describe('importing a skill', () => {
   test('reads a folder first, names its scripts, and imports only on a second action', async ({ page }) => {
     await open(page, 'skills', READOUT)
     await row(page, '[data-test="skills-source"]').fill('/home/someone/incoming/demo')
-    await row(page, '[data-test="skills-preview"]').click()
+    // `skills-preview` names two different things: the *button* that reads the folder, and the
+    // *panel* it draws the answer into. Each locator below therefore says which one it means.
+    // The button is what gets clicked; the panel is what the assertions are about.
+    await row(page, 'button[data-test="skills-preview"]').click()
 
-    await expect(row(page, '[data-test="skills-preview"]')).toBeVisible()
+    await expect(row(page, 'div[data-test="skills-preview"]')).toBeVisible()
     await expect(row(page, '[data-test="skills-scripts"]')).toContainText('scripts/run.sh')
     // The sentence the acceptance turns on. The proof is R5's canary; this is the page saying it,
     // and the call record below is the page not having done anything else.
@@ -437,9 +447,16 @@ test.describe('importing a skill', () => {
     expect(await calledMethods(page)).toEqual(['read', 'preview'])
 
     await row(page, '[data-test="skills-confirm"]').click()
-    await expect.poll(() => calledMethods(page)).toEqual(['read', 'preview', 'import'])
+    // The trailing `read` is the page re-reading after a change, which is what every client here
+    // promises and what the sibling test below asserts of a switch-off (`read`, `setEnabled`,
+    // `read`). The claim this sequence makes is unchanged: an import, and nothing that could run
+    // anything.
+    await expect
+      .poll(() => calledMethods(page))
+      .toEqual(['read', 'preview', 'import', 'read'])
     // `import` was sent the path and "do not replace"; there is no argument that could run a script.
-    const sent = (await calls(page)).at(-1)
+    // Named rather than taken as the last call, because the re-read above comes after it.
+    const sent = (await calls(page)).filter((call) => call.method === 'import').at(-1)
     expect(sent?.args).toEqual(['/home/someone/incoming/demo', false])
   })
 
@@ -452,7 +469,7 @@ test.describe('importing a skill', () => {
       replaceResult: null,
     })
     await row(page, '[data-test="skills-source"]').fill('/home/someone/incoming/demo')
-    await row(page, '[data-test="skills-preview"]').click()
+    await row(page, 'button[data-test="skills-preview"]').click()
     await expect(row(page, '[data-test="skills-replace"]')).toHaveCount(0)
 
     await row(page, '[data-test="skills-confirm"]').click()
@@ -475,6 +492,12 @@ test.describe('switching a skill off', () => {
     owner: 'managed',
     conflicts: [],
     surface: { kind: 'offered' },
+    // The scope's own fact, and not a decoration: `SkillEntryView.suppressedBy` is required, and
+    // the page reads it to choose between "the engine skips this directory when {variable} is
+    // set" and "this launch sets it". A fixture that leaves it out is not the shape a backend
+    // hands over, and the page then takes the second sentence with nothing to put in it —
+    // drawing a literal `{variable}` to the reader.
+    suppressedBy: null,
     disable: { kind: 'per-skill' },
   }
 

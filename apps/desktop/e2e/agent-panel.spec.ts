@@ -441,11 +441,23 @@ test.describe('agent panel — the reader’s scroll', () => {
   test('content arriving under a reader who scrolled up does not move them', async ({ page }) => {
     await mount(page)
     // A live turn, so the rows that arrive belong to it (a frame for no run is not a frame this
-    // host applies).
-    await scriptTurns(page, { chunks: [], hang: true })
+    // host applies). The turn has to *say* something first: there is no "run started" frame in
+    // the grammar, and a run is bound by the first content frame that names it. `chunks: []`
+    // gives the script an empty chunk list — `chunks ?? [text]` only falls back when the field is
+    // absent — so the turn published nothing, the engine's own run was never named, and every
+    // tool row below was refused as unattributable.
+    await scriptTurns(page, { chunks: ['Reading the note. '], hang: true })
     await page.locator('.agent-composer-field').fill('go')
     await page.locator('.agent-composer [data-action="send"]').click()
     await emitToolRow(page, 'seed', 40)
+
+    // The frames really landed: the reader's own row, the turn's opening line, and the forty.
+    // Without this the position assertions below pass for free — a transcript with nothing to
+    // scroll has `scrollTop` and `endOffset` both 0, and `0 === 0` is how this test passed its
+    // first check while every frame it emitted was being dropped.
+    await expect.poll(async () => rowCount(page)).toBe(42)
+    const full = await metrics(page)
+    expect(full.scrollHeight).toBeGreaterThan(full.clientHeight)
 
     // A session nobody has read opens at its end, which is where the reader starts.
     expect(await scrollTop(page)).toBe(await endOffset(page))
@@ -479,7 +491,9 @@ test.describe('agent panel — the reader’s scroll', () => {
 
   test('a session reopens where the reader left it', async ({ page }) => {
     await mount(page)
-    await scriptTurns(page, { chunks: [], hang: true })
+    // Named the same way as the test above, and for the same reason: a turn that publishes
+    // nothing leaves `lastRunId` null and its tool rows unattributable.
+    await scriptTurns(page, { chunks: ['Reading the note. '], hang: true })
     await page.locator('.agent-composer-field').fill('go')
     await page.locator('.agent-composer [data-action="send"]').click()
     await emitToolRow(page, 'pos', 40)
@@ -611,7 +625,18 @@ test.describe('agent panel — the composer', () => {
     // Nothing was sent: not a row, and — the assertion this file exists for — not a call.
     expect(await prompts(page)).toEqual([])
     await expect(page.locator('.agent-row-user')).toHaveCount(0)
-    await expect(field).toHaveValue('niha')
+    // The reader's half is neither sent nor cleared: the field still holds the pre-edit. The
+    // newline beside it is the *browser's* and not the page's, which is why it is allowed for
+    // here rather than asserted as text. A composing Enter belongs to the input method, so the
+    // page leaves the key alone — measured through this harness: the keydown arrives with
+    // `isComposing` true and stays `defaultPrevented: false`, and Chromium's own default for an
+    // Enter a textarea never handled is a newline. There is no input method in this harness to
+    // take that key (`Input.imeSetComposition` reproduces the composition state, not the IME),
+    // and in the real flow there is nothing for the page to suppress: the input method consumes
+    // the Enter and commits the candidate, which is what the `insertText` below stands in for.
+    //   What the page is answerable for — no send, no cleared draft — is asserted above and
+    // below, exactly.
+    await expect(field).toHaveValue(/^niha\n?$/)
 
     // The candidate commits, which ends the composition. That is not a send either.
     await cdp.send('Input.insertText', { text: '你好' })

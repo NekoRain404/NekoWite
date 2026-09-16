@@ -123,7 +123,7 @@ async function open(
   })
   await page.goto('/')
   await page.evaluate(
-    async ({ url, hostId, profileId, first, fails, session }) => {
+    async ({ url, hostId, profileId, first, fails, session, externalEntry }) => {
       const source = await (await fetch('/src/main.ts')).text()
       const vueUrl = source.match(/["']([^"']*\/deps\/vue\.js[^"']*)["']/)?.[1]
       if (vueUrl === undefined) throw new Error('the dev server serves no vue dependency')
@@ -149,17 +149,25 @@ async function open(
           if (state.addRefusal !== null) return state.addRefusal
           // What the backend does with an accepted registration: it becomes an *external*
           // definition, because the draft has no source to claim one with.
+          //
+          // `externalEntry` arrives as data rather than being built by calling the spec's own
+          // `external()` here. This callback runs *inside the page*, where the spec file's scope
+          // does not exist: `external(...)` resolved to the window's own legacy `External`
+          // object and threw `TypeError: external is not a function`, which the component caught
+          // and drew as a failed action. The row assertions below then never ran — the first of
+          // them passed for the wrong reason, and the rest could not have caught it.
           state.readout = {
             ...state.readout,
             entries: [
               ...state.readout.entries,
-              external({
+              {
+                ...externalEntry,
                 agentId: draft.agentId,
                 displayName: draft.displayName || draft.agentId,
                 program: draft.program,
                 args: draft.args,
                 adapterId: draft.adapterId,
-              }),
+              },
             ],
           }
           return null
@@ -210,6 +218,7 @@ async function open(
       first: initial,
       fails: options.readFails ?? false,
       session: options.sessionAgentId ?? null,
+      externalEntry: external(),
     },
   )
   await expect(
