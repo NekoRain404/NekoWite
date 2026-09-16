@@ -357,7 +357,11 @@ mod tests {
             Some("run-0")
         );
 
-        snapshots.record(&ended(0, "end_turn"));
+        // The contract's spelling, because that is what `runs.rs` publishes: the SDK's `end_turn`
+        // is normalised at the boundary and nothing downstream ever sees it. A fixture that fed
+        // this reader the engine's spelling would agree with `_ => Completed` today and would be
+        // the wrong frame for the first case that distinguishes the two endings.
+        snapshots.record(&ended(0, "end-turn"));
         let done = snapshots.snapshot("ses-1", &[]).unwrap();
         assert_eq!(done.state, SessionState::Completed);
         // The run id survives the ending: a window that mounts between two turns is told which

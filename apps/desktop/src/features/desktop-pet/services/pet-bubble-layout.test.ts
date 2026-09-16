@@ -23,8 +23,10 @@ import {
 import {
   PET_BUBBLE_LAYOUT_DEFAULTS,
   PET_TASK_URGENCY,
+  PET_BUBBLE_MAX_HEIGHT,
   PET_BUBBLE_MAX_WIDTH,
   PET_BUBBLE_PRESETS,
+  PET_BUBBLE_SCROLL_STYLE,
   buildPetTaskDisplay,
   filterPetTasks,
   groupPetTasks,
@@ -357,5 +359,16 @@ describe('the wrapping the acceptance names', () => {
     expect(Number.isInteger(PET_BUBBLE_MAX_WIDTH)).toBe(true)
     expect(PET_BUBBLE_MAX_WIDTH).toBeGreaterThan(120)
     expect(PET_BUBBLE_MAX_WIDTH).toBeLessThanOrEqual(320)
+  })
+
+  it('bounds the height in the window’s own units, and hands the scroll to the surface', () => {
+    // The second axis of 气泡不越屏, and the one D13 measured (six rows, 561px, clipped by a window
+    // sized for a sprite). A height in pixels would be a number this surface has no standing to
+    // choose — §7.1 gives the window and its size to the host — so the cap is a fraction of that
+    // window, with an absolute ceiling for a window taller than any bubble should be.
+    expect(PET_BUBBLE_MAX_HEIGHT).toContain('vh')
+    expect(PET_BUBBLE_MAX_HEIGHT).toContain('min(')
+    expect(PET_BUBBLE_SCROLL_STYLE.maxHeight).toBe(PET_BUBBLE_MAX_HEIGHT)
+    expect(PET_BUBBLE_SCROLL_STYLE.overflowY).toBe('auto')
   })
 })

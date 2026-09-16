@@ -8,7 +8,11 @@
 //!
 //! Every type here is D1's frozen shape (`pet-contracts/task.ts`, `pet-contracts/gateway.ts`),
 //! field for field and spelling for spelling: the frontend reads these through serde, and a name
-//! that drifted would be a field that silently reads as absent.
+//! that drifted would be a field that silently reads as absent. The one exception is
+//! [`SessionKey`], which the contract names as a key — `petKeyToken`'s own doc says the identity's
+//! session part, without the run, is a key in its own right — but has no interface for. It is
+//! defined here, next to the task key it is a projection of, because two modules key a stream by it
+//! and a second definition of it would be the same defect as a second [`PetTaskKey`].
 
 use serde::{Deserialize, Serialize};
 
@@ -46,6 +50,35 @@ impl PetTaskKey {
             && self.vault_id == incarnation.vault_id
             && self.runtime_epoch == epoch
     }
+}
+
+/// The part of a task's identity that its event stream belongs to: the five ACP fields, no run.
+///
+/// [`PetTaskKey`] with the run left out, and a key in its own right rather than a convenience: the
+/// sequence space belongs to a *session* (§6.3), so the counters that make a replay recognizable
+/// have to outlive a run boundary — a second run of one session is a new task and the same stream.
+/// `runtime_epoch` is in the five for the reason `agent_runtime/snapshot.rs` gives about its own
+/// counter: a restarted runtime starts a new stream, so a number from the previous incarnation
+/// must not be compared against it. Two agents sharing a session id are likewise two sessions,
+/// which is what keeps each one's frames out of the other's stream.
+///
+/// Defined once, here, because both readers key by it — the ledger files its stream marks under it
+/// (`../history.rs`) and the projection files its sequence log under it — and it used to be two
+/// types of this name, one in each file, field for field and spelling for spelling. That is the
+/// hazard [`PetTaskKey`]'s own doc names, in the place where it costs most: a mark filed under the
+/// wrong session is a replay read as news, or a frame read as a gap.
+///
+/// `Serialize` as well as `Deserialize`, because the ledger persists this key inside its rows: a
+/// mark is read back with the same spelling it was written with, and one definition of the key is
+/// what keeps "the same spelling" from being two agreements.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionKey {
+    pub agent_id: String,
+    pub profile_id: String,
+    pub runtime_epoch: String,
+    pub vault_id: String,
+    pub session_id: String,
 }
 
 /// One state from `PET_TASK_STATES`, kebab-case on the wire so the two are one list rather than two

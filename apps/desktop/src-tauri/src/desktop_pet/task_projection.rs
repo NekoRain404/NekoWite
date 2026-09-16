@@ -53,7 +53,7 @@ mod outcomes;
 mod vocabulary;
 
 pub use vocabulary::{
-    Disposition, FrameOrder, Ingest, PetTaskKey, PetTaskProjection, PetTaskState,
+    Disposition, FrameOrder, Ingest, PetTaskKey, PetTaskProjection, PetTaskState, SessionKey,
 };
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -76,20 +76,6 @@ pub fn system_clock() -> PetClock {
             .map(|since| since.as_millis() as u64)
             .unwrap_or(0)
     })
-}
-
-/// One engine session: §6.1's identity without the run.
-///
-/// Private, and not a second public key. A sequence number belongs to a *session* (§6.3), so the
-/// counters have to outlive a run boundary — and they have to be separated by the whole identity,
-/// because two engines numbering their own frames from one would otherwise look like one stream.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(super) struct SessionKey {
-    agent_id: String,
-    profile_id: String,
-    runtime_epoch: String,
-    vault_id: String,
-    session_id: String,
 }
 
 /// The facts that name one runtime *instance*: §6.1's identity without its epoch.

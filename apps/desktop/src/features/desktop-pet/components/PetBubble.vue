@@ -15,11 +15,14 @@
  * (§6.3's six seconds are the composition's, and a bubble that armed its own timer would be the
  * second reminder about the same turn).
  *
- * Two smaller things it owns rather than passing on:
+ * Three smaller things it owns rather than passing on:
  *
- *  - **The wrapping rules on the line.** §7.2's acceptance is that a bubble does not leave the
- *    screen, and a Chinese idle sentence in a 280px surface is where that is decided. The same
- *    style object the list gives its rows is applied here, for the same reason.
+ *  - **The wrapping rules on the line.** §12's acceptance is that a bubble does not leave the
+ *    screen (气泡不越屏), and a Chinese idle sentence in a 280px surface is where that is decided.
+ *    The same style object the list gives its rows is applied here, for the same reason.
+ *  - **The height the line may reach.** 气泡不越屏 has a second axis: D13 measured the list at 561px
+ *    in a sprite-sized window, and the line is capped by the same rule (`lineStyle`), because a
+ *    caller's sentence is not bounded by the width alone.
  *  - **The right-click.** The pet window is frameless, so the browser's context menu would be a
  *    second menu for the same surface. The default is prevented and the pointer position is handed
  *    to the composition, which owns where the menu goes.
@@ -29,6 +32,7 @@ import type { PetTaskProjection, PetTaskState } from '../../../platform/gateways
 import {
   PET_BUBBLE_MAX_WIDTH,
   PET_BUBBLE_MESSAGE_STYLE,
+  PET_BUBBLE_SCROLL_STYLE,
   filterPetTasks,
   resolvePetBubbleLayout,
   type PetBubbleLayoutInput,
@@ -93,6 +97,17 @@ function onContextMenu(event: MouseEvent): void {
 }
 
 const surfaceStyle = { maxWidth: `${PET_BUBBLE_MAX_WIDTH}px`, boxSizing: 'border-box' } as const
+
+/**
+ * The line's own box: the wrapping rules, and the same height cap the rows get.
+ *
+ * The bubble is bounded whichever shape it is showing, and the cap sits on the element that grows
+ * — here the sentence, in list mode the rows inside `PetTaskList` — so the two never nest two
+ * scrollbars into one surface. A line is short by nature (it is one sentence at 280px), but "by
+ * nature" is not a bound: a caller's words are its own, and a bubble that could be 561px tall as a
+ * list and unbounded as a line would be the same defect with a different trigger.
+ */
+const lineStyle = { ...PET_BUBBLE_MESSAGE_STYLE, ...PET_BUBBLE_SCROLL_STYLE } as const
 </script>
 
 <template>
@@ -118,7 +133,7 @@ const surfaceStyle = { maxWidth: `${PET_BUBBLE_MAX_WIDTH}px`, boxSizing: 'border
     <p
       v-else
       class="pet-bubble__line"
-      :style="PET_BUBBLE_MESSAGE_STYLE"
+      :style="lineStyle"
     >
       {{ line }}
     </p>

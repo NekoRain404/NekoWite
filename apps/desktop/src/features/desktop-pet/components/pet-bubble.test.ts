@@ -17,7 +17,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, type App as VueApp } from 'vue'
 import type { PetTaskKey, PetTaskProjection, PetTaskState } from '../../../platform/gateways/pet-contracts'
-import { PET_BUBBLE_MAX_WIDTH } from '../services/pet-bubble-layout'
+import { PET_BUBBLE_MAX_HEIGHT, PET_BUBBLE_MAX_WIDTH } from '../services/pet-bubble-layout'
 import PetBubble from './PetBubble.vue'
 
 const NOW = 1_700_000_000_000
@@ -168,6 +168,22 @@ describe('long text in a small surface', () => {
 
     expect(bubble()?.style.maxWidth).toBe(`${PET_BUBBLE_MAX_WIDTH}px`)
     expect(bubble()?.style.boxSizing).toBe('border-box')
+  })
+
+  it('bounds the height too, and scrolls the line rather than leaving the window', () => {
+    // 气泡不越屏 has two axes, and the one D13 measured was height: six long rows came to 561px in a
+    // sprite-sized window. The line is the bubble's other shape and gets the same bound — the text
+    // is whole, and what does not fit is below the fold of the box rather than clipped by the
+    // window (where it could not even be reached by the right-click that opens the menu).
+    const longLine = CHINESE.repeat(4)
+    mount({ line: longLine })
+
+    const line = document.querySelector<HTMLElement>('.pet-bubble__line')
+    expect(line?.textContent).toBe(longLine)
+    expect(line?.style.maxHeight).toBe(PET_BUBBLE_MAX_HEIGHT)
+    expect(line?.style.overflowY).toBe('auto')
+    // The wrapping rules are still there — the cap is an addition, not a replacement.
+    expect(line?.style.overflowWrap).toBe('anywhere')
   })
 })
 

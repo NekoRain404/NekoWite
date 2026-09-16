@@ -23,19 +23,20 @@
 //!   eviction comes back in {@link Evicted} with `was_unread` set. A bound that dropped an unseen
 //!   notice without saying so would be the 漏提示 this task is graded against.
 //!
-//! The task vocabulary is [`super::task_projection`]'s: `PetTaskKey` and `PetTaskState` are D1's
-//! frozen shapes (`pet-contracts/task.ts`), defined once in that module's `vocabulary` and imported
-//! here. They used to be defined in both files, field for field and spelling for spelling, and two
-//! types with one name and one shape diverge on the day someone edits one of them — the bug that
-//! produces is an identity bug, which is the class this whole module exists to make impossible.
+//! The task vocabulary is [`super::task_projection`]'s: `PetTaskKey`, `PetTaskState` and the
+//! [`SessionKey`] an event stream's marks are filed under are defined once in that module's
+//! `vocabulary` and imported here. All three used to be defined in both files, field for field and
+//! spelling for spelling, and two types with one name and one shape diverge on the day someone
+//! edits one of them — the bug that produces is an identity bug, which is the class this whole
+//! module exists to make impossible.
 //!
-//! What stays here is what the ledger *adds* to them: the session key an event stream's marks are
-//! filed under, the token both keys are encoded with, and the row that records a state — plus the
-//! two methods the ledger is the reason for ([`PetTaskKey::session`], [`PetTaskKey::token`]).
+//! What stays here is what the ledger *adds* to them: the token both keys are encoded with, the row
+//! that records a state — plus the two methods the ledger is the reason for
+//! ([`PetTaskKey::session`], [`SessionKey::token`]).
 
 use serde::{Deserialize, Serialize};
 
-use super::task_projection::{PetTaskKey, PetTaskState};
+use super::task_projection::{PetTaskKey, PetTaskState, SessionKey};
 
 /// Every state the pet can show, in the contract's order (`pet-contracts/task.ts:69-84`).
 ///
@@ -68,22 +69,6 @@ pub const DEFAULT_RECORD_CAPACITY: usize = 200;
 
 /// How many sessions' stream positions are kept. A mark is a line of defence, not the ledger.
 pub const DEFAULT_MARK_CAPACITY: usize = 64;
-
-/// The part of a task's identity that its event stream belongs to: the five ACP fields, no run.
-///
-/// The sequence space is per session (§6.3), and a session is these five fields — which is why two
-/// agents sharing a session id are two sessions rather than one. `runtimeEpoch` is in here for the
-/// reason `agent_runtime/snapshot.rs` gives about its own counter: a restarted runtime starts a new
-/// stream, so a mark from the previous incarnation must not be compared against it.
-#[derive(Clone, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionKey {
-    pub agent_id: String,
-    pub profile_id: String,
-    pub runtime_epoch: String,
-    pub vault_id: String,
-    pub session_id: String,
-}
 
 impl PetTaskKey {
     /// The session this run belongs to, and therefore the stream its sequence is read from.

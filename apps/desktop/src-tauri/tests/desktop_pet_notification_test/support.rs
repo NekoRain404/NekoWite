@@ -14,12 +14,12 @@ use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use crate::desktop_pet::history::{SessionKey, TaskHistory};
+use crate::desktop_pet::history::TaskHistory;
 use crate::desktop_pet::notification_delivery::{DeliveryFailure, NotificationDelivery, PetNotice};
 use crate::desktop_pet::notification_policy::{
     NotificationOutcome, NotificationPolicy, NotificationPreferences, SilenceReason, TaskFact,
 };
-use crate::desktop_pet::task_projection::{PetTaskKey, PetTaskState};
+use crate::desktop_pet::task_projection::{PetTaskKey, PetTaskState, SessionKey};
 
 pub const AGENT: &str = "opencode";
 pub const PROFILE: &str = "default";

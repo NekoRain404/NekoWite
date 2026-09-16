@@ -41,13 +41,13 @@ mod desktop_pet {
     pub mod history;
     pub mod notification_delivery;
     pub mod notification_policy;
-    // `history` reads `PetTaskKey` and `PetTaskState` from here — one definition of each rather
-    // than a copy in every file that indexes a task — so this target compiles the module too,
-    // exactly as the library will.
+    // `history` reads `PetTaskKey`, `PetTaskState` and the `SessionKey` its marks are filed under
+    // from here — one definition of each rather than a copy in every file that indexes a task — so
+    // this target compiles the module too, exactly as the library will.
     //
     // The `allow` is this target's and not the module's: a projection is not what the ledger's
     // tests exercise, so every item in that file is unreachable *here* and the dead-code lint would
-    // name all of them. What it must not be is a `pub use` of the two types or a second copy of
+    // name all of them. What it must not be is a `pub use` of the three types or a second copy of
     // them under a private path: the library reads them through `task_projection`, and a test that
     // reached a different door would be testing a shape the app does not build.
     #[allow(dead_code)]

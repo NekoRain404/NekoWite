@@ -414,3 +414,46 @@ export interface PetRowField {
 
 /** The bubble's widest row. Narrower than the 300px window upstream's popover used (popover.ts 170). */
 export const PET_BUBBLE_MAX_WIDTH = 280
+
+/**
+ * How tall a surface may get before it scrolls: an absolute ceiling, and a fraction of the window.
+ *
+ * D13 measured what this answers: six rows of long Chinese came to **561px** in the 280px width the
+ * surface caps itself at, and the pet window — §7.1 gives that window to the character, not to the
+ * bubble — simply clipped them. A number in pixels cannot be right here, because the window the
+ * bubble lands in is the host's and its height follows the character's size setting (D13 swept 80,
+ * 160 and 320): `40vh` is the term that tracks the window the bubble is actually in, and the 240px
+ * ceiling is what keeps a tall window from turning a bubble into a panel. At the window the host
+ * builds today (260x320, `window_host::CHARACTER_WINDOW_SIZE`) the box is 128px, and 128 + the 180px
+ * character is 308 of its 320 — the surface's own 12px of padding is what takes that past the
+ * window, and the arithmetic is written down because a host sizing a window to hold both surfaces
+ * is exactly the caller this bound has to agree with.
+ *
+ * **A bound, and not a lower row count.** The list already has a count cap, the user's own
+ * (`maxTasks`), and it reports what that cap left out; a second cap derived from height would be a
+ * second answer to "how many rows are there" that could disagree with the first — the shape the
+ * compact fold refuses by opening only as far as the first cap. Height cannot be turned into a row
+ * count without measuring layout, which this surface deliberately does not do (§7.3: no per-frame
+ * layout reads) and a DOM test cannot do either. Scrolling keeps every row §6.3 requires the list
+ * to keep showing — in the DOM, whole, and reachable — and the ranking decides which of them is
+ * visible first: a task that needs the user is the top row, so it is never the one below the fold.
+ */
+export const PET_BUBBLE_MAX_HEIGHT = 'min(240px, 40vh)'
+
+/**
+ * The box that scrolls when what it holds does not fit: the height cap, and the scroll that makes
+ * the rest of it reachable.
+ *
+ * It is applied to the element that *grows* — the rows of a list, the sentence of a one-line
+ * bubble — and not to the surface around it, so that the parts which say what is on the surface
+ * stay outside the fold: the count of rows the cap left out, the pager and the compact fold are all
+ * under this box, and a report that had to be scrolled to would be a weaker report.
+ *
+ * In the layout service rather than in the SFC styles, for the reason {@link PET_BUBBLE_MESSAGE_STYLE}
+ * gives: the test environment injects no SFC styles, and a bound that only a stylesheet can see is
+ * a bound no test holds on to.
+ */
+export const PET_BUBBLE_SCROLL_STYLE: CSSProperties = {
+  maxHeight: PET_BUBBLE_MAX_HEIGHT,
+  overflowY: 'auto',
+}
