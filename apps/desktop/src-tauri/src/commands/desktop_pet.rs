@@ -17,13 +17,21 @@
 //!   *here* and in `window_host::PetWindowHost::authorized`, and the capability file is the
 //!   second, independent layer rather than the only one.
 //!
-//! **What is not here, and why it refuses loudly instead.** D1's `PetGateway` also reads and
-//! writes the settings domains and lists the tasks; neither has a backend yet (`settings.rs` and
-//! `task_projection.rs` are their own tasks, D6's Rust half and D4). No command is invented for
-//! them, so a window calling one is answered by Tauri itself — "command desktop_pet_read_settings
-//! not found" — which names the call that is missing and needs no error code invented here to
-//! say so. The seam is already on the front end (`tauri-pet.ts`), so the day those land only this
-//! side changes.
+//! **The settings half and the care read are here; the task list is the one call that refuses
+//! loudly instead.** D1's `PetGateway` reads and writes the settings domains (§5.3), lists the
+//! tasks and reads the care ledger, and the settings and care calls have their backend: the two
+//! settings commands are the surface a window reaches `desktop_pet/settings.rs` through, and
+//! [`desktop_pet_care_read`] is the one read-only view of what §8's ledger settled.
+//! `desktop_pet_tasks` — the third — has no backend yet (`task_projection.rs` is D4's and no state
+//! in this process holds its projection), so no command is invented for it, and a window calling it
+//! is answered by Tauri itself — "command desktop_pet_tasks not found" — which names the call that
+//! is missing and needs no error code invented here to say so. The seam is already on the front end
+//! (`tauri-pet.ts`), so the day it lands only this side changes.
+//!
+//! Registering a handler is `lib.rs`'s line and not this file's, so the commands written here are
+//! reported to whoever owns the handler list rather than added to it from here. (Two of them are
+//! still waiting there: `desktop_pet_read_settings` and `desktop_pet_update_settings` landed with
+//! the store and are not yet in the list.)
 //!
 //! **Wording.** The refusals below are sentences rather than codes for the reason
 //! `commands/agent.rs` gives: they reach the user with no form and no mapper in between.
@@ -42,8 +50,9 @@
 use serde::Serialize;
 
 use crate::desktop_pet::{
-    CallerWindow, CapabilityReport, Closed, HostRefusal, LinuxEnvironment, PetInstance,
-    PetWindowHost, TeardownReport, WindowAction,
+    CallerWindow, CapabilityReport, CareSummary, Closed, HostRefusal, LinuxEnvironment,
+    PetInstance, PetSettingsDomain, PetSettingsLoad, PetSettingsRecord, PetSettingsStore,
+    PetSettingsUpdate, PetSettingsWrite, PetWindowHost, TeardownReport, WindowAction,
 };
 use crate::state::DesktopPetState;
 
@@ -99,11 +108,14 @@ pub const SETTINGS_PAGES: [&str; 7] = [
 /// a temporary hide indistinguishable from a disable, and the user's way back would be the wrong
 /// one.
 ///
-/// `enabled` is answered from the host's own state and not from the settings record, because
-/// that record has no backend on this side yet: a character window exists only because the
-/// enable path opened one, and {@link desktop_pet_disable} is what takes them away. The day
-/// `settings.rs` lands, this is where its `general.enabled` joins, and the two must agree — a
-/// window the settings say is off is a window to close, not a state to report.
+/// `enabled` is answered from the host's own state — a character window exists only because the
+/// enable path opened one, and [`desktop_pet_disable`] is what takes them away — and the settings
+/// *are* that enable path: [`desktop_pet_update_settings`] turns an applied `general.enabled` into
+/// windows through [`apply_feature_switch`], so the two agree because one is the cause of the
+/// other and not because they are checked against each other. The direction that is not enforced
+/// is the other one: a direct [`desktop_pet_open`] still opens a window while the switch is off,
+/// because refusing it would need a refusal arm `HostRefusal` does not have. Reported rather than
+/// papered over.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PetFeatureState {
@@ -129,6 +141,29 @@ impl PetFeatureState {
 #[serde(rename_all = "camelCase")]
 struct SettingsRequest {
     page: String,
+}
+
+/// What the care ledger settled, or the fact that it settled nothing (§8).
+///
+/// Two arms, and the second one is the whole design. A ledger nothing has settled into has totals
+/// — `xp: 0`, `meals: 0`, no streak, no day — and handing those over would have the surface draw
+/// level 0 and an empty bar for a user who has completed five hundred runs. That is §8's
+/// 「token 未知不是 0」 one level up: `meals: 0` would read *the absence of a record* as *a record
+/// of absence*, when the truth is that nothing has been recorded at all. So the totals are not
+/// sent unless something settled, and the caller is told which of the two it is holding.
+///
+/// The arms this build cannot produce are deliberately not declared. A `read-only` arm — §10.2's
+/// newer-record rule — has no producer while the ledger is the process's own: `care_ledger` may
+/// not name a file (its `local.rs` test asserts that), so no record from another build can be
+/// loaded for one. It arrives with whatever store gives the ledger a disk, and its absence here
+/// is a statement about the build rather than a forgotten case.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum PetCareRead {
+    /// Something has settled: the totals, and nothing about how they got that way.
+    Current { summary: CareSummary },
+    /// Nothing has settled into the ledger, so there is nothing to draw.
+    Empty,
 }
 
 /// The window state, or the sentence that says it could not be read.
@@ -289,6 +324,171 @@ pub fn desktop_pet_capabilities(
         &LinuxEnvironment::observe(),
         &observations,
     ))
+}
+
+/// What the ledger settled, for the care page that draws it (§8).
+///
+/// The read is the *only* way anything outside the ledger's own settlement path reaches these
+/// totals: `CareLedger::summary` returns facts, never a level, a stage or a progress bar — those
+/// are `pet-care-rules.ts`'s, computed where they are drawn, so there is one level curve in the
+/// build and not two.
+///
+/// Nothing here names a window, a caller or a character. The ledger is the process's own progress
+/// (§6.3's one-ledger rule), so every window that asks gets the same answer and there is nothing
+/// to address, which is why this command takes no parameter at all — the only command in this
+/// file whose request body is nothing.
+#[tauri::command]
+pub fn desktop_pet_care_read(
+    state: tauri::State<'_, DesktopPetState>,
+) -> Result<PetCareRead, String> {
+    let ledger = state
+        .ledger
+        .lock()
+        .map_err(|_| "the pet's care ledger was poisoned by a panic".to_string())?;
+    // `revision` moves when anything is decided *or* when an import lands, so zero means no
+    // decision and no import: the one state in which this ledger holds no record at all. The
+    // check is here rather than in the ledger because what to draw from a summary is the
+    // surface's question — the ledger's own answer (`summary()`) is what it settled, which for an
+    // empty ledger is accurately nothing.
+    if ledger.revision() == 0 {
+        return Ok(PetCareRead::Empty);
+    }
+    Ok(PetCareRead::Current {
+        summary: ledger.summary(),
+    })
+}
+
+/// One settings domain, as a record, a default, or the reason this build will not read it (§5.3).
+///
+/// The four arms are four things the caller does with the answer — `defaults` and `migrated` may
+/// be written back, `current` need not be, and `read-only` must not be — so nothing here flattens
+/// them into a record with a flag. A store that cannot be read is not an error either: a missing
+/// file, an unreadable one and a record from a newer build are three of the four arms, because a
+/// settings page has something to say about each and a rejected promise would replace that with
+/// nothing. What *is* refused is a domain that is not one of the seven: no page sends one, and a
+/// refusal naming the seven is worth more than a `defaults` answer for a typo.
+#[tauri::command]
+pub fn desktop_pet_read_settings<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    domain: String,
+) -> Result<PetSettingsLoad, String> {
+    let domain = PetSettingsDomain::parse(&domain).ok_or_else(|| {
+        format!(
+            "{domain} is not one of the pet's settings domains: {}",
+            PetSettingsDomain::ids().join(", ")
+        )
+    })?;
+    Ok(settings_store(&app)?.read(domain))
+}
+
+/// One domain's write, applied or refused at the revision the caller read (§5.3).
+///
+/// The store decides everything about the record; this adds the one thing a store cannot know,
+/// which is that an applied `general` write *is* the feature switch (§5.1): the windows follow it,
+/// and the state a pet window listens for is published on the channel the window commands publish
+/// on. That is what gives [`desktop_pet_open`] its caller — the enable path is a settings write,
+/// and there is no other one.
+///
+/// A submission this build cannot accept comes back as `refused` rather than as a rejection, with
+/// the reason as a code list: the page has to keep the user's draft on screen and say what was
+/// wrong with it (§5.3's 「保存失败展示错误并保持可重试状态，不伪装成功」). A *domain* the contract
+/// does not have never gets that far — deserializing the request refuses it while naming the
+/// variants it would have accepted.
+#[tauri::command]
+pub fn desktop_pet_update_settings<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, DesktopPetState>,
+    write: PetSettingsWrite,
+) -> Result<PetSettingsUpdate, String> {
+    let store = settings_store(&app)?;
+    let outcome = store.apply(&write);
+    if let PetSettingsUpdate::Applied { record } = &outcome {
+        // A poisoned window lock does not turn a saved setting into a failed one: the write did
+        // happen, and this call's answer is what the caller asked for. What could not be applied
+        // is the window, which is logged here and stated in the state the channel then carries.
+        let feature = host(&state)
+            .map(|mut host| apply_feature_switch(&mut host, record, &chosen_character(&store)))
+            .unwrap_or_else(|detail| {
+                eprintln!("the pet's windows did not follow a saved setting: {detail}");
+                None
+            });
+        if let Some(feature) = feature {
+            publish_feature(&app, feature);
+        }
+    }
+    Ok(outcome)
+}
+
+/// The identity the pet's window is opened under while the character domain names none.
+///
+/// Not a character id and not a stand-in for one: `character.characterId` is `null` until a
+/// character is chosen, and nothing can choose one until D8's library commands land. The window is
+/// opened anyway — `DesktopPetRoot.vue` renders exactly this state ("No character is selected.") —
+/// because a master switch whose only effect is a saved file is the inert control the ledger
+/// forbids (「不显示可点击但无效果的控件」). The id is the host's own key and no window ever learns
+/// it, so all it has to be is stable and non-blank, which is what keeps a second enable from
+/// opening a second window.
+pub const UNSELECTED_CHARACTER: &str = "unselected";
+
+/// The feature switch, as the two things it does to the windows: §5.1's 启用 and §4's rollback.
+///
+/// `general.enabled` is a settings *value*, so the windows follow the write that set it rather than
+/// a watcher on a file — and an applied `general` write is the one moment the answer is known to
+/// this process. `true` opens the character window; `false` closes every window with
+/// [`PetWindowHost::disable`], which is the rollback §4 defines as "the switch, which deletes
+/// nothing". A write to any other domain touches no window and answers `None`.
+///
+/// The two refusals are logged rather than returned, and that is a decision rather than a shrug:
+/// the *setting* was saved, and an answer of "refused" would tell the user their preference did not
+/// take when what failed was a compositor. What happened is still the user's to see — the state
+/// published afterwards says "no window" — and [`desktop_pet_open`] is the call that hands a page
+/// the refusal itself, for a page that wants the sentence.
+pub fn apply_feature_switch(
+    host: &mut PetWindowHost,
+    record: &PetSettingsRecord,
+    character: &str,
+) -> Option<PetFeatureState> {
+    if record.domain != PetSettingsDomain::General {
+        return None;
+    }
+    let enabled = record.value("enabled")?.as_bool()?;
+    if enabled {
+        if let Err(refusal) = host.open(character) {
+            eprintln!("the pet's window could not be opened for {character}: {refusal:?}");
+        }
+    } else {
+        for refusal in host.disable().failed {
+            eprintln!("a pet window could not be closed: {refusal:?}");
+        }
+    }
+    Some(PetFeatureState::of(host))
+}
+
+/// The pet's settings, resolved for one call.
+///
+/// Per call and not managed state: `DesktopPetState` holds the windows and the capability
+/// evidence, and a store is a path with nothing to keep in memory — so what would be installed in
+/// it is a copy of an answer, and §5.3's revision rule is the one thing that cannot survive two
+/// answers to "what is stored". `storage::key_store::data_dir` resolves the same directory for the
+/// rest of the app and is not called here: it is typed for the real runtime, while these commands
+/// are generic over `R` so that a test can drive them the way `tests/desktop_pet_ipc_test` drives
+/// the rest of this surface.
+fn settings_store<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<PetSettingsStore, String> {
+    use tauri::Manager;
+    let data = app.path().app_data_dir().map_err(|error| {
+        format!("the pet's settings have no data directory to live in: {error}")
+    })?;
+    PetSettingsStore::new(data)
+}
+
+/// The character the pet's window is opened for: the one the settings name, or
+/// [`UNSELECTED_CHARACTER`] while they name none.
+fn chosen_character(store: &PetSettingsStore) -> String {
+    store
+        .chosen_character()
+        .unwrap_or_else(|| UNSELECTED_CHARACTER.to_string())
 }
 
 /// Bring the main window up on one of §5.1's pet pages.

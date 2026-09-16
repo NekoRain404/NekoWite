@@ -45,6 +45,7 @@ pub mod linux_capabilities;
 pub mod notification_delivery;
 pub mod notification_policy;
 pub mod resources;
+pub mod settings;
 pub mod task_projection;
 pub mod window_host;
 
@@ -59,6 +60,11 @@ pub use notification_policy::{
     NotificationPreferences, TaskFact,
 };
 pub use resources::CharacterLibrary;
+pub use settings::{
+    decide_write, read_domain, PetSettingsDomain, PetSettingsLoad, PetSettingsRecord,
+    PetSettingsStore, PetSettingsUpdate, PetSettingsWrite, PET_SETTINGS_INITIAL_REVISION,
+    PET_SETTINGS_SCHEMA_VERSION,
+};
 pub use task_projection::{system_clock, PetClock, PetTaskKey, PetTaskProjection, TaskProjection};
 pub use window_host::{
     CallerWindow, Closed, HostRefusal, PetInstance, PetSurfaces, PetWindowHost, PetWindowLabel,

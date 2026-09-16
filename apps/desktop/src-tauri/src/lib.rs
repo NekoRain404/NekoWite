@@ -242,6 +242,14 @@ pub fn run() {
             commands::agent::agent_session_snapshot,
             commands::agent::agent_permission_answer,
             commands::agent::agent_cancel_run,
+            // The registry (T13a's page): which engines exist, and the two changes a window may
+            // make — add a local executable, switch a registration on or off. Registered here for
+            // the reason above; its state is the same `AgentRuntimeState` the session commands use,
+            // because the definitions a start reads and the definitions a settings page edits must
+            // be one registry.
+            commands::agent_registry::agent_registry_read,
+            commands::agent_registry::agent_registry_add,
+            commands::agent_registry::agent_registry_set_enabled,
             // The configuration surface (T12): the profile a settings page manages, and the
             // documents it edits. Registered here for the reason above — this file is the one
             // place the handler list is written — and its state is managed in `setup`, where the
@@ -255,10 +263,19 @@ pub fn run() {
             // `DesktopPetState`, whose host is the only thing that mints a window label — and
             // the two that act on a window take it as the caller Tauri reports rather than as
             // an argument, which is where §7.1's 「前端不能自选任意 label」 is enforced. The
-            // settings and task halves of D1's `PetGateway` have no command here on purpose:
-            // their backends (`settings.rs`, `task_projection.rs`) are their own tasks, and a
-            // call to one is answered by Tauri's own "command not found" rather than by a stub
-            // that would look like a host with nothing to say.
+            // settings half of D1's `PetGateway` is served by the two commands below, and
+            // `desktop_pet_care_read` answers from the ledger, which is not a file but the
+            // process's own state — so that read is an answer this build can give in full.
+            //
+            // The **task** half still has no command, and that is deliberate rather than
+            // pending: `task_projection.rs` has no managed state to answer from, so a call
+            // is refused by Tauri's own "command not found" rather than by a stub that would
+            // look like a host with nothing to say. `desktop_pet_tasks` is the one call a
+            // window can still make that nothing answers.
+            //
+            // `desktop_pet_update_settings` is the pet's switch: writing `general.enabled`
+            // is what opens and closes the window, which is why `desktop_pet_open` — which
+            // had no caller until this landed — is only ever reached through it.
             commands::desktop_pet::desktop_pet_state,
             commands::desktop_pet::desktop_pet_windows,
             commands::desktop_pet::desktop_pet_open,
@@ -267,6 +284,9 @@ pub fn run() {
             commands::desktop_pet::desktop_pet_close_own,
             commands::desktop_pet::desktop_pet_set_click_through,
             commands::desktop_pet::desktop_pet_capabilities,
+            commands::desktop_pet::desktop_pet_care_read,
+            commands::desktop_pet::desktop_pet_read_settings,
+            commands::desktop_pet::desktop_pet_update_settings,
             commands::desktop_pet::desktop_pet_open_settings,
         ])
         .run(context)

@@ -1,0 +1,162 @@
+//! The fixtures the behaviour files share: a store in a temporary directory, a window system that
+//! is not one, and the two readers that pull the TypeScript schema off disk.
+//!
+//! The window system is here rather than in `switch.rs` alone because a store test needs it too:
+//! what the enable path does to a window is one of the things a settings record decides, and
+//! asserting it against a fake is the only way to see it without a compositor.
+
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+use nekowite_lib::desktop_pet::window_host::{
+    PetSurfaces, PetWindowHost, PetWindowLabel, Placement, WindowStyle, WorkArea,
+};
+use nekowite_lib::desktop_pet::PetSettingsStore;
+
+/// A store root nothing else in the process is using.
+///
+/// Removed first and named after the test, so a leftover from a killed run cannot make the next one
+/// pass — the convention `desktop_pet_resources_test/support.rs` established for the same reason.
+pub fn store(label: &str) -> (PetSettingsStore, PathBuf) {
+    let data =
+        std::env::temp_dir().join(format!("nkw-pet-settings-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&data);
+    std::fs::create_dir_all(&data).expect("a temporary data directory");
+    let store = PetSettingsStore::new(&data).expect("an absolute data directory is in scope");
+    (store, data)
+}
+
+/// The TypeScript file the values and record rules are a mirror of.
+pub fn pet_contract_source(relative: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(relative);
+    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{path:?}: {error}"))
+}
+
+/// The source of `pet-contracts/config.ts`, which declares the schema this side mirrors.
+pub fn config_contract() -> String {
+    pet_contract_source("../src/platform/gateways/pet-contracts/config.ts")
+}
+
+/// The source of `pet-settings-values.ts`, which declares the problem vocabulary.
+pub fn values_contract() -> String {
+    pet_contract_source("../src/features/desktop-pet-settings/services/pet-settings-values.ts")
+}
+
+/// The text between two markers, or a panic naming the marker that moved.
+///
+/// A marker that is not found is a failure and not an empty slice: a test that silently compared
+/// nothing with nothing would pass on the day the other side renamed its declaration, which is the
+/// one day it has something to say.
+pub fn slice_between<'a>(text: &'a str, from: &str, to: &str) -> &'a str {
+    let start = text
+        .find(from)
+        .unwrap_or_else(|| panic!("{from:?} is not in the file"))
+        + from.len();
+    let rest = &text[start..];
+    let end = rest
+        .find(to)
+        .unwrap_or_else(|| panic!("{to:?} is not after {from:?}"));
+    &rest[..end]
+}
+
+/// Every `'…'`-quoted string in a slice, as written.
+pub fn quoted(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut rest = text;
+    while let Some(open) = rest.find('\'') {
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('\'') else { break };
+        found.push(after[..close].to_string());
+        rest = &after[close + 1..];
+    }
+    found
+}
+
+/// Whether a line is a comment, so a block of them can be dropped before it is parsed.
+pub fn is_comment(line: &str) -> bool {
+    line.trim_start().starts_with("//")
+}
+
+/// A window system that records what it was asked to do and refuses nothing.
+///
+/// `window_host.rs` takes its windowing through a port, so the enable path's effect on the windows
+/// can be asserted without a compositor. This is that port, backed by lists; it is the smallest
+/// shape the host needs, and `desktop_pet_ipc_test/support.rs` has the fuller one D12's command
+/// tests use.
+#[derive(Clone, Default)]
+pub struct FakeSurfaces {
+    state: Arc<Mutex<SurfaceState>>,
+}
+
+#[derive(Default)]
+pub struct SurfaceState {
+    /// Every window opened, as (label, page).
+    pub opened: Vec<(String, String)>,
+    pub live: Vec<String>,
+    pub closed: Vec<String>,
+}
+
+impl FakeSurfaces {
+    /// A fake with a screen, so the cascade has something to clamp into.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn state(&self) -> std::sync::MutexGuard<'_, SurfaceState> {
+        self.state.lock().expect("the fake's lock is never held across a panic")
+    }
+
+    pub fn opened(&self) -> Vec<(String, String)> {
+        self.state().opened.clone()
+    }
+
+    pub fn live(&self) -> Vec<String> {
+        self.state().live.clone()
+    }
+}
+
+impl PetSurfaces for FakeSurfaces {
+    fn open(
+        &mut self,
+        label: &PetWindowLabel,
+        page: &str,
+        _at: Placement,
+        _style: WindowStyle,
+        _visible: bool,
+    ) -> Result<(), String> {
+        let mut state = self.state();
+        state
+            .opened
+            .push((label.as_str().to_string(), page.to_string()));
+        state.live.push(label.as_str().to_string());
+        Ok(())
+    }
+
+    fn close(&mut self, label: &PetWindowLabel) -> Result<(), String> {
+        let mut state = self.state();
+        state.closed.push(label.as_str().to_string());
+        state.live.retain(|live| live != label.as_str());
+        Ok(())
+    }
+
+    fn set_visible(&mut self, _label: &PetWindowLabel, _visible: bool) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn set_click_through(&mut self, _label: &PetWindowLabel, _ignore: bool) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// `None`, the way §7.2 wants it: a monitor that cannot be read is not replaced by a size
+    /// somebody guessed. The host clamps nothing into a work area it does not have, which is the
+    /// arm the tests below exercise.
+    fn work_area(&self) -> Option<WorkArea> {
+        None
+    }
+}
+
+/// A host over a fake, and the fake to ask afterwards.
+pub fn host() -> (PetWindowHost, FakeSurfaces) {
+    let surfaces = FakeSurfaces::new();
+    (PetWindowHost::new(Box::new(surfaces.clone())), surfaces)
+}
