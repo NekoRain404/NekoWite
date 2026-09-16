@@ -124,3 +124,52 @@
 `P0 ✅ → T1（契约与内存适配）→ T2/T3（进程与协议、权限与 IPC）→ T4（注册与真实适配）→ …`
 
 T2 的验收清单里应加入本报告 §2.4：**进程启动环境必须带 CA 包，且有一例针对「证书不受信任」的失败路径测试**。
+
+---
+
+## 6. 补充实测（2026-09-16 加测，探针 4）
+
+探针 3 的提示词只要求回一个词，因此没有工具执行、也就没有授权帧，§4 把「权限请求」列为未验证。本节是为此加测的一轮：提示词要求**读取工作目录下的 `note.md`**，工具必然被调用。探针：`.tmp-p0/acp-permission-probe.mjs`。
+
+### 6.1 工具事件确实存在，且是两类新的 `sessionUpdate`
+
+线上抓到的完整序列（原文结构，此处只省去重复字段）：
+
+```text
+sessionUpdate: "tool_call"        → status "pending",  toolCallId "call_0630…", kind "read",
+                                    title "read", locations [], rawInput {}
+sessionUpdate: "tool_call_update" → status "in_progress", locations [{path: "…/note.md"}],
+                                    rawInput {filePath: "…/note.md"}
+sessionUpdate: "tool_call_update" → status "completed", title ".tmp-p0/workspace/note.md",
+                                    content [{type:"content", content:{type:"text", text:"# P0 probe workspace"}}],
+                                    rawOutput {output: "<path>…</path>\n<type>file</type>…", metadata:{…}}
+```
+
+**对契约的要求：`tool_call` 与 `tool_call_update` 是必须归一的真实事件类型**，且工具状态是有序的 `pending → in_progress → completed`。`toolCallId` 是跨这三帧关联同一工具的键。§6.2 的 `AgentEventKind` 里 `tool-update` 一项由这两种帧共同支撑。
+
+### 6.2 权限请求：**缺口依然存在，且证据更强了**
+
+**读取类工具被自动放行，引擎没有发出任何授权请求。** 线上唯一的反向调用一个也没有出现（探针里「收到带 id 的 server→client 请求就按引擎自己给的 option 回」的分支从未触发）。
+
+比 §4 的措辞更准确的说法是：不是「提示词没触发工具」，而是**工具确实执行了，引擎自己决定不问**。因此：
+
+- §4 关于权限的结论**保持不变**——T3/T7 的契约仍不得以「已验证」开头。
+- 要观察到授权帧，需要触发**写/执行类**工具，或者用一份要求确认的配置。这是后续 P0 的遗留项，不是本轮能顺带取得的。
+- 有一点可以确定：默认策略下读操作不打扰用户。这对 §5.1「不自动打开所有工具涉及的笔记」「危险操作没有响应时不自动批准」是有利的默认值。
+
+### 6.3 用量字段集**不是固定的**
+
+这是本轮最需要注意的一条。同一引擎、同一个模型、同一段脚本，两轮 `session/prompt` 的结果分别是：
+
+```text
+探针 3:  {"inputTokens":8717, "outputTokens":3,  "totalTokens":8732, "thoughtTokens":12}
+探针 4:  {"inputTokens":1721, "outputTokens":6,  "totalTokens":8895, "cachedReadTokens":7168}
+```
+
+**`thoughtTokens` 在探针 4 中根本不存在，而 `cachedReadTokens` 在探针 3 中不存在。** `totalTokens` 也不是 `input+output`（探针 4：1721+6 ≠ 8895）。
+
+对实现的要求：用量类型必须是**逐字段可选**的，缺字段时显示「未提供」而不是 0——直接对应 §5.1「用量/费用只有来源可靠时展示；未知不显示为零」。任何把 usage 建成固定结构体、缺字段填默认值的写法都会在这里产生**错误数字**。
+
+### 6.4 与 §2.3 一致的部分
+
+`available_commands_update`、`agent_thought_chunk`、`agent_message_chunk` 在本次同样出现，与 §2.3 记录一致；`stopReason: "end_turn"` 一致。
