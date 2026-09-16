@@ -23,6 +23,7 @@
 
 import type { Ref } from 'vue'
 import { flushEdits } from '../services/editor-ownership'
+import { flushSourceEdits } from '../services/source-view'
 import { createUntitledRescue } from './untitled-rescue'
 import type { OpenTab } from './tabs'
 
@@ -206,6 +207,24 @@ export function createTabClose(deps: TabCloseDeps) {
     // path with its own reason attached
     // (`tab-write-preconditions.ts`), and a second, vaguer one on top of it
     // would be noise.
+    //
+    // The flush comes BEFORE the gate, and not behind `dirty` — the rule
+    // `closePlaceholder` states above, taken here for the same reason and for
+    // the ordinary tab rather than the placeholder: a user typing in source or
+    // split mode has `dirty === false` for the length of the burst, so this read
+    // answered "nothing to save" about text the pane was still holding and
+    // `removeTab` below took it. "Close others" arrives here too, once per tab.
+    //
+    // The SOURCE flush, and not `flushEdits()`: `dirty` can only be behind for
+    // the pane that marks it at the publish, which is this one — the rendered
+    // pane calls `markDirty` at the keystroke
+    // (`features/editor/controller/editor-persistence.ts`), so a tab it has
+    // text in is already dirty here and the save below flushes that pane itself
+    // before it writes (`tab-save.ts`). It is also synchronous, which keeps the
+    // close's own shape: an await here would defer `removeTab` and the
+    // `onCloseTab` that follows it by a microtask for every ordinary close, and
+    // the clean close is meant to be untouched by this fix.
+    flushSourceEdits()
     const current = tabs.value.find((x) => x.id === id)
     if (current?.dirty && !(await saveUntilSettled(id))) return
     removeTab(id)
