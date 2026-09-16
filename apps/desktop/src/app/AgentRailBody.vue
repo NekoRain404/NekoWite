@@ -30,11 +30,20 @@ import type { AgentPanelLabels } from '../features/agent'
  * be a blank word in the transcript rather than an English one — which is why the catalogue's
  * `state`, `result` and `status` records are keyed by the contract's own unions and a new arm
  * there fails to compile here instead.
+ *
+ * `engineName` is the live arm's own name ({@link AgentRailState} carries it, and it falls back
+ * to the agent id). The two sentences that name the engine take it as a slot rather than being
+ * assembled from parts here, so a translator sees the whole line. The arms that never mount the
+ * panel pass the empty string: their sentences are the rail's own, and the alternative — a name
+ * guessed on this side — is the one thing the registry read exists to avoid.
  */
-export function agentPanelLabels(): AgentPanelLabels {
+export function agentPanelLabels(engineName: string): AgentPanelLabels {
   return {
+    empty: {
+      line: t('agent.panel.empty.line', { engine: engineName }),
+    },
     bar: {
-      untitled: t('agent.panel.bar.untitled'),
+      untitled: t('agent.panel.bar.untitled', { engine: engineName }),
       state: {
         idle: t('agent.panel.bar.state.idle'),
         starting: t('agent.panel.bar.state.starting'),
@@ -97,7 +106,7 @@ import { computed } from 'vue'
 import { AgentPanel } from '../features/agent'
 import type { AgentRailState } from './agent-rail'
 
-defineProps<{
+const props = defineProps<{
   /** Which state the rail's host is in. */
   state: AgentRailState
   /** Whether a folder is open. The agent works inside one, so "no vault yet" is a sentence
@@ -107,9 +116,12 @@ defineProps<{
 
 const emit = defineEmits<{ (e: 'retry'): void; (e: 'use-chat'): void }>()
 
+/** The engine's own name, and only while a session is live — the one arm that mounts the panel. */
+const engineName = computed(() => (props.state.kind === 'live' ? props.state.engineName : ''))
+
 /** Rebuilt when the locale changes: `t` reads the shared i18n instance, so a computed is what
  *  makes the language switch in General settings reach a panel that is already on screen. */
-const labels = computed(() => agentPanelLabels())
+const labels = computed(() => agentPanelLabels(engineName.value))
 </script>
 
 <template>

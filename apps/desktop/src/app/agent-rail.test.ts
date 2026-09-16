@@ -17,13 +17,21 @@ import { createAgentRail, failureSentence, railKey } from './agent-rail'
 import type { AgentComposition } from './agent-composition'
 import { createMemoryAgentGateway } from '../platform/gateways/memory-agent'
 import type { AgentOpenRequest, AgentSession } from '../platform/gateways/agent-contracts'
-import type { AgentRegistryClient } from '../features/agent-settings/services/agent-registry-policy'
+import type {
+  AgentRegistryClient,
+  AgentRegistryEntry,
+  AgentRegistryReadout,
+} from '../features/agent-settings/services/agent-registry-policy'
 
 /** A composition that answers from the memory runtime, with its three calls observable. The
  *  gateway can be shared between two compositions, which is what a vault switch is: the same
  *  adapter wrapped by a new composition, and a new runtime epoch under it. */
 function fakeComposition(
-  options: { refuseWith?: string; gateway?: ReturnType<typeof createMemoryAgentGateway> } = {},
+  options: {
+    refuseWith?: string
+    gateway?: ReturnType<typeof createMemoryAgentGateway>
+    registry?: AgentRegistryClient
+  } = {},
 ) {
   const gateway = options.gateway ?? createMemoryAgentGateway({ agentId: 'opencode', profileId: 'default' })
   const start = vi.fn(async () => {
@@ -49,10 +57,11 @@ function fakeComposition(
     connectSvgInsertion: () => {
       throw new Error('connectSvgInsertion is not part of this test')
     },
-    // T13a's registry client is part of the interface and none of these tests asks for it: the rail
-    // hands the composition to whoever mounts the settings section, and a stand-in that answered
-    // would be a claim about a path this file does not exercise.
-    registry: unsupportedRegistry(),
+    // T13a's registry client is part of the interface and most of these tests do not ask for it:
+    // the rail hands the composition to whoever mounts the settings section, and a stand-in that
+    // answered would be a claim about a path this file does not exercise. The exception is the
+    // engine's own name, which the rail reads out of the registry — see `registryOf`.
+    registry: options.registry ?? unsupportedRegistry(),
   }
   return { composition, start, stop, opened }
 }
@@ -94,6 +103,47 @@ describe('the agent rail', () => {
     // rather than a re-point (T6's report §8.2).
     expect(state.key).toBe(railKey(state.session))
     expect(state.key).toContain(state.session.runtimeEpoch)
+  })
+
+  it('names the engine from the registration the backend holds, not from a constant here', async () => {
+    const fake = fakeComposition({
+      registry: registryOf([
+        { agentId: 'someone-else', displayName: 'Another Engine' },
+        { agentId: 'opencode', displayName: 'OpenCode' },
+      ]),
+    })
+    const rail = createAgentRail({ compose: () => fake.composition })
+
+    await rail.open('vault-a', '/notes/a')
+
+    const state = rail.state.value
+    if (state.kind !== 'live') throw new Error('unreachable')
+    // §3.4's rule that no component learns an engine's name: the sentence the panel draws gets
+    // the name for *this* session's agent, out of the entries beside it.
+    expect(state.engineName).toBe('OpenCode')
+  })
+
+  it('falls back to the agent id when nothing answers for it — an id is a fact', async () => {
+    const missing = fakeComposition({ registry: registryOf([]) })
+    const rail = createAgentRail({ compose: () => missing.composition })
+
+    await rail.open('vault-a', '/notes/a')
+
+    const state = rail.state.value
+    if (state.kind !== 'live') throw new Error('unreachable')
+    // No registration describes this agent, so the panel is named by its id rather than by a
+    // word this file chose. The same arm covers the registry below.
+    expect(state.engineName).toBe('opencode')
+
+    // And a registry that cannot be read at all is the same answer, not a refusal: the session
+    // is already open, and everything else the panel needs arrived with it.
+    const unreadable = fakeComposition({ registry: unsupportedRegistry() })
+    const second = createAgentRail({ compose: () => unreadable.composition })
+    await second.open('vault-a', '/notes/a')
+
+    const after = second.state.value
+    if (after.kind !== 'live') throw new Error('unreachable')
+    expect(after.engineName).toBe('opencode')
   })
 
   it('is idempotent for the vault already live', async () => {
@@ -267,4 +317,38 @@ function unsupportedRegistry(): AgentRegistryClient {
     throw new Error('the registry is not part of this test')
   }
   return { read: unsupported, add: unsupported, setEnabled: unsupported }
+}
+
+/**
+ * A registry that answers, for the one value the rail reads out of it: the engine's own name.
+ *
+ * Only the fields the name is read from are varied — everything else is the shape a bundled
+ * registration has, because a test that filled in a program path would be asserting a fact
+ * about the backend rather than about the rail.
+ */
+function registryOf(entries: Array<{ agentId: string; displayName: string }>): AgentRegistryClient {
+  const readout: AgentRegistryReadout = {
+    defaultAgentId: entries[0]?.agentId ?? 'opencode',
+    entries: entries.map(
+      (entry): AgentRegistryEntry => ({
+        ...entry,
+        source: 'bundled',
+        program: '/usr/bin/opencode',
+        args: [],
+        env: 'profile-isolated',
+        envExtra: [],
+        enabled: true,
+        adapterId: entry.agentId,
+        reportedVersion: null,
+        programState: 'launchable',
+      }),
+    ),
+    adapterIds: entries.map((entry) => entry.agentId),
+    runningAgentIds: [],
+    profileOwners: Object.fromEntries(entries.map((entry) => ['default', entry.agentId])),
+  }
+  const notThisTest = (): never => {
+    throw new Error('the rail reads the registry and writes nothing')
+  }
+  return { read: async () => readout, add: notThisTest, setEnabled: notThisTest }
 }

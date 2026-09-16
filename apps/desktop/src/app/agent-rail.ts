@@ -54,6 +54,13 @@ export type AgentRailState =
       key: string
       gateway: AgentGateway
       session: AgentSession
+      /**
+       * The engine's own name, for the sentences that have to name it — the session bar's title
+       * and the transcript's first line. Read from the registration the backend holds
+       * ({@link engineNameFor}), never a constant here, and never absent: an engine the registry
+       * does not describe is named by its id, and the id is a fact.
+       */
+      engineName: string
     }
   | { kind: 'refused'; vaultId: string; reason: string }
 
@@ -185,6 +192,32 @@ export function railKey(session: AgentSession): string {
 }
 
 /**
+ * The name to put in front of the user for the engine a session runs on (§3.4: the name is the
+ * backend's fact, so no component carries one of its own).
+ *
+ * Read from the registry's own registration for the agent the session reports, because that is
+ * where the name the user sees lives — `AgentRegistration::display_name` on the Rust side, which
+ * the settings list and the new-session chooser already show. Falling back to the **agent id**,
+ * not to a word this file chose: an id is a fact and is always drawable, which is what keeps the
+ * panel's title available without inventing an engine. The same fallback covers a registry that
+ * cannot be read at all, and that is deliberate — the session is already open and everything else
+ * the panel needs is here, so a registry call that failed must not turn a live session into a
+ * refusal.
+ *
+ * A blank display name counts as absent for the reason the fallback exists: a registration whose
+ * name is empty would otherwise put a hole in the middle of a sentence.
+ */
+async function engineNameFor(composition: AgentComposition, agentId: string): Promise<string> {
+  try {
+    const readout = await composition.registry.read()
+    const name = readout.entries.find((entry) => entry.agentId === agentId)?.displayName
+    return name !== undefined && name.trim() !== '' ? name : agentId
+  } catch {
+    return agentId
+  }
+}
+
+/**
  * The backend's own sentence for a refusal.
  *
  * The IPC rejects with a string (the Rust commands answer `Result<_, String>`), and §6.2's
@@ -267,12 +300,18 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
       try {
         const session = await composition.openSession({ vaultId, cwd })
         if (mine !== generation) return
+        // One read of the registry, for the engine's own name. It cannot reject (see
+        // `engineNameFor`), and the supersession check is repeated because it is an await like
+        // any other: a vault switch during it must not be answered with the old session.
+        const engineName = await engineNameFor(composition, session.agentId)
+        if (mine !== generation) return
         state.value = {
           kind: 'live',
           vaultId,
           key: railKey(session),
           gateway: composition.gateway,
           session,
+          engineName,
         }
       } catch (error) {
         if (mine !== generation) return

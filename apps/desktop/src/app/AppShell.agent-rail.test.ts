@@ -18,6 +18,7 @@ import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import AppShell from './AppShell.vue'
 import { useSettingsStore } from '../stores/settings'
 import { createMemoryAgentGateway } from '../platform/gateways/memory-agent'
+import { setLocale } from '../i18n'
 import type { AgentComposition } from './agent-composition'
 import type { AgentOpenRequest, AgentSession } from '../platform/gateways/agent-contracts'
 
@@ -131,6 +132,9 @@ beforeEach(() => {
   invokeMock.mockResolvedValue(undefined)
   composeMock.mockReset()
   localStorage.clear()
+  // The catalogue is a singleton shared by every test in this file; the one that asserts English
+  // copy puts the locale back, so a later test is not reading a language it did not ask for.
+  setLocale('zh')
   pinia = createPinia()
   setActivePinia(pinia)
   globalThis.matchMedia = vi.fn(() => ({
@@ -195,6 +199,17 @@ describe('the rail with the agent panel switched on', () => {
     expect(fake.opened).toEqual([{ vaultId: '/notes/vault', cwd: '/notes/vault' }])
     expect(chat()).toBeNull()
     expect(document.querySelector('.agent-panel')).not.toBeNull()
+
+    // The two sentences that name the engine, built here by the real catalogue through the real
+    // labels builder. The registry in this composition refuses to answer, so the name is the
+    // session's agent id — the fallback that keeps the title drawable — and what matters is that
+    // the `{engine}` slot is filled rather than shipped to the document.
+    setLocale('en')
+    await untilDom(() => document.querySelector('.agent-bar-title') !== null, 'the title')
+    expect(document.querySelector('.agent-bar-title')?.textContent).toBe('New opencode session')
+    expect(document.querySelector('[data-agent-empty]')?.textContent?.trim()).toBe(
+      'Message opencode — / for commands',
+    )
   })
 
   it('is not stopped by the rail closing, and is not re-opened by it opening', async () => {
