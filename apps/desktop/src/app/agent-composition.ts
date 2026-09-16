@@ -25,6 +25,12 @@
  *    been written and tested, and a composition step that gives it the editor or the vault it
  *    needs. Add them as further `connect*` functions on this object, not as imports into each
  *    other's modules.
+ *  - **T11, now**: `connectSvgInsertion` below binds §7.3's insertion to the two things the
+ *    service cannot have of its own — the session identity a plan is made under, and the editor's
+ *    account of a note *by path* — so that no call site can consult "the active note" or invent an
+ *    identity. **Not implemented here**: reading the staged artifact, writing the attachment and
+ *    applying the markdown edit, all three of which belong to the host and to the tab that holds
+ *    the note.
  *
  * What this file must never become: a second store. Session state, sequencing and "is this run
  * still current" belong to `features/agent` (T5), and a decision taken here would be taken
@@ -37,12 +43,25 @@
 
 import type {
   AgentGateway,
+  AgentIdentity,
   AgentOpenRequest,
   AgentSession,
 } from '../platform/gateways/agent-contracts'
 import { createMemoryAgentGateway } from '../platform/gateways/memory-agent'
 import { createTauriAgentGateway } from '../platform/gateways/tauri-agent'
 import type { AgentIpc } from '../platform/gateways/tauri-agent/ipc'
+import type { AgentLiveNote } from '../features/agent/services/agent-context-snapshot'
+import {
+  captureInsertionTarget,
+  commitSvgInsertion,
+  planSvgInsertion,
+  type AgentInsertionCapture,
+  type AgentInsertionCommitRequest,
+  type AgentInsertionOutcome,
+  type AgentInsertionPlanRequest,
+  type AgentInsertionPlanResult,
+  type AgentSvgInsertionPlan,
+} from '../features/agent/services/agent-svg-insertion'
 
 export interface AgentCompositionDeps {
   /**
@@ -81,6 +100,40 @@ export interface AgentComposition {
   /** Take the runtime down. Turns in flight end as cancelled, and the handles minted by this
    *  runtime stop working — a new `start` is a new epoch. */
   stop(): Promise<void>
+  /**
+   * Bind §7.3's SVG insertion to one session and the editor (T11).
+   *
+   * The two arguments are the two things the service deliberately does not have: the identity a
+   * plan is made under (§6.2's boundary — and a plan made under another session is refused by the
+   * service rather than inserted under this one), and the editor, asked for a note *by path* so
+   * that nothing here can read "whatever happens to be open". `identity.vaultId` is expected to be
+   * this composition's vault; a binding for another vault is a caller that assembled the wrong
+   * pair, and the service's own vault check refuses the targets it would produce.
+   */
+  connectSvgInsertion(identity: AgentIdentity, editor: AgentSvgInsertionEditor): AgentSvgInsertionBinding
+}
+
+/** The editor's side of the SVG-insertion binding: one lookup, and no way to write through it. */
+export interface AgentSvgInsertionEditor {
+  /** The editor's account of one note, or null when no tab holds that path. */
+  liveNote(path: string): AgentLiveNote | null
+}
+
+/**
+ * The insertion service, bound to a session and an editor.
+ *
+ * `plan` takes the request without its identity — the binding's is the one in force — so a call
+ * site cannot plan an insertion for a session it does not hold, and every plan carries the identity
+ * that {@link commit} re-checks.
+ */
+export interface AgentSvgInsertionBinding {
+  readonly identity: AgentIdentity
+  /** The target for a spot in a note, or why that spot cannot be inserted into. */
+  capture(path: string, from: number, to: number): AgentInsertionCapture
+  plan(request: Omit<AgentInsertionPlanRequest, 'identity'>): AgentInsertionPlanResult
+  /** The note edit. The caller reports whether it has already written the attachment, because the
+   *  order cannot be checked here and a note must not link a file nothing wrote. */
+  commit(plan: AgentSvgInsertionPlan, attachmentSaved: boolean): AgentInsertionOutcome
 }
 
 function detectEnvironment(): 'tauri' | 'browser' {
@@ -115,6 +168,32 @@ export function createAgentComposition(deps: AgentCompositionDeps): AgentComposi
     },
     async stop() {
       await gateway.stop()
+    },
+    connectSvgInsertion(identity, editor) {
+      return Object.freeze({
+        identity,
+        capture(path: string, from: number, to: number): AgentInsertionCapture {
+          const live = editor.liveNote(path)
+          // The lookup is this binding's, so its null case is too: a note no tab holds has no
+          // buffer to anchor an insertion in, and saying so is the alternative to inserting into
+          // the note that *is* open.
+          if (live === null) return { status: 'refused', refusal: { reason: 'note-not-open', path } }
+          return captureInsertionTarget(live, identity, { from, to })
+        },
+        plan(request: Omit<AgentInsertionPlanRequest, 'identity'>): AgentInsertionPlanResult {
+          return planSvgInsertion({ ...request, identity })
+        },
+        commit(plan: AgentSvgInsertionPlan, attachmentSaved: boolean): AgentInsertionOutcome {
+          // Read again *now*, by the plan's own path: the check is against the editor's current
+          // account of the note the insert was prepared for, and never against the active one.
+          const request: AgentInsertionCommitRequest = {
+            live: editor.liveNote(plan.path),
+            identity,
+            attachmentSaved,
+          }
+          return commitSvgInsertion(plan, request)
+        },
+      })
     },
   }
 }
