@@ -373,6 +373,36 @@ export function planEngineSwitch(request: {
   return { kind: 'new-session', agentId, profileId }
 }
 
+/** The engine and the profile a settings tree is about, when the registry can name both. */
+export interface EngineIdentity {
+  agentId: string
+  profileId: string
+}
+
+/**
+ * Which (agent, profile) pair the settings pages manage, answered from a registry readout.
+ *
+ * §8.1's rule is that a page reads and writes **one profile**, never "the app's provider" — so the
+ * pages that take a pair have to be *given* one, and the registry readout is the only place that
+ * pairs profiles with engines (`profileOwners`, §3.4's Profile row). The pair is the default
+ * agent — §3.4.1's fixed answer for a new session, which is the engine this build starts — and the
+ * profile the backend recorded as belonging to it.
+ *
+ * `null` rather than a guessed pair when the readout names none: a profile id invented here would
+ * be a page reading a record that belongs to another engine, which is the confusion the Profile
+ * row exists to prevent. The caller's answer to `null` is not to draw the page.
+ */
+export function defaultEngineIdentity(readout: AgentRegistryReadout): EngineIdentity | null {
+  const agentId = readout.defaultAgentId
+  if (agentId === '') return null
+  // The backend's own order (`BTreeMap`), so a registry with several profiles for one engine —
+  // which nothing in this build creates — still answers the same way every time.
+  const profileId = Object.keys(readout.profileOwners).find(
+    (profile) => readout.profileOwners[profile] === agentId,
+  )
+  return profileId === undefined ? null : { agentId, profileId }
+}
+
 /**
  * Substitute `{name}` slots in a sentence.
  *

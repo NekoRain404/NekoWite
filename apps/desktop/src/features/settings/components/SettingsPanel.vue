@@ -26,6 +26,7 @@ import PluginSettings from './PluginSettings.vue'
 import SettingsNavigation from './SettingsNavigation.vue'
 import { DesktopPetSettingsSection } from '../../desktop-pet-settings'
 import { createDesktopPetConnection } from '../../../app/desktop-pet-composition'
+import { createAgentSettingsClients } from '../../../app/agent-settings-composition'
 import { PET_SETTINGS_SECTION, type PetSettingsPage } from '../../../platform/gateways/pet-contracts'
 import { useSettingsDialog } from '../composables/use-settings-dialog'
 import { markArrived, markLeaving } from '../../../composables/surface-leave'
@@ -69,6 +70,17 @@ const petPage = ref<PetSettingsPage>(props.target?.page ?? 'general')
  * `null` is a state the section renders as a sentence — in a browser build, and in a test.
  */
 const petConnection = createDesktopPetConnection()
+
+/**
+ * The agent settings tree's clients, from the composition site that owns that choice.
+ *
+ * Built here for the same reason the pet's connection is: the section takes its clients as a prop
+ * and never constructs one, so §6.1's "the adapter is chosen at the composition site" holds for
+ * these pages too. Unlike the pet's, this is never `null`: there is no double for the registry or
+ * the profile (nothing a double could honestly stand in for), so a build without a backend is the
+ * pages' own unreadable state rather than a section that says nothing.
+ */
+const agentClients = createAgentSettingsClients()
 
 const dialogRef = ref<HTMLElement | null>(null)
 
@@ -181,6 +193,7 @@ watch(
                    does not exist yet. -->
               <AgentSettingsSection
                 v-else-if="activeSection === 'agents'"
+                :clients="agentClients"
               />
               <!-- The pet's settings tree (§5.1), and the one section that is not this
                    feature's: the id is D1's constant (a literal here would be a second spelling

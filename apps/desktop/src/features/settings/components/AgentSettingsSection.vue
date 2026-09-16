@@ -1,49 +1,126 @@
 <script setup lang="ts">
 /**
- * The agents section: the one control that reaches the shell, and the statements
- * for everything in this tree that has no host half yet.
+ * The agents section: the one control that reaches the shell, the two pages whose host half this
+ * build really has, and the statements for everything in this tree that is still absent.
  *
- * ## Why the page is mostly sentences
+ * ## What is mounted, and why these two
  *
- * §10.2's T16 row and §8 give an agent settings tree of seven pages, and every one
- * of them is delivered as a component that takes its facts from an injected
- * `AgentRegistryClient` / `AgentRuntimeClient` / … — a port this build has no
- * implementation of. There is also nothing behind three of them even in the
- * backend: the registry's mutation IPC (nothing in a window can add or disable an
- * engine), the capability join (the negotiated half is not joined to the declared
- * half), and credentials at launch (the start path builds the launch environment
- * without them).
+ * §10.2's T16 row and §8 give an agent settings tree of seven pages, each delivered as a component
+ * that takes its facts from an injected client. Two of those clients can be built against commands
+ * this build registers — the registry (`agent_registry_read` / `_add` / `_set_enabled`) and the
+ * profile (`agent_profile_read` / `_write`) — so those two pages are mounted here and really read
+ * the backend. The clients arrive as a prop from the composition site
+ * (`app/agent-settings-composition.ts`), the way the pet's section is handed its connection: this
+ * file never builds one, and never decides what a page talks to.
  *
- * A page that mounted one of those components with a fabricated client, or drew a
- * switch whose write goes nowhere, would be claiming a capability this build does
- * not have. That is the one claim this feature must not make, and it is a rule
- * already spelled out twice in this tree — the registry page states what being
- * registered does and does not prove, the pet integration page states its absent
- * capabilities as rows of text — so this page follows it: what cannot be done is
- * *said*, with what it would take, and no control is drawn for it.
+ * ## The pair these pages are about
  *
- * ## The one control
+ * The profile page is about **one engine and one profile**, never "the app's provider" (§8.1:
+ * provider credentials, model ids and configuration files are per engine), and the registry page
+ * takes the same pair for the engine it plans a session with. The
+ * registry readout is the only thing that pairs a profile with an engine, so it is read once here,
+ * through {@link defaultEngineIdentity}, and the profile page is mounted only when the pair is
+ * known. Nothing is invented to fill the gap: a page handed a guessed profile id would render
+ * another engine's record under this engine's heading, which is the one thing §8.1 refuses. The
+ * pair is stated on the page, so the two readings below cannot be mistaken for "the app's
+ * provider" either.
  *
- * The rail switch is not one of those gaps: it is a real setting with a real
- * effect (the shell reads it; see `stores/settings-agent.ts` for the value, the
- * default and why the default is off), so it is a control. Its hint states the
- * consequence the user cannot see from here — that the chat panel is unmounted
- * while it is on and a reply still streaming is cancelled — because a rollback
- * the user cannot predict is the failure this section exists to prevent.
+ * ## The switch, and the statements
+ *
+ * The rail switch is a real setting with a real effect (the shell reads it; see
+ * `stores/settings-agent.ts` for the value, the default and why the default is off), so it is a
+ * control whose hint states the consequence a user cannot see from here. Everything else that
+ * cannot be done is *said*, with what it would take and no control drawn for it — the rule the
+ * registry page and the pet integration page follow. The registry page is mounted with
+ * `can-start-session="false"` for the same reason: this dialog has no gateway, so the engine
+ * switch it would otherwise draw is a button that emits to nobody.
  */
+import { computed, onMounted, ref } from 'vue'
 import { t } from '../../../i18n'
+import { AGENT_SETTINGS_SECTIONS, AgentProviderSettings, AgentRegistrySettings } from '../../agent-settings'
+import { defaultEngineIdentity } from '../../agent-settings/services/agent-registry-policy'
+import type { EngineIdentity } from '../../agent-settings/services/agent-registry-policy'
+import type { AgentSettingsClients } from '../../../app/agent-settings-composition'
 import { useAgentPanel } from '../composables/use-agent-panel'
+
+const props = defineProps<{
+  /** The registry and the profile, chosen at the composition site. */
+  clients: AgentSettingsClients
+}>()
 
 const { agentPanel, setAgentPanel } = useAgentPanel()
 
-/** The four statements about what is not connected, in the order they are drawn.
- *  A list rather than four `t()` calls in the template, so the set is one thing a
- *  reader can see at once and a fifth gap is one line here. */
+/**
+ * The engine and profile the pages below are about, or `null` until the registry has been read.
+ *
+ * A failure leaves it `null` and is not reported as a second sentence: the registry page is mounted
+ * either way and draws the backend's own failure in its own words with a retry, and two readings of
+ * one refusal on one page is the kind of duplication that ends up disagreeing with itself.
+ */
+const identity = ref<EngineIdentity | null>(null)
+
+onMounted(async () => {
+  try {
+    identity.value = defaultEngineIdentity(await props.clients.registry.read())
+  } catch {
+    identity.value = null
+  }
+})
+
+/** The engine the pages are about, for the sentence that says which one they are showing. */
+const showing = computed(() =>
+  identity.value === null
+    ? t('agent.settings.agents.profile.unknown')
+    : t('agent.settings.agents.profile.showing', {
+        agent: identity.value.agentId,
+        profile: identity.value.profileId,
+      }),
+)
+
+/**
+ * The sections this file mounts, by their ids in {@link AGENT_SETTINGS_SECTIONS}.
+ *
+ * One list, in the feature that declares the tree, and this is the half of it that is reachable:
+ * a page is in here when its client can be built against a command this build registers. A literal
+ * rather than something derived from the imports, because the id and the component are two
+ * different facts (`mounts` names the component; a section's id is what a navigation binds), and
+ * the test that reads this file's rendering is what keeps the two in step.
+ */
+const MOUNTED = new Set(['registry', 'provider'])
+
+/**
+ * One sentence per section that is not mounted, keyed by the list's own ids.
+ *
+ * Keys are resolved by literal `t()` calls and never built from a variable: a key the source
+ * constructs cannot be seen missing from the catalogue by the i18n guard, so a rename would reach
+ * the page as an id printed where a sentence belongs. The record has no entry for a mounted
+ * section, and the row for an unlisted one falls back to `gaps.other` rather than vanishing.
+ */
+const SENTENCES: Readonly<Record<string, string>> = {
+  runtime: t('agent.settings.agents.gaps.runtime'),
+  skills: t('agent.settings.agents.gaps.skills'),
+  commands: t('agent.settings.agents.gaps.commands'),
+  mcp: t('agent.settings.agents.gaps.mcp'),
+  permission: t('agent.settings.agents.gaps.permission'),
+}
+
+/**
+ * The statements about what is not connected, derived from the tree's own list.
+ *
+ * Derived, and not a hand-kept list of absences: a sentence about a missing thing has a shelf life
+ * of about one commit, and the version of this page that says "no section is reachable" while two
+ * of them are mounted is worse than one that says nothing. Deriving the rows means a page whose
+ * client lands drops out of here by being named in {@link MOUNTED} — the same edit that mounts it.
+ *
+ * The last two rows are not sections: the capability join is a fact about what *any* page can say,
+ * and the engine switch is about the registry page that *is* mounted.
+ */
 const gaps = [
-  t('agent.settings.agents.gaps.sections'),
-  t('agent.settings.agents.gaps.registry'),
+  ...AGENT_SETTINGS_SECTIONS.filter((section) => !MOUNTED.has(section.id)).map(
+    (section) => SENTENCES[section.id] ?? t('agent.settings.agents.gaps.other'),
+  ),
   t('agent.settings.agents.gaps.capabilities'),
-  t('agent.settings.agents.gaps.credentials'),
+  t('agent.settings.agents.gaps.engine'),
 ]
 </script>
 
@@ -66,6 +143,34 @@ const gaps = [
     <p class="settings-note">
       {{ t('agent.settings.agents.panel.hint') }}
     </p>
+
+    <!-- The one engine/profile pair this page is about. Stated, because the pages below are about
+         one record each and a user reading two of them should not have to guess which. -->
+    <p
+      class="settings-note"
+      data-test="agents-profile"
+    >
+      {{ showing }}
+    </p>
+
+    <!-- The mounted pages, in one box so that "the controls this page draws itself" is a question
+         with an answer: everything inside is a page's own, and the switch above is this file's. -->
+    <div
+      class="agents-pages"
+      data-test="agents-pages"
+    >
+      <AgentRegistrySettings
+        :client="props.clients.registry"
+        :profile-id="identity?.profileId ?? ''"
+        :can-start-session="false"
+      />
+      <AgentProviderSettings
+        v-if="identity"
+        :client="props.clients.provider"
+        :agent-id="identity.agentId"
+        :profile-id="identity.profileId"
+      />
+    </div>
 
     <span class="settings-label">{{ t('agent.settings.agents.gaps.title') }}</span>
     <p class="settings-note">
@@ -125,6 +230,10 @@ const gaps = [
   line-height: 1.6;
   color: var(--app-muted);
 }
+/* A divider before each page, so the mounted pages and this file's own sentences read as the two
+   different things they are — the box is one element and draws nothing else. */
+.agents-pages { display: flex; flex-direction: column; }
+.agents-pages > :deep(.settings-section) { padding-top: 10px; border-top: 1px solid var(--app-border); }
 .agent-gaps {
   display: flex;
   flex-direction: column;

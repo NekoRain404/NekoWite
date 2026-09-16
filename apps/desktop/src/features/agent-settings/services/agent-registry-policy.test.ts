@@ -27,6 +27,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   REDACTED_ENV_VALUE,
+  defaultEngineIdentity,
   disableStanding,
   fillTemplate,
   planEngineSwitch,
@@ -303,6 +304,23 @@ describe('choosing the engine for a new session', () => {
         readout: readout({ entries: [off], profileOwners: { 'prof-a': 'acme' } }),
       }),
     ).toEqual({ kind: 'refused', refusal: { kind: 'disabled', agentId: 'acme' } })
+  })
+})
+
+describe('which pair the settings pages are about', () => {
+  it('is the default agent and the profile the backend recorded as its own', () => {
+    expect(
+      defaultEngineIdentity(
+        readout({ profileOwners: { default: 'bundled-engine', 'prof-a': 'acme' } }),
+      ),
+    ).toEqual({ agentId: 'bundled-engine', profileId: 'default' })
+  })
+
+  it('is null when no profile is bound to the default agent, rather than a guessed id', () => {
+    // A guessed profile id is a page reading another engine's record — the confusion §3.4's
+    // Profile row exists to prevent — so the caller is told there is no pair to show.
+    expect(defaultEngineIdentity(readout({ profileOwners: { 'prof-a': 'acme' } }))).toBeNull()
+    expect(defaultEngineIdentity(readout({ defaultAgentId: '' }))).toBeNull()
   })
 })
 

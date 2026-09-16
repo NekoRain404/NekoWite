@@ -217,6 +217,23 @@ async function load(): Promise<void> {
   }
 }
 
+/**
+ * Re-read the record after a write, without the first read's loading state.
+ *
+ * The state is left alone until the answer arrives: the form is on screen and a spinner for a
+ * refresh nobody asked for would blank what the user is looking at. A read that does not complete
+ * falls back to the unreadable state, which is this page's answer to exactly that — the values on
+ * screen are then the ones from before the write, and saying so is better than leaving them
+ * looking current.
+ */
+async function refresh(): Promise<void> {
+  try {
+    rebuild(await props.client.read(props.agentId, props.profileId))
+  } catch {
+    state.value = 'unreadable'
+  }
+}
+
 async function save(): Promise<void> {
   if (readout.value === null) return
   const decided = refused.value
@@ -235,7 +252,11 @@ async function save(): Promise<void> {
     )
     outcome.value = answered
     if (answered.status === 'applied') {
-      rebuild({ ...readout.value, ...answered.fields })
+      // The write moved the record's revision and the form still holds the old one, so the readout
+      // is re-read rather than patched from `answered.fields`: revision is part of what a readout
+      // is, and a page that kept the stale one would read its own next write as a conflict —
+      // a save that lands looking refused.
+      await refresh()
     } else if (answered.status === 'conflict') {
       // Someone else's write landed first. The readout is replaced rather than merged, because a
       // merge is how a value the user changed elsewhere gets undone.
