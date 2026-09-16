@@ -17,7 +17,8 @@
 //! - **A migrated profile cannot be rolled back by moving a binary.** [`rollback`] refuses that
 //!   outright (若新版本已迁移数据库，不得仅回退二进制), and when a restore is confirmed it retains the
 //!   newer data first, refuses to touch the profile if the backup is unusable, and reports what it
-//!   could not reconcile.
+//!   could not reconcile. A profile no version record covers is refused the same way
+//!   ([`UpdateError::UnrecordedState`]) rather than assumed to be safe: the refusal fails closed.
 //!
 //! What this module deliberately does not own: profiles (T12), agent definitions (T3a), and the
 //! question of which of their releases a network should be asked about.
@@ -267,6 +268,12 @@ pub enum UpdateError {
     /// The profile has been written by a version newer than the one being returned to, so moving the
     /// binary back alone would hand an older engine a store a newer one rewrote.
     StateMigrated { profiles: Vec<String> },
+    /// No record covers which version last wrote the profile, so this host cannot tell whether a
+    /// rollback would cross a state migration. Refused rather than assumed (§3.3): 若新版本已迁移
+    /// 数据库，不得仅回退二进制, and "we cannot tell" is not "it did not happen". The confirmation that
+    /// clears it is the same one [`UpdateError::StateMigrated`] takes, because the user is being
+    /// asked the same question — do you want the data-restore path, or not.
+    UnrecordedState { profiles: Vec<String> },
     /// A restore was asked for while an engine could still be writing.
     EngineRunning,
     /// The backup named for a restore cannot be read, or does not hold the profile it should.
@@ -580,15 +587,22 @@ pub struct ProfileState {
     pub profile_id: String,
     /// The profile's managed root (§3.2's `agent-profiles/<profile-id>/`).
     pub root: PathBuf,
-    /// The version that last wrote it, if the app has one to record.
+    /// The version that last wrote this profile's state, as the app recorded it — including the
+    /// version that was active when the app created the profile.
+    ///
+    /// `None` is not "nothing has written it": it is "this host has no record of what wrote it".
+    /// [`rollback`] treats that as a migration it cannot rule out rather than as one it can, which
+    /// is the difference between refusing a bare rollback and silently crossing a store format
+    /// change. T12 owns writing this field.
     pub written_by: Option<String>,
 }
 
 /// A rollback, and the confirmations it needs.
 ///
 /// `confirm_data_restore` is the user's answer to §3.3's rule (若新版本已迁移数据库，不得仅回退二进制):
-/// without it, a rollback under migrated state is refused rather than performed, because the binary
-/// is the easy half and the data is the half that loses work.
+/// without it, a rollback under migrated state — or under a profile no version record covers — is
+/// refused rather than performed, because the binary is the easy half and the data is the half that
+/// loses work.
 #[derive(Debug, Clone)]
 pub struct RollbackRequest<'a> {
     pub to_version: &'a str,
@@ -639,32 +653,57 @@ pub fn rollback(
         });
     }
 
-    // Which profiles a newer version has written. Comparing by the app's record rather than by the
-    // filesystem's timestamps: a profile touched by a *sync* would otherwise read as migrated.
-    let migrated: Vec<&ProfileState> = request
-        .profiles
-        .iter()
-        .filter(|state| {
-            state
-                .written_by
-                .as_deref()
-                .is_some_and(|writer| binary_registry::is_newer(writer, request.to_version))
-        })
-        .collect();
-    if !migrated.is_empty() && !request.confirm_data_restore {
-        return Err(UpdateError::StateMigrated {
-            profiles: migrated
-                .iter()
-                .map(|state| state.profile_id.clone())
-                .collect(),
-        });
+    // Which profiles a newer version has written, and which ones no record covers.
+    //
+    // Comparing by the app's record rather than by the filesystem's timestamps, so a profile touched
+    // by a *sync* does not read as migrated. The second list is the fail-closed half: while T12 has
+    // not written a record yet, every profile is in it, and a rollback over a profile this host
+    // cannot speak for is refused rather than assumed to be older than the version being returned
+    // to. §3.3's rule is about a database a newer version rewrote; "we cannot tell" is not "it did
+    // not happen", and the silent pass is the data-loss path the rule exists to prevent.
+    let mut migrated: Vec<&ProfileState> = Vec::new();
+    let mut unrecorded: Vec<&ProfileState> = Vec::new();
+    for state in request.profiles {
+        match state.written_by.as_deref() {
+            None => unrecorded.push(state),
+            Some(writer) if binary_registry::is_newer(writer, request.to_version) => {
+                migrated.push(state)
+            }
+            Some(_) => {}
+        }
     }
+    if !request.confirm_data_restore {
+        if !migrated.is_empty() {
+            return Err(UpdateError::StateMigrated {
+                profiles: migrated
+                    .iter()
+                    .map(|state| state.profile_id.clone())
+                    .collect(),
+            });
+        }
+        if !unrecorded.is_empty() {
+            return Err(UpdateError::UnrecordedState {
+                profiles: unrecorded
+                    .iter()
+                    .map(|state| state.profile_id.clone())
+                    .collect(),
+            });
+        }
+    }
+    // Everything this rollback cannot vouch for: a profile a newer version wrote, and a profile no
+    // record covers. Both are retained before anything is replaced, because "we cannot prove this
+    // state is ours to drop" answers the retention question the same way it answers the refusal.
+    let crossing: Vec<&ProfileState> = migrated
+        .iter()
+        .chain(unrecorded.iter())
+        .copied()
+        .collect();
 
     // Every backup is checked before any of them is used: a rollback that restores one profile and
     // then finds the next backup unreadable has already damaged the state it was recovering.
     let mut planned: Vec<(&ProfileState, PathBuf)> = Vec::new();
     if let Some(backup) = request.restore_from {
-        for state in &migrated {
+        for state in &crossing {
             let source = backup.join(&state.profile_id);
             if !binary_registry::is_restorable(&source) {
                 return Err(UpdateError::BackupIncomplete {
@@ -679,7 +718,7 @@ pub fn rollback(
     // Retention, before anything is replaced: the newer data is what a rollback is most likely to
     // lose, and a failure to keep it stops the rollback instead of proceeding without it.
     let mut retained = Vec::new();
-    for state in &migrated {
+    for state in &crossing {
         let destination = registry.retained_path(&state.profile_id);
         binary_registry::retain_tree(&state.root, &destination).map_err(|detail| UpdateError::Unpreserved {
             profile_id: state.profile_id.clone(),
@@ -707,7 +746,7 @@ pub fn rollback(
         active,
         retained,
         restored,
-        unreconciled: migrated
+        unreconciled: crossing
             .iter()
             .map(|state| state.profile_id.clone())
             .collect(),
