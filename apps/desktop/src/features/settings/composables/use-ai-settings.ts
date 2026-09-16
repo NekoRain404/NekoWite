@@ -18,6 +18,14 @@ export interface AiSettingsModel {
   baseUrl: WritableComputedRef<string>
   modelsUrl: WritableComputedRef<string>
   apiKey: WritableComputedRef<string>
+  /**
+   * Whether a credential is *stored* for the current provider — the vault's
+   * answer, published by `loadKey`/`saveKey`. The field cannot tell you this:
+   * it is deliberately emptied when a stored key arrives (the mask must never
+   * be sent back as a credential), so an empty field is exactly what a
+   * configured provider looks like. Read this, never the field.
+   */
+  keyConfigured: ComputedRef<boolean>
   allowPrivate: WritableComputedRef<boolean>
   systemPromptOn: WritableComputedRef<boolean>
   systemPrompt: WritableComputedRef<string>
@@ -182,6 +190,7 @@ export function useAiSettings(): AiSettingsModel {
       get: () => settings.apiKey,
       set: (v) => { settings.apiKey = v },
     }),
+    keyConfigured: computed(() => settings.keyConfigured),
     allowPrivate: computed({
       get: () => settings.allowPrivate,
       set: (v) => { settings.allowPrivate = v },
