@@ -23,14 +23,26 @@
 //!   eviction comes back in {@link Evicted} with `was_unread` set. A bound that dropped an unseen
 //!   notice without saying so would be the 漏提示 this task is graded against.
 //!
-//! The task vocabulary lives here because this is the file that indexes tasks: a key and a state are
-//! what a row *is*, and the decision layer above reads them through the record. They are D1's own —
-//! `pet-contracts/task.ts` — and `tests/desktop_pet_notification_test/history.rs` reads that file
-//! rather than a copy of it, so a state added on either side alone fails there.
+//! The task vocabulary is [`super::task_projection`]'s: `PetTaskKey` and `PetTaskState` are D1's
+//! frozen shapes (`pet-contracts/task.ts`), defined once in that module's `vocabulary` and imported
+//! here. They used to be defined in both files, field for field and spelling for spelling, and two
+//! types with one name and one shape diverge on the day someone edits one of them — the bug that
+//! produces is an identity bug, which is the class this whole module exists to make impossible.
+//!
+//! What stays here is what the ledger *adds* to them: the session key an event stream's marks are
+//! filed under, the token both keys are encoded with, and the row that records a state — plus the
+//! two methods the ledger is the reason for ([`PetTaskKey::session`], [`PetTaskKey::token`]).
 
 use serde::{Deserialize, Serialize};
 
+use super::task_projection::{PetTaskKey, PetTaskState};
+
 /// Every state the pet can show, in the contract's order (`pet-contracts/task.ts:69-84`).
+///
+/// The names of [`PetTaskState`], kept beside the pin test that reads every one of them against
+/// `pet-contracts/task.ts` (`tests/desktop_pet_notification_test/history.rs`) rather than beside the
+/// enum: nothing in `task_projection` reads the array, and the list a test holds the vocabulary to
+/// belongs with the test's own module.
 pub const PET_TASK_STATES: [&str; 9] = [
     "working",
     "waiting-input",
@@ -57,51 +69,6 @@ pub const DEFAULT_RECORD_CAPACITY: usize = 200;
 /// How many sessions' stream positions are kept. A mark is a line of defence, not the ledger.
 pub const DEFAULT_MARK_CAPACITY: usize = 64;
 
-/// One state from {@link PET_TASK_STATES}.
-///
-/// The names are serde's `kebab-case` rename and not a method that returns them: a second spelling
-/// is the one that drifts, and the pin test in `tests/desktop_pet_notification_test/history.rs`
-/// reads every one of them against `pet-contracts/task.ts` through this single path.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum PetTaskState {
-    /// A turn is in flight. Never recorded: it is not an ending, and it is what D4's projection
-    /// shows.
-    Working,
-    /// The engine is waiting on the user to allow or refuse something.
-    WaitingInput,
-    /// The turn ended normally. Nothing beyond "this turn finished" may be claimed (§6.2).
-    TurnFinished,
-    /// A limit ended it (`max-tokens`, `max-turn-requests`): reached, not achieved.
-    Stopped,
-    /// The engine declined to continue. Not a failure and not a success.
-    Refused,
-    /// Cancelled — by the user, or on their behalf. Neither a success nor a failure (§6.2).
-    Cancelled,
-    /// The run failed and its detail is in the main panel.
-    Failed,
-    /// The runtime went away mid-run. Never read as done, never re-sent.
-    Interrupted,
-    /// The host cannot be reached, so it cannot say what the task is doing.
-    Unknown,
-}
-
-impl PetTaskState {
-    /// Whether this state records how a run ended, rather than a belief about one still going.
-    ///
-    /// The contract's `isPetTaskSettled` (`pet-contracts/task.ts:132-141`). §6.3 requires a terminal
-    /// state not to be revived by an older work event, and this is the predicate that rule reads.
-    /// `unknown` is deliberately not settled: it admits the host does not know, so a later event
-    /// that does know has to be able to replace it.
-    pub fn is_settled(self) -> bool {
-        matches!(
-            self,
-            Self::TurnFinished | Self::Stopped | Self::Refused | Self::Cancelled | Self::Failed
-                | Self::Interrupted
-        )
-    }
-}
-
 /// The part of a task's identity that its event stream belongs to: the five ACP fields, no run.
 ///
 /// The sequence space is per session (§6.3), and a session is these five fields — which is why two
@@ -118,26 +85,14 @@ pub struct SessionKey {
     pub session_id: String,
 }
 
-/// One run, named by every fact that tells it apart from another (§6.1).
-///
-/// The contract's `PetTaskKey` field for field. It is a structured tuple and not a joined string
-/// because of where the joined string leads: upstream keys its store on `` `${agent}:${session}` ``
-/// (`windows/src/state.ts:54`) and then finds a session by `endsWith(':${session}')` (`:85-89`), so
-/// two agents whose sessions share a name are one entry and one of them is silently mis-attributed.
-#[derive(Clone, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PetTaskKey {
-    pub agent_id: String,
-    pub profile_id: String,
-    pub runtime_epoch: String,
-    pub vault_id: String,
-    pub session_id: String,
-    /// Non-null: a task *is* a run. A new turn of the same session is a new key (§6.3).
-    pub run_id: String,
-}
-
 impl PetTaskKey {
     /// The session this run belongs to, and therefore the stream its sequence is read from.
+    ///
+    /// Inherent impls sit with the types they are about, and this one is about the ledger's own
+    /// session key: the mark a frame is compared against is filed under what this returns, so the
+    /// method lives in the file that keeps the marks rather than in the vocabulary that defines
+    /// the key. §6.1's composite identity is what it is for — two engines sharing a session id are
+    /// two streams, and a mark filed by session id alone would consume each other's frames.
     pub fn session(&self) -> SessionKey {
         SessionKey {
             agent_id: self.agent_id.clone(),

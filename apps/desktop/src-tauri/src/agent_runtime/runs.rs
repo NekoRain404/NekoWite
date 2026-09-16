@@ -10,7 +10,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{SessionId, SessionNotification};
+use agent_client_protocol::schema::v1::{SessionId, SessionNotification, StopReason};
 use serde_json::{Value, json};
 
 use super::events::{AgentEventKind, normalize_update};
@@ -74,7 +74,10 @@ impl AgentRuntime {
                 // defaults would invent numbers the UI must leave blank.
                 Ok(response) => (
                     AgentEventKind::RunFinished,
-                    json!({ "stopReason": response.stop_reason, "usage": response.usage }),
+                    json!({
+                        "stopReason": wire_stop_reason(response.stop_reason),
+                        "usage": response.usage,
+                    }),
                 ),
                 Err(error) => (
                     AgentEventKind::RunFailed,
@@ -127,9 +130,37 @@ impl AgentRuntime {
             session_id,
             &run_id,
             AgentEventKind::RunFinished,
+            // The contract's spelling, which for this one reason is also the engine's: the two
+            // agree here, so a cancelled run reads the same whether it was normalized above or
+            // written by this host on the user's behalf.
             json!({ "stopReason": "cancelled", "usage": Value::Null }),
         );
         cancelled.map_err(SessionError::Transport)
+    }
+}
+
+/// The engine's stop reason, in the one spelling that crosses the wire.
+///
+/// The SDK's `StopReason` is `snake_case` (`end_turn`, `max_turn_requests`) and D1's frozen
+/// contract spells the same five reasons `kebab-case` (`agent-contracts/payloads.ts`, which is what
+/// its validator accepts and what the window's reducer reads). Both spellings would then be live on
+/// this side of the boundary, so every Rust reader of a `run-finished` frame would have to know
+/// both — which is how `task_projection::outcomes` came to accept either, a tolerance that was a
+/// second way to say one fact and therefore a second place to get it wrong. Publishing the
+/// contract's spelling here is what leaves one spelling to know.
+///
+/// Mechanical rather than a `match`, for the reason `frames.ts` gives about the same value: a table
+/// here would be a second copy of the protocol's enum, and a sixth reason would silently fall out
+/// of it. The replacement is total — the protocol's names separate words with `_` and use no other
+/// ones — and a reason this host does not know still reaches the contract's validator unaltered,
+/// where an unreadable ending fails loudly rather than being read as a completed turn.
+fn wire_stop_reason(reason: StopReason) -> Value {
+    match serde_json::to_value(reason) {
+        Ok(Value::String(name)) => Value::String(name.replace('_', "-")),
+        // Not reachable for the schema's unit enum. Deliberately not repaired either: a value that
+        // is not a name is passed through rather than replaced by one the engine never sent.
+        Ok(other) => other,
+        Err(_) => Value::Null,
     }
 }
 

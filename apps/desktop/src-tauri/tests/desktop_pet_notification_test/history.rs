@@ -10,12 +10,13 @@
 //! of either. D1 froze those vocabularies, and a second spelling is the one that drifts.
 
 use crate::desktop_pet::history::{
-    Decoded, DeliveryState, MarkOutcome, PetTaskKey, PetTaskState, TaskHistory, TaskRecord,
-    HISTORY_SCHEMA_VERSION, PET_TASK_STATES,
+    Decoded, DeliveryState, MarkOutcome, TaskHistory, TaskRecord, HISTORY_SCHEMA_VERSION,
+    PET_TASK_STATES,
 };
 use crate::desktop_pet::notification_policy::{
     channel_for, NotificationPreferences, SilenceReason,
 };
+use crate::desktop_pet::task_projection::{PetTaskKey, PetTaskState};
 use crate::support::{
     boolean_pairs, contract, delivered, identifiers, key, policy, quoted, quoted_pairs, session_of,
     silent, slice_after, slice_between, state_named, RecordingChannel, Stream,

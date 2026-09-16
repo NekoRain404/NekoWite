@@ -86,33 +86,24 @@ fn an_unrecognised_stop_reason_is_unknown_and_can_still_be_replaced() {
     assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "refused");
 }
 
-/// The stop reason as the runtime actually writes it today.
+/// There is one spelling, and the engine's is not it.
 ///
-/// `agent_runtime::runs` publishes the engine's own `StopReason`, which serde renames to
-/// snake_case, while the frozen contract and its validator spell the same five reasons
-/// kebab-case. The reader tolerates both (the reason is in `task_projection.rs`, and this task's
-/// report names the file that should be normalized and this tolerance deleted). The case is here
-/// so that the day someone deletes one spelling, the other is already covered: what must never
-/// happen is `end_turn` being read as an unknown ending.
+/// `agent_runtime::runs` normalizes the engine's `snake_case` `StopReason` into the contract's
+/// `kebab-case` before publishing the frame, so the reader has exactly one spelling to know. The
+/// case below is what keeps that from becoming an assumption: what the reader does with the other
+/// spelling is read it as an ending it does not know — never as a completed turn.
 #[test]
-fn the_engine_s_own_spelling_of_a_stop_reason_reads_the_same() {
-    let rows = [
-        ("end_turn", "turn-finished"),
-        ("max_tokens", "stopped"),
-        ("max_turn_requests", "stopped"),
-        ("refusal", "refused"),
-        ("cancelled", "cancelled"),
-    ];
-    for (reason, expected) in rows {
-        let mut projection = projection();
-        let ours = first_instance();
-        projection.install(&ours);
-        projection.started(&ours, "ses_1", "run-1");
+fn the_engines_own_spelling_is_not_a_second_way_to_say_the_same_ending() {
+    let mut projection = projection();
+    let ours = first_instance();
+    projection.install(&ours);
+    projection.started(&ours, "ses_1", "run-1");
 
-        projection.apply(&finished(&ours, "ses_1", "run-1", 1, reason));
+    // A frame from a runtime that did not normalize — an older build, or a producer that is not
+    // this runtime at all. An unknown ending is a wrong fact only if it is read as a known one.
+    projection.apply(&finished(&ours, "ses_1", "run-1", 1, "end_turn"));
 
-        assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), expected, "{reason}");
-    }
+    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "unknown");
 }
 
 /// §6.2's 待授权 row: the state is visible on its own, and the id travels with it so a click goes

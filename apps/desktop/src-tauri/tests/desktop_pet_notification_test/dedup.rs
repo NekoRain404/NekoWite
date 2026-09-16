@@ -5,8 +5,8 @@
 //! "one notice": each pair asserts the *positive* half too — that the second fact either produced its
 //! own notice or was silenced for a reason that names what it was a repeat *of*.
 
-use crate::desktop_pet::history::PetTaskState;
 use crate::desktop_pet::notification_policy::{SilenceReason, COALESCE_WINDOW_MS};
+use crate::desktop_pet::task_projection::PetTaskState;
 use crate::support::{
     delivered, flush, gathering, key, key_for, policy, silent, RecordingChannel, Stream,
 };

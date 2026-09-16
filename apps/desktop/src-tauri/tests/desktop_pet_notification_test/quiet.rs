@@ -6,10 +6,10 @@
 //! forgotten, because the user turned the feature on to be told. The cases below hold both halves:
 //! what suppression costs, and what it must not cost.
 
-use crate::desktop_pet::history::PetTaskState;
 use crate::desktop_pet::notification_policy::{
     channel_for, NotificationChannel, NotificationPreferences, SilenceReason, COALESCE_WINDOW_MS,
 };
+use crate::desktop_pet::task_projection::PetTaskState;
 use crate::support::{
     delivered, flush, gathering, key, key_for, policy_with, session_of, silent, RecordingChannel,
     Stream,

@@ -33,22 +33,17 @@ fn payload_str<'a>(payload: &'a Value, field: &str) -> Option<&'a str> {
 
 /// The state a stop reason means. §6.2's five rows, total over the reasons the contract names.
 ///
-/// **Two spellings, in one place, and it is a defect that there are two.** The frozen contract
-/// spells these kebab-case (`pet-contracts/payloads.ts:166-172`, and its validator rejects
-/// anything else), while `agent_runtime::runs` writes the engine's own `StopReason`, which serde
-/// renames to snake_case (`agent-client-protocol-schema`'s `StopReason`) — so the live wire
-/// carries `end_turn` where the contract says `end-turn`. Accepting both here is the least wrong
-/// thing this reader can do: the alternative is reading every completed run as an unknown ending,
-/// which is a wrong fact rather than a tolerated spelling. The real fix is normalizing the payload
-/// in `runs.rs`, after which this tolerance should be deleted — see this task's report.
+/// One spelling, and it is the contract's: `agent_runtime::runs` normalizes the engine's
+/// `snake_case` `StopReason` into the `kebab-case` the contract's validator accepts before the
+/// payload is published, so a reason that arrives here under some other spelling is a reason this
+/// host does not know rather than a second way of writing one it does.
 ///
 /// A reason this host does not know is `unknown`, never `turn-finished`: §6.2 forbids asserting a
 /// normal ending for a turn whose ending is not known.
 fn state_from_stop_reason(reason: Option<&str>) -> PetTaskState {
     match reason {
-        Some("end-turn") | Some("end_turn") => PetTaskState::TurnFinished,
-        Some("max-tokens") | Some("max_tokens") => PetTaskState::Stopped,
-        Some("max-turn-requests") | Some("max_turn_requests") => PetTaskState::Stopped,
+        Some("end-turn") => PetTaskState::TurnFinished,
+        Some("max-tokens") | Some("max-turn-requests") => PetTaskState::Stopped,
         Some("refusal") => PetTaskState::Refused,
         Some("cancelled") => PetTaskState::Cancelled,
         _ => PetTaskState::Unknown,

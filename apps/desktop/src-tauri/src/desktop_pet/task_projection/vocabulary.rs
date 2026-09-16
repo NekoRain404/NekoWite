@@ -10,7 +10,7 @@
 //! field for field and spelling for spelling: the frontend reads these through serde, and a name
 //! that drifted would be a field that silently reads as absent.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::Incarnation;
 
@@ -19,7 +19,11 @@ use super::Incarnation;
 /// D1's `PetTaskKey` field for field, and a tuple in Rust's sense rather than a string: `Hash` and
 /// `Eq` on the whole value is what lets it be a map key directly, so there is no encoding step for
 /// a suffix match to get wrong later. `session_id` is a field *in* the key and never the key.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+///
+/// `Deserialize` as well as `Serialize`, because the ledger persists this key inside its rows
+/// (`../history.rs`): a record of tasks is read back with the same spelling it was written with,
+/// and one definition of the key is what keeps "the same spelling" from being two agreements.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PetTaskKey {
     pub agent_id: String,
@@ -44,20 +48,34 @@ impl PetTaskKey {
     }
 }
 
-/// Every state the pet can show. D1's `PET_TASK_STATES` verbatim, and kebab-case on the wire so
-/// the two spellings are one list rather than two (`pet-contracts/task.ts:69-82`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+/// One state from `PET_TASK_STATES`, kebab-case on the wire so the two are one list rather than two
+/// (`pet-contracts/task.ts:69-82`).
+///
+/// The names are serde's `kebab-case` rename and not a method that returns them: a second spelling
+/// is the one that drifts. `Deserialize` as well as `Serialize` because the ledger writes this state
+/// into a row and reads it back on the next start (`../history.rs`), and that file is also where
+/// `PET_TASK_STATES` — the array of names the ledger's tests pin against the contract — lives: it
+/// has no reader in this module, and a copy here would be a second list to keep in step rather than
+/// one list in one place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PetTaskState {
+    /// A turn is in flight. Never recorded: it is not an ending, and it is what D4's projection
+    /// shows.
     Working,
+    /// The engine is waiting on the user to allow or refuse something.
     WaitingInput,
-    /// A limit ended it (`max-tokens`, `max-turn-requests`): reached, not achieved.
+    /// The turn ended normally. Nothing beyond "this turn finished" may be claimed (§6.2).
     TurnFinished,
+    /// A limit ended it (`max-tokens`, `max-turn-requests`): reached, not achieved.
     Stopped,
+    /// The engine declined to continue. Not a failure and not a success.
     Refused,
+    /// Cancelled — by the user, or on their behalf. Neither a success nor a failure (§6.2).
     Cancelled,
+    /// The run failed and its detail is in the main panel.
     Failed,
-    /// The runtime went away mid-run. Never a terminal *success*, and not re-sent.
+    /// The runtime went away mid-run. Never read as done, and never re-sent.
     Interrupted,
     /// The host cannot be reached, so it cannot say what the task is doing.
     Unknown,

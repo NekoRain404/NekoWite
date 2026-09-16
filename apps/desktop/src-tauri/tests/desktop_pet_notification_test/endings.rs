@@ -6,11 +6,12 @@
 //! notice says, because the failures this guards against are not crashes: they are sentences that
 //! are untrue about the user's own run.
 
-use crate::desktop_pet::history::{PetTaskState, PET_TASK_STATES};
+use crate::desktop_pet::history::PET_TASK_STATES;
 use crate::desktop_pet::notification_delivery::PetNotice;
 use crate::desktop_pet::notification_policy::{
     channel_for, NotificationChannel, NotificationOutcome, SilenceReason,
 };
+use crate::desktop_pet::task_projection::PetTaskState;
 use crate::support::{
     self, contract, delivered, flush, gathering, key, key_for, policy, silent, state_named,
     RecordingChannel, Stream,

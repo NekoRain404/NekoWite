@@ -9,9 +9,10 @@
 //! so. A notice that failed is a distinct outcome, the row it was about stays unread, the ledger
 //! writes down that the attempt failed, and nothing quietly tries again (§6.3's at-most-once).
 
-use crate::desktop_pet::history::{DeliveryState, PetTaskState, TaskHistory};
+use crate::desktop_pet::history::{DeliveryState, TaskHistory};
 use crate::desktop_pet::notification_delivery::{DeliveryFailure, NoChannel, NotificationDelivery, PetNotice};
 use crate::desktop_pet::notification_policy::{NotificationPolicy, NotificationPreferences};
+use crate::desktop_pet::task_projection::PetTaskState;
 use crate::support::{delivered, gathering, key, policy, refused, RecordingChannel, Stream};
 
 fn refusal(kind: &str) -> DeliveryFailure {

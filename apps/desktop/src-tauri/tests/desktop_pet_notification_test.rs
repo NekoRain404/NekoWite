@@ -31,11 +31,27 @@
 //! `quiet`, `delivery`, `history` — and they are one target and one command, because a test in a
 //! file nobody runs is not evidence.
 
+// `use nekowite_lib::agent_runtime` is what the projection reaches its own types through while it
+// is compiled outside the library, for the reason `desktop_pet_task_projection_test.rs` states: the
+// same module either way, bound under the path the source already names.
+use nekowite_lib::agent_runtime;
+
 #[path = "../src/desktop_pet"]
 mod desktop_pet {
     pub mod history;
     pub mod notification_delivery;
     pub mod notification_policy;
+    // `history` reads `PetTaskKey` and `PetTaskState` from here — one definition of each rather
+    // than a copy in every file that indexes a task — so this target compiles the module too,
+    // exactly as the library will.
+    //
+    // The `allow` is this target's and not the module's: a projection is not what the ledger's
+    // tests exercise, so every item in that file is unreachable *here* and the dead-code lint would
+    // name all of them. What it must not be is a `pub use` of the two types or a second copy of
+    // them under a private path: the library reads them through `task_projection`, and a test that
+    // reached a different door would be testing a shape the app does not build.
+    #[allow(dead_code)]
+    pub mod task_projection;
 }
 
 // `#[path]` rather than a bare `mod`, for the reason `desktop_pet_ipc_test.rs` gives: this target's
