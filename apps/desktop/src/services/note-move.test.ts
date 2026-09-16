@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { moveNote } from './note-move'
+import { NoteMoveBlockedError, moveNote } from './note-move'
 import type { NoteMoveIo } from './note-move'
 import { joinPath } from './paths'
+import { vaultRelativeFromNoteVault } from './attachments'
 
 interface Entry {
   name: string
@@ -180,9 +181,133 @@ describe('moveNote', () => {
     expect(h.write).toHaveBeenCalledWith('/vault', '/vault/notes/sub/b.md', expected)
   })
 
-  it('does not move the assets folder into itself', async () => {
+  it('keeps a root-level note\'s references resolving inside its own assets folder', async () => {
     const h = harness(
-      { '/vault/notes/a.md': '![p](a_assets/pic.png)\n' },
+      { '/vault/a.md': '![p](a_assets/pic.png)\n', '/vault/a_assets/pic.png': 'bytes' },
+      {
+        '/vault': [
+          { name: 'a.md', is_dir: false },
+          { name: 'a_assets', is_dir: true },
+        ],
+      },
+    )
+
+    const to = '/vault/a_assets/a.md'
+    const result = await moveNote(h.io, '/vault', '/vault/a.md', to)
+
+    // Where the gesture has to land: the spelling the note now carries resolves
+    // to the file that is really there. Pre-fix the body was left as
+    // `a_assets/pic.png`, which resolves from the new home to
+    // `a_assets/a_assets/pic.png` — one folder deeper than the only copy.
+    const onDisk = (h.disk.get(to) ?? '').trim()
+    const ref = onDisk.replace(/^!\[[^\]]*\]\((.*)\)$/, '$1')
+    expect(vaultRelativeFromNoteVault(to, '/vault', ref)).toBe('a_assets/pic.png')
+    // ...and the body itself, which is what the editor and every export read.
+    expect(onDisk).toBe('![p](pic.png)')
+    // The note moves, the folder stays, and the file it names is really there.
+    expect(h.rename.mock.calls).toEqual([['/vault', '/vault/a.md', to]])
+    expect(h.disk.has('/vault/a_assets/pic.png')).toBe(true)
+    expect(h.disk.has('/vault/a_assets/a_assets/pic.png')).toBe(false)
+    expect(result).toEqual({ content: '![p](pic.png)\n', movedAssets: false })
+  })
+
+  it('keeps the refs resolving when the note lands in a folder under its own assets', async () => {
+    const h = harness(
+      {
+        '/vault/notes/a.md': '![p](a_assets/pic.png)\n',
+        '/vault/notes/a_assets/pic.png': 'bytes',
+      },
+      {
+        '/vault/notes': [
+          { name: 'a.md', is_dir: false },
+          { name: 'a_assets', is_dir: true },
+        ],
+      },
+    )
+
+    const to = '/vault/notes/a_assets/deep/a.md'
+    const result = await moveNote(h.io, '/vault', '/vault/notes/a.md', to)
+
+    expect(h.rename.mock.calls).toEqual([['/vault', '/vault/notes/a.md', to]])
+    // One level in: the folder's file is one `..` away, not `a_assets/…` again.
+    // Left as written, `a_assets/pic.png` would resolve from here to
+    // `/vault/notes/a_assets/deep/a_assets/pic.png`, which does not exist.
+    expect(h.disk.get(to)).toBe('![p](../pic.png)\n')
+    expect(vaultRelativeFromNoteVault(to, '/vault', '../pic.png')).toBe('notes/a_assets/pic.png')
+    expect(h.disk.has('/vault/notes/a_assets/deep/a_assets/pic.png')).toBe(false)
+    expect(result.movedAssets).toBe(false)
+  })
+
+  it('does not move the assets folder into itself, and keeps the refs resolving there', async () => {
+    const h = harness(
+      {
+        '/vault/notes/a.md': '![p](a_assets/pic.png)\n![q](../attachments/2026-09/q.png)\n',
+        '/vault/notes/a_assets/pic.png': 'bytes',
+      },
+      {
+        '/vault/notes': [
+          { name: 'a.md', is_dir: false },
+          { name: 'a_assets', is_dir: true },
+        ],
+      },
+    )
+
+    const to = '/vault/notes/a_assets/a.md'
+    const result = await moveNote(h.io, '/vault', '/vault/notes/a.md', to)
+
+    // The folder itself still does not move into itself — the note does.
+    expect(h.rename.mock.calls).toEqual([['/vault', '/vault/notes/a.md', to]])
+    expect(result.movedAssets).toBe(false)
+
+    const body = '![p](pic.png)\n![q](../../attachments/2026-09/q.png)\n'
+    expect(h.disk.get(to)).toBe(body)
+    expect(h.write).toHaveBeenCalledWith('/vault', to, body)
+    expect(result.content).toBe(body)
+    // And the references resolve AT the destination: the folder's file is a
+    // sibling, the vault-level attachments tree is one level further up.
+    expect(vaultRelativeFromNoteVault(to, '/vault', 'pic.png')).toBe('notes/a_assets/pic.png')
+    expect(vaultRelativeFromNoteVault(to, '/vault', '../../attachments/2026-09/q.png')).toBe(
+      'attachments/2026-09/q.png',
+    )
+  })
+
+  it('refuses the move when a reference has no spelling from the new folder', async () => {
+    // `a_assets/attachments/x.png` read from inside `a_assets` can only be spelt
+    // `attachments/x.png`, which the resolver reads as the VAULT-level
+    // attachments tree — a different file. Nothing spells the original target
+    // from there, so the gesture is refused rather than landing a note whose
+    // image points elsewhere.
+    const body = '![p](a_assets/attachments/x.png)\n'
+    const h = harness(
+      { '/vault/notes/a.md': body, '/vault/notes/a_assets/attachments/x.png': 'bytes' },
+      {
+        '/vault/notes': [
+          { name: 'a.md', is_dir: false },
+          { name: 'a_assets', is_dir: true },
+        ],
+      },
+    )
+
+    const blocked = await moveNote(
+      h.io,
+      '/vault',
+      '/vault/notes/a.md',
+      '/vault/notes/a_assets/a.md',
+    ).catch((error: unknown) => error)
+
+    // Refused BEFORE the first mutation: the note is where it was, with the body
+    // exactly as written, and nothing exists at the destination.
+    expect(h.rename).not.toHaveBeenCalled()
+    expect(h.write).not.toHaveBeenCalled()
+    expect(h.disk.get('/vault/notes/a.md')).toBe(body)
+    expect(h.disk.has('/vault/notes/a_assets/a.md')).toBe(false)
+    expect(blocked).toBeInstanceOf(NoteMoveBlockedError)
+    expect((blocked as NoteMoveBlockedError).refs).toEqual(['a_assets/attachments/x.png'])
+  })
+
+  it('writes nothing when a move into the assets folder invalidates no reference', async () => {
+    const h = harness(
+      { '/vault/notes/a.md': '# A\n\nPlain text and ![remote](https://example.com/x.png).\n' },
       {
         '/vault/notes': [
           { name: 'a.md', is_dir: false },
@@ -202,7 +327,7 @@ describe('moveNote', () => {
       ['/vault', '/vault/notes/a.md', '/vault/notes/a_assets/a.md'],
     ])
     expect(h.write).not.toHaveBeenCalled()
-    expect(result.movedAssets).toBe(false)
+    expect(result).toEqual({ content: null, movedAssets: false })
   })
 
   it('rolls the folder move back when the rewritten body cannot be written', async () => {

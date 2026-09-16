@@ -17,6 +17,20 @@
  * and rewrites only the reference URLs the move invalidated. Everything else in
  * the document is preserved byte-for-byte.
  *
+ * Two shapes a move cannot carry out as a plain move, and what happens instead —
+ * because a move whose other half was refused is not a move this service is
+ * allowed to finish:
+ *
+ *   - **the note goes INTO its `_assets` folder** (`assetsWouldNest`): the
+ *     folder cannot follow (it would land inside itself), so it stays put and
+ *     the note moves into it. From there its files are SIBLINGS, and the
+ *     references are re-spelled accordingly — `a_assets/pic.png` is `pic.png`;
+ *   - **a reference has no spelling from the new directory** at all (see
+ *     {@link planNoteRefRewrite}): the move is refused before the first
+ *     mutation, and the caller's notification is truthful because nothing
+ *     moved. A note that moved with a stale body is worse than a gesture that
+ *     did not take.
+ *
  * All filesystem access is injected (the `externalDocSync` /
  * `recoveryClosedLoop` style) so the flow runs against the real gateway, the
  * memory gateway or a mock — see `noteMove.test.ts`.
@@ -70,8 +84,48 @@ function isNoteRelative(src: string): boolean {
   return !/^[a-z][a-z0-9+.-]*:/i.test(src)
 }
 
+/** True when `to` files the note inside its own `_assets` folder — the one
+ *  destination that folder cannot follow it to, because the folder would land
+ *  inside itself (the backend refuses that). The folder then stays where it is
+ *  and the NOTE moves into it, which is the case the reference remap has to
+ *  model: from the note's new home the folder's files are siblings. */
+function assetsWouldNest(from: string, to: string, vault: string): boolean {
+  const dir = assetsDirForNote(from, vault)
+  return dir !== null && stripVaultPrefix(to, vault).startsWith(`${dir}/`)
+}
+
+/** The move would leave one of the note's own references unsatisfiable: it has
+ *  no spelling from the note's new directory, so writing the rewritten body
+ *  would silently point the link somewhere else. Thrown BEFORE the first
+ *  mutation, so the caller's notification is truthful — nothing moved. */
+export class NoteMoveBlockedError extends Error {
+  /** The note path the move would have landed at. */
+  readonly to: string
+  /** The destinations as the note spells them today. */
+  readonly refs: readonly string[]
+
+  constructor(to: string, refs: readonly string[]) {
+    super(
+      `cannot move to ${to}: ${refs.length} reference(s) have no spelling from there (${refs.join(', ')})`,
+    )
+    this.name = 'NoteMoveBlockedError'
+    this.to = to
+    this.refs = refs
+  }
+}
+
+interface NoteRefRewrite {
+  /** The body with every expressible note-relative reference re-spelled. */
+  content: string
+  /** The destinations that cannot be expressed from the note's new directory.
+   *  When this is not empty, `content` would retarget them: a move that
+   *  produced it must be refused rather than written. */
+  unexpressible: string[]
+}
+
 /** Rewrite the note-relative references in `content` for a move from
- *  `ctx.from` to `ctx.to`, leaving every other byte alone.
+ *  `ctx.from` to `ctx.to`, leaving every other byte alone — plus the ones that
+ *  cannot be rewritten at all, which the caller has to refuse the move over.
  *
  *  Each reference is resolved to a vault-relative path exactly the way the
  *  display resolver does it (`vaultRelativeFromNoteVault`), remapped to where
@@ -79,15 +133,22 @@ function isNoteRelative(src: string): boolean {
  *  directory. So `../attachments/…` follows a depth change, a reference into
  *  the note's own `<basename>_assets` follows a rename, and a reference to the
  *  note itself follows the note. */
-export function rewriteNoteRefs(content: string, ctx: NoteRefContext): string {
+function planNoteRefRewrite(content: string, ctx: NoteRefContext): NoteRefRewrite {
   const fromRel = stripVaultPrefix(ctx.from, ctx.vault)
   const toRel = stripVaultPrefix(ctx.to, ctx.vault)
   const oldAssetsDir = assetsDirForNote(ctx.from, ctx.vault)
   const newAssetsDir = assetsDirForNote(ctx.to, ctx.vault)
+  // When the note lands inside its own assets folder that folder stays put, so
+  // the files in it do not move at all and the remap below must say so. Assuming
+  // they followed the note is what broke this gesture: `a_assets/pic.png`
+  // became `a_assets/a_assets/pic.png`, which re-spelled from the note's new
+  // directory is the original string again — so `rewrite` returned null, the
+  // body was never written, and the note moved anyway.
+  const assetsFollowNote = !assetsWouldNest(ctx.from, ctx.to, ctx.vault)
 
   function remap(vaultRel: string): string {
     if (vaultRel === fromRel) return toRel
-    if (oldAssetsDir && newAssetsDir) {
+    if (assetsFollowNote && oldAssetsDir && newAssetsDir) {
       if (vaultRel === oldAssetsDir) return newAssetsDir
       if (vaultRel.startsWith(`${oldAssetsDir}/`)) {
         return newAssetsDir + vaultRel.slice(oldAssetsDir.length)
@@ -96,10 +157,22 @@ export function rewriteNoteRefs(content: string, ctx: NoteRefContext): string {
     return vaultRel
   }
 
+  const unexpressible: string[] = []
+
   function rewrite(src: string): string | null {
     if (!isNoteRelative(src)) return null
-    const resolved = vaultRelativeFromNoteVault(ctx.from, ctx.vault, src)
-    const next = relativePathFromNoteVault(ctx.to, ctx.vault, remap(resolved))
+    const target = remap(vaultRelativeFromNoteVault(ctx.from, ctx.vault, src))
+    const next = relativePathFromNoteVault(ctx.to, ctx.vault, target)
+    // The new spelling has to mean at the destination what the old one meant
+    // here. It does not when the resolver has a rule of its own for the string
+    // it produces — a folder literally named `attachments` spells as the
+    // vault-level `attachments/…` from a note beside it, which is a different
+    // file. Nothing can express that reference from there, so it is reported
+    // instead of being written as something else.
+    if (vaultRelativeFromNoteVault(ctx.to, ctx.vault, next) !== target) {
+      unexpressible.push(src)
+      return null
+    }
     return next === src ? null : next
   }
 
@@ -144,7 +217,15 @@ export function rewriteNoteRefs(content: string, ctx: NoteRefContext): string {
       return `${head}${bracketed ? `<${next}>` : next}${title})`
     })
   }
-  return out
+  return { content: out, unexpressible }
+}
+
+/** {@link planNoteRefRewrite}'s content for a caller that has no refusal to
+ *  offer — the tab keeps the user's unsaved text in step with the rewrite the
+ *  move wrote to disk, and `moveNote` has already refused any move whose
+ *  references could not be expressed. */
+export function rewriteNoteRefs(content: string, ctx: NoteRefContext): string {
+  return planNoteRefRewrite(content, ctx).content
 }
 
 /** Move the note at `from` to `to`, carrying its sibling `_assets` directory
@@ -153,9 +234,11 @@ export function rewriteNoteRefs(content: string, ctx: NoteRefContext): string {
  *  handled here.
  *
  *  Ordering is deliberate: the body is read first, so a note whose references
- *  cannot be read is never half-moved, and the assets directory is moved before
- *  the note so a conflict there leaves the note where it was. If the note
- *  rename or the rewrite then fails, both are put back. */
+ *  cannot be read is never half-moved, and a body whose references have no
+ *  spelling at the destination refuses the move before anything is touched —
+ *  neither rename has run at that point. The assets directory is moved before
+ *  the note so a conflict there leaves the note where it was. If the note rename
+ *  or the rewrite then fails, both are put back. */
 export async function moveNote(
   io: NoteMoveIo,
   vault: string,
@@ -163,20 +246,26 @@ export async function moveNote(
   to: string,
 ): Promise<NoteMoveResult> {
   const body = await io.read(vault, from)
-  const rewritten = rewriteNoteRefs(body, { vault, from, to })
+  const plan = planNoteRefRewrite(body, { vault, from, to })
+  if (plan.unexpressible.length > 0) {
+    // Nothing has been renamed yet, so this refusal IS the whole move not
+    // happening. Writing the body without it, or moving the note onto the old
+    // body, is the half-step this section exists to prevent.
+    throw new NoteMoveBlockedError(to, plan.unexpressible)
+  }
+  const rewritten = plan.content
   const changed = rewritten !== body
 
   const noteDir = dirName(from)
   const oldAssetsDir = assetsDirForNote(from, vault)
   const newAssetsDir = assetsDirForNote(to, vault)
   // A note dropped into its own `_assets` folder would make the folder move
-  // land inside itself (the backend refuses that), and the references cannot
-  // resolve from there — so the folder stays where it is instead of turning
-  // the gesture into a failure.
-  const assetsWouldNest =
-    oldAssetsDir !== null && stripVaultPrefix(to, vault).startsWith(`${oldAssetsDir}/`)
+  // land inside itself (the backend refuses that), and the folder's files are
+  // still reachable from where the note lands — as siblings — so the folder
+  // stays put and the gesture is carried by the reference rewrite above.
+  const nested = assetsWouldNest(from, to, vault)
   let assetsMove: { from: string; to: string } | null = null
-  if (oldAssetsDir && newAssetsDir && oldAssetsDir !== newAssetsDir && !assetsWouldNest) {
+  if (oldAssetsDir && newAssetsDir && oldAssetsDir !== newAssetsDir && !nested) {
     const entries = await io.list(vault, noteDir)
     if (entries.some((e) => e.is_dir && e.name === baseName(oldAssetsDir))) {
       // Both sides are built from the moved note's own spelling (`joinPath`
