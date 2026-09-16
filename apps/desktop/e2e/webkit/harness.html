@@ -202,6 +202,21 @@
         }
 
         window.__TAURI_INTERNALS__ = {
+          /**
+           * Which window this context is, in the shape `@tauri-apps/api` reads — the same two
+           * fields the package's own `mockWindows` installs, so this is copied from the
+           * backend it stands in for rather than invented here.
+           *
+           * It is load-bearing for one caller and one only: the agent composition asks for the
+           * window's label when it binds the live-note responder, and with `metadata` absent
+           * that read throws, `agent-rail` reports the throw as a refusal, and the rail shows
+           * 「the agent engine could not be started」 over the panel it was supposed to host.
+           * Nothing in this harness had ever mounted the panel, so nothing had ever asked.
+           */
+          metadata: {
+            currentWindow: { label: 'main' },
+            currentWebview: { windowLabel: 'main', label: 'main' },
+          },
           invoke: async function (cmd, args) {
             args = args || {}
             if (cmd === 'register_vault') return undefined

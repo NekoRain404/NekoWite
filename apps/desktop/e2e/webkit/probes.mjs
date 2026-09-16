@@ -13,6 +13,7 @@ import { motionProbe } from './probe-motion.mjs'
 import { dialogProbe } from './probe-dialog.mjs'
 import { noteSwitchProbe } from './probe-note-switch.mjs'
 import { tailProbe } from './probe-tail.mjs'
+import { agentScrollProbe } from './probe-agent-scroll.mjs'
 
 /** Dumps what is actually in the document, so the probes can address it. */
 const inspect = {
@@ -54,6 +55,12 @@ const inspect = {
  * over the whole window and takes focus into it. Everything above wants the
  * editor addressable, so the probe that covers the window goes after all of
  * them; it closes the dialog again before it returns either way.
+ *
+ * `agent-scroll` goes after even that one, and it is the only probe that needs a
+ * page the harness was asked to prepare (`--agent`): it opens the right rail and
+ * leaves the agent panel mounted in it, which is a page no probe after it could
+ * be measured on. Under a run that did not ask for the agent it reports itself
+ * skipped, the way `note-switch` does under a scenario with one note.
  */
-export const PROBES = [motionProbe, panelProbe, tailProbe, noteSwitchProbe, dialogProbe]
+export const PROBES = [motionProbe, panelProbe, tailProbe, noteSwitchProbe, dialogProbe, agentScrollProbe]
 export const ALL_PROBES = [inspect, ...PROBES]

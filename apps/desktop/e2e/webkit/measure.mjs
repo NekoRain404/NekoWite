@@ -19,6 +19,17 @@
  *   node e2e/webkit/measure.mjs                 # every probe, JSON on stdout
  *   node e2e/webkit/measure.mjs --only panel    # one probe
  *   node e2e/webkit/measure.mjs --scenario plain
+ *   node e2e/webkit/measure.mjs --agent         # the harness stands in for the agent IPC too
+ *
+ * `--agent` is the one flag that changes the page rather than the run: the harness's `?agent=1`
+ * installs the IPC stand-in the agent panel needs and switches the rail to it. It is a flag and
+ * not a scenario because it is orthogonal to which document is open, and because the probes
+ * that do not care about the panel must keep measuring the same page they always did — with it
+ * absent, `harness.html` is byte for byte the document it was.
+ *
+ * The run records whether it was asked for the panel (`results.agent`), so a skipped
+ * agent-panel probe can be told apart from a run that asked and got nothing: the first claims
+ * nothing, the second is the failure this whole file is arranged to make visible.
  *
  * `MiniBrowser` opens a window on the user's real desktop, because WebKitGTK
  * has no headless mode (2.52's MiniBrowser takes no `--headless` and
@@ -135,6 +146,9 @@ function watchdog(ms) {
 async function main() {
   const only = arg('only')
   const scenario = arg('scenario', 'long')
+  // Presence, not a value: `arg` reads the token AFTER a flag, so `--agent --only x` would hand
+  // back `--only` and a switch spelled this way would silently be off.
+  const agent = process.argv.includes('--agent')
 
   const vitePort = await freePort()
   const driverPort = await freePort()
@@ -154,7 +168,7 @@ async function main() {
   })
 
   const wd = new WebDriver(driverPort)
-  const results = { engine: null, viewport: null, scenario, probes: {} }
+  const results = { engine: null, viewport: null, scenario, agent, probes: {} }
   watchdog(Number(arg('watchdog', '300000')))
   try {
     stage('session')
@@ -165,7 +179,9 @@ async function main() {
       platformName: capabilities.platformName,
     }
 
-    const url = `http://127.0.0.1:${vitePort}/e2e/webkit/harness.html?scenario=${scenario}`
+    const url =
+      `http://127.0.0.1:${vitePort}/e2e/webkit/harness.html?scenario=${scenario}` +
+      (agent ? '&agent=1' : '')
     stage(`navigate ${url}`)
     await wd.navigate(url)
 

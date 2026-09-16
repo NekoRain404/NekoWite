@@ -280,6 +280,177 @@ export function verify(results) {
     )
   }
 
+  // ---- The agent panel, in the engine that ships --------------------------
+  //
+  // Three rules, and each check below says which sentence it is. The panel's scroll
+  // policy and the rail's effect on the body were both verified in Chromium only —
+  // `agent-panel.spec.ts` mounts the panel by hand in Playwright, and brief 62 measured
+  // the rail in the same engine — so these are the first readings of either in the
+  // engine the app ships.
+  //
+  // Every one of them is read off a frame-by-frame distribution and carries the load
+  // average the machine was under while the trace ran: this box is shared with unrelated
+  // work at several hundred percent CPU, and a frame count without its load is a number
+  // nothing can be compared with. The `agent` flag on the run is what tells a deliberate
+  // skip (no `--agent`: nothing was claimed) apart from a run that asked for the panel and
+  // measured nothing (a failure, and reported as one).
+  const agent = results.probes['agent-scroll']
+  if (agent?.skipped && !results.agent) {
+    // A run that never asked for the panel claims nothing about it, and says so rather than
+    // passing: the skip is visible in the probe's own JSON and costs no check either way. The
+    // same shape `note-switch` has under a scenario with one note.
+  } else if (results.agent && !agent) {
+    c.run('agent scroll: the run asked for the panel and nothing measured it', 'no agent-scroll result', false)
+  } else if (agent?.skipped) {
+    c.run(
+      'agent scroll: the run asked for the panel and the probe did not measure',
+      `--agent was passed; the probe reported: ${agent.skipped}`,
+      false,
+    )
+  } else if (agent) {
+    const avg = (l) => (l ? `load ${l.one}/${l.five}/${l.fifteen}` : 'load unknown')
+    // A `--violate` run breaks one property on purpose and stops there, so the phases after it
+    // were never measured. They still FAIL — an unmeasured check is not a pass — and this is
+    // what tells that failure apart from one the product produced.
+    const injected = agent.violation
+      ? ` — not measured: this run injected a deliberate violation (--violate ${agent.violation}) and stopped after the phase it breaks`
+      : ''
+    const boot = agent.boot ?? {}
+    const settled =
+      boot.failure === undefined &&
+      boot.mounted?.panel === true &&
+      boot.seeded?.metrics !== null &&
+      boot.seeded.metrics.scrollHeight > boot.seeded.metrics.clientHeight
+    c.run(
+      'agent panel: the rail hosts a live session with a scrollable transcript',
+      boot.failure !== undefined
+        ? `the panel never became measurable: ${boot.failure} (state ${JSON.stringify(boot.state ?? null)})`
+        : `panel ${boot.mounted?.panel}, transcript ${JSON.stringify(boot.seeded?.metrics ?? null)}, run ${boot.runId ?? boot.sendFailed ?? 'none'}, ${avg(agent.load)}`,
+      settled,
+    )
+
+    if (settled) {
+      const held = agent.held ?? {}
+      const trace = held.trace ?? {}
+      // FAILS IF: the panel pins the container to the end while the reader is away from it —
+      // the pre-`use-agent-scroll` behaviour, and the one the ruling forbids in as many words.
+      // The reader's row is the anchor: its offset from the container's top must not move, and
+      // a pinned container moves it by hundreds of pixels in the frames the arrivals land in.
+      c.run(
+        'agent scroll: a reader parked away from the end is not moved by arrivals',
+        `${held.trace?.movedFrames ?? '?'} of ${trace.frames ?? '?'} frames moved the reader ` +
+          `(offset ${JSON.stringify(trace.offsetRange ?? null)}, baseline ${trace.baseline ?? null}, ` +
+          `scrollTop ${JSON.stringify((trace.scrollTop ?? []).map((s) => s.value))}); ` +
+          `frame deltas p50 ${trace.frameDeltaP50}ms p95 ${trace.frameDeltaP95}ms max ${trace.frameDeltaMax}ms; ` +
+          `${avg(held.load)} → ${avg(held.loadAfter)}; trace: ${(trace.trace ?? []).slice(0, 6).join(' | ')}`,
+        held.live?.holds === true && trace.movedFrames === 0,
+      )
+      // The witness, and it is a check of its own on purpose: "the reader did not move" is
+      // worth nothing if the panel never learned they had left the end. FAILS IF: the park
+      // produced no scroll event the container could see — in which case the panel was still
+      // following, and the green above was measuring an unsuspended panel.
+      c.run(
+        'agent scroll: the park was a suspension the panel could see',
+        `the reader was parked by ${held.park?.by} (${JSON.stringify(held.park?.wheel ?? held.park?.requested ?? null)}), ` +
+          `container saw ${held.park?.scrollEvents ?? '?'} scroll event(s), ` +
+          `${held.park?.max !== undefined ? Math.round((held.park.max - held.park.scrollTop) * 100) / 100 : '?'}px from the end; ` +
+          `arrivals: ${held.live?.why ?? 'no trace'}`,
+        held.live?.holds === true && (held.park?.scrollEvents ?? 0) >= 1,
+      )
+
+      for (const [route, name] of [
+        ['affordance', 'the panel’s own affordance'],
+        ['scroll', 'the reader’s own scroll'],
+        ['keyboard', 'the keyboard'],
+      ]) {
+        const resume = agent.resume?.[route]
+        if (!resume) {
+          c.run(`agent scroll: arrival at the end resumes following — by ${name}`, 'no result' + injected, false)
+          continue
+        }
+        const follow = resume.follow
+        const detail =
+          `${resume.reachedEnd ? 'reached the end' : `did NOT reach the end (${JSON.stringify(resume.act?.settled ?? resume.failure ?? null)})`}` +
+          `, hint gone ${resume.hintGone}` +
+          (follow
+            ? `; then ${follow.awayFrames} of ${follow.frames} frames away from the end (gap ${JSON.stringify(follow.gap)}), scrollTop ${follow.scrollTop.first} → ${follow.scrollTop.last} (grew ${follow.scrollTop.grew}), frame deltas p50 ${follow.frameDeltaP50}ms p95 ${follow.frameDeltaP95}ms; ${avg(resume.load)} → ${avg(resume.loadAfter)}`
+            : '; no stream was run') +
+          (route === 'keyboard'
+            ? `; the reader's click landed on ${JSON.stringify(resume.act?.clicked ?? null)} and focus went to ` +
+              `${JSON.stringify(resume.act?.focused?.focus ?? null)}; the page saw ` +
+              `${JSON.stringify(resume.act?.keysSeenByThePage ?? null)}, and PageDown+End left the container at ` +
+              `${resume.act?.afterKeys?.scrollTop ?? '?'} of ${resume.act?.afterKeys?.max ?? '?'} ` +
+              `(parked at ${resume.act?.parked?.scrollTop ?? '?'} of ${resume.act?.parked?.max ?? '?'}; the click ` +
+              `toggles the row it lands on, so the delta is not the keys' alone — reported, not decided on)` +
+              `; the hint the check is about: on screen ${resume.act?.hintPresent?.jump === true}, activated by ` +
+              `${resume.act?.activation?.by ?? 'nothing'} ` +
+              `(focus ${JSON.stringify(resume.act?.activation?.focus ?? null)}); in the DOM: ` +
+              `${JSON.stringify((resume.act?.tabbables?.nodes ?? []).map((n) => `${n.sel}:${n.exists ? `tabIndex ${n.tabIndex}${n.inertAncestor ? ' inert' : ''}` : 'absent'}`))}`
+            : '') +
+          (route === 'scroll' ? `; wheel ${JSON.stringify(resume.act?.wheel ?? null)}, fallback ${JSON.stringify(resume.act?.fallback ?? null)}` : '')
+        // FAILS IF: the container reaches the end and then ignores the stream — the panel
+        // suspends itself and never resumes, which is the failure a jump button that only
+        // scrolls (without clearing `suspended`) would produce. Every frame of the trace must
+        // be at the end AND the offset must have grown, because a container that never moved
+        // was following nothing.
+        //
+        // For the keyboard route the act is the hint focused and activated with a REAL Enter,
+        // and what PageDown/End do on their own is printed beside it rather than decided on:
+        // two runs of this probe had them leave the container exactly where it was and at the
+        // end, and a verdict that moves with the wind is not a verdict.
+        c.run(
+          `agent scroll: arrival at the end resumes following — by ${name}`,
+          detail,
+          resume.reachedEnd === true &&
+            resume.hintGone === true &&
+            follow?.live?.holds === true &&
+            follow.awayFrames === 0 &&
+            follow.scrollTop?.grew === true,
+        )
+      }
+
+      // 「面板移动、正文稳定」. FAILS IF: the rail animates its width (or anything else that
+      // re-lays the body out across frames) — brief 62's instrument then reads dozens of
+      // distinct widths instead of two, and `appShell.css`'s own sentence is violated.
+      const oneReflow = (t) =>
+        t &&
+        t.frames.frames >= 8 &&
+        t.widthChangedFrames === 1 &&
+        t.widths.length === 2 &&
+        (t.panel.length === 2 || t.rail.length === 2)
+      for (const direction of ['close', 'open']) {
+        const t = agent.rail?.[direction]
+        c.run(
+          `agent panel: the rail's ${direction} re-wraps the body once, in the click frame`,
+          t
+            ? `${t.frames.frames} frames, widths ${JSON.stringify(t.widths)}, width changed in ${t.widthChangedFrames} frame(s) ` +
+              `(first at ${t.firstWidthChangeT}ms), paragraph heights ${JSON.stringify(t.paragraphHeights)}, ` +
+              `frame deltas p50 ${t.frames.frameDeltaP50}ms p95 ${t.frames.frameDeltaP95}ms max ${t.frames.frameDeltaMax}ms, ` +
+              `panel ${JSON.stringify(t.panel.map((p) => p.value))}; ${avg(t.load)} → ${avg(t.loadAfter)}`
+            : 'no trace' + injected,
+          oneReflow(t),
+        )
+      }
+      // FAILS IF: the toggle re-mounts the editor or resets the selection — the caret would
+      // come back at another model position, or the model would have no view to read at all.
+      // `head` is the model's own offset (`editorSessionManager`), not the DOM selection:
+      // the click is allowed to move focus, and focus is not the caret.
+      const before = agent.rail?.caretBefore
+      const after = agent.rail?.caretAfter
+      const headsAcrossTheToggles = ['close', 'open'].flatMap((d) => (agent.rail?.[d]?.heads ?? []).map((h) => h.value))
+      c.run(
+        'agent panel: the caret does not move across the rail’s toggle',
+        `placed at ${before?.head ?? '?'} (focus ${before?.focus ?? '?'}), after both toggles ${after?.head ?? '?'} ` +
+          `(focus ${after?.focus ?? '?'}); heads seen across the traces ${JSON.stringify(headsAcrossTheToggles)}, ` +
+          `selection ranges per frame ${JSON.stringify(agent.rail?.close?.ranges ?? null)}; ${avg(agent.rail?.load)} → ${avg(agent.rail?.loadAfter)}${injected}`,
+        before?.head != null &&
+          after?.head != null &&
+          before.head === after.head &&
+          headsAcrossTheToggles.every((h) => h === before.head),
+      )
+    }
+  }
+
   return {
     passed: c.results.filter((r) => r.holds).length,
     failed: c.failed.length,

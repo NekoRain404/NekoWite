@@ -118,6 +118,42 @@ export class WebDriver {
     return this.#request('POST', this.#path(`/element/${elementId}/click`), {})
   }
 
+  /**
+   * Type into a field, as the engine's own input rather than as events a script made.
+   *
+   * The same reason `clickElement` exists at all: a value written with `el.value = …` plus a
+   * dispatched `input` is not the engine's input path, and the app's own listeners are allowed
+   * to tell the two apart. The document has to be focused for the keystrokes to land, which
+   * WebKitWebDriver does itself when the element is not already the active one.
+   */
+  typeInto(elementId, text) {
+    this.log.push(`type ${text.length} chars`)
+    return this.#request('POST', this.#path(`/element/${elementId}/value`), {
+      text,
+      // The array form is the older half of the same command; the driver reads one of them and
+      // sending both is what the client libraries do. Characters, not one string.
+      value: Array.from(text),
+    })
+  }
+
+  /**
+   * The W3C actions endpoint: real wheel and key input, one source at a time.
+   *
+   * This is what makes "the reader scrolled by hand" and "the reader pressed a key" measurable
+   * rather than simulated — a `WheelEvent` built in the page is untrusted and the engine will
+   * not scroll for it, so a probe that used one would be measuring its own event dispatch.
+   * A driver that does not implement the endpoint answers 404/405 and the caller reports that
+   * rather than falling back to something that looks the same and is not.
+   */
+  performActions(actions) {
+    return this.#request('POST', this.#path('/actions'), { actions })
+  }
+
+  /** Drop the input state the actions above left behind (pressed keys, pointer buttons). */
+  releaseActions() {
+    return this.#request('DELETE', this.#path('/actions'))
+  }
+
   windowRect() {
     return this.#request('GET', this.#path('/window/rect'))
   }
