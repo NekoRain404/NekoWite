@@ -1,11 +1,17 @@
 /**
  * The care page: the two settings it stores, and the absence it has to state.
  *
- * The absence is the half worth a test. Levels, achievements and usage have no ledger in this
- * build (D10), and the failure this port's acceptance clause names is not a missing feature —
- * it is a page that shows something anyway, or a switch that looks like it does something. So
- * these assert that the statement is there, that the only controls are the two switches, and
- * that nothing renders a progress number.
+ * The absence is the half worth a test. D10's ledger settles levels, achievements and usage; what
+ * the settings page has no way to do is *ask* — `PetGateway` carries settings and tasks and no
+ * care, and the pet's own care surface is not mounted yet. The failure this port's acceptance
+ * clause names is not a missing feature, it is a page that shows something anyway. So these assert
+ * that the statement is there, that the only controls are the two switches, and that nothing
+ * renders a progress number.
+ *
+ * The wording of that statement lives in the catalogue, so the assertion pins the key
+ * (`settings.pet.care.progressUnavailable`) rather than the prose: a page that stopped rendering it
+ * fails here, and a sentence that stops being true is the catalogue's to fix — which is what
+ * happened when D10 landed.
  *
  * The session is the container's, so the context is built the way `DesktopPetSettings.vue`
  * builds it and the page is mounted the way its slot renders it.
@@ -148,7 +154,7 @@ describe('the care page', () => {
     )
   })
 
-  it('states that nothing is settled rather than showing a progress number', async () => {
+  it('states that this page cannot read progress rather than showing a number', async () => {
     const context = await makeContext()
     await context.sessions.care.load()
     await mount(context)

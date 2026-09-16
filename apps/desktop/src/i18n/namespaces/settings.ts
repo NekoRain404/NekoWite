@@ -13,6 +13,7 @@ export const settings = {
         export: 'Export',
         ai: 'AI',
         plugins: 'Plugins',
+        agents: 'Agents',
       },
       plugins: {
         hint: 'Plugins are loaded from this library\'s plugins/ folder. Switching one off unloads it now and keeps it off: its code is not read or run again until you switch it back on, and no permission prompt appears while it is off.',
@@ -257,7 +258,7 @@ export const settings = {
           restReminders: 'Break reminders',
           restRemindersNote: 'Whether the pet may remind you to take a break.',
           scopeNote: 'Kept with the app\'s own settings, not inside a library - switching libraries does not carry it away.',
-          progressUnavailable: 'Levels, achievements and usage are not shown here: the ledger that settles them is not part of this build. No progress number is displayed, because a number nobody computed would be an invented one, and a finished task earns nothing yet.',
+          progressUnavailable: 'Levels, achievements and usage are not shown here. The ledger that settles them exists in this build, but nothing on this page can read it: the host connection carries settings and tasks, and no care. So there is no progress number to display - and a number nobody computed would be an invented one.',
           onlineNote: 'Signing in, restoring, syncing and the leaderboard are on the Advanced page - and none of them is offered in this build.',
         },
         project: {
@@ -364,6 +365,7 @@ export const settings = {
         export: '导出',
         ai: 'AI',
         plugins: '插件',
+        agents: '智能体',
       },
       plugins: {
         hint: '插件从当前知识库的 plugins/ 目录加载。关掉一个插件会立即卸载它并保持关闭：在你重新打开之前，它的代码不会被读取或执行，也不会弹出权限询问。',
@@ -603,7 +605,7 @@ export const settings = {
           restReminders: '休息提醒',
           restRemindersNote: '是否允许桌宠提醒你休息。',
           scopeNote: '随应用自己的设置保存，不写进某个知识库——换库不会把它带走。',
-          progressUnavailable: '等级、成就与用量不会在这里显示：负责结算它们的账本还不属于本版本。这里不显示任何进度数字——没人算过的数字就是编的；已完成的任务目前也不产生奖励。',
+          progressUnavailable: '等级、成就与用量不会在这里显示。负责结算它们的账本在本版本里已经存在，但这一页读不到它：宿主连接传送的是设置与任务，不含养成数据。所以这里没有进度数字可显示——而没人算过的数字就是编的。',
           onlineNote: '登录、恢复、同步与排行榜在「高级」页，而它们在本版本一律不提供。',
         },
         project: {

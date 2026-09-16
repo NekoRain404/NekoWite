@@ -10,13 +10,17 @@
  *    never creates one: two sessions on one domain are two revisions, and the second write
  *    comes back as a conflict against the first (`DesktopPetSettings.vue` says the same from
  *    its side).
- *  - **No progress.** The ledger that settles rewards (`R/src/desktop_pet/care_ledger.rs`) and
- *    the rules that compute them (`services/pet-care-rules.ts`) are D10 and do not exist yet,
- *    so there is nothing to show and nothing that earns. A level, an XP bar or a streak drawn
- *    here would be an invented number the user would believe — which §8 forbids in the same
- *    words it uses for an unknown token count (「token 未知不是 0」). The page says so instead,
- *    and `PetCareSettings.test.ts` asserts that statement rather than only asserting that the
- *    switches save.
+ *  - **No progress, and the reason is now a channel rather than an absence.** The ledger that
+ *    settles rewards (`R/src/desktop_pet/care_ledger.rs`) and the rules that compute them
+ *    (`services/pet-care-rules.ts`) exist. What is missing is the way to *ask*: `PetGateway` — the
+ *    only channel a settings page has — carries settings and tasks and no care, and the pet's own
+ *    care surface (`features/desktop-pet/components/PetCarePanel.vue`) is a component no entry
+ *    mounts yet (D12's wiring). So there is no number here to show, and inventing one would be
+ *    exactly the figure §8 forbids in the same words it uses for an unknown token count
+ *    (「token 未知不是 0」). The sentence below therefore names the gap rather than a missing
+ *    module — it was rewritten when D10 landed, because it had stopped being true — and
+ *    `PetCareSettings.test.ts` asserts that statement rather than only asserting that the switches
+ *    save.
  *
  * A store written by a newer build keeps the page's controls off the screen (§10.2): the
  * session answers a refused read with *this build's* defaults, so a form here would be showing
