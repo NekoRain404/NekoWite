@@ -31,6 +31,11 @@
  *    identity. **Not implemented here**: reading the staged artifact, writing the attachment and
  *    applying the markdown edit, all three of which belong to the host and to the tab that holds
  *    the note.
+ *  - **T13a, now**: `registry` below is the settings section's client, built from the window's
+ *    registry commands. It is not a fourth gateway: the definitions it reads and changes live in
+ *    the backend's own state (there is no session, no vault and no event stream in it), and the
+ *    section that calls it takes it as a prop rather than reaching for a singleton — which is why
+ *    the choice is made here and nowhere else.
  *
  * What this file must never become: a second store. Session state, sequencing and "is this run
  * still current" belong to `features/agent` (T5), and a decision taken here would be taken
@@ -50,7 +55,13 @@ import type {
 import { createMemoryAgentGateway } from '../platform/gateways/memory-agent'
 import { createTauriAgentGateway } from '../platform/gateways/tauri-agent'
 import type { AgentIpc } from '../platform/gateways/tauri-agent/ipc'
+import {
+  createTauriAgentRegistryCommands,
+  type AgentRegistryCommands,
+} from '../platform/gateways/tauri-agent/registry'
 import type { AgentLiveNote } from '../features/agent/services/agent-context-snapshot'
+import { createAgentRegistryClient } from '../features/agent-settings/services/agent-registry-ipc'
+import type { AgentRegistryClient } from '../features/agent-settings/services/agent-registry-policy'
 import {
   captureInsertionTarget,
   commitSvgInsertion,
@@ -87,11 +98,27 @@ export interface AgentCompositionDeps {
   profileId?: string
   /** The IPC port, for a test that wants to drive the real adapter without a window. */
   ipc?: AgentIpc
+  /**
+   * The registry's IPC port, for a test that wants to drive the real client without a window.
+   *
+   * The same shape as `ipc` above and for the same reason. Nothing is passed in the app: the
+   * composition builds the client over the window's own commands, which is what makes
+   * `composition.registry` the one object a settings section needs.
+   */
+  registryCommands?: AgentRegistryCommands
 }
 
 export interface AgentComposition {
   /** The adapter behind every session this composition opens. */
   readonly gateway: AgentGateway
+  /**
+   * The registry, as the settings section calls it (T13a's page).
+   *
+   * On the composition rather than inside the section because the page takes its client as a prop
+   * and never reaches for a singleton: which backend answers is the assembly's decision (§6.1), and
+   * a page that built its own would be a second place the choice is made.
+   */
+  readonly registry: AgentRegistryClient
   /** Bring the runtime up. Idempotent: `openSession` calls it, and a second call is a no-op
    *  that leaves the open handles alone. */
   start(): Promise<void>
@@ -152,9 +179,18 @@ export function createAgentComposition(deps: AgentCompositionDeps): AgentComposi
           agentId: deps.agentId ?? 'memory',
           profileId: deps.profileId ?? 'default',
         })
+  // The registry is *not* chosen by environment, unlike the gateway: there is no registry double,
+  // because there is nothing a double could honestly stand in for — the definitions live in the
+  // backend's own state, and the settings section that reads them is only mounted in the app. A
+  // browser build's call rejects on Tauri's own "command not found", which is loud and names the
+  // call, rather than reaching a stub that would look like a host with nothing registered.
+  const registry: AgentRegistryClient = createAgentRegistryClient(
+    deps.registryCommands ?? createTauriAgentRegistryCommands(),
+  )
 
   return {
     gateway,
+    registry,
     async start() {
       await gateway.start()
     },

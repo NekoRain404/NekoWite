@@ -282,6 +282,24 @@ describe('AgentNativeTerminal — the keyboard a Chinese reader has', () => {
     expect(harness.writes).toEqual(['你好，世界'])
   })
 
+  it('empties the box it sent from, so the next letter still reaches the program', async () => {
+    const harness = mount()
+    const field = harness.field()
+
+    type(field, 'l')
+    await flush()
+    expect(harness.writes).toEqual(['l'])
+    // The sent text is gone from the field itself. This is the assertion the older version of this
+    // file could not make: it emulated the emptying by hand (`type(field, '')`) instead of checking
+    // that the component had done it, so a component that wrote the empty string into its **ref**
+    // rather than into the element looked identical here and broken in the window.
+    expect(field.value).toBe('')
+
+    type(field, 's')
+    await flush()
+    expect(harness.writes).toEqual(['l', 's'])
+  })
+
   it('turns the keys that are not text into the bytes a terminal sends', async () => {
     const harness = mount()
     const field = harness.field()
