@@ -1,0 +1,258 @@
+/**
+ * §5.1's 常规与交互, driven through the real controls.
+ *
+ * The page writes two domains and this suite checks that each control reaches the one it
+ * belongs to: a switch that renders correctly and drops its write is the failure
+ * `SettingsPanel.controls.test.ts` exists for, and a *second* one lives here — a roaming mode
+ * offered where §7.2 says this machine cannot run it.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createApp, h, nextTick, type App as VueApp } from 'vue'
+import { t } from '../../../i18n'
+import { createMemoryPetGateway, type MemoryPetGateway } from '../../../platform/gateways/memory-pet'
+import type {
+  PetCapabilityFinding,
+  PetSettingsDomain,
+  PetSettingsWrite,
+} from '../../../platform/gateways/pet-contracts'
+import DesktopPetSettings from './DesktopPetSettings.vue'
+
+let mounted: VueApp[] = []
+let warnSpy: ReturnType<typeof vi.spyOn>
+
+beforeEach(() => {
+  vi.useFakeTimers()
+  document.body.innerHTML = ''
+  mounted = []
+  globalThis.matchMedia = vi.fn(() => ({
+    matches: false,
+    media: '',
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  })) as never
+  warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+})
+
+afterEach(() => {
+  mounted.forEach((app) => app.unmount())
+  mounted = []
+  document.body.innerHTML = ''
+  warnSpy.mockRestore()
+  vi.useRealTimers()
+})
+
+/** Everything this machine was verified to do, for the tests that are not about §7.2. */
+const ALL_AVAILABLE: { [C in 'always-on-top' | 'pointer-follow' | 'window-climb']?: PetCapabilityFinding } = {
+  'always-on-top': { status: 'available' },
+  'pointer-follow': { status: 'available' },
+  'window-climb': { status: 'available' },
+}
+
+function mount(gateway: MemoryPetGateway): void {
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const app = createApp(() => h(DesktopPetSettings, { gateway, page: 'general' }))
+  app.mount(host)
+  mounted.push(app)
+}
+
+async function flush(ms = 0): Promise<void> {
+  await vi.advanceTimersByTimeAsync(ms)
+  await nextTick()
+}
+
+const DEBOUNCE_PLUS = 600
+
+function fieldControl<T extends HTMLElement>(label: string, selector: string): T {
+  const field = [...document.querySelectorAll<HTMLElement>('.settings-section label')]
+    .find((candidate) => candidate.textContent?.includes(label))
+  const control = field?.querySelector<T>(selector)
+  if (!control) throw new Error(`no ${selector} labelled "${label}"`)
+  return control
+}
+
+async function choose(trigger: HTMLElement, value: string): Promise<void> {
+  trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  await nextTick()
+  const row = [...document.querySelectorAll<HTMLElement>('.select-option')]
+    .find((candidate) => candidate.dataset.value === value)
+  if (!row) throw new Error(`no option ${value}`)
+  row.click()
+  await nextTick()
+}
+
+async function storedValues(
+  gateway: MemoryPetGateway,
+  domain: PetSettingsDomain,
+): Promise<Record<string, unknown>> {
+  const loaded = await gateway.readSettings(domain)
+  if (loaded.status === 'read-only') throw new Error(`read-only: ${domain}`)
+  return loaded.record.values as unknown as Record<string, unknown>
+}
+
+/** Put a domain where a test needs it before the page ever reads it. */
+async function seed(
+  gateway: MemoryPetGateway,
+  domain: PetSettingsDomain,
+  values: Record<string, unknown>,
+): Promise<void> {
+  const loaded = await gateway.readSettings(domain)
+  if (loaded.status === 'read-only') throw new Error(`read-only: ${domain}`)
+  const current = await storedValues(gateway, domain)
+  const outcome = await gateway.updateSettings({
+    domain,
+    revision: loaded.record.revision,
+    values: { ...current, ...values },
+  } as PetSettingsWrite)
+  if (outcome.status !== 'applied') throw new Error(`seed refused: ${outcome.status}`)
+}
+
+describe('every control writes the domain it belongs to', () => {
+  it('reaches general for the switch and the motion policy, and view for the window', async () => {
+    const gateway = createMemoryPetGateway({ capabilities: ALL_AVAILABLE })
+    mount(gateway)
+    await flush()
+
+    fieldControl<HTMLInputElement>(t('settings.pet.general.enabled'), 'input').click()
+    await choose(fieldControl<HTMLElement>(t('settings.pet.general.motion'), '[role="combobox"]'), 'reduced')
+    await flush(DEBOUNCE_PLUS)
+
+    expect(await storedValues(gateway, 'general')).toEqual({ enabled: false, motion: 'reduced' })
+
+    // The slider is a percentage; the store holds the fraction §5.3's rule is written in.
+    const opacity = document.querySelector<HTMLInputElement>('#pet-general-opacity')
+    if (!opacity) throw new Error('no opacity slider')
+    opacity.value = '40'
+    opacity.dispatchEvent(new Event('input', { bubbles: true }))
+    await flush(DEBOUNCE_PLUS)
+    expect((await storedValues(gateway, 'view')).opacity).toBeCloseTo(0.4)
+  })
+
+  it('starts the opacity slider and its ends at the schema’s own rule', async () => {
+    mount(createMemoryPetGateway())
+    await flush()
+
+    const opacity = document.querySelector<HTMLInputElement>('#pet-general-opacity')
+    expect(opacity?.value).toBe('100')
+    // §5.3 「界面和后端使用同一规则」: the ends are `PET_NUMBER_RULES`, not numbers picked here.
+    expect(opacity?.min).toBe('15')
+    expect(opacity?.max).toBe('100')
+  })
+})
+
+describe('§7.2 decides which window behaviours are offered', () => {
+  it('disables a roaming mode this machine was not verified to have, and quotes the finding', async () => {
+    mount(
+      createMemoryPetGateway({
+        capabilities: {
+          'pointer-follow': { status: 'available' },
+          'window-climb': {
+            status: 'unavailable',
+            fallback: 'not-offered',
+            detail: 'this desktop exposes no window list',
+          },
+        },
+      }),
+    )
+    await flush()
+
+    const trigger = fieldControl<HTMLElement>(t('settings.pet.general.roam'), '[role="combobox"]')
+    trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    await nextTick()
+
+    const rows = [...document.querySelectorAll<HTMLElement>('.select-option')]
+    const byValue = (value: string): HTMLElement | undefined =>
+      rows.find((row) => row.dataset.value === value)
+    // `off` and `stay` need nothing; the two that need the desktop are gated.
+    expect(byValue('off')?.getAttribute('aria-disabled')).toBeNull()
+    expect(byValue('stay')?.getAttribute('aria-disabled')).toBeNull()
+    expect(byValue('follow-pointer')?.getAttribute('aria-disabled')).toBeNull()
+    expect(byValue('climb')?.getAttribute('aria-disabled')).toBe('true')
+
+    const notes = [...document.querySelectorAll<HTMLElement>('.settings-section .settings-note')]
+      .map((note) => note.textContent ?? '')
+    expect(notes.some((note) => note.includes('this desktop exposes no window list'))).toBe(true)
+  })
+
+  it('quotes the host for a capability that was reported and not verified', async () => {
+    mount(createMemoryPetGateway())
+    await flush()
+
+    const notes = [...document.querySelectorAll<HTMLElement>('.settings-section .settings-note')]
+      .map((note) => note.textContent ?? '')
+    // The default host reports `unverified`, which is not the same claim as `unavailable` —
+    // §7.2 forbids presenting one as the other, so the host's own sentence is what is shown.
+    expect(notes.some((note) => note.includes('not verified on this host yet'))).toBe(true)
+    expect(notes.some((note) => note.includes(t('settings.pet.capabilityUnknown')))).toBe(false)
+  })
+
+  it('says nothing has been checked when the host reported nothing at all', async () => {
+    const gateway = createMemoryPetGateway()
+    vi.spyOn(gateway, 'capabilities').mockResolvedValue([])
+    mount(gateway)
+    await flush()
+
+    const notes = [...document.querySelectorAll<HTMLElement>('.settings-section .settings-note')]
+      .map((note) => note.textContent ?? '')
+    expect(notes.some((note) => note.includes(t('settings.pet.capabilityUnknown')))).toBe(true)
+  })
+
+  it('keeps a stored mode this machine cannot run instead of rewriting it', async () => {
+    const gateway = createMemoryPetGateway()
+    await seed(gateway, 'view', { roam: 'climb' })
+    mount(gateway)
+    await flush()
+
+    // §5.3 keeps the choice as a preference that follows the user between machines; §7.2
+    // disables the *modes*, not the value. The control shows it and the store still holds it.
+    const value = document.querySelector<HTMLElement>('#pet-general-roam .select-value')
+    expect(value?.textContent?.trim()).toBe(t('settings.pet.general.roamClimb'))
+    expect((await storedValues(gateway, 'view')).roam).toBe('climb')
+  })
+
+  it('leaves always-on-top alone where the desktop was not verified to keep a window above', async () => {
+    const gateway = createMemoryPetGateway()
+    mount(gateway)
+    await flush()
+
+    const box = fieldControl<HTMLInputElement>(t('settings.pet.general.alwaysOnTop'), 'input')
+    expect(box.disabled).toBe(true)
+    box.click()
+    await flush(DEBOUNCE_PLUS)
+    // Clicking a disabled control is not a write, and the stored preference is untouched.
+    expect((await storedValues(gateway, 'view')).alwaysOnTop).toBe(true)
+  })
+})
+
+describe('restoring this page', () => {
+  it('returns both of this page’s domains to their defaults, and writes nothing else', async () => {
+    const gateway = createMemoryPetGateway({ capabilities: ALL_AVAILABLE })
+    const write = vi.spyOn(gateway, 'updateSettings')
+    mount(gateway)
+    await flush()
+
+    fieldControl<HTMLInputElement>(t('settings.pet.general.enabled'), 'input').click()
+    const opacity = document.querySelector<HTMLInputElement>('#pet-general-opacity')
+    if (!opacity) throw new Error('no opacity slider')
+    opacity.value = '40'
+    opacity.dispatchEvent(new Event('input', { bubbles: true }))
+    await flush(DEBOUNCE_PLUS)
+    write.mockClear()
+
+    const reset = [...document.querySelectorAll<HTMLButtonElement>('.settings-section button')]
+      .find((button) => button.textContent?.includes(t('settings.pet.reset')))
+    if (!reset) throw new Error('no reset button')
+    reset.click()
+    await flush(DEBOUNCE_PLUS)
+
+    expect(await storedValues(gateway, 'general')).toEqual({ enabled: true, motion: 'system' })
+    expect((await storedValues(gateway, 'view')).opacity).toBe(1)
+    // §5.3 「恢复本页默认只影响当前域」: the reset reached this page's two domains and no others,
+    // which is what keeps it from clearing the character library or care progress.
+    expect([...new Set(write.mock.calls.map((call) => call[0].domain))].sort()).toEqual(['general', 'view'])
+  })
+})
