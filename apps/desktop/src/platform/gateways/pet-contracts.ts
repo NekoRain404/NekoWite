@@ -9,6 +9,7 @@
  *  - `pet-contracts/events.ts`     what an ACP event, snapshot or loss means for one
  *  - `pet-contracts/config.ts`     the seven settings schemas, versioned and defaulted
  *  - `pet-contracts/platform.ts`   what this machine can do, and what is done instead
+ *  - `pet-contracts/care.ts`       what the ledger settled, and the two answers a read has
  *  - `pet-contracts/gateway.ts`    the calls the app makes, and the shapes it reads back
  *
  * It is a *projection* contract, not a second source of truth. The ACP contract is where
@@ -100,5 +101,7 @@ export type {
   PetCapabilityReport,
   PetFallback,
 } from './pet-contracts/platform'
+
+export type { PetCareDay, PetCareRead, PetCareSummary } from './pet-contracts/care'
 
 export type { PetFeatureState, PetGateway, PetTaskProjection } from './pet-contracts/gateway'

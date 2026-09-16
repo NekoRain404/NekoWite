@@ -20,7 +20,9 @@
  * own sequencing rather than the wire.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { PetFeatureState, PetSettingsLoad, PetTaskProjection } from './pet-contracts'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import type { PetCareRead, PetFeatureState, PetSettingsLoad, PetTaskProjection } from './pet-contracts'
 import {
   createTauriPetIpc,
   createTauriPetConnection,
@@ -33,10 +35,10 @@ import {
 
 /** `@tauri-apps/api`, replaced. `vi.hoisted` because `vi.mock` is lifted above the imports. */
 const tauri = vi.hoisted(() => ({
-  invoke: vi.fn(async (..._args: unknown[]): Promise<unknown> => undefined),
-  listen: vi.fn(
-    async (_event: string, _handler: unknown): Promise<() => void> => () => {},
-  ),
+  // No parameters of their own: what these record is decided by the caller, and the `_`-prefixed
+  // placeholders that used to be here were lint errors rather than documentation.
+  invoke: vi.fn(async (): Promise<unknown> => undefined),
+  listen: vi.fn(async (): Promise<() => void> => () => {}),
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: tauri.invoke }))
@@ -64,6 +66,9 @@ const WIRE: [
   ['desktop_pet_set_click_through', (ipc) => ipc.setClickThrough(true), { ignore: true }],
   ['desktop_pet_capabilities', (ipc) => ipc.capabilities(), undefined],
   ['desktop_pet_open_settings', (ipc) => ipc.openSettings('character'), { page: 'character' }],
+  // A command with no parameter at all: the ledger is the process's own progress (§6.3), so there
+  // is no window, character or domain to name — and the absent argument is what says so.
+  ['desktop_pet_care_read', (ipc) => ipc.care(), undefined],
   ['desktop_pet_tasks', (ipc) => ipc.tasks(), undefined],
   ['desktop_pet_read_settings', (ipc) => ipc.readSettings('general'), { domain: 'general' }],
   [
@@ -118,6 +123,77 @@ describe('the adapter speaks the backend’s own argument shapes', () => {
     expect(tauri.invoke).toHaveBeenCalledWith('desktop_pet_open_settings', { page: 'care' })
     expect(PET_SETTINGS_CHANNEL).toBe('pet-open-settings')
   })
+
+  it('hands the ledger’s answer on exactly as it arrived', async () => {
+    // No reshaping and no defaulting: both arms are the host's to choose, and an adapter that
+    // turned `empty` into a zeroed summary — or the other way round — would be inventing a fact
+    // about the user's progress. The object identity is the assertion, so a copy that quietly
+    // filled a missing field would fail here rather than on a page.
+    const ipc = new FakeIpc()
+    ipc.careRead = {
+      status: 'current',
+      summary: {
+        schemaVersion: 1,
+        revision: 3,
+        xp: 75,
+        meals: 3,
+        streakDays: 2,
+        unlocked: ['nightOwl'],
+        days: [{ day: '2026-09-16', completions: 1, tokens: null }],
+        reportedTokens: 4200,
+        unreportedRuns: 1,
+        lastSettledAt: 1_789_000_000_000,
+      },
+    }
+
+    const read = await createTauriPetConnection({ ipc }).care()
+
+    expect(read).toBe(ipc.careRead)
+    expect(ipc.calls.map(([name]) => name)).toEqual(['care'])
+  })
+})
+
+describe('the care summary is the ledger’s own shape', () => {
+  /**
+   * `R`'s source, read as text: a rename there is the failure this test exists to catch, and the
+   * test cannot import a Rust file.
+   */
+  function ledgerStruct(name: string, until?: string): string[] {
+    const rust = readFileSync(
+      resolve(__dirname, '../../../src-tauri/src/desktop_pet/care_ledger.rs'),
+      'utf8',
+    )
+    const from = rust.indexOf(`pub struct ${name} {`)
+    expect(from, `${name} is not declared in care_ledger.rs`).toBeGreaterThan(-1)
+    const to = until === undefined ? rust.length : rust.indexOf(`pub struct ${until} {`, from)
+    const body = rust.slice(from, to === -1 ? rust.length : to)
+    return [...body.matchAll(/pub (\w+):/g)].map(([, field]) =>
+      // serde's `rename_all = "camelCase"`, applied to the ledger's own snake_case declaration.
+      field.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase()),
+    )
+  }
+
+  /** The fields a TypeScript interface declares, in the order it declares them. */
+  function declaredFields(file: string, from: string, until: string): string[] {
+    const source = readFileSync(resolve(__dirname, file), 'utf8')
+    const start = source.indexOf(from)
+    expect(start, `${from} is not declared in ${file}`).toBeGreaterThan(-1)
+    const end = source.indexOf(until, start)
+    return [...source.slice(start, end === -1 ? source.length : end)
+      .matchAll(/^ {2}([A-Za-z][A-Za-z0-9]*)\??:/gm)].map(([, field]) => field)
+  }
+
+  it('declares the fields the ledger serializes, and no second vocabulary', () => {
+    // §9, across a wire: the adapter hands the host's answer on without reshaping it, so a field
+    // renamed in `care_ledger.rs` arrives as `undefined` and the care panel draws its defaults — a
+    // number that stopped arriving, silently, because the panel's input is a `Partial`. The Rust
+    // side is pinned by `the_summary_carries_what_was_settled_and_no_level_and_no_price`; this is
+    // the other end of the same claim, read off both files rather than copied from one of them.
+    expect(declaredFields('./pet-contracts/care.ts', 'export interface PetCareSummary {', 'export type PetCareRead'))
+      .toEqual(ledgerStruct('CareSummary', 'CareDayRow'))
+    expect(declaredFields('./pet-contracts/care.ts', 'export interface PetCareDay {', 'export interface PetCareSummary {'))
+      .toEqual(ledgerStruct('CareDayRow'))
+  })
 })
 
 /** Every call a port received, in order, with its arguments. */
@@ -128,6 +204,11 @@ class FakeIpc implements PetIpc {
   readonly featureListeners = new Set<(state: PetFeatureState) => void>()
   readonly taskListeners = new Set<(tasks: PetTaskProjection[]) => void>()
   taskReadFails: string | null = null
+  /**
+   * What the host answers for care. The empty arm by default, because that is what a host that has
+   * settled nothing answers — and the read is a pass-through, which is what the test below says.
+   */
+  careRead: PetCareRead = { status: 'empty' }
 
   private record(name: string, ...args: unknown[]): void {
     this.calls.push([name, args])
@@ -170,6 +251,11 @@ class FakeIpc implements PetIpc {
   async capabilities() {
     this.record('capabilities')
     return []
+  }
+
+  async care(): Promise<PetCareRead> {
+    this.record('care')
+    return this.careRead
   }
 
   async openSettings(page: string): Promise<void> {

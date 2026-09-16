@@ -13,6 +13,7 @@ import type {
   PetSettingsUpdate,
   PetSettingsWrite,
 } from './config'
+import type { PetCareRead } from './care'
 import type { PetCapabilityReport } from './platform'
 import type { PetTaskKey, PetTaskState } from './task'
 
@@ -69,6 +70,19 @@ export interface PetGateway {
   setVisible(visible: boolean): Promise<PetFeatureState>
   /** What this machine was verified to do, each with what happens where it cannot (§7.2). */
   capabilities(): Promise<PetCapabilityReport[]>
+  /**
+   * What the care ledger settled, or the fact that it settled nothing (§8).
+   *
+   * Read-only, and there is deliberately no `settle` beside it: rewards are settled from the
+   * runtime's own completion events, never from a window (`care_ledger.rs` is the only place a
+   * decision is made, and it is idempotent per run key so a replay cannot pay twice). A window that
+   * could settle would be a second way to earn, which is exactly what §6.1's single source of truth
+   * forbids.
+   *
+   * The two arms are not a record with a flag: `empty` is the answer for a ledger nothing has
+   * settled into, and it is a different answer from a summary of zeroes — see {@link PetCareRead}.
+   */
+  care(): Promise<PetCareRead>
   /**
    * Every task the pet shows.
    *

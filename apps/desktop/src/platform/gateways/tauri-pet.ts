@@ -20,21 +20,27 @@
  *
  * ## Which of these the backend has
  *
- * Six of the nine calls have a `#[tauri::command]` behind them today, and they are the window
- * half of §7.1: state, the window list, open, disable, show/hide, close-own, click-through,
- * capabilities, and the settings deep link. The other three — `desktop_pet_tasks`,
- * `desktop_pet_read_settings`, `desktop_pet_update_settings` — are D1's task and settings halves,
- * whose Rust sides (`task_projection.rs`, `settings.rs`) are their own tasks. No stub is invented
- * for them, here or in Rust: a call to one rejects with Tauri's own "command … not found", which
- * names the call that is missing and needs no error code invented to say so. That is the same
- * choice `tauri-agent/ipc.ts` documents for the session half of the agent's IPC, and it is what
- * keeps this seam a seam rather than a second implementation of a store.
+ * Every call here has a `#[tauri::command]` behind it except the task list. The window half of
+ * §7.1 (state, the window list, open, disable, show/hide, close-own, click-through), the settings
+ * deep link, the care read and the settings read and write all exist on the Rust side; the two
+ * channels are `listen` registrations rather than calls. What does not exist is
+ * `desktop_pet_tasks`: no state in this process holds D4's projection yet, so no command is
+ * invented for it, and a window that calls it is answered by Tauri itself — "command
+ * desktop_pet_tasks not found" — which names the call that is missing and needs no error code
+ * invented to say so.
+ *
+ * The settings pair is the same answer arriving from the other end: the commands are written, and
+ * their two lines in `lib.rs`'s handler list are still owed, so a call to one is refused by Tauri
+ * exactly as an unwritten command is. This file does not paper over either case — the seam is the
+ * seam, and the day the lines land only this side's documentation changes. That is the same choice
+ * `tauri-agent/ipc.ts` documents for the session half of the agent's IPC.
  */
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type {
   PetCapabilityReport,
+  PetCareRead,
   PetFeatureState,
   PetGateway,
   PetSettingsDomain,
@@ -124,6 +130,7 @@ export interface PetIpc {
   setClickThrough(ignore: boolean): Promise<void>
   capabilities(): Promise<PetCapabilityReport[]>
   openSettings(page: PetSettingsPage): Promise<void>
+  care(): Promise<PetCareRead>
   tasks(): Promise<PetTaskProjection[]>
   readSettings(domain: PetSettingsDomain): Promise<PetSettingsLoad>
   updateSettings(write: PetSettingsWrite): Promise<PetSettingsUpdate>
@@ -144,6 +151,7 @@ export function createTauriPetIpc(): PetIpc {
       invoke<void>('desktop_pet_set_click_through', { ignore }),
     capabilities: () => invoke<PetCapabilityReport[]>('desktop_pet_capabilities'),
     openSettings: (page) => invoke<void>('desktop_pet_open_settings', { page }),
+    care: () => invoke<PetCareRead>('desktop_pet_care_read'),
     tasks: () => invoke<PetTaskProjection[]>('desktop_pet_tasks'),
     readSettings: (domain) => invoke<PetSettingsLoad>('desktop_pet_read_settings', { domain }),
     updateSettings: (write) => invoke<PetSettingsUpdate>('desktop_pet_update_settings', { write }),
@@ -198,6 +206,7 @@ export function createTauriPetConnection(options: TauriPetOptions = {}): PetHost
     feature: () => ipc.state(),
     setVisible: (visible) => ipc.setVisible(visible),
     capabilities: () => ipc.capabilities(),
+    care: () => ipc.care(),
     tasks: () => ipc.tasks(),
     readSettings: (domain) => ipc.readSettings(domain),
     updateSettings: (write) => ipc.updateSettings(write),

@@ -14,6 +14,7 @@ import type { AgentFailureCode } from '../agent-contracts'
 import type {
   PetCapability,
   PetCapabilityFinding,
+  PetCareSummary,
   PetFallback,
   PetTaskKey,
   PetTaskProjection,
@@ -137,4 +138,13 @@ export interface MemoryPetOptions {
    * data that has to be migrated.
    */
   storedSchemaVersion?: number
+  /**
+   * What the care ledger has settled, or nothing at all.
+   *
+   * The double has no ledger and settles nothing — settlement is `care_ledger.rs`'s, and a
+   * second implementation of it here would be a second answer to what one run pays (§9). What it
+   * has is the *read*: absent means the host answers `empty`, which is what a host nothing has
+   * settled into answers, and a summary means it answers `current` with exactly those totals.
+   */
+  care?: PetCareSummary
 }

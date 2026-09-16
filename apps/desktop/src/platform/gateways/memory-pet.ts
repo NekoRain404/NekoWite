@@ -27,6 +27,7 @@ import type {
 import {
   PET_CAPABILITIES,
   type PetCapabilityReport,
+  type PetCareRead,
   type PetFeatureState,
   type PetGateway,
   type PetRuntimeLoss,
@@ -122,6 +123,14 @@ export function createMemoryPetGateway(options: MemoryPetOptions = {}): MemoryPe
         capability,
         finding: declared[capability] ?? unverified(capability),
       }))
+    },
+
+    async care(): Promise<PetCareRead> {
+      // The double reports; it does not settle. `settle` is `care_ledger.rs`'s and is idempotent
+      // per run key (§6.3's 「重复/乱序事件不增加 XP」), so a second implementation here would be a
+      // second answer to what one completion pays — the thing §9 forbids. What a test drives with
+      // this is the *read*: the two arms, and what a surface draws from each.
+      return options.care ? { status: 'current', summary: options.care } : { status: 'empty' }
     },
 
     async tasks() {

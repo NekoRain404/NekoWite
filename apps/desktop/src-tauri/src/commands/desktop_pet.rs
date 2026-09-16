@@ -335,8 +335,9 @@ pub fn desktop_pet_capabilities(
 ///
 /// Nothing here names a window, a caller or a character. The ledger is the process's own progress
 /// (§6.3's one-ledger rule), so every window that asks gets the same answer and there is nothing
-/// to address, which is why this command takes no parameter at all — the only command in this
-/// file whose request body is nothing.
+/// to address: like the window list and the capability report, this command has no parameter
+/// beyond the state, and unlike them it is the only *read* whose answer a page draws numbers
+/// from.
 #[tauri::command]
 pub fn desktop_pet_care_read(
     state: tauri::State<'_, DesktopPetState>,

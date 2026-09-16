@@ -10,25 +10,37 @@
  *    never creates one: two sessions on one domain are two revisions, and the second write
  *    comes back as a conflict against the first (`DesktopPetSettings.vue` says the same from
  *    its side).
- *  - **No progress, and the reason is now a channel rather than an absence.** The ledger that
- *    settles rewards (`R/src/desktop_pet/care_ledger.rs`) and the rules that compute them
- *    (`services/pet-care-rules.ts`) exist. What is missing is the way to *ask*: `PetGateway` — the
- *    only channel a settings page has — carries settings and tasks and no care, and the pet's own
- *    care surface (`features/desktop-pet/components/PetCarePanel.vue`) is a component no entry
- *    mounts yet (D12's wiring). So there is no number here to show, and inventing one would be
- *    exactly the figure §8 forbids in the same words it uses for an unknown token count
- *    (「token 未知不是 0」). The sentence below therefore names the gap rather than a missing
- *    module — it was rewritten when D10 landed, because it had stopped being true — and
- *    `PetCareSettings.test.ts` asserts that statement rather than only asserting that the switches
- *    save.
+ *  - **What the ledger settled, read once when this page is opened** — the ledger that settles
+ *    rewards (`R/src/desktop_pet/care_ledger.rs`) through the host's own read
+ *    (`PetGateway.care`), drawn by the pet's care surface (`PetCarePanel.vue`, D10) with this
+ *    page's wording as its labels. The read is a read: no control here settles anything, and the
+ *    panel it feeds has no control on it at all (§5.2 sends signing in, syncing and the
+ *    leaderboard to the Advanced page).
+ *  - **A sentence where there is nothing to draw, and no numbers.** The host answers `empty` for
+ *    a ledger nothing has settled into — not a summary of zeroes — and the sentence below says so
+ *    in words. That distinction is the whole reason the read has two arms: `Level 0 · 0 completed`
+ *    is what a summary of zeroes would put on screen for a user who has completed five hundred
+ *    runs, and §8's 「token 未知不是 0」 is the same rule one level down.
+ *
+ * The sentence this page used to carry said the page *could not* read the ledger ("the host
+ * connection carries settings and tasks, and no care"). That was true when D7c wrote it and
+ * stopped being true here, where the read landed: the sentence, the header and the test that pins
+ * them were corrected together, because a page's whole value is that what it says about itself can
+ * be believed.
  *
  * A store written by a newer build keeps the page's controls off the screen (§10.2): the
  * session answers a refused read with *this build's* defaults, so a form here would be showing
  * numbers the user never chose and offering to save them over their own.
  */
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { t } from '../../../i18n'
+// The care surface comes from the feature's public entry (§13.11: nothing outside the pet imports
+// one of its files by path), and the summary it is handed is the contract's — the same split
+// `DesktopPetSettingsSection.vue` uses for the pages it composes.
+import { PetCarePanel } from '../../desktop-pet'
+import type { PetCareSummary } from '../../../platform/gateways/pet-contracts'
 import type { PetSettingsSaveStatus } from '../composables/use-pet-settings'
+import { carePanelLabels } from './pet-care-labels'
 import type { PetSettingsContext } from './DesktopPetSettings.vue'
 
 const props = defineProps<{
@@ -58,6 +70,40 @@ const STATUS_KEYS: Partial<Record<PetSettingsSaveStatus, string>> = {
 }
 
 const statusKey = computed(() => STATUS_KEYS[status.value] ?? null)
+
+/**
+ * What the ledger settled, as this page read it.
+ *
+ * `null` while nothing has been read yet, and the two ways of having nothing to draw are kept
+ * apart rather than folded into one: `empty` is a fact — nothing has settled — while a refusal
+ * means this page cannot tell, which is a different sentence to the user and a different thing to
+ * do about it. Neither is turned into a summary of zeroes.
+ */
+/** The chrome the panel draws with, read once per locale change rather than per render. */
+const labels = computed(() => carePanelLabels())
+
+const settled = ref<PetCareSummary | null>(null)
+/** The host's own words when the read was refused, or `null` when it answered. */
+const readProblem = ref<string | null>(null)
+/** The clock the read was taken at, handed to the panel so "today" is the day the caller is in. */
+const readAt = ref(0)
+
+onMounted(() => {
+  props.context.gateway.care().then(
+    (read) => {
+      // Both arms are the host's to choose and neither is defaulted here: a page that turned
+      // `empty` into a zeroed summary would be inventing the numbers this whole design keeps off
+      // the screen.
+      settled.value = read.status === 'current' ? read.summary : null
+      readAt.value = Date.now()
+    },
+    (error: unknown) => {
+      // A diagnostic, shown rather than swallowed: "no progress" and "could not ask" look the
+      // same on screen otherwise, and the host's sentence is what tells them apart.
+      readProblem.value = error instanceof Error ? error.message : String(error)
+    },
+  )
+})
 
 function setEnabled(value: boolean): void {
   care.edit('enabled', value)
@@ -126,12 +172,33 @@ function retry(): void {
       </button>
     </template>
 
+    <!-- What the ledger settled. Drawn only when there is something to draw: the panel's own
+         `absent` arm is reached by passing it no progress at all, and the sentence below is this
+         page's telling of the same fact in the settings surface's own voice.
+         The note's `data-test` is `pet-care-progress-note` and not `pet-care-progress`: the panel
+         owns that name for the level bar, and two elements answering to one selector is how a
+         later assertion ends up about the wrong one. -->
+    <PetCarePanel
+      v-if="settled"
+      :progress="settled"
+      :now="readAt"
+      :labels="labels"
+    />
     <p
+      v-else-if="readProblem !== null"
       class="settings-note pet-absent"
-      data-test="pet-care-progress"
+      data-test="pet-care-progress-note"
     >
-      {{ t('settings.pet.care.progressUnavailable') }}
+      {{ t('settings.pet.care.progressUnreadable', { msg: readProblem }) }}
     </p>
+    <p
+      v-else
+      class="settings-note pet-absent"
+      data-test="pet-care-progress-note"
+    >
+      {{ t('settings.pet.care.progressEmpty') }}
+    </p>
+
     <p
       class="settings-note"
       data-test="pet-care-online"
