@@ -60,6 +60,7 @@ pub mod permissions;
 pub mod profile;
 pub mod registry;
 pub mod session;
+pub mod skills;
 pub mod snapshot;
 pub mod update;
 
