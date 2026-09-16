@@ -247,8 +247,13 @@ const importText = computed(() => {
   gap: 8px;
   padding: 12px;
   color: var(--app-text);
-  background: var(--app-surface);
-  border-radius: 8px;
+  /* `--app-panel`, not the raised surface: the settings dialog this page is drawn in is itself
+     `--app-elevated` (`SettingsPanel.vue`), and with no border here a card in the same colour as
+     its ground would read as no card at all. Panel is the surface for a block *inside* another
+     one, which is what this is. The radius is the card rung of the ladder, as in every other card
+     the pet draws. */
+  background: var(--app-panel);
+  border-radius: var(--app-radius-lg);
 }
 .pet-care__note { margin: 0; font-size: 11px; line-height: 1.5; color: var(--app-muted); }
 .pet-care__level { margin: 0; font-size: 15px; font-weight: 600; }

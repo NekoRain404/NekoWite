@@ -70,6 +70,7 @@ import type {
 import { useAgentCommands } from '../composables/use-agent-commands'
 import { useAgentSession } from '../composables/use-agent-session'
 import { isRunLive } from '../services/agent-session-view'
+import type { AgentToolEntry } from '../services/agent-timeline'
 import { useAgentSessionStore } from '../stores/agent-session'
 import AgentCommandMenu from './AgentCommandMenu.vue'
 import AgentComposer from './AgentComposer.vue'
@@ -144,8 +145,13 @@ const pending = computed(() => {
 const pendingToolStatus = computed<AgentToolStatus | null>(() => {
   const request = pending.value
   if (request === null) return null
+  // The predicate is the guard, not only the test: without it `find` answers with the whole
+  // `AgentTimelineEntry` union and `status` is a property of one member. `AgentToolEntry` carries
+  // it as a required field, so nothing here is being widened — the row that was selected is
+  // narrowed to the kind it was selected by.
   const row = timeline.value.find(
-    (entry) => entry.kind === 'tool' && entry.toolCallId === request.payload.toolCallId,
+    (entry): entry is AgentToolEntry =>
+      entry.kind === 'tool' && entry.toolCallId === request.payload.toolCallId,
   )
   return row === undefined ? null : row.status
 })

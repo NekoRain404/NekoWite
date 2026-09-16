@@ -452,9 +452,14 @@ function onKeydown(event: KeyboardEvent): void {
 
 /** Send what the input method (or the keyboard) put in the field, and empty it. */
 function flushField(): void {
-  const value = field.value?.value ?? ''
+  const element = field.value
+  if (element === null) return
+  const value = element.value
   if (value.length === 0) return
-  if (field.value !== null) field.value = ''
+  // The element's own value, not the ref. `field.value = ''` reads as "empty the field" and does
+  // the opposite: it replaces the ref with a string, so the textarea keeps the text it just sent,
+  // every later keystroke reads an empty ref and sends nothing, and focus has nothing to point at.
+  element.value = ''
   send(value)
 }
 
@@ -788,7 +793,7 @@ onBeforeUnmount(() => {
   overflow: auto;
   background: var(--app-elevated);
   color: var(--app-text);
-  font-family: var(--app-mono, monospace);
+  font-family: var(--app-mono-font);
   font-size: 12px;
   line-height: 1.4;
   white-space: pre-wrap;

@@ -72,13 +72,15 @@ export interface AgentSkillsLabels {
   }
   /** The conflict line. It names every other directory and nominates no winner — see the component. */
   conflict: string
+  /** The switch's five sentences. `actionFailed` used to sit here: never supplied (there is no
+      such key in the catalogue) and never read (a failed switch renders `import.failed`), so it
+      was a required member that nothing could satisfy and nothing wanted. */
   disable: {
     label: string
     enable: string
     disable: string
     noSwitch: string
     engineSwitch: string
-    actionFailed: string
   }
   disabledList: { title: string; hint: string }
   import: {

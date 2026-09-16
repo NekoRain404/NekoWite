@@ -123,7 +123,10 @@ async function open(page: Page): Promise<void> {
 
       // The review, fed by the session's own stream. `subscribe` replays from the snapshot and then
       // delivers live, so an event pushed with `emit` arrives here exactly as a replayed one does.
-      let state = review.createChangeReview(session.identity)
+      // The session *is* the identity — `AgentSession extends AgentIdentity`, and the handle is
+      // the one thing here that carries the vault, the epoch and the session id. `createChangeReview`
+      // copies what it is given, so handing it the handle is the same thing as handing it a copy.
+      let state = review.createChangeReview(session)
       await gateway.subscribe(await gateway.snapshot(session), (event: unknown) => {
         state = review.applyChangeEvent(state, event)
       })
