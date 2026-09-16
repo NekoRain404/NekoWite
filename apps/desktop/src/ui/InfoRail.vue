@@ -2,34 +2,33 @@
 import { computed } from 'vue'
 import { X } from 'lucide-vue-next'
 import { markArrived, markLeaving } from '../composables/surface-leave'
-import ReferencesPanel from './ReferencesPanel.vue'
-import HistoryPanel from './HistoryPanel.vue'
-import OutlinePanel from './OutlinePanel.vue'
 import { ChatPanel } from '../features/chat'
-import FrontmatterPanel from './FrontmatterPanel.vue'
-import DocStatsPanel from './DocStatsPanel.vue'
 import { t } from '../i18n'
 
 const emit = defineEmits<{ (e: 'close'): void }>()
 
-export type RailTab = 'ai' | 'outline' | 'refs' | 'history' | 'meta' | 'stats'
+// One member today, and the rail is heading somewhere else entirely: the
+// destination is the ACP agent panel, which takes this drawer over and leaves
+// the chat behind a feature flag (ACP plan §12 — the old chat is kept as a
+// fallback and removing it is a separate, later decision). So treat this strip
+// as scaffolding on its way out rather than a shape to build on.
+//
+// It used to carry six — outline, references, history, front matter and stats
+// alongside the chat — and only the chat is left. The union stays rather than
+// collapsing into a bare string because it is the seam a section is added back
+// through, and because `AppShell` holds the value: a second member here is a
+// one-line change on both sides, where a plain string would need the model
+// re-typed.
+//
+// The `tab` model itself is kept for the same reason. Its original justification
+// still holds and is why it is not local state: the rail is mounted with
+// `v-if="railOpen"`, so a ref of its own would not survive being closed, and
+// whoever decides whether the rail is open is who owns the tab.
+export type RailTab = 'ai'
 
-// The rail is mounted with `v-if="railOpen"`, so a ref of its own would not
-// survive being closed: every reopen constructed a fresh `'ai'`, and a user who
-// had been reading the outline was thrown back to the chat each time they took
-// the width back. The tab belongs to whoever decides whether the rail is open,
-// so it is a model rather than local state — and the close that unmounts the
-// rail already stops any chat stream on the way out.
 const activeTab = defineModel<RailTab>('tab', { default: 'ai' })
 
-const TABS = computed(() => [
-  { id: 'ai', label: t('rail.ai') },
-  { id: 'outline', label: t('rail.outline') },
-  { id: 'refs', label: t('rail.refs') },
-  { id: 'history', label: t('rail.history') },
-  { id: 'meta', label: t('rail.meta') },
-  { id: 'stats', label: 'Stats' },
-] as const)
+const TABS = computed(() => [{ id: 'ai', label: t('rail.ai') }] as const)
 </script>
 
 <template>
@@ -64,54 +63,17 @@ const TABS = computed(() => [
       </button>
     </div>
     <div class="rail-body">
-      <!-- One `<Transition>` per section — a `<Transition>` takes a single
-           child, and all six stay mounted — which is what gives the tab swap
-           the same shape the sidebar has: the section arriving fades in place,
-           and the one leaving fades out *still rendered* instead of being cut
-           by `display: none` in the frame of the click. `v-show` and not
-           `v-if`, unchanged: the display flip is what keeps the chat session
-           and the loaded lists alive (see useSectionShown). -->
+      <!-- One `<Transition>`, kept rather than flattened into a bare component:
+           it carries the rail's own enter/leave easing and the `markLeaving`
+           hand-off the `v-show` below relies on. The section stays mounted —
+           `v-show` and not `v-if`, which is what keeps the chat session and its
+           loaded history alive across a rail close and reopen. -->
       <Transition
         name="rail-panel"
         @leave="markLeaving"
         @enter="markArrived"
       >
         <ChatPanel v-show="activeTab === 'ai'" />
-      </Transition>
-      <Transition
-        name="rail-panel"
-        @leave="markLeaving"
-        @enter="markArrived"
-      >
-        <OutlinePanel v-show="activeTab === 'outline'" />
-      </Transition>
-      <Transition
-        name="rail-panel"
-        @leave="markLeaving"
-        @enter="markArrived"
-      >
-        <ReferencesPanel v-show="activeTab === 'refs'" />
-      </Transition>
-      <Transition
-        name="rail-panel"
-        @leave="markLeaving"
-        @enter="markArrived"
-      >
-        <HistoryPanel v-show="activeTab === 'history'" />
-      </Transition>
-      <Transition
-        name="rail-panel"
-        @leave="markLeaving"
-        @enter="markArrived"
-      >
-        <FrontmatterPanel v-show="activeTab === 'meta'" />
-      </Transition>
-      <Transition
-        name="rail-panel"
-        @leave="markLeaving"
-        @enter="markArrived"
-      >
-        <DocStatsPanel v-show="activeTab === 'stats'" />
       </Transition>
     </div>
   </aside>

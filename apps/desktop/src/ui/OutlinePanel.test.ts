@@ -2,7 +2,6 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { createApp, defineComponent, h, nextTick, ref, vShow, withDirectives, type App as VueApp, type Ref } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import OutlinePanel from './OutlinePanel.vue'
-import InfoRail from './InfoRail.vue'
 import { useTabsStore } from '../stores/tabs'
 
 // The rail's other sections are not under test here, and mounting them would
@@ -169,38 +168,6 @@ describe('OutlinePanel only parses while its rail section is shown', () => {
     await nextTick()
 
     expect(parseCalls.count).toBe(afterMount)
-  })
-
-  it('is gated by the real info rail, which hides sections with v-show', async () => {
-    // The gate reads the section's own inline display, so the rail's way of
-    // hiding a section is load-bearing: this pins it to the real rail markup.
-    await openDoc('# One\n\n## Two')
-    const host = document.createElement('div')
-    document.body.appendChild(host)
-    const app = createApp(InfoRail)
-    app.use(pinia)
-    app.mount(host)
-    mounted.push(app)
-    await flush()
-
-    const section = host.querySelector<HTMLElement>('.outline-panel')
-    expect(section).not.toBeNull()
-    // The rail opens on its AI tab: the outline section is mounted but hidden.
-    expect(section!.style.display).toBe('none')
-
-    const afterMount = parseCalls.count
-    useTabsStore().activeTab!.content = '# Renamed\n\n## Added'
-    await nextTick()
-    await nextTick()
-    expect(parseCalls.count).toBe(afterMount)
-
-    const outlineTab = host.querySelectorAll<HTMLButtonElement>('.rail-tab')[1]
-    outlineTab.click()
-    await flush()
-    await nextTick()
-
-    const texts = Array.from(host.querySelectorAll('.outline-text')).map((el) => el.textContent?.trim())
-    expect(texts).toEqual(['Renamed', 'Added'])
   })
 
   it('shows the current headings when it comes back on screen', async () => {
