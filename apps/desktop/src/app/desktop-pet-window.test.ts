@@ -26,7 +26,7 @@
  * `desktop_pet_tasks` failing is a case of its own: that is the break the audit reproduced, and
  * what makes it worth a test is that the *window* has to say so rather than look quiet.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type {
   PetAppearance,
   PetFeatureState,
@@ -175,11 +175,27 @@ function notice(): string | null {
   return document.querySelector('.pet-root__notice')?.textContent?.trim() ?? null
 }
 
+/**
+ * The context the product's engine gives this canvas.
+ *
+ * happy-dom implements no canvas, so `getContext('2d')` answers `null` here — which `PetSprite`
+ * reports through `onUnavailable` and the window states by refusing the sprite branch. These cases
+ * are about the sheet the host hands the window, so the window has to be mounted in the state it
+ * ships in; without this they would be measuring a window that cannot draw on any character.
+ */
+let getContextSpy: MockInstance<HTMLCanvasElement['getContext']> | null = null
+
 beforeEach(() => {
   channels.clear()
   loaded.length = 0
   invoke.mockReset()
   convertFileSrc.mockClear()
+  getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+    imageSmoothingEnabled: true,
+    clearRect: () => undefined,
+    drawImage: () => undefined,
+    getImageData: () => ({ data: new Uint8ClampedArray([0, 0, 0, 255]) }),
+  } as unknown as CanvasRenderingContext2D)
   listen.mockImplementation(
     async (channel: string, handler: (event: { payload: unknown }) => void) => {
       const set = channels.get(channel) ?? new Set()
@@ -195,6 +211,8 @@ afterEach(() => {
   mounted = null
   document.body.innerHTML = ''
   delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+  getContextSpy?.mockRestore()
+  getContextSpy = null
 })
 
 describe('a character chosen in the settings pages appears in the pet window', () => {

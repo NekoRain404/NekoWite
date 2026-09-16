@@ -21,7 +21,7 @@
  * Run: `pnpm perf` from the repo root, or
  * `npx vitest run --config vitest.perf.config.ts perf/pet.bench.test.ts`.
  */
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { performance } from 'node:perf_hooks'
 import { createApp, defineComponent, h, nextTick, ref, shallowRef, type App as VueApp } from 'vue'
 import { createMemoryPetGateway } from '../src/platform/gateways/memory-pet'
@@ -159,6 +159,30 @@ afterAll(() => {
 })
 
 describe('the pet window: opening and closing it', () => {
+  /**
+   * The context the product's engine gives this canvas.
+   *
+   * happy-dom implements no canvas, so `getContext('2d')` answers `null` here — which is a state
+   * `PetSprite` reports (`onUnavailable`) and the window states by refusing the sprite branch. A
+   * harness that means to count the frame timer has to mount the window in the state the window
+   * ships in; without this every count below reads 0 for the right reason and the wrong cause.
+   */
+  let getContextSpy: MockInstance<HTMLCanvasElement['getContext']> | null = null
+
+  beforeEach(() => {
+    getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      imageSmoothingEnabled: true,
+      clearRect: () => undefined,
+      drawImage: () => undefined,
+      getImageData: () => ({ data: new Uint8ClampedArray([0, 0, 0, 255]) }),
+    } as unknown as CanvasRenderingContext2D)
+  })
+
+  afterEach(() => {
+    getContextSpy?.mockRestore()
+    getContextSpy = null
+  })
+
   it('holds one frame timer while it is up, and nothing after 50 cycles', async () => {
     const gateway = createMemoryPetGateway({ visible: true })
     const cycles = 50

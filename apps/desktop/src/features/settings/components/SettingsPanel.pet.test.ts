@@ -521,6 +521,7 @@ describe('the dialog carries the pet’s pages, and what comes with them', () =>
       'features/desktop-pet/components/PetSprite.vue',
       'features/desktop-pet/components/PetTaskList.vue',
       'features/desktop-pet/components/PetTaskRow.vue',
+      'features/desktop-pet/composables/use-pet-drawing-failure.ts',
       'features/desktop-pet/composables/use-pet-lifecycle.ts',
       'features/desktop-pet/composables/use-pet-window.ts',
       'features/desktop-pet/index.ts',
