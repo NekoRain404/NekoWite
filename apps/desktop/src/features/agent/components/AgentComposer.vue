@@ -53,6 +53,18 @@ const props = defineProps<{
   running: boolean
   /** Whether a send would be accepted — the store's answer, not this component's guess. */
   canSend: boolean
+  /**
+   * What a key means to whoever is listening above the field.
+   *
+   * The `/` menu's keys are taken before this component's own — an arrow moves its highlight
+   * and an Enter settles on a row instead of sending — and the decision has to be made
+   * *during* the keydown, before anything is emitted, which is why it arrives as a function
+   * rather than as an event. `commands.onKeydown` is what the panel passes; the three answers
+   * are T8's: `pass` is this component's, `handled` is the menu's, and `composing` says an
+   * input method has the key — the same conclusion reached below, reported by the layer that
+   * saw the composition events first.
+   */
+  resolveKey?: (event: KeyboardEvent) => 'pass' | 'composing' | 'handled'
   labels: AgentComposerLabels
 }>()
 
@@ -65,6 +77,9 @@ const emit = defineEmits<{
   send: [text: string]
   /** Stop the run in flight. */
   stop: []
+  /** A composition opened or closed. The menu's filter is held still across one (T8), so the
+   *  layer that owns it has to know — and the events are this element's to report. */
+  composition: [phase: 'start' | 'end']
 }>()
 
 const field = ref<HTMLTextAreaElement | null>(null)
@@ -91,9 +106,13 @@ function focus(): void {
   field.value?.focus()
 }
 
-/** How tall the field may grow: about a third of the panel (§5.3). */
+/** How tall the field may grow: about a third of the panel (§5.3).
+ *
+ *  Measured from the panel's own marker rather than from `offsetParent`: the panel is what the
+ *  field must not outgrow, and between the two of them now sits the menu's positioning box —
+ *  an ancestor, but not the bound. */
 function limit(el: HTMLTextAreaElement): number {
-  const panel = el.offsetParent as HTMLElement | null
+  const panel = el.closest('[data-agent-panel]') as HTMLElement | null
   return Math.round((panel?.clientHeight ?? 480) * 0.35)
 }
 
@@ -117,6 +136,10 @@ function submit(): void {
 }
 
 function onKeydown(event: KeyboardEvent): void {
+  // The menu above is asked first: an arrow key and the Enter that settles on a row are its
+  // keys while a `/token` is open, and it says so by having already called `preventDefault`.
+  const verdict = props.resolveKey?.(event) ?? 'pass'
+  if (verdict !== 'pass') return
   if (event.key !== 'Enter') return
   // Enter during a composition is the input method committing a candidate. See the header.
   if (composing.value || event.isComposing || event.keyCode === 229) return
@@ -128,9 +151,15 @@ function onKeydown(event: KeyboardEvent): void {
   submit()
 }
 
+function onCompositionStart(): void {
+  composing.value = true
+  emit('composition', 'start')
+}
+
 function onCompositionEnd(): void {
   composing.value = false
   composedAt = performance.now()
+  emit('composition', 'end')
 }
 
 watch(draft, () => {
@@ -154,7 +183,7 @@ defineExpose({ focus })
       rows="2"
       spellcheck="false"
       @keydown="onKeydown"
-      @compositionstart="composing = true"
+      @compositionstart="onCompositionStart"
       @compositionend="onCompositionEnd"
     />
     <div class="agent-composer-bar">

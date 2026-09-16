@@ -30,7 +30,7 @@ import type { Pinia } from 'pinia'
 import type { App } from 'vue'
 import type { AgentPanelLabels } from '/src/features/agent/index.ts'
 import type { AgentSession } from '/src/platform/gateways/agent-contracts.ts'
-import type { MemoryAgentGateway } from '/src/platform/gateways/memory-agent.ts'
+import type { MemoryAgentGateway, MemoryRunScript } from '/src/platform/gateways/memory-agent.ts'
 
 /**
  * The copy the panel draws, as the caller that mounts it supplies it.
@@ -111,6 +111,9 @@ interface PanelHarness {
   /** Every prompt the panel handed the engine, in order. The composer's sends are the only
    *  thing that feeds it, which is what makes "nothing was sent" an assertion about a call. */
   prompts: string[]
+  /** Every answer the panel handed the engine, as `[requestId, optionId]` — the same trick for
+   *  the other decision: a permission that was answered rather than merely rendered. */
+  answers: Array<[string, string]>
   /** The store's own word for the on-screen session's state. */
   state(): string
   /** The engine's own state, from its snapshot: what a collapse must not change. */
@@ -184,6 +187,7 @@ async function mount(page: Page): Promise<void> {
 
       const previous = window.__agentPanel
       const prompts = previous?.prompts ?? []
+      const answers = previous?.answers ?? []
       const gateway =
         previous?.gateway ??
         createMemoryAgentGateway({ agentId: 'memory-e2e', profileId: 'e2e' })
@@ -195,6 +199,13 @@ async function mount(page: Page): Promise<void> {
         gateway.prompt = (target, text) => {
           prompts.push(text)
           return prompt(target, text)
+        }
+        // …and the same for the other decision the panel makes on the reader's behalf: an
+        // authorization that was answered, rather than one that was merely drawn.
+        const answer = gateway.answerPermission.bind(gateway)
+        gateway.answerPermission = async (target, requestId, optionId) => {
+          answers.push([requestId, optionId])
+          return answer(target, requestId, optionId)
         }
       }
       const session = previous?.session ?? (await gateway.openSession({ vaultId: 'e2e-vault', cwd: '/vault' }))
@@ -228,6 +239,7 @@ async function mount(page: Page): Promise<void> {
         pinia: piniaInstance,
         app,
         prompts,
+        answers,
         state: () => record()?.view.state ?? 'none',
         engineState: async () => (await gateway.snapshot(session)).state,
         text: () =>
@@ -254,10 +266,7 @@ async function unmount(page: Page): Promise<void> {
 }
 
 /** What the next turns do, as the memory runtime understands it. */
-async function scriptTurns(
-  page: Page,
-  script: { chunks?: string[]; hang?: boolean },
-): Promise<void> {
+async function scriptTurns(page: Page, script: MemoryRunScript): Promise<void> {
   await page.evaluate((next) => window.__agentPanel?.gateway.script(next), script)
 }
 
@@ -313,6 +322,9 @@ const engineState = (page: Page): Promise<string> =>
 
 const prompts = (page: Page): Promise<string[]> =>
   page.evaluate(() => window.__agentPanel?.prompts ?? [])
+
+const answers = (page: Page): Promise<Array<[string, string]>> =>
+  page.evaluate(() => window.__agentPanel?.answers ?? [])
 
 const rowCount = (page: Page): Promise<number> =>
   page.evaluate(() => window.__agentPanel?.rows() ?? 0)
@@ -501,6 +513,71 @@ test.describe('agent panel — a row that grows', () => {
     expect(after.scrollHeight).toBeGreaterThan(before.scrollHeight)
     // …and the row the reader was on is still where it was on screen.
     expect(Math.abs((await offsetOfRow(page, anchor.row)) - anchor.offset)).toBeLessThanOrEqual(1)
+  })
+})
+
+test.describe('agent panel — the authorization a run waits on', () => {
+  test('a suspended turn is answerable from the panel, and finishing it is the proof', async ({
+    page,
+  }) => {
+    await mount(page)
+    await scriptTurns(page, {
+      chunks: ['Reading the plan. '],
+      // The turn stops here and stays stopped: the engine is waiting for an answer, which is
+      // the state a panel that cannot answer leaves the user in forever.
+      permission: {
+        title: 'Read notes/plan.md',
+        input: { state: 'text', json: '{"path":"notes/plan.md"}' },
+        options: [
+          { optionId: 'always', name: 'Always allow', kind: 'allow_always' },
+          { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+        ],
+      },
+    })
+    await page.locator('.agent-composer-field').fill('read the plan')
+    await page.locator('.agent-composer [data-action="send"]').click()
+
+    // Panel in: the request is on screen, wearing the engine's own sentence and options, and
+    // the status line says what is being waited for (§5.1).
+    await expect(page.locator('.agent-perm')).toBeVisible()
+    await expect(page.locator('.agent-perm-title')).toContainText('Read notes/plan.md')
+    await expect(page.locator('.agent-perm-options button')).toHaveText(['Always allow', 'Reject'])
+    await expect(page.locator('.agent-bar-state')).toContainText('Waiting for approval')
+    // A run in flight offers one action, and it is stop rather than send.
+    await expect(page.locator('.agent-composer [data-action="stop"]')).toBeVisible()
+    expect(await answers(page)).toEqual([])
+
+    // Decision out.
+    await page.locator('.agent-perm-options button').first().click()
+    await expect.poll(async () => answers(page), { timeout: 5000 }).toHaveLength(1)
+    expect((await answers(page))[0][1]).toBe('always')
+    // …and the turn the answer was suspending ran to its own end, which cannot happen unless
+    // the answer arrived.
+    await expect.poll(async () => state(page), { timeout: 5000 }).toBe('completed')
+    await expect(page.locator('.agent-perm')).toHaveCount(0)
+    await expect(page.locator('.agent-row-reply')).toContainText('Reading the plan.')
+  })
+
+  test('stopping the suspended turn is not an answer to it', async ({ page }) => {
+    await mount(page)
+    await scriptTurns(page, {
+      chunks: [],
+      permission: {
+        title: 'Read notes/plan.md',
+        options: [{ optionId: 'always', name: 'Always allow', kind: 'allow_always' }],
+      },
+    })
+    await page.locator('.agent-composer-field').fill('read the plan')
+    await page.locator('.agent-composer [data-action="send"]').click()
+    await expect(page.locator('.agent-perm')).toBeVisible()
+
+    await page.locator('.agent-perm [data-action="cancel-run"]').click()
+
+    await expect.poll(async () => state(page), { timeout: 5000 }).toBe('cancelled')
+    // The protocol has exactly two outcomes and a refusal is one of them: a turned-off turn
+    // must not have sent the engine an option id on the way out.
+    expect(await answers(page)).toEqual([])
+    await expect(page.locator('.agent-perm')).toHaveCount(0)
   })
 })
 
