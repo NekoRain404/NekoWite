@@ -68,6 +68,11 @@ describe('resize drag undo coalescing (editor)', () => {
     const view = editor.getView()
     const img = el.querySelector('img') as HTMLImageElement
     expect(img).toBeTruthy()
+    // The drag must have a real size to commit one: an unmeasurable image now
+    // refuses (as the keymap does), so happy-dom's 0/0 element is given the
+    // pixels the browser would have decoded.
+    Object.defineProperty(img, 'naturalWidth', { value: 1200, configurable: true })
+    Object.defineProperty(img, 'naturalHeight', { value: 300, configurable: true })
 
     // open() is excluded from undo history, so the drag must be the first step.
     const before = undoDepth(view.state)
@@ -257,6 +262,89 @@ describe('a Shift drag with no ratio to hold', () => {
       width: 300,
       height: null,
     })
+    editor.destroy()
+  })
+})
+
+/**
+ * A plain drag on an image whose size cannot be established AT ALL.
+ *
+ * `resizeBasis` answers "no start width" when the document states no width,
+ * the element reports no pixels (0/0 — not loaded, failed, CSP-blocked) and
+ * nothing draws it. The drag used to answer that by stepping from an invented
+ * `1` — `baseWidth ?? 1` — so a 30px plain drag wrote `{width: 31,
+ * height: null}`: a size derived from the same `1` the keymap refuses. The
+ * gesture may run (it is not the document), but the COMMIT is where such a
+ * size reached the note, and that is where it must not. The preview declines
+ * too, for the same reason as the Shift refusal: an element showing a width the
+ * note does not have is a size on screen that no commit will write.
+ */
+describe('a plain drag with no width to step from', () => {
+  /** An editor holding `md`, with the node view's `<img>` reporting 0/0. */
+  async function openUnmeasurable(md: string): Promise<{
+    editor: ReturnType<typeof createEditor>
+    view: EditorView
+    img: HTMLImageElement
+    pos: number
+  }> {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const editor = createEditor(el, { plugins: basicPlugins })
+    await editor.open(md)
+    const img = el.querySelector('img') as HTMLImageElement
+    const view = editor.getView()
+    let pos: number | null = null
+    view.state.doc.descendants((n, p) => {
+      if (pos === null && n.type.name === 'image') pos = p
+      return true
+    })
+    if (pos === null) throw new Error('no image node')
+    return { editor, view, img, pos }
+  }
+
+  it('writes nothing when nothing states a size, instead of stepping from 1', async () => {
+    const { editor, view, img, pos } = await openUnmeasurable('![a](attachments/a.png)')
+    const before = undoDepth(view.state)
+
+    simulateDrag(img, [5, 30])
+
+    // Before: startWidth was the invented 1, so a 30px travel committed
+    // `{ width: 31, height: null }`, saved as `![a](attachments/a.png){width=31}`.
+    const node = view.state.doc.nodeAt(pos)
+    expect({ width: node?.attrs.width, height: node?.attrs.height }).toEqual({
+      width: null,
+      height: null,
+    })
+    expect(undoDepth(view.state)).toBe(before)
+    expect(await editor.save()).not.toContain('{width')
+    // The preview declines too: the element keeps exactly what the document
+    // renders, which is what keeps an invented width from sitting on screen.
+    expect(img.style.width).toBe('')
+    expect(img.style.height).toBe('')
+    editor.destroy()
+  })
+
+  it('writes nothing when only a height is stored — a height is not a width', async () => {
+    const { editor, view, img, pos } = await openUnmeasurable('![a](attachments/a.png){height=300}')
+    const before = undoDepth(view.state)
+
+    simulateDrag(img, [5, 30])
+
+    // Before: no stored width and no pixels meant baseWidth was null, so the
+    // drag stepped from 1 and wrote `{ width: 31, height: null }` — dropping
+    // the height the note actually had. The stored height gives the plain drag
+    // no width to step from.
+    const node = view.state.doc.nodeAt(pos)
+    expect({ width: node?.attrs.width, height: node?.attrs.height }).toEqual({
+      width: null,
+      height: 300,
+    })
+    expect(undoDepth(view.state)).toBe(before)
+    expect(await editor.save()).not.toContain('{width')
+    // The node view renders the stored height; the refused drag must not touch
+    // the element the note's own dims drew.
+    expect(img.style.width).toBe('')
+    expect(img.style.height).toBe('300px')
     editor.destroy()
   })
 })
