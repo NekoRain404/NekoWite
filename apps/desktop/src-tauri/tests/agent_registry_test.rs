@@ -9,22 +9,13 @@
 //!
 //! The engine half is T2's fixture (`tests/fixtures/agent/fake_agent.sh`), unmodified.
 //!
-//! Module inclusion: `agent_runtime/mod.rs` does not declare `registry` or `adapters` —
-//! registering them is T4's (`lib.rs` is that task's serialized file) — so the tree is declared
-//! here by path, the convention `agent_permission_ipc_test.rs` also uses, and this test compiles
-//! exactly the source the library will build.
+//! Module inclusion: `agent_runtime/mod.rs` declares `registry` and `adapters`,
+//! and `lib.rs` declares `agent_runtime` — the registration this test used to do
+//! by hand with `#[path]`, which is what a test does while the files that
+//! register the tree belong to another task. The path is gone; the modules
+//! imported below are the library's own.
 
-#[path = "../src/agent_runtime"]
-mod agent_runtime {
-    pub mod acp_transport;
-    pub mod adapters;
-    pub mod events;
-    pub mod fs_capability;
-    pub mod process;
-    pub mod registry;
-    pub mod runs;
-    pub mod session;
-}
+use nekowite_lib::agent_runtime;
 
 use std::fs;
 use std::path::{Path, PathBuf};

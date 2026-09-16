@@ -16,38 +16,12 @@
 //! unanswered, and after every refusal, the wire stays silent. If the SDK were answering for us,
 //! that silence is the first assertion to fail.
 //!
-//! Module inclusion: `agent_runtime/mod.rs` does not declare `permissions` and `commands/mod.rs`
-//! does not declare `agent` — registering either is T4's (`lib.rs` and `commands/mod.rs` are that
-//! task's serialized files), and the same wiring point as registering the command. Both are
-//! included by path, so this test compiles exactly the source the library will build.
-//!
-//! The runtime tree is declared here rather than pulled in with `include!(".../mod.rs")`, because
-//! `include!` cannot carry that file's inner doc comments into a module body. The module list is
-//! the same list: a name that drifted from `mod.rs` would fail to compile here rather than silently
-//! test something else.
+//! Module inclusion: `agent_runtime/mod.rs` declares `permissions` and `commands/mod.rs` declares
+//! `agent`, so both trees are the library's own — the shims this file used to carry were what a
+//! test does while the files that register them belong to another task.
 
-#[path = "../src/agent_runtime"]
-mod agent_runtime {
-    pub mod acp_transport;
-    pub mod events;
-    pub mod fs_capability;
-    pub mod permissions;
-    pub mod process;
-    pub mod runs;
-    pub mod session;
-
-    pub use acp_transport::EngineConnection;
-    pub use events::{AgentEventEnvelope, AgentEventKind, AgentIdentity};
-    pub use fs_capability::VaultFiles;
-    pub use process::EngineLaunch;
-    pub use session::AgentRuntime;
-}
-
-
-#[path = "../src/commands"]
-mod commands {
-    pub mod agent;
-}
+use nekowite_lib::agent_runtime;
+use nekowite_lib::commands;
 
 use std::fs;
 use std::path::{Path, PathBuf};

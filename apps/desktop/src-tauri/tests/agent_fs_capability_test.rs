@@ -9,9 +9,9 @@
 //! The engine half is the fixture (`tests/fixtures/agent/fake_agent.sh`), which
 //! sends a `fs/*` request verbatim from the environment.
 
-// See `tests/agent_runtime_test.rs` for why the module is included by path.
-#[path = "../src/agent_runtime/mod.rs"]
-mod agent_runtime;
+// The library declares the runtime now (`lib.rs`: `pub mod agent_runtime;`), so
+// this imports the tree the app ships instead of including a copy of it by path.
+use nekowite_lib::agent_runtime;
 
 use std::fs;
 use std::path::{Path, PathBuf};

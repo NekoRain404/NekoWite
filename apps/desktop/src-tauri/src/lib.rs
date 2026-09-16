@@ -1,6 +1,9 @@
 //! NekoWite Tauri backend.
 //!
 //! This crate is split into layered modules (see `docs/dev.md` §5.5):
+//! - [`agent_runtime`]: the agent engine — its process, the ACP connection, the
+//!   sessions, the permission table. It knows nothing about Tauri; the commands
+//!   below are the only thing that reaches it from a window.
 //! - [`commands`]: the `#[tauri::command]` IPC surface — thin args/DTO/error
 //!   mapping only.
 //! - [`domain`]: path-confinement policy, vault rules, crash recovery.
@@ -12,6 +15,7 @@
 //! [`lib.rs`] itself only assembles app state, builds the main window and
 //! registers commands.
 
+pub mod agent_runtime;
 pub mod commands;
 pub mod domain;
 pub mod errors;
@@ -82,6 +86,14 @@ pub fn run() {
         .manage(state::VaultRegistry::default())
         .manage(state::AiState::default())
         .manage(state::KeyVault::default())
+        // The agent subsystem's handle: the engine definitions and the one
+        // running engine, both empty until a session is started. Registered
+        // here rather than by whoever starts it, because this file is the app's
+        // assembly point and a second writer of it is a merge that compiles and
+        // wires the wrong thing; what a later start path does is *fill* the two
+        // slots and `manage` its own IPC state, neither of which touches this
+        // list.
+        .manage(state::AgentRuntimeState::default())
         .setup(|app| {
             // The folders the app's own files live in, before a window exists
             // to ask for them: the config directory the remembered-vault record
@@ -166,6 +178,15 @@ pub fn run() {
             commands::keys::unlock_vault,
             commands::system::system_accent_color,
             commands::open::take_pending_open,
+            // The agent commands. Both address `AgentIpcState`, which is managed
+            // by whoever starts the engine rather than here (see
+            // `state::AgentRuntimeState`), so until a runtime has been started an
+            // invoke of either is refused with Tauri's own "state not managed for
+            // field `state` on command …" — a rejected promise naming the command
+            // that is missing its state, not a silent no-op and not a panic
+            // (`tauri 2.11.5`, `src/state.rs`, `State::from_command`).
+            commands::agent::agent_permission_answer,
+            commands::agent::agent_cancel_run,
         ])
         .run(context)
         .expect("error while running tauri application");

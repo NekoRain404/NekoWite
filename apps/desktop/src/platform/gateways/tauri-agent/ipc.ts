@@ -1,0 +1,156 @@
+/**
+ * The window's half of the agent IPC: one call per backend command, one event channel, and
+ * nothing else.
+ *
+ * This is the only file in the adapter that imports a Tauri API. §6.1's rule is a direction,
+ * not a preference: `features/agent` sees application events and no JSON-RPC, and this module
+ * is the last place above the backend where a Tauri name appears — so the gateway next door
+ * (`../tauri-agent.ts`) is written against {@link AgentIpc} and can be driven by a fake one in
+ * a test, while the argument shapes the renderer actually sends stay here, in one table, where
+ * a wrong key is one line to find instead of one per method.
+ *
+ * ## The argument shapes, and why they are spelled this way
+ *
+ * `@tauri-apps/api` passes the arguments object **verbatim** — no case conversion — and a
+ * `#[tauri::command]` without `rename_all = "snake_case"` deserializes its parameters from
+ * camelCase keys. That is the opposite of the convention the fs commands use (they declare
+ * `rename_all = "snake_case"` and take `vault_root`), and the difference is not cosmetic: a key
+ * in the wrong case makes an invoke reject, which reads exactly like the command not existing.
+ * Every key below is therefore the camelCase spelling of the Rust parameter it must land on —
+ * `sessionId` for `session_id`, `answer` for the one struct argument `agent_permission_answer`
+ * takes — and the two commands that exist today are spelled from the declarations in
+ * `commands/agent.rs`, not from this file's idea of them.
+ *
+ * ## Which of these the backend has
+ *
+ * Two of the eight calls below have a `#[tauri::command]` behind them:
+ * `agent_permission_answer` and `agent_cancel_run` (T3's `commands/agent.rs`, registered in
+ * `lib.rs` by this task). The other six are the session and run half of §9's "会话与授权 IPC",
+ * which is not delivered: opening a session, sending a turn and reading a snapshot all need the
+ * runtime driver, and that needs `AgentRuntime` to hand its two receivers — events and
+ * permission requests — to one task, which its `&mut self` accessors cannot do (T3's report §6
+ * found this; `agent_runtime/session.rs` is T2's file). Until it lands, a call to one of those
+ * six rejects with Tauri's own "command agent_x not found", which is loud, names the call, and
+ * needs no error code invented here to say so.
+ */
+
+import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
+import type { AgentIdentity } from '../agent-contracts'
+
+/**
+ * The channel the host publishes the runtime's events on.
+ *
+ * One channel for every session the runtime holds, not one per session: §6.2's envelope
+ * carries the composite identity, so a frame already says which session, run and sequence it
+ * belongs to — and a channel per session would leak a listener for every session a window ever
+ * opened. The adapter filters; the host does not have to guess who is listening.
+ *
+ * `agent-event` follows the existing naming (`fs-change`, `ai-chunk`): a hyphenated, lowercase
+ * noun for the thing the payload is about.
+ */
+export const AGENT_EVENT_CHANNEL = 'agent-event'
+
+/**
+ * A running runtime instance, as `agent_start` answers it.
+ *
+ * Three fields and not a session id: the epoch is minted per (agent, profile, vault) when an
+ * instance starts (§6.2's `runtimeEpoch`), and the session — which is the engine's own id and
+ * arrives with `agent_open_session` — is what the adapter joins to it to build the five-field
+ * identity the contract validates events against.
+ */
+export interface AgentRuntimeHandle {
+  agentId: string
+  profileId: string
+  runtimeEpoch: string
+}
+
+/** A session the engine opened, and the option list it came with (P0 §2.2 measured the list
+ *  arriving with `session/new`; the model selector is one of its entries). */
+export interface AgentHostSession {
+  sessionId: string
+  /** The engine's own config options, as they came. */
+  configOptions: unknown
+  /**
+   * Which of those options selects the model, or null when this engine has none.
+   *
+   * The host answers this rather than the adapter looking for one: the option's id is the
+   * engine's (`model`, measured — but nothing in the protocol requires that name), and the
+   * Rust side already has the answer from its own adapter (`AgentAdapter::model_option_id`).
+   * Deriving it here from the option's name or shape would be the host guessing at an engine's
+   * configuration, which §3.4 forbids in either direction.
+   */
+  modelOptionId: string | null
+}
+
+/**
+ * The host's snapshot of one session, as an envelope stream and the frames that were a
+ * question.
+ *
+ * `events` are the host's own envelopes — the same shape it publishes on
+ * {@link AGENT_EVENT_CHANNEL} — rather than contract payloads, deliberately: the adapter maps
+ * the two through one function, so a replayed frame and a live one cannot come out differently
+ * (which is the property §6.2's snapshot exists to preserve: a remount must be able to trust
+ * what it rebuilds).
+ *
+ * `permissions` is a list of envelopes for the same reason. They are carried apart from
+ * `events` because a request is not merely the tail of a stream — one that fell out of the
+ * host's bounded buffer would leave a turn nobody can end — but they are still ordinary events
+ * in that runtime's one sequence, which is how the Rust side publishes them.
+ */
+export interface AgentHostSnapshot {
+  identity: AgentIdentity
+  /** The plan's state machine, resolved by the host (§6.2). */
+  state: string
+  runId: string | null
+  sequence: number
+  events: unknown[]
+  permissions: unknown[]
+}
+
+/** One answer the renderer sends back for a permission prompt. Field for field the Rust
+ *  `PermissionAnswer` (T3), which is what `agent_permission_answer` deserializes. */
+export interface AgentPermissionAnswerWire {
+  session: AgentIdentity
+  requestId: string
+  optionId: string
+}
+
+/**
+ * The backend, as this adapter uses it.
+ *
+ * A port rather than a set of free functions so the gateway can be exercised without a Tauri
+ * runtime: `createTauriAgentIpc` is the only implementation that talks to the window's IPC,
+ * and a test hands the gateway its own.
+ */
+export interface AgentIpc {
+  start(vaultId: string): Promise<AgentRuntimeHandle>
+  stop(): Promise<void>
+  openSession(vaultId: string, cwd: string): Promise<AgentHostSession>
+  selectModel(sessionId: string, configId: string, value: string): Promise<void>
+  /** Starts a turn and answers the host's own run id for it. The turn's ending arrives as an
+   *  event, not as this call's result: the engine answers when the generation is over, and the
+   *  Rust runtime is explicit that a caller cannot be left holding that (`runs.rs`). */
+  prompt(sessionId: string, text: string): Promise<string>
+  cancel(sessionId: string): Promise<void>
+  answerPermission(answer: AgentPermissionAnswerWire): Promise<void>
+  snapshot(sessionId: string): Promise<AgentHostSnapshot>
+  /** Register a listener. Resolves with the removal of *that* registration. */
+  onEvent(onFrame: (frame: unknown) => void): Promise<() => void>
+}
+
+export function createTauriAgentIpc(): AgentIpc {
+  return {
+    start: (vaultId) => invoke<AgentRuntimeHandle>('agent_start', { vaultId }),
+    stop: () => invoke<void>('agent_stop'),
+    openSession: (vaultId, cwd) =>
+      invoke<AgentHostSession>('agent_open_session', { vaultId, cwd }),
+    selectModel: (sessionId, configId, value) =>
+      invoke<void>('agent_set_config_option', { sessionId, configId, value }),
+    prompt: (sessionId, text) => invoke<string>('agent_prompt', { sessionId, text }),
+    cancel: (sessionId) => invoke<void>('agent_cancel_run', { sessionId }),
+    answerPermission: (answer) => invoke<void>('agent_permission_answer', { answer }),
+    snapshot: (sessionId) => invoke<AgentHostSnapshot>('agent_session_snapshot', { sessionId }),
+    onEvent: (onFrame) => listen<unknown>(AGENT_EVENT_CHANNEL, (event) => onFrame(event.payload)),
+  }
+}

@@ -12,12 +12,13 @@
 //! that passes here is a statement about our wiring, not about a mock we
 //! invented.
 
-// The runtime is a library module, but `lib.rs` is another task's serialized
-// file and cannot declare it yet (T4 owns that registration). Including the
-// module tree by path lets this test compile and run against exactly the source
-// the library will build, without editing a file this task does not own.
-#[path = "../src/agent_runtime/mod.rs"]
-mod agent_runtime;
+// The runtime is a library module now: `lib.rs` declares `pub mod agent_runtime;`
+// and `agent_runtime/mod.rs` declares the tree inside it, so this test compiles
+// against the same source the app ships rather than a second copy of it. It used
+// to be included by path, which is what a test does while the file that
+// registers it belongs to another task; that shim is gone, and the import below
+// is the whole of what replaced it.
+use nekowite_lib::agent_runtime;
 
 use std::fs;
 use std::path::{Path, PathBuf};

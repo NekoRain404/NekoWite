@@ -1,5 +1,5 @@
 //! The managed states that have nothing to do with vaults: the folder watcher,
-//! the stronghold handle and the AI request registry.
+//! the stronghold handle, the AI request registry and the agent runtime.
 //!
 //! They share a module because they share a shape — each is a handle Tauri
 //! holds for one subsystem, reached through `app.state::<T>()` — not because
@@ -10,6 +10,8 @@ use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::{Arc, Mutex};
 
 use tauri_plugin_stronghold::stronghold::Stronghold;
+
+use crate::agent_runtime::registry::{AgentInstance, AgentRegistry};
 
 // ---------------------------------------------------------------------------
 // Watcher state
@@ -141,6 +143,41 @@ impl Default for AiState {
 
 pub(crate) const CONCURRENCY_LIMIT: usize = 3;
 pub(crate) const MAX_PENDING: usize = 8;
+
+// ---------------------------------------------------------------------------
+// Agent runtime state
+// ---------------------------------------------------------------------------
+
+/// The agent subsystem, as a handle Tauri holds.
+///
+/// Two slots, both `None` until a session is started, and for the same reason
+/// `KeyVault` is lazy: neither can be built at startup. The engine is a child
+/// process whose program path is the packaging step's decision (`binary_registry`
+/// resolves the sidecar, §3.2), and the definitions that describe it come from
+/// the user's settings. An app that opened either before a window existed would
+/// be answering for a failure nobody asked for, and — because a start that fails
+/// must not leave a half-open subsystem behind — the start path fills both only
+/// after it has everything it needs.
+///
+/// What this deliberately does **not** carry is an epoch counter.
+/// `WatcherState::generation` above is the same idea for the folder watcher, and
+/// §6.2's `runtimeEpoch` is minted where it belongs: `agent_runtime::registry`
+/// claims one per (agent, profile, vault) when an instance starts and releases it
+/// when that instance ends, so an envelope's epoch and the registry's answer to
+/// "which incarnation is live" are one value. A counter here would be a second
+/// answer to a question that must have exactly one, and the two would drift the
+/// first time a start failed between the claim and the runtime.
+#[derive(Default)]
+pub struct AgentRuntimeState {
+    /// Which engines this app knows and which profile belongs to which — the
+    /// definitions, not the processes. `Mutex` because adding, disabling and
+    /// removing a definition all take `&mut`; starting one takes `&self`.
+    pub registry: Mutex<Option<AgentRegistry>>,
+    /// The engine that is running, if one is. One at a time: §6.1 requires a
+    /// single session writer per vault, and a second instance for the same
+    /// (agent, profile, vault) is refused by the registry rather than kept here.
+    pub instance: Mutex<Option<AgentInstance>>,
+}
 
 #[cfg(test)]
 mod ai_state_tests {

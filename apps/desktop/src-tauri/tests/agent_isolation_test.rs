@@ -12,21 +12,12 @@
 //! calls its session `ses_fake_1`, which is what makes the isolation test possible without a
 //! second fixture protocol: two copies of one engine really do emit the same session id.
 //!
-//! Module inclusion: `agent_runtime/mod.rs` does not declare `registry` or `adapters` —
-//! registering them is T4's (`lib.rs` is that task's serialized file) — so the tree is declared
-//! here by path, the convention `agent_permission_ipc_test.rs` also uses.
+//! Module inclusion: `agent_runtime/mod.rs` declares `registry` and `adapters`,
+//! and `lib.rs` declares `agent_runtime`, so the tree below is the library's own
+//! — it was included by path while those registrations belonged to another
+//! task, which is what the shim was for.
 
-#[path = "../src/agent_runtime"]
-mod agent_runtime {
-    pub mod acp_transport;
-    pub mod adapters;
-    pub mod events;
-    pub mod fs_capability;
-    pub mod process;
-    pub mod registry;
-    pub mod runs;
-    pub mod session;
-}
+use nekowite_lib::agent_runtime;
 
 use std::collections::HashMap;
 use std::fs;
