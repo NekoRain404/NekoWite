@@ -40,6 +40,13 @@ rust-argon2 = "2"
 # `usage` on a prompt response — P0 §2.3 measured the engine returning usage on
 # every turn, and the field would otherwise be invisible to us.
 agent-client-protocol = { version = "=2.1.0", features = ["unstable"] }
+# A native terminal (§4.3) needs a pty, and a pty is a pair of descriptors only the kernel can
+# make: `posix_openpt`/`grantpt`/`unlockpt`/`ptsname_r`, one `TIOCSWINSZ`, `setsid` +
+# `TIOCSCTTY` in the child, and `kill(-pgid)` to end the group. `libc` is already in the lock
+# file as a transitive dependency (`0.2.189`), so this makes an existing crate direct rather
+# than adding one. The mature PTY crate §4.3 asks for is still an unapproved dependency; this
+# is the substitutable half of it.
+libc = "0.2"
 
 [dev-dependencies]
 # `tauri::test` (MockRuntime, `mock_builder`) is behind tauri's `test` feature,
