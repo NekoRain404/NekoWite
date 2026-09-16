@@ -18,6 +18,7 @@ import { search } from './namespaces/search'
 import { chat } from './namespaces/chat'
 import { history } from './namespaces/history'
 import { plugins } from './namespaces/plugins'
+import { agent } from './namespaces/agent'
 
 export const en = {
   ...shell.en,
@@ -37,4 +38,5 @@ export const en = {
   ...chat.en,
   ...history.en,
   ...plugins.en,
+  ...agent.en,
 }

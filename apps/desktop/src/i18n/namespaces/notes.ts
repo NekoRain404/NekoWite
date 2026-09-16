@@ -73,14 +73,6 @@ export const notes = {
       removeFromDoc: 'Remove this tag from the current document',
     },
 
-    outline: {
-      title: 'Outline',
-      emptyHeading: '(untitled)',
-      empty: 'This document has no headings; use # to ###### to generate an outline.',
-      openDoc: 'Open a document to see the outline',
-      jumpLine: 'Jump to line {n}',
-    },
-
     notecard: {
       open: 'Open',
       favorite: 'Favorite',
@@ -162,14 +154,6 @@ export const notes = {
 
     tag: {
       removeFromDoc: '从当前文档移除该标签',
-    },
-
-    outline: {
-      title: '大纲',
-      emptyHeading: '（无标题）',
-      empty: '本文档还没有标题，使用 # 到 ###### 即可生成大纲。',
-      openDoc: '打开文档以查看大纲',
-      jumpLine: '跳转到第 {n} 行',
     },
 
     notecard: {

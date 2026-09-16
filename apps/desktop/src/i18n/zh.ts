@@ -18,6 +18,7 @@ import { search } from './namespaces/search'
 import { chat } from './namespaces/chat'
 import { history } from './namespaces/history'
 import { plugins } from './namespaces/plugins'
+import { agent } from './namespaces/agent'
 
 export const zh = {
   ...shell.zh,
@@ -37,4 +38,5 @@ export const zh = {
   ...chat.zh,
   ...history.zh,
   ...plugins.zh,
+  ...agent.zh,
 }
