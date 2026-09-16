@@ -96,3 +96,24 @@ agent-client-protocol = { version = "=2.1.0", features = ["unstable"] }
 - capability fallback 不能简化为「OpenCode 必然支持」：按 P0 实测能力矩阵显示按钮。
 - `zed-main/AGENTS.md` 与 `.rules` 只约束 Zed 源码工作；NekoWite 的根 `AGENTS.md` 是唯一开发规范。
 - Zed 部分文件数千至上万行，**不构成本项目文件体积的例外**：按连接、会话、权限、命令、Skills、变更审阅拆开。
+
+## 6. Zed 弱于本方案之处——**这些不得照搬**
+
+维护者要求「除 UI 外尽可能照搬」。以下结论来自对 `acp.rs` 与连接/会话层的逐条行为核对（详见 `.superpowers/sdd/roadmap/ports/` 下两份规格）：
+
+**照搬 Zed 的结构，但凡 Zed 弱于方案之处必须超出 Zed——方案是验收标准，Zed 是参考。** 逐条列出，避免被当成「Zed 也这样」而放行：
+
+| # | 方案要求 | Zed 的实际情况 | 我们的做法 |
+| --- | --- | --- | --- |
+| 1 | §5.2「每帧合并文本增量，不为每个 token 做动画」 | **做的相反**：一条 `session/update` 即触发一次事件发射，无按帧合并。唯一的限速器 `StreamingTextBuffer` 是刻意的**打字机动画**（16 ms tick，`REVEAL_TARGET = 200.0`，文本最多滞后约 200 ms），且**每个 chunk 仍发一次事件** | 可借鉴其增量缓冲机制，**动画必须丢弃**。按帧合并是实现要求 |
+| 2 | §6.2「取消后迟到文本不得复活任务」 | **未满足**：`turn_id` 守卫只挂在*完成*路径，`handle_session_update` 无任何 turn/run 检查，迟到文本照常进时间线且**与下一轮输出无法区分**。`suppress_abort_err` 是会话级布尔值而非按请求 | 必须自行设计。Zed 缺的正是本方案的 `runId` 包络字段 |
+| 3 | §6.2「进程退出使所有悬挂请求结束，旧授权按钮失效」 | **仅由 SDK 兜底**：`emit_load_error` 只发事件、不协调状态（不清 `running_turn`、不失效待授权）。待授权请求能终止只因 `Responder::cancellation()` 触发；`ElicitationStore::cancel_all`/`clear` **无生产调用方**，只在测试中出现 | 宿主侧必须显式协调，不能依赖 SDK 的副作用 |
+| 4 | §6.3 回程必须校验 option id | **不校验**：`From<SelectedPermissionOutcome>` 只保留 id，正确性完全依赖 UI 构造 | 严格于 Zed，见 §10.2 的 IPC 层拒绝 |
+| 5 | §6.3 重复响应幂等 | 重复响应虽不上线，**仍会重绘工具调用视图状态** | 在决策点即视为 no-op |
+| 6 | §6.1 运行时身份需可区分状态 | `AgentConnectionStatus` **有损**：`Error → Disconnected`，「从未启动」与「失败」无法区分 | 需保留 `Error` 的独立性 |
+| 7 | §6.2 一个运行时实例对应一个进程 | 「重启」连接**不杀旧进程**（活跃线程令其存活） | 重启必须走进程组清理（T2） |
+| 8 | §6.2 有界重放策略 | 各 store 列表**均无上限** | 自行定界，无可照搬之上限 |
+
+第 1 条与用户此前对动效的要求（先修掉帧、滚动跟手、正文稳定）直接相关——**Zed 的打字机式文本揭示恰好是被否决的那一类效果**，不要因为它来自参考实现就重新引入。
+
+另有两条属于「Zed 无法提供答案」而非「Zed 做错」：其一，`LoadError::Unsupported { command, current_version, minimum_version }` 被 UI 匹配但**从未被构造**，版本不匹配会退化成泛化的 "Failed to Launch"；其二，`AgentSessionInfo.created_at` 在 ACP 路径上恒为 `None`，是遗漏还是设计意图无从判断。
