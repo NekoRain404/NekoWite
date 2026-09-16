@@ -17,6 +17,7 @@ import { createAgentRail, failureSentence, railKey } from './agent-rail'
 import type { AgentComposition } from './agent-composition'
 import { createMemoryAgentGateway } from '../platform/gateways/memory-agent'
 import type { AgentOpenRequest, AgentSession } from '../platform/gateways/agent-contracts'
+import type { AgentRegistryClient } from '../features/agent-settings/services/agent-registry-policy'
 
 /** A composition that answers from the memory runtime, with its three calls observable. The
  *  gateway can be shared between two compositions, which is what a vault switch is: the same
@@ -48,6 +49,10 @@ function fakeComposition(
     connectSvgInsertion: () => {
       throw new Error('connectSvgInsertion is not part of this test')
     },
+    // T13a's registry client is part of the interface and none of these tests asks for it: the rail
+    // hands the composition to whoever mounts the settings section, and a stand-in that answered
+    // would be a claim about a path this file does not exercise.
+    registry: unsupportedRegistry(),
   }
   return { composition, start, stop, opened }
 }
@@ -184,6 +189,7 @@ describe('the agent rail', () => {
       connectSvgInsertion: () => {
         throw new Error('connectSvgInsertion is not part of this test')
       },
+      registry: unsupportedRegistry(),
     }
     const rail = createAgentRail({ compose: () => composition })
 
@@ -247,3 +253,18 @@ describe('failureSentence', () => {
     expect(failureSentence('   ')).not.toBe('')
   })
 })
+
+/**
+ * The registry client, as this file's compositions stand in for it.
+ *
+ * T13a's settings section is the only caller and it is mounted elsewhere; `AgentComposition` carries
+ * the client so that section does not reach for a singleton, so a literal here has to name it. Every
+ * method throws rather than answering, because an answer would be this file claiming something
+ * about a path it does not exercise.
+ */
+function unsupportedRegistry(): AgentRegistryClient {
+  const unsupported = (): never => {
+    throw new Error('the registry is not part of this test')
+  }
+  return { read: unsupported, add: unsupported, setEnabled: unsupported }
+}

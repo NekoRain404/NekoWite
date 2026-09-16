@@ -73,6 +73,10 @@ class FakeHost implements PetGateway {
     throw new Error('the pet window does not read capabilities in these tests')
   }
 
+  async care(): Promise<never> {
+    throw new Error('the pet window does not read the care ledger in these tests')
+  }
+
   async tasks(): Promise<PetTaskProjection[]> {
     return []
   }

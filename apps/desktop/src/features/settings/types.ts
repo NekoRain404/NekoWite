@@ -6,6 +6,8 @@
  * the panel owns the `v-if` that shows one, so the union is the one place the
  * two are checked against each other.
  */
+import { PET_SETTINGS_SECTION, type PetSettingsPage } from '../../platform/gateways/pet-contracts'
+
 export type SettingsSectionId =
   | 'general'
   | 'appearance'
@@ -18,3 +20,25 @@ export type SettingsSectionId =
   // and a navigation rail that grew by seven rows would be a different control. `agents` is
   // last, which is where a section with no control that changes the document belongs.
   | 'agents'
+  // The desktop pet (pet plan §10.1: 「增加 `desktop-pet` section，子页独立类型」). The id is D1's
+  // constant rather than the literal: the pet names its own section once, in
+  // `pet-contracts/config.ts`, and a literal here would be a second spelling of one decision that
+  // only fails where nobody looks — a right-click whose settings row is not the row it opened.
+  // The sub-pages are *not* union members: they are §5.1's second level, behind
+  // `DesktopPetSettingsSection`, so a rail row for each of the seven would be a different control.
+  | typeof PET_SETTINGS_SECTION
+
+/**
+ * Where a caller asked the dialog to open.
+ *
+ * The settings dialog has always opened on `general`, and this is the one thing that changes
+ * that: the pet window's 设置 (§5.1's 设置定位) raises the main window and names a section and a
+ * page, and the panel lands there instead. `page` is optional because only the pet's section has a
+ * second level — every other section is one page — and the pet's own container is what falls back
+ * to a page this build can actually render (`DesktopPetSettings.vue`). A caller that names no page
+ * is asking for the section, not for a page called `undefined`.
+ */
+export interface SettingsOpenTarget {
+  section: SettingsSectionId
+  page?: PetSettingsPage
+}

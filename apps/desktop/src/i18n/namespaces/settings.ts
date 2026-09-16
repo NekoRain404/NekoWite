@@ -14,6 +14,7 @@ export const settings = {
         ai: 'AI',
         plugins: 'Plugins',
         agents: 'Agents',
+        desktopPet: 'Desktop Pet',
       },
       plugins: {
         hint: 'Plugins are loaded from this library\'s plugins/ folder. Switching one off unloads it now and keeps it off: its code is not read or run again until you switch it back on, and no permission prompt appears while it is off.',
@@ -401,6 +402,7 @@ export const settings = {
         ai: 'AI',
         plugins: '插件',
         agents: '智能体',
+        desktopPet: '桌面宠物',
       },
       plugins: {
         hint: '插件从当前知识库的 plugins/ 目录加载。关掉一个插件会立即卸载它并保持关闭：在你重新打开之前，它的代码不会被读取或执行，也不会弹出权限询问。',

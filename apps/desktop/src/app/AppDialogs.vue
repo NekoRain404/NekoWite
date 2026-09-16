@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import SettingsPanel from '../features/settings/components/SettingsPanel.vue'
+import type { SettingsOpenTarget } from '../features/settings'
 import ConflictDialog from '../components/ConflictDialog.vue'
 import AiWriteDialog from '../components/AiWriteDialog.vue'
 import PermissionDialog from '../components/PermissionDialog.vue'
@@ -40,6 +41,12 @@ import type { PluginIntegrityRequest, PluginPermissionRequest } from '../service
  */
 defineProps<{
   showSettings: boolean
+  /**
+   * Where the dialog should open, or `null` for where it always opened. Carried through this
+   * file, not read by it: it is the shell's value and the settings panel's prop, and the only
+   * thing between them is the one component per modal this file exists to be.
+   */
+  settingsTarget: SettingsOpenTarget | null
   conflict: { tabId: string; path: string } | null
   pluginPermission: PluginPermissionRequest | null
   pluginIntegrity: PluginIntegrityRequest | null
@@ -66,6 +73,7 @@ const emit = defineEmits<{
   >
     <SettingsPanel
       v-if="showSettings"
+      :target="settingsTarget"
       @close="emit('close-settings')"
       @saved="(p: string) => emit('open-folder', p)"
     />

@@ -33,6 +33,7 @@ import type { PluginIntegrityRequest, PluginPermissionRequest } from '../service
 import { notifyError } from '../services/errors'
 import { getLocale, t } from '../i18n'
 import { attachAgentRail, failureSentence } from './agent-rail'
+import { attachPetSettingsLink } from './pet-settings-link'
 import AgentRailBody from './AgentRailBody.vue'
 
 // AppShell is the presentational root layout only. It owns no Tauri calls, no
@@ -128,6 +129,20 @@ const { state: agentState, retry: retryAgentRail } = attachAgentRail({
     notifyError(t('agent.rail.stopFailed', { reason: failureSentence(error) })),
 })
 const agentOn = computed<boolean>(() => settings.agentPanel)
+
+// ---- The pet's settings deep link (§5.1's 设置定位) --------------------------
+//
+// The pet window's right-click asks the host to raise this window on a page; the host checks the
+// page against its own list and emits it, and the shell is where the request lands — what the
+// dialog opens on is a value the shell hands down, and the other thing that has to change is the
+// boolean that shows it, which the shell already asks for with the same `open-settings` event the
+// sidebar's gear emits. The listener, its lifetime and how long one request is remembered are
+// `pet-settings-link.ts`'s, for the reason that file gives: the shell supplies the two values it
+// alone has and nothing else.
+const { target: petSettingsTarget } = attachPetSettingsLink({
+  open: () => props.showSettings,
+  onOpen: () => emit('open-settings'),
+})
 
 const shellStyle = computed<Record<string, string>>(() => ({
   '--app-sidebar-width': `${appearance.sidebarWidth}px`,
@@ -327,6 +342,7 @@ const shellStyle = computed<Record<string, string>>(() => ({
          the component for why they moved out of this template together. -->
     <AppDialogs
       :show-settings="showSettings"
+      :settings-target="petSettingsTarget"
       :conflict="conflict"
       :plugin-permission="pluginPermission"
       :plugin-integrity="pluginIntegrity"

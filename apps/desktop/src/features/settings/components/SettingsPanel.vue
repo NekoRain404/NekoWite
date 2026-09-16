@@ -24,13 +24,51 @@ import ExportSettings from './ExportSettings.vue'
 import GeneralSettings from './GeneralSettings.vue'
 import PluginSettings from './PluginSettings.vue'
 import SettingsNavigation from './SettingsNavigation.vue'
+import { DesktopPetSettingsSection } from '../../desktop-pet-settings'
+import { createDesktopPetConnection } from '../../../app/desktop-pet-composition'
+import { PET_SETTINGS_SECTION, type PetSettingsPage } from '../../../platform/gateways/pet-contracts'
 import { useSettingsDialog } from '../composables/use-settings-dialog'
 import { markArrived, markLeaving } from '../../../composables/surface-leave'
-import type { SettingsSectionId } from '../types'
+import type { SettingsOpenTarget, SettingsSectionId } from '../types'
 
 const emit = defineEmits<{ (e: 'close'): void; (e: 'saved', path: string): void }>()
 
-const activeSection = ref<SettingsSectionId>('general')
+/**
+ * Where the dialog was asked to open.
+ *
+ * `null` — the ordinary case — means "wherever it always opened", which is `general`. The one
+ * caller that passes something is the pet window's 设置 (§5.1's 设置定位): it raises the main
+ * window and names a section and a page, and the dialog lands there instead.
+ *
+ * A prop rather than internal state read once, because the request can also arrive while the
+ * dialog is already open on another section — the right-click is answered by the panel it is
+ * already showing, and a value only read in `setup` would leave that click doing nothing. The
+ * watcher below is what makes the two cases one.
+ */
+const props = withDefaults(
+  defineProps<{ target?: SettingsOpenTarget | null }>(),
+  { target: null },
+)
+
+const activeSection = ref<SettingsSectionId>(props.target?.section ?? 'general')
+
+/**
+ * §5.1's sub-page the caller named.
+ *
+ * Held here rather than inside the pet's section because the *panel* is what outlives a request:
+ * the section is remounted whenever the rail moves away and back, and a page the pet named would
+ * otherwise be forgotten by the first click on another row.
+ */
+const petPage = ref<PetSettingsPage>(props.target?.page ?? 'general')
+
+/**
+ * The pet's host connection, or `null` where this window has none.
+ *
+ * The composition (§10.1) is the one place that decides, and it caches: the section is handed
+ * this as a prop and never makes a connection of its own, so a remount cannot build a second one.
+ * `null` is a state the section renders as a sentence — in a browser build, and in a test.
+ */
+const petConnection = createDesktopPetConnection()
 
 const dialogRef = ref<HTMLElement | null>(null)
 
@@ -44,6 +82,18 @@ const { appVersion, onOverlayPointerDown, focusDialog } = useSettingsDialog({
 watch(activeSection, () => {
   focusDialog()
 })
+
+// The request arriving while the dialog is already open — §5.1's 设置定位 has to answer the
+// second right-click as well as the first. The two writes are in the order the user asked for
+// them: the section, then the page inside it.
+watch(
+  () => props.target,
+  (target) => {
+    if (!target) return
+    activeSection.value = target.section
+    if (target.page) petPage.value = target.page
+  },
+)
 </script>
 
 <template>
@@ -132,6 +182,20 @@ watch(activeSection, () => {
               <AgentSettingsSection
                 v-else-if="activeSection === 'agents'"
               />
+              <!-- The pet's settings tree (§5.1), and the one section that is not this
+                   feature's: the id is D1's constant (a literal here would be a second spelling
+                   of one decision) and the body is one component from
+                   `features/desktop-pet-settings`, which fills the container's five slot pages
+                   itself. This file is therefore where the pet becomes *reachable* — the pages
+                   behind it were built and tested with nowhere to mount — and the connection it
+                   is handed comes from the composition, so nothing here decides what the pet
+                   talks to. A build with no host connection is a state the section states in
+                   words rather than a control that fails when it is used. -->
+              <DesktopPetSettingsSection
+                v-else-if="activeSection === PET_SETTINGS_SECTION"
+                v-model:page="petPage"
+                :gateway="petConnection"
+              />
             </Transition>
           </div>
         </div>
@@ -153,6 +217,13 @@ watch(activeSection, () => {
   backdrop-filter: blur(2px);
 }
 
+/* The 720 is a **maximum**, not a fixed width — and in the shipped app it is always the width
+   used. The overlay's 24px of padding means the dialog is `min(720, viewport - 48)`, so the clamp
+   only engages below a 768px window, while `tauri.conf.json` gives the main window
+   `minWidth: 860` / `minHeight: 560`. Every window the product can be in therefore lands on 720,
+   which is why a viewport sweep reads the same content width at 1280 and at 860: §12's 860x560 is
+   the narrow case, and a narrower viewport (task-183 measured 700 for one) is narrower than this
+   app can be. The height is the term that does bind at 560 — `min(520, 100%)` is 512 there. */
 .settings-dialog {
   display: flex;
   flex-direction: column;

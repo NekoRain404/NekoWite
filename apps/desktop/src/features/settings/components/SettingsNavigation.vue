@@ -7,8 +7,9 @@
  * selected id is the one two-way value: the panel holds it, this displays it.
  */
 import { computed } from 'vue'
-import { Bot, Download, Palette, SlidersHorizontal, Sparkles, Type, Puzzle } from 'lucide-vue-next'
+import { Bot, Download, Palette, PawPrint, SlidersHorizontal, Sparkles, Type, Puzzle } from 'lucide-vue-next'
 import { t } from '../../../i18n'
+import { PET_SETTINGS_SECTION } from '../../../platform/gateways/pet-contracts'
 import type { SettingsSectionId } from '../types'
 
 const activeSection = defineModel<SettingsSectionId>('activeSection', { required: true })
@@ -24,6 +25,11 @@ const SECTIONS = computed<Array<{ id: SettingsSectionId; label: string; icon: ty
   // tree configures an engine that runs *in* the editor, which makes it the
   // section a reader arrives at looking for it rather than passing through.
   { id: 'agents', label: t('settings.section.agents'), icon: Bot },
+  // And then the pet, last again for the same reason: it is a second application's settings,
+  // carried here rather than in a settings window of its own (§5.1: 「这是同一个设置容器内的子
+  // 导航，不再开独立设置程序」). The id is D1's constant — the pet's own right-click names the
+  // section, and two spellings of it would be a request that opens the wrong row.
+  { id: PET_SETTINGS_SECTION, label: t('settings.section.desktopPet'), icon: PawPrint },
 ])
 </script>
 

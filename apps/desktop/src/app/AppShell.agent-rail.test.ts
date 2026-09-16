@@ -56,6 +56,19 @@ function fakeComposition(
     connectSvgInsertion: () => {
       throw new Error('connectSvgInsertion is not part of this test')
     },
+    // And so is T13a's registry client, for the same reason: the settings section that calls it is
+    // mounted by the settings dialog, not by the rail.
+    registry: {
+      read: () => {
+        throw new Error('the registry is not part of this test')
+      },
+      add: () => {
+        throw new Error('the registry is not part of this test')
+      },
+      setEnabled: () => {
+        throw new Error('the registry is not part of this test')
+      },
+    },
   }
   return { composition, stop, opened }
 }

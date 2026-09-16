@@ -41,4 +41,4 @@ export type { AiPermissionSettingsModel } from './composables/use-ai-permission-
 export { usePluginSettings } from './composables/use-plugin-settings'
 export type { PluginSettingsModel } from './composables/use-plugin-settings'
 
-export type { SettingsSectionId } from './types'
+export type { SettingsSectionId, SettingsOpenTarget } from './types'

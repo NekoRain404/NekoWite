@@ -29,11 +29,14 @@
  * desktop_pet_tasks not found" — which names the call that is missing and needs no error code
  * invented to say so.
  *
- * The settings pair is the same answer arriving from the other end: the commands are written, and
- * their two lines in `lib.rs`'s handler list are still owed, so a call to one is refused by Tauri
- * exactly as an unwritten command is. This file does not paper over either case — the seam is the
- * seam, and the day the lines land only this side's documentation changes. That is the same choice
- * `tauri-agent/ipc.ts` documents for the session half of the agent's IPC.
+ * The settings pair used to be the same answer arriving from the other end — the commands were
+ * written and their two lines in `lib.rs`'s handler list were owed — and those lines have since
+ * landed, so `desktop_pet_read_settings` and `desktop_pet_update_settings` answer. What that buys
+ * the user is the master switch: an applied `general.enabled` is what opens the pet's window
+ * (`commands/desktop_pet.rs`'s `apply_feature_switch`). This file does not paper over the one
+ * remaining gap — the seam is the seam, and a call nothing answers is left to be refused by Tauri
+ * rather than given a stub. That is the same choice `tauri-agent/ipc.ts` documents for the session
+ * half of the agent's IPC.
  */
 
 import { invoke } from '@tauri-apps/api/core'
