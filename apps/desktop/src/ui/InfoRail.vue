@@ -24,6 +24,19 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 // still holds and is why it is not local state: the rail is mounted with
 // `v-if="railOpen"`, so a ref of its own would not survive being closed, and
 // whoever decides whether the rail is open is who owns the tab.
+//
+// ## The body is the shell's to choose (T16)
+//
+// The takeover §12 describes happens through the `body` slot below: `AppShell`
+// fills it with the agent panel's rail while settings say so, and passes nothing
+// while they do not — in which case what renders is exactly the chat panel that
+// rendered before this existed. The choice is deliberately NOT made here. It is
+// the shell that reads the feature switch (and that owns the runtime the panel
+// needs: the adapter, the session and the folder it was started for), and a rail
+// that decided for itself would be a second place deciding with a different
+// answer to hand. The chrome — the width, the header, the close button, the
+// leaving-panel fade — stays this file's either way, which is the half that must
+// not be duplicated.
 export type RailTab = 'ai'
 
 const activeTab = defineModel<RailTab>('tab', { default: 'ai' })
@@ -73,7 +86,15 @@ const TABS = computed(() => [{ id: 'ai', label: t('rail.ai') }] as const)
         @leave="markLeaving"
         @enter="markArrived"
       >
-        <ChatPanel v-show="activeTab === 'ai'" />
+        <!-- The fallback is the chat, and it is what renders whenever the shell
+             has nothing to put here — which is the state the rail has been in
+             since the chat moved in. One root either way: the transition above
+             is the reason the slot is read as a single child, and both halves
+             satisfy that (the chat panel is one element, and so is each state
+             the agent rail draws). -->
+        <slot name="body">
+          <ChatPanel v-show="activeTab === 'ai'" />
+        </slot>
       </Transition>
     </div>
   </aside>

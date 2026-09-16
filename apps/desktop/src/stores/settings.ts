@@ -10,11 +10,12 @@
  * end to end —
  *
  *   settings-ai.ts      provider, endpoints, credential, request shape
+ *   settings-agent.ts   which panel the right rail shows (agent vs chat)
  *   settings-chat.ts    the note-context budget, the prompt shelf
  *   settings-editor.ts  autosave interval, undo history
  *   settings-export.ts  frontmatter, page size, orientation, margin,
  *                       image format and quality
- *   settings-persist.ts the storage codec the four share (no keys of its own)
+ *   settings-persist.ts the storage codec the five share (no keys of its own)
  *   provider-urls.ts    the per-provider endpoint maps, extracted earlier
  *
  * — so the next setting is added to the slice that owns its subject instead of
@@ -30,17 +31,20 @@
  */
 
 import { defineStore } from 'pinia'
+import { createAgentSettings } from './settings-agent'
 import { createAiSettings } from './settings-ai'
 import { createChatSettings } from './settings-chat'
 import { createEditorSettings } from './settings-editor'
 import { createExportSettings } from './settings-export'
 
+export * from './settings-agent'
 export * from './settings-ai'
 export * from './settings-chat'
 export * from './settings-editor'
 export * from './settings-export'
 
 export const useSettingsStore = defineStore('settings', () => ({
+  ...createAgentSettings(),
   ...createAiSettings(),
   ...createChatSettings(),
   ...createEditorSettings(),

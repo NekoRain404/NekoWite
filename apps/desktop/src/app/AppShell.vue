@@ -28,8 +28,12 @@ import {
   SIDEBAR_WIDTH_MIN,
 } from '../stores/appearance-schema'
 import { useAppearanceStore } from '../stores/appearance'
+import { useSettingsStore } from '../stores/settings'
 import type { PluginIntegrityRequest, PluginPermissionRequest } from '../services/plugins'
+import { notifyError } from '../services/errors'
 import { getLocale, t } from '../i18n'
+import { attachAgentRail, failureSentence } from './agent-rail'
+import AgentRailBody from './AgentRailBody.vue'
 
 // AppShell is the presentational root layout only. It owns no Tauri calls, no
 // file-path walking and no business logic. Appearance-driven layout (theme,
@@ -39,10 +43,10 @@ import { getLocale, t } from '../i18n'
 // editor region is a default slot so the shell stays composable, with the
 // standard TabBar+EditorPane as the fallback.
 
-// Not assigned to a local: nothing in this script reads a prop any more (the
-// template reads them by name, which `<script setup>` exposes without it), and
-// the only reader used to be the content glide's `props.sidebarVisible`.
-defineProps<{
+// Assigned for the one reader in this script: the agent rail watches
+// `vaultPath`, because the runtime it manages is per vault. Every other prop is
+// read by name in the template, which `<script setup>` exposes without it.
+const props = defineProps<{
   sidebarVisible: boolean
   vaultPath: string | null
   railOpen: boolean
@@ -99,6 +103,32 @@ const theme = computed<string>(() => {
 const accent = computed<string>(() => appearance.effectiveAccent())
 const colorScheme = computed<string>(() => appearance.colorScheme)
 const locale = computed<string>(() => getLocale())
+// ---- The agent rail (T16) --------------------------------------------------
+//
+// The right rail has one job and two possible bodies: the chat panel it has
+// carried since the chat moved in, and the ACP agent panel (§9's tree) that §12
+// stages behind a switch. The shell supplies the two values only it owns — the
+// switch (a setting, `stores/settings-agent.ts` owns the value and its default)
+// and the folder (`vaultPath`, the vault the app opened) — plus whether the rail
+// is on screen; `agent-rail.ts` owns everything that follows from them: when an
+// engine is started, torn down or kept running behind a closed panel, and what
+// the rail shows while it is none of those. See `attachAgentRail`'s doc for the
+// four rules, including why a rollback has to stop the process and not merely
+// stop drawing it.
+const settings = useSettingsStore()
+const { state: agentState, retry: retryAgentRail } = attachAgentRail({
+  enabled: () => settings.agentPanel,
+  vaultPath: () => props.vaultPath,
+  railOpen: () => props.railOpen,
+  // A `stop` that failed is the one thing on this path the user cannot see from
+  // the rail: the state moves on regardless (the window has to be able to say
+  // the runtime is gone even when the backend disagreed), so the failure goes
+  // to the toast rather than nowhere.
+  onStopFailed: (error) =>
+    notifyError(t('agent.rail.stopFailed', { reason: failureSentence(error) })),
+})
+const agentOn = computed<boolean>(() => settings.agentPanel)
+
 const shellStyle = computed<Record<string, string>>(() => ({
   '--app-sidebar-width': `${appearance.sidebarWidth}px`,
   '--app-rail-width': `${appearance.railWidth}px`,
@@ -236,7 +266,24 @@ const shellStyle = computed<Record<string, string>>(() => ({
             v-if="railOpen"
             v-model:tab="railTab"
             @close="emit('toggle-rail')"
-          />
+          >
+            <!-- Filled only while the agent panel is switched on, and that is
+                 what makes the rollback exact: with the slot absent, the rail
+                 renders the chat panel it has always rendered, through the same
+                 element, the same store and the same subscription. `.agent-*`
+                 selectors in the tests are the panel's own. -->
+            <template
+              v-if="agentOn"
+              #body
+            >
+              <AgentRailBody
+                :state="agentState"
+                :vault-open="vaultPath !== null"
+                @retry="retryAgentRail()"
+                @use-chat="settings.agentPanel = false"
+              />
+            </template>
+          </InfoRail>
         </Transition>
       </section>
     </div>

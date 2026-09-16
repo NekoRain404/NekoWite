@@ -7,7 +7,7 @@
  * selected id is the one two-way value: the panel holds it, this displays it.
  */
 import { computed } from 'vue'
-import { Download, Palette, SlidersHorizontal, Sparkles, Type, Puzzle } from 'lucide-vue-next'
+import { Bot, Download, Palette, SlidersHorizontal, Sparkles, Type, Puzzle } from 'lucide-vue-next'
 import { t } from '../../../i18n'
 import type { SettingsSectionId } from '../types'
 
@@ -20,6 +20,10 @@ const SECTIONS = computed<Array<{ id: SettingsSectionId; label: string; icon: ty
   { id: 'export', label: t('settings.section.export'), icon: Download },
   { id: 'ai', label: t('settings.section.ai'), icon: Sparkles },
   { id: 'plugins', label: t('settings.section.plugins'), icon: Puzzle },
+  // Last, and after the app's own sections rather than beside the AI one: this
+  // tree configures an engine that runs *in* the editor, which makes it the
+  // section a reader arrives at looking for it rather than passing through.
+  { id: 'agents', label: t('settings.section.agents'), icon: Bot },
 ])
 </script>
 

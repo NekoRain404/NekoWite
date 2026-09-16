@@ -16,6 +16,7 @@
 import { ref, watch } from 'vue'
 import { X } from 'lucide-vue-next'
 import { t } from '../../../i18n'
+import AgentSettingsSection from './AgentSettingsSection.vue'
 import AiSettings from './AiSettings.vue'
 import AppearanceSettings from './AppearanceSettings.vue'
 import EditorSettings from './EditorSettings.vue'
@@ -120,6 +121,16 @@ watch(activeSection, () => {
               />
               <AiSettings
                 v-else-if="activeSection === 'ai'"
+              />
+              <!-- The agents tree's own door (T16). It is one section here and
+                   seven pages inside it, which is why this is a section of its
+                   own rather than seven rows: the dialog's rail switches
+                   sections, and those seven are a tree one level down. What it
+                   carries today is stated on the page itself — the switch that
+                   reaches this shell, and the parts of the tree whose host half
+                   does not exist yet. -->
+              <AgentSettingsSection
+                v-else-if="activeSection === 'agents'"
               />
             </Transition>
           </div>
