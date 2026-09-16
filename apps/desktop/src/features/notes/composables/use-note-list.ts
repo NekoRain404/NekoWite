@@ -16,7 +16,6 @@
  */
 
 import { computed, ref, watch, type ComputedRef } from 'vue'
-import { splitFrontmatter } from '@nekowite/editor-core'
 import { useDocumentListStore } from '../../../stores/document-list'
 import type { ListView, PanelMode } from '../../../stores/document-list'
 import { useFileTreeStore } from '../../../stores/file-tree'
@@ -221,8 +220,13 @@ export function useNoteList(): NoteListModel {
   const outlineItems = computed(() => {
     const tab = activeTab.value
     if (!tab) return []
-    const { body } = splitFrontmatter(tab.content)
-    return parseOutline(body)
+    // The WHOLE document, frontmatter and all: `parseOutline`'s `line` is an
+    // index into the text it was handed, and every consumer reads it as a FILE
+    // line — the info rail (`stores/doc-derived.ts`) and the split-scroll
+    // mapping both parse the document whole. Reading only the body numbered each
+    // heading short by the block's height, so the row's tooltip named a line
+    // inside the YAML and the jump put the caret on the opening `---`.
+    return parseOutline(tab.content)
   })
 
   function relPath(path: string): string | null {

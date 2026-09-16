@@ -6,6 +6,8 @@ import { FileTree } from '../../vault'
 import { useFileTreeStore } from '../../../stores/file-tree'
 import { useDocumentListStore } from '../../../stores/document-list'
 import { useTabsStore } from '../../../stores/tabs'
+import { useViewStore } from '../../../stores/view'
+import { t } from '../../../i18n'
 
 const fsMocks = vi.hoisted(() => ({
   read: vi.fn(),
@@ -74,6 +76,61 @@ describe('NoteListPanel truncation notice', () => {
     await flush()
     // The default test locale is zh, so the notice resolves to the zh string.
     expect(host!.textContent).toContain('笔记库过大')
+  })
+})
+
+describe('NoteListPanel outline rows', () => {
+  beforeEach(() => {
+    pinia = createPinia()
+    setActivePinia(pinia)
+    document.body.innerHTML = ''
+    mounted = []
+  })
+
+  afterEach(() => {
+    mounted.forEach((app) => app.unmount())
+    mounted = []
+    host?.remove()
+    host = null
+  })
+
+  /**
+   * The note from the bug report: a frontmatter block of four lines and its
+   * only heading on the fifth, so a body-relative index (0) and the heading's
+   * own line cannot be mistaken for one another.
+   */
+  const NOTE = '---\ntitle: x\ntags: [a]\n---\n# Beta\n'
+  const BETA_LINE = 5
+
+  it('names the heading’s own line and jumps to it, not into the YAML', async () => {
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    tabs.tabs.push({
+      id: 't1',
+      path: '/vault/beta.md',
+      content: NOTE,
+      savedContent: NOTE,
+      dirty: false,
+      pendingAssetPaths: [],
+    })
+    tabs.setActive('t1')
+    useDocumentListStore().setPanelMode('outline')
+    mountPanel()
+    await flush()
+
+    const row = host!.querySelector<HTMLButtonElement>('.outline-item')
+    expect(row).not.toBeNull()
+    expect(row!.querySelector('.outline-text')?.textContent?.trim()).toBe('Beta')
+    // The tooltip the user reads, against the line the heading is really on. It
+    // read "跳转到第 1 行" — the opening `---`, which is also the line the jump
+    // handed the pane, and a keystroke is inserted where the caret is.
+    expect(row!.title).toBe(t('notelist.jumpLine', { n: BETA_LINE }))
+
+    // And that is the line the jump asks the editor for: the consumer adds one,
+    // so the outline's own numbering is 0-based.
+    row!.click()
+    await flush()
+    expect(useViewStore().pendingOutlineTarget).toEqual({ line: BETA_LINE - 1, index: 0 })
   })
 })
 

@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { useNoteList, type NoteListModel } from './use-note-list'
+import { useDocDerivedStore } from '../../../stores/doc-derived'
 import { useDocumentListStore } from '../../../stores/document-list'
 import { useTabsStore } from '../../../stores/tabs'
 import { useVaultSessionStore } from '../../../stores/vault-session'
@@ -45,6 +46,15 @@ const NOTES: NoteSummary[] = [
   note('/vault/sub/beta.md', { title: 'Beta', mtime: 300, dir: 'sub' }),
   note('/vault/gamma.md', { title: 'gamma', mtime: 200 }),
 ]
+
+/**
+ * The note the outline defect was reported on: five lines, its only heading on
+ * the last of them, and a frontmatter block whose four lines are what a
+ * body-relative index dropped. `# Beta` is line 5 of the file — the number the
+ * row's tooltip has to name.
+ */
+const FRONTMATTER_NOTE = '---\ntitle: x\ntags: [a]\n---\n# Beta\n'
+const BETA_LINE = 5
 
 let pinia: Pinia
 let mounted: VueApp[] = []
@@ -148,6 +158,49 @@ describe('useNoteList', () => {
       { level: 1, text: 'Beta', line: 0, index: 0 },
       { level: 2, text: 'Head', line: 2, index: 1 },
     ])
+  })
+
+  /** Open `content` as the active note, the way the tab store does. */
+  function openNote(content: string): void {
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    tabs.tabs.push({
+      id: 't1',
+      path: '/vault/beta.md',
+      content,
+      savedContent: content,
+      dirty: false,
+      pendingAssetPaths: [],
+    })
+    tabs.setActive('t1')
+  }
+
+  it('numbers a heading in a frontmatter note by its line in the FILE', () => {
+    const list = mountModel()
+    openNote(FRONTMATTER_NOTE)
+
+    const [beta] = list.outlineItems.value
+    expect(beta.text).toBe('Beta')
+    // The row's tooltip is `item.line + 1` (`OutlineList.vue`), so this IS the
+    // number the user reads and the line the jump is asked for. Reading the
+    // document WITHOUT its frontmatter made the index body-relative: the tooltip
+    // read "跳转到第 1 行" while `# Beta` sat on line 5, and the jump that
+    // followed landed the caret on the opening `---`.
+    expect(beta.line + 1).toBe(BETA_LINE)
+  })
+
+  it('gives the info rail and the notes panel one answer for the same heading', () => {
+    const list = mountModel()
+    openNote(FRONTMATTER_NOTE)
+
+    // The property the siblings already had (`stores/doc-derived.ts` and
+    // `use-split-scroll-sync.ts` both parse the document whole) and this
+    // producer was the only one missing.
+    const rail = useDocDerivedStore().outline
+    expect(list.outlineItems.value).toEqual(rail)
+    // Agreement alone would also hold between two producers that were both
+    // wrong; what they agree on has to be the heading's own line in the file.
+    expect(rail[0].line + 1).toBe(BETA_LINE)
   })
 
   it('runs the content search on demand and reports what it found', async () => {
