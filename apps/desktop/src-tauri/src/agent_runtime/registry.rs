@@ -15,7 +15,7 @@
 //! [`ProgramState::Launchable`] means a file existed and was executable when it was
 //! checked, not that the program is safe.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -24,7 +24,9 @@ use super::acp_transport::EngineConnection;
 use super::adapters::{self, AgentAdapter, Capability, HostFeature};
 use super::events::{AgentIdentity, TransportError};
 use super::fs_capability::VaultFiles;
-use super::process::{EngineLaunch, isolated_profile_env};
+use super::process::{env_pairs, EngineLaunch, isolated_profile_env};
+use super::profile::Credentials;
+use super::secret::Secret;
 use super::session::{AgentRuntime, AgentRuntimeEvents};
 
 /// The profile the first-run flow uses, before T12's settings pages exist (§8.1's
@@ -62,6 +64,18 @@ impl InstallSource {
             InstallSource::External => UpdatePolicy::ReportedOnly,
         }
     }
+
+    /// The spelling the settings page receives, for the reason [`ConfigMode::id`] gives: one
+    /// vocabulary for one value, so the renderer never maps a name this module invented.
+    ///
+    /// [`ConfigMode::id`]: super::profile::ConfigMode::id
+    pub fn id(self) -> &'static str {
+        match self {
+            InstallSource::Bundled => "bundled",
+            InstallSource::Managed => "managed",
+            InstallSource::External => "external",
+        }
+    }
 }
 
 /// What an engine's environment is built from: the engine inherits this process's
@@ -75,6 +89,16 @@ pub enum EnvPolicy {
     ProfileIsolated,
     /// Nothing is injected: an external installation keeps its own credentials (§3.1).
     UserEnvironment,
+}
+
+impl EnvPolicy {
+    /// The spelling the settings page receives — see [`InstallSource::id`].
+    pub fn id(self) -> &'static str {
+        match self {
+            EnvPolicy::ProfileIsolated => "profile-isolated",
+            EnvPolicy::UserEnvironment => "user-environment",
+        }
+    }
 }
 
 /// What a registration's program path is, as of the moment it was asked.
@@ -93,6 +117,21 @@ pub enum ProgramState {
     NotAFile,
     /// A file with no executable bit for anyone.
     NotExecutable,
+}
+
+impl ProgramState {
+    /// The spelling the settings page receives — see [`InstallSource::id`]. The five states stay
+    /// five answers on the wire for the reason they are five here: the user's next move differs for
+    /// each, and a page given "not launchable" could not say which one to make.
+    pub fn id(self) -> &'static str {
+        match self {
+            ProgramState::Launchable => "launchable",
+            ProgramState::NotAbsolute => "not-absolute",
+            ProgramState::Missing => "missing",
+            ProgramState::NotAFile => "not-a-file",
+            ProgramState::NotExecutable => "not-executable",
+        }
+    }
 }
 
 /// Why a registration, a start or a mutation was refused. Data only: the wording a user
@@ -291,16 +330,26 @@ impl AgentRegistration {
     /// The launch description this registration produces (§3.4.3: the path and the arguments
     /// stay separate all the way to `execve`).
     ///
-    /// Also what a diagnostic prints — `env_extra`'s values are the one part that must not be
-    /// printed, and [`redacted_env`] is how a caller that has to show them does it.
-    pub fn launch(&self, managed_root: &Path) -> EngineLaunch {
-        let mut env = match self.env {
-            EnvPolicy::ProfileIsolated => isolated_profile_env(managed_root),
+    /// `credentials` is the profile's set — §3.4's Profile row makes the profile the place an
+    /// engine's authorization lives, and the caller has already established that this profile
+    /// belongs to this agent ([`AgentRegistry::start`] is the caller, and it refuses the pair
+    /// otherwise), which is what makes injecting them *this* engine's credentials rather than a
+    /// copy between engines. They go last, so the value the user set for this profile wins over a
+    /// variable the definition carries; the definition is shared by every profile of one agent,
+    /// and the profile is not.
+    ///
+    /// Also what a diagnostic prints — and now that is safe: every value is a [`Secret`], so this
+    /// struct's derived `Debug` prints names and `<redacted>`, while a caller that has to show a
+    /// variable's value does it through [`redacted_env`].
+    pub fn launch(&self, managed_root: &Path, credentials: &Credentials) -> EngineLaunch {
+        let mut env: Vec<(String, Secret)> = match self.env {
+            EnvPolicy::ProfileIsolated => env_pairs(isolated_profile_env(managed_root)),
             EnvPolicy::UserEnvironment => Vec::new(),
         };
-        // The registration's own variables go last, so an explicit setting wins over the
-        // policy's default root.
-        env.extend(self.env_extra.iter().cloned());
+        // The registration's own variables go next, so an explicit setting wins over the policy's
+        // default root.
+        env.extend(env_pairs(self.env_extra.iter().cloned()));
+        env.extend(credentials.launch_pairs());
         EngineLaunch {
             program: self.program.clone(),
             args: self.args.clone(),
@@ -523,6 +572,38 @@ impl AgentRegistry {
         &self.default_agent
     }
 
+    /// The agents with a live runtime instance, in id order.
+    ///
+    /// The read side of §3.4.7's 「停用/删除注册项前处理活跃任务」: [`AgentRegistry::set_enabled`] and
+    /// [`AgentRegistry::remove`] refuse while an engine is live, so a settings list that offers
+    /// those controls has to be able to say which rows have one. Ids and not epochs — an epoch is
+    /// this host's incarnation token (§6.1) and belongs in a runtime-status surface, not in a row a
+    /// user reads; the refusal the backend returns names the id too.
+    ///
+    /// Read from the live table rather than from a flag on the definition, because "is it running"
+    /// is a fact about this process's children and must not go stale behind a settings write.
+    pub fn running_agent_ids(&self) -> Vec<String> {
+        self.live
+            .lock()
+            .unwrap()
+            .live
+            .keys()
+            .map(|(agent_id, _, _)| agent_id.clone())
+            .collect::<BTreeSet<String>>()
+            .into_iter()
+            .collect()
+    }
+
+    /// Which agent each profile belongs to (§3.4's Profile row), in profile-id order.
+    ///
+    /// Read-only, and a copy rather than a view: the frontend's engine-switch plan asks "does this
+    /// profile belong to the engine I am about to start" before it opens a session, which is the
+    /// question `start` refuses on. `bind_profile` is the only way in, and it is not reachable from
+    /// a renderer.
+    pub fn profile_owners(&self) -> BTreeMap<String, String> {
+        self.profiles.clone()
+    }
+
     /// Binds a profile to an agent. Rebinding to the *same* one is a no-op, because settings forms
     /// resubmit unchanged values; to a different one it is refused (§3.4's Profile row), since
     /// credentials, model ids and config files are not copied between engines.
@@ -594,13 +675,16 @@ impl AgentRegistry {
     /// Starts one engine and returns the instance that owns it. `managed_root` is the app's
     /// managed directory for this profile (§3.2); a registration whose policy is
     /// [`EnvPolicy::UserEnvironment`] ignores it, because an external engine's profile is the
-    /// user's own.
+    /// user's own. `credentials` is what that profile authenticates with (§8.1), and it reaches the
+    /// engine through the environment — the channel P0 §3 names — by way of
+    /// [`AgentRegistration::launch`].
     pub async fn start(
         &self,
         agent_id: &str,
         profile_id: &str,
         vault_id: &str,
         managed_root: &Path,
+        credentials: &Credentials,
         files: Arc<dyn VaultFiles>,
     ) -> Result<AgentInstance, RegistryError> {
         let registration = self
@@ -635,7 +719,7 @@ impl AgentRegistry {
             .ok_or_else(|| RegistryError::UnknownAdapter {
                 adapter_id: registration.adapter_id.clone(),
             })?;
-        let launch = registration.launch(managed_root);
+        let launch = registration.launch(managed_root, credentials);
         let epoch = self
             .live
             .lock()

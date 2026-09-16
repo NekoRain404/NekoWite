@@ -30,6 +30,7 @@ use serde_json::json;
 use agent_runtime::adapters::{self, Capability, HostFeature};
 use agent_runtime::events::{AgentEventEnvelope, AgentEventKind};
 use agent_runtime::fs_capability::VaultFiles;
+use agent_runtime::profile::Credentials;
 use agent_runtime::registry::{
     AgentInstance, AgentRegistration, AgentRegistry, EnvPolicy, InstallSource,
     RegistryError,
@@ -104,7 +105,14 @@ async fn try_start(
     root: &Path,
 ) -> Result<AgentInstance, RegistryError> {
     registry
-        .start(agent_id, profile_id, vault_id, root, Arc::new(NoVault))
+        .start(
+            agent_id,
+            profile_id,
+            vault_id,
+            root,
+            &Credentials::default(),
+            Arc::new(NoVault),
+        )
         .await
 }
 

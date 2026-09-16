@@ -25,10 +25,12 @@ use std::time::Duration;
 use agent_runtime::adapters::{self, Capability, ConfigAuthoring, HostFeature};
 use agent_runtime::events::{AgentEventEnvelope, AgentEventKind};
 use agent_runtime::fs_capability::VaultFiles;
+use agent_runtime::profile::Credentials;
 use agent_runtime::registry::{
     redacted_env, AgentInstance, AgentRegistration, AgentRegistry, EnvPolicy, InstallSource,
     ProgramState, RegistryError, UpdatePolicy, DEFAULT_PROFILE,
 };
+use agent_runtime::secret::Secret;
 use agent_runtime::session::AgentRuntimeEvents;
 
 /// Generous enough that a slow machine does not flake, short enough that a hang fails the run
@@ -88,7 +90,14 @@ async fn try_start(
     root: &Path,
 ) -> Result<AgentInstance, RegistryError> {
     registry
-        .start(agent_id, profile_id, vault_id, root, Arc::new(NoVault))
+        .start(
+            agent_id,
+            profile_id,
+            vault_id,
+            root,
+            &Credentials::default(),
+            Arc::new(NoVault),
+        )
         .await
 }
 
@@ -482,10 +491,22 @@ fn a_credential_in_a_registration_is_never_printable() {
     );
     // Redaction is about the printed form, not about function: the engine still gets the value,
     // because P0 §3's channel for credentials is the environment.
-    let env = registration.launch(Path::new("/managed")).env;
-    assert!(env
+    let launch = registration.launch(Path::new("/managed"), &Credentials::default());
+    assert!(launch
+        .env
         .iter()
-        .any(|(name, value)| name == "ANTHROPIC_API_KEY" && value == "sk-ant-oat01-not-a-real-key"));
+        .any(|(name, value)| name == "ANTHROPIC_API_KEY"
+            && value.expose() == "sk-ant-oat01-not-a-real-key"));
+    // And the launch itself is print-safe: T3a found `EngineLaunch` deriving `Debug` over a
+    // `Vec<(String, String)>`, which would have put a provider key in whatever log line printed
+    // one. The field is made of `Secret`s now, so the derive is safe at the struct that made the
+    // mistake reachable rather than only at this registration's own hand-written `Debug`.
+    let printed_launch = format!("{launch:?}");
+    assert!(
+        !printed_launch.contains("not-a-real-key"),
+        "a launch must not be printable: {printed_launch}"
+    );
+    assert!(printed_launch.contains("<redacted>"), "{printed_launch}");
     // A variable that could not reach a process at all is refused rather than passed on.
     registration.env_extra = vec![("A=B".to_string(), "1".to_string())];
     assert!(matches!(
@@ -528,16 +549,33 @@ fn where_a_program_came_from_decides_who_may_replace_it_and_what_it_inherits() {
     // owns, an external one keeps the environment it has.
     let root = Path::new("/managed/agent-profiles/default");
     let env = adapters::opencode::bundled_registration("/opt/nekowite/opencode".into())
-        .launch(root)
+        .launch(root, &Credentials::default())
         .env;
     assert!(
         env.iter()
-            .any(|(name, value)| name == "HOME" && Path::new(value) == root.join("HOME")),
+            .any(|(name, value)| name == "HOME" && Path::new(value.expose()) == root.join("HOME")),
         "{env:?}"
     );
     assert!(env.iter().any(|(name, _)| name == "XDG_CONFIG_HOME"));
     assert!(
-        external.launch(root).env.is_empty(),
+        external
+            .launch(root, &Credentials::default())
+            .env
+            .is_empty(),
         "nothing of ours is injected into an external installation"
     );
+
+    // The third part of a launch is the profile's credentials (§8.1), and they arrive whatever the
+    // registration's environment policy is: the policy decides which *roots* the engine reads its
+    // configuration from, while a credential is a value the user typed for this profile, and P0 §3
+    // makes the environment the channel it travels in. An external registration therefore carries
+    // exactly the profile's set — the one this test's `Credentials::default()` above showed empty.
+    let credentials = Credentials::new([(
+        "ANTHROPIC_API_KEY".to_string(),
+        Secret::new("sk-ant-oat01-not-a-real-key"),
+    )]);
+    let with_credentials = external.launch(root, &credentials).env;
+    assert_eq!(with_credentials.len(), 1, "{with_credentials:?}");
+    assert_eq!(with_credentials[0].0, "ANTHROPIC_API_KEY");
+    assert_eq!(with_credentials[0].1.expose(), "sk-ant-oat01-not-a-real-key");
 }

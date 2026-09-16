@@ -34,7 +34,7 @@ use futures_util::future::BoxFuture;
 use super::binary_registry::{self, BinaryRegistry, LayoutError};
 use super::registry::{InstallSource, UpdatePolicy};
 use super::session::INITIALIZE_BOUND;
-use super::{EngineConnection, EngineLaunch, isolated_profile_env};
+use super::{env_pairs, EngineConnection, EngineLaunch, isolated_profile_env};
 
 /// How long a candidate gets to answer `--version`.
 ///
@@ -512,7 +512,9 @@ impl CandidateProbe for AcpProbe {
             let launch = EngineLaunch {
                 program: program.to_path_buf(),
                 args: self.args.clone(),
-                env: isolated_profile_env(&self.profile),
+                // Roots only: a candidate is probed before this app has a profile for it to
+                // authenticate with, and a credential has nothing to add to a handshake.
+                env: env_pairs(isolated_profile_env(&self.profile)),
                 ca_bundle: None,
             };
             let (connection, _events) = EngineConnection::connect(&launch)

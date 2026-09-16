@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use agent_runtime::{
     AgentIdentity, AgentRuntime, EngineConnection, EngineLaunch, VaultFiles, client_capabilities,
-    slice_lines,
+    env_pairs, slice_lines,
 };
 
 const PATIENCE: Duration = Duration::from_secs(10);
@@ -100,7 +100,7 @@ async fn start(vault: &Path, capture: &Path, fs_request: Option<String>) -> Agen
             fixture_script().to_string_lossy().into_owned(),
             "good".to_string(),
         ],
-        env,
+        env: env_pairs(env),
         ca_bundle: None,
     };
 

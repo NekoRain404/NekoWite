@@ -19,7 +19,7 @@ use crate::agent_runtime::profile::{ProfileError, ProfileStore};
 use crate::agent_runtime::registry::{
     AgentInstance, AgentRegistry, RegistryError, DEFAULT_PROFILE,
 };
-use crate::desktop_pet::{Observations, PetSurfaces, PetWindowHost, TauriSurfaces};
+use crate::desktop_pet::{CareLedger, Observations, PetSurfaces, PetWindowHost, TauriSurfaces};
 use crate::storage::agent_files::AgentVaultFiles;
 use crate::storage::key_store::data_dir;
 
@@ -208,12 +208,19 @@ pub struct AgentRuntimeState {
 
 /// The desktop pet's backend, as a handle Tauri holds (§7.1, §10.1).
 ///
-/// The two fields are the whole of what a pet window can reach on this side: which character
-/// windows are open and the rules about them, and what this machine has been *observed* to do
-/// (§7.2). Nothing else lives here — no vault, no session, no provider, no document — so a pet
-/// command has nothing to reach even if one were written carelessly. That absence is the
-/// module's own claim (`desktop_pet/mod.rs`) held at the managed-state level: the pet's whole
-/// world is two fields wide.
+/// The three fields are the whole of what a pet window can reach on this side: which character
+/// windows are open and the rules about them, what this machine has been *observed* to do
+/// (§7.2), and what the care ledger has settled (§8). Nothing else lives here — no vault, no
+/// session, no provider, no document — so a pet command has nothing to reach even if one were
+/// written carelessly. That absence is the module's own claim (`desktop_pet/mod.rs`) held at
+/// the managed-state level: the pet's whole world is three fields wide.
+///
+/// **The ledger is the pet's own progress and not a fourth kind of thing.** It is not a
+/// document, it has no path, and it belongs to no vault: it is the totals the pet earned, which
+/// §4 keeps when the feature is switched off. What it deliberately is not is *persisted* —
+/// `care_ledger` may not name a file at all (its own test asserts that), so where its record
+/// lives between runs is a decision for whoever gives it a store, and the read command reports
+/// the process's ledger in the meantime rather than inventing one.
 ///
 /// **Why it is built in `setup` and not by `Default`.** The host's window system is the running
 /// app — [`TauriSurfaces`] holds an `AppHandle` — and there is no `AppHandle` until `setup`
@@ -221,10 +228,11 @@ pub struct AgentRuntimeState {
 /// IPC tests drive the host's rules *and the commands' identity checks* without a compositor
 /// (§10.2's injection rule, applied to the one dependency this state has).
 ///
-/// **Why the observations are a separate lock.** They are written by whatever measured this
-/// machine (D13's matrix) and read by a settings page, and neither has anything to do with
-/// closing a window: one lock would make a capability report wait behind a window operation
-/// that is talking to a compositor.
+/// **Why each field has its own lock.** They are read and written by different callers for
+/// different reasons: the observations by whoever measured this machine (D13's matrix) and a
+/// settings page, the ledger by whatever settles a run and by the settings page's care read, and
+/// the host by every window operation. One lock would make a capability report, or a care read,
+/// wait behind a window operation that is talking to a compositor.
 pub struct DesktopPetState {
     /// The pet windows, and the policy about them. The rules are [`PetWindowHost`]'s; this is
     /// only where the process keeps them.
@@ -232,6 +240,9 @@ pub struct DesktopPetState {
     /// §7.2's evidence. Empty on a fresh install, which is why every capability reads
     /// `unverified` there rather than "supported" or "unsupported".
     pub observations: Mutex<Observations>,
+    /// §8's local progress. One for the process (§6.3's 「一份后端提醒账本」, read at this layer
+    /// as: not one per window), and empty at every start until something settles into it.
+    pub ledger: Mutex<CareLedger>,
 }
 
 impl DesktopPetState {
@@ -248,6 +259,7 @@ impl DesktopPetState {
         Self {
             host: Mutex::new(PetWindowHost::new(surfaces)),
             observations: Mutex::new(Observations::new()),
+            ledger: Mutex::new(CareLedger::new()),
         }
     }
 }
@@ -297,6 +309,11 @@ pub async fn start_session(
             DEFAULT_PROFILE,
             vault_id,
             profile.root(),
+            // §8.1: the profile is where an engine's authorization lives, and this is the moment it
+            // reaches the engine — through the environment, never `argv` (P0 §3). The profiles are
+            // not shared between engines, and `start` has just checked that this one belongs to
+            // this agent, so nothing here is a credential borrowed from another engine.
+            profile.credentials(),
             Arc::new(AgentVaultFiles),
         )
         .await
@@ -322,6 +339,74 @@ pub async fn start_session(
     Ok(session)
 }
 
+/// The definitions this app knows, for a reader that only looks — the settings surface's read.
+///
+/// A share rather than a borrow, because the command that asks runs on another task and a start may
+/// be in flight beside it. What it deliberately is *not* is a mutation path: a change goes through
+/// [`edit_registry`], which is the only way to get `&mut`, so no caller can edit a definition while
+/// a start is awaiting on it (§3.4.7).
+pub fn registry_of(
+    state: &AgentRuntimeState,
+    managed: &Path,
+) -> Result<Arc<AgentRegistry>, String> {
+    registry_for(state, managed)
+}
+
+/// Applies a change to the definitions — register, enable, disable — and answers
+/// what the change produced.
+///
+/// The refusal grammar belongs to the caller: `change` returns its own value, so
+/// "the backend said no" is data inside the answer while an `Err` from here means
+/// the change *never ran* — the two failure channels T13a's settings surface
+/// keeps apart, expressed as two types instead of two conventions.
+///
+/// **Why the value is taken out and put back.** The registry is stored as an
+/// `Arc` because a start awaits while holding it (see the field), and a mutation
+/// needs `&mut`. `Arc::try_unwrap` succeeds exactly when no start is in flight,
+/// so the `Err` arm below is not a lock timeout — it is §3.4.7's rule, seen from
+/// the other side: a definition may not be edited while an engine is being
+/// started from it. The slot is held for the whole operation, so nothing can
+/// observe it empty, and a value that came back out of `try_unwrap` is put back
+/// unchanged.
+pub fn edit_registry<T>(
+    state: &AgentRuntimeState,
+    managed: &Path,
+    change: impl FnOnce(&mut AgentRegistry) -> T,
+) -> Result<T, String> {
+    let mut slot = state
+        .registry
+        .lock()
+        .map_err(|_| "the agent registry state was poisoned by a panic".to_string())?;
+    let registry = match slot.take() {
+        Some(registry) => registry,
+        // Not built yet: this is the first thing to ask for it, and the build is the same one a
+        // start would have done — a settings page that could not read before a session started
+        // would be a page that only worked in one order.
+        None => Arc::new(AgentRegistry::with_bundled(program_to_launch(
+            managed,
+            &executable_dir(),
+        )?)),
+    };
+    match Arc::try_unwrap(registry) {
+        Ok(mut owned) => {
+            let answer = change(&mut owned);
+            *slot = Some(Arc::new(owned));
+            Ok(answer)
+        }
+        Err(shared) => {
+            // An engine start is in flight and holds a share of this registry. Reported as a
+            // failure of *this call* rather than as a refusal, because the request was never
+            // considered — and left in the slot exactly as it was.
+            *slot = Some(shared);
+            Err(
+                "an engine is being started, so its registration cannot be changed right now; \
+                 try again in a moment"
+                    .to_string(),
+            )
+        }
+    }
+}
+
 /// This app's agent definitions, built on first use.
 fn registry_for(state: &AgentRuntimeState, managed: &Path) -> Result<Arc<AgentRegistry>, String> {
     let mut slot = state
@@ -331,15 +416,22 @@ fn registry_for(state: &AgentRuntimeState, managed: &Path) -> Result<Arc<AgentRe
     if let Some(registry) = slot.as_ref() {
         return Ok(Arc::clone(registry));
     }
-    let beside = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(Path::to_path_buf))
-        .unwrap_or_default();
     let registry = Arc::new(AgentRegistry::with_bundled(program_to_launch(
-        managed, &beside,
+        managed,
+        &executable_dir(),
     )?));
     *slot = Some(Arc::clone(&registry));
     Ok(registry)
+}
+
+/// The directory of the running executable, which is where a bundled engine sits
+/// (§3.2). Empty when the platform will not say, which makes the lookup fail with
+/// the sentence [`program_to_launch`] writes rather than with a guess.
+fn executable_dir() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+        .unwrap_or_default()
 }
 
 /// The program this host launches, from the two places §3.2 allows.

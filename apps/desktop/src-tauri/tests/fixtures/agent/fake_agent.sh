@@ -46,6 +46,11 @@ capture() {
 
 capture "pid=$$"
 capture "ca=${NODE_EXTRA_CA_CERTS:-<unset>}"
+# What this process was *given*, reported by the process itself: the only evidence that an injected
+# value reached the child rather than merely being described by the launch that built it. Both are
+# `<unset>` unless a test asks for them, and neither exists in a developer's environment.
+capture "home=${HOME:-<unset>}"
+capture "cred=${NWK_TEST_API_KEY:-<unset>}"
 
 # The group-kill test needs a grandchild that inherited the group, and needs it
 # before any request is sent: this behaviour never answers, so it cannot wait

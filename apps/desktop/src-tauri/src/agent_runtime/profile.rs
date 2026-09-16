@@ -22,10 +22,12 @@
 //! 1. **A profile belongs to one engine** (§3.4). Its record names the agent it was created for and
 //!    every entry point refuses a pair that disagrees, which is what stops one engine's
 //!    authorization, model id or config file from being handed to another.
-//! 2. **A credential is a type, not a string.** [`Secret`] has no `Display`, no `Serialize` and a
-//!    hand-written `Debug`, so a struct that holds one cannot print it by accident — and
+//! 2. **A credential is a type, not a string.** [`Secret`] (defined in [`super::secret`], where the
+//!    launch environment can reach it too) has no `Display`, no `Serialize` and a hand-written
+//!    `Debug`, so a struct that holds one cannot print it by accident — and
 //!    [`Credentials::launch_pairs`] is the single, greppable place where a value leaves that
-//!    protection.
+//!    protection. It answers [`Secret`]s rather than strings, so the value that leaves one
+//!    protected type lands in another one instead of in a `Vec` that any `{:?}` could print.
 //! 3. **The host writes only what it owns** (§8.1). In [`ConfigMode::UserConfig`] the profile is the
 //!    user's own installation, so the host reports it and edits nothing.
 
@@ -39,6 +41,7 @@ use serde_json::{json, Value};
 
 use super::config_edit::{self, ConfigDocument, ConfigEdit, ConfigError, Revision, WriteOutcome};
 use super::process::isolated_profile_env;
+use super::secret::Secret;
 
 /// The directory every profile root sits under, inside the app's managed directory (§3.2).
 pub const PROFILES_DIR: &str = "agent-profiles";
@@ -52,40 +55,13 @@ pub const CREDENTIALS_FILE: &str = "credentials.json";
 /// The mode a profile root is created with: owner only, since the engine's own files land in it.
 pub const PROFILE_ROOT_MODE: u32 = 0o700;
 
-/// A value that must never reach a log line, a report or an error message.
-///
-/// The protection is the type rather than discipline: `Debug` prints the placeholder, and there is
-/// no `Display`, no `Serialize` and no accessor except [`Secret::expose`], which is called by name
-/// in the two places that must have the value. A struct that derives `Debug` and holds one of these
-/// is then safe by construction — which is the property T3a asked for when it flagged
-/// `process::EngineLaunch`'s derived `Debug` as the place a provider key would reach a log.
-#[derive(Clone)]
-pub struct Secret(String);
-
-impl Secret {
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    /// The value itself. Every caller of this is a possible leak, which is why there are two: the
-    /// launch environment and the redactor that removes the value from text.
-    pub fn expose(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Debug for Secret {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("\"<redacted>\"")
-    }
-}
-
 /// The credentials this host injects into one engine's environment.
 ///
 /// Not the only place a credential can live, and §8.1 prefers the other one: the engine's own
 /// authorization flow keeps its own file, and this host neither reads nor reports it. What is here
 /// is the set that has to arrive through the environment — the channel P0 §3 names, `argv` being
-/// world-readable.
+/// world-readable. The values are [`Secret`]s, so this holder inherits the rule instead of
+/// restating it.
 #[derive(Clone, Default)]
 pub struct Credentials(BTreeMap<String, Secret>);
 
@@ -129,14 +105,15 @@ impl Credentials {
     ///
     /// A named method rather than an `Iterator` implementation, because this is the point where a
     /// credential leaves the type that protects it, and it has to be visible at the call site. What
-    /// waits on the other side is `EngineLaunch` (`process.rs`), which derives `Debug` and prints
-    /// `env` verbatim: **nothing that holds a launch built from these may be debug-printed** until
-    /// that type gets the hand-written `Debug` `AgentRegistration` already carries. That fix is
-    /// outside this task's files (T2 owns it) and is reported as a wiring point.
-    pub fn launch_pairs(&self) -> Vec<(String, String)> {
+    /// comes back is still made of [`Secret`]s: the caller that assembles an `EngineLaunch` puts
+    /// them into a field whose own `Debug` cannot print them, so the value moves from one protected
+    /// holder into another and never passes through a `String` a `{:?}` could reach. The two places
+    /// that must have the text — the credential file this host writes, and the launch environment
+    /// the engine reads — call [`Secret::expose`] by name.
+    pub fn launch_pairs(&self) -> Vec<(String, Secret)> {
         self.0
             .iter()
-            .map(|(name, secret)| (name.clone(), secret.expose().to_string()))
+            .map(|(name, secret)| (name.clone(), secret.clone()))
             .collect()
     }
 }
@@ -642,10 +619,12 @@ impl Profile {
             }
         }
         let credentials = self.credentials.patched(changes);
+        // The file this host owns is one of the two places the text itself has to exist, so it is
+        // written from `expose` by name — the same way the launch environment is built.
         let object: Value = credentials
             .launch_pairs()
             .into_iter()
-            .map(|(name, value)| (name, Value::String(value)))
+            .map(|(name, secret)| (name, Value::String(secret.expose().to_string())))
             .collect::<serde_json::Map<_, _>>()
             .into();
         config_edit::write_replacing(&self.credential_file(), &object.to_string())?;

@@ -175,7 +175,14 @@ async fn wired(label: &str, behaviour: &str, fs_frame: Option<String>) -> Wired 
     registry.bind_profile("prof", "fake").expect("binds");
 
     let mut instance = registry
-        .start("fake", "prof", "vault-1", &dir, Arc::new(NoVault))
+        .start(
+            "fake",
+            "prof",
+            "vault-1",
+            &dir,
+            &agent_runtime::profile::Credentials::default(),
+            Arc::new(NoVault),
+        )
         .await
         .expect("the fixture engine starts");
     instance

@@ -30,8 +30,9 @@ use tauri::State;
 use crate::agent_runtime::config_edit::{self, ConfigEdit, Revision};
 use crate::agent_runtime::profile::{
     ConfigMode, ConfigSource, CredentialChange, CredentialStorage, Profile, ProfileError,
-    ProfileFields, ProfileReadout, ProfileStore, RecordUpdate, Secret,
+    ProfileFields, ProfileReadout, ProfileStore, RecordUpdate,
 };
+use crate::agent_runtime::secret::Secret;
 
 /// What every command in this file needs: where the profiles are.
 ///

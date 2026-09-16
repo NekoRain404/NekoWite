@@ -1,6 +1,6 @@
 //! 凭据脱敏 — a value is reported with credentials removed.
 //!
-//! `profile::Secret` is the mechanism (no `Display`, no `Serialize`, a hand-written `Debug`), and
+//! `secret::Secret` is the mechanism (no `Display`, no `Serialize`, a hand-written `Debug`), and
 //! these tests search every surface a value could reach: the readout the page renders, the `Debug`
 //! lines a diagnostic prints, the refusal messages a form shows, and the credential file itself.
 //! The last test is the one that keeps redaction from being mistaken for a functional change: the
@@ -8,7 +8,8 @@
 
 use std::fs;
 
-use crate::agent_runtime::profile::{ProfileError, ProfileStore, Secret};
+use crate::agent_runtime::profile::{ProfileError, ProfileStore};
+use crate::agent_runtime::secret::Secret;
 use crate::agent_settings::{read_document, read_profile, refusal_message, submit_credentials};
 use crate::support::{remove, scratch, set, write_config, CONFIG, RELATIVE, SECRET_VALUE};
 
@@ -61,7 +62,7 @@ fn a_credential_is_absent_from_every_readout_line_of_debug_and_refusal() {
     // from authenticating would be a broken feature, not a safe one.
     let profile = store.open("engine-alpha", "alpha").unwrap();
     assert_eq!(
-        profile.credentials().launch_pairs(),
+        exposed(profile.credentials().launch_pairs()),
         vec![("ANTHROPIC_API_KEY".to_string(), SECRET_VALUE.to_string())]
     );
     assert!(!format!("{:?}", profile.credentials()).contains(SECRET_VALUE));
@@ -95,7 +96,7 @@ fn editing_one_credential_leaves_the_others_alone() {
 
     let mut profile = store.open("engine-alpha", "alpha").unwrap();
     assert_eq!(
-        profile.credentials().launch_pairs(),
+        exposed(profile.credentials().launch_pairs()),
         vec![
             ("ANTHROPIC_API_KEY".to_string(), "sk-three".to_string()),
             ("OPENAI_API_KEY".to_string(), "sk-two".to_string()),
@@ -127,4 +128,13 @@ fn the_document_read_is_the_editors_and_carries_no_redaction_it_would_have_to_un
     // back without destroying the comments.
     assert_eq!(view["text"].as_str().unwrap(), CONFIG);
     assert!(view["path"].as_str().unwrap().starts_with(&profile.root().to_string_lossy().to_string()));
+}
+
+/// The pairs with their values read out — what a launch does when it builds the child's
+/// environment, and the only way to read the text back out of a [`Secret`].
+fn exposed(pairs: Vec<(String, Secret)>) -> Vec<(String, String)> {
+    pairs
+        .into_iter()
+        .map(|(name, secret)| (name, secret.expose().to_string()))
+        .collect()
 }

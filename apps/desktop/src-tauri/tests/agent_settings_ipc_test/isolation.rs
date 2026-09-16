@@ -9,8 +9,9 @@
 use std::fs;
 
 use crate::agent_runtime::profile::{
-    ConfigMode, CredentialChange, ProfileError, ProfileFields, ProfileStore, Secret,
+    ConfigMode, CredentialChange, ProfileError, ProfileFields, ProfileStore,
 };
+use crate::agent_runtime::secret::Secret;
 use crate::agent_settings::{read_profile, refusal_message};
 use crate::support::{scratch, tree_text, RELATIVE};
 

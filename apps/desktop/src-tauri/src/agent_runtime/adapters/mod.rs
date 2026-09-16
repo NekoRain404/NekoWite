@@ -107,10 +107,19 @@ pub enum ConfigAuthoring {
     NativeOnly,
 }
 
+/// Every adapter this build answers to, in the order a settings form lists them.
+///
+/// The registry's readout reports these ids so an add form can offer the ones that exist rather
+/// than a list maintained on the page: §3.4's last line forbids a component knowing an engine by
+/// name, and a form whose choices came from anywhere else would be that knowledge in a different
+/// spelling.
+pub fn all() -> [&'static dyn AgentAdapter; 2] {
+    [&opencode::OPENCODE, &generic_acp::GENERIC_ACP]
+}
+
 /// The adapter that answers to `adapter_id`, if one does.
 pub fn lookup(adapter_id: &str) -> Option<&'static dyn AgentAdapter> {
-    let adapters: [&'static dyn AgentAdapter; 2] = [&opencode::OPENCODE, &generic_acp::GENERIC_ACP];
-    adapters
+    all()
         .into_iter()
         .find(|adapter| adapter.id() == adapter_id)
 }

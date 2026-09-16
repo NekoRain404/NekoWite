@@ -19,8 +19,8 @@ mod remembered;
 mod vault_confinement;
 
 pub use app_state::{
-    program_to_launch, start_session, AgentRuntimeState, AiState, DesktopPetState, KeyVault,
-    WatcherState,
+    edit_registry, program_to_launch, registry_of, start_session, AgentRuntimeState, AiState,
+    DesktopPetState, KeyVault, WatcherState,
 };
 pub use remembered::{
     read_remembered_vault, remember_vault, remembered_vault, remembered_vault_dir,

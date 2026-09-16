@@ -36,7 +36,7 @@ use agent_runtime::permissions::{
 };
 use agent_runtime::{
     AgentEventEnvelope, AgentEventKind, AgentIdentity, AgentRuntime, AgentRuntimeEvents,
-    EngineConnection, EngineLaunch, VaultFiles,
+    EngineConnection, EngineLaunch, VaultFiles, env_pairs,
 };
 use commands::agent::{AgentIpcState, apply_permission_answer, pending_prompts, refusal_message};
 use agent_runtime::driver::Session;
@@ -131,13 +131,13 @@ fn fixture(behaviour: &str, capture: &Path, frame: &str) -> EngineLaunch {
         ],
         // The fixture prints this verbatim after `session/new`, which is where
         // the engine asks in practice: the request arrives inside a turn.
-        env: vec![
+        env: env_pairs(vec![
             (
                 "NWK_FAKE_CAPTURE".to_string(),
                 capture.to_string_lossy().into_owned(),
             ),
             ("NWK_FAKE_FS_REQUEST".to_string(), frame.to_string()),
-        ],
+        ]),
         ca_bundle: None,
     }
 }

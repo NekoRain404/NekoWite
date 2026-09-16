@@ -11,10 +11,12 @@
  *     `ToolCallUpdate` inside `{ "update": … }`, where the contract wants a flat and complete
  *     payload. That one needs state to be honest, so it lives in `tools.ts` with the projection
  *     that completes it; this file dispatches to it and does the rest.
- *  2. **`stopReason` is snake_case** (`end_turn`) where the contract spells kebab (`end-turn`).
- *     The contract's spelling is kept — it is what T5's reducer, T6's panel, T7 and T8 are
- *     written against — and the wire's is translated, mechanically rather than by a table, so a
- *     sixth stop reason needs no edit here.
+ *  2. **`stopReason` is spelled the contract's way.** The runtime normalizes the engine's
+ *     `snake_case` `StopReason` to kebab at the source (`runs.rs`, `wire_stop_reason`), so what
+ *     arrives here is already `end-turn`, and `end_turn` is what a producer that did not normalize
+ *     would send. The mapping below stays as this layer's job for exactly that producer — and
+ *     mechanically, without a table, because a sixth stop reason belongs to the protocol rather
+ *     than to this window and either spelling goes to the same validator.
  *  3. **`usage` is the engine's object, and its field set is not fixed.** P0 §6.3 measured
  *     `thoughtTokens` in one turn and `cachedReadTokens` in another, neither summing to
  *     `totalTokens` (1721 + 6 ≠ 8895). The contract's three numbers are kept, the optional ones
@@ -159,6 +161,11 @@ function mapRunResult(payload: unknown): unknown {
  * a table here would be a second copy of the protocol's enum — one that a sixth reason would
  * silently fall out of. A value that is not one of the contract's (`AGENT_STOP_REASONS`) still
  * fails validation, loudly, which is the right place for that judgement.
+ *
+ * A no-op for the runtime's own frames today, since `runs.rs` normalizes at the source: what this
+ * still covers is a frame from a producer that does not — and the reason it is checked here rather
+ * than assumed is that the alternative to translating is validating every stop reason the engine
+ * sends as unreadable.
  */
 function mapStopReason(raw: unknown): string | null {
   return nonEmpty(raw) ? raw.replaceAll('_', '-') : null

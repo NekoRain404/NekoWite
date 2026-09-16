@@ -26,6 +26,8 @@ use std::time::Duration;
 use agent_client_protocol::AcpAgentConfig;
 use futures_util::io::{AsyncRead, AsyncReadExt};
 
+use super::secret::Secret;
+
 /// The CA bundle handed to the engine through `NODE_EXTRA_CA_CERTS`.
 ///
 /// P0 §2.4: without it every prompt against a host whose chain is complete but
@@ -82,14 +84,25 @@ const MIN_SECRET_LEN: usize = 8;
 ///
 /// The caller owns `program`: the bundled artifact's path is a packaging
 /// decision (T14), and the tests pass a fixture script instead.
+///
+/// **`env` holds [`Secret`]s, and that is the whole of what makes this struct
+/// safe to derive `Debug` on.** T3a found the derived impl printing `env`
+/// verbatim while the field was a `Vec<(String, String)>`; T12 then refused to
+/// inject a provider key into a vector any `{:?}` could print, which left the
+/// plan's credential flow unimplemented. The fix is the field's type rather
+/// than an impl here: a value that cannot be printed is unprintable in *every*
+/// struct that holds one — this one, a future wrapper, a `Vec` of launches in a
+/// diagnostic — while a hand-written `Debug` would only be a promise about this
+/// one. `ca_bundle` and the arguments stay plain: neither is a credential, and
+/// P0 §3 keeps credentials out of `argv` entirely.
 #[derive(Debug, Clone, Default)]
 pub struct EngineLaunch {
     pub program: PathBuf,
     pub args: Vec<String>,
-    /// Credentials and profile roots travel in the environment, never in
+    /// Profile roots and credentials travel in the environment, never in
     /// `argv` (P0 §3): `/proc/<pid>/cmdline` is world-readable, so an API key
     /// on a command line is a key disclosed to every process on the machine.
-    pub env: Vec<(String, String)>,
+    pub env: Vec<(String, Secret)>,
     /// A CA bundle to hand the engine; `None` means "the system one, when it is
     /// there".
     pub ca_bundle: Option<PathBuf>,
@@ -97,9 +110,17 @@ pub struct EngineLaunch {
 
 impl EngineLaunch {
     /// The SDK's launch description, with the CA variable resolved.
+    ///
+    /// This is one of the places the text itself has to exist — the SDK hands
+    /// it to `execve`'s child environment — so it calls [`Secret::expose`] by
+    /// name rather than the field being printable.
     pub fn agent_config(&self) -> AcpAgentConfig {
         let mut config = AcpAgentConfig::new(&self.program).args(self.args.clone());
-        config = config.envs(self.env.iter().map(|(k, v)| (k.clone(), v.clone())));
+        config = config.envs(
+            self.env
+                .iter()
+                .map(|(name, value)| (name.clone(), value.expose().to_string())),
+        );
         if let Some(bundle) = self.resolve_ca_bundle() {
             config = config.env("NODE_EXTRA_CA_CERTS", bundle.to_string_lossy().into_owned());
         }
@@ -128,6 +149,19 @@ impl EngineLaunch {
         // (see `acp_transport::certificate_failure`).
         system.is_file().then_some(system)
     }
+}
+
+/// Plain pairs as launch environment entries.
+///
+/// The one conversion in the crate from `String` values into [`EngineLaunch::env`], and it only
+/// ever moves a value *into* the protector: a caller that has strings is a caller that holds no
+/// credential type (a probe launch, a test fixture, the profile roots), and what it produces cannot
+/// be printed afterwards — so the conversion cannot be the step a credential escapes through.
+pub fn env_pairs(pairs: impl IntoIterator<Item = (String, String)>) -> Vec<(String, Secret)> {
+    pairs
+        .into_iter()
+        .map(|(name, value)| (name, Secret::new(value)))
+        .collect()
 }
 
 /// The environment an engine gets when it must not touch the developer's own
@@ -182,11 +216,15 @@ impl StderrLog {
 }
 
 /// The credentials a runtime injected, for redaction.
+///
+/// Read out of the launch by name. Every variable the launch carries is treated as a candidate,
+/// including the profile roots and the CA bundle — over-redacting a path in the engine's stderr
+/// costs a diagnostic line, and under-redacting costs the credential (see `redact`).
 pub fn secrets_of(launch: &EngineLaunch) -> Vec<String> {
     launch
         .env
         .iter()
-        .map(|(_, value)| value.clone())
+        .map(|(_, value)| value.expose().to_string())
         .filter(|value| value.len() >= MIN_SECRET_LEN)
         .collect()
 }

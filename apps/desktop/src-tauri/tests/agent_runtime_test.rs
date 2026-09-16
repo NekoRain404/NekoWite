@@ -28,7 +28,8 @@ use std::sync::Arc;
 
 use agent_runtime::{
     AgentEventEnvelope, AgentEventKind, AgentFailureCode, AgentIdentity, AgentRuntime,
-    AgentRuntimeEvents, EngineConnection, EngineLaunch, VaultFiles, isolated_profile_env,
+    AgentRuntimeEvents, EngineConnection, EngineLaunch, VaultFiles, env_pairs,
+    isolated_profile_env,
 };
 
 /// The transport tests touch no vault: the fixture engine sends no `fs/*`
@@ -85,7 +86,7 @@ fn fixture(behaviour: &str, capture: Option<&Path>) -> EngineLaunch {
             fixture_script().to_string_lossy().into_owned(),
             behaviour.to_string(),
         ],
-        env,
+        env: env_pairs(env),
         ca_bundle: None,
     }
 }
@@ -354,7 +355,9 @@ async fn a_prompt_streams_text_and_ends_with_the_measured_stop_reason() {
     assert_eq!(texts(&events), vec!["first"]);
     let last = events.last().expect("a run-finished event");
     assert_eq!(last.run_id.as_deref(), Some(run_id.as_str()));
-    assert_eq!(last.payload["stopReason"], "end_turn");
+    // The engine answers `end_turn` (the fixture sends the protocol's snake_case); what the host
+    // publishes is the contract's spelling, so no reader on this side has to know both.
+    assert_eq!(last.payload["stopReason"], "end-turn");
     assert!(
         last.payload.get("usage").is_some(),
         "the usage arrives with the result (P0 §2.3)"
@@ -572,7 +575,7 @@ async fn the_real_engine_negotiates_protocol_version_one() {
     let launch = EngineLaunch {
         program: binary,
         args: vec!["acp".to_string()],
-        env: isolated_profile_env(&profile),
+        env: env_pairs(isolated_profile_env(&profile)),
         ca_bundle: None,
     };
     let (runtime, _events) = start(&launch).await;

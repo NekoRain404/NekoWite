@@ -32,6 +32,10 @@
 //!   live in, the roots the engine is told about, and which values may never be
 //!   printed. Kept apart from [`config_edit`], which is the document layer: a
 //!   profile is a *place*, and the JSONC splice is what may be written in one.
+//! - [`secret`] — the one value that may never be printed. It is its own module
+//!   because both the launch environment ([`process`]) and the profile
+//!   ([`profile`]) hold one, and a type either of them owned would make one
+//!   depend on the other.
 //!
 //! Nothing here knows about Tauri or the IPC surface: `commands/agent.rs` (T4)
 //! wires this to the frontend, which is why the module can be tested against a
@@ -56,9 +60,11 @@ pub mod config_edit;
 pub mod driver;
 pub mod events;
 pub mod fs_capability;
+pub mod native_terminal;
 pub mod permissions;
 pub mod profile;
 pub mod registry;
+pub mod secret;
 pub mod session;
 pub mod skills;
 pub mod snapshot;
@@ -75,7 +81,7 @@ pub use events::{
 pub use fs_capability::{
     ChangeRecord, FsCapability, FsRequest, VaultFiles, client_capabilities, slice_lines,
 };
-pub use process::{EngineLaunch, isolated_profile_env, SYSTEM_CA_BUNDLE};
+pub use process::{env_pairs, EngineLaunch, isolated_profile_env, SYSTEM_CA_BUNDLE};
 pub use session::{
     AgentRuntime, AgentRuntimeEvents, INITIALIZE_BOUND, RuntimeEvent, SessionError, SessionInfo,
 };

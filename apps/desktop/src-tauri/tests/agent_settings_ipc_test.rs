@@ -14,9 +14,10 @@
 //! - **并发冲突**: two writers, and the loser finds out. The rule is the one
 //!   `platform/gateways/memory-pet/settings.ts` states: an update built on a moved revision is
 //!   refused and the caller reloads, never merged.
-//! - **凭据脱敏**: values are reported with credentials removed. `profile::Secret` is the mechanism,
-//!   and the tests below search the readout, the `Debug` lines and the refusal messages for a value
-//!   that must not be in any of them.
+//! - **凭据脱敏**: values are reported with credentials removed. `secret::Secret` is the mechanism —
+//!   a module of its own, because the launch environment holds one too — and the tests below search
+//!   the readout, the `Debug` lines and the refusal messages for a value that must not be in any of
+//!   them.
 //!
 //! The cases are divided by behaviour domain rather than kept in one file, because this target
 //! outgrew a page: `isolation` for what one engine's profile may not contain of another's, `jsonc`
@@ -53,6 +54,10 @@ mod agent_runtime {
     pub mod profile;
     #[allow(dead_code)]
     pub mod registry;
+    // Included because `process` and `profile` both name it through `super::`: the launch
+    // environment and the credential holder share the one type that may not be printed, and this
+    // target reaches it from both sides.
+    pub mod secret;
     #[allow(dead_code)]
     pub mod session;
     // Private in `mod.rs`, public here because `registry`, `session`, `permissions` and the
