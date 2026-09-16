@@ -127,14 +127,43 @@
 
 ## 6. 逐项移植记录
 
-**目前为空——尚无上游代码进入产品源码。**
+> **注意：** 各任务的完整报告位于 `.superpowers/sdd/roadmap/reports/`，而该目录**被 gitignore**。因此**报告不会进入提交**——来源与差异必须登记在本节，否则溯源信息只存在于工作区。
 
-需要登记时的格式（计划 §2 / §10.2）：上游固定提交、源路径与符号、目标文件、许可证、保留的行为、修改原因、测试证据、已知差异。
+### 6.1 D2 — 精灵渲染（`references/desktop-pet/windows/src/pet.ts`）
 
-**发布前必须完成的义务：**
-- 新增 `third-party/desktop-pet/LICENSE` 保留原许可全文，并在第三方声明/关于页展示来源（计划 §2）。
-- 素材**逐包**记录作者、来源、许可与再分发条件（§2、§8）。
-- 发行包检查**不含** `references/desktop-pet/`、上游 `.git`、云服务源码、Win32 依赖、原作者更新端点、私人凭据或无许可素材（§12）。
+| 项 | 值 |
+| --- | --- |
+| 源提交 | `be171a01273a1ed92a27bcdf72f8a58768bac421` |
+| 源文件 | `windows/src/pet.ts`（314 行）；DOM 接线另取自 `windows/src/main.ts` 76-78、116-117 与 `index.html:12` |
+| 许可证 | MIT（根 `LICENSE`，保留原版权） |
+| 目标 | `apps/desktop/src/features/desktop-pet/rendering/{sprite-slicer,sprite-sheet,sprite-player,sprite-hit-test,animation-bindings}.ts`、`components/PetSprite.vue` |
+| 测试证据 | `npx vitest run src/features/desktop-pet/rendering --passWithNoTests=false` → 5 files / **93 tests** |
+
+**符号对应（逐项）：**
+
+| 上游符号 / 行 | 目标 |
+| --- | --- |
+| `COLS`/`ROWS`/`ALPHA_THRESHOLD`(8-10)、`Rect`(33)、`segments`(64-74)、`slice`(76-111)、`clipMaxW`(160-163) | `sprite-slicer.ts`（切帧循环原样保留） |
+| `STATE_ROW`(13-21)、`STATE_FPS`(23-31)、idle 键与 `DEFAULT_IDLE_INTERVAL_S`(39-42)、`readIdleClips`(44-54)、`readIdleIntervalMs`(56-62) | `animation-bindings.ts`（键名丢弃，配置改为注入） |
+| `Pet` 字段(114-134) | 拆到 `sprite-player.ts`（帧/行/fps/rect/headroom/widths）、`sprite-sheet.ts`（image/clips/loaded）、`IdlePlaylist`（index/row/timer） |
+| `hitTest`(136-150) | `sprite-hit-test.ts` — `hitTestSprite`、`contextAlphaReader` |
+| `load`(165-198) | `sprite-sheet.ts` — `SheetLoader.*` |
+| `setState`(200-210) | `sprite-player.ts` + 映射抽到 `animation-bindings.ts` — `resolveAnimation` |
+| `startIdleCycling`(212-226)、`advanceIdleClip`(228-238)、`stopIdleCycling`(240-246) | `animation-bindings.ts` — `IdlePlaylist.*` |
+| `setRow`/`clearRow`(248-256)、`currentClip`(258-264)、`scheduleFrame`(266-279) | `sprite-player.ts` — `setOverrideRow`/`placement`/`schedule` |
+| `draw`(281-313) 的行优先级、帧选择、网格、fit/anchor/headroom | `sprite-player.ts` — `placement`/`fitFrame`；绘制在 `PetSprite.vue` |
+| `main.ts` DOM 接线与 `index.html` 画布尺寸 | `PetSprite.vue` — mount/unmount、`BASE_SIZE`、DPR 尺寸 |
+
+**与上游的行为差异（15 处缺陷修正，逐条理由见报告）：** 载入 epoch 防切换竞态；切角色失败后保留旧角色继续动（**上游会永久冻结**）；负行号两侧钳制；零尺寸画布不再产出 `NaN`；`clipWidths` 空 clip 不再返回 `-Infinity`；像素缓冲长度/尺寸不符时拒绝；**状态映射改用自有属性查找**（上游 `state = "constructor"` 会命中原型）；配置校验要求整数（上游接受 `1.5`）；`setState` 立即重绘改为条件式，以免宿主 500 ms 轮询抵消「按实际帧变化绘制」；canvas 后备存储按 `devicePixelRatio` 放大（仓库既有约定，**相对上游是行为变化**）。
+
+**待确认：** cache-bust 只对 `http(s)` 生效，上游是「非 `data:` 一律追加 `?cors=1`」——若 D8/D12 的角色 URL 是 `http(s)` 则与上游一致，若是 `asset:`/`blob:` 则按新处理，需资源层确认。
+
+**未验证：** 真实 Linux/WebKitGTK 下的渲染与命中（happy-dom 无 canvas，测试用记录的假 context）；`releaseUrl` 目前无真实调用者，要等 D8 接上才真正回收 Object URL。
+
+### 6.2 其他任务
+
+尚无其余代码移植。ACP 侧的 Rust 运行时（`agent_runtime/`）为独立实现，不涉及 Zed 源码复制，其 SDK 依赖见 `docs/architecture/agent-dependencies.md`。
+
 
 ## 7. 上游行为中必须修正、不得机械搬运的项（计划 §3.1）
 
