@@ -6,6 +6,7 @@ import {
   readAgentEvent,
   type AgentEvent,
   type AgentEventKind,
+  type AgentPermissionKind,
   type AgentSession,
 } from './agent-contracts'
 import {
@@ -15,9 +16,10 @@ import {
   type MemoryEvent,
 } from './memory-agent'
 
-const OPTIONS: readonly { optionId: string; name: string; kind: 'allow' | 'reject' }[] = [
-  { optionId: 'once', name: 'Allow once', kind: 'allow' },
-  { optionId: 'no', name: 'Reject', kind: 'reject' },
+const OPTIONS: readonly { optionId: string; name: string; kind: AgentPermissionKind }[] = [
+  { optionId: 'once', name: 'Allow once', kind: 'allow_once' },
+  { optionId: 'always', name: 'Always allow', kind: 'allow_always' },
+  { optionId: 'no', name: 'Reject', kind: 'reject_once' },
 ]
 
 const IDENTITY = {
@@ -245,6 +247,7 @@ describe('readAgentEvent', () => {
       },
       'permission-request': {
         requestId: 'req-1',
+        toolCallId: 'call-1',
         title: 'Write to the vault?',
         input: { state: 'unreadable' },
         options: [...OPTIONS],
@@ -698,7 +701,10 @@ describe('memory agent gateway', () => {
     expect(waiting.permissions).toHaveLength(1)
     const requestId = waiting.permissions[0].payload.requestId
 
-    await expect(failureOf(agent.answerPermission(session, requestId, 'always'))).resolves
+    // An option id the engine never offered is refused — `forever` is not among
+    // OPTIONS, where `always` deliberately is, because the engine does offer a
+    // lasting grant and the answer path has to accept it.
+    await expect(failureOf(agent.answerPermission(session, requestId, 'forever'))).resolves
       .toMatchObject({ code: 'invalid-response' })
     await agent.answerPermission(session, requestId, 'once')
 

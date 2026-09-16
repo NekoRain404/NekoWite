@@ -36,6 +36,7 @@ export type {
   AgentCost,
   AgentEventKind,
   AgentPayloads,
+  AgentPermissionKind,
   AgentPermissionOption,
   AgentPermissionRequest,
   AgentPlanEntry,

@@ -84,6 +84,20 @@ export function readToolUpdate(raw: unknown): AgentPayloads['tool-update'] | nul
   }
 }
 
+/**
+ * The engine's own four kinds (`PermissionOptionKind` in the v1 schema).
+ *
+ * All four, not a collapsed allow/reject pair: `allow_always` remembers the
+ * choice where `allow_once` does not, and a validator that accepted only the
+ * collapsed pair would refuse every real frame the engine sends.
+ */
+const PERMISSION_KINDS = [
+  'allow_once',
+  'allow_always',
+  'reject_once',
+  'reject_always',
+] as const
+
 function readOptions(raw: unknown): AgentPermissionOption[] | null {
   if (!Array.isArray(raw) || raw.length === 0) return null
   const options: AgentPermissionOption[] = []
@@ -91,7 +105,7 @@ function readOptions(raw: unknown): AgentPermissionOption[] | null {
     const record = asRecord(entry)
     const optionId = record && str(record, 'optionId')
     const name = record && str(record, 'name')
-    const kind = record && member(['allow', 'reject'] as const, record.kind)
+    const kind = record && member(PERMISSION_KINDS, record.kind)
     if (!optionId || !name || !kind) return null
     options.push({ optionId, name, kind })
   }
@@ -107,10 +121,13 @@ export function readPermissionRequest(raw: unknown): AgentPermissionRequest | nu
   const record = asRecord(raw)
   if (!record) return null
   const requestId = str(record, 'requestId')
+  const toolCallId = str(record, 'toolCallId')
   const title = str(record, 'title')
   const input = readToolInput(record.input)
   const options = readOptions(record.options)
-  return requestId && title && input && options ? { requestId, title, input, options } : null
+  return requestId && toolCallId && title && input && options
+    ? { requestId, toolCallId, title, input, options }
+    : null
 }
 
 export function readFilesChanged(raw: unknown): AgentPayloads['files-changed'] | null {
