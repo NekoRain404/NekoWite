@@ -16,10 +16,15 @@ type EditorView = NonNullable<ReturnType<NekoEditor['getView']>>
  *
  * §3's guarantee is the other half, and it is why the toolbar holds a
  * *bookmark* rather than a DOM reference: the table it acts on is identified by
- * DOCUMENT POSITION (`tableFrom`), captured when the caret entered the table,
- * and re-validated before every action. A re-parse, an undo or another window's
- * write can move a table; indices into a NodeList cannot survive that, a
- * position plus a type check can.
+ * DOCUMENT POSITION (`tableFrom`), taken when the caret entered the table or
+ * when the toolbar was raised again for a caret that is in one, and re-validated
+ * before every action. A re-parse, an undo or another window's write can move a
+ * table; indices into a NodeList cannot survive that, a position plus a type
+ * check can.
+ *
+ * Being on screen and being able to act are one fact to the user, so they are
+ * one decision here: `place` is the only place `visible` is turned on, and it
+ * turns on only for a bookmark that names a table.
  */
 export interface TableToolbarOptions {
   /** The live editor, or null before the rendered pane has one. */
@@ -137,11 +142,30 @@ export function useTableToolbar(options: TableToolbarOptions): TableToolbar {
     return node?.type.name === 'table'
   }
 
-  /** One frame of positioning: coordinates only (see the module header). */
+  /** One frame of positioning — and the one place the toolbar decides whether it
+   *  may be on screen at all.
+   *
+   *  The coordinates are the DOM's (§4: nothing here re-parses for them). The
+   *  TARGET is not, and must not be: a toolbar placed from live boxes alone can
+   *  come back holding nothing, which is a row of buttons that refuses everything
+   *  it offers. That state is reachable without the caret moving — an outside
+   *  press releases the bookmark (`onPointerDown`) and the press back into the
+   *  same cell crosses no in-table edge, because the caret never left the table.
+   *  So a missing bookmark is taken again here, from the caret's own document
+   *  position, and `capture` reads the state rather than the DOM node. */
   function place(): void {
     const panel = panelEl()
     const nodes = nodesInCaret()
     if (!panel || !nodes) {
+      visible.value = false
+      return
+    }
+    if (!anchor.value) capture()
+    if (!stillValid()) {
+      // A bookmark that no longer names a table is not a target, and it is not
+      // kept: the next placement takes a fresh one from the caret, which is the
+      // only thing that cannot itself go stale.
+      anchor.value = null
       visible.value = false
       return
     }
@@ -214,7 +238,16 @@ export function useTableToolbar(options: TableToolbarOptions): TableToolbar {
   /** A press outside both the table and the toolbar dismisses it. A press that
    *  came from a cell (or from the toolbar itself) never does: the toolbar is
    *  raised for the table the user is working in, and clicking another cell of
-   *  it is still that work. */
+   *  it is still that work.
+   *
+   *  The dismiss is this toolbar's own business (`visible`) and it does NOT
+   *  write `options.inTable`, which it used to. That ref belongs to the pane and
+   *  is published by the editor: `TableMenu.vue` sets it from
+   *  `onTableCursorChange`, whose publisher speaks only when its own answer
+   *  CHANGES. A false written here while the caret is still in a table is
+   *  therefore never taken back — no later transaction reports a change it can
+   *  see — and the pane spends the rest of the visit believing the caret is
+   *  outside the table it is sitting in. */
   function onPointerDown(event: PointerEvent): void {
     if (!visible.value) return
     const target = event.target as Element | null
@@ -223,7 +256,6 @@ export function useTableToolbar(options: TableToolbarOptions): TableToolbar {
     if (target.closest('table')) return
     visible.value = false
     anchor.value = null
-    options.inTable.value = false
   }
   document.addEventListener('pointerdown', onPointerDown, true)
 
