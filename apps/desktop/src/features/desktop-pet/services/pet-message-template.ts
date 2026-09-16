@@ -208,6 +208,11 @@ export interface PetTaskListLabels {
   empty: string
   /** The rows the cap left out. `{count}`. */
   more: string
+  /**
+   * The name of the box the rows scroll in, which is focusable for exactly that reason: it is what
+   * a keyboard user hears when focus lands on it, and it is how they reach a row below the fold.
+   */
+  rows: string
   /** A row's accessible name — the state is always in it, whatever the token layout hides. */
   row: string
   /** The heading over one engine's rows. `{agent}`, `{count}`. */
@@ -229,6 +234,7 @@ export interface PetTaskListLabels {
 export const PET_TASK_LIST_LABELS: PetTaskListLabels = {
   empty: 'Nothing running right now.',
   more: '+{count} more',
+  rows: 'Task rows',
   row: '{agent} {state}: {message}',
   group: '{agent} {count}',
   pages: 'Task pages',

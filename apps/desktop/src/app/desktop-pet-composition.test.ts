@@ -75,6 +75,10 @@ describe('what a menu item does', () => {
       return []
     }
 
+    async care(): Promise<never> {
+      throw new Error('a menu item does not read the care ledger')
+    }
+
     async tasks(): Promise<PetTaskProjection[]> {
       return []
     }

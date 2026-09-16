@@ -25,7 +25,7 @@
 
 use serde::Serialize;
 
-use super::history::{PetTaskKey, PetTaskState};
+use super::task_projection::{PetTaskKey, PetTaskState};
 
 /// Everything one system notification says and routes with.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize)]

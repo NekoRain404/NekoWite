@@ -13,18 +13,21 @@
  *      never named, let alone taken;
  *   2. `WebKitWebDriver` on a free port of its own;
  *   3. `MiniBrowser`, driven by the driver, at `/desktop-pet.html` — the pet window's own page;
- *   4. `PetSprite` mounted in it with a sheet built in the page, read back as pixels.
+ *   4. `PetSprite` mounted in it with a sheet built in the page, read back as pixels;
+ *   5. `PetBubble` mounted in the same page with the six-row fixture, measured against the height
+ *      cap and against the window — 「气泡不越屏」 has two axes and one of them is a pixel height, so
+ *      Chromium's answer to it (`desktop-pet-tasks.spec.ts`) is not the engine's answer.
  *
  *   node e2e/webkit/pet-probe.mjs            # JSON on stdout, verdict on stderr
  *   node e2e/webkit/pet-probe.mjs --keep     # leave the window up (debugging only)
  *
  * **What this measures, and what it does not.** It answers the *engine* question: does the sprite's
  * canvas get pixels in WebKitGTK, does the alpha-gutter slicer see the rows this sheet actually
- * drew, do the frames advance, and does the hit test agree with the drawn pixels at the display's
- * pixel ratio. It does **not** answer anything about the window: MiniBrowser is a different
- * embedding from `wry` — no transparency, no always-on-top, no input regions — so nothing here is
- * evidence about §7.2's compositor rows, and `linux_capabilities::Observations` must not be fed
- * from this run.
+ * drew, do the frames advance, does the hit test agree with the drawn pixels at the display's
+ * pixel ratio, and does the bubble's row box come out at the height its cap promises. It does
+ * **not** answer anything about the window: MiniBrowser is a different embedding from `wry` — no
+ * transparency, no always-on-top, no input regions — so nothing here is evidence about §7.2's
+ * compositor rows, and `linux_capabilities::Observations` must not be fed from this run.
  *
  * `MiniBrowser` opens a window on the user's real desktop, because WebKitGTK has no headless mode
  * (2.52's MiniBrowser takes no `--headless` and `WebKitWebDriver --help` offers none). The session
@@ -46,6 +49,16 @@ const SPRITE = { width: 160, height: 180 }
 const SHEET = { cols: 8, rows: 9, cell: 24, frames: 3, inset: 4 }
 /** How long to wait for a frame to advance: the idle rate is 3fps, so 1.4s is four frames. */
 const FRAME_WAIT_MS = 1400
+/**
+ * The character window, as `window_host::CHARACTER_WINDOW_SIZE` builds it.
+ *
+ * The bubble's cap is `min(240px, 40vh)`, and `vh` is the *viewport* — so a measurement of the cap
+ * has to be taken at the window's own height rather than in a box that happens to be that size.
+ * The sprite probes above run at 480x420 and this resizes for the bubble step.
+ */
+const WINDOW = { width: 260, height: 320 }
+/** MiniBrowser's own chrome, measured rather than assumed: a 420px content area needs 456 (above). */
+const WINDOW_CHROME_PX = 36
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`)
@@ -103,7 +116,7 @@ function stop(child) {
  * compiled modules (a page has no import map), the image decode, and the first frame.
  */
 const MOUNT = `
-const sprite = arguments[0], sheetSpec = arguments[1], done = arguments[arguments.length - 1];
+const sprite = arguments[0], sheetSpec = arguments[1], win = arguments[2], done = arguments[arguments.length - 1];
 (async () => {
   const entry = await (await fetch('/src/app/desktop-pet-entry.ts')).text();
   const vueUrl = entry.match(/["']([^"']*\\/deps\\/vue\\.js[^"']*)["']/)?.[1];
@@ -152,6 +165,32 @@ const sprite = arguments[0], sheetSpec = arguments[1], done = arguments[argument
     hitTest: (x, y) => (api.value ? api.value.hitTest(x, y) : null),
     app,
   };
+
+  // The bubble, in a box the size of the character window. Mounted in this same script rather than
+  // in a second page load because the cap is a fraction of the viewport height, and the window has
+  // to be resized for that to mean the window — a resize needs the surface already in the document.
+  //
+  // The fixture is the one the Playwright case uses, imported from the dev server rather than
+  // copied: six long-Chinese rows behind two agents, which is what makes the row box taller than
+  // any cap. A second copy of it here would be a second answer to "how tall is the content".
+  const fixture = await import('/e2e/support/petFixture.ts');
+  const bubbleComponent = await import('/src/features/desktop-pet/components/PetBubble.vue');
+  const bubbleHost = document.createElement('div');
+  bubbleHost.id = 'probe-bubble';
+  bubbleHost.style.cssText =
+    'width:' + win.width + 'px;height:' + win.height + 'px;display:flex;flex-direction:column;' +
+    'justify-content:flex-end;gap:6px;overflow:hidden';
+  document.body.append(bubbleHost);
+  vue.createApp({
+    render: () => vue.h(bubbleComponent.default, {
+      tasks: fixture.petTasks(),
+      layout: { maxTasks: 6 },
+      phrases: fixture.petPhrases(),
+      now: 1700000010000,
+      agentLabels: { memory: 'Memory', opencode: 'OpenCode' },
+    }),
+  }).mount(bubbleHost);
+
   await vue.nextTick();
   // The sheet is a data URL: its decode is asynchronous even so, and a read taken before it commits
   // measures an empty canvas and calls it a failure.
@@ -255,6 +294,45 @@ function verify(results) {
     results.hit.centre === true && results.hit.corner === false,
   )
 
+  /*
+   * 气泡不越屏, height axis — in this engine rather than in Chromium.
+   *
+   * The cap is `min(240px, 40vh)` and the window is 320 tall, so the box may be 128px. The numbers
+   * are mirrored here rather than imported for the reason the Playwright case states: a check that
+   * read the constant would follow any change to it and go on passing, which is the failure mode
+   * this whole measurement exists to catch.
+   */
+  const bubble = results.bubble
+  const cap = Math.min(240, 0.4 * (bubble?.viewport.height ?? 0))
+  const round = (value) => Math.round(value * 10) / 10
+
+  // FAILS IF: the cap stopped being applied (`maxHeight` dropped, or the element it is applied to
+  // changed), or the content stopped being tall enough to fill it — 128 is what a box at its cap
+  // measures, and both failure modes leave a different number.
+  run(
+    'the rows box is capped here too',
+    `rows ${round(bubble.rows.height)} of a ${cap}px cap in a ${bubble.viewport.width}x${bubble.viewport.height} window`,
+    Math.abs(bubble.rows.height - cap) <= 1,
+  )
+  // FAILS IF: the surface around the box grows what the box does not — a footer, a second list, a
+  // padding change. 60px is the ceiling the Playwright case states: the measured chrome (padding,
+  // border) is 14px, and the rest is the room the count, fold and pager rows need.
+  run(
+    'and the surface is that box plus its chrome',
+    `bubble ${round(bubble.bubble.width)}x${round(bubble.bubble.height)} (${round(bubble.bubble.height - bubble.rows.height)}px of chrome)`,
+    bubble.bubble.height <= cap + 60 + 1,
+  )
+  // FAILS IF: the surface leaves the window it is drawn in. Measured against the window stand-in
+  // and not the viewport: this page also carries the entry's own notice above it.
+  run(
+    'and it stays inside the window',
+    `bubble ${round(bubble.bubble.x)},${round(bubble.bubble.y)} → ${round(bubble.bubble.x + bubble.bubble.width)},${round(bubble.bubble.y + bubble.bubble.height)} in ${round(bubble.frame.x)},${round(bubble.frame.y)} → ${round(bubble.frame.x + bubble.frame.width)},${round(bubble.frame.y + bubble.frame.height)}`,
+    bubble.bubble.x >= bubble.frame.x - 1 &&
+      bubble.bubble.x + bubble.bubble.width <= bubble.frame.x + bubble.frame.width + 1 &&
+      bubble.bubble.y >= bubble.frame.y - 1 &&
+      bubble.bubble.y + bubble.bubble.height <= bubble.frame.y + bubble.frame.height + 1,
+  )
+
   return {
     passed: checks.filter((c) => c.holds).length,
     failed: checks.filter((c) => !c.holds).length,
@@ -272,6 +350,30 @@ const ctx = canvas.getContext('2d');
 done(ctx.getImageData(Math.floor(pt.x * kx), Math.floor(pt.y * ky), 1, 1).data[3]);
 `
 
+/**
+ * The bubble's boxes, as CSS pixels, in the window it is drawn in.
+ *
+ * Three rects and not one: the *surface* is what a host sizes a window for, the *rows box* is where
+ * the cap is applied (the element that grows), and the frame is the window stand-in — so a check
+ * can say which of the three disagreed. `getBoundingClientRect` rather than `offsetHeight` because
+ * WebKitGTK returns fractional layout here and rounding it away first would hide a 1px miss.
+ */
+const BUBBLE_GEOMETRY = `
+const done = arguments[arguments.length - 1];
+const frame = document.getElementById('probe-bubble');
+const bubble = frame && frame.querySelector('.pet-bubble');
+const rows = frame && frame.querySelector('.pet-task__scroll');
+if (!frame || !bubble || !rows) { done({ ok: false, why: 'the bubble is not in the page' }); return; }
+const box = (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; };
+done({
+  ok: true,
+  viewport: { width: innerWidth, height: innerHeight },
+  frame: box(frame),
+  bubble: box(bubble),
+  rows: box(rows),
+});
+`
+
 async function main() {
   const keep = Boolean(arg('keep', false))
   const vitePort = await freePort()
@@ -285,7 +387,7 @@ async function main() {
   })
 
   const wd = new WebDriver(driverPort)
-  const results = { engine: null, page: null, states: {}, hit: {}, advanced: null }
+  const results = { engine: null, page: null, states: {}, hit: {}, advanced: null, bubble: null }
   const watchdog = setTimeout(() => {
     process.stderr.write('\n[webkit-pet] watchdog: nothing finished in 300s\n')
     process.kill(process.pid, 'SIGKILL')
@@ -311,7 +413,7 @@ async function main() {
     })
 
     stage('mount the sprite')
-    const mounted = await wd.executeAsync(MOUNT, [SPRITE, SHEET])
+    const mounted = await wd.executeAsync(MOUNT, [SPRITE, SHEET, WINDOW])
     if (!mounted?.ok) throw new Error(`the mount failed: ${mounted?.why}`)
 
     stage('read the page')
@@ -351,6 +453,33 @@ async function main() {
     results.hit.corner = await wd.execute(
       `return window.__petProbe.hitTest(${points.corner.x}, ${points.corner.y});`,
     )
+
+    // The bubble's cap is a fraction of the window's height, so the window has to be the character's
+    // before the bubble means anything: the same 320px `window_host::CHARACTER_WINDOW_SIZE` builds.
+    // The sprite probes above are done at this point — they are about the canvas, not the viewport —
+    // and the height is verified rather than requested for the reason the first resize is
+    // (`setWindowRect` is accepted and discarded if it is issued at the wrong moment).
+    //
+    // **The width is not set to 260 and cannot be.** Measured: asking for a 260px content width
+    // gives 299 (outer 299x356), so MiniBrowser or the window manager enforces a floor around 299px
+    // and a request below it is silently rounded up. The height is what the cap reads, and the box
+    // the bubble is drawn in is the 260px element in the page — so the width floor costs this probe
+    // nothing; it would matter to anything that had to measure a 260px *viewport*.
+    stage('resize to the character window')
+    await wd.setWindowRect({
+      width: WINDOW.width,
+      height: WINDOW.height + WINDOW_CHROME_PX,
+      x: 0,
+      y: 0,
+    })
+    await until(() => wd.execute(`return innerHeight === ${WINDOW.height};`), {
+      timeout: 10_000,
+      what: `a ${WINDOW.height}px content height`,
+    })
+
+    stage('bubble geometry')
+    results.bubble = await wd.executeAsync(BUBBLE_GEOMETRY)
+    if (!results.bubble?.ok) throw new Error(`the bubble is not measurable: ${results.bubble?.why}`)
 
     const logs = await wd.logs()
     if (logs) results.console = logs.map((l) => `${l.level}: ${l.message}`).slice(0, 20)

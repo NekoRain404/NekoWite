@@ -9,7 +9,7 @@
 //! *windowing system* reports for the window the call came from — and a forged label has nowhere
 //! to be sent.
 //!
-//! Three things are asserted here that no lower layer can assert:
+//! Four things are asserted here that no lower layer can assert:
 //!
 //! - **The main window cannot close a pet window**, and a pet window can close itself. Both are
 //!   the same command with no window argument, invoked from two different windows.
@@ -20,6 +20,9 @@
 //! - **The page vocabulary is D1's.** `desktop_pet_open_settings` validates the page against a
 //!   list compiled into this side, so the list is read off the TypeScript contract here. A page
 //!   added on one side alone fails this test instead of opening nothing at runtime.
+//! - **The care read answers what the ledger holds and no more.** An empty ledger is answered with
+//!   no summary at all rather than with zeroes (§8's 「token 未知不是 0」), and asking is not
+//!   writing: two reads leave the ledger — revision included — where they found it.
 
 use std::fs;
 use std::path::Path;
@@ -33,8 +36,12 @@ use tauri::Listener;
 
 use nekowite_lib::commands::desktop_pet as pet_commands;
 use nekowite_lib::commands::desktop_pet::{PET_FEATURE_CHANNEL, PET_SETTINGS_CHANNEL, SETTINGS_PAGES};
-use nekowite_lib::desktop_pet::{Closed, HostRefusal, PetInstance, TeardownReport, DESKTOP_PET_PAGE};
+use nekowite_lib::desktop_pet::care_ledger::{CareEvent, CareOrigin, CareOutcome, LocalDay, LocalTime};
+use nekowite_lib::desktop_pet::{
+    Closed, HostRefusal, PetInstance, TeardownReport, DESKTOP_PET_PAGE, MEAL_XP,
+};
 use nekowite_lib::state::DesktopPetState;
+use tauri::Manager;
 
 use crate::support::{FakeSurfaces, MAIN_WINDOW};
 
@@ -42,7 +49,7 @@ use crate::support::{FakeSurfaces, MAIN_WINDOW};
 // The wire surface
 // ---------------------------------------------------------------------------
 //
-// These nine wrappers exist because `generate_handler!` resolves a command through the
+// These ten wrappers exist because `generate_handler!` resolves a command through the
 // `__cmd__<name>` macro `#[tauri::command]` emits next to it, and that macro is `pub(crate)` to
 // the library — a test in a separate crate cannot register the library's commands, however
 // public the functions are. So the registration happens here, with the same parameter names (the
@@ -117,6 +124,13 @@ fn desktop_pet_capabilities(
 }
 
 #[tauri::command]
+fn desktop_pet_care_read(
+    state: tauri::State<'_, DesktopPetState>,
+) -> Result<pet_commands::PetCareRead, String> {
+    pet_commands::desktop_pet_care_read(state)
+}
+
+#[tauri::command]
 fn desktop_pet_open_settings<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     page: String,
@@ -147,6 +161,7 @@ fn app() -> Pet {
             desktop_pet_close_own,
             desktop_pet_set_click_through,
             desktop_pet_capabilities,
+            desktop_pet_care_read,
             desktop_pet_open_settings,
         ])
         .build(mock_context(noop_assets()))
@@ -393,6 +408,97 @@ fn the_config_declares_no_pet_window() {
     // something rather than a window that loads nothing.
     let page = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../{DESKTOP_PET_PAGE}"));
     assert!(page.is_file(), "the pet's page is missing: {page:?}");
+}
+
+#[test]
+fn a_ledger_nothing_settled_into_answers_with_no_totals_at_all() {
+    // §8's 「token 未知不是 0」 at the read: an empty ledger has totals (`xp: 0`, `meals: 0`) and
+    // sending them would have the care page draw level 0 for a user who has completed hundreds of
+    // runs. The assertion is not "the numbers are zero" but "there are no numbers on this wire" —
+    // the payload is the status and nothing else, so a surface cannot draw a total it was not
+    // given.
+    let pet = app();
+    let main = window(&pet, MAIN_WINDOW);
+
+    let read = ok(&main, "desktop_pet_care_read", Value::Null);
+
+    assert_eq!(read, json!({ "status": "empty" }));
+    let keys: Vec<&String> = read.as_object().expect("an object").keys().collect();
+    assert_eq!(keys, ["status"], "an empty ledger must carry no summary");
+}
+
+#[test]
+fn what_the_ledger_settled_is_what_the_read_carries() {
+    let pet = app();
+    let main = window(&pet, MAIN_WINDOW);
+    settle_one_completion(&pet);
+
+    let read = ok(&main, "desktop_pet_care_read", Value::Null);
+
+    // The nesting is the contract's: a status, and the summary as the ledger's own `summary()`
+    // serialized it. `local.rs` pins its key set exactly (camelCase, and no `level`, `stage` or
+    // price); what this asserts is that the read hands that object on unmodified rather than
+    // reshaping it into something a page would have to un-know.
+    assert_eq!(read["status"], "current");
+    let summary = &read["summary"];
+    assert_eq!(summary["xp"], MEAL_XP);
+    assert_eq!(summary["meals"], 1);
+    assert_eq!(summary["streakDays"], 1);
+    assert_eq!(summary["unlocked"], json!([]));
+    assert_eq!(summary["days"], json!([{ "day": "2026-09-16", "completions": 1, "tokens": 4200 }]));
+    assert_eq!(summary["reportedTokens"], 4200);
+    assert_eq!(summary["unreportedRuns"], 0);
+    assert_eq!(summary["lastSettledAt"], 1_789_000_000_000i64);
+    assert_eq!(summary["revision"], 1);
+}
+
+#[test]
+fn the_care_read_is_a_read_and_not_a_write() {
+    // A read that bumped the revision would turn every look at the care page into a conflict for
+    // whatever else writes the ledger, and a read that settled something would pay a run twice if
+    // it were asked twice. Both are asserted here rather than reasoned about: the ledger is
+    // compared with itself across two reads, revision included.
+    let pet = app();
+    let main = window(&pet, MAIN_WINDOW);
+    settle_one_completion(&pet);
+    let before = revision(&pet);
+
+    let first = ok(&main, "desktop_pet_care_read", Value::Null);
+    let second = ok(&main, "desktop_pet_care_read", Value::Null);
+
+    assert_eq!(first, second);
+    assert_eq!(revision(&pet), before);
+    assert_eq!(first["summary"]["revision"], before);
+}
+
+/// One trusted completion in the state's ledger, as the settlement path would deliver it.
+fn settle_one_completion(pet: &Pet) {
+    let state = pet.app.state::<DesktopPetState>();
+    let mut ledger = state.ledger.lock().expect("the ledger's lock");
+    ledger
+        .settle(CareEvent {
+            key: "run-1",
+            outcome: CareOutcome::TurnFinished,
+            at: LocalTime {
+                day: LocalDay {
+                    year: 2026,
+                    month: 9,
+                    day: 16,
+                },
+                hour: 9,
+                at_ms: 1_789_000_000_000,
+            },
+            tokens: Some(4_200),
+            origin: CareOrigin::Real,
+        })
+        .expect("a real completion settles");
+}
+
+/// The state's ledger revision, read the way the read command reads it.
+fn revision(pet: &Pet) -> u64 {
+    let state = pet.app.state::<DesktopPetState>();
+    let ledger = state.ledger.lock().expect("the ledger's lock");
+    ledger.revision()
 }
 
 /// One event frame, as JSON.

@@ -31,11 +31,12 @@
 //! the host's milliseconds, so coalescing is exercised by handing it two numbers rather than by
 //! sleeping.
 
-use super::history::{
-    DeliveryState, Evicted, MarkOutcome, PetTaskKey, PetTaskState, SessionKey, TaskHistory,
-    TaskRecord,
-};
+use super::history::{DeliveryState, Evicted, MarkOutcome, TaskHistory, TaskRecord};
 use super::notification_delivery::{DeliveryFailure, NotificationDelivery, PetNotice};
+// The task vocabulary is the projection's, defined once (`task_projection::vocabulary`); the ledger
+// reads all three of the shapes it keys by through that module rather than keeping a copy of any of
+// them — the session key a mark is filed under is the projection's too, and not the ledger's.
+use super::task_projection::{PetTaskKey, PetTaskState, SessionKey};
 
 /// §6.3's 「3 秒内多个完成合并」: how long a burst of completions gathers before one notice goes out.
 pub const COALESCE_WINDOW_MS: i64 = 3_000;

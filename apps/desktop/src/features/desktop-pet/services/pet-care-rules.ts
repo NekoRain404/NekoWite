@@ -398,7 +398,9 @@ export function petCareHunger(lastSettledAt: number | null, now: number): PetCar
 export interface PetCarePanelLabels {
   /** The surface's own name, for the keyboard and the screen reader. */
   panel: string
-  /** This build has no ledger to read, so no progress number is drawn. */
+  /** The caller has nothing to draw — a ledger nothing settled into, or none to ask — so no
+   *  progress number is drawn. Not "a build without a ledger": the reason is a fact about the
+   *  record, which is what keeps the sentence true wherever it is rendered. */
   absent: string
   /** The stored record is from a newer build: shown as it is, never written over (§10.2). */
   readOnly: string
@@ -452,7 +454,7 @@ export interface PetCarePanelLabels {
 
 export const PET_CARE_PANEL_LABELS: PetCarePanelLabels = {
   panel: 'Growth',
-  absent: 'No progress is recorded in this build: the ledger that settles rewards has not landed, so nothing here is drawn and nothing is earned.',
+  absent: 'Nothing has been settled yet, so nothing is drawn here: any level or bar would be a figure nobody earned.',
   readOnly: 'This progress was recorded by a newer version of the app, so it is shown as it is and nothing is written to it.',
   preview: 'Sample data: this is what the panel will look like. Nothing here is recorded and nothing is earned.',
   level: 'Level {level}',

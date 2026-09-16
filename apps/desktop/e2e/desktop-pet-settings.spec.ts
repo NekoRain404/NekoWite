@@ -326,6 +326,12 @@ async function measure(page: Page): Promise<{
 // dialog is `width: min(720px, 100%)` — so a window narrower than about 768px is the first one that
 // gives a *narrower* page rather than a shorter one, and a sweep that stopped at 860 would never
 // have measured the narrow case at all. The measured widths are in this file's report.
+//
+// **The third size is narrower than the product can be**, deliberately: `tauri.conf.json` sets the
+// main window's `minWidth` to 860, so at every window the app can have, the 720px term wins and the
+// dialog is 720 (task-191 checked this — 860x560 is the narrow case, and it is narrow only in
+// height). The 700 case is the clamp itself being exercised, one step past the app's own floor, and
+// it is the check that the dialog would degrade rather than overflow if that floor ever moved.
 for (const viewport of [
   { width: 1280, height: 820 },
   { width: 860, height: 560 },
