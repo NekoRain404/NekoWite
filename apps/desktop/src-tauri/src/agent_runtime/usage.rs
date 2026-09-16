@@ -21,7 +21,7 @@
 use agent_client_protocol::schema::v1::{PromptResponse, StopReason, Usage};
 use agent_client_protocol::JsonRpcResponse;
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 /// The counters a usage object can carry, as this host publishes them.
 ///
@@ -234,7 +234,7 @@ mod tests {
     //! *wire's* shape, and a struct literal would agree with this crate's reading of it by
     //! construction — the reason `tests/agent_event_contract_test.rs` deserializes its frames too.
 
-    use super::super::events::{AgentFailureCode, classify};
+    use super::super::events::{classify, AgentFailureCode};
     use super::*;
 
     /// One `session/prompt` response, through the reader the transport calls.
@@ -256,7 +256,11 @@ mod tests {
             let ending = ending_of(json!({ "stopReason": spelling })).unwrap_or_else(|error| {
                 panic!("the schema reads its own reason {spelling}: {error}")
             });
-            assert_eq!(ending.stop_reason, PromptStopReason::Known(reason), "{spelling}");
+            assert_eq!(
+                ending.stop_reason,
+                PromptStopReason::Known(reason),
+                "{spelling}"
+            );
         }
     }
 
@@ -304,7 +308,9 @@ mod tests {
         );
 
         assert_eq!(
-            ending_of(frame).expect("the same frame is an ending here").stop_reason,
+            ending_of(frame)
+                .expect("the same frame is an ending here")
+                .stop_reason,
             PromptStopReason::Unrecognised("budget_exceeded".to_string())
         );
     }
@@ -316,8 +322,8 @@ mod tests {
         // the engine's word — and not translated into the variant it resembles: this host
         // answering `EndTurn` here would be reporting an ending the engine never sent, which is
         // the class of lie the tolerance exists to replace rather than to commit.
-        let ending =
-            ending_of(json!({ "stopReason": "end-turn" })).expect("a word is a word, either spelling");
+        let ending = ending_of(json!({ "stopReason": "end-turn" }))
+            .expect("a word is a word, either spelling");
 
         assert_eq!(
             ending.stop_reason,
@@ -371,7 +377,10 @@ mod tests {
         ] {
             let ending = ending_of(json!({ "stopReason": "end_turn", "usage": usage }))
                 .unwrap_or_else(|error| panic!("usage {usage} dropped the response: {error}"));
-            assert_eq!(ending.usage, None, "{usage} carries no counter this window can show");
+            assert_eq!(
+                ending.usage, None,
+                "{usage} carries no counter this window can show"
+            );
         }
 
         // Nor is the reason's tolerance conditional on the usage shape, in either direction: the

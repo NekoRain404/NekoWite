@@ -53,7 +53,8 @@ struct RealVault;
 
 impl VaultFiles for RealVault {
     fn frontend_path(&self, vault_root: &str, path: &str) -> Result<String, String> {
-        let (resolved, _relative) = nekowite_lib::domain::path_policy::resolve_within_rel(vault_root, path)?;
+        let (resolved, _relative) =
+            nekowite_lib::domain::path_policy::resolve_within_rel(vault_root, path)?;
         Ok(nekowite_lib::domain::path_policy::ipc_path(&resolved))
     }
     fn read(&self, vault_root: &str, path: &str) -> Result<String, String> {
@@ -115,7 +116,8 @@ fn read(vault: &Path, path: &str) -> String {
 /// The history versions of a note, oldest first, read back through the app's own store.
 fn history_texts(vault: &Path, path: &str) -> Vec<String> {
     let vault_root = vault.to_string_lossy().into_owned();
-    let entries = nekowite_lib::storage::file_store::list_history(&vault_root, path).expect("history listing");
+    let entries = nekowite_lib::storage::file_store::list_history(&vault_root, path)
+        .expect("history listing");
     let mut texts: Vec<String> = entries
         .iter()
         .map(|entry| {
@@ -137,9 +139,15 @@ fn a_change_the_host_can_put_back_rolls_the_file_back_and_keeps_the_version_it_r
     fs::write(vault.join("note.md"), "before").expect("seed");
     let recovery = recovery();
 
-    let baseline = recovery.baseline(&vault.to_string_lossy(), "note.md").expect("baseline");
+    let baseline = recovery
+        .baseline(&vault.to_string_lossy(), "note.md")
+        .expect("baseline");
     assert_eq!(baseline.text, "before");
-    assert_eq!(baseline.hash, sha256("before"), "the baseline's hash is the text's");
+    assert_eq!(
+        baseline.hash,
+        sha256("before"),
+        "the baseline's hash is the text's"
+    );
 
     // What the agent left, and what the host recorded about the write it performed.
     fs::write(vault.join("note.md"), "after").expect("the agent's write");
@@ -147,7 +155,9 @@ fn a_change_the_host_can_put_back_rolls_the_file_back_and_keeps_the_version_it_r
 
     match recovery.plan(&written) {
         RecoveryPlan::Recoverable(step) => assert_eq!(step.current_hash, sha256("after")),
-        RecoveryPlan::Refused(refusal) => panic!("expected a recoverable change, got {}", refusal.code()),
+        RecoveryPlan::Refused(refusal) => {
+            panic!("expected a recoverable change, got {}", refusal.code())
+        }
     }
 
     let outcome = recovery.recover(&written).expect("recovery");
@@ -182,7 +192,9 @@ fn a_file_that_moved_since_the_change_is_refused_and_left_alone() {
     let vault = temp_vault("moved");
     fs::write(vault.join("note.md"), "before").expect("seed");
     let recovery = recovery();
-    recovery.baseline(&vault.to_string_lossy(), "note.md").expect("baseline");
+    recovery
+        .baseline(&vault.to_string_lossy(), "note.md")
+        .expect("baseline");
 
     fs::write(vault.join("note.md"), "after").expect("the agent's write");
     let written = change(&vault, "note.md", Some("before"), "after");
@@ -190,7 +202,10 @@ fn a_file_that_moved_since_the_change_is_refused_and_left_alone() {
 
     let refusal = refused(recovery.plan(&written));
     assert_eq!(refusal.code(), "changed-since-recorded");
-    if let RecoveryRefusal::Changed { expected, found, .. } = &refusal {
+    if let RecoveryRefusal::Changed {
+        expected, found, ..
+    } = &refusal
+    {
         assert_eq!(expected, &sha256("after"));
         assert_eq!(found, &sha256("mine, after the agent"));
     }
@@ -198,7 +213,9 @@ fn a_file_that_moved_since_the_change_is_refused_and_left_alone() {
     assert_eq!(read(&vault, "note.md"), "mine, after the agent");
 
     // …and the recovery call refuses for the same reason rather than racing past the plan.
-    let error = recovery.recover(&written).expect_err("recovery must refuse");
+    let error = recovery
+        .recover(&written)
+        .expect_err("recovery must refuse");
     assert_eq!(error.code(), "changed-since-recorded");
     assert_eq!(read(&vault, "note.md"), "mine, after the agent");
 }
@@ -210,14 +227,21 @@ fn a_recovery_is_checked_again_at_the_moment_of_the_write() {
     let vault = temp_vault("recheck");
     fs::write(vault.join("note.md"), "before").expect("seed");
     let recovery = recovery();
-    recovery.baseline(&vault.to_string_lossy(), "note.md").expect("baseline");
+    recovery
+        .baseline(&vault.to_string_lossy(), "note.md")
+        .expect("baseline");
     fs::write(vault.join("note.md"), "after").expect("the agent's write");
     let written = change(&vault, "note.md", Some("before"), "after");
 
-    assert!(matches!(recovery.plan(&written), RecoveryPlan::Recoverable(_)));
+    assert!(matches!(
+        recovery.plan(&written),
+        RecoveryPlan::Recoverable(_)
+    ));
     fs::write(vault.join("note.md"), "typed in another window").expect("a later edit");
 
-    let error = recovery.recover(&written).expect_err("the stale plan must not be trusted");
+    let error = recovery
+        .recover(&written)
+        .expect_err("the stale plan must not be trusted");
     assert_eq!(error.code(), "changed-since-recorded");
     assert_eq!(read(&vault, "note.md"), "typed in another window");
     assert!(
@@ -263,7 +287,10 @@ fn a_baseline_that_is_not_what_the_change_replaced_is_refused() {
     assert_eq!(refusal.code(), "baseline-stale");
     if let RecoveryRefusal::BaselineStale { held, recorded, .. } = &refusal {
         assert_eq!(held, &sha256("before"));
-        assert_eq!(recorded.as_deref(), Some(sha256("the user's save").as_str()));
+        assert_eq!(
+            recorded.as_deref(),
+            Some(sha256("the user's save").as_str())
+        );
     }
     assert_eq!(read(&vault, "note.md"), "after");
 
@@ -331,7 +358,9 @@ fn a_second_recovery_of_the_same_change_is_refused() {
     let written = change(&vault, "note.md", Some("before"), "after");
 
     recovery.recover(&written).expect("the first recovery");
-    let error = recovery.recover(&written).expect_err("the second must be refused");
+    let error = recovery
+        .recover(&written)
+        .expect_err("the second must be refused");
     assert_eq!(error.code(), "changed-since-recorded");
     assert_eq!(read(&vault, "note.md"), "before");
 }
@@ -354,7 +383,9 @@ fn the_apps_own_write_path_refuses_a_read_only_destination_and_the_change_surviv
 
     fs::set_permissions(&note, fs::Permissions::from_mode(0o444)).expect("make it read-only");
 
-    let error = recovery.recover(&written).expect_err("the app's path refuses this");
+    let error = recovery
+        .recover(&written)
+        .expect_err("the app's path refuses this");
     assert_eq!(error.code(), "write-refused");
     assert_eq!(read(&vault, "note.md"), "after");
 
@@ -375,13 +406,17 @@ fn a_second_baseline_for_one_path_replaces_the_first() {
     let recovery = recovery();
     recovery.baseline(&root, "note.md").expect("first baseline");
     fs::write(vault.join("note.md"), "second").expect("the user edited");
-    recovery.baseline(&root, "note.md").expect("second baseline");
+    recovery
+        .baseline(&root, "note.md")
+        .expect("second baseline");
 
     // The change on the second baseline is recoverable, which it would not be if the first were
     // still the one being compared against.
     fs::write(vault.join("note.md"), "third").expect("the agent's write");
     let written = change(&vault, "note.md", Some("second"), "third");
-    let outcome = recovery.recover(&written).expect("the newer baseline is the one used");
+    let outcome = recovery
+        .recover(&written)
+        .expect("the newer baseline is the one used");
     assert_eq!(outcome.baseline_hash, sha256("second"));
 }
 
@@ -428,7 +463,10 @@ fn baselines_are_bounded_and_the_oldest_is_the_one_dropped() {
     // the whole of it.
     fs::write(vault.join("note-79.md"), "written").expect("the agent's write");
     let newest = change(&vault, "note-79.md", Some("text 79"), "written");
-    assert!(matches!(recovery.plan(&newest), RecoveryPlan::Recoverable(_)));
+    assert!(matches!(
+        recovery.plan(&newest),
+        RecoveryPlan::Recoverable(_)
+    ));
 }
 
 /// The baseline a caller gets back is the material, not a label: the text is what a recovery

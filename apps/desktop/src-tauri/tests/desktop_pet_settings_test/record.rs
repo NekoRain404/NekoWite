@@ -56,7 +56,12 @@ fn every_arm_serializes_the_way_the_contract_spells_it() {
     };
 
     let current = read(
-        Some(stored("general", 2, 3, json!({ "enabled": true, "motion": "system" }))),
+        Some(stored(
+            "general",
+            2,
+            3,
+            json!({ "enabled": true, "motion": "system" }),
+        )),
         PetSettingsDomain::General,
     );
     assert_eq!(current["status"], "current");
@@ -93,7 +98,10 @@ fn every_arm_serializes_the_way_the_contract_spells_it() {
     assert_eq!(migrated["status"], "migrated");
     assert_eq!(migrated["fromVersion"], 1);
     assert_eq!(migrated["repaired"], json!(["character.size"]));
-    assert_eq!(migrated["record"]["schemaVersion"], PET_SETTINGS_SCHEMA_VERSION);
+    assert_eq!(
+        migrated["record"]["schemaVersion"],
+        PET_SETTINGS_SCHEMA_VERSION
+    );
 
     let outcome = |update: PetSettingsUpdate| serde_json::to_value(update).expect("an outcome");
     let stored_record = record(
@@ -129,10 +137,18 @@ fn every_arm_serializes_the_way_the_contract_spells_it() {
     assert_eq!(refused["status"], "refused");
     assert_eq!(refused["reason"], "invalid-value");
     // Schema order, field by field: `enabled` is declared before `motion`.
-    assert_eq!(refused["message"], "general.enabled:wrong-type, general.motion:missing");
+    assert_eq!(
+        refused["message"],
+        "general.enabled:wrong-type, general.motion:missing"
+    );
 
     let newer = outcome(decide_write(
-        &record(PetSettingsDomain::General, 9, 1, submitted(PetSettingsDomain::General, &[])),
+        &record(
+            PetSettingsDomain::General,
+            9,
+            1,
+            submitted(PetSettingsDomain::General, &[]),
+        ),
         &write(1.0, submitted(PetSettingsDomain::General, &[])),
     ));
     assert_eq!(
@@ -236,7 +252,10 @@ fn an_older_record_migrates_and_reports_what_it_repaired() {
     };
     assert_eq!(from_version, 1);
     assert_eq!(record.schema_version, PET_SETTINGS_SCHEMA_VERSION);
-    assert_eq!(record.revision, 4, "the counter is the store's, not this read's");
+    assert_eq!(
+        record.revision, 4,
+        "the counter is the store's, not this read's"
+    );
     assert_eq!(record.values["size"], json!(160));
     assert_eq!(record.values["idleMode"], json!("sequential"));
     assert_eq!(record.values["idleIntervalSeconds"], json!(5));
@@ -285,7 +304,10 @@ fn an_applied_write_moves_the_revision_and_stamps_this_build_s_version() {
     assert_eq!(applied.schema_version, PET_SETTINGS_SCHEMA_VERSION);
     assert_eq!(applied.values["enabled"], json!(false));
     assert_eq!(applied.values["motion"], json!("system"));
-    assert_eq!(stored.revision, 7, "the record the caller read is unchanged");
+    assert_eq!(
+        stored.revision, 7,
+        "the record the caller read is unchanged"
+    );
 }
 
 /// §5.3's cross-window rule, in both wrong directions: a *stale* revision and one *ahead* of the
@@ -387,8 +409,14 @@ fn a_write_whose_values_are_unusable_is_refused_with_the_problem_list() {
     };
     assert_eq!(reason, RefusalReason::InvalidValue);
     assert!(message.contains("character.size:out-of-range"), "{message}");
-    assert!(message.contains("character.idleMode:unknown-member"), "{message}");
-    assert!(message.contains("character.characterId:missing"), "{message}");
+    assert!(
+        message.contains("character.idleMode:unknown-member"),
+        "{message}"
+    );
+    assert!(
+        message.contains("character.characterId:missing"),
+        "{message}"
+    );
 }
 
 /// The notification domain's one consumer, and the reason its record is not an inert file.
@@ -426,11 +454,18 @@ fn a_notification_record_reads_as_the_ledgers_switches() {
     assert!(switches.show_task_title);
 
     // A record of another domain is not a source of switches, whatever names its fields share.
-    assert!(notification_preferences(&PetSettingsRecord::defaults(PetSettingsDomain::Care)).is_none());
+    assert!(
+        notification_preferences(&PetSettingsRecord::defaults(PetSettingsDomain::Care)).is_none()
+    );
 
     // A field the record does not carry takes its default — the same answer the settings page gives
     // for it (§10.2's migration rule), rather than failing the read and silencing every switch.
-    let partial = record(PetSettingsDomain::Notification, 2, 1, json!({ "doNotDisturb": true }));
+    let partial = record(
+        PetSettingsDomain::Notification,
+        2,
+        1,
+        json!({ "doNotDisturb": true }),
+    );
     let switches = notification_preferences(&partial).expect("the missing fields default");
     assert!(switches.do_not_disturb);
     assert!(switches.on_turn_finished, "the shipped default, not false");

@@ -56,21 +56,21 @@ pub mod task_projection;
 pub mod window_host;
 
 pub use care_ledger::{CareLedger, CareOutcome, CareSummary, DAY_WINDOW, MEAL_XP};
+pub use character_view::{
+    appearance, entries, free_character_id, refusal_sentence, PetAppearance, PetCharacterEntry,
+    PetCharacterFiles,
+};
 pub use history::{
     Decoded, DeliveryState, HistoryStore, Loaded, SaveOutcome, TaskHistory, TaskRecord,
     HISTORY_SCHEMA_VERSION, LEDGER_FILE, UNREAD_MAX_AGE_MS,
 };
 pub use linux_capabilities::{
-    CapabilityReport, Desktop, DisplaySession, Finding, LinuxEnvironment, Observed, Observations,
+    CapabilityReport, Desktop, DisplaySession, Finding, LinuxEnvironment, Observations, Observed,
 };
 pub use notification_delivery::{NotificationDelivery, PetNotice};
 pub use notification_policy::{
     channel_for, NotificationChannel, NotificationOutcome, NotificationPolicy,
     NotificationPreferences, TaskFact,
-};
-pub use character_view::{
-    appearance, entries, free_character_id, refusal_sentence, PetAppearance, PetCharacterEntry,
-    PetCharacterFiles,
 };
 pub use resources::{
     is_path_component, CharacterKind, CharacterLibrary, EntryState, InstallRequest, LibraryEntry,

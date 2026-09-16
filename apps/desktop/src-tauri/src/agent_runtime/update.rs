@@ -34,7 +34,7 @@ use futures_util::future::BoxFuture;
 use super::binary_registry::{self, BinaryRegistry, LayoutError};
 use super::registry::{InstallSource, UpdatePolicy};
 use super::session::INITIALIZE_BOUND;
-use super::{env_pairs, EngineConnection, EngineLaunch, isolated_profile_env};
+use super::{env_pairs, isolated_profile_env, EngineConnection, EngineLaunch};
 
 /// How long a candidate gets to answer `--version`.
 ///
@@ -377,13 +377,14 @@ pub async fn verify<P: CandidateProbe>(
     checks.push(Check::ExecuteBit);
 
     // 4. What the candidate says it is.
-    let reported_version = probe
-        .version(&artifact.path)
-        .await
-        .map_err(|detail| UpdateError::Probe {
-            check: Check::Version,
-            detail,
-        })?;
+    let reported_version =
+        probe
+            .version(&artifact.path)
+            .await
+            .map_err(|detail| UpdateError::Probe {
+                check: Check::Version,
+                detail,
+            })?;
     if reported_version != release.version {
         return Err(UpdateError::VersionMismatch {
             expected: release.version.clone(),
@@ -487,10 +488,9 @@ impl CandidateProbe for AcpProbe {
                     program.display()
                 )),
                 Ok(Err(error)) => Err(error.to_string()),
-                Ok(Ok(output)) if !output.status.success() => Err(format!(
-                    "--version exited with {}",
-                    output.status
-                )),
+                Ok(Ok(output)) if !output.status.success() => {
+                    Err(format!("--version exited with {}", output.status))
+                }
                 Ok(Ok(output)) => {
                     let reported = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     if reported.is_empty() {
@@ -523,18 +523,19 @@ impl CandidateProbe for AcpProbe {
             let response = connection.initialize(self.bound).await;
             // Whatever happened, the candidate is stopped through the same shutdown sequence a
             // running engine gets: asking first, then the group signal (§6.2).
-            let handshake = response
-                .map_err(|error| error.failure_message())
-                .and_then(|response| {
-                let info = response
-                    .agent_info
-                    .ok_or_else(|| "the handshake carried no agentInfo".to_string())?;
-                Ok(Handshake {
-                    agent_name: info.name,
-                    agent_version: info.version,
-                    protocol_version: response.protocol_version.as_u16(),
-                })
-            });
+            let handshake =
+                response
+                    .map_err(|error| error.failure_message())
+                    .and_then(|response| {
+                        let info = response
+                            .agent_info
+                            .ok_or_else(|| "the handshake carried no agentInfo".to_string())?;
+                        Ok(Handshake {
+                            agent_name: info.name,
+                            agent_version: info.version,
+                            protocol_version: response.protocol_version.as_u16(),
+                        })
+                    });
             connection.shutdown();
             handshake
         })
@@ -695,11 +696,7 @@ pub fn rollback(
     // Everything this rollback cannot vouch for: a profile a newer version wrote, and a profile no
     // record covers. Both are retained before anything is replaced, because "we cannot prove this
     // state is ours to drop" answers the retention question the same way it answers the refusal.
-    let crossing: Vec<&ProfileState> = migrated
-        .iter()
-        .chain(unrecorded.iter())
-        .copied()
-        .collect();
+    let crossing: Vec<&ProfileState> = migrated.iter().chain(unrecorded.iter()).copied().collect();
 
     // Every backup is checked before any of them is used: a rollback that restores one profile and
     // then finds the next backup unreadable has already damaged the state it was recovering.
@@ -722,10 +719,12 @@ pub fn rollback(
     let mut retained = Vec::new();
     for state in &crossing {
         let destination = registry.retained_path(&state.profile_id);
-        binary_registry::retain_tree(&state.root, &destination).map_err(|detail| UpdateError::Unpreserved {
-            profile_id: state.profile_id.clone(),
-            path: destination.clone(),
-            detail,
+        binary_registry::retain_tree(&state.root, &destination).map_err(|detail| {
+            UpdateError::Unpreserved {
+                profile_id: state.profile_id.clone(),
+                path: destination.clone(),
+                detail,
+            }
         })?;
         retained.push(destination);
     }
@@ -736,8 +735,7 @@ pub fn rollback(
             .map_err(|detail| UpdateError::RestoreFailed {
                 profile_id: state.profile_id.clone(),
                 detail,
-            },
-        )?;
+            })?;
         restored = true;
     }
 

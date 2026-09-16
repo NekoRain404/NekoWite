@@ -226,7 +226,12 @@ pub fn env_pairs(pairs: impl IntoIterator<Item = (String, String)>) -> Vec<(Stri
 /// surface is left where the engine put it and named here instead of being
 /// implied shut.
 pub fn isolated_profile_env(root: &std::path::Path) -> Vec<(String, String)> {
-    let at = |name: &str| (name.to_string(), root.join(name).to_string_lossy().into_owned());
+    let at = |name: &str| {
+        (
+            name.to_string(),
+            root.join(name).to_string_lossy().into_owned(),
+        )
+    };
     vec![
         at("HOME"),
         at("XDG_CONFIG_HOME"),
@@ -251,7 +256,6 @@ pub fn isolated_profile_env(root: &std::path::Path) -> Vec<(String, String)> {
         ),
     ]
 }
-
 
 /// The engine's stderr, sampled and redacted.
 ///

@@ -12,10 +12,9 @@ use std::path::Path;
 use super::media::{audio_format, image_size, looks_like_a_document};
 use super::{
     display_name, io_refusal, PackageProblem, PackageRefusal, ResourceRefusal, SheetRecord,
-    BUDGET_RULES,
-    DEFAULT_SHEET_COLUMNS, DEFAULT_SHEET_ROWS, MAX_AUDIO_BYTES, MAX_COMPONENT_BYTES, MAX_FRAMES,
-    MAX_IMAGE_EDGE, MAX_IMAGE_PIXELS, MAX_METADATA_DEPTH, MAX_PACKAGE_BYTES, MAX_PACKAGE_FILES,
-    PACK_MANIFEST, RESERVED_PREFIX,
+    BUDGET_RULES, DEFAULT_SHEET_COLUMNS, DEFAULT_SHEET_ROWS, MAX_AUDIO_BYTES, MAX_COMPONENT_BYTES,
+    MAX_FRAMES, MAX_IMAGE_EDGE, MAX_IMAGE_PIXELS, MAX_METADATA_DEPTH, MAX_PACKAGE_BYTES,
+    MAX_PACKAGE_FILES, PACK_MANIFEST, RESERVED_PREFIX,
 };
 
 pub(super) struct RawFile {
@@ -90,10 +89,16 @@ pub(super) fn read_pack(source: &Path) -> Result<Vec<RawFile>, ResourceRefusal> 
         // rule that actually refused: a name refused for one reason and explained by another is
         // worse than one refused without a sentence at all.
         if let Some(problem) = name_problem(&name) {
-            return Err(PackageRefusal::new(&name, PackageProblem::UnusableName, problem).into_refusal());
+            return Err(
+                PackageRefusal::new(&name, PackageProblem::UnusableName, problem).into_refusal(),
+            );
         }
         if files.len() >= MAX_PACKAGE_FILES {
-            return Err(budget("file-count", MAX_PACKAGE_FILES as u64, (files.len() + 1) as u64));
+            return Err(budget(
+                "file-count",
+                MAX_PACKAGE_FILES as u64,
+                (files.len() + 1) as u64,
+            ));
         }
         let bytes = fs::read(&path).map_err(|error| io_refusal(&path, error))?;
         check_archive(&name, &bytes)?;
@@ -107,8 +112,7 @@ pub(super) fn read_pack(source: &Path) -> Result<Vec<RawFile>, ResourceRefusal> 
 /// The bytes decide because a renamed archive is the ordinary way one arrives; the name is
 /// consulted only so a corrupt `.zip` gets the archive sentence rather than "unrecognised".
 fn check_archive(name: &str, bytes: &[u8]) -> Result<(), ResourceRefusal> {
-    let archive = bytes.starts_with(b"PK\x03\x04")
-        || name.to_ascii_lowercase().ends_with(".zip");
+    let archive = bytes.starts_with(b"PK\x03\x04") || name.to_ascii_lowercase().ends_with(".zip");
     if archive {
         return Err(PackageRefusal::new(
             name,
@@ -124,7 +128,10 @@ fn check_archive(name: &str, bytes: &[u8]) -> Result<(), ResourceRefusal> {
 ///
 /// Classification is by content, not by extension: a file's own bytes decide what it is, and a
 /// name that disagrees with them changes only the sentence in the refusal.
-pub(super) fn classify_pack(files: Vec<RawFile>, grid: Option<Grid>) -> Result<ClassifiedPack, ResourceRefusal> {
+pub(super) fn classify_pack(
+    files: Vec<RawFile>,
+    grid: Option<Grid>,
+) -> Result<ClassifiedPack, ResourceRefusal> {
     let mut total: u64 = 0;
     let mut sheet: Option<SheetRecord> = None;
     let mut images: Vec<String> = Vec::new();
@@ -164,7 +171,11 @@ pub(super) fn classify_pack(files: Vec<RawFile>, grid: Option<Grid>) -> Result<C
         }
         if audio_format(&file.bytes).is_some() {
             if file.bytes.len() as u64 > MAX_AUDIO_BYTES {
-                return Err(budget("audio-bytes", MAX_AUDIO_BYTES, file.bytes.len() as u64));
+                return Err(budget(
+                    "audio-bytes",
+                    MAX_AUDIO_BYTES,
+                    file.bytes.len() as u64,
+                ));
             }
             continue;
         }
@@ -344,13 +355,15 @@ pub fn name_problem(value: &str) -> Option<String> {
     Some(match refused {
         '/' => "a name may not contain \"/\": that is the separator between path components"
             .to_string(),
-        '\\' => "a name may not contain \"\\\": another system reads it as a separator"
-            .to_string(),
+        '\\' => "a name may not contain \"\\\": another system reads it as a separator".to_string(),
         '\u{fffd}' => "a name may not contain U+FFFD: that is what a name this build could not \
                        read decodes to, and the library does not act on an answer it did not get"
             .to_string(),
         c if c.is_control() => {
-            format!("a name may not contain the control character U+{:04X}", c as u32)
+            format!(
+                "a name may not contain the control character U+{:04X}",
+                c as u32
+            )
         }
         c => format!(
             "a name may not contain U+{:04X}: it can make a name render as a different one",
@@ -391,9 +404,5 @@ fn is_name_character(c: char) -> bool {
 ///
 fn budget(rule: &'static str, limit: u64, found: u64) -> ResourceRefusal {
     debug_assert!(BUDGET_RULES.contains(&rule));
-    ResourceRefusal::Budget {
-        rule,
-        limit,
-        found,
-    }
+    ResourceRefusal::Budget { rule, limit, found }
 }

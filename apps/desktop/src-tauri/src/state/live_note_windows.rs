@@ -55,8 +55,8 @@ use serde::Deserialize;
 use tauri::{Emitter, Listener, Manager};
 
 use crate::agent_runtime::live_notes::{
-    LIVE_NOTE_ANSWER_CHANNEL, LIVE_NOTE_ATTACH_CHANNEL, LIVE_NOTE_REQUEST_CHANNEL,
     LiveNoteAnswerPayload, LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes,
+    LIVE_NOTE_ANSWER_CHANNEL, LIVE_NOTE_ATTACH_CHANNEL, LIVE_NOTE_REQUEST_CHANNEL,
 };
 use crate::state::AgentRuntimeState;
 
@@ -95,12 +95,7 @@ impl LiveNoteWindows for NoteWindows {
             // would make this host wait ten seconds for a listener that does not exist — the
             // one stall the count is here to prevent. `webview_windows` is the authority on
             // which labels exist, so the set is pruned against it rather than trusted.
-            let live: BTreeSet<String> = self
-                .app
-                .webview_windows()
-                .keys()
-                .cloned()
-                .collect();
+            let live: BTreeSet<String> = self.app.webview_windows().keys().cloned().collect();
             if let Some(windows) = attached.get_mut(&question.vault_id) {
                 windows.retain(|label| live.contains(label));
             }
@@ -138,10 +133,7 @@ impl LiveNoteWindows for NoteWindows {
 /// a registration is a fact about a window, not about an engine, so a table that went with the
 /// runtime would make every vault switch a window that can no longer be asked — a read that
 /// fails loudly for a note the user is looking at.
-pub fn live_notes(
-    state: &AgentRuntimeState,
-    app: &tauri::AppHandle,
-) -> Result<LiveNotes, String> {
+pub fn live_notes(state: &AgentRuntimeState, app: &tauri::AppHandle) -> Result<LiveNotes, String> {
     let mut slot = state
         .live_notes
         .lock()
@@ -174,8 +166,9 @@ pub fn live_notes(
     });
 
     let registry = Arc::clone(&attached);
-    let attach_id = app.listen(LIVE_NOTE_ATTACH_CHANNEL, move |event| {
-        match serde_json::from_str::<AttachPayload>(event.payload()) {
+    let attach_id = app.listen(
+        LIVE_NOTE_ATTACH_CHANNEL,
+        move |event| match serde_json::from_str::<AttachPayload>(event.payload()) {
             Ok(payload) => {
                 let mut attached = registry.lock().unwrap();
                 let windows = attached.entry(payload.vault_id).or_default();
@@ -186,8 +179,8 @@ pub fn live_notes(
                 }
             }
             Err(error) => eprintln!("nekowite: a window registration could not be read: {error}"),
-        }
-    });
+        },
+    );
 
     let notes = LiveNotes::new(
         table,

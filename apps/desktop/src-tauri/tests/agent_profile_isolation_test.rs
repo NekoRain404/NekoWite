@@ -160,7 +160,10 @@ impl DecoyTree {
             self.config_home().join("opencode/opencode.json"),
             json(GLOBAL_CONFIG),
         );
-        at(home.join(".opencode/opencode.json"), json(HOME_DOT_OPENCODE));
+        at(
+            home.join(".opencode/opencode.json"),
+            json(HOME_DOT_OPENCODE),
+        );
         at(
             home.join(format!(".claude/skills/{HOME_CLAUDE_SKILL}/SKILL.md")),
             skill(HOME_CLAUDE_SKILL),
@@ -177,7 +180,10 @@ impl DecoyTree {
 
         let cwd = self.cwd();
         at(cwd.join("opencode.json"), json(PROJECT_FILE));
-        at(cwd.join(".opencode/opencode.json"), json(PROJECT_DOT_OPENCODE));
+        at(
+            cwd.join(".opencode/opencode.json"),
+            json(PROJECT_DOT_OPENCODE),
+        );
         at(
             cwd.join(format!(".opencode/skill/{PROJECT_SKILL}/SKILL.md")),
             skill(PROJECT_SKILL),
@@ -193,7 +199,10 @@ impl DecoyTree {
 
         let parent = self.parent();
         at(parent.join("opencode.json"), json(PARENT_FILE));
-        at(parent.join(".opencode/opencode.json"), json(PARENT_DOT_OPENCODE));
+        at(
+            parent.join(".opencode/opencode.json"),
+            json(PARENT_DOT_OPENCODE),
+        );
         at(
             parent.join(format!(".claude/skills/{PARENT_CLAUDE_SKILL}/SKILL.md")),
             skill(PARENT_CLAUDE_SKILL),
@@ -201,7 +210,10 @@ impl DecoyTree {
 
         let case = self.case();
         at(case.join("opencode.json"), json(GRANDPARENT_FILE));
-        at(case.join(".opencode/opencode.json"), json(GRANDPARENT_DOT_OPENCODE));
+        at(
+            case.join(".opencode/opencode.json"),
+            json(GRANDPARENT_DOT_OPENCODE),
+        );
     }
 
     /// The launch the app performs today, as `EnvPolicy::ProfileIsolated` builds it: the roots
@@ -241,7 +253,10 @@ impl DecoyTree {
                 "OPENCODE_TEST_MANAGED_CONFIG_DIR".to_string(),
                 self.root.join("managed").to_string_lossy().into_owned(),
             ),
-            ("OPENCODE_DISABLE_EXTERNAL_SKILLS".to_string(), "0".to_string()),
+            (
+                "OPENCODE_DISABLE_EXTERNAL_SKILLS".to_string(),
+                "0".to_string(),
+            ),
         ]));
         launch
     }
@@ -303,7 +318,10 @@ impl Readout {
     /// that is longer than the failure is not a message.
     fn stderr_tail(&self) -> String {
         let text = self.stderr.lock().unwrap();
-        let lines: Vec<&str> = text.lines().filter(|line| !line.trim().is_empty()).collect();
+        let lines: Vec<&str> = text
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .collect();
         let start = lines.len().saturating_sub(6);
         lines[start..].join("\n    ")
     }
@@ -326,10 +344,22 @@ impl Readout {
     fn summarise(&self) -> String {
         let text = self.text();
         let mut seen: Vec<&str> = [
-            GLOBAL_CONFIG, HOME_DOT_OPENCODE, CONFIG_DIR, MANAGED, PROJECT_FILE,
-            PROJECT_DOT_OPENCODE, PARENT_FILE, PARENT_DOT_OPENCODE, GRANDPARENT_FILE,
-            GRANDPARENT_DOT_OPENCODE, HOME_CLAUDE_SKILL, HOME_AGENTS_SKILL, PROJECT_SKILL,
-            PROJECT_CLAUDE_SKILL, PROJECT_AGENTS_SKILL, PARENT_CLAUDE_SKILL,
+            GLOBAL_CONFIG,
+            HOME_DOT_OPENCODE,
+            CONFIG_DIR,
+            MANAGED,
+            PROJECT_FILE,
+            PROJECT_DOT_OPENCODE,
+            PARENT_FILE,
+            PARENT_DOT_OPENCODE,
+            GRANDPARENT_FILE,
+            GRANDPARENT_DOT_OPENCODE,
+            HOME_CLAUDE_SKILL,
+            HOME_AGENTS_SKILL,
+            PROJECT_SKILL,
+            PROJECT_CLAUDE_SKILL,
+            PROJECT_AGENTS_SKILL,
+            PARENT_CLAUDE_SKILL,
         ]
         .into_iter()
         .filter(|marker| text.contains(marker))
@@ -346,7 +376,10 @@ impl Readout {
 /// that spelled the variables out again would be measuring its own copy of them.
 async fn converse(tree: &DecoyTree, engine: &Path, launch: &EngineLaunch) -> Readout {
     let described = serde_json::to_value(launch.agent_config()).expect("the launch serializes");
-    let env = described["env"].as_object().expect("the launch's env").clone();
+    let env = described["env"]
+        .as_object()
+        .expect("the launch's env")
+        .clone();
 
     let mut command = tokio::process::Command::new(engine);
     command
@@ -388,9 +421,7 @@ async fn converse(tree: &DecoyTree, engine: &Path, launch: &EngineLaunch) -> Rea
     });
 
     let mut stdin = child.stdin.take().expect("stdin");
-    let send = |message: serde_json::Value| {
-        format!("{message}\n").into_bytes()
-    };
+    let send = |message: serde_json::Value| format!("{message}\n").into_bytes();
     stdin
         .write_all(&send(serde_json::json!({
             "jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -442,7 +473,12 @@ async fn converse(tree: &DecoyTree, engine: &Path, launch: &EngineLaunch) -> Rea
 async fn wait_for(frames: &Arc<Mutex<Vec<String>>>, needle: &str, patience: Duration) -> bool {
     let deadline = tokio::time::Instant::now() + patience;
     loop {
-        if frames.lock().unwrap().iter().any(|line| line.contains(needle)) {
+        if frames
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|line| line.contains(needle))
+        {
             return true;
         }
         if tokio::time::Instant::now() >= deadline {
@@ -462,7 +498,10 @@ async fn wait_for(frames: &Arc<Mutex<Vec<String>>>, needle: &str, patience: Dura
 async fn the_roots_close_the_engine_home_and_the_walk_up_stays_open() {
     let engine = Path::new(env!("CARGO_MANIFEST_DIR")).join(ENGINE);
     if !engine.is_file() {
-        eprintln!("SKIP: {} is absent; run scripts/fetch-opencode-linux.sh", engine.display());
+        eprintln!(
+            "SKIP: {} is absent; run scripts/fetch-opencode-linux.sh",
+            engine.display()
+        );
         return;
     }
 
@@ -491,8 +530,13 @@ async fn the_roots_close_the_engine_home_and_the_walk_up_stays_open() {
     // §8.1 warned about. See the module comment for the variable that closes it and the file
     // it belongs in.
     for marker in [
-        PROJECT_FILE, PROJECT_DOT_OPENCODE, PARENT_FILE, PARENT_DOT_OPENCODE,
-        GRANDPARENT_FILE, GRANDPARENT_DOT_OPENCODE, PROJECT_SKILL,
+        PROJECT_FILE,
+        PROJECT_DOT_OPENCODE,
+        PARENT_FILE,
+        PARENT_DOT_OPENCODE,
+        GRANDPARENT_FILE,
+        GRANDPARENT_DOT_OPENCODE,
+        PROJECT_SKILL,
     ] {
         assert!(
             readout.saw(marker),
@@ -507,7 +551,10 @@ async fn the_roots_close_the_engine_home_and_the_walk_up_stays_open() {
     // path rather than the environment. Every one of these was discovered before
     // `OPENCODE_DISABLE_EXTERNAL_SKILLS` joined the launch.
     for marker in [
-        HOME_CLAUDE_SKILL, HOME_AGENTS_SKILL, PROJECT_CLAUDE_SKILL, PROJECT_AGENTS_SKILL,
+        HOME_CLAUDE_SKILL,
+        HOME_AGENTS_SKILL,
+        PROJECT_CLAUDE_SKILL,
+        PROJECT_AGENTS_SKILL,
         PARENT_CLAUDE_SKILL,
     ] {
         assert!(

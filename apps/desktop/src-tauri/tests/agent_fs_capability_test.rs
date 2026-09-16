@@ -23,8 +23,8 @@ use std::time::Duration;
 
 use agent_runtime::live_notes::{LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes};
 use agent_runtime::{
-    AgentIdentity, AgentRuntime, EngineConnection, EngineLaunch, VaultFiles, client_capabilities,
-    env_pairs, slice_lines,
+    client_capabilities, env_pairs, slice_lines, AgentIdentity, AgentRuntime, EngineConnection,
+    EngineLaunch, VaultFiles,
 };
 
 const PATIENCE: Duration = Duration::from_secs(10);
@@ -34,7 +34,8 @@ struct RealVault;
 
 impl VaultFiles for RealVault {
     fn frontend_path(&self, vault_root: &str, path: &str) -> Result<String, String> {
-        let (resolved, _relative) = nekowite_lib::domain::path_policy::resolve_within_rel(vault_root, path)?;
+        let (resolved, _relative) =
+            nekowite_lib::domain::path_policy::resolve_within_rel(vault_root, path)?;
         Ok(nekowite_lib::domain::path_policy::ipc_path(&resolved))
     }
     fn read(&self, vault_root: &str, path: &str) -> Result<String, String> {
@@ -270,7 +271,10 @@ async fn the_baseline_is_the_bytes_the_write_replaced() {
     let change = runtime.changes().remove(0);
     // Taken from the real pre-write bytes rather than reconstructed from a
     // watcher's diff afterwards — which is the difference the capability buys.
-    assert!(change.baseline_hash.is_some(), "an existing file has a baseline");
+    assert!(
+        change.baseline_hash.is_some(),
+        "an existing file has a baseline"
+    );
     assert_ne!(
         change.baseline_hash.as_deref(),
         Some(change.result_hash.as_str()),
@@ -308,7 +312,10 @@ async fn the_apps_own_guards_are_in_the_path() {
         vec![0xff, 0xfe, 0x00, 0x01],
         "a refused write must not touch the file"
     );
-    assert!(runtime.changes().is_empty(), "nothing was written, so nothing is recorded");
+    assert!(
+        runtime.changes().is_empty(),
+        "nothing was written, so nothing is recorded"
+    );
     runtime.shutdown();
 }
 
@@ -338,11 +345,15 @@ async fn a_write_outside_the_vault_is_refused_and_writes_nothing() {
     // without the real engine, which is the only thing that can say whether the engine
     // went on to write the file itself.
     assert!(
-        reply.contains("path escapes vault") && reply.contains(&outside.to_string_lossy().to_string()),
+        reply.contains("path escapes vault")
+            && reply.contains(&outside.to_string_lossy().to_string()),
         "the refusal must come from the vault's own path policy and name the path it refused, \
          got: {reply}"
     );
-    assert!(!outside.exists(), "a path outside the session's vault must not be created");
+    assert!(
+        !outside.exists(),
+        "a path outside the session's vault must not be created"
+    );
     assert!(runtime.changes().is_empty());
     runtime.shutdown();
 }
@@ -408,7 +419,10 @@ async fn a_request_for_an_unknown_session_is_refused() {
         reply.contains("\"error\"") && reply.contains("unknown session"),
         "the engine must learn which id was not found, got: {reply}"
     );
-    assert!(!note.exists(), "no session, no root to confine to, no write");
+    assert!(
+        !note.exists(),
+        "no session, no root to confine to, no write"
+    );
     runtime.shutdown();
 }
 

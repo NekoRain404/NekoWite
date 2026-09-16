@@ -57,7 +57,10 @@ fn two_writers_and_the_loser_is_told_rather_than_silently_clobbered() {
     let after = fs::read_to_string(&path).unwrap();
     assert!(after.contains("winner/model"));
     assert!(!after.contains("loser/model"));
-    assert_eq!(after, CONFIG.replace("\"anthropic/claude-sonnet-4\"", "\"winner/model\""));
+    assert_eq!(
+        after,
+        CONFIG.replace("\"anthropic/claude-sonnet-4\"", "\"winner/model\"")
+    );
 }
 
 #[test]
@@ -73,28 +76,25 @@ fn the_same_race_through_the_ipc_surface_reports_a_conflict_and_reloads() {
         path: vec!["model".to_string()],
         value: json!("first/model"),
     }];
-    let written = submit_document(
-        &store, "engine-alpha", "alpha", RELATIVE, &revision, &edits,
-    )
-    .unwrap();
+    let written =
+        submit_document(&store, "engine-alpha", "alpha", RELATIVE, &revision, &edits).unwrap();
     assert_eq!(written["status"], "written");
     let moved = written["revision"].as_str().unwrap().to_string();
     assert_ne!(moved, revision);
 
-    let lost = submit_document(
-        &store, "engine-alpha", "alpha", RELATIVE, &revision, &edits,
-    )
-    .unwrap();
+    let lost =
+        submit_document(&store, "engine-alpha", "alpha", RELATIVE, &revision, &edits).unwrap();
     assert_eq!(lost["status"], "conflict");
     assert_eq!(lost["current"]["revision"], moved);
-    assert!(lost["current"]["text"].as_str().unwrap().contains("first/model"));
+    assert!(lost["current"]["text"]
+        .as_str()
+        .unwrap()
+        .contains("first/model"));
 
     // A token that is not the shape this host issues is a *different* refusal from a conflict: the
     // page was never built from a document, and "reload and try again" is the wrong instruction.
-    let malformed = submit_document(
-        &store, "engine-alpha", "alpha", RELATIVE, "", &edits,
-    )
-    .unwrap_err();
+    let malformed =
+        submit_document(&store, "engine-alpha", "alpha", RELATIVE, "", &edits).unwrap_err();
     assert!(malformed.contains("not a revision"), "{malformed}");
 }
 

@@ -21,15 +21,15 @@
 use std::path::Path;
 use std::time::Duration;
 
-use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
     CancelNotification, ContentBlock, InitializeRequest, InitializeResponse, NewSessionRequest,
     NewSessionResponse, PromptRequest, SessionConfigValueId, SessionId,
     SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, TextContent,
 };
+use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{JsonRpcRequest, UntypedMessage};
 
-use super::super::events::{TransportError, classify};
+use super::super::events::{classify, TransportError};
 use super::super::fs_capability;
 use super::super::usage::{self, PromptEnding};
 use super::EngineConnection;
@@ -49,8 +49,8 @@ impl EngineConnection {
         // §7's default-configuration probe measured the same engine writing a
         // file through its own tools with zero reverse requests, so what arrives
         // here is a write the engine handed over, not a gate every write must pass.
-        let initialize =
-            InitializeRequest::new(ProtocolVersion::V1).client_capabilities(fs_capability::client_capabilities());
+        let initialize = InitializeRequest::new(ProtocolVersion::V1)
+            .client_capabilities(fs_capability::client_capabilities());
         let response = self.request("initialize", initialize, bound).await?;
         if response.protocol_version != ProtocolVersion::V1 {
             return Err(TransportError::ProtocolIncompatible {
@@ -66,8 +66,12 @@ impl EngineConnection {
         cwd: &Path,
         bound: Duration,
     ) -> Result<NewSessionResponse, TransportError> {
-        self.request("session/new", NewSessionRequest::new(cwd.to_path_buf()), bound)
-            .await
+        self.request(
+            "session/new",
+            NewSessionRequest::new(cwd.to_path_buf()),
+            bound,
+        )
+        .await
     }
 
     /// Selects one of the engine's own options on a session.
@@ -87,7 +91,8 @@ impl EngineConnection {
             config_id,
             SessionConfigValueId::new(value),
         );
-        self.request("session/set_config_option", request, bound).await
+        self.request("session/set_config_option", request, bound)
+            .await
     }
 
     /// Starts a generation. The answer arrives as updates and finally as this

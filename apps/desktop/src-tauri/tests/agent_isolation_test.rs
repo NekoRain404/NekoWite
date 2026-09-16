@@ -18,7 +18,9 @@
 //! task, which is what the shim was for.
 
 use nekowite_lib::agent_runtime;
-use nekowite_lib::agent_runtime::live_notes::{LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes};
+use nekowite_lib::agent_runtime::live_notes::{
+    LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes,
+};
 
 use std::collections::HashMap;
 use std::fs;
@@ -33,8 +35,7 @@ use agent_runtime::events::{AgentEventEnvelope, AgentEventKind};
 use agent_runtime::fs_capability::VaultFiles;
 use agent_runtime::profile::Credentials;
 use agent_runtime::registry::{
-    AgentInstance, AgentRegistration, AgentRegistry, EnvPolicy, InstallSource,
-    RegistryError,
+    AgentInstance, AgentRegistration, AgentRegistry, EnvPolicy, InstallSource, RegistryError,
 };
 use agent_runtime::session::AgentRuntimeEvents;
 
@@ -192,7 +193,12 @@ fn refused<T>(result: Result<T, RegistryError>) -> RegistryError {
 }
 
 /// Registers the fixture engine under an agent id and binds a profile to it.
-fn register_fixture(registry: &mut AgentRegistry, agent_id: &str, profile_id: &str, behaviour: &str) {
+fn register_fixture(
+    registry: &mut AgentRegistry,
+    agent_id: &str,
+    profile_id: &str,
+    behaviour: &str,
+) {
     registry
         .register(fixture_agent(agent_id, behaviour))
         .expect("registers");
@@ -219,11 +225,10 @@ async fn run_to_finish(
         .runtime()
         .prompt(session_id, prompt)
         .expect("prompt");
-    let events = instance.events_mut().expect("the fixture's reader is still here");
-    events_until(events, |event| {
-        event.kind == AgentEventKind::RunFinished
-    })
-    .await
+    let events = instance
+        .events_mut()
+        .expect("the fixture's reader is still here");
+    events_until(events, |event| event.kind == AgentEventKind::RunFinished).await
 }
 
 /// The permission frame in the shape P0 §7.1 measured: a `toolCall` and the engine's own options
@@ -263,15 +268,13 @@ async fn two_engines_reporting_the_same_session_id_do_not_cross_streams() {
     assert_eq!(session_a, "ses_fake_1", "and the fixture's is fixed");
     let run_a = a.runtime().prompt(&session_a, "hello").expect("prompt a");
     let run_b = b.runtime().prompt(&session_b, "hello").expect("prompt b");
-    let events_a = events_until(
-        a.events_mut().expect("a's reader is still here"),
-        |event| event.kind == AgentEventKind::RunFinished,
-    )
+    let events_a = events_until(a.events_mut().expect("a's reader is still here"), |event| {
+        event.kind == AgentEventKind::RunFinished
+    })
     .await;
-    let events_b = events_until(
-        b.events_mut().expect("b's reader is still here"),
-        |event| event.kind == AgentEventKind::RunFinished,
-    )
+    let events_b = events_until(b.events_mut().expect("b's reader is still here"), |event| {
+        event.kind == AgentEventKind::RunFinished
+    })
     .await;
     // Both engines answer with the same words, so no content tells them apart; and the host's own
     // run id is a per-instance counter, so "run-0" names two pieces of work at once.
@@ -342,14 +345,18 @@ async fn the_same_request_id_on_two_engines_stays_with_its_own_instance() {
     assert_eq!(session_a, session_b);
     let asked_a = tokio::time::timeout(
         PATIENCE,
-        a.events_mut().expect("a's reader is still here").next_permission(),
+        a.events_mut()
+            .expect("a's reader is still here")
+            .next_permission(),
     )
     .await
     .expect("a asks")
     .expect("a is running");
     let asked_b = tokio::time::timeout(
         PATIENCE,
-        b.events_mut().expect("b's reader is still here").next_permission(),
+        b.events_mut()
+            .expect("b's reader is still here")
+            .next_permission(),
     )
     .await
     .expect("b asks")
@@ -471,7 +478,10 @@ async fn a_live_instance_keeps_its_registration_from_being_disabled() {
     register_fixture(&mut registry, "fake-a", "prof-a", "stream");
     let mut instance = started(&registry, "fake-a", "prof-a", "vault-1", &root).await;
     let session = open_session(&mut instance, &root).await;
-    instance.runtime().prompt(&session, "hello").expect("prompt");
+    instance
+        .runtime()
+        .prompt(&session, "hello")
+        .expect("prompt");
     let error = registry.set_enabled("fake-a", false);
     assert!(
         matches!(error, Err(RegistryError::InstanceRunning { .. })),
@@ -538,7 +548,10 @@ async fn a_start_that_never_produced_a_runtime_frees_its_profile() {
     registry.register(registration).expect("registers");
     registry.bind_profile("prof-a", "fake-a").expect("binds");
     let first = refused(try_start(&registry, "fake-a", "prof-a", "vault-1", &root).await);
-    assert!(matches!(first, RegistryError::LaunchFailed { .. }), "{first:?}");
+    assert!(
+        matches!(first, RegistryError::LaunchFailed { .. }),
+        "{first:?}"
+    );
     let second = refused(try_start(&registry, "fake-a", "prof-a", "vault-1", &root).await);
     assert!(
         matches!(second, RegistryError::LaunchFailed { .. }),
@@ -553,7 +566,9 @@ async fn a_stopped_instances_advertisements_expire_with_it() {
     let mut registration = fixture_agent("fake-opencode", "good");
     registration.adapter_id = adapters::opencode::ADAPTER_ID.to_string();
     registry.register(registration).expect("registers");
-    registry.bind_profile("prof-a", "fake-opencode").expect("binds");
+    registry
+        .bind_profile("prof-a", "fake-opencode")
+        .expect("binds");
     let stopped = {
         let instance = try_start(&registry, "fake-opencode", "prof-a", "vault-1", &root)
             .await

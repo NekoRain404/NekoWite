@@ -35,7 +35,9 @@
 //! capability as missing and leave the user to guess, nor report one as present while quietly
 //! substituting something).
 
-use agent_client_protocol::schema::v1::{InitializeResponse, NewSessionResponse, PromptCapabilities};
+use agent_client_protocol::schema::v1::{
+    InitializeResponse, NewSessionResponse, PromptCapabilities,
+};
 use serde::Serialize;
 
 use super::adapters::{Capability, HostFeature};
@@ -165,7 +167,9 @@ impl SessionCapabilities {
 
     /// `agentCapabilities.loadSession`.
     pub fn supports_session_resume(&self) -> Option<bool> {
-        self.handshake.as_ref().map(|handshake| handshake.load_session)
+        self.handshake
+            .as_ref()
+            .map(|handshake| handshake.load_session)
     }
 
     /// Zed's `has_slash_completions` (`message_editor.rs:91-93`): completions exist when the
@@ -218,7 +222,8 @@ pub struct CapabilityReport {
 }
 
 /// Why a feature nothing reported is not available.
-const NO_NEGOTIATION: &str = "nothing has been negotiated for this session yet: there is no answer \
+const NO_NEGOTIATION: &str =
+    "nothing has been negotiated for this session yet: there is no answer \
                               to report, only a claim";
 
 /// Why a feature the handshake would have answered is not available.
@@ -447,9 +452,18 @@ mod tests {
         let facts = negotiated(&["model"], Some(2));
         let rows = report(|_| Capability::Advertised, Some(&facts), Some("model"));
         // Reported, so available.
-        assert_eq!(row(&rows, HostFeature::ImageAttachments).finding, Finding::Available);
-        assert_eq!(row(&rows, HostFeature::EmbeddedContext).finding, Finding::Available);
-        assert_eq!(row(&rows, HostFeature::SessionResume).finding, Finding::Available);
+        assert_eq!(
+            row(&rows, HostFeature::ImageAttachments).finding,
+            Finding::Available
+        );
+        assert_eq!(
+            row(&rows, HostFeature::EmbeddedContext).finding,
+            Finding::Available
+        );
+        assert_eq!(
+            row(&rows, HostFeature::SessionResume).finding,
+            Finding::Available
+        );
         // Reported absent, so unavailable — with the engine's own fact named. The declaration
         // still says what the pinned version does, which is the disagreement the two fields exist
         // to show: this engine was declared to take images and did not report that it does.
@@ -464,7 +478,11 @@ mod tests {
 
     #[test]
     fn a_published_empty_list_is_a_measurement_and_silence_is_not() {
-        let before = report(|_| Capability::Advertised, Some(&SessionCapabilities::default()), None);
+        let before = report(
+            |_| Capability::Advertised,
+            Some(&SessionCapabilities::default()),
+            None,
+        );
         let slash = row(&before, HostFeature::SlashCommands);
         assert!(
             matches!(&slash.finding, Finding::Unverified { detail } if detail.contains("no command list")),
@@ -481,15 +499,24 @@ mod tests {
 
         let published = negotiated(&["model"], Some(1));
         let with_commands = report(|_| Capability::Advertised, Some(&published), None);
-        assert_eq!(row(&with_commands, HostFeature::SlashCommands).finding, Finding::Available);
+        assert_eq!(
+            row(&with_commands, HostFeature::SlashCommands).finding,
+            Finding::Available
+        );
     }
 
     #[test]
     fn the_session_response_decides_the_options_and_the_model() {
         let named = negotiated(&["model", "mode"], None);
         let rows = report(|_| Capability::Advertised, Some(&named), Some("model"));
-        assert_eq!(row(&rows, HostFeature::SessionConfigOptions).finding, Finding::Available);
-        assert_eq!(row(&rows, HostFeature::ModelSelection).finding, Finding::Available);
+        assert_eq!(
+            row(&rows, HostFeature::SessionConfigOptions).finding,
+            Finding::Available
+        );
+        assert_eq!(
+            row(&rows, HostFeature::ModelSelection).finding,
+            Finding::Available
+        );
 
         // The session answered, and the option the adapter names is not among them.
         let missing = negotiated(&["mode"], None);
@@ -517,7 +544,10 @@ mod tests {
             row(&rows, HostFeature::ModelSelection).finding,
             Finding::Unverified { .. }
         ));
-        assert_eq!(row(&rows, HostFeature::SessionConfigOptions).finding, Finding::Available);
+        assert_eq!(
+            row(&rows, HostFeature::SessionConfigOptions).finding,
+            Finding::Available
+        );
     }
 
     #[test]
@@ -537,10 +567,18 @@ mod tests {
         assert_eq!(facts.supports_audio(), Some(false));
         assert_eq!(facts.supports_embedded_context(), Some(true));
         assert_eq!(facts.supports_session_resume(), Some(true));
-        assert_eq!(facts.has_slash_completions(), None, "no list has been published yet");
+        assert_eq!(
+            facts.has_slash_completions(),
+            None,
+            "no list has been published yet"
+        );
 
         facts.commands_published(0);
-        assert_eq!(facts.has_slash_completions(), Some(false), "an empty list is an answer");
+        assert_eq!(
+            facts.has_slash_completions(),
+            Some(false),
+            "an empty list is an answer"
+        );
         facts.commands_published(2);
         assert_eq!(facts.has_slash_completions(), Some(true));
     }

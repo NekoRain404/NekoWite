@@ -130,7 +130,11 @@ pub struct LiveNoteQuestion {
 /// answer this host trusts". Folding `cannot-answer` into `not-held` is the defect the whole
 /// module is about, because `not-held` is the one arm a caller may serve from disk.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "state", rename_all = "kebab-case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "state",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
 pub enum LiveNoteReply {
     Held {
         revision: String,
@@ -140,7 +144,9 @@ pub enum LiveNoteReply {
     NotHeld,
     /// The window knows it cannot answer yet, and says why — e.g. the tab is still on its
     /// first read, so what it holds is a placeholder wearing the note's path.
-    CannotAnswer { reason: String },
+    CannotAnswer {
+        reason: String,
+    },
 }
 
 /// One answer as it comes off the wire: the reply, plus the evidence that it belongs to the
@@ -153,7 +159,11 @@ pub enum LiveNoteReply {
 /// a *disagreement* (two windows, one path — `Unknown`). Without it those two are the same
 /// event, and §2.2's rule could not be implemented at all.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "state", rename_all = "kebab-case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "state",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
 pub enum LiveNoteAnswerPayload {
     Held {
         request_id: String,
@@ -283,9 +293,9 @@ impl LiveNoteRefusal {
                 request_id,
                 expected,
                 answered,
-            } => format!(
-                "live-note answer {request_id} names the vault {answered}, not {expected}"
-            ),
+            } => {
+                format!("live-note answer {request_id} names the vault {answered}, not {expected}")
+            }
             LiveNoteRefusal::PathMismatch {
                 request_id,
                 expected,
@@ -577,12 +587,9 @@ impl LiveNotes {
 
     /// What `path` holds in `vault_id`, as the window holding it says.
     pub async fn ask(&self, vault_id: &str, path: &str) -> LiveNoteAnswer {
-        self.table
-            .ask(self.windows.as_ref(), vault_id, path)
-            .await
+        self.table.ask(self.windows.as_ref(), vault_id, path).await
     }
 }
-
 
 #[cfg(test)]
 mod tests {

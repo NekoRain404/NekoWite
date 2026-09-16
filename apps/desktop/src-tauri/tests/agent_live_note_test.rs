@@ -21,12 +21,12 @@
 //! about this host, never about the engine's routing.
 
 use nekowite_lib::agent_runtime::live_notes::{
-    LIVE_NOTE_ANSWER_CHANNEL, LIVE_NOTE_ATTACH_CHANNEL, LIVE_NOTE_BOUND, LIVE_NOTE_REQUEST_CHANNEL,
     LiveNoteAnswerPayload, LiveNoteQuestion, LiveNoteRefusal, LiveNoteReply, LiveNoteTable,
-    LiveNoteWindows, LiveNotes,
+    LiveNoteWindows, LiveNotes, LIVE_NOTE_ANSWER_CHANNEL, LIVE_NOTE_ATTACH_CHANNEL,
+    LIVE_NOTE_BOUND, LIVE_NOTE_REQUEST_CHANNEL,
 };
 use nekowite_lib::agent_runtime::{
-    AgentIdentity, AgentRuntime, EngineConnection, EngineLaunch, VaultFiles, env_pairs,
+    env_pairs, AgentIdentity, AgentRuntime, EngineConnection, EngineLaunch, VaultFiles,
 };
 
 use std::fs;
@@ -42,7 +42,8 @@ struct RealVault;
 
 impl VaultFiles for RealVault {
     fn frontend_path(&self, vault_root: &str, path: &str) -> Result<String, String> {
-        let (resolved, _relative) = nekowite_lib::domain::path_policy::resolve_within_rel(vault_root, path)?;
+        let (resolved, _relative) =
+            nekowite_lib::domain::path_policy::resolve_within_rel(vault_root, path)?;
         Ok(nekowite_lib::domain::path_policy::ipc_path(&resolved))
     }
     fn read(&self, vault_root: &str, path: &str) -> Result<String, String> {
@@ -324,7 +325,10 @@ async fn a_read_serves_the_windows_buffer_and_not_the_disk() {
     // canonical absolute path, which is what `list_dir_entries` renders and what a window can
     // match. A key the window cannot match is a lookup that never hits, and a lookup that never
     // hits answers "no tab holds it" and serves disk.
-    let canonical = fs::canonicalize(&note).expect("canonical").to_string_lossy().into_owned();
+    let canonical = fs::canonicalize(&note)
+        .expect("canonical")
+        .to_string_lossy()
+        .into_owned();
     let asked = window.asked();
     assert_eq!(asked.len(), 1, "one read, one question");
     assert_eq!(
@@ -333,7 +337,10 @@ async fn a_read_serves_the_windows_buffer_and_not_the_disk() {
     );
     assert_eq!(
         asked[0].vault_id,
-        fs::canonicalize(&vault).expect("canonical").to_string_lossy().into_owned()
+        fs::canonicalize(&vault)
+            .expect("canonical")
+            .to_string_lossy()
+            .into_owned()
     );
     assert_eq!(asked[0].request_id, "live-0");
 
@@ -347,7 +354,10 @@ async fn a_read_serves_the_windows_buffer_and_not_the_disk() {
         seen.contains(&format!("\"content\":{}", json_string("IN THE BUFFER\n"))),
         "with the file deleted the buffer is still the answer: {seen}"
     );
-    assert!(!seen.contains("\"error\""), "a held buffer is not an error: {seen}");
+    assert!(
+        !seen.contains("\"error\""),
+        "a held buffer is not an error: {seen}"
+    );
     runtime.shutdown();
     runtime2.shutdown();
 }
@@ -406,8 +416,7 @@ async fn a_read_that_cannot_reach_the_window_is_an_error_and_never_disk() {
             "{reason}: a read that could not reach the live buffer must be refused: {seen}"
         );
         assert!(
-            seen.contains(&json_string(&note.to_string_lossy()))
-                || seen.contains("note.md"),
+            seen.contains(&json_string(&note.to_string_lossy())) || seen.contains("note.md"),
             "{reason}: the refusal must name the note it is about: {seen}"
         );
         assert!(
@@ -467,10 +476,7 @@ async fn two_windows_holding_one_path_is_refused_rather_than_picked_between() {
             "NWK_FAKE_CAPTURE".to_string(),
             capture.to_string_lossy().into_owned(),
         ),
-        (
-            "NWK_FAKE_FS_REQUEST".to_string(),
-            read_request(&note),
-        ),
+        ("NWK_FAKE_FS_REQUEST".to_string(), read_request(&note)),
     ];
     let launch = EngineLaunch {
         program: PathBuf::from("/bin/sh"),

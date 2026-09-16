@@ -81,7 +81,9 @@ fn the_cancelled_run_is_decided_and_never_pays_later() {
         origin: CareOrigin::Real,
     };
 
-    let first = ledger.settle(cancelled).expect("a cancellation is recorded");
+    let first = ledger
+        .settle(cancelled)
+        .expect("a cancellation is recorded");
     assert!(first.first);
     assert_eq!(
         first.decision,
@@ -135,7 +137,10 @@ fn every_ending_that_is_not_a_completion_pays_nothing() {
     assert_eq!(ledger.xp(), 0);
     assert_eq!(ledger.meals(), 0);
     assert_eq!(ledger.streak_days(), 0, "an unearned day started a streak");
-    assert!(ledger.summary().days.is_empty(), "an unearned day made a day");
+    assert!(
+        ledger.summary().days.is_empty(),
+        "an unearned day made a day"
+    );
     // Five endings, five decisions: the record is what stops any of them paying later.
     assert_eq!(ledger.decided(), 5);
 }
@@ -157,9 +162,10 @@ fn the_outcome_vocabulary_is_the_contracts_terminal_states() {
     // `pet-contracts/task.ts` — including *which* of its states are terminal, which is derived from
     // the contract's own `isPetTaskSettled` rather than restated — so a state added there without a
     // decision here fails this test rather than quietly falling outside the ledger.
-    let contract =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/platform/gateways/pet-contracts/task.ts");
-    let text = fs::read_to_string(&contract).unwrap_or_else(|error| panic!("{contract:?}: {error}"));
+    let contract = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../src/platform/gateways/pet-contracts/task.ts");
+    let text =
+        fs::read_to_string(&contract).unwrap_or_else(|error| panic!("{contract:?}: {error}"));
 
     let all = quoted(&slice_between(&text, "PET_TASK_STATES = [", "] as const"));
     let body = &text[text
@@ -241,13 +247,19 @@ fn the_day_window_is_bounded_and_the_totals_are_not() {
 
     let summary = ledger.summary();
     assert_eq!(summary.days.len(), 14, "the window grew");
-    assert_eq!(summary.days[0].day, "2026-09-07", "the window kept the wrong end");
+    assert_eq!(
+        summary.days[0].day, "2026-09-07",
+        "the window kept the wrong end"
+    );
     assert_eq!(summary.days[13].day, "2026-09-20");
     // Pruning drops days, not what they earned: a ledger that forgot XP when its window rolled would
     // lose a user's level at the fortnight mark.
     assert_eq!(summary.xp, 20 * MEAL_XP);
     assert_eq!(summary.meals, 20);
-    assert_eq!(summary.streak_days, 20, "pruning the window broke the streak");
+    assert_eq!(
+        summary.streak_days, 20,
+        "pruning the window broke the streak"
+    );
 }
 
 #[test]

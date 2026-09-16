@@ -32,7 +32,11 @@ fn every_stop_reason_the_contract_names_has_a_row() {
 
         projection.apply(&finished(&ours, "ses_1", "run-1", 1, reason));
 
-        assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), expected, "{reason}");
+        assert_eq!(
+            state_of(&projection, &key(&ours, "ses_1", "run-1")),
+            expected,
+            "{reason}"
+        );
     }
 }
 
@@ -63,7 +67,11 @@ fn a_cancellation_is_not_a_failure_and_a_lost_runtime_is_not_one_either() {
             serde_json::json!({ "code": code, "message": "the engine said so" }),
         ));
 
-        assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), expected, "{code}");
+        assert_eq!(
+            state_of(&projection, &key(&ours, "ses_1", "run-1")),
+            expected,
+            "{code}"
+        );
     }
 }
 
@@ -76,14 +84,26 @@ fn an_unrecognised_stop_reason_is_unknown_and_can_still_be_replaced() {
     let ours = first_instance();
     projection.install(&ours);
     projection.started(&ours, "ses_1", "run-1");
-    projection.apply(&finished(&ours, "ses_1", "run-1", 1, "some-later-protocols-reason"));
+    projection.apply(&finished(
+        &ours,
+        "ses_1",
+        "run-1",
+        1,
+        "some-later-protocols-reason",
+    ));
 
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "unknown");
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-1")),
+        "unknown"
+    );
     assert!(!PetTaskState::Unknown.is_settled());
 
     let informed = projection.apply(&finished(&ours, "ses_1", "run-1", 2, "refusal"));
     assert_eq!(informed.disposition, Disposition::Applied);
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "refused");
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-1")),
+        "refused"
+    );
 }
 
 /// There is one spelling, and the engine's is not it.
@@ -103,7 +123,10 @@ fn the_engines_own_spelling_is_not_a_second_way_to_say_the_same_ending() {
     // this runtime at all. An unknown ending is a wrong fact only if it is read as a known one.
     projection.apply(&finished(&ours, "ses_1", "run-1", 1, "end_turn"));
 
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "unknown");
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-1")),
+        "unknown"
+    );
 }
 
 /// §6.2's 待授权 row: the state is visible on its own, and the id travels with it so a click goes
@@ -163,7 +186,10 @@ fn a_running_snapshot_is_working() {
     ));
 
     assert_eq!(ingest.disposition, Disposition::Applied);
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "working");
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-1")),
+        "working"
+    );
 }
 
 /// A window that mounts while the engine is waiting gets the oldest unanswered request to route
@@ -187,7 +213,10 @@ fn a_waiting_snapshot_carries_the_oldest_unanswered_request() {
         &pending,
     ));
 
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "waiting-input");
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-1")),
+        "waiting-input"
+    );
     assert_eq!(
         projection
             .task(&key(&ours, "ses_1", "run-1"))
@@ -217,7 +246,11 @@ fn a_completed_snapshot_projects_nothing() {
     ));
 
     assert_eq!(ingest.disposition, Disposition::NoChange);
-    assert_eq!(task_count(&projection), 0, "no task is invented from a snapshot that says nothing");
+    assert_eq!(
+        task_count(&projection),
+        0,
+        "no task is invented from a snapshot that says nothing"
+    );
 }
 
 /// A session with no turn going is not a task at all — §6.2 has no row for `ready`, and inventing
@@ -250,7 +283,10 @@ fn the_endings_a_snapshot_can_state_are_projected() {
 
         projection.observe(&snapshot(&ours, "ses_1", Some("run-1"), 2, state, &[]));
 
-        assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), expected);
+        assert_eq!(
+            state_of(&projection, &key(&ours, "ses_1", "run-1")),
+            expected
+        );
     }
 }
 
@@ -266,10 +302,15 @@ fn an_answered_permission_releases_the_wait_and_only_its_own() {
     projection.apply(&permission(&ours, "ses_1", "run-1", 1, "req-1"));
 
     assert!(
-        projection.answered(&ours, "ses_1", "run-1", "req-other").is_none(),
+        projection
+            .answered(&ours, "ses_1", "run-1", "req-other")
+            .is_none(),
         "another request's answer is not this request's"
     );
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "waiting-input");
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-1")),
+        "waiting-input"
+    );
 
     let released = projection
         .answered(&ours, "ses_1", "run-1", "req-1")

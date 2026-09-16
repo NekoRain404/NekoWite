@@ -19,7 +19,7 @@
 //! [`capabilities::report`], a pure function.
 
 use crate::agent_runtime::adapters::HostFeature;
-use crate::agent_runtime::capabilities::{CapabilityReport, report};
+use crate::agent_runtime::capabilities::{report, CapabilityReport};
 use crate::agent_runtime::registry::AgentInstance;
 use crate::agent_runtime::session::AgentRuntime;
 use crate::state::AgentRuntimeState;
@@ -75,8 +75,8 @@ fn report_for(
     let negotiated = runtime
         .capabilities(session_id)
         .map_err(|_| format!("session {session_id} is not one this app opened"))?;
-    let same_incarnation = instance
-        .is_some_and(|live| live.identity().runtime_epoch == runtime_epoch);
+    let same_incarnation =
+        instance.is_some_and(|live| live.identity().runtime_epoch == runtime_epoch);
     let declared = |feature: HostFeature| {
         instance.map_or(
             crate::agent_runtime::adapters::Capability::Unverified,

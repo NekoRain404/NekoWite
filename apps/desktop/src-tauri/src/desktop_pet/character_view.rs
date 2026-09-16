@@ -128,9 +128,12 @@ pub enum PetAppearance {
 /// Sorted by install time, which is the order a page shows them in (D8's policy puts the newest
 /// first) — a listing whose order came from the filesystem would move when a directory did.
 pub fn entries(library: &CharacterLibrary) -> Result<Vec<PetCharacterEntry>, String> {
-    let mut listed = library
-        .list()
-        .map_err(|refusal| format!("the character library could not be read: {}", refusal_sentence(&refusal)))?;
+    let mut listed = library.list().map_err(|refusal| {
+        format!(
+            "the character library could not be read: {}",
+            refusal_sentence(&refusal)
+        )
+    })?;
     listed.sort_by_key(|entry| entry.manifest.as_ref().map_or(0, |m| m.installed_at_ms));
     Ok(listed.iter().map(entry_of).collect())
 }
@@ -174,11 +177,16 @@ pub fn appearance(record: &PetSettingsRecord, library: Option<&CharacterLibrary>
         };
     };
     let entry = match library.list() {
-        Ok(listed) => listed.into_iter().find(|entry| entry.character_id == chosen),
+        Ok(listed) => listed
+            .into_iter()
+            .find(|entry| entry.character_id == chosen),
         Err(refusal) => {
             return PetAppearance::Missing {
                 character_id: chosen.to_string(),
-                detail: format!("the character library could not be read: {}", refusal_sentence(&refusal)),
+                detail: format!(
+                    "the character library could not be read: {}",
+                    refusal_sentence(&refusal)
+                ),
             }
         }
     };
@@ -205,7 +213,9 @@ pub fn appearance(record: &PetSettingsRecord, library: Option<&CharacterLibrary>
         ));
     }
     let Some(manifest) = entry.manifest else {
-        return unavailable("the library cannot describe it (no manifest this build wrote)".to_string());
+        return unavailable(
+            "the library cannot describe it (no manifest this build wrote)".to_string(),
+        );
     };
     // Both names are checked as components even though the library wrote them, because the
     // manifest is a file on disk and this is the one place a name from it becomes a path.
@@ -252,7 +262,10 @@ struct Drawing {
 
 impl Drawing {
     fn of(record: &PetSettingsRecord) -> Self {
-        let size = record.value("size").and_then(serde_json::Value::as_u64).unwrap_or(160);
+        let size = record
+            .value("size")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(160);
         let bindings = record
             .value("bindings")
             .and_then(serde_json::Value::as_object)
@@ -310,7 +323,12 @@ impl Drawing {
 pub fn free_character_id(library: &CharacterLibrary, name: &str) -> Result<String, String> {
     let taken: Vec<String> = library
         .list()
-        .map_err(|refusal| format!("the character library could not be read: {}", refusal_sentence(&refusal)))?
+        .map_err(|refusal| {
+            format!(
+                "the character library could not be read: {}",
+                refusal_sentence(&refusal)
+            )
+        })?
         .into_iter()
         .map(|entry| entry.character_id)
         .collect();
@@ -386,7 +404,10 @@ fn slug(name: &str) -> String {
 pub fn refusal_sentence(refusal: &ResourceRefusal) -> String {
     match refusal {
         ResourceRefusal::OutsideManagedScope { root, detail } => {
-            format!("{} is not a folder this app may write to: {detail}", root.display())
+            format!(
+                "{} is not a folder this app may write to: {detail}",
+                root.display()
+            )
         }
         ResourceRefusal::InvalidName {
             field,
@@ -401,7 +422,10 @@ pub fn refusal_sentence(refusal: &ResourceRefusal) -> String {
             format!("{value} cannot be used as {field}: {detail}")
         }
         ResourceRefusal::NoSource { path } => {
-            format!("{} is not a file or a folder this app can read", path.display())
+            format!(
+                "{} is not a file or a folder this app can read",
+                path.display()
+            )
         }
         ResourceRefusal::Package {
             name,
@@ -411,9 +435,9 @@ pub fn refusal_sentence(refusal: &ResourceRefusal) -> String {
             "{name} cannot be imported ({}): {detail}",
             package_problem(*problem)
         ),
-        ResourceRefusal::Unrecognized { name } => format!(
-            "{name} is not a file type this app can identify from its own contents"
-        ),
+        ResourceRefusal::Unrecognized { name } => {
+            format!("{name} is not a file type this app can identify from its own contents")
+        }
         ResourceRefusal::Budget { rule, limit, found } => {
             format!("the pack breaks the {rule} budget: {found} where the limit is {limit}")
         }
@@ -467,7 +491,8 @@ mod tests {
     /// under — the same shape `tests/desktop_pet_resources_test/support.rs` builds, so a leftover
     /// from a killed run cannot make the next one pass.
     fn library(label: &str) -> (CharacterLibrary, PathBuf) {
-        let data = std::env::temp_dir().join(format!("nkw-pet-view-{label}-{}", std::process::id()));
+        let data =
+            std::env::temp_dir().join(format!("nkw-pet-view-{label}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&data);
         std::fs::create_dir_all(&data).expect("a temporary data directory");
         (
@@ -559,10 +584,16 @@ mod tests {
         // The gap D12's report named: a Chinese folder name was refused because "an id is
         // ASCII". An id is a path component, and `喵喵` is one — so the id is the folder's name.
         assert_eq!(free_character_id(&library, "喵喵").expect("an id"), "喵喵");
-        assert_eq!(free_character_id(&library, "我的猫 2").expect("an id"), "我的猫-2");
+        assert_eq!(
+            free_character_id(&library, "我的猫 2").expect("an id"),
+            "我的猫-2"
+        );
         // Scripts with case are still lowercased and still lose their punctuation, so nothing
         // about the ids a library already holds moved.
-        assert_eq!(free_character_id(&library, "Kitty").expect("an id"), "kitty");
+        assert_eq!(
+            free_character_id(&library, "Kitty").expect("an id"),
+            "kitty"
+        );
     }
 
     #[test]
@@ -577,7 +608,10 @@ mod tests {
             assert!(!refusal.contains("ASCII"), "{refusal}");
         }
         // 你好 is not one of those cases, and the difference is which of the two rules refused.
-        assert_eq!(free_character_id(&library, "你好").expect("letters"), "你好");
+        assert_eq!(
+            free_character_id(&library, "你好").expect("letters"),
+            "你好"
+        );
     }
 
     #[test]
@@ -610,20 +644,30 @@ mod tests {
         let (library, _data) = library("taken");
         install(&library, "kitty", "Kitty");
 
-        assert_eq!(free_character_id(&library, "Kitty").expect("a free variant"), "kitty-2");
+        assert_eq!(
+            free_character_id(&library, "Kitty").expect("a free variant"),
+            "kitty-2"
+        );
 
         // And the same rule in Chinese, which is the case a user meets by importing the folder
         // they already imported: the second one is a character beside the first, not a refusal —
         // and never a second import over the first.
         install(&library, "喵喵", "喵喵");
-        assert_eq!(free_character_id(&library, "喵喵").expect("a free variant"), "喵喵-2");
-        assert_eq!(free_character_id(&library, "喵喵-3").expect("a free variant"), "喵喵-3");
+        assert_eq!(
+            free_character_id(&library, "喵喵").expect("a free variant"),
+            "喵喵-2"
+        );
+        assert_eq!(
+            free_character_id(&library, "喵喵-3").expect("a free variant"),
+            "喵喵-3"
+        );
         assert_eq!(library.list().expect("readable").len(), 2);
     }
 
     #[test]
     fn a_name_the_library_refuses_and_a_pack_it_cannot_read_are_different_sentences() {
-        let absent = std::env::temp_dir().join(format!("nkw-pet-view-absent-{}", std::process::id()));
+        let absent =
+            std::env::temp_dir().join(format!("nkw-pet-view-absent-{}", std::process::id()));
         let named = refusal_sentence(&ResourceRefusal::InvalidName {
             field: "characterId",
             value: "喵/喵".to_string(),
@@ -720,9 +764,10 @@ mod tests {
         // The manifest is a file on disk, so this is what a hand-edited one looks like: a sheet
         // name that is a path. It is refused as a name, not joined onto the library's root.
         let manifest = library.root().join("kitty").join("manifest.json");
-        let mut document: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&manifest).expect("the manifest is there"))
-                .expect("it is JSON");
+        let mut document: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&manifest).expect("the manifest is there"),
+        )
+        .expect("it is JSON");
         document["sheet"]["file"] = serde_json::Value::String("../outside.png".to_string());
         std::fs::write(&manifest, document.to_string()).expect("the manifest is writable");
 

@@ -53,7 +53,11 @@ impl PrivateBus {
     /// `binaries/opencode-*`.
     fn start() -> Option<Self> {
         let mut child = Command::new("dbus-daemon")
-            .args(["--session", "--address=unix:tmpdir=/tmp", "--print-address=1"])
+            .args([
+                "--session",
+                "--address=unix:tmpdir=/tmp",
+                "--print-address=1",
+            ])
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()

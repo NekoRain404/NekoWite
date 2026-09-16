@@ -80,12 +80,7 @@ impl Stream {
     }
 
     /// A frame about a permission request, so the request id is in the key's own space.
-    pub fn asking(
-        &self,
-        key: &PetTaskKey,
-        request_id: &str,
-        at_ms: i64,
-    ) -> TaskFact {
+    pub fn asking(&self, key: &PetTaskKey, request_id: &str, at_ms: i64) -> TaskFact {
         let sequence = self.next(key);
         TaskFact {
             key: key.clone(),
@@ -208,11 +203,7 @@ pub fn policy_with(
     channel: &RecordingChannel,
     preferences: NotificationPreferences,
 ) -> NotificationPolicy {
-    NotificationPolicy::new(
-        Box::new(channel.clone()),
-        preferences,
-        TaskHistory::new(),
-    )
+    NotificationPolicy::new(Box::new(channel.clone()), preferences, TaskHistory::new())
 }
 
 /// A policy that came back from a ledger it was handed — the restart of §6.3.
@@ -323,7 +314,11 @@ pub fn quoted_pairs(slice: &str) -> Vec<(String, String)> {
     let mut pairs = Vec::new();
     for line in slice.lines() {
         let line = line.trim();
-        if line.is_empty() || line.starts_with('*') || line.starts_with('/') || line.starts_with('}') {
+        if line.is_empty()
+            || line.starts_with('*')
+            || line.starts_with('/')
+            || line.starts_with('}')
+        {
             continue;
         }
         let Some((name, value)) = line.split_once(':') else {

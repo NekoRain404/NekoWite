@@ -25,7 +25,7 @@ use crate::desktop_pet::{
 };
 use crate::state::DesktopPetState;
 
-use super::desktop_pet::{PetFeatureState, host, publish_feature};
+use super::desktop_pet::{host, publish_feature, PetFeatureState};
 
 /// The channel a *settings write* is published on, so a window drawing from settings hears it.
 ///
@@ -204,7 +204,9 @@ pub fn apply_notification_switch(tasks: &PetTaskFeed, record: &PetSettingsRecord
             true
         }
         Err(detail) => {
-            eprintln!("nekowite: a saved notification switch did not reach the pet's ledger: {detail}");
+            eprintln!(
+                "nekowite: a saved notification switch did not reach the pet's ledger: {detail}"
+            );
             false
         }
     }

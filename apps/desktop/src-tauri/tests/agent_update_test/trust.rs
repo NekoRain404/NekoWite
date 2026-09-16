@@ -11,7 +11,9 @@ use nekowite_lib::agent_runtime;
 use agent_runtime::binary_registry::{self, BinaryRegistry};
 use agent_runtime::update::{self, ArtifactClaims, PinnedRelease, UpdateError};
 
-use crate::support::{elf_bytes, mode_of, release_of, scratch, sha256_hex, staged, with_machine, FakeProbe};
+use crate::support::{
+    elf_bytes, mode_of, release_of, scratch, sha256_hex, staged, with_machine, FakeProbe,
+};
 
 /// §3.3's sharpest rule, in the shape it has to be enforced: 不能从同一不可信响应同时获取二进制和摘要便
 /// 声称可信.
@@ -33,7 +35,12 @@ async fn a_digest_that_arrived_with_the_artifact_is_not_consulted() {
     };
 
     // The honest-looking claim: the artifact says its digest is the one the app expects.
-    let agreeable = staged(&registry, "9.9.9", &bytes, claim(release.sha256().to_string()));
+    let agreeable = staged(
+        &registry,
+        "9.9.9",
+        &bytes,
+        claim(release.sha256().to_string()),
+    );
     assert!(update::verify(&release, &agreeable, &probe).await.is_ok());
 
     // The same claim, made by bytes the record does not name. If the claim were consulted this

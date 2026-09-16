@@ -25,7 +25,7 @@ use super::adapters::{self, AgentAdapter, Capability, HostFeature};
 use super::events::{AgentIdentity, TransportError};
 use super::fs_capability::VaultFiles;
 use super::live_notes::LiveNotes;
-use super::process::{env_pairs, EngineLaunch, isolated_profile_env};
+use super::process::{env_pairs, isolated_profile_env, EngineLaunch};
 use super::profile::Credentials;
 use super::secret::Secret;
 use super::session::{AgentRuntime, AgentRuntimeEvents};
@@ -142,22 +142,38 @@ pub enum RegistryError {
     /// An id that cannot be an identity or a path component: §3.2 puts profile and vault
     /// ids into directory names, so a `/` or a `..` here is a path traversal dressed as
     /// configuration.
-    Id { field: &'static str, value: String },
+    Id {
+        field: &'static str,
+        value: String,
+    },
     /// The program path failed — kept apart from [`RegistryError::Argument`] because §3.4.3
     /// has the user supply a path *and* an argument list, and a diagnostic that cannot say
     /// which is wrong sends them to fix the wrong one.
-    Program { program: PathBuf, state: ProgramState },
+    Program {
+        program: PathBuf,
+        state: ProgramState,
+    },
     /// One argument is unusable, by its position in the array.
-    Argument { index: usize },
+    Argument {
+        index: usize,
+    },
     /// A variable that cannot reach a process: an empty name, an `=` or a control character
     /// in the name, or a NUL in the value (`execve` takes NUL-terminated strings).
-    Environment { name: String },
+    Environment {
+        name: String,
+    },
     /// No verified adapter answers to that id, so the engine's differences have no owner.
-    UnknownAdapter { adapter_id: String },
+    UnknownAdapter {
+        adapter_id: String,
+    },
     /// Already registered: replacing a definition while an instance may run on it is not an
     /// edit, it is a race.
-    DuplicateAgent { agent_id: String },
-    UnknownAgent { agent_id: String },
+    DuplicateAgent {
+        agent_id: String,
+    },
+    UnknownAgent {
+        agent_id: String,
+    },
     /// The profile does not belong to this agent (`owner` is the agent it does belong to, if
     /// any). §3.4's Profile row forbids copying a profile between engines, which is what stops
     /// an external engine from being handed OpenCode's credentials.
@@ -167,23 +183,36 @@ pub enum RegistryError {
         owner: Option<String>,
     },
     /// The registration is switched off (§3.4.3's enable/disable column).
-    Disabled { agent_id: String },
+    Disabled {
+        agent_id: String,
+    },
     /// A runtime for this (agent, profile, vault) is already live. §3.4 forbids one global
     /// engine standing in for every agent, and two engines on one profile are two writers
     /// into one config and one session store.
-    AlreadyRunning { agent_id: String, epoch: String },
+    AlreadyRunning {
+        agent_id: String,
+        epoch: String,
+    },
     /// §3.4.7: an active task is stopped before the registration it belongs to is switched
     /// off or removed.
-    InstanceRunning { agent_id: String, epoch: String },
+    InstanceRunning {
+        agent_id: String,
+        epoch: String,
+    },
     /// The default agent is the plan's fixed answer for a new session (§3.4.1). Removing or
     /// disabling it would leave the new-session menu with nothing to preselect and
     /// [`AgentRegistry::default_agent_id`] naming an agent that is not registered, so the
     /// registry refuses to create that state instead of leaving it to a frontend to avoid.
-    IsDefault { agent_id: String },
+    IsDefault {
+        agent_id: String,
+    },
     /// The engine could not be started, carrying the transport's own classification rather
     /// than a flattened string so a missing binary and a refused handshake stay
     /// distinguishable at the IPC boundary.
-    LaunchFailed { agent_id: String, error: TransportError },
+    LaunchFailed {
+        agent_id: String,
+        error: TransportError,
+    },
 }
 
 impl RegistryError {
@@ -322,10 +351,9 @@ impl AgentRegistration {
     /// pinned version, never the session in front of the user, and a registration whose adapter id
     /// resolved to nothing answers [`Capability::Unverified`], the answer that offers nothing.
     pub fn declared_capability(&self, feature: HostFeature) -> Capability {
-        self.adapter()
-            .map_or(Capability::Unverified, |adapter| {
-                adapter.declared_capability(feature)
-            })
+        self.adapter().map_or(Capability::Unverified, |adapter| {
+            adapter.declared_capability(feature)
+        })
     }
 
     /// The launch description this registration produces (§3.4.3: the path and the arguments
@@ -540,7 +568,9 @@ impl AgentRegistry {
         // caller-supplied path, so the only check that could fail is one this module owns — and
         // `bundled_registration` carries the test that runs it through `validate`.
         registry.registrations.insert(agent_id.clone(), bundled);
-        registry.profiles.insert(DEFAULT_PROFILE.to_string(), agent_id);
+        registry
+            .profiles
+            .insert(DEFAULT_PROFILE.to_string(), agent_id);
         registry
     }
 
@@ -751,7 +781,8 @@ impl AgentRegistry {
             runtime_epoch: epoch,
             vault_id: vault_id.to_string(),
         };
-        let (runtime, events) = AgentRuntime::new(identity.clone(), connection, events, files, live_notes);
+        let (runtime, events) =
+            AgentRuntime::new(identity.clone(), connection, events, files, live_notes);
         Ok(AgentInstance {
             identity,
             adapter,
@@ -819,7 +850,12 @@ impl AgentInstance {
     /// its process advertised: the answer that cannot put a button in front of a user for a feature
     /// nothing can serve.
     pub fn declared_capability(&self, feature: HostFeature) -> Capability {
-        if !self.live.lock().unwrap().is_live(&self.identity.runtime_epoch) {
+        if !self
+            .live
+            .lock()
+            .unwrap()
+            .is_live(&self.identity.runtime_epoch)
+        {
             return Capability::Unverified;
         }
         self.adapter.declared_capability(feature)

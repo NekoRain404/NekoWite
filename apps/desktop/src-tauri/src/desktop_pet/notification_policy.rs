@@ -185,7 +185,10 @@ pub enum NotificationOutcome {
     Silent(SilenceReason),
     Delivered(PetNotice),
     /// A completion gathered into the burst window; one notice will stand for all of them.
-    Coalescing { count: usize, due_at_ms: i64 },
+    Coalescing {
+        count: usize,
+        due_at_ms: i64,
+    },
     /// The channel was asked and could not. The row is kept unread and says `failed`, and the next
     /// tick does not ask again (§6.3's at-most-once attempt).
     DeliveryFailed {
@@ -387,7 +390,10 @@ impl NotificationPolicy {
         if now_ms < self.pending.as_ref()?.due_at_ms {
             return None;
         }
-        let pending = self.pending.take().expect("the pending burst was just read");
+        let pending = self
+            .pending
+            .take()
+            .expect("the pending burst was just read");
         if self.preferences.do_not_disturb {
             // Dropped rather than held — see this file's header. The rows stay unread, which is
             // §6.3's 「勿扰禁声音和弹出，保留未读」, and nothing is replayed on the way out.

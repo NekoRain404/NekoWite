@@ -35,8 +35,12 @@ use tauri::webview::InvokeRequest;
 use tauri::Listener;
 
 use nekowite_lib::commands::desktop_pet as pet_commands;
-use nekowite_lib::commands::desktop_pet::{PET_FEATURE_CHANNEL, PET_SETTINGS_CHANNEL, SETTINGS_PAGES};
-use nekowite_lib::desktop_pet::care_ledger::{CareEvent, CareOrigin, CareOutcome, LocalDay, LocalTime};
+use nekowite_lib::commands::desktop_pet::{
+    PET_FEATURE_CHANNEL, PET_SETTINGS_CHANNEL, SETTINGS_PAGES,
+};
+use nekowite_lib::desktop_pet::care_ledger::{
+    CareEvent, CareOrigin, CareOutcome, LocalDay, LocalTime,
+};
 use nekowite_lib::desktop_pet::{
     Closed, HostRefusal, PetInstance, TeardownReport, DESKTOP_PET_PAGE, MEAL_XP,
 };
@@ -252,15 +256,23 @@ fn click_through_is_the_callers_own_property_and_nobody_elses() {
     ok(&main, "desktop_pet_open", json!({ "characterId": "cat" }));
     let character = window(&pet, "pet-1");
 
-    let refused = call(&main, "desktop_pet_set_click_through", json!({ "ignore": true }))
-        .expect_err("the main window is not a pet window");
+    let refused = call(
+        &main,
+        "desktop_pet_set_click_through",
+        json!({ "ignore": true }),
+    )
+    .expect_err("the main window is not a pet window");
     assert_eq!(refused["reason"], "unrecognized-caller");
     assert!(
         !pet.surfaces.state().click_through.contains_key("pet-1"),
         "a refused request must not reach the window system"
     );
 
-    ok(&character, "desktop_pet_set_click_through", json!({ "ignore": true }));
+    ok(
+        &character,
+        "desktop_pet_set_click_through",
+        json!({ "ignore": true }),
+    );
     assert_eq!(pet.surfaces.state().click_through.get("pet-1"), Some(&true));
 }
 
@@ -282,7 +294,11 @@ fn the_feature_state_is_published_when_it_changes() {
     let main = window(&pet, MAIN_WINDOW);
 
     ok(&main, "desktop_pet_open", json!({ "characterId": "cat" }));
-    let state = ok(&main, "desktop_pet_set_visible", json!({ "visible": false }));
+    let state = ok(
+        &main,
+        "desktop_pet_set_visible",
+        json!({ "visible": false }),
+    );
     assert_eq!(state, json!({ "enabled": true, "visible": false }));
     let report = ok(&main, "desktop_pet_disable", Value::Null);
 
@@ -290,13 +306,16 @@ fn the_feature_state_is_published_when_it_changes() {
         report["closed"],
         json!([{ "label": "pet-1", "characterId": "cat" }])
     );
-    assert_eq!(*seen.lock().unwrap(), vec![
-        json!({ "enabled": true, "visible": true }),
-        // Hide is not disable: the instance is still there, so the feature is still on and only
-        // the drawing stopped (§7.1).
-        json!({ "enabled": true, "visible": false }),
-        json!({ "enabled": false, "visible": false }),
-    ]);
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![
+            json!({ "enabled": true, "visible": true }),
+            // Hide is not disable: the instance is still there, so the feature is still on and only
+            // the drawing stopped (§7.1).
+            json!({ "enabled": true, "visible": false }),
+            json!({ "enabled": false, "visible": false }),
+        ]
+    );
 }
 
 #[test]
@@ -357,15 +376,23 @@ fn a_settings_request_names_a_page_the_host_knows() {
             .push(parse(event.payload()));
     });
 
-    let refused = call(&main, "desktop_pet_open_settings", json!({ "page": "wallet" }))
-        .expect_err("a page that is not one of §5.1's is refused");
+    let refused = call(
+        &main,
+        "desktop_pet_open_settings",
+        json!({ "page": "wallet" }),
+    )
+    .expect_err("a page that is not one of §5.1's is refused");
     assert!(
         refused.as_str().unwrap_or_default().contains("wallet"),
         "the refusal names what it refused: {refused}"
     );
     assert!(asked.lock().unwrap().is_empty());
 
-    ok(&main, "desktop_pet_open_settings", json!({ "page": "character" }));
+    ok(
+        &main,
+        "desktop_pet_open_settings",
+        json!({ "page": "character" }),
+    );
     assert_eq!(*asked.lock().unwrap(), vec![json!({ "page": "character" })]);
 }
 
@@ -377,7 +404,11 @@ fn the_page_vocabulary_is_the_typescript_one() {
     let config = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../src/platform/gateways/pet-contracts/config.ts");
     let text = fs::read_to_string(&config).unwrap_or_else(|error| panic!("{config:?}: {error}"));
-    let pages = quoted(&slice_between(&text, "PET_SETTINGS_PAGES = [", "] as const"));
+    let pages = quoted(&slice_between(
+        &text,
+        "PET_SETTINGS_PAGES = [",
+        "] as const",
+    ));
     assert_eq!(pages, SETTINGS_PAGES.to_vec());
 }
 
@@ -445,7 +476,10 @@ fn what_the_ledger_settled_is_what_the_read_carries() {
     assert_eq!(summary["meals"], 1);
     assert_eq!(summary["streakDays"], 1);
     assert_eq!(summary["unlocked"], json!([]));
-    assert_eq!(summary["days"], json!([{ "day": "2026-09-16", "completions": 1, "tokens": 4200 }]));
+    assert_eq!(
+        summary["days"],
+        json!([{ "day": "2026-09-16", "completions": 1, "tokens": 4200 }])
+    );
     assert_eq!(summary["reportedTokens"], 4200);
     assert_eq!(summary["unreportedRuns"], 0);
     assert_eq!(summary["lastSettledAt"], 1_789_000_000_000i64);

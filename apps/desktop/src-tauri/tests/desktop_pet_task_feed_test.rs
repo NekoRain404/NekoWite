@@ -77,7 +77,8 @@ fn envelope(
 /// A feed with one instance installed and one run in flight, as a prompt leaves it.
 fn running() -> PetTaskFeed {
     let feed = PetTaskFeed::new();
-    feed.install(&identity("epoch-1")).expect("the lock is fresh");
+    feed.install(&identity("epoch-1"))
+        .expect("the lock is fresh");
     feed.started(&identity("epoch-1"), SESSION, "run-0")
         .expect("the lock is fresh");
     feed
@@ -153,7 +154,10 @@ fn a_frame_from_an_instance_this_host_never_started_is_not_pushed() {
         ))
         .expect("the lock is fresh");
 
-    assert!(pushed.is_none(), "a foreign instance's frame changes nothing");
+    assert!(
+        pushed.is_none(),
+        "a foreign instance's frame changes nothing"
+    );
     assert_eq!(
         feed.read().expect("the lock is fresh")[0].state,
         PetTaskState::Working,
@@ -247,7 +251,9 @@ fn an_answer_to_another_sessions_request_does_not_touch_this_task() {
 fn stopping_the_instance_restates_what_it_was_running_and_pushes_it() {
     let feed = running();
 
-    let pushed = feed.retire(&identity("epoch-1")).expect("the lock is fresh");
+    let pushed = feed
+        .retire(&identity("epoch-1"))
+        .expect("the lock is fresh");
 
     let tasks = pushed.expect("a run in flight is restated");
     assert_eq!(tasks[0].state, PetTaskState::Interrupted);
@@ -259,7 +265,9 @@ fn a_new_instance_restates_the_previous_ones_run() {
 
     // A restart is a new epoch for the same triple, which is proof the old incarnation is over
     // rather than a guess (`registry::LiveInstances::claim` refuses a second live one).
-    let pushed = feed.install(&identity("epoch-2")).expect("the lock is fresh");
+    let pushed = feed
+        .install(&identity("epoch-2"))
+        .expect("the lock is fresh");
 
     let tasks = pushed.expect("the previous run cannot still be running");
     assert_eq!(tasks[0].state, PetTaskState::Interrupted);
@@ -329,7 +337,9 @@ impl Recording {
     }
 
     fn accepted_state(&self) -> std::sync::MutexGuard<'_, ChannelState> {
-        self.state.lock().expect("the fake's lock is never held across a panic")
+        self.state
+            .lock()
+            .expect("the fake's lock is never held across a panic")
     }
 
     fn notices(&self) -> Vec<PetNotice> {
@@ -360,7 +370,8 @@ fn feed_with(channel: &Recording, preferences: NotificationPreferences) -> PetTa
 /// A feed with one run in flight, as a prompt leaves it.
 fn feed_running(channel: &Recording) -> PetTaskFeed {
     let feed = feed_with(channel, NotificationPreferences::default());
-    feed.install(&identity("epoch-1")).expect("the lock is fresh");
+    feed.install(&identity("epoch-1"))
+        .expect("the lock is fresh");
     feed.started(&identity("epoch-1"), SESSION, "run-0")
         .expect("the lock is fresh");
     feed
@@ -419,7 +430,10 @@ fn a_completion_reaches_the_channel_and_the_row_says_so() {
     let rows = ledger.unread();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].delivery, DeliveryState::Delivered);
-    assert!(rows[0].unread, "a notice the user has not looked at is still owed");
+    assert!(
+        rows[0].unread,
+        "a notice the user has not looked at is still owed"
+    );
 }
 
 #[test]
@@ -486,7 +500,8 @@ fn the_switch_the_settings_page_writes_decides_the_notice() {
             ..NotificationPreferences::default()
         },
     );
-    feed.install(&identity("epoch-1")).expect("the lock is fresh");
+    feed.install(&identity("epoch-1"))
+        .expect("the lock is fresh");
     feed.started(&identity("epoch-1"), SESSION, "run-0")
         .expect("the lock is fresh");
     ending(&feed, "run-0", 1);
@@ -494,10 +509,15 @@ fn the_switch_the_settings_page_writes_decides_the_notice() {
     // Nothing is gathering to flush, and that is the switch working: the burst is dropped at the
     // channel check rather than held for a delivery that will never be asked for.
     assert_eq!(
-        feed.notifications().expect("the ledger's lock is fresh").pending_due(),
+        feed.notifications()
+            .expect("the ledger's lock is fresh")
+            .pending_due(),
         None
     );
-    assert!(channel.notices().is_empty(), "the user asked not to be told");
+    assert!(
+        channel.notices().is_empty(),
+        "the user asked not to be told"
+    );
 
     let ledger = feed.notifications().expect("the ledger's lock is fresh");
     let rows = ledger.unread();
@@ -517,7 +537,8 @@ fn a_burst_asks_the_host_for_one_wake_at_the_ledgers_own_due_time() {
     let sink = Arc::clone(&asked);
     feed.set_notice_waker(move |due_at_ms| sink.lock().expect("the lock is fresh").push(due_at_ms));
 
-    feed.install(&identity("epoch-1")).expect("the lock is fresh");
+    feed.install(&identity("epoch-1"))
+        .expect("the lock is fresh");
     feed.started(&identity("epoch-1"), SESSION, "run-0")
         .expect("the lock is fresh");
     feed.started(&identity("epoch-1"), SESSION, "run-1")
@@ -539,7 +560,10 @@ fn a_burst_asks_the_host_for_one_wake_at_the_ledgers_own_due_time() {
         .expect("the lock is fresh");
     feed.flush_notices(first).expect("the lock is fresh");
     ending(&feed, "run-2", 3);
-    assert_eq!(*asked.lock().expect("the lock is fresh"), vec![first, due(&feed)]);
+    assert_eq!(
+        *asked.lock().expect("the lock is fresh"),
+        vec![first, due(&feed)]
+    );
 }
 
 #[test]
@@ -551,7 +575,8 @@ fn a_run_the_runtime_left_behind_is_announced() {
     let channel = Recording::new();
     let feed = feed_running(&channel);
 
-    feed.install(&identity("epoch-2")).expect("the lock is fresh");
+    feed.install(&identity("epoch-2"))
+        .expect("the lock is fresh");
 
     let notices = channel.notices();
     assert_eq!(notices.len(), 1);
@@ -590,7 +615,10 @@ fn a_frame_the_window_already_has_is_not_a_fact_for_the_ledger() {
 
     assert_eq!(channel.notices().len(), 1, "one frame is one notice");
     assert_eq!(
-        feed.notifications().expect("the ledger's lock is fresh").unread().len(),
+        feed.notifications()
+            .expect("the ledger's lock is fresh")
+            .unread()
+            .len(),
         1
     );
 }
@@ -679,16 +707,25 @@ fn an_ending_the_user_never_looked_at_survives_a_restart() {
         "the ledger lives beside the character library, inside the pet's own directory"
     );
     let feed = feed_on(&channel, store, 1_000);
-    feed.install(&identity("epoch-1")).expect("the lock is fresh");
+    feed.install(&identity("epoch-1"))
+        .expect("the lock is fresh");
     ending(&feed, "run-0", 1);
-    let _ = feed.flush_notices(due(&feed)).expect("the ledger's lock is fresh");
+    let _ = feed
+        .flush_notices(due(&feed))
+        .expect("the ledger's lock is fresh");
     assert_eq!(channel.notices().len(), 1, "the notice went out");
     drop(feed);
 
     let (restarted, detail) = reopen(&channel, &data, 2_000);
     assert!(detail.is_empty(), "the ledger was read: {detail:?}");
-    let unread = restarted.notifications().expect("the ledger's lock is fresh");
-    assert_eq!(unread.unread().len(), 1, "the row the user never saw is back");
+    let unread = restarted
+        .notifications()
+        .expect("the ledger's lock is fresh");
+    assert_eq!(
+        unread.unread().len(),
+        1,
+        "the row the user never saw is back"
+    );
     assert_eq!(unread.unread()[0].key.agent_id, AGENT);
     assert_eq!(
         unread.unread()[0].delivery,
@@ -734,10 +771,15 @@ fn a_reminder_older_than_the_bound_does_not_come_back() {
 
     let channel = Recording::new();
     let (restarted, _) = reopen(&channel, &data, now);
-    let ledger = restarted.notifications().expect("the ledger's lock is fresh");
+    let ledger = restarted
+        .notifications()
+        .expect("the ledger's lock is fresh");
     let unread = ledger.unread();
     assert_eq!(unread.len(), 1, "{unread:?}");
-    assert_eq!(unread[0].key.run_id, "run-new", "the row inside the bound is kept");
+    assert_eq!(
+        unread[0].key.run_id, "run-new",
+        "the row inside the bound is kept"
+    );
 }
 
 /// A mark written by a previous run is not a mark.
@@ -772,7 +814,10 @@ fn a_mark_from_a_previous_run_does_not_swallow_this_runs_ending() {
         MarkOutcome::Fresh,
         "a mark from another process is not a mark"
     );
-    assert!(loaded.dropped >= 1, "the drop is counted rather than silent");
+    assert!(
+        loaded.dropped >= 1,
+        "the drop is counted rather than silent"
+    );
 
     // And the same through the feed, which is where it matters: the ending this run produces at
     // sequence one is news, is recorded, and is announced.
@@ -784,7 +829,8 @@ fn a_mark_from_a_previous_run_does_not_swallow_this_runs_ending() {
         ),
         Some(store),
     );
-    feed.install(&identity("epoch-1")).expect("the lock is fresh");
+    feed.install(&identity("epoch-1"))
+        .expect("the lock is fresh");
     ending(&feed, "run-0", 1);
     let notice = feed
         .flush_notices(due(&feed))
@@ -817,16 +863,25 @@ fn a_ledger_a_newer_build_wrote_is_read_only() {
     let loaded = store.load(0);
     assert!(loaded.history.is_empty());
     assert!(
-        loaded.detail.as_deref().is_some_and(|d| d.contains("newer") || d.contains("schema")),
+        loaded
+            .detail
+            .as_deref()
+            .is_some_and(|d| d.contains("newer") || d.contains("schema")),
         "the caller is told why nothing was restored: {:?}",
         loaded.detail
     );
 
     assert_eq!(
-        store.save(&TaskHistory::new()).expect("a refusal is an answer"),
+        store
+            .save(&TaskHistory::new())
+            .expect("a refusal is an answer"),
         SaveOutcome::ReadOnly
     );
-    assert_eq!(stored_ledger(&data), future, "the future ledger is untouched");
+    assert_eq!(
+        stored_ledger(&data),
+        future,
+        "the future ledger is untouched"
+    );
 }
 
 /// A ledger that did not change is not written again.
@@ -891,7 +946,9 @@ fn the_feed_the_app_starts_with_reads_its_switches_and_its_ledger() {
     let channel = Recording::new();
     let store = HistoryStore::new(&data).expect("an absolute data directory is in scope");
     let first = feed_on(&channel, store, 1_000);
-    first.install(&identity("epoch-1")).expect("the lock is fresh");
+    first
+        .install(&identity("epoch-1"))
+        .expect("the lock is fresh");
     ending(&first, "run-0", 1);
     drop(first);
 
@@ -922,12 +979,17 @@ fn the_feed_the_app_starts_with_reads_its_switches_and_its_ledger() {
 
     // And the switch is the one this process decides by — which is only visible in what the ledger
     // does with the next ending: the row is still written, and no notice is attempted.
-    feed.install(&identity("epoch-1")).expect("the lock is fresh");
+    feed.install(&identity("epoch-1"))
+        .expect("the lock is fresh");
     ending(&feed, "run-1", 2);
     let ledger = feed.notifications().expect("the ledger's lock is fresh");
     assert!(
         ledger.pending_due().is_none(),
         "the switch the page saved silences the burst"
     );
-    assert_eq!(ledger.unread().len(), 2, "the ending is still recorded as unread");
+    assert_eq!(
+        ledger.unread().len(),
+        2,
+        "the ending is still recorded as unread"
+    );
 }

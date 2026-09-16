@@ -22,7 +22,13 @@ use crate::support::{
     silent, slice_after, slice_between, state_named, RecordingChannel, Stream,
 };
 
-fn record(history: &mut TaskHistory, task: &PetTaskKey, state: PetTaskState, at_ms: i64, unread: bool) {
+fn record(
+    history: &mut TaskHistory,
+    task: &PetTaskKey,
+    state: PetTaskState,
+    at_ms: i64,
+    unread: bool,
+) {
     let _ = history.record(TaskRecord {
         key: task.clone(),
         state,
@@ -89,7 +95,11 @@ fn the_key_token_is_injective_where_a_join_by_colons_is_not() {
     let joined = |task: &PetTaskKey| {
         format!(
             "{}:{}:{}:{}:{}:{}",
-            task.agent_id, task.profile_id, task.runtime_epoch, task.vault_id, task.session_id,
+            task.agent_id,
+            task.profile_id,
+            task.runtime_epoch,
+            task.vault_id,
+            task.session_id,
             task.run_id
         )
     };
@@ -131,9 +141,15 @@ fn the_bound_drops_the_oldest_row_the_user_has_seen() {
         .expect("the bound was reached");
 
     assert_eq!(evicted.key, seen);
-    assert!(!evicted.was_unread, "there was something seen to drop instead");
+    assert!(
+        !evicted.was_unread,
+        "there was something seen to drop instead"
+    );
     assert!(history.get(&seen).is_none());
-    assert!(history.get(&unseen).is_some(), "an unseen row is not dropped for a seen one");
+    assert!(
+        history.get(&unseen).is_some(),
+        "an unseen row is not dropped for a seen one"
+    );
     assert!(history.get(&newest).is_some());
 }
 
@@ -208,7 +224,10 @@ fn updating_a_key_evicts_nothing_and_never_clears_unread() {
         unread: false,
     });
 
-    assert!(evicted.is_none(), "an update reuses a row rather than needing one");
+    assert!(
+        evicted.is_none(),
+        "an update reuses a row rather than needing one"
+    );
     assert_eq!(history.len(), 2);
     let row = history.get(&task).expect("the row is there");
     assert_eq!(row.state, PetTaskState::Failed);
@@ -252,19 +271,27 @@ fn a_restored_ledger_does_not_replay_what_it_already_announced() {
     assert_eq!(restored.dropped, 0);
 
     let second_channel = RecordingChannel::new();
-    let mut restarted =
-        crate::support::restored(&second_channel, NotificationPreferences::default(), restored.history);
+    let mut restarted = crate::support::restored(
+        &second_channel,
+        NotificationPreferences::default(),
+        restored.history,
+    );
 
     // §6.3: 「在同次应用运行内，关开桌宠或重连不重复提醒；重启读取已处理账本」. The same ending, one frame
     // later on the same stream — what a remounting window would replay — is a duplicate rather than
     // a second notice, and the answer comes from the record rather than from the mark.
     let replay = restarted.observe(stream.at(&task, PetTaskState::Failed, 2_000));
     assert_eq!(silent(&replay), SilenceReason::Duplicate);
-    assert_eq!(second_channel.count(), 0, "nothing is announced twice across a restart");
+    assert_eq!(
+        second_channel.count(),
+        0,
+        "nothing is announced twice across a restart"
+    );
 
     // And a *new* ending after the restart is still announced: the restored ledger is a memory, not
     // a mute.
-    let fresh = delivered(&restarted.observe(stream.at(&key("run-2"), PetTaskState::Failed, 3_000)));
+    let fresh =
+        delivered(&restarted.observe(stream.at(&key("run-2"), PetTaskState::Failed, 3_000)));
     assert_eq!(fresh.state, PetTaskState::Failed);
     assert_eq!(second_channel.count(), 1);
 }
@@ -291,7 +318,11 @@ fn a_restored_ledger_keeps_the_unread_rows_and_what_happened_to_their_notices() 
     );
 
     let unread = restarted.unread();
-    assert_eq!(unread.len(), 1, "the row the user has not seen is the one that came back");
+    assert_eq!(
+        unread.len(),
+        1,
+        "the row the user has not seen is the one that came back"
+    );
     assert_eq!(unread[0].key, key("run-2"));
     assert_eq!(unread[0].delivery, DeliveryState::Delivered);
     assert_eq!(
@@ -306,13 +337,22 @@ fn a_restored_ledger_keeps_the_unread_rows_and_what_happened_to_their_notices() 
 #[test]
 fn a_ledger_from_a_newer_schema_is_not_read_with_this_builds_defaults() {
     let mut history = TaskHistory::with_capacity(4, 4);
-    record(&mut history, &key("run-1"), PetTaskState::Failed, 1_000, true);
+    record(
+        &mut history,
+        &key("run-1"),
+        PetTaskState::Failed,
+        1_000,
+        true,
+    );
     let stored = history.encode();
     let newer = stored.replace(
         &format!("\"version\":{HISTORY_SCHEMA_VERSION}"),
         &format!("\"version\":{}", HISTORY_SCHEMA_VERSION + 1),
     );
-    assert_ne!(stored, newer, "the version field moved, so this test is about nothing");
+    assert_ne!(
+        stored, newer,
+        "the version field moved, so this test is about nothing"
+    );
 
     // §10.2's rule, in the direction that protects the user's data: a build that meets a record it
     // does not understand reports rather than reading the fields it recognises and writing back the
@@ -368,9 +408,18 @@ fn the_stream_mark_notices_a_gap_across_a_restart() {
     let mut history = TaskHistory::with_capacity(4, 4);
     let task = key("run-1");
     let session = session_of(&task);
-    assert_eq!(history.observe_stream(&session, 1, 1_000), MarkOutcome::Fresh);
-    assert_eq!(history.observe_stream(&session, 2, 1_100), MarkOutcome::Advanced);
-    assert_eq!(history.observe_stream(&session, 2, 1_200), MarkOutcome::Replay);
+    assert_eq!(
+        history.observe_stream(&session, 1, 1_000),
+        MarkOutcome::Fresh
+    );
+    assert_eq!(
+        history.observe_stream(&session, 2, 1_100),
+        MarkOutcome::Advanced
+    );
+    assert_eq!(
+        history.observe_stream(&session, 2, 1_200),
+        MarkOutcome::Replay
+    );
 
     let Decoded::Restored(restored) = TaskHistory::decode(&history.encode(), 4, 4) else {
         panic!("readable");
@@ -388,7 +437,11 @@ fn the_stream_mark_notices_a_gap_across_a_restart() {
 
     assert_eq!(delivered(&outcome).state, PetTaskState::Failed);
     assert_eq!(policy.gaps().len(), 1);
-    assert_eq!(policy.gaps()[0].missed, 3, "frames 3, 4 and 5 are the ones nobody saw");
+    assert_eq!(
+        policy.gaps()[0].missed,
+        3,
+        "frames 3, 4 and 5 are the ones nobody saw"
+    );
     assert_eq!(policy.gaps()[0].session, session);
 }
 
@@ -498,12 +551,7 @@ fn every_channel_is_a_switch_the_settings_page_offers() {
     // one has a field in D1's domain rather than that the two lists match.
     let config = contract("pet-contracts/config.ts");
     let fields = identifiers(slice_after(&config, "notification: {", 0, "\n  }"));
-    for field in [
-        "onTurnFinished",
-        "onStopped",
-        "onFailed",
-        "onWaitingInput",
-    ] {
+    for field in ["onTurnFinished", "onStopped", "onFailed", "onWaitingInput"] {
         assert!(
             fields.contains(&field.to_string()),
             "{field} is not a switch the contract has: {fields:?}"

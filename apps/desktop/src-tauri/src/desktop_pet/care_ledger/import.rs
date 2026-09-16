@@ -95,7 +95,9 @@ pub enum CareImportOutcome {
     Merged(CareImportReport),
     /// The ledger moved between the read and the submission. Nothing was written, and nothing is
     /// merged on the way past: a merge is how a value the user just earned gets undone.
-    Conflict { current_revision: u64 },
+    Conflict {
+        current_revision: u64,
+    },
     Refused {
         reason: CareImportRefusal,
         detail: String,
@@ -177,7 +179,11 @@ impl CareLedger {
         kept: &mut Vec<String>,
     ) {
         let offered = payload.streak_days.unwrap_or(0);
-        let Some(day) = payload.last_fed_day_key.as_deref().and_then(LocalDay::parse) else {
+        let Some(day) = payload
+            .last_fed_day_key
+            .as_deref()
+            .and_then(LocalDay::parse)
+        else {
             if offered > 0 {
                 kept.push(IMPORT_STREAK.to_string());
             }

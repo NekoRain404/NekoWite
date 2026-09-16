@@ -86,7 +86,10 @@ fn installing_a_new_instance_restates_what_the_previous_one_had_in_flight() {
     let restated = projection.install(&current);
 
     assert_eq!(restated.len(), 1, "the run that was in flight is restated");
-    assert_eq!(state_of(&projection, &key(&previous, "ses_1", "run-1")), "interrupted");
+    assert_eq!(
+        state_of(&projection, &key(&previous, "ses_1", "run-1")),
+        "interrupted"
+    );
     assert_eq!(
         projection
             .task(&key(&previous, "ses_1", "run-1"))
@@ -101,7 +104,10 @@ fn installing_a_new_instance_restates_what_the_previous_one_had_in_flight() {
         Disposition::Foreign,
         "a late completion cannot reach back into an instance that is over"
     );
-    assert_eq!(state_of(&projection, &key(&previous, "ses_1", "run-1")), "interrupted");
+    assert_eq!(
+        state_of(&projection, &key(&previous, "ses_1", "run-1")),
+        "interrupted"
+    );
 }
 
 /// A different vault is a different process (`registry.rs:414-440` keys its table by the triple),
@@ -124,8 +130,14 @@ fn a_new_instance_in_another_vault_abandons_nothing() {
         vec![&key(&here, "ses_1", "run-1")],
         "only the vault whose engine was replaced has anything restated"
     );
-    assert_eq!(state_of(&projection, &key(&elsewhere, "ses_2", "run-1")), "working");
-    assert_eq!(state_of(&projection, &key(&here, "ses_1", "run-1")), "interrupted");
+    assert_eq!(
+        state_of(&projection, &key(&elsewhere, "ses_2", "run-1")),
+        "working"
+    );
+    assert_eq!(
+        state_of(&projection, &key(&here, "ses_1", "run-1")),
+        "interrupted"
+    );
 }
 
 /// Installing the same instance twice is an ordinary thing for a caller to do — a start that is
@@ -145,7 +157,10 @@ fn installing_the_same_instance_twice_changes_nothing() {
     let restated = projection.install(&ours.clone());
 
     assert!(restated.is_empty());
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "working");
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-1")),
+        "working"
+    );
     assert_eq!(
         projection
             .task(&key(&ours, "ses_1", "run-1"))
@@ -167,10 +182,15 @@ fn retiring_an_instance_restates_its_work_and_refuses_its_later_frames() {
     let restated = projection.retire(&ours);
 
     assert_eq!(restated.len(), 1);
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "interrupted");
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-1")),
+        "interrupted"
+    );
     assert_eq!(projection.installed(AGENT, "default", VAULT), None);
     assert_eq!(
-        projection.apply(&finished(&ours, "ses_1", "run-1", 1, "end-turn")).disposition,
+        projection
+            .apply(&finished(&ours, "ses_1", "run-1", 1, "end-turn"))
+            .disposition,
         Disposition::Foreign
     );
 }
@@ -190,9 +210,19 @@ fn a_task_that_already_ended_keeps_its_ending() {
 
     let restated = projection.retire(&ours);
 
-    assert_eq!(restated.len(), 1, "only the run that was in flight is restated");
-    assert_eq!(state_of(&projection, &key(&ours, "ses_2", "run-2")), "stopped");
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "interrupted");
+    assert_eq!(
+        restated.len(),
+        1,
+        "only the run that was in flight is restated"
+    );
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_2", "run-2")),
+        "stopped"
+    );
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-1")),
+        "interrupted"
+    );
 }
 
 /// Retiring an instance that is not the installed one is a no-op rather than an error: a teardown
@@ -209,8 +239,14 @@ fn retiring_an_instance_that_is_not_installed_does_nothing() {
     let restated = projection.retire(&previous);
 
     assert!(restated.is_empty());
-    assert_eq!(state_of(&projection, &key(&current, "ses_1", "run-1")), "working");
-    assert_eq!(projection.installed(AGENT, "default", VAULT), Some("epoch-2"));
+    assert_eq!(
+        state_of(&projection, &key(&current, "ses_1", "run-1")),
+        "working"
+    );
+    assert_eq!(
+        projection.installed(AGENT, "default", VAULT),
+        Some("epoch-2")
+    );
 }
 
 /// A prompt is a fact about a run, and a run is only a task if its instance is the installed one:

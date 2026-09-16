@@ -73,9 +73,7 @@ pub enum OpenFileRequest {
     },
     /// The path cannot be opened and `message` says why. A refusal that explains
     /// itself is a better answer than opening the wrong folder in silence.
-    Refused {
-        message: String,
-    },
+    Refused { message: String },
 }
 
 /// The request waiting for the window to collect it.
@@ -209,13 +207,11 @@ pub fn markdown_arg<S: AsRef<OsStr>>(
 /// is spelled by whoever created the file, and `Notes.MD` is the same document
 /// as `notes.md`.
 fn has_markdown_extension(path: &Path) -> bool {
-    path.extension()
-        .and_then(OsStr::to_str)
-        .is_some_and(|ext| {
-            MARKDOWN_EXTENSIONS
-                .iter()
-                .any(|known| ext.eq_ignore_ascii_case(known))
-        })
+    path.extension().and_then(OsStr::to_str).is_some_and(|ext| {
+        MARKDOWN_EXTENSIONS
+            .iter()
+            .any(|known| ext.eq_ignore_ascii_case(known))
+    })
 }
 
 /// [`resolve_launch`] against the app's own state: the roots this session has

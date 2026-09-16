@@ -60,7 +60,9 @@ impl FakeSurfaces {
     }
 
     pub fn state(&self) -> std::sync::MutexGuard<'_, SurfaceState> {
-        self.state.lock().expect("the fake's lock is never held across a panic")
+        self.state
+            .lock()
+            .expect("the fake's lock is never held across a panic")
     }
 
     pub fn live(&self) -> Vec<String> {
@@ -140,6 +142,7 @@ pub fn caller(label: &str) -> CallerWindow {
 /// Fill the host with `count` characters, so a cap test is about the cap and not about names.
 pub fn fill(host: &mut PetWindowHost, count: usize) {
     for index in 0..count {
-        host.open(&format!("character-{index}")).expect("within the cap");
+        host.open(&format!("character-{index}"))
+            .expect("within the cap");
     }
 }

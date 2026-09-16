@@ -53,7 +53,7 @@
 mod import;
 
 pub use import::{
-    CareImport, CareImportOutcome, CareImportPayload, CareImportReport, CareImportRefusal,
+    CareImport, CareImportOutcome, CareImportPayload, CareImportRefusal, CareImportReport,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -407,7 +407,12 @@ impl CareLedger {
         } else {
             // Recorded even though it pays nothing: "this run has been decided" is what stops a late
             // or re-delivered event from paying it afterwards (§6.3's terminal states are terminal).
-            (CareDecision::Unpaid { outcome: event.outcome }, Vec::new())
+            (
+                CareDecision::Unpaid {
+                    outcome: event.outcome,
+                },
+                Vec::new(),
+            )
         };
 
         self.decided.insert(key.to_string(), decision);

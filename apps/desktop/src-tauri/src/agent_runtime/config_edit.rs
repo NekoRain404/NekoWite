@@ -72,8 +72,7 @@ impl Revision {
     /// conflict, because those are two different things for a user to act on: "someone else changed
     /// this" and "this form was not built from a document at all".
     pub fn parse(value: &str) -> Option<Self> {
-        let well_formed =
-            value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit());
+        let well_formed = value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit());
         well_formed.then(|| Self(value.to_ascii_lowercase()))
     }
 }
@@ -369,7 +368,10 @@ pub(crate) fn write_replacing(path: &Path, text: &str) -> Result<(), ConfigError
         .create_new(true)
         .mode(mode)
         .open(&temp)
-        .and_then(|mut file| file.write_all(text.as_bytes()).and_then(|()| file.sync_all()))
+        .and_then(|mut file| {
+            file.write_all(text.as_bytes())
+                .and_then(|()| file.sync_all())
+        })
         .and_then(|()| fs::rename(&temp, path));
     if let Err(error) = staged {
         let _ = fs::remove_file(&temp);
@@ -639,9 +641,9 @@ impl<'a> Scanner<'a> {
         let token = std::str::from_utf8(&self.bytes[start..self.pos]).unwrap_or("");
         let body = token.strip_prefix('-').unwrap_or(token);
         let numeric = !body.is_empty()
-            && body
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'.' | b'e' | b'E' | b'+' | b'-'));
+            && body.bytes().all(|byte| {
+                byte.is_ascii_digit() || matches!(byte, b'.' | b'e' | b'E' | b'+' | b'-')
+            });
         if matches!(token, "true" | "false" | "null") || numeric {
             Ok(())
         } else {

@@ -56,7 +56,10 @@ fn a_merge_raises_what_is_higher_and_keeps_what_is_not() {
         },
     )));
 
-    assert_eq!(fields(&report.raised), [IMPORT_MEALS, IMPORT_STREAK, IMPORT_TOKENS]);
+    assert_eq!(
+        fields(&report.raised),
+        [IMPORT_MEALS, IMPORT_STREAK, IMPORT_TOKENS]
+    );
     assert_eq!(fields(&report.kept), [IMPORT_XP]);
     assert_eq!(ledger.xp(), 100, "a file that was behind lowered the total");
     assert_eq!(ledger.meals(), 9);
@@ -112,7 +115,13 @@ fn every_field_a_file_offered_lands_in_exactly_one_of_raised_and_kept() {
 #[test]
 fn a_stale_submission_is_a_conflict_that_writes_nothing() {
     let mut ledger = ledger_with(1);
-    let stale = offer(&ledger, CareImportPayload { xp: Some(10_000), ..Default::default() });
+    let stale = offer(
+        &ledger,
+        CareImportPayload {
+            xp: Some(10_000),
+            ..Default::default()
+        },
+    );
 
     // The ledger earned something after the file was read — which is what makes the file stale. D6's
     // shape for a stale write is a refusal the caller reloads from, never a merge: merging is how the
@@ -165,7 +174,10 @@ fn a_record_from_a_newer_build_is_refused_rather_than_read() {
     let submission = CareImport {
         revision: ledger.revision(),
         schema_version: LEDGER_SCHEMA_VERSION + 1,
-        payload: CareImportPayload { xp: Some(99_999), ..Default::default() },
+        payload: CareImportPayload {
+            xp: Some(99_999),
+            ..Default::default()
+        },
     };
 
     let outcome = ledger.import(submission);
@@ -255,19 +267,21 @@ fn a_badge_is_added_and_never_taken_away() {
 #[test]
 fn a_day_nobody_can_read_is_skipped_and_reported() {
     let mut ledger = ledger_with(1);
-    let report = merged(ledger.import(offer(
-        &ledger,
-        CareImportPayload {
-            days: [
-                ("2026-02-30".to_string(), 1_000),
-                ("last tuesday".to_string(), 2_000),
-                ("2026-09-01".to_string(), 3_000),
-            ]
-            .into_iter()
-            .collect(),
-            ..CareImportPayload::default()
-        },
-    )));
+    let report = merged(
+        ledger.import(offer(
+            &ledger,
+            CareImportPayload {
+                days: [
+                    ("2026-02-30".to_string(), 1_000),
+                    ("last tuesday".to_string(), 2_000),
+                    ("2026-09-01".to_string(), 3_000),
+                ]
+                .into_iter()
+                .collect(),
+                ..CareImportPayload::default()
+            },
+        )),
+    );
 
     // The readable day raised; the unreadable ones are skipped, and the report says so rather than
     // pretending the file had nothing else in it. Nothing was removed from the ledger, which is the
@@ -339,5 +353,8 @@ fn a_ledger_that_has_settled_nothing_accepts_a_file_and_keeps_its_own_history() 
     // deduplicated against, and the next real completion still pays.
     assert_eq!(ledger.decided(), 0);
     pay(&mut ledger, "run-a", noon(day(2026, 9, 17)));
-    assert_eq!(ledger.xp(), 1_250 + crate::desktop_pet::care_ledger::MEAL_XP);
+    assert_eq!(
+        ledger.xp(),
+        1_250 + crate::desktop_pet::care_ledger::MEAL_XP
+    );
 }

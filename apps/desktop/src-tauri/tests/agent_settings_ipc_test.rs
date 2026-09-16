@@ -67,10 +67,10 @@ mod agent_runtime {
     // library builds rather than against a hand-written copy of it. `unused_imports` is allowed
     // with `dead_code` because this target reaches the tree through the names its tests use, while
     // `skills.rs` re-exports the rest for the library.
-    #[allow(dead_code, unused_imports)]
-    pub mod skills;
     #[allow(dead_code)]
     pub mod registry;
+    #[allow(dead_code, unused_imports)]
+    pub mod skills;
     // Included because `process` and `profile` both name it through `super::`: the launch
     // environment and the credential holder share the one type that may not be printed, and this
     // target reaches it from both sides.

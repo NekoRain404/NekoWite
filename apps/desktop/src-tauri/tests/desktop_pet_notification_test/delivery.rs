@@ -10,7 +10,9 @@
 //! writes down that the attempt failed, and nothing quietly tries again (§6.3's at-most-once).
 
 use crate::desktop_pet::history::{DeliveryState, TaskHistory};
-use crate::desktop_pet::notification_delivery::{DeliveryFailure, NoChannel, NotificationDelivery, PetNotice};
+use crate::desktop_pet::notification_delivery::{
+    DeliveryFailure, NoChannel, NotificationDelivery, PetNotice,
+};
 use crate::desktop_pet::notification_policy::{NotificationPolicy, NotificationPreferences};
 use crate::desktop_pet::task_projection::PetTaskState;
 use crate::support::{delivered, gathering, key, policy, refused, RecordingChannel, Stream};
@@ -43,7 +45,10 @@ fn a_channel_that_cannot_deliver_says_so() {
     assert_eq!(failure.kind(), "channel");
     // The outcome is the *only* place the truth can hide: a delivery that failed is not a delivery,
     // so there is no arm for it to be reported as one.
-    assert!(!matches!(outcome, crate::desktop_pet::notification_policy::NotificationOutcome::Delivered(_)));
+    assert!(!matches!(
+        outcome,
+        crate::desktop_pet::notification_policy::NotificationOutcome::Delivered(_)
+    ));
 }
 
 #[test]
@@ -56,8 +61,15 @@ fn a_failed_delivery_leaves_the_row_unread_and_marked_failed() {
 
     let _ = policy.observe(stream.at(&task, PetTaskState::Failed, 1_000));
 
-    let row = policy.history().get(&task).expect("the row was written first");
-    assert_eq!(row.delivery, DeliveryState::Failed, "§6.3: 投递失败不伪装成功");
+    let row = policy
+        .history()
+        .get(&task)
+        .expect("the row was written first");
+    assert_eq!(
+        row.delivery,
+        DeliveryState::Failed,
+        "§6.3: 投递失败不伪装成功"
+    );
     assert!(row.unread, "what the user still has is the row");
     assert_eq!(policy.unread().len(), 1);
 }
@@ -78,7 +90,11 @@ fn a_failed_delivery_is_not_tried_again() {
     // about a channel the ledger cannot see, so the tick does not ask again.
     assert!(policy.flush_due(60_000).is_none());
     let _ = policy.observe(stream.at(&task, PetTaskState::Failed, 2_000));
-    assert_eq!(channel.attempts(), 1, "no retry, and no second attempt for a repeat");
+    assert_eq!(
+        channel.attempts(),
+        1,
+        "no retry, and no second attempt for a repeat"
+    );
 
     let row = policy.history().get(&task).expect("recorded");
     assert_eq!(row.delivery, DeliveryState::Failed);
@@ -173,12 +189,17 @@ fn a_burst_that_cannot_be_shown_keeps_every_row_it_stood_for() {
     let second = key("run-2");
 
     let _ = policy.observe(stream.at(&first, PetTaskState::TurnFinished, 1_000));
-    let (_, due_at_ms) = gathering(&policy.observe(stream.at(&second, PetTaskState::TurnFinished, 1_100)));
+    let (_, due_at_ms) =
+        gathering(&policy.observe(stream.at(&second, PetTaskState::TurnFinished, 1_100)));
     let outcome = policy.flush_due(due_at_ms).expect("the burst was due");
     let (notice, _) = refused(&outcome);
 
     assert_eq!(notice.count, 2);
-    assert_eq!(channel.attempts(), 1, "one notice, one attempt, however many it stood for");
+    assert_eq!(
+        channel.attempts(),
+        1,
+        "one notice, one attempt, however many it stood for"
+    );
     assert_eq!(policy.unread().len(), 2);
     for row in policy.unread() {
         assert_eq!(row.delivery, DeliveryState::Failed);
@@ -219,6 +240,9 @@ fn the_three_ways_a_channel_can_fail_are_told_apart() {
     channel.accept();
     let notice = delivered(&policy.observe(stream.at(&key("run-2"), PetTaskState::Failed, 2_000)));
     assert_eq!(notice.state, PetTaskState::Failed);
-    assert_eq!(channel.count(), 1, "the channel is believed again once it answers");
+    assert_eq!(
+        channel.count(),
+        1,
+        "the channel is believed again once it answers"
+    );
 }
-

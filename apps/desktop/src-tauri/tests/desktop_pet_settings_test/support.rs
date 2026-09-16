@@ -103,7 +103,9 @@ impl FakeSurfaces {
     }
 
     pub fn state(&self) -> std::sync::MutexGuard<'_, SurfaceState> {
-        self.state.lock().expect("the fake's lock is never held across a panic")
+        self.state
+            .lock()
+            .expect("the fake's lock is never held across a panic")
     }
 
     pub fn opened(&self) -> Vec<(String, String)> {

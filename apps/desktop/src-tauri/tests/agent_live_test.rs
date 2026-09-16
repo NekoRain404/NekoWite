@@ -20,14 +20,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_client_protocol::schema::v1::Usage;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use nekowite_lib::agent_runtime::live_notes::{
     LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes,
 };
 use nekowite_lib::agent_runtime::{
-    AgentEventEnvelope, AgentEventKind, AgentIdentity, AgentRuntime, AgentRuntimeEvents,
-    EngineConnection, EngineLaunch, SYSTEM_CA_BUNDLE, VaultFiles, env_pairs, isolated_profile_env,
+    env_pairs, isolated_profile_env, AgentEventEnvelope, AgentEventKind, AgentIdentity,
+    AgentRuntime, AgentRuntimeEvents, EngineConnection, EngineLaunch, VaultFiles, SYSTEM_CA_BUNDLE,
 };
 
 /// The model P0 §2.3 used. It is a gateway model chosen for this test rather than a default the app
@@ -248,8 +248,7 @@ async fn the_real_engine_completes_a_real_prompt() {
     let (connection, engine_events) = EngineConnection::connect(&launch)
         .await
         .expect("the real engine should start");
-    let (runtime, mut events) =
-        AgentRuntime::new(
+    let (runtime, mut events) = AgentRuntime::new(
         identity(),
         connection,
         engine_events,
@@ -262,7 +261,10 @@ async fn the_real_engine_completes_a_real_prompt() {
     assert_eq!(handshake.protocol_version.as_u16(), 1, "protocolVersion");
     let info = handshake.agent_info.expect("agentInfo");
     assert_eq!(info.name, "OpenCode");
-    eprintln!("handshake: protocolVersion=1 agentInfo={} {}", info.name, info.version);
+    eprintln!(
+        "handshake: protocolVersion=1 agentInfo={} {}",
+        info.name, info.version
+    );
 
     // ---- 2. the session (P0 §2.2) --------------------------------------------------------------
     // No credentials are involved: the engine opens a session with none configured, and the
@@ -274,7 +276,10 @@ async fn the_real_engine_completes_a_real_prompt() {
     assert!(!session.session_id.is_empty(), "session/new returned no id");
     let model = config_option(&session.config_options, "model")
         .unwrap_or_else(|| panic!("no model selector in {:?}", session.config_options));
-    assert_eq!(model["type"], "select", "the model option is not a selector");
+    assert_eq!(
+        model["type"], "select",
+        "the model option is not a selector"
+    );
     eprintln!(
         "session: {} model option: current={} choices={}",
         session.session_id,

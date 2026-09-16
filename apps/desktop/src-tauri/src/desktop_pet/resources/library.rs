@@ -17,9 +17,9 @@ use sha2::{Digest, Sha256};
 
 use super::pack::{classify_pack, read_pack, Grid, RawFile};
 use super::{
-    hex, io_refusal, name_problem, CharacterKind, CreateRequest, InstallRequest, InstalledCharacter,
-    InstalledFile, Removal, ResourceRefusal, CHARACTERS_DIR, CHARACTER_SCHEMA_VERSION,
-    INSTALLED_MANIFEST, LIBRARY_DIR, RESERVED_PREFIX, STAGING_ATTEMPTS,
+    hex, io_refusal, name_problem, CharacterKind, CreateRequest, InstallRequest,
+    InstalledCharacter, InstalledFile, Removal, ResourceRefusal, CHARACTERS_DIR,
+    CHARACTER_SCHEMA_VERSION, INSTALLED_MANIFEST, LIBRARY_DIR, RESERVED_PREFIX, STAGING_ATTEMPTS,
 };
 use crate::storage::atomic_write::{atomic_write, move_no_clobber};
 
@@ -49,7 +49,9 @@ impl CharacterLibrary {
         // module's check is private. Two lists that must agree is the shape this repository
         // already treats as a defect; registering this module is where the integrator can lift
         // one of them.
-        const SYSTEM_PREFIXES: [&str; 8] = ["/usr", "/etc", "/opt", "/var", "/bin", "/sbin", "/lib", "/boot"];
+        const SYSTEM_PREFIXES: [&str; 8] = [
+            "/usr", "/etc", "/opt", "/var", "/bin", "/sbin", "/lib", "/boot",
+        ];
         let text = data.to_string_lossy();
         if let Some(prefix) = SYSTEM_PREFIXES
             .iter()
@@ -191,10 +193,11 @@ impl CharacterLibrary {
             let path = staging.path.join(&file.name);
             fs::write(&path, &file.bytes).map_err(|error| io_refusal(&path, error))?;
         }
-        let text = serde_json::to_string_pretty(&manifest)
-            .map_err(|error| ResourceRefusal::MalformedManifest {
+        let text = serde_json::to_string_pretty(&manifest).map_err(|error| {
+            ResourceRefusal::MalformedManifest {
                 detail: error.to_string(),
-            })?;
+            }
+        })?;
         atomic_write(&staging.path.join(INSTALLED_MANIFEST), &text)
             .map_err(|detail| io_refusal(&staging.path.join(INSTALLED_MANIFEST), detail))?;
         // The commit point. `move_no_clobber` rather than `fs::rename`, because a character

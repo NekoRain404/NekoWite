@@ -81,10 +81,11 @@ use super::desktop_pet_surface::settings_store;
 // re-export is supposed to prevent. They are `#[macro_export]`, which is what makes this `pub use`
 // of a macro legal in the first place.
 pub use super::desktop_pet_surface::{
-    PET_SETTINGS_CHANGED_CHANNEL, UNSELECTED_CHARACTER, __cmd__desktop_pet_read_settings,
-    __cmd__desktop_pet_update_settings, __tauri_command_name_desktop_pet_read_settings,
+    __cmd__desktop_pet_read_settings, __cmd__desktop_pet_update_settings,
+    __tauri_command_name_desktop_pet_read_settings,
     __tauri_command_name_desktop_pet_update_settings, apply_feature_switch,
     apply_notification_switch, desktop_pet_read_settings, desktop_pet_update_settings,
+    PET_SETTINGS_CHANGED_CHANNEL, UNSELECTED_CHARACTER,
 };
 
 /// The channel a pet window hears a change in the feature's state on (§7.1).
@@ -459,15 +460,14 @@ pub fn desktop_pet_appearance<R: tauri::Runtime>(
             ..
         } => {
             return Err(
-                "the pet's character settings are there and are not readable as a record".to_string(),
+                "the pet's character settings are there and are not readable as a record"
+                    .to_string(),
             )
         }
         // §10.2: written by a newer build, so this one reads it and does not touch it. There is no
         // record to draw from, and pretending there is would be reading a future schema's fields
         // by guess.
-        PetSettingsLoad::ReadOnly {
-            found_version, ..
-        } => {
+        PetSettingsLoad::ReadOnly { found_version, .. } => {
             return Err(format!(
                 "the pet's character settings are at schema {found_version}, which this build \
                  cannot read"
@@ -657,7 +657,10 @@ fn raise_main<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String
 /// the frames cost the main window a listener it never registered. A failed emit is not an error:
 /// it means no window is listening, which is what the shutdown path looks like, and the state is
 /// readable on request in any case.
-pub(super) fn publish_feature<R: tauri::Runtime>(app: &tauri::AppHandle<R>, state: PetFeatureState) {
+pub(super) fn publish_feature<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: PetFeatureState,
+) {
     let _ = tauri::Emitter::emit(app, PET_FEATURE_CHANNEL, state);
 }
 

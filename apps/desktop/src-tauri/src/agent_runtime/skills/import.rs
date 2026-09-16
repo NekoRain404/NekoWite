@@ -161,7 +161,8 @@ impl SkillLibrary {
                 });
             }
             fs::create_dir_all(&scope.root).map_err(|error| io_error(&scope.root, error))?;
-            fs::rename(&view.directory, &target).map_err(|error| io_error(&view.directory, error))?;
+            fs::rename(&view.directory, &target)
+                .map_err(|error| io_error(&view.directory, error))?;
             Ok(target)
         } else {
             self.stow(&scope.id, "disabled", &view.directory)
@@ -188,7 +189,6 @@ impl SkillLibrary {
         Err(SkillError::StoreOccupied { path: parent })
     }
 }
-
 
 /// Read a source directory into a preview: the checks and the file list an import would write.
 ///
@@ -252,9 +252,7 @@ fn read_source(source: &Path) -> Result<SkillPreview, SkillError> {
         }
         total_bytes += size;
         if total_bytes > MAX_IMPORTED_SKILL_BYTES {
-            return Err(SkillError::SkillTooLarge {
-                bytes: total_bytes,
-            });
+            return Err(SkillError::SkillTooLarge { bytes: total_bytes });
         }
         if relative != SKILL_FILE_NAME {
             scripts.push((relative.clone(), size));

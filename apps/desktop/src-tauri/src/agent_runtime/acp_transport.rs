@@ -32,16 +32,16 @@ use agent_client_protocol::schema::v1::{
     SessionNotification, WriteTextFileRequest, WriteTextFileResponse,
 };
 use agent_client_protocol::{
-    AcpAgent, Agent, ByteStreams, Client, ConnectionTo, Responder, on_receive_notification,
-    on_receive_request,
+    on_receive_notification, on_receive_request, AcpAgent, Agent, ByteStreams, Client,
+    ConnectionTo, Responder,
 };
 use tokio::sync::{mpsc, oneshot};
 
-use super::events::{TransportError, classify};
+use super::events::{classify, TransportError};
 use super::fs_capability::FsRequest;
 use super::process::{
-    BoundedFrameReader, EngineLaunch, FRAME_TOO_LARGE_MARKER, MAX_FRAME_BYTES, SHUTDOWN_GRACE,
-    StderrLog, pump_stderr, secrets_of, signal_group,
+    pump_stderr, secrets_of, signal_group, BoundedFrameReader, EngineLaunch, StderrLog,
+    FRAME_TOO_LARGE_MARKER, MAX_FRAME_BYTES, SHUTDOWN_GRACE,
 };
 
 // Declared by path rather than by name, for the reason `agent_runtime/skills.rs` gives about its
@@ -117,11 +117,12 @@ impl EngineConnection {
         // wrapped in a bounded adapter, and the SDK still does the framing,
         // JSON-RPC and dispatch on top.
         let agent = AcpAgent::new(launch.agent_config());
-        let (stdin, stdout, stderr, mut child) = agent.spawn_process().map_err(|error| {
-            TransportError::Disconnected {
-                detail: error.to_string(),
-            }
-        })?;
+        let (stdin, stdout, stderr, mut child) =
+            agent
+                .spawn_process()
+                .map_err(|error| TransportError::Disconnected {
+                    detail: error.to_string(),
+                })?;
 
         // stderr must always be drained: a full pipe blocks the engine on its
         // own logging. It is bounded and redacted on the way in.
@@ -141,12 +142,18 @@ impl EngineConnection {
             let _ = child_stop_rx.await;
             // Bounded wait for a normal exit first — the engine has just seen
             // stdin EOF and may be finishing a write it started.
-            if tokio::time::timeout(SHUTDOWN_GRACE, child.status()).await.is_err() {
+            if tokio::time::timeout(SHUTDOWN_GRACE, child.status())
+                .await
+                .is_err()
+            {
                 // Gone means gone: a failed signal is not reported on its own,
                 // because the only failure that matters is the child still
                 // running, and the next wait establishes that.
                 let _ = signal_group(pgid, "-TERM");
-                if tokio::time::timeout(SHUTDOWN_GRACE, child.status()).await.is_err() {
+                if tokio::time::timeout(SHUTDOWN_GRACE, child.status())
+                    .await
+                    .is_err()
+                {
                     let _ = signal_group(pgid, "-KILL");
                     // Reap it, so the pid is not left as a zombie.
                     let _ = child.status().await;

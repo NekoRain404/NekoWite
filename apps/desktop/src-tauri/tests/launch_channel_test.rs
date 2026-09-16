@@ -182,7 +182,10 @@ fn a_bus_launch_that_cannot_be_opened_creates_no_root() {
 
     for file in [outside.join("missing.md"), outside.clone()] {
         let err = resolve_launch(&registry, None, &file, SessionBus).unwrap_err();
-        assert!(!err.is_empty(), "a refusal that says nothing is not a refusal");
+        assert!(
+            !err.is_empty(),
+            "a refusal that says nothing is not a refusal"
+        );
     }
 
     assert!(

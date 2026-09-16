@@ -27,7 +27,10 @@ fn object_literal<'a>(text: &'a str, marker: &str) -> &'a str {
         .find(marker)
         .unwrap_or_else(|| panic!("{marker} is not declared"));
     let after = &text[at..];
-    let open = after.find("= {").unwrap_or_else(|| panic!("{marker} has no initializer")) + 3;
+    let open = after
+        .find("= {")
+        .unwrap_or_else(|| panic!("{marker} has no initializer"))
+        + 3;
     let rest = &after[open..];
     let end = rest
         .find("\n}")
@@ -85,7 +88,9 @@ fn number_after(text: &str, name: &str) -> f64 {
         .unwrap_or_else(|| panic!("{name} is not in {text}"))
         + marker.len();
     let rest = &text[start..];
-    let end = rest.find(|character| character == ',' || character == '}').unwrap_or(rest.len());
+    let end = rest
+        .find(|character| character == ',' || character == '}')
+        .unwrap_or(rest.len());
     rest[..end]
         .trim()
         .parse()
@@ -220,7 +225,10 @@ fn every_number_rule_is_the_typescript_one() {
                 })
         })
         .collect();
-    assert_eq!(by_path(&declared, |row| row.0.as_str()), by_path(&mine, |row| row.0.as_str()));
+    assert_eq!(
+        by_path(&declared, |row| row.0.as_str()),
+        by_path(&mine, |row| row.0.as_str())
+    );
 }
 
 /// Every structured field's rule: which container, what a member is, how long a line may be, and
@@ -264,29 +272,30 @@ fn every_structured_rule_is_the_typescript_one() {
     let mine: Vec<(String, String, String, Option<f64>, f64)> = PetSettingsDomain::ALL
         .into_iter()
         .flat_map(|domain| {
-            fields(domain)
-                .iter()
-                .filter_map(move |field| {
-                    let path = format!("{}.{}", domain.id(), field.name);
-                    let (container, member, max) = match field.kind {
-                        Kind::List { member, max } => ("list", member, max),
-                        Kind::Map { value, max } => ("map", value, max),
-                        _ => return None,
-                    };
-                    let length = match member {
-                        MemberRule::Line { max_length } => Some(max_length as f64),
-                        _ => None,
-                    };
-                    Some((
-                        path,
-                        container.to_string(),
-                        member_name(member).to_string(),
-                        length,
-                        max as f64,
-                    ))
-                })
+            fields(domain).iter().filter_map(move |field| {
+                let path = format!("{}.{}", domain.id(), field.name);
+                let (container, member, max) = match field.kind {
+                    Kind::List { member, max } => ("list", member, max),
+                    Kind::Map { value, max } => ("map", value, max),
+                    _ => return None,
+                };
+                let length = match member {
+                    MemberRule::Line { max_length } => Some(max_length as f64),
+                    _ => None,
+                };
+                Some((
+                    path,
+                    container.to_string(),
+                    member_name(member).to_string(),
+                    length,
+                    max as f64,
+                ))
+            })
         })
         .collect();
     // In path order for the reason the number rules are: the table's order is not the schema's.
-    assert_eq!(by_path(&declared, |row| row.0.as_str()), by_path(&mine, |row| row.0.as_str()));
+    assert_eq!(
+        by_path(&declared, |row| row.0.as_str()),
+        by_path(&mine, |row| row.0.as_str())
+    );
 }

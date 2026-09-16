@@ -244,8 +244,10 @@ fn a_launch_for_a_file_in_the_home_directory_names_the_file() {
     let file = note(&home, "todo.md");
     let registry = VaultRegistry::default();
 
-    let err = with_home(&home, || resolve_launch(&registry, None, &file, CommandLine))
-        .expect_err("$HOME cannot be a vault, so this file cannot be served");
+    let err = with_home(&home, || {
+        resolve_launch(&registry, None, &file, CommandLine)
+    })
+    .expect_err("$HOME cannot be a vault, so this file cannot be served");
 
     assert!(
         err.contains(as_str(&file)),
@@ -290,8 +292,10 @@ fn a_launch_one_level_above_home_names_the_file_too() {
     let file = note(&base, "todo.md");
     let registry = VaultRegistry::default();
 
-    let err = with_home(&home, || resolve_launch(&registry, None, &file, CommandLine))
-        .expect_err("a folder containing home cannot be a vault");
+    let err = with_home(&home, || {
+        resolve_launch(&registry, None, &file, CommandLine)
+    })
+    .expect_err("a folder containing home cannot be a vault");
 
     assert!(
         err.contains(as_str(&file)),

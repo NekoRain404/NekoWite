@@ -156,8 +156,13 @@ pub enum WindowAction {
 #[derive(Clone, PartialEq, Eq, Debug, Serialize)]
 #[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum HostRefusal {
-    UnrecognizedCaller { observed: String },
-    CapReached { cap: usize, open: usize },
+    UnrecognizedCaller {
+        observed: String,
+    },
+    CapReached {
+        cap: usize,
+        open: usize,
+    },
     Window {
         action: WindowAction,
         detail: String,
@@ -343,8 +348,11 @@ impl PetWindowHost {
     /// tray (§7.1) — shows the same pet again. A teardown here would make the difference between
     /// "not now" and "never" a matter of which button the user found.
     pub fn set_visible(&mut self, visible: bool) -> Result<(), HostRefusal> {
-        let labels: Vec<PetWindowLabel> =
-            self.instances.iter().map(|open| open.label.clone()).collect();
+        let labels: Vec<PetWindowLabel> = self
+            .instances
+            .iter()
+            .map(|open| open.label.clone())
+            .collect();
         for label in &labels {
             self.surfaces
                 .set_visible(label, visible)
@@ -502,7 +510,9 @@ impl PetSurfaces for TauriSurfaces {
     }
 
     fn close(&mut self, label: &PetWindowLabel) -> Result<(), String> {
-        self.window(label)?.close().map_err(|error| error.to_string())
+        self.window(label)?
+            .close()
+            .map_err(|error| error.to_string())
     }
 
     fn set_visible(&mut self, label: &PetWindowLabel, visible: bool) -> Result<(), String> {

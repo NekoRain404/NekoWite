@@ -69,7 +69,10 @@ fn one_engines_credentials_and_model_do_not_reach_another_profiles_files() {
 
     // The evidence: every byte of beta's profile, searched for alpha's secrets.
     let beta_text = tree_text(beta.root());
-    assert!(beta_text.contains("sk-beta-fedcba9876543210"), "the other direction has to be real");
+    assert!(
+        beta_text.contains("sk-beta-fedcba9876543210"),
+        "the other direction has to be real"
+    );
     assert!(!beta_text.contains("sk-alpha-0123456789abcdef"));
     assert!(!beta_text.contains("alpha-only-model"));
     assert!(!beta_text.contains("ANTHROPIC_API_KEY"));
@@ -79,10 +82,14 @@ fn one_engines_credentials_and_model_do_not_reach_another_profiles_files() {
     assert!(!alpha_text.contains("beta-only-model"));
 
     // And through the readouts, which is what a page would render.
-    let alpha_view = read_profile(&store, "engine-alpha", "alpha").unwrap().to_string();
+    let alpha_view = read_profile(&store, "engine-alpha", "alpha")
+        .unwrap()
+        .to_string();
     assert!(!alpha_view.contains("sk-beta-fedcba9876543210"));
     assert!(alpha_view.contains("alpha-only-model"));
-    let beta_view = read_profile(&store, "engine-beta", "beta").unwrap().to_string();
+    let beta_view = read_profile(&store, "engine-beta", "beta")
+        .unwrap()
+        .to_string();
     assert!(!beta_view.contains("sk-alpha-0123456789abcdef"));
     assert!(!beta_view.contains("alpha-only-model"));
 }
@@ -131,11 +138,18 @@ fn a_document_path_that_would_leave_the_profile_is_refused() {
     let managed = scratch("escape");
     let store = ProfileStore::new(&managed);
     let profile = store.open("engine-alpha", "alpha").unwrap();
-    for relative in ["../outside.jsonc", "/etc/opencode/opencode.jsonc", "a/../../b"] {
+    for relative in [
+        "../outside.jsonc",
+        "/etc/opencode/opencode.jsonc",
+        "a/../../b",
+    ] {
         match profile.document_path(relative) {
             Err(ProfileError::Escapes { relative: refused }) => assert_eq!(refused, relative),
             other => panic!("`{relative}` must not resolve, got {other:?}"),
         }
     }
-    assert!(profile.document_path(RELATIVE).unwrap().starts_with(profile.root()));
+    assert!(profile
+        .document_path(RELATIVE)
+        .unwrap()
+        .starts_with(profile.root()));
 }

@@ -99,14 +99,14 @@ pub use events::{
     AgentEventEnvelope, AgentEventKind, AgentFailureCode, AgentIdentity, TransportError,
 };
 pub use fs_capability::{
-    ChangeRecord, FsCapability, FsRequest, VaultFiles, client_capabilities, slice_lines,
+    client_capabilities, slice_lines, ChangeRecord, FsCapability, FsRequest, VaultFiles,
 };
 pub use live_notes::{
-    LIVE_NOTE_ANSWER_CHANNEL, LIVE_NOTE_ATTACH_CHANNEL, LIVE_NOTE_BOUND, LIVE_NOTE_REQUEST_CHANNEL,
     LiveNote, LiveNoteAnswer, LiveNoteAnswerPayload, LiveNoteQuestion, LiveNoteRefusal,
-    LiveNoteReply, LiveNoteTable, LiveNoteWindows, LiveNotes,
+    LiveNoteReply, LiveNoteTable, LiveNoteWindows, LiveNotes, LIVE_NOTE_ANSWER_CHANNEL,
+    LIVE_NOTE_ATTACH_CHANNEL, LIVE_NOTE_BOUND, LIVE_NOTE_REQUEST_CHANNEL,
 };
-pub use process::{env_pairs, EngineLaunch, isolated_profile_env, SYSTEM_CA_BUNDLE};
+pub use process::{env_pairs, isolated_profile_env, EngineLaunch, SYSTEM_CA_BUNDLE};
 pub use session::{
-    AgentRuntime, AgentRuntimeEvents, INITIALIZE_BOUND, RuntimeEvent, SessionError, SessionInfo,
+    AgentRuntime, AgentRuntimeEvents, RuntimeEvent, SessionError, SessionInfo, INITIALIZE_BOUND,
 };

@@ -14,8 +14,8 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 use tauri::test::{mock_builder, mock_context, noop_assets};
-use tauri::Manager;
 use tauri::Listener;
+use tauri::Manager;
 
 use nekowite_lib::agent_runtime::events::{AgentEventEnvelope, AgentEventKind, AgentIdentity};
 use nekowite_lib::commands::desktop_pet as pet_commands;

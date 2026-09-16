@@ -131,14 +131,23 @@ pub const MAX_SCAN_ENTRIES: usize = 20_000;
 pub enum SkillError {
     /// A scope root, or the store, is a relative path: it would be resolved against this app's own
     /// working directory, which is not where the user meant.
-    RelativePath { path: PathBuf },
+    RelativePath {
+        path: PathBuf,
+    },
     /// The store lies inside a scope root, so a switched-off skill would still be found. Refused
     /// when the library is built, so no later operation can be a disable that is not one.
-    StoreInsideScope { path: PathBuf, scope: String },
+    StoreInsideScope {
+        path: PathBuf,
+        scope: String,
+    },
     /// No scope answers to this id.
-    UnknownScope { scope: String },
+    UnknownScope {
+        scope: String,
+    },
     /// The scope is not this host's to write in.
-    NotManaged { scope: String },
+    NotManaged {
+        scope: String,
+    },
     /// The scope has no per-skill switch; the engine's own variable is the only one there is, when
     /// there is one at all.
     NoSwitch {
@@ -147,50 +156,103 @@ pub enum SkillError {
     },
     /// The directory an action names is not inside the scope it claims to be in. A stale readout, or
     /// a hand-made request, would otherwise move anything anywhere.
-    OutsideScope { directory: PathBuf, scope: String },
+    OutsideScope {
+        directory: PathBuf,
+        scope: String,
+    },
     /// A skill reached through a link that leaves its scope root. The engine would read the target,
     /// so the row exists — as unusable — rather than being quietly dropped.
-    EscapesScope { directory: PathBuf, scope: String },
+    EscapesScope {
+        directory: PathBuf,
+        scope: String,
+    },
     /// No such file or directory.
-    Missing { path: PathBuf },
+    Missing {
+        path: PathBuf,
+    },
     /// There is no `SKILL.md` here, so there is nothing the engine would read.
-    NoManifest { path: PathBuf },
+    NoManifest {
+        path: PathBuf,
+    },
     /// The entry is a symbolic link. Refused on import, where this host is taking custody of a
     /// tree: a link points somewhere that is not part of what is being copied.
-    Symlink { path: PathBuf },
+    Symlink {
+        path: PathBuf,
+    },
     /// Something that is neither a file nor a directory.
-    NotAFile { path: PathBuf },
+    NotAFile {
+        path: PathBuf,
+    },
     /// More files than this host will import at once.
-    TooManyFiles { count: usize },
-    FileTooLarge { path: PathBuf, bytes: u64 },
-    SkillTooLarge { bytes: u64 },
+    TooManyFiles {
+        count: usize,
+    },
+    FileTooLarge {
+        path: PathBuf,
+        bytes: u64,
+    },
+    SkillTooLarge {
+        bytes: u64,
+    },
     /// The frontmatter is not there at all, or never closes.
-    NoFrontmatter { path: PathBuf },
-    UnterminatedFrontmatter { path: PathBuf },
+    NoFrontmatter {
+        path: PathBuf,
+    },
+    UnterminatedFrontmatter {
+        path: PathBuf,
+    },
     /// A line the parser cannot read, named by its line number inside the file.
-    FrontmatterLine { line: usize, message: String },
+    FrontmatterLine {
+        line: usize,
+        message: String,
+    },
     /// `name` is absent.
-    NameMissing { path: PathBuf },
+    NameMissing {
+        path: PathBuf,
+    },
     /// `name` is not lowercase-and-hyphens, or is longer than the engine allows.
-    NameShape { name: String },
+    NameShape {
+        name: String,
+    },
     /// `name` and the folder name disagree. The engine refuses such a skill, so it is reported
     /// rather than renamed in place.
-    NameMismatch { name: String, folder: String },
+    NameMismatch {
+        name: String,
+        folder: String,
+    },
     /// `description` is absent. The engine drops such a skill silently; this host says so.
-    DescriptionMissing { path: PathBuf },
-    DescriptionTooLong { chars: usize },
+    DescriptionMissing {
+        path: PathBuf,
+    },
+    DescriptionTooLong {
+        chars: usize,
+    },
     /// A field value carries a control character, which no page and no log line can hold.
-    FieldControl { key: String },
+    FieldControl {
+        key: String,
+    },
     /// The name is already taken in the target scope, and the import was not told to replace it.
-    NameTaken { name: String, directory: PathBuf },
+    NameTaken {
+        name: String,
+        directory: PathBuf,
+    },
     /// A copy with this name is already in the store, so moving another in would overwrite the only
     /// recoverable one.
-    StoreOccupied { path: PathBuf },
+    StoreOccupied {
+        path: PathBuf,
+    },
     /// The source is already where it would be installed.
-    SameDirectory { path: PathBuf },
+    SameDirectory {
+        path: PathBuf,
+    },
     /// The scan gave up before it finished, so its answer would be a partial one.
-    ScanTooLarge { root: PathBuf },
-    Io { path: PathBuf, message: String },
+    ScanTooLarge {
+        root: PathBuf,
+    },
+    Io {
+        path: PathBuf,
+        message: String,
+    },
 }
 
 impl SkillError {

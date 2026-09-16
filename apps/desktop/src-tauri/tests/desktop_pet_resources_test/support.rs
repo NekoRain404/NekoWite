@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::desktop_pet::resources::{CharacterLibrary, CharacterKind, InstallRequest};
+use crate::desktop_pet::resources::{CharacterKind, CharacterLibrary, InstallRequest};
 
 /// A library root nothing else in the process is using.
 ///
@@ -16,10 +16,8 @@ use crate::desktop_pet::resources::{CharacterLibrary, CharacterKind, InstallRequ
 /// one pass — the failure mode D3's `windows.rs` avoids by asserting on the listing rather than on
 /// counts alone.
 pub fn library(label: &str) -> (CharacterLibrary, PathBuf) {
-    let data = std::env::temp_dir().join(format!(
-        "nkw-pet-resources-{label}-{}",
-        std::process::id()
-    ));
+    let data =
+        std::env::temp_dir().join(format!("nkw-pet-resources-{label}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&data);
     std::fs::create_dir_all(&data).expect("a temporary data directory");
     let library = CharacterLibrary::new(&data).expect("an absolute data directory is in scope");
@@ -28,10 +26,7 @@ pub fn library(label: &str) -> (CharacterLibrary, PathBuf) {
 
 /// A source directory to build a pack in, outside the library so the import has something to copy.
 pub fn pack_dir(label: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "nkw-pet-pack-{label}-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("nkw-pet-pack-{label}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("a temporary pack directory");
     dir

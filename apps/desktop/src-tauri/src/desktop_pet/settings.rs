@@ -253,13 +253,19 @@ pub enum ReadOnlyReason {
 #[derive(Clone, PartialEq, Debug, Serialize)]
 #[serde(tag = "status", rename_all = "kebab-case")]
 pub enum PetSettingsUpdate {
-    Applied { record: PetSettingsRecord },
-    Conflict { current: PetSettingsRecord },
+    Applied {
+        record: PetSettingsRecord,
+    },
+    Conflict {
+        current: PetSettingsRecord,
+    },
     Refused {
         reason: RefusalReason,
         message: String,
     },
-    Failed { message: String },
+    Failed {
+        message: String,
+    },
 }
 
 /// Why a write was refused before anything was written.
@@ -302,10 +308,9 @@ pub fn read_domain(domain: PetSettingsDomain, stored: Option<&Value>) -> PetSett
     let Some(revision) = whole_number(object.get("revision")) else {
         return unreadable_load(domain);
     };
-    let Some(readout) = values::read_stored_values(
-        domain,
-        object.get("values").unwrap_or(&Value::Null),
-    ) else {
+    let Some(readout) =
+        values::read_stored_values(domain, object.get("values").unwrap_or(&Value::Null))
+    else {
         return unreadable_load(domain);
     };
     // The upgraded record carries *this* build's version, so a write-back is an upgrade rather

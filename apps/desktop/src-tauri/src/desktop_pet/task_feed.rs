@@ -59,10 +59,10 @@ use crate::agent_runtime::snapshot::SessionSnapshot;
 
 use super::history::{HistoryStore, TaskHistory};
 use super::notification_delivery::NoChannel;
-use super::settings::{self, PetSettingsDomain, PetSettingsStore};
 use super::notification_policy::{
     NotificationOutcome, NotificationPolicy, NotificationPreferences, TaskFact,
 };
+use super::settings::{self, PetSettingsDomain, PetSettingsStore};
 use super::task_projection::{
     system_clock, Disposition, Ingest, PetTaskProjection, TaskProjection,
 };
@@ -196,11 +196,7 @@ impl PetTaskFeed {
             None => TaskHistory::new(),
         };
         Self::with_ledger(
-            NotificationPolicy::new(
-                Box::new(NoChannel::new()),
-                stored_switches(data),
-                history,
-            ),
+            NotificationPolicy::new(Box::new(NoChannel::new()), stored_switches(data), history),
             ledger,
         )
     }
@@ -212,7 +208,9 @@ impl PetTaskFeed {
     /// do not care about timing run in. The request in flight is forgotten, so a waker installed
     /// after a burst opened is told about that burst rather than waiting for the next one.
     pub fn set_notice_waker(&self, waker: impl Fn(i64) + Send + Sync + 'static) {
-        let Ok(mut wake) = self.wake.lock() else { return };
+        let Ok(mut wake) = self.wake.lock() else {
+            return;
+        };
         wake.waker = Some(Box::new(waker));
         wake.asked_for = None;
     }
@@ -285,7 +283,6 @@ impl PetTaskFeed {
     ) -> Result<Option<Vec<PetTaskProjection>>, String> {
         self.accepted(|tasks| tasks.started(identity, session_id, run_id))
     }
-
 
     /// The user answered a permission, so the run is no longer waiting on it.
     ///
@@ -428,7 +425,9 @@ impl PetTaskFeed {
     /// projection has already applied it and the row is in memory — so it is reported and not
     /// returned, exactly as a failed notice is.
     fn persist(&self, policy: &NotificationPolicy) {
-        let Some(store) = self.ledger.as_ref() else { return };
+        let Some(store) = self.ledger.as_ref() else {
+            return;
+        };
         // The store's two quiet arms are answers, not failures: `Unchanged` means the file already
         // held exactly this, and `ReadOnly` that a newer build owns it (§10.2). Only a write that
         // could not happen is worth a line, and it costs the file rather than the reminder.
@@ -444,7 +443,9 @@ impl PetTaskFeed {
     /// member. `None` clears the request, which is how a burst that was dropped — do-not-disturb
     /// turned on, a flush that already ran — stops owing the host a wake.
     fn ask_wake(&self, due: Option<i64>) {
-        let Ok(mut wake) = self.wake.lock() else { return };
+        let Ok(mut wake) = self.wake.lock() else {
+            return;
+        };
         if wake.asked_for == due {
             return;
         }

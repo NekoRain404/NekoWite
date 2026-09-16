@@ -78,7 +78,10 @@ fn the_engine_scopes_are_built_from_the_roots_a_caller_has() {
 
     let owned = opencode_scopes(Some(&roots.join("config")), &home, &project, &declared, &[]);
     assert_eq!(
-        owned.iter().map(|scope| scope.id.as_str()).collect::<Vec<_>>(),
+        owned
+            .iter()
+            .map(|scope| scope.id.as_str())
+            .collect::<Vec<_>>(),
         vec![
             "engine-global",
             "engine-project",
@@ -109,7 +112,10 @@ fn the_engine_scopes_are_built_from_the_roots_a_caller_has() {
 
     let reused = opencode_scopes(None, &home, &project, &[], &[]);
     assert_eq!(
-        reused.iter().map(|scope| scope.id.as_str()).collect::<Vec<_>>(),
+        reused
+            .iter()
+            .map(|scope| scope.id.as_str())
+            .collect::<Vec<_>>(),
         vec!["engine-project", "claude-code", "agents-directory"],
         "a profile reusing the user's configuration has no global directory this host may write in"
     );
@@ -172,7 +178,11 @@ fn the_engine_switches_decide_which_foreign_directories_are_read() {
             SkillSurface::Suppressed { variable },
             "{variable}"
         );
-        assert_eq!(surface_of(&found, "from-agents"), SkillSurface::Offered, "{variable}");
+        assert_eq!(
+            surface_of(&found, "from-agents"),
+            SkillSurface::Offered,
+            "{variable}"
+        );
     }
 
     // **Present and off is not on.** Measured end to end in `agent_profile_isolation_test.rs`'s

@@ -240,7 +240,11 @@ impl BinaryRegistry {
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .filter(|version| is_launchable(&self.program_of(version)))
             .collect();
-        versions.sort_by(|left, right| version_key(left).cmp(&version_key(right)).then_with(|| left.cmp(right)));
+        versions.sort_by(|left, right| {
+            version_key(left)
+                .cmp(&version_key(right))
+                .then_with(|| left.cmp(right))
+        });
         versions
     }
 
@@ -270,11 +274,12 @@ impl BinaryRegistry {
         let text = serde_json::to_string(&active).expect("a pointer serializes");
         // Through the crate's atomic write, so a power loss leaves the old pointer or the new one
         // and never a truncated file that reads as "no engine installed".
-        crate::storage::atomic_write::atomic_write(&self.root.join(POINTER_FILE), &text)
-            .map_err(|detail| LayoutError::Io {
+        crate::storage::atomic_write::atomic_write(&self.root.join(POINTER_FILE), &text).map_err(
+            |detail| LayoutError::Io {
                 path: self.root.join(POINTER_FILE),
                 detail,
-            })?;
+            },
+        )?;
         Ok(active)
     }
 
@@ -337,7 +342,11 @@ fn attempt() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis())
         .unwrap_or_default();
-    format!("{millis}-{}-{}", std::process::id(), COUNTER.fetch_add(1, Ordering::Relaxed))
+    format!(
+        "{millis}-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 /// The packaged engine, from the directory the host resolved for the app's own executable.
@@ -374,7 +383,8 @@ fn assert_scope(root: &Path) -> Result<(), LayoutError> {
         if root.starts_with(prefix) {
             return Err(LayoutError::OutsideManagedScope {
                 root: root.to_path_buf(),
-                reason: "the distribution owns this directory, and this host never installs into a \
+                reason:
+                    "the distribution owns this directory, and this host never installs into a \
                          system package directory",
             });
         }

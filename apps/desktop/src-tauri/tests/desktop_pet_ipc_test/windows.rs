@@ -53,7 +53,11 @@ fn the_default_cap_is_three_and_the_fourth_character_is_refused() {
         host.open("one-too-many"),
         Err(HostRefusal::CapReached { cap: 3, open: 3 })
     );
-    assert_eq!(host.instances().len(), 3, "the refusal opened something anyway");
+    assert_eq!(
+        host.instances().len(),
+        3,
+        "the refusal opened something anyway"
+    );
 }
 
 #[test]
@@ -127,13 +131,7 @@ fn an_unreadable_screen_is_not_replaced_by_a_guessed_one() {
     // Upstream substituted 1920x1080 for a monitor it could not read (`lib.rs:194`), which is how
     // a pet ends up off-screen on exactly the display that failed. The margin is inside every
     // screen there is, and the compositor has the last word.
-    assert_eq!(
-        surfaces.last_open().at,
-        Placement {
-            x: 20.0,
-            y: 20.0
-        }
-    );
+    assert_eq!(surfaces.last_open().at, Placement { x: 20.0, y: 20.0 });
 }
 
 #[test]

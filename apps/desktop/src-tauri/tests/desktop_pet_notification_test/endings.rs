@@ -64,14 +64,7 @@ fn notice_for(state: PetTaskState, at_ms: i64) -> Option<PetNotice> {
 /// 「无法继续」 rather than an error, and a lost runtime leaves the outcome unknown. The list is
 /// deliberately blunt — it is meant to be hard to satisfy by rewording.
 const UNTRUE_ABOUT_NOT_SUCCESS: [&str; 8] = [
-    "success",
-    "succeed",
-    "complete",
-    "done",
-    "failed",
-    "error",
-    "crash",
-    "finished",
+    "success", "succeed", "complete", "done", "failed", "error", "crash", "finished",
 ];
 
 #[test]
@@ -123,11 +116,7 @@ fn the_five_stop_reasons_do_not_collapse_into_success_and_failure() {
                 // producers — a host that cannot reach the runtime, and this one — so a notice that
                 // named only the first would be untrue here, which is exactly the state this case
                 // was added to pin.
-                assert!(
-                    notice.body().contains("unknown"),
-                    "{}",
-                    notice.body()
-                );
+                assert!(notice.body().contains("unknown"), "{}", notice.body());
                 assert!(
                     notice.body().contains("reason this version"),
                     "the message must say that the ending's reason is what is unreadable: {}",
@@ -146,7 +135,8 @@ fn end_turn_says_the_turn_finished_and_nothing_more() {
     let stream = Stream::new();
     let task = key("run-1");
 
-    let (count, due_at_ms) = gathering(&policy.observe(stream.at(&task, PetTaskState::TurnFinished, 1_000)));
+    let (count, due_at_ms) =
+        gathering(&policy.observe(stream.at(&task, PetTaskState::TurnFinished, 1_000)));
     assert_eq!(count, 1);
     assert_eq!(
         channel.count(),
@@ -157,7 +147,11 @@ fn end_turn_says_the_turn_finished_and_nothing_more() {
     let notice = flush(&mut policy, due_at_ms);
     assert_eq!(notice.state, PetTaskState::TurnFinished);
     assert_eq!(notice.count, 1);
-    assert_eq!(notice.target.as_ref(), Some(&task), "a click has somewhere to go");
+    assert_eq!(
+        notice.target.as_ref(),
+        Some(&task),
+        "a click has somewhere to go"
+    );
     assert!(notice.body().contains("finished"), "{}", notice.body());
     // §6.2: 「可提醒「本轮已完成」，不能据此承诺用户全部目标和文件写入均成功」.
     for word in ["success", "complete", "done", "all"] {
@@ -200,11 +194,7 @@ fn a_failed_run_goes_out_on_the_failure_channel() {
     assert_eq!(notice.state, PetTaskState::Failed);
     assert!(notice.body().contains("failed"), "{}", notice.body());
     // §6.2 keeps the detail in the main panel; the notice says where to look rather than guessing.
-    assert!(
-        notice.body().contains("Open the task"),
-        "{}",
-        notice.body()
-    );
+    assert!(notice.body().contains("Open the task"), "{}", notice.body());
 }
 
 #[test]
@@ -262,7 +252,10 @@ fn a_settled_run_is_not_revived_by_a_later_working_event() {
     let revived = policy.observe(stream.at(&task, PetTaskState::Working, 2_000));
 
     assert_eq!(silent(&revived), SilenceReason::NoRevival);
-    let record = policy.history().get(&task).expect("the ending was recorded");
+    let record = policy
+        .history()
+        .get(&task)
+        .expect("the ending was recorded");
     assert_eq!(
         record.state,
         PetTaskState::TurnFinished,
@@ -282,10 +275,15 @@ fn an_unknown_task_can_still_be_settled_by_a_later_ending() {
     let lost = delivered(&policy.observe(stream.at(&task, PetTaskState::Unknown, 1_000)));
     assert_eq!(lost.state, PetTaskState::Unknown);
 
-    let (_, due_at_ms) = gathering(&policy.observe(stream.at(&task, PetTaskState::TurnFinished, 2_000)));
+    let (_, due_at_ms) =
+        gathering(&policy.observe(stream.at(&task, PetTaskState::TurnFinished, 2_000)));
     let settled = flush(&mut policy, due_at_ms);
     assert_eq!(settled.state, PetTaskState::TurnFinished);
-    assert_eq!(channel.count(), 2, "both facts were told, because both happened");
+    assert_eq!(
+        channel.count(),
+        2,
+        "both facts were told, because both happened"
+    );
     assert_eq!(
         policy.history().get(&task).map(|row| row.state),
         Some(PetTaskState::TurnFinished)
@@ -304,7 +302,8 @@ fn one_task_finishing_while_another_works_is_still_announced() {
         silent(&policy.observe(stream.at(&working, PetTaskState::Working, 1_000))),
         SilenceReason::NothingToSay
     );
-    let (count, due_at_ms) = gathering(&policy.observe(stream.at(&finishing, PetTaskState::TurnFinished, 1_100)));
+    let (count, due_at_ms) =
+        gathering(&policy.observe(stream.at(&finishing, PetTaskState::TurnFinished, 1_100)));
     assert_eq!(count, 1);
 
     // §6.3: 「另一个任务执行中，已完成任务仍进入未读，不被聚合情绪吞掉」. The ledger's version of that is

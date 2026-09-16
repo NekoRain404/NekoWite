@@ -17,12 +17,12 @@
 mod native_terminal;
 
 use native_terminal::{
-    InstallKind, MAX_LINE_COLUMNS, NativeTerminal, OutputDecoder, RefusalKind, TerminalError,
-    TerminalEvent, TerminalExit, TerminalLaunch, TerminalSize, terminal_env,
+    terminal_env, InstallKind, NativeTerminal, OutputDecoder, RefusalKind, TerminalError,
+    TerminalEvent, TerminalExit, TerminalLaunch, TerminalSize, MAX_LINE_COLUMNS,
 };
 
 use std::fs;
-use std::os::unix::fs::{PermissionsExt, symlink};
+use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
@@ -48,7 +48,9 @@ fn scratch(label: &str) -> PathBuf {
 fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
     fs::write(&path, body).expect("the fixture is written");
-    let mut permissions = fs::metadata(&path).expect("the fixture exists").permissions();
+    let mut permissions = fs::metadata(&path)
+        .expect("the fixture exists")
+        .permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(&path, permissions).expect("the fixture is executable");
     path
@@ -234,7 +236,9 @@ fn a_managed_install_may_not_run_its_own_lifecycle() {
     // it — what the app never does is run it *for* them.
     let mut external = launch(engine, &["upgrade"], &dir);
     external.install = InstallKind::External;
-    external.review().expect("the user's own engine is the user's");
+    external
+        .review()
+        .expect("the user's own engine is the user's");
 }
 
 #[test]
@@ -288,7 +292,9 @@ fn a_program_that_cannot_be_started_says_why() {
     // working directory that has gone away fails there. The reason travels with the failure —
     // "spawn failed" would send a reader looking for a missing binary that is not missing.
     request.cwd = dir.join("vanished");
-    let error = NativeTerminal::open(request).err().expect("the launch fails");
+    let error = NativeTerminal::open(request)
+        .err()
+        .expect("the launch fails");
     assert_eq!(error.code(), "spawn-failed");
     assert!(matches!(
         &error,
@@ -301,7 +307,10 @@ fn a_terminal_size_is_never_empty_and_never_contradicts_the_measurement() {
     assert_eq!(TerminalSize::new(0, 0), TerminalSize { cols: 1, rows: 1 });
     assert_eq!(
         TerminalSize::from_pixels(800.0, 320.0, 8.0, 16.0),
-        TerminalSize { cols: 100, rows: 20 }
+        TerminalSize {
+            cols: 100,
+            rows: 20
+        }
     );
     // Nothing measured yet: the default, not a size the tty would have to ignore.
     assert_eq!(
@@ -373,7 +382,10 @@ fn a_line_past_the_column_bound_is_cut_between_characters() {
     assert_eq!(elided, ((5000 - MAX_LINE_COLUMNS / 2) * 2) as u32);
     // The bound is per line: the newline resets it, so the next line is whole.
     assert!(kept.ends_with("尾\n"), "the next line survived: {kept:?}");
-    assert!(!kept.contains('\u{FFFD}'), "nothing was cut inside a character");
+    assert!(
+        !kept.contains('\u{FFFD}'),
+        "nothing was cut inside a character"
+    );
 
     // A carriage return starts a new line for the same purpose — a progress line redrawn from
     // its start is many short lines, not one endless one, and it must not stay elided forever.
@@ -467,11 +479,24 @@ fn the_child_is_given_a_utf8_locale_and_no_second_opinion_about_the_size() {
             || locale.to_ascii_uppercase().contains("UTF8"),
         "the child's locale can encode Chinese: {locale:?}"
     );
-    assert_eq!(variable(&text, "COLUMNS"), None, "no competing size: {text:?}");
-    assert_eq!(variable(&text, "LINES"), None, "no competing size: {text:?}");
+    assert_eq!(
+        variable(&text, "COLUMNS"),
+        None,
+        "no competing size: {text:?}"
+    );
+    assert_eq!(
+        variable(&text, "LINES"),
+        None,
+        "no competing size: {text:?}"
+    );
     let lc_all = variable(&text, "LC_ALL");
     assert!(
-        lc_all.is_none() || lc_all.as_deref().unwrap_or_default().to_ascii_uppercase().contains("UTF-8"),
+        lc_all.is_none()
+            || lc_all
+                .as_deref()
+                .unwrap_or_default()
+                .to_ascii_uppercase()
+                .contains("UTF-8"),
         "LC_ALL=C would override the locale and was dropped: {lc_all:?}"
     );
     terminal.close();
@@ -491,8 +516,15 @@ fn the_child_reports_the_window_size_and_a_live_resize_reaches_it() {
          i=0\nwhile [ \"$i\" -lt 50 ]; do i=$((i+1)); sleep 0.2; done\n",
     );
     let (waiting, waiting_events) = opened(launch(waiting, &[], &dir));
-    let (text, _) = read_until(&waiting_events, |text| text.contains("start:24 80"), PATIENCE);
-    assert!(text.contains("start:24 80"), "the tty's own report: {text:?}");
+    let (text, _) = read_until(
+        &waiting_events,
+        |text| text.contains("start:24 80"),
+        PATIENCE,
+    );
+    assert!(
+        text.contains("start:24 80"),
+        "the tty's own report: {text:?}"
+    );
     waiting
         .resize(TerminalSize::new(100, 30))
         .expect("a live resize");
@@ -513,7 +545,10 @@ fn the_child_reports_the_window_size_and_a_live_resize_reaches_it() {
     );
     let (terminal, events) = opened(launch(echo, &[], &dir));
     let (text, _) = read_until(&events, |text| text.contains("start:24 80"), PATIENCE);
-    assert!(text.contains("start:24 80"), "the tty's own report: {text:?}");
+    assert!(
+        text.contains("start:24 80"),
+        "the tty's own report: {text:?}"
+    );
 
     terminal.write("一\n").expect("write");
     let (text, _) = read_until(&events, |text| text.contains("read:一"), PATIENCE);
@@ -573,7 +608,10 @@ fn dropping_the_terminal_does_not_leave_the_program_behind() {
     };
     // The drop itself is what has to end it: §6.2 has no daemon left behind, and the app closing
     // is the ordinary way this happens.
-    assert!(!is_alive(pid), "the child outlived the terminal that started it");
+    assert!(
+        !is_alive(pid),
+        "the child outlived the terminal that started it"
+    );
 }
 
 #[test]
@@ -589,12 +627,18 @@ fn the_exit_status_is_the_program_s_own() {
             signal: None
         })
     );
-    assert_eq!(terminal.try_exit(), exit, "the ending is readable, not reported twice");
+    assert_eq!(
+        terminal.try_exit(),
+        exit,
+        "the ending is readable, not reported twice"
+    );
     assert!(terminal.is_finished());
 
     // A terminal that has ended refuses what a terminal can no longer do, rather than accepting
     // it and dropping it: the reader is owed the difference between "sent" and "nobody is there".
-    terminal.write("hello").expect_err("writing to a dead child");
+    terminal
+        .write("hello")
+        .expect_err("writing to a dead child");
     assert_eq!(
         terminal
             .write("hello")
@@ -609,7 +653,11 @@ fn the_exit_status_is_the_program_s_own() {
             .code(),
         "terminal-ended"
     );
-    assert_eq!(terminal.close(), exit, "closing an ended terminal is idempotent");
+    assert_eq!(
+        terminal.close(),
+        exit,
+        "closing an ended terminal is idempotent"
+    );
 
     let (terminal, events) = opened(launch(program("false"), &[], &dir));
     let (_, exit) = read_until(&events, |_| false, PATIENCE);

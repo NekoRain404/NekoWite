@@ -44,7 +44,10 @@ fn the_module_cannot_reach_a_network_a_process_or_a_file() {
     // `care_ledger/import.rs`, a scan of the module root alone would be a claim about half a module —
     // and the half nobody re-reads is where a network client would sit unnoticed.
     let files = module_files();
-    assert!(files.len() >= 2, "the ledger is more than one file now: {files:?}");
+    assert!(
+        files.len() >= 2,
+        "the ledger is more than one file now: {files:?}"
+    );
 
     let mut whole = String::new();
     for path in &files {
@@ -60,7 +63,11 @@ fn the_module_cannot_reach_a_network_a_process_or_a_file() {
         }
         // A check on nothing is not a check: the headers this strips are what carry the reasoning,
         // so a scanner that found an empty file would pass everything above.
-        assert!(text.len() > code.len(), "nothing was stripped from {}", path.display());
+        assert!(
+            text.len() > code.len(),
+            "nothing was stripped from {}",
+            path.display()
+        );
         whole.push_str(&text);
     }
     assert!(whole.contains("pub fn settle"), "the scanner read nothing");
@@ -112,7 +119,9 @@ fn the_summary_carries_what_was_settled_and_no_level_and_no_price() {
     // `level` here would be the second copy of the curve §9 forbids; a price, a balance, a
     // subscription or a login would be the paid thing this is not — and either would have to be added
     // to the list above, which is where it would be noticed.
-    for key in ["level", "stage", "progress", "price", "cost", "balance", "login", "account"] {
+    for key in [
+        "level", "stage", "progress", "price", "cost", "balance", "login", "account",
+    ] {
         assert!(
             !keys.iter().any(|name| name.to_lowercase().contains(key)),
             "the summary grew a {key} field; that is not progress and is not this ledger's"
@@ -149,7 +158,11 @@ fn a_reported_zero_is_a_fact_and_an_unreported_day_is_not() {
     // unknown, because the two facts are about different things.
     assert_eq!(summary.reported_tokens, Some(0));
     assert_eq!(summary.unreported_runs, 1);
-    assert_eq!(summary.days[0].tokens, Some(0), "a reported zero became unknown");
+    assert_eq!(
+        summary.days[0].tokens,
+        Some(0),
+        "a reported zero became unknown"
+    );
     assert_eq!(summary.days[1].tokens, None, "an unknown day became a zero");
 }
 
@@ -182,17 +195,25 @@ fn usage_adds_up_within_a_day_and_stays_unknown_only_where_nothing_reported() {
     let mut ledger = CareLedger::new();
     let when = noon(day(2026, 9, 16));
     ledger
-        .settle(CareEvent { tokens: Some(1_200), ..finished("run-a", when) })
+        .settle(CareEvent {
+            tokens: Some(1_200),
+            ..finished("run-a", when)
+        })
         .expect("settles");
     ledger
-        .settle(CareEvent { tokens: Some(300), ..finished("run-b", when) })
+        .settle(CareEvent {
+            tokens: Some(300),
+            ..finished("run-b", when)
+        })
         .expect("settles");
-    ledger
-        .settle(finished("run-c", when))
-        .expect("settles");
+    ledger.settle(finished("run-c", when)).expect("settles");
 
     let summary = ledger.summary();
-    assert_eq!(summary.days[0].tokens, Some(1_500), "a known day lost its total");
+    assert_eq!(
+        summary.days[0].tokens,
+        Some(1_500),
+        "a known day lost its total"
+    );
     assert_eq!(summary.reported_tokens, Some(1_500));
     assert_eq!(summary.unreported_runs, 1);
     assert_eq!(summary.days[0].completions, 3);
@@ -205,7 +226,10 @@ fn the_later_handed_in_of_two_events_is_a_replay_and_not_a_second_run() {
     let mut ledger = CareLedger::new();
     let when = noon(day(2026, 9, 16));
     ledger
-        .settle(CareEvent { tokens: None, ..finished("run-a", when) })
+        .settle(CareEvent {
+            tokens: None,
+            ..finished("run-a", when)
+        })
         .expect("settles");
     let second = ledger
         .settle(CareEvent {
@@ -216,8 +240,14 @@ fn the_later_handed_in_of_two_events_is_a_replay_and_not_a_second_run() {
 
     assert!(!second.first);
     assert_eq!(ledger.xp(), MEAL_XP);
-    assert_eq!(serde_json::to_value(ledger.summary()).expect("serialises")["reportedTokens"], json!(null));
-    assert_eq!(serde_json::to_value(ledger.summary()).expect("serialises")["unreportedRuns"], json!(1));
+    assert_eq!(
+        serde_json::to_value(ledger.summary()).expect("serialises")["reportedTokens"],
+        json!(null)
+    );
+    assert_eq!(
+        serde_json::to_value(ledger.summary()).expect("serialises")["unreportedRuns"],
+        json!(1)
+    );
 }
 
 /// The source with its comments removed, so a claim about what the *code* cannot name is not defeated

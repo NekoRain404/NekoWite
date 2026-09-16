@@ -356,7 +356,11 @@ mod tests {
     }
 
     fn text(sequence: u64) -> AgentEventEnvelope {
-        envelope(sequence, AgentEventKind::TextDelta, serde_json::json!({ "text": "x" }))
+        envelope(
+            sequence,
+            AgentEventKind::TextDelta,
+            serde_json::json!({ "text": "x" }),
+        )
     }
 
     fn ended(sequence: u64, stop_reason: &str) -> AgentEventEnvelope {
@@ -409,7 +413,10 @@ mod tests {
         let snapshots = SessionSnapshots::new(identity(), 8);
         snapshots.opened("ses-1");
         snapshots.started("ses-1", "run-0");
-        assert_eq!(snapshots.snapshot("ses-1", &[]).unwrap().state, SessionState::Running);
+        assert_eq!(
+            snapshots.snapshot("ses-1", &[]).unwrap().state,
+            SessionState::Running
+        );
         assert_eq!(
             snapshots.snapshot("ses-1", &[]).unwrap().run_id.as_deref(),
             Some("run-0")
@@ -429,7 +436,10 @@ mod tests {
 
         snapshots.started("ses-1", "run-1");
         snapshots.record(&ended(1, "cancelled"));
-        assert_eq!(snapshots.snapshot("ses-1", &[]).unwrap().state, SessionState::Cancelled);
+        assert_eq!(
+            snapshots.snapshot("ses-1", &[]).unwrap().state,
+            SessionState::Cancelled
+        );
 
         snapshots.started("ses-1", "run-2");
         snapshots.record(&envelope(
@@ -437,7 +447,10 @@ mod tests {
             AgentEventKind::RunFailed,
             serde_json::json!({ "code": "process-exited", "message": "gone" }),
         ));
-        assert_eq!(snapshots.snapshot("ses-1", &[]).unwrap().state, SessionState::Failed);
+        assert_eq!(
+            snapshots.snapshot("ses-1", &[]).unwrap().state,
+            SessionState::Failed
+        );
     }
 
     /// The ending this snapshot recorded for `ses-1`, as this module holds it.
@@ -493,7 +506,11 @@ mod tests {
         assert_eq!(recorded_ending(&snapshots), Some(Ending::Unrecognised));
         let snapshot = snapshots.snapshot("ses-1", &[]).expect("opened");
         assert_eq!(snapshot.state, SessionState::Completed);
-        assert_eq!(snapshot.run_id.as_deref(), Some("run-0"), "the turn it is looking at");
+        assert_eq!(
+            snapshot.run_id.as_deref(),
+            Some("run-0"),
+            "the turn it is looking at"
+        );
 
         // The why survives where a person can see it: the frame is kept as it was published, so a
         // window replaying this tail reads the engine's own word out of it and shows it. The
@@ -511,7 +528,9 @@ mod tests {
         snapshots.record(&text(0));
         snapshots.record(&prompt(1, "perm-1"));
 
-        let open = snapshots.snapshot("ses-1", &["perm-1".to_string()]).unwrap();
+        let open = snapshots
+            .snapshot("ses-1", &["perm-1".to_string()])
+            .unwrap();
         assert_eq!(open.state, SessionState::WaitingPermission);
         assert_eq!(open.permissions.len(), 1);
         assert_eq!(open.permissions[0].payload["requestId"], "perm-1");

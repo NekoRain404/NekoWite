@@ -14,7 +14,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::desktop_pet::linux_capabilities::{
-    self, Desktop, DisplaySession, Finding, LinuxEnvironment, Observed, Observations,
+    self, Desktop, DisplaySession, Finding, LinuxEnvironment, Observations, Observed,
 };
 
 fn environment(pairs: &[(&str, &str)]) -> LinuxEnvironment {
@@ -76,7 +76,10 @@ fn an_observation_is_what_makes_a_capability_available() {
         )
         .expect("a capability");
     observed
-        .record("pointer-follow", Observed::Refused("no global pointer".into()))
+        .record(
+            "pointer-follow",
+            Observed::Refused("no global pointer".into()),
+        )
         .expect("a capability");
     assert_eq!(observed.len(), 3);
 
@@ -106,7 +109,10 @@ fn an_observation_is_what_makes_a_capability_available() {
         }
     ));
     // Untouched capabilities are untouched: an observation is per capability, not a mode.
-    assert!(matches!(finding("always-on-top"), Finding::Unverified { .. }));
+    assert!(matches!(
+        finding("always-on-top"),
+        Finding::Unverified { .. }
+    ));
 }
 
 #[test]
@@ -147,9 +153,18 @@ fn every_non_available_finding_carries_a_fallback_from_the_contract() {
     for report in linux_capabilities::report(&environment(&[]), &observed) {
         match report.finding {
             Finding::Available => {}
-            Finding::Degraded { fallback, ref detail }
-            | Finding::Unavailable { fallback, ref detail }
-            | Finding::Unverified { fallback, ref detail } => {
+            Finding::Degraded {
+                fallback,
+                ref detail,
+            }
+            | Finding::Unavailable {
+                fallback,
+                ref detail,
+            }
+            | Finding::Unverified {
+                fallback,
+                ref detail,
+            } => {
                 assert!(
                     linux_capabilities::is_fallback(fallback),
                     "{} reports the fallback {fallback}, which the contract does not have",
@@ -249,12 +264,17 @@ fn the_rust_vocabulary_is_the_typescript_one() {
     // added on either side alone fails here.
     let platform = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../src/platform/gateways/pet-contracts/platform.ts");
-    let text = fs::read_to_string(&platform).unwrap_or_else(|error| panic!("{platform:?}: {error}"));
+    let text =
+        fs::read_to_string(&platform).unwrap_or_else(|error| panic!("{platform:?}: {error}"));
 
     let capabilities = quoted(&slice_between(&text, "PET_CAPABILITIES = [", "] as const"));
     assert_eq!(capabilities, linux_capabilities::CAPABILITIES.to_vec());
 
-    let fallbacks = quoted(&slice_between(&text, "export type PetFallback =", "\n\n/**"));
+    let fallbacks = quoted(&slice_between(
+        &text,
+        "export type PetFallback =",
+        "\n\n/**",
+    ));
     assert_eq!(fallbacks, linux_capabilities::FALLBACKS.to_vec());
 }
 

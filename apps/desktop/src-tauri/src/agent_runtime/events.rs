@@ -29,7 +29,7 @@ use agent_client_protocol::schema::v1::{
 use serde::Serialize;
 
 use super::process::{FRAME_TOO_LARGE_MARKER, MAX_FRAME_BYTES};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 /// What an envelope means to the app.
 ///

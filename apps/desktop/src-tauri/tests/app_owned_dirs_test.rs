@@ -157,7 +157,10 @@ fn the_remembered_vault_record_cannot_be_forged_from_inside_the_vault() {
         // app's. (The other shape of this fix — refusing the root at `register`
         // — would have cost them the vault choice altogether.)
         assert!(file_store::write_file(as_str(&t.vault), "note.md", "# mine\n", None).is_ok());
-        assert_eq!(file_store::read_file(as_str(&t.vault), "note.md").unwrap(), "# mine\n");
+        assert_eq!(
+            file_store::read_file(as_str(&t.vault), "note.md").unwrap(),
+            "# mine\n"
+        );
 
         let _ = std::fs::remove_dir_all(&t.base);
     });

@@ -426,7 +426,11 @@ fn the_main_window_reaches_the_commands_the_pet_is_refused() {
     let main = window(&app, "main");
 
     let taken = call(&main, "take_pending_open", Value::Null).expect("the main window may ask");
-    assert_eq!(taken, Value::Null, "nothing was pending, and that is an answer");
+    assert_eq!(
+        taken,
+        Value::Null,
+        "nothing was pending, and that is an answer"
+    );
 
     let error = call(
         &main,
@@ -443,12 +447,8 @@ fn the_main_window_reaches_the_commands_the_pet_is_refused() {
     // And the pet's own surface, for the same window: the switch the settings page writes is the
     // one command here that opens and closes character windows, so "main may call it" is worth
     // asserting directly rather than inferring from the pet being refused it.
-    let answered = call(
-        &main,
-        "desktop_pet_update_settings",
-        json!({ "write": {} }),
-    )
-    .expect("the main window holds the pet's switch");
+    let answered = call(&main, "desktop_pet_update_settings", json!({ "write": {} }))
+        .expect("the main window holds the pet's switch");
     assert_eq!(answered["reached"], "desktop_pet_update_settings");
 }
 
@@ -533,8 +533,9 @@ fn the_pet_window_reaches_the_task_feed_and_not_the_character_picker() {
         "desktop_pet_appearance",
         "desktop_pet_open_task",
     ] {
-        let answered = call(&pet, cmd, json!({}))
-            .unwrap_or_else(|error| panic!("the pet's own page calls {cmd} and must reach it: {error}"));
+        let answered = call(&pet, cmd, json!({})).unwrap_or_else(|error| {
+            panic!("the pet's own page calls {cmd} and must reach it: {error}")
+        });
         assert_eq!(answered["reached"], cmd);
     }
 
@@ -545,8 +546,9 @@ fn the_pet_window_reaches_the_task_feed_and_not_the_character_picker() {
     }
 
     for cmd in ["desktop_pet_library", "desktop_pet_import_character"] {
-        let answered = call(&main, cmd, json!({}))
-            .unwrap_or_else(|error| panic!("the settings page calls {cmd} and must reach it: {error}"));
+        let answered = call(&main, cmd, json!({})).unwrap_or_else(|error| {
+            panic!("the settings page calls {cmd} and must reach it: {error}")
+        });
         assert_eq!(answered["reached"], cmd);
     }
 }
@@ -680,7 +682,11 @@ fn the_capability_files_are_the_policy_and_nothing_else() {
             .map(|command| format!("allow-{}", command.replace('_', "-")))
             .collect()
     };
-    assert_eq!(declared.len(), 65, "the declared surface is sixty-five commands");
+    assert_eq!(
+        declared.len(),
+        65,
+        "the declared surface is sixty-five commands"
+    );
 
     let pet: Vec<String> = allows(&read("desktop-pet.json"));
     assert_eq!(

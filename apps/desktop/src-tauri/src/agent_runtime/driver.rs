@@ -25,7 +25,7 @@ use super::events::{AgentEventEnvelope, AgentIdentity};
 use super::permissions::PermissionTable;
 use super::registry::AgentInstance;
 use super::session::{AgentRuntime, AgentRuntimeEvents, RuntimeEvent};
-use super::snapshot::{REPLAY_WINDOW, SessionSnapshots};
+use super::snapshot::{SessionSnapshots, REPLAY_WINDOW};
 
 /// One running session subsystem: everything a command that addresses the live runtime needs.
 ///

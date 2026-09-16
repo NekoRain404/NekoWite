@@ -197,7 +197,9 @@ impl Recovery {
             text,
         };
         let mut held = self.baselines.lock().unwrap();
-        held.retain(|other| !(other.vault_root == baseline.vault_root && other.path == baseline.path));
+        held.retain(|other| {
+            !(other.vault_root == baseline.vault_root && other.path == baseline.path)
+        });
         if held.len() == MAX_BASELINES {
             held.pop_front();
         }
@@ -250,7 +252,9 @@ impl Recovery {
         }
         let current = match self.files.read(&change.vault_root, &path) {
             Ok(text) => text,
-            Err(detail) => return RecoveryPlan::Refused(RecoveryRefusal::Unavailable { path, detail }),
+            Err(detail) => {
+                return RecoveryPlan::Refused(RecoveryRefusal::Unavailable { path, detail })
+            }
         };
         let current_hash = hash_of(&current);
         if current_hash != change.result_hash {

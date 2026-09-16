@@ -14,7 +14,7 @@
 use nekowite_lib::agent_runtime;
 
 use agent_client_protocol::schema::v1::SessionUpdate;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use agent_runtime::events::normalize_update;
 use agent_runtime::usage::counters;
@@ -309,4 +309,3 @@ fn a_usage_with_nothing_readable_is_no_usage_rather_than_an_empty_object() {
         "no usage is null, never an object with no counters in it"
     );
 }
-

@@ -64,7 +64,11 @@ fn two_agents_sharing_a_session_id_are_two_tasks() {
     let _ = policy.observe(stream.at(&first, PetTaskState::Failed, 1_000));
     let _ = policy.observe(stream.at(&second, PetTaskState::Failed, 1_100));
 
-    assert_eq!(channel.count(), 2, "two agents are two tasks, whatever they named things");
+    assert_eq!(
+        channel.count(),
+        2,
+        "two agents are two tasks, whatever they named things"
+    );
     assert_eq!(policy.unread().len(), 2);
 }
 
@@ -181,13 +185,20 @@ fn three_completions_in_one_window_are_one_notice_with_one_sound() {
     let second = key_for("opencode", "session-b", "run-1");
     let third = key_for("opencode", "session-c", "run-1");
 
-    let (count, due_at_ms) = gathering(&policy.observe(stream.at(&first, PetTaskState::TurnFinished, 1_000)));
+    let (count, due_at_ms) =
+        gathering(&policy.observe(stream.at(&first, PetTaskState::TurnFinished, 1_000)));
     assert_eq!(count, 1);
-    let (count, _) = gathering(&policy.observe(stream.at(&second, PetTaskState::TurnFinished, 1_500)));
+    let (count, _) =
+        gathering(&policy.observe(stream.at(&second, PetTaskState::TurnFinished, 1_500)));
     assert_eq!(count, 2);
-    let (count, _) = gathering(&policy.observe(stream.at(&third, PetTaskState::TurnFinished, 2_500)));
+    let (count, _) =
+        gathering(&policy.observe(stream.at(&third, PetTaskState::TurnFinished, 2_500)));
     assert_eq!(count, 3);
-    assert_eq!(channel.count(), 0, "nothing has gone out while the burst is open");
+    assert_eq!(
+        channel.count(),
+        0,
+        "nothing has gone out while the burst is open"
+    );
 
     let notice = flush(&mut policy, due_at_ms);
     assert_eq!(notice.count, 3);
@@ -227,7 +238,8 @@ fn a_burst_that_has_not_closed_is_not_delivered_yet() {
     let stream = Stream::new();
     let task = key("run-1");
 
-    let (_, due_at_ms) = gathering(&policy.observe(stream.at(&task, PetTaskState::TurnFinished, 1_000)));
+    let (_, due_at_ms) =
+        gathering(&policy.observe(stream.at(&task, PetTaskState::TurnFinished, 1_000)));
     assert!(policy.flush_due(due_at_ms - 1).is_none());
     assert_eq!(channel.count(), 0);
     assert!(policy.flush_due(due_at_ms).is_some());
@@ -243,7 +255,8 @@ fn a_merged_notice_stands_for_no_single_task_but_every_row_is_kept() {
     let second = key_for("opencode", "session-b", "run-1");
 
     let _ = policy.observe(stream.at(&first, PetTaskState::TurnFinished, 1_000));
-    let (_, due_at_ms) = gathering(&policy.observe(stream.at(&second, PetTaskState::TurnFinished, 1_100)));
+    let (_, due_at_ms) =
+        gathering(&policy.observe(stream.at(&second, PetTaskState::TurnFinished, 1_100)));
     let notice = flush(&mut policy, due_at_ms);
 
     // §7.2: a notice that stands for several tasks has no single one to open, so it offers no target
@@ -271,11 +284,16 @@ fn the_ledger_says_when_its_burst_is_due() {
 
     assert_eq!(policy.pending_due(), None, "nothing is gathering yet");
 
-    let (_, due_at_ms) = gathering(&policy.observe(stream.at(&task, PetTaskState::TurnFinished, 1_000)));
+    let (_, due_at_ms) =
+        gathering(&policy.observe(stream.at(&task, PetTaskState::TurnFinished, 1_000)));
     assert_eq!(policy.pending_due(), Some(due_at_ms));
 
     let _ = flush(&mut policy, due_at_ms);
-    assert_eq!(policy.pending_due(), None, "the burst is closed and owes nobody a wake");
+    assert_eq!(
+        policy.pending_due(),
+        None,
+        "the burst is closed and owes nobody a wake"
+    );
 }
 
 #[test]
@@ -292,13 +310,16 @@ fn a_fact_the_host_reports_off_the_stream_is_not_a_replay() {
     let task = key("run-1");
 
     let _ = policy.observe(stream.at(&task, PetTaskState::Working, 1_000));
-    let lost = delivered(&policy.observe(
-        stream.numbered(&task, PetTaskState::Interrupted, 0, 2_000),
-    ));
+    let lost =
+        delivered(&policy.observe(stream.numbered(&task, PetTaskState::Interrupted, 0, 2_000)));
 
     assert_eq!(lost.state, PetTaskState::Interrupted);
     assert_eq!(channel.count(), 1);
-    assert_eq!(policy.unread().len(), 1, "the row survives a toast that may not");
+    assert_eq!(
+        policy.unread().len(),
+        1,
+        "the row survives a toast that may not"
+    );
 }
 
 #[test]
@@ -314,12 +335,8 @@ fn an_off_stream_fact_leaves_every_stream_position_where_it_was() {
     let task = key("run-1");
 
     let _ = policy.observe(stream.at(&task, PetTaskState::Working, 1_000));
-    let asked = delivered(&policy.observe(stream.numbered(
-        &task,
-        PetTaskState::WaitingInput,
-        0,
-        1_500,
-    )));
+    let asked =
+        delivered(&policy.observe(stream.numbered(&task, PetTaskState::WaitingInput, 0, 1_500)));
     let next = policy.observe(stream.at(&task, PetTaskState::Working, 2_000));
 
     assert_eq!(asked.state, PetTaskState::WaitingInput);

@@ -16,7 +16,9 @@
 //! imported below are the library's own.
 
 use nekowite_lib::agent_runtime;
-use nekowite_lib::agent_runtime::live_notes::{LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes};
+use nekowite_lib::agent_runtime::live_notes::{
+    LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes,
+};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -196,11 +198,10 @@ async fn run_to_finish(
         .runtime()
         .prompt(session_id, prompt)
         .expect("prompt");
-    let events = instance.events_mut().expect("the fixture's reader is still here");
-    events_until(events, |event| {
-        event.kind == AgentEventKind::RunFinished
-    })
-    .await
+    let events = instance
+        .events_mut()
+        .expect("the fixture's reader is still here");
+    events_until(events, |event| event.kind == AgentEventKind::RunFinished).await
 }
 
 #[test]
@@ -220,7 +221,11 @@ fn the_default_agent_is_the_bundled_opencode() {
     assert_eq!(registration.adapter_id, adapters::opencode::ADAPTER_ID);
     assert_eq!(registration.env, EnvPolicy::ProfileIsolated);
     assert!(registration.enabled, "a new session starts on it");
-    assert_eq!(registry.registrations().count(), 1, "and it is the only one");
+    assert_eq!(
+        registry.registrations().count(),
+        1,
+        "and it is the only one"
+    );
     // The sidecar is a build product (T14), so a path with nothing at it is a normal state of a
     // checkout — a state the settings page reports, not a malformed definition.
     assert_eq!(registration.program_state(), ProgramState::Missing);
@@ -593,5 +598,8 @@ fn where_a_program_came_from_decides_who_may_replace_it_and_what_it_inherits() {
     let with_credentials = external.launch(root, &credentials).env;
     assert_eq!(with_credentials.len(), 1, "{with_credentials:?}");
     assert_eq!(with_credentials[0].0, "ANTHROPIC_API_KEY");
-    assert_eq!(with_credentials[0].1.expose(), "sk-ant-oat01-not-a-real-key");
+    assert_eq!(
+        with_credentials[0].1.expose(),
+        "sk-ant-oat01-not-a-real-key"
+    );
 }

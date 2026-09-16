@@ -85,7 +85,6 @@ pub use remote::{
     REMOTE_TIMEOUT_MS,
 };
 
-
 /// The directory under the app's data directory that holds everything this module owns.
 pub const LIBRARY_DIR: &str = "desktop-pet";
 /// Inside [`LIBRARY_DIR`]: one directory per installed character.
@@ -174,11 +173,19 @@ pub enum ResourceRefusal {
     /// Also raised when a name read *back* out of a manifest turns out to be a link: the fact is
     /// the same one — a link is not followed — and it has the same consequence, except that what
     /// would depend on a target outside the character is the read rather than the copy.
-    Package { name: String, problem: PackageProblem, detail: String },
+    Package {
+        name: String,
+        problem: PackageProblem,
+        detail: String,
+    },
     /// A file whose type could not be established from its own bytes.
     Unrecognized { name: String },
     /// §8's budgets, named by [`BUDGET_RULES`].
-    Budget { rule: &'static str, limit: u64, found: u64 },
+    Budget {
+        rule: &'static str,
+        limit: u64,
+        found: u64,
+    },
     /// The pack's own manifest is there and not readable as one.
     MalformedManifest { detail: String },
     /// A pack with no spritesheet in it.

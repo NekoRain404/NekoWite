@@ -15,8 +15,8 @@ use agent_runtime::binary_registry::BinaryRegistry;
 use agent_runtime::update::{self, AcpProbe, CandidateProbe, Check, UpdateError};
 
 use crate::support::{
-    elf_bytes, idle, make_executable, mode_of, release_of, scratch, staged, with_machine, FakeProbe,
-    MANIFEST_DIR,
+    elf_bytes, idle, make_executable, mode_of, release_of, scratch, staged, with_machine,
+    FakeProbe, MANIFEST_DIR,
 };
 
 /// The order is the rule (§3.3's list, in the only sequence that makes the digest worth anything):
@@ -157,13 +157,18 @@ async fn an_interrupted_download_leaves_the_active_version_alone() {
     // A half-written second version: the download stopped in the middle of the file.
     let release = release_of("9.9.10", &elf_bytes());
     let artifact = staged(&registry, "9.9.10", &elf_bytes()[..4096], None);
-    assert!(update::verify(&release, &artifact, &FakeProbe::answering("9.9.10"))
-        .await
-        .is_err());
+    assert!(
+        update::verify(&release, &artifact, &FakeProbe::answering("9.9.10"))
+            .await
+            .is_err()
+    );
 
     assert_eq!(registry.active().expect("pointer"), Some(active_before));
     assert_eq!(registry.installed(), vec!["9.9.9".to_string()]);
-    assert_eq!(fs::read(&program_before).expect("still there"), bytes_before);
+    assert_eq!(
+        fs::read(&program_before).expect("still there"),
+        bytes_before
+    );
 }
 
 /// The probe the gate uses in production runs a real process, so it has to be bounded: a candidate

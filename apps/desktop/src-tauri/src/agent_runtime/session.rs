@@ -24,11 +24,11 @@ use tokio::sync::mpsc;
 
 use super::acp_transport::{EngineConnection, EngineEvents, PermissionRequest};
 use super::capabilities::{Handshake, SessionCapabilities};
-use super::fs_capability::{ChangeRecord, FsCapability, VaultFiles};
-use super::live_notes::LiveNotes;
 use super::events::{
     AgentEventEnvelope, AgentEventKind, AgentFailureCode, AgentIdentity, TransportError,
 };
+use super::fs_capability::{ChangeRecord, FsCapability, VaultFiles};
+use super::live_notes::LiveNotes;
 
 /// How long the handshake may take. A process that cannot negotiate in this
 /// long is not going to answer anything else either.
@@ -44,11 +44,15 @@ pub enum SessionError {
     Transport(TransportError),
     /// The host was asked about a session it never opened: §6.1 forbids
     /// inventing a session id, and answering about one would be exactly that.
-    UnknownSession { session_id: String },
+    UnknownSession {
+        session_id: String,
+    },
     /// §6.2: one active generation per session. A second prompt is refused
     /// rather than queued behind the first, because a silent queue turns a
     /// user's second thought into a surprise answer minutes later.
-    RunInProgress { session_id: String },
+    RunInProgress {
+        session_id: String,
+    },
 }
 
 impl SessionError {
@@ -596,7 +600,11 @@ mod tests {
             published.push(envelope.sequence);
         }
         let total = (THREADS * EACH) as u64;
-        assert_eq!(published.len() as u64, total, "every frame reached the queue");
+        assert_eq!(
+            published.len() as u64,
+            total,
+            "every frame reached the queue"
+        );
         let expected: Vec<u64> = (FIRST_SEQUENCE..FIRST_SEQUENCE + total).collect();
         if let Some(index) = published
             .iter()

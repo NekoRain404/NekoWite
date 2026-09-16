@@ -44,9 +44,7 @@ fn webp_size(bytes: &[u8]) -> Option<(u32, u32)> {
             Some((packed & 0x3fff, (packed >> 14) & 0x3fff).map_plus_one())
         }
         // Extended: a 24-bit canvas size, stored as one less than the real one.
-        b"VP8X" if bytes.len() >= 30 => {
-            Some((le_u24(24)? + 1, le_u24(27)? + 1))
-        }
+        b"VP8X" if bytes.len() >= 30 => Some((le_u24(24)? + 1, le_u24(27)? + 1)),
         _ => None,
     }
 }
@@ -91,7 +89,8 @@ pub fn audio_format(bytes: &[u8]) -> Option<&'static str> {
     if bytes.starts_with(b"OggS") {
         return Some("ogg");
     }
-    if bytes.starts_with(b"ID3") || (bytes.len() >= 2 && bytes[0] == 0xff && bytes[1] & 0xe0 == 0xe0)
+    if bytes.starts_with(b"ID3")
+        || (bytes.len() >= 2 && bytes[0] == 0xff && bytes[1] & 0xe0 == 0xe0)
     {
         return Some("mp3");
     }

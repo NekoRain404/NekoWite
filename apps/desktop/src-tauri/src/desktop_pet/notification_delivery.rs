@@ -63,9 +63,7 @@ impl PetNotice {
     /// 内容/路径」, so a user who never opens the settings page never gets their file names on a
     /// desktop where anyone passing by can read them.
     pub fn title(&self) -> String {
-        self.label
-            .clone()
-            .unwrap_or_else(|| "NekoWite".to_string())
+        self.label.clone().unwrap_or_else(|| "NekoWite".to_string())
     }
 
     /// What the notice says, per §6.2's table.
@@ -87,7 +85,8 @@ impl PetNotice {
                 "The run stopped at a limit. Open the task to see how far it got.".to_string()
             }
             PetTaskState::Refused => {
-                "The agent declined to continue this run. Open the task for the details.".to_string()
+                "The agent declined to continue this run. Open the task for the details."
+                    .to_string()
             }
             PetTaskState::Cancelled => "The run was cancelled.".to_string(),
             PetTaskState::Failed => "The run failed. Open the task for the details.".to_string(),
@@ -146,7 +145,9 @@ impl DeliveryFailure {
     /// match that would have to be repeated, and extended, wherever a failure is written down.
     pub fn detail(&self) -> &str {
         match self {
-            Self::NoChannel { detail } | Self::Refused { detail } | Self::Channel { detail } => detail,
+            Self::NoChannel { detail } | Self::Refused { detail } | Self::Channel { detail } => {
+                detail
+            }
         }
     }
 }

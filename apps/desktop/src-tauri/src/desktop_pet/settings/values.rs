@@ -192,10 +192,7 @@ fn judge(field: &Field, raw: &Value) -> Result<Value, ProblemKind> {
     match field.kind {
         Kind::Bool(_) => raw.as_bool().map(Value::Bool).ok_or(ProblemKind::WrongType),
         Kind::Number {
-            min,
-            max,
-            integer,
-            ..
+            min, max, integer, ..
         } => {
             let number = raw.as_f64().ok_or(ProblemKind::WrongType)?;
             // Finiteness before the range, and the range before integer-ness: three separate

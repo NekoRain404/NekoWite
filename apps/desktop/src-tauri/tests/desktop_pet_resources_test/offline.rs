@@ -98,11 +98,17 @@ fn a_fetch_has_to_be_https_whatever_the_endpoint_is() {
     // The endpoint itself is checked by the same rules, so a catalogue configured at an insecure
     // origin is refused as a configuration rather than discovered on the first request.
     assert_eq!(
-        remote_fetch_plan(Some("http://pets.example.invalid/manifest.json"), "https://pets.example.invalid/cat.png"),
+        remote_fetch_plan(
+            Some("http://pets.example.invalid/manifest.json"),
+            "https://pets.example.invalid/cat.png"
+        ),
         Err(RemoteRefusal::NotHttps)
     );
     assert_eq!(
-        remote_fetch_plan(Some("https://localhost/manifest.json"), "https://pets.example.invalid/cat.png"),
+        remote_fetch_plan(
+            Some("https://localhost/manifest.json"),
+            "https://pets.example.invalid/cat.png"
+        ),
         Err(RemoteRefusal::HostRefused)
     );
 }
@@ -111,7 +117,10 @@ fn a_fetch_has_to_be_https_whatever_the_endpoint_is() {
 fn a_plan_carries_every_bound_a_fetch_would_have_to_honour() {
     let plan = remote_fetch_plan(Some(ENDPOINT), "https://cdn.pets.example.invalid/cat.webp")
         .expect("a public host over https");
-    assert_eq!(plan.url.as_str(), "https://cdn.pets.example.invalid/cat.webp");
+    assert_eq!(
+        plan.url.as_str(),
+        "https://cdn.pets.example.invalid/cat.webp"
+    );
     // §8's 超时、大小、内容类型, as values on the plan rather than as conventions a client is
     // trusted to remember.
     assert_eq!(plan.max_bytes, REMOTE_MAX_BYTES);

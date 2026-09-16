@@ -226,8 +226,12 @@ pub enum Decoded {
     /// The bytes are not this record. The consequence is bounded and worth stating: the dedup
     /// memory starts empty, so an ending that was already announced may be announced again. The
     /// unread list is what remains, and the caller is expected to say so rather than pretend.
-    Unreadable { detail: String },
-    NewerSchema { found: u32 },
+    Unreadable {
+        detail: String,
+    },
+    NewerSchema {
+        found: u32,
+    },
 }
 
 /// A ledger that was read back, and how much of it did not fit.
@@ -285,11 +289,7 @@ impl TaskHistory {
 
     /// The rows the user has not seen, newest first.
     pub fn unread(&self) -> Vec<&TaskRecord> {
-        self.records
-            .iter()
-            .rev()
-            .filter(|row| row.unread)
-            .collect()
+        self.records.iter().rev().filter(|row| row.unread).collect()
     }
 
     /// Write a row, replacing the one for the same key if there is one.
@@ -354,7 +354,8 @@ impl TaskHistory {
     /// reminder, and a reminder older than the bound in `store` is one the user can no longer act on.
     pub fn drop_unread_before(&mut self, cutoff_ms: i64) -> usize {
         let before = self.records.len();
-        self.records.retain(|row| !row.unread || row.at_ms >= cutoff_ms);
+        self.records
+            .retain(|row| !row.unread || row.at_ms >= cutoff_ms);
         before - self.records.len()
     }
 
@@ -362,7 +363,12 @@ impl TaskHistory {
     ///
     /// The mark only moves forward: a frame at or below it is a replay, and a frame above it is
     /// either the next one or — when it skipped — news with a hole behind it.
-    pub fn observe_stream(&mut self, session: &SessionKey, sequence: u64, at_ms: i64) -> MarkOutcome {
+    pub fn observe_stream(
+        &mut self,
+        session: &SessionKey,
+        sequence: u64,
+        at_ms: i64,
+    ) -> MarkOutcome {
         if let Some(index) = self.marks.iter().position(|mark| &mark.session == session) {
             let previous = self.marks[index].sequence;
             if sequence <= previous {
@@ -396,11 +402,7 @@ impl TaskHistory {
     /// The row to drop when the bound is reached: the oldest the user has already seen, or — with
     /// nothing seen to spare — the oldest there is, reported as unseen.
     fn evict_one(&mut self) -> Option<Evicted> {
-        let index = self
-            .records
-            .iter()
-            .position(|row| !row.unread)
-            .unwrap_or(0);
+        let index = self.records.iter().position(|row| !row.unread).unwrap_or(0);
         let row = self.records.remove(index);
         Some(Evicted {
             key: row.key,

@@ -28,20 +28,20 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use agent_runtime::permissions::{
-    PermissionAnswer, PermissionIdentity, PermissionPrompt, PermissionRefusal, PermissionTable,
-    ToolInput, cancel_run,
-};
-use agent_runtime::live_notes::{LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes};
-use agent_runtime::{
-    AgentEventEnvelope, AgentEventKind, AgentIdentity, AgentRuntime, AgentRuntimeEvents,
-    EngineConnection, EngineLaunch, VaultFiles, env_pairs,
-};
-use commands::agent::{AgentIpcState, apply_permission_answer, pending_prompts, refusal_message};
 use agent_runtime::driver::Session;
-use agent_runtime::snapshot::{REPLAY_WINDOW, SessionSnapshots};
+use agent_runtime::live_notes::{LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes};
+use agent_runtime::permissions::{
+    cancel_run, PermissionAnswer, PermissionIdentity, PermissionPrompt, PermissionRefusal,
+    PermissionTable, ToolInput,
+};
+use agent_runtime::snapshot::{SessionSnapshots, REPLAY_WINDOW};
+use agent_runtime::{
+    env_pairs, AgentEventEnvelope, AgentEventKind, AgentIdentity, AgentRuntime, AgentRuntimeEvents,
+    EngineConnection, EngineLaunch, VaultFiles,
+};
+use commands::agent::{apply_permission_answer, pending_prompts, refusal_message, AgentIpcState};
 
 /// T2's transport tests panic in a vault; this file's frame is a permission request, so the same
 /// stub holds: reaching the vault would mean the fixture sent something unexpected.
@@ -214,8 +214,16 @@ async fn answered_once(capture: &Path, outcome: Value) {
     wait_for_an_answer(capture).await;
     tokio::time::sleep(SILENCE).await;
     let captured = replies(capture);
-    assert_eq!(captured.len(), 1, "the engine must be answered exactly once: {captured:?}");
-    assert_eq!(captured[0]["id"], json!("fs-1"), "the answer goes to the request");
+    assert_eq!(
+        captured.len(),
+        1,
+        "the engine must be answered exactly once: {captured:?}"
+    );
+    assert_eq!(
+        captured[0]["id"],
+        json!("fs-1"),
+        "the answer goes to the request"
+    );
     assert!(
         captured[0].get("error").is_none(),
         "an error frame here would be the SDK answering, not us: {:?}",
@@ -339,7 +347,10 @@ async fn ask_full(label: &str, behaviour: &str, open_run: bool, frame: Option<St
 }
 
 /// The next host event of `kind`, skipping whatever else the run produced.
-async fn event_of_kind(events: &mut AgentRuntimeEvents, kind: AgentEventKind) -> AgentEventEnvelope {
+async fn event_of_kind(
+    events: &mut AgentRuntimeEvents,
+    kind: AgentEventKind,
+) -> AgentEventEnvelope {
     let deadline = tokio::time::Instant::now() + PATIENCE;
     loop {
         let event = next_event(events, deadline).await;
@@ -431,7 +442,11 @@ async fn the_prompt_carries_the_engines_own_options_and_its_identity() {
 
     // §6.3: the option set is the engine's, ids included — the prompt shows what the engine sent,
     // not a list this host rebuilt — and all four kinds survive rather than a collapsed pair.
-    let offered: Vec<&str> = prompt.options.iter().map(|option| option.option_id.as_str()).collect();
+    let offered: Vec<&str> = prompt
+        .options
+        .iter()
+        .map(|option| option.option_id.as_str())
+        .collect();
     assert_eq!(offered, ["once", "always", "reject"]);
     assert_eq!(prompt.options[1].name, "Always allow");
     assert_eq!(
@@ -443,7 +458,10 @@ async fn the_prompt_carries_the_engines_own_options_and_its_identity() {
     // arguments it sent (the measured frame carries `rawInput` with the diff in it).
     assert!(prompt.title.ends_with("note.md"), "{}", prompt.title);
     let ToolInput::Text { json } = &prompt.input else {
-        panic!("the measured frame carries rawInput, so the input is text: {:?}", prompt.input);
+        panic!(
+            "the measured frame carries rawInput, so the input is text: {:?}",
+            prompt.input
+        );
     };
     assert!(json.contains("Index:"), "{json}");
 
@@ -452,7 +470,10 @@ async fn the_prompt_carries_the_engines_own_options_and_its_identity() {
     // here would silently take the prompt away from the user.
     let payload = serde_json::to_value(prompt).expect("the payload serializes");
     for key in ["requestId", "toolCallId", "title", "input", "options"] {
-        assert!(payload.get(key).is_some(), "the contract reads {key}: {payload}");
+        assert!(
+            payload.get(key).is_some(),
+            "the contract reads {key}: {payload}"
+        );
     }
     assert_eq!(payload["input"]["state"], json!("text"));
     assert_eq!(payload["options"][0]["kind"], json!("allow_once"));
@@ -485,12 +506,18 @@ async fn an_option_the_engine_never_offered_is_refused() {
         .expect_err("an id the engine did not offer is not a decision");
     assert_eq!(
         refusal,
-        PermissionRefusal::OptionNotOffered { option_id: "always-forever".to_string() }
+        PermissionRefusal::OptionNotOffered {
+            option_id: "always-forever".to_string()
+        }
     );
     refused_and_silent(&asked.capture).await;
 
     apply_permission_answer(&asked.table, asked.answer("once")).expect("an offered id");
-    answered_once(&asked.capture, json!({ "outcome": "selected", "optionId": "once" })).await;
+    answered_once(
+        &asked.capture,
+        json!({ "outcome": "selected", "optionId": "once" }),
+    )
+    .await;
     asked.runtime.shutdown();
 }
 
@@ -506,7 +533,9 @@ async fn a_second_answer_to_the_same_request_is_refused() {
         .expect_err("the second click is not a second decision");
     assert_eq!(
         refusal,
-        PermissionRefusal::AlreadyAnswered { request_id: asked.prompt.request_id.clone() }
+        PermissionRefusal::AlreadyAnswered {
+            request_id: asked.prompt.request_id.clone()
+        }
     );
     // The renderer is told which fact it hit, not only that something failed.
     assert!(
@@ -514,7 +543,11 @@ async fn a_second_answer_to_the_same_request_is_refused() {
         "{}",
         refusal_message(&refusal)
     );
-    answered_once(&asked.capture, json!({ "outcome": "selected", "optionId": "once" })).await;
+    answered_once(
+        &asked.capture,
+        json!({ "outcome": "selected", "optionId": "once" }),
+    )
+    .await;
     asked.runtime.shutdown();
 }
 
@@ -527,11 +560,18 @@ async fn an_answer_for_another_vault_is_refused() {
     let mut answer = asked.answer("once");
     answer.session.vault_id = "vault-2".to_string();
     let refusal = apply_permission_answer(&asked.table, answer).expect_err("not this vault");
-    assert_eq!(refusal, PermissionRefusal::IdentityMismatch { field: "vaultId" });
+    assert_eq!(
+        refusal,
+        PermissionRefusal::IdentityMismatch { field: "vaultId" }
+    );
     refused_and_silent(&asked.capture).await;
 
     apply_permission_answer(&asked.table, asked.answer("once")).expect("the real vault still wins");
-    answered_once(&asked.capture, json!({ "outcome": "selected", "optionId": "once" })).await;
+    answered_once(
+        &asked.capture,
+        json!({ "outcome": "selected", "optionId": "once" }),
+    )
+    .await;
     asked.runtime.shutdown();
 }
 
@@ -542,10 +582,18 @@ async fn forged_identity_fields_are_refused_one_by_one() {
     // rather than acted on — and the prompt survives every one of them.
     let asked = ask("forged", true).await;
     let forgeries: [(&str, fn(&mut PermissionIdentity)); 4] = [
-        ("sessionId", |session| session.session_id = "ses_someone_elses".to_string()),
-        ("agentId", |session| session.agent_id = "another-engine".to_string()),
-        ("profileId", |session| session.profile_id = "another-profile".to_string()),
-        ("runtimeEpoch", |session| session.runtime_epoch = "epoch-0".to_string()),
+        ("sessionId", |session| {
+            session.session_id = "ses_someone_elses".to_string()
+        }),
+        ("agentId", |session| {
+            session.agent_id = "another-engine".to_string()
+        }),
+        ("profileId", |session| {
+            session.profile_id = "another-profile".to_string()
+        }),
+        ("runtimeEpoch", |session| {
+            session.runtime_epoch = "epoch-0".to_string()
+        }),
     ];
 
     for (field, spoil) in forgeries {
@@ -558,7 +606,11 @@ async fn forged_identity_fields_are_refused_one_by_one() {
 
     refused_and_silent(&asked.capture).await;
     apply_permission_answer(&asked.table, asked.answer("reject")).expect("the real answer works");
-    answered_once(&asked.capture, json!({ "outcome": "selected", "optionId": "reject" })).await;
+    answered_once(
+        &asked.capture,
+        json!({ "outcome": "selected", "optionId": "reject" }),
+    )
+    .await;
     asked.runtime.shutdown();
 }
 
@@ -573,7 +625,10 @@ async fn a_request_for_an_unknown_session_is_refused_to_the_engine() {
     let (runtime, mut events) = start(&fixture("good", &capture, &frame)).await;
     runtime.initialize().await.expect("initialize");
     let vault = temp_dir("unknown-session-vault");
-    runtime.open_session(&vault).await.expect("a session of our own");
+    runtime
+        .open_session(&vault)
+        .await
+        .expect("a session of our own");
     let table = PermissionTable::new(identity(), &runtime);
 
     let refused = table
@@ -609,7 +664,9 @@ async fn cancelling_ends_the_prompt_and_answers_it_cancelled() {
         .expect_err("a prompt that ended cannot be answered");
     assert_eq!(
         refusal,
-        PermissionRefusal::Expired { request_id: asked.prompt.request_id.clone() }
+        PermissionRefusal::Expired {
+            request_id: asked.prompt.request_id.clone()
+        }
     );
     // The refused click adds nothing: the engine's one answer is the `cancelled`
     // above, and it stays that way.
@@ -652,7 +709,9 @@ async fn a_stop_resolves_the_prompt_before_the_engine_is_told_to_cancel() {
         .expect_err("a prompt that ended cannot be answered");
     assert_eq!(
         refusal,
-        PermissionRefusal::Expired { request_id: asked.prompt.request_id.clone() }
+        PermissionRefusal::Expired {
+            request_id: asked.prompt.request_id.clone()
+        }
     );
     // Alive, and still answering the engine: a dead transport would make the
     // empty capture below meaningless.
@@ -687,7 +746,11 @@ async fn a_cancel_and_an_authorization_race_and_exactly_one_wins() {
     wait_for_an_answer(&asked.capture).await;
     tokio::time::sleep(SILENCE).await;
     let captured = replies(&asked.capture);
-    assert_eq!(captured.len(), 1, "a race is still one answer: {captured:?}");
+    assert_eq!(
+        captured.len(),
+        1,
+        "a race is still one answer: {captured:?}"
+    );
     let outcome = captured[0]["result"]["outcome"].clone();
     // Either side may win, and the pair of results has to agree about which did: an accepted click
     // means nothing was cancelled, a revoked prompt means the click was refused.
@@ -698,7 +761,10 @@ async fn a_cancel_and_an_authorization_race_and_exactly_one_wins() {
         assert_eq!(stopped, 1, "the cancel won, so it revoked the prompt");
         assert_eq!(outcome["outcome"], json!("cancelled"));
     }
-    assert!(asked.table.pending().is_empty(), "and it is over either way");
+    assert!(
+        asked.table.pending().is_empty(),
+        "and it is over either way"
+    );
     asked.runtime.shutdown();
 }
 
@@ -724,7 +790,9 @@ async fn a_process_exit_ends_every_pending_request() {
         .expect_err("a request that ended with the process cannot be answered");
     assert_eq!(
         refusal,
-        PermissionRefusal::Expired { request_id: asked.prompt.request_id.clone() }
+        PermissionRefusal::Expired {
+            request_id: asked.prompt.request_id.clone()
+        }
     );
     // Nothing was sent: the engine it would have been sent to is gone.
     refused_and_silent(&asked.capture).await;
@@ -759,7 +827,9 @@ async fn the_engine_cancelling_its_own_request_revokes_the_prompt() {
         .expect_err("a revoked prompt cannot be answered");
     assert_eq!(
         refusal,
-        PermissionRefusal::Expired { request_id: asked.prompt.request_id.clone() }
+        PermissionRefusal::Expired {
+            request_id: asked.prompt.request_id.clone()
+        }
     );
     asked.runtime.shutdown();
 }
@@ -773,7 +843,11 @@ async fn the_ipc_state_carries_the_runtime_and_the_prompt_snapshot() {
     // the subscription starts — has to see the open prompt, or a reloaded window would answer
     // blind.
     let asked = ask("ipc-state", false).await;
-    assert_eq!(pending_prompts(&asked.table).len(), 1, "the open prompt is in the snapshot");
+    assert_eq!(
+        pending_prompts(&asked.table).len(),
+        1,
+        "the open prompt is in the snapshot"
+    );
 
     // The table is the one that saw this prompt. `install` builds it from the runtime before the
     // runtime is shared, so a state holding a second table is not a state this composition can
@@ -795,7 +869,10 @@ async fn the_ipc_state_carries_the_runtime_and_the_prompt_snapshot() {
     apply_permission_answer(&session.permissions, asked.answer("once"))
         .expect("through the state's own table");
 
-    assert!(pending_prompts(&session.permissions).is_empty(), "answered, so nothing is pending");
+    assert!(
+        pending_prompts(&session.permissions).is_empty(),
+        "answered, so nothing is pending"
+    );
     wait_for_an_answer(&asked.capture).await;
     session.runtime.shutdown();
 }

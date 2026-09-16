@@ -37,7 +37,9 @@ fn removing_a_character_takes_it_out_of_the_library_and_leaves_no_residue() {
     assert!(!library.root().join("cat/sheet.png").exists());
     // The debris name is reserved and does not survive a clean removal: a `.removing-*` left in the
     // library is a directory the next listing would have to explain away.
-    assert!(listing(library.root()).iter().all(|name| !name.starts_with('.')));
+    assert!(listing(library.root())
+        .iter()
+        .all(|name| !name.starts_with('.')));
 }
 
 #[test]
@@ -59,7 +61,9 @@ fn removing_one_character_reaches_only_the_one_that_was_named() {
 fn removing_something_that_is_not_there_is_refused_rather_than_reported_as_done() {
     let library = two_characters("removal-absent");
     assert_eq!(
-        library.remove("ferret").expect_err("nothing is installed under that id"),
+        library
+            .remove("ferret")
+            .expect_err("nothing is installed under that id"),
         ResourceRefusal::NotInstalled {
             character_id: "ferret".to_string()
         }
@@ -75,7 +79,13 @@ fn a_removal_cannot_name_a_path_either() {
     for id in ["..", ".", "../cat", "cat/..", ".hidden", ""] {
         let refusal = library.remove(id).expect_err("not a path component");
         assert!(
-            matches!(refusal, ResourceRefusal::InvalidName { field: "characterId", .. }),
+            matches!(
+                refusal,
+                ResourceRefusal::InvalidName {
+                    field: "characterId",
+                    ..
+                }
+            ),
             "{id:?}"
         );
     }
@@ -101,7 +111,15 @@ fn the_module_offers_no_operation_on_a_whole_library() {
             .map(|entry| entry.path()),
     );
 
-    let forbidden = ["remove_all", "clear_all", "purge", "wipe", "erase", "reset_all", "uninstall"];
+    let forbidden = [
+        "remove_all",
+        "clear_all",
+        "purge",
+        "wipe",
+        "erase",
+        "reset_all",
+        "uninstall",
+    ];
     for source in &sources {
         let text = std::fs::read_to_string(source).expect("a readable source file");
         for name in forbidden {

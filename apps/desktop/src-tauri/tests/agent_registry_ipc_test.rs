@@ -36,23 +36,24 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use nekowite_lib::agent_runtime::VaultFiles;
+use nekowite_lib::agent_runtime::adapters;
 use nekowite_lib::agent_runtime::live_notes::{
     LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes,
 };
-use nekowite_lib::agent_runtime::adapters;
 use nekowite_lib::agent_runtime::profile::Credentials;
 use nekowite_lib::agent_runtime::registry::{
     AgentInstance, AgentRegistration, AgentRegistry, EnvPolicy, InstallSource, RegistryError,
 };
 use nekowite_lib::agent_runtime::secret::Secret;
 use nekowite_lib::agent_runtime::TransportError;
+use nekowite_lib::agent_runtime::VaultFiles;
 use nekowite_lib::commands::agent_registry::{
-    AgentDraft, RegistryReadout, RegistryRefusal, add_agent, read_registry, refusal_view, set_enabled,
+    add_agent, read_registry, refusal_view, set_enabled, AgentDraft, RegistryReadout,
+    RegistryRefusal,
 };
-use nekowite_lib::state::{AgentRuntimeState, edit_registry};
+use nekowite_lib::state::{edit_registry, AgentRuntimeState};
 
 /// The fixture engine (`tests/fixtures/agent/fake_agent.sh`) — T2's, unmodified apart from the two
 /// capture lines this target needs (the fixture's own comment says why). No test here sends a vault
@@ -220,8 +221,10 @@ fn an_added_engine_is_the_users_own_and_carries_the_draft_verbatim() {
 
     // Through `edit_registry`, which is the path a command takes: the closure returns what the page
     // receives, and `Ok(None)` is the accepted arm.
-    let accepted = edit_registry(&state, &managed, |registry| add_agent(registry, draft("acme")))
-        .expect("the registry is there to change");
+    let accepted = edit_registry(&state, &managed, |registry| {
+        add_agent(registry, draft("acme"))
+    })
+    .expect("the registry is there to change");
     assert!(accepted.is_none(), "{accepted:?}");
 
     let installed = state.registry.lock().unwrap().clone().expect("installed");
@@ -250,15 +253,22 @@ fn a_refused_change_is_a_value_and_an_unreachable_registry_is_an_error() {
     // The refusal channel: the call completed and the backend said no. `Ok(Some(…))`, and the facts
     // are the page's to render — no sentence is built here.
     let state = state_with(AgentRegistry::with_bundled("/opt/nekowite/opencode"));
-    let duplicate = edit_registry(&state, &managed, |registry| add_agent(registry, draft("opencode")))
-        .expect("a refusal is not a failure of the call");
-    assert!(matches!(duplicate, Some(RegistryRefusal::DuplicateAgent { .. })));
+    let duplicate = edit_registry(&state, &managed, |registry| {
+        add_agent(registry, draft("opencode"))
+    })
+    .expect("a refusal is not a failure of the call");
+    assert!(matches!(
+        duplicate,
+        Some(RegistryRefusal::DuplicateAgent { .. })
+    ));
 
     // The exception channel, first form: nothing to build a registry from. An empty slot sends
     // `edit_registry` through `program_to_launch`, and a test binary has no engine beside it — the
     // same sentence the app gives for a package that did not carry its sidecar.
     let empty = AgentRuntimeState::default();
-    let unbuildable = edit_registry(&empty, &managed, |registry| add_agent(registry, draft("acme")));
+    let unbuildable = edit_registry(&empty, &managed, |registry| {
+        add_agent(registry, draft("acme"))
+    });
     assert!(unbuildable.is_err(), "{unbuildable:?}");
     assert!(
         empty.registry.lock().unwrap().is_none(),
@@ -269,8 +279,15 @@ fn a_refused_change_is_a_value_and_an_unreachable_registry_is_an_error() {
     // §3.4.7's rule from the other side — a definition may not be edited while an engine is being
     // started from it — and the registry stays exactly where it was.
     let in_flight = state_with(AgentRegistry::with_bundled("/opt/nekowite/opencode"));
-    let held = in_flight.registry.lock().unwrap().clone().expect("installed");
-    let blocked = edit_registry(&in_flight, &managed, |registry| add_agent(registry, draft("acme")));
+    let held = in_flight
+        .registry
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("installed");
+    let blocked = edit_registry(&in_flight, &managed, |registry| {
+        add_agent(registry, draft("acme"))
+    });
     assert!(blocked.is_err(), "{blocked:?}");
     assert_eq!(
         Arc::strong_count(&held),
@@ -281,7 +298,9 @@ fn a_refused_change_is_a_value_and_an_unreachable_registry_is_an_error() {
 
     // And the same call succeeds the moment nothing holds a share — which is what makes the arm
     // above about a race rather than about a registry that cannot be edited at all.
-    let after = edit_registry(&in_flight, &managed, |registry| add_agent(registry, draft("acme")));
+    let after = edit_registry(&in_flight, &managed, |registry| {
+        add_agent(registry, draft("acme"))
+    });
     assert!(after.expect("nothing holds it now").is_none());
 }
 
@@ -458,7 +477,8 @@ async fn the_profiles_credentials_reach_the_engine_at_launch() {
     // Read out of the child's own environment, written by the child: the credential arrived *in the
     // process*, which is the only thing that distinguishes "the launch described it" from "the
     // engine has it" — and that gap is the failure this case exists to catch.
-    let recorded = fs::read_to_string(&capture).expect("the fixture reports what it was started with");
+    let recorded =
+        fs::read_to_string(&capture).expect("the fixture reports what it was started with");
     assert!(recorded.contains(&format!("cred={FAKE_KEY}")), "{recorded}");
     assert!(
         recorded.contains(&format!("home={}", dir.join("HOME").display())),

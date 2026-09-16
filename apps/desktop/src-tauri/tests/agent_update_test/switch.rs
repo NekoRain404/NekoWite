@@ -119,7 +119,9 @@ impl RollbackScene {
             fs::copy("/bin/true", &program).expect("install a program");
             registry.set_active(version).expect("install the version");
         }
-        registry.set_active(older).expect("the pointer starts on the older");
+        registry
+            .set_active(older)
+            .expect("the pointer starts on the older");
 
         let profile = scratch(&format!("{label}-profile"));
         write_file(&profile.join("config.json"), "{\"model\":\"a\"}");

@@ -30,7 +30,11 @@ fn do_not_disturb_shows_nothing_and_keeps_the_row_unread() {
 
     let outcome = policy.observe(stream.at(&task, PetTaskState::TurnFinished, 1_000));
     assert_eq!(silent(&outcome), SilenceReason::DoNotDisturb);
-    assert_eq!(channel.count(), 0, "no toast and no sound while do-not-disturb is on");
+    assert_eq!(
+        channel.count(),
+        0,
+        "no toast and no sound while do-not-disturb is on"
+    );
 
     let unread = policy.unread();
     assert_eq!(unread.len(), 1, "§6.3: 勿扰禁声音和弹出，保留未读");
@@ -61,7 +65,11 @@ fn leaving_do_not_disturb_replays_nothing() {
     // have gathered may come out on the way back.
     policy.set_preferences(NotificationPreferences::default());
     assert!(policy.flush_due(60_000).is_none());
-    assert_eq!(channel.count(), 0, "nothing is replayed by leaving do-not-disturb");
+    assert_eq!(
+        channel.count(),
+        0,
+        "nothing is replayed by leaving do-not-disturb"
+    );
     assert_eq!(
         policy.unread().len(),
         3,
@@ -85,7 +93,8 @@ fn a_burst_gathering_when_do_not_disturb_arrives_is_dropped() {
     let stream = Stream::new();
     let task = key("run-1");
 
-    let (_, due_at_ms) = gathering(&policy.observe(stream.at(&task, PetTaskState::TurnFinished, 1_000)));
+    let (_, due_at_ms) =
+        gathering(&policy.observe(stream.at(&task, PetTaskState::TurnFinished, 1_000)));
     assert!(due_at_ms > 1_000);
 
     // Do-not-disturb arrives inside the burst window. Holding it would be a queue, and the queue is
@@ -100,7 +109,11 @@ fn a_burst_gathering_when_do_not_disturb_arrives_is_dropped() {
     policy.set_preferences(NotificationPreferences::default());
     assert!(policy.flush_due(due_at_ms + 60_000).is_none());
     assert_eq!(channel.count(), 0, "the dropped burst does not come back");
-    assert_eq!(policy.unread().len(), 1, "the row it was about is still there");
+    assert_eq!(
+        policy.unread().len(),
+        1,
+        "the row it was about is still there"
+    );
 }
 
 #[test]
@@ -178,7 +191,8 @@ fn opening_the_task_during_the_burst_window_still_silences_the_notice() {
     let stream = Stream::new();
     let task = key("run-1");
 
-    let (_, due_at_ms) = gathering(&policy.observe(stream.at(&task, PetTaskState::TurnFinished, 1_000)));
+    let (_, due_at_ms) =
+        gathering(&policy.observe(stream.at(&task, PetTaskState::TurnFinished, 1_000)));
     // The window is three seconds long, and the user can open the task inside it. The delivery path
     // applies the same rule the observation path does, so the two cannot disagree about the race.
     policy.set_viewing(Some(session_of(&task)));
@@ -186,7 +200,11 @@ fn opening_the_task_during_the_burst_window_still_silences_the_notice() {
     let outcome = policy.flush_due(due_at_ms).expect("the burst was due");
     assert_eq!(silent(&outcome), SilenceReason::BeingViewed);
     assert_eq!(channel.count(), 0);
-    assert_eq!(policy.unread().len(), 1, "and the row is still the user's to find");
+    assert_eq!(
+        policy.unread().len(),
+        1,
+        "and the row is still the user's to find"
+    );
 
     // A burst that stands for several tasks is not about the one being viewed, so it still goes out.
     let (_, due_at_ms) = gathering(&policy.observe(stream.at(
@@ -214,7 +232,11 @@ fn viewing_another_task_does_not_silence_this_one() {
 
     // And looking away restores the narrow rule rather than leaving a hole in it.
     policy.set_viewing(None);
-    let _ = policy.observe(stream.at(&key_for("opencode", "session-watched", "run-2"), PetTaskState::Failed, 2_000));
+    let _ = policy.observe(stream.at(
+        &key_for("opencode", "session-watched", "run-2"),
+        PetTaskState::Failed,
+        2_000,
+    ));
     assert_eq!(channel.count(), 2);
 }
 
@@ -303,8 +325,14 @@ fn the_channel_a_state_uses_is_the_one_its_switch_names() {
     // as well as in the contract, and the two quiet ones are named rather than left to a default.
     let table = [
         (PetTaskState::Working, None),
-        (PetTaskState::WaitingInput, Some(NotificationChannel::WaitingInput)),
-        (PetTaskState::TurnFinished, Some(NotificationChannel::TurnFinished)),
+        (
+            PetTaskState::WaitingInput,
+            Some(NotificationChannel::WaitingInput),
+        ),
+        (
+            PetTaskState::TurnFinished,
+            Some(NotificationChannel::TurnFinished),
+        ),
         (PetTaskState::Stopped, Some(NotificationChannel::Stopped)),
         (PetTaskState::Refused, Some(NotificationChannel::Failed)),
         (PetTaskState::Cancelled, None),
@@ -312,7 +340,10 @@ fn the_channel_a_state_uses_is_the_one_its_switch_names() {
         (PetTaskState::Interrupted, Some(NotificationChannel::Failed)),
         (PetTaskState::Unknown, Some(NotificationChannel::Failed)),
     ];
-    assert_eq!(table.len(), crate::desktop_pet::history::PET_TASK_STATES.len());
+    assert_eq!(
+        table.len(),
+        crate::desktop_pet::history::PET_TASK_STATES.len()
+    );
     for (state, expected) in table {
         assert_eq!(channel_for(state), expected, "{state:?}");
     }

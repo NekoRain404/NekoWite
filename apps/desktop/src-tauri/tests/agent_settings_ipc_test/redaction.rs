@@ -43,7 +43,9 @@ fn a_credential_is_absent_from_every_readout_line_of_debug_and_refusal() {
     // The refusal messages are the other surface a value could leak through, so every arm is
     // walked rather than the one a test happened to trigger.
     for error in [
-        ProfileError::Id { profile_id: "../x".to_string() },
+        ProfileError::Id {
+            profile_id: "../x".to_string(),
+        },
         ProfileError::AgentMismatch {
             profile_id: "alpha".to_string(),
             requested: "engine-beta".to_string(),
@@ -51,7 +53,9 @@ fn a_credential_is_absent_from_every_readout_line_of_debug_and_refusal() {
         },
         ProfileError::ReadOnly,
         ProfileError::Field { field: "mode" },
-        ProfileError::Credential { name: "A=B".to_string() },
+        ProfileError::Credential {
+            name: "A=B".to_string(),
+        },
     ] {
         let message = refusal_message(&error);
         assert!(!message.contains(SECRET_VALUE), "{message}");
@@ -77,15 +81,23 @@ fn editing_one_credential_leaves_the_others_alone() {
         &store,
         "engine-alpha",
         "alpha",
-        &[set("ANTHROPIC_API_KEY", "sk-one"), set("OPENAI_API_KEY", "sk-two")],
+        &[
+            set("ANTHROPIC_API_KEY", "sk-one"),
+            set("OPENAI_API_KEY", "sk-two"),
+        ],
     )
     .unwrap();
 
     // The page shows names and the placeholder, so it cannot resubmit a value it does not have.
     // A surface that took a whole set would have deleted `OPENAI_API_KEY` on this request, with
     // nothing on screen to say so.
-    let after_set = submit_credentials(&store, "engine-alpha", "alpha", &[set("ANTHROPIC_API_KEY", "sk-three")])
-        .unwrap();
+    let after_set = submit_credentials(
+        &store,
+        "engine-alpha",
+        "alpha",
+        &[set("ANTHROPIC_API_KEY", "sk-three")],
+    )
+    .unwrap();
     let names: Vec<&str> = after_set["credentials"]
         .as_array()
         .unwrap()
@@ -127,7 +139,10 @@ fn the_document_read_is_the_editors_and_carries_no_redaction_it_would_have_to_un
     // Byte-identical to the file: an editor that received a rewritten document could not save it
     // back without destroying the comments.
     assert_eq!(view["text"].as_str().unwrap(), CONFIG);
-    assert!(view["path"].as_str().unwrap().starts_with(&profile.root().to_string_lossy().to_string()));
+    assert!(view["path"]
+        .as_str()
+        .unwrap()
+        .starts_with(&profile.root().to_string_lossy().to_string()));
 }
 
 /// The pairs with their values read out — what a launch does when it builds the child's

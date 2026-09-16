@@ -97,7 +97,10 @@ impl Desktop {
             .map(str::trim)
             .filter(|token| !token.is_empty())
             .collect();
-        if tokens.iter().any(|token| token.eq_ignore_ascii_case("gnome")) {
+        if tokens
+            .iter()
+            .any(|token| token.eq_ignore_ascii_case("gnome"))
+        {
             Self::Gnome
         } else if tokens.iter().any(|token| token.eq_ignore_ascii_case("kde")) {
             Self::Kde

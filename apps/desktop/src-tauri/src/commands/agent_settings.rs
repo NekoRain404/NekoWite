@@ -103,9 +103,8 @@ pub fn submit_profile(
     submission: &ProfileSubmission,
 ) -> Result<Value, String> {
     let expected = Revision::parse(revision).ok_or_else(|| refused_revision(revision))?;
-    let mode = ConfigMode::parse(&submission.mode).ok_or_else(|| {
-        refusal_message(&ProfileError::Field { field: "mode" })
-    })?;
+    let mode = ConfigMode::parse(&submission.mode)
+        .ok_or_else(|| refusal_message(&ProfileError::Field { field: "mode" }))?;
     let fields = ProfileFields {
         mode,
         provider: submission.provider.clone(),
@@ -175,8 +174,8 @@ pub fn submit_document(
         .map(|edit| ConfigEdit::set(edit.path.clone(), edit.value.clone()))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| refusal_message(&error.into()))?;
-    let outcome =
-        config_edit::apply(&path, &expected, &edits).map_err(|error| refusal_message(&error.into()))?;
+    let outcome = config_edit::apply(&path, &expected, &edits)
+        .map_err(|error| refusal_message(&error.into()))?;
     match outcome {
         config_edit::WriteOutcome::Written { revision } => Ok(json!({
             "status": "written",
@@ -207,7 +206,9 @@ pub fn submit_credentials(
                 name: name.clone(),
                 value: Secret::new(value.clone()),
             },
-            CredentialSubmission::Remove { name } => CredentialChange::Remove { name: name.clone() },
+            CredentialSubmission::Remove { name } => {
+                CredentialChange::Remove { name: name.clone() }
+            }
         })
         .collect::<Vec<_>>();
     profile
@@ -374,13 +375,7 @@ pub fn agent_profile_write(
     revision: String,
     submission: ProfileSubmission,
 ) -> Result<Value, String> {
-    submit_profile(
-        &state.store,
-        &agent_id,
-        &profile_id,
-        &revision,
-        &submission,
-    )
+    submit_profile(&state.store, &agent_id, &profile_id, &revision, &submission)
 }
 
 #[tauri::command]

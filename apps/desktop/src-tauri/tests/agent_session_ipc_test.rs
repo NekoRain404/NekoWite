@@ -20,7 +20,9 @@
 //!   snapshot's own sequence and tail are asserted against the frames the sink received.
 
 use nekowite_lib::agent_runtime;
-use nekowite_lib::agent_runtime::live_notes::{LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes};
+use nekowite_lib::agent_runtime::live_notes::{
+    LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes,
+};
 use nekowite_lib::commands;
 use nekowite_lib::state;
 
@@ -38,8 +40,8 @@ use agent_runtime::registry::{AgentRegistration, AgentRegistry, EnvPolicy, Insta
 use agent_runtime::snapshot::{SessionSnapshot, SessionState};
 use agent_runtime::VaultFiles;
 use commands::agent::{
-    AgentIpcState, agent_open_session, agent_prompt, agent_session_snapshot,
-    agent_set_config_option, agent_stop,
+    agent_open_session, agent_prompt, agent_session_snapshot, agent_set_config_option, agent_stop,
+    AgentIpcState,
 };
 use state::AgentRuntimeState;
 
@@ -323,19 +325,35 @@ async fn a_window_opens_a_session_and_reads_the_turn_it_runs() {
     let before = agent_session_snapshot(wired.ipc(), opened.session_id.clone())
         .await
         .expect("snapshot");
-    assert_eq!(before.state, SessionState::Ready, "nothing has been asked of it yet");
+    assert_eq!(
+        before.state,
+        SessionState::Ready,
+        "nothing has been asked of it yet"
+    );
     assert_eq!(before.run_id, None);
     assert_eq!(before.identity.session_id, "ses_fake_1");
     assert_eq!(before.identity.vault_id, "vault-1");
-    assert!(!before.identity.runtime_epoch.is_empty(), "the epoch is minted, not guessed");
+    assert!(
+        !before.identity.runtime_epoch.is_empty(),
+        "the epoch is minted, not guessed"
+    );
 
-    let run_id = agent_prompt(wired.app.handle().clone(), wired.ipc(), opened.session_id.clone(), "hello".to_string())
-        .await
-        .expect("a prompt starts a turn");
+    let run_id = agent_prompt(
+        wired.app.handle().clone(),
+        wired.ipc(),
+        opened.session_id.clone(),
+        "hello".to_string(),
+    )
+    .await
+    .expect("a prompt starts a turn");
     assert_eq!(run_id, "run-0", "the host's own name for the work");
 
     let after = wait_for_state(wired.ipc(), &opened.session_id, SessionState::Completed).await;
-    assert_eq!(after.run_id.as_deref(), Some("run-0"), "the turn it is looking at");
+    assert_eq!(
+        after.run_id.as_deref(),
+        Some("run-0"),
+        "the turn it is looking at"
+    );
     assert!(
         after.sequence > before.sequence,
         "the stream moved: {} -> {}",
@@ -352,7 +370,10 @@ async fn a_window_opens_a_session_and_reads_the_turn_it_runs() {
         "the ending is the last thing this session published: {kinds:?}"
     );
     assert!(
-        after.events.windows(2).all(|pair| pair[0].sequence < pair[1].sequence),
+        after
+            .events
+            .windows(2)
+            .all(|pair| pair[0].sequence < pair[1].sequence),
         "the replay is ordered by the host's own sequence"
     );
 
@@ -360,11 +381,17 @@ async fn a_window_opens_a_session_and_reads_the_turn_it_runs() {
     // window that was already listening.
     let received = wired.received.lock().unwrap().clone();
     assert!(
-        received.iter().any(|event| event.kind == AgentEventKind::RunFinished),
+        received
+            .iter()
+            .any(|event| event.kind == AgentEventKind::RunFinished),
         "the ending must be published, not only replayed"
     );
-    assert!(received.iter().all(|event| event.session_id == opened.session_id));
-    assert!(received.iter().any(|event| event.sequence == after.sequence));
+    assert!(received
+        .iter()
+        .all(|event| event.session_id == opened.session_id));
+    assert!(received
+        .iter()
+        .any(|event| event.sequence == after.sequence));
 }
 
 #[tokio::test]
@@ -414,9 +441,14 @@ async fn every_frame_a_window_receives_after_its_snapshot_is_in_the_snapshot_or_
         .map(|event| event.sequence)
         .collect();
 
-    agent_prompt(wired.app.handle().clone(), wired.ipc(), opened.session_id.clone(), "hello".to_string())
-        .await
-        .expect("prompt");
+    agent_prompt(
+        wired.app.handle().clone(),
+        wired.ipc(),
+        opened.session_id.clone(),
+        "hello".to_string(),
+    )
+    .await
+    .expect("prompt");
     wait_for_state(wired.ipc(), &opened.session_id, SessionState::Completed).await;
 
     let received = wired.received.lock().unwrap().clone();
@@ -494,9 +526,14 @@ async fn the_engines_own_options_reach_both_the_caller_and_the_window() {
     // and switching a model between turns is exactly when a user does it.
     let wired = wired("config", "config-update", None).await;
     let opened = open(&wired).await;
-    agent_prompt(wired.app.handle().clone(), wired.ipc(), opened.session_id.clone(), "hello".to_string())
-        .await
-        .expect("a turn");
+    agent_prompt(
+        wired.app.handle().clone(),
+        wired.ipc(),
+        opened.session_id.clone(),
+        "hello".to_string(),
+    )
+    .await
+    .expect("a turn");
     wait_for_state(wired.ipc(), &opened.session_id, SessionState::Completed).await;
 
     let options = agent_set_config_option(
@@ -514,7 +551,10 @@ async fn the_engines_own_options_reach_both_the_caller_and_the_window() {
     assert_eq!(options[0]["currentValue"], "fake/model-b");
 
     let event = wait_for_event(&wired, AgentEventKind::ConfigChanged).await;
-    assert_eq!(event.session_id, opened.session_id, "the session the engine named");
+    assert_eq!(
+        event.session_id, opened.session_id,
+        "the session the engine named"
+    );
     assert_eq!(
         event.run_id, None,
         "a config change belongs to the session, not to a turn: the one above has already ended"
@@ -522,10 +562,12 @@ async fn the_engines_own_options_reach_both_the_caller_and_the_window() {
     // The contract's payload — the shape `readConfigChanged` reads and no other.
     assert_eq!(event.payload["options"][0]["id"], "model");
     assert_eq!(event.payload["options"][0]["value"]["kind"], "select");
-    assert_eq!(event.payload["options"][0]["value"]["current"], "fake/model-b");
     assert_eq!(
-        event.payload["options"][0]["value"]["choices"][1]["value"],
-        "fake/model-b",
+        event.payload["options"][0]["value"]["current"],
+        "fake/model-b"
+    );
+    assert_eq!(
+        event.payload["options"][0]["value"]["choices"][1]["value"], "fake/model-b",
         "the choices come with the option, which is what a selector draws"
     );
 }
@@ -540,13 +582,24 @@ async fn a_config_change_during_a_turn_belongs_to_the_session_not_the_turn() {
     let wired = wired("mid-run", "config-mid-run", None).await;
     let opened = open(&wired).await;
 
-    let run_id = agent_prompt(wired.app.handle().clone(), wired.ipc(), opened.session_id.clone(), "hello".to_string())
-        .await
-        .expect("a turn");
+    let run_id = agent_prompt(
+        wired.app.handle().clone(),
+        wired.ipc(),
+        opened.session_id.clone(),
+        "hello".to_string(),
+    )
+    .await
+    .expect("a turn");
 
     let event = wait_for_event(&wired, AgentEventKind::ConfigChanged).await;
-    assert_eq!(event.run_id, None, "a session fact carries no run, even mid-turn");
-    assert_eq!(event.payload["options"][0]["value"]["current"], "fake/model-b");
+    assert_eq!(
+        event.run_id, None,
+        "a session fact carries no run, even mid-turn"
+    );
+    assert_eq!(
+        event.payload["options"][0]["value"]["current"],
+        "fake/model-b"
+    );
 
     // The turn it arrived during is untouched: it reaches its own ending, and nothing here was
     // reported as a failure of it.
@@ -554,7 +607,9 @@ async fn a_config_change_during_a_turn_belongs_to_the_session_not_the_turn() {
     assert_eq!(after.run_id.as_deref(), Some(run_id.as_str()));
     let received = wired.received.lock().unwrap().clone();
     assert!(
-        received.iter().all(|frame| frame.kind != AgentEventKind::RunFailed),
+        received
+            .iter()
+            .all(|frame| frame.kind != AgentEventKind::RunFailed),
         "a session-scoped frame must not be able to fail the turn it arrived in"
     );
 }
@@ -602,7 +657,10 @@ async fn a_session_root_is_the_vault_the_user_opened() {
     )
     .await
     .expect_err("this engine was started for one vault");
-    assert!(refusal.contains("was started for the vault vault-1"), "{refusal}");
+    assert!(
+        refusal.contains("was started for the vault vault-1"),
+        "{refusal}"
+    );
 }
 
 #[tokio::test]
@@ -622,9 +680,17 @@ async fn a_pending_prompt_holds_the_session_in_waiting_permission() {
     .await;
     let opened = open(&wired).await;
 
-    let waiting =
-        wait_for_state(wired.ipc(), &opened.session_id, SessionState::WaitingPermission).await;
-    assert_eq!(waiting.permissions.len(), 1, "the question is in the snapshot");
+    let waiting = wait_for_state(
+        wired.ipc(),
+        &opened.session_id,
+        SessionState::WaitingPermission,
+    )
+    .await;
+    assert_eq!(
+        waiting.permissions.len(),
+        1,
+        "the question is in the snapshot"
+    );
     let prompt = &waiting.permissions[0].payload;
     assert!(
         prompt.get("requestId").is_some(),
@@ -637,7 +703,9 @@ async fn a_pending_prompt_holds_the_session_in_waiting_permission() {
         "the engine's own options, as the engine spelled them"
     );
     assert!(
-        prompt["title"].as_str().is_some_and(|title| !title.is_empty()),
+        prompt["title"]
+            .as_str()
+            .is_some_and(|title| !title.is_empty()),
         "a prompt whose title is empty is refused by the contract on the other side: {prompt}"
     );
     assert!(

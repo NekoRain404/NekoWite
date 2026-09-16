@@ -163,9 +163,12 @@ impl Engine {
         // The environment is read back out of the launch description the runtime hands
         // `execve`, rather than restated here: a test that spelled the variables out again
         // would be measuring its own copy of them.
-        let described = serde_json::to_value(tree.launch().agent_config())
-            .expect("the launch serializes");
-        let env = described["env"].as_object().expect("the launch's env").clone();
+        let described =
+            serde_json::to_value(tree.launch().agent_config()).expect("the launch serializes");
+        let env = described["env"]
+            .as_object()
+            .expect("the launch's env")
+            .clone();
 
         let mut command = tokio::process::Command::new(engine);
         command
@@ -250,7 +253,11 @@ impl Engine {
     }
 
     fn said(&self, needle: &str) -> bool {
-        self.frames.lock().unwrap().iter().any(|l| l.contains(needle))
+        self.frames
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|l| l.contains(needle))
     }
 
     /// The session id in a frame, for the caller that has just been told one.
@@ -318,7 +325,10 @@ impl Engine {
 async fn two_engines_on_one_profile_share_the_database_and_the_session() {
     let engine = Path::new(env!("CARGO_MANIFEST_DIR")).join(ENGINE);
     if !engine.is_file() {
-        eprintln!("SKIP: {} is absent; run scripts/fetch-opencode-linux.sh", engine.display());
+        eprintln!(
+            "SKIP: {} is absent; run scripts/fetch-opencode-linux.sh",
+            engine.display()
+        );
         return;
     }
 

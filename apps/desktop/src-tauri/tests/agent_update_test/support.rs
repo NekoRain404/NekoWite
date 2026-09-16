@@ -17,11 +17,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use sha2::{Digest, Sha256};
 
-use nekowite_lib::agent_runtime;
 use agent_runtime::binary_registry::{self, BinaryRegistry};
 use agent_runtime::update::{
     Artifact, ArtifactClaims, CandidateProbe, Handshake, PinnedRelease, SessionActivity,
 };
+use nekowite_lib::agent_runtime;
 
 use futures_util::future::BoxFuture;
 

@@ -49,8 +49,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use skills::{
-    DisableMechanism, Overwrite, ScopeOwner, SkillError, SkillLibrary, SkillScope, SkillImport,
-    SkillPreview, SkillSurface, SkillView, DISABLE_CLAUDE_CODE_SKILLS, MAX_DESCRIPTION_CHARS,
+    DisableMechanism, Overwrite, ScopeOwner, SkillError, SkillImport, SkillLibrary, SkillPreview,
+    SkillScope, SkillSurface, SkillView, DISABLE_CLAUDE_CODE_SKILLS, MAX_DESCRIPTION_CHARS,
     MAX_IMPORTED_FILE_BYTES, SKILL_FILE_NAME,
 };
 
@@ -146,7 +146,12 @@ fn importing_a_skill_copies_its_payload_and_runs_none_of_it() {
     let roots = scratch("no-execution");
     let source = roots.join("incoming/leaky");
     let payload = source.join("scripts/payload.sh");
-    write_skill(&roots.join("incoming"), "leaky", "leaky", Some("A skill with a payload."));
+    write_skill(
+        &roots.join("incoming"),
+        "leaky",
+        "leaky",
+        Some("A skill with a payload."),
+    );
     write_file(&payload, CANARY_PAYLOAD);
     write_file(&source.join("reference/notes.md"), "# Notes\n");
     fs::set_permissions(&payload, fs::Permissions::from_mode(0o755)).expect("executable bit");
@@ -162,11 +167,17 @@ fn importing_a_skill_copies_its_payload_and_runs_none_of_it() {
         preview.scripts,
         vec![
             ("reference/notes.md".to_string(), 8),
-            ("scripts/payload.sh".to_string(), CANARY_PAYLOAD.len() as u64),
+            (
+                "scripts/payload.sh".to_string(),
+                CANARY_PAYLOAD.len() as u64
+            ),
         ],
         "every file that is not SKILL.md is named before anything is installed"
     );
-    assert!(!canary.exists(), "reading a preview must not run anything either");
+    assert!(
+        !canary.exists(),
+        "reading a preview must not run anything either"
+    );
 
     // The positive control. Without it, a canary that could never have fired would make the whole
     // test pass for the wrong reason — which is exactly the failure mode this file exists to avoid.
@@ -239,10 +250,7 @@ fn a_skill_that_cannot_be_read_says_which_part_of_it_could_not_be() {
         ),
         (
             "long-name",
-            format!(
-                "---\nname: {}\ndescription: d\n---\n",
-                "a".repeat(80)
-            ),
+            format!("---\nname: {}\ndescription: d\n---\n", "a".repeat(80)),
         ),
         (
             "no-description",
@@ -313,7 +321,12 @@ fn a_skill_that_cannot_be_read_says_which_part_of_it_could_not_be() {
 #[test]
 fn an_import_refuses_a_name_that_is_not_the_folder() {
     let roots = scratch("name-mismatch");
-    write_skill(&roots.join("incoming"), "folder-name", "other-name", Some("d"));
+    write_skill(
+        &roots.join("incoming"),
+        "folder-name",
+        "other-name",
+        Some("d"),
+    );
     let error = library(&roots)
         .import(
             &roots.join("incoming/folder-name"),
@@ -360,7 +373,9 @@ fn a_discovered_mismatch_is_shown_rather_than_dropped() {
 fn a_skill_without_a_description_is_shown_as_inert() {
     let roots = scratch("undescribed");
     write_file(
-        &roots.join("config/skills/undescribed").join(SKILL_FILE_NAME),
+        &roots
+            .join("config/skills/undescribed")
+            .join(SKILL_FILE_NAME),
         "---\nname: undescribed\n---\n",
     );
     let found = library(&roots).discover().expect("discover");
@@ -399,8 +414,7 @@ fn a_skill_reached_through_a_link_out_of_its_scope_is_reported_as_such() {
     let roots = scratch("escaping-skill");
     let outside = write_skill(&roots.join("outside"), "elsewhere", "elsewhere", Some("d"));
     fs::create_dir_all(roots.join("config/skills")).expect("scope root");
-    std::os::unix::fs::symlink(&outside, roots.join("config/skills/elsewhere"))
-        .expect("symlink");
+    std::os::unix::fs::symlink(&outside, roots.join("config/skills/elsewhere")).expect("symlink");
 
     let found = library(&roots).discover().expect("discover");
     assert_eq!(found.len(), 1);
@@ -424,7 +438,10 @@ fn an_oversized_skill_is_refused_rather_than_cut() {
     let library = library(&roots);
 
     let big = write_skill(&roots.join("incoming"), "big", "big", Some("d"));
-    write_file(&big.join("large.bin"), &"x".repeat(MAX_IMPORTED_FILE_BYTES as usize + 1));
+    write_file(
+        &big.join("large.bin"),
+        &"x".repeat(MAX_IMPORTED_FILE_BYTES as usize + 1),
+    );
     assert_eq!(
         one_error(library.preview(&big).expect_err("must refuse")),
         "file-too-large"
@@ -448,15 +465,28 @@ fn an_oversized_skill_is_refused_rather_than_cut() {
 fn a_name_already_taken_is_refused_and_the_existing_skill_is_untouched() {
     let roots = scratch("overwrite-refused");
     let library = library(&roots);
-    let installed = write_skill(&roots.join("config/skills"), "duplicate", "duplicate", Some("old"));
+    let installed = write_skill(
+        &roots.join("config/skills"),
+        "duplicate",
+        "duplicate",
+        Some("old"),
+    );
     write_file(&installed.join("keep.md"), "the user's own file\n");
 
-    let source = write_skill(&roots.join("incoming"), "duplicate", "duplicate", Some("new"));
+    let source = write_skill(
+        &roots.join("incoming"),
+        "duplicate",
+        "duplicate",
+        Some("new"),
+    );
     let error = library
         .import(&source, "engine-global", Overwrite::KeepExisting)
         .expect_err("must refuse");
     assert_eq!(one_error(error), "name-taken");
-    assert!(installed.join("keep.md").is_file(), "the existing skill stands");
+    assert!(
+        installed.join("keep.md").is_file(),
+        "the existing skill stands"
+    );
     assert_eq!(
         fs::read_to_string(source.join(SKILL_FILE_NAME)).expect("source"),
         "---\nname: duplicate\ndescription: new\n---\n\n# duplicate\n\nBody.\n"
@@ -469,10 +499,20 @@ fn a_name_already_taken_is_refused_and_the_existing_skill_is_untouched() {
 fn a_confirmed_overwrite_keeps_the_previous_copy() {
     let roots = scratch("overwrite-kept");
     let library = library(&roots);
-    let installed = write_skill(&roots.join("config/skills"), "duplicate", "duplicate", Some("old"));
+    let installed = write_skill(
+        &roots.join("config/skills"),
+        "duplicate",
+        "duplicate",
+        Some("old"),
+    );
     write_file(&installed.join("keep.md"), "the user's own file\n");
 
-    let source = write_skill(&roots.join("incoming"), "duplicate", "duplicate", Some("new"));
+    let source = write_skill(
+        &roots.join("incoming"),
+        "duplicate",
+        "duplicate",
+        Some("new"),
+    );
     let outcome: SkillImport = library
         .import(&source, "engine-global", Overwrite::Replace)
         .expect("replace");
@@ -501,7 +541,12 @@ fn a_confirmed_overwrite_keeps_the_previous_copy() {
 fn switching_a_skill_off_removes_it_from_discovery() {
     let roots = scratch("disable");
     let library = library(&roots);
-    write_skill(&roots.join("config/skills"), "noisy", "noisy", Some("A skill."));
+    write_skill(
+        &roots.join("config/skills"),
+        "noisy",
+        "noisy",
+        Some("A skill."),
+    );
 
     let found = library.discover().expect("discover");
     assert_eq!(found.len(), 1);
@@ -550,8 +595,8 @@ fn a_store_that_a_scan_would_reach_is_refused() {
     let error = SkillLibrary::new(scopes(&roots), roots.join("config/skills/disabled"))
         .expect_err("must refuse");
     assert_eq!(one_error(error), "store-inside-scope");
-    let error = SkillLibrary::new(scopes(&roots), roots.join("config/skills"))
-        .expect_err("must refuse");
+    let error =
+        SkillLibrary::new(scopes(&roots), roots.join("config/skills")).expect_err("must refuse");
     assert_eq!(one_error(error), "store-inside-scope");
     // A relative store would be resolved against this app's own working directory.
     let error = SkillLibrary::new(scopes(&roots), "store").expect_err("must refuse");
@@ -565,11 +610,24 @@ fn a_store_that_a_scan_would_reach_is_refused() {
 fn a_scope_this_host_cannot_affect_refuses_the_switch() {
     let roots = scratch("no-switch");
     let library = library(&roots);
-    write_skill(&roots.join("home/.claude/skills"), "borrowed", "borrowed", Some("d"));
-    write_skill(&roots.join("project/.opencode/skills"), "in-project", "in-project", Some("d"));
+    write_skill(
+        &roots.join("home/.claude/skills"),
+        "borrowed",
+        "borrowed",
+        Some("d"),
+    );
+    write_skill(
+        &roots.join("project/.opencode/skills"),
+        "in-project",
+        "in-project",
+        Some("d"),
+    );
 
     let found = library.discover().expect("discover");
-    let borrowed = found.iter().find(|view| view.name == "borrowed").expect("claude row");
+    let borrowed = found
+        .iter()
+        .find(|view| view.name == "borrowed")
+        .expect("claude row");
     assert_eq!(
         borrowed.disable,
         DisableMechanism::EngineSwitch {
@@ -578,18 +636,32 @@ fn a_scope_this_host_cannot_affect_refuses_the_switch() {
         "the only switch there is belongs to the engine, and the row names it"
     );
     assert_eq!(
-        library.set_enabled(borrowed, false).expect_err("must refuse"),
+        library
+            .set_enabled(borrowed, false)
+            .expect_err("must refuse"),
         SkillError::NoSwitch {
             scope: "claude-code".to_string(),
             variable: Some(DISABLE_CLAUDE_CODE_SKILLS),
         }
     );
-    assert!(borrowed.directory.is_dir(), "nothing was moved by a refusal");
+    assert!(
+        borrowed.directory.is_dir(),
+        "nothing was moved by a refusal"
+    );
 
-    let project = found.iter().find(|view| view.name == "in-project").expect("project row");
-    assert_eq!(project.disable, DisableMechanism::None, "there is no switch here at all");
+    let project = found
+        .iter()
+        .find(|view| view.name == "in-project")
+        .expect("project row");
     assert_eq!(
-        library.set_enabled(project, false).expect_err("must refuse"),
+        project.disable,
+        DisableMechanism::None,
+        "there is no switch here at all"
+    );
+    assert_eq!(
+        library
+            .set_enabled(project, false)
+            .expect_err("must refuse"),
         SkillError::NoSwitch {
             scope: "engine-project".to_string(),
             variable: None,
@@ -664,12 +736,21 @@ fn a_duplicate_name_is_reported_as_a_conflict_with_no_winner() {
     let roots = scratch("conflict");
     let library = library(&roots);
     let first = write_skill(&roots.join("config/skills"), "twice", "twice", Some("one"));
-    let second = write_skill(&roots.join("project/.opencode/skills"), "twice", "twice", Some("two"));
+    let second = write_skill(
+        &roots.join("project/.opencode/skills"),
+        "twice",
+        "twice",
+        Some("two"),
+    );
 
     let found = library.discover().expect("discover");
     assert_eq!(found.len(), 2, "neither copy is hidden");
     for view in &found {
-        let other = if view.directory == first { &second } else { &first };
+        let other = if view.directory == first {
+            &second
+        } else {
+            &first
+        };
         assert_eq!(view.conflicts, vec![other.clone()]);
         assert_eq!(view.surface, SkillSurface::Offered);
     }

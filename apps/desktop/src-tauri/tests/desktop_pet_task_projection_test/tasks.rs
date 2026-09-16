@@ -27,9 +27,18 @@ fn three_runs_of_two_sessions_across_two_engines_are_three_tasks() {
     projection.started(&theirs, "ses_2", "run-3");
 
     assert_eq!(task_count(&projection), 3);
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "working");
-    assert_eq!(state_of(&projection, &key(&ours, "ses_2", "run-2")), "working");
-    assert_eq!(state_of(&projection, &key(&theirs, "ses_2", "run-3")), "working");
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-1")),
+        "working"
+    );
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_2", "run-2")),
+        "working"
+    );
+    assert_eq!(
+        state_of(&projection, &key(&theirs, "ses_2", "run-3")),
+        "working"
+    );
 }
 
 /// §6.3 「同一任务后续轮次须有新 runId」: the second turn of one conversation is a second task, and
@@ -45,8 +54,14 @@ fn a_second_turn_of_one_session_is_a_second_task() {
     projection.started(&ours, "ses_1", "run-2");
 
     assert_eq!(task_count(&projection), 2);
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "turn-finished");
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-2")), "working");
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-1")),
+        "turn-finished"
+    );
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-2")),
+        "working"
+    );
 }
 
 /// §6.3's 「终态不能被旧工作事件复活」. The frame here is not a replay — it carries a sequence this
@@ -66,7 +81,10 @@ fn a_settled_run_is_not_revived_by_a_later_work_frame() {
     let ingest = projection.apply(&permission(&ours, "ses_1", "run-1", 2, "req-1"));
 
     assert_eq!(ingest.disposition, Disposition::Settled);
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "turn-finished");
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-1")),
+        "turn-finished"
+    );
     assert_eq!(
         projection
             .task(&key(&ours, "ses_1", "run-1"))
@@ -96,7 +114,10 @@ fn a_late_completion_after_a_cancellation_does_not_undo_it() {
     let late = projection.apply(&finished(&ours, "ses_1", "run-1", 2, "end-turn"));
 
     assert_eq!(late.disposition, Disposition::Settled);
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "cancelled");
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-1")),
+        "cancelled"
+    );
 }
 
 /// §6.3's 「runId 复用拒绝」, which is the settled rule seen from the other side: a run id that
@@ -114,7 +135,10 @@ fn a_reused_run_id_is_refused_rather_than_revived() {
     let reused = projection.started(&ours, "ses_1", "run-1");
 
     assert_eq!(reused.disposition, Disposition::Settled);
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "refused");
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-1")),
+        "refused"
+    );
     assert_eq!(task_count(&projection), 1);
 }
 
@@ -152,8 +176,15 @@ fn silence_neither_completes_nor_removes_a_task() {
     let ingest = projection.apply(&chatter(&ours, "ses_1", "run-1", 1));
 
     assert_eq!(ingest.disposition, Disposition::NoChange);
-    assert_eq!(task_count(&projection), 1, "six quiet hours are not an ending");
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "working");
+    assert_eq!(
+        task_count(&projection),
+        1,
+        "six quiet hours are not an ending"
+    );
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-1")),
+        "working"
+    );
 }
 
 /// The clock the wiring passes when a caller has no reason to control time — and the one thing
@@ -172,7 +203,10 @@ fn the_host_clock_is_in_epoch_milliseconds() {
         now > 1_600_000_000_000,
         "a clock in seconds reads {now}, which is 1970 in milliseconds"
     );
-    assert!(now < 100_000_000_000_000, "and one in nanoseconds reads {now}");
+    assert!(
+        now < 100_000_000_000_000,
+        "and one in nanoseconds reads {now}"
+    );
 }
 
 /// §6.3's sequence rule, from the projection's side: applying a frame twice is not a policy choice
@@ -217,7 +251,10 @@ fn a_gap_in_the_stream_is_reported_and_not_repaired() {
 
     assert_eq!(ingest.order.sequence, 5);
     assert_eq!(ingest.order.missing, vec![3, 4]);
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "turn-finished");
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-1")),
+        "turn-finished"
+    );
 }
 
 /// A frame that carried no sequence on this session's stream is not a gap: the first frame a

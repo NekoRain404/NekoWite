@@ -80,11 +80,11 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-use agent_client_protocol::Responder;
 use agent_client_protocol::schema::v1::{
     ClientCapabilities, Error, ErrorCode, FileSystemCapabilities, ReadTextFileRequest,
     ReadTextFileResponse, SessionId, WriteTextFileRequest, WriteTextFileResponse,
 };
+use agent_client_protocol::Responder;
 use sha2::{Digest, Sha256};
 
 use super::live_notes::{LiveNoteAnswer, LiveNotes};
@@ -135,12 +135,7 @@ pub trait VaultFiles: Send + Sync + 'static {
     fn read(&self, vault_root: &str, path: &str) -> Result<String, String>;
     /// Writes and returns `Some(warning)` when the text landed but something
     /// optional around it (the history snapshot) did not.
-    fn write(
-        &self,
-        vault_root: &str,
-        path: &str,
-        content: &str,
-    ) -> Result<Option<String>, String>;
+    fn write(&self, vault_root: &str, path: &str, content: &str) -> Result<Option<String>, String>;
 }
 
 /// What the host advertises in the handshake.
@@ -152,11 +147,9 @@ pub trait VaultFiles: Send + Sync + 'static {
 /// engine writing a file through its own tools with zero reverse requests, so
 /// declaring this does not make the host the only writer. See the module header.
 pub fn client_capabilities() -> ClientCapabilities {
-    ClientCapabilities::new().fs(
-        FileSystemCapabilities::new()
-            .read_text_file(true)
-            .write_text_file(true),
-    )
+    ClientCapabilities::new().fs(FileSystemCapabilities::new()
+        .read_text_file(true)
+        .write_text_file(true))
 }
 
 /// A reverse request the engine is waiting on, paired with the way to answer it.
@@ -288,8 +281,7 @@ impl FsCapability {
                 let key = match self.files.frontend_path(&root, &path) {
                     Ok(key) => key,
                     Err(message) => {
-                        let _ = responder
-                            .respond_with_error(Error::invalid_params().data(message));
+                        let _ = responder.respond_with_error(Error::invalid_params().data(message));
                         return;
                     }
                 };
@@ -327,9 +319,9 @@ impl FsCapability {
                         // Loudly, with the vault and the path named, and with the disk NOT
                         // consulted: the engine can act on an error — it can ask again, and it
                         // has tools of its own — while it cannot act on a silent lie.
-                        let _ = responder.respond_with_error(Error::internal_error().data(format!(
-                            "could not read the live buffer of {key} in {root}: {reason}"
-                        )));
+                        let _ = responder.respond_with_error(Error::internal_error().data(
+                            format!("could not read the live buffer of {key} in {root}: {reason}"),
+                        ));
                         return;
                     }
                 };
@@ -384,8 +376,7 @@ impl FsCapability {
                     // that the file is untouched, because the alternative is a
                     // model that reports an edit it never made.
                     Ok(Err(message)) => {
-                        let _ = responder
-                            .respond_with_error(Error::invalid_params().data(message));
+                        let _ = responder.respond_with_error(Error::invalid_params().data(message));
                     }
                     Err(join) => {
                         let _ = responder.respond_with_internal_error(join.to_string());

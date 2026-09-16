@@ -87,14 +87,18 @@ pub struct SkillScope {
 /// back. So a variable that is present and *off* must not be reported as a scope the engine has
 /// stopped reading, and the spellings that mean off are treated as off here.
 pub fn launch_switches(env: &[(String, String)]) -> Vec<&'static str> {
-    [DISABLE_EXTERNAL_SKILLS, DISABLE_CLAUDE_CODE_SKILLS, DISABLE_CLAUDE_CODE]
-        .into_iter()
-        .filter(|variable| {
-            env.iter()
-                .find(|(name, _)| name == variable)
-                .is_some_and(|(_, value)| is_on(value))
-        })
-        .collect()
+    [
+        DISABLE_EXTERNAL_SKILLS,
+        DISABLE_CLAUDE_CODE_SKILLS,
+        DISABLE_CLAUDE_CODE,
+    ]
+    .into_iter()
+    .filter(|variable| {
+        env.iter()
+            .find(|(name, _)| name == variable)
+            .is_some_and(|(_, value)| is_on(value))
+    })
+    .collect()
 }
 
 /// Whether one flag's value is read as on. `""` and the parser's own false spellings are off;
@@ -197,7 +201,10 @@ pub fn opencode_scopes(
         // meant by it, has no switch for it, and must not write in it.
         scopes.push(SkillScope {
             id: format!("declared-{index}"),
-            label: format!("Declared in the engine's configuration ({})", path.display()),
+            label: format!(
+                "Declared in the engine's configuration ({})",
+                path.display()
+            ),
             root: path.clone(),
             owner: ScopeOwner::Foreign,
             suppressed_by: None,

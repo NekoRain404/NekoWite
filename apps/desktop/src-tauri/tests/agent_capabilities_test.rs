@@ -20,7 +20,9 @@
 //! incarnation that is over is not an answer at all.
 
 use nekowite_lib::agent_runtime;
-use nekowite_lib::agent_runtime::live_notes::{LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes};
+use nekowite_lib::agent_runtime::live_notes::{
+    LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes,
+};
 use nekowite_lib::commands;
 use nekowite_lib::state;
 
@@ -37,7 +39,7 @@ use agent_runtime::driver;
 use agent_runtime::events::AgentEventEnvelope;
 use agent_runtime::registry::{AgentRegistration, AgentRegistry, EnvPolicy, InstallSource};
 use agent_runtime::VaultFiles;
-use commands::agent::{AgentIpcState, agent_open_session};
+use commands::agent::{agent_open_session, AgentIpcState};
 use commands::agent_capabilities::agent_session_capabilities;
 use state::AgentRuntimeState;
 
@@ -264,7 +266,12 @@ async fn the_report_has_a_row_for_every_feature_and_keeps_the_two_halves_apart()
     // The measured handshake reports `image`, `embeddedContext` and `loadSession`; the session
     // response returns the `model` option; the engine publishes two commands. Every one of those is
     // a row, and every row carries the declaration *beside* the finding rather than folded into it.
-    let wired = wired("declared", "good", agent_runtime::adapters::opencode::ADAPTER_ID).await;
+    let wired = wired(
+        "declared",
+        "good",
+        agent_runtime::adapters::opencode::ADAPTER_ID,
+    )
+    .await;
     let session_id = open(&wired).await;
     let rows = settled(&wired, &session_id, takes_commands).await;
 
@@ -349,7 +356,12 @@ async fn the_session_response_and_the_published_list_are_what_make_the_rest_avai
     // §2.2 measured and the one a capability answer has to survive. `model` is both the option the
     // adapter names and the one the fixture returns, so ModelSelection is confirmed by the session
     // itself rather than by the adapter's guess.
-    let wired = wired("session", "two-in-one", agent_runtime::adapters::opencode::ADAPTER_ID).await;
+    let wired = wired(
+        "session",
+        "two-in-one",
+        agent_runtime::adapters::opencode::ADAPTER_ID,
+    )
+    .await;
     let session_id = open(&wired).await;
     let rows = settled(&wired, &session_id, takes_commands).await;
 
@@ -377,7 +389,12 @@ async fn an_engine_with_no_verified_adapter_is_unverified_rather_than_unsupporte
     // option, so none of this may be called unsupported — including the model selector, whose option
     // id no adapter claimed to know. "We have not measured this engine" must not reach a page as
     // "this engine cannot".
-    let wired = wired("generic", "good", agent_runtime::adapters::generic_acp::ADAPTER_ID).await;
+    let wired = wired(
+        "generic",
+        "good",
+        agent_runtime::adapters::generic_acp::ADAPTER_ID,
+    )
+    .await;
     let session_id = open(&wired).await;
     let rows = settled(&wired, &session_id, takes_commands).await;
 
@@ -392,17 +409,28 @@ async fn an_engine_with_no_verified_adapter_is_unverified_rather_than_unsupporte
     );
     // And what the engine *did* report is still reported: an unknown adapter is not a reason to throw
     // away the handshake's own answer.
-    assert_eq!(row(&rows, HostFeature::ImageAttachments).finding, Finding::Available);
+    assert_eq!(
+        row(&rows, HostFeature::ImageAttachments).finding,
+        Finding::Available
+    );
 }
 
 #[tokio::test]
 async fn a_session_this_host_never_opened_has_no_capability_answer() {
     // §6.1: an id the host did not receive is not one it answers about. The capability report is one
     // more surface a forged id would otherwise read state out of.
-    let wired = wired("unknown", "good", agent_runtime::adapters::opencode::ADAPTER_ID).await;
-    let refusal =
-        agent_session_capabilities(wired.runtime(), wired.ipc(), "ses_somebody_elses".to_string())
-            .expect_err("this host never opened that session");
+    let wired = wired(
+        "unknown",
+        "good",
+        agent_runtime::adapters::opencode::ADAPTER_ID,
+    )
+    .await;
+    let refusal = agent_session_capabilities(
+        wired.runtime(),
+        wired.ipc(),
+        "ses_somebody_elses".to_string(),
+    )
+    .expect_err("this host never opened that session");
     assert!(refusal.contains("not one this app opened"), "{refusal}");
 }
 
@@ -413,7 +441,12 @@ async fn an_answer_from_an_incarnation_that_is_over_is_not_an_answer() {
     // holds everything the engine reported — and the report must nonetheless answer `unverified`: a
     // fact from a runtime that is over is not a fact about the one in front of the user, and
     // repeating it would be the claim §3.4 forbids.
-    let wired = wired("superseded", "good", agent_runtime::adapters::opencode::ADAPTER_ID).await;
+    let wired = wired(
+        "superseded",
+        "good",
+        agent_runtime::adapters::opencode::ADAPTER_ID,
+    )
+    .await;
     let session_id = open(&wired).await;
     let live = settled(&wired, &session_id, takes_commands).await;
     assert_eq!(
@@ -428,14 +461,22 @@ async fn an_answer_from_an_incarnation_that_is_over_is_not_an_answer() {
         .capabilities(&session_id)
         .expect("the session is one this runtime opened")
         .expect("the runtime still holds what the engine reported");
-    assert_eq!(facts.command_count(), Some(2), "and the published list is among them");
+    assert_eq!(
+        facts.command_count(),
+        Some(2),
+        "and the published list is among them"
+    );
 
     let ended = wired.runtime().instance.lock().unwrap().take();
     assert!(ended.is_some(), "the incarnation is the app's to end");
     drop(ended);
 
     let rows = report(&wired, &session_id);
-    assert_eq!(rows.len(), HostFeature::ALL.len(), "still a row for every feature");
+    assert_eq!(
+        rows.len(),
+        HostFeature::ALL.len(),
+        "still a row for every feature"
+    );
     for entry in &rows {
         assert_eq!(entry.declared, Capability::Unverified, "{}", entry.feature);
         assert!(
@@ -453,18 +494,21 @@ async fn a_new_incarnation_rediscovers_rather_than_inheriting() {
     // a session id is not what the facts are keyed to across incarnations. A second engine is a new
     // `runtimeEpoch` and a new runtime, with nothing to say about a session it was never asked
     // about — even though the incarnation before it reported a great deal about that same id.
-    let wired = wired("rederived", "good", agent_runtime::adapters::opencode::ADAPTER_ID).await;
+    let wired = wired(
+        "rederived",
+        "good",
+        agent_runtime::adapters::opencode::ADAPTER_ID,
+    )
+    .await;
     let session_id = open(&wired).await;
     let first_epoch = wired.session().identity.runtime_epoch.clone();
     settled(&wired, &session_id, takes_commands).await;
-    assert!(
-        wired
-            .session()
-            .runtime
-            .capabilities(&session_id)
-            .expect("opened by this runtime")
-            .is_some()
-    );
+    assert!(wired
+        .session()
+        .runtime
+        .capabilities(&session_id)
+        .expect("opened by this runtime")
+        .is_some());
 
     // The first incarnation ends the way `agent_stop` ends one: the instance goes, the registration
     // is free again, and the engine is asked to exit.
@@ -502,7 +546,10 @@ fn every_feature_has_a_name_the_two_sides_share() {
     // The names are data (a page renders them rather than translating them), so they are pinned
     // here: a rename is a change on this side and in the TypeScript contract, and this is where the
     // Rust half says which spelling it has.
-    let names: Vec<&str> = HostFeature::ALL.iter().map(|feature| feature.as_str()).collect();
+    let names: Vec<&str> = HostFeature::ALL
+        .iter()
+        .map(|feature| feature.as_str())
+        .collect();
     assert_eq!(
         names,
         [

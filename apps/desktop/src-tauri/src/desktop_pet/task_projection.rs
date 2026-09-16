@@ -333,11 +333,8 @@ impl TaskProjection {
         // The incarnation check comes first, and before the sequence is remembered: a frame from
         // an instance this host is not serving is not part of any stream it is holding, and
         // counting its sequence would put a hole in a stream it has nothing to do with.
-        let installed = self.installed(
-            &envelope.agent_id,
-            &envelope.profile_id,
-            &envelope.vault_id,
-        );
+        let installed =
+            self.installed(&envelope.agent_id, &envelope.profile_id, &envelope.vault_id);
         if installed != Some(envelope.runtime_epoch.as_str()) {
             return Ingest::new(Disposition::Foreign, None, order).saying(match installed {
                 Some(epoch) => format!(
@@ -449,7 +446,10 @@ impl TaskProjection {
             .collect();
         let mut restated = Vec::with_capacity(keys.len());
         for key in keys {
-            let task = self.tasks.get_mut(&key).expect("the key came from this map");
+            let task = self
+                .tasks
+                .get_mut(&key)
+                .expect("the key came from this map");
             task.state = PetTaskState::Interrupted;
             task.permission_request_id = None;
             task.updated_at = (self.now)();

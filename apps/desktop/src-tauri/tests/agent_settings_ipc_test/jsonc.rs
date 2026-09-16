@@ -75,9 +75,15 @@ fn a_new_member_is_added_in_the_documents_own_style() {
     // Both objects already end their last member with a comma, so an added member goes *past* that
     // comma and brings its own: the document keeps its style rather than ending up with one member
     // separated by a newline and the rest by commas.
-    assert!(after.contains("\"apiKey\": \"sk-not-a-real-key-000000\",\n"), "{after}");
+    assert!(
+        after.contains("\"apiKey\": \"sk-not-a-real-key-000000\",\n"),
+        "{after}"
+    );
     assert!(after.contains("\"timeout\": 30,\n"), "{after}");
-    assert!(after.contains("\"experimental\": { \"someFutureFlag\": true },\n"), "{after}");
+    assert!(
+        after.contains("\"experimental\": { \"someFutureFlag\": true },\n"),
+        "{after}"
+    );
     assert!(after.contains("\"small\": true,\n}"), "{after}");
     assert!(!after.contains(",,"), "{after}");
     // The comments and the unknown member are still there.
@@ -109,7 +115,11 @@ fn a_member_whose_parent_chain_is_missing_is_refused_rather_than_invented() {
         Err(ConfigError::Missing { path }) => assert_eq!(path, vec!["mcp".to_string()]),
         other => panic!("expected a refusal, got {other:?}"),
     }
-    assert_eq!(fs::read_to_string(&path).unwrap(), CONFIG, "nothing was written");
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        CONFIG,
+        "nothing was written"
+    );
 }
 
 #[test]
@@ -132,12 +142,14 @@ fn a_document_this_scanner_cannot_follow_is_refused_and_left_alone() {
     assert_eq!(fs::read_to_string(&path).unwrap(), broken);
     // The refusal the settings page renders names a byte offset and quotes nothing: a parse error
     // is not a place a document's text — or a key inside it — may appear.
-    let message = refusal_message(&ConfigError::Syntax {
-        path: path.clone(),
-        offset: 12,
-        message: "unexpected end of input".to_string(),
-    }
-    .into());
+    let message = refusal_message(
+        &ConfigError::Syntax {
+            path: path.clone(),
+            offset: 12,
+            message: "unexpected end of input".to_string(),
+        }
+        .into(),
+    );
     assert!(message.contains("byte 12"), "{message}");
     assert!(!message.contains("sk-not-a-real-key-000000"));
 }

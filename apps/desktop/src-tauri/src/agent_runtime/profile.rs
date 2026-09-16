@@ -269,10 +269,7 @@ impl ProfileFields {
     /// Refuses a field that no diagnostic and no environment variable could carry: a control
     /// character would break a log line, and a blank provider is a form the user has not finished.
     fn validate(&self) -> Result<(), ProfileError> {
-        for (field, value) in [
-            ("provider", &self.provider),
-            ("model_id", &self.model_id),
-        ] {
+        for (field, value) in [("provider", &self.provider), ("model_id", &self.model_id)] {
             if let Some(value) = value {
                 if value.trim().is_empty() || value.chars().any(char::is_control) {
                     return Err(ProfileError::Field { field });
@@ -356,10 +353,14 @@ struct StoredRecord {
 /// What a record write did. The same two arms as a document write, because it is the same rule.
 #[derive(Debug)]
 pub enum RecordUpdate {
-    Written { revision: Revision },
+    Written {
+        revision: Revision,
+    },
     /// Someone else's write landed first. `current` is the readout to reload from, and the caller
     /// re-applies its change to *that* — nothing is merged here.
-    Conflicted { current: ProfileReadout },
+    Conflicted {
+        current: ProfileReadout,
+    },
 }
 
 /// The profiles this app has, under one managed directory.
@@ -409,12 +410,11 @@ impl ProfileStore {
             // the configuration documents.
             None => create_record(&root, agent_id)?,
         };
-        let stored: StoredRecord = serde_json::from_str(document.text()).map_err(|error| {
-            ProfileError::Unreadable {
+        let stored: StoredRecord =
+            serde_json::from_str(document.text()).map_err(|error| ProfileError::Unreadable {
                 path: document.path().to_path_buf(),
                 message: error.to_string(),
-            }
-        })?;
+            })?;
         let bound = stored.agent_id.unwrap_or_default();
         if bound != agent_id {
             return Err(ProfileError::AgentMismatch {

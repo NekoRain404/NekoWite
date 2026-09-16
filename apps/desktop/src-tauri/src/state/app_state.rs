@@ -612,7 +612,10 @@ pub fn program_to_launch(managed: &Path, beside: &Path) -> Result<PathBuf, Strin
 fn start_refusal(error: &RegistryError) -> String {
     match error {
         RegistryError::Program { program, state } => {
-            format!("the agent's program is not launchable: {} ({state:?})", program.display())
+            format!(
+                "the agent's program is not launchable: {} ({state:?})",
+                program.display()
+            )
         }
         RegistryError::Disabled { agent_id } => {
             format!("the agent {agent_id} is switched off in settings")
@@ -622,14 +625,19 @@ fn start_refusal(error: &RegistryError) -> String {
             agent_id,
             owner,
         } => match owner {
-            Some(owner) => format!("the profile {profile_id} belongs to {owner}, not to {agent_id}"),
+            Some(owner) => {
+                format!("the profile {profile_id} belongs to {owner}, not to {agent_id}")
+            }
             None => format!("no profile {profile_id} is bound to {agent_id}"),
         },
-        RegistryError::AlreadyRunning { agent_id, epoch } => format!(
-            "an engine for {agent_id} is already running in this vault ({epoch})"
-        ),
+        RegistryError::AlreadyRunning { agent_id, epoch } => {
+            format!("an engine for {agent_id} is already running in this vault ({epoch})")
+        }
         RegistryError::LaunchFailed { agent_id, error } => {
-            format!("{agent_id} could not be started: {}", error.failure_message())
+            format!(
+                "{agent_id} could not be started: {}",
+                error.failure_message()
+            )
         }
         RegistryError::UnknownAgent { agent_id } => format!("no agent named {agent_id}"),
         RegistryError::Id { field, value } => {
@@ -661,7 +669,10 @@ fn profile_refusal(error: &ProfileError) -> String {
             profile_id, bound, ..
         } => format!("the profile {profile_id} was created for {bound}, not for this agent"),
         ProfileError::Unreadable { path, message } => {
-            format!("the profile record {} cannot be read: {message}", path.display())
+            format!(
+                "the profile record {} cannot be read: {message}",
+                path.display()
+            )
         }
         ProfileError::ReadOnly => {
             "this profile follows the user's own configuration and is not written by the app"

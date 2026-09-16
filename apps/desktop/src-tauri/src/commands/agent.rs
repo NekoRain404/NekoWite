@@ -33,7 +33,7 @@ use tauri::Manager;
 use crate::agent_runtime::driver::Session;
 use crate::agent_runtime::events::AgentIdentity;
 use crate::agent_runtime::permissions::{
-    PermissionAnswer, PermissionPrompt, PermissionRefusal, PermissionTable, cancel_run,
+    cancel_run, PermissionAnswer, PermissionPrompt, PermissionRefusal, PermissionTable,
 };
 use crate::agent_runtime::snapshot::SessionSnapshot;
 use crate::state::{AgentRuntimeState, VaultRegistry};
@@ -146,12 +146,17 @@ pub fn agent_permission_answer<R: tauri::Runtime>(
         runtime_epoch: answer.session.runtime_epoch.clone(),
         vault_id: answer.session.vault_id.clone(),
     };
-    let (answered_session, request_id) = (answer.session.session_id.clone(), answer.request_id.clone());
+    let (answered_session, request_id) =
+        (answer.session.session_id.clone(), answer.request_id.clone());
     apply_permission_answer(&session.permissions, answer)
         .map_err(|refusal| refusal_message(&refusal))?;
     report_pet_tasks(
         &app,
-        |state| state.tasks.answered(&identity, &answered_session, &request_id),
+        |state| {
+            state
+                .tasks
+                .answered(&identity, &answered_session, &request_id)
+        },
         "an answer",
     );
     Ok(())
@@ -265,10 +270,11 @@ pub async fn agent_start(
         // [`AGENT_EVENT_CHANNEL`]). `emit` failing means no window is listening, which is the
         // shutdown path rather than an error to report.
         let emit = app.clone();
-        let session = crate::state::start_session(&runtime_state, &app, &vault_id, move |envelope| {
-            let _ = tauri::Emitter::emit(&emit, AGENT_EVENT_CHANNEL, envelope);
-        })
-        .await?;
+        let session =
+            crate::state::start_session(&runtime_state, &app, &vault_id, move |envelope| {
+                let _ = tauri::Emitter::emit(&emit, AGENT_EVENT_CHANNEL, envelope);
+            })
+            .await?;
         let handle = AgentRuntimeHandle::of(&session.identity);
         ipc.install(session);
         handle

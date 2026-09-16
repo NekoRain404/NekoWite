@@ -43,7 +43,8 @@ impl VaultFiles for AgentVaultFiles {
         // The app's own confinement, and the app's own rendering of a path for a window: the
         // same two calls `list_dir_entries` makes, which is what makes a live-note question's
         // key and an open tab's path one spelling rather than two that must be kept in step.
-        let (resolved, _relative) = crate::domain::path_policy::resolve_within_rel(vault_root, path)?;
+        let (resolved, _relative) =
+            crate::domain::path_policy::resolve_within_rel(vault_root, path)?;
         Ok(crate::domain::path_policy::ipc_path(&resolved))
     }
 

@@ -17,7 +17,10 @@ fn every_field_defaults_and_every_default_passes_its_own_rule() {
     for domain in PetSettingsDomain::ALL {
         let defaults = defaults(domain);
         let read = read_values(domain, &json!({}));
-        assert_eq!(read.values, defaults, "{domain:?} defaults through the walk");
+        assert_eq!(
+            read.values, defaults,
+            "{domain:?} defaults through the walk"
+        );
         assert!(read.repaired.is_empty(), "{domain:?} repaired nothing");
 
         // The other direction, on the same values: what this build writes is what it reads back.
@@ -58,7 +61,10 @@ fn an_unusable_stored_value_is_repaired_and_an_absent_one_is_not() {
 
     // A key the schema does not declare is dropped from a *stored* record: a file may be ahead of
     // this build in ways a submission from this build's own form cannot be.
-    let unknown = read_values(PetSettingsDomain::General, &json!({ "enabled": false, "new": 1 }));
+    let unknown = read_values(
+        PetSettingsDomain::General,
+        &json!({ "enabled": false, "new": 1 }),
+    );
     assert_eq!(unknown.values["enabled"], json!(false));
     assert!(!unknown.values.contains_key("new"));
     assert!(unknown.repaired.is_empty());
@@ -128,7 +134,10 @@ fn structured_values_are_copied_and_bounded_whole() {
 
     // A third key is dropped, and the two named keys survive.
     let kept = read(json!({ "tokens": [{ "token": "state", "visible": true, "extra": 1 }] }));
-    assert_eq!(kept.values["tokens"], json!([{ "token": "state", "visible": true }]));
+    assert_eq!(
+        kept.values["tokens"],
+        json!([{ "token": "state", "visible": true }])
+    );
     assert!(kept.repaired.is_empty());
 
     // A member that cannot be used takes the whole field.
@@ -176,7 +185,10 @@ fn a_line_is_measured_the_way_the_typescript_half_measures_it() {
     let bubble = |count: usize| json!({ "quickBubbles": ["😀".repeat(count)] });
     let sixty = read_values(PetSettingsDomain::Message, &bubble(60));
     assert_eq!(sixty.values["quickBubbles"], json!(["😀".repeat(60)]));
-    assert!(sixty.repaired.is_empty(), "120 UTF-16 units is inside the cap");
+    assert!(
+        sixty.repaired.is_empty(),
+        "120 UTF-16 units is inside the cap"
+    );
 
     let sixty_one = read_values(PetSettingsDomain::Message, &bubble(61));
     assert_eq!(sixty_one.values["quickBubbles"], json!([]));
@@ -201,10 +213,19 @@ fn the_number_rules_read_the_range_before_integer_ness() {
             .kind
     };
 
-    assert_eq!(kind_of(json!({ "size": "160" }), "size"), ProblemKind::WrongType);
-    assert_eq!(kind_of(json!({ "size": 1000 }), "size"), ProblemKind::OutOfRange);
+    assert_eq!(
+        kind_of(json!({ "size": "160" }), "size"),
+        ProblemKind::WrongType
+    );
+    assert_eq!(
+        kind_of(json!({ "size": 1000 }), "size"),
+        ProblemKind::OutOfRange
+    );
     // Inside the rule's range and not whole, so this is the integer clause and not the range one.
-    assert_eq!(kind_of(json!({ "size": 200.5 }), "size"), ProblemKind::NotInteger);
+    assert_eq!(
+        kind_of(json!({ "size": 200.5 }), "size"),
+        ProblemKind::NotInteger
+    );
     // A rule that does not require whole numbers takes the value between the two.
     let mut opacity = defaults(PetSettingsDomain::View);
     opacity.insert("opacity".to_string(), json!(0.5));
@@ -223,11 +244,8 @@ fn the_number_rules_read_the_range_before_integer_ness() {
 #[test]
 fn the_problem_vocabulary_is_the_typescript_one() {
     let text = values_contract();
-    let union = crate::support::slice_between(
-        &text,
-        "export type PetSettingsProblemKind =",
-        "\n\n",
-    );
+    let union =
+        crate::support::slice_between(&text, "export type PetSettingsProblemKind =", "\n\n");
     // One member per `| 'name'` line rather than every quoted string in the slice: the union
     // carries a doc comment of its own, and a comment is prose with apostrophes in it.
     let reported: Vec<String> = union
@@ -253,7 +271,10 @@ fn the_problem_vocabulary_is_the_typescript_one() {
     // And the members are the closed sets this side validates against, so a control that offers a
     // new name cannot be saved by one half and refused by the other.
     let members = crate::support::slice_between(&text, "const PET_FIELD_MEMBERS", "\n}");
-    for line in members.lines().filter(|line| !crate::support::is_comment(line)) {
+    for line in members
+        .lines()
+        .filter(|line| !crate::support::is_comment(line))
+    {
         let Some((path, rest)) = line.split_once(':') else {
             continue;
         };
@@ -287,5 +308,8 @@ fn a_default_is_a_copy() {
         .as_array_mut()
         .expect("a list")
         .push(json!("mine"));
-    assert_eq!(defaults(PetSettingsDomain::Message)["quickBubbles"], json!([]));
+    assert_eq!(
+        defaults(PetSettingsDomain::Message)["quickBubbles"],
+        json!([])
+    );
 }

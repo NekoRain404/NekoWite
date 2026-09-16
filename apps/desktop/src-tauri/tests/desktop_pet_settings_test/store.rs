@@ -23,11 +23,7 @@ fn submitted(domain: PetSettingsDomain, changes: &[(&str, Value)]) -> Value {
 }
 
 /// A write at one revision, as a page that read exactly that revision would send it.
-fn write(
-    domain: PetSettingsDomain,
-    revision: f64,
-    changes: &[(&str, Value)],
-) -> PetSettingsWrite {
+fn write(domain: PetSettingsDomain, revision: f64, changes: &[(&str, Value)]) -> PetSettingsWrite {
     PetSettingsWrite {
         domain,
         revision,
@@ -89,7 +85,10 @@ fn a_write_reaches_the_disk_and_the_file_is_the_record() {
         0.0,
         &[("enabled", json!(false))],
     )));
-    assert_eq!(record.revision, 1, "the first write moves the counter off zero");
+    assert_eq!(
+        record.revision, 1,
+        "the first write moves the counter off zero"
+    );
 
     let stored = on_disk(&store, PetSettingsDomain::General);
     assert_eq!(stored["domain"], "general");
@@ -252,7 +251,13 @@ fn a_replacement_keeps_the_mode_the_file_had() {
     // And the staging file the write went through is not left behind beside it.
     let entries: Vec<String> = fs::read_dir(store.root())
         .expect("the records directory")
-        .map(|entry| entry.expect("an entry").file_name().to_string_lossy().into_owned())
+        .map(|entry| {
+            entry
+                .expect("an entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
         .collect();
     assert_eq!(entries, vec!["general.json".to_string()]);
 }

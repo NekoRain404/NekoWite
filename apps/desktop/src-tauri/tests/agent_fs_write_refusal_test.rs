@@ -50,8 +50,8 @@ use nekowite_lib::agent_runtime::live_notes::{
     LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes,
 };
 use nekowite_lib::agent_runtime::{
-    AgentEventEnvelope, AgentEventKind, AgentIdentity, AgentRuntime, EngineConnection, EngineLaunch,
-    RuntimeEvent, VaultFiles, env_pairs, isolated_profile_env,
+    env_pairs, isolated_profile_env, AgentEventEnvelope, AgentEventKind, AgentIdentity,
+    AgentRuntime, EngineConnection, EngineLaunch, RuntimeEvent, VaultFiles,
 };
 
 /// How long the engine gets for its whole turn. The runtime's own prompt bound is
@@ -185,7 +185,8 @@ impl LiveNoteWindows for NoWindow {
 
 impl VaultFiles for RealVault {
     fn frontend_path(&self, vault_root: &str, path: &str) -> Result<String, String> {
-        let (resolved, _relative) = nekowite_lib::domain::path_policy::resolve_within_rel(vault_root, path)?;
+        let (resolved, _relative) =
+            nekowite_lib::domain::path_policy::resolve_within_rel(vault_root, path)?;
         Ok(nekowite_lib::domain::path_policy::ipc_path(&resolved))
     }
     fn read(&self, vault_root: &str, path: &str) -> Result<String, String> {
@@ -370,10 +371,16 @@ async fn the_real_engine_does_not_write_the_file_itself_when_the_host_refuses() 
                     None => RequestPermissionOutcome::Cancelled,
                 };
                 if !editing {
-                    let sent = if offered.is_some() { "refused" } else { "cancelled" };
+                    let sent = if offered.is_some() {
+                        "refused"
+                    } else {
+                        "cancelled"
+                    };
                     not_allowed.push(format!("{kind:?} -> {sent}"));
                 }
-                let _ = permission.responder.respond(RequestPermissionResponse::new(outcome));
+                let _ = permission
+                    .responder
+                    .respond(RequestPermissionResponse::new(outcome));
             }
             Some(RuntimeEvent::Event(envelope)) => {
                 eprintln!("event seq={} {}", envelope.sequence, summary(&envelope));

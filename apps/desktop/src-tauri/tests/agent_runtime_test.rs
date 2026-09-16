@@ -26,12 +26,11 @@ use std::time::Duration;
 
 use std::sync::Arc;
 
-use agent_runtime::{
-    AgentEventEnvelope, AgentEventKind, AgentFailureCode, AgentIdentity, AgentRuntime,
-    AgentRuntimeEvents, EngineConnection, EngineLaunch, VaultFiles, env_pairs,
-    isolated_profile_env,
-};
 use agent_runtime::live_notes::{LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes};
+use agent_runtime::{
+    env_pairs, isolated_profile_env, AgentEventEnvelope, AgentEventKind, AgentFailureCode,
+    AgentIdentity, AgentRuntime, AgentRuntimeEvents, EngineConnection, EngineLaunch, VaultFiles,
+};
 
 /// The transport tests touch no vault: the fixture engine sends no `fs/*`
 /// request, so reaching here would mean something unexpected was being served
@@ -189,7 +188,10 @@ async fn two_frames_in_one_write_are_both_handled() {
     let (runtime, mut events) = start(&fixture("two-in-one", None)).await;
     runtime.initialize().await.expect("initialize");
 
-    let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
+    let session = runtime
+        .open_session(Path::new("/tmp"))
+        .await
+        .expect("session/new");
     let event = next_event(&mut events).await;
 
     assert_eq!(event.kind, AgentEventKind::CommandsChanged);
@@ -311,7 +313,10 @@ async fn the_engine_is_started_with_the_ca_bundle() {
         .lines()
         .find_map(|line| line.strip_prefix("ca="))
         .expect("the fixture records the variable");
-    assert_ne!(ca, "<unset>", "NODE_EXTRA_CA_CERTS must be set for the engine");
+    assert_ne!(
+        ca, "<unset>",
+        "NODE_EXTRA_CA_CERTS must be set for the engine"
+    );
     assert!(
         Path::new(ca).is_file(),
         "and it must name a bundle that exists, not just any string: {ca}"
@@ -365,9 +370,14 @@ async fn a_session_reports_the_command_list_before_any_run() {
 async fn a_prompt_streams_text_and_ends_with_the_measured_stop_reason() {
     let (runtime, mut events) = start(&fixture("good", None)).await;
     runtime.initialize().await.expect("initialize");
-    let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
+    let session = runtime
+        .open_session(Path::new("/tmp"))
+        .await
+        .expect("session/new");
 
-    let run_id = runtime.prompt(&session.session_id, "hello").expect("prompt");
+    let run_id = runtime
+        .prompt(&session.session_id, "hello")
+        .expect("prompt");
     let events = events_until(&mut events, |event| {
         event.kind == AgentEventKind::RunFinished
     })
@@ -397,9 +407,14 @@ async fn a_turn_that_ends_for_a_reason_this_version_does_not_know_is_not_a_failu
     // word the window reads as `unrecognised` rather than as a reason either side invented.
     let (runtime, mut events) = start(&fixture("unknown-stop-reason", None)).await;
     runtime.initialize().await.expect("initialize");
-    let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
+    let session = runtime
+        .open_session(Path::new("/tmp"))
+        .await
+        .expect("session/new");
 
-    let run_id = runtime.prompt(&session.session_id, "hello").expect("prompt");
+    let run_id = runtime
+        .prompt(&session.session_id, "hello")
+        .expect("prompt");
     let events = events_until(&mut events, |event| {
         event.kind == AgentEventKind::RunFinished || event.kind == AgentEventKind::RunFailed
     })
@@ -419,7 +434,9 @@ async fn a_turn_that_ends_for_a_reason_this_version_does_not_know_is_not_a_failu
     // And the counters it arrived with are not dropped with the word: P0 §2.3's own numbers.
     assert_eq!(last.payload["usage"]["inputTokens"], 11);
     assert!(
-        events.iter().all(|event| event.kind != AgentEventKind::RunFailed),
+        events
+            .iter()
+            .all(|event| event.kind != AgentEventKind::RunFailed),
         "nothing about this turn may be published as a failure"
     );
     runtime.shutdown();
@@ -434,9 +451,14 @@ async fn a_thought_chunk_reaches_the_host_as_its_own_kind() {
     // thing the separation exists to prevent.
     let (runtime, mut events) = start(&fixture("good", None)).await;
     runtime.initialize().await.expect("initialize");
-    let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
+    let session = runtime
+        .open_session(Path::new("/tmp"))
+        .await
+        .expect("session/new");
 
-    runtime.prompt(&session.session_id, "hello").expect("prompt");
+    runtime
+        .prompt(&session.session_id, "hello")
+        .expect("prompt");
     let events = events_until(&mut events, |event| {
         event.kind == AgentEventKind::RunFinished
     })
@@ -447,17 +469,23 @@ async fn a_thought_chunk_reaches_the_host_as_its_own_kind() {
         .filter(|event| event.kind == AgentEventKind::ThoughtDelta)
         .filter_map(|event| event.payload.get("text")?.as_str())
         .collect();
-    assert_eq!(thoughts, vec!["thinking"], "the engine's reasoning channel arrives");
+    assert_eq!(
+        thoughts,
+        vec!["thinking"],
+        "the engine's reasoning channel arrives"
+    );
     assert!(
         !texts(&events).iter().any(|text| text.contains("thinking")),
         "reasoning must not be rendered as answer text"
     );
     // And nothing arrived as a kind the contract cannot read: the full set of what this turn
     // published is these four, which is what a component switches on.
-    assert!(events.iter().all(|event| event.kind == AgentEventKind::TextDelta
-        || event.kind == AgentEventKind::ThoughtDelta
-        || event.kind == AgentEventKind::CommandsChanged
-        || event.kind == AgentEventKind::RunFinished));
+    assert!(events
+        .iter()
+        .all(|event| event.kind == AgentEventKind::TextDelta
+            || event.kind == AgentEventKind::ThoughtDelta
+            || event.kind == AgentEventKind::CommandsChanged
+            || event.kind == AgentEventKind::RunFinished));
     runtime.shutdown();
 }
 
@@ -477,13 +505,24 @@ async fn an_update_with_no_kind_here_is_dropped_rather_than_failing_the_turn() {
     // always ends it, and every kind that reached the window is one a component can render.
     let (runtime, mut events) = start(&fixture("unknown-update", None)).await;
     runtime.initialize().await.expect("initialize");
-    let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
+    let session = runtime
+        .open_session(Path::new("/tmp"))
+        .await
+        .expect("session/new");
 
-    let run_id = runtime.prompt(&session.session_id, "hello").expect("prompt");
-    let events = events_until(&mut events, |event| event.kind == AgentEventKind::RunFinished)
-        .await;
+    let run_id = runtime
+        .prompt(&session.session_id, "hello")
+        .expect("prompt");
+    let events = events_until(&mut events, |event| {
+        event.kind == AgentEventKind::RunFinished
+    })
+    .await;
 
-    assert_eq!(texts(&events), vec!["first"], "the turn is the one the fixture plays");
+    assert_eq!(
+        texts(&events),
+        vec!["first"],
+        "the turn is the one the fixture plays"
+    );
     let last = events.last().expect("a run-finished event");
     assert_eq!(last.run_id.as_deref(), Some(run_id.as_str()));
     assert_eq!(
@@ -491,10 +530,12 @@ async fn an_update_with_no_kind_here_is_dropped_rather_than_failing_the_turn() {
         "an update with no kind here is not a reason to fail the turn"
     );
     assert!(
-        events.iter().all(|event| event.kind == AgentEventKind::TextDelta
-            || event.kind == AgentEventKind::ThoughtDelta
-            || event.kind == AgentEventKind::CommandsChanged
-            || event.kind == AgentEventKind::RunFinished),
+        events
+            .iter()
+            .all(|event| event.kind == AgentEventKind::TextDelta
+                || event.kind == AgentEventKind::ThoughtDelta
+                || event.kind == AgentEventKind::CommandsChanged
+                || event.kind == AgentEventKind::RunFinished),
         "only kinds a component can render reached the window: {:?}",
         events.iter().map(|event| event.kind).collect::<Vec<_>>()
     );
@@ -513,17 +554,34 @@ async fn a_tool_calls_three_frames_arrive_correlated_and_in_order() {
     //    both intact, which is what lets the panel draw one evolving row.
     let (runtime, mut events) = start(&fixture("tools", None)).await;
     runtime.initialize().await.expect("initialize");
-    let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
+    let session = runtime
+        .open_session(Path::new("/tmp"))
+        .await
+        .expect("session/new");
 
-    let run_id = runtime.prompt(&session.session_id, "hello").expect("prompt");
-    let events = events_until(&mut events, |event| event.kind == AgentEventKind::RunFinished).await;
+    let run_id = runtime
+        .prompt(&session.session_id, "hello")
+        .expect("prompt");
+    let events = events_until(&mut events, |event| {
+        event.kind == AgentEventKind::RunFinished
+    })
+    .await;
 
     let calls: Vec<&serde_json::Value> = events
         .iter()
         .filter(|event| event.kind == AgentEventKind::ToolUpdate)
-        .map(|event| event.payload.get("update").expect("the schema's frame, wrapped"))
+        .map(|event| {
+            event
+                .payload
+                .get("update")
+                .expect("the schema's frame, wrapped")
+        })
         .collect();
-    assert_eq!(calls.len(), 3, "one frame per measured update, none dropped");
+    assert_eq!(
+        calls.len(),
+        3,
+        "one frame per measured update, none dropped"
+    );
 
     let ids: Vec<&str> = calls
         .iter()
@@ -572,15 +630,26 @@ async fn the_usage_the_engine_reported_is_published_field_by_field() {
     // in the engine's own numbers.
     let (runtime, mut events) = start(&fixture("cached-usage", None)).await;
     runtime.initialize().await.expect("initialize");
-    let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
+    let session = runtime
+        .open_session(Path::new("/tmp"))
+        .await
+        .expect("session/new");
 
-    runtime.prompt(&session.session_id, "hello").expect("prompt");
-    let events = events_until(&mut events, |event| event.kind == AgentEventKind::RunFinished).await;
+    runtime
+        .prompt(&session.session_id, "hello")
+        .expect("prompt");
+    let events = events_until(&mut events, |event| {
+        event.kind == AgentEventKind::RunFinished
+    })
+    .await;
 
     let usage = &events.last().expect("a run-finished event").payload["usage"];
     assert_eq!(usage["inputTokens"], 1721);
     assert_eq!(usage["outputTokens"], 6);
-    assert_eq!(usage["totalTokens"], 8895, "the engine's own total, never a sum");
+    assert_eq!(
+        usage["totalTokens"], 8895,
+        "the engine's own total, never a sum"
+    );
     assert_eq!(usage["cachedReadTokens"], 7168);
     assert!(
         usage.get("thoughtTokens").is_none(),
@@ -606,13 +675,24 @@ async fn a_usage_missing_a_core_field_still_reports_the_counters_it_sent() {
     //    finished turn failed.
     let (runtime, mut events) = start(&fixture("thin-usage", None)).await;
     runtime.initialize().await.expect("initialize");
-    let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
+    let session = runtime
+        .open_session(Path::new("/tmp"))
+        .await
+        .expect("session/new");
 
-    runtime.prompt(&session.session_id, "hello").expect("prompt");
-    let events = events_until(&mut events, |event| event.kind == AgentEventKind::RunFinished).await;
+    runtime
+        .prompt(&session.session_id, "hello")
+        .expect("prompt");
+    let events = events_until(&mut events, |event| {
+        event.kind == AgentEventKind::RunFinished
+    })
+    .await;
 
     let last = events.last().expect("a run-finished event");
-    assert_eq!(last.payload["stopReason"], "end-turn", "the turn still ended normally");
+    assert_eq!(
+        last.payload["stopReason"], "end-turn",
+        "the turn still ended normally"
+    );
     let usage = &last.payload["usage"];
     assert_eq!(
         usage["inputTokens"], 1721,
@@ -639,8 +719,13 @@ async fn a_usage_missing_a_core_field_still_reports_the_counters_it_sent() {
 async fn a_second_prompt_while_running_is_refused() {
     let (runtime, _events) = start(&fixture("stream", None)).await;
     runtime.initialize().await.expect("initialize");
-    let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
-    let run_id = runtime.prompt(&session.session_id, "first").expect("prompt");
+    let session = runtime
+        .open_session(Path::new("/tmp"))
+        .await
+        .expect("session/new");
+    let run_id = runtime
+        .prompt(&session.session_id, "first")
+        .expect("prompt");
     assert!(run_id.starts_with("run-"));
 
     let refused = runtime.prompt(&session.session_id, "second");
@@ -660,9 +745,14 @@ async fn a_second_prompt_while_running_is_refused() {
 async fn a_cancelled_run_drops_its_late_text_and_finishes_once() {
     let (runtime, mut events) = start(&fixture("stream", None)).await;
     runtime.initialize().await.expect("initialize");
-    let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
+    let session = runtime
+        .open_session(Path::new("/tmp"))
+        .await
+        .expect("session/new");
 
-    let run_id = runtime.prompt(&session.session_id, "hello").expect("prompt");
+    let run_id = runtime
+        .prompt(&session.session_id, "hello")
+        .expect("prompt");
     // The fixture sends "first", then waits for the cancel before sending
     // "late" — the text that must not revive a stopped run (§6.2).
     let first = events_until(&mut events, |event| event.kind == AgentEventKind::TextDelta).await;
@@ -699,7 +789,10 @@ async fn cancelling_an_idle_session_is_not_an_error() {
     // race as a fault would be reporting the user's own click as a bug.
     let (runtime, _events) = start(&fixture("good", None)).await;
     runtime.initialize().await.expect("initialize");
-    let session = runtime.open_session(Path::new("/tmp")).await.expect("session/new");
+    let session = runtime
+        .open_session(Path::new("/tmp"))
+        .await
+        .expect("session/new");
 
     runtime.cancel(&session.session_id).await.expect("cancel");
     runtime.shutdown();
@@ -790,7 +883,9 @@ async fn wait_for_pids(capture: &Path) -> Vec<i32> {
 async fn wait_until_gone(pids: &[i32]) -> bool {
     let deadline = tokio::time::Instant::now() + PATIENCE;
     loop {
-        let alive = pids.iter().any(|pid| Path::new(&format!("/proc/{pid}")).exists());
+        let alive = pids
+            .iter()
+            .any(|pid| Path::new(&format!("/proc/{pid}")).exists());
         if !alive {
             return true;
         }
@@ -810,8 +905,8 @@ async fn the_real_engine_negotiates_protocol_version_one() {
     // The artifact is a pipeline product and gitignored (P0 §1), so a checkout
     // without it is normal — that is a skip, not a failure. Run
     // `scripts/fetch-opencode-linux.sh` to make this test mean something.
-    let binary = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("binaries/opencode-x86_64-unknown-linux-gnu");
+    let binary =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries/opencode-x86_64-unknown-linux-gnu");
     if !binary.is_file() {
         eprintln!(
             "SKIP: {} is absent; run scripts/fetch-opencode-linux.sh",
@@ -834,7 +929,10 @@ async fn the_real_engine_negotiates_protocol_version_one() {
 
     // Nothing past the handshake: `initialize` costs nothing and needs no
     // credentials, so this stays a test and not a bill.
-    let response = runtime.initialize().await.expect("the real engine initializes");
+    let response = runtime
+        .initialize()
+        .await
+        .expect("the real engine initializes");
 
     assert_eq!(response.protocol_version.as_u16(), 1);
     let info = response.agent_info.expect("agentInfo");

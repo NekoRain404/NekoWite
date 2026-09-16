@@ -17,7 +17,8 @@ use agent_runtime::registry::InstallSource;
 use agent_runtime::update::{self, AcpProbe, Check};
 
 use crate::support::{
-    make_executable, mode_of, pinned_artifact, scratch, sha256_hex, staged, write_file, MANIFEST_DIR,
+    make_executable, mode_of, pinned_artifact, scratch, sha256_hex, staged, write_file,
+    MANIFEST_DIR,
 };
 
 /// The pinned record is a claim about a real file, and this is where it is checked: if the artifact
@@ -41,7 +42,8 @@ async fn the_pinned_record_describes_the_artifact_the_fetch_script_installs() {
     }
 
     let bytes = fs::read(&artifact_path).expect("read the artifact");
-    let release = update::shipped("1.18.29").expect("the shipped manifest names the pinned version");
+    let release =
+        update::shipped("1.18.29").expect("the shipped manifest names the pinned version");
     assert_eq!(
         sha256_hex(&bytes),
         release.sha256(),
@@ -159,7 +161,9 @@ fn a_managed_root_outside_what_the_app_owns_is_refused() {
 fn the_layout_is_the_one_the_plan_names() {
     let registry = BinaryRegistry::new(scratch("layout")).expect("managed root");
     assert!(registry.downloads().ends_with("agent-runtime/downloads"));
-    assert!(registry.recovery("default").ends_with("agent-recovery/default"));
+    assert!(registry
+        .recovery("default")
+        .ends_with("agent-recovery/default"));
     assert!(registry
         .program_of("1.2.3")
         .ends_with("agent-runtime/releases/1.2.3/x86_64-unknown-linux-gnu/opencode"));
@@ -189,7 +193,8 @@ fn versions_are_compared_numerically_rather_than_alphabetically() {
     let registry = BinaryRegistry::new(scratch("ordering")).expect("managed root");
     for version in ["1.18.9", "1.18.10", "1.18.2"] {
         let program = registry.program_of(version);
-        fs::create_dir_all(program.parent().expect("release directory")).expect("release directory");
+        fs::create_dir_all(program.parent().expect("release directory"))
+            .expect("release directory");
         fs::copy("/bin/true", &program).expect("install a program");
     }
     assert_eq!(

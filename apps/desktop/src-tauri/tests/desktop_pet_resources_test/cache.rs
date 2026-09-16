@@ -17,11 +17,18 @@
 //! a directory by hand: what is installed is what is on disk, so a character cannot be invisible
 //! and a listing cannot invent one.
 
-use crate::desktop_pet::resources::{EntryState, LibraryEntry, ResourceRefusal, INSTALLED_MANIFEST};
+use crate::desktop_pet::resources::{
+    EntryState, LibraryEntry, ResourceRefusal, INSTALLED_MANIFEST,
+};
 use crate::support::{install_request, library, listing, pack_dir, png, write};
 
 /// Install one character of two files so the cases below have something to damage.
-fn installed(label: &str) -> (crate::desktop_pet::resources::CharacterLibrary, std::path::PathBuf) {
+fn installed(
+    label: &str,
+) -> (
+    crate::desktop_pet::resources::CharacterLibrary,
+    std::path::PathBuf,
+) {
     let (library, data) = library(label);
     let source = pack_dir(label);
     write(&source, "sheet.png", &png(64, 64));
@@ -33,7 +40,11 @@ fn installed(label: &str) -> (crate::desktop_pet::resources::CharacterLibrary, s
 }
 
 fn only(entries: &[LibraryEntry]) -> &LibraryEntry {
-    assert_eq!(entries.len(), 1, "the fixture installs exactly one character");
+    assert_eq!(
+        entries.len(),
+        1,
+        "the fixture installs exactly one character"
+    );
     &entries[0]
 }
 
@@ -86,7 +97,11 @@ fn a_file_the_manifest_lists_and_the_directory_does_not_have_is_incomplete() {
     // The manifest is still there and still says what the character is. A listing that rewrote it
     // to match the directory would be a record that can no longer disagree with anything — which
     // is also a record that can no longer tell the user anything.
-    assert!(library.root().join("cat").join(INSTALLED_MANIFEST).is_file());
+    assert!(library
+        .root()
+        .join("cat")
+        .join(INSTALLED_MANIFEST)
+        .is_file());
 }
 
 #[test]
@@ -100,7 +115,10 @@ fn a_same_size_edit_is_invisible_to_a_listing_and_caught_by_the_digest_check() {
     forged[0] = b'\x8a';
     std::fs::write(&sheet, &forged).expect("writable");
 
-    assert_eq!(only(&library.list().expect("readable")).state, EntryState::Intact);
+    assert_eq!(
+        only(&library.list().expect("readable")).state,
+        EntryState::Intact
+    );
 
     let mismatches = library.verify("cat").expect("readable");
     assert_eq!(mismatches.len(), 1);
@@ -108,7 +126,9 @@ fn a_same_size_edit_is_invisible_to_a_listing_and_caught_by_the_digest_check() {
     assert_ne!(mismatches[0].recorded, mismatches[0].found);
     // The other file is untouched and is not reported: a verification names what changed rather
     // than declaring the whole character suspect.
-    assert!(mismatches.iter().all(|mismatch| mismatch.name == "sheet.png"));
+    assert!(mismatches
+        .iter()
+        .all(|mismatch| mismatch.name == "sheet.png"));
 }
 
 #[test]
@@ -127,12 +147,19 @@ fn a_directory_with_no_manifest_is_reported_and_neither_adopted_nor_removed() {
         .find(|entry| entry.character_id == "someone-elses")
         .expect("listed");
     assert_eq!(unmanaged.state, EntryState::Unmanaged);
-    assert_eq!(unmanaged.manifest, None, "there is no character to describe");
+    assert_eq!(
+        unmanaged.manifest, None,
+        "there is no character to describe"
+    );
     assert!(stranger.join("art.png").is_file(), "nothing was deleted");
     // And no operation will address it: the only way it leaves is the user removing the folder.
     assert_eq!(
-        library.remove("someone-elses").expect_err("the directory is there and has no record"),
-        ResourceRefusal::Unmanaged { character_id: "someone-elses".into() }
+        library
+            .remove("someone-elses")
+            .expect_err("the directory is there and has no record"),
+        ResourceRefusal::Unmanaged {
+            character_id: "someone-elses".into()
+        }
     );
 }
 
@@ -143,7 +170,9 @@ fn an_unreadable_manifest_is_reported_and_a_reading_never_repairs_it() {
     std::fs::write(&path, b"{ this is not json").expect("writable");
     let before = std::fs::read(&path).expect("readable");
 
-    let entries = library.list().expect("a library with one bad manifest still lists");
+    let entries = library
+        .list()
+        .expect("a library with one bad manifest still lists");
     let entry = only(&entries);
     assert!(matches!(entry.state, EntryState::UnreadableManifest { .. }));
     assert_eq!(entry.manifest, None);
@@ -179,7 +208,11 @@ fn the_manifest_records_every_file_and_the_digest_of_the_bytes_the_library_wrote
     let (library, _data) = installed("cache-record");
     let entries = library.list().expect("readable");
     let manifest = only(&entries).manifest.as_ref().expect("readable");
-    let mut names: Vec<&str> = manifest.files.iter().map(|file| file.name.as_str()).collect();
+    let mut names: Vec<&str> = manifest
+        .files
+        .iter()
+        .map(|file| file.name.as_str())
+        .collect();
     names.sort_unstable();
     assert_eq!(names, vec!["meow.ogg", "sheet.png"]);
     for file in &manifest.files {

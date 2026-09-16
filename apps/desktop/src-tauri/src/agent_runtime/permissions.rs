@@ -81,7 +81,10 @@ impl PermissionIdentity {
             ("vaultId", self.vault_id == other.vault_id),
             ("sessionId", self.session_id == other.session_id),
         ];
-        checked.into_iter().find(|(_, matches)| !matches).map(|(field, _)| field)
+        checked
+            .into_iter()
+            .find(|(_, matches)| !matches)
+            .map(|(field, _)| field)
     }
 }
 
@@ -211,7 +214,10 @@ struct PendingRequest {
 impl PendingRequest {
     /// Sends the response this request is entitled to.
     fn answer(self, outcome: RequestPermissionOutcome) {
-        report_failed_send(self.responder.respond(RequestPermissionResponse::new(outcome)));
+        report_failed_send(
+            self.responder
+                .respond(RequestPermissionResponse::new(outcome)),
+        );
     }
 
     /// Refuses on the engine's side: a request this host will not act on still has to end, because
@@ -232,9 +238,9 @@ fn label_of(tool_call: &ToolCallUpdate) -> String {
         return title;
     }
     if let Some(kind) = tool_call.fields.kind {
-        let name = serde_json::to_value(kind).ok().and_then(|value| {
-            value.as_str().map(String::from)
-        });
+        let name = serde_json::to_value(kind)
+            .ok()
+            .and_then(|value| value.as_str().map(String::from));
         if let Some(name) = name {
             return name;
         }
@@ -246,7 +252,11 @@ fn label_of(tool_call: &ToolCallUpdate) -> String {
 /// it somehow did, "nothing to show" is the honest state rather than an empty string that reads
 /// like empty arguments.
 fn input_of(tool_call: &ToolCallUpdate) -> ToolInput {
-    let Some(json) = tool_call.fields.raw_input.as_ref().and_then(|raw| serde_json::to_string(raw).ok())
+    let Some(json) = tool_call
+        .fields
+        .raw_input
+        .as_ref()
+        .and_then(|raw| serde_json::to_string(raw).ok())
     else {
         return ToolInput::Absent;
     };
@@ -278,21 +288,29 @@ impl Pending {
     fn take(&mut self, answer: &PermissionAnswer) -> Result<PendingRequest, PermissionRefusal> {
         let Some(entry) = self.requests.get(&answer.request_id) else {
             return Err(if self.answered.iter().any(|id| id == &answer.request_id) {
-                PermissionRefusal::AlreadyAnswered { request_id: answer.request_id.clone() }
+                PermissionRefusal::AlreadyAnswered {
+                    request_id: answer.request_id.clone(),
+                }
             } else {
-                PermissionRefusal::Expired { request_id: answer.request_id.clone() }
+                PermissionRefusal::Expired {
+                    request_id: answer.request_id.clone(),
+                }
             });
         };
         if let Some(field) = entry.binding.identity.first_mismatch(&answer.session) {
             return Err(PermissionRefusal::IdentityMismatch { field });
         }
         if !entry.offered.iter().any(|id| id == &answer.option_id) {
-            return Err(PermissionRefusal::OptionNotOffered { option_id: answer.option_id.clone() });
+            return Err(PermissionRefusal::OptionNotOffered {
+                option_id: answer.option_id.clone(),
+            });
         }
         // Removed only once every check has passed: a refused answer must leave the prompt
         // answerable, or one forged vault id would be enough to consume a live request.
-        let entry = self.requests.remove(&answer.request_id).expect("checked a moment ago, under
-             this same lock");
+        let entry = self.requests.remove(&answer.request_id).expect(
+            "checked a moment ago, under
+             this same lock",
+        );
         self.remember_answered(&answer.request_id);
         Ok(entry)
     }
@@ -328,8 +346,8 @@ impl PermissionTable {
                     // The engine is blocked on this request, so silence is not an option — it gets
                     // an error naming the id, the answer Zed's choke point gives the same case
                     // (spec §2.5).
-                    let error = AcpError::internal_error()
-                        .data(format!("unknown session: {session_id}"));
+                    let error =
+                        AcpError::internal_error().data(format!("unknown session: {session_id}"));
                     report_failed_send(request.responder.respond_with_error(error));
                     return Err(PermissionRefusal::UnknownSession { session_id });
                 }
@@ -345,7 +363,10 @@ impl PermissionTable {
             },
             run_id,
         };
-        let request_id = format!("perm-{}", self.next_request_id.fetch_add(1, Ordering::Relaxed));
+        let request_id = format!(
+            "perm-{}",
+            self.next_request_id.fetch_add(1, Ordering::Relaxed)
+        );
         let tool_call = &request.request.tool_call;
         let prompt = PermissionPrompt {
             request_id: request_id.clone(),
@@ -363,7 +384,11 @@ impl PermissionTable {
                 })
                 .collect(),
         };
-        let offered = request.request.options.iter().map(|option| option.option_id.to_string());
+        let offered = request
+            .request
+            .options
+            .iter()
+            .map(|option| option.option_id.to_string());
         let cancellation = request.responder.cancellation();
         let (resolved, resolved_rx) = oneshot::channel();
 
@@ -374,7 +399,11 @@ impl PermissionTable {
             responder: request.responder,
             _resolved: resolved,
         };
-        self.pending.lock().unwrap().requests.insert(request_id.clone(), entry);
+        self.pending
+            .lock()
+            .unwrap()
+            .requests
+            .insert(request_id.clone(), entry);
 
         // Into the runtime's own stream, stamped with the same run id the binding holds.
         self.emitter.emit(
@@ -383,7 +412,8 @@ impl PermissionTable {
             AgentEventKind::PermissionRequest,
             serde_json::to_value(&prompt).unwrap_or(Value::Null),
         );
-        let watched = watch_peer_cancellation(Arc::clone(self), request_id, cancellation, resolved_rx);
+        let watched =
+            watch_peer_cancellation(Arc::clone(self), request_id, cancellation, resolved_rx);
         tokio::spawn(watched);
         Ok(prompt)
     }
@@ -401,7 +431,8 @@ impl PermissionTable {
     ) -> Result<PermissionPrompt, PermissionRefusal> {
         let session_id = request.request.session_id.to_string();
         let deadline = Instant::now() + REGISTRATION_WINDOW;
-        while !self.sessions.lock().unwrap().contains_key(&session_id) && Instant::now() < deadline {
+        while !self.sessions.lock().unwrap().contains_key(&session_id) && Instant::now() < deadline
+        {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         self.adopt(request)
@@ -422,9 +453,9 @@ impl PermissionTable {
     pub fn respond(&self, answer: &PermissionAnswer) -> Result<(), PermissionRefusal> {
         let entry = self.pending.lock().unwrap().take(answer)?;
         // Outside the lock: an answer that cannot be sent must not hold up the next request's.
-        entry.answer(RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
-            PermissionOptionId::new(answer.option_id.clone()),
-        )));
+        entry.answer(RequestPermissionOutcome::Selected(
+            SelectedPermissionOutcome::new(PermissionOptionId::new(answer.option_id.clone())),
+        ));
         Ok(())
     }
 
@@ -469,7 +500,13 @@ impl PermissionTable {
     /// The prompts still waiting for an answer — the snapshot §6.2 requires a remounting UI to
     /// take before it subscribes, for the one part of the state that grants something.
     pub fn pending(&self) -> Vec<PermissionPrompt> {
-        self.pending.lock().unwrap().requests.values().map(|entry| entry.prompt.clone()).collect()
+        self.pending
+            .lock()
+            .unwrap()
+            .requests
+            .values()
+            .map(|entry| entry.prompt.clone())
+            .collect()
     }
 
     /// Ends one request because the engine abandoned it (see the watcher).

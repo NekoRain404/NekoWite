@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 
 use super::scope::{contains, resolve, DisableMechanism, ScopeOwner, SkillScope};
 use super::{
-    io_error, SkillError, SkillLibrary, MAX_DESCRIPTION_CHARS, MAX_NAME_BYTES,
-    MAX_SCAN_ENTRIES, SKILL_FILE_NAME,
+    io_error, SkillError, SkillLibrary, MAX_DESCRIPTION_CHARS, MAX_NAME_BYTES, MAX_SCAN_ENTRIES,
+    SKILL_FILE_NAME,
 };
 
 /// What a `SKILL.md` declares. Only the keys this app reads; `license`, `compatibility` and
@@ -140,7 +140,6 @@ impl SkillLibrary {
         found.sort_by(|left, right| left.name.cmp(&right.name));
         Ok(found)
     }
-
 }
 
 /// One discovered directory, as a view. `seen` accumulates the names found so the caller can fill
@@ -288,7 +287,11 @@ fn parse_frontmatter(text: &str, path: &Path) -> Result<BTreeMap<String, String>
             });
         };
         let key = key.trim();
-        if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+        if key.is_empty()
+            || !key
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
             return Err(SkillError::FrontmatterLine {
                 line: index + 1,
                 message: "the key is not a name this app can read".to_string(),

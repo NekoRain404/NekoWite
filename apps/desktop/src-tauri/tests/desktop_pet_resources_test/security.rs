@@ -96,12 +96,26 @@ fn every_letter_of_every_script_is_a_name_and_only_the_hostile_ones_are_not() {
         "a b.png",
         "猫（素材）",
     ] {
-        assert!(is_path_component(name), "{name:?} is a name the filesystem holds");
+        assert!(
+            is_path_component(name),
+            "{name:?} is a name the filesystem holds"
+        );
     }
     // And what is refused is refused for something the filesystem or the page objects to, never
     // for being in the wrong alphabet.
-    for name in ["喵/喵", "喵\n喵", ".喵喵", "..", "", "\u{fffd}", "喵\u{202e}喵"] {
-        assert!(!is_path_component(name), "{name:?} is not a name this library takes");
+    for name in [
+        "喵/喵",
+        "喵\n喵",
+        ".喵喵",
+        "..",
+        "",
+        "\u{fffd}",
+        "喵\u{202e}喵",
+    ] {
+        assert!(
+            !is_path_component(name),
+            "{name:?} is not a name this library takes"
+        );
     }
 }
 
@@ -114,7 +128,10 @@ fn a_refused_name_and_an_unreadable_pack_are_two_different_answers() {
     let (library, _data) = library("security-sentences");
 
     let named = library
-        .install(&install_request("喵/喵", &pack_dir("security-sentences-name")))
+        .install(&install_request(
+            "喵/喵",
+            &pack_dir("security-sentences-name"),
+        ))
         .expect_err("a name that is a path");
     assert!(
         matches!(&named, ResourceRefusal::InvalidName { field: "characterId", detail, .. }
@@ -171,7 +188,11 @@ fn an_archive_is_refused_by_its_bytes_whatever_it_is_called() {
     for name in ["cat.zip", "cat.dat", "pack"] {
         let source = pack_dir(&format!("security-archive-{name}"));
         write(&source, "sheet.png", &png(64, 64));
-        write(&source, name, b"PK\x03\x04\x14\x00\x00\x00 a zip by its own bytes");
+        write(
+            &source,
+            name,
+            b"PK\x03\x04\x14\x00\x00\x00 a zip by its own bytes",
+        );
 
         let refusal = library
             .install(&install_request("cat", &source))
@@ -187,7 +208,9 @@ fn an_archive_is_refused_by_its_bytes_whatever_it_is_called() {
     let source = pack_dir("security-archive-broken");
     write(&source, "sheet.png", &png(64, 64));
     write(&source, "cat.zip", b"not a zip at all");
-    let refusal = library.install(&install_request("cat", &source)).expect_err("a .zip");
+    let refusal = library
+        .install(&install_request("cat", &source))
+        .expect_err("a .zip");
     assert_eq!(refusal_of(&refusal), &PackageProblem::Archive);
     assert!(listing(library.root()).is_empty());
 }
@@ -199,7 +222,10 @@ fn a_document_in_a_pack_is_refused_and_never_carried_into_the_library() {
     // behaviour, and this app renders imported text as text — a resource path that bypassed that
     // would be the regression §7.2's D9 work removed.
     let cases: [(&str, &[u8]); 3] = [
-        ("sheet.svg", b"<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>"),
+        (
+            "sheet.svg",
+            b"<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>",
+        ),
         ("payload.dat", b"<!doctype html><script>alert(1)</script>"),
         ("pet.js", b"export default 1"),
     ];
@@ -221,7 +247,9 @@ fn the_sheet_budget_is_measured_from_the_header_and_not_taken_on_trust() {
     let (library, _data) = library("security-budget-edge");
     let source = pack_dir("security-budget-edge");
     write(&source, "sheet.png", &png(MAX_IMAGE_EDGE + 1, 16));
-    let refusal = library.install(&install_request("cat", &source)).expect_err("too wide");
+    let refusal = library
+        .install(&install_request("cat", &source))
+        .expect_err("too wide");
     assert_eq!(
         refusal,
         ResourceRefusal::Budget {
@@ -240,7 +268,9 @@ fn the_sheet_budget_is_measured_from_the_header_and_not_taken_on_trust() {
     ] {
         let source = pack_dir(&format!("security-budget-{name}"));
         write(&source, name, &bytes);
-        let refusal = library.install(&install_request("cat", &source)).expect_err("too large");
+        let refusal = library
+            .install(&install_request("cat", &source))
+            .expect_err("too large");
         assert_eq!(
             refusal,
             ResourceRefusal::Budget {
@@ -255,7 +285,10 @@ fn the_sheet_budget_is_measured_from_the_header_and_not_taken_on_trust() {
     // §8 states the edge and the total pixels as two rows. Held together they are one ceiling:
     // the largest square a sheet may be. Pinned so that raising one without the other fails here
     // rather than in a settings page that suddenly admits a sheet nothing can draw.
-    assert_eq!(MAX_IMAGE_PIXELS, MAX_IMAGE_EDGE as u64 * MAX_IMAGE_EDGE as u64);
+    assert_eq!(
+        MAX_IMAGE_PIXELS,
+        MAX_IMAGE_EDGE as u64 * MAX_IMAGE_EDGE as u64
+    );
     let source = pack_dir("security-budget-exact");
     write(&source, "sheet.png", &png(MAX_IMAGE_EDGE, MAX_IMAGE_EDGE));
     library
@@ -277,24 +310,26 @@ fn the_package_budgets_are_bounded_in_every_row_they_name() {
         .expect_err("too many files");
     assert!(matches!(
         refusal,
-        ResourceRefusal::Budget { rule: "file-count", .. }
+        ResourceRefusal::Budget {
+            rule: "file-count",
+            ..
+        }
     ));
 
     // Audio: one file, over §8's five mebibytes.
     let (audio_library, _audio_data) = library("security-audio");
     let source = pack_dir("security-audio");
     write(&source, "sheet.png", &png(64, 64));
-    write(
-        &source,
-        "meow.ogg",
-        &ogg(5 * 1024 * 1024 + 1),
-    );
+    write(&source, "meow.ogg", &ogg(5 * 1024 * 1024 + 1));
     let refusal = audio_library
         .install(&install_request("cat", &source))
         .expect_err("too loud");
     assert!(matches!(
         refusal,
-        ResourceRefusal::Budget { rule: "audio-bytes", .. }
+        ResourceRefusal::Budget {
+            rule: "audio-bytes",
+            ..
+        }
     ));
 
     // Package: the whole pack, not one file in it.
@@ -311,7 +346,10 @@ fn the_package_budgets_are_bounded_in_every_row_they_name() {
         .expect_err("too big");
     assert!(matches!(
         refusal,
-        ResourceRefusal::Budget { rule: "package-bytes", .. }
+        ResourceRefusal::Budget {
+            rule: "package-bytes",
+            ..
+        }
     ));
 
     // A rule this module names and never reaches would be a row of §8 it only claims to check.
@@ -329,16 +367,34 @@ fn a_declared_grid_is_checked_against_the_renderer_and_against_the_sheet() {
     // nobody, and a resource that is silently truncated is refused instead.
     let source = pack_dir("security-grid-frames");
     write(&source, "sheet.png", &png(1024, 1024));
-    write(&source, PACK_MANIFEST, &pet_json(",\"columns\":100,\"rows\":100"));
-    let refusal = library.install(&install_request("cat", &source)).expect_err("too many frames");
-    assert!(matches!(refusal, ResourceRefusal::Budget { rule: "frames", .. }));
-    assert_eq!(MAX_FRAMES, DEFAULT_SHEET_COLUMNS as u64 * DEFAULT_SHEET_ROWS as u64);
+    write(
+        &source,
+        PACK_MANIFEST,
+        &pet_json(",\"columns\":100,\"rows\":100"),
+    );
+    let refusal = library
+        .install(&install_request("cat", &source))
+        .expect_err("too many frames");
+    assert!(matches!(
+        refusal,
+        ResourceRefusal::Budget { rule: "frames", .. }
+    ));
+    assert_eq!(
+        MAX_FRAMES,
+        DEFAULT_SHEET_COLUMNS as u64 * DEFAULT_SHEET_ROWS as u64
+    );
 
     // A grid the sheet does not divide into is a grid that would cut frames in half.
     let source = pack_dir("security-grid-ragged");
     write(&source, "sheet.png", &png(1000, 900));
-    write(&source, PACK_MANIFEST, &pet_json(",\"columns\":7,\"rows\":9"));
-    let refusal = library.install(&install_request("cat", &source)).expect_err("ragged");
+    write(
+        &source,
+        PACK_MANIFEST,
+        &pet_json(",\"columns\":7,\"rows\":9"),
+    );
+    let refusal = library
+        .install(&install_request("cat", &source))
+        .expect_err("ragged");
     assert!(matches!(refusal, ResourceRefusal::MalformedManifest { .. }));
 
     // Half a grid is not a grid: one field of the pair with the other missing is refused rather
@@ -346,14 +402,18 @@ fn a_declared_grid_is_checked_against_the_renderer_and_against_the_sheet() {
     let source = pack_dir("security-grid-half");
     write(&source, "sheet.png", &png(800, 900));
     write(&source, PACK_MANIFEST, &pet_json(",\"columns\":8"));
-    let refusal = library.install(&install_request("cat", &source)).expect_err("half a grid");
+    let refusal = library
+        .install(&install_request("cat", &source))
+        .expect_err("half a grid");
     assert!(matches!(refusal, ResourceRefusal::MalformedManifest { .. }));
 
     // A pack that declares nothing is sliced on the renderer's own grid, which is a real answer
     // and not a missing one.
     let source = pack_dir("security-grid-none");
     write(&source, "sheet.png", &png(800, 900));
-    let installed = library.install(&install_request("cat", &source)).expect("no grid declared");
+    let installed = library
+        .install(&install_request("cat", &source))
+        .expect("no grid declared");
     assert_eq!(
         (installed.sheet.columns, installed.sheet.rows),
         (DEFAULT_SHEET_COLUMNS, DEFAULT_SHEET_ROWS)
@@ -371,10 +431,15 @@ fn metadata_deeper_than_the_library_will_walk_is_refused() {
         "]".repeat(20)
     );
     write(&source, PACK_MANIFEST, deep.as_bytes());
-    let refusal = library.install(&install_request("cat", &source)).expect_err("too deep");
+    let refusal = library
+        .install(&install_request("cat", &source))
+        .expect_err("too deep");
     assert!(matches!(
         refusal,
-        ResourceRefusal::Budget { rule: "metadata-depth", .. }
+        ResourceRefusal::Budget {
+            rule: "metadata-depth",
+            ..
+        }
     ));
 }
 
@@ -402,6 +467,9 @@ fn the_sheet_grid_is_the_renderers_own() {
 fn a_library_root_the_app_does_not_own_is_refused_before_anything_is_written() {
     for root in ["/usr/share/nekowite", "/etc", "relative/path"] {
         let refusal = CharacterLibrary::new(Path::new(root)).expect_err("not the app's to write");
-        assert!(matches!(refusal, ResourceRefusal::OutsideManagedScope { .. }), "{root}");
+        assert!(
+            matches!(refusal, ResourceRefusal::OutsideManagedScope { .. }),
+            "{root}"
+        );
     }
 }

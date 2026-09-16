@@ -31,8 +31,14 @@ fn two_engines_reporting_one_session_id_are_two_tasks() {
         2,
         "one session id is two engines' sessions, so it is two tasks"
     );
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "working");
-    assert_eq!(state_of(&projection, &key(&theirs, "ses_1", "run-1")), "working");
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-1")),
+        "working"
+    );
+    assert_eq!(
+        state_of(&projection, &key(&theirs, "ses_1", "run-1")),
+        "working"
+    );
 }
 
 /// Filing one engine's ending under the other's task is what a lookup by session id does, and it
@@ -55,7 +61,10 @@ fn one_engines_ending_does_not_end_the_others_run() {
         Some(&key(&ours, "ses_1", "run-1")),
         "the frame was filed under the engine that sent it, run and all"
     );
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "turn-finished");
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-1")),
+        "turn-finished"
+    );
     assert_eq!(
         state_of(&projection, &key(&theirs, "ses_1", "run-1")),
         "working",
@@ -123,8 +132,14 @@ fn a_frame_is_filed_under_the_session_it_names() {
 
     projection.apply(&finished(&ours, "ses_2", "run-1", 1, "end-turn"));
 
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "working");
-    assert_eq!(state_of(&projection, &key(&ours, "ses_2", "run-1")), "turn-finished");
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-1")),
+        "working"
+    );
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_2", "run-1")),
+        "turn-finished"
+    );
 }
 
 /// The prompt is filed under the run it belongs to, so a permission on one run cannot suspend
@@ -139,8 +154,14 @@ fn a_prompt_on_one_run_does_not_suspend_the_session_s_other_run() {
 
     projection.apply(&permission(&ours, "ses_1", "run-2", 1, "req-1"));
 
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-1")), "working");
-    assert_eq!(state_of(&projection, &key(&ours, "ses_1", "run-2")), "waiting-input");
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-1")),
+        "working"
+    );
+    assert_eq!(
+        state_of(&projection, &key(&ours, "ses_1", "run-2")),
+        "waiting-input"
+    );
     assert_eq!(
         projection
             .task(&key(&ours, "ses_1", "run-2"))
@@ -171,8 +192,14 @@ fn the_vault_a_run_belongs_to_is_part_of_what_names_it() {
     projection.apply(&finished(&here, "ses_1", "run-1", 1, "end-turn"));
 
     assert_eq!(task_count(&projection), 2);
-    assert_eq!(state_of(&projection, &key(&here, "ses_1", "run-1")), "turn-finished");
-    assert_eq!(state_of(&projection, &key(&elsewhere, "ses_1", "run-1")), "working");
+    assert_eq!(
+        state_of(&projection, &key(&here, "ses_1", "run-1")),
+        "turn-finished"
+    );
+    assert_eq!(
+        state_of(&projection, &key(&elsewhere, "ses_1", "run-1")),
+        "working"
+    );
 }
 
 /// The shape the frontend reads. D1's `PetTaskProjection` is frozen, so the key's field names are

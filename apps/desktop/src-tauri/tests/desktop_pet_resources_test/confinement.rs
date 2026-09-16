@@ -64,7 +64,11 @@ fn plant(library: &CharacterLibrary, name: &str, reached: &[u8]) {
 /// What the library reports for the one character in the fixture.
 fn state_of(library: &CharacterLibrary) -> EntryState {
     let entries = library.list().expect("readable");
-    assert_eq!(entries.len(), 1, "the fixture installs exactly one character");
+    assert_eq!(
+        entries.len(),
+        1,
+        "the fixture installs exactly one character"
+    );
     entries.into_iter().next().expect("one entry").state
 }
 
@@ -74,7 +78,9 @@ fn state_of(library: &CharacterLibrary) -> EntryState {
 /// The sentence is not respelled here: it is `name_problem`'s own, asked of the same function the
 /// library asked — which is what keeps the check and the explanation from drifting apart.
 fn name_refusal(library: &CharacterLibrary, name: &str) -> ResourceRefusal {
-    let refusal = library.verify("cat").expect_err("a name the library will not open");
+    let refusal = library
+        .verify("cat")
+        .expect_err("a name the library will not open");
     assert_eq!(
         refusal,
         ResourceRefusal::InvalidName {
@@ -92,7 +98,12 @@ fn a_manifest_naming_a_parent_directory_names_nothing() {
     let (library, _data) = fixture("confine-parent");
     // `..` and every spelling that starts with it: from the character's own directory, three of
     // them are the app's data directory, which is where `outside.txt` is.
-    for name in ["..", "../..", "../../../outside.txt", "cat/../../outside.txt"] {
+    for name in [
+        "..",
+        "../..",
+        "../../../outside.txt",
+        "cat/../../outside.txt",
+    ] {
         plant(&library, name, OUTSIDE);
         assert_eq!(
             state_of(&library),
@@ -121,7 +132,10 @@ fn a_manifest_naming_an_absolute_path_names_nothing() {
         }
     );
     name_refusal(&library, &name);
-    assert!(absolute.is_file(), "nothing here reads or removes the file it refused to name");
+    assert!(
+        absolute.is_file(),
+        "nothing here reads or removes the file it refused to name"
+    );
 }
 
 #[test]
@@ -191,7 +205,10 @@ fn a_manifest_naming_a_link_out_of_the_directory_is_not_followed() {
             names: vec!["linked.png".to_string()]
         }
     );
-    match library.verify("cat").expect_err("a link is not read through") {
+    match library
+        .verify("cat")
+        .expect_err("a link is not read through")
+    {
         ResourceRefusal::Package { name, problem, .. } => {
             assert_eq!(name, "linked.png");
             assert_eq!(problem, PackageProblem::Symlink);

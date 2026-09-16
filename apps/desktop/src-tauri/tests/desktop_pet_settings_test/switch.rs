@@ -12,11 +12,11 @@ use nekowite_lib::desktop_pet::settings::{
     PetSettingsDomain, PetSettingsRecord, PET_SETTINGS_SCHEMA_VERSION,
 };
 use nekowite_lib::desktop_pet::task_projection::{PetTaskKey, PetTaskState};
-use nekowite_lib::desktop_pet::{NotificationOutcome, PetTaskFeed, TaskFact};
 use nekowite_lib::desktop_pet::window_host::{
     PetSurfaces, PetWindowHost, PetWindowLabel, Placement, WindowStyle, WorkArea,
 };
 use nekowite_lib::desktop_pet::DESKTOP_PET_PAGE;
+use nekowite_lib::desktop_pet::{NotificationOutcome, PetTaskFeed, TaskFact};
 
 use crate::support;
 
@@ -125,7 +125,10 @@ fn the_unselected_identity_opens_the_pet_window() {
     assert_eq!(surfaces.opened().len(), 1);
     assert_eq!(host.instances().len(), 1);
     assert_eq!(host.instances()[0].character_id, UNSELECTED_CHARACTER);
-    assert!(state.is_some(), "the state to publish is the one this ended in");
+    assert!(
+        state.is_some(),
+        "the state to publish is the one this ended in"
+    );
 }
 
 /// A window system that refuses everything, so the enable path's handling of a real failure has a
@@ -216,7 +219,10 @@ fn an_applied_notification_write_reaches_the_ledger_that_reads_it() {
 
     // The shipped defaults: a finished turn is announced, and the burst gathers before it goes out.
     assert!(
-        matches!(finished(&feed, "run-1", 1), NotificationOutcome::Coalescing { .. }),
+        matches!(
+            finished(&feed, "run-1", 1),
+            NotificationOutcome::Coalescing { .. }
+        ),
         "a finished turn is announced by default"
     );
 
@@ -224,7 +230,10 @@ fn an_applied_notification_write_reaches_the_ledger_that_reads_it() {
         PetSettingsDomain::Notification,
         &[("onTurnFinished", json!(false))],
     );
-    assert!(apply_notification_switch(&feed, &saved), "the record is the notification domain's");
+    assert!(
+        apply_notification_switch(&feed, &saved),
+        "the record is the notification domain's"
+    );
 
     assert_eq!(
         // A second run of the same session, and the next sequence: §6.3's stream is per session, so
@@ -245,7 +254,10 @@ fn an_applied_notification_write_reaches_the_ledger_that_reads_it() {
 #[test]
 fn turning_do_not_disturb_on_ends_a_burst_that_was_already_gathering() {
     let feed = PetTaskFeed::new();
-    assert!(matches!(finished(&feed, "run-1", 1), NotificationOutcome::Coalescing { .. }));
+    assert!(matches!(
+        finished(&feed, "run-1", 1),
+        NotificationOutcome::Coalescing { .. }
+    ));
     let due = feed
         .notifications()
         .expect("the ledger's lock is fresh")
@@ -260,12 +272,23 @@ fn turning_do_not_disturb_on_ends_a_burst_that_was_already_gathering() {
 
     apply_notification_switch(
         &feed,
-        &record(PetSettingsDomain::Notification, &[("doNotDisturb", json!(true))]),
+        &record(
+            PetSettingsDomain::Notification,
+            &[("doNotDisturb", json!(true))],
+        ),
     );
 
     let policy = feed.notifications().expect("the ledger's lock is fresh");
-    assert_eq!(policy.pending_due(), None, "the burst was dropped, not postponed");
-    assert_eq!(policy.unread().len(), 1, "the row the switch silenced is still unread");
+    assert_eq!(
+        policy.pending_due(),
+        None,
+        "the burst was dropped, not postponed"
+    );
+    assert_eq!(
+        policy.unread().len(),
+        1,
+        "the row the switch silenced is still unread"
+    );
 }
 
 /// A write to another domain is not the notification switches, for the reason the feature switch

@@ -38,7 +38,10 @@ fn a_successful_import_publishes_the_pack_the_manifest_and_nothing_else() {
     assert!(directory.join(INSTALLED_MANIFEST).is_file());
 
     assert_eq!(installed.sheet.file, "sheet.png");
-    assert_eq!((installed.sheet.width, installed.sheet.height), (1536, 1872));
+    assert_eq!(
+        (installed.sheet.width, installed.sheet.height),
+        (1536, 1872)
+    );
     assert_eq!(installed.files.len(), 3);
     // Nothing named with the reserved prefix is left anywhere under the library: the staging
     // directory is the transaction's own bookkeeping and it is gone once the rename happened.
@@ -55,10 +58,16 @@ fn a_successful_import_publishes_the_pack_the_manifest_and_nothing_else() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].state, EntryState::Intact);
     assert_eq!(
-        entries[0].manifest.as_ref().map(|manifest| manifest.files.len()),
+        entries[0]
+            .manifest
+            .as_ref()
+            .map(|manifest| manifest.files.len()),
         Some(3)
     );
-    assert_eq!(library.root().parent(), Some(_data.join("desktop-pet").as_path()));
+    assert_eq!(
+        library.root().parent(),
+        Some(_data.join("desktop-pet").as_path())
+    );
 }
 
 #[test]
@@ -77,7 +86,10 @@ fn a_pack_with_one_bad_file_after_several_good_ones_publishes_none_of_them() {
     // Not "the character is incomplete" — there is no character, no directory, and no staging
     // name left behind. The three good files were read and then nothing was published.
     assert!(listing(library.root()).is_empty());
-    assert!(library.list().expect("an unreadable library would be a second failure").is_empty());
+    assert!(library
+        .list()
+        .expect("an unreadable library would be a second failure")
+        .is_empty());
 }
 
 #[test]
@@ -92,7 +104,11 @@ fn a_refused_import_leaves_a_library_that_already_holds_characters_untouched() {
     let before = listing(library.root());
     let bad = pack_dir("import-untouched-bad");
     write(&bad, "sheet.png", &png(64, 64));
-    write(&bad, "payload.zip", b"PK\x03\x04 not a pack this build unpacks");
+    write(
+        &bad,
+        "payload.zip",
+        b"PK\x03\x04 not a pack this build unpacks",
+    );
 
     library
         .install(&install_request("second", &bad))
@@ -107,7 +123,9 @@ fn importing_the_same_id_twice_is_refused_rather_than_replacing_the_first() {
     let (library, _data) = library("import-twice");
     let first = pack_dir("import-twice-a");
     write(&first, "sheet.png", &png(64, 64));
-    library.install(&install_request("cat", &first)).expect("the first import");
+    library
+        .install(&install_request("cat", &first))
+        .expect("the first import");
     let sheet_before = std::fs::read(library.root().join("cat/sheet.png")).expect("readable");
 
     let second = pack_dir("import-twice-b");
@@ -158,7 +176,11 @@ fn a_pack_named_in_chinese_is_a_character_like_any_other() {
     let mut published = listing(&library.root().join("喵喵"));
     published.retain(|name| name != INSTALLED_MANIFEST);
     assert_eq!(published, vec!["pet.json", "精灵图.png"]);
-    assert!(library.root().join("喵喵").join(INSTALLED_MANIFEST).is_file());
+    assert!(library
+        .root()
+        .join("喵喵")
+        .join(INSTALLED_MANIFEST)
+        .is_file());
 
     // The reads a settings page makes all address it by that same string — the listing, and the
     // digest pass, which is the one that reads every file back by the name in the manifest.
@@ -166,7 +188,10 @@ fn a_pack_named_in_chinese_is_a_character_like_any_other() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].character_id, "喵喵");
     assert_eq!(entries[0].state, EntryState::Intact);
-    assert!(library.verify("喵喵").expect("read back by name").is_empty());
+    assert!(library
+        .verify("喵喵")
+        .expect("read back by name")
+        .is_empty());
 }
 
 /// The second import of one folder is a second character, and the first one is untouched.
@@ -176,7 +201,9 @@ fn a_chinese_name_that_is_taken_is_refused_rather_than_overwritten() {
     let source = pack_dir("import-cjk-twice");
     write(&source, "精灵图.png", &png(64, 64));
 
-    library.install(&install_request("喵喵", &source)).expect("the first import");
+    library
+        .install(&install_request("喵喵", &source))
+        .expect("the first import");
     let sheet_before =
         std::fs::read(library.root().join("喵喵").join("精灵图.png")).expect("readable");
 
@@ -218,8 +245,12 @@ fn two_spellings_of_one_name_are_two_characters_and_neither_overwrites_the_other
     let decomposed = "\u{1100}\u{1161}\u{11a8}";
     assert_ne!(composed, decomposed);
 
-    library.install(&install_request(composed, &source)).expect("the first spelling");
-    library.install(&install_request(decomposed, &source)).expect("the second spelling");
+    library
+        .install(&install_request(composed, &source))
+        .expect("the first spelling");
+    library
+        .install(&install_request(decomposed, &source))
+        .expect("the second spelling");
 
     let mut ids: Vec<String> = library
         .list()
@@ -230,7 +261,10 @@ fn two_spellings_of_one_name_are_two_characters_and_neither_overwrites_the_other
     ids.sort();
     let mut expected = vec![composed.to_string(), decomposed.to_string()];
     expected.sort();
-    assert_eq!(ids, expected, "both are installed, and neither replaced the other");
+    assert_eq!(
+        ids, expected,
+        "both are installed, and neither replaced the other"
+    );
     assert_eq!(listing(library.root()).len(), 2);
 }
 
@@ -278,7 +312,10 @@ fn creating_a_character_is_the_same_transaction_with_the_same_budgets() {
     let entries = library.list().expect("readable");
     assert_eq!(entries[0].state, EntryState::Intact);
     assert_eq!(
-        entries[0].manifest.as_ref().map(|manifest| manifest.sheet.clone()),
+        entries[0]
+            .manifest
+            .as_ref()
+            .map(|manifest| manifest.sheet.clone()),
         Some(created.sheet.clone())
     );
     assert_eq!(created.sheet.columns, 8);
@@ -325,19 +362,26 @@ fn a_pack_cannot_author_the_record_the_library_trusts() {
     let refusal = library
         .install(&install_request("cat", &source))
         .expect_err("a file of a type this build cannot establish");
-    assert!(matches!(refusal, ResourceRefusal::Unrecognized { ref name } if name == INSTALLED_MANIFEST));
+    assert!(
+        matches!(refusal, ResourceRefusal::Unrecognized { ref name } if name == INSTALLED_MANIFEST)
+    );
 
     // And the record that exists after a real import is the library's, written from the bytes it
     // staged rather than from anything the pack said.
     let clean = pack_dir("import-forged-clean");
     write(&clean, "sheet.png", &png(64, 64));
-    let installed = library.install(&install_request("cat", &clean)).expect("a clean pack");
+    let installed = library
+        .install(&install_request("cat", &clean))
+        .expect("a clean pack");
     assert_eq!(installed.files[0].name, "sheet.png");
     assert_eq!(installed.files[0].bytes, 24);
     assert_eq!(installed.files[0].sha256.len(), 64);
     let text = std::fs::read_to_string(library.root().join("cat").join(INSTALLED_MANIFEST))
         .expect("the record is readable");
-    assert!(text.contains(&installed.files[0].sha256), "the digest the library computed");
+    assert!(
+        text.contains(&installed.files[0].sha256),
+        "the digest the library computed"
+    );
     assert!(text.contains("\"schemaVersion\": 1"));
 }
 
@@ -359,7 +403,11 @@ fn the_clock_and_the_order_are_the_callers() {
         .into_iter()
         .map(|entry| entry.character_id)
         .collect();
-    assert_eq!(ids, vec!["new", "old"], "the newest import is where the user finds it");
+    assert_eq!(
+        ids,
+        vec!["new", "old"],
+        "the newest import is where the user finds it"
+    );
 }
 
 #[test]
@@ -382,7 +430,11 @@ fn a_source_that_is_not_there_is_refused_with_the_path_it_looked_for() {
 fn a_pack_may_be_one_file_because_the_user_picked_a_sheet_and_not_a_folder() {
     let (library, _data) = library("import-single");
     let single = pack_dir("import-single").join("sheet.png");
-    write(single.parent().expect("a directory"), "sheet.png", &png(64, 64));
+    write(
+        single.parent().expect("a directory"),
+        "sheet.png",
+        &png(64, 64),
+    );
 
     let installed = library
         .install(&install_request("cat", &single))

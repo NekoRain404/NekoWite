@@ -168,7 +168,10 @@ impl HistoryStore {
             Err(error) => {
                 self.lock_writable(true);
                 return Loaded {
-                    detail: Some(format!("{} could not be read: {error}", self.path.display())),
+                    detail: Some(format!(
+                        "{} could not be read: {error}",
+                        self.path.display()
+                    )),
                     ..Loaded::default()
                 };
             }
@@ -226,10 +229,7 @@ impl HistoryStore {
     /// of one another. Within this process the ledger's own lock is what serialises saves.
     pub fn save(&self, history: &TaskHistory) -> Result<SaveOutcome, String> {
         let text = history.encode();
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if !state.writable {
             return Ok(SaveOutcome::ReadOnly);
         }
@@ -242,10 +242,7 @@ impl HistoryStore {
     }
 
     fn lock_writable(&self, writable: bool) {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         state.writable = writable;
     }
 }

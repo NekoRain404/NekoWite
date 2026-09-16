@@ -103,7 +103,10 @@ fn a_profile_that_reuses_the_users_own_configuration_refuses_writes() {
         }],
     )
     .unwrap_err();
-    assert!(refused.contains("reuses the engine's own configuration"), "{refused}");
+    assert!(
+        refused.contains("reuses the engine's own configuration"),
+        "{refused}"
+    );
     assert_eq!(
         fs::read_to_string(profile.document_path(RELATIVE).unwrap()).unwrap(),
         CONFIG
@@ -116,7 +119,10 @@ fn a_profile_that_reuses_the_users_own_configuration_refuses_writes() {
         &[set("ANTHROPIC_API_KEY", SECRET_VALUE)],
     )
     .unwrap_err();
-    assert!(refused.contains("reuses the engine's own configuration"), "{refused}");
+    assert!(
+        refused.contains("reuses the engine's own configuration"),
+        "{refused}"
+    );
 
     // And the readout says so, so a page can disable the form rather than let the user fill it in
     // and be refused at save time. The injected roots are gone with the mode, and the list still
@@ -164,7 +170,9 @@ fn the_injected_roots_the_readout_reports_are_the_ones_the_launch_uses() {
             .filter(|(_, value)| std::path::Path::new(value).is_absolute())
             .collect();
     assert_eq!(reported, expected);
-    assert!(reported.iter().all(|(_, path)| path.starts_with(&profile.root().to_string_lossy().to_string())));
+    assert!(reported
+        .iter()
+        .all(|(_, path)| path.starts_with(&profile.root().to_string_lossy().to_string())));
 
     // And the honest half §8.1 requires: the list says what this host does *not* close — one
     // surface at a time, so a reader can count the merges that remain instead of taking a summary
@@ -178,7 +186,10 @@ fn the_injected_roots_the_readout_reports_are_the_ones_the_launch_uses() {
             ConfigSource::Injected { .. } => None,
         })
         .collect();
-    assert_eq!(open, vec![DiscoverySurface::Project, DiscoverySurface::Managed]);
+    assert_eq!(
+        open,
+        vec![DiscoverySurface::Project, DiscoverySurface::Managed]
+    );
 }
 
 /// The other half of the same claim: what a Skills page would list is built from the launch the
@@ -203,9 +214,15 @@ fn the_scope_readout_reads_the_launch_the_profile_gets() {
     let home = profile.root().join("HOME");
     let project = managed.join("vault");
     for (directory, body) in [
-        (".claude/skills/planted", "---\nname: planted\ndescription: d\n---\n"),
+        (
+            ".claude/skills/planted",
+            "---\nname: planted\ndescription: d\n---\n",
+        ),
         (".claude/skills/broken", "no frontmatter at all\n"),
-        (".agents/skills/planted", "---\nname: planted\ndescription: d\n---\n"),
+        (
+            ".agents/skills/planted",
+            "---\nname: planted\ndescription: d\n---\n",
+        ),
     ] {
         let skill = home.join(directory);
         fs::create_dir_all(&skill).unwrap();
@@ -213,7 +230,11 @@ fn the_scope_readout_reads_the_launch_the_profile_gets() {
     }
     let in_project = project.join(".opencode/skills/mine");
     fs::create_dir_all(&in_project).unwrap();
-    fs::write(in_project.join("SKILL.md"), "---\nname: mine\ndescription: d\n---\n").unwrap();
+    fs::write(
+        in_project.join("SKILL.md"),
+        "---\nname: mine\ndescription: d\n---\n",
+    )
+    .unwrap();
 
     let scopes = opencode_scopes(
         Some(&profile.root().join("XDG_CONFIG_HOME/opencode")),
@@ -229,7 +250,10 @@ fn the_scope_readout_reads_the_launch_the_profile_gets() {
     // Configured, and not contributing. Both foreign directories are *listed* — §8.2 asks for the
     // 来源目录 and the 实际权限状态, not for a shorter list — and neither contributes anything to
     // this launch.
-    let foreign: Vec<_> = found.iter().filter(|view| view.owner == ScopeOwner::Foreign).collect();
+    let foreign: Vec<_> = found
+        .iter()
+        .filter(|view| view.owner == ScopeOwner::Foreign)
+        .collect();
     assert_eq!(foreign.len(), 3, "{found:?}");
     for view in &foreign {
         assert_eq!(
@@ -270,11 +294,16 @@ fn the_scope_readout_reads_the_launch_the_profile_gets() {
 
     // The engine's own project directory is a different scope and is still read: the switch that
     // closed the two compatible-tool scans does not touch a vault's `.opencode`.
-    let mine = found.iter().find(|view| view.name == "mine").expect("project row");
+    let mine = found
+        .iter()
+        .find(|view| view.name == "mine")
+        .expect("project row");
     assert_eq!(mine.suppressed_by, None);
     assert_eq!(mine.surface, SkillSurface::Offered);
     assert_eq!(
-        library.set_enabled(mine, false).expect_err("a vault is not this host's to move"),
+        library
+            .set_enabled(mine, false)
+            .expect_err("a vault is not this host's to move"),
         SkillError::NoSwitch {
             scope: "engine-project".to_string(),
             variable: None,
@@ -287,9 +316,12 @@ fn a_credential_name_that_cannot_reach_a_process_is_refused() {
     let managed = scratch("credential-names");
     let store = ProfileStore::new(&managed);
     for name in ["", "A=B", "A\tB"] {
-        let refused = submit_credentials(&store, "engine-alpha", "alpha", &[set(name, "value")])
-            .unwrap_err();
-        assert!(refused.contains("environment variable"), "{name}: {refused}");
+        let refused =
+            submit_credentials(&store, "engine-alpha", "alpha", &[set(name, "value")]).unwrap_err();
+        assert!(
+            refused.contains("environment variable"),
+            "{name}: {refused}"
+        );
     }
     // Nothing was written by any of the refusals, and the profile still describes where a
     // credential would live — the refusal is about the name, not about the profile.
@@ -319,7 +351,10 @@ fn every_profile_the_store_holds_reports_which_engine_owns_it() {
         ]
     );
     // An empty store is not an error: a first run has no profiles.
-    assert!(ProfileStore::new(managed.join("elsewhere")).bindings().unwrap().is_empty());
+    assert!(ProfileStore::new(managed.join("elsewhere"))
+        .bindings()
+        .unwrap()
+        .is_empty());
 }
 
 #[test]

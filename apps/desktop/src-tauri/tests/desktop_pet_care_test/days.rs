@@ -44,7 +44,14 @@ fn the_day_is_the_one_the_host_reported_not_the_one_the_instant_falls_on() {
     // moved between them actually experienced.
     let mut moved = CareLedger::new();
     pay(&mut moved, "run-a", local);
-    pay(&mut moved, "run-b", LocalTime { day: day(2026, 9, 15), ..local });
+    pay(
+        &mut moved,
+        "run-b",
+        LocalTime {
+            day: day(2026, 9, 15),
+            ..local
+        },
+    );
     assert_eq!(moved.summary().days.len(), 2);
 }
 
@@ -60,7 +67,11 @@ fn a_streak_survives_a_clock_that_moved_back_a_day() {
     // is still tallied — it happened — and the streak is left exactly where it was. Restarting it here
     // would be the pet punishing the user for their laptop's timezone.
     pay(&mut ledger, "run-c", noon(first));
-    assert_eq!(ledger.streak_days(), 2, "a day that went backwards broke the streak");
+    assert_eq!(
+        ledger.streak_days(),
+        2,
+        "a day that went backwards broke the streak"
+    );
 
     // And the last settled day did not move, so the day after *it* still continues the run.
     pay(&mut ledger, "run-d", noon(third));
@@ -116,7 +127,15 @@ fn a_key_is_the_spelling_upstream_writes_and_a_bad_one_is_refused() {
 
     // A stored date nobody can reason about is refused rather than sorted by: an import carrying one
     // loses that day, which the import test asserts it *reports*.
-    for bad in ["2026-02-30", "2027-02-29", "2026-13-01", "2026-00-10", "2026-9-6", "", "today"] {
+    for bad in [
+        "2026-02-30",
+        "2027-02-29",
+        "2026-13-01",
+        "2026-00-10",
+        "2026-9-6",
+        "",
+        "today",
+    ] {
         assert_eq!(LocalDay::parse(bad), None, "{bad} was accepted as a date");
     }
 }

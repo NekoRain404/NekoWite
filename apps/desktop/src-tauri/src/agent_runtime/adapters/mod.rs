@@ -150,7 +150,5 @@ pub fn all() -> [&'static dyn AgentAdapter; 2] {
 
 /// The adapter that answers to `adapter_id`, if one does.
 pub fn lookup(adapter_id: &str) -> Option<&'static dyn AgentAdapter> {
-    all()
-        .into_iter()
-        .find(|adapter| adapter.id() == adapter_id)
+    all().into_iter().find(|adapter| adapter.id() == adapter_id)
 }

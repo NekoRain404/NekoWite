@@ -84,7 +84,9 @@ const DEFAULT_TERM: &str = "xterm-256color";
 
 /// Programs that exist to run a string as a command: with a command flag, the arbitrary
 /// `shell -c` IPC §4.3 refuses to provide.
-const SHELLS: [&str; 9] = ["sh", "bash", "zsh", "dash", "ash", "ksh", "fish", "csh", "tcsh"];
+const SHELLS: [&str; 9] = [
+    "sh", "bash", "zsh", "dash", "ash", "ksh", "fish", "csh", "tcsh",
+];
 
 /// Programs whose whole purpose is to become a more privileged one. §3.3 forbids `sudo`, and
 /// the rule is about the act, so the family is refused together.
@@ -287,7 +289,9 @@ fn is_command_flag(arg: &str) -> bool {
     };
     !body.is_empty()
         && body.ends_with(['c', 'C'])
-        && body[..body.len() - 1].chars().all(|c| c.is_ascii_alphabetic())
+        && body[..body.len() - 1]
+            .chars()
+            .all(|c| c.is_ascii_alphabetic())
 }
 
 /// The environment a terminal child is given, derived from the app's own.
@@ -789,9 +793,8 @@ fn open_pty(size: TerminalSize) -> Result<Pty, TerminalError> {
         // `O_CLOEXEC` is not decoration: without it the child would inherit the master side of
         // its own terminal, keep the pty alive after exiting, and be able to read what the host
         // writes to it.
-        let fd = libc::posix_openpt(
-            libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC | libc::O_NONBLOCK,
-        );
+        let fd =
+            libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC | libc::O_NONBLOCK);
         if fd == -1 {
             return Err(pty_error("posix_openpt"));
         }

@@ -41,7 +41,7 @@ use crate::agent_runtime::events::AgentFailureCode;
 use crate::agent_runtime::registry::{
     self, AgentRegistration, AgentRegistry, EnvPolicy, InstallSource, RegistryError,
 };
-use crate::state::{AgentRuntimeState, edit_registry, registry_of};
+use crate::state::{edit_registry, registry_of, AgentRuntimeState};
 
 /// What an add form sends: §3.4.3's 「添加本地可执行文件、启动参数」, field for field.
 ///
@@ -123,7 +123,11 @@ pub struct RegistryReadout {
 /// incarnation token (§6.1) and the row identifies the engine by id — a page that printed one would
 /// be showing a value nothing on screen can act on.
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "kind", rename_all = "kebab-case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
 pub enum RegistryRefusal {
     Id {
         field: &'static str,

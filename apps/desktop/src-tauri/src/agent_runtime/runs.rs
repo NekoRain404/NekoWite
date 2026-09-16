@@ -11,10 +11,10 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{SessionId, SessionNotification, SessionUpdate};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::capabilities::SessionCapabilities;
-use super::events::{AgentEventKind, normalize_update};
+use super::events::{normalize_update, AgentEventKind};
 use super::fs_capability::{FsCapability, FsRequest};
 use super::session::{AgentRuntime, Emitter, RunState, SessionError, SessionSlot};
 use super::usage::PromptStopReason;
@@ -35,11 +35,12 @@ impl AgentRuntime {
         let run_id = format!("run-{}", self.run_counter.fetch_add(1, Ordering::Relaxed));
         {
             let mut sessions = self.sessions.lock().unwrap();
-            let slot = sessions
-                .get_mut(session_id)
-                .ok_or_else(|| SessionError::UnknownSession {
-                    session_id: session_id.to_string(),
-                })?;
+            let slot =
+                sessions
+                    .get_mut(session_id)
+                    .ok_or_else(|| SessionError::UnknownSession {
+                        session_id: session_id.to_string(),
+                    })?;
             if slot.run.as_ref().is_some_and(|run| !run.finished) {
                 return Err(SessionError::RunInProgress {
                     session_id: session_id.to_string(),
@@ -104,11 +105,12 @@ impl AgentRuntime {
     pub async fn cancel(&self, session_id: &str) -> Result<(), SessionError> {
         let run_id = {
             let mut sessions = self.sessions.lock().unwrap();
-            let slot = sessions
-                .get_mut(session_id)
-                .ok_or_else(|| SessionError::UnknownSession {
-                    session_id: session_id.to_string(),
-                })?;
+            let slot =
+                sessions
+                    .get_mut(session_id)
+                    .ok_or_else(|| SessionError::UnknownSession {
+                        session_id: session_id.to_string(),
+                    })?;
             match slot.run.as_mut() {
                 None => return Ok(()),
                 Some(run) if run.finished => return Ok(()),
@@ -195,7 +197,10 @@ fn finish_run(
 ) -> bool {
     {
         let mut sessions = sessions.lock().unwrap();
-        let Some(run) = sessions.get_mut(session_id).and_then(|slot| slot.run.as_mut()) else {
+        let Some(run) = sessions
+            .get_mut(session_id)
+            .and_then(|slot| slot.run.as_mut())
+        else {
             return false;
         };
         // The run id check is not decoration: a late answer for a previous run
@@ -322,7 +327,9 @@ fn forward_update(
 /// statement about the kind rather than about traffic.
 fn is_session_scoped(kind: AgentEventKind) -> bool {
     match kind {
-        AgentEventKind::CommandsChanged | AgentEventKind::ConfigChanged | AgentEventKind::FilesChanged => true,
+        AgentEventKind::CommandsChanged
+        | AgentEventKind::ConfigChanged
+        | AgentEventKind::FilesChanged => true,
         AgentEventKind::TextDelta
         | AgentEventKind::ThoughtDelta
         | AgentEventKind::ToolUpdate
