@@ -70,6 +70,10 @@ Thumbs.db
 /references/
 /zed-main/
 
+# Pinned DesktopPet source used for the Linux port. Keep the nested clone out
+# of commits; build/package inputs must also exclude this reference directory.
+/references/desktop-pet/
+
 # The bundled OpenCode engine (scripts/fetch-opencode-linux.sh installs it here).
 # 176 MB per release: it belongs in the packaging pipeline's output, not in a
 # commit. The path is what Tauri's `bundle.externalBin` resolves, so it must

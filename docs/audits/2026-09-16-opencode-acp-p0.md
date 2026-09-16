@@ -173,3 +173,56 @@ sessionUpdate: "tool_call_update" → status "completed", title ".tmp-p0/workspa
 ### 6.4 与 §2.3 一致的部分
 
 `available_commands_update`、`agent_thought_chunk`、`agent_message_chunk` 在本次同样出现，与 §2.3 记录一致；`stopReason: "end_turn"` 一致。
+
+---
+
+## 7. 权限请求实测（探针 5，终于取得）
+
+§6.2 的结论是「读取类工具被自动放行」。本节进一步实测：**写操作同样被自动放行**——写入工具成功落地（`kind: "edit"`、`"Wrote file successfully."`、文件确实生成），**全程没有任何授权请求**（`reverse requests seen: 0`）。
+
+原因是 profile 里没有任何权限配置。**在 `opencode.json` 中设置 `permission: { edit: "ask", bash: "ask", webfetch: "ask" }` 后，授权帧立即出现。** 要观测权限流程，必须先把引擎配置成要问——默认配置下它什么都不问。
+
+### 7.1 授权请求的完整形状（实测，我们 pinned 的 1.18.29）
+
+```json
+{"jsonrpc":"2.0","id":0,"method":"session/request_permission",
+ "params":{
+   "sessionId":"ses_…",
+   "toolCall":{
+     "toolCallId":"call_…",
+     "title":"…/probe-output.txt",
+     "kind":"edit",
+     "status":"pending",
+     "locations":[{"path":"…/probe-output.txt"}],
+     "rawInput":{"filepath":"…/probe-output.txt","diff":"Index: …\n===…"},
+     "content":[{"type":"diff","path":"…/probe-output.txt",
+                 "oldText":"HELLO","newText":"HELLO"}]},
+   "options":[
+     {"optionId":"once",   "kind":"allow_once",   "name":"Allow once"},
+     {"optionId":"always", "kind":"allow_always", "name":"Always allow"},
+     {"optionId":"reject", "kind":"reject_once",  "name":"Reject"}]}}
+```
+
+由此确立的事实：
+
+1. **参数是齐的。** `rawInput`（含 `filepath` 与一段 unified diff 文本）与 `content` 都在请求里，`status` 为 `pending`。
+   > **更正**：本轮执行过程中我曾一度报告「`rawInput` 缺失，证实了 OpenCode 先发权限请求再补参数的假设（agent-shell #617）」。**那是我读错了帧**——`rawInput present? NO` 属于紧随其后的 `fs/write_text_file`（见 7.2），不是权限请求。**#617 描述的情况在我们 pinned 的 1.18.29 上、针对 edit 工具并未复现。** 该假设仍不应被当作已验证，但也不应被引作已证实。
+2. **选项由引擎提供，且自带「永久允许」。** 三个选项 id 为 `once`/`always`/`reject`，kind 为 `allow_once`/`allow_always`/`reject_once`。这直接落实 §6.3「授权 UI 使用引擎提供的选项与 option ID，不能自行发明『永久允许』」——**引擎自己就提供了 `always`**。
+3. **引擎直接给出 diff。** `content` 是 `{type:"diff", path, oldText, newText}`，即方案 §7.2 与生态调研 #8/#9 预判的 `ToolCallContent::Diff`。**方案 §7.2「diff 不要求库有 Git」由此获得实测支撑**：差异由引擎侧产生，不依赖仓库。
+   注意本例 `oldText` 与 `newText` 同为 `HELLO`（上一轮探针已写入同名文件），因此这不是有效的变更样本，只是形状样本。
+
+### 7.2 引擎还会把文件写入反向委托给客户端
+
+**同一个会话里，权限帧之后紧接着另一个反向请求**（`id: 1`）：
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"fs/write_text_file",
+ "params":{"sessionId":"ses_…","path":"…/probe-output.txt","content":"HELLO"}}
+```
+
+这是**请求宿主代为写文件**，与授权请求是两回事（因此没有 `rawInput`/`options`）。**我们的握手用的是 `clientCapabilities: {}`，并未声明 fs 能力，引擎仍然发出了它。**
+
+这对方案 §7.2 有实质意义：如果宿主**声明并实现** fs 能力，引擎的写入就会**经由宿主**执行，而不是绕过我们直接落盘。这会把我方的冲突检查从「事后观察并归因」变成「写入路径上结构性地必经」——正是生态调研 #58 记录的 Obsidian Agent Client 的做法（它直接拒绝 `fs.readTextFile`/`writeTextFile`，理由是「Agents use their own Read tools」，代价是放弃该能力）。
+
+**这是一项需要显式决策的架构选项，不是默认行为**：声明 fs 能力意味着宿主必须正确实现 ACP 的文件读写语义，且要注意 spec 中 `fs/read_text_file` 的 `limit` 是**行数**而 `line` 从 1 开始（生态调研 #51）。未决定前，默认行为是引擎自己写、我们观察——即现有 §7.2 的设计。
+

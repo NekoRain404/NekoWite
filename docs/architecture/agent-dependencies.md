@@ -84,8 +84,36 @@
 - **只存 blob，不注册 worktree**——否则 `.gitignore` 会让被忽略文件的改动在审查中不可见。
 - 绝不向用户仓库提交、不碰其 index、不假设其工作树是干净的。
 
-## 6. 范围外发现（与 ACP 无关，另立任务）
+## 5.5 方案引述与协议原文的出入（需留档，方案只读故不修改）
 
+生态调研逐条核对了 ACP 官方 spec 与 `schema/v1/schema.json`，发现两处方案引述与原文不符。**实现不受影响，但引述需要更正**，否则后续会有人拿着「方案说这是协议事实」去争论。
+
+| # | 方案原文 | 核实结果 |
+| --- | --- | --- |
+| 1 | §4.1：「使用 ACP 的 `available_commands_update` 更新当前会话命令列表，**按当前完整列表替换，不能只追加**」，并以协议事实的口吻引用 | **spec 中没有任何替换语义的表述**，只有一句 prose「removed when no longer relevant」。整体替换是合理推断，但**不是协议规定**。实现照旧（方案的行为要求是对的），引述应改为「按语义推断」 |
+| 2 | §6.2 的 `SessionUpdate` 事件类型列表（7 类） | schema 实际有 **11 个变体**，另有 `plan`、`current_mode_update`、`config_option_update`、`session_info_update`、`usage_update`。已要求 T1 对每个变体给出「成为宿主 kind / 显式丢弃 / 映射到已有」的判定。同理 `StopReason` 有 **5 个值**（`end_turn`、`max_tokens`、`max_turn_requests`、`refusal`、`cancelled`），其中后三个**不是错误** |
+
+## 5.6 上线前必须解决的渠道分歧（T14 之前）
+
+**registry 与我们的固定版本来自不同渠道，摘要无法互相校验：**
+
+| | 我们的 P0 固定 | ACP registry 登记 |
+| --- | --- | --- |
+| 版本 | **1.18.29** | **1.18.30** |
+| 来源 | npm 平台包 `opencode-linux-x64` | GitHub release tarball（`anomalyco/opencode`） |
+| 摘要 | 注册表 `dist.integrity`（sha512），已校验且与实测一致 | registry 给出 sha256 |
+
+两个渠道**不保证逐字节一致**，因此 registry 的摘要**无法用于校验我们的制品**，反之亦然。P0 §1 的校验只对我们 pin 的那份有效。T14（内置制品与更新）之前必须二选一，并把选择理由写进供应链记录。
+
+## 5.7 值得考虑的架构选项（来自同类产品）
+
+调研发现与我们**形态最接近**的两款产品都是 Apache-2.0（许可暂缓，但这两条与许可无关，是有独立价值的判断）：
+
+- **Obsidian Agent Client 直接拒绝 `fs.readTextFile` / `writeTextFile`**，理由是「Agents use their own Read tools」，从而把笔记 I/O 全部收敛到 vault API，**使宿主成为唯一写入者**。这对方案 §7.2 的冲突保护有实质意义：会话内所有落盘都经过同一套 revision 检查，而不是与引擎自己的写入路径赛跑。代价是放弃一项 ACP 能力（需要按 §3.4 r6 如实声明不支持）。
+- **marimo 在 agent 改动活文档后把受影响的单元标记为 stale**，而不是自动重跑——是「失效标记」而非「回滚」。这与 §7.2「区分未落盘建议和已写入的更改」是同一思路的另一种表达，可用于我们的变更审阅 UI。
+- **FlowForge 的事后复盘**给出了一条测试纪律，建议直接采纳：手写的 ACP 类型与 schema 不符时，测试会**把这个错误钉死**——「a fixture is only schema-derived if the JSON text came from the schema」。即 fixture 必须取自真实流量或 schema，不能凭理解手写。
+
+## 6. 范围外发现（与 ACP 无关，另立任务）
 `apps/desktop/src/plugins/callout.ts:23` 以 `innerHTML: props.children` 渲染 Callout 内容，而 `children` 来自笔记 MDX 中作者可自由填写的部分。**这是全仓库源码中唯一一处对笔记内容的未消毒注入点**（其余 `innerHTML` 命中全部是测试里的 `document.body.innerHTML = ''`）。
 
 值得注意的是，同一功能在**导出侧已把该内容当作不可信**：`services/export-renderers.ts` 有 `Callout: (props, childrenHtml) => …`，且其测试用 `{ type: 'warn" onclick="x()' }` 验证过转义。**编辑器侧没有对应的处理**，两者不一致。
