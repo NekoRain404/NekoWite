@@ -5,8 +5,6 @@ import {
   h,
   nextTick,
   ref,
-  vShow,
-  withDirectives,
   type App as VueApp,
   type Ref,
 } from 'vue'
@@ -120,7 +118,7 @@ describe('DocStatsPanel', () => {
   })
 })
 
-describe('DocStatsPanel only scans while its rail section is shown', () => {
+describe('DocStatsPanel mounts and unmounts with its section', () => {
   beforeEach(() => {
     pinia = createPinia()
     setActivePinia(pinia)
@@ -135,12 +133,19 @@ describe('DocStatsPanel only scans while its rail section is shown', () => {
     document.body.innerHTML = ''
   })
 
+  /** Mounts the panel the way the note list does: its sections are a `v-else-if`
+   *  chain, so a section that is not the one on screen does not exist. This used
+   *  to be a `v-show` host, and the panel used to gate its own grid behind
+   *  `useSectionShown`; that composition is gone (see `use-history-panel.ts` for
+   *  the full account), and the half that is now the host's — "a section that is
+   *  not on screen scans nothing" — is asserted in `NoteListPanel.test.ts`,
+   *  against the real chain. What is left here is what the panel itself owes. */
   function mountSection(shown: Ref<boolean>): HTMLElement {
     const host = document.createElement('div')
     document.body.appendChild(host)
     const app = createApp(
       defineComponent({
-        render: () => withDirectives(h(DocStatsPanel), [[vShow, shown.value]]),
+        render: () => (shown.value ? h(DocStatsPanel) : null),
       }),
     )
     app.use(pinia)
@@ -149,31 +154,22 @@ describe('DocStatsPanel only scans while its rail section is shown', () => {
     return host
   }
 
-  it('stops scanning the document while another rail section is on screen', async () => {
-    seedDoc('# Note\n\nsome text\n')
-    const shown = ref(false)
-    mountSection(shown)
-    await nextTick()
-
-    const afterMount = statCalls.count
-    const tabs = useTabsStore()
-    tabs.activeTab!.content = '# Note\n\ndifferent text entirely\n'
-    await nextTick()
-    await nextTick()
-
-    expect(statCalls.count).toBe(afterMount)
-  })
-
   it('shows the current reading when it comes back on screen', async () => {
+    // Not a cached one: the host unmounts this panel on every mode switch, and
+    // the text can move while it is away.
     seedDoc('# Note\n\nsome text\n')
     const shown = ref(false)
     const host = mountSection(shown)
     await nextTick()
+    expect(host.querySelector('.doc-stats-panel')).toBeNull()
 
     const tabs = useTabsStore()
+    const before = statCalls.count
     tabs.activeTab!.content = 'five words in this text\n'
     await nextTick()
     await nextTick()
+    // Away, so nothing of this panel is scanning.
+    expect(statCalls.count).toBe(before)
 
     shown.value = true
     await nextTick()

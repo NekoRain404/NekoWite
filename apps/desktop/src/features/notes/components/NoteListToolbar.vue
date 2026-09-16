@@ -1,9 +1,13 @@
 <script lang="ts">
 import type { Component } from 'vue'
+import type { PanelMode } from '../../../stores/document-list'
 
-/** One entry of the notes / outline / links switch. */
+/** One entry of the mode switch over the notes view. */
 export interface NoteListMode {
-  id: 'notes' | 'outline' | 'links'
+  /** `PanelMode` itself, not a copy: a union typed out again here would stop
+   *  offering whatever `PanelMode` gained, in the switch the user reaches every
+   *  mode through. */
+  id: PanelMode
   label: string
   icon: Component
 }
@@ -22,12 +26,21 @@ export interface NoteListMode {
  * decides what that means.
  */
 import { computed, ref } from 'vue'
-import { ArrowDownWideNarrow, BookOpen, Link2, ListTree } from 'lucide-vue-next'
+import {
+  ArrowDownWideNarrow,
+  BookMarked,
+  BookOpen,
+  ChartColumn,
+  History,
+  Link2,
+  ListTree,
+  SlidersHorizontal,
+} from 'lucide-vue-next'
 import ContextMenu from '../../../ui/ContextMenu.vue'
 import type { ContextMenuItem } from '../../../ui/ContextMenu.vue'
 import NoteSearch from './NoteSearch.vue'
 import { t } from '../../../i18n'
-import type { ListView, PanelMode } from '../../../stores/document-list'
+import type { ListView } from '../../../stores/document-list'
 import type { IndexState } from '../../search'
 import type { SortBy } from '../services/note-query'
 
@@ -56,10 +69,21 @@ const emit = defineEmits<{
   (e: 'set-sort', sortBy: SortBy): void
 }>()
 
+/**
+ * The modes, in the order they sit in the switch. The last four are the panels
+ * the right rail gave up; their labels are those panels' own titles, so the
+ * tooltip here and the heading inside the panel read the same string.
+ * `links` (wiki links between notes) and `references` (the open document's
+ * bibliography) are different features that sound alike — keep them distinct.
+ */
 const MODES: readonly NoteListMode[] = [
   { id: 'notes', label: t('notelist.notes'), icon: BookOpen },
   { id: 'outline', label: t('notelist.outline'), icon: ListTree },
   { id: 'links', label: t('notelist.links'), icon: Link2 },
+  { id: 'references', label: t('references.title'), icon: BookMarked },
+  { id: 'history', label: t('history.title'), icon: History },
+  { id: 'frontmatter', label: t('frontmatter.title'), icon: SlidersHorizontal },
+  { id: 'stats', label: t('docstats.title'), icon: ChartColumn },
 ]
 
 const PLACEHOLDER_TITLES: Record<string, string> = {
@@ -121,12 +145,18 @@ function onSortSelect(id: string): void {
       class="nl-switch"
       role="tablist"
     >
+      <!-- Icon only, named by its tooltip and its aria label. Seven labelled
+           buttons measure ~600px of label and this column is 200–520px wide, so
+           the words would clip or wrap the header into three rows. Nothing goes
+           unnamed: each of these panels prints its own title inside itself. -->
       <button
         v-for="m in MODES"
         :key="m.id"
         class="switch-option nl-mode-btn"
         :class="{ 'is-active': props.panelMode === m.id }"
         role="tab"
+        :title="m.label"
+        :aria-label="m.label"
         :aria-selected="props.panelMode === m.id"
         @click="emit('set-mode', m.id)"
       >
@@ -135,7 +165,6 @@ function onSortSelect(id: string): void {
           :size="13"
           :stroke-width="1.8"
         />
-        <span>{{ m.label }}</span>
       </button>
     </div>
     <h2
@@ -231,12 +260,22 @@ function onSortSelect(id: string): void {
   border-radius: var(--app-radius-lg);
   background: color-mix(in srgb, var(--app-elevated) 55%, var(--app-panel));
   border: 1px solid color-mix(in srgb, var(--app-border) 48%, transparent);
+  /* Seven modes and a column that can be dragged to 200px: the pill scrolls
+     rather than let a button sit outside an `overflow: hidden` column, and it
+     scrolls silently — a scrollbar inside a 32px pill reads as a border. The
+     buttons stay tabbable, so the keyboard reaches the off-screen ones. */
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.nl-switch::-webkit-scrollbar {
+  display: none;
+}
+/* Icons only (see the markup): a square around one glyph. */
 .nl-mode-btn {
+  flex: none;
   height: 26px;
-  padding: 0 10px;
-  gap: 5px;
-  font-size: 11.5px;
+  padding: 0 8px;
   border-radius: var(--app-radius);
 }
 .nl-mode-btn :deep(svg) {

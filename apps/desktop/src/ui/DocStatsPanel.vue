@@ -1,27 +1,18 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
-import { computeDocStats, type DocStats } from '../services/doc-stats'
 import { useDocDerivedStore } from '../stores/doc-derived'
-import { useSectionShown } from './use-section-shown'
 import { t } from '../i18n'
 
-const { sectionRef, shown } = useSectionShown()
-
-/** Shared with the status bar and the word-goal widget (stores/docDerived.ts). */
-const { stats: derived } = storeToRefs(useDocDerivedStore())
-
-/** The reading of an empty document, shared by every hidden render. */
-const NO_STATS: DocStats = computeDocStats('')
-
-/**
- * The grid is only read while the rail shows this section, and this section
- * stays mounted while another one is on screen (the rail switches with
- * `v-show`), so it used to rescan the whole note on every typing pause for a
- * panel nobody was looking at. Becoming visible again reads the current text —
- * the gate caches nothing, it just does not ask.
- */
-const stats = computed<DocStats>(() => (shown.value ? derived.value : NO_STATS))
+/** Shared with the status bar and the word-goal widget (stores/docDerived.ts).
+ *
+ *  Read straight through: this panel used to gate the grid behind
+ *  `useSectionShown`, because the info rail kept every section mounted and hid
+ *  them with `v-show` — a hidden panel went on rescanning the whole note on
+ *  every typing pause. Its host is the note list now, whose `v-else-if` chain
+ *  unmounts whatever is not on screen, so a mounted panel is the visible one and
+ *  there is no hidden render left to gate. */
+const { stats } = storeToRefs(useDocDerivedStore())
 
 const taskPct = computed(() => {
   if (!stats.value.taskTotal) return 0
@@ -30,10 +21,7 @@ const taskPct = computed(() => {
 </script>
 
 <template>
-  <section
-    :ref="sectionRef"
-    class="doc-stats-panel"
-  >
+  <section class="doc-stats-panel">
     <h3 class="rail-section-title">
       {{ t('docstats.title') }}
     </h3>

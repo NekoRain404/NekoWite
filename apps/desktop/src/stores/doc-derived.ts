@@ -2,12 +2,12 @@
  * The shared readings of the active document.
  *
  * Why this exists: every reading here is a full-document scan, and all the
- * consumers are mounted at the same time — the info rail keeps its sections
- * mounted and hides them with `v-show`, so a hidden panel still re-renders and
- * still runs its computeds on every edit. A typing pause publishes one new text
- * and that used to cost one scan per panel (four in a row with the rail open,
- * plus a `listHistory` IPC read), each one re-deriving numbers another panel had
- * already derived.
+ * consumers are mounted at the same time — the info rail used to keep every
+ * section mounted and hidden with `v-show`, so a panel nobody was looking at
+ * still re-rendered and still ran its computeds on every edit. A typing pause
+ * publishes one new text, and that used to cost one scan per panel (four in a
+ * row with the rail open, plus a `listHistory` IPC read), each one re-deriving
+ * numbers another panel had already derived.
  *
  * The memo is Vue's own computed cache, and it is deliberately kept that way:
  * it holds ONE entry per reading, keyed on the active tab (id + path) and the
@@ -44,8 +44,8 @@ export const useDocDerivedStore = defineStore('docDerived', () => {
   /**
    * The headings, for the outline section.
    *
-   * Deliberately separate from `stats`: the rail can show either section
-   * without the other, and an unread computed is never evaluated.
+   * Deliberately separate from `stats`: a consumer can want either without the
+   * other, and an unread computed is never evaluated.
    */
   const outline = computed<OutlineItem[]>(() => parseOutline(text.value))
 

@@ -15,6 +15,10 @@
  */
 import AttachmentsPanel from '../../../ui/AttachmentsPanel.vue'
 import ContextMenu from '../../../ui/ContextMenu.vue'
+import DocStatsPanel from '../../../ui/DocStatsPanel.vue'
+import FrontmatterPanel from '../../../ui/FrontmatterPanel.vue'
+import HistoryPanel from '../../../ui/HistoryPanel.vue'
+import ReferencesPanel from '../../../ui/ReferencesPanel.vue'
 import { GraphPanel } from '../../graph'
 import { FileTree } from '../../vault'
 import LinkList from './LinkList.vue'
@@ -23,7 +27,18 @@ import NoteListToolbar from './NoteListToolbar.vue'
 import OutlineList from './OutlineList.vue'
 import { useNoteActions } from '../composables/use-note-actions'
 import { useNoteList } from '../composables/use-note-list'
+import { computed, type Component } from 'vue'
 import { t } from '../../../i18n'
+import type { PanelMode } from '../../../stores/document-list'
+
+/** The panel each document-scoped mode shows. The three modes above have their
+ *  own branches because each takes its own props; these four take none. */
+const DOC_PANELS: Partial<Record<PanelMode, Component>> = {
+  references: ReferencesPanel,
+  history: HistoryPanel,
+  frontmatter: FrontmatterPanel,
+  stats: DocStatsPanel,
+}
 
 const {
   panelMode,
@@ -71,6 +86,9 @@ const {
   performNoteDelete,
   cancelNoteDelete,
 } = useNoteActions()
+
+/** The document panel to show, or null for a mode with its own branch above. */
+const docPanel = computed<Component | null>(() => DOC_PANELS[panelMode.value] ?? null)
 </script>
 
 <template>
@@ -186,6 +204,19 @@ const {
       />
     </div>
 
+    <!-- The four panels the right rail gave up, as modes of this column: each
+         describes the OPEN document and none takes a prop, so they share one
+         branch — four near-identical wrappers is what would push this file past
+         its line budget. `:key` mounts the element afresh on every mode change,
+         which is what the `arrives` nudge above is on. -->
+    <div
+      v-else-if="docPanel"
+      :key="docPanel"
+      class="nl-body nl-panel arrives"
+    >
+      <component :is="docPanel" />
+    </div>
+
     <!-- The exit. A context menu is mounted with `v-if` in every host, so its
          own leave rule never ran and it was gone in the frame the user acted;
          `<Transition>` keeps the node mounted for that rule and nothing else
@@ -251,6 +282,11 @@ const {
   align-items: center;
   justify-content: center;
 }
+/* The ported panels bring the rail's inset and its section divider; the rail
+   needed both between its sections, this column needs neither. */
+.nl-panel { padding: 0; }
+.nl-panel :deep(.references-panel),
+.nl-panel :deep(.doc-stats-panel) { border-bottom: none; }
 .empty-hint {
   margin: 0;
   font-size: 12px;

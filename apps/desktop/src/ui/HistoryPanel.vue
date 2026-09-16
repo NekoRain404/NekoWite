@@ -8,7 +8,6 @@ import { useTabsStore } from '../stores/tabs'
 // The data layer lives in the composable (see useHistoryPanel.ts); this file is
 // the markup, the styles and the wiring.
 const {
-  sectionRef,
   entries,
   loadFailed,
   comparing,
@@ -28,10 +27,7 @@ const tabs = useTabsStore()
 </script>
 
 <template>
-  <section
-    :ref="sectionRef"
-    class="history-panel"
-  >
+  <section class="history-panel">
     <div class="history-header">
       <h3 class="rail-section-title">
         {{ t('history.title') }}
