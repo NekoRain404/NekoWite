@@ -4,15 +4,38 @@
 
 本文件是**审批记录**：哪些依赖已决定、依据是什么、还有什么未定。方案本身只读，依赖结论记在这里。
 
-**本项目根许可证为 MIT。** 下表「许可证」一列中任何高于 MIT 兼容性的项都必须显式决策，不能默认放行。
+**本项目根许可证为 MIT。**
+
+> **许可证审查暂缓（维护者决定，2026-09-16）**：「先忽略许可证的问题，这个最后解决」。下表「许可证」一列**不在实施阶段作为闸门**——实施代理可自由选用下列库，不必先取得许可结论。逐项许可事实仍然记录在案，收尾阶段一次性处理分发与通知义务。见 `docs/architecture/zed-port-ledger.md` §2.2。
+
+即便如此，本文档仍把许可证逐项写明，因为**收尾阶段的决策需要这些事实**，而事后重新调研的成本远高于顺手记录。建议（非阻塞）：DOMPurify 直接选 Apache-2.0（免费且干净）；git 若引入选 `gix` 而非 `git2`。
 
 ## 1. 已决定并已落地
 
 | 依赖 | 版本 | 许可证 | 用途 | 状态 |
 | --- | --- | --- | --- | --- |
 | `agent-client-protocol` | `=2.1.0`（features: `unstable`） | **Apache-2.0** | ACP 协议层：分帧、JSON-RPC、`Lines`/`Responder`/`Client`/`Agent`、schema | **已加入** `apps/desktop/src-tauri/Cargo.toml`（T2） |
+| `tokio-util` | `0.7` + 新增 **`compat`** feature | **MIT/Apache-2.0** | 已有依赖，仅加 feature：用于在 SDK 的 `Lines` 之外套一层**有界**适配器 | **已批准**（T2 实施） |
 
 版本锁定 `=2.1.0` 与 Zed 完全一致（见移植台账 §2.1）。官方 SDK，`github.com/agentclientprotocol/rust-sdk`。TS 侧对应物 `@agentclientprotocol/sdk` 1.4.0 同为 Apache-2.0，但按 §6.1「features/agent 不直接处理 JSON-RPC」，**TS 侧不使用**。
+
+`tokio-util` 已是依赖，加 feature 不引入新的供应链条目，也不扩大许可证面，是能达成目标的**最小改动**。
+
+### 1.1 实测推翻的方案假设（T2）
+
+| 方案原文 | 实测 | 后果 |
+| --- | --- | --- |
+| §6.2「分帧、UTF-8 分段、**消息体上限**由所选协议库正确处理」 | **SDK 的 `Lines` 没有任何大小上限**（源码中无任何 `MAX_*`）。9 MiB 无换行帧既不被接受也不被拒绝——它永远不会成为一条消息 | §6.2 同一段又要求「超限则中止任务并报告，禁止静默丢弃数据」，**该要求无人满足**。超时只约束时间不约束内存，1 秒内 9 MiB 仍是 9 MiB。故需自带有界适配器 |
+| （我的派发指令）「SDK 不管进程，spawn / 进程组 / 组 kill 都归你」 | **错**：`AcpAgent` 自己 spawn、设 `process_group(0)`、并用 `rustix::process::kill_process_group` 杀整组。`process.rs` 因此从 419 行降到 98 行 | 该判断来自读 import 列表而未核实，已由 T2 纠正 |
+| （同上）「超时由 SDK 提供」 | **错**：SDK 内 `grep timeout` 无结果，**完全没有超时** | 本层所有超时均需我们自己实现 |
+| — | **SDK 只用 `SIGKILL`** 清理 | §6.2「先正常取消/退出再限时终止」在**信号层**无法满足。若「先 cancel、关 stdin、设宽限、再让组 kill 落地」的顺序成立则协议层已足够；顺序待 T2 实测 |
+
+## 2. 契约扩展（非方案原文，需保持两侧同步）
+
+| 项 | 说明 |
+| --- | --- |
+| `certificate-untrusted` | **第 11 个 failure code**。方案 §6.2 的 `AgentFailureCode` 只有 10 个，但 P0 §2.4 要求证书类失败自成一类（否则退化为 `unknown certificate verification error` 这类用户看不懂的原文）。Rust 侧（T2）已实现，**TS 侧（T1）必须同步加入**，否则分类会在边界丢失 |
+
 
 ## 2. 调研结论：**不要新增**的依赖
 
