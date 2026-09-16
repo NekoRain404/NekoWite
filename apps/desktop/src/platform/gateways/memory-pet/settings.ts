@@ -104,7 +104,14 @@ export function createMemoryPetSettings(
         writeFailures -= 1
         return { status: 'failed', message: 'the settings could not be written' }
       }
-      values[write.domain] = write.values
+      // A union index into a per-domain record is not something TypeScript can
+      // prove: `values[D]` where `D` is the union of all domains erases to the
+      // *intersection* of every domain's shape, which no single domain
+      // satisfies — and a cast to `values[typeof write.domain]` does not help,
+      // because that is the same intersection. The key and the value come from
+      // the same union member, so this one write goes through a loose view of
+      // the record rather than a wrong one.
+      ;(values as Record<string, unknown>)[write.domain] = write.values
       revisions[write.domain] += 1
       return { status: 'applied', record: recordFor(write.domain) }
     },

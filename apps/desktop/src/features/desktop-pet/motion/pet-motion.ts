@@ -57,6 +57,7 @@ import {
   systemClock,
   type MotionClock,
   type MotionTick,
+  type MotionTimerHandle,
   type PetMotionMood,
   type PetMotionSettings,
   type PetRoamBehaviour,
@@ -128,7 +129,9 @@ export function createPetMotion(deps: PetMotionDeps): PetMotionEngine {
   // The sleep in flight, so `stop()` can end it rather than leave a timer to fire into a dead
   // engine: §7.1 asks a destroyed pet to leave no timer behind, and a parked loop is one.
   let pendingSleep: (() => void) | null = null
-  let pendingTimer: number | null = null
+  // The clock's own handle, not `number`: under the DOM lib a timer answers a number, under
+  // Node's globals a `Timeout` object, and `MotionClock` names whichever one is in force.
+  let pendingTimer: MotionTimerHandle | null = null
 
   const sleep = (ms: number): Promise<void> =>
     new Promise((resolve) => {

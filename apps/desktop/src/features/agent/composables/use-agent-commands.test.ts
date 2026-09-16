@@ -60,7 +60,11 @@ const LABELS: AgentCommandMenuLabels = {
 
 function commandsFrame(
   identity: AgentIdentity,
-  commands: readonly AgentCommand[],
+  // Mutable, as the frame's own payload declares it (`'commands-changed':
+  // { commands: AgentCommand[] }`): the helper hands the list straight to the frame
+  // rather than copying it, so a readonly one is not what it takes. Every call site
+  // passes an array literal.
+  commands: AgentCommand[],
   sequence = 1,
 ): AgentEvent {
   return { ...identity, runId: null, sequence, kind: 'commands-changed', payload: { commands } }

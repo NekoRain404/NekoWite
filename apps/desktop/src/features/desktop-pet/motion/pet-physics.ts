@@ -238,8 +238,11 @@ export async function applyFall(
 
   while (!deps.stopped() && session.running) {
     vy += PHYSICS_GRAVITY * DT_SEC
-    const nx = pos.x + vx * DT_SEC
-    let ny = pos.y + vy * DT_SEC
+    // Both are annotated because `pos` is assigned from them further down: read as `pos.x`
+    // and `pos.y` they depend on `pos`, and written as `pos`'s next value they are depended
+    // on by it, so with neither type named the inference for the three runs in a circle.
+    const nx: number = pos.x + vx * DT_SEC
+    let ny: number = pos.y + vy * DT_SEC
 
     const floorY = findFloor(pos.x, nx, bounds, surfaces)
     if (ny >= floorY) {

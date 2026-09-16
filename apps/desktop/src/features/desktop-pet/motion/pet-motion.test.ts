@@ -7,7 +7,6 @@ import {
   createPetMotion,
   type PetMotionDeps,
   type PetMotionEngine,
-  type PetMotionSettings,
 } from './pet-motion'
 import {
   DEFAULT_ROAM_SPEED,
@@ -17,6 +16,8 @@ import {
   motionSpeed,
   pxPerSec,
   type MotionClock,
+  type MotionTimerHandle,
+  type PetMotionSettings,
 } from './pet-motion-types'
 import { DT_SEC, ROW_RIGHT, TICK_MS, WIN_H, WIN_W, type PetMotionFrame } from './pet-physics'
 import type { PetMotionPlatform, PhysicalPoint, PhysicalRect } from './pet-platform'
@@ -96,13 +97,26 @@ function frame(): { sink: PetMotionFrame; rows: number[]; clears(): number } {
   }
 }
 
+/**
+ * The handle a fake clock hands back.
+ *
+ * The real one has no value a test can construct: `MotionTimerHandle` is whatever the
+ * ambient `setTimeout` answers — a `number` under the DOM lib, a `Timeout` object under
+ * Node's globals — and only the real timer can make one. The engine also never stores or
+ * clears a handle (its loops stop by flag), so a fake's handle is a token by nature: it is
+ * marked as what this clock hands out, and it is never given to a real timer.
+ */
+function fakeHandle(n: number): MotionTimerHandle {
+  return n as unknown as MotionTimerHandle
+}
+
 /** A clock that fires at once, so a physics loop finishes inside one `await`. */
 function immediateClock(onTimer?: (ms: number) => void): MotionClock {
   return {
     setTimeout: (handler, ms) => {
       onTimer?.(ms)
       handler()
-      return 0
+      return fakeHandle(0)
     },
     clearTimeout: () => {},
   }
@@ -528,7 +542,7 @@ describe('start and stop (§7.1)', () => {
     const manual: MotionClock = {
       setTimeout: (handler) => {
         timers.push(handler)
-        return timers.length
+        return fakeHandle(timers.length)
       },
       clearTimeout: () => void (cleared += 1),
     }
@@ -562,7 +576,7 @@ describe('start and stop (§7.1)', () => {
     const manual: MotionClock = {
       setTimeout: (handler) => {
         timers.push(handler)
-        return timers.length
+        return fakeHandle(timers.length)
       },
       clearTimeout: () => {},
     }

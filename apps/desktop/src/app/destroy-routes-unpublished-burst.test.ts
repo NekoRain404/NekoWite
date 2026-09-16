@@ -67,8 +67,12 @@ const h = vi.hoisted(() => {
     write,
     // The two calls a vault switch makes of its port, and nothing else: the
     // switch is handed this rather than the whole gateway.
-    registerVault: vi.fn(async (): Promise<void> => undefined),
-    watchVault: vi.fn(async (): Promise<void> => undefined),
+    // The vault path the switch passes through them is stated rather than left out: an
+    // inferred zero-argument mock cannot be called with one, and the switch does. Stated in
+    // the type argument, as `read` and `write` above do it — the implementation never reads
+    // the path, so naming the parameter in the signature is enough.
+    registerVault: vi.fn<(_vault: string) => Promise<void>>(async () => undefined),
+    watchVault: vi.fn<(_vault: string) => Promise<void>>(async () => undefined),
     background: { arm: vi.fn(), stop: vi.fn() },
     windowMock: { onCloseRequested: vi.fn(), close: vi.fn(), destroy: vi.fn() },
     appearanceMock: { autosaveOnBlur: false, touchSystem: vi.fn() },

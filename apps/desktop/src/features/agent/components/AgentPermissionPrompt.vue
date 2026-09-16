@@ -3,6 +3,7 @@ import { computed, nextTick, ref, useId } from 'vue'
 import { Ban, Ellipsis, TriangleAlert } from 'lucide-vue-next'
 import { t } from '../../../i18n'
 import type {
+  AgentPermissionKind,
   AgentPermissionOption,
   AgentPermissionRequest,
   AgentToolStatus,
@@ -97,6 +98,18 @@ const phase = computed<PromptPhase>(() => {
 })
 
 const answeredOptionId = computed<string | null>(() => answer.value?.optionId ?? null)
+
+/**
+ * Whether an option is one of the engine's refusals.
+ *
+ * `kind` carries the engine's own four kinds rather than a collapsed allow/reject pair
+ * (payloads.ts), so the refusals are `reject_once` and `reject_always`. Both mean no —
+ * whether the engine remembers the choice is a difference in the option's own name, not in
+ * what pressing it does here — and this is the test the button's styling is chosen by.
+ */
+function isReject(kind: AgentPermissionKind): boolean {
+  return kind === 'reject_once' || kind === 'reject_always'
+}
 
 function choose(option: AgentPermissionOption): void {
   // Guarded on the state machine rather than on the DOM. The buttons are gone one tick
@@ -250,7 +263,7 @@ nextTick(() => rootEl.value?.focus())
           :key="option.optionId"
           type="button"
           class="btn"
-          :class="option.kind === 'reject' ? 'btn-ghost' : 'btn-secondary'"
+          :class="isReject(option.kind) ? 'btn-ghost' : 'btn-secondary'"
           :data-option-id="option.optionId"
           @click="choose(option)"
         >

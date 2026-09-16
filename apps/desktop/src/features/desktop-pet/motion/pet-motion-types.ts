@@ -114,11 +114,21 @@ export function motionMoodForAlert(alert: PetTaskAlert | null): PetMotionMood {
   return alert === 'quiet' ? 'busy' : 'alert'
 }
 
-/** Timers, in the shape the sprite player already takes (`rendering/animation-bindings.ts:27`). */
+/**
+ * Timers, in the shape the sprite player already takes (`rendering/animation-bindings.ts:27`).
+ *
+ * That shape includes the handle's type being the ambient one rather than `number`: under
+ * the DOM lib `setTimeout` answers a number, under Node's a `Timeout` object, and the same
+ * file runs on both sides here. Naming the real return type is what keeps `systemClock`
+ * below assignable without a cast.
+ */
 export interface MotionClock {
-  setTimeout(handler: () => void, ms: number): number
-  clearTimeout(handle: number): void
+  setTimeout(handler: () => void, ms: number): MotionTimerHandle
+  clearTimeout(handle: MotionTimerHandle): void
 }
+
+/** The handle the ambient `setTimeout` hands back, named so both sides can say it once. */
+export type MotionTimerHandle = ReturnType<typeof globalThis.setTimeout>
 
 export const systemClock: MotionClock = {
   // The globals are read at call time, so a test that fakes them fakes this clock too.
