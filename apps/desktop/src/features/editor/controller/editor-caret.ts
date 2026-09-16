@@ -1,6 +1,8 @@
 import { TextSelection } from '@milkdown/prose/state'
 import type { NekoEditor } from '@nekowite/editor-core'
+import { useTabsStore } from '../../../stores/tabs'
 import { renderedModelRefused } from '../../../services/editor-ownership'
+import { documentLineFor, documentPositionFor } from './document-caret'
 import { renderedLineOrRatio, renderedTopFor } from './pane-scroll-mapping'
 
 type EditorView = NonNullable<ReturnType<NekoEditor['getView']>>
@@ -18,6 +20,13 @@ type EditorView = NonNullable<ReturnType<NekoEditor['getView']>>
  * mapping's inputs (the outline, the measured heading offsets, the pane's
  * content range) are read live, so both halves must work from the same reading
  * rather than each assembling their own.
+ *
+ * A caret is placed by one of two routes, and which one is not a preference: a
+ * document with headings has real anchors and goes through the line↔offset
+ * mapping, and a document without them has none — the mapping falls back to a
+ * fraction of the pane's SCROLLABLE extent, which is the wrong instrument for a
+ * point in a document (nothing to scroll, and every line is at the top). That
+ * case goes through the note's own blocks instead; see `document-caret`.
  */
 export interface EditorCaretDeps {
   getScrollEl: () => HTMLElement | null
@@ -37,6 +46,22 @@ export interface RenderedGeometry {
   renderedRange: number
 }
 
+/**
+ * Whether the line↔offset mapping has anchors to work with: headings in the
+ * outline AND measured offsets for them.
+ *
+ * When it has not — a note with no headings at all, or one whose headings are
+ * mid-render — `renderedTopFor` and `renderedLineFor` answer from the pane's
+ * scrollable extent instead. Two of them must answer with the same line for the
+ * same offset (that is why the fallback lives in one place, see
+ * `renderedLineOrRatio`), and they do; but a VIEWPORT position is the only thing
+ * that ratio can carry. A caret is a point in the document, and a document
+ * shorter than its pane has no scrollable extent to be a fraction of.
+ */
+function hasAnchors(geometry: RenderedGeometry): boolean {
+  return geometry.items.length > 0 && geometry.tops !== null
+}
+
 export interface EditorCaret {
   /**
    * The 1-based (fractional) source line the caret sits on, or null when the
@@ -54,6 +79,21 @@ export interface EditorCaret {
 }
 
 export function createEditorCaret(deps: EditorCaretDeps): EditorCaret {
+  // The note's text, read the same way `editorScrollSync`'s geometry reads it:
+  // the block mapping and the outline's line numbers have to come from one
+  // reading of the open document, or the two disagree about which block a line
+  // is in.
+  const tabs = useTabsStore()
+
+  /** The note's own text — or the empty string, which no block pairing survives,
+   *  when the model is holding another document's. That is the same refusal
+   *  `caretTop` makes below, stated once for both directions: a caret in another
+   *  note's text is not a position in this one. */
+  function noteText(): string {
+    if (renderedModelRefused()) return ''
+    return tabs.activeTab?.content ?? ''
+  }
+
   /** The live ProseMirror view, or null before the editor is ready — the
    *  editor's own `getView()` throws until then (`editor-controller.getView`
    *  guards the same way). */
@@ -111,9 +151,20 @@ export function createEditorCaret(deps: EditorCaretDeps): EditorCaret {
     // text would arrive off-screen. So the answer is "no caret to carry" until
     // the user has moved it, and the handoff falls back to the viewport line.
     if (view && loadedHead !== null && view.state.selection.head === loadedHead) return null
+    const geometry = deps.geometry()
+    // The mirror of `setCaretLine`'s routing, and for the same reason: with no
+    // anchors the ratio would be a fraction of the pane's scrollable extent,
+    // which is nothing at all for a note shorter than the pane. Asked before
+    // `caretTop` on purpose — the blocks need no measurement, and the flush that
+    // carries a caret out of this pane is the one that hides it, where nothing
+    // can be measured at all.
+    if (view && !hasAnchors(geometry)) {
+      const line = documentLineFor(view, noteText())
+      if (line !== null) return line
+    }
     const top = caretTop()
     if (top === null) return null
-    return renderedLineOrRatio(top, deps.geometry())
+    return renderedLineOrRatio(top, geometry)
   }
 
   /**
@@ -202,14 +253,25 @@ export function createEditorCaret(deps: EditorCaretDeps): EditorCaret {
     const view = editorView()
     if (!el || !view) return
     const geometry = deps.geometry()
-    const offset = renderedTopFor(
-      line,
-      geometry.items,
-      geometry.tops,
-      geometry.totalLines,
-      geometry.renderedRange,
-    )
-    const pos = posForOffset(view, el, offset)
+    // A note WITH headings keeps the anchored mapping exactly as it was. Without
+    // them the line is placed through the note's own blocks, whose answer does
+    // not depend on how much of the pane the note fills; the pixel route stays
+    // as the fallback for the case the two readings of the note are out of step
+    // (see `document-caret`).
+    const byBlock = hasAnchors(geometry) ? null : documentPositionFor(view, noteText(), line)
+    const pos =
+      byBlock ??
+      posForOffset(
+        view,
+        el,
+        renderedTopFor(
+          line,
+          geometry.items,
+          geometry.tops,
+          geometry.totalLines,
+          geometry.renderedRange,
+        ),
+      )
     if (pos === null) return
     dispatchCaret(view, pos)
   }

@@ -578,4 +578,161 @@ describe('EditorPane mode handoff', () => {
       expect(renderedCaretBlock()).toBe(blockText(27))
     })
   })
+
+  /**
+   * The reported defect, in the user's own shape: three unheaded short
+   * paragraphs, the caret in the third, switch to rendered, type — and the text
+   * landed in the FIRST paragraph.
+   *
+   * Both things that made it a short-note defect are here and nowhere else in
+   * this file: the note has no headings, so the line↔offset mapping has no
+   * anchors and falls back to the pane's SCROLLABLE extent, and the note is
+   * shorter than the pane, so that extent is 0. Every line then maps to the top
+   * of the pane, and the caret's own paragraph is discarded by the conversion
+   * meant to carry it.
+   *
+   * No rendered layout is installed, and that is the point of the fix rather than
+   * an omission: the caret's route through the note's own blocks reads positions
+   * and the note's text, so it needs no measurement — which is also the state the
+   * handoff reads a caret in, its own flush being what hides the pane.
+   */
+  describe('the caret on a note shorter than its pane', () => {
+    /** The user's note: three short paragraphs, no headings anywhere. */
+    const SHORT = 'first paragraph\n\nsecond paragraph\n\nthird paragraph\n'
+    /** Its paragraphs, in document order, and the source line each is on. */
+    const PARAGRAPHS = ['first paragraph', 'second paragraph', 'third paragraph']
+    const PARAGRAPH_LINES = [1, 3, 5]
+    /** Taller than the note, so the rendered pane has nothing to scroll. */
+    const PANE_PX = 600
+    /** What one top-level block measures in the layout installed below. */
+    const BLOCK_PX = 140
+
+    async function mountShortNote(mode: 'source' | 'rendered'): Promise<HTMLElement> {
+      const tabs = useTabsStore()
+      tabs.setVault('/vault')
+      note.content = SHORT
+      await tabs.openTab('notes/short.md')
+      const host = document.createElement('div')
+      document.body.appendChild(host)
+      await import('../view/SourcePane.vue')
+      const app = createApp(EditorPane)
+      app.use(pinia)
+      app.mount(host)
+      mounted.push(app)
+      await flush()
+
+      const view = useViewStore()
+      if (mode !== 'rendered') view.setMode(mode)
+      if (mode !== 'rendered') {
+        for (let i = 0; i < 40; i += 1) {
+          await flush()
+          if (host.querySelector('.pane.source .cm-scroller')) break
+        }
+      }
+      await nextTick()
+
+      const rendered = host.querySelector<HTMLElement>('.pane.rendered')
+      expect(rendered).not.toBeNull()
+      // Nothing to scroll: the extent the fallback ratio divides by is 0.
+      fakeScrollMetrics(rendered!, PANE_PX, PANE_PX)
+      // …and there are no headings to anchor on either.
+      fakeHeadingTops(rendered!, [])
+      if (mode !== 'rendered') {
+        const scroller = host.querySelector<HTMLElement>('.pane.source .cm-scroller')
+        expect(scroller).not.toBeNull()
+        fakeScrollMetrics(scroller!, METRICS.source.scrollHeight, METRICS.source.clientHeight)
+      }
+      await nextTick()
+      return host
+    }
+
+    function renderedView(): PmView {
+      const view = editorSessionManager.getView()
+      if (!view) throw new Error('the rendered pane has no editor')
+      return view
+    }
+
+    /**
+     * Positions laid out the way a document of one-line paragraphs is: one
+     * `BLOCK_PX` per top-level block, reported the way the browser reports them
+     * — relative to the viewport, so they travel with the pane's scroll.
+     *
+     * Installed for the PRE-FIX half of these cases as much as for the fixed one.
+     * happy-dom performs no layout, and a mapping that reads zeroes for every
+     * block happens to land in the LAST one — which is the paragraph these cases
+     * expect — so without a layout they would "pass" against the code they
+     * indict. With it, the pre-fix ratio (offset 0, for a pane with nothing to
+     * scroll) puts the caret in the first block, which is the reported defect.
+     */
+    function installShortLayout(host: HTMLElement): void {
+      const view = renderedView()
+      const pane = host.querySelector<HTMLElement>('.pane.rendered')!
+      const blockTop = (pos: number): number =>
+        view.state.doc
+          .resolve(Math.max(0, Math.min(pos, view.state.doc.content.size)))
+          .index(0) * BLOCK_PX
+      view.coordsAtPos = ((pos: number) => ({
+        left: 0,
+        right: 0,
+        top: blockTop(pos) - pane.scrollTop,
+        bottom: blockTop(pos) + BLOCK_PX - pane.scrollTop,
+      })) as typeof view.coordsAtPos
+    }
+
+    /** The text of the rendered block the caret is in. */
+    function caretBlock(): string {
+      const view = renderedView()
+      return view.state.doc.resolve(view.state.selection.head).parent.textContent
+    }
+
+    /** Put the rendered caret inside the block at `index`, the way a click does. */
+    async function caretInto(index: number): Promise<void> {
+      const view = renderedView()
+      let pos = 0
+      for (let i = 0; i < index; i += 1) pos += view.state.doc.child(i).nodeSize
+      view.dispatch(
+        view.state.tr.setSelection(
+          TextSelection.create(view.state.doc, Math.min(pos + 1, view.state.doc.content.size)),
+        ),
+      )
+      await nextTick()
+    }
+
+    it('源码 → 渲染 types where the source caret was, not in the first paragraph', async () => {
+      const host = await mountShortNote('source')
+      installShortLayout(host)
+      const cm = sourceViewOf(host)
+      // The user's caret: the third paragraph, source line 5.
+      cm.dispatch({ selection: { anchor: cm.state.doc.line(PARAGRAPH_LINES[2]).from } })
+      await nextTick()
+
+      useViewStore().setMode('rendered')
+      await nextTick()
+      await flush()
+
+      expect(caretBlock()).toBe(PARAGRAPHS[2])
+      // …and the next keystroke lands there, which is the thing the user saw go
+      // wrong: the text arrived in the first paragraph instead.
+      const view = renderedView()
+      view.dispatch(view.state.tr.insertText('!', view.state.selection.head))
+      expect(caretBlock()).toContain(PARAGRAPHS[2])
+      expect(view.state.doc.child(0).textContent).toBe(PARAGRAPHS[0])
+    })
+
+    it('渲染 → 源码 carries the caret back to the paragraph it was in', async () => {
+      const host = await mountShortNote('rendered')
+      installShortLayout(host)
+      await caretInto(2)
+      expect(caretBlock()).toBe(PARAGRAPHS[2])
+
+      useViewStore().setMode('source')
+      for (let i = 0; i < 40; i += 1) {
+        await flush()
+        if (host.querySelector('.pane.source .cm-scroller')) break
+      }
+      await nextTick()
+
+      expect(caretLineOf(sourceViewOf(host))).toBe(PARAGRAPH_LINES[2])
+    })
+  })
 })
