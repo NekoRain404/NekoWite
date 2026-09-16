@@ -10,7 +10,7 @@
  * read out of `localStorage` on every 500ms tick, and the three timers (§3.1.6: 不得把 1800 行脚本
  * 塞入 Vue `onMounted`).
  *
- * Four decisions in here are the acceptance clauses rather than taste:
+ * Five decisions in here are the acceptance clauses rather than taste:
  *
  *  - **A row is a task, never a group of them.** Upstream collapses same-agent sessions into one
  *    row with a `×N` badge (`groupSessions`, 141-156) and clicks it to the first session of the
@@ -24,6 +24,12 @@
  *    break opportunity at all; `PET_BUBBLE_MESSAGE_STYLE` is applied inline rather than only in the
  *    stylesheet because that is the acceptance, and a rule only a stylesheet can see is a rule no
  *    test can hold on to.
+ *  - **The rows are a bounded box, not a shorter list.** A list of six long Chinese rows is 561px
+ *    tall (D13's measurement) and the window it is drawn in is the character's, so the rows scroll
+ *    inside a box capped in window units (`PET_BUBBLE_MAX_HEIGHT`) instead of being cut down to
+ *    what happens to fit. Nothing is dropped, and the count cap that *does* cut is a different
+ *    thing: it is the user's (`maxTasks`), it reports what it left out, and a height-derived row
+ *    count would be a second cap that could disagree with it.
  *  - **No timer of its own.** The elapsed field is computed from `now`, which the caller ticks
  *    (§6.3: 参数注入时钟测试，不写死到组件定时器), and the carousel does not advance by itself — a
  *    surface that hides a task the user has not answered yet, on a clock, is §3.1.3 undone.
@@ -41,6 +47,7 @@ import {
 import {
   PET_BUBBLE_COMPACT_PREVIEW,
   PET_BUBBLE_MAX_WIDTH,
+  PET_BUBBLE_SCROLL_STYLE,
   buildPetTaskDisplay,
   petAgentLabel,
   resolvePetBubbleLayout,
@@ -232,34 +239,48 @@ const surfaceStyle = { maxWidth: `${PET_BUBBLE_MAX_WIDTH}px`, boxSizing: 'border
         {{ summary }}
       </p>
 
-      <section
-        v-for="group in groups"
-        :key="group.agentId ?? 'flat'"
-        class="pet-task__group"
+      <!--
+        The rows, in a box that is bounded and scrollable. Every row the count cap kept is drawn:
+        what does not fit is below the fold of this box rather than dropped, and the box is
+        focusable and named so a keyboard reaches it too. The reports that say what the list holds
+        — the count, the fold, the pager — are deliberately outside it.
+      -->
+      <div
+        class="pet-task__scroll"
+        :style="PET_BUBBLE_SCROLL_STYLE"
+        tabindex="0"
+        role="group"
+        :aria-label="labels.rows"
       >
-        <p
-          v-if="group.label"
-          class="pet-task__group-head"
+        <section
+          v-for="group in groups"
+          :key="group.agentId ?? 'flat'"
+          class="pet-task__group"
         >
-          {{ fillPetLabel(labels.group, { agent: group.label, count: String(group.tasks.length) }) }}
-        </p>
-        <ul class="pet-task__rows">
-          <li
-            v-for="task in group.tasks"
-            :key="petTaskToken(task.key)"
-            class="pet-task__item"
+          <p
+            v-if="group.label"
+            class="pet-task__group-head"
           >
-            <PetTaskRow
-              :state="task.state"
-              :agent-id="task.key.agentId"
-              :permission-request-id="task.permissionRequestId"
-              :fields="fieldsOf(task)"
-              :label="rowLabel(task)"
-              @select="emit('select', task)"
-            />
-          </li>
-        </ul>
-      </section>
+            {{ fillPetLabel(labels.group, { agent: group.label, count: String(group.tasks.length) }) }}
+          </p>
+          <ul class="pet-task__rows">
+            <li
+              v-for="task in group.tasks"
+              :key="petTaskToken(task.key)"
+              class="pet-task__item"
+            >
+              <PetTaskRow
+                :state="task.state"
+                :agent-id="task.key.agentId"
+                :permission-request-id="task.permissionRequestId"
+                :fields="fieldsOf(task)"
+                :label="rowLabel(task)"
+                @select="emit('select', task)"
+              />
+            </li>
+          </ul>
+        </section>
+      </div>
 
       <button
         v-if="compact"

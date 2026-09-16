@@ -355,10 +355,17 @@ describe('the wrapping the acceptance names', () => {
     expect(petTokenStyle('agent').whiteSpace).toBe('nowrap')
   })
 
-  it('bounds the bubble at a width a 300px window can hold', () => {
-    expect(Number.isInteger(PET_BUBBLE_MAX_WIDTH)).toBe(true)
-    expect(PET_BUBBLE_MAX_WIDTH).toBeGreaterThan(120)
-    expect(PET_BUBBLE_MAX_WIDTH).toBeLessThanOrEqual(320)
+  it('is no wider than the window it is drawn in', () => {
+    // 260 is `window_host::CHARACTER_WINDOW_SIZE.0` — the number is written here rather than read
+    // from the Rust file because the two languages meet at a test, and the meeting is on the Rust
+    // side: `desktop_pet_ipc_test`'s `the_bubble_fits_the_window_it_is_drawn_in` reads this
+    // constant out of the layout service and fails when the pair drifts. What this holds is that
+    // the constant stays a width a bubble could plausibly have — an integer, not a stray 0.
+    //
+    // A literal, and deliberately: a test that compared the constant with itself would pass for
+    // every value, which is how the old 280 (chosen against upstream's 300px popover window, a
+    // surface this bubble is not in) survived a fix that was about the bubble's own geometry.
+    expect(PET_BUBBLE_MAX_WIDTH).toBe(260)
   })
 
   it('bounds the height in the window’s own units, and hands the scroll to the surface', () => {

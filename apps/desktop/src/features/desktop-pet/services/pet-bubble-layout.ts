@@ -412,22 +412,44 @@ export interface PetRowField {
   text: string
 }
 
-/** The bubble's widest row. Narrower than the 300px window upstream's popover used (popover.ts 170). */
-export const PET_BUBBLE_MAX_WIDTH = 280
+/**
+ * The bubble's widest row: **the width of the window the bubble is drawn in**, not a number of its
+ * own choosing.
+ *
+ * It was 280, and the reason written beside it compared it to the wrong surface — upstream's
+ * 300px *popover* (`windows/src/popover.ts:170`), which is a window of its own (`popover.html`,
+ * the menu-bar panel) and not this bubble's container. Upstream's bubble is `.bubble` inside
+ * `index.html` — 「The bubble sits above the sprite」, `#pet-root`, a column — and its own rule is
+ * `max-width: 260px` (styles.css:43), which is exactly the character window's width. Two hundred
+ * and eighty is greater than two hundred and sixty, and the pair had never been compared.
+ *
+ * The window wins because it is the frame: a webview cannot paint outside its own window, so a
+ * bubble wider than the window is not an overhanging bubble, it is a clipped one — and a clipped
+ * bubble cannot be clicked, which is how D13 found the height half of this (task-183, finding 7).
+ * §7.1 gives the window and its size to the host; a surface that asked for more than the host
+ * grants would be asking for something no compositor can give it.
+ *
+ * The number is `window_host::CHARACTER_WINDOW_SIZE.0` (260.0), and that pairing is held by a
+ * test rather than by this sentence: `desktop_pet_ipc_test`'s
+ * `the_bubble_fits_the_window_it_is_drawn_in` reads this constant out of this file and fails if
+ * either side moves without the other.
+ */
+export const PET_BUBBLE_MAX_WIDTH = 260
 
 /**
  * How tall a surface may get before it scrolls: an absolute ceiling, and a fraction of the window.
  *
  * D13 measured what this answers: six rows of long Chinese came to **561px** in the 280px width the
- * surface caps itself at, and the pet window — §7.1 gives that window to the character, not to the
- * bubble — simply clipped them. A number in pixels cannot be right here, because the window the
- * bubble lands in is the host's and its height follows the character's size setting (D13 swept 80,
- * 160 and 320): `40vh` is the term that tracks the window the bubble is actually in, and the 240px
- * ceiling is what keeps a tall window from turning a bubble into a panel. At the window the host
- * builds today (260x320, `window_host::CHARACTER_WINDOW_SIZE`) the box is 128px, and 128 + the 180px
- * character is 308 of its 320 — the surface's own 12px of padding is what takes that past the
- * window, and the arithmetic is written down because a host sizing a window to hold both surfaces
- * is exactly the caller this bound has to agree with.
+ * surface capped itself at then (it is 260 now, so the same rows are taller still), and the pet
+ * window — §7.1 gives that window to the character, not to the bubble — simply clipped them. A
+ * number in pixels cannot be right here, because the window the bubble lands in is the host's and
+ * its height follows the character's size setting (D13 swept 80, 160 and 320): `40vh` is the term
+ * that tracks the window the bubble is actually in, and the 240px ceiling is what keeps a tall
+ * window from turning a bubble into a panel. At the window the host builds today (260x320,
+ * `window_host::CHARACTER_WINDOW_SIZE`) the box is 128px, and 128 + the 180px character is 308 of
+ * its 320 — the surface's own 12px of padding is what takes that past the window, and the
+ * arithmetic is written down because a host sizing a window to hold both surfaces is exactly the
+ * caller this bound has to agree with.
  *
  * **A bound, and not a lower row count.** The list already has a count cap, the user's own
  * (`maxTasks`), and it reports what that cap left out; a second cap derived from height would be a

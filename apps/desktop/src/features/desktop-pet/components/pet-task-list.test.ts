@@ -13,14 +13,18 @@
  * mistake has a second shape — a row closing over an index instead of over the task — which is why
  * one test changes the list's order between two clicks and asks again.
  *
- * The text is deliberately long and Chinese rather than `Hello world`: these rows are 280px wide,
- * and a CJK sentence full of mixed Latin ids is the content that actually has to fit in them.
+ * The text is deliberately long and Chinese rather than `Hello world`: these rows are as wide as
+ * the bubble gets (260px, the character window's width), and a CJK sentence full of mixed Latin
+ * ids is the content that actually has to fit in them.
  */
 import { afterEach, describe, expect, it } from 'vitest'
 import { createApp, h, nextTick, ref, type App as VueApp } from 'vue'
 import type { PetTaskKey, PetTaskProjection, PetTaskState } from '../../../platform/gateways/pet-contracts'
-import { PET_BUBBLE_MAX_WIDTH } from '../services/pet-bubble-layout'
-import type { PetMessagePhrases } from '../services/pet-message-template'
+import { PET_BUBBLE_MAX_HEIGHT, PET_BUBBLE_MAX_WIDTH } from '../services/pet-bubble-layout'
+import {
+  PET_TASK_LIST_LABELS,
+  type PetMessagePhrases,
+} from '../services/pet-message-template'
 import PetTaskList from './PetTaskList.vue'
 
 /** The host clock the tests read: elapsed times are assertions, not wall-clock readings. */
@@ -327,7 +331,7 @@ describe('a click lands on the task it points at', () => {
   })
 })
 
-describe('long Chinese in a 280px row', () => {
+describe('long Chinese in a row as wide as the window', () => {
   it('shows the whole sentence, with nothing truncated and no ellipsis of its own', () => {
     mount({ tasks: [task('working', { sessionId: 'a' })], layout: { grouping: 'flat' } })
 
@@ -359,6 +363,101 @@ describe('long Chinese in a 280px row', () => {
     expect(surface?.style.maxWidth).toBe(`${PET_BUBBLE_MAX_WIDTH}px`)
     expect(surface?.style.boxSizing).toBe('border-box')
     expect(document.querySelector<HTMLElement>('.pet-task__row')?.style.flexWrap).toBe('wrap')
+  })
+})
+
+describe('a list taller than the window', () => {
+  /**
+   * The rows D13 measured: six long-Chinese sentences at the width the surface then capped itself
+   * at (280px; 260 now, so taller still), **561px tall** in a window that §7.1 sizes for the
+   * character. The fixture is the case that produced the number
+   * rather than a convenient short one, because a row that fits proves nothing about the bound.
+   */
+  function sixTall(): PetTaskProjection[] {
+    return [
+      task('waiting-input', { sessionId: 'needs-you', updatedAt: NOW - 6_000 }),
+      task('working', { sessionId: 'a', updatedAt: NOW - 5_000 }),
+      task('working', { sessionId: 'b', updatedAt: NOW - 4_000 }),
+      task('working', { sessionId: 'c', updatedAt: NOW - 3_000 }),
+      task('failed', { sessionId: 'd', updatedAt: NOW - 2_000 }),
+      task('turn-finished', { sessionId: 'e', updatedAt: NOW - 1_000 }),
+    ]
+  }
+
+  function box(): HTMLElement | null {
+    return document.querySelector<HTMLElement>('.pet-task__scroll')
+  }
+
+  it('keeps every row it was given, whole, inside the box that is capped', async () => {
+    const view = mount({ tasks: sixTall(), layout: { maxTasks: 6, grouping: 'flat' } })
+
+    // Six rows, drawn even though six of them cannot fit: a bound on height moves a row below the
+    // fold of a box the user can move through, while a bound on the count would drop it — and the
+    // count is the user's own setting, reported when it bites.
+    expect(view.rows()).toHaveLength(6)
+    // The order the ranking promises, and the reason the fold is safe to have: the task that needs
+    // the user is at the top of the box, never the row that ended up below it.
+    expect(view.texts()).toEqual([
+      WAITING_CN,
+      '这一轮执行失败了，详情请看主面板。（任务 c）',
+      WORKING_CN,
+      WORKING_CN,
+      WORKING_CN,
+      '本轮已经结束，工具输出与文件改动都不再变化。（任务 d）',
+    ])
+    // Whole sentences, not the beginnings of them: the assertion above compares every row to the
+    // fixture's own sentence, and this is the second way to lose one — trimming it to fit and
+    // saying so with an ellipsis, which is the same loss with a sign on it.
+    for (const text of view.texts()) expect(text).not.toContain('…')
+    const scroll = box()
+    expect(scroll).not.toBeNull()
+    for (const row of view.rows()) expect(scroll?.contains(row)).toBe(true)
+
+    // …and the count cap is a different bound, still cutting and still saying so.
+    await view.set({ layout: { maxTasks: 2, grouping: 'flat' } })
+    expect(view.rows()).toHaveLength(2)
+    expect(document.querySelector('.pet-task__more')?.textContent?.trim()).toBe('+4 more')
+  })
+
+  it('caps the box in the window’s own units, because the window is not this surface’s to size', () => {
+    mount({ tasks: sixTall(), layout: { maxTasks: 6, grouping: 'flat' } })
+
+    const scroll = box()
+    expect(scroll?.style.maxHeight).toBe(PET_BUBBLE_MAX_HEIGHT)
+    expect(scroll?.style.overflowY).toBe('auto')
+    // A pixel cap could not be right: §7.1 gives the window (and its height, which follows the
+    // character's size setting) to the host, so the cap has to be a fraction of the window it
+    // lands in — with a ceiling for the case where that window is a tall one.
+    expect(PET_BUBBLE_MAX_HEIGHT).toContain('vh')
+    expect(PET_BUBBLE_MAX_HEIGHT).toContain('min(')
+  })
+
+  it('makes the rows below the fold reachable, and keeps the counts above it', async () => {
+    const view = mount({ tasks: sixTall(), layout: { maxTasks: 6, grouping: 'flat' } })
+
+    // Focusable and named: without that, the rows under the fold would be reachable by pointer
+    // only — a bound that hides content from the keyboard is a bound nobody can get past.
+    const scroll = box()
+    expect(scroll?.getAttribute('tabindex')).toBe('0')
+    expect(scroll?.getAttribute('role')).toBe('group')
+    expect(scroll?.getAttribute('aria-label')).toBe('Task rows')
+    expect(scroll?.getAttribute('aria-label')).toBe(PET_TASK_LIST_LABELS.rows)
+
+    // The report of what the list holds stays outside the box: a count below the fold is a count
+    // the user has to scroll to be told, which is not what "never silently dropped" promises.
+    await view.set({ layout: { maxTasks: 2, grouping: 'flat' } })
+    const more = document.querySelector('.pet-task__more')
+    expect(more?.textContent?.trim()).toBe('+4 more')
+    expect(box()?.contains(more ?? null)).toBe(false)
+  })
+
+  it('keeps the pager outside the box, so the way to the other pages never scrolls away', () => {
+    mount({ tasks: sixTall(), layout: { mode: 'carousel', maxTasks: 2, grouping: 'flat' } })
+
+    const pager = document.querySelector('.pet-task__pages')
+    expect(pager).not.toBeNull()
+    expect(box()?.contains(pager ?? null)).toBe(false)
+    expect(document.querySelectorAll('.pet-task__page')).toHaveLength(3)
   })
 })
 

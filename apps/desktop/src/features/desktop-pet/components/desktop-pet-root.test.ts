@@ -36,6 +36,13 @@ class FakeHost implements PetGateway {
     throw new Error('the window does not read capabilities here')
   }
 
+  async care(): Promise<never> {
+    // §7.1's isolation: the pet window carries no care surface (the file list in
+    // `desktop-pet-entry.test.ts` says so), so this host is never asked and a call here is a
+    // wiring mistake rather than a state to model.
+    throw new Error('the window does not read the care ledger here')
+  }
+
   async tasks(): Promise<PetTaskProjection[]> {
     return []
   }

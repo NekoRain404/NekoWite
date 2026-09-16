@@ -18,7 +18,7 @@
  * Three smaller things it owns rather than passing on:
  *
  *  - **The wrapping rules on the line.** §12's acceptance is that a bubble does not leave the
- *    screen (气泡不越屏), and a Chinese idle sentence in a 280px surface is where that is decided.
+ *    screen (气泡不越屏), and a Chinese idle sentence in a 260px surface is where that is decided.
  *    The same style object the list gives its rows is applied here, for the same reason.
  *  - **The height the line may reach.** 气泡不越屏 has a second axis: D13 measured the list at 561px
  *    in a sprite-sized window, and the line is capped by the same rule (`lineStyle`), because a
@@ -103,9 +103,9 @@ const surfaceStyle = { maxWidth: `${PET_BUBBLE_MAX_WIDTH}px`, boxSizing: 'border
  *
  * The bubble is bounded whichever shape it is showing, and the cap sits on the element that grows
  * — here the sentence, in list mode the rows inside `PetTaskList` — so the two never nest two
- * scrollbars into one surface. A line is short by nature (it is one sentence at 280px), but "by
- * nature" is not a bound: a caller's words are its own, and a bubble that could be 561px tall as a
- * list and unbounded as a line would be the same defect with a different trigger.
+ * scrollbars into one surface. A line is short by nature — it is one sentence at the window's own
+ * width — but "by nature" is not a bound: a caller's words are its own, and a bubble that could be
+ * 561px tall as a list and unbounded as a line would be the same defect with a different trigger.
  */
 const lineStyle = { ...PET_BUBBLE_MESSAGE_STYLE, ...PET_BUBBLE_SCROLL_STYLE } as const
 </script>

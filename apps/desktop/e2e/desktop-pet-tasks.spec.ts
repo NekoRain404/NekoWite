@@ -485,20 +485,56 @@ test('a task message is shown as text and never interpreted', async ({ page }) =
 // Geometry: the window is small, and nothing may leave it
 // ---------------------------------------------------------------------------
 
+/*
+ * The bubble's bounds, as numbers this file holds rather than ones it imports.
+ *
+ * **The copies are deliberate, and they are the whole point.** `PET_BUBBLE_MAX_HEIGHT` is
+ * `min(240px, 40vh)` and `PET_BUBBLE_MAX_WIDTH` is the character window's 260px; the DOM tests pin
+ * those declarations. This file must not import either one: a case that read the bound out of the
+ * constant would follow every change to it and go on passing, which is exactly how this case
+ * stopped measuring anything the first time. The bound is stated here, the geometry is measured
+ * here, and changing either one fails the other — the reconciliation is a person's.
+ */
+const BUBBLE_CAP_PX = 240
+const BUBBLE_CAP_FRACTION = 0.4
+
+/**
+ * The width of the character window: `window_host::CHARACTER_WINDOW_SIZE` (260x320), which the
+ * bubble is drawn inside rather than beside. Not imported, for the reason above.
+ */
+const CHARACTER_WINDOW_WIDTH = 260
+
+/**
+ * What the bubble adds around the box that grows: its own padding and border, plus the rows that
+ * report what the box holds — the count of rows a count cap left out, the fold, the pager — which
+ * are deliberately outside that box. 14px of it is the padding and border — measured, at the three
+ * sizes of the sweep below: a 164/200/240px box under a 178/214/254px bubble — and the rest is the
+ * room those reports need. It is a ceiling and not a description: the case fails if the chrome grows past it.
+ */
+const BUBBLE_CHROME_MAX = 60
+
+/** The cap a window of a given height implies, evaluated from the declaration's own shape. */
+function bubbleCap(windowHeight: number): number {
+  return Math.min(BUBBLE_CAP_PX, BUBBLE_CAP_FRACTION * windowHeight)
+}
+
 for (const size of [80, 160, 320]) {
   test(`a ${size}px character and the bubble both stay inside the window the host sizes`, async ({ browser }) => {
-    // The window is 360 wide and the sprite's own height plus a bubble allowance tall — because that
-    // is what the *host* makes: §7.1 gives window identity and size to Rust, and the character's
-    // size is a setting, so the two have to agree.
+    // The frame is the window a host *would* build for this character: as wide as the largest
+    // character (320px) needs and no wider, and — the part that matters — as tall as the sprite
+    // plus the room the bubble's bound needs, which is `min(240, 0.4 * H) + the chrome above + the
+    // 6px gap`. That budget is written down before the bubble is looked at, so the assertions below
+    // can fail against it; the host built today is one fixed 260x320 that ignores the character's
+    // size setting, and what that window can hold is measured by the next case.
     //
-    // **The allowance is a measured number, not a tuned one.** The first run of this test used 260
-    // and failed with `bubble 280x561`: six rows of long Chinese at the bubble's 280px cap are
-    // **561px tall**, so a window sized for the sprite alone clips the list — the bubble has no
-    // height cap of its own. 620 is that measurement plus the 6px gap and a margin, and the number
-    // is printed below so a reader sees what the host rule has to leave. A change that makes the
-    // bubble taller than the allowance fails here, which is the point of pinning it.
+    // **The history of this number, because it is the reason the case is written this way.** The
+    // frame used to be `spriteHeight + 620` — an allowance derived from the 561px the bubble
+    // measured before it was capped. Once the rows were bounded, nothing the bubble did could
+    // approach 620px, so the case passed whatever happened: it had been written to catch exactly
+    // this defect and could no longer catch it or anything like it. A smaller frame is what makes
+    // the containment assertions below able to fail again.
     const spriteHeight = Math.round((size * 180) / 160)
-    const frame = { width: 360, height: spriteHeight + 620 }
+    const frame = { width: 360, height: spriteHeight + 320 }
     const context = await browser.newContext({ viewport: frame })
     const page = await context.newPage()
     try {
@@ -513,24 +549,39 @@ for (const size of [80, 160, 320]) {
       const window_ = page.locator('#e2e-pet-surface > div')
       const sprite = page.locator('#e2e-pet-surface canvas.pet-sprite')
       const bubble = page.locator('#e2e-pet-surface .pet-bubble')
+      // The one element that grows: the rows scroll inside it, and it is what the cap is applied to.
+      const rows = page.locator('#e2e-pet-surface .pet-task__scroll')
       await expect(sprite).toBeVisible()
       await expect(bubble).toBeVisible()
+      await expect(rows).toBeVisible()
 
       const frameBox = await window_.boundingBox()
       const spriteBox = await sprite.boundingBox()
       const bubbleBox = await bubble.boundingBox()
+      const rowsBox = await rows.boundingBox()
       expect(frameBox).not.toBeNull()
       expect(spriteBox).not.toBeNull()
       expect(bubbleBox).not.toBeNull()
-      if (!frameBox || !spriteBox || !bubbleBox) return
+      expect(rowsBox).not.toBeNull()
+      if (!frameBox || !spriteBox || !bubbleBox || !rowsBox) return
 
-      // What the bubble actually took, measured from the top of the window down to the top of the
-      // bubble — six rows of long Chinese at a 280px cap, plus the gap between the two surfaces.
-      // That is the number a host sizing the window has to leave above the sprite.
-      const bubbleUsed = Math.round(frameBox.y + frameBox.height - bubbleBox.y)
+      const cap = bubbleCap(frame.height)
       console.log(
-        `[pet-tasks] ${size}px: sprite ${Math.round(spriteBox.width)}x${Math.round(spriteBox.height)}, bubble ${Math.round(bubbleBox.width)}x${Math.round(bubbleBox.height)} using ${bubbleUsed}px of the window's ${frame.height}px`,
+        `[pet-tasks] ${size}px: window ${frame.width}x${frame.height} (cap ${cap}px), sprite ${Math.round(spriteBox.width)}x${Math.round(spriteBox.height)}, bubble ${Math.round(bubbleBox.width)}x${Math.round(bubbleBox.height)}, rows box ${Math.round(rowsBox.height)} (${Math.round(bubbleBox.height - rowsBox.height)}px of chrome)`,
       )
+
+      // **The measurement this case exists for.** Six long-Chinese rows are 567px of content at
+      // this 260px width (561px at the 280px width D13 measured), so the box is pinned at the cap
+      // from both sides: a box that is *at* the cap is a bound that holds, and a box that is far
+      // short of it means the fixture stopped being tall enough to test anything. Removing the cap
+      // measures the 567 here and fails on the first line; raising it past the window fails the
+      // same way.
+      expect(rowsBox.height).toBeGreaterThanOrEqual(cap - 1)
+      expect(rowsBox.height).toBeLessThanOrEqual(cap + 1)
+      // And the surface around it is bounded too, which is what a host sizing a window has to
+      // leave: the box, plus the chrome, plus nothing else.
+      expect(bubbleBox.height).toBeLessThanOrEqual(cap + BUBBLE_CHROME_MAX + 1)
+
       // The sprite is drawn at exactly the character's size: the setting is the box, and the fit is
       // inside it (D2 scales the sheet into the canvas; it does not resize the canvas).
       expect(Math.round(spriteBox.width)).toBe(size)
@@ -541,7 +592,9 @@ for (const size of [80, 160, 320]) {
         expect(box.y).toBeGreaterThanOrEqual(frameBox.y - 1)
         expect(box.y + box.height).toBeLessThanOrEqual(frameBox.y + frameBox.height + 1)
       }
-      expect(bubbleBox.width).toBeLessThanOrEqual(280)
+      // The bubble is not wider than the window the product gives it, even in a frame wide enough
+      // to allow it: the cap is the character window's width, not a number of the surface's own.
+      expect(bubbleBox.width).toBeLessThanOrEqual(CHARACTER_WINDOW_WIDTH)
 
       // …and the message is what wraps rather than what widens the surface: a `min-width: 0` that
       // went missing would show up here as a row wider than the bubble holding it.
@@ -554,6 +607,66 @@ for (const size of [80, 160, 320]) {
     }
   })
 }
+
+test('the bubble is bounded in the window the host actually builds', async ({ browser }) => {
+  // 260x320 is `window_host::CHARACTER_WINDOW_SIZE`, and it is the one window this product has: the
+  // host does not read the character's size setting, so every character gets it. The sweep above
+  // sizes a window per character — frames nobody builds today — and this is the one the product
+  // opens, where the cap is 128px and the box has to be measured rather than assumed.
+  const frame = { width: CHARACTER_WINDOW_WIDTH, height: 320 }
+  const context = await browser.newContext({ viewport: frame })
+  const page = await context.newPage()
+  try {
+    await mountOnPetPage(page, 'surfaces', {
+      tasks: petTasks(),
+      layout: { maxTasks: 6 },
+      phrases: petPhrases(),
+      window: frame,
+      // The bubble alone. With the 160x180 character in it too, the two surfaces do not both fit:
+      // 128 + chrome + the 6px gap + 180 is past 320, which is the host's sizing question and is
+      // written up in task-191's report rather than asserted here as if it held.
+      sprite: null,
+    })
+
+    const bubble = page.locator('#e2e-pet-surface .pet-bubble')
+    const rows = page.locator('#e2e-pet-surface .pet-task__scroll')
+    // The stand-in for the window: the same box the composition gives the surfaces, and the thing
+    // the containment assertions are measured against. Not the viewport — the page carries the
+    // entry's own notice above this div (measured: 32.8px at this height), which is furniture of
+    // the harness rather than of the window.
+    const window_ = page.locator('#e2e-pet-surface > div')
+    await expect(bubble).toBeVisible()
+    await expect(rows).toBeVisible()
+    const frameBox = await window_.boundingBox()
+    const bubbleBox = await bubble.boundingBox()
+    const rowsBox = await rows.boundingBox()
+    expect(frameBox).not.toBeNull()
+    expect(bubbleBox).not.toBeNull()
+    expect(rowsBox).not.toBeNull()
+    if (!frameBox || !bubbleBox || !rowsBox) return
+
+    const cap = bubbleCap(frame.height)
+    console.log(
+      `[pet-tasks] host window ${frame.width}x${frame.height}: bubble ${Math.round(bubbleBox.width)}x${Math.round(bubbleBox.height)}, rows box ${Math.round(rowsBox.height)} of a ${cap}px cap`,
+    )
+    expect(cap).toBe(128)
+    expect(rowsBox.height).toBeGreaterThanOrEqual(cap - 1)
+    expect(rowsBox.height).toBeLessThanOrEqual(cap + 1)
+    expect(bubbleBox.height).toBeLessThanOrEqual(cap + BUBBLE_CHROME_MAX + 1)
+    // No width assertion here, and that is not an omission: this window *is* the bubble's
+    // container, so `width: 100%` decides the width and any cap at or above 260 measures the same.
+    // The cap is measured where it can fail — in the sweep above, whose frame is wide enough that
+    // the bubble would grow past 260 if the constant allowed it.
+    // What is asserted here is containment, the 气泡不越屏 acceptance in the window the product
+    // actually opens.
+    expect(bubbleBox.x).toBeGreaterThanOrEqual(frameBox.x - 1)
+    expect(bubbleBox.x + bubbleBox.width).toBeLessThanOrEqual(frameBox.x + frameBox.width + 1)
+    expect(bubbleBox.y).toBeGreaterThanOrEqual(frameBox.y - 1)
+    expect(bubbleBox.y + bubbleBox.height).toBeLessThanOrEqual(frameBox.y + frameBox.height + 1)
+  } finally {
+    await context.close()
+  }
+})
 
 test('the menu is placed inside the window from every corner', async ({ browser }) => {
   // 320x260 — the smallest window the pet is likely to be given. The menu is at least 150px wide and

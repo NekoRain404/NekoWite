@@ -4,11 +4,12 @@
 //! the backend the authority (「数量上限由后端控制」): a front end that asked for fifty characters
 //! has to meet a refusal, and the refusal is what these tests read.
 
+use std::fs;
 use std::path::Path;
 
 use crate::desktop_pet::window_host::{
-    HostRefusal, PetWindowHost, Placement, DEFAULT_CHARACTER_CAP, DESKTOP_PET_PAGE,
-    HARD_CHARACTER_CAP, PET_WINDOW_STYLE,
+    HostRefusal, PetWindowHost, Placement, CHARACTER_WINDOW_SIZE, DEFAULT_CHARACTER_CAP,
+    DESKTOP_PET_PAGE, HARD_CHARACTER_CAP, PET_WINDOW_STYLE,
 };
 use crate::support::{fill, with_host, FakeSurfaces};
 
@@ -147,4 +148,47 @@ fn windows_are_cascaded_so_they_do_not_stack_on_one_pixel() {
     assert!(a.x < b.x && a.y < b.y, "the cascade goes down-right");
     assert!(a.x >= 0.0 && b.x >= 0.0);
     assert_ne!(first.label, second.label);
+}
+
+#[test]
+fn the_bubble_fits_the_window_it_is_drawn_in() {
+    // The bubble is drawn inside the character window, not in a window of its own: upstream's
+    // `index.html` puts `#bubble` and the pet in one column (「The bubble sits above the sprite」)
+    // and caps it at `max-width: 260px` — the window's own width. This port's cap was 280, chosen
+    // against upstream's 300px *popover* window, which is a different surface; 280 > 260 and the
+    // two numbers had never been compared (task-191).
+    //
+    // The relationship is checked here rather than by a comment, and across the language boundary
+    // the way `capabilities.rs` checks the capability vocabulary: the front end cannot import this
+    // file, so the side that owns the window reads the side that owns the surface. A webview
+    // cannot paint outside its own window, so a bubble wider than this is a clipped bubble — and a
+    // clipped bubble cannot even be right-clicked, which is how D13 found the height half of it.
+    let layout = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../src/features/desktop-pet/services/pet-bubble-layout.ts");
+    let text = fs::read_to_string(&layout).unwrap_or_else(|error| panic!("{layout:?}: {error}"));
+
+    let bubble = number_after(&text, "export const PET_BUBBLE_MAX_WIDTH =");
+    let (window_width, _) = CHARACTER_WINDOW_SIZE;
+    assert!(
+        bubble <= window_width,
+        "the bubble caps itself at {bubble}px and the window it is drawn in is {window_width}px \
+         wide (CHARACTER_WINDOW_SIZE): the surface would be clipped, not overhanging"
+    );
+}
+
+/// The number that follows a marker in a TypeScript file, or a panic naming the marker that moved.
+///
+/// A panic rather than a default: a constant this test cannot find is a constant it is not
+/// checking, and a test that quietly checks nothing is worse than one that fails.
+fn number_after(text: &str, marker: &str) -> f64 {
+    let from = text
+        .find(marker)
+        .unwrap_or_else(|| panic!("{marker} is not in the layout service"));
+    text[from + marker.len()..]
+        .trim_start()
+        .chars()
+        .take_while(|character| character.is_ascii_digit() || *character == '.')
+        .collect::<String>()
+        .parse()
+        .unwrap_or_else(|error| panic!("{marker} is not followed by a number: {error}"))
 }
