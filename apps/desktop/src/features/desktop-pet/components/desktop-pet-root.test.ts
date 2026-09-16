@@ -10,10 +10,17 @@
  * It lives in `components/` beside the component rather than in one of the plan's other V-gates,
  * because this file is the root's own behaviour and nothing else's.
  */
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { createApp, type App as VueApp } from 'vue'
-import type { PetGateway, PetTaskProjection } from '../../../platform/gateways/pet-contracts'
+import { createMemoryPetGateway, type MemoryPetGateway } from '../../../platform/gateways/memory-pet'
+import {
+  PET_SETTINGS_DEFAULTS,
+  type PetCharacterEntry,
+  type PetGateway,
+  type PetTaskProjection,
+} from '../../../platform/gateways/pet-contracts'
 import type { ImageFactory, LoadableImage } from '../rendering/sprite-sheet'
+import type { Rect, SheetPixelReader, SheetPixels } from '../rendering/sprite-slicer'
 import DesktopPetRoot from './DesktopPetRoot.vue'
 
 /** A host with one answer and a listener count, which is all this file needs. */
@@ -120,6 +127,84 @@ const failingImage: ImageFactory = (): LoadableImage => {
   return image
 }
 
+/**
+ * A sheet that decodes for one character and fails for another, the way a pack with a missing file
+ * and a pack without one behave on the same machine.
+ *
+ * The factory takes no URL — `SheetLoader` sets `src` on what it hands back — so the decision is made
+ * in the `src` setter, which is also where a real `Image` learns the same thing. Both of the
+ * loader's attempts go through it, so a URL this refuses is refused the way upstream refuses one.
+ */
+function imagesFor(loads: (url: string) => boolean): ImageFactory {
+  return () => {
+    // Not annotated as `LoadableImage` where it is built: `SpriteImageLike` declares the two
+    // dimensions `readonly`, and this fixture has to *become* decoded. Inferred, they are the
+    // mutable numbers a test writes to, and the shape still satisfies the interface it is returned
+    // through.
+    const image = {
+      naturalWidth: 0,
+      naturalHeight: 0,
+      crossOrigin: null as string | null,
+      src: '',
+      onload: null as ((ev: Event) => void) | null,
+      onerror: null as ((ev: Event) => void) | null,
+    }
+    Object.defineProperty(image, 'src', {
+      set(value: string) {
+        queueMicrotask(() => {
+          if (!loads(value)) {
+            image.onerror?.(new Event('error'))
+            return
+          }
+          image.naturalWidth = 32
+          image.naturalHeight = 24
+          image.onload?.(new Event('load'))
+        })
+      },
+      get: () => '',
+    })
+    return image
+  }
+}
+
+/** One clip of two cells spanning the sheet, so a decoded sheet slices into something drawable. */
+const twoCells: SheetPixelReader = (_img, width, height): SheetPixels => {
+  const data = new Uint8ClampedArray(width * height * 4)
+  for (const rect of [
+    { x: 0, y: 0, w: 8, h: height },
+    { x: 16, y: 0, w: 8, h: height },
+  ] satisfies Rect[]) {
+    for (let y = rect.y; y < rect.y + rect.h; y++) {
+      for (let x = rect.x; x < rect.x + rect.w; x++) data[(y * width + x) * 4 + 3] = 255
+    }
+  }
+  return { width, height, data }
+}
+
+const BROKEN: PetCharacterEntry = {
+  characterId: 'broken',
+  packName: 'Broken',
+  kind: 'imported',
+  files: 'intact',
+  installedAtMs: 1,
+}
+const WORKING: PetCharacterEntry = {
+  characterId: 'working',
+  packName: 'Working',
+  kind: 'imported',
+  files: 'intact',
+  installedAtMs: 2,
+}
+
+/** The character's own settings write: how the settings page tells an open window which one to draw. */
+async function choose(host: MemoryPetGateway, characterId: string, revision: number): Promise<void> {
+  await host.updateSettings({
+    domain: 'character',
+    revision,
+    values: { ...PET_SETTINGS_DEFAULTS.character, characterId },
+  })
+}
+
 const mounted: VueApp[] = []
 
 function mount(props: Record<string, unknown>): ReturnType<VueApp['mount']> {
@@ -129,15 +214,41 @@ function mount(props: Record<string, unknown>): ReturnType<VueApp['mount']> {
   return app.mount(document.getElementById('host') as Element)
 }
 
+const noticeText = (): string | null =>
+  document.querySelector('.pet-root__notice')?.textContent ?? null
+
 async function flush(): Promise<void> {
   await Promise.resolve()
   await Promise.resolve()
   await Promise.resolve()
 }
 
+/**
+ * happy-dom implements no canvas, so `getContext('2d')` answers `null` for every element — which is
+ * the state `PetSprite` reports through `onUnavailable`, and which this window now states. A case
+ * that means to exercise the *drawing* path therefore has to supply the context the drawing path
+ * runs on, exactly as `rendering/pet-sprite.test.ts` does; the one case below that means to
+ * exercise the other path sets the mock back to `null`.
+ */
+let getContextSpy: MockInstance<HTMLCanvasElement['getContext']> | null = null
+const context2d = {
+  imageSmoothingEnabled: true,
+  clearRect: () => undefined,
+  drawImage: () => undefined,
+  getImageData: () => ({ data: new Uint8ClampedArray([0, 0, 0, 255]) }),
+} as unknown as CanvasRenderingContext2D
+
+beforeEach(() => {
+  getContextSpy = vi
+    .spyOn(HTMLCanvasElement.prototype, 'getContext')
+    .mockReturnValue(context2d)
+})
+
 afterEach(() => {
   for (const app of mounted.splice(0)) app.unmount()
   document.body.innerHTML = ''
+  getContextSpy?.mockRestore()
+  getContextSpy = null
 })
 
 describe('the pet window draws, or says why it cannot', () => {
@@ -180,7 +291,80 @@ describe('the pet window draws, or says why it cannot', () => {
     mount({ gateway: host, imageUrl: '/missing.png', createImage: failingImage })
     await flush()
 
-    expect(document.querySelector('.pet-root__notice')?.textContent).toMatch(/did not load/i)
+    expect(noticeText()).toMatch(/did not load/i)
+  })
+
+  it('states a canvas it cannot paint on, rather than nothing at all', async () => {
+    // The engine's own answer, not a mocked one: `PetSprite` reports this state rather than
+    // throwing (D2's deviation 2), and a window that does not pass `onUnavailable` leaves the state
+    // announced to nobody — an inert canvas where the pet should be, which is what a window with
+    // nothing to draw looks like.
+    getContextSpy?.mockReturnValue(null)
+    mount({ gateway: new FakeHost(), imageUrl: '/cat.png', createImage: loadingImage })
+    await flush()
+
+    expect(noticeText()).toMatch(/no 2D context/i)
+    expect(document.querySelector('.pet-sprite')).toBeNull()
+  })
+})
+
+/*
+ * Recovery: a failure is a fact about *one* attempt, and it stops being a fact when the attempt is
+ * replaced. Both cases below drive the real route a user takes — the character settings write that
+ * an open window hears on `pet-settings-changed` — because that is the route the failure has to
+ * come out of. A window that only recovers when it is closed and reopened is what these refuse.
+ */
+describe('a failure does not outlive what failed', () => {
+  it('draws again when the next character loads, after one that did not', async () => {
+    const host = createMemoryPetGateway({ visible: true, characters: [BROKEN, WORKING] })
+    mount({
+      gateway: host,
+      connection: host,
+      // One pack on this "machine" is whole and the other is not: `broken` is the character whose
+      // file is missing, and every other URL decodes.
+      createImage: imagesFor((url) => !url.includes(BROKEN.characterId)),
+      readPixels: twoCells,
+    })
+    await flush()
+
+    await choose(host, BROKEN.characterId, 1)
+    await flush()
+    // The failure is real before it is stale: without this the case would pass on a window that
+    // never noticed the broken character at all.
+    expect(noticeText()).toMatch(/did not load/i)
+    expect(document.querySelector('.pet-sprite')).toBeNull()
+
+    await choose(host, WORKING.characterId, 2)
+    await flush()
+    expect(document.querySelector('.pet-sprite')).not.toBeNull()
+    expect(noticeText()).toBeNull()
+  })
+
+  it('tries a fresh canvas the next time the window is asked to draw again', async () => {
+    const host = createMemoryPetGateway({ visible: true, characters: [WORKING] })
+    getContextSpy?.mockReturnValue(null)
+    const vm = mount({
+      gateway: host,
+      connection: host,
+      createImage: imagesFor(() => true),
+      readPixels: twoCells,
+    }) as unknown as { lifecycle: { hide(): Promise<void>; show(): Promise<void> } }
+    await flush()
+    await choose(host, WORKING.characterId, 1)
+    await flush()
+    expect(noticeText()).toMatch(/no 2D context/i)
+
+    // A canvas element's context is decided once for that element, so the failure belongs to the
+    // element and not to the character. Hiding unmounts the sprite (§7.1's drawing scope), which
+    // means the window is shown again on a canvas that has never been asked.
+    await vm.lifecycle.hide()
+    await flush()
+    getContextSpy?.mockReturnValue(context2d)
+    await vm.lifecycle.show()
+    await flush()
+
+    expect(document.querySelector('.pet-sprite')).not.toBeNull()
+    expect(noticeText()).toBeNull()
   })
 })
 

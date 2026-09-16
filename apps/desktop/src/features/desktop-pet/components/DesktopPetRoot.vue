@@ -26,8 +26,9 @@ import type {
   PetWindowGateway,
 } from '../../../platform/gateways/pet-contracts'
 import type { AnimationConfig, SpriteClock } from '../rendering/animation-bindings'
-import type { ImageFactory, LoadFailure } from '../rendering/sprite-sheet'
+import type { ImageFactory } from '../rendering/sprite-sheet'
 import type { SheetPixelReader } from '../rendering/sprite-slicer'
+import { usePetDrawingFailure } from '../composables/use-pet-drawing-failure'
 import { usePetLifecycle } from '../composables/use-pet-lifecycle'
 import { usePetWindow } from '../composables/use-pet-window'
 import type { PetAppearanceView } from '../services/pet-appearance'
@@ -110,8 +111,6 @@ const window_ = props.connection
   : null
 
 const drawing = computed(() => lifecycle?.state.value.drawing ?? false)
-/** A sheet that failed to load, so the window can say so instead of looking idle for ever. */
-const sheetFailure = ref<string | null>(null)
 /** The task list, folded out on request (the menu's "Show tasks"). */
 const listOpen = ref(false)
 /** Where the right-click was, in window coordinates, and whether the menu is up. */
@@ -126,13 +125,27 @@ const animation = computed(() => appearance.value?.animation ?? props.animation)
 const mood = computed(() => window_?.mood.value ?? props.mood)
 const tasks = computed<readonly PetTaskProjection[]>(() => lifecycle?.state.value.tasks ?? [])
 
+/**
+ * The two states `PetSprite` reports when it cannot draw, and when they stop being true. Declared
+ * after `imageUrl` and `drawing` because those are what its invalidation is *about*: a failure
+ * belongs to one attempt, and it is cleared when that attempt's subject is replaced.
+ *
+ * Taken apart rather than kept as one object: the notice is a ref, and a ref nested in a plain
+ * object is not unwrapped in a template — `!drawingFailure.notice` is the truthiness of a ref.
+ */
+const {
+  notice: drawingFailure,
+  onLoadError: onSheetFailure,
+  onUnavailable: onSpriteUnavailable,
+} = usePetDrawingFailure({ imageUrl, drawing })
+
 const notice = computed<string | null>(() => {
   const state = lifecycle?.state.value
   if (!state) return 'This window has no host connection.'
   if (state.error) return state.error
   if (state.connecting) return null
   if (!state.enabled) return 'The pet is switched off.'
-  if (sheetFailure.value) return sheetFailure.value
+  if (drawingFailure.value) return drawingFailure.value
   // The host could not answer at all, which is not the same state as a host that answered
   // "nothing is chosen": the two look identical on screen unless they are kept apart here.
   if (window_?.appearanceError.value) return window_?.appearanceError.value ?? null
@@ -163,15 +176,6 @@ async function onMenuSelect(action: PetMenuAction): Promise<void> {
   // `window` means the action was this window's own surface, which here is the task list.
   if (outcome === 'window') listOpen.value = true
   menuAt.value = null
-}
-
-/**
- * Upstream threw from the sheet loader and left the pet frozen (§3.1's resource-failure rule,
- * D2's deviation 2). A window whose character will not load is a state, and stating it is the
- * difference between a pet that is broken and a pet that looks asleep.
- */
-function onSheetFailure(failure: LoadFailure): void {
-  sheetFailure.value = `The character's spritesheet did not load (${failure.phase}).`
 }
 
 onMounted(() => {
@@ -205,10 +209,13 @@ defineExpose({ lifecycle })
       @select="selectTask"
       @menu="openMenu"
     />
-    <!-- The sprite branch is refused once the sheet has failed, because a canvas that will never
-         be painted is worse than a sentence: it looks like a pet that is standing still. -->
+    <!-- The sprite branch is refused whenever the window has a failure to state about it, because a
+         canvas that will never be painted is worse than a sentence: it looks like a pet that is
+         standing still. That covers the sheet that will not load and the canvas with no 2D context,
+         and for the second it is also what makes the sentence reachable at all — the sentence is
+         drawn in `notice`'s own element, which this branch otherwise wins. -->
     <PetSprite
-      v-if="drawing && imageUrl && !sheetFailure"
+      v-if="drawing && imageUrl && !drawingFailure"
       :image-url="imageUrl"
       :state="mood"
       :width="spriteWidth"
@@ -218,6 +225,7 @@ defineExpose({ lifecycle })
       :create-image="createImage"
       :read-pixels="readPixels"
       :on-load-error="onSheetFailure"
+      :on-unavailable="onSpriteUnavailable"
     />
     <p
       v-else-if="notice"

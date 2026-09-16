@@ -258,11 +258,14 @@ const sheetUrl = arguments[0], size = arguments[1], done = arguments[arguments.l
 
   const gateway = memory.createMemoryPetGateway({ visible: true });
   let rooted = null;
+  // The settings page is another window, so a character changed there reaches this one the way
+  // use-pet-window hands it over: one prop, changed under the component that is already up.
+  const sheet = vue.ref(sheetUrl);
   const app = vue.createApp({
     render: () =>
       vue.h(root.default, {
         gateway,
-        imageUrl: sheetUrl,
+        imageUrl: sheet.value,
         width: size.width,
         height: size.height,
         ref: (value) => { rooted = value; },
@@ -270,13 +273,33 @@ const sheetUrl = arguments[0], size = arguments[1], done = arguments[arguments.l
   });
   app.mount(host);
 
+  const realGetContext = HTMLCanvasElement.prototype.getContext;
   window.__petRoot = {
     listeners: () => liveResize.size,
     canvas: () => Boolean(document.querySelector('#probe-root canvas.pet-sprite')),
+    // Scoped to this host: the page's own entry mounted a second root, and it has no host behind it.
+    notice: () => {
+      const el = document.querySelector('#probe-root .pet-root__notice');
+      return el ? el.textContent.trim() : null;
+    },
+    choose: (url) => { sheet.value = url; },
+    refuseContext: (refuse) => {
+      HTMLCanvasElement.prototype.getContext = refuse
+        ? function (type, ...rest) {
+            // Only this host's canvases: the sheet slicing above draws on detached ones.
+            if (type === '2d' && this.closest('#probe-root')) return null;
+            return realGetContext.call(this, type, ...rest);
+          }
+        : realGetContext;
+    },
     hide: () => Promise.resolve(rooted && rooted.lifecycle ? rooted.lifecycle.hide() : null),
     show: () => Promise.resolve(rooted && rooted.lifecycle ? rooted.lifecycle.show() : null),
     unmount: () => Promise.resolve(app.unmount()),
-    restore: () => { window.addEventListener = add; window.removeEventListener = remove; },
+    restore: () => {
+      window.addEventListener = add;
+      window.removeEventListener = remove;
+      HTMLCanvasElement.prototype.getContext = realGetContext;
+    },
   };
   // The lifecycle asks the host two questions before it draws, and the sheet is a data URL whose
   // decode is asynchronous even so: a read taken before either commits measures an empty host and
@@ -304,6 +327,10 @@ const host = arguments[0], done = arguments[arguments.length - 1];
 const canvas = document.querySelector(host + ' canvas.pet-sprite');
 if (!canvas) { done({ ok: false, why: 'no sprite canvas in ' + host }); return; }
 const ctx = canvas.getContext('2d');
+// A canvas with no context is a reading this probe takes on purpose, and it has to come back as a
+// value the checks can print rather than as a driver error thrown from getImageData: an
+// instrument that throws where it should measure reports the same thing for every cause.
+if (!ctx) { done({ ok: false, why: 'the canvas has no 2D context' }); return; }
 const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
 const data = image.data;
 let opaque = 0, transparent = 0, hash = 2166136261;
@@ -443,6 +470,48 @@ function verify(results) {
       root.hidden.listeners === 0 &&
       root.gone.present === false &&
       root.gone.listeners === 0,
+  )
+
+  /*
+   * Recovery — the half of a failure that is about getting out of it, in the engine that ships. A
+   * state a window cannot leave is the defect this pair exists for: a sheet that failed once used to
+   * refuse the sprite branch for the rest of the window's life, so picking a working character drew
+   * nothing and the window said nothing about why.
+   */
+  // FAILS IF: the failure is not cleared when the sheet moves — the branch stays refused and the
+  // sentence stays up, which is how it read before the fix too. The *pair* discriminates: `broken`
+  // without `recovered` is a window that never noticed the character was broken.
+  run(
+    'a sheet that will not load is stated, and a character that loads draws again',
+    `broken: canvas ${root.broken.present}, notice ${JSON.stringify(root.broken.notice)}; recovered: canvas ${root.recovered.present}, opaque ${root.recovered.digest?.opaque}, notice ${JSON.stringify(root.recovered.notice)}`,
+    root.broken.present === false &&
+      /did not load/.test(root.broken.notice ?? '') &&
+      root.recovered.present === true &&
+      root.recovered.digest?.ok === true &&
+      root.recovered.digest.opaque > 0 &&
+      root.recovered.notice === null,
+  )
+  // FAILS IF: nothing consumes `onUnavailable` — the state `PetSprite` has announced since D2 and
+  // that this window did not pass a callback for, which leaves an inert canvas and no sentence. The
+  // `restored` half is the other direction: a window that kept the sentence would refuse a canvas
+  // that can be painted, and a report that outlives its cause is as wrong as none at all.
+  run(
+    'a canvas with no 2D context is stated, and a canvas that has one draws again',
+    `refused: canvas ${root.unavailable.present}, notice ${JSON.stringify(root.unavailable.notice)}; restored: canvas ${root.restored.present}, opaque ${root.restored.digest?.opaque}, notice ${JSON.stringify(root.restored.notice)}`,
+    root.unavailable.present === false &&
+      /no 2D context/.test(root.unavailable.notice ?? '') &&
+      root.restored.present === true &&
+      root.restored.digest?.ok === true &&
+      root.restored.digest.opaque > 0 &&
+      root.restored.notice === null,
+  )
+  // FAILS IF: `onUnavailable` starts firing when the canvas is fine — a sentence a user sees while
+  // everything works, which is how a real one gets ignored. These three are that same window with
+  // nothing wrong with it.
+  run(
+    'and the working window states nothing at all',
+    `up ${JSON.stringify(up.notice)}, re-shown ${JSON.stringify(again.notice)}, hidden ${JSON.stringify(root.hidden.notice)}`,
+    up.notice === null && again.notice === null && root.hidden.notice === null,
   )
 
   /*
@@ -616,10 +685,12 @@ async function main() {
     if (!rootMounted?.ok) throw new Error(`the root mount failed: ${rootMounted?.why}`)
 
     const readRoot = async (name) => {
-      const present = await wd.execute('return window.__petRoot.canvas();')
-      const listeners = await wd.execute('return window.__petRoot.listeners();')
+      // One page read, not three: three round-trips can describe three different moments.
+      const [present, listeners, notice] = await wd.execute(
+        'const r = window.__petRoot; return [r.canvas(), r.listeners(), r.notice()];',
+      )
       const digest = present ? await wd.executeAsync(DIGEST, ['#probe-root']) : null
-      results.root[name] = { present, listeners, digest }
+      results.root[name] = { present, listeners, notice, digest }
     }
 
     stage('root: while it is up')
@@ -630,6 +701,36 @@ async function main() {
     stage('root: shown again')
     await wd.executeAsync(ROOT_ACTION, ['show'])
     await readRoot('again')
+
+    // Read on a window that was already up — one opened *on* a broken character is a rarer shape of
+    // this defect than one that breaks under the user — and settled by the 500ms the first mount
+    // gets, because the re-render, the load and its verdict all land inside it.
+    const chooseSheet = async (url) => {
+      await wd.execute(`window.__petRoot.choose(${JSON.stringify(url)}); return true;`)
+      await sleep(500)
+    }
+    const cycle = async () => {
+      await wd.executeAsync(ROOT_ACTION, ['hide'])
+      await wd.executeAsync(ROOT_ACTION, ['show'])
+    }
+
+    stage('root: a sheet that will not load')
+    await chooseSheet('/__no-such-character__.png')
+    await readRoot('broken')
+    stage('root: the user picks a character that loads')
+    await chooseSheet(rootSheet)
+    await readRoot('recovered')
+    // §7.1 unmounts the sprite on hide, so being shown again is a canvas that has never been asked
+    // for a context — which is the retry, and a context refused for an element is refused for good.
+    stage('root: a canvas whose 2D context is refused')
+    await wd.execute('window.__petRoot.refuseContext(true); return true;')
+    await cycle()
+    await readRoot('unavailable')
+    stage('root: the context is back')
+    await wd.execute('window.__petRoot.refuseContext(false); return true;')
+    await cycle()
+    await readRoot('restored')
+
     stage('root: unmounted')
     await wd.executeAsync(ROOT_ACTION, ['unmount'])
     await readRoot('gone')
