@@ -773,4 +773,56 @@ describe('memory agent gateway', () => {
       code: 'runtime-unavailable',
     })
   })
+
+  it('answers a capability row for every feature, unverified until a script says otherwise', async () => {
+    // The default is the truthful one for a double: nothing here has talked to an engine, so
+    // nothing may be `available` (§3.4's row: a capability nobody observed is not one to report as
+    // present). What a test can move is the finding, one feature at a time.
+    const { agent, session } = await openAgent()
+    const reports = await agent.capabilities(session)
+
+    expect(reports.map((report) => report.feature)).toEqual([
+      'session-resume',
+      'slash-commands',
+      'model-selection',
+      'image-attachments',
+      'audio-attachments',
+      'session-config-options',
+      'embedded-context',
+    ])
+    for (const report of reports) {
+      expect(report.declared).toBe('unverified')
+      expect(report.finding.status).toBe('unverified')
+    }
+  })
+
+  it('reports the findings a test declares, and refuses a handle from another runtime', async () => {
+    const agent = createMemoryAgentGateway({
+      agentId: 'memory',
+      profileId: 'default',
+      capabilities: {
+        'slash-commands': { status: 'available' },
+        'audio-attachments': { status: 'unavailable', detail: 'the engine reported no audio' },
+      },
+    })
+    await agent.start()
+    const session = await agent.openSession({ vaultId: 'memoir://demo', cwd: '/vault' })
+
+    const reports = await agent.capabilities(session)
+    expect(reports.find((report) => report.feature === 'slash-commands')?.finding).toEqual({
+      status: 'available',
+    })
+    expect(reports.find((report) => report.feature === 'audio-attachments')?.finding).toEqual({
+      status: 'unavailable',
+      detail: 'the engine reported no audio',
+    })
+    // A handle check, not an engine call: the rows are state about a session, and a session of a
+    // previous runtime is refused everywhere else for the same reason. A second runtime is a new
+    // epoch, which is what makes the handle stale rather than merely unknown.
+    await agent.stop()
+    await agent.start()
+    await expect(failureOf(agent.capabilities(session))).resolves.toMatchObject({
+      code: 'session-stale',
+    })
+  })
 })

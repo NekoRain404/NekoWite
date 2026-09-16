@@ -42,6 +42,11 @@ mod agent_runtime {
     // the rest is reported as dead rather than being dead.
     #[allow(dead_code)]
     pub mod adapters;
+    // Included because `runs` and `session` both name it through `super::`: the command list an
+    // engine publishes is recorded as a capability fact (plan §3.4's row), so the two modules that
+    // carry it have to find it here too.
+    #[allow(dead_code)]
+    pub mod capabilities;
     pub mod config_edit;
     #[allow(dead_code)]
     pub mod events;

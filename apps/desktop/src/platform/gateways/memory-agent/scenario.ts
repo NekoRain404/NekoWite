@@ -9,6 +9,8 @@
  */
 
 import type {
+  AgentCapabilityFeature,
+  AgentCapabilityFinding,
   AgentConfigChoice,
   AgentConfigOption,
   AgentEventKind,
@@ -79,6 +81,31 @@ export interface MemoryAgentOptions {
    * cannot fill a gap.
    */
   replayLimit?: number
+  /**
+   * What the capability report says about a feature, for the features a test names.
+   *
+   * Empty by default, and the empty default is the truthful one: this double has
+   * measured nothing — there is no engine behind it — so every feature is
+   * `unverified` until a test says otherwise (§3.4's row: a capability nobody
+   * observed is not one to report as available). The declaration half is always
+   * `unverified` here for the same reason: a double has no installation to declare
+   * anything.
+   */
+  capabilities?: Partial<Record<AgentCapabilityFeature, AgentCapabilityFinding>>
+}
+
+/**
+ * The finding a feature gets when nothing declared one.
+ *
+ * Exported because the gateway composing this scenario is a different module: a default that a page
+ * reads as a row belongs beside the table it comes from, not beside the loop that adds up the
+ * report — the same split `memory-pet/scenario.ts` makes for its own findings.
+ */
+export function unverifiedCapability(feature: AgentCapabilityFeature): AgentCapabilityFinding {
+  return {
+    status: 'unverified',
+    detail: `${feature} has not been measured: nothing in this double has talked to an engine`,
+  }
 }
 
 /**

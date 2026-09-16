@@ -23,7 +23,10 @@ const listenMock = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }))
 
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import {
+  AGENT_CAPABILITY_FEATURES,
   AgentFailure,
   readAgentEvent,
   type AgentEvent,
@@ -94,6 +97,33 @@ const TOOL_COMPLETED = {
     content: [{ type: 'content', content: { type: 'text', text: '# P0 probe workspace' } }],
     rawOutput: { output: '<path>…</path>' },
   },
+}
+
+/** The engine's option list as the runtime forwards it: `agent_runtime::events::normalize_update`
+ *  maps the schema's flattened `type`/`currentValue` (and a select's possibly grouped choices)
+ *  into this payload, which is the one `readConfigChanged` reads.
+ *
+ *  The *same* JSON is asserted on the other side
+ *  (`tests/agent_runtime_test.rs`, `a_config_option_update_is_mapped_into_the_contracts_payload`),
+ *  which is what makes these one shape rather than two readings of one fact — the failure this
+ *  suite exists for. */
+const CONFIG_CHANGED = {
+  options: [
+    {
+      id: 'model',
+      name: 'Model',
+      description: 'Which model answers',
+      value: {
+        kind: 'select',
+        current: 'fake/model-b',
+        choices: [
+          { value: 'fake/model-a', name: 'Model A' },
+          { value: 'fake/model-b', name: 'Model B', description: 'the fast one' },
+        ],
+      },
+    },
+    { id: 'fast', name: 'Fast mode', value: { kind: 'toggle', current: true } },
+  ],
 }
 
 function eventOf(mapped: AgentEvent | AgentFailure): AgentEvent {
@@ -228,6 +258,34 @@ describe('the mapping from the runtime’s frames to the contract', () => {
     expect((failed.payload as { code: string }).code).toBe('certificate-untrusted')
   })
 
+  it('reads the engine’s own option list, which the runtime now forwards', () => {
+    // `config-changed` is the kind the panel's config state is built from, and until the runtime
+    // produced one the reader below had never been fed a frame by anything but a test. `runId` is
+    // null because a config change is a fact about the *session*: the host stamps it that way and
+    // the reducer refuses a turn-scoped kind with no turn, so the two must agree here.
+    const event = eventOf(
+      mapHostFrame(frame('config-changed', CONFIG_CHANGED, { runId: null }), new ToolProjection()),
+    )
+    expect(event.kind).toBe('config-changed')
+    expect(event.runId).toBeNull()
+    expect(event.payload).toEqual(CONFIG_CHANGED)
+
+    // And the shape the engine itself sends is *not* this one — which is why the runtime maps
+    // it. Passed through, the schema's flattened `type`/`currentValue` is refused here rather
+    // than drawn as an option with no choices and no current value.
+    const wire = failureOf(
+      mapHostFrame(
+        frame(
+          'config-changed',
+          { options: [{ id: 'model', name: 'Model', type: 'select', currentValue: 'fake/model-b' }] },
+          { runId: null },
+        ),
+        new ToolProjection(),
+      ),
+    )
+    expect(wire.code).toBe('invalid-response')
+  })
+
   it('reports a frame it cannot read as a failure of the run, never as silence', () => {
     // The failure this adapter exists to prevent. The envelope is good, the payload is not,
     // and the frame belongs to a run: the run's ending arrives as an event, so a frame
@@ -334,6 +392,24 @@ describe('the window’s half of the IPC', () => {
 // The gateway: a fake IPC in place of the window's
 // ---------------------------------------------------------------------------
 
+/**
+ * What `agent_session_capabilities` answers, in the shape `commands/agent_capabilities.rs` returns:
+ * `CapabilityReport` with `#[serde(rename_all = "camelCase")]` on the struct and a `status`-tagged
+ * finding. One row per feature, which is what the host's own `HostFeature::ALL` drives.
+ */
+function capabilityAnswer(
+  finding: (feature: string) => unknown = (feature) =>
+    feature === 'image-attachments'
+      ? { status: 'available' }
+      : { status: 'unverified', detail: `${feature} has not been negotiated` },
+): unknown[] {
+  return AGENT_CAPABILITY_FEATURES.map((feature) => ({
+    feature,
+    declared: 'unverified',
+    finding: finding(feature),
+  }))
+}
+
 interface FakeIpc extends AgentIpc {
   /** Push a frame at the gateway as the host would. */
   push(frame: unknown): void
@@ -401,6 +477,10 @@ function fakeIpc(overrides: Partial<AgentIpc> = {}): FakeIpc {
     async snapshot(): Promise<AgentHostSnapshot> {
       calls.push('snapshot')
       return { identity: IDENTITY, state: 'ready', runId: null, sequence: 0, events: [], permissions: [] }
+    },
+    async capabilities() {
+      calls.push('capabilities')
+      return capabilityAnswer()
     },
     async onEvent(listener) {
       registered.add(listener)
@@ -654,5 +734,97 @@ describe('the subscription', () => {
       code: 'permission-denied',
       message: 'permission request perm-1 is no longer open',
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The capability report
+// ---------------------------------------------------------------------------
+
+describe('the capability report', () => {
+  it('asks the host for the session’s report and hands every row on, declared beside finding', async () => {
+    const ipc = fakeIpc()
+    const gateway = createTauriAgentGateway({ vaultId: 'vault-1', ipc })
+    const session = await openSessionOn(gateway)
+
+    const reports = await gateway.capabilities(session)
+
+    expect(ipc.calls).toContain('capabilities')
+    expect(reports.map((report) => report.feature)).toEqual([...AGENT_CAPABILITY_FEATURES])
+    expect(reports.find((report) => report.feature === 'image-attachments')).toEqual({
+      feature: 'image-attachments',
+      declared: 'unverified',
+      finding: { status: 'available' },
+    })
+    // The two halves stay two fields: a report that merged them could not show the case this row
+    // exists for — a declaration the engine's own answer contradicts.
+    expect(reports.find((report) => report.feature === 'slash-commands')).toEqual({
+      feature: 'slash-commands',
+      declared: 'unverified',
+      finding: { status: 'unverified', detail: 'slash-commands has not been negotiated' },
+    })
+  })
+
+  it('refuses a report it cannot read, rather than showing a shorter one', async () => {
+    // Every arm below is a way the host could answer something this contract does not describe, and
+    // each one would reach a page as a *fact* if it were repaired on the way through: a row with no
+    // reason, a feature the window cannot render, and a report that simply left one out.
+    const unreadable: unknown[] = [
+      capabilityAnswer(() => ({ status: 'unavailable' })),
+      [{ feature: 'telepathy', declared: 'advertised', finding: { status: 'available' } }],
+      capabilityAnswer().slice(1),
+    ]
+    for (const answer of unreadable) {
+      const ipc = fakeIpc({ capabilities: async () => answer })
+      const gateway = createTauriAgentGateway({ vaultId: 'vault-1', ipc })
+      const session = await openSessionOn(gateway)
+      await expect(gateway.capabilities(session)).rejects.toMatchObject({
+        code: 'invalid-response',
+      })
+    }
+  })
+
+  it('refuses a report about a session this gateway did not open', async () => {
+    // The same boundary every session-scoped call passes: rows are state about a session, and a
+    // handle the book does not know is not one to answer about.
+    const ipc = fakeIpc()
+    const gateway = createTauriAgentGateway({ vaultId: 'vault-1', ipc })
+    const session = await openSessionOn(gateway)
+    // A second runtime instance: the handles of the first are stale rather than merely unknown
+    // (§6.2), and the report is refused before any call leaves the window.
+    await gateway.stop()
+    await gateway.start()
+
+    await expect(gateway.capabilities(session)).rejects.toMatchObject({ code: 'session-stale' })
+    expect(ipc.calls).not.toContain('capabilities')
+  })
+
+  it('names the features the host names, read off both sides', () => {
+    // The list is data: a page renders `feature` as it arrived rather than translating it, so a
+    // rename on either side is a page showing a name nothing produces. The Rust half is the
+    // authority (`HostFeature::ALL`) and this test reads its source, because a TypeScript test
+    // cannot import a Rust enum — the same guard `tauri-pet.test.ts` keeps over the care ledger.
+    const rust = readFileSync(
+      resolve(__dirname, '../../../src-tauri/src/agent_runtime/adapters/mod.rs'),
+      'utf8',
+    )
+    const start = rust.indexOf('pub const ALL: [HostFeature;')
+    expect(start, 'HostFeature::ALL is not declared in adapters/mod.rs').toBeGreaterThan(-1)
+    const list = rust.slice(start, rust.indexOf('];', start))
+    const variants = [...list.matchAll(/HostFeature::(\w+)/g)].map(([, variant]) => variant)
+    expect(variants.length, 'HostFeature::ALL lists no features').toBeGreaterThan(0)
+
+    // The spellings, from `as_str`, which is where the host decides what it calls them.
+    const asStr = rust.slice(rust.indexOf('pub fn as_str(&self)'))
+    const spelling = new Map(
+      [...asStr.matchAll(/HostFeature::(\w+) => "([a-z-]+)"/g)].map(([, variant, name]) => [
+        variant,
+        name,
+      ]),
+    )
+    expect(
+      variants.map((variant) => spelling.get(variant)),
+      'the contract’s feature list no longer matches the host’s',
+    ).toEqual([...AGENT_CAPABILITY_FEATURES])
   })
 })

@@ -135,6 +135,10 @@ export interface AgentIpc {
   cancel(sessionId: string): Promise<void>
   answerPermission(answer: AgentPermissionAnswerWire): Promise<void>
   snapshot(sessionId: string): Promise<AgentHostSnapshot>
+  /** §3.4's capability report for a session: the host's rows, unread here — the contract's reader
+   *  narrows them, the same way it narrows a frame, because what arrives is a foreign process's
+   *  answer either way. Deliberately `unknown` rather than a second declaration of the shape. */
+  capabilities(sessionId: string): Promise<unknown>
   /** Register a listener. Resolves with the removal of *that* registration. */
   onEvent(onFrame: (frame: unknown) => void): Promise<() => void>
 }
@@ -151,6 +155,8 @@ export function createTauriAgentIpc(): AgentIpc {
     cancel: (sessionId) => invoke<void>('agent_cancel_run', { sessionId }),
     answerPermission: (answer) => invoke<void>('agent_permission_answer', { answer }),
     snapshot: (sessionId) => invoke<AgentHostSnapshot>('agent_session_snapshot', { sessionId }),
+    capabilities: (sessionId) =>
+      invoke<unknown>('agent_session_capabilities', { sessionId }),
     onEvent: (onFrame) => listen<unknown>(AGENT_EVENT_CHANNEL, (event) => onFrame(event.payload)),
   }
 }

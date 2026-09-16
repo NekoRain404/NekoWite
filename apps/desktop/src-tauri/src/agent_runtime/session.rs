@@ -23,6 +23,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use super::acp_transport::{EngineConnection, EngineEvents, PermissionRequest};
+use super::capabilities::{Handshake, SessionCapabilities};
 use super::fs_capability::{ChangeRecord, FsCapability, VaultFiles};
 use super::events::{
     AgentEventEnvelope, AgentEventKind, AgentFailureCode, AgentIdentity, TransportError,
@@ -211,6 +212,19 @@ pub struct AgentRuntime {
     pub(super) fs: Arc<FsCapability>,
     pub(super) emitter: Emitter,
     pub(super) run_counter: AtomicU64,
+    /// What the engine has reported about itself, per session.
+    ///
+    /// Keyed by the engine's own session id and written by whoever heard first: the session
+    /// response, or the command list the engine publishes right after it — which P0 §2.2 measured
+    /// arriving as a notification and which `runs` forwards even when the session is not registered
+    /// yet. So the entry is created by the reporter rather than only by [`Self::open_session`];
+    /// reads pass through [`Self::capabilities`], which answers only about sessions this host
+    /// registered, so an id the engine named but this host never opened is unreadable.
+    reported: Arc<Mutex<HashMap<String, SessionCapabilities>>>,
+    /// The handshake's answer, once per incarnation — the first of the two negotiations §3.4 names.
+    handshake: Mutex<Option<Handshake>>,
+    /// Serializes the handshake, so two sessions opened at once share one.
+    negotiating: tokio::sync::Mutex<()>,
 }
 
 impl AgentRuntime {
@@ -234,10 +248,13 @@ impl AgentRuntime {
             sequence: Arc::new(AtomicU64::new(0)),
             events: outgoing,
         };
+        let reported: Arc<Mutex<HashMap<String, SessionCapabilities>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         tokio::spawn(super::runs::dispatch_updates(
             events.updates,
             Arc::clone(&sessions),
+            Arc::clone(&reported),
             emitter.clone(),
         ));
         let fs = Arc::new(FsCapability::new(files));
@@ -254,6 +271,9 @@ impl AgentRuntime {
                 fs,
                 emitter,
                 run_counter: AtomicU64::new(0),
+                reported,
+                handshake: Mutex::new(None),
+                negotiating: tokio::sync::Mutex::new(()),
             },
             AgentRuntimeEvents {
                 incoming,
@@ -263,10 +283,36 @@ impl AgentRuntime {
     }
 
     /// Negotiates the protocol and returns the engine's answer.
+    ///
+    /// The answer is also this incarnation's capability evidence: §3.4's row makes the handshake
+    /// the first of the two negotiations that decide what is available at runtime, so what it
+    /// reported is kept here rather than dropped by a caller that only wanted the version.
     pub async fn initialize(
         &self,
     ) -> Result<agent_client_protocol::schema::v1::InitializeResponse, TransportError> {
-        self.connection.initialize(INITIALIZE_BOUND).await
+        let response = self.connection.initialize(INITIALIZE_BOUND).await?;
+        *self.handshake.lock().unwrap() = Some(Handshake::of(&response));
+        Ok(response)
+    }
+
+    /// The handshake, once per incarnation, before the first session.
+    ///
+    /// ACP's own rule, and the SDK's agent side enforces it in as many words: a connection's first
+    /// request is `initialize` ("first ACP request must be initialize"). §3.4's capability row is
+    /// where that matters to this app — the two negotiations decide what works, so no session is
+    /// opened before the first of them has been read.
+    ///
+    /// Idempotent by the fact rather than by a counter: once the answer is kept, a second caller
+    /// gets the first caller's result instead of a second `initialize` on one connection. The lock
+    /// is held across the await on purpose — it is what makes two sessions opened at once share
+    /// one handshake rather than race two.
+    async fn negotiate(&self) -> Result<(), SessionError> {
+        let _one_at_a_time = self.negotiating.lock().await;
+        if self.handshake.lock().unwrap().is_some() {
+            return Ok(());
+        }
+        self.initialize().await.map_err(SessionError::Transport)?;
+        Ok(())
     }
 
     /// Opens a session in `cwd`.
@@ -275,6 +321,7 @@ impl AgentRuntime {
     /// with none configured, the provider being chosen afterwards through the
     /// model option.
     pub async fn open_session(&self, cwd: &Path) -> Result<SessionInfo, SessionError> {
+        self.negotiate().await?;
         let response = self
             .connection
             .new_session(cwd, CONTROL_BOUND)
@@ -287,6 +334,19 @@ impl AgentRuntime {
             .and_then(|options| serde_json::to_value(options).ok())
             .unwrap_or_else(|| Value::Array(Vec::new()));
 
+        {
+            let handshake = self.handshake.lock().unwrap().clone();
+            let mut reported = self.reported.lock().unwrap();
+            // The entry may already exist: the engine publishes its command list the instant
+            // `session/new` returns, and that notification can be dispatched before this insert
+            // (measured ordering, `runs::forward_update`). What arrived early is kept, and the two
+            // facts this call owns are added to it.
+            let facts = reported.entry(session_id.clone()).or_default();
+            if let Some(handshake) = handshake {
+                facts.negotiated(handshake);
+            }
+            facts.opened(&response);
+        }
         self.sessions.lock().unwrap().insert(
             session_id.clone(),
             SessionSlot {
@@ -299,6 +359,24 @@ impl AgentRuntime {
             session_id,
             config_options,
         })
+    }
+
+    /// What the engine reported about `session_id`.
+    ///
+    /// `Err` for a session this host never opened — §6.1: answering about an id it did not receive
+    /// would be inventing one — and `Ok(None)` for a session it opened and has heard nothing about.
+    /// The two are different answers, and a caller that merged them would be telling a forged id
+    /// exactly what it tells a real one.
+    ///
+    /// Read fresh on every call rather than handed out as a value someone keeps: this is the
+    /// engine's own report for one incarnation, and a copy that outlived either would be a claim
+    /// about an engine nobody asked.
+    pub fn capabilities(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<SessionCapabilities>, SessionError> {
+        self.known_session(session_id)?;
+        Ok(self.reported.lock().unwrap().get(session_id).cloned())
     }
 
     /// Selects an option on an open session — in practice the model, which P0

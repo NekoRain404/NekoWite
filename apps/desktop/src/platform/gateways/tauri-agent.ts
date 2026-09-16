@@ -37,6 +37,8 @@
 
 import {
   AgentFailure,
+  readCapabilityReports,
+  type AgentCapabilityReport,
   type AgentEvent,
   type AgentGateway,
   type AgentIdentity,
@@ -286,6 +288,23 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
         const message = error instanceof Error ? error.message : String(error)
         throw new AgentFailure('permission-denied', message)
       }
+    },
+
+    async capabilities(session: AgentSession): Promise<readonly AgentCapabilityReport[]> {
+      // The handle check first, like every other session-scoped call: rows about a session this
+      // window did not open would be this adapter inventing a session's state.
+      book.recordFor(session)
+      const answer = await ipc.capabilities(session.sessionId)
+      const reports = readCapabilityReports(answer)
+      if (reports === null) {
+        // A rejected read, not an empty report: the panel's answer to this is "unreadable, try
+        // again", never "this engine can do none of it" — which is what a shorter list would say.
+        throw new AgentFailure(
+          'invalid-response',
+          'the host answered a capability report this window could not read',
+        )
+      }
+      return reports
     },
 
     async snapshot(session: AgentSession): Promise<AgentSessionSnapshot> {

@@ -20,10 +20,23 @@ PROMPT_ID=
 # from a real engine, and the SDK deserializes it into typed structs, so a
 # shape invented here would fail for reasons that say nothing about our code.
 INIT='{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"mcpCapabilities":{"http":true,"sse":true},"promptCapabilities":{"embeddedContext":true,"image":true},"sessionCapabilities":{"close":{},"fork":{},"list":{},"resume":{}}},"authMethods":[{"id":"fake-login","name":"Fake login"}],"agentInfo":{"name":"FakeAgent","version":"0.0.1"}}'
-NEW='{"sessionId":"ses_fake_1","configOptions":[{"id":"model","type":"select","currentValue":"fake/model-a","options":[{"value":"fake/model-a","name":"Model A"}]}]}'
-SET='{"configOptions":[{"id":"model","type":"select","currentValue":"fake/model-b","options":[{"value":"fake/model-b","name":"Model B"}]}]}'
+# The session response and the command list below carry every field the pinned schema
+# requires — `SessionConfigOption.name` and `AvailableCommand.description` are *not*
+# optional on the wire (`agent-client-protocol-schema` 1.7.0), and the SDK's
+# `skip-invalid-items` reader drops an item that omits one. A fixture that left them out
+# would answer `configOptions: []` and `availableCommands: []` to every test, which is a
+# session with no model catalog and a `/` menu with nothing in it — the exact shape a
+# capability report is asked about, arrived at by accident.
+NEW='{"sessionId":"ses_fake_1","configOptions":[{"id":"model","name":"Model","type":"select","currentValue":"fake/model-a","options":[{"value":"fake/model-a","name":"Model A"}]}]}'
+SET='{"configOptions":[{"id":"model","name":"Model","type":"select","currentValue":"fake/model-b","options":[{"value":"fake/model-a","name":"Model A"},{"value":"fake/model-b","name":"Model B"}]}]}'
+# The same new state again, this time as the notification ACP lets an engine send
+# (`config_option_update`). Both producers exist here on purpose: the reply alone is enough for
+# Zed and for this host's command answer, while the notification is the only route by which a
+# change the host did NOT ask for reaches the window — a host that read only one of them would
+# be wrong against the other.
+CFG='{"sessionId":"ses_fake_1","update":{"sessionUpdate":"config_option_update","configOptions":[{"id":"model","name":"Model","type":"select","currentValue":"fake/model-b","options":[{"value":"fake/model-a","name":"Model A"},{"value":"fake/model-b","name":"Model B"}]}]}}'
 DONE='{"stopReason":"end_turn","usage":{"inputTokens":11,"outputTokens":2,"totalTokens":13,"thoughtTokens":1}}'
-CMDS='{"sessionId":"ses_fake_1","update":{"sessionUpdate":"available_commands_update","availableCommands":[{"name":"init"},{"name":"review"}]}}'
+CMDS='{"sessionId":"ses_fake_1","update":{"sessionUpdate":"available_commands_update","availableCommands":[{"name":"init","description":"Start a session"},{"name":"review","description":"Review the working tree"}]}}'
 
 # `id_of` reads the JSON-RPC id out of a request and keeps it as it arrived,
 # quotes and all: the SDK numbers its requests with UUID strings, and a reply
@@ -113,6 +126,14 @@ while IFS= read -r line; do
                 cert-fail)
                     fail "$id" '{"code":-32603,"message":"Internal error: unknown certificate verification error","data":{"service":"session","errorName":"UnknownError"}}'
                     ;;
+                modest-handshake)
+                    # A handshake that reports none of the prompt capabilities the pinned engine
+                    # advertises. An installation's declaration describes the pinned version and is
+                    # only a start-time hint (plan §3.4), so this is the process that produces the
+                    # disagreement a capability report has to *show* rather than blur: what it
+                    # declares and what it negotiated are two different facts.
+                    reply "$id" '{"protocolVersion":1,"agentCapabilities":{"promptCapabilities":{}},"agentInfo":{"name":"FakeAgent","version":"0.0.1"}}'
+                    ;;
                 *)
                     reply "$id" "$INIT"
                     ;;
@@ -146,6 +167,9 @@ while IFS= read -r line; do
             ;;
         *'"method":"session/set_config_option"'*)
             reply "$id" "$SET"
+            if [ "$BEHAVIOUR" = config-update ]; then
+                notify "$CFG"
+            fi
             ;;
         *'"method":"session/prompt"'*)
             PROMPT_ID=$id
@@ -153,6 +177,15 @@ while IFS= read -r line; do
             # A thought chunk is part of the measured stream (P0 §2.3) and has
             # no host kind; the test asserts it does not reach the host.
             notify "{\"sessionId\":\"$SESSION\",\"update\":{\"sessionUpdate\":\"agent_thought_chunk\",\"content\":{\"type\":\"text\",\"text\":\"thinking\"}}}"
+            if [ "$BEHAVIOUR" = config-mid-run ]; then
+                # A config change the host did not ask for, while a turn is in flight: the run
+                # is still open when this frame arrives, which is the case the host has to
+                # decide about (a session fact must not be stamped with a run, and must not be
+                # able to fail one). The pause is what makes that ordering the deterministic
+                # one rather than a race with the reply below.
+                notify "$CFG"
+                sleep 0.3
+            fi
             if [ "$BEHAVIOUR" = stream ]; then
                 # Wait for the cancel and then keep talking: the text that
                 # arrives after a cancelled run is exactly what must not

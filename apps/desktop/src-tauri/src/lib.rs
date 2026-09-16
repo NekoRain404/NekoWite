@@ -240,6 +240,7 @@ pub fn run() {
             commands::agent::agent_set_config_option,
             commands::agent::agent_prompt,
             commands::agent::agent_session_snapshot,
+            commands::agent_capabilities::agent_session_capabilities,
             commands::agent::agent_permission_answer,
             commands::agent::agent_cancel_run,
             // The registry (T13a's page): which engines exist, and the two changes a window may

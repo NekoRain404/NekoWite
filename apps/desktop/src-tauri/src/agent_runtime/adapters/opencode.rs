@@ -79,6 +79,9 @@ impl AgentAdapter for OpenCode {
             HostFeature::ModelSelection => Capability::Advertised,
             // `promptCapabilities.image`, advertised in the measured handshake.
             HostFeature::ImageAttachments => Capability::Advertised,
+            // `promptCapabilities.embeddedContext`, advertised in the same
+            // measured handshake (P0 §2.1).
+            HostFeature::EmbeddedContext => Capability::Advertised,
             // `configOptions` measured in the `session/new` response.
             HostFeature::SessionConfigOptions => Capability::Advertised,
             // The same handshake advertises `promptCapabilities` with

@@ -47,6 +47,69 @@ export interface AgentModelOption {
   readonly name: string
 }
 
+/**
+ * The features a capability report has a row for, in the order the host reports them.
+ *
+ * One list, and it is the host's: the Rust `HostFeature::ALL` (`agent_runtime/adapters/mod.rs`),
+ * spelled with the same names `HostFeature::as_str` produces. They are *data* — a settings page
+ * renders them as they arrived rather than translating them — so the two sides sharing one spelling
+ * is the whole contract, and `tauri-agent.test.ts` reads the Rust file and holds the two lists to
+ * each other rather than trusting this copy.
+ */
+export const AGENT_CAPABILITY_FEATURES = [
+  'session-resume',
+  'slash-commands',
+  'model-selection',
+  'image-attachments',
+  'audio-attachments',
+  'session-config-options',
+  'embedded-context',
+] as const
+
+export type AgentCapabilityFeature = (typeof AGENT_CAPABILITY_FEATURES)[number]
+
+/**
+ * What the installation claims about a feature — `adapters::Capability`, arm for arm.
+ *
+ * A **claim**, not an answer: §3.4 makes the install declaration a start-time hint, and the
+ * handshake and the session negotiation are what decide what works. It is reported (a page that
+ * showed only the finding would be hiding that the pinned version was measured to differ), but it
+ * is never a route to {@link AgentCapabilityFinding} saying `available`.
+ *
+ * `unverified` is a third arm rather than a synonym for `not-advertised` because the two are
+ * different claims: "the pinned version is known not to do this" against "we have not measured this
+ * engine at all", and letting one stand in for the other is the failure the third state exists to
+ * prevent.
+ */
+export type AgentCapabilityDeclaration = 'advertised' | 'not-advertised' | 'unverified'
+
+/**
+ * What was established about one feature, from the engine's own report.
+ *
+ * Three arms, and the third is the one a two-armed version would lose — `available` is only ever
+ * built from something the engine reported, `unavailable` is a report that said no, and `unverified`
+ * is one that has not happened. Every non-available arm *requires* a detail, so a report cannot say
+ * a capability is missing and leave the user to guess why (§7.2 「不宣称…」), and the same shape is
+ * what D3's `PetCapabilityFinding` uses on the pet side.
+ */
+export type AgentCapabilityFinding =
+  | { readonly status: 'available' }
+  | { readonly status: 'unavailable' | 'unverified'; readonly detail: string }
+
+/**
+ * One feature, with both halves of §3.4's capability row kept apart.
+ *
+ * Two fields rather than one optimistic one: a page that merged them would be showing the
+ * installation's claim as the engine's answer, which is exactly what the row's 「安装声明仅用于启动提示」
+ * forbids. The finding is nested rather than intersected into this type so a consumer reads
+ * `report.finding.status` and narrows a plain union.
+ */
+export interface AgentCapabilityReport {
+  readonly feature: AgentCapabilityFeature
+  readonly declared: AgentCapabilityDeclaration
+  readonly finding: AgentCapabilityFinding
+}
+
 declare const sessionOwnership: unique symbol
 
 /**
@@ -179,6 +242,20 @@ export interface AgentGateway {
    * consent.
    */
   answerPermission(session: AgentSession, requestId: string, optionId: string): Promise<void>
+  /**
+   * What this engine reported about this session, feature by feature — §3.4's capability row, with
+   * the installation's declaration beside the negotiated answer.
+   *
+   * A **call** rather than a field on {@link AgentSession}, and the difference is the point: the
+   * answer is re-derived on every ask, while a value that arrived with the handle would be a claim
+   * about an engine nobody has asked since. A runtime that has been replaced has no answer left to
+   * give, and the host answers `unverified` for it rather than repeating what its process once
+   * reported (§3.4: 「重连和版本变化后重新检测」).
+   *
+   * A session this gateway did not open is rejected with `session-stale`, like every other
+   * session-scoped call — never answered with rows, which would be inventing a session's state.
+   */
+  capabilities(session: AgentSession): Promise<readonly AgentCapabilityReport[]>
   /** Read the session's state and the point a subscription continues from. */
   snapshot(session: AgentSession): Promise<AgentSessionSnapshot>
   /**

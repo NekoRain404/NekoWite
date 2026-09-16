@@ -9,6 +9,8 @@
 //! a caller asking "what can this engine do" must not have to know an engine's
 //! name to ask it.
 
+use serde::Serialize;
+
 pub mod generic_acp;
 pub mod opencode;
 
@@ -56,19 +58,43 @@ pub enum HostFeature {
     /// The engine's own session config options (§6.3: the option ids are the
     /// engine's, and a host that assumes they exist invents them).
     SessionConfigOptions,
+    /// Notes, selections and other referenced context sent *inside* the prompt as
+    /// resource blocks (the handshake's `promptCapabilities.embeddedContext`; §7.1's
+    /// context list is what sends them). It is one of the three prompt capabilities
+    /// the handshake carries, and a report that dropped it would be answering about
+    /// two thirds of what the engine said about prompts.
+    EmbeddedContext,
 }
 
 impl HostFeature {
     /// Every feature, so a caller can render a complete limitation list instead
     /// of the ones it happened to remember.
-    pub const ALL: [HostFeature; 6] = [
+    pub const ALL: [HostFeature; 7] = [
         HostFeature::SessionResume,
         HostFeature::SlashCommands,
         HostFeature::ModelSelection,
         HostFeature::ImageAttachments,
         HostFeature::AudioAttachments,
         HostFeature::SessionConfigOptions,
+        HostFeature::EmbeddedContext,
     ];
+
+    /// The feature's own name, as the wire spells it.
+    ///
+    /// Data, not a translation key: a settings page renders it as it arrived
+    /// (T13's `RuntimeCapabilityRow.feature`), so the two sides of the IPC agree
+    /// on one spelling rather than each keeping its own.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            HostFeature::SessionResume => "session-resume",
+            HostFeature::SlashCommands => "slash-commands",
+            HostFeature::ModelSelection => "model-selection",
+            HostFeature::ImageAttachments => "image-attachments",
+            HostFeature::AudioAttachments => "audio-attachments",
+            HostFeature::SessionConfigOptions => "session-config-options",
+            HostFeature::EmbeddedContext => "embedded-context",
+        }
+    }
 }
 
 /// What an adapter declares about a feature.
@@ -79,7 +105,12 @@ impl HostFeature {
 /// reconnect. Nothing here may be renamed into "supported now", and the third
 /// state exists so that "we have not measured this engine" cannot be mistaken
 /// for either of the other two.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Serialized because the declaration travels beside the finding in the
+/// capability report ([`super::capabilities`]) — as its own field, which is the
+/// whole point: a page that shows both cannot read the claim as the answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Capability {
     /// The pinned engine version advertises this (see each adapter's source).
     Advertised,

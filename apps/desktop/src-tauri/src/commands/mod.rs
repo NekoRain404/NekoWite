@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod agent_capabilities;
 pub mod agent_registry;
 pub mod agent_settings;
 pub mod ai;

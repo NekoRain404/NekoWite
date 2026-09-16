@@ -21,7 +21,9 @@
  */
 
 import {
+  AGENT_CAPABILITY_FEATURES,
   AgentFailure,
+  type AgentCapabilityReport,
   type AgentEvent,
   type AgentGateway,
   type AgentIdentity,
@@ -37,6 +39,7 @@ import {
   type MemoryAgentOptions,
   type MemoryEvent,
   type MemoryRunScript,
+  unverifiedCapability,
 } from './memory-agent/scenario'
 import {
   answerPermissionOn,
@@ -245,6 +248,22 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
       optionId: string,
     ): Promise<void> {
       answerPermissionOn(engineCall(session), requestId, optionId, sessions.values())
+    },
+
+    async capabilities(session: AgentSession): Promise<readonly AgentCapabilityReport[]> {
+      // A handle check, not an engine call: `crash` must not hide the report, because the report is
+      // what a page draws to say what the engine could not do — and a session of a *previous*
+      // runtime is refused here exactly as it is everywhere else.
+      recordFor(session.sessionId)
+      const declared = options.capabilities ?? {}
+      // Every feature, from the contract's one list, in its order: a double that answered only the
+      // features a test named would be teaching a page to expect a short report, and the short
+      // report is the failure §3.4's row exists to prevent.
+      return AGENT_CAPABILITY_FEATURES.map((feature) => ({
+        feature,
+        declared: 'unverified',
+        finding: declared[feature] ?? unverifiedCapability(feature),
+      }))
     },
 
     async snapshot(session: AgentSession): Promise<AgentSessionSnapshot> {

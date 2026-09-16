@@ -290,23 +290,31 @@ pub async fn agent_open_session(
 }
 
 /// Moves one of the engine's own config options — in practice the model.
+///
+/// Answers the engine's own refreshed option list, in the shape `agent_open_session` answers
+/// the original one in (the schema's, as it came), so a caller never has to guess the new
+/// state or wait for an event that may not come. That is the reason Zed's equivalent returns
+/// `Vec<acp::SessionConfigOption>` rather than `()` (`crates/acp_thread/src/connection.rs:311`
+/// in the reference tree), and it is stricter here than there: the runtime's `set_config_option`
+/// is what stores the list on the session, and this answer is that same value rather than a
+/// second read of it.
+///
+/// It is *not* the contract's `config-changed` payload: that shape belongs to the event
+/// boundary, where an adapter maps it (`agent_runtime::events::normalize_update`), and this
+/// one is the same fact `AgentHostSession.config_options` carries.
 #[tauri::command]
 pub async fn agent_set_config_option(
     ipc: tauri::State<'_, AgentIpcState>,
     session_id: String,
     config_id: String,
     value: String,
-) -> Result<(), String> {
+) -> Result<serde_json::Value, String> {
     let session = ipc.session()?;
     session
         .runtime
         .set_config_option(&session_id, &config_id, &value)
         .await
-        .map_err(|error| error.failure_message())?;
-    // The engine's answer carries the new option list, and the runtime keeps it on the session
-    // (`session::SessionSlot`) — it is what a later snapshot or a re-open would be served from.
-    // The command answers nothing, because the contract's `selectModel` answers nothing.
-    Ok(())
+        .map_err(|error| error.failure_message())
 }
 
 /// Sends a turn. The answer is the host's run id; the turn's *ending* arrives as an event.

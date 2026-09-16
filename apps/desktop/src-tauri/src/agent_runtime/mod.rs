@@ -10,6 +10,9 @@
 //!   per-call timeouts, and the failure classification the SDK cannot do.
 //! - [`session`] — sessions: which engine session the host knows about.
 //! - [`runs`] — runs: one generation, and the single ending it is allowed.
+//! - [`capabilities`] — §3.4's capability row: the installation's declaration joined to
+//!   what the handshake and the session response actually reported. It is its own module
+//!   because the join is the *whole* of it — neither half may be answered from here.
 //! - [`events`] — the host envelope and failure vocabulary: the one place
 //!   protocol frames become the app's language, including what went wrong.
 //! - [`fs_capability`] — the client's file-system capability, so an agent write
@@ -56,6 +59,7 @@
 
 pub mod adapters;
 pub mod binary_registry;
+pub mod capabilities;
 pub mod config_edit;
 pub mod driver;
 pub mod events;

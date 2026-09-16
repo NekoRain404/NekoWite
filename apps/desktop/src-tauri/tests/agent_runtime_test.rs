@@ -26,6 +26,10 @@ use std::time::Duration;
 
 use std::sync::Arc;
 
+use agent_client_protocol::schema::v1::SessionUpdate;
+use serde_json::json;
+
+use agent_runtime::events::normalize_update;
 use agent_runtime::{
     AgentEventEnvelope, AgentEventKind, AgentFailureCode, AgentIdentity, AgentRuntime,
     AgentRuntimeEvents, EngineConnection, EngineLaunch, VaultFiles, env_pairs,
@@ -451,6 +455,161 @@ async fn cancelling_an_idle_session_is_not_an_error() {
 
     runtime.cancel(&session.session_id).await.expect("cancel");
     runtime.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// The engine's own options
+// ---------------------------------------------------------------------------
+
+/// One `session/update` as the pinned schema sends it.
+///
+/// Deserialized from JSON rather than built from Rust structs on purpose: what the mapping
+/// below has to survive is the *wire's* shape (`agent-client-protocol-schema` 1.7.0, v1), and
+/// a struct literal would agree with this crate's reading of that shape by construction.
+fn wire_update(frame: serde_json::Value) -> SessionUpdate {
+    serde_json::from_value(frame).expect("the pinned schema reads its own frame")
+}
+
+/// The engine's option list, as the contract's reader takes it (`readers/session.ts`,
+/// `readConfigChanged`): the discriminator on the *value* (`kind`), the current value under
+/// `current`, and a select's choices a flat list.
+#[test]
+fn a_config_option_update_is_mapped_into_the_contracts_payload() {
+    let update = wire_update(json!({
+        "sessionUpdate": "config_option_update",
+        "configOptions": [
+            {
+                "id": "model",
+                "name": "Model",
+                "description": "Which model answers",
+                "type": "select",
+                "currentValue": "fake/model-b",
+                "options": [
+                    { "value": "fake/model-a", "name": "Model A" },
+                    { "value": "fake/model-b", "name": "Model B", "description": "the fast one" }
+                ]
+            },
+            {
+                "id": "fast",
+                "name": "Fast mode",
+                "type": "boolean",
+                "currentValue": true
+            }
+        ]
+    }));
+
+    let (kind, payload) = normalize_update(&update).expect("an option list must be forwarded");
+
+    assert_eq!(kind, AgentEventKind::ConfigChanged);
+    assert_eq!(
+        payload,
+        json!({
+            "options": [
+                {
+                    "id": "model",
+                    "name": "Model",
+                    "description": "Which model answers",
+                    "value": {
+                        "kind": "select",
+                        "current": "fake/model-b",
+                        "choices": [
+                            { "value": "fake/model-a", "name": "Model A" },
+                            { "value": "fake/model-b", "name": "Model B", "description": "the fast one" }
+                        ]
+                    }
+                },
+                {
+                    "id": "fast",
+                    "name": "Fast mode",
+                    "value": { "kind": "toggle", "current": true }
+                }
+            ]
+        }),
+        "the window's reader accepts this shape and no other"
+    );
+}
+
+#[test]
+fn grouped_config_choices_are_flattened_in_the_engines_order() {
+    // The wire's choices are an untagged union — a flat list, or a list of groups of them —
+    // and the contract's `AgentConfigChoice` is one flat list. Flattening keeps the values and
+    // their order; the group's *name* has nowhere to go, which is the residual T4b §7 reported
+    // rather than something this mapping can decide.
+    let update = wire_update(json!({
+        "sessionUpdate": "config_option_update",
+        "configOptions": [{
+            "id": "model",
+            "name": "Model",
+            "type": "select",
+            "currentValue": "a",
+            "options": [
+                { "group": "anthropic", "name": "Anthropic", "options": [
+                    { "value": "a", "name": "A" },
+                    { "value": "b", "name": "B" }
+                ]},
+                { "group": "local", "name": "Runs here", "options": [
+                    { "value": "c", "name": "C" }
+                ]}
+            ]
+        }]
+    }));
+
+    let (kind, payload) = normalize_update(&update).expect("an option list must be forwarded");
+
+    assert_eq!(kind, AgentEventKind::ConfigChanged);
+    let choices = payload["options"][0]["value"]["choices"]
+        .as_array()
+        .expect("a select's choices are a list");
+    let values: Vec<&str> = choices
+        .iter()
+        .filter_map(|choice| choice["value"].as_str())
+        .collect();
+    assert_eq!(values, vec!["a", "b", "c"], "in the engine's own order");
+    assert!(
+        choices.iter().all(|choice| choice.get("group").is_none()),
+        "the group's name has nowhere to go in the contract's choice: {choices:?}"
+    );
+}
+
+#[test]
+fn an_option_list_with_no_options_is_still_a_list() {
+    // An engine may withdraw every option it offered, and the contract replaces the previous
+    // set wholesale: an empty list is a fact (`readConfigChanged` accepts it), while a missing
+    // one is a payload the window cannot read.
+    let update = wire_update(json!({
+        "sessionUpdate": "config_option_update",
+        "configOptions": []
+    }));
+
+    let (_, payload) = normalize_update(&update).expect("an empty list is still forwarded");
+
+    assert_eq!(payload, json!({ "options": [] }));
+}
+
+#[test]
+fn every_kind_is_spelled_the_way_the_contract_spells_it() {
+    // The envelope's `kind` is a *string* on the wire: serde renders it from the variant name
+    // (`#[serde(rename_all = "kebab-case")]`) while the contract's union is written out by hand
+    // in `agent-contracts/payloads.ts`, so the two can drift apart with both suites green — which
+    // is the failure this task's own predecessor found for `stopReason` (`runs.rs`,
+    // `wire_stop_reason`), one field over. This is the whole enum in one place, against the
+    // contract's own spellings; a kind added without its string fails here.
+    for (kind, spelling) in [
+        (AgentEventKind::TextDelta, "text-delta"),
+        (AgentEventKind::ToolUpdate, "tool-update"),
+        (AgentEventKind::PermissionRequest, "permission-request"),
+        (AgentEventKind::CommandsChanged, "commands-changed"),
+        (AgentEventKind::ConfigChanged, "config-changed"),
+        (AgentEventKind::FilesChanged, "files-changed"),
+        (AgentEventKind::RunFinished, "run-finished"),
+        (AgentEventKind::RunFailed, "run-failed"),
+    ] {
+        assert_eq!(
+            serde_json::to_value(kind).expect("a kind is a name"),
+            json!(spelling),
+            "{kind:?} must cross the wire under the contract's own name"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
