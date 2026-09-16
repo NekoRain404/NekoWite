@@ -154,6 +154,17 @@ function geometry(): { spriteRect: Rect | null; headroom: number } {
 
 onMounted(() => {
   const el = canvas.value
+  // Unreachable as this component is written, and kept anyway. The canvas is the template's only
+  // element, and Vue queues a template ref's assignment ahead of the mounted hook behind it
+  // (`setRef`'s job carries id -1, a `mounted` hook carries none), so `el` is always the element the
+  // component was mounted with. Removing this line would not make a missing canvas recover: it would
+  // replace "nothing happened" with a TypeError from `el.getContext`, which is the whole of what the
+  // return prevents. It is *not* a defence, either — nothing below recovers, every prop watcher is
+  // written `player?.…`, so a canvas that ever moved behind a `v-if` would leave an inert sprite
+  // with no error and no sentence anywhere. That edit needs this mount path rewritten around "the
+  // element may arrive later" (and the listener released when it leaves), not this guard kept as is.
+  // `e2e/webkit/pet-probe.mjs` drives the parent's own `v-if` and fails on the signature a firing
+  // guard leaves in WebKitGTK: a 300x150 backing store for a 320x420 box, no pixels, no listener.
   if (!el) return
   const context = el.getContext('2d')
   if (context) {

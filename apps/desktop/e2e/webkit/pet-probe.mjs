@@ -17,6 +17,9 @@
  *   5. `PetBubble` mounted in the same page with the six-row fixture, measured against the height
  *      cap and against the window — 「气泡不越屏」 has two axes and one of them is a pixel height, so
  *      Chromium's answer to it (`desktop-pet-tasks.spec.ts`) is not the engine's answer.
+ *   6. `DesktopPetRoot` — the component `desktop-pet-entry.ts` mounts, and the only thing that
+ *      mounts a sprite in the product — driven through a hide and a show, so the sprite is measured
+ *      on the parent's `v-if` rather than on a mount the probe performs itself.
  *
  *   node e2e/webkit/pet-probe.mjs            # JSON on stdout, verdict on stderr
  *   node e2e/webkit/pet-probe.mjs --keep     # leave the window up (debugging only)
@@ -45,6 +48,14 @@ const packageRoot = resolve(here, '..', '..')
 const PAGE = '/desktop-pet.html'
 /** The sprite box the probe mounts: upstream's 100% size (`index.html:12`, `main.ts:116-117`). */
 const SPRITE = { width: 160, height: 180 }
+/**
+ * The box `DesktopPetRoot` is mounted in, which is the window's own size.
+ *
+ * Bigger than `SPRITE` on purpose: the root draws the bubble above the character, so a host at the
+ * sprite's own height would leave the canvas at the bottom of a box the bubble had already filled.
+ * The sprite's *own* box is still `SPRITE` — `DesktopPetRoot` defaults `width`/`height` to it.
+ */
+const ROOT_BOX = { width: 320, height: 420 }
 /** The sheet: 8x9 cells of 24px, three frames drawn per row, with a transparent gutter between. */
 const SHEET = { cols: 8, rows: 9, cell: 24, frames: 3, inset: 4 }
 /** How long to wait for a frame to advance: the idle rate is 3fps, so 1.4s is four frames. */
@@ -200,6 +211,88 @@ const sprite = arguments[0], sheetSpec = arguments[1], win = arguments[2], done 
 `
 
 /**
+ * The pet window's own root, mounted the way the window mounts it.
+ *
+ * `DesktopPetRoot` is what `desktop-pet-entry.ts` hands `createApp`, and it is the only thing that
+ * mounts `PetSprite` in the product (`DesktopPetRoot.vue:210`, behind
+ * `drawing && imageUrl && !sheetFailure`). The sprite step above mounts the component *directly*,
+ * which is why it cannot say anything about that `v-if`: a probe that skips the parent cannot see a
+ * sprite the parent refuses to mount, and the branch that mounts it is where the canvas has to exist
+ * by the time `onMounted` runs.
+ *
+ * The host is a double (`memory-pet`, the one `perf/pet.bench.test.ts` drives the same root with):
+ * MiniBrowser has no Tauri behind it, so the *host* is the one thing that cannot be the product's
+ * here. Everything above it — the entry's root component, its lifecycle, the parent's `v-if`, the
+ * sprite's own mount — is.
+ *
+ * The window's listener bookkeeping is a `Set` of the handlers the window actually holds, not a
+ * count of calls: `PetContextMenu` removes three listeners it never added, which is what made an
+ * earlier `perf/pet.bench.test.ts` read 0 while the sprite's own listener was attached.
+ */
+const MOUNT_ROOT = `
+const sheetUrl = arguments[0], size = arguments[1], done = arguments[arguments.length - 1];
+(async () => {
+  const entry = await (await fetch('/src/app/desktop-pet-entry.ts')).text();
+  const vueUrl = entry.match(/["']([^"']*\\/deps\\/vue\\.js[^"']*)["']/)?.[1];
+  if (!vueUrl) { done({ ok: false, why: 'the dev server serves no vue dependency' }); return; }
+  const vue = await import(vueUrl);
+  const root = await import('/src/features/desktop-pet/components/DesktopPetRoot.vue');
+  const memory = await import('/src/platform/gateways/memory-pet.ts');
+
+  const liveResize = new Set();
+  const add = window.addEventListener, remove = window.removeEventListener;
+  window.addEventListener = function (type, handler) {
+    if (type === 'resize') liveResize.add(handler);
+    return add.apply(this, arguments);
+  };
+  window.removeEventListener = function (type, handler) {
+    if (type === 'resize') liveResize.delete(handler);
+    return remove.apply(this, arguments);
+  };
+
+  const host = document.createElement('div');
+  host.id = 'probe-root';
+  host.style.cssText = 'width:' + size.width + 'px;height:' + size.height +
+    'px;display:flex;flex-direction:column;justify-content:flex-end;overflow:hidden';
+  document.body.append(host);
+
+  const gateway = memory.createMemoryPetGateway({ visible: true });
+  let rooted = null;
+  const app = vue.createApp({
+    render: () =>
+      vue.h(root.default, {
+        gateway,
+        imageUrl: sheetUrl,
+        width: size.width,
+        height: size.height,
+        ref: (value) => { rooted = value; },
+      }),
+  });
+  app.mount(host);
+
+  window.__petRoot = {
+    listeners: () => liveResize.size,
+    canvas: () => Boolean(document.querySelector('#probe-root canvas.pet-sprite')),
+    hide: () => Promise.resolve(rooted && rooted.lifecycle ? rooted.lifecycle.hide() : null),
+    show: () => Promise.resolve(rooted && rooted.lifecycle ? rooted.lifecycle.show() : null),
+    unmount: () => Promise.resolve(app.unmount()),
+    restore: () => { window.addEventListener = add; window.removeEventListener = remove; },
+  };
+  // The lifecycle asks the host two questions before it draws, and the sheet is a data URL whose
+  // decode is asynchronous even so: a read taken before either commits measures an empty host and
+  // calls it a failure.
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  done({ ok: true });
+})().catch((error) => done({ ok: false, why: String((error && error.message) || error) }));
+`
+
+/** One of the root's own transitions, settled before the driver reads the page again. */
+const ROOT_ACTION = `
+const name = arguments[0], done = arguments[arguments.length - 1];
+window.__petRoot[name]().then(() => setTimeout(() => done(true), 400));
+`
+
+/**
  * What is on the canvas, as numbers.
  *
  * Alpha decides "drawn" (§12's 非空透明像素), the four channels decide "the same" — and the *sprite
@@ -207,8 +300,9 @@ const sprite = arguments[0], sheetSpec = arguments[1], win = arguments[2], done 
  * is compared against where the pet believes it is.
  */
 const DIGEST = `
-const canvas = document.querySelector('#probe-pet canvas.pet-sprite'), done = arguments[arguments.length - 1];
-if (!canvas) { done({ ok: false, why: 'no sprite canvas' }); return; }
+const host = arguments[0], done = arguments[arguments.length - 1];
+const canvas = document.querySelector(host + ' canvas.pet-sprite');
+if (!canvas) { done({ ok: false, why: 'no sprite canvas in ' + host }); return; }
 const ctx = canvas.getContext('2d');
 const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
 const data = image.data;
@@ -292,6 +386,63 @@ function verify(results) {
     'the hit test agrees with the pixels',
     `centre ${results.hit.centre} (alpha ${results.hit.centreAlpha}), corner ${results.hit.corner} (alpha ${results.hit.cornerAlpha})`,
     results.hit.centre === true && results.hit.corner === false,
+  )
+
+  /*
+   * The parent's `v-if` — the branch the product actually mounts the sprite through.
+   *
+   * `PetSprite`'s mount body is behind `if (!el) return`, and *if it ever fired* the sprite would be
+   * inert rather than absent: a backing store still at WebKit's 300x150 default (nothing sized it),
+   * no pixels (no player, no frame callback), no resize listener, and nothing in the window saying
+   * so — the parent's sentence covers a sheet that failed to load and not a canvas that never came.
+   * Every reading below is that signature inverted, so these four are a check on the guard as much
+   * as on the drawing: the sprite step earlier mounts the component directly and cannot see any of
+   * it, because a mount the probe performs itself never runs the branch that decides.
+   */
+  const root = results.root
+  const up = root.up
+  const again = root.again
+  // FAILS IF: the mount body did not run at all — the guard fired, or the parent stopped mounting
+  // the sprite. An unsized 300x150 backing store with 0 opaque pixels is that failure exactly. The
+  // box is `DesktopPetRoot`'s own (`it` forwards `width`/`height` to the sprite), which is why the
+  // reading is compared against the canvas's *client* box rather than against `SPRITE`.
+  run(
+    'the root mounts a sprite sized to its box and painted',
+    `backing ${up.digest?.backing.width}x${up.digest?.backing.height} for a ${up.digest?.client.width}x${up.digest?.client.height} css box (dpr ${up.digest?.dpr}), opaque ${up.digest?.opaque}`,
+    up.present === true &&
+      up.digest?.ok === true &&
+      up.digest.opaque > 0 &&
+      up.digest.backing.width === up.digest.client.width * up.digest.dpr &&
+      up.digest.client.width === ROOT_BOX.width &&
+      up.digest.client.height === ROOT_BOX.height,
+  )
+  // FAILS IF: the listener is registered after the guard and the guard fired, or a second one is
+  // left behind. One is the whole of what the sprite registers (`syncCanvasSize`).
+  run(
+    'and the window holds exactly one resize listener while it is up',
+    `listeners ${up.listeners}`,
+    up.listeners === 1,
+  )
+  // FAILS IF: the re-mount through the parent's `v-if` takes a path the first mount did not — a ref
+  // that is only set on the first render, or a player the second instance never builds.
+  run(
+    'a hide and a show re-mount it, and the second mount is as alive as the first',
+    `backing ${again.digest?.backing.width}x${again.digest?.backing.height}, opaque ${again.digest?.opaque}, listeners ${again.listeners}`,
+    again.present === true &&
+      again.digest?.ok === true &&
+      again.digest.opaque > 0 &&
+      again.digest.backing.width === up.digest.backing.width &&
+      again.listeners === 1,
+  )
+  // FAILS IF: the unmount stops giving the listener back (§7.1's 关闭/重开无泄漏), or the sprite
+  // outlives the branch that mounted it.
+  run(
+    'and the hidden window and the unmounted one hold neither listener nor canvas',
+    `hidden: canvas ${root.hidden.present}, listeners ${root.hidden.listeners}; unmounted: canvas ${root.gone.present}, listeners ${root.gone.listeners}`,
+    root.hidden.present === false &&
+      root.hidden.listeners === 0 &&
+      root.gone.present === false &&
+      root.gone.listeners === 0,
   )
 
   /*
@@ -387,7 +538,7 @@ async function main() {
   })
 
   const wd = new WebDriver(driverPort)
-  const results = { engine: null, page: null, states: {}, hit: {}, advanced: null, bubble: null }
+  const results = { engine: null, page: null, states: {}, hit: {}, advanced: null, root: {}, bubble: null }
   const watchdog = setTimeout(() => {
     process.stderr.write('\n[webkit-pet] watchdog: nothing finished in 300s\n')
     process.kill(process.pid, 'SIGKILL')
@@ -425,7 +576,7 @@ async function main() {
     )
 
     stage('digest: idle')
-    results.states.idle = await wd.executeAsync(DIGEST)
+    results.states.idle = await wd.executeAsync(DIGEST, ['#probe-pet'])
     // The two points the hit test is read at: the middle of the CSS box, and a corner the sprite's
     // own fit cannot reach (it is anchored bottom-centre inside the box).
     const points = { centre: { x: SPRITE.width / 2, y: SPRITE.height * 0.85 }, corner: { x: 2, y: 2 } }
@@ -434,15 +585,15 @@ async function main() {
 
     stage('wait a few frames')
     await sleep(FRAME_WAIT_MS)
-    results.advanced = await wd.executeAsync(DIGEST)
+    results.advanced = await wd.executeAsync(DIGEST, ['#probe-pet'])
 
     stage('digest: working and waiting')
     await wd.execute('window.__petProbe.setState("working"); return true;')
     await sleep(400)
-    results.states.working = await wd.executeAsync(DIGEST)
+    results.states.working = await wd.executeAsync(DIGEST, ['#probe-pet'])
     await wd.execute('window.__petProbe.setState("waiting"); return true;')
     await sleep(400)
-    results.states.waiting = await wd.executeAsync(DIGEST)
+    results.states.waiting = await wd.executeAsync(DIGEST, ['#probe-pet'])
     await wd.execute('window.__petProbe.setState("idle"); return true;')
     await sleep(400)
 
@@ -453,6 +604,38 @@ async function main() {
     results.hit.corner = await wd.execute(
       `return window.__petProbe.hitTest(${points.corner.x}, ${points.corner.y});`,
     )
+
+    // The parent's `v-if`, driven rather than assumed: the root is mounted with the sheet the sprite
+    // step above built, and then hidden and shown again, which unmounts and re-mounts the sprite
+    // through the same branch the product's window does. Run before the window is resized for the
+    // bubble: this step is about the canvas, not the viewport, and a 480x420 page is the one the
+    // sprite numbers above were taken on.
+    stage('mount the product root')
+    const rootSheet = await wd.execute('return window.__petProbe.sheetURL;')
+    const rootMounted = await wd.executeAsync(MOUNT_ROOT, [rootSheet, ROOT_BOX])
+    if (!rootMounted?.ok) throw new Error(`the root mount failed: ${rootMounted?.why}`)
+
+    const readRoot = async (name) => {
+      const present = await wd.execute('return window.__petRoot.canvas();')
+      const listeners = await wd.execute('return window.__petRoot.listeners();')
+      const digest = present ? await wd.executeAsync(DIGEST, ['#probe-root']) : null
+      results.root[name] = { present, listeners, digest }
+    }
+
+    stage('root: while it is up')
+    await readRoot('up')
+    stage('root: hidden')
+    await wd.executeAsync(ROOT_ACTION, ['hide'])
+    await readRoot('hidden')
+    stage('root: shown again')
+    await wd.executeAsync(ROOT_ACTION, ['show'])
+    await readRoot('again')
+    stage('root: unmounted')
+    await wd.executeAsync(ROOT_ACTION, ['unmount'])
+    await readRoot('gone')
+    // The window stand-in is put back before anything else runs on the page: a patched
+    // `addEventListener` left in place would change what the bubble step's own mounts register.
+    await wd.execute('window.__petRoot.restore(); return true;')
 
     // The bubble's cap is a fraction of the window's height, so the window has to be the character's
     // before the bubble means anything: the same 320px `window_host::CHARACTER_WINDOW_SIZE` builds.
