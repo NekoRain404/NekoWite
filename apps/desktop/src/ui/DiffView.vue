@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { X } from 'lucide-vue-next'
-import { diffStats, lineDiff } from '../services/diff'
+import { compareDocuments, DIFF_MAX_LINES } from '../services/diff'
 import { t } from '../i18n'
 
 const props = defineProps<{
@@ -18,9 +18,18 @@ const emit = defineEmits<{
   (e: 'close'): void
 }>()
 
-const ops = computed(() => lineDiff(props.current, props.history))
-const stats = computed(() => diffStats(ops.value))
-const identical = computed(() => stats.value.added === 0 && stats.value.removed === 0)
+const comparison = computed(() => compareDocuments(props.current, props.history))
+const ops = computed(() => comparison.value.ops)
+const stats = computed(() => comparison.value.stats)
+// Whether the two documents are the same, which the service answers over the
+// whole texts — never over `ops`, which stop at the row cap. Deriving it from
+// the rows (`added === 0 && removed === 0`) said "no differences" about a long
+// note that had changed below line 2000, and disabled Restore on it.
+const identical = computed(() => comparison.value.identical)
+/** The rows cover a prefix of a longer note: say so, or an empty row set reads
+ *  as a complete answer. Not shown for an identical pair: that answer was
+ *  computed over the whole text, so there is nothing partial about it. */
+const partial = computed(() => comparison.value.truncated && !comparison.value.identical)
 </script>
 
 <template>
@@ -70,6 +79,13 @@ const identical = computed(() => stats.value.added === 0 && stats.value.removed 
         {{ t('diff.restore') }}
       </button>
     </div>
+
+    <p
+      v-if="partial"
+      class="diff-partial"
+    >
+      {{ t('diff.partial', { n: DIFF_MAX_LINES }) }}
+    </p>
 
     <div
       v-if="identical"
@@ -182,6 +198,12 @@ const identical = computed(() => stats.value.added === 0 && stats.value.removed 
   padding: 12px;
   text-align: center;
   font-size: 11px;
+  color: var(--app-muted);
+}
+.diff-partial {
+  margin: 0;
+  padding: 0 8px 6px;
+  font-size: 10px;
   color: var(--app-muted);
 }
 .diff-scroll {

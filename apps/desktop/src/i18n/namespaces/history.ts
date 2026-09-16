@@ -23,6 +23,7 @@ export const history = {
       restore: 'Restore this version',
       restoreTitle: 'Replace current content with this historical version',
       identical: 'This version matches the current content, no differences',
+      partial: 'Only the first {n} lines are compared; changes after them are not listed',
     },
   },
   zh: {
@@ -48,6 +49,7 @@ export const history = {
       restore: '恢复此版本',
       restoreTitle: '用当前版本替换为该历史版本',
       identical: '该版本与当前内容一致，无差异',
+      partial: '仅对比前 {n} 行，其后的改动未列出',
     },
   },
 }
