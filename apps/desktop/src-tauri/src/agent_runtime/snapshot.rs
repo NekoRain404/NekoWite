@@ -58,11 +58,34 @@ impl Default for SessionLog {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// Why the last run ended, as far as this host can say — and deliberately not *whether* it did.
+///
+/// The two are different axes and the contract keeps them apart. "The turn ended" is settled by
+/// the frame's own kind, and it is what [`SessionState::Completed`] reports; "how it ended" is
+/// what this type holds, and it is the only place an ending the engine named and an ending nobody
+/// named can be told apart. A reader that folds them makes the second axis carry the first
+/// axis's confidence — which is what `_ => Completed` did, and what `run-finished` did not say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Ending {
+    /// An ending the engine named among the reasons this build knows, `cancelled` excepted
+    /// below. A ceiling (`max-tokens`, `max-turn-requests`) and a refusal are here, not in arms
+    /// of their own: the contract decided they "ended the way the turn was always going to end"
+    /// (`agent-event-apply.ts`'s `endStateFor`, and the reducer's cases pin it), and this type has
+    /// no consumer that could act on the difference — the reason itself travels in the frame.
     Completed,
     Cancelled,
     Failed,
+    /// An ending whose reason this build cannot state: the engine's own word for something this
+    /// version has no arm for, or a frame that states no usable reason at all.
+    ///
+    /// Its own arm rather than the `Completed` above, because "the turn ended" is all that was
+    /// said: `runs.rs` publishes an unfamiliar reason as the engine's own word (the pinned
+    /// schema's `StopReason` is `#[non_exhaustive]`, so this is a normal frame), the pet
+    /// projection reads the same frame as `Unknown` rather than `turn-finished`
+    /// (`task_projection::outcomes`), and the window's own reader reports `unrecognised`. All
+    /// three agree that the ending is *known to have happened* and *not known to be* anything
+    /// more; this arm saying `Completed` would be the one reader inventing an ending out of three.
+    Unrecognised,
 }
 
 /// What the view draws, as §6.2's state machine.
@@ -199,13 +222,11 @@ impl SessionSnapshots {
         match envelope.kind {
             // The run's ending is the one frame that changes what the view draws, and it is the
             // engine's own stop reason that says which ending it was: `cancelled` is the user's
-            // stop (or the engine refusing mid-turn), and everything else is a completed turn.
+            // stop (or the engine refusing mid-turn), the four other reasons the contract names
+            // are ordinary ends, and anything else is an ending this build cannot name.
             AgentEventKind::RunFinished => {
                 let stop_reason = envelope.payload.get("stopReason").and_then(Value::as_str);
-                log.ended = Some(match stop_reason {
-                    Some("cancelled") => Ending::Cancelled,
-                    _ => Ending::Completed,
-                });
+                log.ended = Some(ending_of(stop_reason));
             }
             AgentEventKind::RunFailed => log.ended = Some(Ending::Failed),
             _ => {}
@@ -257,12 +278,49 @@ impl SessionSnapshots {
     }
 }
 
+/// How one `run-finished` frame's stop reason reads to this module.
+///
+/// One spelling, and it is the contract's: `runs.rs` renders every reason — the schema's and an
+/// unfamiliar one — through the same `_` → `-` replacement before publishing, so a reason under
+/// some other spelling is a reason this host does not know rather than a second way of writing one
+/// it does. The pet projection reads the same value the same way and with the same total match
+/// (`task_projection::outcomes::state_from_stop_reason`), which is what keeps the two readers of
+/// one frame from answering differently about it.
+///
+/// The four known reasons an ordinary turn can end with are named one by one rather than caught by
+/// a fallback: a reason the protocol adds later is then `Unrecognised` — the honest reading — by
+/// construction, instead of being read as a completion by a `_` arm that was written when the
+/// vocabulary was the five it could see. What catches the rest is a single arm that says "this
+/// build cannot name it", so the fallback is the honest reading rather than the confident one.
+/// `None` — a frame that states no usable reason at all — is the same fact as a word this build
+/// does not know: no ending can be named. `runs.rs` always renders a string, so that input is not
+/// one the runtime's own frames produce; it is here so the match is total over what the reader can
+/// be handed.
+fn ending_of(stop_reason: Option<&str>) -> Ending {
+    match stop_reason {
+        Some("cancelled") => Ending::Cancelled,
+        Some("end-turn" | "max-tokens" | "max-turn-requests" | "refusal") => Ending::Completed,
+        Some(_) | None => Ending::Unrecognised,
+    }
+}
+
 impl SessionLog {
     fn state(&self) -> SessionState {
         match (self.run_id.is_some(), self.ended) {
             (_, Some(Ending::Cancelled)) => SessionState::Cancelled,
             (_, Some(Ending::Failed)) => SessionState::Failed,
-            (_, Some(Ending::Completed)) => SessionState::Completed,
+            // Two endings, one state, and only on *this* axis: a frame with `run-finished` as its
+            // kind has said the turn is over, and how it ended is not what this state reports —
+            // `outcome_of_snapshot` reads it that way ("a snapshot says a turn ended and cannot
+            // say how"), and the window's own reader maps its `unrecognised` arm here as well
+            // (`agent-event-apply.ts`'s `endStateFor`, with the reason kept in `lastResult`).
+            //
+            // A state of this host's own naming is the one answer that is not available: the
+            // window's `readHostState` refuses a state outside the contract's eight, and the
+            // refusal costs the whole snapshot rather than one field. So the uncertainty is
+            // carried where it can be — `Ending` — and the word the engine sent is left in the
+            // `run-finished` frame this log keeps, which is what a window replays and shows.
+            (_, Some(Ending::Completed | Ending::Unrecognised)) => SessionState::Completed,
             (true, None) => SessionState::Running,
             (false, None) => SessionState::Ready,
         }
@@ -359,8 +417,9 @@ mod tests {
 
         // The contract's spelling, because that is what `runs.rs` publishes: the SDK's `end_turn`
         // is normalised at the boundary and nothing downstream ever sees it. A fixture that fed
-        // this reader the engine's spelling would agree with `_ => Completed` today and would be
-        // the wrong frame for the first case that distinguishes the two endings.
+        // this reader the engine's spelling would be the wrong frame for the reading under test —
+        // `ending_of` knows the five names that cross the wire, and an unnormalised spelling is a
+        // reason this host does not know like any other.
         snapshots.record(&ended(0, "end-turn"));
         let done = snapshots.snapshot("ses-1", &[]).unwrap();
         assert_eq!(done.state, SessionState::Completed);
@@ -379,6 +438,70 @@ mod tests {
             serde_json::json!({ "code": "process-exited", "message": "gone" }),
         ));
         assert_eq!(snapshots.snapshot("ses-1", &[]).unwrap().state, SessionState::Failed);
+    }
+
+    /// The ending this snapshot recorded for `ses-1`, as this module holds it.
+    ///
+    /// Reached through the private map on purpose: the arm is the thing under test, and reading it
+    /// back through `state()` would only show the axis the fix deliberately leaves unchanged.
+    fn recorded_ending(snapshots: &SessionSnapshots) -> Option<Ending> {
+        snapshots
+            .sessions
+            .lock()
+            .unwrap()
+            .get("ses-1")
+            .and_then(|log| log.ended)
+    }
+
+    #[test]
+    fn an_ending_this_build_cannot_name_is_an_arm_of_its_own() {
+        // The word a live engine sent (P0 §6.3's `budget_exceeded`, respelled at the boundary by
+        // `runs.rs`), which the pinned schema's `#[non_exhaustive]` `StopReason` does not
+        // enumerate: a normal frame, not a corrupt one. It is *not* `Completed` — that arm means
+        // the engine named one of the reasons this build knows, and this frame named none of them.
+        // The pet projection reads the same value as `Unknown` and the window's reader as
+        // `unrecognised`; an arm here that said `Completed` would be the one reader out of three
+        // inventing an ending.
+        assert_eq!(ending_of(Some("budget-exceeded")), Ending::Unrecognised);
+        // A frame that states no usable reason at all says the same thing about *why*: nothing.
+        assert_eq!(ending_of(None), Ending::Unrecognised);
+        // And the other spelling of a reason this build knows is a reason it does not know: one
+        // spelling crosses this boundary (`runs.rs::wire_stop_reason`), so an engine's
+        // `snake_case` here is not a second way of writing `end-turn`.
+        assert_eq!(ending_of(Some("end_turn")), Ending::Unrecognised);
+
+        // Every reason the contract names keeps the arm it had, named one by one so that a sixth
+        // reason the protocol adds lands in `Unrecognised` rather than being read as a completion.
+        for reason in ["end-turn", "max-tokens", "max-turn-requests", "refusal"] {
+            assert_eq!(ending_of(Some(reason)), Ending::Completed, "{reason}");
+        }
+        assert_eq!(ending_of(Some("cancelled")), Ending::Cancelled);
+    }
+
+    #[test]
+    fn an_unknown_ending_says_the_turn_ended_and_keeps_the_engines_own_word() {
+        let snapshots = SessionSnapshots::new(identity(), 8);
+        snapshots.opened("ses-1");
+        snapshots.started("ses-1", "run-0");
+        snapshots.record(&ended(0, "budget-exceeded"));
+
+        // The recorded ending is the unknown one — and the state is the arm that says the turn is
+        // over, because that is the axis a `run-finished` frame settles. The two are not the same
+        // claim: this is the state the contract answers for the case (`endStateFor` in
+        // `agent-event-apply.ts`, and the pet's reading of a snapshot's `completed`), and a state
+        // of this host's own naming is the one answer the window cannot read at all.
+        assert_eq!(recorded_ending(&snapshots), Some(Ending::Unrecognised));
+        let snapshot = snapshots.snapshot("ses-1", &[]).expect("opened");
+        assert_eq!(snapshot.state, SessionState::Completed);
+        assert_eq!(snapshot.run_id.as_deref(), Some("run-0"), "the turn it is looking at");
+
+        // The why survives where a person can see it: the frame is kept as it was published, so a
+        // window replaying this tail reads the engine's own word out of it and shows it. The
+        // snapshot does not restate the word anywhere else — it is not a second source of truth,
+        // and a copy here would be a field no consumer reads.
+        let ending = snapshot.events.last().expect("the ending is in the tail");
+        assert_eq!(ending.kind, AgentEventKind::RunFinished);
+        assert_eq!(ending.payload["stopReason"], "budget-exceeded");
     }
 
     #[test]

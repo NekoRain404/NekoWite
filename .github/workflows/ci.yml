@@ -5,8 +5,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # No `with: version` here on purpose. The action reads `packageManager` from the root
+      # package.json (`pnpm@11.1.1`), and when both are given it refuses to run at all:
+      # "Multiple versions of pnpm specified". The field is the one that stays, because it is also
+      # what corepack and CONTRIBUTING.md pin a developer's local pnpm to.
       - uses: pnpm/action-setup@v4
-        with: { version: 11 }
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - run: pnpm install --frozen-lockfile

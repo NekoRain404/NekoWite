@@ -170,8 +170,9 @@ pub struct FrameOrder {
 impl FrameOrder {
     /// For a fact that came off no stream at all — a run's start, an answered permission, either
     /// of which the host reports from its own view rather than from a frame (§6.1). Zero is the
-    /// sequence no runtime ever assigns, so a ledger that counts these separately can tell one
-    /// from a frame.
+    /// sequence no runtime ever assigns — a stream's first frame is 1, which is what
+    /// `agent_runtime/session.rs`'s `FIRST_SEQUENCE` exists for — so a ledger that counts these
+    /// separately can tell one from a frame.
     pub(super) fn off_stream() -> Self {
         Self {
             sequence: 0,

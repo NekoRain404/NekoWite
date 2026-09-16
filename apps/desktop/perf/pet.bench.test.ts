@@ -168,16 +168,25 @@ describe('the pet window: opening and closing it', () => {
     // The window's own listener bookkeeping, so a leak is attributable rather than inferred from the
     // timer count alone. `resize` is the one `PetSprite` registers (`syncCanvasSize`), and the one
     // §7.3's resize handling would leak first.
-    let resizeListeners = 0
+    //
+    // A set of live handlers rather than a call counter, because the two are not the same number and
+    // this tree is where they part: `removeEventListener` for a listener that was never added is a
+    // no-op in the DOM, and `PetContextMenu` makes exactly that call — its `open` watcher runs with
+    // `immediate: true`, so every mount detaches the three viewport listeners it has not attached.
+    // Counted per call that is -1, and the assertion below then reads 0 while the sprite's listener
+    // is up, which is a failure that accuses the component of a defect the window does not have. A
+    // set is also what the DOM means by registering twice: one listener. What it counts is what the
+    // window holds, so an add with no matching remove is a leak it can still see.
+    const liveResize = new Set<unknown>()
     const add = window.addEventListener
     const remove = window.removeEventListener
-    window.addEventListener = function (this: Window, type: string, ...rest: unknown[]) {
-      if (type === 'resize') resizeListeners += 1
-      return (add as unknown as (t: string, ...a: unknown[]) => void).call(this, type, ...rest)
+    window.addEventListener = function (this: Window, type: string, handler: unknown, ...rest: unknown[]) {
+      if (type === 'resize') liveResize.add(handler)
+      return (add as unknown as (t: string, h: unknown, ...a: unknown[]) => void).call(this, type, handler, ...rest)
     } as unknown as typeof window.addEventListener
-    window.removeEventListener = function (this: Window, type: string, ...rest: unknown[]) {
-      if (type === 'resize') resizeListeners -= 1
-      return (remove as unknown as (t: string, ...a: unknown[]) => void).call(this, type, ...rest)
+    window.removeEventListener = function (this: Window, type: string, handler: unknown, ...rest: unknown[]) {
+      if (type === 'resize') liveResize.delete(handler)
+      return (remove as unknown as (t: string, h: unknown, ...a: unknown[]) => void).call(this, type, handler, ...rest)
     } as unknown as typeof window.removeEventListener
 
     try {
@@ -200,7 +209,7 @@ describe('the pet window: opening and closing it', () => {
         expect(whileUp.subscriptions, 'a visible pet listens to the host').toBe(2)
         expect(whileUp.holds, 'and holds nothing of its own beyond them').toBe(0)
         expect(mounted.clock.outstanding(), 'the sprite schedules one frame at a time').toBe(1)
-        expect(resizeListeners, 'the sprite watches the window while it is up').toBe(1)
+        expect(liveResize.size, 'the sprite watches the window while it is up').toBe(1)
 
         mounted.app.unmount()
         await flush()
@@ -211,7 +220,7 @@ describe('the pet window: opening and closing it', () => {
         const after = lifecycle.counts()
         expect(after.subscriptions, `cycle ${cycle}: subscriptions are given back`).toBe(0)
         expect(mounted.clock.outstanding(), `cycle ${cycle}: no frame timer survives`).toBe(0)
-        expect(resizeListeners, `cycle ${cycle}: the resize listener is released`).toBe(0)
+        expect(liveResize.size, `cycle ${cycle}: the resize listener is released`).toBe(0)
         mounted.host.remove()
       }
       record('pet-window-50-cycles', now() - start)
@@ -221,7 +230,7 @@ describe('the pet window: opening and closing it', () => {
     }
 
     console.log(
-      `[pet-perf] mounted: ${mountedSubscriptions} subscriptions, ${mountedTimers} frame timer; after ${cycles} cycles: ${resizeListeners} resize listeners`,
+      `[pet-perf] mounted: ${mountedSubscriptions} subscriptions, ${mountedTimers} frame timer; after ${cycles} cycles: ${liveResize.size} resize listeners`,
     )
   })
 

@@ -74,7 +74,10 @@ describe('the pet’s task request', () => {
 
     // A missing field, an empty one, a null and a bare string: each would stringify into a key no
     // session answers to, and the consumer's `focus` takes any string.
-    const { runId: _runId, ...withoutRun } = KEY
+    // `delete` rather than rest-destructuring: this config keeps `no-unused-vars` at its default,
+    // without `ignoreRestSiblings`, so the discarded binding is an error rather than an idiom.
+    const withoutRun: Partial<PetTaskKey> = { ...KEY }
+    delete withoutRun.runId
     for (const payload of [withoutRun, { ...KEY, sessionId: '' }, null, 'pet-open-task', 42]) {
       delivered[0]?.({ payload })
     }

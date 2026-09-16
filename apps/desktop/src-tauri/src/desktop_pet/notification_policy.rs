@@ -272,7 +272,9 @@ impl NotificationPolicy {
         // replay nor a gap, and it must not move the mark: the number would be one the engine never
         // sent, and the next real frame would then be reported as following a hole that never
         // existed. Zero is the whole of the distinction, which is why the projection mints it for
-        // exactly these facts and for nothing else.
+        // exactly these facts and for nothing else — and why a stream's first frame is 1 rather
+        // than 0 (`agent_runtime/session.rs`'s `FIRST_SEQUENCE`): nothing off the wire carries the
+        // number this branch reads as "not off the wire".
         if fact.sequence != 0 {
             match self
                 .history

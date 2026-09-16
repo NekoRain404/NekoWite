@@ -392,7 +392,7 @@ defineExpose({ settle })
   flex: 0 1 auto;
   min-width: 0;
   color: var(--app-muted);
-  font-family: var(--app-mono, monospace);
+  font-family: var(--app-mono-font, monospace);
   font-size: 10px;
   overflow-wrap: anywhere;
 }

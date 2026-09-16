@@ -37,6 +37,8 @@
 //! New dependencies: none. `AppManifest` and `try_build` are `tauri-build`'s own, already a
 //! build-dependency.
 
+use std::{env, path::PathBuf};
+
 use tauri_build::{AppManifest, Attributes};
 
 /// Every command in `lib.rs`'s `invoke_handler!`, in the same order and grouped the same way.
@@ -122,6 +124,124 @@ const COMMANDS: &[&str] = &[
 ];
 
 fn main() {
+    check_sidecar();
     tauri_build::try_build(Attributes::new().app_manifest(AppManifest::new().commands(COMMANDS)))
-        .expect("the application's ACL manifest builds");
+        .expect("Tauri's build helpers (config, ACL app manifest, resources) succeed");
+}
+
+/// The file `bundle.externalBin` names, at the path Tauri looks for it.
+///
+/// `tauri.conf.json` says `binaries/opencode`, and Tauri appends the target triple itself — plus
+/// `.exe` on Windows — in `tauri_utils::resources::external_binaries`, which `tauri-build` does not
+/// re-export, so the rule is mirrored here instead of imported. A wrong path here is not silent:
+/// the check below names the file it looked for, and `tauri-build`'s own copy step would still fail
+/// on the file the config really names.
+fn sidecar_path() -> PathBuf {
+    let triple = env::var("TARGET").expect("cargo sets TARGET for build scripts");
+    let extension = if triple.contains("windows") {
+        ".exe"
+    } else {
+        ""
+    };
+    PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR"))
+        .join("binaries")
+        .join(format!("opencode-{triple}{extension}"))
+}
+
+/// Whether the engine has to be on disk for *this* build: that is, whether a package could be cut
+/// from it. Two signals, and either is enough to answer yes.
+///
+/// - `DEP_TAURI_DEV` is the value behind `tauri-build`'s own `is_dev()`, and it is `"false"` exactly
+///   when the Tauri CLI compiled this with `tauri/custom-protocol` — which `tauri build` does and
+///   `tauri dev` does not. Unset is treated as "unknown" rather than as a failure, so a Tauri that
+///   renames this metadata cannot break a checkout that builds today.
+/// - `PROFILE` is cargo's name for the profile being compiled, and a package is cut from `release`.
+///   It is the signal that catches `cargo build --release` run without the CLI: that is the same
+///   binary `tauri build` would have produced, but it enables no feature, so the first signal calls
+///   it dev.
+///
+/// Each signal alone has a hole — `tauri build --debug` packages from a debug profile, a bare
+/// `cargo build --release` is production without the CLI — and the failure this file exists to
+/// prevent, a package that ships without its engine, is the one direction worth erring in: a release
+/// build nobody meant to bundle is asked for the engine and told how to get it.
+fn is_production_build() -> bool {
+    let cli_says_production = env::var("DEP_TAURI_DEV").is_ok_and(|dev| dev == "false");
+    let release_profile = env::var("PROFILE").is_ok_and(|profile| profile != "debug");
+    cli_says_production || release_profile
+}
+
+/// The engine is a build input, and its absence is the expected state of a fresh checkout.
+///
+/// Those two facts have to be reconciled, because `tauri-build` copies `externalBin`'s input in
+/// *every* build — `cargo check`, `cargo test` and `cargo clippy` included — and fails the build
+/// when it is not there. That is how CI died: a clean checkout has no engine (184 MB, deliberately
+/// gitignored, produced by a pipeline), so `cargo test` never reached a test, `cargo build` never
+/// ran, and `cargo clippy` and `cargo fmt` were skipped behind it. A gate nobody can reach is not a
+/// gate.
+///
+/// So the absence is fatal only where it means something — a build a package can be cut from — and
+/// everywhere else it is a warning naming the script that fixes it, with `externalBin` dropped from
+/// the config `tauri-build` is about to read so its copy step does not look for a file that is not
+/// there. Nothing is smuggled past the check: there is no file to copy, so no copy is skipped, and
+/// an absence that *would* reach a package is still a failed build.
+///
+/// The alternative was having CI run `scripts/fetch-opencode-linux.sh`. It would work, and it would
+/// cost 184 MB per run to satisfy a step that builds no package, leave a fresh clone unable to run
+/// `cargo test` until the download finished, and make CI depend on the npm registry answering.
+fn check_sidecar() {
+    let sidecar = sidecar_path();
+    if sidecar.exists() {
+        return;
+    }
+    if is_production_build() {
+        panic!(
+            "the bundled engine is missing: {path} does not exist.\n\
+             \n\
+             `bundle.externalBin` in tauri.conf.json names that file, and the package built from \
+             this tree is meant to carry an engine — a user gets the bundled one whether or not \
+             they have one of their own. Nothing here can invent it: it is a pinned 184 MB download \
+             that is deliberately not in git.\n\
+             \n\
+             Install it with:  bash scripts/fetch-opencode-linux.sh\n\
+             \n\
+             That script downloads the version the release pins and verifies its sha512 before \
+             extracting it. This check runs for builds a package can be cut from (`tauri build`, or \
+             a release profile); `cargo check`, `cargo test`, `cargo clippy` and `tauri dev` build \
+             without the engine and warn instead.",
+            path = sidecar.display()
+        );
+    }
+
+    // A fetch script run after this build is what makes the file appear, and cargo only re-runs a
+    // build script when a watched path *changes*: a path that was missing when the fingerprint was
+    // recorded is not seen to change when it arrives, so watching the file itself would leave the
+    // engine uncopied beside the binary until something unrelated was edited. The directory it
+    // would land in does change, so that is what is watched — and created first, because a fresh
+    // checkout has no `binaries/` at all (nothing in an empty gitignored directory is tracked, and
+    // the fetch script creates it too).
+    let binaries = sidecar.parent().expect("the sidecar path has a parent");
+    let _ = std::fs::create_dir_all(binaries);
+    println!("cargo:rerun-if-changed={}", binaries.display());
+    println!(
+        "cargo:warning=the bundled engine is not on disk ({path}) — this build is not a production \
+         one, so it proceeds without an engine; run `bash scripts/fetch-opencode-linux.sh` before \
+         building a package",
+        path = sidecar.display()
+    );
+
+    // The one knob that reaches the config before `tauri-build` reads `externalBin`. It is a JSON
+    // merge patch, so `null` removes the key. When it is already set, the Tauri CLI is passing a
+    // `--config` override of the caller's own, which is merged *after* anything put here and would
+    // bring `externalBin` straight back — so clobbering it would either drop their override or fail
+    // anyway with a message that no longer explains why. Saying so, and letting `tauri-build` report
+    // the missing file, is the honest half of that trade.
+    if env::var_os("TAURI_CONFIG").is_some() {
+        println!(
+            "cargo:warning=TAURI_CONFIG is already set, so this build cannot leave \
+             `bundle.externalBin` out of the config and will fail in tauri-build's copy step; the \
+             engine above is the thing to fix"
+        );
+        return;
+    }
+    env::set_var("TAURI_CONFIG", r#"{"bundle":{"externalBin":null}}"#);
 }

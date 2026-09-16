@@ -4,6 +4,7 @@ pub mod agent_registry;
 pub mod agent_settings;
 pub mod ai;
 pub mod desktop_pet;
+pub mod desktop_pet_surface;
 pub mod fs;
 pub mod keys;
 pub mod open;
