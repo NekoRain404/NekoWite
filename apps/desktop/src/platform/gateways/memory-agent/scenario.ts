@@ -9,8 +9,11 @@
  */
 
 import type {
+  AgentConfigChoice,
+  AgentConfigOption,
   AgentEventKind,
   AgentIdentity,
+  AgentModelOption,
   AgentPayloads,
   AgentPermissionOption,
   AgentStopReason,
@@ -19,13 +22,44 @@ import type {
 } from '../agent-contracts'
 
 /**
- * The catalog the double publishes. Two entries, so a test can make a real switch
- * rather than set the only model to itself.
+ * The choices of the `model` option the double's engine publishes. Two of them, so a
+ * test can make a real switch rather than set the only model to itself.
  */
-export const MEMORY_MODELS = [
-  { id: 'memory-echo', name: 'Memory (echo)' },
-  { id: 'memory-quiet', name: 'Memory (quiet)' },
+const MEMORY_MODEL_CHOICES: AgentConfigChoice[] = [
+  { value: 'memory-echo', name: 'Memory (echo)' },
+  { value: 'memory-quiet', name: 'Memory (quiet)' },
 ]
+
+/**
+ * The config option the catalog below is projected from — what the engine returns
+ * with a session (`configOptions[model]`, P0 §2.2).
+ *
+ * Exported so a test can hold the session's catalog to the option it projects: the
+ * double derives one from the other instead of keeping two copies of one wire value
+ * that could drift.
+ */
+export const MEMORY_MODEL_OPTION: AgentConfigOption = {
+  id: 'model',
+  name: 'Model',
+  value: {
+    kind: 'select',
+    current: MEMORY_MODEL_CHOICES[0].value,
+    choices: MEMORY_MODEL_CHOICES,
+  },
+}
+
+/**
+ * The catalog the session handle exposes: the option's choices, projected — a
+ * choice's `value` is the model's id and its `name` is the label, which is the
+ * projection an adapter makes of the same wire data.
+ */
+export const MEMORY_MODELS: AgentModelOption[] = MEMORY_MODEL_CHOICES.map((choice) => ({
+  id: choice.value,
+  name: choice.name,
+}))
+
+/** The option's current value when the session opens. */
+export const MEMORY_INITIAL_MODEL_ID: string = MEMORY_MODEL_CHOICES[0].value
 
 /** How many events stay replayable by default. */
 export const DEFAULT_REPLAY_LIMIT = 64

@@ -82,16 +82,18 @@ export function createSession(identity: AgentIdentity, replayLimit: number): Liv
  * The one place a session handle is minted.
  *
  * The brand is a phantom property — the unique symbol exists only in the type — so
- * the cast below is what makes this factory the sole producer of a handle and
- * keeps a feature from addressing a session id it made up (§6.2 「不能编造
- * sessionId」).
+ * what makes this factory the sole producer of a handle is that a plain object is not
+ * castable to `AgentSession` in one step: TypeScript refuses the conversion, which
+ * keeps a feature from writing `… as AgentSession` and addressing a session id it
+ * made up (§6.2 「不能编造 sessionId」). The two-step cast below is this module saying
+ * that it means it.
  */
 export function mintSession(
   identity: AgentIdentity,
-  models: AgentModelOption[],
+  models: readonly AgentModelOption[],
   initialModelId: string,
 ): AgentSession {
-  return { ...identity, models, initialModelId } as AgentSession
+  return { ...identity, models, initialModelId } as unknown as AgentSession
 }
 
 /**
