@@ -611,9 +611,9 @@ test.describe('agent panel — the change an edit proposes', () => {
     expect(box.width).toBeLessThanOrEqual(box.panel)
 
     // The reader keeps working from the same composer: the surface this row is for — allowing the
-    // edit — is the permission prompt beside it, and the prompt draws the same block when the
-    // engine asks. That half is unit-tested (`AgentPermissionPrompt.test.ts`) because the memory
-    // runtime authors its own prompts; what is proved here is that the row and its diff are
+    // edit — is the permission prompt beside it, which draws the block the *request* carried rather
+    // than this row's (see 'the change the permission prompt shows' below, and
+    // `AgentPermissionPrompt.test.ts`). What is proved here is that the row and its own diff are
     // reachable from the real panel.
     await page.locator('.agent-composer [data-action="stop"]').click()
     await expect.poll(async () => state(page), { timeout: 5000 }).toBe('cancelled')
@@ -738,6 +738,127 @@ test.describe('agent panel — the authorization a run waits on', () => {
     // must not have sent the engine an option id on the way out.
     expect(await answers(page)).toEqual([])
     await expect(page.locator('.agent-perm')).toHaveCount(0)
+  })
+})
+
+test.describe('agent panel — the change the permission prompt shows', () => {
+  /**
+   * The other half of the diff's two routes, and the one a person decides on: the prompt beside the
+   * composer. `AgentPermissionPrompt.test.ts` mounts the component with a request it builds by hand,
+   * which proves the render and nothing about what a request ever carries; the runtime's own tests
+   * prove the host maps the frame. Neither proves the two are joined through the panel — and this
+   * project's signature defect is exactly the surface that was built, tested and never reached.
+   *
+   * The rule at the pixels, both ways round: what the prompt draws is the request's own blocks. The
+   * request is where the engine puts them (its `toolCall` carries the diff), and a prompt that fell
+   * back to the transcript's row for the same call would draw *more* than the request said in the
+   * case below — the case where a person allowing an edit has nothing on screen to check it against.
+   */
+  test('a change the request itself carries is drawn, with no row to take it from', async ({
+    page,
+  }) => {
+    await mount(page)
+    // No tool row is emitted for this call anywhere in this turn, which is the witness: the block
+    // below can only have come from the request.
+    await scriptTurns(page, {
+      chunks: ['Editing the note. '],
+      permission: {
+        title: 'Editing notes/a.md',
+        toolCallId: 'edit-1',
+        input: { state: 'text', json: '{"filepath":"notes/a.md"}' },
+        content: [
+          {
+            type: 'diff',
+            path: 'notes/a.md',
+            oldText: 'alpha\nbeta\ngamma\n',
+            newText: 'alpha\nBETA\ngamma\n',
+          },
+        ],
+        options: [{ optionId: 'once', name: 'Allow once', kind: 'allow_once' }],
+      },
+    })
+    await page.locator('.agent-composer-field').fill('fix the note')
+    await page.locator('.agent-composer [data-action="send"]').click()
+    await expect(page.locator('.agent-perm')).toBeVisible()
+
+    expect(await page.locator('.agent-tool').count()).toBe(0)
+    const block = page.locator('.agent-perm .agent-diff-block')
+    await expect(block).toBeVisible()
+    await expect(block).toHaveAttribute('data-path', 'notes/a.md')
+    await expect(block.locator('.agent-diff-line[data-type="del"] .agent-diff-text')).toHaveText(
+      'beta',
+    )
+    await expect(block.locator('.agent-diff-line[data-type="add"] .agent-diff-text')).toHaveText(
+      'BETA',
+    )
+
+    // Still answerable while it is drawn: the diff is above the buttons, not instead of them.
+    await page.locator('.agent-perm-options button').first().click()
+    await expect.poll(async () => answers(page), { timeout: 5000 }).toHaveLength(1)
+    await expect(page.locator('.agent-perm')).toHaveCount(0)
+  })
+
+  test('a request that carried no change draws none, even when its row has one', async ({
+    page,
+  }) => {
+    await mount(page)
+    await scriptTurns(page, {
+      chunks: ['Looking at the note. '],
+      permission: {
+        title: 'Editing notes/a.md',
+        toolCallId: 'edit-1',
+        input: { state: 'text', json: '{"filepath":"notes/a.md"}' },
+        // No `content`: this request carried no block, which is an answer and not a gap.
+        options: [{ optionId: 'once', name: 'Allow once', kind: 'allow_once' }],
+      },
+    })
+    await page.locator('.agent-composer-field').fill('fix the note')
+    await page.locator('.agent-composer [data-action="send"]').click()
+    await expect(page.locator('.agent-perm')).toBeVisible()
+
+    // The same call's row arrives afterwards, carrying a diff — the shape the engine's own stream
+    // has (a tool call is a `ToolCall` followed by updates), and the reason the row is not a source
+    // the prompt may read: here it would put a change on screen that this request never stated.
+    await page.evaluate(() => {
+      const harness = window.__agentPanel
+      if (harness === undefined) throw new Error('the panel is not mounted')
+      harness.gateway.emit(harness.session, {
+        kind: 'tool-update',
+        payload: {
+          toolCallId: 'edit-1',
+          title: 'Editing notes/a.md',
+          kind: 'edit',
+          status: 'in_progress',
+          paths: ['notes/a.md'],
+          content: [
+            {
+              type: 'diff',
+              path: 'notes/a.md',
+              oldText: 'alpha\nbeta\ngamma\n',
+              newText: 'alpha\nBETA\ngamma\n',
+            },
+          ],
+          input: { state: 'absent' },
+          output: { state: 'absent' },
+        },
+      })
+    })
+    await nextFrames(page)
+
+    // The row holds it and draws it when the reader opens the row…
+    const row = page.locator('.agent-tool[data-call="edit-1"]')
+    await expect(row).toHaveCount(1)
+    await row.locator('.agent-tool-head').click()
+    await expect(row.locator('.agent-diff-block')).toBeVisible()
+
+    // …and the prompt still draws nothing, because *this request* carried no block. Both halves are
+    // asserted together: the distinction between "carried none" and "carried the row's" has to
+    // survive to the pixels, which it only does while the prompt has no second source.
+    await expect(page.locator('.agent-perm')).toBeVisible()
+    await expect(page.locator('.agent-perm [data-agent-diff]')).toHaveCount(0)
+
+    await page.locator('.agent-perm [data-action="cancel-run"]').click()
+    await expect.poll(async () => state(page), { timeout: 5000 }).toBe('cancelled')
   })
 })
 

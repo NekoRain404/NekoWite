@@ -1036,6 +1036,9 @@ describe('the subscription', () => {
       toolCallId: 'call_0630',
       title: '/vault/note.md',
       input: { state: 'text', json: '{"filepath":"/vault/note.md"}' },
+      // The request's own blocks, as the host sends them (`permissions.rs`'s `content_of`): the
+      // contract's reader requires the field, and this one's request carried a proposed change.
+      content: [{ type: 'diff', path: '/vault/note.md', oldText: 'old\n', newText: 'new\n' }],
       options: [
         { optionId: 'once', name: 'Allow once', kind: 'allow_once' },
         { optionId: 'always', name: 'Always', kind: 'allow_always' },

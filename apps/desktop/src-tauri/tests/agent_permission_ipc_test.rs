@@ -32,9 +32,10 @@ use serde_json::{json, Value};
 
 use agent_runtime::driver::Session;
 use agent_runtime::live_notes::{LiveNoteQuestion, LiveNoteTable, LiveNoteWindows, LiveNotes};
+use agent_runtime::permissions::payload::ToolInput;
 use agent_runtime::permissions::{
     cancel_run, PermissionAnswer, PermissionIdentity, PermissionPrompt, PermissionRefusal,
-    PermissionTable, ToolInput,
+    PermissionTable,
 };
 use agent_runtime::snapshot::{SessionSnapshots, REPLAY_WINDOW};
 use agent_runtime::{
@@ -469,7 +470,14 @@ async fn the_prompt_carries_the_engines_own_options_and_its_identity() {
     // validates it at the gateway drops anything it cannot read, so a renamed or missing field
     // here would silently take the prompt away from the user.
     let payload = serde_json::to_value(prompt).expect("the payload serializes");
-    for key in ["requestId", "toolCallId", "title", "input", "options"] {
+    for key in [
+        "requestId",
+        "toolCallId",
+        "title",
+        "input",
+        "content",
+        "options",
+    ] {
         assert!(
             payload.get(key).is_some(),
             "the contract reads {key}: {payload}"
@@ -477,6 +485,25 @@ async fn the_prompt_carries_the_engines_own_options_and_its_identity() {
     }
     assert_eq!(payload["input"]["state"], json!("text"));
     assert_eq!(payload["options"][0]["kind"], json!("allow_once"));
+
+    // And the blocks the *request itself* carried, in the contract's shapes — the measured frame's
+    // own `toolCall` holds the diff, which is the whole reason the prompt does not have to read the
+    // transcript's row for one: on a host where this request is the first frame to carry a block,
+    // the row would have none, and a prompt that joined it would ask for consent to an edit it
+    // showed no text of.
+    let carried = payload["content"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the payload states the request's blocks: {payload}"));
+    assert_eq!(carried.len(), 1, "{payload}");
+    assert_eq!(carried[0]["type"], json!("diff"));
+    assert_eq!(carried[0]["oldText"], json!("HELLO"));
+    assert_eq!(carried[0]["newText"], json!("HELLO"));
+    assert!(
+        carried[0]["path"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("note.md")),
+        "the engine's own path: {payload}"
+    );
 
     // §6.1: the identity the renderer is told is the identity an answer must come back with — the
     // envelope's fields and the binding agree by construction, since `adopt` builds both from one

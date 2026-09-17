@@ -43,9 +43,21 @@ function request(overrides: Partial<AgentPermissionRequest> = {}): AgentPermissi
     toolCallId: 'call-1',
     title: '/vault/probe-output.txt',
     input: { state: 'text', json: '{"filepath":"/vault/probe-output.txt"}' },
+    // The request's own blocks, required by the contract for the same reason the arguments
+    // are: this is the surface a person allows an edit on, and `[]` is the request stating
+    // "I carried none" rather than a field a producer may leave out.
+    content: [],
     options: MEASURED.map((option) => ({ ...option })),
     ...overrides,
   }
+}
+
+/** One proposed change, in the shape the engine's own frame carries it (`Diff`). */
+const EDIT: AgentToolContent = {
+  type: 'diff',
+  path: '/vault/a.md',
+  oldText: 'alpha\nbeta\n',
+  newText: 'alpha\nBETA\n',
 }
 
 /**
@@ -57,7 +69,6 @@ function request(overrides: Partial<AgentPermissionRequest> = {}): AgentPermissi
 type PromptProps = {
   request: AgentPermissionRequest
   toolStatus?: AgentToolStatus | null
-  toolContent?: readonly AgentToolContent[]
   expired?: boolean
   onAnswer?: (requestId: string, optionId: string) => void
   onCancel?: () => void
@@ -428,17 +439,18 @@ describe('AgentPermissionPrompt — what the user is approving', () => {
     expect(unreadable.host.querySelector('.agent-perm-args-none')).toBeTruthy()
   })
 
-  it('draws the change the call proposes, above the arguments', () => {
+  it('draws the change the request itself carries, above the arguments', () => {
     // §6.3's rule is that the user sees the target of the action they authorize, and for an edit
-    // the target is the text. The request carries no content of its own — the host's reader is
-    // built from the engine's title, its `rawInput` and its options
-    // (`agent_runtime/permissions.rs:370-375`) — so what is drawn here is the same call's row
-    // from the transcript, which the panel joins by `toolCallId`.
+    // the target is the text. The blocks are the request's own — the engine attaches them to the
+    // frame it asks with and the host carries them (`agent_runtime/permissions.rs`'s
+    // `content_of`), so the prompt needs no second reading of the same call. It used to take them
+    // from the transcript's row by `toolCallId`; that join is gone, because a row holds whatever
+    // the transcript last had, and a prompt drawing it can show less than the engine asked with.
     const { host } = mount({
-      request: request({ input: { state: 'text', json: '{"filepath":"/vault/a.md"}' } }),
-      toolContent: [
-        { type: 'diff', path: '/vault/a.md', oldText: 'alpha\nbeta\n', newText: 'alpha\nBETA\n' },
-      ],
+      request: request({
+        input: { state: 'text', json: '{"filepath":"/vault/a.md"}' },
+        content: [EDIT],
+      }),
     })
     const block = host.querySelector('.agent-perm-diff .agent-diff-block')
     expect(block).toBeTruthy()
@@ -455,16 +467,16 @@ describe('AgentPermissionPrompt — what the user is approving', () => {
     expect(order).toEqual(['diff', 'args'])
   })
 
-  it('draws no diff frame when the call proposed no edit', () => {
+  it('draws no diff frame when the request carried no block', () => {
     // The ordinary prompt: the memory runtime authors its own requests and the engine measured
     // here sends no permission request at all with the default configuration. §5.3's rule is that
-    // what the session reports is what is drawn — so a request about a non-edit call, or one whose
-    // row has not arrived, gets no diff view rather than an empty one.
+    // what the session reports is what is drawn — so a request about a non-edit call gets no diff
+    // view rather than an empty one.
     const none = mount({ request: request() })
     expect(none.host.querySelector('.agent-perm-diff .agent-diff-block')).toBeNull()
     expect(none.host.querySelector('[data-agent-diff]')).toBeNull()
 
-    const other = mount({ toolContent: [{ type: 'unrecognised' }] })
+    const other = mount({ request: request({ content: [{ type: 'unrecognised' }] }) })
     expect(other.host.querySelector('.agent-perm-diff .agent-diff-block')).toBeNull()
   })
 

@@ -97,7 +97,6 @@ import type {
   AgentCommand,
   AgentGateway,
   AgentSession,
-  AgentToolContent,
   AgentToolStatus,
 } from '../../../platform/gateways/agent-contracts'
 import { t } from '../../../i18n'
@@ -278,9 +277,14 @@ const pending = computed(() => {
  * The transcript's row for the tool call the pending request is about, when it already has one.
  *
  * The join is by `toolCallId`, which is what the contract carries on both sides for exactly this
- * (`AgentPermissionRequest.toolCallId`'s own comment). It is made once, here, and everything the
- * prompt needs from that row is read off it — the status and the blocks an edit proposed — rather
- * than two searches that could disagree about which row they found.
+ * (`AgentPermissionRequest.toolCallId`'s own comment). It is made once, here, and read for the one
+ * thing the request does not carry itself: the call's *status*, which arrives on the transcript's
+ * frames rather than on the request.
+ *
+ * **Not for the blocks.** They used to be read off this row and handed to the prompt as a
+ * fallback; the request carries its own now (`AgentPermissionRequest.content`), and the row is
+ * deliberately not consulted for them — the two can disagree, and a prompt that drew the row's
+ * would be showing the reader something other than what the engine asked with.
  */
 const pendingToolRow = computed<AgentToolEntry | null>(() => {
   const request = pending.value
@@ -304,18 +308,6 @@ const pendingToolRow = computed<AgentToolEntry | null>(() => {
  */
 const pendingToolStatus = computed<AgentToolStatus | null>(
   () => pendingToolRow.value?.status ?? null,
-)
-
-/**
- * The content blocks of that same row, for the prompt to draw.
- *
- * The request itself carries none — see `AgentPermissionPrompt`'s `toolContent` — so this is the
- * join by `toolCallId`, made once here and read by both the status and the diff. An empty list is
- * both the ordinary case (a call that proposed no edit) and the "the row has not arrived yet"
- * case, and neither of them draws anything.
- */
-const pendingToolContent = computed<readonly AgentToolContent[]>(
-  () => pendingToolRow.value?.content ?? [],
 )
 
 /** Whether the request can no longer be answered — the store's own rule, not a second opinion:
@@ -693,7 +685,6 @@ function onHistoryPick(sessionId: string): void {
       class="agent-panel-permission"
       :request="pending.payload"
       :tool-status="pendingToolStatus"
-      :tool-content="pendingToolContent"
       :expired="expired"
       @answer="answer"
       @cancel="stop"

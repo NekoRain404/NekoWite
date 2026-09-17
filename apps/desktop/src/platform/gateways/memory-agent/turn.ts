@@ -40,6 +40,11 @@ export async function runTurn(
         toolCallId: script.permission.toolCallId ?? `${run.runId}:tool`,
         title: script.permission.title,
         input: script.permission.input ?? { state: 'absent' },
+        // The blocks the request itself carries, which is where the engine puts them (the
+        // measured frame's own `toolCall` holds the diff) — and `[]` is the double's own,
+        // explicit "this request carried none", so a scripted prompt with no diff draws none
+        // rather than borrowing the row's.
+        content: script.permission.content ?? [],
         options: script.permission.options,
       },
       run.runId,

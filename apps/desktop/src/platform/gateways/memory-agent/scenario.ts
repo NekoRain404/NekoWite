@@ -19,6 +19,7 @@ import type {
   AgentPayloads,
   AgentPermissionOption,
   AgentStopReason,
+  AgentToolContent,
   AgentToolInput,
   AgentUsage,
 } from '../agent-contracts'
@@ -161,6 +162,16 @@ export interface MemoryRunScript {
     title: string
     options: AgentPermissionOption[]
     input?: AgentToolInput
+    /**
+     * The content blocks the request itself carries, in the contract's shapes — a proposed
+     * edit's diff among them. Default: none, which is what a request that proposes no
+     * change says.
+     *
+     * It is a field of the *request* and not a row it is paired with on purpose: the two
+     * can differ, and a script whose point is that the prompt draws the request's own
+     * blocks (that the request is the first frame to carry them) has to be able to say so.
+     */
+    content?: AgentToolContent[]
     /**
      * The tool call this request is about. Optional so a script that does not
      * care still gets a paired id; a script that wants to test the pairing —

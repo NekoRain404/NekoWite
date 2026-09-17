@@ -278,6 +278,7 @@ describe('readAgentEvent', () => {
         toolCallId: 'call-1',
         title: 'Write to the vault?',
         input: { state: 'unreadable' },
+        content: [{ type: 'diff', path: 'notes/a.md', oldText: null, newText: 'written\n' }],
         options: [...OPTIONS],
       },
       'commands-changed': { commands: [{ name: 'init', description: 'Scaffold the vault' }] },

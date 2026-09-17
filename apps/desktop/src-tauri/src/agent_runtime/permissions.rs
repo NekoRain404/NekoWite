@@ -16,9 +16,9 @@
 //!   6), and §6.2 requires both.
 //!
 //! Each request is also bound to a composite identity — runtime, vault, session, run — because the
-//! renderer is not a trusted source of it (§6.1), and the payloads below are the contract's own
-//! shapes (`agent-contracts/payloads.ts`), whose validator drops a prompt whose fields this host
-//! renamed.
+//! renderer is not a trusted source of it (§6.1), and every payload below is the contract's own
+//! shape (`agent-contracts/payloads.ts`, and the shapes themselves in [`payload`]), whose validator
+//! drops a prompt whose fields this host renamed.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -26,17 +26,26 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use agent_client_protocol::schema::v1::{
-    PermissionOptionId, PermissionOptionKind, RequestPermissionOutcome, RequestPermissionResponse,
-    SelectedPermissionOutcome, ToolCallUpdate,
+    PermissionOptionId, RequestPermissionOutcome, RequestPermissionResponse,
+    SelectedPermissionOutcome,
 };
 use agent_client_protocol::{Error as AcpError, RequestCancellation, Responder};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::oneshot;
 
+use self::payload::{content_of, input_of, label_of};
 use super::acp_transport::PermissionRequest;
 use super::events::{AgentEventKind, AgentIdentity};
 use super::session::{AgentRuntime, AgentRuntimeEvents, Emitter, SessionError, SessionSlot};
+
+// The payload shapes live beside this file rather than in it (see `payload.rs` for why they were
+// split out). Public because they are a prompt's own vocabulary: this module re-exports the two a
+// caller outside names — `commands/agent.rs` serves `PermissionPrompt`s, and the IPC test reads
+// one field by field — while a test that reads the input state imports it where it is defined.
+pub mod payload;
+
+pub use self::payload::{PermissionOptionView, PermissionPrompt};
 
 /// How long a request may wait for the session it names to appear. The same window, for the same
 /// measured reason, as `runs::dispatch_fs`: the engine may use a session the instant it receives
@@ -131,51 +140,6 @@ pub enum PermissionRefusal {
     UnknownSession { session_id: String },
 }
 
-/// One of the engine's options, as the UI offers it — the contract's `AgentPermissionOption`. The
-/// kind is the engine's own, all four of them rather than a collapsed allow/reject pair:
-/// `allow_always` remembers the choice where `allow_once` does not, and that is what the user is
-/// weighing (§6.3).
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PermissionOptionView {
-    pub option_id: String,
-    pub name: String,
-    pub kind: PermissionOptionKind,
-}
-
-/// The arguments, in the states the contract's `AgentToolInput` keeps apart.
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum ToolInput {
-    /// Nothing to show. The schema drops a `rawInput` it cannot deserialize, so "the engine sent
-    /// none" and "it sent one that did not parse" are one state by the time a typed request exists
-    /// (open spec issue #1979): the contract's third state, `unreadable`, is one this host cannot
-    /// honestly claim, and the prompt must read as "what you are approving has not arrived".
-    Absent,
-    /// The arguments as the engine sent them, serialized rather than parsed: their shape is the
-    /// engine's, and pretty-printing is the UI's business.
-    Text { json: String },
-}
-
-/// One permission request, as the UI receives it — the contract's `AgentPermissionRequest`.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PermissionPrompt {
-    /// The host's id for this request — what an answer must name, and what the UI keys its state
-    /// on. Not the engine's JSON-RPC id, which is per connection and never leaves the transport.
-    pub request_id: String,
-    /// The engine's tool call id, which ties this prompt to the `tool_call_update` frames about the
-    /// same call. §2.0b's re-render rule hangs on it: the arguments may be filled in *after* the
-    /// request, and a prompt rendered from the request alone is consent given blind.
-    pub tool_call_id: String,
-    /// What the user is being asked to allow, in the engine's own wording ([`label_of`] says what a
-    /// frame without one shows).
-    pub title: String,
-    pub input: ToolInput,
-    /// Exactly the options the engine offered, in its order: §6.3 forbids the host inventing one.
-    pub options: Vec<PermissionOptionView>,
-}
-
 /// Every request the engine has asked and this host has not answered. Bound to one runtime: its
 /// event stream (a prompt is an ordinary event, sharing the runtime's one sequence counter rather
 /// than starting a second stream the UI would have to interleave) and its session table (the run a
@@ -225,42 +189,6 @@ impl PendingRequest {
     fn fail(self, error: AcpError) {
         report_failed_send(self.responder.respond_with_error(error));
     }
-}
-
-/// The prompt's label, from the engine's own data: its title, else its own kind as the wire spells
-/// it, else the tool call id. Nothing is worded for the engine.
-///
-/// The fallback exists because the contract's reader refuses an empty title, and a prompt dropped
-/// on the way to the UI leaves the engine blocked on a question the user never saw — the one
-/// outcome §6.3 cannot allow.
-fn label_of(tool_call: &ToolCallUpdate) -> String {
-    if let Some(title) = tool_call.fields.title.clone() {
-        return title;
-    }
-    if let Some(kind) = tool_call.fields.kind {
-        let name = serde_json::to_value(kind)
-            .ok()
-            .and_then(|value| value.as_str().map(String::from));
-        if let Some(name) = name {
-            return name;
-        }
-    }
-    tool_call.tool_call_id.to_string()
-}
-
-/// The arguments as the payload carries them. A value already in hand cannot fail to serialize; if
-/// it somehow did, "nothing to show" is the honest state rather than an empty string that reads
-/// like empty arguments.
-fn input_of(tool_call: &ToolCallUpdate) -> ToolInput {
-    let Some(json) = tool_call
-        .fields
-        .raw_input
-        .as_ref()
-        .and_then(|raw| serde_json::to_string(raw).ok())
-    else {
-        return ToolInput::Absent;
-    };
-    ToolInput::Text { json }
 }
 
 /// A failed send means the connection is gone. The engine sees only an error code either way, so
@@ -373,6 +301,9 @@ impl PermissionTable {
             tool_call_id: tool_call.tool_call_id.to_string(),
             title: label_of(tool_call),
             input: input_of(tool_call),
+            // Read from this request's own frame, never from the session's tool rows: the request
+            // is what the user is being asked to allow, and the two can disagree.
+            content: content_of(tool_call),
             options: request
                 .request
                 .options

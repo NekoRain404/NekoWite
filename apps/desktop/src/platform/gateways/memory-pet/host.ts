@@ -268,6 +268,11 @@ export function createPetTaskHost(options: { epoch: string; now: () => number })
           toolCallId: `${key.sessionId}:tool`,
           title: 'A tool wants to run',
           input: { state: 'absent' },
+          // The request's own content blocks, which the contract requires a producer to state:
+          // `[]` here is the honest one — this double's request proposes no change, so nothing
+          // is drawn for it, and nothing is taken from anywhere else either. The pet itself
+          // reads none of them (it shows that input is wanted and authorises nothing).
+          content: [],
           // Exactly the options the engine offered (§6.3): the double must not look like
           // an engine that invents an answer, and the pet never offers one at all.
           // The kind is the wire's own (`allow_once`), not a collapsed allow/reject —

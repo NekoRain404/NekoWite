@@ -34,12 +34,12 @@ const props = withDefaults(
     /**
      * The status of the tool call this request belongs to, when the host knows it.
      *
-     * "Not known" (`null`) is not "over". The contract's request carries no tool call id
-     * and no status, so a panel that cannot join a request to its tool row knows nothing
-     * here — and that must not end the prompt. Only a settled status does: a call that
-     * moves `pending -> in_progress` while the user is still deciding is still waiting
-     * for the same answer, and an ecosystem survey found a client that tore its prompt
-     * down on exactly that change.
+     * "Not known" (`null`) is not "over". The request carries the call's id but no status
+     * — status is the transcript's, arriving on the call's own frames — so a panel whose
+     * row has not arrived yet knows nothing here, and that must not end the prompt. Only a
+     * settled status does: a call that moves `pending -> in_progress` while the user is
+     * still deciding is still waiting for the same answer, and an ecosystem survey found a
+     * client that tore its prompt down on exactly that change.
      */
     toolStatus?: AgentToolStatus | null
     /**
