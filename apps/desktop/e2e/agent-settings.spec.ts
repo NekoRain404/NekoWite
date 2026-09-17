@@ -412,22 +412,41 @@ test.describe('where an MCP server comes from', () => {
 
 test.describe('what the runtime has actually been measured to do', () => {
   test('keeps "running" and "a model will answer" apart', async ({ page }) => {
+    // The fixture is in the **page's** vocabulary, not the wire's — `open` hands it straight to the
+    // client as an `AgentRuntimeReadout`, so the port's narrowing never runs and a fixture written
+    // in the wire's shape fails in a way that looks like a missing element: `capabilities[].standing`
+    // comes out `undefined`, and Vue omits an attribute whose binding is undefined, so the rows draw
+    // and the `[data-standing]` locator finds none of them.
+    //
+    // The three fields that did move are the page's own, and each moved for a reason worth keeping
+    // straight: `version` is `reportedVersion` (the registration's answer, which this host may not
+    // have), `update.policy` is `updatePolicy`, and the flat `protocol` is a two-armed `handshake`
+    // — because the protocol version is a fact of the handshake, and the handshake is per
+    // incarnation, so a page that drew it unconditionally was drawing it when there was none.
+    // `authorization` is gone: no ACP field carries an authorization state and this host never calls
+    // `authenticate`, so it could only have asserted a fact nothing had stated. What replaced it is
+    // the engine's own advertised `authMethods`, inside the handshake, drawn as a report.
     await open(page, 'runtime', {
       agentId: 'opencode',
       displayName: 'OpenCode',
       source: 'bundled',
       program: '/opt/nekowite/opencode',
-      version: '1.18.29',
+      reportedVersion: '1.18.29',
       adapterId: 'opencode',
       process: 'ready',
-      authorization: 'required',
-      protocol: { version: 1, negotiated: true },
+      updatePolicy: 'reported-only',
+      handshake: {
+        status: 'read',
+        protocolVersion: 1,
+        agentName: 'OpenCode',
+        agentVersion: '1.18.29',
+        authMethods: [{ id: 'login', name: 'Log in' }],
+      },
       capabilities: [
         { feature: 'slash-commands', standing: 'advertised', detail: null },
-        { feature: 'audio-attachments', standing: 'not-advertised', detail: null },
-        { feature: 'session-config-options', standing: 'unverified', detail: null },
+        { feature: 'audio-attachments', standing: 'not-advertised', detail: 'not advertised by this engine' },
+        { feature: 'session-config-options', standing: 'unverified', detail: 'no session has been opened in this run' },
       ],
-      update: { policy: 'reported-only' },
     })
 
     await expect(row(page, '[data-test="runtime-program"]')).toContainText('/opt/nekowite/opencode')
