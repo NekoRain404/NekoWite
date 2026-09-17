@@ -385,6 +385,12 @@ function onSend(text: string): void {
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  /* The same release on the other axis. Without it the panel's automatic minimum size is its
+     content's min-content width — measured at 419px inside a 400px rail, with the send button
+     drawn past the panel's own right edge and, on a narrower rail or with wider fonts, past the
+     window, where nothing can click it. A rail hosts this panel, so the panel takes the rail's
+     width and its contents give way — which the bar already does when it is allowed to. */
+  min-width: 0;
   /* The composer measures its growth against the nearest positioned ancestor, which is this
      element: §5.3 bounds the field by the panel's own height, not the window's. */
   position: relative;
