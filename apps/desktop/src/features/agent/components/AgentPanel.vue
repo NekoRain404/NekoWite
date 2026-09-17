@@ -425,11 +425,16 @@ function onSend(text: string, attachments: readonly AgentPromptAttachment[]): vo
         @select="chooseCommand"
         @highlight="commands.setActive"
       />
+      <!-- The workspace the composer addresses its files, its mentions and the `+`'s listing in:
+           the vault of the session *this panel* is mounted on, taken from the prop above rather
+           than from the store's focused record — a pointer the pet's task link moves to another
+           session (`app/pet-task-link.ts`) while this panel stays on screen. -->
       <AgentComposer
         v-model="draft"
         :running="running"
         :can-send="canSend"
         :resolve-key="commands.onKeydown"
+        :vault="session.vaultId"
         :config="config"
         :config-busy="configBusy"
         :config-failure="configFailure"

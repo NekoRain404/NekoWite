@@ -11,6 +11,10 @@
  * The report is built here rather than fetched: `AgentCapabilityReport` is the contract's own
  * shape, and a test that went through `gateway.capabilities` would be testing the memory double's
  * report rather than this component's reading of one.
+ *
+ * The workspace is the panel's too — a prop on the composer, exactly as the panel hands it down —
+ * and three cases point the *store* at a vault of its own to hold that: this component's four
+ * readers of the vault (a pick, a drop, a mention and the `+`) must not follow the store's focus.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick, type App as VueApp } from 'vue'
@@ -106,13 +110,17 @@ async function settle(): Promise<void> {
   }
 }
 
-function mountComposer(capabilities?: readonly AgentCapabilityReport[]): void {
+function mountComposer(
+  capabilities?: readonly AgentCapabilityReport[],
+  vault: string = VAULT,
+): void {
   host = document.createElement('div')
   document.body.appendChild(host)
   const app = createApp(AgentComposer, {
     running: false,
     canSend: true,
     labels: LABELS,
+    vault,
     ...(capabilities === undefined ? {} : { capabilities }),
   })
   app.use(pinia)
@@ -120,10 +128,23 @@ function mountComposer(capabilities?: readonly AgentCapabilityReport[]): void {
   mounted.push(app)
 }
 
+/** The state a live panel mounts its composer in: a session attached with its record in front of
+ *  the store. Nothing below depends on it — that is the subject of the divergence cases — and it
+ *  is kept because it is the state the composer is really mounted in. */
 async function withSession(): Promise<void> {
   const store = useAgentSessionStore()
   await store.attach(gateway, session)
   store.focus(sessionKey(session))
+  await settle()
+}
+
+/** A session in another vault, focused: the pet's task link (`app/pet-task-link.ts`) moves the
+ *  store's pointer to a session whose panel is not the one on screen. */
+async function focusAnotherVault(): Promise<void> {
+  const elsewhere = await gateway.openSession({ vaultId: '/somewhere/else', cwd: '/somewhere/else' })
+  const store = useAgentSessionStore()
+  await store.attach(gateway, elsewhere)
+  store.focus(sessionKey(elsewhere))
   await settle()
 }
 
@@ -502,6 +523,23 @@ describe('a drop', () => {
     expect(event.defaultPrevented).toBe(true)
   })
 
+  it('addresses a dragged note in its own vault, not the one the store is pointed at', async () => {
+    // The vault is the session's own, handed in by the panel that holds it — so a store pointer
+    // moved elsewhere (the pet's task link) cannot turn a note of this session's folder into a
+    // path this component refuses to touch.
+    readMock.mockResolvedValue('# welcome')
+    mountComposer(report(['embedded-context']))
+    await withSession()
+    await focusAnotherVault()
+
+    const event = dragPath(`${VAULT}/welcome.md`)
+    field().dispatchEvent(event)
+    await settle()
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(chips()).toEqual(['welcome.md'])
+  })
+
   it('leaves a path from outside the vault alone', async () => {
     // A reference is vault-relative because that is the only spelling the engine resolves, so a
     // path from elsewhere is refused rather than inserted as something the turn cannot read.
@@ -578,6 +616,23 @@ describe('the `@` menu', () => {
 
     expect(chips()).toEqual([])
     expect(field().value).toBe('welcome.md ')
+  })
+
+  it('lists the notes of its own vault, not the one the store is pointed at', async () => {
+    // The `@` menu's vault is the composer's own — the prop the panel handed down — so a store
+    // pointer that moved to another session's vault cannot offer this message notes from a
+    // workspace the turn is not being sent to, nor hide the ones it is.
+    indexGetMock.mockResolvedValue([`${VAULT}/welcome.md`])
+    mountComposer(report(['embedded-context']))
+    await withSession()
+    await focusAnotherVault()
+
+    field().value = '@wel'
+    field().dispatchEvent(new Event('input', { bubbles: true }))
+    await settle()
+
+    expect(indexGetMock).toHaveBeenCalledWith(VAULT)
+    expect(document.querySelectorAll('.agent-reference-row')).toHaveLength(1)
   })
 
   it('says which nothing it is showing rather than drawing an empty frame', async () => {

@@ -5,8 +5,7 @@
  * The defaults come from the catalogue (`src/i18n/namespaces/agent.ts`), the way
  * `AgentCommandMenu`'s do: the keys exist, so a caller that wants other words can pass them and a
  * caller that does not gets the translated ones. It is not threaded through `AgentPanelLabels`
- * because the panel builds that tree in a file this change does not own — the same seam the vault
- * comes through below.
+ * because the panel builds that tree in a file this change does not own.
  */
 export interface AgentComposerContextLabels {
   /** The button's accessible name and its tooltip: what the control adds to the message. */
@@ -69,12 +68,13 @@ export interface AgentComposerSelection {
  *    anywhere outside it closes the list, so the editor cannot be re-entered underneath.
  *  - **It does not read the session's own state.** Only the vault, and only to list it: the rows are
  *    the folder's, the draft is the composer's, and no frame, run or permission is touched. The vault
- *    comes from the store's active record because this component cannot be given it any other way —
- *    `AgentPanel.vue` is the one file that could pass `session.identity.vaultId` down and it belongs
- *    to the right-hand group's work; the active record IS the session the composer beside it sends
- *    to, so the folder listed is that session's own rather than whatever the window last opened. The
- *    selection arrives as a prop for the same reason and with the opposite outcome: a test can supply
- *    it, and nothing here reaches into the editor.
+ *    arrives as a prop — {@link props.vault}, the session's own, handed down by the panel that holds
+ *    it — rather than read from the store's active record, which is a *window-wide pointer* rather
+ *    than the session in front of the reader: `app/pet-task-link.ts` moves it to the session its task
+ *    names while the rail keeps the session it was on, so a listing taken from it would be a folder
+ *    of a workspace this message cannot be sent to. The selection arrives as a prop for the same
+ *    reason and with the opposite outcome: a test can supply it, and nothing here reaches into the
+ *    editor.
  *  - **It does not stay open across a vault switch.** The vault that was listed is captured before
  *    the await and the answer is dropped when it no longer matches — §7.1's rule that an async gap
  *    may not re-read what is current and serve it under the name of what was asked for.
@@ -88,7 +88,6 @@ import { fsService } from '../../../platform/gateways/fs'
 import { notifyError } from '../../../services/errors'
 import { getTextSelection } from '../../../services/editor-text-selection'
 import { t } from '../../../i18n'
-import { useAgentSessionStore } from '../stores/agent-session'
 import {
   referenceText,
   selectedPassage,
@@ -101,6 +100,15 @@ import AgentReferenceMenu, { type AgentReferenceRow } from './AgentReferenceMenu
 const props = defineProps<{
   /** Overrides for the default copy; see {@link AgentComposerContextLabels}. */
   labels?: Partial<AgentComposerContextLabels>
+  /**
+   * The workspace whose folder the `+` lists, or nothing when there is no folder to read.
+   *
+   * The session's own vault, handed down by whoever holds the session — `AgentComposer` takes it
+   * from the panel, which is mounted on one session and has that session's identity — so the
+   * folder offered is the one the message above this control is sent to. A store read would be a
+   * different answer to the same question: the store's record is whatever was focused last.
+   */
+  vault?: string | null
   /**
    * The editor's live selection, or `null` when nothing is selected.
    *
@@ -138,8 +146,8 @@ const labels = computed((): AgentComposerContextLabels => ({
   ...props.labels,
 }))
 
-/** The folder the session works in, or null while no session is on screen. */
-const vaultId = computed(() => useAgentSessionStore().activeRecord?.identity.vaultId ?? null)
+/** The folder the session works in, or null while there is none to read. */
+const vaultId = computed(() => props.vault ?? null)
 
 /** The control and the list share it: a click inside either is not a dismissal, and a click
  *  anywhere else is. */

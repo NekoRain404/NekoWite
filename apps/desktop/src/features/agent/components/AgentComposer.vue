@@ -63,7 +63,6 @@ import type {
   AgentPromptAttachment,
 } from '../../../platform/gateways/agent-contracts'
 import { t } from '../../../i18n'
-import { useAgentSessionStore } from '../stores/agent-session'
 import { useAgentComposerAttachments } from '../composables/use-agent-composer-attachments'
 import {
   textWithoutMention,
@@ -112,6 +111,18 @@ const props = defineProps<{
    *  keeps showing the engine's value either way, because a set that did not happen leaves it
    *  in force. */
   configFailure?: { key: string; message: string } | null
+  /**
+   * The workspace this message is addressed in — the session's own vault, handed down by the panel
+   * that holds the session — or nothing when there is no folder to read.
+   *
+   * It is what a picked file, a dropped document, a `@` mention and the `+`'s listing are all
+   * resolved against, so one value serves all four. It arrives rather than being read from the
+   * store for the reason `AgentComposerContext.vue` gives for its own copy: the store's record is
+   * the *focused* session, and the focus can be moved to a session whose panel is not on screen
+   * (`app/pet-task-link.ts`), which would silently re-point every one of the four at a workspace
+   * the turn is not being sent to.
+   */
+  vault?: string | null
   /**
    * The editor's live selection, for the `+`'s Selection row — see `AgentComposerContext.vue`,
    * which owns the row and what a pick puts in the message.
@@ -178,30 +189,24 @@ let composedAt = Number.NEGATIVE_INFINITY
 /**
  * What the message is carrying, and the three intakes that put something there.
  *
- * The vault is read from the store's active record because that IS the session this composer sends
- * to — the same seam, and the same reason, `AgentComposerContext.vue` gives for its folder listing.
+ * The vault is a prop — the panel's own session's, see {@link props.vault} — and every reader below
+ * resolves against it: `attachments` reads it when a file is picked or pasted, `onDrop` reads it for
+ * a dragged path, the `+`'s listing reads it, and the `@` menu reads it.
  */
-/** The store the workspace is read from, resolved *here* rather than inside the readers below.
- *
- *  `useAgentSessionStore()` answers from whichever Pinia is active at the instant it is called, so
- *  a reader that looked it up when a file was picked would be reading global state that belongs to
- *  whoever mounted last — the store would be a different one from the store this component's other
- *  reads go through, and the failure is silent: `attachFile` answers "refused" for a null vault
- *  without a sentence, because a pick with no workspace is not an error it can name.
- *
- *  It also gives the two readers one source: `vault()` below and the mention composable's own
- *  option are the same question. */
-const sessionStore = useAgentSessionStore()
-
 /** The workspace a picked or dropped file is addressed in, or `null` before a session is on
- *  screen. */
-function vault(): string | null {
-  return sessionStore.activeRecord?.identity.vaultId ?? null
+ *  screen.
+ *
+ *  Read through a function because that is the shape all three consumers ask for — a composable
+ *  option and an event handler each take a reader rather than a value, so a composer re-pointed at
+ *  another session with the same instance cannot answer one of them with an older vault than
+ *  another. Named for the session it belongs to rather than `vault`, which is the prop itself. */
+function sessionVault(): string | null {
+  return props.vault ?? null
 }
 
 const attachments = useAgentComposerAttachments({
   capabilities: () => props.capabilities ?? null,
-  vault,
+  vault: sessionVault,
 })
 
 /**
@@ -227,7 +232,7 @@ function pickMention(path: string): void {
 }
 
 const mentions = useAgentComposerMentions({
-  vault: () => useAgentSessionStore().activeRecord?.identity.vaultId ?? null,
+  vault: sessionVault,
   text: () => draft.value,
   select: pickMention,
 })
@@ -331,7 +336,7 @@ function onDrop(event: DragEvent): void {
   // because that is the only spelling the engine can resolve, and the same rule produces the `+`'s
   // rows. A path that cannot become one — from outside the vault, or with no vault open yet —
   // leaves the drag unclaimed rather than inserting a path that names nothing the turn can read.
-  const dropped = draggedReference(draggedPath(event.dataTransfer), vault())
+  const dropped = draggedReference(draggedPath(event.dataTransfer), sessionVault())
   if (dropped !== null) {
     event.preventDefault()
     pickFile(dropped)
@@ -551,6 +556,7 @@ defineExpose({ focus })
            that keeps the hint beside it instead of letting `space-between` float the hint into
            the middle of the row. -->
       <AgentComposerContext
+        :vault="vault"
         :selection="selection"
         @insert="insertReference"
         @pick="pickFile"

@@ -5,12 +5,13 @@
  * are a menu that reads a folder and a field that receives a path, and every one of these cases is
  * about both: an entry the reader picked has to arrive in the draft, and a failure has to arrive
  * somewhere the reader is looking. The folder is the app's own gateway port (stubbed, as the
- * attachments panel's tests stub it); the session is the memory double, so the vault the listing is
- * asked for is the one the session was really opened with rather than one the test handed the
- * component.
+ * attachments panel's tests stub it); the workspace is the panel's — a prop, exactly as the panel
+ * hands it down — and the store is set up as production has it (a session attached and in front),
+ * which is what the case that points the store at *another* vault asserts this component does not
+ * read.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createApp, nextTick, type App as VueApp } from 'vue'
+import { createApp, h, nextTick, ref, type App as VueApp, type Ref } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import AgentComposer, { type AgentComposerLabels } from './AgentComposer.vue'
 import {
@@ -93,13 +94,22 @@ const field = (): HTMLTextAreaElement => {
   return el
 }
 
-function mountComposer(selection?: () => { readonly text: string } | null): void {
+/**
+ * The composer, mounted the way the panel mounts it: the workspace arrives as a prop and nothing
+ * here reaches the store for one. `null` is the no-folder arm — the state the panel is never in,
+ * since a session always has a vault, and the state the control's disabled self is for.
+ */
+function mountComposer(
+  selection?: () => { readonly text: string } | null,
+  vault: string | null = VAULT,
+): void {
   host = document.createElement('div')
   document.body.appendChild(host)
   const app = createApp(AgentComposer, {
     running: false,
     canSend: true,
     labels: LABELS,
+    vault,
     ...(selection === undefined ? {} : { selection }),
   })
   app.use(pinia)
@@ -107,11 +117,54 @@ function mountComposer(selection?: () => { readonly text: string } | null): void
   mounted.push(app)
 }
 
-/** The session a live panel would have put on screen: attached, and the active record. */
+/**
+ * The composer with a *re-pointable* vault, which is a caller's own contract rather than the
+ * panel's: the panel is mounted per session and never re-points one.
+ *
+ * It is mounted through a wrapper because a root props object is not reactive — `createApp`'s
+ * second argument is copied into the vnode's props, so a `ref` handed there never reaches the
+ * component. What the case below holds is the rule a re-point would otherwise break.
+ */
+function mountRepointable(vault: Ref<string | null>): void {
+  host = document.createElement('div')
+  document.body.appendChild(host)
+  const app = createApp({
+    setup: () => () =>
+      h(AgentComposer, {
+        running: false,
+        canSend: true,
+        labels: LABELS,
+        vault: vault.value,
+      }),
+  })
+  app.use(pinia)
+  app.mount(host)
+  mounted.push(app)
+}
+
+/** The state a live panel mounts its composer in: a session attached with its record in front of
+ *  the store. Nothing below depends on it — that is the subject of the divergence case — and it is
+ *  kept because it is the state the composer is really mounted in. */
 async function withSession(): Promise<void> {
   const store = useAgentSessionStore()
   await store.attach(gateway, session)
   store.focus(sessionKey(session))
+  await settle()
+}
+
+/**
+ * A session in *another* vault, put in front of the store.
+ *
+ * This is the pet's task link, and it is the one production case where the store's active record
+ * and the session a panel is showing disagree: the click focuses the session its task names
+ * (`app/pet-task-link.ts`, `store.focus(target)`) while the rail keeps the session it was on, so
+ * the store's pointer lands on a session whose panel is not mounted.
+ */
+async function focusAnotherVault(): Promise<void> {
+  const elsewhere = await gateway.openSession({ vaultId: '/somewhere/else', cwd: '/somewhere/else' })
+  const store = useAgentSessionStore()
+  await store.attach(gateway, elsewhere)
+  store.focus(sessionKey(elsewhere))
   await settle()
 }
 
@@ -135,7 +188,10 @@ afterEach(() => {
 
 describe('before there is a folder', () => {
   it('offers nothing and says why, rather than opening an empty menu', async () => {
-    mountComposer()
+    // No workspace to address anything in: the caller handed the composer no vault. Under the
+    // store seam this state was "no session on screen"; it is now the caller's own answer, which
+    // is why the control is a value rather than a read.
+    mountComposer(undefined, null)
     await settle()
     const button = host.querySelector<HTMLButtonElement>('[data-action="context"]')
     expect(button?.disabled).toBe(true)
@@ -165,6 +221,21 @@ describe('with a session in a folder', () => {
     // Chosen, so the menu is gone — a second pick cannot be made against a listing the reader has
     // already acted on.
     expect(rows()).toEqual([])
+  })
+
+  it('lists the session’s own vault, not the one the store is pointed at', async () => {
+    // Correct by construction rather than by the store's focus: the folder listed is the one the
+    // panel's session works in, so the two cannot disagree however the store's pointer moved.
+    listMock.mockResolvedValue([entry('welcome.md')])
+    mountComposer()
+    await withSession()
+    await focusAnotherVault()
+
+    host.querySelector<HTMLButtonElement>('[data-action="context"]')?.click()
+    await settle()
+
+    expect(listMock).toHaveBeenCalledWith(VAULT, '')
+    expect(rows().map((row) => row.label)).toEqual(['welcome.md'])
   })
 
   it('walks into a folder, and back up out of it', async () => {
@@ -215,7 +286,7 @@ describe('with a session in a folder', () => {
     expect(rows()).toEqual([])
   })
 
-  it('drops a listing that arrives after the window moved to another folder', async () => {
+  it('drops a reading that arrives after the caller moved to another folder', async () => {
     let release: (entries: FileEntry[]) => void = () => {}
     listMock.mockImplementation(
       () =>
@@ -223,17 +294,17 @@ describe('with a session in a folder', () => {
           release = resolve
         }),
     )
-    mountComposer()
+    // Re-pointed mid-flight, which is the only way this component's vault can move now that it is
+    // a prop: a caller that re-points is a caller whose in-flight answer belongs to the vault that
+    // asked, and the file it names is one the new folder cannot offer.
+    const vault = ref<string | null>(VAULT)
+    mountRepointable(vault)
     await withSession()
     host.querySelector<HTMLButtonElement>('[data-action="context"]')?.click()
     await settle()
 
-    // Another vault, opened and put on screen while this folder's reading is in flight — which is
-    // what a vault switch does to the store (§6.2: a new vault is a new runtime).
-    const other = await gateway.openSession({ vaultId: '/somewhere/else', cwd: '/somewhere/else' })
-    const store = useAgentSessionStore()
-    await store.attach(gateway, other)
-    store.focus(sessionKey(other))
+    vault.value = '/somewhere/else'
+    await settle()
     release([entry('welcome.md')])
     await settle()
 

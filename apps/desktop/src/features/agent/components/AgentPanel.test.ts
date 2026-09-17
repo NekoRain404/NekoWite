@@ -30,6 +30,15 @@ import { useAgentSessionStore } from '../stores/agent-session'
 import { sessionKey } from '../services/agent-session-view'
 import { setLocale } from '../../../i18n'
 
+/** The folder reader behind the composer's `+`, stubbed the way `AgentComposerContext.test.ts`
+ *  stubs it: the listing is the app's own port and a test that walked a real folder would be
+ *  testing the port rather than which folder the panel asked for. */
+const listMock = vi.hoisted(() => vi.fn())
+
+vi.mock('../../../platform/gateways/fs', () => ({
+  fsService: { list: listMock },
+}))
+
 /**
  * The copy the caller supplies, which is the whole of the panel's words: the components have
  * none of their own (the catalogue has no keys for them yet — see `AgentPanelLabels`). Typed as
@@ -161,6 +170,8 @@ const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 
 beforeEach(async () => {
   pinia = createPinia()
   setActivePinia(pinia)
+  listMock.mockReset()
+  listMock.mockResolvedValue([])
   gateway = createMemoryAgentGateway({ agentId: 'memory', profileId: 'test' })
   await gateway.start()
   session = await gateway.openSession({ vaultId: 'vault', cwd: '/vault' })
@@ -628,9 +639,9 @@ describe('AgentPanel — what the last turn took', () => {
  * past a session unmounts its panel, and `useAgentSession`'s `onBeforeUnmount` detaches. The
  * record stays — and `recordFor` is exactly what the pet's own guard reads.
  */
-async function focusBehindThePanel(): Promise<string> {
+async function focusBehindThePanel(vaultId = 'vault'): Promise<string> {
   const store = useAgentSessionStore()
-  const elsewhere = await gateway.openSession({ vaultId: 'vault', cwd: '/vault' })
+  const elsewhere = await gateway.openSession({ vaultId, cwd: `/${vaultId}` })
   await store.attach(gateway, elsewhere)
   const key = sessionKey(elsewhere)
   store.detach(key)
@@ -678,5 +689,19 @@ describe('AgentPanel — which session its controls address', () => {
     expect(harness.answers).toHaveLength(1)
     expect(onScreen()).toBe('completed')
     expect(harness.el('.agent-perm')).toBeNull()
+  })
+
+  it('lists the folder of the session it is mounted on, not the one in front behind it', async () => {
+    const harness = await mountPanel({ chunks: [] })
+    // A second session, in another vault: the `+` lists files an engine running in *this* panel's
+    // folder can resolve, so the two vaults have to be told apart rather than compared.
+    await focusBehindThePanel('another-vault')
+
+    await harness.click('[data-action="context"]')
+
+    // The folder asked for is the panel's own session's, which is the one its words would be sent
+    // to — not the workspace the store's pointer names.
+    expect(listMock).toHaveBeenCalledWith('vault', '')
+    expect(harness.el('[data-action="context"]')?.getAttribute('aria-expanded')).toBe('true')
   })
 })
