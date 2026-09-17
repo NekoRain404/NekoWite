@@ -29,6 +29,12 @@
  *     the application icon (`floating-ball.html:11-13`); here the ball occupies a character's slot
  *     on the desktop, so it wears that character when it has one and falls back to upstream's
  *     plain orb when it does not.
+ *   - A character that cannot be drawn is *reported*, and the orb is what is left. Upstream had
+ *     an `<img>` that simply broke; a `PetSprite` with neither `on-load-error` nor
+ *     `on-unavailable` is worse than that — it states nothing and goes on running a frame timer
+ *     for a canvas nothing will ever paint (`pet-failure-recovery.md` §7.3). Both are wired
+ *     below, and the branch is refused while either is true, which unmounts the sprite and takes
+ *     its timer with it.
  *
  * What it deliberately does not own: the menu. Upstream's ball carried the quick-bubble form and
  * its presets in the same file (`:10-12`, `:123-190`); that is the bubble feature's job here (§10's D9), so
@@ -40,7 +46,8 @@
  * window must not import the app's whole dictionary (§7.1). §10.1 gives the pet its own i18n
  * namespace to the integrator, and this component is one of the places it plugs in.
  */
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { usePetDrawingFailure } from '../composables/use-pet-drawing-failure'
 import type { SpriteClock } from '../rendering/animation-bindings'
 import type { ImageFactory } from '../rendering/sprite-sheet'
 import {
@@ -99,7 +106,42 @@ const emit = defineEmits<{
   'dismiss-menu': []
   /** The ball was right-clicked. Where that lands is the host's (§7.1); this only reports it. */
   'open-settings': []
+  /**
+   * The ball cannot draw the character it was given, or can again. The sentence is
+   * `usePetDrawingFailure`'s, so the host that shows it says what the pet window says.
+   */
+  'draw-failure': [notice: string | null]
 }>()
+
+/**
+ * The two states `PetSprite` reports when it cannot draw, and when they stop being true.
+ *
+ * Declared here rather than left to the composition, because the props have to be *passed* for
+ * the ball to hear them at all: a sprite with no `on-load-error` has no way to say a character
+ * is broken, and one with no `on-unavailable` is the inert case — a player and a frame timer
+ * built for a canvas that will never be painted, ticking at 3-8 Hz with nothing to do and
+ * nothing to say (`pet-failure-recovery.md` §7.3). Wiring both is what makes the refusal below
+ * reachable, and the refusal is what stops that timer.
+ *
+ * `drawing` is the ball's own lifetime: the branch further down mounts the sprite only while the
+ * ball is visible and has a character, which is exactly the canvas the composable's second rule
+ * is about. `imageUrl` is read through a computed rather than passed as the prop, because the
+ * composable watches it and a prop read directly would be watched for its identity alone.
+ */
+const drawing = computed(() => props.visible && Boolean(props.imageUrl))
+const {
+  notice: drawingFailure,
+  onLoadError: onSpriteLoadError,
+  onUnavailable: onSpriteUnavailable,
+} = usePetDrawingFailure({ imageUrl: computed(() => props.imageUrl ?? null), drawing })
+
+/**
+ * Say it out loud to whoever can place it. The orb is 56px and has room for no sentence at all,
+ * so the same division the gestures above use applies here: this component reports, and the
+ * composition decides where a sentence goes. `immediate` because the first state is worth
+ * stating — a host that only heard about changes would have to guess at the one it mounted with.
+ */
+watch(drawingFailure, (notice) => emit('draw-failure', notice), { immediate: true })
 
 /** Upstream's margin between the orb and its window (`styles.css:236`), so hover and shadow fit. */
 const BALL_MARGIN = 12
@@ -122,7 +164,13 @@ const movable = computed(() => typeof props.platform?.startDrag === 'function')
 
 const hint = computed(() => {
   const base = 'Left-click: menu · Right-click: settings'
-  return movable.value ? `${base} · Drag to move` : `${base} · This desktop cannot move it`
+  const movement = movable.value ? 'Drag to move' : 'This desktop cannot move it'
+  // A failure is appended and never replaces the rest: the two clauses above stay true whatever
+  // the character did. It is here as well as in the emit because the orb is the whole window and
+  // a user has no other way to learn that the ball is plain because the character broke — and
+  // because the sentence is `usePetDrawingFailure`'s, so this is the same words the pet window
+  // shows rather than a second description of one failure.
+  return drawingFailure.value ? `${base} · ${movement} · ${drawingFailure.value}` : `${base} · ${movement}`
 })
 
 function clockOf(): number {
@@ -232,7 +280,7 @@ async function endDrag(started: Promise<void>): Promise<void> {
       @keydown.space.prevent="emit('toggle-menu')"
     >
       <PetSprite
-        v-if="imageUrl"
+        v-if="imageUrl && !drawingFailure"
         class="pet-ball__face"
         :image-url="imageUrl"
         :state="state"
@@ -240,6 +288,8 @@ async function endDrag(started: Promise<void>): Promise<void> {
         :height="faceSize"
         :clock="clock"
         :create-image="createImage"
+        :on-load-error="onSpriteLoadError"
+        :on-unavailable="onSpriteUnavailable"
       />
       <span
         v-else

@@ -40,6 +40,7 @@ import { spawn } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebDriver, freePort, sleep, until } from './webdriver.mjs'
+import { driveBall, verifyBall } from './probe-ball.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const packageRoot = resolve(here, '..', '..')
@@ -315,13 +316,6 @@ const name = arguments[0], done = arguments[arguments.length - 1];
 window.__petRoot[name]().then(() => setTimeout(() => done(true), 400));
 `
 
-/**
- * What is on the canvas, as numbers.
- *
- * Alpha decides "drawn" (§12's 非空透明像素), the four channels decide "the same" — and the *sprite
- * rect* is read back from the component's own placement rather than inferred, so the hit test below
- * is compared against where the pet believes it is.
- */
 const DIGEST = `
 const host = arguments[0], done = arguments[arguments.length - 1];
 const canvas = document.querySelector(host + ' canvas.pet-sprite');
@@ -514,6 +508,9 @@ function verify(results) {
     up.notice === null && again.notice === null && root.hidden.notice === null,
   )
 
+  // The floating ball's own checks, in `probe-ball.mjs` with the instrument they read.
+  checks.push(...verifyBall(results.ball))
+
   /*
    * 气泡不越屏, height axis — in this engine rather than in Chromium.
    *
@@ -607,7 +604,7 @@ async function main() {
   })
 
   const wd = new WebDriver(driverPort)
-  const results = { engine: null, page: null, states: {}, hit: {}, advanced: null, root: {}, bubble: null }
+  const results = { engine: null, page: null, states: {}, hit: {}, advanced: null, root: {}, ball: {}, bubble: null }
   const watchdog = setTimeout(() => {
     process.stderr.write('\n[webkit-pet] watchdog: nothing finished in 300s\n')
     process.kill(process.pid, 'SIGKILL')
@@ -737,6 +734,11 @@ async function main() {
     // The window stand-in is put back before anything else runs on the page: a patched
     // `addEventListener` left in place would change what the bubble step's own mounts register.
     await wd.execute('window.__petRoot.restore(); return true;')
+
+    // The floating ball — D11b's surface, mounted nowhere in the product, so this is its only run
+    // in the engine that ships. Its instrument, steps and verdict are `probe-ball.mjs`.
+    const ballSheet = await wd.execute('return window.__petProbe.sheetURL;')
+    results.ball = await driveBall(wd, { digest: DIGEST, sheetUrl: ballSheet, stage })
 
     // The bubble's cap is a fraction of the window's height, so the window has to be the character's
     // before the bubble means anything: the same 320px `window_host::CHARACTER_WINDOW_SIZE` builds.

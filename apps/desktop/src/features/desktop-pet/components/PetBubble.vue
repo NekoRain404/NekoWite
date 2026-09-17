@@ -96,6 +96,17 @@ function onContextMenu(event: MouseEvent): void {
   emit('menu', { x: event.clientX, y: event.clientY })
 }
 
+/**
+ * Whether this surface is on screen at all, for the caller that has to decide whether the window
+ * takes the pointer (§7.2's 鼠标穿透).
+ *
+ * Exposed rather than recomputed by the caller: "the bubble is showing something" is
+ * `filterPetTasks` plus the layout's filter plus `forceList`, and a second copy of that in the
+ * window's root would be a second answer to the same question — the kind that drifts, and drifts
+ * silently, because the two would only disagree about the states nobody tests.
+ */
+defineExpose({ visible })
+
 const surfaceStyle = { maxWidth: `${PET_BUBBLE_MAX_WIDTH}px`, boxSizing: 'border-box' } as const
 
 /**
