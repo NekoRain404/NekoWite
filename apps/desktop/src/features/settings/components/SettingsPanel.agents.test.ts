@@ -86,6 +86,71 @@ function profileReadout(revision: string): unknown {
         { tool: 'bash', action: 'ask' },
       ],
     },
+    // The relative path of the same file, which is what `agent_config_document` takes. An
+    // app-managed profile is the mode where this host owns the document, so it is present here;
+    // `null` is the arm the document editor draws as a sentence instead of a form.
+    configDocument: 'XDG_CONFIG_HOME/opencode/opencode.json',
+  }
+}
+
+/**
+ * The document's answer, as `agent_config_document` serializes it (`commands/agent_settings.rs`).
+ *
+ * The text is the engine's own file, comments and all — that is the point of showing it, and the
+ * reason this fixture is not a parsed object.
+ */
+function documentReadout(revision: string): unknown {
+  return {
+    path: '/tmp/profile/XDG_CONFIG_HOME/opencode/opencode.json',
+    exists: true,
+    revision,
+    text: '{\n  // the engine’s own file\n  "permission": { "edit": "ask" }\n}\n',
+    editable: true,
+  }
+}
+
+/**
+ * The catalogue's answer, as `agent_catalogue_read` serializes it (`commands/agent_catalogue.rs`).
+ *
+ * One row, and it is the arm `catalogueAction` draws a control for: `via-package-manager` with
+ * `offerable: true`. Rows that are `archive-only`, `unsupported` or `unrecognised` draw no control
+ * at all, so they would prove nothing about the one wire this test is for — the click that hands an
+ * entry to the registry's add form.
+ */
+function catalogueReadout(): unknown {
+  return {
+    registryVersion: '1.0.0',
+    freshness: 'current',
+    note: null,
+    rows: [
+      {
+        id: 'acme-agent',
+        name: 'Acme Agent',
+        version: '2.1.0',
+        description: 'An agent that publishes itself to the registry.',
+        repository: null,
+        website: null,
+        authors: [],
+        license: null,
+        licenseUrl: null,
+        iconUrl: null,
+        standing: {
+          kind: 'via-package-manager',
+          manager: 'npx',
+          package: 'acme-agent@2.1.0',
+          program: 'npx',
+          args: ['-y', 'acme-agent@2.1.0'],
+          pinnedVersion: '2.1.0',
+        },
+        defects: [],
+        offerable: true,
+      },
+    ],
+    offerable: 1,
+    installGates: [
+      { check: 'digest', transfers: false },
+      { check: 'architecture', transfers: true },
+    ],
   }
 }
 
@@ -120,6 +185,10 @@ beforeEach(() => {
       case 'agent_permission_grants':
         // No engine in this test, which is the state the grants page draws as its own sentence.
         return { kind: 'not-running' }
+      case 'agent_config_document':
+        return documentReadout(revision)
+      case 'agent_catalogue_read':
+        return catalogueReadout()
       case 'agent_profile_write': {
         // The backend's own behaviour, in three lines: the write is applied at the revision the
         // form read, and applying it moves the revision — which is what makes a stale form's next
@@ -262,9 +331,22 @@ describe('the agents section in the settings dialog', () => {
     expect(el('permission-state')?.textContent).toContain('asks before it changes your files')
     expect(el('grants-not-running')).not.toBeNull()
     expect(el('grants-empty')).toBeNull()
+    // The engine's own configuration: the document's text, drawn as the engine wrote it, with a
+    // form over one member. Both facts are the backend's — the path came off the profile readout
+    // and the text off the document read — so a page that spelled either itself fails here.
+    await untilDom(() => el('config-text') !== null, 'the configuration document')
+    expect(el('config-text')?.textContent).toContain('"permission"')
+    expect(el('config-location')?.textContent).toContain('opencode.json')
+    expect(el('config-edit')).not.toBeNull()
+    // And the catalogue, which had no mount point at all before this: it reads, and it draws the
+    // registry's own version rather than an empty section.
+    await untilDom(() => el('catalogue-freshness') !== null, 'the catalogue')
+    expect(section().contains(el('catalogue-freshness'))).toBe(true)
 
     // The exact set, so a page that starts asking for a command nobody registered fails here.
     expect([...new Set(asked)].sort()).toEqual([
+      'agent_catalogue_read',
+      'agent_config_document',
       'agent_permission_grants',
       'agent_profile_read',
       'agent_registry_read',
@@ -307,6 +389,27 @@ describe('the agents section in the settings dialog', () => {
     expect(el('registry-new-session')).toBeNull()
     expect(el('registry-engine-select')).toBeNull()
     expect(asked).not.toContain('agent_start')
+  })
+
+  it('hands a catalogue entry to the registry’s add form, rather than emitting to nobody', async () => {
+    await openAgents()
+    await untilDom(() => el('catalogue-use-acme-agent') !== null, 'the catalogue’s control')
+
+    // The catalogue's only control means "register this one", and it holds no `add` of its own. The
+    // two assertions below are the difference between a wired control and a button that emits into
+    // an empty room: the entry's program and its arguments are in the *form the registry submits*,
+    // as an array joined one argument per line (§3.4.3 — never a command line).
+    el('catalogue-use-acme-agent')?.dispatchEvent(new MouseEvent('click'))
+    await nextTick()
+    await nextTick()
+
+    const program = document.querySelector<HTMLInputElement>('[data-test="registry-field-program"]')
+    const args = document.querySelector<HTMLTextAreaElement>('[data-test="registry-field-args"]')
+    expect(program?.value).toBe('npx')
+    expect(args?.value).toBe('-y\nacme-agent@2.1.0')
+    expect(document.querySelector<HTMLInputElement>('[data-test="registry-field-agentId"]')?.value).toBe(
+      'acme-agent',
+    )
   })
 
   it('states the absences as text, one per section it does not mount, and draws nothing else', async () => {

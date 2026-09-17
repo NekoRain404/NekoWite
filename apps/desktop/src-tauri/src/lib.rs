@@ -278,6 +278,13 @@ pub fn run() {
             commands::agent::agent_prompt,
             commands::agent::agent_session_snapshot,
             commands::agent_capabilities::agent_session_capabilities,
+            // Session history: the sessions the engine already holds, reopening one, and freeing
+            // one. Registered here for the reason above — a command in no handler list is a
+            // permission onto a wall — and declared in `build.rs` in the same change, because the
+            // two lists are each other's mirror and `command_authorisation_test` compares them.
+            commands::agent_sessions::agent_list_sessions,
+            commands::agent_sessions::agent_load_session,
+            commands::agent_sessions::agent_close_session,
             commands::agent::agent_permission_answer,
             commands::agent::agent_permission_grants,
             commands::agent::agent_permission_grant_revoke,

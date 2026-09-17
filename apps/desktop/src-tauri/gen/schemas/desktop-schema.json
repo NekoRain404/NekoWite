@@ -189,6 +189,12 @@
           "markdownDescription": "Enables the agent_catalogue_read command without any pre-configured scope."
         },
         {
+          "description": "Enables the agent_close_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-close-session",
+          "markdownDescription": "Enables the agent_close_session command without any pre-configured scope."
+        },
+        {
           "description": "Enables the agent_config_document command without any pre-configured scope.",
           "type": "string",
           "const": "allow-agent-config-document",
@@ -205,6 +211,18 @@
           "type": "string",
           "const": "allow-agent-credentials-write",
           "markdownDescription": "Enables the agent_credentials_write command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_list_sessions command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-list-sessions",
+          "markdownDescription": "Enables the agent_list_sessions command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_load_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-load-session",
+          "markdownDescription": "Enables the agent_load_session command without any pre-configured scope."
         },
         {
           "description": "Enables the agent_open_session command without any pre-configured scope.",
@@ -615,6 +633,12 @@
           "markdownDescription": "Denies the agent_catalogue_read command without any pre-configured scope."
         },
         {
+          "description": "Denies the agent_close_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-close-session",
+          "markdownDescription": "Denies the agent_close_session command without any pre-configured scope."
+        },
+        {
           "description": "Denies the agent_config_document command without any pre-configured scope.",
           "type": "string",
           "const": "deny-agent-config-document",
@@ -631,6 +655,18 @@
           "type": "string",
           "const": "deny-agent-credentials-write",
           "markdownDescription": "Denies the agent_credentials_write command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_list_sessions command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-list-sessions",
+          "markdownDescription": "Denies the agent_list_sessions command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_load_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-load-session",
+          "markdownDescription": "Denies the agent_load_session command without any pre-configured scope."
         },
         {
           "description": "Denies the agent_open_session command without any pre-configured scope.",

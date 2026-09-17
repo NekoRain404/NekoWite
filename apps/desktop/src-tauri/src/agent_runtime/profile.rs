@@ -410,6 +410,20 @@ pub struct ProfileReadout {
     /// Where the rules live, when this host may write them. `None` in the mode where it may not —
     /// a page that drew a path here would be naming a document this host does not own.
     pub permission_document: Option<PathBuf>,
+    /// The engine's own configuration document, as the editor opens it: [`ENGINE_CONFIG_DOCUMENT`],
+    /// or `None` in the mode where this host owns no such file.
+    ///
+    /// The *relative* spelling, and that is the point of having a second field beside
+    /// [`ProfileReadout::permission_document`]: `agent_config_document` and `Profile::document_path`
+    /// take a path relative to the profile root, and the confinement check that keeps an editor
+    /// inside that root is the one every document read already goes through. An absolute path here
+    /// would have to be turned back into a relative one by whoever called, and a caller doing that
+    /// arithmetic is a second place for the answer to be wrong.
+    ///
+    /// `None` is the honest arm in `user-config` mode for the reason `permission_document` gives: a
+    /// profile that reuses the user's own installation has an engine configuration, and it is that
+    /// installation's file — a path this host does not own and will not hand out as if it did.
+    pub config_document: Option<&'static str>,
 }
 
 impl ProfileReadout {
@@ -768,6 +782,14 @@ impl Profile {
             permission_defaults: self.permission_defaults(),
             permission_document: match self.fields.mode {
                 ConfigMode::AppManaged => self.document_path(ENGINE_CONFIG_DOCUMENT).ok(),
+                ConfigMode::UserConfig => None,
+            },
+            // The same document, spelled the way a caller may open it. Not derived from the field
+            // above: that one is `document_path`'s answer *for this root*, this one is the relative
+            // name `document_path` takes, and a caller stripping the prefix off the first would be
+            // doing arithmetic the type system cannot check.
+            config_document: match self.fields.mode {
+                ConfigMode::AppManaged => Some(ENGINE_CONFIG_DOCUMENT),
                 ConfigMode::UserConfig => None,
             },
         }

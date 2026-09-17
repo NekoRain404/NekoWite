@@ -51,6 +51,33 @@ export interface LiveSession {
   readonly identity: AgentIdentity
   /** The bound this session's replay buffer keeps to. */
   readonly replayLimit: number
+  /**
+   * The working directory the session belongs to.
+   *
+   * A real engine keeps one per session — ACP's `SessionInfo` requires it and `session/load`
+   * takes it as a parameter — and the double needs it for the same reason the engine does: a
+   * history row names a directory, and a load has to be asked for one.
+   */
+  cwd: string
+  /**
+   * The engine's own title for the session.
+   *
+   * Generated the way the pinned engine generates one — `New session - <ISO stamp>`, which is
+   * what `agent_session_lifecycle_test.rs` §4.5 measured it answering — because a title this
+   * double invented in some other shape would teach a surface to expect a shape no engine sends.
+   */
+  title: string
+  /** ISO 8601, the engine's own last-activity stamp. */
+  updatedAt: string
+  /**
+   * Whether the engine still serves this session.
+   *
+   * A close does not remove a session from the engine's *table* — the pinned engine was measured
+   * leaving it listed (§4.4 of the lifecycle probe) — it stops serving it. Keeping the two facts
+   * apart is what lets the double model the shape a panel actually has to draw: a history row
+   * for a session whose handle is dead.
+   */
+  closed: boolean
   state: AgentSessionState
   /** Last sequence handed out; events start at 1, so 0 means "nothing yet". */
   sequence: number
@@ -65,10 +92,34 @@ export interface LiveSession {
   run: LiveRun | null
 }
 
-export function createSession(identity: AgentIdentity, replayLimit: number): LiveSession {
+/**
+ * The clock this double's timestamps are read from, and it is deliberately **not** `Date.now()`.
+ *
+ * A session list renders a relative age, so a stamp that moved with the wall clock would make
+ * every assertion about a row's text a race. This counts instead: session 1 is `…T00:00:01Z`,
+ * session 2 is `…T00:00:02Z`, and the same test run produces the same strings every time. The
+ * shape is what a real engine sends — ISO 8601, which `SessionInfo.updatedAt` is defined as — and
+ * that is the whole of what the double owes the contract here.
+ */
+const MEMORY_EPOCH = '2026-01-01T00:00:'
+function stamp(index: number): string {
+  return `${MEMORY_EPOCH}${String(index).padStart(2, '0')}Z`
+}
+
+export function createSession(
+  identity: AgentIdentity,
+  replayLimit: number,
+  cwd: string,
+  ordinal: number,
+): LiveSession {
+  const at = stamp(ordinal)
   return {
     identity,
     replayLimit,
+    cwd,
+    title: `New session - ${at}`,
+    updatedAt: at,
+    closed: false,
     state: 'ready',
     sequence: 0,
     lastRunId: null,
@@ -78,6 +129,8 @@ export function createSession(identity: AgentIdentity, replayLimit: number): Liv
     run: null,
   }
 }
+
+export { stamp as memoryStamp }
 
 /**
  * The one place a session handle is minted.

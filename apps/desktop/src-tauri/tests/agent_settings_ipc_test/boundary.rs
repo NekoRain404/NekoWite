@@ -368,6 +368,57 @@ fn a_revision_that_is_not_the_shape_this_host_issues_never_reaches_a_comparison(
     assert!(Revision::parse(&"a".repeat(63)).is_none());
 }
 
+/// The document the editor opens, named by the backend rather than spelled by a window.
+///
+/// `configDocument` is the one fact the configuration editor cannot derive: the relative path
+/// inside the profile root that `agent_config_document` and `agent_config_edit` take. Which file an
+/// engine reads under its own root is that engine's layout (§3.4.5), so a component holding a
+/// literal path would be the engine known by name in a window — the thing §3.4's last line forbids.
+/// Two arms, and each is a different sentence on the page: the profile this host writes in has a
+/// document, and the profile that reuses the user's own installation has one this host does not own.
+#[test]
+fn the_readout_names_the_document_the_editor_may_open() {
+    let store = ProfileStore::new(scratch("config-document"));
+    let profile = store.open("engine-alpha", "alpha").unwrap();
+
+    let view = read_profile(&store, "engine-alpha", "alpha").unwrap();
+    let relative = view["configDocument"]
+        .as_str()
+        .expect("an app-managed profile names its engine's configuration document");
+    // The name is usable, which is the whole point of reporting it: the confinement check every
+    // document read goes through accepts it, the path it resolves to is inside this root, and the
+    // read the editor's page makes answers rather than refusing.
+    let path = profile.document_path(relative).unwrap();
+    assert!(path.starts_with(profile.root()), "{path:?}");
+    // And the command the editor's page calls accepts it: this is the pair of facts that has to
+    // hold together — the name the readout reports and the name `agent_config_document` opens.
+    let opened = crate::agent_settings::read_document(&store, "engine-alpha", "alpha", relative)
+        .expect("the document the readout named is one the editor may open");
+    assert_eq!(opened["path"], path.to_string_lossy().as_ref());
+    assert_eq!(opened["editable"], true);
+
+    // The other mode: the engine reads the user's own installation, and this host writes nothing
+    // there. `null` is that fact — never a path this app would be claiming to own. The mode switch
+    // is the same call the profile page makes.
+    submit_profile(
+        &store,
+        "engine-alpha",
+        "alpha",
+        profile.revision().as_str(),
+        &ProfileSubmission {
+            mode: ConfigMode::UserConfig.id().to_string(),
+            provider: None,
+            model_id: None,
+        },
+    )
+    .unwrap();
+    let reused = read_profile(&store, "engine-alpha", "alpha").unwrap();
+    assert!(reused["configDocument"].is_null(), "{reused}");
+    // And the two fields agree about it, which is what lets the page choose its arm from either:
+    // no document named, no document this host may write.
+    assert_eq!(reused["editable"], false);
+}
+
 #[test]
 fn the_command_names_the_composition_root_registers_are_the_ones_this_file_has() {
     // The wiring point, transcribed where it cannot rot: `lib.rs` and `commands/mod.rs` are T4's

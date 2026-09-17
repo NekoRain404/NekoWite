@@ -21,6 +21,11 @@ export interface AgentSessionBarLabels {
    *  engine refused, the run was stopped — and so does an ending whose reason this version does
    *  not know, which is a fact about the engine rather than a failure of the turn. */
   result: Record<AgentRunEnding, string>
+  /** The history control's accessible name and tooltip. Optional with a catalogue default, the
+   *  direction the newer components beside this one take (`AgentCommandMenu.vue`,
+   *  `AgentConfigPicker.vue`): the words for a control are the control's own, and a caller only
+   *  overrides them when it has something more specific to say. */
+  history?: string
 }
 </script>
 
@@ -28,11 +33,14 @@ export interface AgentSessionBarLabels {
 /**
  * The session's title bar: what this session is, and what it is doing.
  *
- * Props in, events out — and in fact nothing out, because everything §5.3 puts in this strip
- * beyond the title (history, new session, more) is an action over the *session list*, which
- * is a different part of the feature than this one renders. The title is shown, not edited:
- * the contract lets the engine name a session (`session-changed`) and offers the host no way
- * to name one back, so a rename control here would be a button that cannot act.
+ * Props in, events out. The one control §5.3 puts in this strip beyond the title — history, the
+ * action over the session *list* — is here as a trigger and nothing more: pressing it is an
+ * event, and the list itself is the panel's, which is where the gateway and the session are.
+ * **Whether it is drawn at all is not this component's decision** (`history`): the panel draws it
+ * only when the engine's own report says it answers `session/list`, so a bar with no such report
+ * has no button rather than a disabled one. The title is shown, not edited: the contract lets the
+ * engine name a session (`session-changed`) and offers the host no way to name one back, so a
+ * rename control here would be a button that cannot act.
  *
  * The state line is the panel's screen-reader status cue (§5.2 「支持…屏幕阅读器状态提示；
  * 不能每 token 都触发朗读」). It is a `role="status"` region on purpose and it changes when the
@@ -42,15 +50,17 @@ export interface AgentSessionBarLabels {
  * The status is a word, an icon and a colour in that order of importance: §5.3 asks for text
  * and icon together so that the restrained status colours are never the only signal.
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import {
   Circle,
   CircleCheck,
   CircleSlash,
   CircleX,
+  History,
   Loader,
   ShieldQuestion,
 } from 'lucide-vue-next'
+import { t } from '../../../i18n'
 import type { AgentRunResult } from '../../../platform/gateways/agent-contracts'
 
 const props = defineProps<{
@@ -62,8 +72,37 @@ const props = defineProps<{
   failure: { code: string; message: string } | null
   /** How the last run ended. Its stop reason is shown only when it is not the ordinary one. */
   result: AgentRunResult | null
+  /**
+   * Whether to draw the history control — the panel's answer, from the engine's own report.
+   *
+   * A prop rather than a condition here, because what decides it is a capability this component
+   * has no way to ask about: the panel calls `AgentGateway.capabilities` and passes the answer
+   * down. False draws no button at all, which is the whole point of asking.
+   */
+  history: boolean
+  /** Whether the list it opens is up, for `aria-expanded` — the state lives in the panel. */
+  historyOpen: boolean
   labels: AgentSessionBarLabels
 }>()
+
+const emit = defineEmits<{
+  /** The user asked for the sessions this engine holds. The panel draws the list. */
+  history: []
+}>()
+
+const triggerEl = ref<HTMLButtonElement | null>(null)
+
+/** The element the panel measures its popup against. Exposed rather than kept here because the
+ *  list is the panel's (it is the layer that holds the gateway), and the app's popup recipe
+ *  measures from the control it hangs off. */
+function triggerElement(): HTMLElement | null {
+  return triggerEl.value
+}
+
+defineExpose({ triggerElement })
+
+/** The catalogue's own name for this control, unless the caller said otherwise. */
+const historyLabel = computed(() => props.labels.history ?? t('agent.panel.bar.history'))
 
 const STATE_ICONS: Record<AgentSessionState, typeof Circle> = {
   idle: Circle,
@@ -114,6 +153,27 @@ const detail = computed(() => {
     >
       {{ title ?? labels.untitled }}
     </h2>
+    <!-- §5.3's one control beyond the title, and only when the engine said it answers the call
+         behind it. `aria-haspopup` and `aria-expanded` carry the state; the list's own element is
+         the panel's (it is teleported to the body), so this control does not name it. -->
+    <button
+      v-if="history"
+      ref="triggerEl"
+      class="agent-bar-history"
+      type="button"
+      data-agent-history
+      aria-haspopup="listbox"
+      :aria-expanded="historyOpen"
+      :title="historyLabel"
+      :aria-label="historyLabel"
+      @click="emit('history')"
+    >
+      <History
+        :size="13"
+        :stroke-width="1.8"
+        aria-hidden="true"
+      />
+    </button>
     <p
       class="agent-bar-state"
       role="status"
@@ -163,6 +223,38 @@ const detail = computed(() => {
   letter-spacing: -0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* The strip is baseline-aligned for the title and the state word; a control has no baseline to
+   sit on, so it centres itself in the row instead. Quiet by default — this is a title bar, and
+   the one thing here that must draw the eye is the state it is reporting. */
+.agent-bar-history {
+  display: inline-flex;
+  align-self: center;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+  transition: background var(--app-motion-fast) var(--app-ease),
+              color var(--app-motion-fast) var(--app-ease);
+}
+.agent-bar-history:hover {
+  background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
+  color: var(--app-text);
+}
+/* Open, it reads as held: the list below belongs to this control. */
+.agent-bar-history[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--app-accent-soft) 82%, var(--app-elevated));
+  color: var(--app-accent);
+}
+.agent-bar-history:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
 }
 .agent-bar-state {
   display: inline-flex;

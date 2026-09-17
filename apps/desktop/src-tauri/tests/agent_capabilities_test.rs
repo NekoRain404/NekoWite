@@ -550,10 +550,21 @@ fn every_feature_has_a_name_the_two_sides_share() {
         .iter()
         .map(|feature| feature.as_str())
         .collect();
+    // The four the scan report's §1 table recorded as advertised by the engine and *neither read
+    // nor called* by this host — `sessionCapabilities.list`, `.resume`, `.close` and `.fork` — are
+    // the reason this list grew from seven to eleven. Each is now a fact read off the handshake
+    // (`capabilities::SessionManagement`), reported in its own row, and the spelling below is what
+    // the TypeScript contract mirrors: `AGENT_CAPABILITY_FEATURES` in
+    // `platform/gateways/agent-contracts/gateway.ts`, held to this list by
+    // `platform/gateways/tauri-agent.test.ts`, which reads this source.
     assert_eq!(
         names,
         [
             "session-resume",
+            "session-list",
+            "session-resume-without-history",
+            "session-close",
+            "session-fork",
             "slash-commands",
             "model-selection",
             "image-attachments",
@@ -562,6 +573,77 @@ fn every_feature_has_a_name_the_two_sides_share() {
             "embedded-context",
         ]
     );
+}
+
+/// The four session-management capabilities are read off the handshake's `sessionCapabilities`
+/// group, presence by presence — the thing §1 of the scan report said this host never did.
+///
+/// The wire defines support by the *presence* of a sub-object (`{}` means yes; omitted or `null`
+/// means no), so what is asserted here is the reading of that presence and nothing about what a
+/// sub-object holds. `None` — a handshake that carried no `sessionCapabilities` at all — is
+/// deliberately not `false`: it is the state in which nothing has said either way, which is the
+/// distinction `Finding::Unverified` exists for.
+#[test]
+fn the_session_management_group_is_read_from_the_handshake_by_presence() {
+    use agent_client_protocol::schema::v1::{
+        AgentCapabilities, InitializeResponse, PromptCapabilities, SessionCapabilities as Wire,
+        SessionCloseCapabilities, SessionListCapabilities,
+    };
+    use nekowite_lib::agent_runtime::capabilities::SessionCapabilities;
+
+    fn facts(capabilities: AgentCapabilities) -> SessionCapabilities {
+        let mut response = InitializeResponse::new(
+            agent_client_protocol::schema::ProtocolVersion::V1,
+        );
+        response.agent_capabilities = capabilities;
+        let mut facts = SessionCapabilities::default();
+        facts.negotiated(nekowite_lib::agent_runtime::capabilities::Handshake::of(
+            &response,
+        ));
+        facts
+    }
+
+    // Nothing negotiated: not a "no" for any of the four.
+    let before = SessionCapabilities::default();
+    assert_eq!(before.session_capability_list(), None);
+    assert_eq!(before.session_capability_resume(), None);
+    assert_eq!(before.session_capability_close(), None);
+    assert_eq!(before.session_capability_fork(), None);
+
+    // A handshake that *happened* and carried no `sessionCapabilities` group: an answer, not a
+    // silence. The schema's words are "omitted or `null` both mean the agent does not advertise
+    // support", so all four are `Some(false)` — `unavailable`, with the engine's own fact named —
+    // and only the absence of a handshake above is `None`. Folding the two together is the one
+    // mistake this type was written wrong with first: it reported `unverified` for an engine that
+    // had answered no.
+    let absent = facts(AgentCapabilities::new().prompt_capabilities(PromptCapabilities::new()));
+    assert_eq!(absent.session_capability_list(), Some(false));
+    assert_eq!(absent.session_capability_resume(), Some(false));
+    assert_eq!(absent.session_capability_close(), Some(false));
+    assert_eq!(absent.session_capability_fork(), Some(false));
+
+    // One sub-object present and the rest omitted: the present one is yes, the others are no.
+    // This is the shape the schema's own words describe, and the shape the pinned engine's
+    // measured handshake does *not* have — it carries all four (`fake_agent.sh:22`).
+    let partial = facts(
+        AgentCapabilities::new().session_capabilities(Wire::new().list(SessionListCapabilities::new())),
+    );
+    assert_eq!(partial.session_capability_list(), Some(true));
+    assert_eq!(partial.session_capability_resume(), Some(false));
+    assert_eq!(partial.session_capability_close(), Some(false));
+    assert_eq!(partial.session_capability_fork(), Some(false));
+
+    // And a close sub-object present beside the list: independent readings of one group.
+    let two = facts(
+        AgentCapabilities::new().session_capabilities(
+            Wire::new()
+                .list(SessionListCapabilities::new())
+                .close(SessionCloseCapabilities::new()),
+        ),
+    );
+    assert_eq!(two.session_capability_list(), Some(true));
+    assert_eq!(two.session_capability_close(), Some(true));
+    assert_eq!(two.session_capability_resume(), Some(false));
 }
 
 #[test]

@@ -151,6 +151,11 @@ function readout(value: unknown): AgentProfileReadout {
     credentials: asList(record['credentials'], 'credentials').map(credential),
     credentialStorage: storage(record['credentialStorage']),
     permissions: permissions(record['permissions']),
+    // The one nullable member the document editor reads: `null` is a profile whose engine
+    // configuration belongs to the user's own installation, and the page's arm for it is a
+    // sentence rather than an editor — so a value invented here would draw a document this host
+    // does not own.
+    configDocument: asNullableString(record['configDocument'], 'configDocument'),
   }
 }
 

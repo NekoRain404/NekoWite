@@ -118,7 +118,7 @@ const locale = computed<string>(() => getLocale())
 // four rules, including why a rollback has to stop the process and not merely
 // stop drawing it.
 const settings = useSettingsStore()
-const { state: agentState, retry: retryAgentRail } = attachAgentRail({
+const { state: agentState, retry: retryAgentRail, resume: resumeAgentSession } = attachAgentRail({
   enabled: () => settings.agentPanel,
   vaultPath: () => props.vaultPath,
   railOpen: () => props.railOpen,
@@ -128,6 +128,12 @@ const { state: agentState, retry: retryAgentRail } = attachAgentRail({
   // to the toast rather than nowhere.
   onStopFailed: (error) =>
     notifyError(t('agent.rail.stopFailed', { reason: failureSentence(error) })),
+  // A reopened session the engine would not hand back, and the same reasoning one
+  // step further: the rail *keeps* the session that is open — a failed load is not
+  // a reason to take a running conversation off the screen — so there is no state
+  // for this failure to live in, and the shell is the only layer that can say it.
+  onResumeFailed: (error) =>
+    notifyError(t('agent.rail.resumeFailed', { reason: failureSentence(error) })),
 })
 const agentOn = computed<boolean>(() => settings.agentPanel)
 
@@ -311,6 +317,7 @@ const shellStyle = computed<Record<string, string>>(() => ({
                 :state="agentState"
                 :vault-open="vaultPath !== null"
                 @retry="retryAgentRail()"
+                @resume="resumeAgentSession($event)"
                 @use-chat="settings.agentPanel = false"
               />
             </template>

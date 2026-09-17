@@ -37,9 +37,19 @@
 //! ## The other direction
 //!
 //! `main` is asserted to still reach what it always reached. A boundary that refuses the
-//! legitimate caller is a regression, not a fix, and the main window's 63 permissions are listed
+//! legitimate caller is a regression, not a fix, and the main window's permissions are listed
 //! in `capabilities/default.json` one command at a time — so a command that goes missing there is
 //! a test failure here rather than a broken editor at runtime.
+//!
+//! ## Where the other half went
+//!
+//! The two tests that compare the four hand-kept lists against each other — `build.rs`'s
+//! `COMMANDS`, `lib.rs`'s `invoke_handler!`, and the two capability files — are in
+//! `tests/command_surface_test.rs`. They moved, not changed: this file had reached 809 lines
+//! against a budget of 800, and the seam is between the two kinds of evidence rather than between
+//! two sizes. Everything here drives the real IPC entry and observes Tauri's own refusal; those
+//! read source text and compare lists. Adding a command still means touching both, and forgetting
+//! the second is still caught — just one target over.
 
 use std::sync::{Arc, Mutex};
 
@@ -126,6 +136,32 @@ async fn agent_permission_grants() -> Result<Value, String> {
 async fn agent_permission_grant_revoke(grant_id: String) -> Result<Value, String> {
     Ok(json!({ "reached": "agent_permission_grant_revoke", "grantId": grant_id }))
 }
+
+/// The three session-history commands, as stand-ins.
+///
+/// Stand-ins for the reason the two above are: a refusal proves something about the ACL only when
+/// the command *would* have answered, and `is_not_allowed_on` fails outright on a "not found"
+/// message — which is exactly the guard that keeps a missing registration from passing as a
+/// refusal. What the real ones do needs a live engine for anything to be true of it, and the
+/// boundary being measured here is upstream of that. Their signatures are deliberately *not*
+/// copied: `build.rs`'s manifest and the capability files are what name a command, and the
+/// authorisation reads the name alone, so a fixture bound to a parameter list would break for a
+/// reason that has nothing to do with authorisation.
+#[tauri::command]
+async fn agent_list_sessions() -> Result<Value, String> {
+    Ok(json!({ "reached": "agent_list_sessions" }))
+}
+
+#[tauri::command]
+async fn agent_load_session() -> Result<Value, String> {
+    Ok(json!({ "reached": "agent_load_session" }))
+}
+
+#[tauri::command]
+async fn agent_close_session() -> Result<Value, String> {
+    Ok(json!({ "reached": "agent_close_session" }))
+}
+
 
 /// The pet's five granted commands, each answering whether it was reached.
 #[tauri::command]
@@ -218,6 +254,9 @@ fn app() -> App {
             agent_stop,
             agent_permission_grants,
             agent_permission_grant_revoke,
+            agent_list_sessions,
+            agent_load_session,
+            agent_close_session,
             desktop_pet_state,
             desktop_pet_set_visible,
             desktop_pet_close_own,
@@ -331,6 +370,16 @@ fn a_pet_window_cannot_stop_or_start_the_users_agent() {
         "agent_registry_add",
         "agent_registry_set_enabled",
         "agent_session_capabilities",
+        // Session history. The sharpest of the three for a decoration to hold would be
+        // `agent_list_sessions`: it needs no session id at all, so one invoke from a pet window
+        // would read the user's whole engine-side session table — every working directory they
+        // have worked in, and the engine's own auto-generated title for each. `agent_load_session`
+        // and `agent_close_session` are the same boundary one step further in: one would put a
+        // session this app did not open in front of a window, and the other would take a session
+        // out of the host's table and free it on the engine.
+        "agent_list_sessions",
+        "agent_load_session",
+        "agent_close_session",
         "agent_profile_write",
         "agent_credentials_write",
         // The rest of the agent surface: reading a session, opening one, changing its
@@ -444,8 +493,11 @@ fn the_ball_window_is_governed_by_the_pets_capability() {
         "desktop_pet_care_read",
         "desktop_pet_read_settings",
         "desktop_pet_update_settings",
-        // And the app beyond the pet, one from each family the pet's boundary withholds.
+        // And the app beyond the pet, one from each family the pet's boundary withholds — plus
+        // session history, because it is the one command in this file that reads the user's
+        // engine-side session table and needs no argument to do it.
         "agent_stop",
+        "agent_list_sessions",
         "read_file",
         "take_pending_open",
     ] {
@@ -628,181 +680,4 @@ fn a_window_no_capability_names_may_call_nothing() {
     for cmd in ["take_pending_open", "agent_stop", "desktop_pet_state"] {
         is_not_allowed_on(&stranger, cmd, "stranger");
     }
-}
-
-// ---------------------------------------------------------------------------
-// The policy table, executed
-// ---------------------------------------------------------------------------
-
-/// The two lists that have to stay each other's mirror.
-///
-/// `build.rs`'s `COMMANDS` and `lib.rs`'s `invoke_handler!` are two spellings of one surface, and
-/// each can be wrong in its own direction:
-///
-/// - A name in `build.rs` that no handler registers is an `allow-` permission for a command
-///   nothing answers — a capability could hand a window a door onto a wall.
-/// - A name in the handler list that `build.rs` omits is a command **no window can reach**, and
-///   the failure surfaces at runtime as an invoke refused for a reason nothing in the handler list
-///   explains. That is the direction this change could have introduced, and it is silent by
-///   construction: the app still builds, the command still exists, and only its caller notices.
-///
-/// So the two are compared here rather than trusted. This is a text read, which is a weaker kind
-/// of evidence than the IPC tests above — but the fact it guards is about the source files
-/// themselves, and those are the only place it can be seen.
-#[test]
-fn the_manifest_and_the_handler_list_name_the_same_commands() {
-    let source = |name: &str| -> String {
-        std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(name))
-            .unwrap_or_else(|e| panic!("{name} is part of the surface: {e}"))
-    };
-
-    let declared: Vec<String> = {
-        let build = source("build.rs");
-        let list = build
-            .split("const COMMANDS: &[&str] = &[")
-            .nth(1)
-            .and_then(|rest| rest.split("];").next())
-            .expect("build.rs's command list");
-        list.lines()
-            .filter_map(|line| line.trim().strip_prefix('"'))
-            .filter_map(|line| line.split('"').next())
-            .map(str::to_string)
-            .collect()
-    };
-
-    let registered: Vec<String> = {
-        let lib = source("src/lib.rs");
-        let list = lib
-            .split("generate_handler![")
-            .nth(1)
-            .and_then(|rest| rest.split("])").next())
-            .expect("lib.rs's handler list");
-        // The handler list is commented — most of its entries carry a paragraph explaining why
-        // they are registered where they are — so the extraction keeps the entries and drops
-        // everything else rather than the other way round. A line qualifies by being a
-        // `commands::<module>::<name>,` entry, which is also what makes a renamed module fail
-        // here instead of being silently skipped.
-        list.lines()
-            .filter_map(|line| line.trim().strip_suffix(','))
-            .filter(|line| line.starts_with("commands::"))
-            .filter_map(|line| line.rsplit("::").next())
-            .map(str::to_string)
-            .collect()
-    };
-
-    assert_eq!(
-        declared, registered,
-        "every declared command is registered, and every registered command is declared"
-    );
-}
-
-/// `capabilities/` read as the table it is, one row per command.
-///
-/// The IPC tests above are the evidence that the policy is consulted; this one is the evidence
-/// that it is the policy somebody meant. It is the same two facts stated from the other side — the
-/// pet's permissions are exactly the five, and the main window's are every declared command except
-/// the two that belong to a pet window alone — so a permission added to the wrong file fails here
-/// even if no test above happens to invoke that command.
-#[test]
-fn the_capability_files_are_the_policy_and_nothing_else() {
-    let read = |name: &str| -> Value {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("capabilities")
-            .join(name);
-        serde_json::from_str(
-            &std::fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("{} is part of the policy: {e}", path.display())),
-        )
-        .unwrap_or_else(|e| panic!("{} is not JSON: {e}", path.display()))
-    };
-
-    let allows = |value: &Value| -> Vec<String> {
-        value["permissions"]
-            .as_array()
-            .expect("a capability's permissions")
-            .iter()
-            .filter_map(|p| p.as_str())
-            .filter(|p| p.starts_with("allow-"))
-            .map(str::to_string)
-            .collect()
-    };
-
-    // Every name `build.rs` declares, read from the manifest that declares them. A permission
-    // outside this set does not exist, so listing one fails the build long before this runs.
-    let declared: Vec<String> = {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("build.rs"),
-        )
-        .expect("build.rs declares the surface");
-        let list = source
-            .split("const COMMANDS: &[&str] = &[")
-            .nth(1)
-            .and_then(|rest| rest.split("];").next())
-            .expect("the command list");
-        list.lines()
-            .filter_map(|line| line.trim().strip_prefix('"'))
-            .filter_map(|line| line.split('"').next())
-            .map(|command| format!("allow-{}", command.replace('_', "-")))
-            .collect()
-    };
-    assert_eq!(
-        declared.len(),
-        70,
-        "the declared surface is seventy commands"
-    );
-
-    let pet: Vec<String> = allows(&read("desktop-pet.json"));
-    assert_eq!(
-        pet,
-        vec![
-            "allow-desktop-pet-state",
-            "allow-desktop-pet-set-visible",
-            "allow-desktop-pet-close-own",
-            "allow-desktop-pet-set-click-through",
-            "allow-desktop-pet-open-settings",
-            // The three the pet's own page makes and nothing else does: the task list it renders
-            // (`tauri-pet.ts`'s `tasks`, read by `use-pet-window.ts:176`), the appearance it draws
-            // (`connection.appearance()`, `:108`), and the click on a bubble that asks the app's
-            // window to open the task (`connection.openTask`, `:196`). The picker's two —
-            // `desktop_pet_library` and `desktop_pet_import_character` — are *not* here: the
-            // settings page in `main` is what chooses a character, and the pet draws the one it
-            // was already told to draw.
-            "allow-desktop-pet-tasks",
-            "allow-desktop-pet-appearance",
-            "allow-desktop-pet-open-task",
-        ],
-        "the pet window holds eight of this app's commands and no others"
-    );
-
-    // The ball's own file, which is the one capability that is not a *surface* but a widening of
-    // one: `pet-*` still governs the ball's IPC (above), and this adds one window permission to
-    // one window. Asserted here so the boundary cannot grow quietly — the next permission added to
-    // this file fails this case and has to be argued in the same commit.
-    let ball = read("desktop-pet-ball.json");
-    assert_eq!(
-        ball["windows"],
-        serde_json::json!(["pet-ball"]),
-        "the drag is the ball's, and only the ball's: the character window may still move nothing"
-    );
-    assert_eq!(
-        ball["permissions"],
-        serde_json::json!(["core:window:allow-start-dragging"]),
-        "one permission, and it is not an app command: the compositor does the moving"
-    );
-
-    let main: Vec<String> = allows(&read("default.json"));
-    let expected: Vec<String> = declared
-        .iter()
-        .filter(|permission| {
-            !matches!(
-                permission.as_str(),
-                "allow-desktop-pet-close-own" | "allow-desktop-pet-set-click-through"
-            )
-        })
-        .cloned()
-        .collect();
-    assert_eq!(
-        main, expected,
-        "the main window holds every declared command except the two that are a pet window's own"
-    );
 }

@@ -95,13 +95,39 @@ pub enum HostFeature {
     /// the handshake carries, and a report that dropped it would be answering about
     /// two thirds of what the engine said about prompts.
     EmbeddedContext,
+    /// Enumerating the sessions the engine holds (`sessionCapabilities.list`).
+    ///
+    /// The gate on the whole session-history surface, and the one the scan report's §1 named
+    /// as advertised by the engine and neither read nor called by this host. §3.4's rule makes
+    /// this the only honest way to decide whether a panel offers that surface: an engine whose
+    /// handshake carries no `sessionCapabilities.list` has said it does not answer
+    /// `session/list`, and drawing the affordance anyway would be a button that reaches a
+    /// method-not-found.
+    SessionList,
+    /// Freeing a session on the engine (`sessionCapabilities.close`).
+    SessionClose,
+    /// Reopening a session **without** its previous messages (`sessionCapabilities.resume`).
+    ///
+    /// Distinct from [`HostFeature::SessionResume`], which despite its name reads
+    /// `agentCapabilities.loadSession` and is about reopening a session *with* them. The two are
+    /// different wire fields and different methods, and the pinned schema documents resume as the
+    /// one that returns no history.
+    SessionResumeWithoutHistory,
+    /// **UNSTABLE**: `sessionCapabilities.fork`, which the pinned schema marks as "not part of
+    /// the spec yet, and may be removed or changed at any point". Read rather than assumed, for
+    /// exactly that reason.
+    SessionFork,
 }
 
 impl HostFeature {
     /// Every feature, so a caller can render a complete limitation list instead
     /// of the ones it happened to remember.
-    pub const ALL: [HostFeature; 7] = [
+    pub const ALL: [HostFeature; 11] = [
         HostFeature::SessionResume,
+        HostFeature::SessionList,
+        HostFeature::SessionResumeWithoutHistory,
+        HostFeature::SessionClose,
+        HostFeature::SessionFork,
         HostFeature::SlashCommands,
         HostFeature::ModelSelection,
         HostFeature::ImageAttachments,
@@ -118,6 +144,10 @@ impl HostFeature {
     pub fn as_str(&self) -> &'static str {
         match self {
             HostFeature::SessionResume => "session-resume",
+            HostFeature::SessionList => "session-list",
+            HostFeature::SessionResumeWithoutHistory => "session-resume-without-history",
+            HostFeature::SessionClose => "session-close",
+            HostFeature::SessionFork => "session-fork",
             HostFeature::SlashCommands => "slash-commands",
             HostFeature::ModelSelection => "model-selection",
             HostFeature::ImageAttachments => "image-attachments",

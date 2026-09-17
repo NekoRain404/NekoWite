@@ -16,6 +16,7 @@ import { nextTick } from 'vue'
 import { createAgentRail, failureSentence, railKey } from './agent-rail'
 import type { AgentComposition } from './agent-composition'
 import { createMemoryAgentGateway } from '../platform/gateways/memory-agent'
+import { AgentFailure } from '../platform/gateways/agent-contracts'
 import type { AgentOpenRequest, AgentSession } from '../platform/gateways/agent-contracts'
 import type {
   AgentRegistryClient,
@@ -284,6 +285,174 @@ describe('the agent rail', () => {
     await rail.close()
     await rail.close()
     expect(fake.stop).toHaveBeenCalledTimes(1)
+  })
+})
+
+/**
+ * The other way between two sessions of one runtime, and the races it shares with `open`.
+ *
+ * A rail is driven into the state a history exists for — one session the engine still lists but
+ * the current runtime no longer serves, and one it is serving now — by asking twice: the first
+ * `open` is a session of the epoch that the second one replaced. Everything below is about the
+ * step the panel's history control leads to, including the two orderings that would otherwise
+ * arrive as "the loaded session is suddenly the live one".
+ */
+describe('the agent rail — reopening a session the engine holds', () => {
+  /** A rail over one memory runtime, with a first session the runtime has since been replaced
+   *  under and a second one it is serving. Returns what each case needs to ask for the older. */
+  async function twoSessions(options: { onResumeFailed?: (error: unknown) => void } = {}) {
+    const gateway = createMemoryAgentGateway({ agentId: 'opencode', profileId: 'default' })
+    const fake = fakeComposition({ gateway })
+    const loads: string[] = []
+    const load = gateway.loadSession.bind(gateway)
+    gateway.loadSession = async (sessionId, request) => {
+      loads.push(sessionId)
+      return load(sessionId, request)
+    }
+    const rail = createAgentRail({
+      compose: () => fake.composition,
+      ...(options.onResumeFailed ? { onResumeFailed: options.onResumeFailed } : {}),
+    })
+    await rail.open('vault-a', '/notes/a')
+    const earlier = rail.state.value
+    await rail.retry()
+    const later = rail.state.value
+    if (earlier.kind !== 'live' || later.kind !== 'live') throw new Error('unreachable')
+    return { gateway, fake, rail, loads, earlier, later, load }
+  }
+
+  it('re-adopts the session and makes it the one on screen, under a new key', async () => {
+    const { rail, loads, earlier, later, fake } = await twoSessions()
+
+    await rail.resume(earlier.session.sessionId)
+
+    expect(loads).toEqual([earlier.session.sessionId])
+    const after = rail.state.value
+    if (after.kind !== 'live') throw new Error('unreachable')
+    expect(after.session.sessionId).toBe(earlier.session.sessionId)
+    // The vault and folder are the ones the runtime was started for, not the ones the session
+    // was recorded in: a load is a move within this runtime, and its vault does not change.
+    expect(after.vaultId).toBe('vault-a')
+    expect(after.cwd).toBe('/notes/a')
+    // A session change is a remount: the panel is keyed by epoch and session id.
+    expect(after.key).toBe(railKey(after.session))
+    expect(after.key).not.toBe(later.key)
+    // The same runtime throughout — one stop, from the retry that replaced the first epoch.
+    expect(fake.stop).toHaveBeenCalledTimes(1)
+  })
+
+  /**
+   * The point of the whole gesture: the conversation comes back.
+   *
+   * `session/load` exists for this and nothing else — ACP documents `resume` as the variant that
+   * returns no previous messages — and the engine was measured handing the history over as
+   * ordinary `session/update` frames during the call (`agent_session_replay_live_test.rs`:
+   * `seq=1 run=Some("load-0") text-delta String("PONG")`). What the *window* then sees depends on
+   * one detail that is easy to get wrong in the middle layer: a turn-scoped frame naming no run is
+   * dropped by the reducer (`agent-event-reducer.ts`, `unattributed-run`), so a replay stamped
+   * `runId: null` reaches the panel as an empty transcript.
+   *
+   * This is the test that fails when the double stamps one — it did, and this is why the double
+   * now mints a load run the way `AgentRuntime::load_session` does.
+   */
+  it('brings the conversation back, as frames the window can attribute', async () => {
+    const gateway = createMemoryAgentGateway({ agentId: 'opencode', profileId: 'default' })
+    const fake = fakeComposition({ gateway })
+    const rail = createAgentRail({ compose: () => fake.composition })
+    await rail.open('vault-a', '/notes/a')
+    const earlier = rail.state.value
+    if (earlier.kind !== 'live') throw new Error('unreachable')
+
+    // A turn, so there is a conversation to restore.
+    await gateway.prompt(earlier.session, 'remember this')
+    const before = await gateway.snapshot(earlier.session)
+    expect(before.events.some((event) => event.kind === 'text-delta')).toBe(true)
+
+    // The runtime is replaced, which is what makes the earlier session one the engine *holds*
+    // rather than one this runtime serves — the state a history row is picked from.
+    await rail.retry()
+
+    await rail.resume(earlier.session.sessionId)
+    const after = rail.state.value
+    if (after.kind !== 'live') throw new Error('unreachable')
+    expect(after.session.sessionId).toBe(earlier.session.sessionId)
+
+    const replayed = await gateway.snapshot(after.session)
+    const text = replayed.events.filter((event) => event.kind === 'text-delta')
+    expect(text.length).toBeGreaterThan(0)
+    // Attributed to a run, which is what keeps the reducer from dropping it. The id is the
+    // double's own load run; that it is not null is the whole claim.
+    expect(text.every((event) => event.runId !== null)).toBe(true)
+    expect(text.map((event) => event.payload)).toEqual(
+      before.events
+        .filter((event) => event.kind === 'text-delta')
+        .map((event) => event.payload),
+    )
+  })
+
+  it('does not call for the session already on screen', async () => {
+    const { rail, loads, later } = await twoSessions()
+
+    await rail.resume(later.session.sessionId)
+
+    // The engine refuses a load of a session it is serving, and the row is drawn as the open one
+    // rather than offered as a call that cannot work.
+    expect(loads).toEqual([])
+    expect(rail.state.value).toBe(later)
+  })
+
+  it('does nothing at all when no runtime is up', async () => {
+    const fake = fakeComposition()
+    const rail = createAgentRail({ compose: () => fake.composition })
+
+    await rail.resume('session-1')
+
+    expect(rail.state.value).toEqual({ kind: 'idle' })
+    expect(fake.opened).toEqual([])
+    expect(fake.stop).not.toHaveBeenCalled()
+  })
+
+  it('reports a refusal and keeps the session that was open', async () => {
+    const onResumeFailed = vi.fn()
+    const { rail, gateway, later, earlier } = await twoSessions({ onResumeFailed })
+    const failure = new AgentFailure('session-stale', 'the engine does not hold that session')
+    gateway.loadSession = async () => {
+      throw failure
+    }
+
+    await rail.resume(earlier.session.sessionId)
+
+    expect(onResumeFailed).toHaveBeenCalledWith(failure)
+    // The user stays where they were. A load that failed is not a reason to take a running
+    // conversation off the screen, and the rail has no arm for "live, with a notice" — which is
+    // why this is the one failure on this path the caller has to draw.
+    expect(rail.state.value).toBe(later)
+  })
+
+  it('a close during a reopen wins: the loaded session never becomes the state', async () => {
+    const { rail, gateway, earlier, later } = await twoSessions()
+    let release: (() => void) | null = null
+    const load = gateway.loadSession.bind(gateway)
+    gateway.loadSession = async (sessionId, request) => {
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return load(sessionId, request)
+    }
+
+    const reopening = rail.resume(earlier.session.sessionId)
+    // Parked inside the load, which is the moment the switch can go off or the vault can change.
+    await until(() => release !== null)
+    const closing = rail.close()
+    release!()
+    await reopening
+    await closing
+    await nextTick()
+
+    // The answer of a runtime that is on its way out must not arrive as if it were the current
+    // one: same latch as `open`, because this is the same question.
+    expect(rail.state.value).toEqual({ kind: 'idle' })
+    expect(later.session.sessionId).not.toBe(earlier.session.sessionId)
   })
 })
 

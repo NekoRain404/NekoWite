@@ -338,6 +338,12 @@ fn profile_view(readout: &ProfileReadout) -> Value {
                 .map(|rule| json!({ "tool": rule.tool, "action": rule.action }))
                 .collect::<Vec<_>>(),
         },
+        // The relative path `agent_config_document` and `agent_config_edit` take for the engine's
+        // own configuration, or `null` where this host owns no such file. The editor's page cannot
+        // spell this itself: which document an engine reads under its own root is the engine's
+        // layout, and a component holding a literal path is the engine known by name — the thing
+        // §3.4's last line forbids in a window.
+        "configDocument": readout.config_document,
     })
 }
 

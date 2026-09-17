@@ -302,6 +302,113 @@ describe('the rail with the agent panel switched on', () => {
   })
 })
 
+/**
+ * The whole chain, from a click in the real window down to the gateway's own call.
+ *
+ * The unit tests either side of this one hold the halves — the panel's capability gate and rows
+ * (`AgentSessionHistory.test.ts`), the rail's latch (`agent-rail.test.ts`) — and this is the
+ * seam they share, which is the one that cannot be asserted from either: the bar's control, the
+ * panel's list, the rail body's event, the shell's handler and the rail's reopen, in one gesture.
+ *
+ * The table is the one a history exists for. A first session was opened, used, and left behind by
+ * a runtime that has since been replaced — so the engine still lists it while nothing serves its
+ * handle — and the runtime now up holds a second one. That is what `stop`, `start` and a second
+ * `openSession` produce, and it is the state that makes "reopen the earlier conversation" a real
+ * thing to ask for.
+ */
+describe('the sessions the engine holds, from the panel’s own control', () => {
+  async function shellWithHistory(options: { refuseLoadWith?: string } = {}) {
+    const gateway = createMemoryAgentGateway({
+      agentId: 'opencode',
+      profileId: 'default',
+      // What the engine reports about itself, which is what draws the control at all.
+      capabilities: { 'session-list': { status: 'available' } },
+    })
+    await gateway.start()
+    const earlier = await gateway.openSession({ vaultId: '/notes/vault', cwd: '/notes/vault' })
+    gateway.script({ chunks: ['the earlier answer. '] })
+    await gateway.prompt(earlier, 'earlier question')
+    await gateway.stop()
+
+    const loads: string[] = []
+    const load = gateway.loadSession.bind(gateway)
+    gateway.loadSession = async (sessionId, request) => {
+      loads.push(sessionId)
+      if (options.refuseLoadWith !== undefined) throw options.refuseLoadWith
+      return load(sessionId, request)
+    }
+
+    composeMock.mockReturnValue(fakeComposition({ gateway }).composition)
+    const store = useSettingsStore()
+    store.agentPanel = true
+    shell({})
+    await untilDom(() => panel() !== null, 'the agent panel')
+    await untilDom(() => document.querySelector('[data-agent-history]') !== null, 'the history control')
+    return { gateway, earlier, loads }
+  }
+
+  /** Open the list and wait for the engine's answer to be drawn. */
+  async function openHistory(): Promise<void> {
+    document.querySelector<HTMLElement>('[data-agent-history]')!.click()
+    await untilDom(() => document.querySelector('.agent-history-option') !== null, 'the history rows')
+  }
+
+  /** The row the list marks as the session on screen. */
+  const openRow = (): (string | null)[] =>
+    Array.from(document.querySelectorAll<HTMLElement>('.agent-history-option')).flatMap((row) =>
+      row.getAttribute('aria-current') === 'true' ? [row.getAttribute('data-session')] : [],
+    )
+
+  it('reopens the session the reader picks, and the panel ends up on it', async () => {
+    const { earlier, loads } = await shellWithHistory()
+    const before = panel()
+
+    await openHistory()
+    // The engine's own list: the session this runtime is serving, and the one it only lists.
+    const rows = Array.from(document.querySelectorAll<HTMLElement>('.agent-history-option')).map(
+      (row) => row.getAttribute('data-session'),
+    )
+    expect(rows).toContain(earlier.sessionId)
+    expect(openRow()).not.toEqual([earlier.sessionId])
+
+    document.querySelector<HTMLElement>(`[data-session="${earlier.sessionId}"]`)!.click()
+
+    // The call is the rail's, made for the vault the runtime was started for.
+    await untilDom(() => loads.length === 1, 'the load')
+    expect(loads).toEqual([earlier.sessionId])
+    // …and the panel is mounted fresh on it rather than re-pointed: a session change is a
+    // remount, which is what the store's `focus`/`attach` path does for any other session.
+    await untilDom(() => panel() !== null && panel() !== before, 'a new panel element')
+    // The list the replaced panel had open goes with it, so what is read back below is the new
+    // panel's own.
+    await untilDom(() => document.querySelector('.agent-history-popup') === null, 'the old list to leave')
+
+    // Read back from the surface the user reads it from: the reopened session is the one the
+    // engine now reports as open.
+    await untilDom(() => document.querySelector('[data-agent-history]') !== null, 'the control again')
+    await openHistory()
+    expect(openRow()).toEqual([earlier.sessionId])
+  })
+
+  it('says so in the engine’s words when a session cannot be reopened, and keeps the one open', async () => {
+    const refusal = 'the engine refused to restore that session'
+    const { earlier, loads } = await shellWithHistory({ refuseLoadWith: refusal })
+    const before = panel()
+
+    await openHistory()
+    document.querySelector<HTMLElement>(`[data-session="${earlier.sessionId}"]`)!.click()
+
+    await untilDom(() => loads.length === 1, 'the attempt')
+    // The engine's sentence, where the user is looking. It is not a state of the rail: the
+    // session that *is* open is not the one at fault, and taking it off the screen because a
+    // different one would not open is the wrong trade.
+    await untilDom(() => document.querySelector('.toast') !== null, 'the notice')
+    expect(document.querySelector('.toast')?.textContent).toContain(refusal)
+    expect(panel()).toBe(before)
+    expect(railState('refused')).toBeNull()
+  })
+})
+
 describe('a refusal, and the way back from it', () => {
   it('shows the backend\'s own sentence and rolls back to the chat in one click', async () => {
     const fake = fakeComposition({ refuseWith: NO_ENGINE })

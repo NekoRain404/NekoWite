@@ -76,6 +76,10 @@ function readout(overrides: Partial<AgentProfileReadout> = {}): AgentProfileRead
         { tool: 'bash', action: 'ask' },
       ],
     },
+    // The document editor's own field: the relative path `agent_config_document` takes. Present
+    // for an app-managed profile, which is the mode this host writes in; `user-config` answers
+    // `null` and the editor draws a sentence instead of a form.
+    configDocument: 'XDG_CONFIG_HOME/opencode/opencode.json',
     ...overrides,
   }
 }
@@ -86,9 +90,15 @@ function fields(overrides: Partial<ProfileFields> = {}): ProfileFields {
 
 function configRead(overrides: Partial<ConfigRead> = {}): ConfigRead {
   return {
+    // The relative path — what an edit is submitted with and what `decideConfigWrite` compares —
+    // and the absolute one beside it, which is shown and never submitted.
     path: 'XDG_CONFIG_HOME/opencode/opencode.jsonc',
+    resolved: '/profiles/default/XDG_CONFIG_HOME/opencode/opencode.jsonc',
     exists: true,
     revision: 'b'.repeat(64),
+    // The file as written: JSONC, comment and all, which is why the page draws it rather than
+    // parsing it.
+    text: '{\n  // mine\n  "permission": { "edit": "ask" }\n}\n',
     editable: true,
     ...overrides,
   }

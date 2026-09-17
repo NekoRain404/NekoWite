@@ -78,6 +78,10 @@ export interface AgentModelOption {
  */
 export const AGENT_CAPABILITY_FEATURES = [
   'session-resume',
+  'session-list',
+  'session-resume-without-history',
+  'session-close',
+  'session-fork',
   'slash-commands',
   'model-selection',
   'image-attachments',
@@ -180,6 +184,50 @@ export interface AgentSession extends AgentIdentity {
   readonly options: readonly AgentConfigOption[]
 }
 
+/**
+ * One session the engine holds, as `session/list` described it — the row a history
+ * surface is drawn from.
+ *
+ * A projection of ACP's `SessionInfo`, and deliberately not the schema type: what
+ * crosses this boundary is the fields a surface renders. The schema's `_meta` is
+ * "reserved by ACP to allow clients and agents to attach additional metadata", which
+ * is an engine's private annexe rather than a fact about the session.
+ *
+ * The two optional fields are optional *here for the same reason they are on the
+ * wire*. The pinned engine was measured filling both, but the schema says an agent
+ * may omit them, and a title this app invented for a session that had none would be a
+ * fact about the engine that the engine never stated.
+ *
+ * There is deliberately no creation time: ACP's `SessionInfo` has no such field, so a
+ * server-side listing cannot be sorted by creation. The engine's own `updatedAt` is
+ * the only ordering it offers.
+ */
+export interface AgentSessionSummary {
+  readonly sessionId: string
+  /** The working directory the session belongs to, as the engine reported it. */
+  readonly cwd: string
+  /** The engine's own title, when it has one. */
+  readonly title: string | null
+  /** ISO 8601 last-activity stamp, when the engine sent one. */
+  readonly updatedAt: string | null
+}
+
+/**
+ * One page of the engine's session table.
+ *
+ * A page rather than a bare array so `nextCursor` has somewhere to be: ACP defines its
+ * absence as "there are no more results", so a caller handed only the array could not
+ * tell a complete list from a truncated one. The pinned engine answers in one page,
+ * which is why a surface may render this whole thing — but it can *say* whether it is
+ * whole, which is the difference between offering a complete history and offering the
+ * first slice of one as if it were the whole.
+ */
+export interface AgentSessionHistory {
+  readonly sessions: readonly AgentSessionSummary[]
+  /** Opaque; only ever passed back to the engine that issued it. */
+  readonly nextCursor: string | null
+}
+
 export interface AgentOpenRequest {
   /**
    * The vault the session works in. It becomes part of the event identity, which
@@ -253,6 +301,70 @@ export interface AgentGateway {
    * model catalog come from (P0 §2.2).
    */
   openSession(request: AgentOpenRequest): Promise<AgentSession>
+  /**
+   * The sessions the engine already holds — the history a window offers to reopen.
+   *
+   * Takes **no session handle**, and that is the point rather than an oversight: this
+   * question is about the runtime's engine, not about a conversation in it. It needs
+   * the runtime to be up (it rejects with `runtime-unavailable` otherwise, like
+   * {@link openSession}) and it needs nothing else — no credential, no provider, no
+   * open session.
+   *
+   * **A listed session is not an open one.** The ids in this answer are the engine's
+   * own and this gateway has minted no handle for any of them, which is why the answer
+   * is a list of summaries rather than of {@link AgentSession}s. The only way to get a
+   * handle for one of them is {@link loadSession}.
+   *
+   * Whether to *ask at all* is a capability question and belongs to the caller: the
+   * engine reports `session-list` — `sessionCapabilities.list` — in its own capability
+   * report, and a window that offers history for an engine whose handshake carries no
+   * such field is drawing a button onto a method the engine has said it does not
+   * answer. The adapter does not second-guess that here, for the reason
+   * `agent_session_capabilities` gives: a handshake is one engine's report about
+   * itself, and this side may not answer for it on evidence it does not have.
+   */
+  listSessions(): Promise<AgentSessionHistory>
+  /**
+   * Reopen a session the engine holds, and adopt it.
+   *
+   * Resolves with a **new** {@link AgentSession} handle, exactly as
+   * {@link openSession} does — because that is what it produces: a session this
+   * gateway now follows, subscribes to and can be prompted on. A window that already
+   * knows how to follow an opened session needs no second path.
+   *
+   * The engine replays the restored conversation as ordinary events while this call is
+   * in flight, so a caller that subscribes afterwards is not looking at an empty
+   * transcript: the restore lands on the same stream a turn does, and
+   * {@link snapshot} carries the tail of it.
+   *
+   * Rejects with `session-stale` for a session this gateway already holds — the user
+   * picked a row they are already in — and with the engine's own refusal for an id it
+   * does not have.
+   */
+  loadSession(sessionId: string, request: AgentOpenRequest): Promise<AgentSession>
+  /**
+   * Free a session on the engine and stop following it here.
+   *
+   * **Not a deletion.** ACP gives removing a session from `session/list` to a
+   * different method, `session/delete`, and the pinned engine neither advertises nor
+   * implements it — a close was measured leaving the session listed. So a caller must
+   * not draw this as "delete this conversation", and a history surface that offers it
+   * should say what it does: the engine lets the session go, the row stays.
+   *
+   * **By id, not by handle**, and the difference is not stylistic. A session the
+   * engine *lists* has no handle — `listSessions` answers summaries and mints none,
+   * and `loadSession` is the only call that does. A handle-shaped close therefore
+   * forced a caller to adopt a row before freeing it, which is two round trips and,
+   * worse, is impossible for a session the runtime is *already serving but not
+   * showing*: `loadSession` refuses it (already open) and there is no handle to close.
+   * That session could be neither reopened nor freed, with no user action to recover
+   * it. Taking the id removes the state rather than working around it.
+   *
+   * The §6.1 boundary the handle used to carry is not lost, it is one layer down:
+   * `agent_close_session` refuses an id this host never opened, so a renderer still
+   * cannot free a session id it composed. Rejects with `session-stale` for such an id.
+   */
+  closeSession(sessionId: string): Promise<void>
   /**
    * Choose a model for this session; P0 §2.3 measured that the engine accepts a
    * switch mid-session.

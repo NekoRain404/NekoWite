@@ -1,8 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The application's own window ('main'), and every command it may call.\n\nThis is the editor, the settings panel and the agent panel, so it holds the whole declared surface except the two commands that belong to a pet window alone (`desktop_pet_close_own`, `desktop_pet_set_click_through` — see `capabilities/desktop-pet.json`). Deliberately the whole of it: the boundary this file draws is the pet's, and a main window refused a command the app actually uses would be a regression dressed as a security fix. The commands are declared in `build.rs`'s app manifest; an `allow-` name that is not declared there fails the build rather than granting nothing.",
-  "windows": ["main"],
+  "description": "The application's own window ('main'), and every command it may call.\n\nThis is the editor, the settings panel and the agent panel, so it holds the whole declared surface except the two commands that belong to a pet window alone (`desktop_pet_close_own`, `desktop_pet_set_click_through` \u2014 see `capabilities/desktop-pet.json`). Deliberately the whole of it: the boundary this file draws is the pet's, and a main window refused a command the app actually uses would be a regression dressed as a security fix. The commands are declared in `build.rs`'s app manifest; an `allow-` name that is not declared there fails the build rather than granting nothing.",
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-minimize",
@@ -50,6 +52,9 @@
     "allow-agent-prompt",
     "allow-agent-session-snapshot",
     "allow-agent-session-capabilities",
+    "allow-agent-list-sessions",
+    "allow-agent-load-session",
+    "allow-agent-close-session",
     "allow-agent-permission-answer",
     "allow-agent-permission-grants",
     "allow-agent-permission-grant-revoke",

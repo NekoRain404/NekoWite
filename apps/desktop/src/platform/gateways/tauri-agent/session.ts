@@ -54,6 +54,14 @@ export interface SessionBook {
   /** The same check for a plain identity: a snapshot carries the five fields without the
    *  handle's brand, and the boundary it has to pass is the same one. */
   recordOf(identity: AgentIdentity): SessionRecord
+  /**
+   * Forget one handle, because the engine has let that session go.
+   *
+   * Answers whether there was one. The caller is `closeSession`, which has already checked the
+   * handle it was given; what this returns is for the case where something else removed it in
+   * between, which is not an error — the session is gone either way.
+   */
+  close(sessionId: string): boolean
   /** Forget every handle: the runtime that minted them is over. */
   clear(): void
 }
@@ -102,6 +110,12 @@ export function createSessionBook(started: () => boolean): SessionBook {
       return recordOf(session)
     },
     recordOf,
+    close(sessionId) {
+      // Removed rather than marked: a handle for a session the engine has let go is a handle
+      // every later call must reject, and the one place that decides is `recordOf`. A tombstone
+      // would be a second kind of entry for the same question.
+      return sessions.delete(sessionId)
+    },
     clear() {
       sessions.clear()
     },

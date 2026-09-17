@@ -4,8 +4,15 @@
  * §9 gives a feature one entry point, and §13.11 gives it one rule — a name is exported when a
  * second real caller exists, rather than in case one appears. The second caller here is T16's
  * `SettingsPanel.vue`, which mounts these sections in the settings dialog, and that is what this
- * file is for: it names the seven sections, the vocabulary they share, and nothing else. No store,
+ * file is for: it names the sections, the vocabulary they share, and nothing else. No store,
  * no service and no helper is exported, because nothing outside the tree calls one.
+ *
+ * The list has grown past the seven pages §10.2's T16 row enumerates, twice, and each addition is a
+ * page the tree was missing rather than a page invented here: `configuration` is the engine's own
+ * configuration document (`agent_config_document` / `agent_config_edit`, which had no caller), and
+ * `catalogue` is the catalogue browser that shipped behind no mount point at all. A section is in
+ * this list when a component exists for it; whether it is *mounted* is `AgentSettingsSection.vue`'s
+ * answer, and the two are deliberately not the same list.
  *
  * `AgentRegistrySettings` is exported beside the six rather than rebuilt: T13a delivered it and it
  * is done, and a page that an export line can reach does not need a second version of itself. Its
@@ -33,6 +40,8 @@
 
 export { default as AgentRuntimeSettings } from './components/AgentRuntimeSettings.vue'
 export { default as AgentProviderSettings } from './components/AgentProviderSettings.vue'
+export { default as AgentConfigurationSettings } from './components/AgentConfigurationSettings.vue'
+export { default as AgentCatalogueBrowser } from './components/AgentCatalogueBrowser.vue'
 export { default as AgentSkillsSettings } from './components/AgentSkillsSettings.vue'
 export { default as AgentCommandsSettings } from './components/AgentCommandsSettings.vue'
 export { default as AgentMcpSettings } from './components/AgentMcpSettings.vue'
@@ -86,9 +95,17 @@ export interface AgentSettingsSection {
 export const AGENT_SETTINGS_SECTIONS: readonly AgentSettingsSection[] = [
   { id: 'runtime', mounts: 'AgentRuntimeSettings', needsRuntime: true },
   { id: 'provider', mounts: 'AgentProviderSettings', needsRuntime: true },
+  // The engine's own configuration document. Beside `provider` rather than at the end, because
+  // §8.1 puts provider credentials, model ids and *configuration files* in one row: they are all
+  // per engine, and the two pages are about the same (engine, profile) pair.
+  { id: 'configuration', mounts: 'AgentConfigurationSettings', needsRuntime: false },
   { id: 'skills', mounts: 'AgentSkillsSettings', needsRuntime: true },
   { id: 'commands', mounts: 'AgentCommandsSettings', needsRuntime: true },
   { id: 'mcp', mounts: 'AgentMcpSettings', needsRuntime: true },
   { id: 'permission', mounts: 'AgentPermissionSettings', needsRuntime: true },
   { id: 'registry', mounts: 'AgentRegistrySettings', needsRuntime: false },
+  // Last, and it is the one section that is not about a profile: what the public ACP registry
+  // publishes, which is what the add form above it registers. It reads a network-backed catalogue
+  // and owns nothing, so it needs neither a runtime nor a vault.
+  { id: 'catalogue', mounts: 'AgentCatalogueBrowser', needsRuntime: false },
 ]

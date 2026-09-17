@@ -85,6 +85,17 @@ export interface AgentProfileReadout {
   credentials: CredentialView[]
   credentialStorage: CredentialStorageView
   permissions: PermissionView
+  /**
+   * The engine's own configuration document, as the editor opens it: a path relative to
+   * {@link root}, or `null` where this host owns no such file.
+   *
+   * Relative, and that is the backend's choice rather than this file's: `agent_config_document`
+   * confines every read to the profile root, and the relative spelling is the one that check takes.
+   * `null` is not "there is no configuration" — it is `user-config`, the mode where the engine
+   * reads the user's own installation and this app writes nothing there. The two are different
+   * sentences and the page draws them differently.
+   */
+  configDocument: string | null
 }
 
 /**
@@ -316,11 +327,87 @@ export interface ConfigEdit {
 
 /** What the backend said about the document, before the user touched it. */
 export interface ConfigRead {
+  /**
+   * The path an edit is submitted with: the document's location *inside the profile root*, which is
+   * what `agent_config_document` and `agent_config_edit` take and what `decideConfigWrite` compares.
+   *
+   * Relative rather than absolute, and the backend's choice: every document read is confined to the
+   * profile root by `Profile::document_path`, and the relative spelling is the one that check takes.
+   */
   path: string
+  /** Where the file really is, as the backend resolved it. Shown; never submitted. */
+  resolved: string
   exists: boolean
   /** `null` when the file is not there: there is nothing to edit against. */
   revision: string | null
+  /**
+   * The file as written, or `null` when it is not there.
+   *
+   * Carried because §8.1 asks a page to say what is actually in effect, and an engine's
+   * configuration is a JSONC file whose comments and unknown members a parse would lose — so the
+   * page draws the text and edits members, and nothing here re-serializes it.
+   */
+  text: string | null
   editable: boolean
+}
+
+/**
+ * Which of §8.1's three absences this profile is in, or `null` when there is nothing absent.
+ *
+ * One predicate with two callers, and that is the whole reason it is a function rather than two
+ * conditions written where they are needed: {@link decideConfigWrite} refuses a write for these
+ * reasons, and {@link configEditor} decides whether the page may draw a control at all. A second
+ * spelling of "there is no document" would be the two answers the page shows disagreeing — and the
+ * direction that disagreement fails in is a form over a file the backend will refuse to write.
+ */
+type ConfigAbsence = Extract<ConfigRefusal, 'not-editable' | 'absent'>
+
+function configAbsence(read: ConfigRead): ConfigAbsence | null {
+  if (!read.editable) return 'not-editable'
+  if (!read.exists || read.revision === null) return 'absent'
+  return null
+}
+
+/**
+ * What the configuration page may draw for one document.
+ *
+ * The four arms are the four honest answers, and `none` is not an absence of information: it is the
+ * pair having no document of this host's at all (`user-config`, where the engine reads the user's own
+ * installation). It is separate from the other two because a user's next move is different in each —
+ * switch the profile's mode, start the engine once, or edit the file where it lives.
+ *
+ * The two middle arms are `ConfigRefusal`'s own ids rather than a parallel union, so an arm added
+ * there is a compile error here rather than a state this page silently has no sentence for.
+ */
+export type ConfigEditor =
+  | { kind: 'editable' }
+  | { kind: 'absent' }
+  | { kind: 'not-editable' }
+  | { kind: 'none' }
+
+/** Which arm of {@link ConfigEditor} a document — or the lack of one — is in. */
+export function configEditor(document: ConfigRead | null): ConfigEditor {
+  if (document === null) return { kind: 'none' }
+  const absence = configAbsence(document)
+  return absence === null ? { kind: 'editable' } : { kind: absence }
+}
+
+/**
+ * What the user typed as a member's value.
+ *
+ * `invalid` is its own arm rather than a thrown error: a form that threw would lose what the user
+ * typed, and "that is not JSON" is a sentence the page draws next to the field. The parse is of the
+ * *value alone* — a fragment the user wrote, not the document — so no comment or trailing comma
+ * survives it, and nothing here round-trips the document's own text through `JSON.parse`.
+ */
+export type ConfigValueParse = { kind: 'value'; value: unknown } | { kind: 'invalid' }
+
+export function parseConfigValue(text: string): ConfigValueParse {
+  try {
+    return { kind: 'value', value: JSON.parse(text) }
+  } catch {
+    return { kind: 'invalid' }
+  }
 }
 
 export interface ConfigWrite {
@@ -365,11 +452,11 @@ export function decideConfigWrite(read: ConfigRead, write: ConfigWrite): ConfigU
       message: configRefusalMessage('other-document'),
     }
   }
-  if (!read.editable) {
-    return { status: 'refused', reason: 'not-editable', message: configRefusalMessage('not-editable') }
-  }
-  if (!read.exists || read.revision === null) {
-    return { status: 'refused', reason: 'absent', message: configRefusalMessage('absent') }
+  // The same predicate the page's own arm comes from, so "there is nothing to edit" cannot be true
+  // on screen and false here.
+  const absence = configAbsence(read)
+  if (absence !== null) {
+    return { status: 'refused', reason: absence, message: configRefusalMessage(absence) }
   }
   if (write.revision !== read.revision) {
     return { status: 'conflict', current: read }

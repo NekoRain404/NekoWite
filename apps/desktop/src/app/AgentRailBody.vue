@@ -118,7 +118,13 @@ const props = defineProps<{
   vaultOpen: boolean
 }>()
 
-const emit = defineEmits<{ (e: 'retry'): void; (e: 'use-chat'): void }>()
+const emit = defineEmits<{
+  (e: 'retry'): void
+  (e: 'use-chat'): void
+  /** A session the reader picked out of the engine's history. The reopen itself belongs to the
+   *  rail (`agent-rail.ts`'s `resume`), which is the layer that owns the vault it is made for. */
+  (e: 'resume', sessionId: string): void
+}>()
 
 /** The engine's own name, and only while a session is live — the one arm that mounts the panel. */
 const engineName = computed(() => (props.state.kind === 'live' ? props.state.engineName : ''))
@@ -134,7 +140,9 @@ const labels = computed(() => agentPanelLabels(engineName.value))
     :key="state.key"
     :gateway="state.gateway"
     :session="state.session"
+    :cwd="state.cwd"
     :labels="labels"
+    @resume="emit('resume', $event)"
   />
   <div
     v-else-if="state.kind === 'refused'"

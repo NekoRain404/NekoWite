@@ -22,9 +22,10 @@ use std::path::Path;
 use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{
-    CancelNotification, ContentBlock, InitializeRequest, InitializeResponse, NewSessionRequest,
-    NewSessionResponse, PromptRequest, SessionConfigValueId, SessionId,
-    SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, TextContent,
+    CancelNotification, CloseSessionRequest, CloseSessionResponse, ContentBlock, InitializeRequest,
+    InitializeResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionRequest,
+    LoadSessionResponse, NewSessionRequest, NewSessionResponse, PromptRequest, SessionConfigValueId,
+    SessionId, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, TextContent,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{JsonRpcRequest, UntypedMessage};
@@ -72,6 +73,62 @@ impl EngineConnection {
             bound,
         )
         .await
+    }
+
+    /// Lists the sessions the engine holds.
+    ///
+    /// Answered out of the engine's own database, so it costs nothing and reaches no provider —
+    /// which is why the scan report could measure it without a credential
+    /// (`agent_session_lifecycle_test.rs`, §4.5). Both parameters are optional in the schema and
+    /// the engine was measured answering `{}`; `cwd` narrows to one working directory and `cursor`
+    /// continues a page the engine cut short.
+    pub async fn list_sessions(
+        &self,
+        cwd: Option<&Path>,
+        cursor: Option<&str>,
+        bound: Duration,
+    ) -> Result<ListSessionsResponse, TransportError> {
+        let request = ListSessionsRequest::new()
+            .cwd(cwd.map(Path::to_path_buf))
+            .cursor(cursor.map(str::to_string));
+        self.request("session/list", request, bound).await
+    }
+
+    /// Reopens a session the engine still holds.
+    ///
+    /// The response carries only the session's modes and configuration options — never its
+    /// conversation. What a load restores arrives as `session/update` notifications published
+    /// *while this call is outstanding*, which is why the caller must have the session registered
+    /// before it sends this: a replayed update for an id the host does not hold is dropped by
+    /// `runs::forward_update`. Zed's implementation states the same ordering in as many words
+    /// ("Register the session before awaiting the RPC so that any `session/update` notifications
+    /// that arrive during the call (e.g. history replay during `session/load`) can find the
+    /// thread", `zed-main/crates/agent_servers/src/acp.rs:1223-1227`), and the SDK's own load
+    /// builder documents the contract (agent-client-protocol 2.1.0 `src/session.rs:79-83`).
+    pub async fn load_session(
+        &self,
+        session_id: SessionId,
+        cwd: &Path,
+        bound: Duration,
+    ) -> Result<LoadSessionResponse, TransportError> {
+        let request = LoadSessionRequest::new(session_id, cwd.to_path_buf());
+        self.request("session/load", request, bound).await
+    }
+
+    /// Frees a session on the engine, cancelling any work it has in flight.
+    ///
+    /// The schema's own words for the contract: the agent "must cancel any ongoing work related
+    /// to the session ... and then free up any resources associated with the session". Removing
+    /// the conversation from `session/list` is `session/delete`'s job, which the pinned engine
+    /// neither advertises nor implements (`agent_session_lifecycle_test.rs` prints its `-32601`),
+    /// so a closed session that is still listed is the two methods meaning what they say.
+    pub async fn close_session(
+        &self,
+        session_id: SessionId,
+        bound: Duration,
+    ) -> Result<CloseSessionResponse, TransportError> {
+        self.request("session/close", CloseSessionRequest::new(session_id), bound)
+            .await
     }
 
     /// Selects one of the engine's own options on a session.

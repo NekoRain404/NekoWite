@@ -46,6 +46,14 @@ import {
   createTauriAgentPermissionGrantCommands,
   type AgentPermissionGrantCommands,
 } from '../platform/gateways/tauri-agent/grants'
+import {
+  createTauriAgentConfigCommands,
+  type AgentConfigCommands,
+} from '../platform/gateways/tauri-agent/config'
+import {
+  createTauriAgentCatalogueCommands,
+  type AgentCatalogueCommands,
+} from '../platform/gateways/tauri-agent/catalogue'
 import { createAgentRegistryClient } from '../features/agent-settings/services/agent-registry-ipc'
 import type { AgentRegistryClient } from '../features/agent-settings/services/agent-registry-policy'
 import { createAgentProviderClient } from '../features/agent-settings/services/agent-profile-ipc'
@@ -54,6 +62,12 @@ import {
   createAgentPermissionClient,
   type AgentPermissionClient,
 } from '../features/agent-settings/services/agent-permission-ipc'
+import {
+  createAgentConfigClient,
+  type AgentConfigClient,
+} from '../features/agent-settings/services/agent-config-ipc'
+import { createAgentCatalogueClient } from '../features/agent-settings/services/agent-catalogue-ipc'
+import type { AgentCatalogueClient } from '../features/agent-settings/services/agent-catalogue-policy'
 
 /**
  * What the settings tree calls.
@@ -76,6 +90,24 @@ export interface AgentSettingsClients {
    * identity, which is the division §8.1 asks for.
    */
   readonly permission: (agentId: string, profileId: string) => AgentPermissionClient
+  /**
+   * The engine's own configuration document, for one engine/profile pair.
+   *
+   * A builder for the permission client's reason, and one more of its own: this page *writes*, and
+   * the path it writes to arrives from the profile readout, so the pair has to be bound before any
+   * call exists rather than checked after. {@link AgentSettingsClients.provider} is handed to it —
+   * the same object the profile page uses — because the document's name is a field on that readout
+   * and a second reader of it here would be a second narrowing of the same wire.
+   */
+  readonly config: (agentId: string, profileId: string) => AgentConfigClient
+  /**
+   * The ACP catalogue, which is about no profile and no window: one read of what the public
+   * registry publishes.
+   *
+   * A value rather than a builder, unlike the three above: its answer does not depend on which
+   * engine a page is about, so a builder would take an argument it has no use for.
+   */
+  readonly catalogue: AgentCatalogueClient
 }
 
 /**
@@ -86,17 +118,24 @@ export interface AgentSettingsDeps {
   registryCommands?: AgentRegistryCommands
   profileCommands?: AgentProfileCommands
   grantCommands?: AgentPermissionGrantCommands
+  configCommands?: AgentConfigCommands
+  catalogueCommands?: AgentCatalogueCommands
 }
 
 /** Build the settings tree's clients over the window's own commands. */
 export function createAgentSettingsClients(deps: AgentSettingsDeps = {}): AgentSettingsClients {
   const profileCommands = deps.profileCommands ?? createTauriAgentProfileCommands()
   const grantCommands = deps.grantCommands ?? createTauriAgentPermissionGrantCommands()
+  const configCommands = deps.configCommands ?? createTauriAgentConfigCommands()
+  // One provider client, two pages. The configuration page reads this same object for the field
+  // that names the document it edits, so building a second one would be two narrowings of one wire
+  // and two chances for them to disagree about which document the pair has.
+  const provider = createAgentProviderClient(profileCommands)
   return {
     registry: createAgentRegistryClient(
       deps.registryCommands ?? createTauriAgentRegistryCommands(),
     ),
-    provider: createAgentProviderClient(profileCommands),
+    provider,
     permission: (agentId: string, profileId: string) =>
       createAgentPermissionClient({
         wire: profileCommands,
@@ -104,5 +143,10 @@ export function createAgentSettingsClients(deps: AgentSettingsDeps = {}): AgentS
         agentId,
         profileId,
       }),
+    config: (agentId: string, profileId: string) =>
+      createAgentConfigClient({ profile: provider, config: configCommands, agentId, profileId }),
+    catalogue: createAgentCatalogueClient(
+      deps.catalogueCommands ?? createTauriAgentCatalogueCommands(),
+    ),
   }
 }

@@ -1,17 +1,25 @@
 <script setup lang="ts">
 /**
- * The agents section: the one control that reaches the shell, the two pages whose host half this
+ * The agents section: the one control that reaches the shell, the five pages whose host half this
  * build really has, and the statements for everything in this tree that is still absent.
  *
- * ## What is mounted, and why these two
+ * ## What is mounted, and why these five
  *
  * §10.2's T16 row and §8 give an agent settings tree of seven pages, each delivered as a component
- * that takes its facts from an injected client. Two of those clients can be built against commands
- * this build registers — the registry (`agent_registry_read` / `_add` / `_set_enabled`) and the
- * profile (`agent_profile_read` / `_write`) — so those two pages are mounted here and really read
- * the backend. The clients arrive as a prop from the composition site
- * (`app/agent-settings-composition.ts`), the way the pet's section is handed its connection: this
- * file never builds one, and never decides what a page talks to.
+ * that takes its facts from an injected client. Five of those clients can be built against commands
+ * this build registers — the registry (`agent_registry_read` / `_add` / `_set_enabled`), the
+ * profile (`agent_profile_read` / `_write`), the permission pair
+ * (`agent_permission_grants` / `_revoke`), the engine's own configuration
+ * (`agent_config_document` / `agent_config_edit`) and the ACP catalogue (`agent_catalogue_read`) —
+ * so those five pages are mounted here and really read the backend. The clients arrive as a prop
+ * from the composition site (`app/agent-settings-composition.ts`), the way the pet's section is
+ * handed its connection: this file never builds one, and never decides what a page talks to.
+ *
+ * The last two commands on that list had **no caller anywhere in `src/`** until this file mounted
+ * these pages. That is this repository's signature failure mode — 建好了但够不到, caught six times —
+ * and the thing that ends it is a mount point reached by a real gesture, which for this tree means:
+ * the status bar's gear (`AppShell.vue`), the `agents` row in `SettingsNavigation.vue`, and the
+ * pages below.
  *
  * ## The pair these pages are about
  *
@@ -39,12 +47,18 @@ import { computed, onMounted, ref } from 'vue'
 import { t } from '../../../i18n'
 import {
   AGENT_SETTINGS_SECTIONS,
+  AgentCatalogueBrowser,
+  AgentConfigurationSettings,
   AgentPermissionSettings,
   AgentProviderSettings,
   AgentRegistrySettings,
 } from '../../agent-settings'
 import { defaultEngineIdentity } from '../../agent-settings/services/agent-registry-policy'
 import type { EngineIdentity } from '../../agent-settings/services/agent-registry-policy'
+// Named by file rather than through the barrel: the catalogue's prefill is the *component's* own
+// vocabulary (`index.ts` exports the sections' components and their label types, and a fifth type
+// there would be a name with one caller). The specifier is the component the type belongs to.
+import type { CataloguePrefill } from '../../agent-settings/components/AgentCatalogueBrowser.vue'
 import type { AgentSettingsClients } from '../../../app/agent-settings-composition'
 import { useAgentPanel } from '../composables/use-agent-panel'
 
@@ -91,7 +105,7 @@ const showing = computed(() =>
  * different facts (`mounts` names the component; a section's id is what a navigation binds), and
  * the test that reads this file's rendering is what keeps the two in step.
  */
-const MOUNTED = new Set(['registry', 'provider', 'permission'])
+const MOUNTED = new Set(['registry', 'provider', 'permission', 'configuration', 'catalogue'])
 
 /**
  * The permission page's client, built for the pair the registry answered with.
@@ -107,6 +121,30 @@ const permissionClient = computed(() =>
     ? null
     : props.clients.permission(identity.value.agentId, identity.value.profileId),
 )
+
+/**
+ * The configuration document's client, behind the same gate and for the same reason.
+ *
+ * The document lives inside the profile root and its path arrives on that profile's readout, so a
+ * page mounted without the pair would have nothing to open — and, worse, a client built for a
+ * guessed pair would read one profile's record to decide where to write, which is the §8.1 failure
+ * this whole file's `showing` sentence exists to prevent.
+ */
+const configClient = computed(() =>
+  identity.value === null
+    ? null
+    : props.clients.config(identity.value.agentId, identity.value.profileId),
+)
+
+/**
+ * The entry the catalogue handed to the registry's add form, or `null`.
+ *
+ * The catalogue's only control is "register this one", and the add form is the registry page's — so
+ * the click travels through this file rather than being duplicated inside the catalogue, which
+ * holds no `add` of its own. Held here rather than in either page because neither owns the other:
+ * one emits, one receives, and the section is the only thing that knows both exist.
+ */
+const cataloguePrefill = ref<CataloguePrefill | null>(null)
 
 /**
  * One sentence per section that is not mounted, keyed by the list's own ids.
@@ -182,6 +220,7 @@ const gaps = [
         :client="props.clients.registry"
         :profile-id="identity?.profileId ?? ''"
         :can-start-session="false"
+        :prefill="cataloguePrefill"
       />
       <AgentProviderSettings
         v-if="identity"
@@ -189,12 +228,26 @@ const gaps = [
         :agent-id="identity.agentId"
         :profile-id="identity.profileId"
       />
+      <!-- The engine's own configuration document. Mounted with the pair like the profile page, and
+           for the same reason; the page states its own three absences rather than this file
+           deciding which of them applies. -->
+      <AgentConfigurationSettings
+        v-if="configClient"
+        :client="configClient"
+      />
       <!-- The pair is the page's own, so it is built from the registry's answer rather than from
            anything this section decides. The grants half of it reads the running engine, which is
            why the page draws "no agent is running" as a state of its own rather than as a gap. -->
       <AgentPermissionSettings
         v-if="permissionClient"
         :client="permissionClient"
+      />
+      <!-- Last, and about no profile at all: what the public registry publishes. Its one control
+           hands an entry to the add form above, which is why it is mounted below the registry page
+           rather than beside the profile pages. -->
+      <AgentCatalogueBrowser
+        :client="props.clients.catalogue"
+        @use="cataloguePrefill = $event"
       />
     </div>
 

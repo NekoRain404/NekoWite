@@ -127,6 +127,26 @@ export interface AgentIpc {
   start(vaultId: string): Promise<AgentRuntimeHandle>
   stop(): Promise<void>
   openSession(vaultId: string, cwd: string): Promise<AgentHostSession>
+  /**
+   * The engine's own session table. Needs the runtime, not a session: `agent_list_sessions`
+   * reads no session id from its caller at all.
+   *
+   * `unknown` rather than a declared shape, like {@link capabilities}: what arrives is a foreign
+   * process's answer, and the contract's reader is what narrows it.
+   */
+  listSessions(): Promise<unknown>
+  /**
+   * Reopens a session the engine holds.
+   *
+   * `vaultId` and `cwd` travel with the id because the Rust side checks both against what the
+   * user actually opened — `agent_load_session` re-runs `agent_open_session`'s two guards, so a
+   * renderer cannot name a vault into existence or point a restored session at a tree the user
+   * never opened. The cwd the *engine* reported for the session is what a caller should pass.
+   */
+  loadSession(vaultId: string, cwd: string, sessionId: string): Promise<AgentHostSession>
+  /** Frees a session on the engine and drops it from the host's table. Not a deletion — see
+   *  `AgentGateway.closeSession`. */
+  closeSession(sessionId: string): Promise<void>
   selectModel(sessionId: string, configId: string, value: string): Promise<void>
   /** Starts a turn and answers the host's own run id for it. The turn's ending arrives as an
    *  event, not as this call's result: the engine answers when the generation is over, and the
@@ -149,6 +169,10 @@ export function createTauriAgentIpc(): AgentIpc {
     stop: () => invoke<void>('agent_stop'),
     openSession: (vaultId, cwd) =>
       invoke<AgentHostSession>('agent_open_session', { vaultId, cwd }),
+    listSessions: () => invoke<unknown>('agent_list_sessions'),
+    loadSession: (vaultId, cwd, sessionId) =>
+      invoke<AgentHostSession>('agent_load_session', { vaultId, cwd, sessionId }),
+    closeSession: (sessionId) => invoke<void>('agent_close_session', { sessionId }),
     selectModel: (sessionId, configId, value) =>
       invoke<void>('agent_set_config_option', { sessionId, configId, value }),
     prompt: (sessionId, text) => invoke<string>('agent_prompt', { sessionId, text }),

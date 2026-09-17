@@ -36,7 +36,8 @@
 //! substituting something).
 
 use agent_client_protocol::schema::v1::{
-    InitializeResponse, NewSessionResponse, PromptCapabilities,
+    InitializeResponse, LoadSessionResponse, NewSessionResponse, PromptCapabilities,
+    SessionCapabilities as WireSessionCapabilities, SessionConfigOption,
 };
 use serde::Serialize;
 
@@ -56,6 +57,57 @@ pub struct Handshake {
     pub load_session: bool,
     /// `agentCapabilities.promptCapabilities`: the content a prompt may carry.
     pub prompt: PromptCapabilities,
+    /// `agentCapabilities.sessionCapabilities`: the session-management methods this engine
+    /// serves. Four of the five capabilities the scan report named as advertised-and-never-called
+    /// live here — `fork`, `close`, `list` and `resume` — and until this field existed the host
+    /// parsed none of them.
+    pub session: SessionManagement,
+}
+
+/// The four session-management methods the handshake advertises, each read off the wire's
+/// optional-presence sub-object.
+///
+/// **`bool`, not `Option<bool>`, and that is the schema's decision rather than a simplification.**
+/// Each sub-object is documented as "Optional. Omitted or `null` both mean the agent does not
+/// advertise support. Supplying `{}` means the agent supports …" — so absence on this wire is not
+/// a silence, it is an answer, and the only fact that could be read any other way is whether the
+/// handshake happened at all. That third state lives one level up, on [`Handshake`]'s presence:
+/// the predicates on [`SessionCapabilities`] answer `None` when no handshake has been read and
+/// `Some(this)` afterwards, which is the distinction [`Finding`] exists to keep.
+///
+/// The first version of this type held `Option<bool>` per field and was **wrong**, which its own
+/// test caught: a handshake carrying only `list` answered `None` for `resume`, and `None` reads as
+/// "nobody has established that it can" — an engine that had said no in the schema's own words
+/// would have been reported as unmeasured. The reading is presence (`is_some`), never the
+/// sub-object's contents: the schema defines support by `{}` existing and defines nothing about
+/// what a non-empty sub-object would mean, so reading further would be inventing a field the
+/// protocol does not have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SessionManagement {
+    /// `sessionCapabilities.list`: the engine serves `session/list`. The one that decides whether
+    /// a session-history surface may be offered at all — a panel that drew one for an engine that
+    /// did not advertise it would be offering a call the engine has said it does not answer.
+    pub list: bool,
+    /// `sessionCapabilities.resume`: reopening a session *without* its previous messages.
+    pub resume: bool,
+    /// `sessionCapabilities.close`: freeing a session on the engine.
+    pub close: bool,
+    /// `sessionCapabilities.fork`: **UNSTABLE** in the pinned schema — the capability is not part
+    /// of the spec yet and may be removed or changed at any point, which is why it is read here
+    /// rather than assumed present.
+    pub fork: bool,
+}
+
+impl SessionManagement {
+    /// Read the group out of the handshake.
+    fn of(capabilities: &WireSessionCapabilities) -> Self {
+        Self {
+            list: capabilities.list.is_some(),
+            resume: capabilities.resume.is_some(),
+            close: capabilities.close.is_some(),
+            fork: capabilities.fork.is_some(),
+        }
+    }
 }
 
 impl Handshake {
@@ -64,6 +116,7 @@ impl Handshake {
         Self {
             load_session: response.agent_capabilities.load_session,
             prompt: response.agent_capabilities.prompt_capabilities.clone(),
+            session: SessionManagement::of(&response.agent_capabilities.session_capabilities),
         }
     }
 }
@@ -81,13 +134,20 @@ impl SessionFacts {
     /// schema makes the field optional and 「not supported」 is what absent means, which is a
     /// measurement rather than a silence.
     pub fn of(response: &NewSessionResponse) -> Self {
+        Self::from_options(response.config_options.as_ref())
+    }
+
+    /// The same reading of a *load* response, which answers with the option list under the same
+    /// name and the same type — a reopened session has the same options a new one does.
+    pub fn of_loaded(response: &LoadSessionResponse) -> Self {
+        Self::from_options(response.config_options.as_ref())
+    }
+
+    fn from_options(options: Option<&Vec<SessionConfigOption>>) -> Self {
         Self {
-            config_option_ids: response
-                .config_options
-                .iter()
-                .flatten()
-                .map(|option| option.id.to_string())
-                .collect(),
+            config_option_ids: options
+                .map(|options| options.iter().map(|option| option.id.to_string()).collect())
+                .unwrap_or_default(),
         }
     }
 }
@@ -125,6 +185,12 @@ impl SessionCapabilities {
     /// The second: the session response.
     pub fn opened(&mut self, response: &NewSessionResponse) {
         self.session = Some(SessionFacts::of(response));
+    }
+
+    /// The second one more time, for a session that already existed: a load response answers the
+    /// same question `session/new` does about the options this session now offers.
+    pub fn reopened(&mut self, response: &LoadSessionResponse) {
+        self.session = Some(SessionFacts::of_loaded(response));
     }
 
     /// The command list the engine published, replacing the previous one whole
@@ -170,6 +236,43 @@ impl SessionCapabilities {
         self.handshake
             .as_ref()
             .map(|handshake| handshake.load_session)
+    }
+
+    /// `sessionCapabilities.list`: may a session-history surface be offered at all.
+    ///
+    /// `None` is *no handshake has been read* — the one state in which nothing has said either
+    /// way. Once one has, this wire answers: a handshake without the sub-object is the engine
+    /// saying it does not serve `session/list`, which is `Some(false)` and not a silence.
+    pub fn session_capability_list(&self) -> Option<bool> {
+        self.session_capability(|session| session.list)
+    }
+
+    /// `sessionCapabilities.resume`: reopening a session **without** its previous messages.
+    ///
+    /// Deliberately not spelled `supports_session_resume`, which is the predicate above it: that
+    /// one reads `agentCapabilities.loadSession`, and `load` and `resume` are different methods
+    /// the schema separates in as many words. This group is named for its wire parent
+    /// (`sessionCapabilities`) for the same reason — the four here are the sub-objects of one
+    /// struct, and a reader can tell at a glance which of the two handshake fields an answer came
+    /// from.
+    pub fn session_capability_resume(&self) -> Option<bool> {
+        self.session_capability(|session| session.resume)
+    }
+
+    /// `sessionCapabilities.close`.
+    pub fn session_capability_close(&self) -> Option<bool> {
+        self.session_capability(|session| session.close)
+    }
+
+    /// `sessionCapabilities.fork` — **UNSTABLE** in the pinned schema.
+    pub fn session_capability_fork(&self) -> Option<bool> {
+        self.session_capability(|session| session.fork)
+    }
+
+    fn session_capability(&self, read: impl FnOnce(&SessionManagement) -> bool) -> Option<bool> {
+        self.handshake
+            .as_ref()
+            .map(|handshake| read(&handshake.session))
     }
 
     /// Zed's `has_slash_completions` (`message_editor.rs:91-93`): completions exist when the
@@ -278,6 +381,34 @@ fn finding_for(
              session it still has",
             NO_HANDSHAKE,
         ),
+        // The four `sessionCapabilities` sub-objects. Each names the wire field it read, because
+        // the specific limitation is what §3.4.6 asks a page to be able to show — and because
+        // "list" and "resume" name one method each while `SessionResume` above names a *different*
+        // one, so a detail that said only "resume" would be ambiguous about which field said no.
+        HostFeature::SessionList => answered(
+            facts.session_capability_list(),
+            "the engine's handshake carries no `sessionCapabilities.list`, so it has said it does \
+             not answer `session/list` and there is no session history to show",
+            NO_HANDSHAKE,
+        ),
+        HostFeature::SessionResumeWithoutHistory => answered(
+            facts.session_capability_resume(),
+            "the engine's handshake carries no `sessionCapabilities.resume`, so this engine cannot \
+             reopen a session without its previous messages",
+            NO_HANDSHAKE,
+        ),
+        HostFeature::SessionClose => answered(
+            facts.session_capability_close(),
+            "the engine's handshake carries no `sessionCapabilities.close`, so this engine cannot \
+             be asked to free a session it holds",
+            NO_HANDSHAKE,
+        ),
+        HostFeature::SessionFork => answered(
+            facts.session_capability_fork(),
+            "the engine's handshake carries no `sessionCapabilities.fork` — and the pinned schema \
+             marks that capability unstable, so an engine may have removed it",
+            NO_HANDSHAKE,
+        ),
         HostFeature::ImageAttachments => answered(
             facts.supports_images(),
             "the engine's handshake does not advertise `promptCapabilities.image`, so an image \
@@ -377,6 +508,17 @@ mod tests {
                 .image(true)
                 .audio(false)
                 .embedded_context(true),
+            // The pinned engine's own group, verbatim from the measured handshake the fixture
+            // carries (`tests/fixtures/agent/fake_agent.sh:22`):
+            // `"sessionCapabilities":{"close":{},"fork":{},"list":{},"resume":{}}`. All four
+            // present, which is the schema's way of saying yes to each — and the fact the scan
+            // report's §1 table recorded this host as never reading.
+            session: SessionManagement {
+                list: true,
+                resume: true,
+                close: true,
+                fork: true,
+            },
         }
     }
 
@@ -560,6 +702,10 @@ mod tests {
         assert_eq!(facts.supports_audio(), None);
         assert_eq!(facts.supports_embedded_context(), None);
         assert_eq!(facts.supports_session_resume(), None);
+        assert_eq!(facts.session_capability_list(), None);
+        assert_eq!(facts.session_capability_resume(), None);
+        assert_eq!(facts.session_capability_close(), None);
+        assert_eq!(facts.session_capability_fork(), None);
         assert_eq!(facts.has_slash_completions(), None);
 
         facts.negotiated(measured_handshake());
@@ -567,6 +713,10 @@ mod tests {
         assert_eq!(facts.supports_audio(), Some(false));
         assert_eq!(facts.supports_embedded_context(), Some(true));
         assert_eq!(facts.supports_session_resume(), Some(true));
+        assert_eq!(facts.session_capability_list(), Some(true));
+        assert_eq!(facts.session_capability_resume(), Some(true));
+        assert_eq!(facts.session_capability_close(), Some(true));
+        assert_eq!(facts.session_capability_fork(), Some(true));
         assert_eq!(
             facts.has_slash_completions(),
             None,

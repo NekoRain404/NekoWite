@@ -808,8 +808,17 @@ describe('memory agent gateway', () => {
     const { agent, session } = await openAgent()
     const reports = await agent.capabilities(session)
 
+    // Spelled out rather than compared against `AGENT_CAPABILITY_FEATURES`, which is what the
+    // double maps over: the literal is what catches a *rename* in the contract, and a test that
+    // read the same constant it is checking would agree with itself about any name at all. The
+    // order is the host's (`HostFeature::ALL`), and `tauri-agent.test.ts` reads that source to
+    // hold the contract to it.
     expect(reports.map((report) => report.feature)).toEqual([
       'session-resume',
+      'session-list',
+      'session-resume-without-history',
+      'session-close',
+      'session-fork',
       'slash-commands',
       'model-selection',
       'image-attachments',

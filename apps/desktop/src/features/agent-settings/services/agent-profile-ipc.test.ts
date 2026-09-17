@@ -56,6 +56,10 @@ function record(overrides: Record<string, unknown> = {}): Record<string, unknown
         { tool: 'bash', action: 'ask' },
       ],
     },
+    // The relative spelling of the same file, which is what `agent_config_document` takes. The
+    // absolute one above is `permissions.document`'s, and they are two fields because they answer
+    // two questions: where the rules are, and which path the editor opens.
+    configDocument: 'XDG_CONFIG_HOME/opencode/opencode.json',
     ...overrides,
   }
 }
@@ -106,6 +110,10 @@ describe('the readout', () => {
           { tool: 'bash', action: 'ask' },
         ],
       },
+      // Passed through as the backend sent it, `null` and all: the document editor's whole
+      // capability switch is this field, and a client that defaulted it to a path would draw an
+      // editor for a profile whose configuration this host may not write.
+      configDocument: 'XDG_CONFIG_HOME/opencode/opencode.json',
     })
   })
 
@@ -115,6 +123,16 @@ describe('the readout', () => {
     const { port } = wire({ read: record({ agentId: 'acme' }) })
     const answer = await createAgentProviderClient(port).read('opencode', 'default')
     expect(answer.agentId).toBe('acme')
+  })
+
+  it('reads a profile this host owns no engine configuration for as null', async () => {
+    // `user-config` is the mode where the engine reads the user's own installation. The document
+    // editor's arm for it is a sentence rather than a control, and it is this field that decides —
+    // so a `''` or a default path here would be an editor drawn over a file this host must not
+    // write.
+    const { port } = wire({ read: record({ mode: 'user-config', configDocument: null }) })
+    const answer = await createAgentProviderClient(port).read('opencode', 'default')
+    expect(answer.configDocument).toBeNull()
   })
 
   it('reads a profile whose provider and model are unset as null, not as an empty string', async () => {

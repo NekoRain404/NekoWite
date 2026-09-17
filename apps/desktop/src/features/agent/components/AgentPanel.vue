@@ -56,6 +56,12 @@ export interface AgentPanelLabels {
  *    the session's record, and the one honest thing to offer is a resync rather than a
  *    silent partial answer.
  *
+ * It is also where the engine's *other* sessions are reached: the bar carries the history control
+ * and this file owns what it opens — the capability check that decides whether the control exists
+ * at all, the `listSessions` read, and the rows the engine's own answer draws. Picking one leaves
+ * as an event (`resume`): a load has to be made for the rail's vault and it replaces the session
+ * this panel is mounted on, so the call belongs to whoever owns that lifecycle, not here.
+ *
  * It also *places* the three components the neighbouring tasks own, because putting them in the
  * session's life is the part that is this file's business: the permission prompt (T7) is
  * rendered for the request the run is waiting on, the `/` menu (T8) sits over the composer whose
@@ -86,7 +92,7 @@ export interface AgentPanelLabels {
  * composition site keys it (or remounts it) rather than re-pointing it at another session —
  * a store binding cannot be moved to a session the panel was not mounted for.
  */
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type {
   AgentCommand,
   AgentGateway,
@@ -94,12 +100,20 @@ import type {
   AgentToolStatus,
 } from '../../../platform/gateways/agent-contracts'
 import { useAgentCommands } from '../composables/use-agent-commands'
+import { useDetachedPopup } from '../composables/use-detached-popup'
 import { useAgentSession } from '../composables/use-agent-session'
 import {
   configControls,
   setConfigOption,
   type AgentConfigControl,
 } from '../services/agent-config-options'
+import {
+  agentSessionHistoryRows,
+  capabilityAvailable,
+  freeAgentSession,
+  type AgentSessionHistoryRow,
+} from '../services/agent-session-history'
+import { describeFailure } from '../services/agent-session-subscription'
 import { isRunLive } from '../services/agent-session-view'
 import type { AgentToolEntry } from '../services/agent-timeline'
 import { useAgentSessionStore } from '../stores/agent-session'
@@ -107,6 +121,10 @@ import AgentCommandMenu from './AgentCommandMenu.vue'
 import AgentComposer from './AgentComposer.vue'
 import AgentPermissionPrompt from './AgentPermissionPrompt.vue'
 import AgentSessionBar from './AgentSessionBar.vue'
+import AgentSessionHistoryMenu, {
+  type AgentSessionHistoryFooter,
+  type AgentSessionHistoryView,
+} from './AgentSessionHistoryMenu.vue'
 import AgentTimeline from './AgentTimeline.vue'
 
 const props = defineProps<{
@@ -114,7 +132,27 @@ const props = defineProps<{
   gateway: AgentGateway
   /** The session to show. Read once — see the note above about mounting per session. */
   session: AgentSession
+  /**
+   * The directory this runtime works in — `AgentRailState`'s own `cwd`, the vault root on disk.
+   *
+   * It is here for one comparison: a session the engine recorded in a *different* folder is a
+   * different thing to reopen, and the history rows say so. Never assumed equal to `vaultId`:
+   * that the two are the same string today is a fact about the composition site.
+   */
+  cwd: string
   labels: AgentPanelLabels
+}>()
+
+const emit = defineEmits<{
+  /**
+   * The user picked a session out of the engine's history.
+   *
+   * An event rather than a call, because the reopen is the *rail's*: a load has to be made for the
+   * vault the runtime was started for, and it replaces the session this panel is mounted on — a
+   * panel cannot re-point itself, and one that called the gateway here would be a second place
+   * the rail's generation latch did not reach.
+   */
+  resume: [sessionId: string]
 }>()
 
 const store = useAgentSessionStore()
@@ -286,6 +324,182 @@ function onSend(text: string): void {
   // clear the draft); there is nothing for the panel to do with the outcome here.
   void send(text)
 }
+
+/**
+ * The sessions this engine holds (§5.3's history control): whether the control may be drawn at
+ * all, and the list it opens.
+ *
+ * **Both controls are capabilities first.** `session/list` and `session/close` are what the engine
+ * reports about itself in its handshake, `AgentGateway.capabilities` is where that report is read
+ * back, and only an `available` finding draws the control that needs it — see
+ * `capabilityAvailable`. The check happens once, on mount, because a panel is mounted per session:
+ * a report belongs to the runtime the session belongs to, and a runtime the host replaced has no
+ * answer left to give. A report this window could not read at all is *not* an available one:
+ * neither control is drawn, and nothing is said about a call nobody answered.
+ */
+const historyOffered = ref(false)
+const closeOffered = ref(false)
+
+onMounted(async () => {
+  try {
+    const reports = await props.gateway.capabilities(props.session)
+    historyOffered.value = capabilityAvailable(reports, 'session-list')
+    closeOffered.value = capabilityAvailable(reports, 'session-close')
+  } catch {
+    historyOffered.value = false
+    closeOffered.value = false
+  }
+})
+
+const barEl = ref<InstanceType<typeof AgentSessionBar> | null>(null)
+const historyEl = ref<InstanceType<typeof AgentSessionHistoryMenu> | null>(null)
+
+/** The list's element id, so the rows and the listbox agree on one name. */
+const historyListId = `agent-history-${props.session.sessionId}`
+
+/** What the menu is showing; four states rather than a `loaded` flag, because "the engine holds
+ *  nothing" and "the engine did not answer" are different sentences (see the menu). */
+const historyView = ref<AgentSessionHistoryView>('loading')
+const historyRows = ref<readonly AgentSessionHistoryRow[]>([])
+const historyReason = ref<string | null>(null)
+/** The engine named a further page, so the list below is not the whole history. */
+const historyMore = ref(false)
+/** The instant every row's age is read against — one clock for the whole list. */
+const historyAt = ref(0)
+
+/**
+ * Where the list goes, when it closes, and who owns Escape while it is up: the app's popup recipe,
+ * measured against the control in the bar (which exposes its element for exactly this).
+ */
+const historyMenu = useDetachedPopup({
+  floor: 220,
+  claim: 'agent-session-history',
+  trigger: computed(() => barEl.value?.triggerElement() ?? null),
+  popup: () => historyEl.value?.element() ?? null,
+})
+
+/**
+ * Show the engine's sessions, or take the list away again.
+ *
+ * The read is started before the popup is measured so the list is on screen — with its own
+ * "reading" line — while the engine answers, and the outcome is *settled into a value* rather
+ * than left as a rejecting promise for the two awaits in between to trip over.
+ */
+async function openHistory(): Promise<void> {
+  if (historyMenu.open.value) {
+    closeHistory()
+    return
+  }
+  historyView.value = 'loading'
+  historyReason.value = null
+  const answer = readHistory()
+  await historyMenu.show()
+  await answer
+  historyEl.value?.focus()
+}
+
+/**
+ * Ask the engine for its list, and draw whatever it answers.
+ *
+ * One function for both readers — the control opening the list, and the refresh after a free —
+ * because both are the same question and a second copy is a second place the four states could be
+ * got wrong. The outcome is *settled into a value* rather than left as a rejecting promise for
+ * the awaits around it to trip over, and everything it writes is the engine's own answer: the
+ * rows, whether the list is a whole page, and the sentence a refusal came with.
+ */
+async function readHistory(): Promise<void> {
+  const settled = await props.gateway.listSessions().then(
+    (history) => ({ ok: true as const, history }),
+    (error: unknown) => ({ ok: false as const, error }),
+  )
+  if (!settled.ok) {
+    // The gateway's own sentence, shown in the list rather than swallowed: a control that asked
+    // the engine something and got nothing back owes the reader the reason.
+    historyReason.value = describeFailure(settled.error).message
+    historyView.value = 'unreadable'
+    return
+  }
+  historyAt.value = Date.now()
+  historyRows.value = agentSessionHistoryRows(settled.history, {
+    currentSessionId: props.session.sessionId,
+    cwd: props.cwd,
+  })
+  historyMore.value = settled.history.nextCursor !== null
+  historyView.value = historyRows.value.length === 0 ? 'empty' : 'rows'
+}
+
+/** Close the list and hand the keyboard back to the control it belongs to. */
+function closeHistory(): void {
+  historyMenu.hide()
+  // The question goes with the list: a confirmation is about a row the reader can see, and one
+  // that outlived its list would be answered against a subject that is no longer on screen.
+  freeTarget.value = null
+  historyFooter.value = null
+  barEl.value?.triggerElement()?.focus()
+}
+
+/**
+ * The free action: the strip under the rows, and the two calls behind it.
+ *
+ * `session/close` is a real change on the engine — it stops serving the session and cancels
+ * whatever it was running — so the button that starts it asks first, and the answer's sentence
+ * says the thing that would otherwise read as a failure: **the engine keeps the session in its
+ * list**. That is measured behaviour, not leniency (`agent_session_lifecycle_test.rs` §4.4: the
+ * row is still there afterwards, and removing one is `session/delete`, which this engine answers
+ * `-32601` for). A reader who presses this and sees the row still on screen must not conclude it
+ * did not work.
+ */
+const freeTarget = ref<string | null>(null)
+const freeBusy = ref(false)
+const historyFooter = ref<AgentSessionHistoryFooter | null>(null)
+
+/** A row's action was pressed: ask, and name the row the question is about. */
+function askFree(sessionId: string): void {
+  freeTarget.value = sessionId
+  historyFooter.value = { kind: 'confirm' }
+}
+
+/** No: the row stays, and so does the engine's session. */
+function cancelFree(): void {
+  freeTarget.value = null
+  historyFooter.value = null
+}
+
+/** Yes: one call, then the engine's own list again. */
+async function confirmFree(): Promise<void> {
+  const sessionId = freeTarget.value
+  if (sessionId === null || freeBusy.value) return
+  freeBusy.value = true
+  try {
+    await freeAgentSession(props.gateway, sessionId)
+    // The list is *re-read* rather than edited: the engine's answer is what the reader sees, and
+    // the row is expected to still be in it. Anything else — dropping the row here — would be
+    // this window drawing its own idea of what a close means.
+    await readHistory()
+    freeTarget.value = null
+    historyFooter.value = { kind: 'freed' }
+  } catch (error) {
+    historyFooter.value = { kind: 'failed', reason: describeFailure(error).message }
+  } finally {
+    freeBusy.value = false
+  }
+}
+
+/**
+ * One row settled on: close the list, and ask the rail for the session — unless it is the one
+ * already on screen.
+ *
+ * That row is not an error and not a call. The engine refuses a load of a session it is currently
+ * serving (`session-stale`, documented on `AgentGateway.loadSession`), and the honest reading of
+ * "show me this one" about the session already showing is that there is nothing to do. The row is
+ * drawn and marked as the open one rather than hidden: it is the engine's answer, and dropping it
+ * would be this window editing a list the engine gave.
+ */
+function onHistoryPick(sessionId: string): void {
+  closeHistory()
+  if (sessionId === props.session.sessionId) return
+  emit('resume', sessionId)
+}
 </script>
 
 <template>
@@ -294,11 +508,15 @@ function onSend(text: string): void {
     data-agent-panel
   >
     <AgentSessionBar
+      ref="barEl"
       :title="view?.title ?? null"
       :state="state"
       :failure="view?.failure ?? null"
       :result="view?.lastResult ?? null"
+      :history="historyOffered"
+      :history-open="historyMenu.open.value"
       :labels="labels.bar"
+      @history="openHistory"
     />
     <p
       v-if="gap"
@@ -376,6 +594,37 @@ function onSend(text: string): void {
         @set-config="onConfigSet"
       />
     </div>
+    <!-- The engine's sessions, teleported to the body and placed against the control in the bar
+         by `useDetachedPopup`: the rail body scrolls, and a list drawn inside it would be clipped
+         by a container it has nothing to do with. It is the panel's list rather than the bar's
+         because the gateway and the session are here — the bar draws the control and nothing
+         else. -->
+    <Teleport to="body">
+      <Transition name="agent-history-popup">
+        <AgentSessionHistoryMenu
+          v-if="historyMenu.open.value"
+          ref="historyEl"
+          :view="historyView"
+          :rows="historyRows"
+          :reason="historyReason"
+          :more="historyMore"
+          :closeable="closeOffered"
+          :footer="historyFooter"
+          :confirming="freeTarget"
+          :now="historyAt"
+          :list-id="historyListId"
+          :left="historyMenu.placement.value.left"
+          :top="historyMenu.placement.value.top"
+          :min-width="historyMenu.placement.value.minWidth"
+          :drop="historyMenu.placement.value.drop"
+          @activate="onHistoryPick"
+          @ask="askFree"
+          @confirm="confirmFree"
+          @cancel="cancelFree"
+          @close="closeHistory"
+        />
+      </Transition>
+    </Teleport>
   </section>
 </template>
 
@@ -471,5 +720,28 @@ function onSend(text: string): void {
   bottom: calc(100% + 4px);
   left: 8px;
   z-index: 1;
+}
+/* How the history list arrives, which is the panel's business because the panel measured where
+   it went: the region rung in, its exit fraction out, because by then it has been read. A leaving
+   list is on screen for a moment and must not take the dismissing click — hence `pointer-events`
+   below. It reaches the popup's element because Vue gives a child component's root the parent's
+   scope id as well as its own. */
+.agent-history-popup-enter-active {
+  transition: opacity var(--app-motion) var(--app-ease),
+              transform var(--app-motion) var(--app-ease);
+}
+.agent-history-popup-leave-active {
+  transition: opacity var(--app-motion-exit) var(--app-ease-exit),
+              transform var(--app-motion-exit) var(--app-ease-exit);
+  pointer-events: none;
+}
+.agent-history-popup-enter-from,
+.agent-history-popup-leave-to {
+  opacity: 0;
+  transform: translateY(calc(var(--app-motion-travel) * -1)) scale(var(--app-motion-scale-pop));
+}
+.agent-history-popup.is-above.agent-history-popup-enter-from,
+.agent-history-popup.is-above.agent-history-popup-leave-to {
+  transform: translateY(var(--app-motion-travel)) scale(var(--app-motion-scale-pop));
 }
 </style>

@@ -68,9 +68,23 @@ const props = withDefaults(
      * caller that cannot act must say so rather than be assumed.
      */
     canStartSession?: boolean
+    /**
+     * An entry the catalogue browser chose, to fill the add form with.
+     *
+     * The catalogue's one control means "register this one", and it holds no `add` of its own: the
+     * form is this page's, and duplicating it there would be two places a draft can be submitted
+     * from. So the choice arrives as a value, and a `watch` writes it into the form — the form
+     * stays the single source of what would be submitted, and a prefill is a prefill rather than a
+     * second submit path.
+     *
+     * `args` is an **array** here and a newline-joined string in the form, which is the conversion
+     * this prop exists to do: §3.4.3 forbids a command line, and a program and its arguments are
+     * two facts that a `join` on this side would fuse.
+     */
+    prefill?: { agentId: string; displayName: string; program: string; args: readonly string[] } | null
     labels?: AgentRegistryLabels
   }>(),
-  { sessionAgentId: null, canStartSession: true },
+  { sessionAgentId: null, canStartSession: true, prefill: null },
 )
 
 const emit = defineEmits<{ (event: 'new-session', agentId: string): void }>()
@@ -196,6 +210,32 @@ const selectedEngine = ref('')
 const selectable = computed(() => entries.value.filter((entry) => entry.enabled))
 const nameOf = (agentId: string): string =>
   entries.value.find((entry) => entry.agentId === agentId)?.displayName || agentId
+
+/**
+ * A choice made in the catalogue browser, written into the add form.
+ *
+ * Not `immediate`: a prefill that has not happened is `null`, and running this on mount would clear
+ * a form nobody had touched. The `edited` flags are set with it because a prefilled field *is* the
+ * user's — `refusedField` uses them to decide whether a refusal belongs beside a field, and a value
+ * the user chose from the catalogue is as much their input as one they typed.
+ */
+watch(
+  () => props.prefill,
+  (prefill) => {
+    if (prefill === null) return
+    form.agentId = prefill.agentId
+    form.displayName = prefill.displayName
+    form.program = prefill.program
+    form.args = prefill.args.join('\n')
+    edited.agentId = true
+    edited.displayName = true
+    edited.program = true
+    edited.args = true
+    // A prefill is a fresh start: the previous submission's answers do not belong to this draft.
+    addRefusal.value = null
+    addedAgentId.value = null
+  },
+)
 
 watch(
   [entries, () => props.sessionAgentId],

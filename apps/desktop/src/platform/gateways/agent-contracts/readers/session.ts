@@ -27,6 +27,8 @@ import type {
   AgentCapabilityFeature,
   AgentCapabilityFinding,
   AgentCapabilityReport,
+  AgentSessionHistory,
+  AgentSessionSummary,
 } from '../gateway'
 import { AGENT_CAPABILITY_FEATURES } from '../gateway'
 import { isAgentFailureCode } from '../failure'
@@ -262,6 +264,50 @@ export function readCapabilityReports(raw: unknown): AgentCapabilityReport[] | n
   // row and §7.2 forbid — and a rejection is the one outcome a page can render as "unreadable"
   // instead of as a fact about the engine.
   return AGENT_CAPABILITY_FEATURES.every((feature) => seen.has(feature)) ? reports : null
+}
+
+/**
+ * One page of the engine's session table, or `null` when the answer is not one this
+ * contract allows.
+ *
+ * Strict in both directions, for the reason {@link readCapabilityReports} is: a row
+ * silently dropped on the way in is a session the user never learns they can reopen,
+ * and there is no way to show that absence — a shorter list reads as a shorter history.
+ * A row missing `sessionId` or `cwd` is therefore a rejection rather than a skip, and
+ * so is a page that is not an object at all.
+ *
+ * `title` and `updatedAt` are read with `maybeStr`, which distinguishes *absent* from
+ * *null* from *a string*: ACP makes both fields optional, so absent is a legitimate
+ * answer, and a row that presented one as `''` would be a title the engine never gave.
+ * The contract's own type keeps them `string | null` for the same reason.
+ */
+export function readSessionHistory(raw: unknown): AgentSessionHistory | null {
+  const record = asRecord(raw)
+  if (!record) return null
+  if (!Array.isArray(record.sessions)) return null
+  const sessions: AgentSessionSummary[] = []
+  for (const entry of record.sessions) {
+    const row = asRecord(entry)
+    if (!row) return null
+    const sessionId = nonEmpty(row.sessionId)
+    const cwd = nonEmpty(row.cwd)
+    if (!sessionId || !cwd) return null
+    const title = maybeStr(row, 'title')
+    const updatedAt = maybeStr(row, 'updatedAt')
+    if (!title || !updatedAt) return null
+    sessions.push({
+      sessionId,
+      cwd,
+      title: title.value,
+      updatedAt: updatedAt.value,
+    })
+  }
+  // The cursor travels with the page whether or not it is present: `undefined` and
+  // `null` both mean "the engine named no further page", and the contract collapses
+  // them into one `null` so a caller has one thing to test.
+  const cursor = maybeStr(record, 'nextCursor')
+  if (!cursor) return null
+  return { sessions, nextCursor: cursor.value }
 }
 
 /** Every arm of {@link AgentCapabilityDeclaration}, listed once so a new one is a change here. */

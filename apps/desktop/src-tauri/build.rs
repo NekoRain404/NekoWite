@@ -90,6 +90,13 @@ const COMMANDS: &[&str] = &[
     "agent_prompt",
     "agent_session_snapshot",
     "agent_session_capabilities",
+    // Session history: what the engine already holds, reopening one of those sessions, and
+    // freeing one. Three commands rather than a session-management bag, because each is one
+    // method of the protocol and each is gated on its own advertised capability
+    // (`sessionCapabilities.list` / `loadSession` / `sessionCapabilities.close`).
+    "agent_list_sessions",
+    "agent_load_session",
+    "agent_close_session",
     "agent_permission_answer",
     // The permissions the engine has written down because the user answered "always": read from
     // the engine's own route, and removed through it.

@@ -42,6 +42,51 @@ export const agent = {
             cancelled: 'Stopped before it finished',
             unrecognised: 'Ended for a reason this version does not know',
           },
+          /* The one control §5.3 puts in this strip beyond the title. It is drawn only when the
+             engine's own report says it answers `session/list` — see `AgentPanel` — so the words
+             answer "what does pressing this show", not "what could it show in principle". */
+          history: 'Sessions this engine holds',
+        },
+        /* The session history menu (T17): the rows an engine's `session/list` answer draws.
+           Every row is the engine's own facts — its title, its folder, its last-activity stamp —
+           and the sentences here are only what this app can say *of* them: which one is open,
+           that one was recorded elsewhere, when one was last touched, and why there is nothing
+           to show. `untitled` is deliberately a statement about the engine rather than a name
+           for the session: a title this app invented for a session that had none would be a fact
+           the engine never stated. */
+        history: {
+          list: 'Sessions',
+          loading: 'Reading the sessions this engine holds...',
+          empty: 'This engine holds no sessions.',
+          unreadable: 'The engine’s sessions could not be read: {reason}',
+          /* An engine that names a further page has not shown the whole table, and a list that
+             read as complete would be the one answer worse than a short one. */
+          more: 'This is the first page. The engine named more sessions after these.',
+          untitled: 'The engine sent no title for this session',
+          current: 'Open now',
+          elsewhere: 'Recorded in another folder: {cwd}',
+          age: {
+            now: 'just now',
+            minutes: '{n} min ago',
+            hours: '{n} h ago',
+            days: '{n} d ago',
+          },
+          /* The action on a row's engine record, and the whole of what this app says about it.
+             **Nothing here may read as "delete".** The engine was measured keeping a closed
+             session in its list (`agent_session_lifecycle_test.rs` §4.4) — removing one is
+             `session/delete`, which the pinned engine answers `-32601` for — so the question says
+             what is about to happen, the note says what will *not*, and the sentence after a
+             success says why the row the reader is looking at is still there. A user who presses
+             this and sees the row still present must not conclude it failed. */
+          free: {
+            label: 'Free this session on the engine',
+            confirm: 'Free this session on the engine?',
+            note: 'The engine stops serving it and cancels anything it was running. It keeps the session in its list: removing one is a different method this engine does not implement, so this row will still be here afterwards.',
+            confirmAction: 'Free it',
+            cancel: 'Keep it',
+            done: 'The engine let it go. The row is still in this list — that is the engine’s answer, not a failure.',
+            failed: 'The engine would not free it: {reason}',
+          },
         },
         /* The transcript's first line, drawn only while the transcript is empty. It names the
            engine and offers the one mechanism this panel really has: `/` opens the engine's own
@@ -142,6 +187,11 @@ export const agent = {
         useChat: 'Back to the chat panel',
         unknownFailure: 'The request was refused without a reason this app could read.',
         stopFailed: 'The agent engine could not be stopped: {reason}',
+        /* A session the user picked out of the engine's history and the engine would not hand
+           back. The rail keeps the session that is open — a failed load is not a reason to take a
+           live conversation off the screen — so this sentence is the only place the refusal can be
+           read, and it carries the engine's own reason rather than a summary of it. */
+        resumeFailed: 'The session could not be reopened: {reason}',
       },
       permission: {
         argumentsPending: 'The engine has not sent the arguments yet',
@@ -400,6 +450,44 @@ export const agent = {
             hostFile: 'Stored in a file this app owns:',
             notEncrypted: 'That file is a file with owner-only permissions. It is not encrypted, and it is not a system keychain.',
             placeholder: 'value is stored',
+          },
+        },
+        /* The engine's own configuration document (`agent_config_document` /
+           `agent_config_edit`). Four states with four sentences, because a user's next move is
+           different in each: a document this app may write, a document the engine has not written
+           yet, a document this app may not write, and a profile whose engine reads the user's own
+           installation. The last three draw no form — a control that cannot work is not drawn. */
+        config: {
+          section: {
+            title: 'Engine configuration',
+            hint: 'The file the engine itself reads. NekoWite shows it as the engine wrote it and changes one member at a time, at the revision it read.',
+          },
+          loading: 'Reading the engine configuration…',
+          unreadable: 'The engine configuration could not be read from the backend. That is a fact about this window, not about the file.',
+          none: 'This profile reuses your own installation, so the engine reads that installation’s configuration. It is a file NekoWite did not write and does not open here; edit it where it lives, or switch this profile to app-managed above.',
+          unwritten: 'The engine has not written its configuration yet, and nothing here may create one: an edit sets a member of a document that exists, and a missing file is not a member. Start the engine once and it will write the file.',
+          readOnly: 'The document is there and this profile is one NekoWite does not write into, so it is shown and not edited.',
+          document: {
+            title: 'The document',
+            path: 'File',
+            exists: 'On disk.',
+            absent: 'Not written yet.',
+            text: 'No text was returned for this document.',
+            textHint: 'Shown as written, comments and all. Nothing here parses it — an edit names one member and its value, and every other byte of the file is left alone.',
+          },
+          edit: {
+            title: 'Set a member',
+            hint: 'One member of this document, at the revision that was just read. If the file changed since then, the change is refused rather than merged.',
+            member: 'Member',
+            memberHint: 'The member’s name at the document’s root, exactly as the engine spells it. One name, not a dotted path — a key containing a dot is a key like any other.',
+            value: 'Value',
+            valueHint: 'A JSON value: a string needs its quotes, an object its braces. This is the only thing here that is parsed as JSON.',
+            save: 'Apply',
+            noMember: 'A member has to be named.',
+            invalidValue: 'That is not a JSON value.',
+            applied: 'Applied.',
+            conflict: 'The file changed since this page read it. Nothing was written — the document above has been reloaded, so what is on screen is what is there.',
+            failed: 'This change could not be sent to the backend.',
           },
         },
         skills: {
@@ -682,6 +770,42 @@ export const agent = {
             cancelled: '未完成即被停止',
             unrecognised: '以本版本未知的原因结束',
           },
+          history: '该引擎保存的会话',
+        },
+        /* 会话历史菜单（T17）：引擎对 `session/list` 的回答所画出的行。每一行都是引擎自己的
+           事实——它的标题、它所在的文件夹、它的最后活动时间——这里的话只是本应用对这些事实能
+           说的部分：哪一个是当前打开的、哪一个记录在别处、某个会话上次被碰是什么时候，以及为什
+           么什么都没有。`untitled` 刻意是对引擎的陈述而不是替它起的名字：本应用为没有标题的会话
+           编一个标题，就是在陈述引擎从未说过的事。 */
+        history: {
+          list: '会话',
+          loading: '正在读取该引擎保存的会话……',
+          empty: '该引擎没有保存任何会话。',
+          unreadable: '未能读取该引擎的会话列表：{reason}',
+          more: '这只是第一页，引擎在后面还列出了更多会话。',
+          untitled: '引擎没有为该会话提供标题',
+          current: '当前打开',
+          elsewhere: '记录在另一个文件夹中：{cwd}',
+          age: {
+            now: '刚刚',
+            minutes: '{n} 分钟前',
+            hours: '{n} 小时前',
+            days: '{n} 天前',
+          },
+          /* 针对某一行「引擎侧记录」的操作，本应用对此说的全部内容。**这里任何一句话都不能读起
+             来像「删除」。**实测中引擎会保留已关闭的会话（`agent_session_lifecycle_test.rs` §4.4）
+             ——从列表中移除走的是 `session/delete`，而该引擎对它回答 `-32601`——因此提问说的是即将
+             发生什么，说明说的是不会发生什么，成功之后那句话解释为什么这一行还在。按下去之后看到
+             该行仍在，用户不能以为自己失败了。 */
+          free: {
+            label: '让引擎释放该会话',
+            confirm: '要让引擎释放这个会话吗？',
+            note: '引擎将不再为它服务，并会取消它当时正在运行的内容。引擎仍会把它留在自己的列表中：从列表中移除会话是另一个方法，而该引擎并未实现，因此这一行之后依然在。',
+            confirmAction: '释放',
+            cancel: '保留',
+            done: '引擎已经释放了它。这一行仍然在这个列表里——这是引擎自己的回答，不是失败。',
+            failed: '引擎没有释放它：{reason}',
+          },
         },
         empty: {
           line: '给 {engine} 发消息——输入 / 查看命令',
@@ -747,6 +871,7 @@ export const agent = {
         useChat: '回到聊天面板',
         unknownFailure: '请求被拒绝，且没有给出本应用能读到的原因。',
         stopFailed: '智能体引擎未能停止：{reason}',
+        resumeFailed: '未能重新打开该会话：{reason}',
       },
       permission: {
         argumentsPending: '引擎还没有发送参数',
@@ -993,6 +1118,42 @@ export const agent = {
             hostFile: '保存在本应用拥有的文件中：',
             notEncrypted: '那是一个仅有属主权限的普通文件。它没有加密，也不是系统钥匙串。',
             placeholder: '已保存值',
+          },
+        },
+        /* 引擎自己的配置文件。四种状态、四句话，因为用户的下一步在每种状态里都不一样：
+           本应用可写的文件、引擎还没写出来的文件、本应用无权写的文件，以及配置文件属于用户自己那套
+           安装的配置档。后三种都不画表单——画不出来的控件就不画。 */
+        config: {
+          section: {
+            title: '引擎配置',
+            hint: '引擎自己读取的那个文件。NekoWite 按引擎写下的原样显示，并按读到的修订逐个成员修改。',
+          },
+          loading: '正在读取引擎配置……',
+          unreadable: '无法从后端读取引擎配置。这是关于本窗口的事实，而不是关于那个文件的事实。',
+          none: '该配置档复用你自己那套安装，因此引擎读取的是那套安装的配置文件。它不是 NekoWite 写的，这里也不打开它；请在它所在的位置编辑，或者把上面的配置档改为「本应用管理」。',
+          unwritten: '引擎还没有写出配置文件，而这里也无法创建：一次修改是设置一个已存在文档中的成员，而文件不存在就谈不上成员。启动一次引擎，它就会写出这个文件。',
+          readOnly: '文件存在，但该配置档是本应用不写入的那种，因此这里只显示、不修改。',
+          document: {
+            title: '文件内容',
+            path: '文件',
+            exists: '已在磁盘上。',
+            absent: '尚未写出。',
+            text: '该文件没有返回文本内容。',
+            textHint: '按原样显示，注释也在。这里没有任何解析——一次修改只指定一个成员和它的值，文件其余部分一个字节都不动。',
+          },
+          edit: {
+            title: '设置一个成员',
+            hint: '针对刚读到的修订，改这个文档里的一个成员。如果文件在那之后变过，修改会被拒绝，而不是被合并。',
+            member: '成员名',
+            memberHint: '文档根下的成员名，按引擎自己的拼写写。是一个名字，不是点分路径——名字里带点也是普通的名字。',
+            value: '值',
+            valueHint: '一个 JSON 值：字符串要带引号，对象要带花括号。这里是整个页面唯一会按 JSON 解析的东西。',
+            save: '应用',
+            noMember: '必须指定一个成员名。',
+            invalidValue: '这不是一个 JSON 值。',
+            applied: '已应用。',
+            conflict: '文件在本页读取之后变过，因此什么都没写入——上面的内容已经重新读取，屏幕上显示的就是文件里现在的内容。',
+            failed: '这次修改没能发送到后端。',
           },
         },
         skills: {

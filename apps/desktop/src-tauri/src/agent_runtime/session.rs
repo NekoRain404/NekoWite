@@ -14,11 +14,12 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use agent_client_protocol::schema::v1::SessionId;
+use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -38,6 +39,17 @@ pub const INITIALIZE_BOUND: Duration = Duration::from_secs(20);
 /// are quick by construction.
 pub(super) const CONTROL_BOUND: Duration = Duration::from_secs(30);
 
+/// `session/load` gets a bound of its own, because it is the one call in this group that is not
+/// answered out of the engine's own table.
+///
+/// A load replays a conversation: every message, thought and tool call the session ever produced
+/// is published as a `session/update` while the request is outstanding, so the time it takes
+/// grows with the session rather than being a fixed lookup — the same reason §6.2 makes a
+/// generation's bound a net rather than a budget. Longer than `CONTROL_BOUND` and far shorter
+/// than a prompt's thirty minutes: a load streams no new tokens, so a session that takes minutes
+/// to come back is a wedged engine rather than a long answer.
+pub(super) const LOAD_BOUND: Duration = Duration::from_secs(120);
+
 /// Why a session call was refused.
 #[derive(Debug, Clone)]
 pub enum SessionError {
@@ -53,6 +65,25 @@ pub enum SessionError {
     RunInProgress {
         session_id: String,
     },
+    /// A load named a session this host already holds.
+    ///
+    /// Not a fault in the engine: a session this app opened is open, and re-loading it would
+    /// replace the slot a window is following — dropping its run, its vault root and its
+    /// engine-reported options — with a second copy of itself. The user picked a row they are
+    /// already in, and the answer is to say so rather than to reload underneath them.
+    AlreadyOpen {
+        session_id: String,
+    },
+    /// A `session/load` for this session is already in flight.
+    ///
+    /// Its own variant rather than a reuse of [`Self::AlreadyOpen`], because the two are different
+    /// facts about the user's click and the wording is what they act on: one says the session is
+    /// open (do nothing), the other says it is being opened (wait a moment). They also reach
+    /// different states — the second is transient, and a caller that treated it as the first would
+    /// tell the user their session was already open while it was still coming back.
+    LoadInFlight {
+        session_id: String,
+    },
 }
 
 impl SessionError {
@@ -65,6 +96,11 @@ impl SessionError {
             // is what `session-stale` describes.
             SessionError::UnknownSession { .. } => AgentFailureCode::SessionStale,
             SessionError::RunInProgress { .. } => AgentFailureCode::Cancelled,
+            // The session is one this host holds, so the epoch has not moved — what is wrong is
+            // that the caller asked to open something that is already open, which is the same
+            // class of "this call does not fit the session's state" that `RunInProgress` names.
+            SessionError::AlreadyOpen { .. } => AgentFailureCode::BufferConflict,
+            SessionError::LoadInFlight { .. } => AgentFailureCode::BufferConflict,
         }
     }
 
@@ -77,6 +113,12 @@ impl SessionError {
             }
             SessionError::RunInProgress { .. } => {
                 "this session is already answering; wait for it or stop it".to_string()
+            }
+            SessionError::AlreadyOpen { session_id } => {
+                format!("session {session_id} is already open in this window")
+            }
+            SessionError::LoadInFlight { session_id } => {
+                format!("session {session_id} is still being reopened; wait for it to finish")
             }
         }
     }
@@ -292,6 +334,23 @@ pub struct AgentRuntime {
     reported: Arc<Mutex<HashMap<String, SessionCapabilities>>>,
     /// The handshake's answer, once per incarnation — the first of the two negotiations §3.4 names.
     handshake: Mutex<Option<Handshake>>,
+    /// The sessions a `session/load` is in flight for, right now.
+    ///
+    /// The pre-registration [`Self::load_session`] does before it sends is what lets replayed
+    /// frames find the session — and it is also why a second load of the same id must be refused:
+    /// both calls would pass the "is it already open" check, both would insert a slot, and the
+    /// second would overwrite the first's run id, so the first's replay frames would be stamped
+    /// with a run the slot no longer names. That is a duplicate RPC against one session, which is
+    /// what Zed's `pending_sessions` map exists to prevent ("underlying ACP load_session should be
+    /// called exactly once for concurrent loads",
+    /// `zed-main/crates/agent_servers/src/acp.rs:4090`).
+    ///
+    /// **Refused rather than shared**, which is where this differs from Zed's answer. Zed returns
+    /// the in-flight task to the second caller; this host refuses, for the reason [`SessionError::
+    /// RunInProgress`] refuses a second prompt — a caller that silently receives another call's
+    /// answer cannot tell that it was not the one that asked. What the user sees is a sentence
+    /// instead of a second spinner on the same row.
+    loading: Mutex<std::collections::HashSet<String>>,
     /// Serializes the handshake, so two sessions opened at once share one.
     negotiating: tokio::sync::Mutex<()>,
 }
@@ -343,6 +402,7 @@ impl AgentRuntime {
                 run_counter: AtomicU64::new(0),
                 reported,
                 handshake: Mutex::new(None),
+                loading: Mutex::new(std::collections::HashSet::new()),
                 negotiating: tokio::sync::Mutex::new(()),
             },
             AgentRuntimeEvents {
@@ -431,6 +491,186 @@ impl AgentRuntime {
         })
     }
 
+    /// Lists the sessions the engine holds.
+    ///
+    /// One of the four methods §4 of the scan report measured the engine serving and this host
+    /// never calling, so this is the first caller rather than a second opinion: no session is
+    /// opened, no credential is used and no provider is reached.
+    ///
+    /// **No session id is required, and none is invented.** The answer is the engine's own list
+    /// for this connection — the sessions its profile root holds — so this negotiates and asks,
+    /// which is why it is a method on the runtime rather than on one of its sessions. What comes
+    /// back is projected to [`SessionListing`] rather than to a session this host now believes
+    /// it has: a listed session is not an open one, and §6.1 forbids the host from treating an id
+    /// it has not received a `session/new` or `session/load` answer for as one of its own.
+    pub async fn list_sessions(&self) -> Result<SessionPage, SessionError> {
+        self.negotiate().await?;
+        let response = self
+            .connection
+            .list_sessions(None, None, CONTROL_BOUND)
+            .await
+            .map_err(SessionError::Transport)?;
+        Ok(SessionPage {
+            sessions: response.sessions.iter().map(SessionListing::of).collect(),
+            next_cursor: response.next_cursor.clone(),
+        })
+    }
+
+    /// Reopens a session the engine holds, adopting it as one of this host's own.
+    ///
+    /// **What makes this different from [`Self::open_session`].** A new session is born empty; a
+    /// loaded one already has a conversation, and the engine hands that conversation back as
+    /// `session/update` notifications published *while the load request is outstanding* — the
+    /// load response itself carries only modes and configuration options.
+    ///
+    /// **So the session is registered before the request is sent, not after.** This is the one
+    /// ordering the call depends on, and it is Zed's (`zed-main/crates/agent_servers/src/acp.rs`
+    /// `open_or_create_session`: "Register the session before awaiting the RPC so that any
+    /// `session/update` notifications that arrive during the call (e.g. history replay during
+    /// `session/load`) can find the thread"). Without it `runs::forward_update` sees a
+    /// run-scoped update for a session the host does not hold and drops it — silently, and with
+    /// the session then appearing to have been restored empty.
+    ///
+    /// **A load is stamped with a run, and that run ends without a frame.** `forward_update`
+    /// attaches turn content to the run a session has in flight, so a slot with `run: None` drops
+    /// replayed text exactly as it drops text for a session that is not there. The run id is
+    /// minted here and marked finished once the response arrives, which is the barrier: an update
+    /// that arrives after it belongs to no turn this host is showing and is dropped, which is the
+    /// same rule a late frame for a cancelled run gets. **No ending is emitted** — a load is not a
+    /// turn and the contract has no stop reason for one, so the caller learns it finished from
+    /// this call's own answer, exactly as `prompt` learns its run id from its return value.
+    ///
+    /// The registration is rolled back when the engine refuses, so a failed load does not leave
+    /// the host holding a session nothing opened.
+    pub async fn load_session(
+        &self,
+        session_id: &str,
+        cwd: &Path,
+    ) -> Result<SessionInfo, SessionError> {
+        self.negotiate().await?;
+        {
+            // Claimed *before* the open check, and released by whichever exit runs, so the two
+            // facts cannot be observed apart: a second caller either sees the claim or sees the
+            // registered session, never the gap between them in which it would insert its own.
+            let mut loading = self.loading.lock().unwrap();
+            if self.sessions.lock().unwrap().contains_key(session_id) {
+                return Err(SessionError::AlreadyOpen {
+                    session_id: session_id.to_string(),
+                });
+            }
+            if !loading.insert(session_id.to_string()) {
+                return Err(SessionError::LoadInFlight {
+                    session_id: session_id.to_string(),
+                });
+            }
+        }
+        // The body is a separate function so that the release below is on the one path out of it:
+        // a `?` added inside the body returns to *here*, not past the release. Holding the claim
+        // across an await would mean holding a `std::sync::Mutex` guard across it — this is a
+        // `HashSet` of session ids, taken and dropped in two synchronous steps, and the await
+        // happens in between with the lock released.
+        let result = self.adopt_loaded_session(session_id, cwd).await;
+        self.loading.lock().unwrap().remove(session_id);
+        result
+    }
+
+    /// The body of [`Self::load_session`], past the two refusals and holding the claim.
+    async fn adopt_loaded_session(
+        &self,
+        session_id: &str,
+        cwd: &Path,
+    ) -> Result<SessionInfo, SessionError> {
+
+        // Registered before the request — see this method's own note. The run is minted from the
+        // same counter `prompt` uses, so a load and a turn can never share an id.
+        let load_run = format!("load-{}", self.run_counter.fetch_add(1, Ordering::Relaxed));
+        self.sessions.lock().unwrap().insert(
+            session_id.to_string(),
+            SessionSlot {
+                config_options: Value::Array(Vec::new()),
+                run: Some(RunState {
+                    run_id: load_run.clone(),
+                    cancelled: false,
+                    finished: false,
+                }),
+                vault_root: cwd.to_string_lossy().into_owned(),
+            },
+        );
+
+        let response = match self
+            .connection
+            .load_session(SessionId::new(session_id), cwd, LOAD_BOUND)
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                // Rolled back, so a refused load leaves no trace: a slot with no answer behind it
+                // would make every later command about this id answer as though it were open.
+                self.sessions.lock().unwrap().remove(session_id);
+                return Err(SessionError::Transport(error));
+            }
+        };
+
+        let config_options = response
+            .config_options
+            .as_ref()
+            .and_then(|options| serde_json::to_value(options).ok())
+            .unwrap_or_else(|| Value::Array(Vec::new()));
+
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            if let Some(slot) = sessions.get_mut(session_id) {
+                slot.config_options = config_options.clone();
+                // Finished, not removed: the slot stays stamped with the load's run so that a
+                // replayed update arriving after the response is dropped as belonging to a turn
+                // this host is no longer showing. `prompt` treats a finished run as free.
+                if let Some(run) = slot.run.as_mut() {
+                    if run.run_id == load_run {
+                        run.finished = true;
+                    }
+                }
+            }
+        }
+
+        // The same two groups `open_session` records, from a load response rather than a new one.
+        // The id was pre-registered, so a fact the engine published during the load — a command
+        // list, a config change — is already in this entry and is added to rather than replaced.
+        {
+            let handshake = self.handshake.lock().unwrap().clone();
+            let mut reported = self.reported.lock().unwrap();
+            let entry = reported.entry(session_id.to_string()).or_default();
+            if let Some(handshake) = handshake {
+                entry.negotiated(handshake);
+            }
+            entry.reopened(&response);
+        }
+
+        Ok(SessionInfo {
+            session_id: session_id.to_string(),
+            config_options,
+        })
+    }
+
+    /// Frees a session on the engine after taking it out of this host's own table.
+    ///
+    /// The host's half is removed even when the engine refuses, and for the reason
+    /// [`Self::cancel`](super::runs) gives about a dead connection: a session this host cannot
+    /// talk to any more is not one it should keep answering about. What is *not* done is
+    /// pretending the call freed anything on the engine — the scan report measured that a closed
+    /// session stays in `session/list` (`session/delete` is the method that removes it, and this
+    /// engine answers `-32601` for that), so a caller must not read a successful close as a
+    /// removal from the list.
+    pub async fn close_session(&self, session_id: &str) -> Result<(), SessionError> {
+        self.known_session(session_id)?;
+        let closed = self
+            .connection
+            .close_session(SessionId::new(session_id), CONTROL_BOUND)
+            .await;
+        self.sessions.lock().unwrap().remove(session_id);
+        self.reported.lock().unwrap().remove(session_id);
+        closed.map(|_| ()).map_err(SessionError::Transport)
+    }
+
     /// What the engine reported about `session_id`.
     ///
     /// `Err` for a session this host never opened — §6.1: answering about an id it did not receive
@@ -511,6 +751,59 @@ pub struct SessionInfo {
     pub session_id: String,
     /// The engine's option list, to be rendered as it came.
     pub config_options: Value,
+}
+
+/// One session the engine holds, as `session/list` described it.
+///
+/// A projection of the schema's `SessionInfo` rather than the type itself, for the reason
+/// [`SessionInfo`] above is one: what crosses this boundary is the fields a surface renders, and
+/// the schema's `_meta` is "reserved by ACP to allow clients and agents to attach additional
+/// metadata" — an engine's private annexe rather than a fact about the session.
+///
+/// The two optional fields are the schema's own optionals and are left optional here. The pinned
+/// engine was measured filling both (`agent_session_lifecycle_test.rs` §4.5 prints
+/// `title: "New session - 2026-09-17T01:36:22.667Z"` and a matching `updatedAt`), but the schema
+/// says an agent may omit them, and a title this host *invented* for a session that had none
+/// would be a fact about the engine that the engine never stated. There is deliberately no
+/// `created_at`: the schema has no such field, so sorting by creation is not something a
+/// `session/list` answer can support (Zed's archive view sorts by a client-side store instead —
+/// `zed-main/crates/agent_ui/src/threads_archive_view.rs:287-291`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionListing {
+    pub session_id: String,
+    /// The working directory the session belongs to, as the engine reported it.
+    pub cwd: String,
+    /// The engine's own title for the session, when it has one.
+    pub title: Option<String>,
+    /// ISO 8601, the engine's own last-activity stamp, when it has one.
+    pub updated_at: Option<String>,
+}
+
+impl SessionListing {
+    fn of(info: &agent_client_protocol::schema::v1::SessionInfo) -> Self {
+        Self {
+            session_id: info.session_id.to_string(),
+            cwd: info.cwd.to_string_lossy().into_owned(),
+            title: info.title.clone(),
+            updated_at: info.updated_at.clone(),
+        }
+    }
+}
+
+/// One page of `session/list`.
+///
+/// The cursor travels with the entries rather than being dropped, because the schema defines
+/// `nextCursor` as "if absent, there are no more results" — so a host that read only `sessions`
+/// would be unable to tell a complete list from a truncated one, and a surface rendering the
+/// first page of many as though it were all of them is the quiet kind of wrong. The pinned engine
+/// was measured answering in one page (the probe's answer carried no cursor), so today this is a
+/// shape that keeps the door open rather than a path anyone walks.
+#[derive(Debug, Clone)]
+pub struct SessionPage {
+    pub sessions: Vec<SessionListing>,
+    /// Opaque, and only ever sent back to the engine that issued it.
+    pub next_cursor: Option<String>,
 }
 
 #[cfg(test)]

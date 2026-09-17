@@ -98,6 +98,16 @@ impl AgentAdapter for OpenCode {
             // `agentCapabilities.loadSession` and `sessionCapabilities.resume`,
             // both advertised in the measured handshake.
             HostFeature::SessionResume => Capability::Advertised,
+            // The same measured handshake carries `"sessionCapabilities":
+            // {"close":{},"fork":{},"list":{},"resume":{}}` — the fixture at
+            // `tests/fixtures/agent/fake_agent.sh:22` is that handshake verbatim, and P0 §2.1
+            // makes it the real engine's own answer. Four sub-objects, all present, which per the
+            // schema is how an engine advertises each one (`{}` means supported; omitted means
+            // not).
+            HostFeature::SessionList => Capability::Advertised,
+            HostFeature::SessionResumeWithoutHistory => Capability::Advertised,
+            HostFeature::SessionClose => Capability::Advertised,
+            HostFeature::SessionFork => Capability::Advertised,
             // `available_commands_update`, measured arriving unasked on
             // `session/new` (P0 §2.2).
             HostFeature::SlashCommands => Capability::Advertised,

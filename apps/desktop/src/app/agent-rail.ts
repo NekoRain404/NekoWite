@@ -50,6 +50,16 @@ export type AgentRailState =
   | {
       kind: 'live'
       vaultId: string
+      /**
+       * The directory the engine runs in — the vault root on disk, which is what an open or a
+       * load was asked for.
+       *
+       * Carried because a *load* needs it: `AgentOpenRequest` takes a vault and a folder, and a
+       * reopen is a call for the vault the runtime was started for rather than for a new one.
+       * The panel's history rows read it too, to say which of the engine's sessions were recorded
+       * somewhere else.
+       */
+      cwd: string
       /** Stable per session, and the key the panel is mounted under — see {@link railKey}. */
       key: string
       gateway: AgentGateway
@@ -70,6 +80,17 @@ export interface AgentRailDeps {
   /** A `stop` that failed. Reported rather than swallowed: an engine that would not go away
    *  is a fact about the machine, and it is the one failure the next start will meet again. */
   onStopFailed?: (error: unknown) => void
+  /**
+   * A `loadSession` that failed — the engine would not hand back a session the user picked out of
+   * its history.
+   *
+   * Reported rather than drawn, and for a reason the other failures here do not have: the rail
+   * has no arm for "live, with a notice", and the session on screen is *not* the one at fault, so
+   * publishing a refusal would take a running conversation off the screen because a different one
+   * could not be opened. The rail keeps the session it is on and hands the engine's own sentence
+   * to the caller, which is where the user is looking.
+   */
+  onResumeFailed?: (error: unknown) => void
 }
 
 export interface AgentRail {
@@ -85,6 +106,17 @@ export interface AgentRail {
    * unhandled rejection waiting to happen.
    */
   open(vaultId: string, cwd: string): Promise<void>
+  /**
+   * Reopen a session the running engine already holds, and put it on screen — the one move
+   * between two sessions of one runtime.
+   *
+   * Resolves when the attempt has settled, and never rejects: a load that failed leaves the
+   * session that was already open exactly where it was, and reports the engine's refusal through
+   * {@link AgentRailDeps.onResumeFailed}. Nothing happens for a rail that is not `live` — a
+   * reopen is a move *within* a runtime, so there is nothing to move from — and nothing happens
+   * for the session already on screen, which is the row a list is most likely to be asked about.
+   */
+  resume(sessionId: string): Promise<void>
   /** Ask again after a refusal: a fresh composition, which is a fresh `runtimeEpoch`. */
   retry(): Promise<void>
   /** Take the runtime down and go back to `idle`. */
@@ -108,6 +140,7 @@ export interface AgentRailInputs {
   railOpen: () => boolean
   compose?: (vaultId: string) => AgentComposition
   onStopFailed?: (error: unknown) => void
+  onResumeFailed?: (error: unknown) => void
 }
 
 export interface AttachedAgentRail {
@@ -121,6 +154,13 @@ export interface AttachedAgentRail {
    * so undoing it is the caller's own act rather than a second path into the same decision.
    */
   retry(): Promise<void>
+  /**
+   * The other way between sessions of one runtime: what the panel's history control leads to.
+   *
+   * On the attached rail as well as the created one, because the panel's gesture arrives here —
+   * the shell is what holds both the rail and the folder the session was opened for.
+   */
+  resume(sessionId: string): Promise<void>
 }
 
 /**
@@ -149,6 +189,7 @@ export function attachAgentRail(inputs: AgentRailInputs): AttachedAgentRail {
   const rail = createAgentRail({
     ...(inputs.compose ? { compose: inputs.compose } : {}),
     ...(inputs.onStopFailed ? { onStopFailed: inputs.onStopFailed } : {}),
+    ...(inputs.onResumeFailed ? { onResumeFailed: inputs.onResumeFailed } : {}),
   })
 
   /** Start one, if there is a folder to work in, a switch asking for one and a rail to draw it
@@ -177,7 +218,11 @@ export function attachAgentRail(inputs: AgentRailInputs): AttachedAgentRail {
     void rail.close()
   })
 
-  return { state: rail.state, retry: () => rail.retry() }
+  return {
+    state: rail.state,
+    retry: () => rail.retry(),
+    resume: (sessionId) => rail.resume(sessionId),
+  }
 }
 
 /**
@@ -237,6 +282,11 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
     deps.onStopFailed ??
     ((error: unknown) => {
       console.error('[NekoWite] the agent runtime could not be stopped', error)
+    })
+  const onResumeFailed =
+    deps.onResumeFailed ??
+    ((error: unknown) => {
+      console.error('[NekoWite] the agent session could not be reopened', error)
     })
 
   // `shallowRef`, not `ref`: the state is replaced wholesale and never mutated, and a deep
@@ -308,6 +358,7 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
         state.value = {
           kind: 'live',
           vaultId,
+          cwd,
           key: railKey(session),
           gateway: composition.gateway,
           session,
@@ -322,11 +373,71 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
     })
   }
 
+  /**
+   * Reopen a session the engine holds — `request`'s sibling, and deliberately not a second
+   * lifecycle.
+   *
+   * It goes through the **same `enqueue` and the same generation latch**, because the races are
+   * the same ones: a vault switch or the switch going off while a load is in flight must not let
+   * the loaded session arrive as the current one, and a load must not overlap a start or a stop
+   * (the backend is being asked to re-adopt a session on a runtime that may be on its way out).
+   * On success it publishes the same `live` arm, so a session change is a remount under a new
+   * {@link railKey} and the panel — which reads its session once — is replaced rather than
+   * re-pointed. The store's `focus`/`attach` path then does the rest, unchanged.
+   *
+   * Three things it does *not* do, each of them a decision:
+   *
+   *  - **No runtime, no call.** A reopen is a move between two sessions of one runtime, so a rail
+   *    that is not `live` has nothing to move from; a row picked while the runtime was going away
+   *    is not an error worth a sentence.
+   *  - **The row already open is not a call.** The engine refuses to load a session it is
+   *    currently serving, and the panel marks that row instead of asking.
+   *  - **A failure does not become a state.** The session on screen is not the one at fault, and
+   *    taking a live conversation off the screen because a different session would not open is
+   *    the wrong trade — so the state is left exactly as it is and the engine's refusal goes to
+   *    {@link AgentRailDeps.onResumeFailed}.
+   */
+  function resume(sessionId: string): Promise<void> {
+    const now = state.value
+    if (now.kind !== 'live' || now.session.sessionId === sessionId) return Promise.resolve()
+    // The pair an `AgentOpenRequest` needs, read from the runtime that is up rather than from
+    // `asked`: those are the same values, and the state is the one that is true *now*.
+    const target = { vaultId: now.vaultId, cwd: now.cwd }
+    const mine = ++generation
+    return enqueue(async () => {
+      if (mine !== generation) return
+      const held = live
+      if (held === null) return
+      try {
+        const session = await held.composition.gateway.loadSession(sessionId, target)
+        if (mine !== generation) return
+        // The engine's name is read again for the session that came back — it is the same engine,
+        // and a name cached from the previous session would be this file answering for a
+        // registration it has not read.
+        const engineName = await engineNameFor(held.composition, session.agentId)
+        if (mine !== generation) return
+        state.value = {
+          kind: 'live',
+          vaultId: target.vaultId,
+          cwd: target.cwd,
+          key: railKey(session),
+          gateway: held.composition.gateway,
+          session,
+          engineName,
+        }
+      } catch (error) {
+        if (mine !== generation) return
+        onResumeFailed(error)
+      }
+    })
+  }
+
   return {
     state,
     open(vaultId, cwd) {
       return request(vaultId, cwd, false)
     },
+    resume,
     retry() {
       const last = asked
       if (last === null) return Promise.resolve()

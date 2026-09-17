@@ -567,6 +567,47 @@ function fakeIpc(overrides: Partial<AgentIpc> = {}): FakeIpc {
         modelOptionId: 'model',
       }
     },
+    // The three session-management calls. Defaults that *work* rather than throw, because the
+    // fake has to stand for a host that answers: a default that refused would make every test
+    // that merely touches the gateway report a broken host. What each one answers is the smallest
+    // thing the reader accepts — one listed session, one loaded session, a close that returns —
+    // and a test that wants a refusal uses `overrides`, which is why the port takes a `Partial`.
+    async listSessions() {
+      calls.push('listSessions')
+      return {
+        sessions: [
+          {
+            sessionId: 'ses_fake_1',
+            cwd: '/vault',
+            title: 'New session - 2026-01-01T00:00:01Z',
+            updatedAt: '2026-01-01T00:00:01Z',
+          },
+        ],
+        nextCursor: null,
+      }
+    },
+    async loadSession() {
+      calls.push('loadSession')
+      return {
+        sessionId: 'ses_fake_1',
+        configOptions: [
+          {
+            id: 'model',
+            name: 'Model',
+            type: 'select',
+            currentValue: 'fake/model-a',
+            options: [
+              { value: 'fake/model-a', name: 'Model A' },
+              { value: 'fake/model-b', name: 'Model B' },
+            ],
+          },
+        ],
+        modelOptionId: 'model',
+      }
+    },
+    async closeSession() {
+      calls.push('closeSession')
+    },
     async selectModel() {
       calls.push('selectModel')
     },

@@ -20,15 +20,25 @@
 #                  (plan §3.2), and the comparison below is the evidence that it worked rather than a
 #                  claim that it does.
 #
-# Cost: three prompts per run — one for `agent_live_test`'s end-to-end turn, and two for
-# `agent_cancel_live_test`, which needs a turn that is still streaming when the stop is pressed and a
-# second turn on the same session to show the engine really let go of the first. Roughly 9–14k tokens
-# of input each (P0 §3). It is not a test to put on a loop.
+# Cost: four prompts per run — one for `agent_live_test`'s end-to-end turn, two for
+# `agent_cancel_live_test` (a turn that is still streaming when the stop is pressed, and a second
+# turn on the same session to show the engine really let go of the first), and one for
+# `agent_session_replay_live_test`'s replay measurement. Roughly 9–14k tokens of input each (P0 §3).
+# It is not a test to put on a loop.
+#
+# The fourth was added when `session/load`'s history replay was measured; before that this runner
+# spent three. Its test target's *second* case is free, so the prompt count is the whole of the
+# increase.
 #
 # `agent_session_lifecycle_test.rs` is deliberately **not** here: it spends no prompt (`session/new`
 # needs no credentials and none of the calls it makes reaches a provider) and so needs none of the
 # three guards above. Run it with
 #   cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test agent_session_lifecycle_test
+#
+# The same is true of the *control* half of the replay target, which can be run on its own without a
+# credential — only the second of its two tests spends anything:
+#   cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml \
+#     --test agent_session_replay_live_test a_load_whose_session_has_no_turns_replays_nothing
 #
 # Usage:
 #   bash scripts/verify-acp-live.sh
@@ -86,8 +96,16 @@ say "profile before: $REAL_CONFIG and $REAL_DATA recorded"
 # second, because what a caller needs to know is the state of all of them. Each target's own
 # evidence marker is what separates "a model answered" from "the tests all skipped and cargo still
 # printed ok" — the same distinction the artifact and key checks above exist to keep unreachable.
-TARGETS=(agent_live_test agent_cancel_live_test)
-MARKERS=('reply in ' 'the turn after the stop answered')
+# The fourth spends the prompt that closes the one gap `agent_session_lifecycle_test.rs` §6 left
+# open: whether `session/load` hands a *conversation* back. That probe's session had no turns in it,
+# so it measured `frames the load produced: []` — everything about `load` except the thing `load`
+# is for. `agent_session_replay_live_test.rs` asks the same question of a session with a turn in it
+# and reads the answer off this runtime's own event stream, so a green run there is evidence about
+# the code that ships rather than about the wire alone. Its second test costs nothing (an empty
+# session replays nothing, and `session/new` needs no credential) and is the control that makes the
+# first one's frame count mean something.
+TARGETS=(agent_live_test agent_cancel_live_test agent_session_replay_live_test)
+MARKERS=('reply in ' 'the turn after the stop answered' '--- replayed assistant text:')
 STATUSES=()
 
 # One log per target, and a combined one: the per-target file is what the checks below read, so one

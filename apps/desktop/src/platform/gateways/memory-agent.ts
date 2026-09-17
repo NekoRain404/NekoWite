@@ -31,6 +31,7 @@ import {
   type AgentOpenRequest,
   type AgentRunResult,
   type AgentSession,
+  type AgentSessionHistory,
   type AgentSessionSnapshot,
 } from './agent-contracts'
 import {
@@ -119,8 +120,10 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
     const current = currentEpoch()
     // An id minted under another epoch means the session outlived the runtime that
     // owned it: the live runtime never opened it, so the handle is stale rather than
-    // unknown, and nothing read or written through it can be trusted.
-    if (!record || record.identity.runtimeEpoch !== current) {
+    // unknown, and nothing read or written through it can be trusted. A *closed* one is
+    // the same refusal for a different reason — the engine stopped serving it — and
+    // both are `session-stale` because both mean the handle addresses nothing live.
+    if (!record || record.closed || record.identity.runtimeEpoch !== current) {
       throw new AgentFailure(
         'session-stale',
         `session ${sessionId} belongs to an earlier runtime instance`,
@@ -259,9 +262,154 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
         vaultId: request.vaultId,
         sessionId: `session-${sessionCount}`,
       }
-      sessions.set(identity.sessionId, createSession(identity, replayLimit))
+      sessions.set(
+        identity.sessionId,
+        createSession(identity, replayLimit, request.cwd, sessionCount),
+      )
       publishedOptions.set(identity.sessionId, [...MEMORY_OPTIONS])
       return mintSession(identity, MEMORY_MODELS, MEMORY_INITIAL_MODEL_ID, MEMORY_OPTIONS)
+    },
+
+    /**
+     * Every session this runtime *knows about* — which is more than the ones it currently
+     * serves, and that is the point.
+     *
+     * A real engine's session table outlives the process that wrote it: the sessions a previous
+     * `stop` closed are still there, which is what makes reopening yesterday's conversation
+     * possible at all. The double already keeps them (`stop` clears the epoch, not the map;
+     * `recordFor` is what refuses a stale handle), so this reads the map rather than a second
+     * store — a history kept anywhere else would be the double's own invention rather than a
+     * model of the engine's.
+     */
+    async listSessions(): Promise<AgentSessionHistory> {
+      currentEpoch()
+      if (dead) throw new AgentFailure('process-exited', 'the agent runtime exited')
+      return {
+        sessions: [...sessions.values()].map((record) => ({
+          sessionId: record.identity.sessionId,
+          cwd: record.cwd,
+          title: record.title,
+          updatedAt: record.updatedAt,
+        })),
+        // One page, which is what the pinned engine was measured answering — and an honest
+        // `null` rather than a fabricated cursor, because a cursor the engine never issued is a
+        // page this double could not serve.
+        nextCursor: null,
+      }
+    },
+
+    /**
+     * Re-adopt a session this engine already holds, under the current runtime's epoch.
+     *
+     * **The conversation comes back**, which is the whole reason `load` exists and the one thing
+     * a double that merely re-registered the id would fail to model: the previous record's
+     * replay tail is pushed into the revived one as ordinary events, stamped with the new epoch
+     * and the new sequences. That is what the pinned engine's own replay looks like from the
+     * host's side — `agent_session_replay_live_test.rs` measures it arriving as `session/update`
+     * frames during the call — so a panel written against this double is written against the
+     * real shape.
+     *
+     * Both refusals are the engine's:
+     *
+     *  - an id the engine does not hold is not one it can reopen;
+     *  - an id it *currently serves* is already open — a load is for a session that is not.
+     */
+    async loadSession(sessionId: string, request: AgentOpenRequest): Promise<AgentSession> {
+      const current = currentEpoch()
+      if (dead) throw new AgentFailure('process-exited', 'the agent runtime exited')
+      const existing = sessions.get(sessionId)
+      if (!existing) {
+        throw new AgentFailure(
+          'session-stale',
+          `session ${sessionId} is not one this engine holds`,
+        )
+      }
+      // A *closed* session is not open, however fresh its epoch: the host removes it from its
+      // table on a close (`AgentRuntime::close_session`), so the same load it accepts is one this
+      // double must accept too. Refusing on the epoch alone made a freed row permanently
+      // unreopenable here and nowhere else.
+      if (existing.identity.runtimeEpoch === current && !existing.closed) {
+        throw new AgentFailure(
+          'session-stale',
+          `session ${sessionId} is already open in this runtime`,
+        )
+      }
+      const identity: AgentIdentity = {
+        agentId: options.agentId,
+        profileId: options.profileId,
+        runtimeEpoch: current,
+        vaultId: request.vaultId,
+        sessionId,
+      }
+      const revived = createSession(identity, replayLimit, existing.cwd, sessionCount + 1)
+      // **A load replays under a run of its own**, and that is the host's shape rather than a
+      // convenience here: `AgentRuntime::load_session` mints `load-N` before it sends the request
+      // and stamps the replayed frames with it, because `runs::forward_update` attaches turn
+      // content to the run a session has in flight and a session with no run drops every replayed
+      // text frame. The window's reducer makes the same refusal from the other side — a
+      // turn-scoped frame naming no turn is `unattributed-run`, dropped in both modes
+      // (`agent-event-reducer.ts`). A double that stamped `null` here therefore modelled a load
+      // whose conversation never reaches the reader, which is the one thing `load` exists for;
+      // `agent_session_replay_live_test.rs` measured the same frames arriving under `load-0` from
+      // the real engine.
+      runCount += 1
+      const loadRun = `load-${runCount}`
+      for (const event of existing.buffer) {
+        switch (event.kind) {
+          case 'text-delta':
+            pushEvent(revived, 'text-delta', event.payload, loadRun)
+            break
+          case 'thought-delta':
+            pushEvent(revived, 'thought-delta', event.payload, loadRun)
+            break
+          case 'tool-update':
+            pushEvent(revived, 'tool-update', event.payload, loadRun)
+            break
+          // Everything else is either session-scoped state the engine re-announces on its own
+          // (`commands-changed`, `config-changed`) or a turn's ending, which belongs to the turn
+          // that produced it rather than to the restored conversation.
+          default:
+            break
+        }
+      }
+      sessions.set(sessionId, revived)
+      publishedOptions.set(sessionId, [...MEMORY_OPTIONS])
+      return mintSession(identity, MEMORY_MODELS, MEMORY_INITIAL_MODEL_ID, MEMORY_OPTIONS)
+    },
+
+    /**
+     * Let a session go, and forget its handle.
+     *
+     * The record is **kept**, not deleted, and that is the engine's own measured behaviour rather
+     * than the double being lenient: a close was measured leaving the session in `session/list`
+     * (`agent_session_lifecycle_test.rs` §4.4 — removing it is `session/delete`, which the pinned
+     * engine answers `-32601` for). So the session stops being served here, its handle goes
+     * stale, and it stays in the history — which is exactly the state a panel has to be able to
+     * draw, and the reason `closeSession` is not called "delete".
+     */
+    async closeSession(sessionId: string): Promise<void> {
+      // By id, like the contract's: the row a history surface frees may be one this runtime
+      // serves without the window holding a handle for it. A runtime that is down still refuses,
+      // and so does an id this double never opened — the same two facts the host's command
+      // answers with.
+      const record = anyRecord(sessionId)
+      if (dead) throw new AgentFailure('process-exited', 'the agent runtime exited')
+      const run = record.run
+      if (run) {
+        // ACP's own words for a close: the agent "must cancel any ongoing work related to the
+        // session". In the double a turn runs synchronously inside `prompt`, so the only turn
+        // that can be in flight here is one suspended on a permission or on `hang` — the same
+        // pair `crash` cuts.
+        run.cancelled = true
+        run.failure = new AgentFailure('cancelled', 'the session was closed while the turn ran')
+        wake(run)
+        record.run = null
+      }
+      // Marked rather than removed: the handle is now dead (so every call through it refuses)
+      // while the session itself stays in the table, which is the state the engine was measured
+      // leaving behind.
+      record.closed = true
+      publishedOptions.delete(sessionId)
     },
 
     setConfigOption,

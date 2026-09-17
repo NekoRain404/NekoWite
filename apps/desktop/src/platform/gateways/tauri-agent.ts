@@ -38,6 +38,7 @@
 import {
   AgentFailure,
   readCapabilityReports,
+  readSessionHistory,
   type AgentCapabilityReport,
   type AgentEvent,
   type AgentGateway,
@@ -45,6 +46,7 @@ import {
   type AgentOpenRequest,
   type AgentRunResult,
   type AgentSession,
+  type AgentSessionHistory,
   type AgentSessionSnapshot,
 } from './agent-contracts'
 import { createEventChannel, checkSnapshot, mapAll, readHostState } from './tauri-agent/channel'
@@ -215,6 +217,58 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
         sessionId: answer.sessionId,
       }
       return book.open(identity, answer)
+    },
+
+    async listSessions(): Promise<AgentSessionHistory> {
+      // The runtime check is this adapter's, not the host's: `agent_list_sessions` needs a live
+      // session slot to reach the runtime through, so without one it would refuse with the host's
+      // own sentence. Answering the contract's `runtime-unavailable` here instead is the same fact
+      // said in the vocabulary every other call on this gateway already uses, and it keeps a
+      // caller from having to know which of the two wordings means "not started".
+      if (runtime === null) {
+        throw new AgentFailure('runtime-unavailable', 'the agent runtime is not started')
+      }
+      const answer = await ipc.listSessions()
+      const history = readSessionHistory(answer)
+      if (history === null) {
+        // A rejected read, not an empty history — for the reason `capabilities` gives about a
+        // rejected capability report: a shorter list would reach the panel as "this engine holds
+        // no sessions", which is a claim about the engine made from a frame this window could
+        // not read.
+        throw new AgentFailure(
+          'invalid-response',
+          'the host answered a session list this window could not read',
+        )
+      }
+      return history
+    },
+
+    async loadSession(sessionId: string, request: AgentOpenRequest): Promise<AgentSession> {
+      if (runtime === null) {
+        throw new AgentFailure('runtime-unavailable', 'the agent runtime is not started')
+      }
+      // The same call the host makes for a new session, one method over: `agent_load_session`
+      // answers the identical handle shape, and the engine replays the restored conversation as
+      // ordinary events on the channel this gateway is already listening to. So there is no
+      // second path here, and the record is built the same way `openSession` builds one.
+      const answer = await ipc.loadSession(request.vaultId, request.cwd, sessionId)
+      const identity: AgentIdentity = {
+        ...runtime,
+        vaultId: request.vaultId,
+        sessionId: answer.sessionId,
+      }
+      return book.open(identity, answer)
+    },
+
+    async closeSession(sessionId: string): Promise<void> {
+      // No handle check, and deliberately so: the id may name a session this gateway never
+      // minted a handle for — a row the engine listed — which is the case the by-id shape exists
+      // for. What replaces that check is the host's own `known_session`: it refuses an id it did
+      // not open, so a renderer still cannot free a session id it composed. What is *not*
+      // replaced is dropping the record: a session this gateway was following must stop being
+      // followable, or its handle would outlive the engine's session.
+      await ipc.closeSession(sessionId)
+      book.close(sessionId)
     },
 
     setConfigOption,
