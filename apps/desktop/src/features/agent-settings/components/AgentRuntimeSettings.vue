@@ -383,8 +383,10 @@ function standingText(standing: CapabilityStanding): string {
  * at all — and drawing the file under *every* row would make a page about this engine half a page
  * about a catalogue entry, which is the reading `declared` is a hint against.
  *
- * The comparison is `===` across two *types* rather than one: a fourth arm added to either union
- * fails to compile here rather than being compared across two vocabularies.
+ * The two arms are compared as two types rather than as one vocabulary, and the guard that keeps
+ * that honest is the labels index below: a fourth arm added to either union is `TS7053` at
+ * `declaredClaim[row.declared]` / `findingClaim[row.standing]` (measured by adding one), rather than
+ * a row that draws whichever branch happened to be last.
  */
 function declarationNote(row: RuntimeCapabilityRow): string | null {
   if (row.declared === row.standing) return null
@@ -397,9 +399,15 @@ function declarationNote(row: RuntimeCapabilityRow): string | null {
 const readout = ref<AgentRuntimeReadout | null>(null)
 const state = ref<'loading' | 'ready' | 'unreadable'>('loading')
 
-/** The rows as drawn: each with the finding's own line, and the file's note where the two disagree. */
-const capabilityRows = computed<readonly { row: RuntimeCapabilityRow; declared: string | null }[]>(
-  () => (readout.value?.capabilities ?? []).map((row) => ({ row, declared: declarationNote(row) })),
+/**
+ * The rows as drawn: each with the finding's own line, and the file's `note` where the two disagree.
+ *
+ * `note` rather than `declared`, because it holds the *sentence* while `row.declared` holds the arm
+ * — two names one letter apart, on one line of the template, is the kind of pair a reader would
+ * take for the same value.
+ */
+const capabilityRows = computed<readonly { row: RuntimeCapabilityRow; note: string | null }[]>(
+  () => (readout.value?.capabilities ?? []).map((row) => ({ row, note: declarationNote(row) })),
 )
 
 async function load(): Promise<void> {
@@ -550,11 +558,11 @@ onMounted(load)
                    disagree — see `declarationNote` — so its presence is itself the disclosure
                    that the pinned version was measured to differ. -->
               <span
-                v-if="entry.declared !== null"
+                v-if="entry.note !== null"
                 class="settings-note runtime-declared"
                 :data-declaration="entry.row.declared"
               >
-                {{ entry.declared }}
+                {{ entry.note }}
               </span>
             </li>
           </ul>
