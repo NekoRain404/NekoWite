@@ -17,6 +17,7 @@
 import { computed, ref } from 'vue'
 import type { ComputedRef } from 'vue'
 import { resolveDropTarget } from '../../../services/tree-drop'
+import { DRAGGED_PATH_TYPE } from '../../../services/drag-payload'
 import type { DropRow } from '../../../services/tree-drop'
 import { moveOrRepair } from '../../../services/note-move-flow'
 import { notifyError } from '../../../services/errors'
@@ -45,7 +46,7 @@ export function useFileTreeDrag(options: UseFileTreeDragOptions) {
     dragState.value = { path: node.path, isDir: node.is_dir }
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = 'move'
-      e.dataTransfer.setData('text/nekowite-path', node.path)
+      e.dataTransfer.setData(DRAGGED_PATH_TYPE, node.path)
       e.dataTransfer.setData('text/plain', node.path)
     }
   }

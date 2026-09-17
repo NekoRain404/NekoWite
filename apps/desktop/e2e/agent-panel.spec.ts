@@ -930,6 +930,79 @@ test.describe('agent panel — the change the permission prompt shows', () => {
   })
 })
 
+/**
+ * The editor's own tab strip, put on the page the way the panel is: by URL, over a store of its
+ * own, with one document in it.
+ *
+ * A *real* `TabBar` rather than a hand-made draggable element, because what is under test is that
+ * the app's producer and the app's consumer agree — a stand-in source would be testing the
+ * composer against a payload this spec invented, which is the one thing the unit tests around it
+ * already do. The drag itself is driven by the browser (see the spec below), so the transfer is a
+ * real `DataTransfer` filled in by the real handler.
+ */
+async function mountTabBar(page: Page, path: string): Promise<void> {
+  const deps = await viewDeps(page)
+  await page.evaluate(
+    async ({ deps: urls, path }) => {
+      const vue = (await import(/* @vite-ignore */ urls.vue)) as typeof import('vue')
+      const pinia = (await import(/* @vite-ignore */ urls.pinia)) as typeof import('pinia')
+      const { default: TabBar } = await import('/src/ui/TabBar.vue')
+      const { useTabsStore } = await import('/src/stores/tabs.ts')
+
+      // A store of its own: the panel's is on another pinia, and the two are different stores
+      // rather than two views of one. The active pinia is put back as this page found it — the
+      // application is running on it, and leaving the strip's in place would silently repoint
+      // every later `useAgentSessionStore()` on the page.
+      const previous = pinia.getActivePinia()
+      const instance = pinia.createPinia()
+      pinia.setActivePinia(instance)
+      // The fields the strip reads: an id to name the row, a path to drag, and the state a
+      // freshly opened document has. Nothing here is loaded, so no workspace is touched.
+      useTabsStore().tabs.push({
+        id: 'e2e-tab',
+        path,
+        content: '',
+        savedContent: '',
+        dirty: false,
+        pendingAssetPaths: [],
+      })
+
+      const host = document.createElement('div')
+      host.id = 'agent-e2e-tabbar'
+      host.style.cssText = 'position: fixed; bottom: 0; left: 0; z-index: 60;'
+      document.body.append(host)
+      vue.createApp(TabBar).use(instance).mount(host)
+      pinia.setActivePinia(previous)
+    },
+    { deps, path },
+  )
+  await expect(page.locator('[data-tab-id="e2e-tab"]')).toBeVisible()
+}
+
+test.describe('agent panel — a document dragged out of the editor', () => {
+  test('a tab dropped on the composer becomes a reference in the message', async ({ page }) => {
+    // The session's vault, written the way the double names it (`openSession` above). The path a
+    // tab holds is the one the listing gave it, and the composer addresses it by stripping that
+    // prefix — which is the whole of the conversion this gesture needs.
+    const VAULT = 'e2e-vault'
+    // This engine reads no embedded files, so a picked file travels as its *path* in the message
+    // rather than as content. That is the branch which needs no workspace read, and it is what
+    // makes the whole gesture observable in a page with no Tauri behind it — the same branch a
+    // reader gets on an engine whose handshake said no.
+    await mount(page, {
+      capabilities: { 'embedded-context': { status: 'unavailable', detail: 'E2E' } },
+    })
+    await mountTabBar(page, `${VAULT}/notes/welcome.md`)
+
+    const field = page.locator('.agent-composer-field')
+    await page.locator('[data-tab-id="e2e-tab"]').dragTo(field)
+
+    // The path is in the message, vault-relative, with the separating space a reference is
+    // inserted with (`insertReferenceText`).
+    await expect(field).toHaveValue('notes/welcome.md ')
+  })
+})
+
 test.describe('agent panel — the composer', () => {
   test('Enter that commits an input method candidate does not send', async ({ page }) => {
     await mount(page)

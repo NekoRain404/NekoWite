@@ -6,6 +6,7 @@ import ContextMenu from './ContextMenu.vue'
 import type { ContextMenuItem } from './ContextMenu.vue'
 import { t } from '../i18n'
 import { baseName as baseNameOf } from '../services/paths'
+import { DRAGGED_PATH_TYPE } from '../services/drag-payload'
 
 const tabs = useTabsStore()
 
@@ -38,6 +39,35 @@ function dotTitle(id: string): string {
 
 function onTabMouseDown(e: MouseEvent): void {
   if (e.button === 1) e.preventDefault()
+}
+
+/**
+ * A tab begins a drag: the document's own path, under the app's own media type.
+ *
+ * The gesture this exists for is the one the agent panel's composer accepts — a note dragged out of
+ * the editor and into the message — and the payload is deliberately the *same* one the vault tree
+ * drags (`services/drag-payload.ts`), so the composer has one rule rather than one per producer.
+ *
+ * **A tab with no path is not draggable, and does not start a drag that carries nothing.** An
+ * untitled document has no path to name, and a drag that reached the composer empty would be a
+ * gesture that ends in a refusal about a file nobody named. `draggable` is bound the same way, so
+ * the pointer never picks one up in the first place; `preventDefault` here is the second line of
+ * defence for a dragstart that arrives anyway.
+ *
+ * `effectAllowed = 'copy'`, not the tree's `'move'`: a tab is a *view* of a document, and dragging
+ * it into a message leaves the tab exactly where it was. It also decides whether the drop lands at
+ * all — a target may only accept an effect the source offers, which is why the tree's move-only
+ * drag is not what this gesture is built on.
+ */
+function onTabDragStart(e: DragEvent, path: string | null): void {
+  if (path === null) {
+    e.preventDefault()
+    return
+  }
+  if (!e.dataTransfer) return
+  e.dataTransfer.effectAllowed = 'copy'
+  e.dataTransfer.setData(DRAGGED_PATH_TYPE, path)
+  e.dataTransfer.setData('text/plain', path)
 }
 
 function onTabAuxClick(e: MouseEvent, id: string): void {
@@ -103,9 +133,11 @@ async function onMenuSelect(id: string): Promise<void> {
       :aria-selected="tab.id === tabs.activeId"
       :tabindex="tabindexOf(tab.id)"
       :data-tab-id="tab.id"
+      :draggable="tab.path !== null"
       @click="tabs.setActive(tab.id)"
       @keydown="onTabKeydown($event, tab.id)"
       @mousedown="onTabMouseDown($event)"
+      @dragstart="onTabDragStart($event, tab.path)"
       @auxclick="onTabAuxClick($event, tab.id)"
       @contextmenu.prevent="menu = { x: $event.clientX, y: $event.clientY, tabId: tab.id }"
     >

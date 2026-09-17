@@ -70,7 +70,8 @@ import {
   useAgentComposerMentions,
 } from '../composables/use-agent-composer-mentions'
 import type { AgentConfigControl } from '../services/agent-config-options'
-import { insertReferenceText } from '../services/agent-context-references'
+import { draggedReference, insertReferenceText } from '../services/agent-context-references'
+import { carriesDraggedPath, draggedPath } from '../../../services/drag-payload'
 import AgentComposerAttachments from './AgentComposerAttachments.vue'
 import AgentComposerContext, { type AgentComposerSelection } from './AgentComposerContext.vue'
 import AgentConfigRow from './AgentConfigRow.vue'
@@ -180,9 +181,27 @@ let composedAt = Number.NEGATIVE_INFINITY
  * The vault is read from the store's active record because that IS the session this composer sends
  * to — the same seam, and the same reason, `AgentComposerContext.vue` gives for its folder listing.
  */
+/** The store the workspace is read from, resolved *here* rather than inside the readers below.
+ *
+ *  `useAgentSessionStore()` answers from whichever Pinia is active at the instant it is called, so
+ *  a reader that looked it up when a file was picked would be reading global state that belongs to
+ *  whoever mounted last — the store would be a different one from the store this component's other
+ *  reads go through, and the failure is silent: `attachFile` answers "refused" for a null vault
+ *  without a sentence, because a pick with no workspace is not an error it can name.
+ *
+ *  It also gives the two readers one source: `vault()` below and the mention composable's own
+ *  option are the same question. */
+const sessionStore = useAgentSessionStore()
+
+/** The workspace a picked or dropped file is addressed in, or `null` before a session is on
+ *  screen. */
+function vault(): string | null {
+  return sessionStore.activeRecord?.identity.vaultId ?? null
+}
+
 const attachments = useAgentComposerAttachments({
   capabilities: () => props.capabilities ?? null,
-  vault: () => useAgentSessionStore().activeRecord?.identity.vaultId ?? null,
+  vault,
 })
 
 /**
@@ -293,15 +312,31 @@ function onPaste(event: ClipboardEvent): void {
   void attachments.addFromTransfer(clipboard)
 }
 
-/** A drag over the field. Only claimed when the drag actually carries files, and refused by
- *  default otherwise so the field keeps its ordinary text-drop behaviour. */
+/** A drag over the field. Only claimed when the drag carries files or a document of this app's
+ *  own, and refused by default otherwise so the field keeps its ordinary text-drop behaviour. */
 function onDragOver(event: DragEvent): void {
-  if (!carriesFiles(event.dataTransfer)) return
+  const data = event.dataTransfer
+  if (!carriesFiles(data) && !carriesDraggedPath(data)) return
   event.preventDefault()
-  if (event.dataTransfer !== null) event.dataTransfer.dropEffect = 'copy'
+  if (data !== null) data.dropEffect = offeredEffect(data)
 }
 
 function onDrop(event: DragEvent): void {
+  // The whole reason a document drag is not a file drag: the bytes were never in the transfer.
+  // What arrives is a path this window dragged, and it goes exactly where the `+`'s file row goes —
+  // through `attachFile`, the one place that decides between an image, a resource block and a path
+  // in the message by asking the engine's own report. See {@link pickFile}.
+  //
+  // The conversion is `draggedReference`'s and not this component's: a reference is vault-relative
+  // because that is the only spelling the engine can resolve, and the same rule produces the `+`'s
+  // rows. A path that cannot become one — from outside the vault, or with no vault open yet —
+  // leaves the drag unclaimed rather than inserting a path that names nothing the turn can read.
+  const dropped = draggedReference(draggedPath(event.dataTransfer), vault())
+  if (dropped !== null) {
+    event.preventDefault()
+    pickFile(dropped)
+    return
+  }
   if (!carriesFiles(event.dataTransfer)) return
   event.preventDefault()
   void attachments.addFromTransfer(event.dataTransfer)
@@ -310,6 +345,26 @@ function onDrop(event: DragEvent): void {
 function carriesFiles(data: DataTransfer | null): boolean {
   if (data === null) return false
   return Array.from(data.types).includes('Files')
+}
+
+/**
+ * Which effect to ask for, out of the ones the source is offering.
+ *
+ * The two producers of a document drag do not offer the same thing: the tab strip offers a copy
+ * (the document stays where it was) and the vault tree offers a move (its drag re-parents a node).
+ * A target may only accept an effect the source offers — asking for a copy of a move-only drag
+ * makes the browser cancel the drop before this handler ever runs — so the field asks for the copy
+ * when it may and settles for the move when it may not. Either way the message is the same: the
+ * *effect* is a promise about the source, not about what this component does with the path.
+ */
+function offeredEffect(data: DataTransfer): 'copy' | 'move' {
+  const allowed = data.effectAllowed
+  const copies = allowed === 'copy' || allowed === 'copyMove' || allowed === 'copyLink' || allowed === 'all'
+  // `uninitialized` is the value a source that never set one leaves behind, and every effect is
+  // available there; `link` alone is the one case with no copy and no move to ask for, and the
+  // field asks for neither rather than inventing a third.
+  if (copies || allowed === 'uninitialized') return 'copy'
+  return 'move'
 }
 
 /** How tall the field may grow: about a third of the panel (§5.3).

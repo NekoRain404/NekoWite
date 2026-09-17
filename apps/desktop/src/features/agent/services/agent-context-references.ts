@@ -103,6 +103,46 @@ export function toReference(entry: FileEntry, vault: string): AgentFileReference
   return { path, name: entry.name, isDirectory: entry.is_dir }
 }
 
+/**
+ * The vault-relative path a *dragged* path names, or `null` when there is none to name.
+ *
+ * A drag carries a path and nothing else — an editor tab's document, or a tree row's node — so this
+ * is {@link toReference}'s rule without the entry: there is no name to read off and no `is_dir` to
+ * ask about, and a folder dragged into a message is refused downstream anyway, by the same
+ * `isDirectory` arm `referenceText` applies to a listing row.
+ *
+ * It is here rather than at the drop target because the rule it applies is this module's own and is
+ * written once: **a reference is vault-relative**, since the engine runs with the vault as its
+ * working directory and cannot resolve anything else. What follows from that is the two refusals —
+ * a path from outside the vault, and the vault root itself, which has no relative path to offer.
+ *
+ * A path that is already relative is taken as it stands, which is what makes this the one
+ * conversion for both spellings the app holds: the listing, the tab strip and the tree all carry
+ * the vault's own absolute paths, and a caller that has already relativised one loses nothing by
+ * coming through here.
+ */
+export function draggedReference(path: string | null, vault: string | null): string | null {
+  if (path === null) return null
+  const root = vault ?? ''
+  // `stripVaultPrefix` cannot answer this half on its own, and that is worth stating because it
+  // looks like it can: a path from outside the vault comes back *shortened*, with its leading
+  // separator taken off, so a foreign `/etc/hosts` would otherwise become the reference `etc/hosts`
+  // — a relative path the engine would resolve against the vault and find nothing at. The
+  // containment test is the attachments feature's own, as it is for a listing entry.
+  if (isAbsolutePath(path) && !isPathWithinVault(path, root)) return null
+  const relative = stripVaultPrefix(path, root)
+  if (relative === '' || relative.startsWith('..')) return null
+  return relative
+}
+
+/** Whether a path is an OS path rather than one relative to something. Written out here because
+ *  the shared path grammar has no such test and this is the one place that needs it: a relative
+ *  path is the app's *own* spelling of a reference and needs no containment check, and an absolute
+ *  one always does. */
+function isAbsolutePath(path: string): boolean {
+  return /^([a-z]:[\\/]|[\\/])/i.test(path)
+}
+
 /** One listing, with the entries the vault does not contain left out. */
 export function toFolder(
   directory: string,

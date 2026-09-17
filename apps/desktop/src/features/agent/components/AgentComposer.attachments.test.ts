@@ -27,6 +27,7 @@ import {
 } from '../../../platform/gateways/agent-contracts'
 import type { FileEntry } from '../../../platform/gateways/contracts'
 import { onNotify } from '../../../services/errors'
+import { DRAGGED_PATH_TYPE } from '../../../services/drag-payload'
 import { t } from '../../../i18n'
 import { useAgentSessionStore } from '../stores/agent-session'
 import { sessionKey } from '../services/agent-session-view'
@@ -452,6 +453,69 @@ describe('a drop', () => {
 
     expect(chips()).toEqual(['shot.png'])
     expect(event.defaultPrevented).toBe(true)
+  })
+
+  /**
+   * A drag of a document *this window* started: a tab, or a row of the vault tree. The payload is
+   * the app's own type and an absolute path, which is what both producers hold
+   * (`services/drag-payload.ts`, `ui/TabBar.vue`).
+   */
+  function dragPath(path: string): DragEvent {
+    return Object.assign(new Event('drop', { bubbles: true, cancelable: true }), {
+      dataTransfer: {
+        types: [DRAGGED_PATH_TYPE],
+        getData: (type: string) => (type === DRAGGED_PATH_TYPE ? path : ''),
+      },
+    }) as unknown as DragEvent
+  }
+
+  it('attaches the document a dragged path names', async () => {
+    // The gesture the tab strip now produces and the panel had no rule for: a note dragged out of
+    // the editor and into the message. It goes through the same `attachFile` the `+`'s file row
+    // does, so what the reader gets is what that row has always given them.
+    readMock.mockResolvedValue('# welcome')
+    mountComposer(report(['embedded-context']))
+    await withSession()
+
+    const event = dragPath(`${VAULT}/welcome.md`)
+    field().dispatchEvent(event)
+    await settle()
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(chips()).toEqual(['welcome.md'])
+    // The absolute path the drag carried was addressed the way a reference is: vault-relative, and
+    // read out of the workspace rather than out of the transfer.
+    expect(readMock).toHaveBeenCalledWith(VAULT, 'welcome.md')
+  })
+
+  it('claims the drag before the drop, which is what lets the drop happen at all', async () => {
+    // The browser fires no `drop` over an element that did not cancel `dragover`, so a target that
+    // only handled the drop would never be given one.
+    mountComposer(report(['embedded-context']))
+    await withSession()
+
+    const event = Object.assign(new Event('dragover', { bubbles: true, cancelable: true }), {
+      dataTransfer: { types: [DRAGGED_PATH_TYPE], effectAllowed: 'copy', dropEffect: 'none' },
+    }) as unknown as DragEvent
+    field().dispatchEvent(event)
+
+    expect(event.defaultPrevented).toBe(true)
+  })
+
+  it('leaves a path from outside the vault alone', async () => {
+    // A reference is vault-relative because that is the only spelling the engine resolves, so a
+    // path from elsewhere is refused rather than inserted as something the turn cannot read.
+    mountComposer(report(['embedded-context']))
+    await withSession()
+
+    const event = dragPath('/somewhere/else/note.md')
+    field().dispatchEvent(event)
+    await settle()
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(chips()).toEqual([])
+    expect(field().value).toBe('')
+    expect(readMock).not.toHaveBeenCalled()
   })
 
   it('leaves a drag that is not files entirely alone', async () => {
