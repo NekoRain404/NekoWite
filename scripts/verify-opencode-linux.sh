@@ -198,6 +198,21 @@ check_program() {
 extract_package() {
   local package="$1" dest="$2"
   mkdir -p "$dest"
+  # The rpm and AppImage arms `cd` into the destination before running their extractor, so a
+  # caller's relative path stops resolving at exactly the moment it is used. Every caller passes
+  # one: `package-linux.sh` iterates `release/*.deb`/`*.rpm`/`*.AppImage` from the repository root,
+  # and this script is documented to be run that way. The deb arm was unaffected only because
+  # `dpkg-deb -x` takes the path as an argument and never changes directory — which is why the
+  # failure looked like an AppImage problem rather than a path problem:
+  #
+  #   release/nekowite-2d60229.AppImage: No such file or directory
+  #   FAILED: release/nekowite-2d60229.AppImage could not be extracted (--appimage-extract)
+  #
+  # for a file that was sitting right there. Because `package-linux.sh` runs under `set -e`, the
+  # rpm arm failed first and aborted the packaging run — so the whole `[6/7]` step, the one that
+  # exists to prove an installed layout carries its engine, had never completed for any package.
+  local package_at
+  package_at="$(cd "$(dirname "$package")" && pwd)/$(basename "$package")"
   case "$package" in
     *.deb)
       command -v dpkg-deb >/dev/null 2>&1 || fail "dpkg-deb is needed to inspect $package"
@@ -205,9 +220,9 @@ extract_package() {
     *.rpm)
       command -v rpm2cpio >/dev/null 2>&1 || fail "rpm2cpio is needed to inspect $package"
       command -v cpio >/dev/null 2>&1 || fail "cpio is needed to inspect $package"
-      ( cd "$dest" && rpm2cpio "$package" | cpio -idm --quiet ) ;;
+      ( cd "$dest" && rpm2cpio "$package_at" | cpio -idm --quiet ) ;;
     *.AppImage)
-      ( cd "$dest" && "$package" --appimage-extract >/dev/null ) \
+      ( cd "$dest" && "$package_at" --appimage-extract >/dev/null ) \
         || fail "$package could not be extracted (--appimage-extract)"
       # The AppImage extracts into squashfs-root/; everything below expects the package root.
       if [ -d "$dest/squashfs-root" ]; then
