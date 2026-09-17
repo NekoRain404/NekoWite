@@ -51,6 +51,19 @@ export const AGENT_FAILURE_CODES = [
   // not `buffer-conflict`, which is this list's word for a stream or a session's state; a reader
   // told either would go looking for a protocol bug instead of at the engine's own report.
   'attachment-unsupported',
+  // Extension. A reopen named a session this host already holds, so there is nothing to do: the
+  // row the reader pressed is the conversation they are in. It arrived as `buffer-conflict` —
+  // this list's word for a *stream* that cannot be continued — which named neither the session
+  // nor its state, and the host's own `SessionError::AlreadyOpen` carried the same borrowed word
+  // from the other side (`session.rs`). Not `turn-in-flight`: nothing is running, and the two
+  // refusals leave the reader different things to do.
+  'session-open',
+  // Extension, and its own code rather than `session-open` because the two are different facts
+  // about one click: this one says the conversation is still coming back and waiting is what
+  // there is to do. A reader told "already open" stops trying, which is the expensive direction
+  // for a condition that lasts a moment — so the transient half is the one that most needed the
+  // word it did not have.
+  'load-in-flight',
 ] as const
 
 export type AgentFailureCode = (typeof AGENT_FAILURE_CODES)[number]

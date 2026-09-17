@@ -642,6 +642,61 @@ describe('the window’s half of the IPC', () => {
   })
 })
 
+/**
+ * The rejected-call half of the same boundary, in a describe of its own.
+ *
+ * **Why it does not share the describe above.** That one resets `invoke` in a `beforeEach`, and a
+ * mock whose *result* is a rejection does not survive it in this vitest version: the raw rejection
+ * is then reported as an unhandled error — which this project's config turns into a red run
+ * (`vitest.unhandled-reporter.ts` states the ruling) — even though the assertion that awaited it
+ * passed. Nothing here calls `mockReset` or `mockClear` for that reason, and every test sets the
+ * implementation it needs before it calls. The failure that constraint costs is a test that cannot
+ * see leftover implementations; the one it buys is a test that can see a rejection at all.
+ */
+describe('a call the host refused', () => {
+  it('turns a rejected call into the contract’s failure, code and all', async () => {
+    // The Rust commands reject with `commands::agent::AgentFailure` — `{code, message}`, the same
+    // pair a `run-failed` frame carries — and this is the one place that knows the wire, so it is
+    // the one place that can turn it into the contract's own `AgentFailure`. Before this existed
+    // the rejection was the *sentence alone*: `SessionError::failure_code` was computed, tested and
+    // reached by nothing, and a caller here had to match on wording to learn the condition.
+    invokeMock.mockRejectedValue({
+      code: 'load-in-flight',
+      message: 'session ses_fake_1 is still being reopened; wait for it to finish',
+    })
+    const ipc = createTauriAgentIpc()
+    const rejection = await ipc.loadSession('vault-1', '/vault', 'ses_fake_1').catch((e: unknown) => e)
+    expect(rejection).toBeInstanceOf(AgentFailure)
+    expect((rejection as AgentFailure).code).toBe('load-in-flight')
+    expect((rejection as AgentFailure).message).toBe(
+      'session ses_fake_1 is still being reopened; wait for it to finish',
+    )
+  })
+
+  it('never invents a code for a rejection it cannot read, and never drops the sentence', async () => {
+    // Two arms, and both have to stay honest. A rejection that is still a bare string is what two
+    // commands answer today — the permission-grant pair, whose failures are the engine's HTTP
+    // surface rather than the ACP pipe this vocabulary classifies — and Tauri's own "command not
+    // found" is a string too. What a caller must not receive is a *code*, because a code is a
+    // claim about a condition nobody stated: `invalid-response` is this list's word for "the answer
+    // could not be read", which is exactly what happened.
+    invokeMock.mockRejectedValue('the runtime is not started')
+    const ipc = createTauriAgentIpc()
+    const rejection = await ipc.stop().catch((e: unknown) => e)
+    expect(rejection).toBeInstanceOf(AgentFailure)
+    expect((rejection as AgentFailure).code).toBe('invalid-response')
+    expect((rejection as AgentFailure).message).toBe('the runtime is not started')
+
+    // And a code this window does not know is not one it passes through: a newer backend's
+    // vocabulary arriving here would otherwise reach a feature whose switch has no arm for it.
+    invokeMock.mockRejectedValue({ code: 'a-code-from-the-future', message: 'something new' })
+    const unknown = await ipc.stop().catch((e: unknown) => e)
+    expect((unknown as AgentFailure).code).toBe('invalid-response')
+    expect((unknown as AgentFailure).message).toBe('something new')
+  })
+
+})
+
 // ---------------------------------------------------------------------------
 // The gateway: a fake IPC in place of the window's
 // ---------------------------------------------------------------------------

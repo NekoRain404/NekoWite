@@ -96,6 +96,11 @@ export interface UseAgentCommandsOptions {
  * it was always going to end and says nothing about the list the engine already
  * published; only these say the session that list belongs to is gone, where
  * keeping the rows on offer would be offering commands nothing is listening for.
+ *
+ * It is a rule about *a code*, and it is applied from both directions: a frame that
+ * failed a run, and a call the host refused. Those are one fact arriving over two
+ * channels — the host's `AgentFailure` carries the same code a `run-failed` payload
+ * does — and the menu's conclusion is the same for both.
  */
 const LIST_INVALIDATING_FAILURES: readonly AgentFailureCode[] = [
   'runtime-unavailable',
@@ -266,8 +271,23 @@ export function useAgentCommands(options: UseAgentCommandsOptions) {
       return
     }
 
-    if (event.kind === 'run-failed' && LIST_INVALIDATING_FAILURES.includes(event.payload.code)) {
-      list.value = { kind: 'unavailable', reason: event.payload.code }
+    if (event.kind === 'run-failed') invalidate(event.payload.code)
+  }
+
+  /**
+   * Tell the menu that the conversation its rows belong to is gone.
+   *
+   * The second way in, and it is the same rule: a call the host refused carries the code a failed
+   * run does, and for the codes above that refusal is the host saying it cannot reach this session
+   * at all. The rows go, and the menu says why (`unavailable`'s own sentence, keyed by the code)
+   * rather than drawing commands for a conversation that is no longer there.
+   *
+   * A code outside that list changes nothing — a refusal about the *turn* (`turn-in-flight`) says
+   * the session is answering, which is the opposite of gone.
+   */
+  function invalidate(code: AgentFailureCode): void {
+    if (LIST_INVALIDATING_FAILURES.includes(code)) {
+      list.value = { kind: 'unavailable', reason: code }
     }
   }
 
@@ -368,6 +388,7 @@ export function useAgentCommands(options: UseAgentCommandsOptions) {
     move,
     setActive,
     accept,
+    invalidate,
     onKeydown,
     onCompositionStart,
     onCompositionEnd,

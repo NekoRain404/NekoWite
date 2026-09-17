@@ -24,24 +24,24 @@ use crate::agent_runtime::registry::AgentInstance;
 use crate::agent_runtime::session::AgentRuntime;
 use crate::state::AgentRuntimeState;
 
-use super::agent::AgentIpcState;
+use super::agent::{AgentFailure, AgentIpcState};
 
 /// What the engine reported about this session, declared beside negotiated.
 ///
-/// Refusals are sentences, like the rest of this surface: a session this host never opened, and a
-/// runtime that is not running, are conditions the user's click can act on, and the two are
-/// different — the first is a stale window, the second is an app that has not started its engine.
+/// Refusals carry codes, like the rest of this surface: a session this host never opened
+/// (`session-stale`) and a runtime that is not running (`runtime-unavailable`) are conditions the
+/// user's click can act on, and the two are different — the first is a stale window, the second is
+/// an app that has not started its engine. The sentences travel with them untouched.
 #[tauri::command]
 pub fn agent_session_capabilities(
     runtime_state: tauri::State<'_, AgentRuntimeState>,
     ipc: tauri::State<'_, AgentIpcState>,
     session_id: String,
-) -> Result<Vec<CapabilityReport>, String> {
+) -> Result<Vec<CapabilityReport>, AgentFailure> {
     let session = ipc.session()?;
-    let instance = runtime_state
-        .instance
-        .lock()
-        .map_err(|_| "the agent runtime state was poisoned by a panic".to_string())?;
+    let instance = runtime_state.instance.lock().map_err(|_| {
+        AgentFailure::unavailable("the agent runtime state was poisoned by a panic")
+    })?;
     report_for(
         instance.as_ref(),
         &session.runtime,
@@ -71,10 +71,10 @@ fn report_for(
     runtime_epoch: &str,
     session_id: &str,
     model_option_id: Option<&str>,
-) -> Result<Vec<CapabilityReport>, String> {
-    let negotiated = runtime
-        .capabilities(session_id)
-        .map_err(|_| format!("session {session_id} is not one this app opened"))?;
+) -> Result<Vec<CapabilityReport>, AgentFailure> {
+    let negotiated = runtime.capabilities(session_id).map_err(|_| {
+        AgentFailure::stale(format!("session {session_id} is not one this app opened"))
+    })?;
     let same_incarnation =
         instance.is_some_and(|live| live.identity().runtime_epoch == runtime_epoch);
     let declared = |feature: HostFeature| {

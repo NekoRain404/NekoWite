@@ -608,6 +608,22 @@ describe('memory agent gateway', () => {
     expect(tail[1].runId).toBe(tail[0].runId)
   })
 
+  it('tells a load of a session it already serves apart from a session it does not hold', async () => {
+    // Two refusals on one call, and they leave the reader different things to do — nothing at all
+    // in the first case, and "pick another row" in the second. Both were `session-stale`, which
+    // named neither: a load of a session this runtime *is* serving has nothing stale about it, and
+    // the reader told "stale" goes looking for a runtime that has gone. The host separates them
+    // (`SessionError::AlreadyOpen` → `session-open`), so a double that answered one code for both
+    // would be a contract implemented twice with two different meanings.
+    const { agent, session } = await openAgent()
+    await expect(
+      agent.loadSession(session.sessionId, { vaultId: 'memoir://demo', cwd: '/vault' }),
+    ).rejects.toMatchObject({ code: 'session-open' })
+    await expect(
+      agent.loadSession('ses_never_opened', { vaultId: 'memoir://demo', cwd: '/vault' }),
+    ).rejects.toMatchObject({ code: 'session-stale' })
+  })
+
   it('leaves a redundant start alone, so it cannot invalidate open sessions', async () => {
     const { agent, session } = await openAgent()
     await agent.start()

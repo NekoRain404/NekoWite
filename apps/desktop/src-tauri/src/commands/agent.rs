@@ -31,13 +31,95 @@ use serde::Serialize;
 use tauri::Manager;
 
 use crate::agent_runtime::driver::Session;
-use crate::agent_runtime::events::AgentIdentity;
+use crate::agent_runtime::events::{AgentFailureCode, AgentIdentity};
 use crate::agent_runtime::permission_grants::{self, GrantsReadout};
 use crate::agent_runtime::permissions::{
     cancel_run, PermissionAnswer, PermissionPrompt, PermissionRefusal, PermissionTable,
 };
+use crate::agent_runtime::session::SessionError;
 use crate::agent_runtime::snapshot::SessionSnapshot;
 use crate::state::{AgentRuntimeState, VaultRegistry};
+
+/// A failure as it crosses the IPC boundary: the condition's own code, and the sentence.
+///
+/// The contract's `AgentFailure` (`agent-contracts/failure.ts`) on this side of the wire — the same
+/// pair of fields a `run-failed` frame carries, so a call and a turn name a condition the same way.
+/// It exists because a command's rejection used to be the *sentence alone*: `SessionError::failure_code`
+/// was written, tested and reached by nothing, so a window that received 「this session is already
+/// answering」 had nothing to branch on and no way to learn which condition it had hit. That is the
+/// same defect one layer up from a frame nothing can read, and the fix is the same: the fact
+/// travels with the wording.
+///
+/// **This is a rejection, and it is the only thing on this surface that is.** A refusal that is
+/// *data* — a registry entry a page renders, a skill arrangement the backend would not accept —
+/// travels in the `Ok` arm as a value (`RegistryRefusal`, `SkillError`), and the settings clients
+/// state that rule in their own headers. The agent surface is the other case, and deliberately: the
+/// contract's `AgentGateway` declares every method as rejecting with an `AgentFailure`, because
+/// 「the engine did not answer」 and 「this turn is already running」 are one channel to the caller —
+/// a gateway method cannot return a value *and* fail to have run.
+///
+/// The code is computed here rather than taken from the caller, for the reason §6.1 gives about
+/// identity: a renderer that could name the condition could name one it did not hit.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentFailure {
+    pub code: AgentFailureCode,
+    pub message: String,
+}
+
+impl AgentFailure {
+    pub fn new(code: AgentFailureCode, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+
+    /// The runtime's own refusal, as the contract names it: the code and the sentence are the two
+    /// halves `SessionError` already keeps apart, and this only carries them across.
+    pub fn of_session(error: &SessionError) -> Self {
+        Self::new(error.failure_code(), error.failure_message())
+    }
+
+    /// A refused permission answer.
+    ///
+    /// Four of the five refusals are one condition on this vocabulary — `permission-denied`, "the
+    /// answer did not take effect" — and the fifth names a session this host does not have, which
+    /// is the same fact `SessionError::UnknownSession` answers with. The split is made here, where
+    /// the refusal was raised, rather than by a window that would have to read five sentences to
+    /// guess it; the sentences stay untouched and remain the part the user reads.
+    pub fn of_permission(refusal: &PermissionRefusal) -> Self {
+        match refusal {
+            PermissionRefusal::UnknownSession { session_id } => Self::new(
+                AgentFailureCode::SessionStale,
+                format!("session {session_id} is not one this app opened"),
+            ),
+            other => Self::new(AgentFailureCode::PermissionDenied, refusal_message(other)),
+        }
+    }
+
+    /// There is no engine to ask: no session has been started, or the state that holds one is gone.
+    ///
+    /// `runtime-unavailable` is the code the contract's own adapter uses for the same fact when it
+    /// answers it alone (`tauri-agent.ts`), so a caller sees one word for "nothing is running"
+    /// whichever side refused.
+    pub fn unavailable(message: impl Into<String>) -> Self {
+        Self::new(AgentFailureCode::RuntimeUnavailable, message)
+    }
+
+    /// A session id this host does not hold — §6.1's guard, refused everywhere it appears.
+    pub fn stale(message: impl Into<String>) -> Self {
+        Self::new(AgentFailureCode::SessionStale, message)
+    }
+
+    /// A vault or path the user never opened.
+    ///
+    /// The app's own confinement refusing to serve a folder nothing vouches for: the request asked
+    /// for something outside what this window may reach, which is what `permission-denied` names.
+    pub fn not_permitted(message: impl Into<String>) -> Self {
+        Self::new(AgentFailureCode::PermissionDenied, message)
+    }
+}
 
 /// The channel the runtime's events are published on.
 ///
@@ -69,13 +151,22 @@ impl Default for AgentIpcState {
 
 impl AgentIpcState {
     /// The running session, or the sentence that says there is none.
-    pub fn session(&self) -> Result<Session, String> {
+    ///
+    /// `runtime-unavailable` for both arms, and for the same reason: neither is a fact about a
+    /// session — there is no session — so the code names the one thing they have in common, which
+    /// is that nothing here can be asked. A window that branches on it is branching on "start an
+    /// engine", which is exactly what the sentence tells the user to do.
+    pub fn session(&self) -> Result<Session, AgentFailure> {
         self.session
             .lock()
-            .map_err(|_| "the agent session state was poisoned by a panic".to_string())?
+            .map_err(|_| {
+                AgentFailure::unavailable("the agent session state was poisoned by a panic")
+            })?
             .as_ref()
             .cloned()
-            .ok_or_else(|| "no agent session is running: start one first".to_string())
+            .ok_or_else(|| {
+                AgentFailure::unavailable("no agent session is running: start one first")
+            })
     }
 
     /// Installs the session a start produced, replacing whatever was there.
@@ -147,7 +238,7 @@ pub fn agent_permission_answer<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: tauri::State<'_, AgentIpcState>,
     answer: PermissionAnswer,
-) -> Result<(), String> {
+) -> Result<(), AgentFailure> {
     let session = state.session()?;
     // Read out before the answer is consumed, because the pet's list has to follow *this* answer:
     // a run the user is no longer being asked about must stop saying `waiting-input` (§6.2), and
@@ -161,7 +252,7 @@ pub fn agent_permission_answer<R: tauri::Runtime>(
     let (answered_session, request_id) =
         (answer.session.session_id.clone(), answer.request_id.clone());
     apply_permission_answer(&session.permissions, answer)
-        .map_err(|refusal| refusal_message(&refusal))?;
+        .map_err(|refusal| AgentFailure::of_permission(&refusal))?;
     report_pet_tasks(
         &app,
         |state| {
@@ -215,7 +306,7 @@ pub fn pending_prompts(permissions: &PermissionTable) -> Vec<PermissionPrompt> {
 pub async fn agent_cancel_run(
     state: tauri::State<'_, AgentIpcState>,
     session_id: String,
-) -> Result<(), String> {
+) -> Result<(), AgentFailure> {
     // Through `cancel_run` and not `AgentRuntime::cancel`: pending permission prompts are resolved
     // *before* the engine is told to stop, which is the order the protocol requires (see
     // `permissions::cancel_run`). A stop path that called the runtime directly would leave the
@@ -227,7 +318,7 @@ pub async fn agent_cancel_run(
     let session = state.session()?;
     cancel_run(&session.runtime, &session.permissions, &session_id)
         .await
-        .map_err(|error| error.failure_message())
+        .map_err(|error| AgentFailure::of_session(&error))
 }
 
 // ---------------------------------------------------------------------------
@@ -276,7 +367,7 @@ pub async fn agent_start(
     runtime_state: tauri::State<'_, AgentRuntimeState>,
     ipc: tauri::State<'_, AgentIpcState>,
     vault_id: String,
-) -> Result<AgentRuntimeHandle, String> {
+) -> Result<AgentRuntimeHandle, AgentFailure> {
     let handle = {
         // The sink is the window's half of this: one channel, every session (see
         // [`AGENT_EVENT_CHANNEL`]). `emit` failing means no window is listening, which is the
@@ -286,7 +377,8 @@ pub async fn agent_start(
             crate::state::start_session(&runtime_state, &app, &vault_id, move |envelope| {
                 let _ = tauri::Emitter::emit(&emit, AGENT_EVENT_CHANNEL, envelope);
             })
-            .await?;
+            .await
+            .map_err(AgentFailure::unavailable)?;
         let handle = AgentRuntimeHandle::of(&session.identity);
         ipc.install(session);
         handle
@@ -300,7 +392,7 @@ pub async fn agent_stop<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     runtime_state: tauri::State<'_, AgentRuntimeState>,
     ipc: tauri::State<'_, AgentIpcState>,
-) -> Result<(), String> {
+) -> Result<(), AgentFailure> {
     // The prompts first, then the engine: a pending request belongs to a turn that is about to
     // end, and the engine is blocking on it — so it is answered `cancelled` while there is still
     // a connection to answer on (§6.2's 旧授权按钮失效, on the process-exit route).
@@ -323,7 +415,7 @@ pub async fn agent_stop<R: tauri::Runtime>(
     let instance = runtime_state
         .instance
         .lock()
-        .map_err(|_| "the agent runtime state was poisoned by a panic".to_string())?
+        .map_err(|_| AgentFailure::unavailable("the agent runtime state was poisoned by a panic"))?
         .take();
     drop(instance);
     Ok(())
@@ -336,25 +428,31 @@ pub async fn agent_open_session(
     ipc: tauri::State<'_, AgentIpcState>,
     vault_id: String,
     cwd: String,
-) -> Result<AgentHostSession, String> {
+) -> Result<AgentHostSession, AgentFailure> {
     let session = ipc.session()?;
     // §6.1: the renderer names a vault, it does not choose one. A request for a vault this
     // runtime was not started for is refused rather than answered about the one it has.
     if vault_id != session.identity.vault_id {
-        return Err(format!(
+        // `session-stale`, and the code is the honest one rather than a second word for "no": the
+        // caller is addressing an incarnation that is not the live one — it named the vault a
+        // *different* runtime serves — which is the same condition a session id from a previous
+        // epoch is. The sentence still names both vaults, because that is what the user reads.
+        return Err(AgentFailure::stale(format!(
             "this engine was started for the vault {} and not for {vault_id}",
             session.identity.vault_id
-        ));
+        )));
     }
     // And the root the engine will be confined to is the one the *user* opened — not the string
     // the renderer sent. `authorize` answers with the canonical root, which is what makes
     // `cwd == vault` a fact rather than a claim.
-    let root = vaults.authorize(&cwd)?;
+    let root = vaults
+        .authorize(&cwd)
+        .map_err(AgentFailure::not_permitted)?;
     let info = session
         .runtime
         .open_session(&root)
         .await
-        .map_err(|error| error.failure_message())?;
+        .map_err(|error| AgentFailure::of_session(&error))?;
     // §6.2's state machine: a session the engine admitted and nothing has been asked of yet.
     // Registered before the answer returns, so a frame that arrives first still has a log.
     session.snapshots.opened(&info.session_id);
@@ -384,13 +482,13 @@ pub async fn agent_set_config_option(
     session_id: String,
     config_id: String,
     value: String,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, AgentFailure> {
     let session = ipc.session()?;
     session
         .runtime
         .set_config_option(&session_id, &config_id, &value)
         .await
-        .map_err(|error| error.failure_message())
+        .map_err(|error| AgentFailure::of_session(&error))
 }
 
 /// Sends a turn. The answer is the host's run id; the turn's *ending* arrives as an event.
@@ -407,12 +505,12 @@ pub async fn agent_prompt<R: tauri::Runtime>(
     session_id: String,
     text: String,
     attachments: Option<Vec<crate::agent_runtime::attachments::PromptAttachment>>,
-) -> Result<String, String> {
+) -> Result<String, AgentFailure> {
     let session = ipc.session()?;
     let run_id = session
         .runtime
         .prompt(&session_id, &text, &attachments.unwrap_or_default())
-        .map_err(|error| error.failure_message())?;
+        .map_err(|error| AgentFailure::of_session(&error))?;
     // Marked from here and not from a frame, because no frame says "a turn began" — the runtime's
     // own answer is the run id, and a window that mounts while a turn is running has to be told
     // which turn it is looking at.
@@ -434,7 +532,7 @@ pub async fn agent_prompt<R: tauri::Runtime>(
 pub async fn agent_session_snapshot(
     ipc: tauri::State<'_, AgentIpcState>,
     session_id: String,
-) -> Result<SessionSnapshot, String> {
+) -> Result<SessionSnapshot, AgentFailure> {
     let session = ipc.session()?;
     // The table is the authority on which prompts are still answerable, and it is read once: the
     // prompt list the snapshot carries and the state it reports are derived from this one answer,
@@ -446,7 +544,9 @@ pub async fn agent_session_snapshot(
     session
         .snapshots
         .snapshot(&session_id, &pending)
-        .ok_or_else(|| format!("session {session_id} is not one this app opened"))
+        .ok_or_else(|| {
+            AgentFailure::stale(format!("session {session_id} is not one this app opened"))
+        })
 }
 
 /// The permissions the engine has written down because the user answered "always".

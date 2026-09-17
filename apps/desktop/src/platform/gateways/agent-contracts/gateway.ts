@@ -387,9 +387,13 @@ export interface AgentGateway {
    * transcript: the restore lands on the same stream a turn does, and
    * {@link snapshot} carries the tail of it.
    *
-   * Rejects with `session-stale` for a session this gateway already holds — the user
-   * picked a row they are already in — and with the engine's own refusal for an id it
-   * does not have.
+   * Rejects with **`session-open`** for a session this gateway already holds — the user
+   * picked a row the runtime is already serving — and with `session-stale` for an id the
+   * engine does not have, which is the one of the two that means the epoch moved on. They
+   * were one code until both implementations were read together: "already open" is not a
+   * stale session, and a reader told so went looking for a runtime that had gone. A load
+   * already in flight for the same session is a third condition and has its own code,
+   * `load-in-flight`.
    */
   loadSession(sessionId: string, request: AgentOpenRequest): Promise<AgentSession>
   /**

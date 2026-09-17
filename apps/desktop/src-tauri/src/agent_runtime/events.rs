@@ -139,6 +139,23 @@ pub enum AgentFailureCode {
     CertificateUntrusted,
     TurnInFlight,
     AttachmentUnsupported,
+    /// A `session/load` named a session this host already holds.
+    ///
+    /// Extension. §6.2's state machine, said as a condition: the session is open, and the call
+    /// asked to open it. It was published as `BufferConflict` — this list's word for a *stream*
+    /// that cannot be continued (a sequence older than the replay buffer, a view that outgrew what
+    /// the host holds) — which named neither the session nor its state, and sent a reader looking
+    /// for a protocol bug. Not `TurnInFlight` either: nothing is running, and the two refusals
+    /// leave the user different things to do.
+    SessionOpen,
+    /// A `session/load` for this session is already on the wire.
+    ///
+    /// Extension, and its own arm rather than [`Self::SessionOpen`] because the two are different
+    /// facts about the same click: the first means there is nothing to do, the second means waiting
+    /// is what there is to do. It was published as `BufferConflict` for the same reason the arm
+    /// above was — and the transient one is the one where the wrong word costs the most, because a
+    /// reader told "already open" stops trying.
+    LoadInFlight,
 }
 
 /// Everything that can go wrong between issuing a request and reading its

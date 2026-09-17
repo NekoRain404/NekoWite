@@ -35,7 +35,7 @@ use tauri::Manager;
 
 use agent_runtime::binary_registry::BinaryRegistry;
 use agent_runtime::driver;
-use agent_runtime::events::{AgentEventEnvelope, AgentEventKind};
+use agent_runtime::events::{AgentEventEnvelope, AgentEventKind, AgentFailureCode};
 use agent_runtime::registry::{AgentRegistration, AgentRegistry, EnvPolicy, InstallSource};
 use agent_runtime::snapshot::{SessionSnapshot, SessionState};
 use agent_runtime::VaultFiles;
@@ -648,7 +648,14 @@ async fn a_session_this_host_never_opened_is_refused_rather_than_answered_about(
     let refusal = agent_session_snapshot(wired.ipc(), "ses_somebody_elses".to_string())
         .await
         .expect_err("this host never opened that session");
-    assert!(refusal.contains("not one this app opened"), "{refusal}");
+    // The condition travels with the sentence: this is the value the window's IPC rejects with, and
+    // a caller that had only the words would have to match on them to learn which of the two
+    // refusals on this path it hit (`session-stale` here, `runtime-unavailable` for no engine).
+    assert_eq!(refusal.code, AgentFailureCode::SessionStale);
+    assert!(
+        refusal.message.contains("not one this app opened"),
+        "{refusal:?}"
+    );
 }
 
 #[tokio::test]
@@ -667,10 +674,15 @@ async fn a_session_root_is_the_vault_the_user_opened() {
     )
     .await
     .expect_err("that folder was never opened as a vault");
+    assert_eq!(
+        refusal.code,
+        AgentFailureCode::PermissionDenied,
+        "a folder the user never opened is a request outside what this window may reach: {refusal:?}"
+    );
     assert!(
-        refusal.contains("vault root is not open"),
+        refusal.message.contains("vault root is not open"),
         "the refusal is the one every path-confined command gives for a root the user never \
-         opened: {refusal}"
+         opened: {refusal:?}"
     );
 
     // And the vault named has to be the one this engine was started for: a runtime is per (agent,
@@ -683,9 +695,12 @@ async fn a_session_root_is_the_vault_the_user_opened() {
     )
     .await
     .expect_err("this engine was started for one vault");
+    assert_eq!(refusal.code, AgentFailureCode::SessionStale);
     assert!(
-        refusal.contains("was started for the vault vault-1"),
-        "{refusal}"
+        refusal
+            .message
+            .contains("was started for the vault vault-1"),
+        "{refusal:?}"
     );
 }
 
@@ -769,7 +784,14 @@ async fn stopping_empties_the_state_and_ends_the_session() {
     let refusal = agent_session_snapshot(wired.ipc(), opened.session_id)
         .await
         .expect_err("there is no session to snapshot");
-    assert!(refusal.contains("no agent session is running"), "{refusal}");
+    // `runtime-unavailable` is the code the contract's own adapter answers the same fact with when
+    // the window refuses before reaching the backend (`tauri-agent.ts`'s `runtime === null` arms),
+    // so a caller sees one word for "nothing is running" whichever side said it.
+    assert_eq!(refusal.code, AgentFailureCode::RuntimeUnavailable);
+    assert!(
+        refusal.message.contains("no agent session is running"),
+        "{refusal:?}"
+    );
 }
 
 // --- Reopening a session the engine holds ---

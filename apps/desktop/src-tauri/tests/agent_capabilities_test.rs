@@ -36,7 +36,7 @@ use tauri::Manager;
 use agent_runtime::adapters::{Capability, HostFeature};
 use agent_runtime::capabilities::{CapabilityReport, Finding};
 use agent_runtime::driver;
-use agent_runtime::events::AgentEventEnvelope;
+use agent_runtime::events::{AgentEventEnvelope, AgentFailureCode};
 use agent_runtime::registry::{AgentRegistration, AgentRegistry, EnvPolicy, InstallSource};
 use agent_runtime::VaultFiles;
 use commands::agent::{agent_open_session, AgentIpcState};
@@ -431,7 +431,14 @@ async fn a_session_this_host_never_opened_has_no_capability_answer() {
         "ses_somebody_elses".to_string(),
     )
     .expect_err("this host never opened that session");
-    assert!(refusal.contains("not one this app opened"), "{refusal}");
+    // The refusal carries the condition as well as the sentence: this is the boundary the window
+    // reads, and a caller that had only the words would have to match on them to learn which of
+    // §6.1's two refusals it hit.
+    assert_eq!(refusal.code, AgentFailureCode::SessionStale);
+    assert!(
+        refusal.message.contains("not one this app opened"),
+        "{refusal:?}"
+    );
 }
 
 #[tokio::test]

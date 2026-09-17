@@ -451,6 +451,23 @@ const commands = useAgentCommands({
 const stopObserving = store.observeEvents((event) => commands.accept(event))
 onBeforeUnmount(stopObserving)
 
+// ...and the second way the same fact arrives. A *call* the host refused is not a frame, so it
+// never reaches `accept`: `agent_prompt` answering `session-stale` (or `runtime-unavailable`, or
+// `process-exited`) is recorded on the view by the store's send, and this is where the menu hears
+// it. The watch is on the failure alone rather than on the view, because every frame replaces the
+// view and the menu would otherwise be re-told about a failure it has already acted on.
+//
+// Only the codes that mean the conversation is gone do anything (`invalidate` is the rule's own
+// home, beside the frame arm that applies the same list). A refusal about the turn — the race of a
+// second send — leaves the rows alone, which is what the reader would expect: the session is busy,
+// not absent.
+watch(
+  () => view.value?.failure?.code ?? null,
+  (code) => {
+    if (code !== null) commands.invalidate(code)
+  },
+)
+
 /**
  * What settling on a menu row means: the command's name replaces the token, and everything the
  * reader typed after it is kept exactly as it was — this function cannot read an argument, so it

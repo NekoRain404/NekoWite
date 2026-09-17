@@ -32,7 +32,7 @@ use serde::Serialize;
 use crate::agent_runtime::session::{SessionError, SessionListing, SessionPage};
 use crate::state::VaultRegistry;
 
-use super::agent::{AgentHostSession, AgentIpcState};
+use super::agent::{AgentFailure, AgentHostSession, AgentIpcState};
 
 /// One page of the engine's own session table, as this host reads it out.
 ///
@@ -72,7 +72,7 @@ pub struct AgentSessionHistory {
 pub async fn agent_close_session(
     ipc: tauri::State<'_, AgentIpcState>,
     session_id: String,
-) -> Result<(), String> {
+) -> Result<(), AgentFailure> {
     let session = ipc.session()?;
     session
         .runtime
@@ -87,7 +87,7 @@ pub async fn agent_close_session(
 /// small helpers: the wording is a rule (below), and a rule that can only be exercised with a live
 /// engine is a rule no test holds. The other half is that the sentence is read by a *list* whose
 /// rows are drawn from the engine's table, so the two refusers must not be confused by accident.
-fn close_refusal(error: &SessionError) -> String {
+fn close_refusal(error: &SessionError) -> AgentFailure {
     match error {
         // §6.1's guard, and the one refusal on this path that is not the engine's. The row the
         // reader pressed is still in the engine's list — that is what makes it a *listed* session
@@ -95,15 +95,15 @@ fn close_refusal(error: &SessionError) -> String {
         // panel's own lead-in, read as the engine's doing. Naming this app is the whole point:
         // 「the engine would not release it」 and 「this app will not release it」 are different
         // facts, and only the second one has anything the user can act on.
-        SessionError::UnknownSession { session_id } => format!(
+        SessionError::UnknownSession { session_id } => AgentFailure::stale(format!(
             "this app is not serving session {session_id} in this run, so it cannot ask the \
              engine to free it"
-        ),
+        )),
         // Everything else is the engine's or the transport's, and their own sentences are already
         // the ones the user acts on — the certificate case is the one `TransportError` rewords
         // itself, for the same reason this arm exists: a sentence has to name the thing that
         // refused.
-        other => other.failure_message(),
+        other => AgentFailure::of_session(other),
     }
 }
 
@@ -127,13 +127,13 @@ fn close_refusal(error: &SessionError) -> String {
 pub async fn agent_list_sessions(
     cursor: Option<String>,
     ipc: tauri::State<'_, AgentIpcState>,
-) -> Result<AgentSessionHistory, String> {
+) -> Result<AgentSessionHistory, AgentFailure> {
     let session = ipc.session()?;
     let page: SessionPage = session
         .runtime
         .list_sessions(cursor.as_deref())
         .await
-        .map_err(|error| error.failure_message())?;
+        .map_err(|error| AgentFailure::of_session(&error))?;
     Ok(AgentSessionHistory {
         sessions: page.sessions,
         next_cursor: page.next_cursor,
@@ -158,19 +158,24 @@ pub async fn agent_load_session(
     vault_id: String,
     cwd: String,
     session_id: String,
-) -> Result<AgentHostSession, String> {
+) -> Result<AgentHostSession, AgentFailure> {
     let session = ipc.session()?;
     // §6.1, exactly as `agent_open_session` states it: the renderer names a vault, it does not
     // choose one.
     if vault_id != session.identity.vault_id {
-        return Err(format!(
+        // `session-stale`: the caller addressed a runtime that is not the live one (§6.1), the
+        // same condition `agent_open_session` refuses under — see its arm for why that code is
+        // the honest one for a vault the live incarnation does not serve.
+        return Err(AgentFailure::stale(format!(
             "this engine was started for the vault {} and not for {vault_id}",
             session.identity.vault_id
-        ));
+        )));
     }
     // The canonical root, not the string the renderer sent — and the string this session will be
     // confined to for every file request the engine delegates.
-    let root = vaults.authorize(&cwd)?;
+    let root = vaults
+        .authorize(&cwd)
+        .map_err(AgentFailure::not_permitted)?;
     // §6.2's log, told what is about to arrive before it does: a load replays a conversation as
     // ordinary events, and events replayed by a load are that session's *history* rather than a
     // turn of it — so the log records them without binding the load's run as the session's turn
@@ -182,7 +187,7 @@ pub async fn agent_load_session(
         .runtime
         .load_session(&session_id, &root)
         .await
-        .map_err(|error| error.failure_message())?;
+        .map_err(|error| AgentFailure::of_session(&error))?;
     // §6.2's log, opened for the loaded session before this returns: a replayed frame that arrived
     // while the load was in flight has already been recorded by the driver, and this is what makes
     // the entry exist for a window that takes its snapshot the instant this answers.
@@ -210,20 +215,20 @@ mod tests {
         let error = SessionError::UnknownSession {
             session_id: "session-7".to_string(),
         };
-        let sentence = close_refusal(&error);
+        let refusal = close_refusal(&error);
         assert!(
-            sentence.contains("this app"),
-            "the refusal must name the refuser: {sentence}"
+            refusal.message.contains("this app"),
+            "the refusal must name the refuser: {refusal:?}"
         );
         assert!(
-            sentence.contains("session-7"),
-            "and the session it is about: {sentence}"
+            refusal.message.contains("session-7"),
+            "and the session it is about: {refusal:?}"
         );
         // The generic sentence is right where it is used — a handle that went stale under a window
         // that was already following the session — and wrong here, where nothing about it says
         // that what refused was this app. Keeping the two apart is the fix, so the test is the
         // difference between them.
-        assert_ne!(sentence, error.failure_message());
+        assert_ne!(refusal.message, error.failure_message());
     }
 
     /// Every other refusal on this path is the engine's or the transport's, and their own
@@ -242,9 +247,9 @@ mod tests {
                 session_id: "session-7".to_string(),
             },
         ] {
-            assert_eq!(close_refusal(&error), error.failure_message());
+            assert_eq!(close_refusal(&error).message, error.failure_message());
             assert!(
-                !close_refusal(&error).contains("this app"),
+                !close_refusal(&error).message.contains("this app"),
                 "only the host's own guard is worded as the host's",
             );
         }

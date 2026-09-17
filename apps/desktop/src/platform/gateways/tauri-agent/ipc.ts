@@ -36,7 +36,53 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { AgentFailure, isAgentFailureCode } from '../agent-contracts'
 import type { AgentIdentity, AgentPromptAttachment } from '../agent-contracts'
+
+/**
+ * One call to the backend, with its rejection read as the contract's failure.
+ *
+ * Every method below goes through this, because the backend's rejection is where a *condition*
+ * travels and this is the last place that can read it. The Rust commands answer
+ * `commands::agent::AgentFailure` — `{code, message}`, the same pair a `run-failed` frame carries —
+ * and before this existed the rejection arrived as the sentence alone: `SessionError::failure_code`
+ * was computed, tested, and reached by nothing, so a caller here could only match on wording to
+ * learn which condition it had hit. That is this repository's signature failure one layer in, and
+ * the fix is the same shape as the frame vocabulary's: the fact travels with the words.
+ *
+ * **Nothing is invented.** A rejection this window cannot read a code from keeps the host's own
+ * sentence and is reported as `invalid-response` — this list's word for "the answer could not be
+ * read" — because a code is a claim about a condition, and nobody stated one. Two commands answer
+ * a bare string today (`agent_permission_grants` and `agent_permission_grant_revoke`, whose
+ * failures are the engine's HTTP surface rather than the ACP pipe this vocabulary classifies) and
+ * Tauri's own "command not found" is a string too; both land here.
+ */
+async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  try {
+    return await invoke<T>(command, args)
+  } catch (raw) {
+    throw asFailure(raw)
+  }
+}
+
+/** The sentence a rejection with no readable message leaves. Named rather than blank, because a
+ *  caller puts it inside a sentence of its own and an empty one reads as a truncated error. */
+const UNREADABLE = 'the host answered without a reason this window could read'
+
+function asFailure(raw: unknown): AgentFailure {
+  if (raw instanceof AgentFailure) return raw
+  const record = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : null
+  const code = record?.['code']
+  // A string rejection is the whole message and carries no condition; anything else (a number, a
+  // null, an object whose code is missing or is a word from a vocabulary this window does not
+  // have) is a shape this window cannot read. Both fall to the same arm for the same reason: the
+  // one thing that must not happen is a code nobody stated being passed off as one.
+  const message = typeof raw === 'string' ? raw : record?.['message']
+  const sentence = typeof message === 'string' && message.trim() !== '' ? message : UNREADABLE
+  return isAgentFailureCode(code)
+    ? new AgentFailure(code, sentence)
+    : new AgentFailure('invalid-response', sentence)
+}
 
 /**
  * The channel the host publishes the runtime's events on.
@@ -184,29 +230,29 @@ export interface AgentIpc {
 
 export function createTauriAgentIpc(): AgentIpc {
   return {
-    start: (vaultId) => invoke<AgentRuntimeHandle>('agent_start', { vaultId }),
-    stop: () => invoke<void>('agent_stop'),
+    start: (vaultId) => call<AgentRuntimeHandle>('agent_start', { vaultId }),
+    stop: () => call<void>('agent_stop'),
     openSession: (vaultId, cwd) =>
-      invoke<AgentHostSession>('agent_open_session', { vaultId, cwd }),
+      call<AgentHostSession>('agent_open_session', { vaultId, cwd }),
     // `null` and not an absent field: the command's own signature is `Option<String>`, and a
     // first page is a statement the caller makes rather than a key it leaves out.
-    listSessions: (cursor) => invoke<unknown>('agent_list_sessions', { cursor: cursor ?? null }),
+    listSessions: (cursor) => call<unknown>('agent_list_sessions', { cursor: cursor ?? null }),
     loadSession: (vaultId, cwd, sessionId) =>
-      invoke<AgentHostSession>('agent_load_session', { vaultId, cwd, sessionId }),
-    closeSession: (sessionId) => invoke<void>('agent_close_session', { sessionId }),
+      call<AgentHostSession>('agent_load_session', { vaultId, cwd, sessionId }),
+    closeSession: (sessionId) => call<void>('agent_close_session', { sessionId }),
     selectModel: (sessionId, configId, value) =>
-      invoke<unknown>('agent_set_config_option', { sessionId, configId, value }),
+      call<unknown>('agent_set_config_option', { sessionId, configId, value }),
     prompt: (sessionId, text, attachments) =>
-      invoke<string>('agent_prompt', {
+      call<string>('agent_prompt', {
         sessionId,
         text,
         attachments: attachments.length === 0 ? null : attachments,
       }),
-    cancel: (sessionId) => invoke<void>('agent_cancel_run', { sessionId }),
-    answerPermission: (answer) => invoke<void>('agent_permission_answer', { answer }),
-    snapshot: (sessionId) => invoke<AgentHostSnapshot>('agent_session_snapshot', { sessionId }),
+    cancel: (sessionId) => call<void>('agent_cancel_run', { sessionId }),
+    answerPermission: (answer) => call<void>('agent_permission_answer', { answer }),
+    snapshot: (sessionId) => call<AgentHostSnapshot>('agent_session_snapshot', { sessionId }),
     capabilities: (sessionId) =>
-      invoke<unknown>('agent_session_capabilities', { sessionId }),
+      call<unknown>('agent_session_capabilities', { sessionId }),
     onEvent: (onFrame) => listen<unknown>(AGENT_EVENT_CHANNEL, (event) => onFrame(event.payload)),
   }
 }

@@ -110,11 +110,12 @@ impl SessionError {
             // half of the same refusal is `TurnInFlight` too (`tauri-agent.ts`).
             SessionError::RunInProgress { .. } => AgentFailureCode::TurnInFlight,
             // The session is one this host holds, so the epoch has not moved — what is wrong is
-            // that the caller asked to open something that is already open. That is a different
-            // fact from a turn in flight (nothing is running), and it keeps the code that names
-            // "this call does not fit what the session is doing right now".
-            SessionError::AlreadyOpen { .. } => AgentFailureCode::BufferConflict,
-            SessionError::LoadInFlight { .. } => AgentFailureCode::BufferConflict,
+            // that the caller asked to open something that is already open. It is a state
+            // conflict of its own and it has its own code, for the reason the `SessionOpen` arm
+            // gives: `buffer-conflict` is this vocabulary's word for a stream that cannot be
+            // continued, and neither of these is that.
+            SessionError::AlreadyOpen { .. } => AgentFailureCode::SessionOpen,
+            SessionError::LoadInFlight { .. } => AgentFailureCode::LoadInFlight,
             SessionError::AttachmentRefused { .. } => AgentFailureCode::AttachmentUnsupported,
         }
     }
@@ -938,6 +939,40 @@ pub struct SessionPage {
 mod tests {
     use super::*;
     use std::sync::Barrier;
+
+    /// The two refusals about *what the session is doing* carry codes that say so.
+    ///
+    /// Both were published as `buffer-conflict`, which is the vocabulary's word for a stream that
+    /// cannot be continued (`tauri-agent.ts`'s sequence gap; the window reducer's capacity abort)
+    /// and for nothing else. A reader who saw it on a load had to open both sources to learn which
+    /// condition it was, and neither answer was in the word: one refusal means "you are already in
+    /// this session, do nothing" and the other "it is still coming back, wait a moment". They are
+    /// also the two refusals a *window* can reach by pressing a row in the session list, which is
+    /// what makes the difference worth carrying rather than worth explaining.
+    ///
+    /// Asserted here rather than only at the boundary because this is where the mapping is a
+    /// decision: the boundary passes whatever this answers through.
+    #[test]
+    fn a_state_conflict_is_named_by_its_own_code_and_not_by_a_streams() {
+        let open = SessionError::AlreadyOpen {
+            session_id: "ses-1".to_string(),
+        };
+        let loading = SessionError::LoadInFlight {
+            session_id: "ses-1".to_string(),
+        };
+        assert_eq!(open.failure_code(), AgentFailureCode::SessionOpen);
+        assert_eq!(loading.failure_code(), AgentFailureCode::LoadInFlight);
+        for error in [&open, &loading] {
+            assert_ne!(
+                error.failure_code(),
+                AgentFailureCode::BufferConflict,
+                "a state conflict is not a stream that cannot be continued: {error:?}"
+            );
+        }
+        // And the two are different facts, so one code cannot serve both: the first is a
+        // statement that there is nothing to do, the second that waiting is what there is to do.
+        assert_ne!(open.failure_code(), loading.failure_code());
+    }
 
     fn identity() -> AgentIdentity {
         AgentIdentity {

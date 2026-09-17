@@ -424,6 +424,36 @@ describe('a list with nothing in it', () => {
     expect(names(pair.api.matches.value)).toEqual(['review'])
     expect(pair.api.view.value).toBe('rows')
   })
+
+  // The same rule from the other side. A frame is not the only way this list can be told the
+  // session is gone: a *call* the host refused says it too — `agent_prompt` answering
+  // `session-stale`, `runtime-unavailable` or `process-exited` means the conversation the rows
+  // belong to is not there to be asked, which is the same fact a `run-failed` frame carries and
+  // the same conclusion for the menu. Before the host's refusals carried codes there was nothing
+  // to key this on, so a rejected prompt left the rows on offer — commands nothing was listening
+  // for, drawn under a session that had already gone.
+  it.each(UNREACHABLE)('stops offering the list when a call was refused as %s', (code) => {
+    const pair = mountPair()
+    pair.api.accept(commandsFrame(IDENTITY, [REVIEW]))
+
+    pair.api.invalidate(code)
+    expect(pair.api.view.value).toBe('unavailable')
+    expect(pair.api.reason.value).toBe(code)
+    expect(pair.api.matches.value).toEqual([])
+  })
+
+  it('keeps offering the list when a call was refused for a reason about the turn', () => {
+    // The race the host answers when a second turn arrives on a session that is answering: nothing
+    // about it says the session is gone, and dropping the rows would take the reader's commands
+    // away over a refusal that lasts as long as the turn does.
+    const pair = mountPair()
+    pair.api.accept(commandsFrame(IDENTITY, [REVIEW]))
+
+    pair.api.invalidate('turn-in-flight')
+
+    expect(names(pair.api.matches.value)).toEqual(['review'])
+    expect(pair.api.view.value).toBe('rows')
+  })
 })
 
 describe('while an IME is composing', () => {

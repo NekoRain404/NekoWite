@@ -372,8 +372,13 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
       // double must accept too. Refusing on the epoch alone made a freed row permanently
       // unreopenable here and nowhere else.
       if (existing.identity.runtimeEpoch === current && !existing.closed) {
+        // `session-open` and not `session-stale`: the runtime this session belongs to *is* the live
+        // one, so nothing about it has gone stale — what refused is that a load is for a session
+        // that is not open, and this one is. The host answers the same condition with the same code
+        // (`SessionError::AlreadyOpen`), which is what makes the two implementations of this
+        // contract tell a caller the same thing.
         throw new AgentFailure(
-          'session-stale',
+          'session-open',
           `session ${sessionId} is already open in this runtime`,
         )
       }
