@@ -8,7 +8,7 @@
  */
 
 import type { AgentEvent, AgentIdentity } from './envelope'
-import type { AgentRunResult } from './payloads'
+import type { AgentConfigOption, AgentRunResult } from './payloads'
 
 /**
  * The session lifecycle, exactly as the plan spells it out:
@@ -163,6 +163,21 @@ export interface AgentSession extends AgentIdentity {
    * nothing pushes the new value back here.
    */
   readonly initialModelId: string
+  /**
+   * Every configuration option the engine answered with when the session opened, in the engine's
+   * order, under the engine's names — the seed the composer's control row is drawn from.
+   *
+   * The same facts as {@link models}, and for the same reason a *projection* is not enough: a
+   * model is one instance of an ACP config option, and the pinned engine reports a session mode
+   * beside it (`{id: "mode", name: "Session Mode", currentValue: "build"}`, measured). A window
+   * that drew only the catalog would show one control where the engine reported two.
+   *
+   * Read at open and never written: this is the engine's answer to `session/new` rather than a
+   * running total, and later changes arrive as `config-changed` frames, which is what
+   * `AgentSessionView.config` holds. Both are the engine's own report — the response carried the
+   * list before any frame could, which is exactly why the row needs this one as well.
+   */
+  readonly options: readonly AgentConfigOption[]
 }
 
 export interface AgentOpenRequest {
@@ -241,8 +256,27 @@ export interface AgentGateway {
   /**
    * Choose a model for this session; P0 §2.3 measured that the engine accepts a
    * switch mid-session.
+   *
+   * The narrower spelling of {@link setConfigOption} for the option this app knows by name: the
+   * adapter resolves the engine's own option id and holds the value to the session's published
+   * catalog. A model is one instance of a config option, not a second mechanism beside one.
    */
   selectModel(session: AgentSession, modelId: string): Promise<void>
+  /**
+   * Move any one of the session's own configuration options — the general call {@link selectModel}
+   * is the model's special case of.
+   *
+   * ACP's concept is the config option (P0 §2.2 measured the model arriving as one of them, and
+   * the pinned engine reports a session mode beside it: `{id: "mode", name: "Session Mode",
+   * currentValue: "build"}`), so a UI that renders one selector per option the engine reports
+   * needs this call and not a third method per option name. §6.3 leaves the ids and the values to
+   * the engine, and this passes both through as they came.
+   *
+   * `configId` and `value` are constraints the *engine* has: it refuses an option it did not
+   * publish, and a value that option does not offer. The adapter checks the handle before it
+   * forwards anything (§6.1) and reports the engine's own refusal otherwise.
+   */
+  setConfigOption(session: AgentSession, configId: string, value: string): Promise<void>
   /**
    * Send one turn. Resolves when the turn ends, because that is when the protocol
    * answers the prompt request (P0 §2.3: the response carries the stop reason and

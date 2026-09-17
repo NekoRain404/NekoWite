@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use nekowite_lib::desktop_pet::window_host::{
-    PetSurfaces, PetWindowHost, PetWindowLabel, Placement, WindowStyle, WorkArea,
+    PetSurfaces, PetWindowHost, PetWindowLabel, Placement, WindowStyle, WorkArea, BALL_LABEL,
 };
 use nekowite_lib::desktop_pet::PetSettingsStore;
 
@@ -112,6 +112,24 @@ impl FakeSurfaces {
         self.state().opened.clone()
     }
 
+    /// The opens that are not the ball's.
+    ///
+    /// The ball comes up with the pet (`PetWindowHost::open`), so a case about the character
+    /// window counts these; {@link Self::ball_open} is the ball's own.
+    pub fn character_opens(&self) -> Vec<(String, String)> {
+        self.opened()
+            .into_iter()
+            .filter(|(label, _)| label != BALL_LABEL)
+            .collect()
+    }
+
+    /// The ball's open call, or `None` when the pet came up without one.
+    pub fn ball_open(&self) -> Option<(String, String)> {
+        self.opened()
+            .into_iter()
+            .find(|(label, _)| label == BALL_LABEL)
+    }
+
     pub fn live(&self) -> Vec<String> {
         self.state().live.clone()
     }
@@ -123,6 +141,7 @@ impl PetSurfaces for FakeSurfaces {
         label: &PetWindowLabel,
         page: &str,
         _at: Placement,
+        _size: (f64, f64),
         _style: WindowStyle,
         _visible: bool,
     ) -> Result<(), String> {

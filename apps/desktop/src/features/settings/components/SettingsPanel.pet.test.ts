@@ -294,6 +294,14 @@ describe('the pet’s settings are reachable from the dialog', () => {
       // choose between. It is a *read*: installing a character is the import button's call
       // (`desktop_pet_import_character`), and it is not made until the user clicks it.
       'desktop_pet_library',
+      // §8's online catalogue, read when the character page opens — the same shape as the picker
+      // above, and read for the same reason: there has to be something to browse before there is
+      // something to click.
+      'desktop_pet_catalogue',
+      // And the click. Not observed by this case, which mounts pages and does not press their
+      // buttons; it is here so that the day one of them does, the command it reaches for is one
+      // this list already says is allowed to exist rather than a surprise this case reports.
+      'desktop_pet_adopt_character',
     ])
     expect([...new Set(petCommands())].filter((command) => !allowed.has(command))).toEqual([])
   })
@@ -477,6 +485,9 @@ describe('the dialog carries the pet’s pages, and what comes with them', () =>
       'features/desktop-pet-settings/components/DesktopPetSettingsSection.vue',
       'features/desktop-pet-settings/components/PetBubbleSettings.vue',
       'features/desktop-pet-settings/components/PetCareSettings.vue',
+      // §8's catalogue browser, which the character page renders. Its own component, so that
+      // the page that picks a character and the document written by strangers are not one file.
+      'features/desktop-pet-settings/components/PetCatalogueBrowser.vue',
       'features/desktop-pet-settings/components/PetCharacterSettings.vue',
       'features/desktop-pet-settings/components/PetGeneralSettings.vue',
       'features/desktop-pet-settings/components/PetIntegrationSettings.vue',
@@ -513,6 +524,15 @@ describe('the dialog carries the pet’s pages, and what comes with them', () =>
     //     pre-existing barrel cost, grown. If it ever matters, the seam is the same one named
     //     above: nothing in this window needs `DesktopPetRoot`, and the export that carries it is
     //     what makes the extra modules reachable.
+    //
+    //   - `composables/use-pet-click-through.ts` is the same cost again, one module over: it is the
+    //     pet window's input-region rule (§7.2's 鼠标穿透), it is reached through that same
+    //     `DesktopPetRoot` export, and this window neither mounts it nor needs it.
+    //
+    //   - `services/pet-ball-platform.ts` is the newest of them and the *thinnest*: the ball
+    //     window's drag adapter, carried because the composition imports it for that window's
+    //     resolver. It holds one call and reaches `platform/window.ts`, which is in this window's
+    //     graph already.
     expect(surface).toEqual([
       'features/desktop-pet/components/DesktopPetRoot.vue',
       'features/desktop-pet/components/PetBubble.vue',
@@ -521,6 +541,7 @@ describe('the dialog carries the pet’s pages, and what comes with them', () =>
       'features/desktop-pet/components/PetSprite.vue',
       'features/desktop-pet/components/PetTaskList.vue',
       'features/desktop-pet/components/PetTaskRow.vue',
+      'features/desktop-pet/composables/use-pet-click-through.ts',
       'features/desktop-pet/composables/use-pet-drawing-failure.ts',
       'features/desktop-pet/composables/use-pet-lifecycle.ts',
       'features/desktop-pet/composables/use-pet-window.ts',
@@ -531,6 +552,7 @@ describe('the dialog carries the pet’s pages, and what comes with them', () =>
       'features/desktop-pet/rendering/sprite-sheet.ts',
       'features/desktop-pet/rendering/sprite-slicer.ts',
       'features/desktop-pet/services/pet-appearance.ts',
+      'features/desktop-pet/services/pet-ball-platform.ts',
       'features/desktop-pet/services/pet-bubble-layout.ts',
       'features/desktop-pet/services/pet-care-rules.ts',
       'features/desktop-pet/services/pet-catalogue.ts',

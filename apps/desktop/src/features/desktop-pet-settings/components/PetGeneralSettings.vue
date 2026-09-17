@@ -9,9 +9,14 @@
  * stated where the user can read it rather than left to be discovered.
  *
  * It writes two domains, because §5.1's page does and because the schemas are what a page is
- * allowed to be about: `general` for 启用 and the motion policy, `view` for 窗口行为. The
- * restored-defaults action is the two of them together and nothing else (§5.3
+ * allowed to be about: `general` for 启用, the motion policy and §5.1's 悬浮球, `view` for
+ * 窗口行为. The restored-defaults action is the two of them together and nothing else (§5.3
  * 「恢复本页默认只影响当前域」).
+ *
+ * The ball's switch is *disabled while the pet is off*, and that is the honest treatment of a
+ * preference about one of the pet's windows: it is still stored, still meaningful and still the
+ * user's, but it can have no visible effect until 显示桌宠 is on — and §5.2 forbids a control that
+ * looks like it should do something and cannot. The note under it says the same thing in words.
  *
  * §7.2 decides which of the window behaviours may be offered. A control whose capability this
  * machine was not verified to have is shown *disabled, with the finding's own words* — the mode
@@ -117,6 +122,9 @@ const alwaysOnTopRestriction = computed(() => unavailability('always-on-top'))
 function setEnabled(value: boolean): void {
   general.edit('enabled', value)
 }
+function setBall(value: boolean): void {
+  general.edit('ball', value)
+}
 function setMotion(value: string | number): void {
   general.edit('motion', value === 'reduced' ? 'reduced' : 'system')
 }
@@ -155,6 +163,18 @@ function resetPage(): void {
         >
       </label>
       <span class="settings-note">{{ t('settings.pet.general.enabledNote') }}</span>
+
+      <label class="settings-field settings-toggle">
+        <span>{{ t('settings.pet.general.ball') }}</span>
+        <input
+          class="checkbox"
+          type="checkbox"
+          :disabled="!generalValues.enabled"
+          :checked="generalValues.ball"
+          @change="setBall(($event.target as HTMLInputElement).checked)"
+        >
+      </label>
+      <span class="settings-note">{{ t('settings.pet.general.ballNote') }}</span>
 
       <label
         class="settings-field"

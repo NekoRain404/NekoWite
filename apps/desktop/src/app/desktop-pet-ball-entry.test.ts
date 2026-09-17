@@ -122,6 +122,11 @@ describe('the ball entry is one orb and not the character window', () => {
       'features/desktop-pet/rendering/sprite-slicer.ts',
       'features/desktop-pet/services/pet-appearance.ts',
       'features/desktop-pet/services/pet-ball-input.ts',
+      // The drag, wired to the app's window controls rather than to the Tauri bridge. It arrives
+      // through the composition — which both pet windows import — so a reader looking for why the
+      // *character* window carries a drag adapter it does not use will find it here: the resolver
+      // hands it to this page alone, and the import is what the two windows share.
+      'features/desktop-pet/services/pet-ball-platform.ts',
       'features/desktop-pet/services/pet-menu-actions.ts',
       'platform/gateways/pet-contracts.ts',
       'platform/gateways/pet-contracts/appearance.ts',
@@ -136,6 +141,10 @@ describe('the ball entry is one orb and not the character window', () => {
       'platform/gateways/pet-contracts/platform.ts',
       'platform/gateways/pet-contracts/task.ts',
       'platform/gateways/tauri-pet.ts',
+      // The app's own window controls, which `pet-ball-platform.ts` builds the drag on. It is the
+      // module the whole application reaches the window API through (`platform/window.ts`'s own
+      // rule), so this is one shared adapter rather than a pet-shaped second one.
+      'platform/window.ts',
       'styles/palettes.css',
       'styles/tokens.css',
     ])
@@ -197,7 +206,15 @@ describe('the ball entry is one orb and not the character window', () => {
         `the ball entry reaches ${pattern}: ${why}`,
       ).toEqual([])
     }
-    expect(packagesFrom(ENTRY)).toEqual(['@tauri-apps/api/core', '@tauri-apps/api/event', 'vue'])
+    // `@tauri-apps/api/window` arrived with the ball's drag: `platform/window.ts` is the one module
+    // in this app that imports it, and the orb needs one call from it. Still four packages and no
+    // more — no framework, no editor, no agent client.
+    expect(packagesFrom(ENTRY)).toEqual([
+      '@tauri-apps/api/core',
+      '@tauri-apps/api/event',
+      '@tauri-apps/api/window',
+      'vue',
+    ])
   })
 
   it('is a build entry, so the page exists in a packaged app', () => {

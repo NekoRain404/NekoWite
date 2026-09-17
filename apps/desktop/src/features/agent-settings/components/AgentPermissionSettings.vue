@@ -22,6 +22,13 @@ export interface AgentPermissionLabels {
   loading: string
   unreadable: string
   retry: string
+  /**
+   * One sentence per state of the consent default (`PermissionState`), because the state is what
+   * decides whether the list below is a promise or an absence — a page that drew its rules without
+   * saying which profile they apply to would be claiming them for a profile where this host wrote
+   * nothing.
+   */
+  states: { written: string; engineOwn: string; notThisHost: string }
   rules: { title: string; empty: string; tool: string; action: string }
   options: { title: string; hint: string; none: string; noInvention: string }
   origin: { host: string; engine: string; session: string }
@@ -43,6 +50,11 @@ export function permissionLabels(): AgentPermissionLabels {
     loading: t('agent.settings.permission.loading'),
     unreadable: t('agent.settings.permission.unreadable'),
     retry: t('agent.settings.retry'),
+    states: {
+      written: t('agent.settings.permission.states.written'),
+      engineOwn: t('agent.settings.permission.states.engineOwn'),
+      notThisHost: t('agent.settings.permission.states.notThisHost'),
+    },
     rules: {
       title: t('agent.settings.permission.rules.title'),
       empty: t('agent.settings.permission.rules.empty'),
@@ -94,42 +106,44 @@ export function permissionLabels(): AgentPermissionLabels {
  */
 import { computed, onMounted, ref } from 'vue'
 import type { SettingOrigin } from '../index'
+import type { PermissionState } from '../services/agent-settings-policy'
+import type {
+  AgentPermissionClient,
+  PermissionLimitId,
+  PermissionReadout,
+} from '../services/agent-permission-ipc'
 
-/** A limitation the backend reports for the engine it has measured. */
-export type PermissionLimitId =
-  | 'not-a-sandbox'
-  | 'no-isolation'
-  | 'stale-requests'
-  | 'no-silent-approval'
-
-/** One tool and what the engine is configured to do about it. */
-export interface PermissionRuleView {
-  /** The tool name, exactly as the engine's own configuration writes it. */
-  tool: string
-  /** The action, exactly as the engine's own configuration writes it. */
-  action: string
-  origin: SettingOrigin
-}
-
-export interface AgentPermissionReadout {
-  rules: PermissionRuleView[]
-  /** The engine's own option kinds, as they arrive with a request. */
-  optionKinds: string[]
-  limits: PermissionLimitId[]
-}
-
-/** The backend, chosen at the composition site. */
-export interface AgentPermissionClient {
-  read(): Promise<AgentPermissionReadout>
-}
-
+/**
+ * The port and its readout are declared by their *implementation* now, and imported rather than
+ * repeated.
+ *
+ * They were declared in this file while nothing implemented them — a page describing a backend that
+ * did not exist. One does now (`services/agent-permission-ipc.ts`, over the profile the session
+ * path also writes through), and a second copy of the same types here would be a second place for
+ * the two to disagree — the disagreement being a page rendering a state the client never sends.
+ * `<script setup>` cannot re-export them, so the port's name lives in `services/`; nothing outside
+ * this page imported the old ones.
+ */
 const props = defineProps<{
   client: AgentPermissionClient
   labels?: AgentPermissionLabels
 }>()
 
+/**
+ * The sentence for the state, which is what says whether the rows below are in force.
+ *
+ * Exhaustive on purpose: a fourth arm added to `PermissionState` fails to compile here, so a page
+ * cannot end up rendering an empty explanation for a state somebody just introduced.
+ */
+function stateText(state: PermissionState): string {
+  const copy = labels.value.states
+  if (state === 'written') return copy.written
+  if (state === 'engine-own') return copy.engineOwn
+  return copy.notThisHost
+}
+
 const labels = computed<AgentPermissionLabels>(() => props.labels ?? permissionLabels())
-const readout = ref<AgentPermissionReadout | null>(null)
+const readout = ref<PermissionReadout | null>(null)
 const state = ref<'loading' | 'ready' | 'unreadable'>('loading')
 
 function originText(origin: SettingOrigin): string {
@@ -184,6 +198,17 @@ onMounted(load)
     </template>
 
     <template v-else-if="readout">
+      <!-- What this app did about permissions for this profile, above the list it explains: the
+           state is what turns "these are the rules" into "these are the rules in force", and the
+           two states where they are not in force are the ones a user most needs said out loud. -->
+      <p
+        class="settings-note"
+        data-test="permission-state"
+        :data-state="readout.state"
+      >
+        {{ stateText(readout.state) }}
+      </p>
+
       <div class="permission-group">
         <span class="settings-label">{{ labels.rules.title }}</span>
         <span v-if="readout.rules.length === 0" class="settings-note" data-test="permission-no-rules">

@@ -294,7 +294,11 @@ async fn stopping_a_streaming_turn_ends_it_and_leaves_the_session_usable() {
                     cancel_run(&runtime, &permissions, &session.session_id)
                         .await
                         .expect("the cancel reaches the engine");
-                    eprintln!("  cancelled at seq {} — {}", event.sequence, summary(&event));
+                    eprintln!(
+                        "  cancelled at seq {} — {}",
+                        event.sequence,
+                        summary(&event)
+                    );
                 }
                 continue;
             }

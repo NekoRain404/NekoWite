@@ -11,7 +11,8 @@
  *   - the three gestures: primary press and release (`floating-ball.ts:197-238`), which
  *     `../services/pet-ball-input` decides, and the context menu that opens settings (`:227-231`)
  *   - the hint upstream put in the orb's `title` (`:113`), which is also where a desktop that
- *     cannot move the ball says so
+ *     cannot move the ball says so — with upstream's 「Left-click: menu」 clause removed, because
+ *     that click opens nothing here (see {@link hint})
  *
  * What the port changed:
  *
@@ -153,6 +154,11 @@ const FACE_RATIO = 0.58
  */
 const NAME = 'Desktop pet ball'
 
+// `aria-haspopup="true"` stood beside the label until the left-click clause left the hint. It was
+// the same claim — "activating this shows a menu" — made to assistive technology rather than to a
+// hovering pointer, and it is false for the same reason: there is no menu yet. It comes back with
+// the menu. `:aria-expanded="menuOpen"` stays, because it reads `false` and that is true.
+
 const gesture = createBallGesture()
 const pressed = ref(false)
 const dragging = ref(false)
@@ -163,7 +169,15 @@ const faceSize = computed(() => Math.round(props.size * FACE_RATIO))
 const movable = computed(() => typeof props.platform?.startDrag === 'function')
 
 const hint = computed(() => {
-  const base = 'Left-click: menu · Right-click: settings'
+  // Upstream's hint said 「Left-click: menu · Right-click: settings · Drag」 (`:113`). The
+  // left-click clause is **gone, and it is the one clause that was a promise rather than a
+  // description**: the menu needs a window resize this build cannot do and an action design it has
+  // not made (`PetBallWindow.vue`'s header, `desktop-pet-port-ledger.md:114`), so a press on the orb
+  // opens nothing. A tooltip that says it opens a menu is the app asserting something it does not
+  // do — the detail a user notices *because* they believe it — and the clause comes back in the same
+  // change that gives the click something to do. What is left is what happens: right-click really
+  // does open the pet's page, and the movement clause below says which of the two this desktop got.
+  const base = 'Right-click: settings'
   const movement = movable.value ? 'Drag to move' : 'This desktop cannot move it'
   // A failure is appended and never replaces the rest: the two clauses above stay true whatever
   // the character did. It is here as well as in the emit because the orb is the whole window and
@@ -268,7 +282,6 @@ async function endDrag(started: Promise<void>): Promise<void> {
       :class="{ 'is-pressed': pressed, 'is-dragging': dragging, 'is-still': reduceMotion }"
       :title="hint"
       :aria-label="NAME"
-      aria-haspopup="true"
       :aria-expanded="menuOpen"
       :style="{ width: `${size}px`, height: `${size}px` }"
       @pointerdown="onPointerDown"

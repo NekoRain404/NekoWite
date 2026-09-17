@@ -13,6 +13,7 @@ import { motionProbe } from './probe-motion.mjs'
 import { dialogProbe } from './probe-dialog.mjs'
 import { noteSwitchProbe } from './probe-note-switch.mjs'
 import { tailProbe } from './probe-tail.mjs'
+import { tableProbe } from './probe-table.mjs'
 import { agentScrollProbe } from './probe-agent-scroll.mjs'
 import { chatScrollProbe } from './probe-chat-scroll.mjs'
 import { focusRingProbe } from './probe-focus-ring.mjs'
@@ -53,6 +54,13 @@ const inspect = {
  * itself skipped under any other, which is what keeps a plain run of everything
  * working.
  *
+ * `table-cell` goes before `tail` and `note-switch`, and it is the only probe
+ * that needs the `table` scenario. It edits the document (it inserts a table) and
+ * raises an overlay, so it belongs before the probes that move the pane into
+ * split mode or change which note is open — and it returns a `skipped` under any
+ * other scenario, the way `note-switch` does, so a plain run of everything still
+ * runs on the document the others expect.
+ *
  * `motion-dialog` is last of all, and it is the only probe that opens an overlay
  * over the whole window and takes focus into it. Everything above wants the
  * editor addressable, so the probe that covers the window goes after all of
@@ -76,5 +84,5 @@ const inspect = {
  * four foreign panels on it, so nothing goes after it. The surfaces it reads on the
  * product's own page are read before it mounts anything.
  */
-export const PROBES = [motionProbe, panelProbe, tailProbe, noteSwitchProbe, dialogProbe, agentScrollProbe, chatScrollProbe, focusRingProbe]
+export const PROBES = [motionProbe, panelProbe, tableProbe, tailProbe, noteSwitchProbe, dialogProbe, agentScrollProbe, chatScrollProbe, focusRingProbe]
 export const ALL_PROBES = [inspect, ...PROBES]

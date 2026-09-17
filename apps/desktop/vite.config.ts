@@ -123,6 +123,12 @@ export default defineConfig({
       input: {
         index: fileURLToPath(new URL('index.html', import.meta.url)),
         'desktop-pet': fileURLToPath(new URL('desktop-pet.html', import.meta.url)),
+        // The ball's window is a second light entry beside the character's (plan §10.1's 多入口,
+        // §7.1's isolation): its page mounts the orb and nothing else, so it is its own document
+        // rather than a branch inside the pet page. The window that loads it is minted with the
+        // same `pet-` label prefix, which is what keeps `capabilities/desktop-pet.json` — and not
+        // the main window's sixty commands — governing it.
+        'desktop-pet-ball': fileURLToPath(new URL('desktop-pet-ball.html', import.meta.url)),
       },
       output: { manualChunks },
       // `remark-math` pulls in `micromark-extension-math`, whose root index

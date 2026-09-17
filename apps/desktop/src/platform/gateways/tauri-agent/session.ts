@@ -16,6 +16,8 @@
  */
 
 import type {
+  AgentConfigChoice,
+  AgentConfigOption,
   AgentIdentity,
   AgentModelOption,
   AgentSession,
@@ -31,6 +33,17 @@ export interface SessionRecord {
   initialModelId: string
   /** The engine's id for the option the catalog came from, or null when the engine has none. */
   modelOptionId: string | null
+  /**
+   * Every option `session/new` answered with, in the engine's order.
+   *
+   * The same answer the catalog is projected from, and the reason it is kept whole: the response
+   * is not a frame, so a window that only read `config-changed` would show one control where the
+   * engine reported two until something happened to change. The pinned engine reports a model
+   * *and* a session mode (`agent_session_lifecycle_test.rs`'s probe: `{id: "model", name:
+   * "Model", currentValue: "opencode/big-pickle"}` beside `{id: "mode", name: "Session Mode",
+   * currentValue: "build"}`), and Zed's row shows both from the moment the session opens.
+   */
+  options: readonly AgentConfigOption[]
 }
 
 export interface SessionBook {
@@ -76,10 +89,14 @@ export function createSessionBook(started: () => boolean): SessionBook {
 
   return {
     open(identity, answer) {
+      // One answer, read twice: the model catalog the contract has always carried, and the whole
+      // list of options the engine reported. Both are the same read of `configOptions`, so they
+      // cannot come from two moments (T1's rule for the two views of this wire value).
       const projected = projectModels(answer)
-      const record: SessionRecord = { identity, ...projected }
+      const options = readConfigOptions(answer.configOptions)
+      const record: SessionRecord = { identity, ...projected, options }
       sessions.set(identity.sessionId, record)
-      return mintSession(identity, projected)
+      return mintSession(identity, { ...projected, options })
     },
     recordFor(session) {
       return recordOf(session)
@@ -101,13 +118,90 @@ export function createSessionBook(started: () => boolean): SessionBook {
  */
 function mintSession(
   identity: AgentIdentity,
-  projected: { models: readonly AgentModelOption[]; initialModelId: string },
+  projected: {
+    models: readonly AgentModelOption[]
+    initialModelId: string
+    options: readonly AgentConfigOption[]
+  },
 ): AgentSession {
   return {
     ...identity,
     models: projected.models,
     initialModelId: projected.initialModelId,
+    options: projected.options,
   } as unknown as AgentSession
+}
+
+/**
+ * Every option the engine answered `session/new` with, in the contract's shape.
+ *
+ * The same mapping `agent_runtime/events.rs`'s `config_option` makes for a `config-changed`
+ * frame, for the same three reasons it gives: the discriminator is on the option on the wire
+ * (`type`) and on the value in the contract (`value.kind`, and `toggle` where the wire says
+ * `boolean`); the current value is `currentValue` there and `value.current` here; and a select's
+ * choices are an untagged union on the wire — a flat list, or a list of *groups* of them — which
+ * the contract holds flat. Flattening loses the group's name, which is the residual T4b §7
+ * reported rather than a decision taken here.
+ *
+ * An option this reader cannot express is **left out** rather than sent as something it is not,
+ * and the rest of the list is still read: one unreadable entry costs its own control, where
+ * refusing the whole answer would cost every control on the row. The engine's own list is the
+ * report, so what is kept is kept as it came — order, names and values untouched.
+ */
+function readConfigOptions(raw: unknown): AgentConfigOption[] {
+  if (!Array.isArray(raw)) return []
+  const options: AgentConfigOption[] = []
+  for (const entry of raw) {
+    const option = readConfigOption(entry)
+    if (option !== null) options.push(option)
+  }
+  return options
+}
+
+function readConfigOption(entry: unknown): AgentConfigOption | null {
+  if (!isRecord(entry)) return null
+  const { id, name, description, type, currentValue } = entry
+  if (typeof id !== 'string' || id === '' || typeof name !== 'string') return null
+  const shared = description === undefined ? {} : { description: String(description) }
+  if (type === 'select') {
+    if (typeof currentValue !== 'string') return null
+    return {
+      id,
+      name,
+      ...shared,
+      value: { kind: 'select', current: currentValue, choices: readChoices(entry.options) },
+    }
+  }
+  if (type === 'boolean') {
+    if (typeof currentValue !== 'boolean') return null
+    return { id, name, ...shared, value: { kind: 'toggle', current: currentValue } }
+  }
+  // `SessionConfigKind` is `#[non_exhaustive]`: a type the pinned schema does not name yet is a
+  // shape this adapter has no arm for, and the contract's two are the whole of what it can say.
+  return null
+}
+
+/** A select's choices, flattened out of the wire's untagged union and in the engine's order. */
+function readChoices(raw: unknown): AgentConfigChoice[] {
+  if (!Array.isArray(raw)) return []
+  const choices: AgentConfigChoice[] = []
+  for (const entry of raw) {
+    if (!isRecord(entry)) continue
+    // A grouped entry holds the values one level down; an ungrouped one *is* a value. The same
+    // test `projectModels` makes of the same union, because it is the same union.
+    const values = Array.isArray(entry.options) ? entry.options : [entry]
+    for (const value of values) {
+      if (!isRecord(value)) continue
+      const { value: id, name, description } = value
+      if (typeof id !== 'string' || typeof name !== 'string') continue
+      choices.push({
+        value: id,
+        name,
+        ...(description === undefined ? {} : { description: String(description) }),
+      })
+    }
+  }
+  return choices
 }
 
 /**

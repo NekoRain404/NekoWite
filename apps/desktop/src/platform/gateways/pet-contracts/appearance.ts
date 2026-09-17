@@ -24,7 +24,12 @@ export interface PetCharacterEntry {
   characterId: string
   /** The pack's own name, or the id when the directory carries no manifest the host wrote. */
   packName: string
-  kind: 'imported' | 'created'
+  /**
+   * How it came to be here. `remote` is a catalogue download, through §8's transfer rules —
+   * recorded because a character that arrived over a network is the one the deferred licence
+   * question is about, and a build that filed it as `created` could not answer it.
+   */
+  kind: 'imported' | 'created' | 'remote'
   /**
    * Whether the character can be drawn. `damaged` is not "not installed": the character is the
    * user's and is listed, and what a page says about it is a page's business.

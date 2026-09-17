@@ -74,6 +74,7 @@
 pub mod adapters;
 pub mod binary_registry;
 pub mod capabilities;
+pub mod catalogue;
 pub mod config_edit;
 pub mod driver;
 pub mod events;

@@ -48,13 +48,25 @@
  *   a stable click target and must not be click-through」: the permission is granted to the pet's
  *   windows as a group, and the identity check is what keeps the ball from using it.
  * - **It follows the pet's switch, not the character list.** {@link PetWindowHost::open} — the
- *   call `apply_feature_switch` makes when `general.enabled` is written true — opens it, {@link
+ *   call `feature_switch::apply` makes when `general.enabled` is written true — opens it, {@link
  *   PetWindowHost::set_visible} hides and shows it with the rest, and {@link
- *   PetWindowHost::disable} closes it. The ball has no switch of its own yet: upstream's is a
- *   stored flag defaulting to on (`lib.rs:331-345`), plan §5.1/§5.2 put 悬浮球 on the settings
- *   page's 常规与交互 row, and that page's `general` domain has no such field today.
+ *   PetWindowHost::disable} closes it. Its own switch (`general.ball`, upstream's stored flag,
+ *   `lib.rs:331-345`) is read in the same place: the ball exists when the pet is on *and* the user
+ *   wants it, and {@link PetWindowHost::set_ball_enabled} is how the second half reaches it.
+ *
+ * **What the ball's window *is*, and how it answers its switch, is `ball.rs`.** The policy lived
+ * here until it had a switch of its own to hold; this file keeps the one `PetSurfaces`, the
+ * instances and the rules about them, and `Ball` keeps the label, the page, the size, the corner
+ * and the user's answer.
  */
 use serde::Serialize;
+
+use super::ball::Ball;
+// The ball's policy moved to `ball.rs`; the path it was read by does not move with it. Every caller
+// that named `window_host::BALL_LABEL` — the command surface's tests among them — still resolves,
+// which is the property `state.rs` states for its own split: the split moved the code, not the
+// surface.
+pub use super::ball::{BALL_LABEL, BALL_WINDOW_SIZE, DESKTOP_PET_BALL_PAGE};
 
 /// §7.1's numbers: 「建议默认最多 3 个、可配置硬上限 5 个，需性能验证后确认」.
 ///
@@ -74,31 +86,6 @@ pub const DESKTOP_PET_PAGE: &str = "desktop-pet.html";
 /// The character window's size in logical px: upstream's `260x320` (`:459`), the same at all
 /// four of its builder sites.
 pub const CHARACTER_WINDOW_SIZE: (f64, f64) = (260.0, 320.0);
-
-/// The floating ball's window label. Fixed, and not a generation: there is one ball (upstream's
-/// `FLOATING_BALL_LABEL`, `:310`), so there is nothing for a generation to distinguish it from.
-///
-/// It carries {@link LABEL_PREFIX} on purpose. `capabilities/desktop-pet.json` selects its windows
-/// by the glob `pet-*`, and a label outside it would be a window with no capability at all — see
-/// this file's header.
-pub const BALL_LABEL: &str = "pet-ball";
-
-/// The ball's page. The second light entry (§9), beside `desktop-pet.html`: the ball is a different
-/// surface from the character window (it is a launcher that stays where it is put, while the
-/// character roams) and it must not be click-through, so it is not the character window's page and
-/// not the character window's bundle.
-pub const DESKTOP_PET_BALL_PAGE: &str = "desktop-pet-ball.html";
-
-/// The ball window's size in logical px: upstream's `BALL_W`/`BALL_H` (`:312-314`) — an 80 px
-/// square for a 56 px orb, so the orb's shadow and its hover scale are not clipped by the window's
-/// own edges.
-pub const BALL_WINDOW_SIZE: (f64, f64) = (80.0, 80.0);
-
-/// Where a ball with no readable screen is placed, and the margins upstream used for its default
-/// corner (`:357`: `(sw - BALL_W - 24, sh - BALL_H - 80)` — the wider bottom gap is where a
-/// taskbar or a dock usually is).
-const BALL_MARGIN_X: f64 = 24.0;
-const BALL_MARGIN_Y: f64 = 80.0;
 
 /// What we ask a compositor for, as a value rather than as calls buried in an adapter.
 ///
@@ -167,9 +154,10 @@ impl PetWindowLabel {
     /// The ball's label, and the one label here that is not minted from a generation.
     ///
     /// Still built here and nowhere else: the point of the private field is that a label is the
-    /// host's to make, and a fixed name is no exception. A generation could not collide with it —
-    /// `mint` formats a number, this is a word — so a character window can never inherit it.
-    fn ball() -> Self {
+    /// host's to make, and a fixed name is no exception — `ball.rs` holds the label, but it is
+    /// handed one rather than making one. A generation could not collide with it — `mint` formats a
+    /// number, this is a word — so a character window can never inherit it.
+    pub(super) fn ball() -> Self {
         Self(BALL_LABEL.to_string())
     }
 
@@ -312,10 +300,12 @@ pub struct PetWindowHost {
     /// identity, and a caller left over from a closed window would otherwise be believed.
     generation: u32,
     instances: Vec<PetInstance>,
-    /// The ball's window, when it has one. Deliberately *not* an entry in `instances`: the two
-    /// types of window differ in what they hold (a character, or none), in what the cap counts,
-    /// and in whether a per-window operation may be aimed at them — see this file's header.
-    ball: Option<PetWindowLabel>,
+    /// The ball's window and its switch. Deliberately *not* an entry in `instances`: the two types
+    /// of window differ in what they hold (a character, or none), in what the cap counts, and in
+    /// whether a per-window operation may be aimed at them — see this file's header. The label is
+    /// minted here and handed over, which is what keeps `PetWindowLabel`'s one constructor in this
+    /// module (`ball.rs`'s header).
+    ball: Ball,
     visible: bool,
 }
 
@@ -326,7 +316,7 @@ impl PetWindowHost {
             cap: DEFAULT_CHARACTER_CAP,
             generation: 0,
             instances: Vec::new(),
-            ball: None,
+            ball: Ball::new(PetWindowLabel::ball()),
             visible: true,
         }
     }
@@ -359,7 +349,18 @@ impl PetWindowHost {
     /// The label stays inside its own type and no operation accepts one, so this is a read for a
     /// report or a test rather than a handle a caller could aim something with.
     pub fn ball(&self) -> Option<&PetWindowLabel> {
-        self.ball.as_ref()
+        self.ball.label()
+    }
+
+    /// Whether the user wants the ball at all (`general.ball`).
+    pub fn ball_enabled(&self) -> bool {
+        self.ball.is_enabled()
+    }
+
+    /// The ball's own switch, as §5.1's 悬浮球 row writes it — see {@link Ball::set_enabled} for why
+    /// turning it *on* opens nothing here.
+    pub fn set_ball_enabled(&mut self, enabled: bool) -> Result<(), HostRefusal> {
+        self.ball.set_enabled(&mut *self.surfaces, enabled)
     }
 
     /// Create the window for a character, or return the one already showing it (§7.1's 按需创建).
@@ -372,12 +373,13 @@ impl PetWindowHost {
     /// **It also brings up the ball**, and that is a decision rather than a side effect: this is
     /// the call the enable switch makes, and the pet's two surfaces appear and disappear with that
     /// switch — the ball is on by default upstream (`read_ball_visible`'s `unwrap_or(true)`,
-    /// `:334-339`) and its own switch does not exist in this build yet. A ball that would not open
-    /// fails this call rather than being logged and forgotten, because the window the *caller*
-    /// asked for did not come up either; the refusal names the action, and the next enable (or
-    /// character pick) retries, since the ball is only recorded once it opened.
+    /// `:334-339`) and this build's `general.ball` holds the same default. It is `Ball::ensure` that
+    /// reads that switch, so a user who wants the character and not the ball gets exactly that. A
+    /// ball that would not open fails this call rather than being logged and forgotten, because the
+    /// window the *caller* asked for did not come up either; the refusal names the action, and the
+    /// next enable (or character pick) retries, since the ball is only recorded once it opened.
     pub fn open(&mut self, character_id: &str) -> Result<PetInstance, HostRefusal> {
-        self.ensure_ball()?;
+        self.ball.ensure(&mut *self.surfaces, self.visible)?;
         if let Some(existing) = self
             .instances
             .iter()
@@ -450,7 +452,6 @@ impl PetWindowHost {
             .instances
             .iter()
             .map(|open| open.label.clone())
-            .chain(self.ball.clone())
             .collect();
         for label in &labels {
             self.surfaces
@@ -464,6 +465,9 @@ impl PetWindowHost {
                     detail,
                 })?;
         }
+        // The ball is shown and hidden with the rest, and a ball that is not open is not an error:
+        // its own switch may be off, or the compositor may have refused it.
+        self.ball.set_visible(&mut *self.surfaces, visible)?;
         self.visible = visible;
         Ok(())
     }
@@ -502,16 +506,10 @@ impl PetWindowHost {
     /// follows — the same way every other closed window's is.
     pub fn disable(&mut self) -> TeardownReport {
         let mut report = TeardownReport::default();
-        if let Some(label) = self.ball.take() {
-            if let Err(detail) = self.surfaces.close(&label) {
-                report.failed.push(HostRefusal::Window {
-                    action: WindowAction::Close,
-                    detail,
-                });
-                // Still a window, and the same rule as below: it stays so the next teardown can
-                // try again rather than being forgotten while the compositor still holds it.
-                self.ball = Some(label);
-            }
+        if let Err(refusal) = self.ball.close(&mut *self.surfaces) {
+            // Still a window, and the same rule as below: it stays so the next teardown can try
+            // again rather than being forgotten while the compositor still holds it.
+            report.failed.push(refusal);
         }
         for instance in std::mem::take(&mut self.instances) {
             match self.surfaces.close(&instance.label) {
@@ -544,56 +542,6 @@ impl PetWindowHost {
             .ok_or_else(|| HostRefusal::UnrecognizedCaller {
                 observed: caller.label().to_string(),
             })
-    }
-
-    /// Open the ball's window if the pet does not have one yet, and record it once it opened.
-    ///
-    /// Idempotent, and recorded *after* the call succeeds: a compositor that refused it leaves
-    /// this host believing it has no ball, so the next enable asks again instead of reporting a
-    /// window that is not there.
-    fn ensure_ball(&mut self) -> Result<(), HostRefusal> {
-        if self.ball.is_some() {
-            return Ok(());
-        }
-        let label = PetWindowLabel::ball();
-        self.surfaces
-            .open(
-                &label,
-                DESKTOP_PET_BALL_PAGE,
-                self.ball_position(),
-                BALL_WINDOW_SIZE,
-                PET_WINDOW_STYLE,
-                self.visible,
-            )
-            .map_err(|detail| HostRefusal::Window {
-                action: WindowAction::Open,
-                detail,
-            })?;
-        self.ball = Some(label);
-        Ok(())
-    }
-
-    /// Where the ball goes: upstream's default corner, and never off the screen.
-    ///
-    /// Upstream *restored* a dragged position from a file and clamped it, defaulting to the
-    /// bottom-right (`:350-358`). There is no stored position here because nothing can move the
-    /// ball yet — drag needs a window permission the pet's capability deliberately does not hold
-    /// and snap needs a command that does not exist — so this is the default, and a stored
-    /// position arrives with whatever gives the ball its drag. An unreadable work area is not
-    /// substituted with a guessed screen (§7.2): the ball goes to the margins and the compositor
-    /// has the last word, the rule {@link Self::cascade} already follows.
-    fn ball_position(&self) -> Placement {
-        let (width, height) = BALL_WINDOW_SIZE;
-        let Some(area) = self.surfaces.work_area() else {
-            return Placement {
-                x: BALL_MARGIN_X,
-                y: BALL_MARGIN_Y,
-            };
-        };
-        Placement {
-            x: (area.x + area.width - width - BALL_MARGIN_X).max(area.x),
-            y: (area.y + area.height - height - BALL_MARGIN_Y).max(area.y),
-        }
     }
 
     /// Where a new window goes: upstream's cascade (`:281-292`), stepped by index so several

@@ -42,7 +42,7 @@ use std::path::Path;
 use serde_json::json;
 
 use super::character_view::free_character_id;
-use super::resources::{CharacterLibrary, CreateRequest};
+use super::resources::{CharacterKind, CharacterLibrary, CreateRequest};
 use super::settings::{
     DefaultsReason, PetSettingsDomain, PetSettingsLoad, PetSettingsStore, PetSettingsUpdate,
     PetSettingsWrite,
@@ -85,7 +85,10 @@ pub enum Seeded {
     /// nothing was read, written or checked.
     AlreadyOffered,
     /// The character was installed and the selection written, because nobody had chosen.
-    Installed { character_id: String, selected: bool },
+    Installed {
+        character_id: String,
+        selected: bool,
+    },
     /// The character was installed and the selection left alone, because the settings already
     /// held a record — a user who has used the app keeps whatever they chose.
     InstalledOnly { character_id: String },
@@ -129,11 +132,16 @@ pub fn seed(
     // failed between the install and here re-runs both next time — and both are idempotent
     // about what they find, which is what makes re-running them the safe answer.
     if let Err(error) = atomic_write(&marker, "1") {
-        return Err(format!("the shipped character's marker could not be written: {error}"));
+        return Err(format!(
+            "the shipped character's marker could not be written: {error}"
+        ));
     }
 
     Ok(if selected {
-        Seeded::Installed { character_id, selected: true }
+        Seeded::Installed {
+            character_id,
+            selected: true,
+        }
     } else {
         Seeded::InstalledOnly { character_id }
     })
@@ -159,6 +167,7 @@ fn install(library: &CharacterLibrary, installed_at_ms: u64) -> Result<String, S
         .create(&CreateRequest {
             character_id: character_id.clone(),
             name: BUNDLED_CHARACTER_NAME.to_string(),
+            kind: CharacterKind::Created,
             installed_at_ms,
             sheet_name: SHEET_FILE.to_string(),
             sheet: SHEET.to_vec(),
@@ -175,8 +184,10 @@ fn install(library: &CharacterLibrary, installed_at_ms: u64) -> Result<String, S
 /// produced, because a write is only accepted at the revision it was based on (§5.3) and the
 /// defaults record is exactly what this was based on.
 fn select(store: &PetSettingsStore, character_id: &str) -> Result<bool, String> {
-    let PetSettingsLoad::Defaults { reason: DefaultsReason::Absent, record } =
-        store.read(PetSettingsDomain::Character)
+    let PetSettingsLoad::Defaults {
+        reason: DefaultsReason::Absent,
+        record,
+    } = store.read(PetSettingsDomain::Character)
     else {
         // Current, migrated, unreadable or read-only: all four are somebody else's state, and
         // none of them is a first run. §10.2's read-only arm in particular must not be written.
@@ -194,7 +205,9 @@ fn select(store: &PetSettingsStore, character_id: &str) -> Result<bool, String> 
     };
     match store.apply(&write) {
         PetSettingsUpdate::Applied { .. } => Ok(true),
-        other => Err(format!("the shipped character could not be selected: {other:?}")),
+        other => Err(format!(
+            "the shipped character could not be selected: {other:?}"
+        )),
     }
 }
 

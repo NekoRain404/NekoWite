@@ -10,7 +10,16 @@
  * verdict is formed and `verify.mjs` stays the one place a run is reported.
  *
  * Every check names the mutation that turns it red, and each was shown red under one: the chat
- * four under `--violate chatnofocus`, the focus five under `--violate ringless`.
+ * four under `--violate chatnofocus`, and the focus checks under `--violate ringless` — which
+ * suppresses the indicators the per-surface checks are about, and (with `--revert`) puts the
+ * engine's ring back on them, which is the same red arriving from the other side.
+ *
+ * The focus checks split in two, and the split is by what each one can do to a regression:
+ * seven of them read a SURFACE (a stop this task fixed, or one nothing hosts yet), and four read
+ * the INSTRUMENTS — the witness, the sweep over every stop, the two repaired branches held against
+ * five fixture controls, and the census, which is the one that names a stop whose ring is not this
+ * app's. A surface check goes red when its surface regresses; an instrument check goes red when the
+ * method that would find the NEXT surface stops being able to.
  */
 
 export function verifyKeyboard(c, results, avg) {
@@ -224,35 +233,156 @@ if (focus && !focus.skipped) {
         px?.painted === true,
     )
   }
-  // The sweep, printed rather than decided: it covers surfaces this task may not edit, and a
-  // gate that can only go green by opening files outside its brief is not a gate. What it is
-  // for is the report's answer to "is the list of ringless stops complete" — and it is the only
-  // reading in this repository that can say whether the class regrew. The check itself claims
-  // only what it can: that the sweep RAN, over a whole page, through a method that was proved
-  // able to see a ring. The offender list is in the detail for a reader to act on.
+  // The sweep, printed rather than decided — unlike the census below, and the difference is what
+  // each one covers. The sweep walks every stop on whatever page the run booted and names the ones
+  // that paint nothing; its reds are not a defect count this task owns but a reading of the page,
+  // and a run whose page is another feature's would be gated on that feature's markup. What this
+  // check claims is what it can: that the sweep RAN, over a whole page, through a method proved
+  // able to see a ring — and the two lists are in the detail for a reader to act on. Its two
+  // repaired branches are gated separately, on five fixture stops (below) rather than on the
+  // product, so the instrument is held even where the page is not.
   if (focus.sweep) {
     c.run(
       'focus indicator: the sweep reaches every tab stop on the page',
       `the sweep focused ${focus.sweep.total ?? '?'} tab stops through the witness's own method and found ` +
         `${focus.sweep.offenders?.length ?? '?'} that painted nothing: ` +
         `${JSON.stringify((focus.sweep.offenders ?? []).map((o) => `${o.cls || o.tag} (${o.outline})`))}; ` +
-        `${focus.sweep.clean ?? '?'} painted an indicator, ${focus.sweep.unaddressable?.length ?? 0} could not be addressed` +
+        `${focus.sweep.clipped?.length ?? '?'} whose ring layout clips away: ` +
+        `${JSON.stringify((focus.sweep.clipped ?? []).map((o) => `${o.cls || o.tag} (${o.outline} at ${o.offset}, ${o.ring?.onScreen ?? '?'}% on screen)`))}; ` +
+        `${focus.sweep.clean ?? '?'} painted an indicator a reader can see, ${focus.sweep.unaddressable?.length ?? 0} could not be addressed` +
         (focus.sweep.blind ? ' — AND THE SWEEP WAS BLIND' : ''),
       focus.sweep.blind !== true && (focus.sweep.total ?? 0) > 0,
     )
   }
-  // The census, printed for the same reason the sweep is: it covers stops this task does not own,
-  // and the number it produces is a fact about the product rather than about this change. What it
-  // claims is only that it ran over the page and could classify what it saw — the counts are in
-  // the detail, and the two classes it separates are the two answers the sweep cannot tell apart.
+  // ---- The sweep's two repaired branches, on stops whose verdicts are not in question -------
+  //
+  // A sweep nobody has watched decide anything is a sweep nobody can trust, and this file's whole
+  // subject is the reading that was trusted and was wrong. Five fixture stops are mounted by the
+  // probe for the length of one sweep — one of each kind the two repairs are about — and each
+  // check below asserts BOTH polarities in one line: the branch fires on the stop it was written
+  // for, and stays quiet on the stop that looks like it but paints. The pixel half is what makes
+  // the sweep's word checkable, through the same reader every surface above was measured with.
+  //
+  // FAILS IF: the clip test stops firing (the `.graph-canvas` defect stops being findable), stops
+  // firing on the twin that paints (the branch has gone loose and will be switched off), the
+  // box-shadow test goes back to reading the declaration, or the four-frame settle is dropped and
+  // a transitioned ring is read at t=0 as a control that paints nothing.
+  const controls = focus.controls ?? null
+  const verdict = (key) => controls?.verdicts?.[key]?.verdict ?? 'not mounted'
+  const px = (key) => controls?.pixels?.[key] ?? null
+  const paint = (key) => (px(key)?.painted === true ? 'repainted' : 'repainted nothing')
+  if (controls) {
+    c.run(
+      'focus indicator: the sweep sees a ring layout clips away, and does not accuse one that paints',
+      `controls mounted: ${controls.present ?? '?'} of 5; the clipped ring reads "${verdict('clipped')}" ` +
+        `and ${paint('clipped')} (${px('clipped')?.diff?.inside ?? '?'} inside the box, ${px('clipped')?.diff?.outside ?? '?'} outside); ` +
+        `the same ring with room around it reads "${verdict('plain')}" and ${paint('plain')} ` +
+        `(${px('plain')?.diff?.inside ?? '?'} inside, ${px('plain')?.diff?.outside ?? '?'} outside)` +
+        (controls.removed?.mounted === false ? '' : ' — AND THE FIXTURE IS STILL ON THE PAGE'),
+      controls.present === 5 &&
+        verdict('clipped') === 'clipped' &&
+        px('clipped')?.painted === false &&
+        verdict('plain') === 'clean' &&
+        px('plain')?.painted === true,
+    )
+    // FAILS IF: the box-shadow branch is tightened without the settle (the fading control would
+    // read as ringless), or left loose (the empty one would read as painted). The two are the same
+    // repair read from either side, which is why they are asserted together.
+    c.run(
+      'focus indicator: the sweep judges a box-shadow by what it paints, at the end of the fade',
+      `an all-zero transparent shadow reads "${verdict('shadowless')}" and ${paint('shadowless')} ` +
+        `(${JSON.stringify(controls.verdicts?.shadowless?.entry?.boxShadow ?? null)}); ` +
+        `a three-pixel accent shadow reads "${verdict('shadow')}" and ${paint('shadow')} ` +
+        `(${JSON.stringify(controls.verdicts?.shadow?.entry?.boxShadow ?? 'clean')}); the same shadow arriving on a ` +
+        `150ms transition reads "${verdict('fade')}" and ${paint('fade')}`,
+      controls.present === 5 &&
+        verdict('shadowless') === 'offender' &&
+        px('shadowless')?.painted === false &&
+        verdict('shadow') === 'clean' &&
+        px('shadow')?.painted === true &&
+        verdict('fade') === 'clean' &&
+        px('fade')?.painted === true,
+    )
+  } else {
+    c.run(
+      'focus indicator: the sweep sees a ring layout clips away, and does not accuse one that paints',
+      'the control fixture was not mounted, so neither repaired branch of the sweep was shown to fire',
+      false,
+    )
+  }
+  // ---- The enumeration's own blind spot -----------------------------------------------------
+  //
+  // The census is exhaustive over the stops `__nkwTabStops` returns, and the previous list of
+  // offenders was called complete on that basis. It is not the whole tab order: a
+  // `contenteditable` region is focusable with no attribute the selector list names, and this
+  // application's editor body is one — so a ring the product does not draw on the editor would
+  // never have appeared in any list this file prints. Each candidate is focused and read above;
+  // the ones the engine refuses to focus are reported and not judged, and the ones it focuses are
+  // held to the clause the sixteen stops were fixed for: none of the engine's ring.
+  //
+  // FAILS IF: a focusable element outside the enumeration paints the user agent's ring — the
+  // same defect as the sixteen, on a surface no list in this repository could name. An element
+  // that paints NOTHING is printed and not gated: whether a focusable region may hide its own
+  // outline is a design decision (the editor body's caret is the affordance it was traded for),
+  // and a gate that decides it here would be this file making that choice by accident.
+  if (Array.isArray(focus.beyond)) {
+    const candidates = focus.beyond
+    const focusable = candidates.filter((b) => b.focusable === true)
+    const onEngineRing = focusable.filter((b) => String(b.outline ?? '').startsWith('auto'))
+    const ringless = focusable.filter((b) => b.paints !== true)
+    c.run(
+      'focus indicator: no stop the enumeration cannot see paints the engine’s ring',
+      `${candidates.length} candidate(s) beside the enumeration, ${focusable.length} of them focusable: ` +
+        focusable
+          .map(
+            (b) =>
+              `${b.cls || b.tag} (${b.outline}${b.paints === true ? '' : ' — PAINTS NOTHING'}, ` +
+              `${b.onScreen ?? '?'}% on screen, ${b.where?.parent ?? '?'})`,
+          )
+          .join('; ') +
+        (candidates.length === focusable.length
+          ? ''
+          : `; the engine refused ${candidates.length - focusable.length} (${candidates
+              .filter((b) => b.focusable !== true)
+              .map((b) => b.cls || b.tag)
+              .join(', ')})`) +
+        (ringless.length > 0
+          ? ` — ${ringless.length} of them remove the indicator outright rather than painting the wrong one`
+          : ''),
+      onEngineRing.length === 0,
+    )
+  }
+  // The census, GATED — and the gate is the point of this task's second half.
+  //
+  // The previous run of this check asserted only that the census had run, because the stops still
+  // wearing the engine's ring were in files that change could not open: a gate that can only go
+  // green by editing somebody else's component is not a gate, and it said so rather than pretending
+  // otherwise. All sixteen of those stops have now been given the app's ring — six beside their
+  // markup, ten from the shared layer — so the claim can be made in full: **no tab stop on this
+  // page paints a ring that is not this app's**. Deleting any one of those rules turns this red and
+  // names the stop, its class and the chain of parents it lives under.
+  //
+  // FAILS IF: a rule is removed or renamed (a stop comes back on the engine's ring), a new control
+  // is added without one, an author ring is written in a colour that is not the accent, or the
+  // census stops accounting for a stop it walked (the sum clause — a bucket that silently drops
+  // one reads exactly like a page where nothing is wrong).
   if (focus.census) {
     c.run(
-      'focus indicator: the census counts whose ring each tab stop paints',
-      `of ${focus.census.total ?? '?'} stops, ${focus.census.accent ?? '?'} paint the app's own accent ` +
-        `(${JSON.stringify(focus.census.accentList ?? [])}) and ${focus.census.engine ?? '?'} paint the ` +
-        `engine's ring from the user agent's stylesheet (${JSON.stringify(focus.census.engineList ?? [])}); ` +
-        `${focus.census.other ?? '?'} paint something else (${JSON.stringify(focus.census.otherList ?? [])})`,
-      (focus.census.total ?? 0) > 0,
+      'focus indicator: every tab stop paints this app’s ring, not another one',
+      `of ${focus.census.total ?? '?'} stops, ${focus.census.accent ?? '?'} paint the app's own accent; ` +
+        `${focus.census.engine ?? '?'} still paint the engine's ring from the user agent's stylesheet ` +
+        `(${JSON.stringify(focus.census.engineList ?? [])} — at ${JSON.stringify(focus.census.engineWhere ?? [])}); ` +
+        `${focus.census.foreign ?? '?'} paint a ring of some other colour (${JSON.stringify(focus.census.foreignList ?? [])}); ` +
+        `${focus.census.clippedList?.length ?? 0} paint a ring layout does not leave on screen ` +
+        `(${JSON.stringify(focus.census.clippedList ?? [])}); ` +
+        `${focus.census.other ?? '?'} paint no outline but something else ` +
+        `(${JSON.stringify(focus.census.otherList ?? [])}); ${focus.census.notFocusVisible ?? '?'} did not answer ` +
+        `:focus-visible and ${focus.census.skipped ?? '?'} had no box to read. The accent list is ` +
+        `${JSON.stringify(focus.census.accentList ?? [])}`,
+      (focus.census.total ?? 0) > 0 &&
+        (focus.census.engine ?? -1) === 0 &&
+        (focus.census.foreign ?? -1) === 0 &&
+        (focus.census.classified ?? -1) === (focus.census.total ?? -2),
     )
   }
 }

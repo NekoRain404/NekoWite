@@ -239,13 +239,14 @@ fn a_pet_window_closes_itself_and_the_main_window_is_refused_by_name() {
     );
     assert_eq!(
         pet.surfaces.live(),
-        vec!["pet-1".to_string()],
+        vec!["pet-ball".to_string(), "pet-1".to_string()],
         "a refused close must leave the window alone"
     );
 
     let closed = ok(&character, "desktop_pet_close_own", Value::Null);
     assert_eq!(closed["label"], "pet-1");
-    assert!(pet.surfaces.live().is_empty());
+    // The ball is what is left: closing a character window is not switching the pet off.
+    assert_eq!(pet.surfaces.live(), vec!["pet-ball".to_string()]);
     assert_eq!(pet.surfaces.state().closed, vec!["pet-1".to_string()]);
 }
 
@@ -274,6 +275,43 @@ fn click_through_is_the_callers_own_property_and_nobody_elses() {
         json!({ "ignore": true }),
     );
     assert_eq!(pet.surfaces.state().click_through.get("pet-1"), Some(&true));
+}
+
+/// The ball is one of the pet's windows and not one of its characters, and the IPC entry refuses
+/// it the two operations that act on the calling window.
+///
+/// Both halves are the point. The capability hands `allow-desktop-pet-set-click-through` to every
+/// window matching `pet-*` — which the ball must match, or it would hold no IPC at all — so the
+/// capability file is not what keeps the ball clickable; this is. The ball is a stable click
+/// target, and a window that could turn its own input region off is the opposite of one.
+#[test]
+fn the_ball_window_holds_no_window_of_its_own_to_change() {
+    let pet = app();
+    let main = window(&pet, MAIN_WINDOW);
+    ok(&main, "desktop_pet_open", json!({ "characterId": "cat" }));
+    let ball = window(&pet, "pet-ball");
+
+    for cmd in ["desktop_pet_set_click_through", "desktop_pet_close_own"] {
+        let body = if cmd == "desktop_pet_set_click_through" {
+            json!({ "ignore": true })
+        } else {
+            Value::Null
+        };
+        let refused = call(&ball, cmd, body).expect_err("the ball is not a character window");
+        assert_eq!(
+            refused,
+            json!({ "reason": "unrecognized-caller", "observed": "pet-ball" }),
+            "{cmd}"
+        );
+    }
+    assert!(
+        pet.surfaces.state().click_through.is_empty(),
+        "a refused request must not reach the window system"
+    );
+    assert_eq!(
+        pet.surfaces.live(),
+        vec!["pet-ball".to_string(), "pet-1".to_string()]
+    );
 }
 
 #[test]

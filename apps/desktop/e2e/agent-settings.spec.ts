@@ -64,8 +64,8 @@ import type {
 } from '/src/features/agent-settings/components/AgentMcpSettings.vue'
 import type {
   AgentPermissionClient,
-  AgentPermissionReadout,
-} from '/src/features/agent-settings/components/AgentPermissionSettings.vue'
+  PermissionReadout,
+} from '/src/features/agent-settings/services/agent-permission-ipc'
 
 const SECTIONS = {
   runtime: { url: '/src/features/agent-settings/components/AgentRuntimeSettings.vue', host: 'e2e-runtime' },
@@ -149,7 +149,7 @@ async function open(page: Page, section: SectionName, payload: unknown): Promise
         commands: { read: readOnce(initial as unknown as AgentCommandsReadout) } satisfies AgentCommandsClient,
         mcp: { read: readOnce(initial as unknown as AgentMcpReadout) } satisfies AgentMcpClient,
         permission: {
-          read: readOnce(initial as unknown as AgentPermissionReadout),
+          read: readOnce(initial as unknown as PermissionReadout),
         } satisfies AgentPermissionClient,
         skills: {
           read: async () => {
@@ -571,13 +571,31 @@ test.describe('switching a skill off', () => {
 
 test.describe('what a permission prompt can and cannot promise', () => {
   test('shows the engine’s own options and refuses to claim isolation', async ({ page }) => {
+    // `written` is the state this app reaches for a profile it manages, and the only one that
+    // draws rules — the other two are profiles where this app wrote nothing, and the page says so
+    // rather than showing rules the engine was never given.
     await open(page, 'permission', {
-      rules: [{ tool: 'edit', action: 'ask', origin: { kind: 'engine', what: 'the engine’s configuration' } }],
-      optionKinds: ['allow_once', 'allow_always', 'reject_once'],
+      state: 'written',
+      rules: [
+        {
+          tool: 'edit',
+          action: 'ask',
+          origin: { kind: 'host', variable: null, path: '/profiles/default/XDG_CONFIG_HOME/opencode/opencode.json' },
+        },
+        {
+          tool: 'bash',
+          action: 'ask',
+          origin: { kind: 'host', variable: null, path: '/profiles/default/XDG_CONFIG_HOME/opencode/opencode.json' },
+        },
+      ],
+      // Empty, and it is the honest value: the offered options arrive with a request, and this
+      // page is read with no session running.
+      optionKinds: [],
       limits: ['not-a-sandbox', 'no-isolation', 'stale-requests', 'no-silent-approval'],
     })
 
-    await expect(row(page, '[data-test="permission-options"]')).toContainText('allow_always')
+    await expect(row(page, '[data-test="permission-state"]')).toContainText('asks before it changes your files')
+    await expect(row(page, '[data-test="permission-rule-edit"]')).toContainText('ask')
     // §6.3: the options come from the engine, and this app adds none of its own.
     await expect(row(page, '[data-test="permission-no-invention"]')).toContainText('no option of its own')
     // §6.3's closing paragraph, on screen: an unbuilt sandbox must not be displayed as one.

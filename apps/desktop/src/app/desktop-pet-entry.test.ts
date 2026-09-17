@@ -151,6 +151,13 @@ describe('the pet entry is one lightweight window and not a second application',
     //     being read for a `status` while the window renders. It lives in the contract because the
     //     adapter and the window both need it, and `platform/` may not reach into `features/`.
     //
+    // **One more module landed with §7.2's 鼠标穿透**: `composables/use-pet-click-through.ts`. The
+    // window had a host operation it could ask for and never asked for — `desktop_pet_set_click_through`
+    // has been registered and granted to this window since D3, and nothing under `features/` called
+    // it — which is the shape of wiring this repository keeps finding: a name that asserts a state
+    // the build is not in. The rule it carries is a function of what this window is showing, and
+    // nothing in it reads the pointer, because a click-through window is sent no pointer events.
+    //
     // **And the feature's public entry is deliberately *not* in this list.** `features/desktop-pet/index.ts`
     // is where outside callers go (§13.11) — the settings page takes the care panel from it — and
     // reaching it from here would put the whole of it in this window: the care panel, its rules,
@@ -169,6 +176,7 @@ describe('the pet entry is one lightweight window and not a second application',
       'features/desktop-pet/components/PetSprite.vue',
       'features/desktop-pet/components/PetTaskList.vue',
       'features/desktop-pet/components/PetTaskRow.vue',
+      'features/desktop-pet/composables/use-pet-click-through.ts',
       'features/desktop-pet/composables/use-pet-drawing-failure.ts',
       'features/desktop-pet/composables/use-pet-lifecycle.ts',
       'features/desktop-pet/composables/use-pet-window.ts',
@@ -178,6 +186,12 @@ describe('the pet entry is one lightweight window and not a second application',
       'features/desktop-pet/rendering/sprite-sheet.ts',
       'features/desktop-pet/rendering/sprite-slicer.ts',
       'features/desktop-pet/services/pet-appearance.ts',
+      // The ball's drag adapter, carried in because the composition imports it for the *other*
+      // window's resolver (`desktop-pet-composition.ts`). Nothing in this window calls it: the
+      // character window has no drag affordance, which is why the capability that permits the
+      // drag names `pet-ball` alone (`capabilities/desktop-pet-ball.json`). Recorded rather than
+      // hidden, the same way the catalogue contract below is.
+      'features/desktop-pet/services/pet-ball-platform.ts',
       'features/desktop-pet/services/pet-bubble-layout.ts',
       'features/desktop-pet/services/pet-context-menu.ts',
       'features/desktop-pet/services/pet-menu-actions.ts',
@@ -185,11 +199,20 @@ describe('the pet entry is one lightweight window and not a second application',
       'features/desktop-pet/services/pet-task-view.ts',
       'platform/gateways/pet-contracts.ts',
       'platform/gateways/pet-contracts/appearance.ts',
+      // §8's catalogue contract. It arrives because the window reaches `pet-contracts.ts`,
+      // which is a barrel, and the barrel re-exports every part — so this list is where the
+      // widening becomes visible rather than a place to hide it. What the module holds is a
+      // shape, a type guard and no behaviour: the window cannot browse a catalogue, and the
+      // methods that could are on the gateway object it is *handed* rather than one it builds.
+      'platform/gateways/pet-contracts/catalogue.ts',
       'platform/gateways/pet-contracts/config.ts',
       'platform/gateways/pet-contracts/events.ts',
       'platform/gateways/pet-contracts/platform.ts',
       'platform/gateways/pet-contracts/task.ts',
       'platform/gateways/tauri-pet.ts',
+      // The app's shared window controls, reached through the ball's drag adapter (above). One
+      // module for the whole application, so this is a carry rather than a second adapter.
+      'platform/window.ts',
       'styles/palettes.css',
       'styles/tokens.css',
     ])
@@ -221,7 +244,14 @@ describe('the pet entry is one lightweight window and not a second application',
     // `@tauri-apps/api` is the window's host connection and nothing else — `invoke` and `listen`,
     // no plugin, no `@tauri-apps/plugin-notification`, no process control (§4 removes the second
     // quit path, and the ledger's dependency table is where each of those was decided).
-    expect(packagesFrom(ENTRY)).toEqual(['@tauri-apps/api/core', '@tauri-apps/api/event', 'vue'])
+    // `@tauri-apps/api/window` is the ball's drag adapter arriving through the shared composition;
+    // this window calls none of it (`pet-ball-platform.ts` above).
+    expect(packagesFrom(ENTRY)).toEqual([
+      '@tauri-apps/api/core',
+      '@tauri-apps/api/event',
+      '@tauri-apps/api/window',
+      'vue',
+    ])
   })
 
   it('cannot reach the application, its editor, its index or its agent client', () => {

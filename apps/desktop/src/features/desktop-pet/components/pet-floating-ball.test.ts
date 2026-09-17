@@ -305,6 +305,28 @@ describe('the ball and the desktop it stands on', () => {
     expect(movable.title).toMatch(/Drag to move/)
   })
 
+  it('promises nothing the click does not do: the tooltip names no menu', () => {
+    // Upstream's hint said 「Left-click: menu」. The menu is not built — it needs a window resize
+    // this build cannot do and an `ap_left_click_action` this build has not designed — so the
+    // text was a promise, and a user believes a tooltip. What is left is what happens: a real
+    // right-click does open the pet's page, which the case below drives.
+    for (const orb of [mount(), mount({ platform: { startDrag: () => Promise.resolve() } })]) {
+      expect(orb.title).not.toMatch(/menu/i)
+      expect(orb.title).toMatch(/Right-click: settings/)
+      // The other half of the same claim, made to assistive technology rather than to a pointer:
+      // `aria-haspopup` says "activating this shows a menu", and there is none to show.
+      expect(orb.getAttribute('aria-haspopup')).toBeNull()
+    }
+    // A left click still emits the gesture — the seam the menu lands on — and the tooltip is
+    // silent about it rather than wrong about it.
+    const orb = mount()
+    clock = 0
+    orb.dispatchEvent(pointer('pointerdown', 1000, 600))
+    clock = 60
+    orb.dispatchEvent(pointer('pointerup', 1000, 600))
+    expect(events).toEqual(['toggle-menu'])
+  })
+
   it('keeps the dragging state honest when the platform refuses the drag', async () => {
     const orb = mount({ platform: { startDrag: () => Promise.reject(new Error('no compositor')) } })
 

@@ -441,6 +441,50 @@ describe('AgentPermissionPrompt — what the user is approving', () => {
   })
 })
 
+describe('AgentPermissionPrompt — what a lasting answer commits the user to', () => {
+  it('says what “Always allow” does, when the engine offered one', () => {
+    // The engine's own label for the option does not say how long the grant lasts, and the answer
+    // outlives the prompt: the engine stops asking, this app is never told again, and nothing later
+    // arrives to tell the user either. This sentence is the only place that gap is closed.
+    const { host } = mount()
+    const note = host.querySelector('[data-test="permission-lasting-note"]')
+    expect(note?.textContent?.trim()).toBe(t('agent.permission.lastingGrant'))
+    // An undefined key renders as the key, so equality alone would hold for a string the catalogue
+    // never had — which is the failure this block exists to prevent.
+    expect(note?.textContent?.trim()).not.toBe('agent.permission.lastingGrant')
+  })
+
+  it('says nothing about it when the request offers no lasting answer', () => {
+    // §6.3: the options are the request's own. A request with no `allow_always` has no lasting
+    // grant to warn about, and a sentence that appeared anyway would be about a button that is
+    // not on screen.
+    const { host } = mount({
+      request: request({
+        options: [
+          { optionId: 'once', name: 'Allow once', kind: 'allow_once' },
+          { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+        ],
+      }),
+    })
+    expect(host.querySelector('[data-test="permission-lasting-note"]')).toBeNull()
+  })
+
+  it('gives the two allows different glyphs, so the pair is not told apart by colour', () => {
+    // The two allow buttons are the pair a reader is most likely to confuse, and Zed's mapping —
+    // one check for the answer that covers this call, a double check for the one that covers every
+    // later one — is the signal that survives not being read.
+    const { host } = mount()
+    const icons = [...host.querySelectorAll('.agent-perm-options button')].map((button) => ({
+      kind: (button as HTMLElement).dataset.optionKind,
+      glyph: button.querySelector('svg')?.getAttribute('class') ?? '',
+    }))
+    expect(icons.map((entry) => entry.kind)).toEqual(['allow_once', 'allow_always', 'reject_once'])
+    // Lucide names each icon in its class list, so two different names is two different glyphs.
+    expect(icons[0]?.glyph).not.toBe(icons[1]?.glyph)
+    expect(icons[0]?.glyph).not.toBe(icons[2]?.glyph)
+  })
+})
+
 describe('AgentPermissionPrompt — the strings on the chrome', () => {
   it('labels the stop control with a key the catalogue already defines', () => {
     // No `agent.*` namespace exists yet, so the component uses none: the only chrome

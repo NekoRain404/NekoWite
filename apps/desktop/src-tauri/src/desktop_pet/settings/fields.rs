@@ -103,6 +103,18 @@ const GENERAL: &[Field] = &[
             default: "system",
         },
     },
+    // §5.1's 悬浮球, which upstream stores on its own (`read_ball_visible`, on by default,
+    // `references/.../src-tauri/src/lib.rs:334-339`) and this build had no field for: the ball
+    // followed the master switch, so a user who wanted the character and not the ball could not say
+    // so. On by default because that is what upstream's `unwrap_or(true)` means and what this build
+    // already did — the field makes the existing behaviour a choice rather than changing it.
+    //
+    // It is a *preference about one of the pet's windows*, not a second master switch: the ball
+    // exists when this is on and 启用 is on, which is why it is 常规与交互's row and not its own page.
+    Field {
+        name: "ball",
+        kind: Kind::Bool(true),
+    },
 ];
 
 /// The fields of `character`: which character, how big, and which clip plays when.

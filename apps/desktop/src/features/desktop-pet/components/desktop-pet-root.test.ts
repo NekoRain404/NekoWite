@@ -75,6 +75,14 @@ class FakeHost implements PetGateway {
     throw new Error('this window does not import characters')
   }
 
+  async catalogue(): Promise<never> {
+    throw new Error('this window has no catalogue page')
+  }
+
+  async adoptCharacter(): Promise<never> {
+    throw new Error('this window has no catalogue page')
+  }
+
   async openTask(): Promise<never> {
     throw new Error('this window was not given a connection to route a task through')
   }
@@ -383,6 +391,81 @@ describe('a failure does not outlive what failed', () => {
 
     expect(document.querySelector('.pet-sprite')).not.toBeNull()
     expect(noticeText()).toBeNull()
+  })
+})
+
+/*
+ * The window's own input region (§7.2's 鼠标穿透).
+ *
+ * This is the wiring half: the policy is `composables/use-pet-click-through.test.ts`'s, and what
+ * is asserted here is that this window *has* one and that it is driven by what the window shows.
+ * Two facts about the state are what make the assertions below meaningful — a fresh window takes
+ * clicks, and a pet that is showing a character and nothing else has nothing to click — so the
+ * first request is the one that stops the window being a 260x320 hole in the desktop, and the
+ * `false` that follows is the one that keeps the bubble clickable when a task arrives.
+ */
+describe('the window takes the pointer only while it has something to click', () => {
+  it('asks for pass-through as soon as it is showing a character and no task', async () => {
+    const host = createMemoryPetGateway({ visible: true, characters: [WORKING] })
+    mount({
+      gateway: host,
+      connection: host,
+      createImage: imagesFor(() => true),
+      readPixels: twoCells,
+    })
+    await flush()
+
+    expect(host.clickThrough()).toEqual([true])
+  })
+
+  it('asks for the pointer back while the bubble is showing a task', async () => {
+    const host = createMemoryPetGateway({ visible: true, characters: [WORKING] })
+    mount({
+      gateway: host,
+      connection: host,
+      createImage: imagesFor(() => true),
+      readPixels: twoCells,
+    })
+    await flush()
+    expect(host.clickThrough()).toEqual([true])
+
+    host.startRun()
+    await flush()
+    await flush()
+
+    // The bubble is the window's only clickable surface today, so its appearing is the one event
+    // that has to turn the compositor's switch back — and it is the bubble's *own* visibility that
+    // decides, not a second copy of "is there a task" in the root.
+    expect(document.querySelector('.pet-bubble')).not.toBeNull()
+    expect(host.clickThrough()).toEqual([true, false])
+  })
+
+  it('lets go again when the surface it was holding the pointer for is gone', async () => {
+    const host = createMemoryPetGateway({ visible: true, characters: [WORKING] })
+    const vm = mount({
+      gateway: host,
+      connection: host,
+      createImage: imagesFor(() => true),
+      readPixels: twoCells,
+    }) as unknown as { lifecycle: { hide(): Promise<void>; show(): Promise<void> } }
+    await flush()
+    host.startRun()
+    await flush()
+    await flush()
+    expect(host.clickThrough()).toEqual([true, false])
+
+    // §7.1's drawing scope: hiding takes the bubble away (§7.1's 隐藏时停止动画绘制), and a window with
+    // nothing on screen has nothing to hold the pointer for. Showing it again is the same rule
+    // read the other way, and the task is still in the list when it comes back.
+    await vm.lifecycle.hide()
+    await flush()
+    await flush()
+    expect(host.clickThrough()).toEqual([true, false, true])
+
+    await vm.lifecycle.show()
+    await flush()
+    await flush()
+    expect(host.clickThrough()).toEqual([true, false, true, false])
   })
 })
 

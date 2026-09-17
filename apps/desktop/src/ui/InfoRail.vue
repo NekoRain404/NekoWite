@@ -176,6 +176,13 @@ const TABS = computed(() => [{ id: 'ai', label: t('rail.ai') }] as const)
   color: var(--app-text);
   background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
 }
+/* The rail's second stop, and it had the same ring as the first one had before its rule was
+   added: the engine's. `.rail-tab` beside it is the shape to follow — 2px of accent at a 1px
+   offset — and the header pads both of them by 8px, so the ring is drawn inside the rail. */
+.rail-close:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
 .rail-body {
   /* The containing block for a section on its way out. */
   position: relative;

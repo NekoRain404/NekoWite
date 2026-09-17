@@ -121,7 +121,13 @@ describe('every control writes the domain it belongs to', () => {
     await choose(fieldControl<HTMLElement>(t('settings.pet.general.motion'), '[role="combobox"]'), 'reduced')
     await flush(DEBOUNCE_PLUS)
 
-    expect(await storedValues(gateway, 'general')).toEqual({ enabled: false, motion: 'reduced' })
+    expect(await storedValues(gateway, 'general')).toEqual({
+      enabled: false,
+      motion: 'reduced',
+      // The ball's switch is on this page too and this case never touched it: it is written
+      // whole-domain, so what a page does not edit keeps the value it was read with.
+      ball: true,
+    })
 
     // The slider is a percentage; the store holds the fraction §5.3's rule is written in.
     const opacity = document.querySelector<HTMLInputElement>('#pet-general-opacity')
@@ -130,6 +136,41 @@ describe('every control writes the domain it belongs to', () => {
     opacity.dispatchEvent(new Event('input', { bubbles: true }))
     await flush(DEBOUNCE_PLUS)
     expect((await storedValues(gateway, 'view')).opacity).toBeCloseTo(0.4)
+  })
+
+  it('reaches the ball’s own switch, which is on the same domain as the master one', async () => {
+    const gateway = createMemoryPetGateway({ capabilities: ALL_AVAILABLE })
+    mount(gateway)
+    await flush()
+
+    const ball = fieldControl<HTMLInputElement>(t('settings.pet.general.ball'), 'input')
+    expect(ball.checked).toBe(true)
+    expect(ball.disabled).toBe(false)
+    ball.click()
+    await flush(DEBOUNCE_PLUS)
+
+    expect((await storedValues(gateway, 'general')).ball).toBe(false)
+    // The master switch is untouched: the two are one `general` record and two decisions, which
+    // is the whole point of the field — a user who wants the character and not the ball.
+    expect((await storedValues(gateway, 'general')).enabled).toBe(true)
+  })
+
+  it('disables the ball’s switch while the pet is off, and says why', async () => {
+    const gateway = createMemoryPetGateway({ capabilities: ALL_AVAILABLE })
+    await seed(gateway, 'general', { enabled: false })
+    mount(gateway)
+    await flush()
+
+    // §5.2's 「不显示可点击但无效果的控件」, applied to a preference about one of the pet's windows:
+    // the value is still stored and still meaningful, but nothing can show it until 显示桌宠 is on.
+    const ball = fieldControl<HTMLInputElement>(t('settings.pet.general.ball'), 'input')
+    expect(ball.disabled).toBe(true)
+    ball.click()
+    await flush(DEBOUNCE_PLUS)
+    expect((await storedValues(gateway, 'general')).ball).toBe(true)
+    const notes = [...document.querySelectorAll<HTMLElement>('.settings-section .settings-note')]
+      .map((note) => note.textContent ?? '')
+    expect(notes.some((note) => note.includes(t('settings.pet.general.ballNote')))).toBe(true)
   })
 
   it('starts the opacity slider and its ends at the schema’s own rule', async () => {
@@ -249,7 +290,11 @@ describe('restoring this page', () => {
     reset.click()
     await flush(DEBOUNCE_PLUS)
 
-    expect(await storedValues(gateway, 'general')).toEqual({ enabled: true, motion: 'system' })
+    expect(await storedValues(gateway, 'general')).toEqual({
+      enabled: true,
+      motion: 'system',
+      ball: true,
+    })
     expect((await storedValues(gateway, 'view')).opacity).toBe(1)
     // §5.3 「恢复本页默认只影响当前域」: the reset reached this page's two domains and no others,
     // which is what keeps it from clearing the character library or care progress.

@@ -17,6 +17,7 @@ import {
   type AgentEvent,
   type AgentEventKind,
   type AgentIdentity,
+  type AgentConfigOption,
   type AgentModelOption,
   type AgentPayloads,
   type AgentSession,
@@ -92,8 +93,9 @@ export function mintSession(
   identity: AgentIdentity,
   models: readonly AgentModelOption[],
   initialModelId: string,
+  options: readonly AgentConfigOption[],
 ): AgentSession {
-  return { ...identity, models, initialModelId } as unknown as AgentSession
+  return { ...identity, models, initialModelId, options } as unknown as AgentSession
 }
 
 /**

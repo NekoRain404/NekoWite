@@ -106,6 +106,12 @@ export type {
 
 export type { PetCareDay, PetCareRead, PetCareSummary } from './pet-contracts/care'
 
+export { isPetCatalogueReading } from './pet-contracts/catalogue'
+export type {
+  PetCatalogueOffer,
+  PetCatalogueReading,
+} from './pet-contracts/catalogue'
+
 export { isPetAppearance } from './pet-contracts/appearance'
 export type {
   PetAppearance,

@@ -104,6 +104,8 @@ mod conflict;
 mod isolation;
 #[path = "agent_settings_ipc_test/jsonc.rs"]
 mod jsonc;
+#[path = "agent_settings_ipc_test/permission.rs"]
+mod permission;
 #[path = "agent_settings_ipc_test/redaction.rs"]
 mod redaction;
 #[path = "agent_settings_ipc_test/support.rs"]

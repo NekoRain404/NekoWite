@@ -141,12 +141,9 @@ impl Engine {
     /// `session/new`, returning the whole response so a caller can keep the engine's own
     /// `configOptions` as well as the id.
     async fn open(&mut self, workspace: &Path) -> Value {
-        self.call(
-            "session/new",
-            json!({ "cwd": workspace, "mcpServers": [] }),
-        )
-        .await
-        .unwrap_or_else(|error| panic!("session/new was refused: {error}"))
+        self.call("session/new", json!({ "cwd": workspace, "mcpServers": [] }))
+            .await
+            .unwrap_or_else(|error| panic!("session/new was refused: {error}"))
     }
 
     /// The same, reduced to the id.
@@ -352,10 +349,12 @@ async fn session_fork_hands_back_a_second_session_the_engine_serves() {
             json!({ "sessionId": parent_id, "cwd": workspace, "mcpServers": [] }),
         )
         .await
-        .unwrap_or_else(|error| panic!(
-            "the engine's handshake advertises sessionCapabilities.fork and it refused \
+        .unwrap_or_else(|error| {
+            panic!(
+                "the engine's handshake advertises sessionCapabilities.fork and it refused \
              session/fork: {error}"
-        ));
+            )
+        });
     let child_id = forked["sessionId"]
         .as_str()
         .unwrap_or_else(|| panic!("session/fork returned no sessionId: {forked}"))
@@ -416,10 +415,12 @@ async fn session_close_is_served_without_taking_another_session_with_it() {
     let closed = engine
         .call("session/close", json!({ "sessionId": doomed }))
         .await
-        .unwrap_or_else(|error| panic!(
-            "the engine's handshake advertises sessionCapabilities.close and it refused \
+        .unwrap_or_else(|error| {
+            panic!(
+                "the engine's handshake advertises sessionCapabilities.close and it refused \
              session/close: {error}"
-        ));
+            )
+        });
     eprintln!("session/close: {doomed} answered {closed}");
 
     let list = engine
@@ -427,9 +428,7 @@ async fn session_close_is_served_without_taking_another_session_with_it() {
         .await
         .expect("session/list");
     let ids = listed_ids(&list);
-    eprintln!(
-        "session/list after the close: {ids:?} (closed {doomed}, kept {kept})"
-    );
+    eprintln!("session/list after the close: {ids:?} (closed {doomed}, kept {kept})");
     assert!(
         ids.contains(&kept),
         "closing one session took another with it: {ids:?}"
@@ -497,11 +496,13 @@ async fn session_load_reopens_a_session_after_the_engine_that_made_it_is_gone() 
             json!({ "sessionId": session, "cwd": workspace, "mcpServers": [] }),
         )
         .await
-        .unwrap_or_else(|error| panic!(
+        .unwrap_or_else(|error| {
+            panic!(
             "the engine's handshake advertises agentCapabilities.loadSession, and a second engine \
              on the same profile refused session/load for a session its own profile created: \
              {error}"
-        ));
+        )
+        });
     eprintln!(
         "session/load: {session} answered {}; frames the load produced: {:?}",
         summarize(&loaded),
@@ -550,10 +551,12 @@ async fn session_resume_reopens_a_session_after_the_engine_that_made_it_is_gone(
             json!({ "sessionId": session, "cwd": workspace, "mcpServers": [] }),
         )
         .await
-        .unwrap_or_else(|error| panic!(
+        .unwrap_or_else(|error| {
+            panic!(
             "the engine's handshake advertises sessionCapabilities.resume and a second engine on \
              the same profile refused session/resume: {error}"
-        ));
+        )
+        });
     eprintln!("session/resume: {session} answered {}", summarize(&resumed));
 
     // A resume is only meaningful if the session is then servable: the response saying so is the

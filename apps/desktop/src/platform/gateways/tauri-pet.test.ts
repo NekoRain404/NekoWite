@@ -25,6 +25,7 @@ import { resolve } from 'node:path'
 import type {
   PetAppearance,
   PetCareRead,
+  PetCatalogueReading,
   PetCharacterEntry,
   PetFeatureState,
   PetSettingsChange,
@@ -109,6 +110,8 @@ const WIRE: [
   ['desktop_pet_appearance', (ipc) => ipc.appearance(), undefined],
   ['desktop_pet_library', (ipc) => ipc.library(), undefined],
   ['desktop_pet_import_character', (ipc) => ipc.importCharacter(), undefined],
+  ['desktop_pet_catalogue', (ipc) => ipc.catalogue(), undefined],
+  ['desktop_pet_adopt_character', (ipc) => ipc.adoptCharacter('boba'), { slug: 'boba' }],
   ['desktop_pet_open_task', (ipc) => ipc.openTask(PET_TASK_KEY), { task: PET_TASK_KEY }],
   ['desktop_pet_read_settings', (ipc) => ipc.readSettings('general'), { domain: 'general' }],
   [
@@ -324,6 +327,22 @@ class FakeIpc implements PetIpc {
   async importCharacter(): Promise<PetCharacterEntry | null> {
     this.record('importCharacter')
     return null
+  }
+
+  async catalogue(): Promise<PetCatalogueReading> {
+    this.record('catalogue')
+    return { status: 'unconfigured' }
+  }
+
+  async adoptCharacter(slug: string): Promise<PetCharacterEntry> {
+    this.record('adoptCharacter', slug)
+    return {
+      characterId: slug,
+      packName: slug,
+      kind: 'remote',
+      files: 'intact',
+      installedAtMs: 1,
+    }
   }
 
   async openTask(key: PetTaskKey): Promise<void> {

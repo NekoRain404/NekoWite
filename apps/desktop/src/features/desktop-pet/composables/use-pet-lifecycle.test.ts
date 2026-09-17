@@ -107,6 +107,14 @@ class FakeHost implements PetGateway {
     throw new Error('the lifecycle does not import characters in these tests')
   }
 
+  async catalogue(): Promise<never> {
+    throw new Error('the lifecycle does not read the character catalogue in these tests')
+  }
+
+  async adoptCharacter(): Promise<never> {
+    throw new Error('the lifecycle does not read the character catalogue in these tests')
+  }
+
   async openTask(): Promise<never> {
     throw new Error('the lifecycle does not route a task in these tests')
   }

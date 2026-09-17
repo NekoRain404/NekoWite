@@ -39,9 +39,11 @@
  *    from them names which one it is. A library whose catalogue is unreachable still has its
  *    characters in it, and the notice says the catalogue was not reached rather than that nothing
  *    is installed.
- *  - **授权不明** is a catalogue offer whose licence was not stated. §8
- *    「不把下载成功当授权证明」: an offer with no stated terms is shown and cannot be adopted, and
- *    the refusal says which of the two it is.
+ *  - **授权不明** is a catalogue offer whose terms were not stated. It is *shown*, it is
+ *    installable, and {@link PetLibraryNotice} says what the catalogue left unsaid: §8's
+ *    「不把下载成功当授权证明」 forbids this app from treating a successful download as permission,
+ *    and it does not oblige it to refuse on the user's behalf. That ruling is the maintainer's and
+ *    is deferred — see `pet-catalogue.ts`'s header for the whole of it.
  *  - **保留已安装角色 / 禁止失败时重新下载覆盖**: nothing in this module removes an installed
  *    character, and {@link planCharacterAdoption} refuses to adopt a slug that is already
  *    installed rather than fetching it again over the user's copy.
@@ -55,7 +57,7 @@
  * an app that quietly selected the first row would be showing the user a pet they did not choose.
  */
 
-import { PET_CATALOGUE } from './pet-catalogue'
+import { PET_CATALOGUE, statesTerms } from './pet-catalogue'
 import type { PetCatalogueState } from './pet-catalogue'
 
 /** What a character's files are, as the host read them (D8's `resources.rs` `EntryState`). */
@@ -66,8 +68,14 @@ export type PetCharacterFiles =
    * user's; it may simply not be drawable. */
   | 'damaged'
 
-/** How a character came to be here. Two arms and neither is remote (see {@link PET_CATALOGUE}). */
-export type PetCharacterKind = 'imported' | 'created'
+/**
+ * How a character came to be here.
+ *
+ * `remote` is a catalogue download. It is recorded rather than folded into `created` because the
+ * deferred licence question is exactly the question "which of these came from a third party", and
+ * a library that filed every download as one the user made could not answer it.
+ */
+export type PetCharacterKind = 'imported' | 'created' | 'remote'
 
 /** One character the host has installed. What the *host* found, never what a catalogue said. */
 export interface PetInstalledCharacter {
@@ -163,8 +171,11 @@ export type PetLibraryNotice =
   | 'catalogue-unconfigured'
   /** The catalogue offers nothing. */
   | 'catalogue-empty'
-  /** At least one offer states no licence, so it cannot be adopted. */
-  | 'offers-without-licence'
+  /**
+   * At least one offer states no terms. A *statement* and not a refusal: the offer is listed and
+   * installable, and the page says what the catalogue left unsaid. See `pet-catalogue.ts`.
+   */
+  | 'offers-without-terms'
 
 /** Everything the library page needs, derived in one pass. */
 export interface PetLibraryReading {
@@ -335,9 +346,16 @@ export function readPetLibrary(
       notices.push('catalogue-empty')
       break
     case 'listed':
-      if (catalogue.offers.some((offer) => offer.licence === null)) {
-        notices.push('offers-without-licence')
+      // A *statement* and not a gate: an offer that states no terms is listed, is installable, and
+      // the page says what the catalogue left unsaid. See `pet-catalogue.ts`'s header for why the
+      // refusal this used to raise is gone.
+      if (catalogue.offers.some((offer) => !statesTerms(offer))) {
+        notices.push('offers-without-terms')
       }
+      break
+    case 'unasked':
+      // Nobody has asked yet. Saying anything about the catalogue here would be a claim the app
+      // cannot support before the read comes back — and one it would have to take back.
       break
   }
 

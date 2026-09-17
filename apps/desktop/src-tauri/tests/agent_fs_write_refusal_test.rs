@@ -29,12 +29,33 @@
 //! passed when the artifact or the credential is absent — for the reason
 //! `agent_live_test.rs` gives: both are legitimately missing from a checkout.
 //!
-//! **It has not been run by whoever wrote it.** Calling it a success because it
-//! compiles would be the same failure class as a read that silently serves stale
-//! text, so it is stated here instead: the decisive run is outstanding. Running it is
-//! one prompt — export `NWK_TEST_KEY` out of `/tmp/nwk-test-key` as
+//! **The decisive run has since happened, and it falsified.** Three runs on
+//! 2026-09-17 left their scratch directories behind with `escape.txt` in them, each
+//! holding the text the write carried (two at five bytes, one at six: three separate
+//! runs, not one file copied). The falsifying assertion is the only one that leaves a
+//! populated directory, and the directory is left *because* it panicked — so the file
+//! on disk is that assertion firing, not a run that stopped early. The premise is
+//! therefore falsified as this file said it would be: after this host refused the
+//! write, the engine wrote the file itself, so a delegated write is an opportunity the
+//! engine may take rather than a gate it must pass, and this host is not the mandatory
+//! route for agent writes. The capability decision has to be re-argued from that.
+//!
+//! The evidence is kept, deliberately: `.tmp-fs-write/real-618994`, `-621121` and
+//! `-623810` (process ids from that session) are on disk, and `/.tmp-fs-write/` in
+//! `.gitignore` is what keeps them out of `git status` without removing them. The
+//! directory with no `escape.txt` beside them (`real-1165437`) is a run that reached
+//! the INCONCLUSIVE assertion instead — the other way this file goes red, and a
+//! different answer.
+//!
+//! Nothing in this file changes because of that: the assertion stays exactly as it is,
+//! so a run with the artifact and the credential keeps reporting the falsification
+//! rather than a green that would read as "the host is the write path after all".
+//! Re-running it is one prompt — export `NWK_TEST_KEY` out of `/tmp/nkw-test-key` as
 //! `scripts/verify-acp-live.sh` does, then
-//! `cargo test --test agent_fs_write_refusal_test`.
+//! `cargo test --test agent_fs_write_refusal_test`. It does not gate a push: CI runs
+//! `cargo test --locked` in a fresh checkout, where `binaries/` holds no engine
+//! artifact (it is untracked) and `NWK_TEST_KEY` is unset, so both gates in
+//! `live_run_inputs` answer SKIP and the run returns before it spends anything.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -107,8 +128,10 @@ const PROFILE_CONFIG: &str = r#"{
 /// the way out — except on a panic, where the directory *is* the evidence of what the
 /// engine did to it and is left for whoever reads the failure.
 ///
-/// It is not in `.gitignore` yet, and it should be, exactly like the two siblings:
-/// the panic path above is the one that leaves a populated directory behind.
+/// It is in `.gitignore` now (`/.tmp-fs-write/`, beside its two siblings), which is
+/// what keeps a left-behind directory out of `git status` without taking it off the
+/// disk — the panic path above is the one that leaves a populated directory behind,
+/// and that directory is evidence rather than litter.
 struct TempRoot {
     path: PathBuf,
 }
@@ -241,7 +264,7 @@ fn live_run_inputs() -> Option<(PathBuf, String)> {
         Ok(key) if !key.trim().is_empty() => Some((artifact, key)),
         _ => {
             eprintln!(
-                "SKIP: NWK_TEST_KEY is not set; it is read from /tmp/nwk-test-key the way \
+                "SKIP: NWK_TEST_KEY is not set; it is read from /tmp/nkw-test-key the way \
                  scripts/verify-acp-live.sh does it"
             );
             None

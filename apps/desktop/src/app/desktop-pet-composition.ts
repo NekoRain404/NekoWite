@@ -36,6 +36,11 @@ import { actOnPetMenu, type PetMenuOutcome } from '../features/desktop-pet/servi
 // spelling of the import would be a re-export to keep in step with the first, and this window is
 // the one place that cannot afford the feature's public entry (see above).
 import type { PetMenuAction } from '../features/desktop-pet/services/pet-context-menu'
+// The ball's drag, as the app's window controls rather than the Tauri bridge — the rule
+// `platform/window.ts` states for every feature. Built below only on the host path, which is what
+// keeps `getCurrentWindow()` out of a page that has no window to name.
+import { createBallPlatform } from '../features/desktop-pet/services/pet-ball-platform'
+import type { DesktopPetBallDependencies } from './desktop-pet-ball-entry'
 import type { DesktopPetDependencies } from './desktop-pet-entry'
 
 /** Whether this window is the app's, or a browser/test page with no host behind it. */
@@ -70,6 +75,26 @@ export function createDesktopPetConnection(): PetHostConnection | null {
 export function resolveDesktopPetDependencies(): DesktopPetDependencies | undefined {
   const connection = createDesktopPetConnection()
   return connection ? { connection } : undefined
+}
+
+/**
+ * The ball window's resolver, as `mountDesktopPetBall` takes one.
+ *
+ * The same connection object the character window gets, built by the same function: both windows
+ * ask the same host the same questions, and a second adapter here would be a second listener per
+ * subscription. What differs is only what the *dependency type* lets each window reach — the ball
+ * takes `PetWindowGateway`, which has no `open`, `disable` or `closeOwn` on it.
+ *
+ * The desktop's drag is supplied **only when there is a Tauri host behind the page**: the controls
+ * it is built on are window calls, and a browser page has no window to drag. Without one the orb
+ * says it cannot be moved, which is true there — the same rule as the connection above, applied to
+ * the other thing this window can be without.
+ */
+export function resolveDesktopPetBallDependencies():
+  | DesktopPetBallDependencies
+  | undefined {
+  const connection = createDesktopPetConnection()
+  return connection ? { connection, platform: createBallPlatform() } : undefined
 }
 
 /**

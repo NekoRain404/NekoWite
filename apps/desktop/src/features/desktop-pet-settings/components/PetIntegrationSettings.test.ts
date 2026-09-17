@@ -28,7 +28,6 @@ import type { PetSettingsContext, PetSettingsSessions } from './DesktopPetSettin
 
 /** The rows §5.2 puts on this page, and the ledger's §3 review of the four upstream plugins. */
 const ROW_IDS = [
-  'catalog',
   'care-sync',
   'external-monitor',
   'update',

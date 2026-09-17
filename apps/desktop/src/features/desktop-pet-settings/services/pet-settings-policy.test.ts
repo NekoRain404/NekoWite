@@ -66,10 +66,13 @@ function currentRecord(domain: PetSettingsDomain, storedRaw: unknown): PetSettin
 
 describe('a stored object: version policy', () => {
   it('reads a record of this build as current, values and revision intact', () => {
-    const outcome = readPetSettingsDomain('general', stored('general', { enabled: false, motion: 'reduced' }))
+    const outcome = readPetSettingsDomain(
+      'general',
+      stored('general', { enabled: false, motion: 'reduced', ball: false }),
+    )
     expect(outcome.status).toBe('current')
     if (outcome.status !== 'current') return
-    expect(outcome.record.values).toEqual({ enabled: false, motion: 'reduced' })
+    expect(outcome.record.values).toEqual({ enabled: false, motion: 'reduced', ball: false })
     expect(outcome.record.revision).toBe(1)
     expect(outcome.record.schemaVersion).toBe(PET_SETTINGS_SCHEMA_VERSION)
   })
@@ -302,23 +305,30 @@ describe('unknown fields: dropped when stored, refused when submitted', () => {
     const read = readPetSettingsValues('general', {
       enabled: true,
       motion: 'system',
+      ball: true,
       ap_something_upstream: 'kept? no',
     })
-    expect(Object.keys(read.values).sort()).toEqual(['enabled', 'motion'])
-    expect(read.values).toEqual({ enabled: true, motion: 'system' })
+    expect(Object.keys(read.values).sort()).toEqual(['ball', 'enabled', 'motion'])
+    expect(read.values).toEqual({ enabled: true, motion: 'system', ball: true })
   })
 
   it('refuses a submitted write carrying a key this build does not know', () => {
     // Accepting and dropping it would report "saved" for a submission the policy did not
     // fully understand.
     expect(
-      petSettingsValueProblems('general', { enabled: true, motion: 'system', futureField: 1 }),
+      petSettingsValueProblems('general', {
+        enabled: true,
+        motion: 'system',
+        ball: true,
+        futureField: 1,
+      }),
     ).toEqual([{ path: 'general.futureField', kind: 'unknown-field' }])
   })
 
   it('refuses a submission that leaves a field out: a write is the domain, not a patch', () => {
     expect(petSettingsValueProblems('general', { enabled: true })).toEqual([
       { path: 'general.motion', kind: 'missing' },
+      { path: 'general.ball', kind: 'missing' },
     ])
     expect(petSettingsValueProblems('project', null)).toEqual([{ path: 'project', kind: 'wrong-type' }])
   })
@@ -344,10 +354,10 @@ describe('the member fields', () => {
 
   it('has no third motion value: the pet may reduce further, never undo the system choice', () => {
     expect(
-      petSettingsValueProblems('general', { enabled: true, motion: 'full' }),
+      petSettingsValueProblems('general', { enabled: true, motion: 'full', ball: true }),
     ).toEqual([{ path: 'general.motion', kind: 'unknown-member' }])
-    expect(petSettingsValueProblems('general', { enabled: true, motion: 'system' })).toEqual([])
-    expect(petSettingsValueProblems('general', { enabled: true, motion: 'reduced' })).toEqual([])
+    expect(petSettingsValueProblems('general', { enabled: true, motion: 'system', ball: true })).toEqual([])
+    expect(petSettingsValueProblems('general', { enabled: true, motion: 'reduced', ball: true })).toEqual([])
   })
 
   it('keeps every roam mode representable, including the ones a machine cannot do', () => {
@@ -490,7 +500,9 @@ describe('the write decision: schema, atomicity', () => {
     )
     expect(outcome.status).toBe('refused')
     if (outcome.status !== 'refused') return
-    expect(outcome.message).toBe('general.enabled:wrong-type, general.motion:unknown-member')
+    expect(outcome.message).toBe(
+      'general.enabled:wrong-type, general.motion:unknown-member, general.ball:missing',
+    )
   })
 
   it('stamps the current schema version on what it applies, whatever the record said', () => {
@@ -534,7 +546,7 @@ describe('the scoped reset', () => {
 
   it('carries one domain’s fields and no other domain’s', () => {
     const general = resetPetSettingsDomain('general', 1)
-    expect(Object.keys(general.values).sort()).toEqual(['enabled', 'motion'])
+    expect(Object.keys(general.values).sort()).toEqual(['ball', 'enabled', 'motion'])
     for (const foreign of [
       'characterId',
       'size',
@@ -564,7 +576,7 @@ describe('the scoped reset', () => {
   })
 
   it('goes through the revision gate like any other write', () => {
-    const before = record('general', { enabled: true, motion: 'reduced' }, 5)
+    const before = record('general', { enabled: true, motion: 'reduced', ball: true }, 5)
     const stale = decidePetSettingsWrite(before, resetPetSettingsDomain('general', 4))
     expect(stale.status).toBe('conflict')
     const fresh = decidePetSettingsWrite(before, resetPetSettingsDomain('general', 5))

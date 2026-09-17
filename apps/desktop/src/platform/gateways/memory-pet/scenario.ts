@@ -15,6 +15,7 @@ import type {
   PetCapability,
   PetCapabilityFinding,
   PetCareSummary,
+  PetCatalogueReading,
   PetCharacterEntry,
   PetFallback,
   PetTaskKey,
@@ -157,4 +158,14 @@ export interface MemoryPetOptions {
    */
   characters?: readonly PetCharacterEntry[]
   importRefusal?: string
+  /**
+   * What the double's catalogue answers, and the sentence a download is refused with.
+   *
+   * Absent means the double answers the `unconfigured` arm, which is what this build answered
+   * before there was a catalogue and is the honest default for a double that has no network. A
+   * `listed` reading makes the gallery reachable; `adoptRefusal` makes the download path's failure
+   * reachable, which is the half a page has to be able to draw.
+   */
+  catalogue?: PetCatalogueReading
+  adoptRefusal?: string
 }

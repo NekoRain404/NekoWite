@@ -14,6 +14,7 @@ import type {
   PetSettingsWrite,
 } from './config'
 import type { PetAppearance, PetCharacterEntry, PetSettingsChange } from './appearance'
+import type { PetCatalogueReading } from './catalogue'
 import type { PetCareRead } from './care'
 import type { PetCapabilityReport } from './platform'
 import type { PetTaskKey, PetTaskState } from './task'
@@ -154,6 +155,28 @@ export interface PetGateway {
    */
   importCharacter(): Promise<PetCharacterEntry | null>
   /**
+   * What the online catalogue offers right now (§8's 在线角色库).
+   *
+   * Read-only, and deliberately not cached on either side: a browse is a user opening a page, and a
+   * copy of a document whose whole purpose is to change would make the first paint fast and every
+   * install after it resolve against a list that may have moved.
+   */
+  catalogue(): Promise<PetCatalogueReading>
+  /**
+   * Download one catalogue offer and install it (§8's transfer rules).
+   *
+   * The argument is a **slug** and nothing else — no address, no host, no path. That is §7.1's
+   * shape ("a caller names a character, never a window") applied to a download, and it is why an
+   * offer carries no URL: the address is resolved on the host side from a catalogue the host read,
+   * so a window cannot point this app's downloader anywhere.
+   *
+   * A refusal rejects with the host's own sentence — which of §8's four checks refused, and with
+   * what — rather than resolving to null, because "the user closed a dialog" is the only thing
+   * `null` means anywhere in this contract ({@link importCharacter}) and a failed download is not
+   * that.
+   */
+  adoptCharacter(slug: string): Promise<PetCharacterEntry>
+  /**
    * Send a click on a task back to the session it belongs to (§6.2's 点击返回任务).
    *
    * The key and nothing else: no URL, no path, no window label, no command. §6.3 requires a
@@ -175,8 +198,16 @@ export interface PetGateway {
  * which is the direction §9 forbids; a port declared in the contract is a shape all three can see.
  *
  * It is narrower than the composition's own object (`PetHostConnection`, which adds the window
- * lifecycle: open, disable, close-own, click-through). That is the point: the entry holds one of
- * these, so the teardown stays one call away from the window that must not reach it.
+ * lifecycle: open, disable, close-own). That is the point: the entry holds one of these, so the
+ * *teardown* — creating and closing character windows, which is the cap and the rollback — stays
+ * one call away from the window that must not reach it.
+ *
+ * {@link PetWindowGateway.setClickThrough} is the one operation from that group that is here
+ * rather than there, and the difference is the argument: it is not a teardown. It changes the
+ * input region of the window that asks and no other — the host reads the caller off the window the
+ * IPC arrived from, so there is nothing for a caller to name and nothing it could turn off that it
+ * does not own. What it does need is the window itself: §7.2's 鼠标穿透 is a property of the
+ * surface, and the surface is the only thing that knows whether it has anything to be clicked on.
  */
 export interface PetWindowGateway extends PetGateway {
   /**
@@ -188,4 +219,18 @@ export interface PetWindowGateway extends PetGateway {
    * pure notification rather than a state, so there is no first delivery to make.
    */
   subscribeSettings(onChange: (change: PetSettingsChange) => void): Promise<() => void>
+  /**
+   * Whether clicks that land on **the calling window** reach it or pass through to what is below
+   * (§7.2's 鼠标穿透).
+   *
+   * `true` asks the compositor to let them through. A request is always about the caller: no
+   * argument names a window, so this cannot be pointed at somebody else's — the same shape as
+   * `closeOwn` on the composition's own object, and for the same reason.
+   *
+   * It is a *window-wide* switch and not a shape — see `usePetClickThrough` for why the window's
+   * own policy is written in terms of what it has on screen rather than in terms of where the
+   * pointer is — and it is deliberately not the renderer's pixel hit test: §7.2 forbids presenting
+   * one as the other, and the two are different machinery on every platform.
+   */
+  setClickThrough(ignore: boolean): Promise<void>
 }

@@ -528,6 +528,7 @@ mod tests {
             .create(&CreateRequest {
                 character_id: id.to_string(),
                 name: name.to_string(),
+                kind: CharacterKind::Created,
                 installed_at_ms: 1_700_000_000_000,
                 sheet_name: sheet_name.to_string(),
                 // Divides into the 6x5 grid below, which the library checks: a sheet that does not

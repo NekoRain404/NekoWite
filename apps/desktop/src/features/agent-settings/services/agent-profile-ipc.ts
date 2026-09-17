@@ -36,11 +36,13 @@
 import {
   CONFIG_MODES,
   DISCOVERY_SURFACES,
+  PERMISSION_STATES,
   type AgentProfileReadout,
   type ConfigMode,
   type ConfigSourceView,
   type CredentialStorageView,
   type CredentialView,
+  type PermissionView,
   type ProfileFields,
   type ProfileUpdate,
 } from './agent-settings-policy'
@@ -148,6 +150,33 @@ function readout(value: unknown): AgentProfileReadout {
     sources: asList(record['sources'], 'sources').map(source),
     credentials: asList(record['credentials'], 'credentials').map(credential),
     credentialStorage: storage(record['credentialStorage']),
+    permissions: permissions(record['permissions']),
+  }
+}
+
+/**
+ * The consent default, as `profile_view()` reports it.
+ *
+ * Every member is checked rather than assumed, and `rules` is checked as a list of members with a
+ * *tool* and an *action* — because the page's sentence is a claim about what the engine was
+ * configured to ask, and a rule this file invented would be that claim made up. `state` is
+ * narrowed to the three ids the backend sends; a fourth would be a state this window has no
+ * sentence for, which reads as "nothing is wrong" and is the one answer this page must not give.
+ * `document` is the only nullable member: `null` is a profile whose rules this host may not write,
+ * which is a fact and not a missing value.
+ */
+function permissions(value: unknown): PermissionView {
+  const record = asRecord(value, 'permissions')
+  return {
+    state: oneOf(record['state'], PERMISSION_STATES, 'permissions.state'),
+    document: asNullableString(record['document'], 'permissions.document'),
+    rules: asList(record['rules'], 'permissions.rules').map((rule, index) => {
+      const entry = asRecord(rule, `permissions.rules[${index}]`)
+      return {
+        tool: asString(entry['tool'], `permissions.rules[${index}].tool`),
+        action: asString(entry['action'], `permissions.rules[${index}].action`),
+      }
+    }),
   }
 }
 

@@ -84,7 +84,53 @@ export interface AgentProfileReadout {
   sources: ConfigSourceView[]
   credentials: CredentialView[]
   credentialStorage: CredentialStorageView
+  permissions: PermissionView
 }
+
+/**
+ * What this app does about permissions for this profile — §8.1's 「列出实际生效源」 for the one
+ * setting this host writes into an engine of its own.
+ *
+ * `state` is the whole point of the type, and it is three ids rather than a boolean because the
+ * third is a real and unprotected one: `not-this-host` is a profile that reuses the user's own
+ * installation, where this app wrote no rules and cannot say what the engine will ask. `rules` is
+ * what this app ships — a fact about this app, not about the file — and `state` is what says
+ * whether those are the ones in force.
+ */
+export interface PermissionView {
+  state: PermissionState
+  /** Where the rules live, or `null` when this host may not write there. */
+  document: string | null
+  rules: PermissionRuleView[]
+}
+
+export type PermissionState = 'written' | 'engine-own' | 'not-this-host'
+
+export const PERMISSION_STATES: readonly PermissionState[] = [
+  'written',
+  'engine-own',
+  'not-this-host',
+]
+
+/** One rule, in the engine's own vocabulary: its tool name and its action for it. */
+export interface PermissionRuleView {
+  tool: string
+  action: string
+}
+
+/** The four option kinds the engine may offer with a request (ACP v1). */
+export type PermissionOptionKind =
+  | 'allow_once'
+  | 'allow_always'
+  | 'reject_once'
+  | 'reject_always'
+
+export const PERMISSION_OPTION_KINDS: readonly PermissionOptionKind[] = [
+  'allow_once',
+  'allow_always',
+  'reject_once',
+  'reject_always',
+]
 
 /** The value the page shows where a credential would be. */
 export const REDACTED_CREDENTIAL = '<redacted>'

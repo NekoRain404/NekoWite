@@ -74,6 +74,16 @@ function profileReadout(revision: string): unknown {
     ],
     credentials: [{ name: 'ANTHROPIC_API_KEY', value: '<redacted>' }],
     credentialStorage: { kind: 'none' },
+    // The consent default, as `profile_view` answers it: `written` for an app-managed profile,
+    // because that is the mode this host writes the engine's configuration in.
+    permissions: {
+      state: 'written',
+      document: '/tmp/profile/XDG_CONFIG_HOME/opencode/opencode.json',
+      rules: [
+        { tool: 'edit', action: 'ask' },
+        { tool: 'bash', action: 'ask' },
+      ],
+    },
   }
 }
 

@@ -63,6 +63,38 @@ export const MEMORY_MODELS: AgentModelOption[] = MEMORY_MODEL_CHOICES.map((choic
 /** The option's current value when the session opens. */
 export const MEMORY_INITIAL_MODEL_ID: string = MEMORY_MODEL_CHOICES[0].value
 
+/** The engine's own id for the model option, so a call can name it without rebuilding it. */
+export const MEMORY_MODEL_ID: string = MEMORY_MODEL_OPTION.id
+
+/**
+ * The second option the double's engine reports, in the shape the pinned engine's own second
+ * option has: `{id: "mode", name: "Session Mode", currentValue: "build", options: [build,
+ * plan]}` (measured against the real engine — `agent_session_lifecycle_test.rs`'s probe).
+ *
+ * It is here for the reason the model option is: the double stands for the engine this app
+ * ships against, and the row it drives is built from what the engine reports. An engine with a
+ * mode selector beside its model selector is the case the control row exists for, and a double
+ * with one option would exercise half of it.
+ */
+export const MEMORY_MODE_OPTION: AgentConfigOption = {
+  id: 'mode',
+  name: 'Session Mode',
+  value: {
+    kind: 'select',
+    current: 'build',
+    choices: [
+      { value: 'build', name: 'Build' },
+      { value: 'plan', name: 'Plan' },
+    ],
+  },
+}
+
+/**
+ * What a session opens with, in the engine's order — the list the handle carries and the list a
+ * move publishes back.
+ */
+export const MEMORY_OPTIONS: readonly AgentConfigOption[] = [MEMORY_MODEL_OPTION, MEMORY_MODE_OPTION]
+
 /** How many events stay replayable by default. */
 export const DEFAULT_REPLAY_LIMIT = 64
 

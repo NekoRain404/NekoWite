@@ -45,6 +45,17 @@ function record(overrides: Record<string, unknown> = {}): Record<string, unknown
     ],
     credentials: [{ name: 'ANTHROPIC_API_KEY', value: '<redacted>' }],
     credentialStorage: { kind: 'host-file', path: '/tmp/profile/auth.json', mode: '600', encrypted: false, keychain: false },
+    // The consent default this app writes into the engine's configuration when it opens a profile
+    // (`profile.rs`'s `apply_shipped_permissions`). `written` is the arm an app-managed profile
+    // reaches, because the host is the one that writes there.
+    permissions: {
+      state: 'written',
+      document: '/tmp/profile/XDG_CONFIG_HOME/opencode/opencode.json',
+      rules: [
+        { tool: 'edit', action: 'ask' },
+        { tool: 'bash', action: 'ask' },
+      ],
+    },
     ...overrides,
   }
 }
@@ -85,6 +96,16 @@ describe('the readout', () => {
       ],
       credentials: [{ name: 'ANTHROPIC_API_KEY', value: '<redacted>' }],
       credentialStorage: { kind: 'host-file', path: '/tmp/profile/auth.json', mode: '600', encrypted: false, keychain: false },
+      // Passed through as the backend sent it, rules and all — this client narrows, and the
+      // sentence about which state is which is the page's own copy.
+      permissions: {
+        state: 'written',
+        document: '/tmp/profile/XDG_CONFIG_HOME/opencode/opencode.json',
+        rules: [
+          { tool: 'edit', action: 'ask' },
+          { tool: 'bash', action: 'ask' },
+        ],
+      },
     })
   })
 

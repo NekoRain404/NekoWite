@@ -150,6 +150,17 @@ export interface PetSettingsValues {
      * would be a setting that cancels a system-wide accessibility choice.
      */
     motion: 'system' | 'reduced'
+    /**
+     * §5.1's 悬浮球: whether the floating ball is one of the pet's windows.
+     *
+     * It defaults on, which is what upstream's own stored flag means (`read_ball_visible`'s
+     * `unwrap_or(true)`) and what this app did before the field existed — the switch makes
+     * the existing behaviour a choice rather than changing it. It is a preference about
+     * *one* of the pet's windows and not a second master switch: the ball is on the
+     * desktop when this is on and `enabled` is on, and switching the pet off takes it
+     * down with everything else.
+     */
+    ball: boolean
   }
   character: {
     /**
@@ -264,7 +275,7 @@ export interface PetSettingsValues {
 
 /** The defaults §5.3 requires each schema to state outright. */
 export const PET_SETTINGS_DEFAULTS: { [D in PetSettingsDomain]: PetSettingsValues[D] } = {
-  general: { enabled: true, motion: 'system' },
+  general: { enabled: true, motion: 'system', ball: true },
   character: {
     characterId: null,
     size: 160,

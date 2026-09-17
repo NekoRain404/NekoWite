@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::desktop_pet::window_host::{
     CallerWindow, PetSurfaces, PetWindowHost, PetWindowLabel, Placement, WindowStyle, WorkArea,
+    BALL_LABEL,
 };
 
 /// The window the app already has, used as the forged caller every identity test tries first.
@@ -24,6 +25,10 @@ pub struct OpenCall {
     pub label: String,
     pub page: String,
     pub at: Placement,
+    /// The size the host asked for, kept so the ball's 80x80 and the character's 260x320 can be
+    /// told apart after the fact — they are the two numbers that make the ball the reference's
+    /// surface rather than a second character window.
+    pub size: (f64, f64),
     pub style: WindowStyle,
     pub visible: bool,
 }
@@ -76,6 +81,42 @@ impl FakeSurfaces {
     pub fn last_open(&self) -> OpenCall {
         self.opened().pop().expect("no window was opened")
     }
+
+    /// The opens that are not the ball's.
+    ///
+    /// The ball comes up with the pet (`PetWindowHost::open`), so a case whose subject is a
+    /// character window counts these rather than `opened()`: the ball's own open is real, and
+    /// {@link Self::ball_call} is where it is asserted about.
+    pub fn character_opens(&self) -> Vec<OpenCall> {
+        self.opened()
+            .into_iter()
+            .filter(|call| call.label != BALL_LABEL)
+            .collect()
+    }
+
+    /// The character window opened last. The ball's open is the first one of every enable, so
+    /// `last_open` would be the character's too — this says so rather than depending on it.
+    pub fn last_character_open(&self) -> OpenCall {
+        self.character_opens()
+            .pop()
+            .expect("no character window was opened")
+    }
+
+    /// The ball's open call, which is the first one of the enable that brought the pet up.
+    pub fn ball_call(&self) -> OpenCall {
+        self.opened()
+            .into_iter()
+            .find(|call| call.label == BALL_LABEL)
+            .expect("the ball was never opened")
+    }
+
+    /// The live windows that are not the ball's.
+    pub fn live_characters(&self) -> Vec<String> {
+        self.live()
+            .into_iter()
+            .filter(|label| label != BALL_LABEL)
+            .collect()
+    }
 }
 
 impl PetSurfaces for FakeSurfaces {
@@ -84,6 +125,7 @@ impl PetSurfaces for FakeSurfaces {
         label: &PetWindowLabel,
         page: &str,
         at: Placement,
+        size: (f64, f64),
         style: WindowStyle,
         visible: bool,
     ) -> Result<(), String> {
@@ -92,6 +134,7 @@ impl PetSurfaces for FakeSurfaces {
             label: label.as_str().to_string(),
             page: page.to_string(),
             at,
+            size,
             style,
             visible,
         });

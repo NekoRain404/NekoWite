@@ -28,6 +28,7 @@ import type {
 import type { AnimationConfig, SpriteClock } from '../rendering/animation-bindings'
 import type { ImageFactory } from '../rendering/sprite-sheet'
 import type { SheetPixelReader } from '../rendering/sprite-slicer'
+import { usePetClickThrough } from '../composables/use-pet-click-through'
 import { usePetDrawingFailure } from '../composables/use-pet-drawing-failure'
 import { usePetLifecycle } from '../composables/use-pet-lifecycle'
 import { usePetWindow } from '../composables/use-pet-window'
@@ -116,6 +117,40 @@ const listOpen = ref(false)
 /** Where the right-click was, in window coordinates, and whether the menu is up. */
 const menuAt = ref<{ x: number; y: number } | null>(null)
 
+/** The bubble, for the one thing only it can answer: whether it is showing anything (§7.2). */
+const bubble = ref<InstanceType<typeof PetBubble> | null>(null)
+
+/**
+ * What this window has for the pointer to act on, which is what decides whether it takes the
+ * pointer at all — the whole of `usePetClickThrough`'s rule.
+ *
+ * Two things today, and they are the whole list: the bubble, whose rows open a task and whose
+ * right-click opens the menu, and the menu itself. **The character is deliberately not on it.**
+ * §7.2's 「角色可点区」 is a target this window does not meet yet, because nothing here handles a
+ * pointer on the sprite: `PetSprite` exposes `hitTest` and `geometry` for a shell that does not
+ * exist (both are `defineExpose`d and nothing calls them), so a click on the character reaches
+ * this window and does nothing but raise WebKit's own context menu. When that shell lands, the
+ * sprite becomes a third entry — and the trade-off has to be decided again rather than inherited,
+ * because one switch for the whole window means a character the pointer can always act on makes
+ * the whole 260x320 rectangle interactive again, which is the defect this rule exists to remove.
+ */
+const needsInput = computed(() => Boolean(bubble.value?.visible) || menuAt.value !== null)
+
+/**
+ * The window's own input region (§7.2's 鼠标穿透), asked for the first time below and re-asked
+ * whenever `needsInput` moves.
+ *
+ * Absent when the window has no host connection, which is a state this component already renders:
+ * a window with no host is a window that never has anything to click, and the compositor's default
+ * — take the clicks — is what it keeps.
+ */
+const clickThrough = props.connection
+  ? usePetClickThrough({
+      setClickThrough: (ignore) => props.connection!.setClickThrough(ignore),
+      needsInput: () => needsInput.value,
+    })
+  : null
+
 /** What to draw: the host's read when there is one, the caller's props otherwise. */
 const appearance = computed<PetAppearanceView | null>(() => window_?.appearance.value ?? null)
 const imageUrl = computed(() => appearance.value?.imageUrl ?? props.imageUrl)
@@ -185,6 +220,11 @@ onMounted(() => {
   // exists for — a pet that is switched on. A disabled window pays one call and draws the "off"
   // sentence anyway, which is the cheaper mistake of the two.
   void window_?.start()
+  // The first ask, and the one this window exists in the plan for: a pet that is showing a
+  // character and nothing else has nothing for the pointer to act on, so it stops being a
+  // 260x320 hole in the desktop from the moment it appears. Every later ask comes from the
+  // watcher on `needsInput` (§7.2's 菜单打开/关闭 included: an open menu is input the window needs).
+  void clickThrough?.sync()
 })
 // Not `await`ed: Vue's unmount is synchronous, and the one thing that is a promise — the host's
 // unsubscribe — is issued before this returns. `usePetLifecycle` also registers its own scope
@@ -202,6 +242,7 @@ defineExpose({ lifecycle })
          has none. -->
     <PetBubble
       v-if="drawing"
+      ref="bubble"
       class="pet-root__bubble"
       :tasks="tasks"
       :now="window_?.now.value ?? 0"

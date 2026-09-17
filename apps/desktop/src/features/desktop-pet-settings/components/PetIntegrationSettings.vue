@@ -20,8 +20,10 @@
  *    available if it were `available`.
  *  - **What this build does not have**, from §5.2 and the ledger's dependency review: the
  *    upstream plugins for process control, autostart and updating, which were *rejected* rather
- *    than deferred; the online gallery; the care login/sync/leaderboard; external hooks and the
- *    local monitor bridge; and the DesktopPet configuration import. Each row carries its reason.
+ *    than deferred; the care login/sync/leaderboard; external hooks and the local monitor bridge;
+ *    and the DesktopPet configuration import. Each row carries its reason. **The online gallery
+ *    is no longer one of these** — it is wired, and its row is on the character page — so it is
+ *    not listed here as absent.
  *
  * Why there is not one switch on this page: an off switch says the feature exists and is merely
  * switched off, and the user then believes the app will do it once enabled. That belief is the
@@ -86,7 +88,10 @@ const nothingReported = computed(() => reportedCapabilities(props.context).lengt
  * Ids, not sentences: the wording lives in the catalogue (`settings.pet.integration.rows.<id>`),
  * so a row cannot quietly change what it claims here.
  */
-const ONLINE_ROWS = ['catalog', 'care-sync', 'external-monitor'] as const
+// `catalog` is deliberately absent: §8's online gallery is wired now, and it lives on the
+// character page where a user picks a character. A row saying it is not in this build would be the
+// lie this page exists to avoid (§7.2's 不伪装已支持, in the other direction).
+const ONLINE_ROWS = ['care-sync', 'external-monitor'] as const
 const SYSTEM_ROWS = ['update', 'autostart', 'process', 'import-export'] as const
 </script>
 

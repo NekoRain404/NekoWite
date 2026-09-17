@@ -164,6 +164,24 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
     }
   }
 
+  /**
+   * Move one of the session's own options, whichever one it is.
+   *
+   * One path for both public calls, because there is one protocol call behind them
+   * (`session/set_config_option`, id and value as the engine defined them) and one boundary in
+   * front of it: the handle has to be one this gateway minted for a runtime that is still the
+   * live one (§6.1). `selectModel` is the model's name for this, and adds the one check only a
+   * model can carry — that the value is in the catalog this session published.
+   */
+  async function setConfigOption(
+    session: AgentSession,
+    configId: string,
+    value: string,
+  ): Promise<void> {
+    book.recordFor(session)
+    await ipc.selectModel(session.sessionId, configId, value)
+  }
+
   return {
     async start(): Promise<void> {
       // A redundant start is a no-op, like the double's: it must not invalidate the handles a
@@ -199,6 +217,8 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
       return book.open(identity, answer)
     },
 
+    setConfigOption,
+
     async selectModel(session: AgentSession, modelId: string): Promise<void> {
       const record = book.recordFor(session)
       // The same rule as the double's, and §6.3's for permission options: the host does not
@@ -213,7 +233,7 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
       if (record.modelOptionId === null) {
         throw new AgentFailure('invalid-response', 'this engine has no model option to move')
       }
-      await ipc.selectModel(session.sessionId, record.modelOptionId, modelId)
+      await setConfigOption(session, record.modelOptionId, modelId)
     },
 
     async prompt(session: AgentSession, text: string): Promise<AgentRunResult> {

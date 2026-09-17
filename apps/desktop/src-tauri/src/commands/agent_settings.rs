@@ -29,8 +29,9 @@ use tauri::State;
 
 use crate::agent_runtime::config_edit::{self, ConfigEdit, Revision};
 use crate::agent_runtime::profile::{
-    ConfigMode, ConfigSource, CredentialChange, CredentialStorage, Profile, ProfileError,
-    ProfileFields, ProfileReadout, ProfileStore, RecordUpdate,
+    ConfigMode, ConfigSource, CredentialChange, CredentialStorage, PermissionDefaults, Profile,
+    ProfileError, ProfileFields, ProfileReadout, ProfileStore, RecordUpdate,
+    SHIPPED_PERMISSION_RULES,
 };
 use crate::agent_runtime::secret::Secret;
 
@@ -322,7 +323,35 @@ fn profile_view(readout: &ProfileReadout) -> Value {
             .map(|(name, value)| json!({ "name": name, "value": value }))
             .collect::<Vec<_>>(),
         "credentialStorage": storage_view(&readout.credential_storage),
+        // The consent default, and the one thing about it a user has to be able to check: whether
+        // the engine is configured to ask at all. Read out of the same object the session path
+        // writes through (`Profile::apply_shipped_permissions`), so the page cannot report a rule
+        // the engine was not given.
+        "permissions": {
+            "state": permission_state(readout.permission_defaults),
+            "document": readout.permission_document.as_ref().map(|path| path.to_string_lossy()),
+            // The rules this app ships, as the engine's configuration spells them. A fact about
+            // this app rather than about the document — `state` is what says whether they are the
+            // ones in force.
+            "rules": SHIPPED_PERMISSION_RULES
+                .iter()
+                .map(|rule| json!({ "tool": rule.tool, "action": rule.action }))
+                .collect::<Vec<_>>(),
+        },
     })
+}
+
+/// [`PermissionDefaults`] as the settings page reads it.
+///
+/// Three ids rather than a boolean, because the third state is a real one and the one a user whose
+/// files are least protected is in: a profile that reuses the user's own installation is a profile
+/// where this app wrote no rules and cannot say what the engine will ask.
+fn permission_state(defaults: PermissionDefaults) -> &'static str {
+    match defaults {
+        PermissionDefaults::Written => "written",
+        PermissionDefaults::Left | PermissionDefaults::Contended => "engine-own",
+        PermissionDefaults::NotThisHosts => "not-this-host",
+    }
 }
 
 fn source_view(source: &ConfigSource) -> Value {

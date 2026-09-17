@@ -68,6 +68,14 @@ function readout(overrides: Partial<AgentProfileReadout> = {}): AgentProfileRead
       encrypted: false,
       keychain: false,
     },
+    permissions: {
+      state: 'written',
+      document: '/profiles/default/XDG_CONFIG_HOME/opencode/opencode.json',
+      rules: [
+        { tool: 'edit', action: 'ask' },
+        { tool: 'bash', action: 'ask' },
+      ],
+    },
     ...overrides,
   }
 }

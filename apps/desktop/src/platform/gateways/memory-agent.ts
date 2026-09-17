@@ -24,6 +24,7 @@ import {
   AGENT_CAPABILITY_FEATURES,
   AgentFailure,
   type AgentCapabilityReport,
+  type AgentConfigOption,
   type AgentEvent,
   type AgentGateway,
   type AgentIdentity,
@@ -35,7 +36,9 @@ import {
 import {
   DEFAULT_REPLAY_LIMIT,
   MEMORY_INITIAL_MODEL_ID,
+  MEMORY_MODEL_ID,
   MEMORY_MODELS,
+  MEMORY_OPTIONS,
   type MemoryAgentOptions,
   type MemoryEvent,
   type MemoryRunScript,
@@ -55,7 +58,12 @@ import {
 } from './memory-agent/session'
 import { runTurn } from './memory-agent/turn'
 
-export { MEMORY_MODEL_OPTION } from './memory-agent/scenario'
+export {
+  MEMORY_MODE_OPTION,
+  MEMORY_MODEL_ID,
+  MEMORY_MODEL_OPTION,
+  MEMORY_OPTIONS,
+} from './memory-agent/scenario'
 export type {
   MemoryAgentOptions,
   MemoryEvent,
@@ -141,6 +149,72 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
     return record
   }
 
+  /**
+   * The options each session has published, seeded with the one the session opened with.
+   *
+   * Kept here rather than on the session record because it is the *gateway's* account of what
+   * the engine would accept: the record is about the stream, and this is about the call. It is
+   * what lets a test drive the frame the panel's row is built from — a value moved through
+   * `setConfigOption` is published back as `config-changed`, which is how the pinned engine
+   * announces its own change too (measured after every `session/set_config_option`).
+   */
+  const publishedOptions = new Map<string, AgentConfigOption[]>()
+
+  function optionsOf(record: LiveSession): AgentConfigOption[] {
+    // The map is seeded by `openSession`, so the fallback is the no-session case rather than a
+    // second place the seed is written.
+    return publishedOptions.get(record.identity.sessionId) ?? [...MEMORY_OPTIONS]
+  }
+
+  /**
+   * The session's options with one of them moved, or the refusal.
+   *
+   * Both refusals are the engine's own rules rather than this double's invention: an option
+   * this session never published, and a value the option does not offer. Whether the *engine*
+   * would refuse a value it did publish is not measured, which is why the published list is the
+   * boundary — the same one `selectModel` has always drawn.
+   */
+  function moveOption(record: LiveSession, configId: string, value: string): AgentConfigOption[] {
+    const options = optionsOf(record)
+    const option = options.find((entry) => entry.id === configId)
+    if (option === undefined) {
+      throw new AgentFailure(
+        'invalid-response',
+        `this session published no ${configId} option`,
+      )
+    }
+    if (option.value.kind !== 'select') {
+      throw new AgentFailure('invalid-response', `${configId} is not a select option`)
+    }
+    if (!option.value.choices.some((choice) => choice.value === value)) {
+      throw new AgentFailure(
+        'invalid-response',
+        `${value} is not one of ${configId}'s values`,
+      )
+    }
+    const moved = options.map((entry) =>
+      entry.id === configId && entry.value.kind === 'select'
+        ? { ...entry, value: { kind: 'select' as const, current: value, choices: entry.value.choices } }
+        : entry,
+    )
+    publishedOptions.set(record.identity.sessionId, moved)
+    return moved
+  }
+
+  /** Move one of the session's own options, whatever it is — the double's one path, as the
+   *  contract has one. See {@link AgentGateway.setConfigOption}. */
+  async function setConfigOption(
+    session: AgentSession,
+    configId: string,
+    value: string,
+  ): Promise<void> {
+    const record = engineCall(session)
+    const moved = moveOption(record, configId, value)
+    // The engine tells the session about its own change, and this is the frame that carries it:
+    // session-scoped, so `runId` is null rather than the last turn's id.
+    pushEvent(record, 'config-changed', { options: moved }, null)
+  }
+
   return {
     async start() {
       // Starting an already-running runtime is a no-op rather than a restart: a
@@ -186,8 +260,11 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
         sessionId: `session-${sessionCount}`,
       }
       sessions.set(identity.sessionId, createSession(identity, replayLimit))
-      return mintSession(identity, MEMORY_MODELS, MEMORY_INITIAL_MODEL_ID)
+      publishedOptions.set(identity.sessionId, [...MEMORY_OPTIONS])
+      return mintSession(identity, MEMORY_MODELS, MEMORY_INITIAL_MODEL_ID, MEMORY_OPTIONS)
     },
+
+    setConfigOption,
 
     async selectModel(session: AgentSession, modelId: string): Promise<void> {
       engineCall(session)
@@ -200,6 +277,10 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
           `model ${modelId} is not one of the session's models`,
         )
       }
+      // Through the general call, as the contract's two methods relate to each other: the model
+      // option is one of the session's options, and a double that moved it by a second route
+      // would be the parallel mechanism the contract exists to avoid.
+      await setConfigOption(session, MEMORY_MODEL_ID, modelId)
     },
 
     async prompt(session: AgentSession, text: string): Promise<AgentRunResult> {

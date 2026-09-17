@@ -136,10 +136,10 @@ fn every_arm_serializes_the_way_the_contract_spells_it() {
     ));
     assert_eq!(refused["status"], "refused");
     assert_eq!(refused["reason"], "invalid-value");
-    // Schema order, field by field: `enabled` is declared before `motion`.
+    // Schema order, field by field: `enabled` is declared before `motion`, and `ball` after it.
     assert_eq!(
         refused["message"],
-        "general.enabled:wrong-type, general.motion:missing"
+        "general.enabled:wrong-type, general.motion:missing, general.ball:missing"
     );
 
     let newer = outcome(decide_write(

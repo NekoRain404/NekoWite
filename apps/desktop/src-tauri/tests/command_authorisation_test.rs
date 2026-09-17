@@ -390,6 +390,47 @@ fn a_pet_window_cannot_drive_the_features_own_lifecycle() {
     }
 }
 
+/// The floating ball's window is governed by the pet's capability, and this is where "the label
+/// decides which capability a window gets" is measured rather than asserted in prose.
+///
+/// The host mints exactly one label for the ball — `pet-ball` (`window_host.rs`) — and
+/// `capabilities/desktop-pet.json` selects its windows with the glob `pet-*`. Two things have to
+/// hold for the ball, and each fails silently if it does not:
+///
+/// - **the glob has to match the label.** A label no capability matched would be a window whose
+///   every invoke is refused, which the first assertion rules out by reaching a command the pet
+///   capability grants;
+/// - **it has to hand out the pet's eight commands rather than the main window's.** The refusals
+///   below are the same ones a `pet-1` window gets, read against the ball's own label — so a
+///   future label that quietly matched `main` (or a capability that listed `pet-ball` in
+///   `default.json` as well) fails here instead of shipping a launcher with the editor's ACL.
+#[test]
+fn the_ball_window_is_governed_by_the_pets_capability() {
+    let app = app();
+    let ball = window(&app, "pet-ball");
+
+    let reached = call(&ball, "desktop_pet_state", Value::Null)
+        .expect("a pet window may read the feature state");
+    assert_eq!(reached, json!({ "reached": "desktop_pet_state" }));
+
+    for cmd in [
+        // The lifecycle: creating and tearing down pet windows is the settings switch's job.
+        "desktop_pet_open",
+        "desktop_pet_disable",
+        "desktop_pet_windows",
+        "desktop_pet_capabilities",
+        "desktop_pet_care_read",
+        "desktop_pet_read_settings",
+        "desktop_pet_update_settings",
+        // And the app beyond the pet, one from each family the pet's boundary withholds.
+        "agent_stop",
+        "read_file",
+        "take_pending_open",
+    ] {
+        is_not_allowed_on(&ball, cmd, "pet-ball");
+    }
+}
+
 /// The rest of the app: the AI providers, the key store and the host integration.
 #[test]
 fn a_pet_window_cannot_reach_the_providers_or_the_keys() {
@@ -684,8 +725,8 @@ fn the_capability_files_are_the_policy_and_nothing_else() {
     };
     assert_eq!(
         declared.len(),
-        65,
-        "the declared surface is sixty-five commands"
+        67,
+        "the declared surface is sixty-seven commands"
     );
 
     let pet: Vec<String> = allows(&read("desktop-pet.json"));
@@ -709,6 +750,22 @@ fn the_capability_files_are_the_policy_and_nothing_else() {
             "allow-desktop-pet-open-task",
         ],
         "the pet window holds eight of this app's commands and no others"
+    );
+
+    // The ball's own file, which is the one capability that is not a *surface* but a widening of
+    // one: `pet-*` still governs the ball's IPC (above), and this adds one window permission to
+    // one window. Asserted here so the boundary cannot grow quietly — the next permission added to
+    // this file fails this case and has to be argued in the same commit.
+    let ball = read("desktop-pet-ball.json");
+    assert_eq!(
+        ball["windows"],
+        serde_json::json!(["pet-ball"]),
+        "the drag is the ball's, and only the ball's: the character window may still move nothing"
+    );
+    assert_eq!(
+        ball["permissions"],
+        serde_json::json!(["core:window:allow-start-dragging"]),
+        "one permission, and it is not an app command: the compositor does the moving"
     );
 
     let main: Vec<String> = allows(&read("default.json"));

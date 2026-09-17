@@ -2,12 +2,16 @@
 /**
  * The panel's copy tree, handed in rather than reached for.
  *
- * One prop for the whole panel, holding one entry per component that needs words. The
- * catalogue has keys for the command menu and the permission prompt and none for anything
- * this task draws, and this task does not own `src/i18n/namespaces/agent.ts` — so the words
- * arrive from above, which keeps every missing sentence a visible integration point instead
- * of an English string shipped in its place. When the keys land, each component's defaults
- * move into it and these props become overrides.
+ * One prop for the whole panel, holding one entry per component that needs words. They arrive
+ * from above rather than being read here, so a missing sentence is a visible integration point
+ * instead of an English string shipped in its place.
+ *
+ * The catalogue did not have the panel's keys when this prop was written, and it does now
+ * (`src/i18n/namespaces/agent.ts`'s `agent.panel`, added with the composer's control row); the
+ * tree is kept because the *shape* is what makes an unmounted or test-mounted panel say exactly
+ * what its caller gave it. The newer components beside this one read their own defaults from the
+ * catalogue and take these as overrides (`AgentCommandMenu.vue`, `AgentConfigRow.vue`), which is
+ * the direction the rest of the tree moves in as its keys land.
  */
 import type { AgentComposerLabels } from './AgentComposer.vue'
 import type { AgentSessionBarLabels } from './AgentSessionBar.vue'
@@ -59,22 +63,30 @@ export interface AgentPanelLabels {
  * empty. Both answers are the store's own actions — the prompt's answer, and the menu's
  * selection written back into the draft, because §4.1 sends a command as an ordinary prompt.
  *
- * What is deliberately *not* here is the composer's attachment, mode and model controls. That is
- * not a preference about layout: **no layer produces the engine's option list for a session in
- * this build.** The contract has the event kind (`config-changed`), the reducer has the arm, and
- * the view carries `config` — but the host vocabulary in `src-tauri/src/agent_runtime/events.rs`
- * has no kind for it, `normalize_update` drops `SessionUpdate::ConfigOptionUpdate`, and
- * `agent_set_config_option` answers with nothing while throwing away the option list the engine
- * returned. So `view.config` is empty in the running app, and a selector drawn from it would be a
- * control that never appears — or, drawn from `session.models` alone, one whose current value the
- * host would have to shadow because nothing ever pushes the engine's answer back. Both are worse
- * than the gap, and the exact edit each one needs is in this task's report.
+ * The composer's control row is here too — the session's own config options, on the right of the
+ * bar below the field (§5.3's 「模型菜单」, and Zed's arrangement of the same row). **The three
+ * facts this file used to record as a backend gap have changed, and the note is rewritten rather
+ * than dropped because one of them still holds in a narrower form.** The host vocabulary
+ * (`src-tauri/src/agent_runtime/events.rs`) now carries `ConfigChanged` and `normalize_update`
+ * maps `SessionUpdate::ConfigOptionUpdate` into the contract's payload; the live suite holds the
+ * engine's own `config_option_update` to that shape
+ * (`agent_session_ipc_test.rs`, `the_engines_own_options_reach_both_the_caller_and_the_window`).
+ * `agent_set_config_option` now answers the engine's refreshed option list rather than throwing it
+ * away, and `AgentGateway` carries the general `setConfigOption` the row needs — `selectModel` is
+ * the model's special case of it rather than a second mechanism beside it.
+ *
+ * What still holds, and what the row is built around: **`view.config` is filled by frames, and
+ * the engine's first option list arrives as the `session/new` response.** A session that has just
+ * opened therefore has an empty `view.config` while the engine has already reported its options,
+ * and a row drawn from the view alone would be a control that never appears.
+ * `services/agent-config-options.ts` is the one place that decides which report a control came
+ * from, and it is the place to read before changing what the row holds.
  *
  * The session arrives as a prop and is read once: a panel is mounted *per session*, so the
  * composition site keys it (or remounts it) rather than re-pointing it at another session —
  * a store binding cannot be moved to a session the panel was not mounted for.
  */
-import { computed, onBeforeUnmount } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import type {
   AgentCommand,
   AgentGateway,
@@ -83,6 +95,11 @@ import type {
 } from '../../../platform/gateways/agent-contracts'
 import { useAgentCommands } from '../composables/use-agent-commands'
 import { useAgentSession } from '../composables/use-agent-session'
+import {
+  configControls,
+  setConfigOption,
+  type AgentConfigControl,
+} from '../services/agent-config-options'
 import { isRunLive } from '../services/agent-session-view'
 import type { AgentToolEntry } from '../services/agent-timeline'
 import { useAgentSessionStore } from '../stores/agent-session'
@@ -173,6 +190,48 @@ const pendingToolStatus = computed<AgentToolStatus | null>(() => {
 /** Whether the request can no longer be answered — the store's own rule, not a second opinion:
  *  an answer for a request whose run is not live is refused there. */
 const expired = computed(() => view.value === null || !isRunLive(view.value))
+
+/**
+ * The session's own configuration options, as the composer's control row draws them.
+ *
+ * Read from the view — the engine's own frames, replaced whole by each `config-changed` — and
+ * seeded by the session handle for as long as no frame has carried them, which is the state a
+ * session is in the moment it opens. `services/agent-config-options.ts` holds that rule and the
+ * reason for it; nothing here decides what the row contains, because what it contains is the
+ * engine's report rather than this app's list.
+ */
+const config = computed<readonly AgentConfigControl[]>(() =>
+  configControls(props.session, view.value?.config ?? []),
+)
+
+/** The control whose value is being set right now. A second choice while one is in flight is
+ *  refused by the control itself (it is disabled), so this is also what the row reads to know
+ *  which trigger to hold still. */
+const configBusy = ref<string | null>(null)
+
+/** The last set that did not take. Kept rather than dropped because the row goes on showing the
+ *  engine's value: without a word about it, a press that did nothing looks like a press that
+ *  worked. */
+const configFailure = ref<{ key: string; message: string } | null>(null)
+
+/**
+ * One choice in the control row.
+ *
+ * Not the store's business and not the composer's: the option belongs to the session and the
+ * call belongs to the gateway, and both are here. A refusal is already reported to the reader by
+ * the row that made the choice, so nothing is thrown at a click handler that could not catch it.
+ */
+async function onConfigSet(key: string, value: string | boolean): Promise<void> {
+  const control = config.value.find((entry) => entry.key === key)
+  if (control === undefined) return
+  configBusy.value = key
+  configFailure.value = null
+  const outcome = await setConfigOption(props.gateway, props.session, control, value)
+  configBusy.value = null
+  if (!outcome.accepted && outcome.reason === 'refused') {
+    configFailure.value = { key, message: outcome.message }
+  }
+}
 
 /**
  * The `/` menu (T8): the engine's published commands for this session, filtered by the token
@@ -307,10 +366,14 @@ function onSend(text: string): void {
         :running="running"
         :can-send="canSend"
         :resolve-key="commands.onKeydown"
+        :config="config"
+        :config-busy="configBusy"
+        :config-failure="configFailure"
         :labels="labels.composer"
         @send="onSend"
         @stop="stop"
         @composition="onComposition"
+        @set-config="onConfigSet"
       />
     </div>
   </section>

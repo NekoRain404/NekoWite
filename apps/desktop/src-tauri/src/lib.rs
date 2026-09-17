@@ -288,6 +288,11 @@ pub fn run() {
             commands::agent_registry::agent_registry_read,
             commands::agent_registry::agent_registry_add,
             commands::agent_registry::agent_registry_set_enabled,
+            // The ACP catalogue: what the public registry publishes, which other clients support
+            // many engines from. A *read* and nothing else — it parses and describes, and the
+            // §3.3 checks a download would owe travel with it so the page can say why it offers no
+            // install action. Registered here for the reason above.
+            commands::agent_catalogue::agent_catalogue_read,
             // The configuration surface (T12): the profile a settings page manages, and the
             // documents it edits. Registered here for the reason above — this file is the one
             // place the handler list is written — and its state is managed in `setup`, where the

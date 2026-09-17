@@ -38,11 +38,12 @@
 
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { isPetAppearance } from './pet-contracts'
+import { isPetAppearance, isPetCatalogueReading } from './pet-contracts'
 import type {
   PetAppearance,
   PetCapabilityReport,
   PetCareRead,
+  PetCatalogueReading,
   PetCharacterEntry,
   PetFeatureState,
   PetGateway,
@@ -163,6 +164,8 @@ export interface PetIpc {
   appearance(): Promise<PetAppearance>
   library(): Promise<PetCharacterEntry[]>
   importCharacter(): Promise<PetCharacterEntry | null>
+  catalogue(): Promise<PetCatalogueReading>
+  adoptCharacter(slug: string): Promise<PetCharacterEntry>
   openTask(key: PetTaskKey): Promise<void>
   readSettings(domain: PetSettingsDomain): Promise<PetSettingsLoad>
   updateSettings(write: PetSettingsWrite): Promise<PetSettingsUpdate>
@@ -200,6 +203,15 @@ export function createTauriPetIpc(): PetIpc {
     },
     library: () => invoke<PetCharacterEntry[]>('desktop_pet_library'),
     importCharacter: () => invoke<PetCharacterEntry | null>('desktop_pet_import_character'),
+    catalogue: async () => {
+      const read = await invoke<PetCatalogueReading>('desktop_pet_catalogue')
+      // Re-read here rather than trusted, the way the appearance arm above re-reads its
+      // own answer: a frame that is not a reading is answered with the `unreadable` arm —
+      // which is true, and is what the page has a notice for — instead of being handed on
+      // for a caller to read a `status` it does not have.
+      return isPetCatalogueReading(read) ? read : { status: 'unreadable', detail: 'the host answered with something that is not a catalogue' }
+    },
+    adoptCharacter: (slug) => invoke<PetCharacterEntry>('desktop_pet_adopt_character', { slug }),
     openTask: (key) => invoke<void>('desktop_pet_open_task', { task: key }),
     readSettings: (domain) => invoke<PetSettingsLoad>('desktop_pet_read_settings', { domain }),
     updateSettings: (write) => invoke<PetSettingsUpdate>('desktop_pet_update_settings', { write }),
@@ -215,13 +227,18 @@ export function createTauriPetIpc(): PetIpc {
 /**
  * The host connection: D1's `PetGateway`, plus the window operations a gateway has no room for.
  *
- * The extra five are the pet's *lifecycle* — creating a character window, tearing them all down,
- * closing the one that is calling, and click-through — and they are deliberately not on
- * `PetGateway`. That interface is what a settings page and a bubble are handed, and §4's rollback
- * is defined as "the switch, which deletes nothing": an object that could be handed to a page and
- * could also close every window would put the teardown one call away from the thing the teardown
- * must not touch. The composition (§10.1) is what holds this narrower object, and it hands the
- * pages only the gateway half.
+ * The extras are the pet's *lifecycle* — creating a character window, tearing them all down and
+ * closing the one that is calling — plus click-through, and none of them are on `PetGateway`. That
+ * interface is what a settings page and a bubble are handed, and §4's rollback is defined as "the
+ * switch, which deletes nothing": an object that could be handed to a page and could also close
+ * every window would put the teardown one call away from the thing the teardown must not touch.
+ * The composition (§10.1) is what holds this narrower object, and it hands the pages only the
+ * gateway half.
+ *
+ * Click-through is the one of the four that the *window* needs rather than the composition, so it
+ * is also on `PetWindowGateway` — see that interface for why it is not a teardown. Nothing here
+ * changes: this object is what the entry hands the pet window, and it carries every operation
+ * either port names.
  */
 export interface PetHostConnection extends PetGateway {
   /** The feature state, and whether anything is showing. Same as `PetGateway.feature`. */
@@ -234,7 +251,12 @@ export interface PetHostConnection extends PetGateway {
   disable(): Promise<PetTeardownReport>
   /** Close the window that is calling. Refused for any other window. */
   closeOwn(): Promise<PetClosedWindow>
-  /** §7.2's pass-through, system half, on the window that is calling. */
+  /**
+   * §7.2's pass-through, system half, on the window that is calling.
+   *
+   * The same operation `PetWindowGateway` declares, and one implementation of it: the window asks
+   * and the host reads the caller off the window the IPC arrived from.
+   */
   setClickThrough(ignore: boolean): Promise<void>
   /**
    * Hear that a settings domain was written, wherever the write came from.
@@ -274,6 +296,8 @@ export function createTauriPetConnection(options: TauriPetOptions = {}): PetHost
     appearance: () => ipc.appearance(),
     library: () => ipc.library(),
     importCharacter: () => ipc.importCharacter(),
+    catalogue: () => ipc.catalogue(),
+    adoptCharacter: (slug) => ipc.adoptCharacter(slug),
     openTask: (key) => ipc.openTask(key),
     readSettings: (domain) => ipc.readSettings(domain),
     updateSettings: (write) => ipc.updateSettings(write),

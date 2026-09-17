@@ -327,6 +327,12 @@
           "markdownDescription": "Enables the delete_file command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_pet_adopt_character command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-adopt-character",
+          "markdownDescription": "Enables the desktop_pet_adopt_character command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_pet_appearance command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-pet-appearance",
@@ -343,6 +349,12 @@
           "type": "string",
           "const": "allow-desktop-pet-care-read",
           "markdownDescription": "Enables the desktop_pet_care_read command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_pet_catalogue command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-catalogue",
+          "markdownDescription": "Enables the desktop_pet_catalogue command without any pre-configured scope."
         },
         {
           "description": "Enables the desktop_pet_close_own command without any pre-configured scope.",
@@ -723,6 +735,12 @@
           "markdownDescription": "Denies the delete_file command without any pre-configured scope."
         },
         {
+          "description": "Denies the desktop_pet_adopt_character command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-adopt-character",
+          "markdownDescription": "Denies the desktop_pet_adopt_character command without any pre-configured scope."
+        },
+        {
           "description": "Denies the desktop_pet_appearance command without any pre-configured scope.",
           "type": "string",
           "const": "deny-desktop-pet-appearance",
@@ -739,6 +757,12 @@
           "type": "string",
           "const": "deny-desktop-pet-care-read",
           "markdownDescription": "Denies the desktop_pet_care_read command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_pet_catalogue command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-catalogue",
+          "markdownDescription": "Denies the desktop_pet_catalogue command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_pet_close_own command without any pre-configured scope.",

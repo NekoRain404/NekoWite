@@ -65,7 +65,9 @@ function offer(overrides: Partial<PetCatalogueOffer> = {}): PetCatalogueOffer {
   return {
     slug: 'boba',
     name: 'Boba',
-    licence: { author: 'railly', terms: 'CC-BY-4.0' },
+    author: 'railly',
+    kind: 'creature',
+    terms: null,
     ...overrides,
   }
 }
@@ -104,10 +106,12 @@ describe('the four states upstream collapsed into an empty list', () => {
   })
 
   it('says the library is empty when it is, whatever the catalogue is doing', () => {
-    const reading = readPetLibrary(NO_PET_LIBRARY, PET_CATALOGUE)
+    const reading = readPetLibrary(NO_PET_LIBRARY, { status: 'unreachable', detail: 'no route' })
     expect(reading.characters).toEqual([])
     expect(reading.notices).toContain('no-characters')
-    expect(reading.notices).toContain('catalogue-unconfigured')
+    // Both facts, and neither is the other: "nothing is installed" and "the catalogue could not be
+    // read" are two sentences because they are two situations a user acts on differently.
+    expect(reading.notices).toContain('catalogue-unreachable')
   })
 
   it('tells a corrupt catalogue apart from an unreachable one and from an empty one', () => {
@@ -115,7 +119,7 @@ describe('the four states upstream collapsed into an empty list', () => {
       { status: 'unconfigured' },
       { status: 'unreachable', detail: 'connection refused' },
       { status: 'unreadable', detail: 'not JSON' },
-      { status: 'empty' },
+      { status: 'empty', skipped: 0 },
     ]
     const notices = states.map((state) => readPetLibrary(NO_PET_LIBRARY, state).notices)
     const catalogueNotices = notices.map((list) =>
@@ -144,12 +148,19 @@ describe('the four states upstream collapsed into an empty list', () => {
     expect(reading.characters[0].name).toBe('Cat')
   })
 
-  it('states that no catalogue is configured rather than offering nothing', () => {
-    // §8: only local mode until the endpoint, the terms and the data flow are settled. A page
-    // draws "not available" from this; a page that drew nothing would be the control that does
-    // nothing when pressed.
-    expect(PET_CATALOGUE).toEqual({ status: 'unconfigured' })
-    expect(readPetLibrary(NO_PET_LIBRARY).notices).toContain('catalogue-unconfigured')
+  it('says nothing about the catalogue before anybody has asked it', () => {
+    // The initial value is `unasked` and not `unconfigured`: before the host answers, a page has no
+    // business claiming this build has no catalogue, and a notice drawn then would be one it had to
+    // take back. `unconfigured` is still a real arm — a build with no endpoint — and it is drawn
+    // when the host *says* so.
+    expect(PET_CATALOGUE).toEqual({ status: 'unasked' })
+    const before = readPetLibrary(NO_PET_LIBRARY)
+    expect(before.notices).not.toContain('catalogue-unconfigured')
+    expect(before.notices.some((notice) => notice.startsWith('catalogue-'))).toBe(false)
+
+    expect(readPetLibrary(NO_PET_LIBRARY, { status: 'unconfigured' }).notices).toContain(
+      'catalogue-unconfigured',
+    )
   })
 })
 
@@ -249,13 +260,15 @@ describe('removal', () => {
 })
 
 describe('adoption from a catalogue', () => {
-  it('plans a fetch for an offer with a stated licence that is not installed', () => {
+  it('plans a fetch for an offer that is not already installed', () => {
     expect(planCharacterAdoption(NO_PET_LIBRARY, PET_CATALOGUE, offer())).toEqual({
       status: 'refused',
       refusal: 'no-catalogue',
-      detail: expect.stringContaining('no catalogue is configured'),
+      // Nobody has asked yet, and the sentence says that rather than claiming this build has no
+      // catalogue — one is configured and simply has not been read.
+      detail: expect.stringContaining('has not been read yet'),
     })
-    const listed: PetCatalogueState = { status: 'listed', offers: [offer()] }
+    const listed: PetCatalogueState = { status: 'listed', offers: [offer()], skipped: 0 }
     expect(planCharacterAdoption(NO_PET_LIBRARY, listed, offer())).toEqual({
       status: 'planned',
       slug: 'boba',
@@ -263,14 +276,26 @@ describe('adoption from a catalogue', () => {
     })
   })
 
-  it('refuses an offer whose licence the catalogue did not state', () => {
-    // §8: 不把下载成功当授权证明. The pack is still listed; it simply cannot be adopted, and the
-    // refusal names that rather than saying the offer is invalid.
-    const listed: PetCatalogueState = { status: 'listed', offers: [offer({ licence: null })] }
-    const plan = planCharacterAdoption(NO_PET_LIBRARY, listed, offer({ licence: null }))
-    expect(plan.status).toBe('refused')
-    if (plan.status === 'refused') expect(plan.refusal).toBe('licence-unknown')
-    expect(readPetLibrary(NO_PET_LIBRARY, listed).notices).toContain('offers-without-licence')
+  it('installs an offer whose terms the catalogue did not state', () => {
+    // The maintainer's ruling: 许可我们最后解决，能接的全部接入. Every entry of every catalogue
+    // available today states none, so a gate on terms would make all 4,044 offers un-adoptable —
+    // this code re-making a decision it was told to defer. What the page does instead is *say*
+    // what the catalogue left unsaid, which is the notice below.
+    const bare = offer({ terms: null })
+    const listed: PetCatalogueState = { status: 'listed', offers: [bare], skipped: 0 }
+    expect(planCharacterAdoption(NO_PET_LIBRARY, listed, bare)).toEqual({
+      status: 'planned',
+      slug: 'boba',
+      name: 'Boba',
+    })
+    expect(readPetLibrary(NO_PET_LIBRARY, listed).notices).toContain('offers-without-terms')
+    // And an offer that does state terms is not flagged: the notice is about the catalogue's
+    // silence, so it must not appear when there is none.
+    const stated = offer({ terms: 'CC0-1.0' })
+    const withTerms: PetCatalogueState = { status: 'listed', offers: [stated], skipped: 0 }
+    expect(readPetLibrary(NO_PET_LIBRARY, withTerms).notices).not.toContain(
+      'offers-without-terms',
+    )
   })
 
   it('refuses to adopt over a character the user already has', () => {
@@ -281,7 +306,7 @@ describe('adoption from a catalogue', () => {
       names: { boba: 'Boba the Second' },
       selectedId: 'boba',
     }
-    const listed: PetCatalogueState = { status: 'listed', offers: [offer()] }
+    const listed: PetCatalogueState = { status: 'listed', offers: [offer()], skipped: 0 }
     const plan = planCharacterAdoption(installed, listed, offer())
 
     expect(plan.status).toBe('refused')

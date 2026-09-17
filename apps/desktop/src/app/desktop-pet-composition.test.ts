@@ -60,6 +60,32 @@ describe('the pet runs on the host or on nothing', () => {
   })
 })
 
+describe('the ball’s drag, and where it comes from', () => {
+  it('hands the ball window a platform, built on the app’s own window controls', async () => {
+    setHost(true)
+    const { resolveDesktopPetBallDependencies } = await composition()
+
+    const dependencies = resolveDesktopPetBallDependencies()
+
+    // §7.2's 「不伪装已支持」 read the other way: an object that exists is one whose method *does*
+    // something, and this one calls `startDragging` on the window that asked. The orb reads that
+    // presence to choose between 「Drag to move」 and 「This desktop cannot move it」.
+    expect(typeof dependencies?.platform?.startDrag).toBe('function')
+    // And no `snap`: the port says absent is "this desktop cannot do it", and the permission that
+    // would let it park the ball is not one this build holds (see the capability file's note).
+    expect(dependencies?.platform?.snap).toBeUndefined()
+  })
+
+  it('hands the ball window nothing where there is no host', async () => {
+    setHost(false)
+    const { resolveDesktopPetBallDependencies } = await composition()
+
+    // Not a platform whose methods resolve and move nothing: a browser page has no window to drag,
+    // and the orb says so rather than looking movable.
+    expect(resolveDesktopPetBallDependencies()).toBeUndefined()
+  })
+})
+
 describe('what a menu item does', () => {
   /** The connection's gateway half is all `actOnPetMenu` is allowed to reach. */
   class RecordingGateway implements PetGateway {
@@ -107,6 +133,14 @@ describe('what a menu item does', () => {
 
     async importCharacter(): Promise<never> {
       throw new Error('a menu item does not import characters')
+    }
+
+    async catalogue(): Promise<never> {
+      throw new Error('a menu item does not read the character catalogue')
+    }
+
+    async adoptCharacter(): Promise<never> {
+      throw new Error('a menu item does not download a character')
     }
 
     async openTask(): Promise<never> {

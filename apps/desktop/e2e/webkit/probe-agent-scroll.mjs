@@ -44,6 +44,7 @@
  * the two disagree, the difference is the finding.
  */
 import { until } from './webdriver.mjs'
+import { FOCUS_INSTRUMENTS } from './focus-instrument.mjs'
 import {
   AGENT,
   BODY,
@@ -109,6 +110,9 @@ export const agentScrollProbe = {
     const out = { harness, load: load(), violation: violated, boot: {}, held: {}, resume: {}, keys: {}, rail: {} }
 
     await wd.execute(INSTRUMENTS)
+    // The focus instruments are a second script because they are a second subject; the
+    // scripts are one-way — this one reads __nkwTabStops, the enumeration INSTRUMENTS owns.
+    await wd.execute(FOCUS_INSTRUMENTS)
     // The editor's live view, so the caret can be read from the model. The module is the app's
     // own and the page is the app's own dev server, so this is the handle
     // `e2e/support/editorHarness.ts` reads in Chromium.

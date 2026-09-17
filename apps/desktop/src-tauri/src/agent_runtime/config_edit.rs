@@ -155,6 +155,54 @@ impl ConfigDocument {
     pub fn text(&self) -> &str {
         &self.text
     }
+
+    /// Whether this document already has a member named `name` at its root.
+    ///
+    /// The question `apply` cannot answer, and the one a *default* needs: a value this host ships
+    /// may only be written where the document has not spoken, and a caller that cannot tell "the
+    /// member is absent" from "the member is there and says something else" cannot tell a first run
+    /// from a user who made their own choice. Deliberately a `bool` and not a value: this document
+    /// can hold a credential, and a query whose answer is a value would be a second way for that
+    /// text to leave the module.
+    ///
+    /// A document whose root is not an object has no members, which is the honest answer and not a
+    /// failure — nothing in this module writes such a document, and refusing here would make a file
+    /// the host does not own a reason for a settings page to stop working.
+    pub fn has_member(&self, name: &str) -> Result<bool, ConfigError> {
+        let root = scan(&self.text, &self.path)?;
+        Ok(root
+            .object
+            .as_ref()
+            .is_some_and(|object| object.entries.iter().any(|entry| entry.key == name)))
+    }
+
+    /// Whether the member `name` is, byte for byte, `value` as this host serializes it.
+    ///
+    /// The question "is the thing in this document the thing I would write?" — which is what an
+    /// idempotent default and a settings readout both need, and which [`has_member`] cannot answer:
+    /// a member that is *there* and one that is *mine* are different facts, and the difference is
+    /// the whole of whether a host may leave it alone.
+    ///
+    /// A comparison rather than a reader, deliberately. The text of a value is exactly what
+    /// [`ConfigDocument::text`] exists to keep out of every other channel, and a method that handed
+    /// back a member's span would be a second way for a credential to leave this module — so this
+    /// one answers with a `bool` and the caller never sees the bytes it compared.
+    ///
+    /// Whitespace is part of the comparison and that is the safe direction: a member a user
+    /// reformatted by hand compares unequal, and the caller's conservatism is to treat it as
+    /// theirs rather than as its own.
+    ///
+    /// [`has_member`]: ConfigDocument::has_member
+    pub fn member_is(&self, name: &str, value: &Value) -> Result<bool, ConfigError> {
+        let root = scan(&self.text, &self.path)?;
+        let found = root
+            .object
+            .as_ref()
+            .and_then(|object| object.entries.iter().find(|entry| entry.key == name));
+        Ok(found.is_some_and(|entry| {
+            self.text[entry.value.start..entry.value.end] == value.to_string()
+        }))
+    }
 }
 
 /// What a write did.

@@ -13,6 +13,7 @@
  */
 import type {
   PetAppearance,
+  PetCatalogueReading,
   PetCharacterEntry,
   PetSettingsValues,
 } from '../pet-contracts'
@@ -25,6 +26,10 @@ export interface MemoryPetCharacters {
   appearance(): PetAppearance
   /** One import, as the real command's dialog produces: a new entry, or a refusal. */
   importCharacter(): PetCharacterEntry
+  /** What the catalogue answers, which is the `unconfigured` arm unless a test scripted one. */
+  catalogue(): PetCatalogueReading
+  /** One download, as the real command's transfer produces: a new entry, or a refusal. */
+  adoptCharacter(slug: string): PetCharacterEntry
 }
 
 export interface MemoryCharacterOptions {
@@ -36,6 +41,10 @@ export interface MemoryCharacterOptions {
    * double that could only succeed would leave the half of the page that shows a refusal untested.
    */
   importRefusal?: string
+  /** What the catalogue answers. Absent means `unconfigured` — this double has no network. */
+  catalogue?: PetCatalogueReading
+  /** The sentence a download is refused with, for the failure path a page has to draw. */
+  adoptRefusal?: string
 }
 
 /**
@@ -51,6 +60,7 @@ export function createPetCharacterDouble(
 ): MemoryPetCharacters {
   const installed: PetCharacterEntry[] = [...(options.characters ?? [])]
   let imported = 0
+  let downloaded = 0
 
   /**
    * The `character` domain, as the host would read it for an appearance.
@@ -125,6 +135,38 @@ export function createPetCharacterDouble(
         files: 'intact',
         // Later than anything a test hands the double, so "newest first" has something to order.
         installedAtMs: 1_700_000_000_000 + imported,
+      }
+      installed.push(entry)
+      return entry
+    },
+
+    catalogue(): PetCatalogueReading {
+      // `unconfigured` rather than an empty listing, and it is the same value the product answered
+      // before there was an endpoint: a double that answered `listed` with nothing in it would
+      // make "no catalogue" and "an empty catalogue" the same answer, which is the defect the
+      // whole vocabulary exists to keep apart.
+      return options.catalogue ?? { status: 'unconfigured' }
+    },
+
+    adoptCharacter(slug: string): PetCharacterEntry {
+      if (options.adoptRefusal !== undefined) throw new Error(options.adoptRefusal)
+      // The download lands the way a real one does: through the library, under the catalogue's
+      // own slug, as a character that came from the network rather than from the user's files.
+      // A slug that is already installed is refused for the same reason the real library refuses
+      // it — the user's copy is theirs, and a second download would replace it.
+      if (installed.some((entry) => entry.characterId === slug)) {
+        throw new Error(`${slug} is already installed`)
+      }
+      const offered = (options.catalogue?.status === 'listed'
+        ? options.catalogue.offers.find((offer) => offer.slug === slug)
+        : undefined)
+      downloaded += 1
+      const entry: PetCharacterEntry = {
+        characterId: slug,
+        packName: offered?.name ?? slug,
+        kind: 'remote',
+        files: 'intact',
+        installedAtMs: 1_700_000_100_000 + downloaded,
       }
       installed.push(entry)
       return entry

@@ -12,7 +12,7 @@
 //! (「桌宠窗口伪造授权/文件写入 IPC 被拒」), and the entry these tests drive is the authorization
 //! entry rather than something behind it — there is no other way to close a window here.
 
-use crate::desktop_pet::window_host::{Closed, HostRefusal};
+use crate::desktop_pet::window_host::{Closed, HostRefusal, BALL_LABEL};
 use crate::support::{caller, with_host, MAIN_WINDOW};
 
 #[test]
@@ -27,7 +27,46 @@ fn a_pet_window_may_close_itself() {
     assert_eq!(closed.label, instance.label);
     assert_eq!(closed.character_id, "cat");
     assert!(host.instances().is_empty());
-    assert!(surfaces.live().is_empty(), "the window outlived its close");
+    assert!(
+        surfaces.live_characters().is_empty(),
+        "the window outlived its close"
+    );
+}
+
+/// The ball is a pet window and not a character window, and the two operations that act on *the
+/// caller's own window* are refused for it by name.
+///
+/// This is the structural half of 「the ball is a stable click target」: §7.2 makes 鼠标穿透 a
+/// property of a window, the pet's capability grants the permission to the pet's windows as a
+/// group (`windows: ["pet-*"]` — the ball has to match it or hold no IPC at all), and what keeps
+/// the ball from using it is that the host resolves a caller through the character registry, where
+/// the ball has no entry. It cannot be hidden this way either: the ball's life is the feature
+/// switch's, and a window that could close itself could be closed by a click.
+#[test]
+fn the_ball_may_not_close_itself_and_may_not_be_made_click_through() {
+    let (mut host, surfaces) = with_host();
+    let instance = host.open("cat").expect("opens");
+
+    assert_eq!(
+        host.close_own(&caller(BALL_LABEL)),
+        Err(HostRefusal::UnrecognizedCaller {
+            observed: BALL_LABEL.to_string()
+        })
+    );
+    assert_eq!(
+        host.set_click_through(&caller(BALL_LABEL), true),
+        Err(HostRefusal::UnrecognizedCaller {
+            observed: BALL_LABEL.to_string()
+        })
+    );
+    assert!(
+        surfaces.state().click_through.is_empty(),
+        "the compositor was told"
+    );
+    assert_eq!(
+        surfaces.live(),
+        vec![BALL_LABEL.to_string(), instance.label.as_str().to_string()]
+    );
 }
 
 #[test]
@@ -43,7 +82,11 @@ fn the_main_window_is_not_reachable_from_a_pet_shaped_request() {
         })
     );
     assert_eq!(host.instances().len(), 1);
-    assert_eq!(surfaces.live().len(), 1, "a window was closed anyway");
+    assert_eq!(
+        surfaces.live_characters().len(),
+        1,
+        "a window was closed anyway"
+    );
 }
 
 #[test]
@@ -62,7 +105,10 @@ fn a_sibling_pet_window_cannot_be_closed_by_another_pet_window() {
         })
     );
     assert_eq!(host.instances(), [first.clone()]);
-    assert_eq!(surfaces.live(), vec![first.label.as_str().to_string()]);
+    assert_eq!(
+        surfaces.live_characters(),
+        vec![first.label.as_str().to_string()]
+    );
 }
 
 #[test]

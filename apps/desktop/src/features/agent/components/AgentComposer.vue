@@ -49,6 +49,10 @@ export interface AgentComposerLabels {
  */
 import { computed, nextTick, ref, watch } from 'vue'
 import { Send, Square } from 'lucide-vue-next'
+import type { AgentConfigControl } from '../services/agent-config-options'
+import { insertReferenceText } from '../services/agent-context-references'
+import AgentComposerContext from './AgentComposerContext.vue'
+import AgentConfigRow from './AgentConfigRow.vue'
 
 const props = defineProps<{
   /** A run is in flight: the button is a stop, and Enter will not send. */
@@ -67,6 +71,23 @@ const props = defineProps<{
    * saw the composition events first.
    */
   resolveKey?: (event: KeyboardEvent) => 'pass' | 'composing' | 'handled'
+  /**
+   * The session's own configuration options, in the order the engine reported them — the
+   * right-hand group of the bar below the field.
+   *
+   * Empty means this session reported none, and then the group is not drawn at all: what the
+   * row holds is the engine's report rather than a list this app decided on, and a session
+   * with no options has no controls to offer (`AgentConfigRow.vue`, Zed's
+   * `ConfigOptionsView`).
+   */
+  config?: readonly AgentConfigControl[]
+  /** Which of them is being set right now, by key, or null — one call at a time, and the
+   *  control that is mid-call takes no second press. */
+  configBusy?: string | null
+  /** The last set that did not take: which control, and the reason as it arrived. The control
+   *  keeps showing the engine's value either way, because a set that did not happen leaves it
+   *  in force. */
+  configFailure?: { key: string; message: string } | null
   labels: AgentComposerLabels
 }>()
 
@@ -82,6 +103,10 @@ const emit = defineEmits<{
   /** A composition opened or closed. The menu's filter is held still across one (T8), so the
    *  layer that owns it has to know — and the events are this element's to report. */
   composition: [phase: 'start' | 'end']
+  /** The reader chose a value for one of the session's own options, named by its key. What
+   *  that call means — and whether this build can make it at all — is the panel's business,
+   *  not this component's. */
+  setConfig: [key: string, value: string | boolean]
 }>()
 
 const field = ref<HTMLTextAreaElement | null>(null)
@@ -153,6 +178,33 @@ function onKeydown(event: KeyboardEvent): void {
   submit()
 }
 
+/**
+ * Put a reference the reader picked into the message, at the caret.
+ *
+ * The caret is where the reader was typing, so the text lands there; a field that has never been
+ * focused has no selection to read and the reference is appended. What the message becomes is
+ * `insertReferenceText`'s decision rather than this component's — the spaces, the clamp and the
+ * new caret live with the rest of the reference rules — and what is left here is the two things
+ * only the element can do: read the caret off the textarea, and put focus and the caret back.
+ *
+ * Focus goes to the field, and it goes there in a `nextTick`: the list that produced the reference
+ * is being torn down in this same turn, and a field that asked for focus before that patch would
+ * be handing it straight back to a dying menu. Choosing a row is the one way out of that list that
+ * ends here rather than on the control (`AgentComposerContext` returns focus to the control when
+ * the reader *dismisses* it), because the reader's next act is a word, not another file.
+ */
+function insertReference(reference: string): void {
+  const el = field.value
+  const placed = insertReferenceText(draft.value, el?.selectionStart ?? draft.value.length, reference)
+  draft.value = placed.text
+  void nextTick(() => {
+    const target = field.value
+    if (target === null) return
+    target.focus()
+    target.setSelectionRange(placed.caret, placed.caret)
+  })
+}
+
 function onCompositionStart(): void {
   composing.value = true
   emit('composition', 'start')
@@ -189,9 +241,27 @@ defineExpose({ focus })
       @compositionend="onCompositionEnd"
     />
     <div class="agent-composer-bar">
+      <!-- The left-hand end of the row: the files of the folder the agent works in, brought into
+           the message (Zed's `+` at the head of its composer's bottom row). The bar's own
+           structure is untouched — this is one more child, and the hint, the button and whatever
+           the right-hand end adds keep their places in it. The control carries the auto margin
+           that keeps the hint beside it instead of letting `space-between` float the hint into
+           the middle of the row. -->
+      <AgentComposerContext @insert="insertReference" />
       <p class="agent-composer-hint">
         {{ running ? labels.hintBusy : labels.hint }}
       </p>
+      <!-- The right-hand end of the row: the session's own configuration options, then the one
+           button that acts on the words above. That order is Zed's (`agent_ui`'s thread view:
+           the config options, then the send button — `conversation_view/thread_view.rs:4458-4476`),
+           and the group draws itself away entirely when the session reported no options, so an
+           engine with none gets exactly the row that was here before. -->
+      <AgentConfigRow
+        :controls="config ?? []"
+        :busy="configBusy ?? null"
+        :failure="configFailure ?? null"
+        @set="(key, value) => emit('setConfig', key, value)"
+      />
       <!-- A paper plane to send, a square to stop (§5.3), and never both at once: a run in
            flight is the one state in which the reader's next action is not a send. -->
       <button

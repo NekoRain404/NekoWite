@@ -20,10 +20,16 @@
 use serde::Serialize;
 
 use crate::desktop_pet::{
-    PetSettingsDomain, PetSettingsLoad, PetSettingsRecord, PetSettingsStore, PetSettingsUpdate,
-    PetSettingsWrite, PetTaskFeed, PetWindowHost,
+    feature_switch, PetSettingsDomain, PetSettingsLoad, PetSettingsRecord, PetSettingsStore,
+    PetSettingsUpdate, PetSettingsWrite, PetTaskFeed, PetWindowHost,
 };
 use crate::state::DesktopPetState;
+
+/// The switch rule itself lives in the pet's own tree (`desktop_pet::feature_switch`), because the
+/// start path needs it as much as this one does and a second copy of "which windows does this
+/// record open" is the second answer §9 forbids. What is re-exported here is the name the command
+/// surface and its tests have always used.
+pub use crate::desktop_pet::feature_switch::{chosen_character, UNSELECTED_CHARACTER};
 
 use super::desktop_pet::{host, publish_feature, PetFeatureState};
 
@@ -133,49 +139,23 @@ pub fn desktop_pet_update_settings<R: tauri::Runtime>(
     Ok(outcome)
 }
 
-/// The identity the pet's window is opened under while the character domain names none.
-///
-/// Not a character id and not a stand-in for one: `character.characterId` is `null` until a
-/// character is chosen, and nothing can choose one until D8's library commands land. The window is
-/// opened anyway — `DesktopPetRoot.vue` renders exactly this state ("No character is selected.") —
-/// because a master switch whose only effect is a saved file is the inert control the ledger
-/// forbids (「不显示可点击但无效果的控件」). The id is the host's own key and no window ever learns
-/// it, so all it has to be is stable and non-blank, which is what keeps a second enable from
-/// opening a second window.
-pub const UNSELECTED_CHARACTER: &str = "unselected";
-
-/// The feature switch, as the two things it does to the windows: §5.1's 启用 and §4's rollback.
+/// The feature switch, as the two things it does to the windows: §5.1's 启用 and §4's rollback —
+/// and the *other* switch on the same record, §5.1's 悬浮球 (`general.ball`).
 ///
 /// `general.enabled` is a settings *value*, so the windows follow the write that set it rather than
-/// a watcher on a file — and an applied `general` write is the one moment the answer is known to
-/// this process. `true` opens the character window; `false` closes every window with
-/// [`PetWindowHost::disable`], which is the rollback §4 defines as "the switch, which deletes
-/// nothing". A write to any other domain touches no window and answers `None`.
+/// a watcher on a file — and an applied `general` write is one of the two moments the answer is
+/// known to this process (the other is a launch, `desktop_pet::feature_switch::restore`). A write
+/// to any other domain touches no window and answers `None`.
 ///
-/// The two refusals are logged rather than returned, and that is a decision rather than a shrug:
-/// the *setting* was saved, and an answer of "refused" would tell the user their preference did not
-/// take when what failed was a compositor. What happened is still the user's to see — the state
-/// published afterwards says "no window" — and [`desktop_pet_open`] is the call that hands a page
-/// the refusal itself, for a page that wants the sentence.
+/// The rule is `desktop_pet::feature_switch::apply`'s, and this is the command half of it: the
+/// pet's own tree decides which windows a record opens, closes and leaves alone, and what is left
+/// here is the state a window listens for — which only a running app can publish.
 pub fn apply_feature_switch(
     host: &mut PetWindowHost,
     record: &PetSettingsRecord,
     character: &str,
 ) -> Option<PetFeatureState> {
-    if record.domain != PetSettingsDomain::General {
-        return None;
-    }
-    let enabled = record.value("enabled")?.as_bool()?;
-    if enabled {
-        if let Err(refusal) = host.open(character) {
-            eprintln!("the pet's window could not be opened for {character}: {refusal:?}");
-        }
-    } else {
-        for refusal in host.disable().failed {
-            eprintln!("a pet window could not be closed: {refusal:?}");
-        }
-    }
-    Some(PetFeatureState::of(host))
+    feature_switch::apply(host, record, character).then(|| PetFeatureState::of(host))
 }
 
 /// The notification switches, as an applied write delivers them to the ledger that reads them.
@@ -229,12 +209,4 @@ pub(super) fn settings_store<R: tauri::Runtime>(
         format!("the pet's settings have no data directory to live in: {error}")
     })?;
     PetSettingsStore::new(data)
-}
-
-/// The character the pet's window is opened for: the one the settings name, or
-/// [`UNSELECTED_CHARACTER`] while they name none.
-fn chosen_character(store: &PetSettingsStore) -> String {
-    store
-        .chosen_character()
-        .unwrap_or_else(|| UNSELECTED_CHARACTER.to_string())
 }

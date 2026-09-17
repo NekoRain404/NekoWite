@@ -274,4 +274,17 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--app-danger) 18%, transparent);
   color: var(--app-danger);
 }
+
+/* The bar's four controls — the sidebar toggle and the three window buttons — are tab stops,
+   and until now the only ring any of them had was the engine's own: five pixels of the user
+   agent's blue, a colour nothing else in this product draws. The rule is the app's other
+   thirty-pixel icon buttons' rule (.chat-tool, .rail-tab) — two pixels of accent at a one-pixel
+   offset — and the bar's own padding (10px right, 12px left) is room for it, so nothing about
+   the buttons' geometry changes. The close button is in the same selector because it is the
+   same kind of control: it differs in hover colour, which is a colour and not a ring. */
+.tb-btn:focus-visible,
+.tb-window-btn:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
 </style>

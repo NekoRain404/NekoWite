@@ -10,7 +10,7 @@
 use std::fs;
 use std::path::Path;
 
-use crate::desktop_pet::window_host::{HostRefusal, TeardownReport, WindowAction};
+use crate::desktop_pet::window_host::{HostRefusal, TeardownReport, WindowAction, BALL_LABEL};
 use crate::support::{caller, with_host};
 
 #[test]
@@ -26,8 +26,16 @@ fn fifty_open_and_close_cycles_leave_nothing_behind() {
     }
 
     assert!(host.instances().is_empty(), "the registry kept something");
-    assert!(surfaces.live().is_empty(), "a window outlived its close");
+    assert!(
+        surfaces.live_characters().is_empty(),
+        "a character window outlived its close"
+    );
     assert_eq!(surfaces.state().closed.len(), 50);
+    // The ball is the one window these cycles are not about: it came up with the first one and
+    // nothing here closes it — closing a character window is not switching the pet off (§7.1's
+    // 隐藏/禁用 distinction), and the ball has a lifetime of its own upstream.
+    assert_eq!(surfaces.live(), vec![BALL_LABEL.to_string()]);
+    assert_eq!(host.ball().map(|label| label.as_str()), Some(BALL_LABEL));
 
     let mut unique = labels.clone();
     unique.sort();
@@ -48,7 +56,42 @@ fn disabling_closes_every_window_and_reports_them() {
     assert_eq!(closed[0].label, one.label);
     assert_eq!(closed[1].label, two.label);
     assert!(host.instances().is_empty());
-    assert!(surfaces.live().is_empty());
+    assert!(surfaces.live().is_empty(), "the ball outlived the feature");
+    assert!(host.ball().is_none());
+    // The ball closed, and it is not in `closed` — that list names the character each window was
+    // showing, and the ball shows none. What a caller can act on is in `failed`, and it is empty.
+    // The ball goes first: it is not one of the cascade, and taking it down before walking the
+    // character windows keeps that walk a loop over `instances` alone.
+    assert_eq!(
+        surfaces.state().closed,
+        vec![
+            BALL_LABEL.to_string(),
+            one.label.as_str().to_string(),
+            two.label.as_str().to_string()
+        ]
+    );
+}
+
+/// A ball the compositor will not close is reported, kept, and retried — the same rule the
+/// character windows get, and the one case where the ball reaches `failed`.
+#[test]
+fn a_ball_that_will_not_close_stays_in_the_registry_and_is_reported() {
+    let (mut host, surfaces) = with_host();
+    host.open("cat").expect("opens");
+    surfaces.state().refuse_close.push(BALL_LABEL.to_string());
+
+    let report = host.disable();
+
+    assert_eq!(report.closed.len(), 1, "the character closed");
+    assert_eq!(
+        report.failed,
+        [HostRefusal::Window {
+            action: WindowAction::Close,
+            detail: "the compositor declined".to_string(),
+        }]
+    );
+    assert_eq!(host.ball().map(|label| label.as_str()), Some(BALL_LABEL));
+    assert_eq!(surfaces.live(), vec![BALL_LABEL.to_string()]);
 }
 
 #[test]
@@ -87,11 +130,17 @@ fn hide_keeps_the_windows_and_the_registry_and_show_brings_them_back() {
     // here would turn "not now" into "never" — with the way back being a settings page the user
     // would have to find.
     assert_eq!(host.instances(), [instance.clone()]);
-    assert_eq!(surfaces.live(), vec![instance.label.as_str().to_string()]);
+    assert_eq!(
+        surfaces.live(),
+        vec![BALL_LABEL.to_string(), instance.label.as_str().to_string()]
+    );
     assert_eq!(
         surfaces.state().hidden.get(instance.label.as_str()),
         Some(&true)
     );
+    // The ball hides with the rest: §7.1's 隐藏 is a state of the feature, and a ball left on
+    // screen would be a pet the user switched off still taking clicks.
+    assert_eq!(surfaces.state().hidden.get(BALL_LABEL), Some(&true));
 
     host.set_visible(true).expect("shows");
     assert!(host.is_visible());
@@ -99,6 +148,7 @@ fn hide_keeps_the_windows_and_the_registry_and_show_brings_them_back() {
         surfaces.state().hidden.get(instance.label.as_str()),
         Some(&false)
     );
+    assert_eq!(surfaces.state().hidden.get(BALL_LABEL), Some(&false));
     assert_eq!(host.instances(), [instance]);
 }
 

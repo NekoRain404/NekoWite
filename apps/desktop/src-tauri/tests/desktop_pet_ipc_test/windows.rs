@@ -8,8 +8,9 @@ use std::fs;
 use std::path::Path;
 
 use crate::desktop_pet::window_host::{
-    HostRefusal, PetWindowHost, Placement, CHARACTER_WINDOW_SIZE, DEFAULT_CHARACTER_CAP,
-    DESKTOP_PET_PAGE, HARD_CHARACTER_CAP, PET_WINDOW_STYLE,
+    HostRefusal, PetWindowHost, Placement, BALL_LABEL, BALL_WINDOW_SIZE, CHARACTER_WINDOW_SIZE,
+    DEFAULT_CHARACTER_CAP, DESKTOP_PET_BALL_PAGE, DESKTOP_PET_PAGE, HARD_CHARACTER_CAP,
+    PET_WINDOW_STYLE,
 };
 use crate::support::{fill, with_host, FakeSurfaces};
 
@@ -18,8 +19,11 @@ fn one_character_opens_one_window_and_asks_for_the_lightweight_entry() {
     let (mut host, surfaces) = with_host();
     let instance = host.open("cat").expect("the first character fits");
 
-    assert_eq!(surfaces.live(), vec![instance.label.as_str().to_string()]);
-    let call = surfaces.last_open();
+    assert_eq!(
+        surfaces.live_characters(),
+        vec![instance.label.as_str().to_string()]
+    );
+    let call = surfaces.last_character_open();
     assert_eq!(call.page, DESKTOP_PET_PAGE);
     // The page is a file on disk, not a string that happens to look like one: §7.1's whole
     // requirement is that this window loads the pet and nothing else, and a constant nothing
@@ -39,7 +43,11 @@ fn opening_the_same_character_twice_returns_the_window_it_already_has() {
     let again = host.open("cat").expect("the second call is not an error");
 
     assert_eq!(first, again);
-    assert_eq!(surfaces.opened().len(), 1, "a second window per character");
+    assert_eq!(
+        surfaces.character_opens().len(),
+        1,
+        "a second window per character"
+    );
     assert_eq!(host.instances().len(), 1);
 }
 
@@ -84,7 +92,7 @@ fn lowering_the_cap_does_not_close_windows_that_are_already_open() {
     // The limit is on opening. Closing what the user has because a number moved would be this
     // module deciding to take something away, which is the class of thing §4 rules out.
     assert_eq!(host.instances().len(), 3);
-    assert_eq!(surfaces.live().len(), 3);
+    assert_eq!(surfaces.live_characters().len(), 3);
 }
 
 #[test]
@@ -117,7 +125,89 @@ fn a_new_window_is_opened_hidden_when_the_pet_is_hidden() {
 
     // Creating a window while the feature is hidden must not flash it on screen: §7.1's 隐藏 is a
     // state of the feature, not of one window.
-    assert!(!surfaces.last_open().visible);
+    assert!(!surfaces.last_character_open().visible);
+}
+
+/// The ball: the pet's second surface, brought up by the same call and asked for as the
+/// reference's window rather than as a small character window.
+///
+/// Every number here is upstream's, and each is the difference between the two surfaces: the
+/// label (`lib.rs:310`), the 80x80 box for a 56 px orb (`lib.rs:312-314`), the page, and the same
+/// seven presentation flags (`lib.rs:366-372`).
+#[test]
+fn the_pet_comes_up_with_its_ball_on_the_reference_s_window() {
+    let (mut host, surfaces) = with_host();
+    host.open("cat").expect("opens");
+
+    let ball = surfaces.ball_call();
+    assert_eq!(ball.label, BALL_LABEL);
+    assert_eq!(ball.label, "pet-ball");
+    assert_eq!(ball.page, DESKTOP_PET_BALL_PAGE);
+    assert_eq!(ball.size, BALL_WINDOW_SIZE);
+    assert_eq!(ball.size, (80.0, 80.0));
+    assert_ne!(ball.size, CHARACTER_WINDOW_SIZE);
+    assert_eq!(ball.style, PET_WINDOW_STYLE);
+    assert!(ball.visible);
+
+    // The page is a file on disk for the same reason the character page is: a constant nothing
+    // builds is a window that loads a blank frame in the packaged app.
+    assert!(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../desktop-pet-ball.html")
+            .is_file(),
+        "desktop-pet-ball.html is the entry {DESKTOP_PET_BALL_PAGE} names and it is not there"
+    );
+}
+
+#[test]
+fn the_ball_is_opened_once_however_many_characters_arrive() {
+    let (mut host, surfaces) = with_host();
+    fill(&mut host, DEFAULT_CHARACTER_CAP);
+
+    let balls: Vec<_> = surfaces
+        .opened()
+        .into_iter()
+        .filter(|call| call.label == BALL_LABEL)
+        .collect();
+    assert_eq!(
+        balls.len(),
+        1,
+        "the ball is one window, not one per character"
+    );
+    assert_eq!(host.ball().map(|label| label.as_str()), Some(BALL_LABEL));
+    // And it is not a character: the cap counts characters, and a second `open` for a character
+    // that already has a window must not open a second ball either.
+    assert_eq!(host.instances().len(), DEFAULT_CHARACTER_CAP);
+}
+
+#[test]
+fn the_ball_lands_in_the_corner_upstream_put_it_in() {
+    let (mut host, surfaces) = with_host();
+    host.open("cat").expect("opens");
+
+    // The fake's work area is 1920x1080 at the origin, so upstream's default (`lib.rs:357`:
+    // `(sw - BALL_W - 24, sh - BALL_H - 80)`) is `(1920 - 80 - 24, 1080 - 80 - 80)`.
+    assert_eq!(
+        surfaces.ball_call().at,
+        Placement {
+            x: 1816.0,
+            y: 920.0
+        }
+    );
+}
+
+#[test]
+fn a_ball_with_no_screen_to_read_goes_to_the_margin_not_to_a_guessed_corner() {
+    let surfaces = FakeSurfaces::new();
+    surfaces.state().work_area = None;
+    let mut host = PetWindowHost::new(Box::new(surfaces.clone()));
+
+    host.open("cat").expect("a window with no screen to read");
+
+    // The same rule as the character's cascade: an unreadable monitor is not replaced by a size
+    // somebody guessed, so there is no "bottom right of 1920x1080" to compute — only the margin
+    // upstream's default corner is measured from, and the compositor has the last word.
+    assert_eq!(surfaces.ball_call().at, Placement { x: 24.0, y: 80.0 });
 }
 
 #[test]
@@ -139,7 +229,7 @@ fn windows_are_cascaded_so_they_do_not_stack_on_one_pixel() {
     let (mut host, surfaces) = with_host();
     let first = host.open("one").expect("opens");
     let second = host.open("two").expect("opens");
-    let opened = surfaces.opened();
+    let opened = surfaces.character_opens();
     let (a, b) = (opened[0].at, opened[1].at);
 
     assert_ne!(a, b);

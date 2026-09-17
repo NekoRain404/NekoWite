@@ -7,6 +7,8 @@
 //!
 //! - [`window_host`] — which character windows exist, what they are labelled, how they are
 //!   created on demand and torn down, and which window is allowed to ask for any of it (§7.1).
+//!   The floating ball's window (D11b's surface, which had none) is minted there too: same label
+//!   prefix so the pet's capability governs it, same style, its own 80x80 size and its own page.
 //! - [`linux_capabilities`] — what this machine has been *observed* to do, with what happens
 //!   where it has not, so a missing capability is stated rather than substituted (§7.2).
 //! - [`task_feed`] — the one place a runtime frame becomes a task a window can read, and the one
@@ -43,9 +45,11 @@
 //! build has never seen is a module nobody has type-checked. The list is the pet's whole backend;
 //! a name added to it is a name every build carries.
 
+pub mod ball;
 pub mod bundled;
 pub mod care_ledger;
 pub mod character_view;
+pub mod feature_switch;
 pub mod history;
 pub mod linux_capabilities;
 pub mod notification_delivery;
@@ -56,12 +60,14 @@ pub mod task_feed;
 pub mod task_projection;
 pub mod window_host;
 
+pub use ball::{BALL_LABEL, BALL_WINDOW_SIZE, DESKTOP_PET_BALL_PAGE};
 pub use bundled::{seed, Seeded, BUNDLED_CHARACTER_ID, BUNDLED_CHARACTER_NAME};
 pub use care_ledger::{CareLedger, CareOutcome, CareSummary, DAY_WINDOW, MEAL_XP};
 pub use character_view::{
     appearance, entries, free_character_id, refusal_sentence, PetAppearance, PetCharacterEntry,
     PetCharacterFiles,
 };
+pub use feature_switch::{chosen_character, UNSELECTED_CHARACTER};
 pub use history::{
     Decoded, DeliveryState, HistoryStore, Loaded, SaveOutcome, TaskHistory, TaskRecord,
     HISTORY_SCHEMA_VERSION, LEDGER_FILE, UNREAD_MAX_AGE_MS,
@@ -75,7 +81,9 @@ pub use notification_policy::{
     NotificationPreferences, TaskFact,
 };
 pub use resources::{
-    is_path_component, CharacterKind, CharacterLibrary, EntryState, InstallRequest, LibraryEntry,
+    install_from_catalogue, is_path_component, read_catalogue, AdoptionRefusal, CatalogueOffer,
+    CatalogueReading, CharacterKind, CharacterLibrary, EntryState, InstallRequest, LibraryEntry,
+    RemoteRefusal,
 };
 pub use settings::{
     decide_write, read_domain, PetSettingsDomain, PetSettingsLoad, PetSettingsRecord,

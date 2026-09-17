@@ -38,6 +38,7 @@
  * in this repository that can say whether the class regrew.
  */
 import { until } from './webdriver.mjs'
+import { FOCUS_INSTRUMENTS } from './focus-instrument.mjs'
 import {
   CHAT,
   CHAT_FIELD,
@@ -83,6 +84,9 @@ export const chatScrollProbe = {
     const out = { harness, load: load(), violation: violated, boot: {}, keys: {}, composer: {}, sweep: {} }
 
     await wd.execute(INSTRUMENTS)
+    // The focus instruments are a second script because they are a second subject; the
+    // scripts are one-way — this one reads __nkwTabStops, the enumeration INSTRUMENTS owns.
+    await wd.execute(FOCUS_INSTRUMENTS)
 
     // The rail is mounted with `v-if="railOpen"`, so the panel is not in the document — let
     // alone scrolled — until the reader opens it. Clicked through the driver for the same reason

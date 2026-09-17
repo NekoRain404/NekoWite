@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, useId } from 'vue'
-import { Ban, Ellipsis, TriangleAlert } from 'lucide-vue-next'
+import { Ban, Check, CheckCheck, Ellipsis, TriangleAlert, X } from 'lucide-vue-next'
 import { t } from '../../../i18n'
 import type {
   AgentPermissionKind,
@@ -110,6 +110,40 @@ const answeredOptionId = computed<string | null>(() => answer.value?.optionId ??
 function isReject(kind: AgentPermissionKind): boolean {
   return kind === 'reject_once' || kind === 'reject_always'
 }
+
+/**
+ * The glyph each of the engine's four kinds wears.
+ *
+ * Zed's mapping, ported as a mechanism rather than as a design: one check for the answer that
+ * covers this call, a double check for the one that covers every later one, a cross for either
+ * refusal. The distinction that matters is between the two *allows* — they are the two buttons a
+ * tired reader is most likely to confuse, and the icon is the one signal that survives not being
+ * read. `reject_always` is in the same arm as an unknown kind for Zed's reason: a refusal is a
+ * refusal, and an engine that grows a fifth kind must not get an approving icon by default.
+ *
+ * The colour is this app's, not Zed's (`--app-success` / `--app-danger`), and it is carried on the
+ * button's own icon rather than on the whole button: §5.3 wants a state carried by more than a
+ * colour, and here the glyph and the engine's own wording carry it while the colour agrees.
+ */
+function kindIcon(kind: AgentPermissionKind) {
+  switch (kind) {
+    case 'allow_once':
+      return Check
+    case 'allow_always':
+      return CheckCheck
+    default:
+      return X
+  }
+}
+
+/**
+ * Whether the engine offered an answer that stops it asking about this tool again.
+ *
+ * The test is the *kind*, not the id: §6.3 leaves the ids to the engine, and `allow_always` is the
+ * kind the protocol defines as the lasting grant. This is what the note below the options is drawn
+ * for, and it is drawn only when there is something to warn about.
+ */
+const offersLastingGrant = computed(() => props.request.options.some((o) => o.kind === 'allow_always'))
 
 function choose(option: AgentPermissionOption): void {
   // Guarded on the state machine rather than on the DOM. The buttons are gone one tick
@@ -265,8 +299,16 @@ nextTick(() => rootEl.value?.focus())
           class="btn"
           :class="isReject(option.kind) ? 'btn-ghost' : 'btn-secondary'"
           :data-option-id="option.optionId"
+          :data-option-kind="option.kind"
           @click="choose(option)"
         >
+          <component
+            :is="kindIcon(option.kind)"
+            :size="14"
+            :stroke-width="1.8"
+            aria-hidden="true"
+            :class="isReject(option.kind) ? 'agent-perm-glyph is-no' : 'agent-perm-glyph is-yes'"
+          />
           {{ option.name }}
         </button>
       </template>
@@ -280,6 +322,19 @@ nextTick(() => rootEl.value?.focus())
         >{{ option.name }}</span>
       </template>
     </div>
+
+    <!-- What the lasting answer commits the user to, said at the moment it is offered.
+         The engine's own label for it is "Always allow", which does not say *how long* — and the
+         answer outlives this prompt: the engine stops raising the question for that tool, so
+         nothing later reaches this app, and nothing later tells the user either. One sentence
+         under the row is cheaper than a user discovering it from a write they never approved. -->
+    <p
+      v-if="phase === 'open' && offersLastingGrant"
+      class="agent-perm-lasting"
+      data-test="permission-lasting-note"
+    >
+      {{ t('agent.permission.lastingGrant') }}
+    </p>
 
     <div
       v-if="phase === 'open'"
@@ -394,6 +449,19 @@ nextTick(() => rootEl.value?.focus())
 .agent-perm-option.is-answered {
   color: var(--app-text);
   border-color: var(--app-accent);
+}
+/* The two allows are the pair a reader is most likely to confuse, so the glyph carries the
+   difference and the colour agrees with it. Both are set on the icon rather than the button: a
+   button painted green and one painted red would be the colour-only signal §5.3 forbids. */
+.agent-perm-glyph.is-yes { color: var(--app-success); }
+.agent-perm-glyph.is-no { color: var(--app-danger); }
+/* Not `is-warn`: this is not a fault, it is the consequence of a button in the row above, and a
+   warning colour on an ordinary prompt is the kind of alarm users learn to skip. */
+.agent-perm-lasting {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--app-muted);
 }
 .agent-perm-foot {
   display: flex;

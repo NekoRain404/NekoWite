@@ -17,13 +17,19 @@
 //! writing a file through its own tools with **zero reverse requests** — no
 //! permission frame and no `fs/write_text_file` (the measurement is in §7's preamble,
 //! not in §7.1, which records a different run) — so the engine has a write path that
-//! does not involve us, and used it. What has never been measured is what
-//! the engine does *after* the capability is declared and one of its requests is
-//! refused; `tests/agent_fs_write_refusal_test.rs` is the experiment that would
-//! settle it, and it needs the real engine. Until it has been run: the capability
-//! is an **opportunity the engine may take, not a gate every write must pass**. A
-//! conflict-detection design built on "every agent write reaches this module"
-//! rests on something this code cannot support.
+//! does not involve us, and used it. That was the suspicion; it is now a measurement.
+//! `tests/agent_fs_write_refusal_test.rs` ran three times against the pinned 1.18.29 and
+//! every run refused the delegated write and found the file written anyway. The artifact
+//! says why: the engine asks this host to write **only** on the permission path, fires
+//! that request without awaiting it and discards the answer, and unblocks its own edit
+//! tool either way (the engine's single `writeTextFile` call site, inside
+//! `writeProposedEdit`). A refusal here is therefore invisible to the engine, and
+//! refusing is not a way to prevent a write — the capability is an **opportunity the
+//! engine may take, not a gate every write must pass**. What can stop the tool is the
+//! permission answer, which is a different module and a different question. A
+//! conflict-detection design built on "every agent write reaches this module" rests on
+//! something this code cannot support. Full argument:
+//! `.superpowers/sdd/roadmap/reports/fs-capability-reargued.md`.
 //!
 //! **The read half is a buffer read, and the window is asked for it.** `fs/read_text_file` is
 //! described by ACP as access to "unsaved editor state" and Zed answers it from the open
@@ -48,6 +54,14 @@
 //! **The path is confined before the question is asked**, not after: a window must never be
 //! asked about a path the write path would refuse, and the key it is asked with has to be the
 //! spelling the editor uses for an open tab (see [`super::live_notes::LiveNoteQuestion::path`]).
+//!
+//! **And the pinned engine never sends this request.** `readTextFile` has no call site in the
+//! 1.18.29 artifact — the schema field, the two capability defaults and the client SDK's own
+//! method definition are the whole of it — so its Read tool opens the file from disk and the
+//! arm below is for engines that do delegate reads. The stale-read divergence this arm closes
+//! is therefore **not** closed by the capability on this engine: plan §7.1's rule, save the
+//! note before a disk tool touches it or propose instead, is what stands between the agent and
+//! a version the user has moved past.
 //!
 //! Two rules shape everything here, and both are about not being able to lie:
 //!

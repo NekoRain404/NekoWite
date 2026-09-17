@@ -30,6 +30,7 @@ import {
   type PetAppearance,
   type PetCapabilityReport,
   type PetCareRead,
+  type PetCatalogueReading,
   type PetCharacterEntry,
   type PetFeatureState,
   type PetRuntimeLoss,
@@ -84,6 +85,15 @@ export interface MemoryPetGateway extends PetWindowGateway {
   openedSettings(): readonly PetSettingsPage[]
   /** The tasks `openTask` was sent, so §6.2's click-to-the-session route is assertable. */
   openedTasks(): readonly PetTaskKey[]
+  /**
+   * Every input-region request the window made, in order, so §7.2's policy is assertable.
+   *
+   * A list rather than the current value: the interesting property is not where the window ended
+   * up but that it *asked* — a window that never calls this and a window that calls it with the
+   * compositor's own default look identical from the state alone, and that identity is the defect
+   * this operation was added to remove.
+   */
+  clickThrough(): readonly boolean[]
 }
 
 export function createMemoryPetGateway(options: MemoryPetOptions = {}): MemoryPetGateway {
@@ -96,6 +106,7 @@ export function createMemoryPetGateway(options: MemoryPetOptions = {}): MemoryPe
   const declared = options.capabilities ?? {}
   const opened: PetSettingsPage[] = []
   const openedTasks: PetTaskKey[] = []
+  const clickThroughRequests: boolean[] = []
   const featureListeners = new Set<(state: PetFeatureState) => void>()
   const settingsListeners = new Set<(change: PetSettingsChange) => void>()
   let visible = options.visible ?? false
@@ -223,8 +234,24 @@ export function createMemoryPetGateway(options: MemoryPetOptions = {}): MemoryPe
       return characters.importCharacter()
     },
 
+    async catalogue(): Promise<PetCatalogueReading> {
+      return characters.catalogue()
+    },
+
+    async adoptCharacter(slug: string): Promise<PetCharacterEntry> {
+      // The refusal is a rejection and not a null, which is the shape the contract asks for: the
+      // only `null` in this gateway is a dialog the user closed, and a failed download is not one.
+      return characters.adoptCharacter(slug)
+    },
+
     async openTask(key: PetTaskKey) {
       openedTasks.push(key)
+    },
+
+    async setClickThrough(ignore: boolean) {
+      // Recorded and not applied: a double has no compositor to hold an input region, and the
+      // claim worth asserting is that the window asked (§7.2) — the effect is the real window's.
+      clickThroughRequests.push(ignore)
     },
 
     startRun: host.startRun,
@@ -240,6 +267,10 @@ export function createMemoryPetGateway(options: MemoryPetOptions = {}): MemoryPe
 
     openedTasks() {
       return openedTasks
+    },
+
+    clickThrough() {
+      return clickThroughRequests
     },
   }
 }

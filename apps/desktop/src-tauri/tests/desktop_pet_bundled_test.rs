@@ -51,7 +51,11 @@ fn library_in(dir: &Path) -> CharacterLibrary {
 
 /// The PNG's own header, as `resources::media` reads it: the two dimensions, and nothing else.
 fn png_size(bytes: &[u8]) -> (u32, u32) {
-    assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "the shipped sheet is a PNG");
+    assert_eq!(
+        &bytes[..8],
+        b"\x89PNG\r\n\x1a\n",
+        "the shipped sheet is a PNG"
+    );
     assert_eq!(&bytes[12..16], b"IHDR", "the shipped sheet has an IHDR");
     (
         u32::from_be_bytes(bytes[16..20].try_into().expect("four bytes")),
@@ -102,7 +106,10 @@ fn a_fresh_install_has_a_character_to_draw() {
     let outcome = seed(&library, &dir, 1_700_000_000_000).expect("the shipped character installs");
     assert_eq!(
         outcome,
-        Seeded::Installed { character_id: BUNDLED_CHARACTER_ID.to_string(), selected: true },
+        Seeded::Installed {
+            character_id: BUNDLED_CHARACTER_ID.to_string(),
+            selected: true
+        },
         "a first run installs the shipped character and chooses it"
     );
 
@@ -151,9 +158,15 @@ fn the_shipped_sheet_is_the_grid_the_renderer_slices() {
     // hands the window. A sheet of the right size with the wrong recorded grid slices the right
     // pixels into the wrong clips.
     let listed = library.list().expect("the library reads");
-    let manifest = listed[0].manifest.as_ref().expect("the library wrote a manifest");
+    let manifest = listed[0]
+        .manifest
+        .as_ref()
+        .expect("the library wrote a manifest");
     assert_eq!((manifest.sheet.columns, manifest.sheet.rows), (cols, rows));
-    assert_eq!((manifest.sheet.width, manifest.sheet.height), (width, height));
+    assert_eq!(
+        (manifest.sheet.width, manifest.sheet.height),
+        (width, height)
+    );
 }
 
 #[test]
@@ -168,7 +181,10 @@ fn a_second_start_does_not_install_a_second_copy() {
         Seeded::AlreadyOffered,
         "the second start recognises the first"
     );
-    assert_eq!(library.list().expect("the library reads").len(), before.len());
+    assert_eq!(
+        library.list().expect("the library reads").len(),
+        before.len()
+    );
 }
 
 #[test]
@@ -179,7 +195,9 @@ fn a_removed_character_is_not_put_back_by_the_next_start() {
     let character_id = only_character(&library);
 
     // The user's act, through the same call the ✕ on a library row makes.
-    library.remove(&character_id).expect("the user removes the shipped character");
+    library
+        .remove(&character_id)
+        .expect("the user removes the shipped character");
 
     assert_eq!(
         seed(&library, &dir, 2).expect("the next start"),
@@ -206,14 +224,19 @@ fn a_choice_the_user_already_made_survives() {
         values: serde_json::Value::Object(defaults.values.clone()),
     });
     assert!(
-        matches!(applied, nekowite_lib::desktop_pet::PetSettingsUpdate::Applied { .. }),
+        matches!(
+            applied,
+            nekowite_lib::desktop_pet::PetSettingsUpdate::Applied { .. }
+        ),
         "{applied:?}"
     );
 
     let library = library_in(&dir);
     assert_eq!(
         seed(&library, &dir, 1).expect("the shipped character installs anyway"),
-        Seeded::InstalledOnly { character_id: BUNDLED_CHARACTER_ID.to_string() },
+        Seeded::InstalledOnly {
+            character_id: BUNDLED_CHARACTER_ID.to_string()
+        },
         "the character is installed, the selection is left alone"
     );
 
@@ -223,7 +246,9 @@ fn a_choice_the_user_already_made_survives() {
         .expect("a record")
         .clone();
     assert_eq!(
-        record.value("characterId").and_then(serde_json::Value::as_str),
+        record
+            .value("characterId")
+            .and_then(serde_json::Value::as_str),
         None,
         "the user's 'no character' is still what the settings say"
     );
@@ -261,7 +286,11 @@ fn the_shipped_character_does_not_take_an_id_a_user_already_used() {
         .expect("their character installs");
 
     let outcome = seed(&library, &dir, 2).expect("the shipped character still installs");
-    let Seeded::Installed { character_id, selected } = outcome else {
+    let Seeded::Installed {
+        character_id,
+        selected,
+    } = outcome
+    else {
         panic!("a library with a free id takes the shipped character: {outcome:?}");
     };
     assert_ne!(
@@ -276,7 +305,10 @@ fn the_shipped_character_does_not_take_an_id_a_user_already_used() {
         .iter()
         .find(|entry| entry.character_id == BUNDLED_CHARACTER_ID)
         .expect("their character is still there");
-    assert_eq!(theirs.manifest.as_ref().map(|m| m.name.as_str()), Some("Their Cat"));
+    assert_eq!(
+        theirs.manifest.as_ref().map(|m| m.name.as_str()),
+        Some("Their Cat")
+    );
     assert_eq!(theirs.state, EntryState::Intact);
     assert!(selected);
 
