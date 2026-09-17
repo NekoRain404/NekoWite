@@ -834,6 +834,14 @@ function fakeIpc(overrides: Partial<AgentIpc> = {}): FakeIpc {
     async cancel() {
       calls.push('cancel')
     },
+    // The host's default answer here is a refusal, unlike the session-management calls above, and
+    // it is the one every real host gives for a file it did not write: the double and the pinned
+    // engine's own-tool writes both land on `no-baseline`. A test that wants a recovery uses
+    // `overrides` — what matters for the default is that the *reader* is exercised.
+    async recoverChange(_sessionId: string, path: string) {
+      calls.push('recoverChange')
+      return { kind: 'refused', path, code: 'no-baseline' }
+    },
     async answerPermission() {
       calls.push('answerPermission')
     },

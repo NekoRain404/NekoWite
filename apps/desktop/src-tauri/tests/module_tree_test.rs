@@ -6,6 +6,12 @@
 //! binary, and a test target's `#[path]` include kept it compiling, so its tests were green about
 //! code the application did not contain. Nothing detected that. This is the detector.
 //!
+//! That file is declared now — `agent_runtime/mod.rs` names it, and `agent_recover_change` is the
+//! caller it never had — so the exemption below is gone with it, and this check can see the next
+//! one. The paragraph under「What is not a declaration」 still explains why a test target's include
+//! is not a declaration; the example is left as it was written, because it is what the check was
+//! written for.
+//!
 //! **How it enumerates.** From the filesystem: every `.rs` under `CARGO_MANIFEST_DIR/src`. It then
 //! replays rustc's own name resolution — start at `src/lib.rs` and `src/main.rs`, and for each
 //! `mod name;` follow the file rustc would read, for as long as declarations keep leading somewhere
@@ -15,7 +21,7 @@
 //! it is the same shape as a hand list of ``src`` files would have been.
 //!
 //! **What is not a declaration.** A `#[path]` include in a *test target* is not one. Every target
-//! that compiles library sources reaches them that way, and `recovery.rs` is included by
+//! that compiles library sources reaches them that way, and `recovery.rs` was included by
 //! `tests/agent_recovery_test.rs` — counting it would have hidden the one file this check was
 //! written for, and would hide the next one the same way. Only declarations written in files under
 //! `src/` are followed. A `#[path]` written *there* is honoured — `agent_runtime/skills.rs`
@@ -37,16 +43,16 @@ use std::path::{Path, PathBuf};
 /// Files under `src/` that are in no crate's module tree today, and why that is a decision rather
 /// than a repair to make here.
 ///
+/// Empty, and it is meant to stay that way: the one entry it ever held was `agent_runtime/
+/// recovery.rs`, and the change that declared that module (and gave it its caller) deleted the
+/// entry in the same commit, as the entry itself asked. It is kept as a list rather than removed
+/// because the *mechanism* is the point — a future orphan with a real reason has somewhere to go
+/// that still fails the moment the reason stops being true.
+///
 /// Both directions are compared, so an entry cannot rot into a blanket exemption: a file that is
 /// an orphan and is not listed here fails, and an entry here that is no longer an orphan also
 /// fails, asking to be deleted. An exemption that outlives its reason is how a check stops seeing.
-const KNOWN_ORPHANS: &[(&str, &str)] = &[(
-    "agent_runtime/recovery.rs",
-    "R3's recovery material, reachable today only from `tests/agent_recovery_test.rs`'s `#[path]` \
-     include. Declaring it in `agent_runtime/mod.rs` changes session-start behaviour, so it is the \
-     integrator's change and not this check's. Delete this entry in the same change that declares \
-     it.",
-)];
+const KNOWN_ORPHANS: &[(&str, &str)] = &[];
 
 /// The walk must find at least this many files, or it is the enumeration that is broken and not
 /// the tree. `src/` holds a little over 120 `.rs` files, and a floor of half that leaves room for

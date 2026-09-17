@@ -27,10 +27,11 @@ import type {
   AgentCapabilityFeature,
   AgentCapabilityFinding,
   AgentCapabilityReport,
+  AgentChangeRecovery,
   AgentSessionHistory,
   AgentSessionSummary,
 } from '../gateway'
-import { AGENT_CAPABILITY_FEATURES } from '../gateway'
+import { AGENT_CAPABILITY_FEATURES, AGENT_RECOVERY_REFUSALS } from '../gateway'
 import { isAgentFailureCode } from '../failure'
 import { asRecord, count, maybeStr, member, nonEmpty, str } from './fields'
 
@@ -347,4 +348,44 @@ export function readRunFailure(raw: unknown): AgentPayloads['run-failed'] | null
   const message = str(record, 'message')
   if (!message || !isAgentFailureCode(record.code)) return null
   return { code: record.code, message }
+}
+
+/**
+ * `agent_recover_change`'s answer, arm for arm — `commands::agent_recovery::AgentChangeRecovery`.
+ *
+ * A reader rather than a cast, for the reason `readCapabilityReports` is one: the answer comes
+ * from a foreign process, and a shape this window only *believes* is how a refusal ends up
+ * rendered as a recovery. `null` is "this window could not read it", which the caller reports
+ * rather than drawing — the alternative is a row that claims a file was put back on the strength
+ * of a payload nobody checked.
+ *
+ * The refusal codes are checked against `AGENT_RECOVERY_REFUSALS` rather than accepted as text: a
+ * code is an index into the window's copy tree, and one this build does not have would render as
+ * a missing sentence (`agent.changes.refused.<code>`) rather than as a refusal.
+ */
+export function readChangeRecovery(raw: unknown): AgentChangeRecovery | null {
+  const record = asRecord(raw)
+  if (!record) return null
+  const path = str(record, 'path')
+  if (!path) return null
+  if (record.kind === 'refused') {
+    const code = member(AGENT_RECOVERY_REFUSALS, record.code)
+    return code === null ? null : { kind: 'refused', path, code }
+  }
+  if (record.kind !== 'recovered') return null
+  const baselineHash = str(record, 'baselineHash')
+  const replacedHash = str(record, 'replacedHash')
+  if (!baselineHash || !replacedHash) return null
+  // The warning is optional and its absence is a fact — the save kept the history — so a field
+  // that is present and is neither a string nor null is a shape this reader refuses rather than
+  // reading as "no warning".
+  const warning = record.warning
+  if (warning !== undefined && warning !== null && typeof warning !== 'string') return null
+  return {
+    kind: 'recovered',
+    path,
+    baselineHash,
+    replacedHash,
+    warning: typeof warning === 'string' ? warning : null,
+  }
 }

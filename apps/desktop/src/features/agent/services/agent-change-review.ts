@@ -49,6 +49,7 @@
  */
 
 import type {
+  AgentChangeRecovery,
   AgentEvent,
   AgentIdentity,
   AgentToolContent,
@@ -152,20 +153,35 @@ export interface AgentChangeReview {
 export type AgentChangeDecision = 'kept' | 'rejected'
 
 /**
+ * What a rejection did, in the three ways one can end — and they are three because they are made
+ * by two different writers plus the case where neither ran.
+ *
+ * `editor` is the note's own save transaction while a tab holds it (`agent-edit-apply.ts`'s write
+ * outcome, reused rather than respelled: "the note and the file have it", "the note has it and the
+ * file does not" and "nothing took it" are the same three facts here as there). `host` is the
+ * app's own recovery, and its answer is the host's — a file put back, or one of the six reasons it
+ * would not be. `unreachable` is the call that never happened: no runtime, a session this host
+ * does not hold, an engine that went away mid-call. Its `message` is the host's own sentence,
+ * which is the part the reader acts on, and it is *not* folded into a refusal code because nobody
+ * refused anything — the request was never answered.
+ */
+export type AgentChangeRejection =
+  | { readonly via: 'editor'; readonly written: AgentEditWriteOutcome }
+  | { readonly via: 'host'; readonly answered: AgentChangeRecovery }
+  | { readonly via: 'unreachable'; readonly message: string }
+
+/**
  * One answer, and it is about *a change* rather than about a path.
  *
  * `toolCallId` is part of the key on purpose: the engine writing the same note again is a change
  * nobody has looked at, and a row that read "kept" there would be hiding work the user has not
- * seen. `written` is what a rejection did — `agent-edit-apply.ts`'s write outcome, reused rather
- * than respelled, because "the note and the file have it", "the note has it and the file does not"
- * and "nothing took it" are the same three facts here as there — and it is `null` for a keep,
- * which writes nothing.
+ * seen. `rejection` is what a rejection did and is `null` for a keep, which writes nothing.
  */
 export interface AgentChangeAnswer {
   readonly path: string
   readonly toolCallId: string
   readonly decision: AgentChangeDecision
-  readonly written: AgentEditWriteOutcome | null
+  readonly rejection: AgentChangeRejection | null
 }
 
 /**
@@ -196,6 +212,24 @@ export type AgentChangeVerdict =
 export type AgentChangeOffer = 'view' | 'recover'
 
 /**
+ * Which of the app's two writers a recovery would go through.
+ *
+ * There are two because a note is reachable in two ways, and which one applies is a fact about
+ * the *file*, not a preference:
+ *
+ *  - `editor` — a tab holds the note. The write is the note's own save transaction
+ *    (`agent-note-write.ts`): the buffer, the vault check and the external write precondition all
+ *    apply, and the pane that owns the text is asked first. That is the app's one path into an open
+ *    file, and nothing here may go around it.
+ *  - `host` — no tab holds it. The host that *performed* the vetted write holds the bytes it
+ *    replaced, and `AgentGateway.recoverChange` puts them back through the app's own save path
+ *    without a buffer involved. Before that call existed this case was a dead end: a row could say
+ *    the note had no tab and offer nothing, which is exactly the note a reader is least likely to
+ *    have open — the one the agent went and changed.
+ */
+export type AgentChangeRoute = 'editor' | 'host'
+
+/**
  * Why an offer this row could otherwise have is not made — a code, not a sentence, because the UI
  * owns the wording and a service that returned text would have to invent it in two languages.
  *
@@ -220,10 +254,6 @@ export type AgentChangeRefusal =
       readonly noteVaultId: string
       readonly sessionVaultId: string
     }
-  /** No tab holds it, and the window's one way into a note's file is the tab's own save
-   *  transaction (`agent-note-write.ts`). Opening it is the user's to do — the row's `view` does
-   *  exactly that — and writing the file without one would be the second write path. */
-  | { readonly reason: 'note-not-open'; readonly path: string }
   | { readonly reason: 'unsaved-edits'; readonly path: string }
   /** The call stated no text for this path, so the app cannot tell the agent's text from the
    *  user's own later edit — and overwriting on a guess is the silent loss §7.2 rules out. */
@@ -248,6 +278,15 @@ export interface AgentChangeRow {
   readonly baseline: string | null
   /** The offers that survive the judgement, in the order the view shows them. */
   readonly offers: readonly AgentChangeOffer[]
+  /**
+   * Which writer a `recover` would use, or null when the row is not offering one.
+   *
+   * A property of the row rather than something a view derives from `verdict`, for the reason the
+   * whole file exists: the decision about *how* a change may be put back is made where the tool
+   * call, the buffer and the host's answer can all be seen at once, and a component that re-derived
+   * it from `verdict.kind` would be a second judgement that could disagree with this one.
+   */
+  readonly recoverVia: AgentChangeRoute | null
   /** The one offer that was withheld, if one was. */
   readonly refused: AgentChangeRefusal | null
   /** What the user answered about this change, or null while it is unanswered. */
@@ -511,48 +550,77 @@ interface AgentChangeFacts {
 function judge(
   review: AgentChangeReview,
   facts: AgentChangeFacts,
-): { offers: readonly AgentChangeOffer[]; refused: AgentChangeRefusal | null } {
+): {
+  offers: readonly AgentChangeOffer[]
+  recoverVia: AgentChangeRoute | null
+  refused: AgentChangeRefusal | null
+} {
   const { path, attribution, call, note, verdict, result } = facts
   const offers: AgentChangeOffer[] = ['view']
+  /** The refusal arms, in one place, so every early return says the same three fields. */
+  const refuse = (
+    refusal: AgentChangeRefusal,
+  ): {
+    offers: readonly AgentChangeOffer[]
+    recoverVia: AgentChangeRoute | null
+    refused: AgentChangeRefusal | null
+  } => ({ offers: Object.freeze(offers), recoverVia: null, refused: refusal })
+  const through = (
+    route: AgentChangeRoute,
+  ): {
+    offers: readonly AgentChangeOffer[]
+    recoverVia: AgentChangeRoute | null
+    refused: AgentChangeRefusal | null
+  } => {
+    offers.push('recover')
+    return { offers: Object.freeze(offers), recoverVia: route, refused: null }
+  }
+
   if (call !== null && decisionFor(review, path, call.toolCallId) !== null) {
-    return { offers: Object.freeze(offers), refused: null }
+    return { offers: Object.freeze(offers), recoverVia: null, refused: null }
   }
   if (attribution !== 'agent' || call === null) {
-    return { offers: Object.freeze(offers), refused: { reason: 'not-agent-change', attribution } }
+    return refuse({ reason: 'not-agent-change', attribution })
   }
   if (call.status === 'pending' || call.status === 'in_progress') {
-    return { offers: Object.freeze(offers), refused: { reason: 'write-in-flight', toolCallId: call.toolCallId } }
+    return refuse({ reason: 'write-in-flight', toolCallId: call.toolCallId })
+  }
+  if (note !== null && note.vaultId !== review.identity.vaultId) {
+    return refuse({
+      reason: 'vault-mismatch',
+      path,
+      noteVaultId: note.vaultId,
+      sessionVaultId: review.identity.vaultId,
+    })
+  }
+  // **No tab holds the file, so the host is the writer.** This comes before the baseline question
+  // rather than after it, and the order is the point: the window's baseline is a note the *tab*
+  // captured at the send, so a file no tab holds is precisely the one whose window baseline is
+  // missing — asking about it first made every closed note answer 「no request named this file」
+  // and offer nothing, which is the dead end `AgentGateway.recoverChange` removed. The host judges
+  // its own record, against the file's hash, and answers `no-baseline` itself when it has none.
+  //
+  // Nothing is skipped by going through the host: the vault check above still applies, and the
+  // checks below — the call's stated result, the buffer's text — are about a *buffer*, which is
+  // what there is none of here.
+  if (verdict.kind === 'record') {
+    return through('host')
   }
   const baseline = baselineFor(review, path)
   if (baseline === null) {
-    return { offers: Object.freeze(offers), refused: { reason: 'no-baseline', path } }
-  }
-  if (note !== null && note.vaultId !== review.identity.vaultId) {
-    return {
-      offers: Object.freeze(offers),
-      refused: {
-        reason: 'vault-mismatch',
-        path,
-        noteVaultId: note.vaultId,
-        sessionVaultId: review.identity.vaultId,
-      },
-    }
-  }
-  if (verdict.kind === 'record') {
-    return { offers: Object.freeze(offers), refused: { reason: 'note-not-open', path } }
+    return refuse({ reason: 'no-baseline', path })
   }
   if (verdict.kind === 'unsaved-edits') {
-    return { offers: Object.freeze(offers), refused: { reason: 'unsaved-edits', path } }
+    return refuse({ reason: 'unsaved-edits', path })
   }
   if (result === null) {
-    return { offers: Object.freeze(offers), refused: { reason: 'result-unstated', path } }
+    return refuse({ reason: 'result-unstated', path })
   }
   // The buffer is clean here, so its text is the file's — which is the comparison §7.2 asks for.
   if (note === null || note.buffer.text !== result) {
-    return { offers: Object.freeze(offers), refused: { reason: 'changed-since', path } }
+    return refuse({ reason: 'changed-since', path })
   }
-  offers.push('recover')
-  return { offers: Object.freeze(offers), refused: null }
+  return through('editor')
 }
 
 /**
@@ -579,7 +647,14 @@ export function changeRows(
     const note = live(path)
     const verdict = verdictFor(note)
     const result = resultFor(call, path)
-    const { offers, refused } = judge(review, { path, attribution, call, note, verdict, result })
+    const { offers, recoverVia, refused } = judge(review, {
+      path,
+      attribution,
+      call,
+      note,
+      verdict,
+      result,
+    })
     return Object.freeze({
       path,
       attribution,
@@ -590,6 +665,7 @@ export function changeRows(
       result,
       baseline: baselineFor(review, path)?.text ?? null,
       offers,
+      recoverVia,
       refused,
       decision: decisionFor(review, path, call?.toolCallId ?? null),
     })

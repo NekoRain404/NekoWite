@@ -259,44 +259,106 @@ describe('what the run changed', () => {
 })
 
 describe('the answers', () => {
-  it('Review opens the note the change is in, and the row can then be rejected', async () => {
-    // A row for a note no tab holds: the run wrote it, the user has not opened it. The window's
-    // only write into a note's file is the note's own save transaction, so this is the one state in
-    // which a rejection cannot be made — and Review, one click, is how the user gets there.
-    // Absolute, because that is how a tab and the engine both spell a path (`agent-note-proposals`
-    // normalizes the separator and nothing else) — and `openTab` in the test below is addressed by
-    // the same spelling the row shows.
-    const CLOSED = `${VAULT}/notes/closed.md`
+  /** A row for a note no tab holds: the run wrote it and the user never opened it. */
+  async function closedNote(path: string): Promise<HTMLElement> {
     await afterTheRun(
-      toolRow({ paths: [CLOSED], content: [{ type: 'diff', path: CLOSED, oldText: BEFORE, newText: AFTER }] }),
+      toolRow({ paths: [path], content: [{ type: 'diff', path, oldText: BEFORE, newText: AFTER }] }),
     )
-    // The version the request captured for that note, read through `captureEditBaselines` rather
-    // than spelled by hand, so the row is refused for the note not being open and for nothing else.
-    const held = sessionsOf().records[sessionKey(IDENTITY)]
-    if (held === undefined) throw new Error('no record')
-    held.edits = [
-      ...held.edits,
-      ...captureEditBaselines(
-        [{ vaultId: VAULT, path: CLOSED, revision: 'r', buffer: { state: 'clean', text: BEFORE } }],
-        IDENTITY,
-      ).baselines,
-    ]
-    disk.set(CLOSED, AFTER)
+    disk.set(path, AFTER)
     useTabsStore().removeAllTabs()
-    const host = await mount()
+    return mount()
+  }
+
+  it('puts back a note no tab holds through the host, which is the writer that needs none', async () => {
+    // The dead end this replaced: the window's only write into a note's file was the note's own
+    // save transaction, which needs a tab — so exactly the notes a reader is least likely to have
+    // open (the ones the agent went and changed) could be refused and not un-changed. The host
+    // performed the write and still holds what it replaced, so the row offers the rejection and
+    // names that writer.
+    const CLOSED = `${VAULT}/notes/closed.md`
+    const store = sessionsOf()
+    const recoverChange = vi
+      .spyOn(store, 'recoverChange')
+      .mockResolvedValue({ kind: 'refused', path: CLOSED, code: 'no-baseline' })
+    const host = await closedNote(CLOSED)
 
     expect(row(host, CLOSED)?.dataset.verdict).toBe('record')
-    expect(action(host, CLOSED, 'recover')).toBeNull()
-    expect(row(host, CLOSED)?.querySelector('[data-refused]')?.getAttribute('data-refusal')).toBe(
-      'note-not-open',
+    const recover = action(host, CLOSED, 'recover')
+    expect(recover).not.toBeNull()
+    // Nothing is withheld: the route exists, so the row has no refusal to explain.
+    expect(row(host, CLOSED)?.querySelector('[data-refused]')).toBeNull()
+
+    await click(recover)
+
+    expect(recoverChange).toHaveBeenCalledWith(sessionKey(IDENTITY), CLOSED)
+    // The host's own answer is what the row says, and the code is what picked the sentence: this
+    // is the host saying it never performed the write, which is a fact about the file rather than
+    // a failure of the press.
+    expect(recoverChange).toHaveBeenCalledTimes(1)
+    expect(sentence(host, '[data-decision-outcome]')).toBe(
+      t('agent.changes.recovered.refused.noBaseline'),
     )
+    // And nothing was written by this window: the host is the writer here, so the note's own save
+    // was not used and the file still holds what the agent left.
+    expect(writeMock).not.toHaveBeenCalled()
+    expect(disk.get(CLOSED)).toBe(AFTER)
+  })
+
+  it('draws the host’s recovery when it worked, warning and all', async () => {
+    const CLOSED = `${VAULT}/notes/closed.md`
+    vi.spyOn(sessionsOf(), 'recoverChange').mockResolvedValue({
+      kind: 'recovered',
+      path: CLOSED,
+      baselineHash: 'b',
+      replacedHash: 'a',
+      warning: 'the history snapshot could not be written',
+    })
+    const host = await closedNote(CLOSED)
+
+    await click(action(host, CLOSED, 'recover'))
+
+    const said = sentence(host, '[data-decision-outcome]')
+    expect(said).toContain(t('agent.changes.recovered.recovered'))
+    // The warning travels with it rather than being dropped: "the file is back, but the version it
+    // replaced is gone" is something the reader has to be told, and a recovery that reported only
+    // the good half would be claiming more than it did.
+    expect(said).toContain(t('agent.changes.recovered.warning'))
+  })
+
+  it('says the call never happened when the host could not be asked', async () => {
+    // A rejection is not a refusal: no runtime, a session this host does not hold. The row says so
+    // with the host's own sentence, and it does not pretend a file was examined.
+    const CLOSED = `${VAULT}/notes/closed.md`
+    vi.spyOn(sessionsOf(), 'recoverChange').mockRejectedValue(
+      new Error('no agent session is running: start one first'),
+    )
+    const host = await closedNote(CLOSED)
+
+    await click(action(host, CLOSED, 'recover'))
+
+    expect(sentence(host, '[data-decision-outcome]')).toContain(
+      'no agent session is running: start one first',
+    )
+  })
+
+  it('Review opens the note, and the line the route is drawn on is what a tab holds', async () => {
+    // The host route is the answer to *the editor route being impossible*, and that is the only
+    // reason it exists: no tab, so the window has nothing to write through. Opening the note
+    // removes that reason — and then the window's own judgement is the one that applies, including
+    // the half of it that says 「没有基线时标记不可直接恢复」 out loud rather than asking the host a
+    // question whose answer it can already predict (a note no request named has no captured
+    // version, and on an engine that writes with its own tools the host has no record either).
+    const CLOSED = `${VAULT}/notes/closed.md`
+    const host = await closedNote(CLOSED)
 
     await click(action(host, CLOSED, 'view'))
 
     expect(useTabsStore().tabs.some((tab) => tab.path === CLOSED)).toBe(true)
-    // The note is open and holds what the call left, so the rejection is offered with no second
-    // frame: the row is rebuilt from the record and the live buffer on every render.
-    expect(action(host, CLOSED, 'recover')).not.toBeNull()
+    expect(row(host, CLOSED)?.dataset.verdict).toBe('follows-disk')
+    expect(action(host, CLOSED, 'recover')).toBeNull()
+    expect(row(host, CLOSED)?.querySelector('[data-refused]')?.getAttribute('data-refusal')).toBe(
+      'no-baseline',
+    )
   })
 
   it('Keep records the answer and stops offering the write, without touching the note', async () => {

@@ -60,6 +60,11 @@ mod agent_runtime {
     // serves, and what it refuses to serve, are one question now.
     #[allow(dead_code)]
     pub mod live_notes;
+    // Included because `fs_capability` and `session` both name it through `super::`: a delegated
+    // write leaves a baseline there, and the call that puts one back belongs to the runtime. It is
+    // in `mod.rs` now, so this target's list is the library's own again.
+    #[allow(dead_code)]
+    pub mod recovery;
     // Included because `registry` names it through `super::`: the port the engine's own HTTP
     // surface is pinned to is decided at launch, and the module that decides it is a sibling of
     // the module that launches.

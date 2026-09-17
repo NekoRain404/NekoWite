@@ -289,6 +289,12 @@ pub fn run() {
             commands::agent_sessions::agent_list_sessions,
             commands::agent_sessions::agent_load_session,
             commands::agent_sessions::agent_close_session,
+            // Putting a change back that this host performed — the one write on the agent surface
+            // that needs no tab, for the notes an agent changed while no window held them.
+            // Registered here for the reason above, and gated on the same `main` capability as the
+            // rest: the pet window holds none of the `agent_*` surface, and this is the command
+            // that writes a vault file.
+            commands::agent_recovery::agent_recover_change,
             commands::agent::agent_permission_answer,
             commands::agent::agent_permission_grants,
             commands::agent::agent_permission_grant_revoke,

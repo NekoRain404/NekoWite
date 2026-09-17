@@ -18,7 +18,7 @@
 //!
 //! | Window | Capability | May call |
 //! | --- | --- | --- |
-//! | `main` | `capabilities/default.json` | all seventy-nine below, except the two that are the pet window's own |
+//! | `main` | `capabilities/default.json` | all eighty below, except the two that are the pet window's own |
 //! | `pet-*` | `capabilities/desktop-pet.json` | `desktop_pet_state`, `desktop_pet_set_visible`, `desktop_pet_close_own`, `desktop_pet_set_click_through`, `desktop_pet_open_settings`, `desktop_pet_tasks`, `desktop_pet_appearance`, `desktop_pet_open_task`, and the two `core:event` permissions it already held |
 //!
 //! Two consequences worth knowing before editing either list:
@@ -98,6 +98,10 @@ const COMMANDS: &[&str] = &[
     "agent_list_sessions",
     "agent_load_session",
     "agent_close_session",
+    // The reviewed change, put back: the one `agent_*` command that writes a file, and the only
+    // way to reach this host's own record of what it wrote on the engine's behalf. Declared here
+    // like every other command — an undeclared one is a command no window can reach.
+    "agent_recover_change",
     "agent_permission_answer",
     // The permissions the engine has written down because the user answered "always": read from
     // the engine's own route, and removed through it.

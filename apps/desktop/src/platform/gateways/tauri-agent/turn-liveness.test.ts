@@ -136,6 +136,13 @@ function fakeIpc(): FakeIpc {
     async cancel() {
       calls.push('cancel')
     },
+    // The host's refusal for a file it never wrote. This suite is about a turn's liveness, and no
+    // test here recovers a change; the call exists because the port requires an implementation,
+    // and answering the honest refusal keeps a fake from claiming a recovery it never performed.
+    async recoverChange(_sessionId: string, path: string) {
+      calls.push('recoverChange')
+      return { kind: 'refused', path, code: 'no-baseline' }
+    },
     async answerPermission() {
       calls.push('answerPermission')
     },

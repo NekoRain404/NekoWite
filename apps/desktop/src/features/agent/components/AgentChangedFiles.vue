@@ -15,10 +15,15 @@
  *    will still offer: an answered row stops offering the rejection, and the counts move. That is
  *    the shape the reference client gives the same word (`action_log`'s `keep_edits_in_range`
  *    moves the edit out of the unreviewed set and advances the baseline; the file is untouched).
- *  - **Reject** puts the note back to the text it held when the request was made — the baseline the
- *    session captured at the send — through the note's own save transaction, so the precondition,
- *    the vault and the content watcher all apply. It is offered only where the judge allowed it,
- *    and the row says which of the seven reasons withheld it otherwise.
+ *  - **Reject** puts the note back, and *which writer does it* is a fact about the file rather
+ *    than a preference (`AgentChangeRoute`). A tab holds the note: the note's own save transaction
+ *    does the write, so the precondition, the vault and the content watcher all apply — that is the
+ *    app's one path into an open file. **No tab holds it**: the host does, through
+ *    `AgentGateway.recoverChange`, which is the same request answered by the layer that *performed*
+ *    the write and still holds the bytes it replaced. Before that call existed this case was a row
+ *    that could only say「no tab holds this note」, for exactly the notes a reader is least likely
+ *    to have open. It is offered only where the judge allowed it, and the row says which of the
+ *    reasons withheld it otherwise.
  *
  * ## Where the state is, and where it is not
  *
@@ -42,8 +47,11 @@ import {
   decideChange,
   reviewOfSession,
   type AgentChangeAnswer,
+  type AgentChangeDecision,
+  type AgentChangeRejection,
   type AgentChangeRow,
 } from '../services/agent-change-review'
+import { describeFailure } from '../services/agent-session-subscription'
 import { liveNoteEditorOf } from '../services/live-note-responder'
 import { writeNoteText } from '../services/agent-note-write'
 import { sessionKey } from '../services/agent-session-view'
@@ -137,7 +145,6 @@ const labels = computed<AgentChangesLabels>(() => ({
     writeInFlight: t('agent.changes.refused.writeInFlight'),
     noBaseline: t('agent.changes.refused.noBaseline'),
     vaultMismatch: t('agent.changes.refused.vaultMismatch'),
-    noteNotOpen: t('agent.changes.refused.noteNotOpen'),
     unsavedEdits: t('agent.changes.refused.unsavedEdits'),
     resultUnstated: t('agent.changes.refused.resultUnstated'),
     changedSince: t('agent.changes.refused.changedSince'),
@@ -150,6 +157,19 @@ const labels = computed<AgentChangesLabels>(() => ({
     saved: t('agent.changes.written.saved'),
     saveFailed: t('agent.changes.written.saveFailed'),
     unavailable: t('agent.changes.written.unavailable'),
+  },
+  recovered: {
+    recovered: t('agent.changes.recovered.recovered'),
+    recoveredWarning: t('agent.changes.recovered.warning'),
+    refused: {
+      noBaseline: t('agent.changes.recovered.refused.noBaseline'),
+      baselineStale: t('agent.changes.recovered.refused.baselineStale'),
+      unavailable: t('agent.changes.recovered.refused.unavailable'),
+      changedSinceRecorded: t('agent.changes.recovered.refused.changedSinceRecorded'),
+      alreadyAtBaseline: t('agent.changes.recovered.refused.alreadyAtBaseline'),
+      writeRefused: t('agent.changes.recovered.refused.writeRefused'),
+    },
+    unreachable: t('agent.changes.recovered.unreachable'),
   },
   unsavedBuffer: t('agent.changes.unsavedBuffer'),
   agentVersion: t('agent.changes.agentVersion'),
@@ -179,11 +199,15 @@ function rowFor(path: string): AgentChangeRow | null {
   return rows.value.find((candidate) => candidate.path === path) ?? null
 }
 
-function answer(row: AgentChangeRow, decision: AgentChangeAnswer['decision'], written: AgentChangeAnswer['written']): void {
+function answer(
+  row: AgentChangeRow,
+  decision: AgentChangeDecision,
+  rejection: AgentChangeRejection | null,
+): void {
   if (row.toolCallId === null) return
   answers.value = [
     ...answers.value,
-    { path: row.path, toolCallId: row.toolCallId, decision, written },
+    { path: row.path, toolCallId: row.toolCallId, decision, rejection },
   ]
 }
 
@@ -195,20 +219,42 @@ function keep(path: string): void {
 }
 
 /**
- * Reject: the note goes back to the text the request was made against.
+ * Reject: the note goes back — through the writer the row named.
  *
- * The `offers` are re-read at the press, and the write is refused here when the row no longer
- * carries one — that is the same judgement the row drew its button from, taken again against the
- * note as it is now, which is the only version of it that matters. The write itself is the note's
- * own save: `writeNoteText` assigns the text to the tab and saves it, so the precondition that
- * reads the file, the vault check and the content watcher are the ones every other write takes.
- * What comes back is what actually happened, and the row says which of the three it was rather
- * than claiming the undo worked.
+ * The `offers` and the route are re-read at the press, and the press is refused here when the row
+ * no longer carries one: that is the same judgement the row drew its button from, taken again
+ * against the note as it is now, which is the only version of it that matters.
+ *
+ * **`editor`** is the note's own save: `writeNoteText` assigns the text to the tab and saves it, so
+ * the precondition that reads the file, the vault check and the content watcher are the ones every
+ * other write takes. What comes back is what actually happened, and the row says which of the
+ * three it was rather than claiming the undo worked.
+ *
+ * **`host`** is the app's own recovery, for a note no tab holds. It is *not* a fallback for a
+ * failure: it is the route the judge chose, because the window has no buffer to write through and
+ * the host has the bytes. A refusal comes back as the host's own answer and a rejection — no
+ * runtime, a session this host does not hold — as the sentence the host gave, because "the file
+ * was not put back" and "the call never happened" are different things for the reader to do
+ * something about.
  */
 async function reject(path: string): Promise<void> {
   const row = rowFor(path)
-  if (row === null || row.baseline === null || !row.offers.includes('recover')) return
-  answer(row, 'rejected', await writeNoteText(row.path, row.baseline))
+  if (row === null || !row.offers.includes('recover')) return
+  if (row.recoverVia === 'host') {
+    // The session's own key, read here rather than captured: the store is keyed by it and the
+    // surface re-renders when the session changes under it, so a captured key could name the
+    // session the reader just left.
+    if (key.value === null) return
+    try {
+      const answered = await sessions.recoverChange(key.value, row.path)
+      answer(row, 'rejected', { via: 'host', answered })
+    } catch (error) {
+      answer(row, 'rejected', { via: 'unreachable', message: describeFailure(error).message })
+    }
+    return
+  }
+  if (row.baseline === null) return
+  answer(row, 'rejected', { via: 'editor', written: await writeNoteText(row.path, row.baseline) })
 }
 </script>
 

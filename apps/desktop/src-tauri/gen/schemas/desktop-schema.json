@@ -267,6 +267,12 @@
           "markdownDescription": "Enables the agent_prompt command without any pre-configured scope."
         },
         {
+          "description": "Enables the agent_recover_change command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-recover-change",
+          "markdownDescription": "Enables the agent_recover_change command without any pre-configured scope."
+        },
+        {
           "description": "Enables the agent_registry_add command without any pre-configured scope.",
           "type": "string",
           "const": "allow-agent-registry-add",
@@ -745,6 +751,12 @@
           "type": "string",
           "const": "deny-agent-prompt",
           "markdownDescription": "Denies the agent_prompt command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_recover_change command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-recover-change",
+          "markdownDescription": "Denies the agent_recover_change command without any pre-configured scope."
         },
         {
           "description": "Denies the agent_registry_add command without any pre-configured scope.",

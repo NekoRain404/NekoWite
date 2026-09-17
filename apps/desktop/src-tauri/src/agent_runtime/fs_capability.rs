@@ -102,6 +102,7 @@ use agent_client_protocol::Responder;
 use sha2::{Digest, Sha256};
 
 use super::live_notes::{LiveNoteAnswer, LiveNotes};
+use super::recovery::Recovery;
 
 /// How many agent-attributed changes are kept for review (T10).
 ///
@@ -256,20 +257,72 @@ pub struct FsCapability {
     /// one table, one lookup, one definition of what "the same version of the note" means.
     live_notes: LiveNotes,
     changes: Mutex<VecDeque<ChangeRecord>>,
+    /// What the version each delegated write replaced *held*, kept beside the record that
+    /// describes it.
+    ///
+    /// A [`ChangeRecord`] carries the hash of the bytes a write replaced and not the bytes, which
+    /// is enough to *judge* a recovery and not enough to perform one: a host holding hashes alone
+    /// would have to call a change recoverable it cannot restore (§7.2's own line — 恢复前检查
+    /// is a check, and the material is the text). The text is read anyway on this path — it is
+    /// where the record's `baseline_hash` comes from — so keeping it costs the write nothing and
+    /// makes every change this host *performed* one it can put back.
+    ///
+    /// It is the strongest form of §7.2's 「会话开始前…保存基线」 that this host can take, and it
+    /// is deliberately not the window's version of it: the window can only capture the notes it
+    /// has open at the send, while this is the file as it was at the instant of the change,
+    /// whether or not any tab held it.
+    recovery: Arc<Recovery>,
 }
 
 impl FsCapability {
-    pub fn new(files: Arc<dyn VaultFiles>, live_notes: LiveNotes) -> Self {
+    pub fn new(files: Arc<dyn VaultFiles>, live_notes: LiveNotes, recovery: Arc<Recovery>) -> Self {
         Self {
             files,
             live_notes,
             changes: Mutex::new(VecDeque::new()),
+            recovery,
         }
     }
 
     /// The agent-attributed changes, oldest first.
     pub fn changes(&self) -> Vec<ChangeRecord> {
         self.changes.lock().unwrap().iter().cloned().collect()
+    }
+
+    /// The baselines those changes left, and the recovery that judges them.
+    pub fn recovery(&self) -> &Arc<Recovery> {
+        &self.recovery
+    }
+
+    /// The newest change this host performed for `path` inside `vault_root`, if it performed one.
+    ///
+    /// **Compared by the app's own spelling of the path, not by the engine's.** A record's path is
+    /// whatever the engine put in its request — absolute, relative, doubly slashed — because that
+    /// is what the write was resolved from, while a window names a file the way its tabs do
+    /// (`file_store::list_dir_entries` renders every path through `ipc_path`, and
+    /// [`VaultFiles::frontend_path`] is that same rendering). Comparing the two strings directly
+    /// would find nothing for the very asking side this exists for, and finding nothing is
+    /// indistinguishable from "this host never wrote it". Both sides are therefore put through
+    /// `frontend_path`, which also means a path outside the vault is refused here rather than
+    /// searched for.
+    ///
+    /// The **newest** match wins: two writes to one file are two changes, and the one a recovery
+    /// can undo is the last one — the earlier change's result is no longer what the file holds.
+    pub fn change_for(&self, vault_root: &str, path: &str) -> Option<ChangeRecord> {
+        let wanted = self.files.frontend_path(vault_root, path).ok()?;
+        self.changes
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|record| {
+                record.vault_root == vault_root
+                    && self
+                        .files
+                        .frontend_path(&record.vault_root, &record.path)
+                        .is_ok_and(|key| key == wanted)
+            })
+            .cloned()
     }
 
     /// Answers one request. `vault_root` is the session's root as the HOST
@@ -375,6 +428,13 @@ impl FsCapability {
 
                 match written {
                     Ok(Ok((baseline, _warning, content))) => {
+                        // The baseline becomes recovery material before the record is written,
+                        // and from the same read: this is the text the write just replaced. A
+                        // creation has none (`None`), which is not an empty file — the distinction
+                        // the record keeps and the one a recovery moves on.
+                        if let Some(before) = &baseline {
+                            self.recovery.remember(&vault_root, &path, before.clone());
+                        }
                         self.record(ChangeRecord {
                             session_id,
                             vault_root: vault_root.to_string(),

@@ -24,6 +24,7 @@ import {
   AGENT_CAPABILITY_FEATURES,
   AgentFailure,
   type AgentCapabilityReport,
+  type AgentChangeRecovery,
   type AgentConfigOption,
   type AgentConfigOptionList,
   type AgentEvent,
@@ -551,6 +552,25 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
         record.run = null
         dropRunPermissions(record, run.runId)
       }
+    },
+
+    /**
+     * The double holds no files, so it holds no change to put back.
+     *
+     * `no-baseline` is the honest arm rather than a stub that pretends: this double's sessions are
+     * conversations with no vault behind them, and every file fact a real host would answer about
+     * — what a path held before an agent's write — is a fact about a disk this object does not
+     * have. A panel driven by it therefore shows the refusal a real host gives for a file the
+     * engine changed with its own tools, which is the state a reader reaches most often and the
+     * one worth being able to see without an engine.
+     *
+     * The handle is still checked, because that part *is* this double's: a session it never minted
+     * is refused exactly as `loadSession` refuses one, and a test that hands it a foreign handle
+     * must see that rather than a plausible refusal about a file.
+     */
+    async recoverChange(session: AgentSession, path: string): Promise<AgentChangeRecovery> {
+      engineCall(session)
+      return { kind: 'refused', path, code: 'no-baseline' }
     },
 
     async cancel(session: AgentSession): Promise<void> {

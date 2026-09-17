@@ -190,6 +190,22 @@ impl Recovery {
     /// not be protected before the session started.
     pub fn baseline(&self, vault_root: &str, path: &str) -> Result<Baseline, String> {
         let text = self.files.read(vault_root, path)?;
+        Ok(self.remember(vault_root, path, text))
+    }
+
+    /// The same record, from text the caller has already read.
+    ///
+    /// Two callers need a baseline and only one of them can afford to read the file: the window's
+    /// pre-session capture has nothing else to do, while [`super::fs_capability`] reads the file
+    /// *because* it is about to overwrite it — the baseline hash on a [`ChangeRecord`] comes from
+    /// that read. Reading it a second time there would be a second version of the same file, and a
+    /// baseline that described bytes the write did not replace is the one thing [`Self::plan`]
+    /// exists to catch: it would refuse every change as `baseline-stale` with nothing saying why.
+    ///
+    /// So the text travels in rather than the path, and the hash is still derived here — a stored
+    /// hash and a stored text that were computed separately are exactly the pair that would let a
+    /// wrong version be declared correct.
+    pub fn remember(&self, vault_root: &str, path: &str, text: String) -> Baseline {
         let baseline = Baseline {
             vault_root: vault_root.to_string(),
             path: path.to_string(),
@@ -204,7 +220,7 @@ impl Recovery {
             held.pop_front();
         }
         held.push_back(baseline.clone());
-        Ok(baseline)
+        baseline
     }
 
     /// The baseline held for this path in this vault, if any.

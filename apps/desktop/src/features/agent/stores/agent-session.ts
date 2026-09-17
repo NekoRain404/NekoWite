@@ -39,7 +39,9 @@
 
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
+import { AgentFailure } from '../../../platform/gateways/agent-contracts'
 import type {
+  AgentChangeRecovery,
   AgentConfigOption,
   AgentEvent,
   AgentGateway,
@@ -439,6 +441,30 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
   }
 
   /**
+   * Put one of the run's changes back through the host, for a note no tab holds.
+   *
+   * The store's own door to `AgentGateway.recoverChange`, and it is here rather than in the
+   * component for the reason the gateway arrives as an argument to *this* module: the subscription
+   * a session is followed through is the only thing holding it, and a component that reached for a
+   * gateway would be answering about a runtime it cannot see.
+   *
+   * A rejection is thrown rather than swallowed — "no session is attached" and "the host could not
+   * be asked" are both facts the caller has to say, and the caller is the surface that knows what
+   * the reader pressed. A *refusal* is not a rejection: it comes back as the host's own answer,
+   * with one of the six codes, exactly as the contract declares it.
+   */
+  async function recoverChange(key: string, path: string): Promise<AgentChangeRecovery> {
+    const live = subscriptionFor(key)
+    if (live === null) {
+      // The same word the adapter uses when it refuses before reaching the backend
+      // (`tauri-agent.ts`), so a caller sees one code for "nothing is running" whichever layer
+      // said it.
+      throw new AgentFailure('runtime-unavailable', 'no agent session is attached')
+    }
+    return live.gateway.recoverChange(live.session, path)
+  }
+
+  /**
    * The version `path` held when this session's current run was submitted, or null when the
    * request did not name that note.
    *
@@ -512,6 +538,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     send,
     cancel,
     answer,
+    recoverChange,
     resync,
     focus,
     setDraft,

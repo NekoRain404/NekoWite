@@ -55,17 +55,28 @@ export type {
 export type { AgentEvent, AgentEventEnvelope, AgentIdentity } from './agent-contracts/envelope'
 
 export { readAgentEvent } from './agent-contracts/validation'
-export { readCapabilityReports, readSessionHistory } from './agent-contracts/readers/session'
+export {
+  readCapabilityReports,
+  readChangeRecovery,
+  readSessionHistory,
+} from './agent-contracts/readers/session'
 
-export { AGENT_CAPABILITY_FEATURES, AGENT_SESSION_STATES, isAgentSessionState } from './agent-contracts/gateway'
+export {
+  AGENT_CAPABILITY_FEATURES,
+  AGENT_RECOVERY_REFUSALS,
+  AGENT_SESSION_STATES,
+  isAgentSessionState,
+} from './agent-contracts/gateway'
 export type {
   AgentCapabilityDeclaration,
   AgentCapabilityFeature,
   AgentCapabilityFinding,
   AgentCapabilityReport,
+  AgentChangeRecovery,
   AgentGateway,
   AgentModelOption,
   AgentOpenRequest,
+  AgentRecoveryRefusalCode,
   AgentSession,
   AgentSessionHistory,
   AgentSessionSnapshot,

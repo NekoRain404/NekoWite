@@ -30,6 +30,7 @@ use super::events::{
 };
 use super::fs_capability::{ChangeRecord, FsCapability, VaultFiles};
 use super::live_notes::LiveNotes;
+use super::recovery::{Recovery, RecoveryOutcome, RecoveryRefusal};
 
 /// How long the handshake may take. A process that cannot negotiate in this
 /// long is not going to answer anything else either.
@@ -340,6 +341,13 @@ pub struct AgentRuntime {
     pub(super) connection: Arc<EngineConnection>,
     pub(super) sessions: Arc<Mutex<HashMap<String, SessionSlot>>>,
     pub(super) fs: Arc<FsCapability>,
+    /// The baselines the delegated writes left, and the one recovery that judges them.
+    ///
+    /// Held here as well as in [`FsCapability`] — the same `Arc`, not a second table — because the
+    /// capability is what *writes* a baseline and the commands are what *use* one, and a command
+    /// reaching through the file-request server for a review operation would be one module
+    /// answering for another's subject.
+    pub(super) recovery: Arc<Recovery>,
     pub(super) emitter: Emitter,
     pub(super) run_counter: AtomicU64,
     /// What the engine has reported about itself, per session.
@@ -417,7 +425,11 @@ impl AgentRuntime {
             Arc::clone(&reported),
             emitter.clone(),
         ));
-        let fs = Arc::new(FsCapability::new(files, live_notes));
+        // One recovery for the incarnation, shared with the capability that feeds it: the
+        // baselines a delegated write leaves are the material a recovery puts back, and two of
+        // them would be two answers to "can this change be undone".
+        let recovery = Arc::new(Recovery::new(Arc::clone(&files)));
+        let fs = Arc::new(FsCapability::new(files, live_notes, Arc::clone(&recovery)));
         tokio::spawn(super::runs::dispatch_fs(
             events.fs,
             Arc::clone(&sessions),
@@ -429,6 +441,7 @@ impl AgentRuntime {
                 connection,
                 sessions,
                 fs,
+                recovery,
                 emitter,
                 run_counter: AtomicU64::new(0),
                 reported,
@@ -839,13 +852,53 @@ impl AgentRuntime {
         self.fs.changes()
     }
 
+    /// The change to put back for one session's file, or nothing when this host performed none.
+    ///
+    /// **The session's own root decides what is looked under**, and it is read from the host's
+    /// table rather than taken from the caller: a path is only a path inside one vault, and a
+    /// recovery that paired one vault's record with another vault's file is the cross-root mistake
+    /// every other call here refuses. §6.1's guard comes first for the same reason it does
+    /// everywhere else — a session this host never opened has no root, and answering about one
+    /// would be answering about a session the renderer invented.
+    ///
+    /// `Ok(None)` is «this host has no such change», which is not a failure of the call: the file
+    /// may have been written by the engine with its own tools (P0 §7 measured that path existing),
+    /// or by the user, and either way there is nothing here to put back.
+    pub fn change_for(
+        &self,
+        session_id: &str,
+        path: &str,
+    ) -> Result<Option<ChangeRecord>, SessionError> {
+        self.known_session(session_id)?;
+        let root = self
+            .sessions
+            .lock()
+            .unwrap()
+            .get(session_id)
+            .map(|slot| slot.vault_root.clone());
+        Ok(root.and_then(|root| self.fs.change_for(&root, path)))
+    }
+
+    /// Put one of them back, judged again at this moment.
+    ///
+    /// The judgement lives in [`Recovery`] and is not repeated here: this is the runtime saying
+    /// which table the changes are in, not a second opinion about whether one can be undone.
+    pub fn recover(&self, change: &ChangeRecord) -> Result<RecoveryOutcome, RecoveryRefusal> {
+        self.recovery.recover(change)
+    }
+
     /// Ends the runtime and the engine with it.
     pub fn shutdown(&self) {
         self.connection.shutdown();
     }
 
     /// Fails unless this host opened `session_id`.
-    pub(super) fn known_session(&self, session_id: &str) -> Result<(), SessionError> {
+    ///
+    /// Public because the command boundary is where §6.1's guard is applied: a call that reaches
+    /// the runtime from outside needs the same check the methods here make, and a second
+    /// implementation of "is this a session of ours" at the IPC layer is how two answers to one
+    /// question appear.
+    pub fn known_session(&self, session_id: &str) -> Result<(), SessionError> {
         let known = self.sessions.lock().unwrap().contains_key(session_id);
         if known {
             Ok(())

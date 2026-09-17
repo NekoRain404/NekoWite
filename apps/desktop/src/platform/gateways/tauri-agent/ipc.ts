@@ -218,6 +218,14 @@ export interface AgentIpc {
     attachments: readonly AgentPromptAttachment[],
   ): Promise<string>
   cancel(sessionId: string): Promise<void>
+  /**
+   * Put one of the run's changes back, through the host that performed it.
+   *
+   * `unknown` for the same reason {@link capabilities} is: the Rust command answers a tagged
+   * enum, and the contract's reader (`readChangeRecovery`) is what narrows it. A window that
+   * declared the shape here would be promising something about a foreign answer.
+   */
+  recoverChange(sessionId: string, path: string): Promise<unknown>
   answerPermission(answer: AgentPermissionAnswerWire): Promise<void>
   snapshot(sessionId: string): Promise<AgentHostSnapshot>
   /** §3.4's capability report for a session: the host's rows, unread here — the contract's reader
@@ -249,6 +257,8 @@ export function createTauriAgentIpc(): AgentIpc {
         attachments: attachments.length === 0 ? null : attachments,
       }),
     cancel: (sessionId) => call<void>('agent_cancel_run', { sessionId }),
+    recoverChange: (sessionId, path) =>
+      call<unknown>('agent_recover_change', { sessionId, path }),
     answerPermission: (answer) => call<void>('agent_permission_answer', { answer }),
     snapshot: (sessionId) => call<AgentHostSnapshot>('agent_session_snapshot', { sessionId }),
     capabilities: (sessionId) =>

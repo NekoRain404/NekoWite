@@ -242,6 +242,41 @@ describe('the session store', () => {
     expect(store.records[key].view.timeline.some((entry) => 'text' in entry)).toBe(false)
   })
 
+  it('puts a change back through the host the session is attached to', async () => {
+    // The store is where the gateway lives — it arrives as an argument to `attach`, and the
+    // subscription is the only thing holding it — so this is the door a surface uses to reach the
+    // host's own recovery. The call goes out with the *session's* handle and the caller's path,
+    // and the host's answer comes back unchanged: a refusal is the port's return value and not an
+    // exception, and a store that turned one into the other would leave the caller unable to tell
+    // "the file cannot be put back" from "the call did not happen".
+    const { store, gateway, key } = await attached()
+    const recoverChange = vi.fn(async (_session: AgentSession, path: string) => ({
+      kind: 'refused' as const,
+      path,
+      code: 'changed-since-recorded' as const,
+    }))
+    gateway.recoverChange = recoverChange
+
+    await expect(store.recoverChange(key, '/vault/notes/a.md')).resolves.toEqual({
+      kind: 'refused',
+      path: '/vault/notes/a.md',
+      code: 'changed-since-recorded',
+    })
+    expect(recoverChange).toHaveBeenCalledTimes(1)
+    expect(recoverChange.mock.calls[0][1]).toBe('/vault/notes/a.md')
+  })
+
+  it('refuses to recover for a session that is not attached', async () => {
+    // `runtime-unavailable`, the word the adapter uses when it refuses before reaching the
+    // backend, so a caller sees one code for "nothing is running" whichever layer said it.
+    setActivePinia(createPinia())
+    const store = useAgentSessionStore()
+
+    await expect(store.recoverChange('nobody', '/vault/notes/a.md')).rejects.toMatchObject({
+      code: 'runtime-unavailable',
+    })
+  })
+
   it('keeps two sessions apart, including their unread flags and drafts', async () => {
     const store = useAgentSessionStore()
     const first = await opened()

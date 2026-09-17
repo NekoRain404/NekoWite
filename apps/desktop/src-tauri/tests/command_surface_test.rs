@@ -20,7 +20,7 @@
 //!
 //! ## Why the counts below are asserted rather than bounded
 //!
-//! `70` and the pet's eight are not round numbers to relax when the surface grows. Each is a
+//! `80` and the pet's eight are not round numbers to relax when the surface grows. Each is a
 //! statement that the *whole* surface was enumerated rather than sampled, and a count that was
 //! quietly lowered to let a change through would take the enumeration with it: a list read short
 //! passes every other assertion here, because the other assertions compare two derivations of the
@@ -157,8 +157,8 @@ fn the_capability_files_are_the_policy_and_nothing_else() {
         .collect();
     assert_eq!(
         declared.len(),
-        79,
-        "the declared surface is seventy-nine commands"
+        80,
+        "the declared surface is eighty commands"
     );
 
     let pet: Vec<String> = allows(&capability("desktop-pet.json"));

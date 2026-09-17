@@ -541,19 +541,43 @@ describe('recovery: what is offered, and what is refused', () => {
     expect(row.result).toBe('after')
   })
 
-  it('a note no tab holds is refused, because the window’s only write is a note’s save', () => {
-    // `agent-note-write.ts` puts text into a note through the tab's own save transaction — the
-    // precondition, the vault and the content watcher. A path with no tab has no such transaction,
-    // and writing the file anyway would be the second write path this feature forbids.
-    const review = withBaselines(
-      reviewWith(write('call-1', ['notes/a.md'], { content: [diff('notes/a.md', 'before', 'after')] })),
-      baselineFor('notes/a.md', 'before'),
+  it('a note no tab holds is offered through the host, which is the writer that needs none', () => {
+    // The dead end this route removed: `agent-note-write.ts` puts text into a note through the
+    // tab's own save transaction — the precondition, the vault and the content watcher — so a path
+    // with no tab could only be refused, and the notes a reader is least likely to have open are
+    // exactly the ones an agent went and changed. The host performed the write, holds the bytes it
+    // replaced, and needs no buffer at all — so the row offers the rejection and names the writer.
+    //
+    // It is offered *without* a window baseline, deliberately: a note no tab holds is precisely a
+    // note whose baseline this window never captured, and asking about that first is what made
+    // every closed note answer「no request named this file」. The host judges its own record.
+    const review = reviewWith(
+      write('call-1', ['notes/a.md'], { content: [diff('notes/a.md', 'before', 'after')] }),
     )
     const row = rowFor(changeRows(review, () => null), 'notes/a.md')
 
     expect(row.verdict.kind).toBe('record')
-    expect(row.offers).toEqual(['view'])
-    expect(row.refused).toEqual({ reason: 'note-not-open', path: 'notes/a.md' })
+    expect(row.baseline).toBeNull()
+    expect(row.offers).toEqual(['view', 'recover'])
+    expect(row.recoverVia).toBe('host')
+    expect(row.refused).toBeNull()
+  })
+
+  it('a note a tab holds is put back through the note’s own save, not the host', () => {
+    // The other route, and the difference is the file rather than a preference: while a tab holds
+    // the note the buffer, the vault check and the precondition all apply, and the pane that owns
+    // the text is asked before anything is written — none of which the host's own write can see.
+    const files = editor()
+    files.openClean('notes/a.md', 'after')
+    const review = withBaselines(
+      reviewWith(write('call-1', ['notes/a.md'], { content: [diff('notes/a.md', 'before', 'after')] })),
+      baselineFor('notes/a.md', 'before'),
+    )
+    const row = rowFor(changeRows(review, files.read), 'notes/a.md')
+
+    expect(row.verdict.kind).toBe('follows-disk')
+    expect(row.offers).toEqual(['view', 'recover'])
+    expect(row.recoverVia).toBe('editor')
   })
 
   it('a note that is no longer what the call left is refused rather than overwritten', () => {
@@ -677,7 +701,7 @@ describe('the answers a change can be given', () => {
       path: 'notes/a.md',
       toolCallId: 'call-1',
       decision: 'kept',
-      written: null,
+      rejection: null,
     })
     const row = rowFor(changeRows(kept, files.read), 'notes/a.md')
 
@@ -694,7 +718,7 @@ describe('the answers a change can be given', () => {
       path: 'notes/a.md',
       toolCallId: 'call-1',
       decision: 'rejected',
-      written: { status: 'saved' },
+      rejection: { via: 'editor', written: { status: 'saved' } },
     })
     const row = rowFor(changeRows(rejected, files.read), 'notes/a.md')
 
@@ -702,7 +726,7 @@ describe('the answers a change can be given', () => {
       path: 'notes/a.md',
       toolCallId: 'call-1',
       decision: 'rejected',
-      written: { status: 'saved' },
+      rejection: { via: 'editor', written: { status: 'saved' } },
     })
     expect(row.offers).toEqual(['view'])
   })
@@ -713,13 +737,13 @@ describe('the answers a change can be given', () => {
       path: 'notes/a.md',
       toolCallId: 'call-1',
       decision: 'rejected',
-      written: { status: 'save-failed' },
+      rejection: { via: 'editor', written: { status: 'save-failed' } },
     })
     const twice = decideChange(once, {
       path: 'notes/a.md',
       toolCallId: 'call-1',
       decision: 'kept',
-      written: null,
+      rejection: null,
     })
 
     expect(twice.decisions).toHaveLength(1)
@@ -735,7 +759,7 @@ describe('the answers a change can be given', () => {
       path: 'notes/a.md',
       toolCallId: 'call-1',
       decision: 'kept',
-      written: null,
+      rejection: null,
     })
     const again = {
       ...answered,

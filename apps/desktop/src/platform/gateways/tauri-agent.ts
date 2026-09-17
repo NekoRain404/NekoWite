@@ -70,8 +70,10 @@
 import {
   AgentFailure,
   readCapabilityReports,
+  readChangeRecovery,
   readSessionHistory,
   type AgentCapabilityReport,
+  type AgentChangeRecovery,
   type AgentConfigOptionList,
   type AgentEvent,
   type AgentGateway,
@@ -492,6 +494,24 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
         releaseTurn(session.sessionId, turn)
         await channel.release()
       }
+    },
+
+    async recoverChange(session: AgentSession, path: string): Promise<AgentChangeRecovery> {
+      // The handle check first, like every other session-scoped call: a path is only a path inside
+      // one vault, and the host resolves the change under the root of the session it is given —
+      // so a session this gateway did not mint has no root to look one up under.
+      const record = book.recordFor(session)
+      const answer = readChangeRecovery(await ipc.recoverChange(record.identity.sessionId, path))
+      if (answer === null) {
+        // A rejected read, not a refusal: a refusal is a code this window knows, and drawing an
+        // unreadable answer as one would put a sentence about a condition nobody established in
+        // front of the reader — the same rule `capabilities` and `listSessions` follow.
+        throw new AgentFailure(
+          'invalid-response',
+          'the host answered a recovery this window could not read',
+        )
+      }
+      return answer
     },
 
     async cancel(session: AgentSession): Promise<void> {

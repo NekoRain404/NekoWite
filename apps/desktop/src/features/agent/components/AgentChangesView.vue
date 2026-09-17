@@ -44,7 +44,6 @@ export interface AgentChangesLabels {
     writeInFlight: string
     noBaseline: string
     vaultMismatch: string
-    noteNotOpen: string
     unsavedEdits: string
     resultUnstated: string
     changedSince: string
@@ -54,11 +53,33 @@ export interface AgentChangesLabels {
     kept: string
     rejected: string
   }
-  /** What a rejection did, in the three facts §7.2 keeps apart. */
+  /** What a rejection did, in the three facts §7.2 keeps apart — the editor's own write. */
   written: {
     saved: string
     saveFailed: string
     unavailable: string
+  }
+  /**
+   * What the host's own recovery did, and why it did not.
+   *
+   * `recovered` is the file put back, and `recoveredWarning` is drawn under it when the app could
+   * not keep the version it replaced — "the file is back, but the previous version is gone" is a
+   * fact the reader has to be told. `refused` is keyed by the host's own six codes, one sentence
+   * each, for the same reason the review's refusals are: each names a different thing to do.
+   */
+  recovered: {
+    recovered: string
+    recoveredWarning: string
+    refused: {
+      noBaseline: string
+      baselineStale: string
+      unavailable: string
+      changedSinceRecorded: string
+      alreadyAtBaseline: string
+      writeRefused: string
+    }
+    /** The call itself did not complete; the host's own sentence says which fact it was. */
+    unreachable: string
   }
   /** The two texts of a note in conflict, labelled so a merge view cannot show one as the other. */
   unsavedBuffer: string
@@ -91,6 +112,7 @@ export interface AgentChangesLabels {
  * remounted.
  */
 import { Check, ChevronDown, ChevronRight, FileWarning, History, RotateCcw, Trash2 } from 'lucide-vue-next'
+import type { AgentRecoveryRefusalCode } from '../../../platform/gateways/agent-contracts'
 import type { AgentChangeOffer, AgentChangeRow } from '../services/agent-change-review'
 
 // `AgentChangesLabels` needs no import: the plain `<script>` block above is the same module, which
@@ -164,8 +186,6 @@ function refusalText(row: AgentChangeRow): string | null {
       return props.labels.refused.noBaseline
     case 'vault-mismatch':
       return props.labels.refused.vaultMismatch
-    case 'note-not-open':
-      return props.labels.refused.noteNotOpen
     case 'unsaved-edits':
       return props.labels.refused.unsavedEdits
     case 'result-unstated':
@@ -175,14 +195,51 @@ function refusalText(row: AgentChangeRow): string | null {
   }
 }
 
-/** What became of a rejection. `null` for a keep, which writes nothing — and the row says only
- *  that it was kept. */
-function writtenText(row: AgentChangeRow): string | null {
-  const written = row.decision?.written ?? null
-  if (written === null) return null
-  if (written.status === 'saved') return props.labels.written.saved
-  if (written.status === 'save-failed') return props.labels.written.saveFailed
-  return props.labels.written.unavailable
+/**
+ * What became of a rejection, in every arm one can end in. `null` for a keep, which writes
+ * nothing — and the row says only that it was kept.
+ *
+ * The arms are total over the union and switch rather than fall through, so a writer added later
+ * is a missing case here rather than a row that silently draws nothing.
+ */
+function rejectionText(row: AgentChangeRow): string | null {
+  const rejection = row.decision?.rejection ?? null
+  if (rejection === null) return null
+  switch (rejection.via) {
+    case 'editor':
+      if (rejection.written.status === 'saved') return props.labels.written.saved
+      if (rejection.written.status === 'save-failed') return props.labels.written.saveFailed
+      return props.labels.written.unavailable
+    case 'host': {
+      const answer = rejection.answered
+      if (answer.kind === 'recovered') {
+        return answer.warning === null
+          ? props.labels.recovered.recovered
+          : `${props.labels.recovered.recovered} ${props.labels.recovered.recoveredWarning}`
+      }
+      return props.labels.recovered.refused[REFUSAL_LABELS[answer.code]]
+    }
+    case 'unreachable':
+      // The host's own sentence, verbatim: the row's lead-in already says what was attempted, and
+      // a sentence this file rewrote would be this window describing a failure it did not see.
+      return `${props.labels.recovered.unreachable} ${rejection.message}`
+  }
+}
+
+/**
+ * The host's refusal codes as the label keys they are drawn from.
+ *
+ * A table rather than a chain of `if`s for the reason the labels are a copy tree at all: the six
+ * codes are the contract's (`AGENT_RECOVERY_REFUSALS`) and the six sentences are this view's, and
+ * a code with no entry is a type error here rather than a blank row.
+ */
+const REFUSAL_LABELS: Record<AgentRecoveryRefusalCode, keyof AgentChangesLabels['recovered']['refused']> = {
+  'no-baseline': 'noBaseline',
+  'baseline-stale': 'baselineStale',
+  unavailable: 'unavailable',
+  'changed-since-recorded': 'changedSinceRecorded',
+  'already-at-baseline': 'alreadyAtBaseline',
+  'write-refused': 'writeRefused',
 }
 
 /** The decision's own word, for the row that is no longer asking. */
@@ -360,12 +417,12 @@ function offer(row: AgentChangeRow, choice: AgentChangeChoice): void {
             {{ decisionText(row) }}
           </p>
           <p
-            v-if="writtenText(row) !== null"
+            v-if="rejectionText(row) !== null"
             class="agent-changes-outcome"
             data-decision-outcome
             role="status"
           >
-            {{ writtenText(row) }}
+            {{ rejectionText(row) }}
           </p>
         </template>
 

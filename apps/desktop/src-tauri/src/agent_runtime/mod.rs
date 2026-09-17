@@ -85,6 +85,7 @@ pub mod native_terminal;
 pub mod permission_grants;
 pub mod permissions;
 pub mod profile;
+pub mod recovery;
 pub mod registry;
 pub mod secret;
 pub mod session;
@@ -111,6 +112,7 @@ pub use live_notes::{
 };
 pub use permission_grants::{EngineHttp, GrantsReadout, SavedGrant};
 pub use process::{env_pairs, isolated_profile_env, EngineLaunch, SYSTEM_CA_BUNDLE};
+pub use recovery::{Baseline, Recovery, RecoveryOutcome, RecoveryPlan, RecoveryRefusal};
 pub use session::{
     AgentRuntime, AgentRuntimeEvents, RuntimeEvent, SessionError, SessionInfo, INITIALIZE_BOUND,
 };
