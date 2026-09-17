@@ -15,6 +15,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { createApp, h, nextTick, type App as VueApp } from 'vue'
 import { t } from '../../../i18n'
 import { createMemoryPetGateway, type MemoryPetGateway } from '../../../platform/gateways/memory-pet'
+import { PET_NUMBER_RULES } from '../../../platform/gateways/pet-contracts'
 import type { PetSettingsDomain, PetSettingsWrite } from '../../../platform/gateways/pet-contracts'
 import DesktopPetSettings from './DesktopPetSettings.vue'
 import type { PetSettingsContext } from './DesktopPetSettings.vue'
@@ -126,9 +127,30 @@ function askForBubble(): void {
  * alpha is the setting's), and the binding is what this component decides.
  */
 function bubbleAlpha(): string {
+  return bubbleProperty('--pet-bubble-alpha')
+}
+
+/**
+ * The size the stage's bubble declares, read off the same custom property the *desktop's* bubble
+ * carries (`PetBubble.vue`'s `--pet-bubble-size`, which `message.fontSize` reaches it through).
+ *
+ * The binding is what this component decides and what happy-dom can see; whether the stylesheet
+ * *consumes* it is measured in a real engine by `e2e/desktop-pet-appearance.spec.ts`, which compares
+ * this surface's computed size against the pet window's.
+ */
+function bubbleSize(): string {
+  return bubbleProperty('--pet-bubble-size')
+}
+
+function bubbleProperty(name: string): string {
   const el = document.querySelector<HTMLElement>('.pet-preview__bubble')
   if (!el) throw new Error('no preview bubble')
-  return el.style.getPropertyValue('--pet-bubble-alpha')
+  return el.style.getPropertyValue(name)
+}
+
+/** A file beside this one, as text — for the assertions that are about a *declaration*. */
+function source(relative: string): string {
+  return readFileSync(resolve(__dirname, relative), 'utf8')
 }
 
 async function storedValues(
@@ -181,6 +203,48 @@ describe('the stage follows the draft', () => {
     expect(write).not.toHaveBeenCalled()
     expect(bubbleAlpha()).toBe('70%')
     expect(figure().style.opacity).toBe('')
+  })
+
+  it('draws the bubble at the size the setting names, before anything is written', async () => {
+    // The size half of the same claim the alpha half makes above, and the one the stage used to get
+    // wrong in the way nobody checks a decoration for: `.pet-preview__bubble` declared a fixed
+    // `font-size: 11px` while the desktop's bubble draws `message.fontSize` — the setting this very
+    // page offers as three buttons. So the stage showed a bubble size the user could not reach by
+    // clicking, which is a preview lying about the one thing it exists for.
+    //
+    // Read off the custom property the *desktop's* bubble carries, not off a second number: the same
+    // binding, so the two surfaces cannot be given different sizes by this component.
+    const gateway = createMemoryPetGateway()
+    const largest = PET_NUMBER_RULES['message.fontSize'].max
+    const smallest = PET_NUMBER_RULES['message.fontSize'].min
+    await seed(gateway, 'message', { fontSize: largest })
+    mountOnBubblePage(gateway)
+    await flush()
+
+    askForBubble()
+    await flush()
+    expect(bubbleSize()).toBe(`${largest}px`)
+
+    // Moved through the page's own control, and read before the write lands — the stage follows the
+    // draft, so a preview that only moved after a save would be showing the old size while the user
+    // is choosing the new one.
+    const button = document.querySelector<HTMLButtonElement>(`[data-test="pet-bubble-font-size-${smallest}"]`)
+    if (!button) throw new Error('no font-size button')
+    button.click()
+    await nextTick()
+    expect(bubbleSize()).toBe(`${smallest}px`)
+  })
+
+  it('declares that size through the same expression the desktop’s bubble uses', () => {
+    // happy-dom has no cascade, so what the stylesheet *does* with the property is measured in a
+    // real engine (`e2e/desktop-pet-appearance.spec.ts`, and the pet half of it in WebKitGTK). What
+    // is assertable here is the one thing that makes a fix in either file a fix in both: the
+    // declaration is the same expression, character for character. A stage that bound
+    // `--pet-bubble-size` and went on declaring `font-size: 11px`, or that fell back to the app's
+    // body size where the desktop falls back to 12px, would otherwise pass every case in this suite.
+    const declaration = 'font-size: var(--pet-bubble-size, var(--app-body-size, 12px))'
+    expect(source('PetSettingsPreview.vue')).toContain(declaration)
+    expect(source('../../desktop-pet/components/PetBubble.vue')).toContain(declaration)
   })
 
   it('takes the bubble away after the setting’s own life, not a number of its own', async () => {

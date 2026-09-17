@@ -26,6 +26,7 @@ import { readSystemAccentColor } from '../platform/system-accent'
 import { createSystemAccentReader } from './appearance-system-accent'
 import {
   APPEARANCE_DEFAULTS,
+  clampBodyFontSize,
   clampInt,
   NOTELIST_WIDTH_MAX,
   NOTELIST_WIDTH_MIN,
@@ -174,8 +175,12 @@ export const useAppearanceStore = defineStore('appearance', () => {
     persist()
   }
 
+  /** The control's end of the body size's one rule. The bounds and the fallback are
+   *  `appearance-schema.ts`'s (`clampBodyFontSize`), which is also what the stored blob
+   *  is read back through — a second copy of `12`/`20` here is how the two doors came to
+   *  disagree about the same setting. */
   function setBodyFontSize(n: number): void {
-    bodyFontSize.value = Math.min(20, Math.max(12, Number.isFinite(n) ? n : APPEARANCE_DEFAULTS.bodyFontSize))
+    bodyFontSize.value = clampBodyFontSize(n)
     persist()
   }
 

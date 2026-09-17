@@ -58,7 +58,27 @@ const seconds = computed(() => messageValues.value.bubbleSeconds)
  * overrides below too, because it is an alpha and not a colour — the colour is the theme's.
  */
 const bubbleAlpha = computed(() => `${Math.round(messageValues.value.opacity * 100)}%`)
-const bubbleStyle = computed(() => ({ '--pet-bubble-alpha': bubbleAlpha.value }))
+
+/**
+ * The bubble's own text size, as the desktop's bubble draws it (§5.2's 气泡与消息, upstream
+ * `ap_font_size`).
+ *
+ * The second half of the same rule the alpha above follows, and the one this stage used to get
+ * wrong in the direction nobody checks a decoration for: it declared a fixed 11px while
+ * `PetBubble.vue` draws `message.fontSize` — the setting *this page* offers as three buttons, and
+ * the one the pet window's own bubble is measured at (`pet-probe.mjs`'s message step). So the user
+ * chose a size by looking at a stage that could not show it.
+ *
+ * It travels the way the size travels in the window: as `--pet-bubble-size` on the surface, which is
+ * the property `PetBubble.vue`'s stylesheet reads, so the two declare the same expression and neither
+ * can be given a number the other does not have.
+ */
+const bubbleSize = computed(() => `${messageValues.value.fontSize}px`)
+
+const bubbleStyle = computed(() => ({
+  '--pet-bubble-alpha': bubbleAlpha.value,
+  '--pet-bubble-size': bubbleSize.value,
+}))
 
 /** The largest figure this panel can draw, in CSS pixels. */
 const STAGE_MAX_PX = 132
@@ -275,7 +295,11 @@ onBeforeUnmount(() => {
      expression per colour, and the colour is never written twice. */
   background: color-mix(in srgb, var(--app-elevated) var(--pet-bubble-alpha, 92%), transparent);
   color: var(--app-text);
-  font-size: 11px;
+  /* The setting, then the app's body size, then this build's own 12px — `PetBubble.vue:262`'s
+     expression, character for character, so the two surfaces resolve the same property to the same
+     number. The stage used to declare `11px` here, which is a size the settings page cannot produce
+     and the desktop never draws. */
+  font-size: var(--pet-bubble-size, var(--app-body-size, 12px));
   line-height: 1.4;
 }
 /* No colour of this component's own, deliberately. The bubble is drawn from `--app-elevated`,

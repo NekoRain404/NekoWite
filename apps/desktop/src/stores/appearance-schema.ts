@@ -30,6 +30,20 @@ export const NOTELIST_WIDTH_DEFAULT = 280
 
 export const WORD_GOAL_MAX = 100000
 
+/**
+ * The range the body size is held to, declared once because **two doors read this setting**: the
+ * Appearance control that sets it, and the stored blob read while the window is still coming up.
+ *
+ * The bounds belong to this module rather than to either door — it is the module that owns "the
+ * bounds its numbers are held to" — and a bound written at one door only is a second answer to one
+ * question. It was: `parseStored` accepted whatever the blob said while the control clamped to
+ * 12..20, so a hand-edited or corrupted `99` was drawn by the app's own shell at 99px while the pet
+ * window, applying this range to the size the app publishes, drew 20. One setting, two sizes, two
+ * windows.
+ */
+export const BODY_FONT_SIZE_MIN = 12
+export const BODY_FONT_SIZE_MAX = 20
+
 export interface AppearanceSettings {
   theme: Theme
   colorScheme: ColorScheme
@@ -108,6 +122,21 @@ export function clampInt(value: unknown, min: number, max: number, fallback: num
   return Math.round(Math.min(max, Math.max(min, numeric)))
 }
 
+/** The body size a stored or set value is held to: a finite number clamped into range, and anything
+ *  that is not a number at all is the schema's default — the same reading {@link clampInt} gives a
+ *  bounded setting, minus the rounding.
+ *
+ *  Not `clampInt`: that one rounds, and the app's font sizes are the user's, so a fraction is a size
+ *  the store has always kept (`setBodyFontSize(14.5)`); the range is a bound, not a step. Both doors
+ *  call this — the control and {@link parseStored} — so the size a window draws and the size a blob
+ *  is read back as are one rule applied twice rather than two rules that happen to agree today. */
+export function clampBodyFontSize(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return APPEARANCE_DEFAULTS.bodyFontSize
+  }
+  return Math.min(BODY_FONT_SIZE_MAX, Math.max(BODY_FONT_SIZE_MIN, value))
+}
+
 /** Parse a stored appearance blob with field-by-field validation, returning null
  *  when it is corrupt (the domain persister then falls back to `defaults`). */
 function parseStored(raw: string): AppearanceSettings | null {
@@ -123,7 +152,7 @@ function parseStored(raw: string): AppearanceSettings | null {
     colorScheme: typeof parsed.colorScheme === 'string' && COLOR_SCHEMES.includes(parsed.colorScheme as ColorScheme)
       ? (parsed.colorScheme as ColorScheme)
       : APPEARANCE_DEFAULTS.colorScheme,
-    bodyFontSize: parsed.bodyFontSize ?? APPEARANCE_DEFAULTS.bodyFontSize,
+    bodyFontSize: clampBodyFontSize(parsed.bodyFontSize),
     lineHeight: parsed.lineHeight ?? APPEARANCE_DEFAULTS.lineHeight,
     sidebarWidth: clampInt(parsed.sidebarWidth ?? APPEARANCE_DEFAULTS.sidebarWidth, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX, APPEARANCE_DEFAULTS.sidebarWidth),
     railWidth: clampInt(parsed.railWidth ?? APPEARANCE_DEFAULTS.railWidth, RAIL_WIDTH_MIN, RAIL_WIDTH_MAX, APPEARANCE_DEFAULTS.railWidth),

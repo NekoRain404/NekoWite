@@ -35,15 +35,29 @@ function anImage(name: string, size = 8): ReturnType<typeof imageAttachment> {
 }
 
 describe('what a file becomes', () => {
-  it('reads its media type off the extension, not off the browser', () => {
+  it('reads its media type off the two tables, and answers null for what neither knows', () => {
     expect(mediaTypeOf('notes/a.md')).toBe('text/markdown')
     expect(mediaTypeOf('notes/a.ts')).toBe('text/typescript')
-    // An extension nobody has a type for falls back to `text/plain` and not to
-    // `application/octet-stream`: the block this feeds is built from text, so `text/plain` is the
-    // one type that is certainly true, while `octet-stream` would be this app contradicting the
-    // payload it just put in the block.
-    expect(mediaTypeOf('LICENSE')).toBe('text/plain')
-    expect(mediaTypeOf('archive.tar.zst')).toBe('text/plain')
+    expect(mediaTypeOf('assets/shot.png')).toBe('image/png')
+    // An extension neither table knows is **no answer**, not a type. `text/plain` used to be what
+    // this returned, and for `scan.tiff` that was a specific type for a file nothing had
+    // established anything about: `.tiff` is an image, and an image block labelled `text/plain` is
+    // this app telling the engine something about the reader's file that is not true. The three
+    // cases below are the three shapes of "neither table knows": an image format outside the image
+    // table, an extension-less name, and a suffix that is not an extension at all.
+    expect(mediaTypeOf('scan.tiff')).toBeNull()
+    expect(mediaTypeOf('icons/app.ico')).toBeNull()
+    expect(mediaTypeOf('LICENSE')).toBeNull()
+    expect(mediaTypeOf('archive.tar.zst')).toBeNull()
+  })
+
+  it('gives a text block the one type that is true of its payload', () => {
+    // `resourceAttachment` is built from text the window has already read as a string, so
+    // `text/plain` is a fact about *the block* rather than a guess about the file — which is why
+    // that fallback lives at this call site and no longer inside `mediaTypeOf`. A `.conf`, a
+    // `Makefile` and a `.md` all become blocks whose payload really is text.
+    expect(resourceAttachment('LICENSE', 'the licence').mediaType).toBe('text/plain')
+    expect(resourceAttachment('notes/a.md', '# a').mediaType).toBe('text/markdown')
   })
 
   it('carries the path AND the text, because the block needs both', () => {
@@ -246,6 +260,20 @@ describe('what a paste or a drop carries', () => {
 
   it('says nothing when the clipboard carried nothing this app can send', async () => {
     const result = await imagesFromDataTransfer(transfer([file('notes.md', 'text/markdown')]), [])
+    expect(result.accepted).toEqual([])
+    expect(result.refused).toEqual([])
+  })
+
+  it('never names a type for an image format outside this build’s own list', async () => {
+    // Where the absent answer above is *reachable from*, stated as an executable fact: a pasted
+    // `.tiff` is filtered out by the shared intake's own `isImageFile` — a format the vault may
+    // hold and this build cannot attach — so no image block is built for it and `mediaTypeOf` is
+    // never asked. That is why the defect was latent rather than visible, and why the day this
+    // assertion turns red is the day a route change has to answer for the type it sends.
+    const result = await imagesFromDataTransfer(
+      transfer([file('scan.tiff', ''), file('paste', 'application/octet-stream')]),
+      [],
+    )
     expect(result.accepted).toEqual([])
     expect(result.refused).toEqual([])
   })

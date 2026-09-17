@@ -86,6 +86,16 @@ const BUBBLE_WINDOW = { width: 420, height: 320 }
 /** MiniBrowser's own chrome, measured rather than assumed: a 420px content area needs 456 (above). */
 const WINDOW_CHROME_PX = 36
 
+/**
+ * The bubble's own text size the two pages are compared at.
+ *
+ * The largest of the three buttons the settings page offers (`PET_NUMBER_RULES['message.fontSize']`
+ * is 10/12/14), written through the message domain on both pages so the number one page draws is the
+ * number the other is measured against. It is deliberately not the app's body size (13px at that
+ * point in the run) and not the `11px` the preview used to declare.
+ */
+const MESSAGE_SIZE = 14
+
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`)
   return i === -1 ? fallback : (process.argv[i + 1] ?? true)
@@ -868,6 +878,44 @@ function verify(results) {
       message?.largeClaude?.dotGlyph !== 'none',
   )
 
+  /*
+   * The settings page's own preview — the corner of the size claim Chromium cannot answer for.
+   *
+   * The bubble's size lives in two pages, and the two readings compared here were taken in
+   * **WebKitGTK**, one page each: the desktop's bubble (the `message` step above, on
+   * `desktop-pet.html`) and the stage inside the settings dialog (the `preview` step, on the app's
+   * page). The claim is the equality of those two measured numbers for one written setting — not
+   * "the stage is fixed at 11px" nor "the two differ", neither of which says which number either
+   * page drew.
+   */
+  const preview = results.preview
+  run(
+    'the settings preview draws the bubble at the size the desktop drew it at, in this engine',
+    `stage ${JSON.stringify(preview?.fontSize)} via --pet-bubble-size ${JSON.stringify(preview?.property)} on the app’s page vs ${JSON.stringify(message?.largeClaude?.fontSize)} on the desktop’s; the app’s body ${JSON.stringify(preview?.shellBodySize)}, the stage’s own inherited ${JSON.stringify(preview?.stageBodySize)}`,
+    preview?.fontSize === message?.largeClaude?.fontSize &&
+      // Both directions, because an equality is satisfiable by two wrong answers: `11px` is what the
+      // component used to declare, and the sizes the stage *could* have fallen back to (the app's
+      // body size, or the 15px the teleported dialog resolves the property to) are neither of them
+      // the setting. `14px` is `MESSAGE_SIZE`, mirrored here rather than read for the reason above.
+      preview?.fontSize === '14px' &&
+      preview?.fontSize !== '11px' &&
+      preview?.fontSize !== preview?.shellBodySize &&
+      preview?.fontSize !== preview?.stageBodySize,
+  )
+  // FAILS IF: the body size above the control's ceiling is drawn at the ceiling by *one* window and
+  // verbatim by the other — the third defect, in the engine that ships. The app's number is what its
+  // own shell read from the blob it was loaded with (99, written before the page came up), and the
+  // pet window's is what its page wrote from the value published to it (the same 99, in the
+  // appearance step above). One setting, one size, two windows.
+  run(
+    'and one stored body size is one size in both windows',
+    `a stored ${CORRUPT_BODY_SIZE}: the app’s shell drew ${JSON.stringify(preview?.shellBodySize)}, the pet’s page carried ${JSON.stringify(appearance?.overRange?.bodySize)} (inherited ${JSON.stringify(appearance?.overRange?.inheritedBodySize)}, menu at ${JSON.stringify(appearance?.overRange?.menuFontSize)})`,
+    preview?.shellBodySize === '20px' &&
+      appearance?.overRange?.bodySize === preview?.shellBodySize &&
+      appearance?.overRange?.inheritedBodySize === preview?.shellBodySize &&
+      appearance?.overRange?.menuFontSize === preview?.shellBodySize,
+  )
+
   return {
     passed: checks.filter((c) => c.holds).length,
     failed: checks.filter((c) => !c.holds).length,
@@ -1047,6 +1095,91 @@ const value = arguments[0], done = arguments[arguments.length - 1];
 })().catch((error) => done({ ok: false, why: String((error && error.message) || error) }));
 `
 
+/**
+ * The settings page's own preview, in the engine that ships.
+ *
+ * **What this step is here for.** The bubble's size lives in two pages: the desktop's bubble (the
+ * `message` step above, read off `desktop-pet.html`) and the stage in the settings dialog, which is
+ * the *app's* page. Chromium answers the pair for the app's page (`desktop-pet-appearance.spec.ts`)
+ * and the probe above answers the pet half in WebKitGTK; this step is the missing corner, so the
+ * claim "one setting, one size, two windows" is measured in the product's engine on both sides.
+ *
+ * **The host is mounted in the product's own mount point.** The preview is drawn by
+ * `DesktopPetSettings.vue` into the settings dialog's content box, so the dialog is opened the way a
+ * user opens it — the status bar's settings button, then the rail's Appearance row — and the
+ * container is mounted into `.dialog-content`, which is what the Chromium case does too. A host
+ * appended to `document.body` would have been a page the product never has, which is the mistake the
+ * bubble step's own comment records.
+ *
+ * `fontSize` is written through the message domain before the mount, the same write the pet step
+ * above made, so the number compared against is the number *that* page drew.
+ */
+const PREVIEW = `
+const wrote = arguments[0], done = arguments[arguments.length - 1];
+(async () => {
+  const entry = await (await fetch('/src/main.ts')).text();
+  const vueUrl = entry.match(/["']([^"']*\\/deps\\/vue\\.js[^"']*)["']/)?.[1];
+  if (!vueUrl) { done({ ok: false, why: 'the dev server serves no vue dependency' }); return; }
+  const vue = await import(vueUrl);
+  const container = await import('/src/features/desktop-pet-settings/components/DesktopPetSettings.vue');
+  const memory = await import('/src/platform/gateways/memory-pet.ts');
+
+  const gateway = memory.createMemoryPetGateway({ visible: true });
+  const loaded = await gateway.readSettings('message');
+  if (loaded.status !== 'current') { done({ ok: false, why: 'the double would not read message' }); return; }
+  await gateway.updateSettings({
+    domain: 'message',
+    revision: loaded.record.revision,
+    values: Object.assign({}, loaded.record.values, { fontSize: wrote, quickBubbles: ['The desktop bubble.'] }),
+  });
+
+  const content = document.querySelector('.dialog-content');
+  if (!content) { done({ ok: false, why: 'the settings dialog has no content box' }); return; }
+  const host = document.createElement('div');
+  host.id = 'probe-preview';
+  content.append(host);
+  const app = vue.createApp({ render: () => vue.h(container.default, { gateway, page: 'bubble' }) });
+  app.mount(host);
+  await vue.nextTick();
+  // The container's own reads are promises and the stage is drawn once they land (§5.3), which is
+  // the same settle the Chromium case needs.
+  await new Promise((resolve) => setTimeout(resolve, 400));
+
+  const ask = host.querySelector('.pet-preview__ask');
+  if (!ask) { done({ ok: false, why: 'the stage drew no button to ask for the bubble' }); return; }
+  ask.click();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+
+  const bubble = host.querySelector('.pet-preview__bubble');
+  const stage = host.querySelector('.pet-preview__stage');
+  if (!bubble || !stage) { done({ ok: false, why: 'the stage drew no bubble to measure' }); return; }
+  const shell = document.querySelector('.shell');
+  done({
+    ok: true,
+    // The two readings the size claim is made of: what the stage drew, and which property carried it.
+    fontSize: getComputedStyle(bubble).fontSize,
+    property: bubble.style.getPropertyValue('--pet-bubble-size'),
+    // The body sizes, for the fence: the app's own (from the stored blob the page was loaded with)
+    // and the one the stage inherits — the dialog is teleported to body, so they are not the same
+    // number, and neither is the size the bubble must draw.
+    shellBodySize: shell ? shell.style.getPropertyValue('--app-body-size').trim() : null,
+    stageBodySize: getComputedStyle(stage).getPropertyValue('--app-body-size').trim(),
+  });
+})().catch((error) => done({ ok: false, why: String((error && error.message) || error) }));
+`
+
+/**
+ * The body size written into the stored blob before the app page loads.
+ *
+ * Above the Appearance control's ceiling (12..20) and unreachable through it, which is the whole of
+ * the state it stands for: a hand-edited blob, a half-written save, a downgrade. The app's own shell
+ * drew it verbatim until `stores/appearance-schema.ts`'s read was held to the control's range.
+ */
+const CORRUPT_BODY_SIZE = 99
+
+/** A roomy window for the app page: the settings dialog is 176px of rail plus a content column. */
+const APP_WINDOW = { width: 900, height: 700 }
+
 async function main() {
   const keep = Boolean(arg('keep', false))
   const vitePort = await freePort()
@@ -1060,7 +1193,7 @@ async function main() {
   })
 
   const wd = new WebDriver(driverPort)
-  const results = { engine: null, page: null, states: {}, hit: {}, advanced: null, root: {}, ball: {}, bubble: null, theme: null, message: null, appearance: null }
+  const results = { engine: null, page: null, states: {}, hit: {}, advanced: null, root: {}, ball: {}, bubble: null, theme: null, message: null, appearance: null, preview: null }
   const watchdog = setTimeout(() => {
     process.stderr.write('\n[webkit-pet] watchdog: nothing finished in 300s\n')
     process.kill(process.pid, 'SIGKILL')
@@ -1242,7 +1375,7 @@ async function main() {
     results.message = {}
     for (const [name, write] of [
       ['smallPlain', { fontSize: 10, dot: 'plain' }],
-      ['largeClaude', { fontSize: 14, dot: 'claude' }],
+      ['largeClaude', { fontSize: MESSAGE_SIZE, dot: 'claude' }],
     ]) {
       const read = await wd.executeAsync(BUBBLE_THEME, [write])
       if (!read?.ok) throw new Error(`the ${name} message write is not measurable: ${read?.why}`)
@@ -1262,10 +1395,65 @@ async function main() {
     for (const [name, published] of [
       ['forest', { theme: 'dark', colorScheme: 'forest', accent: 'teal', highContrast: false, bodyFontSize: 16 }],
       ['highContrast', { theme: 'light', colorScheme: 'sunset', accent: 'coral', highContrast: true, bodyFontSize: 13 }],
+      // And the third defect's own state: a body size above the control's ceiling, which the app's
+      // own page cannot produce through its UI. The window's rule for a published value
+      // (`pet-page-appearance.ts`'s `petBodySizeOf`, 12..20) is what this reading is about, and the
+      // app's half of the same number is read in the `preview` step at the end of this run.
+      ['overRange', { theme: 'light', colorScheme: 'default', accent: 'ink', highContrast: false, bodyFontSize: CORRUPT_BODY_SIZE }],
     ]) {
       const read = await wd.executeAsync(APPEARANCE, [published])
       if (!read?.ok) throw new Error(`the ${name} appearance is not measurable: ${read?.why}`)
       results.appearance[name] = read
+    }
+
+    /*
+     * The settings page's own preview — the last step, because it *navigates*: the app page is a
+     * different document from `desktop-pet.html`, and every reading above is already in hand. The
+     * blob is written first, on the pet page's origin (the two pages are the same origin: one dev
+     * server), so the app page reads it as its window comes up — which is when the appearance store
+     * is built (`AppShell.vue`'s setup), not after some later read.
+     */
+    stage('the app’s settings page')
+    await wd.execute(
+      `localStorage.setItem('nekowite.appearance', JSON.stringify({ bodyFontSize: ${CORRUPT_BODY_SIZE} })); return true;`,
+    )
+    const appUrl = `http://127.0.0.1:${vitePort}/`
+    await wd.navigate(appUrl)
+    await wd.setWindowRect({
+      width: APP_WINDOW.width,
+      height: APP_WINDOW.height + WINDOW_CHROME_PX,
+      x: 0,
+      y: 0,
+    })
+    await until(() => wd.execute('return Boolean(document.querySelector(".shell"));'), {
+      timeout: 20_000,
+      what: 'the app page to draw its shell',
+    })
+    // The settings dialog, opened the way a user opens it: the status bar's own button. A page with
+    // no vault still draws the bar — the note columns are what a vault decides — which is what makes
+    // this reachable here at all.
+    const opened = await wd.execute(
+      `const buttons = Array.from(document.querySelectorAll('.status-btn'));
+       const last = buttons[buttons.length - 1];
+       if (last) last.click();
+       return buttons.length;`,
+    )
+    if (!opened) throw new Error('the app page drew no status button to open the settings with')
+    await until(() => wd.execute('return Boolean(document.querySelector(".settings-overlay"));'), {
+      timeout: 10_000,
+      what: 'the settings dialog to open',
+    })
+    // The rail's second row is Appearance (`SettingsNavigation`'s own table is general, appearance,
+    // …), which is the row the Chromium case clicks for the same reason: a label would need this
+    // file to know the locale.
+    await wd.execute(
+      `const rows = document.querySelectorAll('.dialog-nav .nav-row');
+       if (rows[1]) rows[1].click();
+       return rows.length;`,
+    )
+    results.preview = await wd.executeAsync(PREVIEW, [MESSAGE_SIZE])
+    if (!results.preview?.ok) {
+      throw new Error(`the settings preview is not measurable: ${results.preview?.why}`)
     }
 
     const logs = await wd.logs()

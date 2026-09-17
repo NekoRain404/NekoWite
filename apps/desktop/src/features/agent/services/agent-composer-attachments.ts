@@ -157,20 +157,32 @@ const TEXT_MEDIA_TYPES: Record<string, string> = {
 }
 
 /**
- * The media type of a file, from its extension and nothing else.
+ * The media type of a file, from its extension and nothing else — or `null` when neither table
+ * knows the extension.
  *
- * The fallback is `text/plain` and not `application/octet-stream`, because of the one arm this is
- * used for: a `resource` attachment is built from text the window has already read, so its payload
- * *is* text and `text/plain` is the one type that is certainly true when the extension says
- * nothing. `application/octet-stream` would be this app contradicting the block it built.
+ * **`null` and not a type.** This used to fall back to `text/plain`, and for a `.tiff` that was a
+ * *specific* type for a file nothing had established anything about: `.tiff` is an image format the
+ * app's own importer copies into a vault, and an image block labelled `text/plain` is this window
+ * telling the engine something about the reader's file that is not true. A fallback that names a
+ * wrong type is worse than one that admits it does not know, so the absent answer is the answer and
+ * each caller says what its own payload makes of it:
+ *
+ *  - a `resource` block is built from text the window has already read, so {@link resourceAttachment}
+ *    supplies `text/plain`, which is a fact about the block rather than a guess about the file;
+ *  - an image is a file the app's own intake has already called an image, and a format this build
+ *    cannot name is refused with the format named rather than sent under an invented one.
+ *
+ * The tables are consulted in the only order that is meaningful: the image table first (it answers
+ * `application/octet-stream` for "not an image", which is its own sentinel and not this function's),
+ * then the text table.
  */
-export function mediaTypeOf(path: string): string {
+export function mediaTypeOf(path: string): string | null {
   const name = path.split(/[\\/]/).pop() ?? path
   const match = name.toLowerCase().match(/\.([a-z0-9]+)$/)
-  if (match === null) return 'text/plain'
+  if (match === null) return null
   const image = mimeFromExtension(match[1])
   if (image !== 'application/octet-stream') return image
-  return TEXT_MEDIA_TYPES[match[1]] ?? 'text/plain'
+  return TEXT_MEDIA_TYPES[match[1]] ?? null
 }
 
 /** The file suffix a media type implies, for naming something the clipboard gave no name for. */
@@ -181,10 +193,18 @@ function suffixFor(mediaType: string): string {
   return sub === 'jpeg' ? 'jpg' : sub.length > 0 ? sub : 'png'
 }
 
-/** A file of the workspace, as the block that embeds it whole. The window read the text; the host
- *  turns the path into the URI. */
+/**
+ * A file of the workspace, as the block that embeds it whole. The window read the text; the host
+ * turns the path into the URI.
+ *
+ * **`text/plain` when the extension says nothing**, and only here: `text` is a string the window
+ * read through the host's `read_to_string`, so the block's payload *is* text whatever the file is
+ * called — a `Makefile`, a `.conf`, a file with no extension at all. That is a fact about the block
+ * this function just built, which is why the fallback sits on the payload's side of the call rather
+ * than inside the inference ({@link mediaTypeOf} answers `null` instead).
+ */
 export function resourceAttachment(path: string, text: string): AgentPromptAttachment {
-  return { kind: 'resource', path, text, mediaType: mediaTypeOf(path) }
+  return { kind: 'resource', path, text, mediaType: mediaTypeOf(path) ?? 'text/plain' }
 }
 
 /** Image bytes, as the block that carries them. `data` is base64 with no `data:` prefix. */
@@ -343,8 +363,20 @@ export async function imagesFromDataTransfer(
       refused.push(room)
       continue
     }
+    // The browser's own answer first, this app's tables only when it has none. A format neither can
+    // name is refused by name rather than sent under an invented one — the intake accepted this file
+    // as an image (`isImageFile`), so its bytes are not in doubt; it is the *type* nobody knows, and
+    // an image block whose `mimeType` this window made up would be a claim about the reader's file
+    // that nothing supports. The budget above is asked first for the same reason the reader is
+    // usually owed that answer: a file that did not fit is dropped whether or not its format is
+    // known.
+    const mediaType = file.type || mediaTypeOf(name)
+    if (mediaType === null) {
+      refused.push({ reason: 'unsupported-image', name })
+      continue
+    }
     try {
-      accepted.push(imageAttachment(name, file.type || mediaTypeOf(name), await fileToBase64(file)))
+      accepted.push(imageAttachment(name, mediaType, await fileToBase64(file)))
     } catch {
       // `fileToBase64` refuses an oversize blob itself, and a rejected read means the bytes never
       // arrived. Either way the answer is a refusal naming the file rather than a broken prompt.

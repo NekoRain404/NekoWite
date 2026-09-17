@@ -10,6 +10,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { computed } from 'vue'
 import { useAppearanceStore } from './appearance'
+import { APPEARANCE_DEFAULTS, BODY_FONT_SIZE_MAX, BODY_FONT_SIZE_MIN } from './appearance-schema'
 
 // The OS accent colour reaches the store through the platform adapter; mocking
 // it keeps these tests about the store's decisions instead of about the machine
@@ -106,6 +107,44 @@ describe('useAppearanceStore', () => {
     expect(s.bodyFontSize).toBe(20)
     s.setBodyFontSize(14.5)
     expect(s.bodyFontSize).toBe(14.5)
+  })
+
+  it('holds a stored body size to the range the control writes it with, not to the default', () => {
+    // **One setting, one size.** The read used to be `parsed.bodyFontSize ?? default`, which accepted
+    // anything: a hand-edited or corrupted `99` was drawn by the app's own shell at 99px while the
+    // pet window — which applies the same 12..20 rule to the value the app publishes — drew 20. Two
+    // windows, two sizes, one setting. The rule is now declared once (`appearance-schema.ts`'s
+    // `clampBodyFontSize`) and both doors go through it, the control and the blob.
+    //
+    // A fresh Pinia per reading, because `defineStore` caches per instance: a store that was already
+    // built holds the value it read, not the blob that is in storage now.
+    const readBodySize = (stored: unknown): number => {
+      localStorage.setItem('nekowite.appearance', JSON.stringify(stored))
+      setActivePinia(createPinia())
+      return useAppearanceStore().bodyFontSize
+    }
+    expect(readBodySize({ bodyFontSize: 99 })).toBe(BODY_FONT_SIZE_MAX)
+    expect(readBodySize({ bodyFontSize: 4 })).toBe(BODY_FONT_SIZE_MIN)
+    // A fraction is kept: the app's font sizes are the user's, and the range is a bound and not a
+    // rounding (`clampInt` rounds, which is why the body size has a guard of its own).
+    expect(readBodySize({ bodyFontSize: 14.5 })).toBe(14.5)
+    // Not a number at all is the schema's default, exactly as the setter reads it.
+    expect(readBodySize({ bodyFontSize: 'huge' })).toBe(APPEARANCE_DEFAULTS.bodyFontSize)
+    expect(readBodySize({})).toBe(APPEARANCE_DEFAULTS.bodyFontSize)
+  })
+
+  it('has one rule behind the two doors into bodyFontSize', () => {
+    // The pair, read from both ends of the same constant: what a stored blob may be read as, and
+    // what the control may be set to. A second copy of `12`/`20` at either door is the defect this
+    // asserts against — the numbers are `appearance-schema.ts`'s own, imported rather than restated.
+    localStorage.setItem('nekowite.appearance', JSON.stringify({ bodyFontSize: BODY_FONT_SIZE_MAX + 7 }))
+    setActivePinia(createPinia())
+    const s = useAppearanceStore()
+    expect(s.bodyFontSize).toBe(BODY_FONT_SIZE_MAX)
+    s.setBodyFontSize(BODY_FONT_SIZE_MAX + 7)
+    expect(s.bodyFontSize).toBe(BODY_FONT_SIZE_MAX)
+    s.setBodyFontSize(BODY_FONT_SIZE_MIN - 7)
+    expect(s.bodyFontSize).toBe(BODY_FONT_SIZE_MIN)
   })
 
   it('clamps lineHeight into [1.2, 2.4]', () => {

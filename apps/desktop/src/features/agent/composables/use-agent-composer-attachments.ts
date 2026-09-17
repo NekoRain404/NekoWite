@@ -244,6 +244,20 @@ export function useAgentComposerAttachments(
     // The engine's answer first, and the read after it: a file this engine cannot be sent has no
     // reason to be read at all, and reading it would put its contents in memory for nothing.
     if (standingFor('image').kind !== 'allowed') return 'path-in-message'
+    // The format next, and also before any read, for the reason the routing above gives: the media
+    // type comes from the extension and not from the response, so the `mimeType` the engine receives
+    // is this app's own answer about a file it read rather than whatever the protocol guessed when it
+    // served it. The extension is on this app's own image allowlist (`attachFile` routed it here
+    // through `isImagePath`, and every member of that list is in the image table), so this read
+    // answers — and the day it does not, the answer is a refusal that names the format rather than a
+    // block labelled with a type nobody established. `text/plain` used to be what came back here,
+    // which sent an *image* to the engine as text.
+    const name = baseName(path) || path
+    const mediaType = mediaTypeOf(name)
+    if (mediaType === null) {
+      reportRefusal({ reason: 'unsupported-image', name: path })
+      return 'refused'
+    }
     // The size is asked for before the bytes are, so an image the message cannot take is refused
     // as too large rather than fetched, encoded and then thrown away. It is the file's raw byte
     // size, the same quantity the paste path hands `roomFor` as `File.size`.
@@ -268,10 +282,7 @@ export function useAgentComposerAttachments(
       reportRefusal({ reason: 'unreadable', name: path })
       return 'refused'
     }
-    // The media type comes from the extension and not from the response, so the `mimeType` the
-    // engine receives is this app's own answer about a file it just read, rather than whatever
-    // the protocol guessed when it served it.
-    accept([imageAttachment(baseName(path) || path, mediaTypeOf(path), data)])
+    accept([imageAttachment(name, mediaType, data)])
     return 'attached'
   }
 
