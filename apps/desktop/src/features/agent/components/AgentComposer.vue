@@ -249,7 +249,7 @@ defineExpose({ focus })
            the middle of the row. -->
       <AgentComposerContext @insert="insertReference" />
       <p class="agent-composer-hint">
-        {{ running ? labels.hintBusy : labels.hint }}
+        <span>{{ running ? labels.hintBusy : labels.hint }}</span>
       </p>
       <!-- The right-hand end of the row: the session's own configuration options, then the one
            button that acts on the words above. That order is Zed's (`agent_ui`'s thread view:
@@ -338,10 +338,37 @@ defineExpose({ focus })
 }
 .agent-composer-hint {
   margin: 0;
+  /* What is left of the bar after everything else has taken its size — and the first thing to
+     give it back. The zero basis is the mechanism, not a shortcut: a flex item with a content
+     basis takes a share of a shortfall in proportion to how much it holds, and this one must
+     take none of it. Sharing it would take the control row below its own width — and the row's
+     controls are chips that do not shrink, so they would wrap onto a second line at the panel's
+     DEFAULT width, where they fit today with room to spare. With the basis at zero the row keeps
+     every pixel it asks for until the panel is narrower than the row and the two fixed buttons;
+     below that the sentence is already gone and the row is what gives way
+     (`AgentConfigRow.vue`).
+
+     The box may therefore be wider than the sentence — that is what taking the free space means
+     — so the sentence is pinned to its END (`justify-content`, over the span below) and stays
+     where it has always been drawn: against the control row it describes, not floating at the
+     left end of a box that grew. Capping the box is the obvious alternative and it is not one
+     this engine offers: `max-width: max-content` is resolved against the free space rather than
+     against the text (measured in the width sweep below: the box took all 346.36px of it at a
+     639px rail while the sentence is 317.53px wide), so the pinning has to be on the sentence
+     itself. */
+  display: flex;
+  justify-content: flex-end;
+  flex: 1 1 0;
   min-width: 0;
-  overflow: hidden;
   color: var(--app-muted);
   font-size: 11px;
+}
+/* The sentence itself. A flex item may be given less than its text, and this is where that
+   shows: `min-width: 0` lets it be squeezed, and the ellipsis is drawn on the element that is
+   actually clipping. */
+.agent-composer-hint > span {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

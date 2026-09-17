@@ -538,6 +538,62 @@ test.describe('agent panel — a row that grows', () => {
   })
 })
 
+test.describe('agent panel — the composer at the rail’s narrow end', () => {
+  /**
+   * The panel is mounted 400px wide and the rail can be dragged to 220 (`RAIL_WIDTH_MIN`,
+   * `src/stores/appearance-schema.ts`). The bar below the field is where that shows: the `+`,
+   * the hint, the session's own config controls and the send button share one row, and the
+   * controls are the widest of the four. The row could not give way, so below the width at
+   * which all four fit the bar overflowed its own panel — and the thing that went over the
+   * edge was the send button, drawn past the window where a pointer cannot reach it at all.
+   *
+   * Two questions, because either alone passes for the wrong reason: is the bar inside its own
+   * box, and is the button the thing under its own centre. The second is the one a click asks
+   * before it presses (Playwright's own actionability check is the same hit test), and it is
+   * the reason a button at the window's edge is not "reachable" merely for having been drawn.
+   */
+  test('the bar fits and the send button is reachable at the narrowest rail', async ({ page }) => {
+    await mount(page)
+    await page.locator('.agent-composer-field').fill('go')
+    await resizePanel(page, 220)
+
+    const measured = await page.locator('.agent-composer').evaluate((composer) => {
+      const bar = composer.querySelector<HTMLElement>('.agent-composer-bar')
+      const action = composer.querySelector<HTMLElement>('[data-action="send"]')
+      if (bar === null || action === null) throw new Error('the composer is not drawn')
+      const row = composer.querySelector<HTMLElement>('.agent-config-row')
+      const box = action.getBoundingClientRect()
+      const hit = document.elementFromPoint(
+        Math.round(box.left + box.width / 2),
+        Math.round(box.top + box.height / 2),
+      )
+      return {
+        barClient: bar.clientWidth,
+        barScroll: bar.scrollWidth,
+        barHeight: Math.round(bar.getBoundingClientRect().height),
+        chips: row === null ? [] : Array.from(row.children).map((el) => el.textContent?.trim() ?? ''),
+        insideViewport:
+          box.left >= 0 && box.top >= 0 && box.right <= innerWidth && box.bottom <= innerHeight,
+        hitIsAction: hit !== null && (hit === action || action.contains(hit)),
+        hit: hit === null ? null : (hit as HTMLElement).className,
+      }
+    })
+
+    // The witness first: the row this test is about has to be on the page, or "the bar fits" is
+    // a sentence about a bar the product does not draw — `AgentConfigRow` renders nothing when
+    // the session reported no options, and this runtime's session reports two.
+    expect(measured.chips.length).toBeGreaterThanOrEqual(1)
+    // The overflow, in the engine's own arithmetic…
+    expect(measured.barScroll).toBeLessThanOrEqual(measured.barClient)
+    // …and its consequence, which is the defect: the button the reader has to press.
+    expect(measured.insideViewport, `the send button is outside the viewport (${measured.hit})`).toBe(true)
+    expect(measured.hitIsAction, `the centre of the send button is ${measured.hit}`).toBe(true)
+    // Fitting by wrapping is the point; fitting by growing until the composer is the panel would
+    // be another defect. Two control rows is the budget.
+    expect(measured.barHeight).toBeLessThanOrEqual(2 * 28 + 4)
+  })
+})
+
 test.describe('agent panel — the authorization a run waits on', () => {
   test('a suspended turn is answerable from the panel, and finishing it is the proof', async ({
     page,

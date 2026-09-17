@@ -282,7 +282,13 @@ function onTriggerKeydown(event: KeyboardEvent): void {
   flex: none;
   align-items: center;
   gap: 4px;
-  max-width: 180px;
+  /* Bounded twice. 180px is the cap that keeps one long model name from eating the row, and
+     `100%` — the row's own content box — is the cap that keeps a value wider than the row from
+     being drawn past the row's edge when the row has been given less than it asked for
+     (`AgentConfigRow.vue` explains when that happens: the rail's narrow end). A trigger clamped
+     that way shows a shortened value rather than a clipped one — `.agent-config-value` below
+     ellipsises — so the control stays recognisable at `RAIL_WIDTH_MIN`. */
+  max-width: min(180px, 100%);
   height: 28px;
   padding: 0 6px;
   border: 1px solid var(--app-border);

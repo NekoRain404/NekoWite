@@ -608,6 +608,145 @@ export function verify(results) {
           before.head === after.head &&
           headsAcrossTheToggles.every((h) => h === before.head),
       )
+
+      // ---- The composer's bar at the rail's narrow end ------------------------
+      //
+      // `RAIL_WIDTH_MIN` is 220 and the default is 300, so every width in the sweep is one the
+      // reader can drag to. The bar below the field holds the `+`, the hint, the session's own
+      // config controls and the send button; at the narrow end the four of them did not fit, the
+      // bar overflowed, and the control that went over the window's edge was the send button —
+      // drawn where no pointer can reach it. These four checks are that defect, in the order a
+      // reader would meet it.
+      //
+      // Every one of them is read at EVERY width in the sweep rather than at a chosen one: the
+      // defect is a range, the fix has to hold across it, and a check that only looked at the
+      // default would have been green throughout.
+      const fit = agent.fit ?? {}
+      const rows = (fit.widths ?? []).filter((r) => r && r.bar)
+      const span = rows.length > 0 ? `${rows[0].requested}–${rows[rows.length - 1].requested}` : 'none'
+      const chips = rows[0]?.row?.chips ?? []
+      const where = (r) => `${r.requested}px (panel ${r.panel?.clientWidth ?? '?'})`
+
+      // The witness, and it is a check of its own for the reason the park's witness is: "the bar
+      // fits" is worth nothing on a page that drew no controls. `AgentConfigRow` renders nothing
+      // when the session reports no options, and a harness that answered `session/new` with an
+      // empty list would have measured a bar the product does not have — three children and no
+      // overflow, green from beginning to end. FAILS IF: the config row is absent, which is what
+      // an empty `configOptions` in the harness's stand-in produces.
+      c.run(
+        'agent composer: the bar under test is the one with the engine’s own controls',
+        `${rows.length} widths read (${span}); the control row holds ${chips.length} chip(s): ` +
+          `${chips.map((ch) => `${ch.text || ch.cls} ${ch.width}px`).join(', ') || 'none'}; ` +
+          `the rail's width was set by ${fit.storePath?.ok ? 'the store (the drag handle’s own setter)' : `the Custom property (the store was unreachable: ${fit.storePath?.why ?? '?'})`}` +
+          (fit.skipped ? `; SKIPPED: ${fit.skipped}` : '') +
+          (fit.failures?.length ? `; failures: ${JSON.stringify(fit.failures.slice(0, 3))}` : ''),
+        rows.length > 0 && chips.length >= 1,
+      )
+
+      // FAILS IF: the row cannot give way — the defect, and its cause. `.agent-composer-bar`'s
+      // own `scrollWidth` is the engine's arithmetic on the box the panel gave it, and the row's
+      // `flex-shrink` is printed beside it because a bar that overflows is one whose row was
+      // never allowed to shrink or wrap.
+      const overflowing = rows.filter((r) => r.bar.fits === false)
+      const worst = overflowing[0] ?? null
+      c.run(
+        'agent composer: the bar fits its own panel at every width the rail takes',
+        `${rows.length} widths ${span}: ${overflowing.length} overflowed` +
+          (worst
+            ? ` — ${where(worst)}: bar ${worst.bar.clientWidth}/${worst.bar.scrollWidth} ` +
+              `(wrap ${worst.bar.wrap}), row ${worst.row?.width ?? '?'}px flex ${worst.row?.flex ?? '?'} ` +
+              `min-width ${worst.row?.minWidth ?? '?'}, hint ${worst.hint?.width ?? '?'}px, ` +
+              `chips ${JSON.stringify((worst.row?.chips ?? []).map((ch) => ch.width))}`
+            : `; the row's own flex is ${rows[0]?.row?.flex ?? '?'} (min-width ${rows[0]?.row?.minWidth ?? '?'}) and ` +
+              `the bar's wrap ${rows[0]?.bar?.wrap ?? '?'}`) +
+          `; ${avg(fit.load)}` +
+          injected,
+        rows.length > 0 && overflowing.length === 0,
+      )
+
+      // FAILS IF: the send button is drawn past the window's edge — the consequence of the
+      // overflow above and the one that costs the reader the ability to send at all. Both halves
+      // are asserted, and neither alone is enough: a button inside the viewport whose centre the
+      // engine's hit test answers with something else is a button a click does not reach, and a
+      // button that is hittable but off screen cannot be seen to be aimed at.
+      //
+      // The real click at `RAIL_WIDTH_MIN` is the second, stronger reading, and the thing waited
+      // for is the CALL the button makes: `agent_cancel_run` reaching the runtime, counted in the
+      // tap on `invoke`. A press that landed anywhere else leaves that count where it was.
+      const unreachable = rows.filter(
+        (r) => r.action && !(r.action.insideViewport && r.action.hitIsAction),
+      )
+      const miss = unreachable[0] ?? null
+      const clickMissed = fit.realClick !== undefined && fit.realClick?.landed !== true
+      c.run(
+        'agent composer: the send button stays in the viewport and under the pointer',
+        `${rows.length} widths ${span}: ${unreachable.length} with the ${miss?.action?.kind ?? 'action'} button unreachable` +
+          (miss
+            ? ` — ${where(miss)}: box [${miss.action.box.left}, ${miss.action.box.right}] ` +
+              `in ${miss.viewport.width} (centre x ${miss.action.centre.x}), ` +
+              `hit test at that centre: ${JSON.stringify(miss.action.hit)} ` +
+              `(is the button: ${miss.action.hitIsAction})`
+            : `; at ${where(rows[0])} the ${rows[0]?.action?.kind} button is [${rows[0]?.action?.box.left}, ` +
+              `${rows[0]?.action?.box.right}] with its centre hittable`) +
+          `; a real click at ${fit.realClick?.width ?? '?'}px (panel ${fit.realClick?.panel ?? '?'}, ` +
+          `${fit.realClick?.kind ?? '?'} button, in the viewport ${fit.realClick?.insideViewport ?? '?'}): ` +
+          `the runtime was asked for something ${JSON.stringify(fit.realClick?.before ?? null)} → ` +
+          `${JSON.stringify(fit.realClick?.after ?? null)}, ` +
+          `${fit.realClick?.landed ? `so the press reached the button (${fit.realClick.reached})` : 'and nothing arrived'}` +
+          (fit.realClick?.failure ? ` — the click itself failed: ${fit.realClick.failure}` : '') +
+          `; ${avg(fit.loadAfter)}` +
+          injected,
+        rows.length > 0 && unreachable.length === 0 && !clickMissed,
+      )
+
+      // FAILS IF: the sentence stops being drawn against the control row it explains. The hint
+      // is given the bar's free space, so its box grows with the panel — and a box that grew
+      // without pinning its text would leave the sentence floating at the far end of the bar,
+      // which is a change to a layout that works today. The measure is the bar's own gap: at
+      // every width where the sentence is drawn at all, its right edge is 8px from the row's
+      // left edge, exactly as it was before the row was allowed to give way.
+      const floated = rows.filter(
+        (r) =>
+          (r.hintText?.width ?? 0) > 0 &&
+          r.row != null &&
+          Math.abs(r.row.left - r.hintText.right - 8) > 0.5,
+      )
+      const adrift = floated[0] ?? null
+      const drawn = rows.filter((r) => (r.hintText?.width ?? 0) > 0)
+      c.run(
+        'agent composer: the hint stays against the control row',
+        `${rows.length} widths ${span}: ${floated.length} with the sentence adrift` +
+          (adrift
+            ? ` — ${where(adrift)}: the sentence ends at ${adrift.hintText.right}, the row starts at ${adrift.row.left}`
+            : `; drawn at ${drawn.length} of them (${drawn.length > 0 ? `${where(drawn[0])} … ${where(drawn[drawn.length - 1])}` : 'none'}), ` +
+              `width ${drawn[0]?.hintText?.width ?? '?'}px … ${drawn[drawn.length - 1]?.hintText?.width ?? '?'}px`) +
+          `; ${avg(fit.load)}` +
+          injected,
+        rows.length > 0 && floated.length === 0 && drawn.length > 0,
+      )
+
+      // FAILS IF: fitting is paid for with a stack — the row wrapping one chip per line, or the
+      // hint taking a line of its own, until the composer is most of the panel. Two control rows
+      // is the budget: the chips are 28px tall with a 4px gap, so a bar that fits two of them is
+      // 60px, and the field keeps its own 64px minimum beside it (§5.3's 96–120px opening rung is
+      // the field AND its bar, and this is the bound that keeps the promise).
+      const BUDGET = 2 * 28 + 4
+      const tooTall = rows.filter((r) => r.bar.height > BUDGET + 1 || (r.field?.height ?? 0) < 63)
+      const stack = tooTall[0] ?? null
+      c.run(
+        'agent composer: fitting the panel does not turn the bar into a stack',
+        `${rows.length} widths ${span}: ${tooTall.length} taller than ${BUDGET}px or with a field under 64px` +
+          (stack
+            ? ` — ${where(stack)}: bar ${stack.bar.height}px, field ${stack.field?.height ?? '?'}px, ` +
+              `composer ${stack.composer?.height}px of a ${stack.panelHeight}px panel`
+            : `; at ${where(rows[0])} the bar is ${rows[0]?.bar.height}px and the field ` +
+              `${rows[0]?.field?.height}px of a ${rows[0]?.panelHeight}px panel; ` +
+              `the tallest is ${Math.max(...rows.map((r) => r.bar.height))}px at ` +
+              `${where(rows.find((r) => r.bar.height === Math.max(...rows.map((x) => x.bar.height))) ?? rows[0])}`) +
+          `; ${avg(fit.load)}` +
+          injected,
+        rows.length > 0 && tooTall.length === 0,
+      )
     }
   }
 

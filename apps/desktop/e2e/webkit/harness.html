@@ -305,7 +305,45 @@
               }
             }
             if (cmd === 'agent_open_session') {
-              return { sessionId: AGENT.sessionId, configOptions: [], modelOptionId: null }
+              // The engine's own two options, not an empty list. `session/new` answers with
+              // the config options the session opened with, and the pinned engine reports two
+              // of them — `{id: "model", name: "Model", currentValue: "opencode/big-pickle"}`
+              // and `{id: "mode", name: "Session Mode", currentValue: "build"}`, read off a
+              // real session (`src/features/agent/services/agent-config-options.ts` records
+              // the same reading).
+              //
+              // An empty list here was not neutral: `AgentConfigRow` draws nothing when the
+              // session reports nothing, so a page that answered `[]` rendered a composer bar
+              // with three children instead of five — and a width measured on it would have
+              // been a green about a bar the product does not have. The row the controls
+              // occupy is the widest thing in the bar, and every width question this harness
+              // now asks is a question about it.
+              return {
+                sessionId: AGENT.sessionId,
+                modelOptionId: 'model',
+                configOptions: [
+                  {
+                    id: 'model',
+                    name: 'Model',
+                    type: 'select',
+                    currentValue: 'opencode/big-pickle',
+                    options: [
+                      { value: 'opencode/big-pickle', name: 'Big Pickle' },
+                      { value: 'opencode/little-pickle', name: 'Little Pickle' },
+                    ],
+                  },
+                  {
+                    id: 'mode',
+                    name: 'Session Mode',
+                    type: 'select',
+                    currentValue: 'build',
+                    options: [
+                      { value: 'build', name: 'Build' },
+                      { value: 'plan', name: 'Plan' },
+                    ],
+                  },
+                ],
+              }
             }
             if (cmd === 'agent_session_snapshot') {
               return {

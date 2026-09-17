@@ -462,6 +462,15 @@ export const agentScrollProbe = {
     }
     out.rail.stateAfter = await wd.execute('return window.__nkwPanelState()')
     out.rail.loadAfter = load()
+
+    // ---- The composer's own row at the rail's narrow end ----------------------
+    //
+    // Last of all, because it is the only phase that CHANGES the rail's width, and every phase
+    // above measures a transcript whose scrollHeight depends on how wide the panel is. At
+    // `RAIL_WIDTH_MIN` the composer's bar — the `+`, the hint, the session's own config
+    // controls, and the send button — is asked to fit in 204px, and the controls are the widest
+    // thing in it. The numbers this phase returns are the ones the checks in `verify.mjs` read.
+    out.fit = await fitPhase(wd)
     return out
   },
 }
@@ -760,5 +769,270 @@ async function railTrace(wd, direction, click) {
   trace.panel = distinct(frames.map((f) => f.panel))
   trace.trace = frames.map((f) => `t${f.t} w${f.bodyWidth} h${f.bodyHeight} p0${f.p0} head${f.head} rail${f.rail}`)
   return trace
+}
+
+/* ---------------------------------------------------------------------------
+ * The composer's bar, at every width the rail can be dragged to
+ *
+ * ---- The defect this measures
+ *
+ * `RAIL_WIDTH_MIN` is 220 (`src/stores/appearance-schema.ts`), the default is 300, and the bar
+ * below the composer's field holds four things: the `+`, the hint, the session's own config
+ * controls, and the send button. The controls are the widest of them, and they were given
+ * `flex: 0 0 auto` — a row that may take whatever it needs and NEVER give any of it back. Below
+ * the width at which the four of them fit (268px of panel, measured), the bar overflows its own
+ * box, and the thing that goes over the edge is the one control the reader cannot do without:
+ * the send button. It is not clipped, it is not scrolled to — it is drawn past the window's
+ * right edge, where a pointer cannot reach it at all.
+ *
+ * ---- What is read, and why these numbers
+ *
+ *  - **the bar's own two widths.** `scrollWidth > clientWidth` is the overflow, in the engine's
+ *    own arithmetic, and it is the coarse question.
+ *  - **the action button's box against the viewport**, and the element the ENGINE's hit test
+ *    answers at its centre (`elementFromPoint`). This is the same question Playwright's
+ *    actionability check asks before it clicks: an element whose centre belongs to something
+ *    else is not clickable, however visible its left edge is.
+ *  - **the row's own box and each chip's**, so a bar that fits because the controls vanished is
+ *    told apart from one that fits because they wrapped.
+ *  - **the composer's height and the field's**, because "it fits" is not a pass if the way it
+ *    fits is a stack of one chip per line.
+ *
+ * ---- How the width is applied
+ *
+ * Through the product's own setter when the page can reach it — `useAppearanceStore()
+ * .setRailWidth`, which is exactly what the rail's drag handle calls — and through the Custom
+ * property `AppShell` renders that value into when it cannot. Which path was taken is reported
+ * rather than assumed: a page where the store is unreachable and the property was written by
+ * hand is a weaker reading, and the difference has to be visible.
+ * ------------------------------------------------------------------------- */
+
+/** The widths swept: the whole of `[RAIL_WIDTH_MIN, RAIL_WIDTH_DEFAULT]` at 2px, then the
+ *  rungs above it that a reader actually drags to. `220` and `300` are `appearance-schema.ts`'s
+ *  own numbers; `268` is the width the Chromium reading found the bar first fitting at. */
+function fitWidths() {
+  const widths = []
+  for (let w = 220; w <= 300; w += 2) widths.push(w)
+  for (const w of [320, 360, 480, 640]) widths.push(w)
+  return widths
+}
+
+/**
+ * One width: apply it, then read the composer.
+ *
+ * Synchronous on purpose. The width arrives as a Custom property (or through the reactive store,
+ * which writes it in the same turn), and reading a rect is what makes WebKit lay the page out —
+ * so the numbers below are the layout of the width just applied, with no frame to wait for and
+ * no chance of reading the previous one. Nothing in the rail animates its width: `appShell.css`
+ * says so in as many words ("The layout collapses in the frame the user acts"), and the only
+ * transitions on it are `opacity` on enter and leave.
+ *
+ * The width is applied in its own step, and it WAITS, because the two paths are not the same
+ * shape: a Custom property written by hand lands before the next line, while the store's value
+ * reaches the DOM through a Vue render, which is a microtask away. The first version of this
+ * probe read straight after the setter and every reading was one width stale — a sweep that
+ * looked like it had measured 220 twice and 640 as 480. The wait is on the rendered property,
+ * not on a guess: it polls until `AppShell`'s own `--app-rail-width` says what was asked for.
+ */
+function applyRailWidth(wd, width) {
+  return wd.executeAsync(
+    `const done = arguments[arguments.length - 1];
+     const width = arguments[0];
+     const store = window.__nkwSetRailWidth;
+     const by = store ? 'store.setRailWidth' : 'the --app-rail-width Custom property';
+     if (store) store(width);
+     else {
+       const shell = document.querySelector('.shell');
+       if (!shell) { done({ ok: false, why: 'the shell is not on the page' }); return; }
+       shell.style.setProperty('--app-rail-width', width + 'px');
+     }
+     const deadline = performance.now() + 2000;
+     const step = function () {
+       const shell = document.querySelector('.shell');
+       const rail = document.querySelector('${RAIL}');
+       const rendered = shell ? shell.style.getPropertyValue('--app-rail-width').trim() : null;
+       if ((rendered !== width + 'px' || !rail) && performance.now() < deadline) {
+         requestAnimationFrame(step);
+         return;
+       }
+       done({ ok: true, by: by, rendered: rendered,
+              railWidth: rail ? Math.round(rail.getBoundingClientRect().width * 100) / 100 : null,
+              storeValue: store ? window.__nkwRailWidth() : null });
+     };
+     requestAnimationFrame(step);`,
+    [width],
+  )
+}
+
+/**
+ * What the composer looks like at the width just applied. Read in its own command, after the
+ * frames the step above waited for, so this is the layout of that width and not of the last one.
+ */
+function fitReading(wd) {
+  return wd.execute(
+    `const panel = document.querySelector('${PANEL}');
+     const bar = document.querySelector('.agent-composer-bar');
+     const composer = document.querySelector('.agent-composer');
+     const row = document.querySelector('.agent-config-row');
+     const hint = document.querySelector('.agent-composer-hint');
+     const field = document.querySelector('.agent-composer-field');
+     const timeline = document.querySelector('${TIMELINE}');
+     const rail = document.querySelector('${RAIL}');
+     const action = document.querySelector('.agent-composer [data-action="send"], .agent-composer [data-action="stop"]');
+     if (!panel || !bar || !action) return { failure: 'the composer is not mounted' };
+     const box = (el) => {
+       if (!el) return null;
+       const r = el.getBoundingClientRect();
+       const round = (n) => Math.round(n * 100) / 100;
+       return { left: round(r.left), right: round(r.right), top: round(r.top), bottom: round(r.bottom),
+                width: round(r.width), height: round(r.height) };
+     };
+     const barBox = box(bar);
+     const actionBox = box(action);
+     const cx = Math.round((actionBox.left + actionBox.right) / 2);
+     const cy = Math.round((actionBox.top + actionBox.bottom) / 2);
+     const hit = document.elementFromPoint(cx, cy);
+     const rowStyle = row ? getComputedStyle(row) : null;
+     const barStyle = getComputedStyle(bar);
+     return {
+       rail: box(rail),
+       panel: Object.assign(box(panel), { clientWidth: panel.clientWidth, scrollWidth: panel.scrollWidth }),
+       panelHeight: panel.clientHeight,
+       bar: Object.assign(barBox, {
+         clientWidth: bar.clientWidth, scrollWidth: bar.scrollWidth,
+         wrap: barStyle.flexWrap,
+         fits: bar.scrollWidth <= bar.clientWidth,
+       }),
+       composer: box(composer),
+       field: box(field),
+       timeline: box(timeline),
+       hint: hint ? Object.assign(box(hint), { text: hint.textContent.trim() }) : null,
+       // The sentence's own box, which is the thing whose position must not move: the hint's box
+       // is allowed to grow into the bar's free space (it is what the free space is given to),
+       // and the text inside it is pinned to its end. Read as the inner span when there is one,
+       // and as the hint itself otherwise — so a run before the span existed and a run after it
+       // are the same measurement.
+       hintText: hint ? box(hint.querySelector('span') || hint) : null,
+       row: row ? Object.assign(box(row), {
+         clientWidth: row.clientWidth, scrollWidth: row.scrollWidth,
+         flex: rowStyle.flexGrow + ' ' + rowStyle.flexShrink + ' ' + rowStyle.flexBasis,
+         minWidth: rowStyle.minWidth, maxWidth: rowStyle.maxWidth,
+         chips: Array.from(row.children)
+           .filter((el) => el.matches('.agent-config-trigger, .agent-config-toggle'))
+           .map((el) => ({ cls: el.className.split(' ')[0], text: el.textContent.trim(),
+                           width: Math.round(el.getBoundingClientRect().width * 100) / 100 })),
+       }) : null,
+       action: {
+         kind: action.dataset.action, disabled: action.disabled,
+         box: actionBox,
+         centre: { x: cx, y: cy },
+         insideViewport: actionBox.left >= 0 && actionBox.top >= 0 &&
+                         actionBox.right <= innerWidth && actionBox.bottom <= innerHeight,
+         hit: hit ? (hit.className && hit.className.split ? hit.className.split(' ')[0] : hit.tagName) : null,
+         hitIsAction: hit !== null && (hit === action || action.contains(hit)),
+       },
+       viewport: { width: innerWidth, height: innerHeight },
+     }`,
+  )
+}
+
+/** The calls the composer's two buttons make, counted in the tap the probe put on `invoke`:
+ *  the stop asks the runtime to cancel, and the send hands it a prompt. Either growing after the
+ *  click is the proof that the press reached the button — and which one it was says which button
+ *  the panel was showing. */
+function buttonCalls(wd) {
+  return wd.execute(
+    `const seen = window.__nkwInvokes || [];
+     const count = (cmd) => seen.filter((e) => e.cmd === cmd).length;
+     return { cancel: count('agent_cancel_run'), prompt: count('agent_prompt'), total: seen.length }`,
+  )
+}
+
+async function fitPhase(wd) {
+  const out = { load: load(), widths: [], failures: [] }
+  // The store's own setter, when this page has one. `useAppearanceStore` needs an active Pinia;
+  // the app installs one on this page, so the import normally succeeds and the sweep drives the
+  // path the drag handle drives — the clamp in `appearance-schema.ts` included. The fallback is
+  // recorded per reading rather than hidden.
+  out.storePath = await wd.executeAsync(
+    `const done = arguments[arguments.length - 1];
+     import('/src/stores/appearance.ts').then(function (m) {
+       const store = m.useAppearanceStore();
+       window.__nkwSetRailWidth = function (w) { store.setRailWidth(w); };
+       window.__nkwRailWidth = function () { return store.railWidth; };
+       done({ ok: true, reached: store.railWidth });
+     }, function (e) { done({ ok: false, why: String(e && e.message ? e.message : e) }); });`,
+  )
+  const mounted = await wd.execute(`return Boolean(document.querySelector('${PANEL}'))`)
+  if (!mounted) return { skipped: 'the panel is not mounted at this point in the run', storePath: out.storePath }
+
+  for (const width of fitWidths()) {
+    try {
+      const applied = await applyRailWidth(wd, width)
+      if (!applied?.ok) {
+        out.failures.push({ width, why: applied?.why ?? 'the width could not be applied' })
+        continue
+      }
+      const reading = await fitReading(wd)
+      if (reading?.failure) out.failures.push({ width, why: reading.failure })
+      out.widths.push({ requested: width, ...applied, ...reading })
+    } catch (error) {
+      out.failures.push({ width, why: String(error.message || error) })
+    }
+  }
+  out.loadAfter = load()
+
+  // The narrowest width, clicked for real.
+  //
+  // The hit test in every reading above is the engine's own answer to "what is under this point",
+  // and it is the same question Playwright asks before it clicks. This is the stronger reading:
+  // the driver presses where the button is, and the thing observed afterwards is the call the
+  // button makes — `agent_cancel_run` for the stop or `agent_prompt` for the send, counted in the
+  // tap the probe put on `invoke`. A press that landed anywhere else leaves both counts where
+  // they were.
+  //
+  // Which button is on screen is the panel's state rather than this probe's choice, so both are
+  // counted and the reading records which one the press produced.
+  //
+  // It runs last, and it is allowed to end the run: the panel is not moved to `cancelled` by the
+  // stop call (the store's own comment says cancelling is a request, not an outcome) and a send
+  // starts a turn the harness answers with the same id — so nothing above is measured across a
+  // state the reader would notice.
+  try {
+    const narrowest = out.widths.find((r) => r.requested === 220) ?? out.widths[0] ?? null
+    if (narrowest?.action) {
+      await applyRailWidth(wd, narrowest.requested)
+      const at = await fitReading(wd)
+      const before = await buttonCalls(wd)
+      out.realClick = {
+        width: narrowest.requested,
+        panel: at.panel.clientWidth,
+        kind: at.action.kind,
+        disabled: at.action.disabled,
+        centre: at.action.centre,
+        insideViewport: at.action.insideViewport,
+        hitIsAction: at.action.hitIsAction,
+        before: before,
+      }
+      try {
+        out.realClick.click = await clickAt(wd, at.action.centre.x, at.action.centre.y)
+      } catch (error) {
+        out.realClick.failure = String(error.message || error)
+      }
+      const after = await buttonCalls(wd)
+      out.realClick.after = after
+      // The press arrived at the button: the button emitted, the store called the gateway, and
+      // the gateway asked the runtime for something.
+      out.realClick.landed = after.cancel > before.cancel || after.prompt > before.prompt
+      out.realClick.reached = after.prompt > before.prompt ? 'agent_prompt' : after.cancel > before.cancel ? 'agent_cancel_run' : null
+    }
+  } catch (error) {
+    out.realClick = { failure: String(error.message || error) }
+  }
+
+  // …and back to the width the rest of the app is measured at, so the page is left as it was
+  // found for anything after this run.
+  await applyRailWidth(wd, 300)
+  return out
 }
 

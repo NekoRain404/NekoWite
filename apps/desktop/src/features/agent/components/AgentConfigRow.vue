@@ -142,12 +142,29 @@ function unavailableFor(control: AgentConfigControl): string | null {
 /* Sized by its own controls and never grown into the bar's free space: the hint beside it is the
    thing that gives way when the panel is narrow (it ellipsises), and a row that took the slack
    would paint its controls over the sentence — which is what the first WebKitGTK render of this
-   row showed. `max-width` and `wrap` are the narrow-panel case: an engine that reports four
-   options gets a second line rather than a control pushed off the edge (§5.3's
-   「不能把所有项都做成文字胶囊按钮」 is about capsules, not about wrapping). */
+   row showed.
+
+   `flex: 0 1 auto` — not the `0 0 auto` this row carried until the rail's narrow end was
+   measured — is the narrow-panel case this comment has always claimed. The row may be given
+   LESS than its controls ask for, and when it is, the `flex-wrap` below puts them on a second
+   line rather than letting one be pushed off the edge. `min-width: 0` is the other half of that
+   and not decoration: a flex item's automatic minimum is its min-content width, so without the
+   release this row refuses the smaller box it is offered and overflows the bar — which is how
+   the send button was being drawn past the window, out of reach, at every width from
+   `RAIL_WIDTH_MIN` (220) up to 267.
+
+   That is Zed's arrangement of the same row, and the reason to copy it rather than invent one:
+   `ConfigOptionsView` is `h_flex().min_w_0().flex_wrap()`
+   (`zed-main/crates/agent_ui/src/config_options.rs:275-288`) over buttons that `ButtonLike`
+   pins at `flex_none` (`crates/ui/src/components/button/button_like.rs:785`) — the collection
+   wraps, the controls inside it never shrink, and nothing is hidden or scrolled sideways. The
+   cap on a single control is the other half of that: see `AgentConfigPicker.vue`'s
+   `max-width`, which keeps one long model name from asking the row for room it does not have.
+   (§5.3's 「不能把所有项都做成文字胶囊按钮」 is about capsules, not about wrapping.) */
 .agent-config-row {
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
@@ -161,6 +178,11 @@ function unavailableFor(control: AgentConfigControl): string | null {
   gap: 6px;
   height: 28px;
   padding: 0 6px;
+  /* No wider than the row it is in. The row can be given less than its controls ask for (see
+     above), and a control that kept its own width in that box would be drawn past the row's
+     edge — over the send button, or off the window. Clamped, it ellipsises its name instead
+     (`.agent-config-toggle-label`). */
+  max-width: 100%;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-sm);
   background: var(--app-elevated);
