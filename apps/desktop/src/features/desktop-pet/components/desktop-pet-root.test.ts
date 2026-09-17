@@ -254,6 +254,18 @@ beforeEach(() => {
 
 afterEach(() => {
   for (const app of mounted.splice(0)) app.unmount()
+  // The root is given a known state between cases, and the reason is a fact about this file rather
+  // than about the window: one case below mounts *two* apps into one document, which the product
+  // never does — a pet window is a page of its own, one app, one `document` — and the appearance a
+  // window restores is the one it found when it mounted. With two of them, the second's "found" is
+  // the first's drawing, so the two restores are last-writer-wins and the order they happen in
+  // decides what the next case starts from. Stating the bare state here is what keeps every case
+  // below independent of that order, rather than a case passing because a leaked attribute happened
+  // to be invisible to it.
+  for (const name of ['theme', 'colorScheme', 'accent', 'contrast'] as const) {
+    delete document.documentElement.dataset[name]
+  }
+  document.documentElement.style.removeProperty('--app-body-size')
   document.body.innerHTML = ''
   getContextSpy?.mockRestore()
   getContextSpy = null
@@ -527,7 +539,7 @@ describe('the bubble is drawn at the alpha, the size and the dot the host read c
  * component takes no such parameter because the *product* has no other page to draw on, and the
  * teardown puts the attribute back, so this file does not colour the next case in it.
  */
-describe('the bubble is drawn in the theme the host read carried', () => {
+describe('the page is drawn in the appearance the host read carried', () => {
   /** The `message` domain's own write, as §5.2's 气泡与消息 page makes it. */
   async function setTheme(
     host: MemoryPetGateway,
@@ -541,7 +553,7 @@ describe('the bubble is drawn in the theme the host read carried', () => {
     })
   }
 
-  it('puts the page in the theme the read carried, over a character that is drawing', async () => {
+  it('puts the theme the read carried on the page root, over a character that is drawing', async () => {
     const host = createMemoryPetGateway({ visible: true, characters: [WORKING] })
     // Stored before the window opens, so the read this case is about is the one that draws the
     // first frame.
@@ -556,9 +568,10 @@ describe('the bubble is drawn in the theme the host read carried', () => {
     const host = createMemoryPetGateway({ visible: true, characters: [WORKING] })
     mount({ gateway: host, connection: host, createImage: imagesFor(() => true), readPixels: twoCells })
     await flush()
-    // `system`, and this runner's engine states no preference: the schema's default, which is the
-    // theme the bubble was drawn in before the field reached this window.
-    expect(document.documentElement.hasAttribute('data-theme')).toBe(false)
+    // `system` with an app that is following the engine too, and this runner's engine states no
+    // preference: the light palette, *named* rather than omitted — the window writes the same four
+    // attributes the app shell writes on its own root, and `light` is one of the two names.
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light')
 
     // A settings page saving the bubble's theme while the pet is already on the desktop — which is
     // the case the defect was reported from.
@@ -566,28 +579,82 @@ describe('the bubble is drawn in the theme the host read carried', () => {
     await flush()
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
 
-    // And back: the light arm is the absence of the attribute, so a window that only ever wrote it
-    // would stay dark for a user who returned to Light.
+    // And back: a user who returns to Light gets the light palette back. This half is why the
+    // attribute is written as a name rather than deleted: `[data-theme="light"]` is a selector the
+    // light block answers to (and the light *high-contrast* block requires), so a window that only
+    // ever wrote `dark` would draw the dark page's `color-scheme` under a light palette.
     const read = await host.readSettings('message')
     if (read.status !== 'current') throw new Error('the double would not read message')
     await setTheme(host, 'light', read.record.revision)
     await flush()
-    expect(document.documentElement.hasAttribute('data-theme')).toBe(false)
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light')
+  })
+
+  it('draws the app’s own colour scheme, accent and body size on the same root', async () => {
+    // §1's 「保留现有主题、强调色」. The four axes are one appearance, so they travel together: the
+    // bubble's palette, the accent its rows are dotted with, the contrast the accessibility setting
+    // asks for and the body size the app is drawn at. Before this they were all `palettes.css`'s
+    // fallbacks and `tokens.css`'s constant, on a machine whose user had chosen otherwise.
+    const host = createMemoryPetGateway({
+      visible: true,
+      characters: [WORKING],
+      hostAppearance: { theme: 'dark', colorScheme: 'forest', accent: 'teal', bodyFontSize: 16 },
+    })
+    mount({ gateway: host, connection: host, createImage: imagesFor(() => true), readPixels: twoCells })
+    // Twice: the palette is the window's *second* read, and the settings channel is registered
+    // between the two on purpose (see `usePetWindow.start`) so that an edit in another window is
+    // never delivered to nobody while a colour is fetched.
+    await flush()
+    await flush()
+
+    const root = document.documentElement
+    // The app's theme decides, because the bubble's own setting is `system` — 「跟随宿主主题」 is a
+    // statement about the app, not about the desktop.
+    expect(root.getAttribute('data-theme')).toBe('dark')
+    expect(root.getAttribute('data-color-scheme')).toBe('forest')
+    expect(root.getAttribute('data-accent')).toBe('teal')
+    expect(root.getAttribute('data-contrast')).toBe('normal')
+    expect(root.style.getPropertyValue('--app-body-size')).toBe('16px')
+  })
+
+  it('follows the app publishing another appearance while the window is open', async () => {
+    const host = createMemoryPetGateway({ visible: true, characters: [WORKING] })
+    mount({ gateway: host, connection: host, createImage: imagesFor(() => true), readPixels: twoCells })
+    await flush()
+    expect(document.documentElement.getAttribute('data-accent')).toBe('ink')
+
+    // The user changes the accent in Appearance with the pet on the desktop. The app publishes, the
+    // host relays, and the window is already mounted — which is the case the channel exists for.
+    host.publishHostAppearance({ accent: 'coral', bodyFontSize: 13 })
+    await flush()
+    await flush()
+
+    expect(document.documentElement.getAttribute('data-accent')).toBe('coral')
+    expect(document.documentElement.style.getPropertyValue('--app-body-size')).toBe('13px')
   })
 
   it('gives the page back when the window goes away', async () => {
-    const host = createMemoryPetGateway({ visible: true, characters: [WORKING] })
+    const host = createMemoryPetGateway({
+      visible: true,
+      characters: [WORKING],
+      hostAppearance: { accent: 'coral', bodyFontSize: 18 },
+    })
     await setTheme(host, 'dark', 1)
     mount({ gateway: host, connection: host, createImage: imagesFor(() => true), readPixels: twoCells })
     await flush()
+    await flush()
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
 
-    // The window's own unmount, and the only one this file performs inside a case: the attribute is
-    // put back where it was found, so a window that closes does not leave a theme on a document it
-    // is about to stop owning — and so the cases after this one start from no attribute at all.
+    // The window's own unmount, and the only one this file performs inside a case: every attribute
+    // and the property are put back where they were found, so a window that closes does not leave a
+    // theme, an accent or a size on a document it is about to stop owning — and so the cases after
+    // this one start from a bare root.
     mounted.at(-1)?.unmount()
     await flush()
     expect(document.documentElement.hasAttribute('data-theme')).toBe(false)
+    expect(document.documentElement.hasAttribute('data-accent')).toBe(false)
+    expect(document.documentElement.getAttribute('data-color-scheme')).toBeNull()
+    expect(document.documentElement.style.getPropertyValue('--app-body-size')).toBe('')
   })
 })
 

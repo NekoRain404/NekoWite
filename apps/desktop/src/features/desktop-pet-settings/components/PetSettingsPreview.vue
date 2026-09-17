@@ -21,6 +21,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { t } from '../../../i18n'
+import { useAppearanceStore } from '../../../stores/appearance'
 import type { PetSettingsContext } from './DesktopPetSettings.vue'
 
 const props = defineProps<{
@@ -77,11 +78,35 @@ const figureStyle = computed(() => ({
   height: `${Math.round(size.value * scale.value)}px`,
 }))
 
-/** The bubble's theme: the host's unless the user set an override (§5.2). */
-const themeClass = computed(() => {
+/**
+ * The four axes the *pet window* draws with, put on the stage — which is what makes this preview
+ * show the bubble the desktop will show rather than a table of its own.
+ *
+ * The stage is an element **inside** the app's page, and that is the whole difficulty: the app's own
+ * root already carries an appearance (its theme, scheme, accent and contrast), and the bubble may
+ * have been pinned to the other palette (§5.2's 「保留明确的局部外观覆盖」). So the stage names all
+ * four axes itself, exactly as the pet window's root does (`usePetPageAppearance` writes the same
+ * four there), and `palettes.css` — whose light half answers to `[data-theme="light"]` as well as
+ * `:root` — resolves them to the same numbers on both. Nothing here is a colour: this component used
+ * to write `#f7f7f5` / `#23211f` for exactly this override, which is a preview that lies about the
+ * one thing the user is looking at it to decide.
+ *
+ * `system` resolves to the app's own effective theme, which is what the pet window resolves it to as
+ * well: the pet window follows the *app* (the host publishes the setting, `pet-bubble-theme.ts` puts
+ * the two together), so the two pages agree on every member of the control.
+ */
+const appearance = useAppearanceStore()
+const previewTheme = computed<string>(() => {
   const theme = messageValues.value.theme
-  return theme === 'system' ? null : `is-${theme}`
+  if (theme === 'light' || theme === 'dark') return theme
+  return appearance.effectiveTheme()
 })
+const stageAppearance = computed(() => ({
+  'data-theme': previewTheme.value,
+  'data-color-scheme': appearance.colorScheme,
+  'data-accent': appearance.effectiveAccent(),
+  'data-contrast': appearance.highContrast ? 'high' : 'normal',
+}))
 
 
 /**
@@ -147,7 +172,10 @@ onBeforeUnmount(() => {
       {{ t('settings.pet.preview.loading') }}
     </p>
     <template v-else>
-      <div class="pet-preview__stage">
+      <div
+        class="pet-preview__stage"
+        v-bind="stageAppearance"
+      >
         <p
           v-if="!enabled"
           class="pet-preview__notice"
@@ -159,7 +187,6 @@ onBeforeUnmount(() => {
             <p
               v-if="bubbleOpen"
               class="pet-preview__bubble"
-              :class="themeClass"
               :style="bubbleStyle"
             >
               {{ t('settings.pet.preview.bubbleText') }}
@@ -251,18 +278,12 @@ onBeforeUnmount(() => {
   font-size: 11px;
   line-height: 1.4;
 }
-/* The two theme overrides §5.2 allows. No rule here is on the default path: with `system` the
-   bubble takes the host's own variables, which is what "follow the app" has to mean. */
-.pet-preview__bubble.is-light {
-  background: color-mix(in srgb, #f7f7f5 var(--pet-bubble-alpha, 92%), transparent);
-  color: #23211f;
-  border-color: #d9d6d1;
-}
-.pet-preview__bubble.is-dark {
-  background: color-mix(in srgb, #23211f var(--pet-bubble-alpha, 92%), transparent);
-  color: #f2f0ec;
-  border-color: #3a3733;
-}
+/* No colour of this component's own, deliberately. The bubble is drawn from `--app-elevated`,
+   `--app-text` and `--app-border` — the palette the *stage* declares, which is the palette the pet
+   window's page declares for the same settings — so the two draw the same numbers by construction.
+   A hard-coded pair here (`#f7f7f5` / `#23211f`) is what the preview used to show for Light and
+   Dark, and neither is the app's `--app-elevated` for that theme: the preview was showing a bubble
+   the desktop would never draw. */
 
 .pet-preview__ask { align-self: flex-start; }
 

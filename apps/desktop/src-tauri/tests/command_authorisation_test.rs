@@ -252,6 +252,22 @@ async fn desktop_pet_tasks() -> Result<Value, String> {
     Ok(json!({ "reached": "desktop_pet_tasks" }))
 }
 
+/// The app's own appearance, one command per direction (§1's 「保留现有主题、强调色」).
+///
+/// The read is the pet's and the write is `main`'s, and that is the boundary this pair is here to
+/// prove: a pet window draws the palette the app is in, and it may not say what the app looks like.
+/// Both bodies answer with the command's own name so a *refusal* can be told apart from a command
+/// that was reached and refused by its own logic.
+#[tauri::command]
+async fn desktop_pet_host_appearance() -> Result<Value, String> {
+    Ok(json!({ "reached": "desktop_pet_host_appearance" }))
+}
+
+#[tauri::command]
+async fn desktop_pet_publish_host_appearance() -> Result<Value, String> {
+    Ok(json!({ "reached": "desktop_pet_publish_host_appearance" }))
+}
+
 #[tauri::command]
 async fn desktop_pet_appearance() -> Result<Value, String> {
     Ok(json!({ "reached": "desktop_pet_appearance" }))
@@ -308,6 +324,8 @@ fn app() -> App {
             desktop_pet_update_settings,
             desktop_pet_tasks,
             desktop_pet_appearance,
+            desktop_pet_host_appearance,
+            desktop_pet_publish_host_appearance,
             desktop_pet_open_task,
             desktop_pet_library,
             desktop_pet_import_character,
@@ -726,6 +744,34 @@ fn the_pet_window_reaches_the_task_feed_and_not_the_character_picker() {
         });
         assert_eq!(answered["reached"], cmd);
     }
+}
+
+/// The appearance crosses in one direction, proved through the real ACL.
+///
+/// The read is the pet's and the write is the app's, and both halves are asserted on both windows:
+/// a pet that could *publish* would be a decoration deciding the application's appearance, and a
+/// `main` that could not read would be a window refused the value it authored. Both commands are
+/// registered above, so a refusal here is the capability files' answer and not a missing handler.
+#[test]
+fn the_pet_reads_the_apps_appearance_and_only_the_app_publishes_one() {
+    let app = app();
+    let pet = window(&app, "pet-1");
+    let main = window(&app, "main");
+
+    let answered = call(&pet, "desktop_pet_host_appearance", json!({}))
+        .unwrap_or_else(|error| panic!("a pet window draws the app's palette: {error}"));
+    assert_eq!(answered["reached"], "desktop_pet_host_appearance");
+
+    is_not_allowed_on(&pet, "desktop_pet_publish_host_appearance", "pet-1");
+
+    let answered = call(&main, "desktop_pet_publish_host_appearance", json!({}))
+        .unwrap_or_else(|error| panic!("the app window is what publishes it: {error}"));
+    assert_eq!(answered["reached"], "desktop_pet_publish_host_appearance");
+
+    // And `main` does not hold the pet's read: the value it published is the one it already has,
+    // so the command that answers pet windows is theirs alone — the same asymmetry `close_own` and
+    // `set_click_through` have in the other direction.
+    is_not_allowed_on(&main, "desktop_pet_host_appearance", "main");
 }
 
 /// A window no capability names.

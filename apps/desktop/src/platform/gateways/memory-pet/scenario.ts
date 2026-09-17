@@ -18,6 +18,7 @@ import type {
   PetCatalogueReading,
   PetCharacterEntry,
   PetFallback,
+  PetHostAppearance,
   PetTaskKey,
   PetTaskProjection,
 } from '../pet-contracts'
@@ -168,4 +169,14 @@ export interface MemoryPetOptions {
    */
   catalogue?: PetCatalogueReading
   adoptRefusal?: string
+  /**
+   * What the *app* has published about its own appearance (§1's 「保留现有主题、强调色」).
+   *
+   * The double's stand-in for the host's relay: the real one is filled by
+   * `desktop_pet_publish_host_appearance`, which the app window calls, and a page reads it through
+   * `hostAppearance()`. Absent is the fresh-install state — a read that carries nothing, which the
+   * page's own reader turns into the app's defaults — and `publishHostAppearance` changes it while
+   * a window is mounted, which is the case the channel exists for.
+   */
+  hostAppearance?: PetHostAppearance
 }

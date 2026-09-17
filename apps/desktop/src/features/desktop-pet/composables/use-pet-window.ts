@@ -42,6 +42,11 @@ import {
   type PetBubbleView,
 } from '../services/pet-appearance'
 import { pickPetPhrase } from '../services/pet-message-template'
+import {
+  PET_PAGE_APPEARANCE_DEFAULTS,
+  petHostAppearanceOf,
+  type PetPageAppearance,
+} from '../services/pet-page-appearance'
 import type { PetHold } from './use-pet-lifecycle'
 
 export interface PetWindowOptions {
@@ -74,6 +79,16 @@ export interface PetWindow {
    */
   readonly bubble: ComputedRef<PetBubbleView>
   /**
+   * The *app's* own appearance, as the host last answered it (§1's 「保留现有主题、强调色」).
+   *
+   * Never null, for the reason the bubble model is not: before the host has answered it is the app's
+   * own defaults — the appearance a fresh install draws in — so a window whose read is still in
+   * flight is the pet this build has always drawn rather than a pet with no palette at all. The page
+   * root is where it is written (`usePetPageAppearance`), because the four axes and the body size
+   * are page-level: they reach the bubble, the rows, the menu and the notice alike.
+   */
+  readonly hostAppearance: ShallowRef<PetPageAppearance>
+  /**
    * The line the pet says when there is nothing to report, or null (§5.2's 自定义词句).
    *
    * `null` in two cases, and both are deliberate: `message.idle` is off, or the user has written no
@@ -100,8 +115,10 @@ export function usePetWindow(options: PetWindowOptions): PetWindow {
   }
   const appearance = shallowRef<PetAppearanceView | null>(null)
   const appearanceError = shallowRef<string | null>(null)
+  const hostAppearance = shallowRef<PetPageAppearance>(PET_PAGE_APPEARANCE_DEFAULTS)
   const now = shallowRef(Date.now())
   let unsubscribe: (() => void) | null = null
+  let unsubscribeHostAppearance: (() => void) | null = null
   let timer: ReturnType<typeof globalThis.setTimeout> | null = null
   let disposed = false
 
@@ -151,12 +168,40 @@ export function usePetWindow(options: PetWindowOptions): PetWindow {
     }
   }
 
+  /**
+   * The app's appearance, read from the host — the one call this module makes that is not about the
+   * character.
+   *
+   * A refused read is deliberately *not* an error state here, and that is the difference from
+   * {@link readAppearance}: the character read decides whether there is a pet at all, while these
+   * four axes only decide which palette it is drawn in. A host that cannot answer leaves the page at
+   * the app's own defaults, which is exactly what this window drew with before the appearance
+   * crossed — a palette, not a missing pet.
+   */
+  async function readHostAppearance(): Promise<void> {
+    try {
+      const read = await options.connection.hostAppearance()
+      if (disposed) return
+      hostAppearance.value = petHostAppearanceOf(read)
+    } catch {
+      // Nothing to state on screen, and nothing swallowed either: the value stays the one the page
+      // mounted with, and the window is still a window. The host's own sentence belongs to the
+      // appearance read, which is the one that decides whether anything is drawn at all.
+    }
+  }
+
   async function start(): Promise<void> {
     if (disposed) return
     // The read first, then the subscription: a change that lands in between is delivered twice
     // rather than lost, and the read is complete every time — the same ordering `subscribe` uses
     // for tasks, for the same reason.
     await readAppearance()
+    // The app's appearance is read *while* the settings channel is registered — two independent
+    // calls, and neither may hold the other up. Every await before the subscription below is a
+    // moment in which an edit made in another window is delivered to nobody (which is the window
+    // `desktop-pet-root.test.ts`'s recovery cases drive), and a palette that arrives one round trip
+    // after mount is a frame nobody sees.
+    const hostRead = readHostAppearance()
     try {
       const off = await options.connection.subscribeSettings(onSettingsChanged)
       if (disposed) off()
@@ -166,6 +211,18 @@ export function usePetWindow(options: PetWindowOptions): PetWindow {
       // keeps drawing what it has and does not turn a listener failure into a state, because the
       // next write is not this window's to know about.
       appearanceError.value ??= cause instanceof Error ? cause.message : String(cause)
+    }
+    await hostRead
+    try {
+      const off = await options.connection.subscribeHostAppearance((next) => {
+        if (!disposed) hostAppearance.value = petHostAppearanceOf(next)
+      })
+      if (disposed) off()
+      else unsubscribeHostAppearance = off
+    } catch {
+      // A host that cannot deliver the channel still has a working `hostAppearance` read, and the
+      // window keeps the appearance it just read. Turning that into a state would say the pet is
+      // broken because it cannot hear about a colour change.
     }
     arm()
   }
@@ -194,6 +251,8 @@ export function usePetWindow(options: PetWindowOptions): PetWindow {
     release()
     unsubscribe?.()
     unsubscribe = null
+    unsubscribeHostAppearance?.()
+    unsubscribeHostAppearance = null
   }
 
   const view = computed(() =>
@@ -234,6 +293,7 @@ export function usePetWindow(options: PetWindowOptions): PetWindow {
   return {
     appearance,
     appearanceError,
+    hostAppearance,
     now,
     mood: computed(() => view.value.mood),
     bubble,

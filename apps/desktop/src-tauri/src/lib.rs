@@ -373,6 +373,8 @@ pub fn run() {
             commands::desktop_pet::desktop_pet_care_read,
             commands::desktop_pet::desktop_pet_tasks,
             commands::desktop_pet::desktop_pet_appearance,
+            commands::desktop_pet::desktop_pet_host_appearance,
+            commands::desktop_pet::desktop_pet_publish_host_appearance,
             commands::desktop_pet::desktop_pet_library,
             commands::desktop_pet::desktop_pet_import_character,
             commands::desktop_pet::desktop_pet_catalogue,

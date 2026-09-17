@@ -555,11 +555,18 @@ describe('the dialog carries the pet’s pages, and what comes with them', () =>
     //     modules reached is otherwise unchanged — the file is a move, not a new dependency — and
     //     the cost is one more line of the same barrel kind.
     //
-    //   - `composables/use-pet-page-theme.ts` and `services/pet-bubble-theme.ts` are the pair the
-    //     bubble's theme arrives with, and the same barrel cost one more time: the root applies the
-    //     page's palette from `message.theme`, and the service is the reader `pet-appearance.ts`
-    //     resolves the field through. This window mounts neither — the settings *dialog* is drawn by
-    //     the app, which is the page whose palette this pair is deliberately not allowed to touch.
+    //   - `services/pet-bubble-theme.ts` is the reader `pet-appearance.ts` resolves the bubble's
+    //     theme through, and the same barrel cost one more time: the root applies the page's palette
+    //     from `message.theme`. This window mounts none of it — the settings *dialog* is drawn by the
+    //     app, which is the page whose palette the pet window's own rule is deliberately kept out of.
+    //
+    //   - `composables/use-pet-page-appearance.ts` and `services/pet-page-appearance.ts` are the
+    //     pair that replaced the theme composable when the pet window started following the *app's*
+    //     appearance (§1's 「保留现有主题、强调色」): the four axes and the body size go on the pet
+    //     window's page root, read from what the app published. They are reached through the same
+    //     `DesktopPetRoot` export and are mounted by nothing here — and this dialog draws its own
+    //     preview's palette from the store directly (`PetSettingsPreview.vue`), which is the
+    //     *app*'s page and therefore a different answer to the same question.
     expect(surface).toEqual([
       'features/desktop-pet/components/DesktopPetRoot.vue',
       'features/desktop-pet/components/PetBubble.vue',
@@ -572,7 +579,7 @@ describe('the dialog carries the pet’s pages, and what comes with them', () =>
       'features/desktop-pet/composables/use-pet-drag.ts',
       'features/desktop-pet/composables/use-pet-drawing-failure.ts',
       'features/desktop-pet/composables/use-pet-lifecycle.ts',
-      'features/desktop-pet/composables/use-pet-page-theme.ts',
+      'features/desktop-pet/composables/use-pet-page-appearance.ts',
       'features/desktop-pet/composables/use-pet-window.ts',
       'features/desktop-pet/index.ts',
       'features/desktop-pet/rendering/animation-bindings.ts',
@@ -591,6 +598,7 @@ describe('the dialog carries the pet’s pages, and what comes with them', () =>
       'features/desktop-pet/services/pet-library-policy.ts',
       'features/desktop-pet/services/pet-menu-actions.ts',
       'features/desktop-pet/services/pet-message-template.ts',
+      'features/desktop-pet/services/pet-page-appearance.ts',
       'features/desktop-pet/services/pet-task-view.ts',
     ])
   })

@@ -261,6 +261,18 @@ const sprite = arguments[0], sheetSpec = arguments[1], win = arguments[2], done 
       });
       return update.status;
     },
+    // The app's own appearance, driven the way the app window drives it: a publish the *host*
+    // relays, which every mounted window hears on the pet-host-appearance channel. The double
+    // stands in for the host (MiniBrowser has no Tauri behind it); what is measured is the page.
+    //
+    // A host that cannot publish is *stated* rather than thrown, and the reason is the instrument
+    // itself: this step is also read against the tree from before the channel existed, to say what
+    // the page drew with nothing published. That reading is the change's own baseline, so the step
+    // has to survive a double with no such method.
+    setHostAppearance: (values) =>
+      typeof bubbleGateway.publishHostAppearance === 'function'
+        ? bubbleGateway.publishHostAppearance(values)
+        : 'the host has no appearance to publish',
   };
 
   await vue.nextTick();
@@ -771,6 +783,60 @@ function verify(results) {
   )
 
   /*
+   * The app's own appearance, which the window used to carry none of.
+   *
+   * What each check is about is a *user-visible* consequence rather than an attribute: the palette
+   * the page resolved (so a state dot or a hover is the user's accent), the contrast the
+   * accessibility setting asked for, and the size the menu is drawn at — the surface that had been
+   * drawing at `tokens.css`'s 15px whatever anybody chose.
+   */
+  const appearance = results.appearance
+  run(
+    'the app’s axes reach the page that draws the desktop',
+    `forest ${JSON.stringify(appearance?.forest?.theme)}/${appearance?.forest?.accent}/${appearance?.forest?.colorScheme}/${appearance?.forest?.contrast}; highContrast ${JSON.stringify(appearance?.highContrast?.theme)}/${appearance?.highContrast?.accent}/${appearance?.highContrast?.colorScheme}/${appearance?.highContrast?.contrast}`,
+    appearance?.forest?.theme === 'dark' &&
+      appearance?.forest?.accent === 'teal' &&
+      appearance?.forest?.colorScheme === 'forest' &&
+      appearance?.forest?.contrast === 'normal' &&
+      appearance?.highContrast?.theme === 'light' &&
+      appearance?.highContrast?.accent === 'coral' &&
+      appearance?.highContrast?.colorScheme === 'sunset' &&
+      appearance?.highContrast?.contrast === 'high',
+  )
+  // FAILS IF: the attribute is written but nothing resolves through it — the defect this replaces
+  // was not "no attribute" but "the palette's fallback", so what is checked is the *resolved* token
+  // on the page root. Each expected value is the member's own declaration in `palettes.css`
+  // (`[data-accent="teal"]` at `:129`, `[data-contrast="high"][data-accent="coral"]` at `:277`),
+  // read from the table rather than picked: the point is that the page resolved *that* member, and
+  // not the `#343532` fallback the light half declares.
+  run(
+    'and the accent the page resolved is the user’s, not the palette’s fallback',
+    `forest ${appearance?.forest?.resolvedAccent} over ${appearance?.forest?.resolvedElevated}; highContrast ${appearance?.highContrast?.resolvedAccent} over ${appearance?.highContrast?.resolvedElevated}`,
+    appearance?.forest?.resolvedAccent === '#2e9e8f' &&
+      appearance?.forest?.resolvedElevated === '#243020' &&
+      appearance?.highContrast?.resolvedAccent === '#c22818' &&
+      appearance?.highContrast?.resolvedElevated === '#ffffff',
+  )
+  // FAILS IF: the size reaches the root and not the surfaces that read it — the menu is
+  // `font-size: var(--app-body-size, 12px)`, so a page that never wrote the property drew every
+  // item at the fallback, which is the defect this step exists for.
+  run(
+    'the body size the app was given is the size the window’s menu draws at',
+    `16px → ${appearance?.forest?.menuFontSize} (inherited ${appearance?.forest?.inheritedBodySize}); 13px → ${appearance?.highContrast?.menuFontSize} (inherited ${appearance?.highContrast?.inheritedBodySize})`,
+    appearance?.forest?.bodySize === '16px' &&
+      appearance?.forest?.inheritedBodySize === '16px' &&
+      appearance?.forest?.menuFontSize === '16px' &&
+      appearance?.highContrast?.bodySize === '13px' &&
+      appearance?.highContrast?.menuFontSize === '13px',
+  )
+  // FAILS IF: the menu never opened, which would make the reading above vacuously `null`.
+  run(
+    'and the surface that was measured is the window’s own menu',
+    `menu drawn: ${appearance?.forest?.menu}, ${appearance?.highContrast?.menu}`,
+    appearance?.forest?.menu === true && appearance?.highContrast?.menu === true,
+  )
+
+  /*
    * The other two fields of the same domain, measured the same way — one write each, read off the
    * page. `message.fontSize` and `message.dot` were stored and read by nobody until they crossed the
    * appearance payload, so what each check is about is that a *write* changes what is drawn.
@@ -926,6 +992,61 @@ const value = arguments[0], done = arguments[arguments.length - 1];
 })().catch((error) => done({ ok: false, why: String((error && error.message) || error) }));
 `
 
+/**
+ * The app's own appearance, as the pet window's page draws it (§1's 「保留现有主题、强调色」).
+ *
+ * The claim is the one the port report filed as missing: the window used to carry **none** of the
+ * app's four axes — no `data-theme`, `data-accent`, `data-color-scheme`, `data-contrast` — and no
+ * body size, so `palettes.css`'s fallbacks and `tokens.css`'s 15px were what a user saw whatever
+ * they had chosen. What is read here is the page root, which is where both the attributes and the
+ * property belong (`use-pet-page-appearance.ts`), plus two *consumers*: the resolved `--app-accent`
+ * every hover and dot reads, and the menu's own font size, which is the surface nobody had ever
+ * asked about (`PetContextMenu.vue:249` is `font-size: var(--app-body-size, 12px)`).
+ *
+ * `setHostAppearance` is the host's half of the channel the app window uses
+ * (`desktop_pet_publish_host_appearance` → `pet-host-appearance`); the page's half is what this
+ * reads. Written rather than mounted, because a window that is already open has to follow a change
+ * made in Settings — the same shape as the theme step above.
+ */
+const APPEARANCE = `
+const value = arguments[0], done = arguments[arguments.length - 1];
+(async () => {
+  // A host with no appearance to publish is a *state of this instrument*, not a pass: the reading
+  // below then says what the page draws with nothing published, which is exactly what this step
+  // measures the change against. An older harness has no such method.
+  const published = typeof window.__petBubble.setHostAppearance === 'function'
+    ? window.__petBubble.setHostAppearance(value)
+    : 'the host has no appearance to publish';
+  // The publish is a promise the page hears through its subscription, and the render follows it.
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const page_ = document.documentElement;
+  const frame = document.getElementById('probe-bubble');
+  const bubble = frame && frame.querySelector('.pet-bubble');
+  if (!bubble) { done({ ok: false, why: 'the bubble is not in the page' }); return; }
+  // The menu, opened the way the window opens it: a right-click on the bubble, which the surface
+  // turns into the composition's own event. It is the only surface in this window that has always
+  // drawn at the app's body size, and it is the reason the size has to reach a page at all.
+  bubble.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 24, clientY: 24 }));
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  const menu = document.querySelector('.pet-menu');
+  const root = getComputedStyle(page_);
+  done({
+    ok: true,
+    published,
+    theme: page_.getAttribute('data-theme'),
+    colorScheme: page_.getAttribute('data-color-scheme'),
+    accent: page_.getAttribute('data-accent'),
+    contrast: page_.getAttribute('data-contrast'),
+    bodySize: page_.style.getPropertyValue('--app-body-size'),
+    resolvedAccent: root.getPropertyValue('--app-accent').trim(),
+    resolvedElevated: root.getPropertyValue('--app-elevated').trim(),
+    inheritedBodySize: getComputedStyle(frame).getPropertyValue('--app-body-size').trim(),
+    menu: Boolean(menu),
+    menuFontSize: menu ? getComputedStyle(menu).fontSize : null,
+  });
+})().catch((error) => done({ ok: false, why: String((error && error.message) || error) }));
+`
+
 async function main() {
   const keep = Boolean(arg('keep', false))
   const vitePort = await freePort()
@@ -939,7 +1060,7 @@ async function main() {
   })
 
   const wd = new WebDriver(driverPort)
-  const results = { engine: null, page: null, states: {}, hit: {}, advanced: null, root: {}, ball: {}, bubble: null, theme: null, message: null }
+  const results = { engine: null, page: null, states: {}, hit: {}, advanced: null, root: {}, ball: {}, bubble: null, theme: null, message: null, appearance: null }
   const watchdog = setTimeout(() => {
     process.stderr.write('\n[webkit-pet] watchdog: nothing finished in 300s\n')
     process.kill(process.pid, 'SIGKILL')
@@ -1126,6 +1247,25 @@ async function main() {
       const read = await wd.executeAsync(BUBBLE_THEME, [write])
       if (!read?.ok) throw new Error(`the ${name} message write is not measurable: ${read?.why}`)
       results.message[name] = read
+    }
+
+    /*
+     * The app's own appearance (§1's 「保留现有主题、强调色」), which is the half the window never had:
+     * the theme it draws on, the accent its rows are dotted with, the scheme and the contrast the
+     * user chose in Appearance, and the body size every menu item is drawn at. Two publishes, so
+     * each reading is a *change* rather than a mount — a window that is already open is exactly the
+     * case the channel exists for — and the theme member is `system` by now (the step above left it
+     * there), which is what makes the app's own theme decide the palette.
+     */
+    stage('app appearance')
+    results.appearance = {}
+    for (const [name, published] of [
+      ['forest', { theme: 'dark', colorScheme: 'forest', accent: 'teal', highContrast: false, bodyFontSize: 16 }],
+      ['highContrast', { theme: 'light', colorScheme: 'sunset', accent: 'coral', highContrast: true, bodyFontSize: 13 }],
+    ]) {
+      const read = await wd.executeAsync(APPEARANCE, [published])
+      if (!read?.ok) throw new Error(`the ${name} appearance is not measurable: ${read?.why}`)
+      results.appearance[name] = read
     }
 
     const logs = await wd.logs()

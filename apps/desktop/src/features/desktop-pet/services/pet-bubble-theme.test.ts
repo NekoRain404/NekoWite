@@ -17,7 +17,6 @@ import { describe, expect, it } from 'vitest'
 import { PET_SETTINGS_DEFAULTS } from '../../../platform/gateways/pet-contracts'
 import {
   PET_BUBBLE_THEMES,
-  applyPetPageTheme,
   petBubbleThemeOf,
   prefersDarkScheme,
   resolvePetPageTheme,
@@ -52,37 +51,36 @@ describe('the bubble theme a read carries', () => {
 describe('what reaches the page', () => {
   it('is one of the two palettes the stylesheet declares, never a third name', () => {
     // `system` is a *rule* for choosing between the two, and a page drawn in it would be a page
-    // whose `data-theme` says a word no selector matches.
+    // whose `data-theme` says a word no selector matches. Swept over every pair of settings rather
+    // than over the bubble's members alone, because `system` now has two rules to stand on.
     for (const member of PET_BUBBLE_THEMES) {
-      expect(['light', 'dark']).toContain(resolvePetPageTheme(member, false))
-      expect(['light', 'dark']).toContain(resolvePetPageTheme(member, true))
+      for (const host of PET_BUBBLE_THEMES) {
+        expect(['light', 'dark']).toContain(resolvePetPageTheme(member, false, host))
+        expect(['light', 'dark']).toContain(resolvePetPageTheme(member, true, host))
+      }
     }
   })
 
-  it('forces the two members whichever way the engine leans', () => {
-    expect(resolvePetPageTheme('light', false)).toBe('light')
-    expect(resolvePetPageTheme('light', true)).toBe('light')
-    expect(resolvePetPageTheme('dark', false)).toBe('dark')
-    expect(resolvePetPageTheme('dark', true)).toBe('dark')
+  it('forces the two members whichever way the engine leans, and whatever the app says', () => {
+    for (const host of PET_BUBBLE_THEMES) {
+      expect(resolvePetPageTheme('light', false, host)).toBe('light')
+      expect(resolvePetPageTheme('light', true, host)).toBe('light')
+      expect(resolvePetPageTheme('dark', false, host)).toBe('dark')
+      expect(resolvePetPageTheme('dark', true, host)).toBe('dark')
+    }
   })
 
-  it('resolves the third from the engine’s own preference', () => {
-    expect(resolvePetPageTheme('system', true)).toBe('dark')
-    expect(resolvePetPageTheme('system', false)).toBe('light')
-  })
-
-  it('spells the light arm as the absence of the attribute, and the dark one as the attribute', () => {
-    // Not a preference: light is the palette declared on `:root`, so "no attribute" and "light" are
-    // the same drawing. Writing `data-theme="light"` would be a value no block in `palettes.css`
-    // matches — which draws light today and would draw light after a light block was added, but
-    // would also make the attribute's presence mean two different things to two readers.
-    const root = document.createElement('div')
-
-    applyPetPageTheme(root, 'dark')
-    expect(root.getAttribute('data-theme')).toBe('dark')
-
-    applyPetPageTheme(root, 'light')
-    expect(root.hasAttribute('data-theme')).toBe(false)
+  it('follows the app when the bubble’s setting is `system`, which is what `system` is short for', () => {
+    // §5.2's 「默认跟随宿主主题」: the third member is not "whatever the engine says", it is
+    // "whatever the *app* is drawing". The app's own theme is a setting with the same three
+    // members, so it decides before the engine does.
+    expect(resolvePetPageTheme('system', false, 'dark')).toBe('dark')
+    expect(resolvePetPageTheme('system', true, 'light')).toBe('light')
+    // And when the app is following the engine too, the engine's preference is the answer — which
+    // is the same signal `stores/appearance.ts` resolves the app's own `system` from, read from the
+    // same engine in the same process.
+    expect(resolvePetPageTheme('system', true, 'system')).toBe('dark')
+    expect(resolvePetPageTheme('system', false, 'system')).toBe('light')
   })
 })
 

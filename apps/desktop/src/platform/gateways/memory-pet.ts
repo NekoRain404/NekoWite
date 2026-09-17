@@ -33,6 +33,7 @@ import {
   type PetCatalogueReading,
   type PetCharacterEntry,
   type PetFeatureState,
+  type PetHostAppearance,
   type PetRuntimeLoss,
   type PetSettingsChange,
   type PetSettingsDomain,
@@ -94,6 +95,16 @@ export interface MemoryPetGateway extends PetWindowGateway {
    * this operation was added to remove.
    */
   clickThrough(): readonly boolean[]
+  /**
+   * The app published its own appearance, as the real flow's first hop does.
+   *
+   * `desktop_pet_publish_host_appearance` is a command the *app* calls (the host relays what it is
+   * told to the windows it created), so a double that only answered a canned value could not show
+   * the case the channel exists for: a window that is already mounted and has to follow a write
+   * made in another one. Returns the value, like `setVisible`, so a test can assert what a page
+   * would have read.
+   */
+  publishHostAppearance(appearance: PetHostAppearance): PetHostAppearance
 }
 
 export function createMemoryPetGateway(options: MemoryPetOptions = {}): MemoryPetGateway {
@@ -109,7 +120,9 @@ export function createMemoryPetGateway(options: MemoryPetOptions = {}): MemoryPe
   const clickThroughRequests: boolean[] = []
   const featureListeners = new Set<(state: PetFeatureState) => void>()
   const settingsListeners = new Set<(change: PetSettingsChange) => void>()
+  const hostAppearanceListeners = new Set<(appearance: PetHostAppearance) => void>()
   let visible = options.visible ?? false
+  let hostAppearance: PetHostAppearance = { ...(options.hostAppearance ?? {}) }
 
   function featureState(): PetFeatureState {
     return { enabled: settings.enabled(), visible: settings.enabled() && visible }
@@ -131,6 +144,15 @@ export function createMemoryPetGateway(options: MemoryPetOptions = {}): MemoryPe
   /** One applied settings write, as the window that draws from settings hears it. */
   function publishSettingsChanged(change: PetSettingsChange): void {
     for (const listener of settingsListeners) listener(change)
+  }
+
+  /**
+   * Tell every mounted window what the app's appearance is now — the whole appearance, not a
+   * delta, for the reason every other channel here pushes whole states: a subscriber that missed
+   * one is stale for a frame rather than wrong for ever.
+   */
+  function publishHostAppearanceChanged(next: PetHostAppearance): void {
+    for (const listener of hostAppearanceListeners) listener(next)
   }
 
   return {
@@ -216,6 +238,19 @@ export function createMemoryPetGateway(options: MemoryPetOptions = {}): MemoryPe
       }
     },
 
+    async hostAppearance(): Promise<PetHostAppearance> {
+      return hostAppearance
+    },
+
+    async subscribeHostAppearance(onChange: (appearance: PetHostAppearance) => void) {
+      hostAppearanceListeners.add(onChange)
+      // Listen-only, exactly as the adapter is: the value is what `hostAppearance()` answers, and
+      // a change is news rather than a state — so there is no first delivery to make.
+      return () => {
+        hostAppearanceListeners.delete(onChange)
+      }
+    },
+
     async openSettings(page: PetSettingsPage) {
       opened.push(page)
     },
@@ -271,6 +306,12 @@ export function createMemoryPetGateway(options: MemoryPetOptions = {}): MemoryPe
 
     clickThrough() {
       return clickThroughRequests
+    },
+
+    publishHostAppearance(next: PetHostAppearance) {
+      hostAppearance = { ...next }
+      publishHostAppearanceChanged(hostAppearance)
+      return hostAppearance
     },
   }
 }

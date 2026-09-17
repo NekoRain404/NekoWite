@@ -18,8 +18,8 @@
 //!
 //! | Window | Capability | May call |
 //! | --- | --- | --- |
-//! | `main` | `capabilities/default.json` | all eighty below, except the two that are the pet window's own |
-//! | `pet-*` | `capabilities/desktop-pet.json` | `desktop_pet_state`, `desktop_pet_set_visible`, `desktop_pet_close_own`, `desktop_pet_set_click_through`, `desktop_pet_open_settings`, `desktop_pet_tasks`, `desktop_pet_appearance`, `desktop_pet_open_task`, and the two `core:event` permissions it already held |
+//! | `main` | `capabilities/default.json` | all eighty-two below, except the three that are a pet window's own |
+//! | `pet-*` | `capabilities/desktop-pet.json` | `desktop_pet_state`, `desktop_pet_set_visible`, `desktop_pet_close_own`, `desktop_pet_set_click_through`, `desktop_pet_open_settings`, `desktop_pet_tasks`, `desktop_pet_appearance`, `desktop_pet_host_appearance`, `desktop_pet_open_task`, and the two `core:event` permissions it already held |
 //!
 //! Two consequences worth knowing before editing either list:
 //!
@@ -29,8 +29,11 @@
 //!   forgetting the second is a refusal at the invoke rather than a silent grant.
 //! - **Naming it here grants it to nobody.** The manifest declares the surface; the capabilities
 //!   hand it out per window. The pet is the least trusted window in the app — it renders a
-//!   character the user chose and receives engine events — so it holds the eight commands its own
+//!   character the user chose and receives engine events — so it holds the nine commands its own
 //!   page and menu call and none of the `agent_*`, `fs_*`, `ai_*`, `keys` or recovery surface.
+//!   `desktop_pet_publish_host_appearance` is the direction that proves the rule: it is the one
+//!   command on this surface that `main` alone may call, because what it writes is the *app's*
+//!   appearance — a pet window saying what the app looks like would be a decoration deciding it.
 //!   `tests/command_authorisation_test.rs` drives the real IPC entry with the real context and
 //!   asserts both directions, so this table is executable rather than a note.
 //!
@@ -146,6 +149,12 @@ const COMMANDS: &[&str] = &[
     "desktop_pet_care_read",
     "desktop_pet_tasks",
     "desktop_pet_appearance",
+    // The app's own appearance (§1's 「保留现有主题、强调色」), in the two directions it travels: the
+    // read a pet window makes, and the publish the *app* window makes. The second is granted to
+    // `main` and to no other window, which is what §5.3 asks for by making a config write a command
+    // rather than an event; `desktop_pet_host_appearance` is the same value read back.
+    "desktop_pet_host_appearance",
+    "desktop_pet_publish_host_appearance",
     "desktop_pet_library",
     "desktop_pet_import_character",
     "desktop_pet_catalogue",

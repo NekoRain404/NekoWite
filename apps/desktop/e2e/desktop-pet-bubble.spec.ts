@@ -614,9 +614,17 @@ test('the theme the user picks is the palette the bubble on the desktop is drawn
   const light = await page.evaluate(() => window.__petBubble?.theme())
   if (!light) throw new Error('the pet window is not mounted')
   console.log(`[pet-bubble] theme light: ${JSON.stringify(light)}`)
-  // The light arm is the *absence* of the attribute: `:root` is where `palettes.css` declares the
-  // light palette, and `data-theme="light"` matches no block in the table.
-  expect(light.attribute).toBeNull()
+  // Light is *named*, not omitted. The theme composable used to spell it as the absence of the
+  // attribute — `:root` is where `palettes.css` declares the light palette, and no block matched a
+  // `light` value — but the pet window now writes the same four attributes the app shell writes on
+  // its own root, and `light` is one of the two names. The light half of the table answers
+  // `[data-theme="light"]` as well as `:root` (`styles/palettes.css:16`), and it has to: the
+  // settings page's preview is an element *inside* the app's root and has to be able to name the
+  // palette it draws, and the light high-contrast block
+  // (`[data-theme="light"][data-color-scheme][data-contrast="high"]`) reads the attribute as a
+  // value rather than as "not dark". A window that omitted it would draw one palette in this
+  // window and another in the app's, for the same settings.
+  expect(light.attribute).toBe('light')
   expect(light.colorScheme).toBe('light')
   // The bubble's background is that colour at the setting's alpha, so the channels are compared and
   // the alpha is not.
@@ -640,7 +648,7 @@ test('the theme the user picks is the palette the bubble on the desktop is drawn
   // returned to Light.
   await page.evaluate(() => window.__petBubble?.setMessage({ theme: 'light' }))
   const back = await page.evaluate(() => window.__petBubble?.theme())
-  expect(back?.attribute).toBeNull()
+  expect(back?.attribute).toBe('light')
   expect(channelsOf(back?.background ?? '')).toEqual(hexChannels(light.elevated))
 })
 

@@ -63,8 +63,8 @@ use serde::Serialize;
 use crate::desktop_pet::settings::DefaultsReason;
 use crate::desktop_pet::{
     AdoptionRefusal, CallerWindow, CapabilityReport, CareSummary, CharacterKind, CharacterLibrary,
-    Closed, HostRefusal, InstallRequest, LinuxEnvironment, PetInstance, PetSettingsDomain,
-    PetSettingsLoad, PetWindowHost, TeardownReport, WindowAction,
+    Closed, HostAppearance, HostAppearanceWrite, HostRefusal, InstallRequest, LinuxEnvironment,
+    PetInstance, PetSettingsDomain, PetSettingsLoad, PetWindowHost, TeardownReport, WindowAction,
 };
 use crate::state::DesktopPetState;
 
@@ -123,6 +123,15 @@ pub use crate::desktop_pet::PET_TASKS_CHANNEL;
 /// `platform/pet-task-request.ts` reads the payload and refuses what is not a key, and
 /// `app/pet-task-link.ts` focuses the session only when this window is holding it.
 pub const PET_TASK_OPEN_CHANNEL: &str = "pet-open-task";
+
+/// The channel the host relays the app's own appearance on (§1's 「保留现有主题、强调色」).
+///
+/// The fifth channel of the same shape, and the direction is the one that matters: the *app*
+/// publishes over a command (`desktop_pet_publish_host_appearance`, which is §5.3's rule that an
+/// event may not be an unauthorised config write), this host holds the value, and a pet window that
+/// is already mounted hears the new one here. `tauri-pet.ts` listens on this name; the two
+/// spellings are one decision.
+pub const PET_HOST_APPEARANCE_CHANNEL: &str = "pet-host-appearance";
 
 /// The main window's label, as the app builds it from `tauri.conf.json`.
 ///
@@ -531,6 +540,62 @@ pub fn desktop_pet_appearance<R: tauri::Runtime>(
         allow_character_sheet(&app, Path::new(sheet_path));
     }
     Ok(appearance)
+}
+
+/// The *app's* own appearance — its theme, colour scheme, accent, contrast and body size.
+///
+/// The other half of §1's 「保留现有主题、强调色」, and the only one of the pet's reads that is not
+/// about the character. It exists because the app's appearance lives in the main window's store and
+/// a pet window may not read it (§7.1; `app/desktop-pet-entry.test.ts` fails on an import graph that
+/// reaches `stores/`), so what crosses is a *published* value — see
+/// `desktop_pet/host_appearance.rs` for the relay and `app/pet-host-appearance-link.ts` for the
+/// publisher.
+///
+/// No caller identity is checked, and that is deliberate rather than an omission: the permission is
+/// what decides who may ask (`capabilities/desktop-pet.json` grants this to `pet-*` only, and
+/// `desktop_pet_publish_host_appearance` to `main` alone), this answer holds no path, no window and
+/// no character, and every pet window is entitled to the palette it is drawn in.
+#[tauri::command]
+pub fn desktop_pet_host_appearance(
+    state: tauri::State<'_, DesktopPetState>,
+) -> Result<HostAppearance, String> {
+    let relay = state
+        .appearance
+        .lock()
+        .map_err(|_| "the app's appearance could not be read: the lock was poisoned".to_string())?;
+    Ok(relay.current())
+}
+
+/// The app publishes what it is drawing, and every mounted pet window hears it.
+///
+/// The write half, and it is a **command rather than an event** for §5.3's reason: 「事件不能作为
+/// 无需授权的配置写入口」. An event is broadcast to whoever happens to listen, while this is
+/// authorised per window by the ACL — `capabilities/default.json` grants it to `main` and to no
+/// other window, which is exactly the shape of "only the app says what the app looks like".
+///
+/// Two effects, in this order, and the order is the rule: the value is stored first, so a window
+/// that is created *because* of this frame reads the appearance rather than the defaults, and only
+/// then is it broadcast, so a window that is already mounted moves without asking. A failed emit is
+/// not an error — it means no pet window is listening, which is the state of the whole feature being
+/// switched off, and the value remains readable.
+///
+/// The *normalised* value is what is broadcast rather than the raw write: a window must never be
+/// handed something the read would not answer with, or the pushed appearance and the read one would
+/// be two answers to one question.
+#[tauri::command]
+pub fn desktop_pet_publish_host_appearance<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, DesktopPetState>,
+    appearance: HostAppearanceWrite,
+) -> Result<HostAppearance, String> {
+    let held = {
+        let mut relay = state.appearance.lock().map_err(|_| {
+            "the app's appearance could not be published: the lock was poisoned".to_string()
+        })?;
+        relay.publish(appearance)
+    };
+    let _ = tauri::Emitter::emit(&app, PET_HOST_APPEARANCE_CHANNEL, held.clone());
+    Ok(held)
 }
 
 /// One character's spritesheet, and nothing else, through `asset://`.

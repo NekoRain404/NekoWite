@@ -441,6 +441,12 @@
           "markdownDescription": "Enables the desktop_pet_disable command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_pet_host_appearance command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-host-appearance",
+          "markdownDescription": "Enables the desktop_pet_host_appearance command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_pet_import_character command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-pet-import-character",
@@ -469,6 +475,12 @@
           "type": "string",
           "const": "allow-desktop-pet-open-task",
           "markdownDescription": "Enables the desktop_pet_open_task command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_pet_publish_host_appearance command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-publish-host-appearance",
+          "markdownDescription": "Enables the desktop_pet_publish_host_appearance command without any pre-configured scope."
         },
         {
           "description": "Enables the desktop_pet_read_settings command without any pre-configured scope.",
@@ -927,6 +939,12 @@
           "markdownDescription": "Denies the desktop_pet_disable command without any pre-configured scope."
         },
         {
+          "description": "Denies the desktop_pet_host_appearance command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-host-appearance",
+          "markdownDescription": "Denies the desktop_pet_host_appearance command without any pre-configured scope."
+        },
+        {
           "description": "Denies the desktop_pet_import_character command without any pre-configured scope.",
           "type": "string",
           "const": "deny-desktop-pet-import-character",
@@ -955,6 +973,12 @@
           "type": "string",
           "const": "deny-desktop-pet-open-task",
           "markdownDescription": "Denies the desktop_pet_open_task command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_pet_publish_host_appearance command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-publish-host-appearance",
+          "markdownDescription": "Denies the desktop_pet_publish_host_appearance command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_pet_read_settings command without any pre-configured scope.",

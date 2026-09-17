@@ -115,6 +115,7 @@ export type {
   PetAppearance,
   PetBubbleRead,
   PetCharacterEntry,
+  PetHostAppearance,
   PetMotion,
   PetSettingsChange,
 } from './pet-contracts/appearance'

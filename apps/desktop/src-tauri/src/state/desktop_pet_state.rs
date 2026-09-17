@@ -20,20 +20,21 @@ use std::sync::Mutex;
 use tauri::Manager;
 
 use crate::desktop_pet::{
-    feature_switch, system_clock, CareLedger, Observations, PetSettingsStore, PetSurfaces,
-    PetTaskFeed, PetWindowHost, TauriSurfaces,
+    feature_switch, system_clock, CareLedger, HostAppearanceRelay, Observations, PetSettingsStore,
+    PetSurfaces, PetTaskFeed, PetWindowHost, TauriSurfaces,
 };
 use crate::storage::key_store::data_dir;
 
 /// The desktop pet's backend, as a handle Tauri holds (§7.1, §10.1).
 ///
-/// The four fields are the whole of what a pet window can reach on this side: which character
+/// The five fields are the whole of what a pet window can reach on this side: which character
 /// windows are open and the rules about them, what this machine has been *observed* to do
-/// (§7.2), what the care ledger has settled (§8), and what the agent runtime is doing, projected
-/// down to what a window may be told (§6). Nothing else lives here — no vault, no session owned
-/// by this struct, no provider, no document — so a pet command has nothing to reach even if one
-/// were written carelessly. That absence is the module's own claim (`desktop_pet/mod.rs`) held at
-/// the managed-state level: the pet's whole world is four fields wide.
+/// (§7.2), what the care ledger has settled (§8), what the agent runtime is doing, projected
+/// down to what a window may be told (§6), and the appearance the app last published (§1). Nothing
+/// else lives here — no vault, no session owned by this struct, no provider, no document — so a pet
+/// command has nothing to reach even if one were written carelessly. That absence is the module's
+/// own claim (`desktop_pet/mod.rs`) held at the managed-state level: the pet's whole world is five
+/// fields wide, and the fifth is one value the app hands over rather than a thing the pet owns.
 ///
 /// **The task feed is here for the reason the ledger is.** §6.1 makes the host the single source
 /// of truth for a task, and a projection is host state: the frames arrive on the driver's task,
@@ -51,9 +52,10 @@ use crate::storage::key_store::data_dir;
 ///
 /// **Why each field has its own lock.** They are read and written by different callers for
 /// different reasons: the observations by whoever measured this machine (D13's matrix) and a
-/// settings page, the ledger by whatever settles a run and by the settings page's care read, and
-/// the host by every window operation. One lock would make a capability report, or a care read,
-/// wait behind a window operation that is talking to a compositor.
+/// settings page, the ledger by whatever settles a run and by the settings page's care read, the
+/// host by every window operation, and the appearance by the app window's publish. One lock would
+/// make a capability report, or a care read, wait behind a window operation that is talking to a
+/// compositor — or behind a colour.
 pub struct DesktopPetState {
     /// The pet windows, and the policy about them. The rules are [`PetWindowHost`]'s; this is
     /// only where the process keeps them.
@@ -68,6 +70,16 @@ pub struct DesktopPetState {
     /// place a frame is applied (`desktop_pet/task_feed.rs`), so a window that reads it and a
     /// command that answers from it cannot disagree.
     pub tasks: PetTaskFeed,
+    /// §1's 「保留现有主题、强调色」, as the app published it: the theme, colour scheme, accent,
+    /// contrast and body size the main window is drawing with.
+    ///
+    /// One for the process, for the reason the ledger is: there is one main window and therefore
+    /// one answer. It is a *relay* and not a store — the app owns the value
+    /// (`app/pet-host-appearance-link.ts`), this holds what it last said
+    /// (`desktop_pet/host_appearance.rs`), and a pet window may not read the store it comes from
+    /// (§7.1). Nothing here is written to a file: an appearance is republished at every start, and
+    /// a remembered one would be a second answer the next time the app changed its mind.
+    pub appearance: Mutex<HostAppearanceRelay>,
 }
 
 impl DesktopPetState {
@@ -144,6 +156,9 @@ impl DesktopPetState {
             host: Mutex::new(PetWindowHost::new(surfaces)),
             observations: Mutex::new(Observations::new()),
             ledger: Mutex::new(CareLedger::new()),
+            // Nothing has published yet: the relay answers the app's own defaults until the main
+            // window publishes what it is drawing (`host_appearance.rs`).
+            appearance: Mutex::new(HostAppearanceRelay::new()),
             // The feed builds its own clock (`system_clock`): the projection stamps `updated_at`
             // with it, and the display subtracts it from the same epoch milliseconds, which is the
             // one thing about the unit a test can get wrong (`task_projection/outcomes.rs`).

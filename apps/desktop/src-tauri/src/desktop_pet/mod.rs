@@ -52,6 +52,7 @@ pub mod care_ledger;
 pub mod character_view;
 pub mod feature_switch;
 pub mod history;
+pub mod host_appearance;
 pub mod linux_capabilities;
 pub mod notification_delivery;
 pub mod notification_policy;
@@ -74,6 +75,9 @@ pub use feature_switch::{chosen_character, UNSELECTED_CHARACTER};
 pub use history::{
     Decoded, DeliveryState, HistoryStore, Loaded, SaveOutcome, TaskHistory, TaskRecord,
     HISTORY_SCHEMA_VERSION, LEDGER_FILE, UNREAD_MAX_AGE_MS,
+};
+pub use host_appearance::{
+    HostAppearance, HostAppearanceRelay, HostAppearanceWrite, HostTheme, HOST_BODY_FONT_SIZE,
 };
 pub use linux_capabilities::{
     CapabilityReport, Desktop, DisplaySession, Finding, LinuxEnvironment, Observations, Observed,

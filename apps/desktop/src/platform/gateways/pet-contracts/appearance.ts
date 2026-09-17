@@ -259,3 +259,35 @@ export interface PetSettingsChange {
   domain: string
   revision: number
 }
+
+/**
+ * The *application's* own appearance, as a pet window is told it (§1's 「保留现有主题、强调色」 and
+ * §5.2's 「默认跟随宿主主题」).
+ *
+ * The other half of what a pet window may not read for itself. `message.theme` and the bubble's
+ * alpha are the pet's own settings and ride `desktop_pet_appearance`; the theme, colour scheme,
+ * accent and contrast of the *app*, and the body size the user set for it, live in the app
+ * window's store — §7.1 forbids this page from reaching it, and `app/desktop-pet-entry.test.ts`
+ * fails on a graph that does. So the app publishes them (`app/pet-host-appearance-link.ts`, through
+ * `desktop_pet_publish_host_appearance`) and the host relays them here.
+ *
+ * Every field is optional, because a read that carries none is a real state rather than a wiring
+ * error: a double, a browser build, and a host that has not been told yet all answer without them,
+ * and the reading rule
+ * (`features/desktop-pet/services/pet-page-appearance.ts`'s `petHostAppearanceOf`) is where an
+ * absent field becomes the app's own default. Nothing here is a colour: `colorScheme` and `accent`
+ * are `palettes.css`'s member names, and which colour a name resolves to is the stylesheet's
+ * answer on both pages.
+ */
+export interface PetHostAppearance {
+  /** The app's theme setting (`system`, `light` or `dark`) — see `petHostAppearanceOf`. */
+  theme?: string
+  /** `palettes.css`'s colour-scheme member (`default`, `sunset`, …). */
+  colorScheme?: string
+  /** `palettes.css`'s accent member (`ink`, `coral`, …). */
+  accent?: string
+  /** The accessibility axis: `data-contrast="high"` where the user asked for it. */
+  highContrast?: boolean
+  /** The app's body size in CSS pixels (`AppShell.vue`'s `--app-body-size`). */
+  bodyFontSize?: number
+}

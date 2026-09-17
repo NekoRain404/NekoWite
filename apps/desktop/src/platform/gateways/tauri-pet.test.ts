@@ -28,6 +28,7 @@ import type {
   PetCatalogueReading,
   PetCharacterEntry,
   PetFeatureState,
+  PetHostAppearance,
   PetSettingsChange,
   PetSettingsLoad,
   PetTaskKey,
@@ -37,6 +38,7 @@ import {
   createTauriPetIpc,
   createTauriPetConnection,
   PET_FEATURE_CHANNEL,
+  PET_HOST_APPEARANCE_CHANNEL,
   PET_SETTINGS_CHANNEL,
   PET_TASKS_CHANNEL,
   type PetIpc,
@@ -114,6 +116,9 @@ const WIRE: [
   ['desktop_pet_adopt_character', (ipc) => ipc.adoptCharacter('boba'), { slug: 'boba' }],
   ['desktop_pet_open_task', (ipc) => ipc.openTask(PET_TASK_KEY), { task: PET_TASK_KEY }],
   ['desktop_pet_read_settings', (ipc) => ipc.readSettings('general'), { domain: 'general' }],
+  // The app's own appearance: a read with no argument, like the two above it. The app published it
+  // — the window never names a setting it wants, which is the whole shape of this channel.
+  ['desktop_pet_host_appearance', (ipc) => ipc.hostAppearance(), undefined],
   [
     'desktop_pet_update_settings',
     (ipc) => ipc.updateSettings({ domain: 'general' } as never),
@@ -247,6 +252,10 @@ class FakeIpc implements PetIpc {
   readonly featureListeners = new Set<(state: PetFeatureState) => void>()
   readonly taskListeners = new Set<(tasks: PetTaskProjection[]) => void>()
   readonly settingsListeners = new Set<(change: PetSettingsChange) => void>()
+  readonly hostAppearanceListeners = new Set<(appearance: PetHostAppearance) => void>()
+  /** What the host relays as the app's appearance. The fresh-install shape: a read that carries
+      nothing, which the page's own reader turns into the app's defaults. */
+  hostAppearanceRead: PetHostAppearance = {}
   taskReadFails: string | null = null
   /**
    * What the host answers for care. The empty arm by default, because that is what a host that has
@@ -377,6 +386,22 @@ class FakeIpc implements PetIpc {
     }
   }
 
+  async hostAppearance(): Promise<PetHostAppearance> {
+    this.record('hostAppearance')
+    return this.hostAppearanceRead
+  }
+
+  async onHostAppearance(
+    onChange: (appearance: PetHostAppearance) => void,
+  ): Promise<() => void> {
+    this.record('onHostAppearance')
+    this.hostAppearanceListeners.add(onChange)
+    return () => {
+      this.record('offHostAppearance')
+      this.hostAppearanceListeners.delete(onChange)
+    }
+  }
+
   async onSettingsChanged(onChange: (change: PetSettingsChange) => void): Promise<() => void> {
     this.record('onSettingsChanged')
     this.settingsListeners.add(onChange)
@@ -469,6 +494,42 @@ describe('a subscription gives back its own removal', () => {
     expect(seen).toEqual([{ domain: 'character', revision: 2 }])
     expect(ipc.calls.map(([name]) => name)).toEqual(['onSettingsChanged', 'offSettingsChanged'])
     expect(ipc.settingsListeners.size).toBe(0)
+  })
+
+  it('passes the app’s appearance through, and hears the app publish another one', async () => {
+    const ipc = new FakeIpc()
+    ipc.hostAppearanceRead = { theme: 'dark', accent: 'coral', bodyFontSize: 17 }
+    const connection = createTauriPetConnection({ ipc })
+
+    // The read is handed over unchanged: the adapter is not where a member is judged, and the
+    // reading rule that turns an absent field into the app's default is the page's own
+    // (`pet-page-appearance.ts`), the way `appearance`'s facts are read by `pet-appearance.ts`.
+    await expect(connection.hostAppearance()).resolves.toEqual({
+      theme: 'dark',
+      accent: 'coral',
+      bodyFontSize: 17,
+    })
+
+    // And the channel is listen-only, like the settings one: the user changes the accent in
+    // Settings, and the window that is already mounted has to move. The payload is the appearance
+    // itself rather than a notification, because that is what the app published and what the page
+    // draws with — there is no second read to make.
+    const seen: PetHostAppearance[] = []
+    const stop = await connection.subscribeHostAppearance((appearance) => seen.push(appearance))
+    for (const listener of ipc.hostAppearanceListeners) listener({ theme: 'light', accent: 'teal' })
+    stop()
+
+    expect(seen).toEqual([{ theme: 'light', accent: 'teal' }])
+    // The channel's name is the Rust side's too: `commands/desktop_pet.rs` emits this string and a
+    // window listens for it, so the two spellings are one decision and a rename on one side alone
+    // would leave a mounted pet following nothing.
+    expect(PET_HOST_APPEARANCE_CHANNEL).toBe('pet-host-appearance')
+    expect(ipc.calls.map(([name]) => name)).toEqual([
+      'hostAppearance',
+      'onHostAppearance',
+      'offHostAppearance',
+    ])
+    expect(ipc.hostAppearanceListeners.size).toBe(0)
   })
 
   it('keeps each subscription’s removal to itself', async () => {

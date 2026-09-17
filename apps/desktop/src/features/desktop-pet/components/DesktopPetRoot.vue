@@ -40,13 +40,14 @@ import { usePetClickThrough } from '../composables/use-pet-click-through'
 import { usePetDrag } from '../composables/use-pet-drag'
 import { usePetDrawingFailure } from '../composables/use-pet-drawing-failure'
 import { usePetLifecycle } from '../composables/use-pet-lifecycle'
-import { usePetPageTheme } from '../composables/use-pet-page-theme'
+import { usePetPageAppearance } from '../composables/use-pet-page-appearance'
 import { usePetWindow } from '../composables/use-pet-window'
 import {
   PET_BUBBLE_VIEW_DEFAULTS,
   type PetAppearanceView,
   type PetBubbleView,
 } from '../services/pet-appearance'
+import { PET_PAGE_APPEARANCE_DEFAULTS } from '../services/pet-page-appearance'
 // The ball's gesture, reused rather than restated. `pet-ball-input.ts` is where upstream's
 // click-versus-drag arithmetic was ported from `floating-ball.ts`, and the character window's
 // drag needs exactly that arithmetic — the same 4 px threshold, the same 280 ms click window, the
@@ -205,21 +206,25 @@ const bubbleModel = computed<PetBubbleView>(
 const line = computed(() => window_?.line.value ?? null)
 
 /**
- * The page's palette, from `message.theme` — the one setting on 气泡与消息 that is not drawn on a
- * surface inside this window but **on the window itself**.
+ * The page's appearance: the palette `message.theme` asks for, drawn in the app's own colours.
  *
- * The bubble's theme is a choice between the app's two palettes, and the app's palettes are selected
- * on a page's root: `:root` is the light one and `[data-theme="dark"]` re-points it
- * (`styles/palettes.css:16-92`). This window is its own page, so its root is the html element, and
- * the attribute goes there. `pet-bubble-theme.ts` carries the whole argument, including why the
- * light arm needs no second table and what the third member of the setting can observe.
+ * This window is a page of its own, so its root is the html element and the four attributes
+ * `palettes.css` selects on go there — the same four the app shell puts on its own root
+ * (`app/AppShell.vue:207-210`), plus the body size at `:195`. `pet-bubble-theme.ts` carries the
+ * argument for the palette and `pet-page-appearance.ts` for the four axes; what is decided *here*
+ * is only that the page is what carries them, because all of it reaches every surface in this
+ * window: the bubble, the rows inside it, the menu, and the notice a missing character draws.
  *
- * Declared here rather than in `desktop-pet-entry.ts` because the value is not the entry's: it
- * arrives on the appearance read, which `usePetWindow` owns, and the entry mounts before any read
- * has happened. A window with no host draws `PET_BUBBLE_VIEW_DEFAULTS` — `system`, which is what
- * the bubble was drawn with before the setting reached this window.
+ * Declared here rather than in `desktop-pet-entry.ts` because the values are not the entry's: one
+ * arrives on the appearance read and the other from the host's own relay, both of which
+ * `usePetWindow` owns, and the entry mounts before either read has happened. A window with no host
+ * connection draws the app's own defaults — `system`, the `default` scheme, the `ink` accent and
+ * 15px — which is what this window drew with before any of it crossed.
  */
-usePetPageTheme({ theme: () => bubbleModel.value.theme })
+usePetPageAppearance({
+  theme: () => bubbleModel.value.theme,
+  host: () => window_?.hostAppearance.value ?? PET_PAGE_APPEARANCE_DEFAULTS,
+})
 
 /**
  * The two states `PetSprite` reports when it cannot draw, and when they stop being true. Declared

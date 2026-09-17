@@ -47,6 +47,7 @@ import type {
   PetCharacterEntry,
   PetFeatureState,
   PetGateway,
+  PetHostAppearance,
   PetSettingsChange,
   PetSettingsDomain,
   PetSettingsLoad,
@@ -83,6 +84,17 @@ export const PET_TASKS_CHANNEL = 'pet-task'
  * request a pet window makes, this is news it receives.
  */
 export const PET_SETTINGS_CHANGED_CHANNEL = 'pet-settings-changed'
+
+/**
+ * The channel the host publishes the *app's* appearance on, after the app window publishes one.
+ *
+ * The fourth instance of the same shape, and the same gap: the pet window mounts with the
+ * appearance the host had when it read, and the user changing the accent in Settings is a write in
+ * another window. `desktop_pet_publish_host_appearance` is the app's half (a command, because §5.3
+ * makes an event an unacceptable *write* entry point) and this is the news it produces — emitted by
+ * `commands/desktop_pet.rs`, which relays to the pet windows it created.
+ */
+export const PET_HOST_APPEARANCE_CHANNEL = 'pet-host-appearance'
 
 /**
  * The channel a click on a task reaches the main window on (§6.2's 点击返回任务).
@@ -169,10 +181,12 @@ export interface PetIpc {
   openTask(key: PetTaskKey): Promise<void>
   readSettings(domain: PetSettingsDomain): Promise<PetSettingsLoad>
   updateSettings(write: PetSettingsWrite): Promise<PetSettingsUpdate>
+  hostAppearance(): Promise<PetHostAppearance>
   /** Register a listener. Resolves with the removal of *that* registration. */
   onFeature(onState: (state: PetFeatureState) => void): Promise<() => void>
   onTasks(onTasks: (tasks: PetTaskProjection[]) => void): Promise<() => void>
   onSettingsChanged(onChange: (change: PetSettingsChange) => void): Promise<() => void>
+  onHostAppearance(onChange: (appearance: PetHostAppearance) => void): Promise<() => void>
 }
 
 export function createTauriPetIpc(): PetIpc {
@@ -221,6 +235,9 @@ export function createTauriPetIpc(): PetIpc {
       listen<PetTaskProjection[]>(PET_TASKS_CHANNEL, (event) => onTasks(event.payload)),
     onSettingsChanged: (onChange) =>
       listen<PetSettingsChange>(PET_SETTINGS_CHANGED_CHANNEL, (event) => onChange(event.payload)),
+    hostAppearance: () => invoke<PetHostAppearance>('desktop_pet_host_appearance'),
+    onHostAppearance: (onChange) =>
+      listen<PetHostAppearance>(PET_HOST_APPEARANCE_CHANNEL, (event) => onChange(event.payload)),
   }
 }
 
@@ -271,6 +288,15 @@ export interface PetHostConnection extends PetGateway {
    * other way to hear.
    */
   subscribeSettings(onChange: (change: PetSettingsChange) => void): Promise<() => void>
+  /** The app's own appearance, read once — see `PetWindowGateway.hostAppearance`. */
+  hostAppearance(): Promise<PetHostAppearance>
+  /**
+   * Hear that the app published a different appearance.
+   *
+   * The same listen-only shape as {@link subscribeSettings}, and for its reason: a change has no
+   * current value to deliver, and the value is what `hostAppearance` answers.
+   */
+  subscribeHostAppearance(onChange: (appearance: PetHostAppearance) => void): Promise<() => void>
 }
 
 export interface TauriPetOptions {
@@ -308,6 +334,8 @@ export function createTauriPetConnection(options: TauriPetOptions = {}): PetHost
     // already answers. Listen-only is therefore not an omission here, the way it would be for the
     // task list.
     subscribeSettings: (onChange) => ipc.onSettingsChanged(onChange),
+    hostAppearance: () => ipc.hostAppearance(),
+    subscribeHostAppearance: (onChange) => ipc.onHostAppearance(onChange),
 
     async subscribe(onTasks: (tasks: PetTaskProjection[]) => void) {
       // Listen first, then read, so a frame that lands between the two is delivered twice rather

@@ -13,7 +13,12 @@ import type {
   PetSettingsUpdate,
   PetSettingsWrite,
 } from './config'
-import type { PetAppearance, PetCharacterEntry, PetSettingsChange } from './appearance'
+import type {
+  PetAppearance,
+  PetCharacterEntry,
+  PetHostAppearance,
+  PetSettingsChange,
+} from './appearance'
 import type { PetCatalogueReading } from './catalogue'
 import type { PetCareRead } from './care'
 import type { PetCapabilityReport } from './platform'
@@ -233,4 +238,30 @@ export interface PetWindowGateway extends PetGateway {
    * one as the other, and the two are different machinery on every platform.
    */
   setClickThrough(ignore: boolean): Promise<void>
+  /**
+   * The *app's* own appearance, as the host last heard it: its theme, colour scheme, accent,
+   * contrast and body size (§1's 「保留现有主题、强调色」, §5.2's 「默认跟随宿主主题」).
+   *
+   * The read a page of its own cannot make for itself. The app's appearance lives in the app
+   * window's store, §7.1 keeps this window out of it, and `app/desktop-pet-entry.test.ts` fails on
+   * an import graph that reaches `stores/` — so what this answers with is what the app *published*
+   * (`app/pet-host-appearance-link.ts` → `desktop_pet_publish_host_appearance`), relayed by the
+   * host. It is the fourth read of the same kind here, after `appearance`'s own three facts: each
+   * one exists because the window draws something whose setting it cannot read.
+   *
+   * A read that carries nothing is a real answer — see {@link PetHostAppearance}: the reading rule
+   * turns it into the app's own defaults, which is what the pet drew with before any of this
+   * crossed.
+   */
+  hostAppearance(): Promise<PetHostAppearance>
+  /**
+   * Hear that the app changed its appearance, wherever the change was made.
+   *
+   * Listen-only, exactly like {@link subscribeSettings}: a *change* has no current value to
+   * deliver, and the state a listener wants is the one its own {@link hostAppearance} read already
+   * answers. Without this channel a window that was already open would keep the appearance it
+   * mounted with — the user changes the accent in Settings, and the pet beside it does not move
+   * until something else makes it re-read, which nothing would.
+   */
+  subscribeHostAppearance(onChange: (appearance: PetHostAppearance) => void): Promise<() => void>
 }

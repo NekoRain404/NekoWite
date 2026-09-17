@@ -36,13 +36,14 @@ use tauri::Listener;
 
 use nekowite_lib::commands::desktop_pet as pet_commands;
 use nekowite_lib::commands::desktop_pet::{
-    PET_FEATURE_CHANNEL, PET_SETTINGS_CHANNEL, SETTINGS_PAGES,
+    PET_FEATURE_CHANNEL, PET_HOST_APPEARANCE_CHANNEL, PET_SETTINGS_CHANNEL, SETTINGS_PAGES,
 };
 use nekowite_lib::desktop_pet::care_ledger::{
     CareEvent, CareOrigin, CareOutcome, LocalDay, LocalTime,
 };
 use nekowite_lib::desktop_pet::{
-    Closed, HostRefusal, PetInstance, TeardownReport, DESKTOP_PET_PAGE, MEAL_XP,
+    Closed, HostAppearance, HostAppearanceWrite, HostRefusal, PetInstance, TeardownReport,
+    DESKTOP_PET_PAGE, MEAL_XP,
 };
 use nekowite_lib::state::DesktopPetState;
 use tauri::Manager;
@@ -61,6 +62,28 @@ use crate::support::{FakeSurfaces, MAIN_WINDOW};
 // `character_id` is what the front end must spell `characterId`), and each body is the
 // library's own function. What is under test is the library's code; what is written here is the
 // registration and nothing else.
+
+/// The app's own appearance (§1's 「保留现有主题、强调色」), in the two directions it travels.
+///
+/// Registered here for the reason every wrapper in this file is: what is under test is the
+/// library's command, and the names above the bodies are the wire contract. `appearance` is the
+/// camelCase key `tauri-pet.ts` and the app's own publisher use — one word, so the case cannot
+/// differ.
+#[tauri::command]
+fn desktop_pet_publish_host_appearance<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, DesktopPetState>,
+    appearance: HostAppearanceWrite,
+) -> Result<HostAppearance, String> {
+    pet_commands::desktop_pet_publish_host_appearance(app, state, appearance)
+}
+
+#[tauri::command]
+fn desktop_pet_host_appearance(
+    state: tauri::State<'_, DesktopPetState>,
+) -> Result<HostAppearance, String> {
+    pet_commands::desktop_pet_host_appearance(state)
+}
 
 #[tauri::command]
 fn desktop_pet_state(
@@ -167,6 +190,8 @@ fn app() -> Pet {
             desktop_pet_capabilities,
             desktop_pet_care_read,
             desktop_pet_open_settings,
+            desktop_pet_publish_host_appearance,
+            desktop_pet_host_appearance,
         ])
         .build(mock_context(noop_assets()))
         .expect("the pet's command surface builds");
@@ -588,6 +613,105 @@ fn slice_between<'a>(text: &'a str, start: &str, end: &str) -> &'a str {
         .find(end)
         .unwrap_or_else(|| panic!("{start:?} is no longer closed by {end:?}"));
     &text[from..from + to]
+}
+
+/// The app's appearance reaches a pet window, and nothing else can publish one.
+///
+/// Two claims, and each is the half of §1's 「保留现有主题、强调色」 that could go wrong quietly:
+///
+///  - **The value crosses.** A publish from the app window is stored, relayed on
+///    `pet-host-appearance` and answered by the read a pet window makes — so a window that mounts
+///    later draws the app's palette instead of the defaults, and a window that is already mounted
+///    is told. The two are one value: what the channel carries is the normalised appearance rather
+///    than the raw write, so a listener and a reader cannot end up holding different appearances.
+///  - **The read is a *value*, not a settings record.** A write that names no axis leaves none of
+///    the previous publish's fields behind — an appearance is what the app is drawing now, and a
+///    window must never be handed an accent from an earlier publish that this one did not mention.
+///
+/// What the *ACL* says about the two commands is asserted in `command_authorisation_test.rs`
+/// (a pet window may read and may not publish, and `main` is the other way round); this case is
+/// about the bodies those commands run.
+#[test]
+fn the_apps_appearance_is_published_relayed_and_read_back() {
+    let pet = app();
+    let main = window(&pet, MAIN_WINDOW);
+    let pet_window = window(&pet, "pet-1");
+    let heard: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&heard);
+    pet.app.listen(PET_HOST_APPEARANCE_CHANNEL, move |event| {
+        sink.lock()
+            .expect("the listener's lock")
+            .push(parse(event.payload()));
+    });
+
+    // Nothing has published yet: the app's own defaults, which is what this window drew with
+    // before any of it crossed.
+    assert_eq!(
+        ok(&pet_window, "desktop_pet_host_appearance", Value::Null),
+        json!({
+            "theme": "system",
+            "colorScheme": "default",
+            "accent": "ink",
+            "highContrast": false,
+            "bodyFontSize": 15.0,
+        })
+    );
+
+    let published = ok(
+        &main,
+        "desktop_pet_publish_host_appearance",
+        json!({
+            "appearance": {
+                "theme": "dark",
+                "colorScheme": "sunset",
+                "accent": "coral",
+                "highContrast": true,
+                "bodyFontSize": 17,
+            }
+        }),
+    );
+    assert_eq!(
+        published,
+        json!({
+            "theme": "dark",
+            "colorScheme": "sunset",
+            "accent": "coral",
+            "highContrast": true,
+            "bodyFontSize": 17.0,
+        })
+    );
+    // The channel carries the same frame the read answers with — and it is the *normalised* one.
+    assert_eq!(
+        heard.lock().unwrap().as_slice(),
+        std::slice::from_ref(&published)
+    );
+    assert_eq!(
+        ok(&pet_window, "desktop_pet_host_appearance", Value::Null),
+        published
+    );
+
+    // A member this build cannot act on is the default rather than a word a stylesheet would take
+    // for a theme, and a value that is not a name at all is the default name.
+    let normalised = ok(
+        &main,
+        "desktop_pet_publish_host_appearance",
+        json!({ "appearance": { "theme": "solarized", "accent": "" } }),
+    );
+    assert_eq!(
+        normalised,
+        json!({
+            "theme": "system",
+            "colorScheme": "default",
+            "accent": "ink",
+            "highContrast": false,
+            "bodyFontSize": 15.0,
+        })
+    );
+    // And the second publish *replaced* the first: no field of the earlier one survives it.
+    assert_eq!(
+        ok(&pet_window, "desktop_pet_host_appearance", Value::Null),
+        normalised
+    );
 }
 
 /// Every single-quoted name in a slice, in order.

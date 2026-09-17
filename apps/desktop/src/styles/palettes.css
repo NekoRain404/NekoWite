@@ -13,7 +13,18 @@
    Loaded after `tokens.css`; see that file's header for why the order is
    load-bearing and what has to be kept in step. */
 
-:root {
+/* The light baseline, under BOTH selectors it has to answer to. `:root` is the page's own root —
+   the html element — and `[data-theme="light"]` is any element that has to draw the light palette
+   while the page around it draws another one, which is what the settings page's preview of the
+   pet's bubble is (`features/desktop-pet-settings/components/PetSettingsPreview.vue`: an element
+   inside the app's own root, showing a bubble the user may have pinned to light on a dark app).
+   One declaration list and two selectors, rather than a second copy of the table under a
+   `[data-theme="light"]` block: the numbers the pet window draws and the numbers the preview draws
+   are then the same numbers by construction, which is what the preview is for — a user sets a
+   bubble colour by looking at it. The dark half below is one selector because the dark palette IS
+   a re-point: `:root` already carries light, so writing dark is writing a change. */
+:root,
+[data-theme="light"] {
   color-scheme: light;
   --app-canvas: #fbfaf6;
   --app-panel: #f5f3ee;

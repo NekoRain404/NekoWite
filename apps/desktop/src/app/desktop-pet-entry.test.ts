@@ -189,12 +189,17 @@ describe('the pet entry is one lightweight window and not a second application',
       'features/desktop-pet/composables/use-pet-drag.ts',
       'features/desktop-pet/composables/use-pet-drawing-failure.ts',
       'features/desktop-pet/composables/use-pet-lifecycle.ts',
-      // The page's own palette, from `message.theme`: the composable writes `data-theme` on the
-      // page's root and keeps a `system` setting reading the engine. It is here for the reason
-      // every other module on this list is — without it the control on 气泡与消息 stores a value
-      // that nothing on the desktop acts on — and it costs no dependency the window did not
-      // already carry: `document`, `window.matchMedia`, and Vue's own `watch`.
-      'features/desktop-pet/composables/use-pet-page-theme.ts',
+      // **The page's own appearance, in two modules, and the second is why the first exists.** The
+      // composable writes the four attributes and the body size onto the page's root and keeps the
+      // one setting that still has an engine to read; the service beside it is the *spelling* —
+      // which attribute carries which axis, and what a read that carries nothing means — and it is
+      // the same spelling the app shell puts on its own root (`app/AppShell.vue:207-210`, `:195`).
+      // They are here for the reason every other module on this list is: without them the controls
+      // on 气泡与消息 and the whole Appearance page store values that nothing on the desktop acts
+      // on. What they cost is no dependency the window did not already carry — `document`,
+      // `window.matchMedia`, Vue's own `watch` — and they are `Data`-less in the sense §7.1 cares
+      // about: no store, no palette table, no colour.
+      'features/desktop-pet/composables/use-pet-page-appearance.ts',
       'features/desktop-pet/composables/use-pet-window.ts',
       'features/desktop-pet/rendering/animation-bindings.ts',
       'features/desktop-pet/rendering/sprite-hit-test.ts',
@@ -218,6 +223,9 @@ describe('the pet entry is one lightweight window and not a second application',
       'features/desktop-pet/services/pet-context-menu.ts',
       'features/desktop-pet/services/pet-menu-actions.ts',
       'features/desktop-pet/services/pet-message-template.ts',
+      // The spelling of those attributes and of the body size, in one module: which axis goes on
+      // which attribute, and what a read that carries nothing means. See the composable above.
+      'features/desktop-pet/services/pet-page-appearance.ts',
       'features/desktop-pet/services/pet-task-view.ts',
       'platform/gateways/pet-contracts.ts',
       'platform/gateways/pet-contracts/appearance.ts',

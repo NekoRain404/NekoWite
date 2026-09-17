@@ -52,9 +52,13 @@ function rules(text: string): { selector: string; body: string }[] {
 }
 
 function matches(selector: string, s: Scenario): boolean {
-  if (selector === ':root') return true
-  const attrs = selector.match(/\[[^\]]+\]/g)
-  if (!attrs || attrs.join('') !== selector) return false
+  return selectorParts(selector).some((part) => partMatches(part, s))
+}
+
+function partMatches(part: string, s: Scenario): boolean {
+  if (part === ':root') return true
+  const attrs = part.match(/\[[^\]]+\]/g)
+  if (!attrs || attrs.join('') !== part) return false
   return attrs.every((attr) => {
     const m = /^\[data-([a-z-]+)(?:="([^"]*)")?\]$/.exec(attr)
     if (!m) return false
@@ -68,8 +72,19 @@ function matches(selector: string, s: Scenario): boolean {
   })
 }
 
+/** A selector list, one part at a time: `:root, [data-theme="light"]` is two selectors and one
+    declaration list. The light baseline is written that way now — the second half is what lets an
+    element inside another page's root draw the light palette (`PetSettingsPreview.vue`'s stage) —
+    and a simulation that read the list as a single compound selector would stop seeing the light
+    palette at all, which is the one thing this file must never do quietly. */
+function selectorParts(selector: string): string[] {
+  return selector.split(',').map((part) => part.trim())
+}
+
 function specificity(selector: string): number {
-  return selector === ':root' ? 1 : (selector.match(/\[/g) ?? []).length
+  return Math.max(
+    ...selectorParts(selector).map((part) => (part === ':root' ? 1 : (part.match(/\[/g) ?? []).length)),
+  )
 }
 
 function resolveToken(text: string, s: Scenario, name: string): Resolved {

@@ -9,6 +9,9 @@
  * than a number of its own.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { createPinia, setActivePinia } from 'pinia'
 import { createApp, h, nextTick, type App as VueApp } from 'vue'
 import { t } from '../../../i18n'
 import { createMemoryPetGateway, type MemoryPetGateway } from '../../../platform/gateways/memory-pet'
@@ -23,6 +26,12 @@ let warnSpy: ReturnType<typeof vi.spyOn>
 let systemReducedMotion = false
 
 beforeEach(() => {
+  // The preview draws in this *window's* appearance as well as the pet's own settings (§1's
+  // 「保留现有主题、强调色」): its stage carries the same four axes the app's root does, read from the
+  // appearance store. So a suite that mounts it provides the store's world the same way it
+  // provides a gateway — a Pinia, installed on the app under test.
+  setActivePinia(createPinia())
+  localStorage.clear()
   vi.useFakeTimers()
   document.body.innerHTML = ''
   mounted = []
@@ -91,6 +100,11 @@ function figure(): HTMLElement {
   const el = document.querySelector<HTMLElement>('.pet-preview__figure')
   if (!el) throw new Error('no preview figure')
   return el
+}
+
+/** The stage, which is the element the appearance is selected on. */
+function stage(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('.pet-preview__stage')
 }
 
 function previewNotes(): string[] {
@@ -245,14 +259,21 @@ describe('reduced motion is never turned back on', () => {
 })
 
 describe('the bubble’s theme', () => {
-  it('follows the host by default and takes an override where one was set', async () => {
+  it('is the app’s palette by default and the bubble’s own override where one was set', async () => {
     const host = createMemoryPetGateway()
     mount(host)
     await flush()
     askForBubble()
     await flush()
-    // §5.2's default: nothing is applied, so the bubble is the host's own surface.
-    expect(document.querySelector('.pet-preview__bubble')?.className).not.toContain('is-')
+    // §5.2's default is `system`, which follows the *app* — and this runner's engine states no
+    // preference while the app's own theme is `system` too, so the stage names the light palette.
+    // The name and not the absence of the attribute: an element inside another page's root has to
+    // say which palette it is drawing (`palettes.css` answers `[data-theme="light"]`, which is what
+    // the light half's second selector is for).
+    expect(stage()?.getAttribute('data-theme')).toBe('light')
+    expect(stage()?.getAttribute('data-color-scheme')).toBe('default')
+    expect(stage()?.getAttribute('data-accent')).toBe('ink')
+    expect(stage()?.getAttribute('data-contrast')).toBe('normal')
 
     document.body.innerHTML = ''
     mounted.forEach((app) => app.unmount())
@@ -264,6 +285,21 @@ describe('the bubble’s theme', () => {
     await flush()
     askForBubble()
     await flush()
-    expect(document.querySelector('.pet-preview__bubble')?.classList.contains('is-dark')).toBe(true)
+    expect(stage()?.getAttribute('data-theme')).toBe('dark')
+  })
+
+  it('owns no colour of its own, which is the whole of what was wrong with it', () => {
+    // The preview used to answer Light and Dark with `#f7f7f5` / `#23211f` — two colours this
+    // application draws nowhere: the app's own `--app-elevated` is `#fffefb` in light and `#24241f`
+    // in dark. A user sets a bubble colour by looking at this stage, so a table of its own is a
+    // preview that lies about the one thing it exists for. The four axes go on the stage and every
+    // colour comes from `palettes.css`; this is that stated as a fact about the file, because a
+    // later edit adding one hex back would pass every other case in this suite.
+    const source = readFileSync(resolve(__dirname, 'PetSettingsPreview.vue'), 'utf8')
+      // Comments are stripped first: prose about a colour declares nothing, and the comment that
+      // explains this rule names the two literals it is about.
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+    expect(source).not.toMatch(/#[0-9a-f]{3,8}\b/i)
   })
 })

@@ -20,7 +20,7 @@
 //!
 //! ## Why the counts below are asserted rather than bounded
 //!
-//! `80` and the pet's eight are not round numbers to relax when the surface grows. Each is a
+//! `82` and the pet's nine are not round numbers to relax when the surface grows. Each is a
 //! statement that the *whole* surface was enumerated rather than sampled, and a count that was
 //! quietly lowered to let a change through would take the enumeration with it: a list read short
 //! passes every other assertion here, because the other assertions compare two derivations of the
@@ -157,8 +157,8 @@ fn the_capability_files_are_the_policy_and_nothing_else() {
         .collect();
     assert_eq!(
         declared.len(),
-        80,
-        "the declared surface is eighty commands"
+        82,
+        "the declared surface is eighty-two commands"
     );
 
     let pet: Vec<String> = allows(&capability("desktop-pet.json"));
@@ -179,9 +179,14 @@ fn the_capability_files_are_the_policy_and_nothing_else() {
             // was already told to draw.
             "allow-desktop-pet-tasks",
             "allow-desktop-pet-appearance",
+            // The app's own appearance (§1's 「保留现有主题、强调色」): the fourth read of the same kind
+            // as the three above it, and the one whose *write* is not here. The app publishes what it
+            // is drawing (`desktop_pet_publish_host_appearance`, granted to `main` alone), the host
+            // relays it, and this is the read a window makes of the result.
+            "allow-desktop-pet-host-appearance",
             "allow-desktop-pet-open-task",
         ],
-        "the pet window holds eight of this app's commands and no others"
+        "the pet window holds nine of this app's commands and no others"
     );
 
     // The pet's own file, read for the one permission in it that is not an app command. It is the
@@ -229,13 +234,28 @@ fn the_capability_files_are_the_policy_and_nothing_else() {
         .filter(|permission| {
             !matches!(
                 permission.as_str(),
-                "allow-desktop-pet-close-own" | "allow-desktop-pet-set-click-through"
+                "allow-desktop-pet-close-own"
+                    | "allow-desktop-pet-set-click-through"
+                    | "allow-desktop-pet-host-appearance"
             )
         })
         .cloned()
         .collect();
     assert_eq!(
         main, expected,
-        "the main window holds every declared command except the two that are a pet window's own"
+        "the main window holds every declared command except the three that are a pet window's own"
+    );
+    // The other direction, which is the one this change added: the publish is on `main` *alone*, so
+    // a pet window cannot claim an appearance the user did not choose. A decoration that could say
+    // what the app looks like would be deciding the app's appearance.
+    assert!(
+        allows(&capability("default.json"))
+            .contains(&"allow-desktop-pet-publish-host-appearance".to_string()),
+        "the app window is the one that publishes what it is drawing"
+    );
+    assert!(
+        !allows(&capability("desktop-pet.json"))
+            .contains(&"allow-desktop-pet-publish-host-appearance".to_string()),
+        "and no pet window may publish an appearance of its own"
     );
 }

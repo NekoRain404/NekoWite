@@ -14,6 +14,7 @@
  * disabled, because a disabled control is what the user reported.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import { createApp, h, nextTick, type App as VueApp } from 'vue'
 import { t } from '../../../i18n'
 import { createMemoryPetGateway, type MemoryPetGateway } from '../../../platform/gateways/memory-pet'
@@ -30,6 +31,12 @@ let mounted: VueApp[] = []
 let warnSpy: ReturnType<typeof vi.spyOn>
 
 beforeEach(() => {
+  // The container's preview draws in this *window's* appearance as well as the pet's own settings
+  // (§1's 「保留现有主题、强调色」): its stage carries the same four axes the app's root does, read from
+  // the appearance store. A suite that mounts the container therefore provides the store's world the
+  // same way it provides a gateway — a Pinia.
+  setActivePinia(createPinia())
+
   vi.useFakeTimers()
   document.body.innerHTML = ''
   mounted = []

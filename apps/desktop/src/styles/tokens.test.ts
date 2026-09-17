@@ -40,7 +40,16 @@ const DARK_BLOCKS = [...css.matchAll(/\[data-theme="dark"\]\s*\{([^}]*)\}/g)].ma
 const DARK_BLOCK = DARK_BLOCKS[0] ?? ''
 // 浅色基线：`:root` 在 tokens.css（尺度）和 palettes.css（颜色）里各写了一次，而浏览器
 // 看到的是两个块合起来的结果。只取第一个会让 REQUIRED 里横跨两边的 token 找不到声明。
-const LIGHT_BLOCK = [...css.matchAll(/:root\s*\{([^}]*)\}/g)].map((m) => m[1]).join('\n')
+//
+// `:root` 后面允许跟别的东西，因为浅色调色板现在有两个选择器：`:root, [data-theme="light"]`。
+// 第二个选择器是为「页面里的一块区域要画另一种主题」而加的（设置页里气泡的预览就是这个
+// 结构），声明清单是一份而不是复制一份——所以这里读到的仍然是那一份数字。
+//
+// 注释先剥掉：palettes.css 里那段解释别名的注释本身就写着 `:root`，而放宽后的选择器模式
+// 会从注释里的那三个字符一路匹配到下一个 `{`，把别名块的声明当成 :root 的一部分读进来。
+const LIGHT_BLOCK = [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/:root[^{}]*\{([^}]*)\}/g)]
+  .map((m) => m[1])
+  .join('\n')
 
 const SRC_DIR = resolve(__dirname, '..')
 
@@ -205,12 +214,18 @@ const RULES = [...CLEAN.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
   body: m[2],
 }))
 
-function matchesSelector(selector: string, s: Scenario): boolean {
+/** 选择器表里的一条，按逗号拆开——`:root, [data-theme="light"]` 是两条规则一份声明。
+    浏览器对元素逐个匹配每一条，所以这里也必须逐条判断，否则浅色调色板会整块被判成不匹配。 */
+function selectorParts(selector: string): string[] {
+  return selector.split(',').map((part) => part.trim())
+}
+
+function partMatches(part: string, s: Scenario): boolean {
   // 全文件唯一的 :not() 规则只声明 --app-accent-soft，没有断言读它。
-  if (selector.includes(':not(')) return false
-  if (selector === ':root') return true
-  const attrs = selector.match(/\[[^\]]+\]/g)
-  if (!attrs || attrs.join('') !== selector) return false
+  if (part.includes(':not(')) return false
+  if (part === ':root') return true
+  const attrs = part.match(/\[[^\]]+\]/g)
+  if (!attrs || attrs.join('') !== part) return false
   return attrs.every((attr) => {
     const m = /^\[data-([a-z-]+)(?:="([^"]*)")?\]$/.exec(attr)
     if (!m) return false
@@ -224,9 +239,15 @@ function matchesSelector(selector: string, s: Scenario): boolean {
   })
 }
 
+function matchesSelector(selector: string, s: Scenario): boolean {
+  return selectorParts(selector).some((part) => partMatches(part, s))
+}
+
 /** 和浏览器同款的取值顺序：选择器更具体的赢，一样具体则后写的赢。 */
 function specificity(selector: string): number {
-  return selector === ':root' ? 1 : (selector.match(/\[/g) ?? []).length
+  return Math.max(
+    ...selectorParts(selector).map((part) => (part === ':root' ? 1 : (part.match(/\[/g) ?? []).length)),
+  )
 }
 
 function resolveToken(s: Scenario, name: string): string {

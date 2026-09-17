@@ -12,6 +12,7 @@
  * no test-utils): the point is what a user can reach, and the DOM is where that is.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import { createApp, h, nextTick, type App as VueApp } from 'vue'
 import {
   PET_SETTINGS_PAGES,
@@ -24,6 +25,12 @@ import DesktopPetSettingsSection from './DesktopPetSettingsSection.vue'
 let mounted: VueApp[] = []
 
 beforeEach(() => {
+  // The preview draws in this *window's* appearance as well as the pet's own settings (§1's
+  // 「保留现有主题、强调色」): its stage carries the same four axes the app's root does, read from the
+  // appearance store. So a suite that mounts it provides the store's world the same way it
+  // provides a gateway — a Pinia, installed on the app under test.
+  setActivePinia(createPinia())
+  localStorage.clear()
   document.body.innerHTML = ''
   mounted = []
   // happy-dom exposes no `matchMedia`; the container's preview reads one query through it.
