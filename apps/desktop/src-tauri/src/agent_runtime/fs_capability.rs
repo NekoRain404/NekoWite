@@ -289,11 +289,6 @@ impl FsCapability {
         self.changes.lock().unwrap().iter().cloned().collect()
     }
 
-    /// The baselines those changes left, and the recovery that judges them.
-    pub fn recovery(&self) -> &Arc<Recovery> {
-        &self.recovery
-    }
-
     /// The newest change this host performed for `path` inside `vault_root`, if it performed one.
     ///
     /// **Compared by the app's own spelling of the path, not by the engine's.** A record's path is
