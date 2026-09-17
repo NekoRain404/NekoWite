@@ -83,6 +83,14 @@ export function petStateLabel(
  * A per-agent key is an arbitrary string rather than an enum: §5.2 requires the list to come from
  * the current agent registry and to work for an engine nobody has heard of, so an unknown key is a
  * line for an engine this build does not know — not a value to reject.
+ *
+ * **Two levels, and nothing in the settings schema can hold it.** Upstream keeps this across
+ * `ap_msg_<agent|all>_<mood>` keys (`windows/src/activity.ts:198-208`, written per row by
+ * `settings.ts:839-864`), and this build's structured-field vocabulary is a scalar member inside
+ * one container — `pet-settings-values.ts`'s `PetMemberRule` and Rust's `fields::MemberRule` both —
+ * so a map of maps of lists is not a value either side can declare. The type is therefore reachable
+ * from a test and from any future caller, and unreachable from a stored record until that
+ * vocabulary grows a nested kind. `PetBubble.vue`'s `phrases` prop carries the same note.
  */
 export type PetMessagePhrases = Readonly<
   Record<string, Partial<Record<PetTaskState, readonly string[]>>>

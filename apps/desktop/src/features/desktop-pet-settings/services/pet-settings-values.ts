@@ -105,6 +105,15 @@ const PET_FIELD_MEMBERS: Readonly<Record<`${PetSettingsDomain}.${string}`, reado
  * plain text (a quick bubble, an agent id, an icon spec), and one bubble row field with
  * its visibility (`ap_bub_tokens`). A fourth kind would be a rule for data no setting
  * carries.
+ *
+ * **Every member is a scalar, and that is the limit this vocabulary has today.** One
+ * container, one scalar inside it: a field whose value nests a second container is not
+ * expressible, and the one setting the port wants that would need it is
+ * `PetMessagePhrases` — the per-engine × per-state pools upstream stores across
+ * `ap_msg_<agent|all>_<mood>` keys (`references/desktop-pet/windows/src/activity.ts:198-208`).
+ * `features/desktop-pet/services/pet-message-template.ts` carries that type, and a nested
+ * kind added here is what would make a field for it declarable (Rust's `fields::MemberRule`
+ * is the same shape and moves with this one).
  */
 type PetMemberRule =
   | { kind: 'row' }

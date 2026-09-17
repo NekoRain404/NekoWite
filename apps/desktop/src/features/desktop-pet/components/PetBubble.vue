@@ -51,7 +51,26 @@ const props = withDefaults(
     tasks?: readonly PetTaskProjection[]
     /** The `message` domain's bubble fields, or the defaults (§5.2). */
     layout?: PetBubbleLayoutInput
-    /** The user's own lines (§5.2's 自定义词句). */
+    /**
+     * The user's own lines, keyed by engine and then by state (§5.2's 自定义词句).
+     *
+     * **No production caller passes one, and the reason is a schema gap rather than a missing
+     * wire.** `message` stores the quick bubbles as one flat list (`quickBubbles`), which is what
+     * this window's idle line is drawn from — `PetBubble`'s `line` prop, not this one. What this
+     * prop takes is the per-engine × per-state pool upstream keeps across `ap_msg_<agent|all>_<mood>`
+     * keys (`references/desktop-pet/windows/src/activity.ts:198-208`), and the settings schema has
+     * no field of that shape *and no vocabulary to declare one*: both sides' structured rules are a
+     * scalar member inside one container (`pet-settings-values.ts`'s `PetMemberRule`, Rust's
+     * `fields::MemberRule`), so a map of maps of lists is not expressible. The plan files it as
+     * 「Agent 覆盖」 (`docs/superpowers/plans/2026-09-16-desktop-pet-port.md:116`), and what it needs
+     * first is a nested container kind.
+     *
+     * The prop stays because the mechanism it feeds is the port's: `petPhrasePool`'s precedence —
+     * this engine's lines, then the ones written for every engine, then the built-in pool — is the
+     * behaviour the file exists to carry, and dropping the prop would delete it rather than defer
+     * it. Nothing here defaults a pool into existence: an absent one is the built-in lines, which
+     * is what a fresh install shows.
+     */
     phrases?: PetMessagePhrases
     /** The host's clock in epoch ms, ticked by the caller; this component starts no timer. */
     now?: number

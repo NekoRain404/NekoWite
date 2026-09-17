@@ -31,6 +31,15 @@ pub const TOKEN_MAX_LENGTH: usize = 32;
 /// Three, and each is a ledger row rather than a step towards a general schema language: a
 /// spritesheet row (`ap_bind_<mood>`'s values and `ap_idle_clips`' members), one line of plain text
 /// (a quick bubble, an agent id, an icon spec), and one bubble row field with its visibility.
+///
+/// **Every member is a scalar, and that is the limit this vocabulary has today.** One container, one
+/// scalar inside it: a field whose value nests a second container is not expressible, and the one
+/// setting the port wants that would need it is the per-engine × per-state phrase pools upstream
+/// stores across `ap_msg_<agent|all>_<mood>` keys
+/// (`references/desktop-pet/windows/src/activity.ts:198-208`) — which
+/// `features/desktop-pet/services/pet-message-template.ts`'s `PetMessagePhrases` types and no field
+/// of this schema can hold. A nested kind added here, and to `pet-settings-values.ts`'s
+/// `PetMemberRule` which moves with this one, is what would make such a field declarable.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MemberRule {
     /// A spritesheet row: whole, non-negative, finite. `animation-bindings.ts`'s `isRow` is the
