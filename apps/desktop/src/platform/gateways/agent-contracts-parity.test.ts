@@ -40,7 +40,12 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { AGENT_FAILURE_CODES, AGENT_STOP_REASONS, isAgentSessionState } from './agent-contracts'
+import {
+  AGENT_FAILURE_CODES,
+  AGENT_RECOVERY_REFUSALS,
+  AGENT_STOP_REASONS,
+  isAgentSessionState,
+} from './agent-contracts'
 
 const TAURI = resolve(__dirname, '../../../src-tauri/src')
 
@@ -121,6 +126,50 @@ describe('the agent contract’s hand-kept halves', () => {
       .map(kebab)
       .filter((state) => !isAgentSessionState(state))
     expect(unnameable, 'a snapshot in these states would be refused whole').toEqual([])
+  })
+
+  it('names every reason a change cannot be put back, in the host’s own words', () => {
+    // The recovery's refusals are a vocabulary kept by hand on two sides, like the failure codes
+    // and the stop reasons above — and the direction that costs something is one-sided here too: a
+    // code the host answers and this window does not have is a refusal whose sentence is missing
+    // from the copy tree (`agent.changes.recovered.refused.<code>`), which renders as an empty row
+    // rather than as a refusal. `RecoveryRefusal::code` is the producer, so it is what is read.
+    const recovery = rust('agent_runtime/recovery.rs')
+    const start = recovery.indexOf('pub fn code(&self) -> &\'static str {')
+    expect(start, '`code` is not declared in recovery.rs').toBeGreaterThan(-1)
+    const declared = [
+      ...recovery.slice(start, recovery.indexOf('\n    }', start)).matchAll(/=> "([a-z-]+)"/g),
+    ].map(([, code]) => code)
+
+    expect(declared.length, '`code` answers no codes').toBeGreaterThan(0)
+    expect(declared).toEqual([...AGENT_RECOVERY_REFUSALS])
+  })
+
+  it('spells the recovery answer the way the command that produces it does', () => {
+    // The answer crosses as a *tagged* enum, so the two spellings that matter are the tag's name,
+    // its casing, and the fields each arm carries: a field the reader looks for under another name
+    // is `null` from `readChangeRecovery`, and the surface reports an unreadable answer for a
+    // recovery the host had already performed. Read off the source rather than restated, for the
+    // reason this whole file exists.
+    const command = rust('commands/agent_recovery.rs')
+    expect(
+      command.includes('#[serde(\n    tag = "kind",\n    rename_all = "kebab-case",\n    rename_all_fields = "camelCase"\n)]'),
+      '`AgentChangeRecovery` must be tagged by `kind`, kebab-arm and camelCase-field',
+    ).toBe(true)
+
+    const enumStart = command.indexOf('pub enum AgentChangeRecovery {')
+    expect(enumStart, 'AgentChangeRecovery is not declared in agent_recovery.rs').toBeGreaterThan(-1)
+    const arms = command.slice(enumStart, command.indexOf('\n}', enumStart))
+    // The two arms the reader branches on, and the fields it reads: the recovered hashes, the
+    // optional warning, and the path both arms carry.
+    for (const field of ['Recovered {', 'Refused {', 'baseline_hash', 'replaced_hash', 'warning', 'path']) {
+      expect(arms, `the answer's own declaration has no ${field}`).toContain(field)
+    }
+    // `rename_all_fields = "camelCase"` is what turns those snake_case fields into the names the
+    // reader asks for — asserted as the transformation rather than as the literal, so a field
+    // added later is covered by the same rule.
+    expect('baseline_hash'.replace(/_[a-z]/g, (s) => s[1].toUpperCase())).toBe('baselineHash')
+    expect('replaced_hash'.replace(/_[a-z]/g, (s) => s[1].toUpperCase())).toBe('replacedHash')
   })
 
   it('classifies exactly the stop reasons the contract names', () => {
