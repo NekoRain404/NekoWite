@@ -21,9 +21,36 @@ import {
   useSplitScrollSync,
 } from '../features/editor'
 import { runEditorCommand } from '../services/run-editor-command'
+import AgentNoteProposals, {
+  type AgentInsertionSource,
+} from '../features/agent/components/AgentNoteProposals.vue'
+import type { AgentIdentity } from '../platform/gateways/agent-contracts'
 import { useFloatStore } from '../stores/float'
 import { resetFocusedPane } from '../services/editor-ownership'
 import { t } from '../i18n'
+
+// ---- What the agent proposes for the note this pane has open (N8/N9) -------------------------
+//
+// The surface `agent-edit-apply.ts` names as belonging to "whoever holds the editor pane": an
+// agent edit's conflict question, and an SVG the run staged for this note, both decided where the
+// document they are about is on screen. It is mounted HERE rather than in the rail because the
+// rail is where the request is made and this pane is where its subject is — and because the host's
+// `ask` is a question about the reader's own paragraph, which is only answerable with the
+// paragraph in front of them.
+//
+// Both props are the shell's, not this pane's: which session a runtime is serving and which
+// composition can mint an insertion binding are the assembly's decisions (`app/agent-rail.ts`),
+// and a pane that read them from a store would be answering about a runtime it cannot see. The
+// pane is also where they arrive, because it is the unit the shell mounts.
+const props = withDefaults(
+  defineProps<{
+    /** The session the runtime on screen is serving, or null when none is up. */
+    agentIdentity?: AgentIdentity | null
+    /** Where an SVG insertion is bound, or null. */
+    agentInsertions?: AgentInsertionSource | null
+  }>(),
+  { agentIdentity: null, agentInsertions: null },
+)
 
 // The source (CodeMirror) pane is loaded only when the user actually needs it:
 // its graph (@codemirror/*, @lezer/*, the host and highlighting services) would
@@ -160,6 +187,10 @@ onBeforeUnmount(() => {
 <template>
   <div class="editor-pane">
     <template v-if="hasTab">
+      <AgentNoteProposals
+        :identity="props.agentIdentity"
+        :insertions="props.agentInsertions"
+      />
       <WordToolbar @command="handleCommand" />
       <div
         ref="panesEl"

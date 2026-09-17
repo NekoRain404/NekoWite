@@ -594,6 +594,45 @@ export const agent = {
             conflictCreated: 'Something else created this file between this page reading the folder and this save. Nothing was written — what is above is the file that is there now, and it is not this app’s.',
             failed: 'This change could not be sent to the backend.',
           },
+          /* The structured half of the same page: a provider block, built from fields rather than
+             typed as JSONC. The sentences are long on purpose where a user is about to write into a
+             file this app only splices — what is written, and exactly which bytes are left alone. */
+          provider: {
+            title: 'Add a provider',
+            hint: 'Writes one block into this document, under the provider id you give it: the address the engine calls, the models it may use, and a reference to a key rather than the key itself. Everything else in the file — the other providers, the comments, the members this app has never heard of — is left byte for byte.',
+            id: 'Provider id',
+            idHint: 'Letters, digits, dots, dashes and underscores. It is the block’s name in the file and part of the name the key is stored under: {name}.',
+            name: 'Name',
+            nameHint: 'What the engine calls this provider. Blank uses the id.',
+            baseUrl: 'Base URL',
+            baseUrlHint: 'The engine appends /models and its request path to this. No trailing slash is needed.',
+            key: 'API key',
+            /* `{'{'}` is a literal brace to the message compiler — the reference is written into a
+               configuration file and has to be shown as it is written there, not as a placeholder. */
+            keyHint: 'Stored in this profile’s credential file (mode 0600), never in the document: the block carries {\'{\'}env:…{\'}\'} and the engine reads the value from the environment this app starts it with.',
+            keyBlank: 'No key: the block written will name none, and requests to this provider will go out unauthenticated.',
+            allowPrivate: 'Allow a local or private address for the fetch',
+            allowPrivateHint: 'The fetch is this app making the request, and it refuses a loopback or private address by default. The engine is not bound by that — it talks to whatever the block says.',
+            fetch: 'Fetch models',
+            fetching: 'Asking the endpoint…',
+            fetched: '{n} models listed by the endpoint.',
+            fetchNeedsKey: 'The model list is fetched with the key in the field above, so it has to be there first. With an empty field the app would send the key it has stored for its own AI instead, and the list would be about a credential the engine never uses.',
+            fetchFailed: 'The endpoint could not be reached.',
+            models: 'Models',
+            modelsEmpty: 'No models yet. Fetch them from the endpoint, or type an id below.',
+            modelHint: 'Ticked ids become the models the engine has for this provider. A model the endpoint lists but this block does not declare is one the engine cannot use.',
+            manual: 'A model id that was not listed',
+            manualAdd: 'Add',
+            preview: 'What this saves',
+            previewHint: 'The value of provider.{id}, exactly as it is written. What this page shows is what is sent — nothing is added to it afterwards.',
+            save: 'Save provider',
+            problem: 'Nothing was written: {reason}',
+            credentialFailed: 'The key could not be stored, so nothing was written to the document either. {reason}',
+            editFailed: 'The provider could not be written to the document. {reason}',
+            applied: 'The provider was written.',
+            conflict: 'The file changed since this page read it, so nothing was written. Reload and save again.',
+            conflictCreated: 'Something else created this file first, so nothing was written. What is above is the file that is there now.',
+          },
         },
         skills: {
           section: {
@@ -850,6 +889,53 @@ export const agent = {
             engine: 'Choosing the engine a new session starts on. Engines can be added and switched off above, but a session always starts on the default one: the backend’s start call takes a folder and nothing else, so nothing in this window opens a session on another engine yet.',
             other: 'This section needs a host half this build does not have.',
           },
+        },
+      },
+      /* What the editor pane owes the reader about what the agent produced for the note it has
+         open. The surface these words belong to is mounted inside the editor pane, so every
+         sentence here answers a question the reader is asking with their own paragraph in front
+         of them: what did the agent produce, what does applying it do to MY text, and what
+         happened after I chose. `conflict` is the copy `AgentEditConflictView` draws; the words
+         live here rather than inside that component because a surface that carried its own
+         sentences could not be mounted in a Chinese window without shipping English ones. */
+      note: {
+        title: 'What the agent proposes for this note',
+        /* An unwritten proposal is the whole subject of this block: §7.2 gives it the verbs
+           apply/discard, and the sentence says so before the reader presses anything, because
+           "did it already do this?" is the question a change that has not landed raises. */
+        unwritten: 'Nothing has been written yet. Applying it puts the agent’s version in this note; keeping yours leaves the note untouched.',
+        edit: {
+          row: 'The agent produced a version of {path}',
+          apply: 'Use the agent’s version',
+          discard: 'Keep mine',
+        },
+        /* What became of the answer. Three facts, told apart on purpose: the text is in the note
+           and on the file, the text is in the note and the file does not have it, and nothing was
+           written. Folding the second into the first is how a user finds out on their next
+           restart that a paragraph only ever existed in this window. */
+        outcome: {
+          saved: 'The agent’s version is in the note, and the file has it.',
+          saveFailed: 'The agent’s version is in the note, but the file does not have it. Saving the note again will write it.',
+          discarded: 'Nothing was written. The note is as you left it.',
+        },
+        /* Why nothing was written. Codes in, sentences out — the same arrangement the change
+           review uses, and for the same reason: the service returns a reason and this is the one
+           layer that owns the language. */
+        refused: {
+          noteNotOpen: 'No tab holds this note any more, so there is nothing to write into.',
+          targetChanged: 'The editor answered about a different note than the one asked about, so nothing was written.',
+          vaultMismatch: 'This note belongs to another vault than the session the answer was produced under.',
+          identityChanged: 'The session that produced this answer is not the session this window is on any more.',
+          writeUnavailable: 'Nothing can take the text: the pane that owns this note is not available.',
+        },
+        conflict: {
+          title: 'This note changed while the agent was working',
+          moved: 'was edited after the request went out',
+          agentText: 'What the agent produced',
+          noteText: 'What the note holds now',
+          apply: 'Use the agent’s version',
+          discard: 'Keep my version',
+          kept: 'Your text is handed back to the window either way: applying replaces it in the note, and nothing else holds a copy.',
         },
       },
     },
@@ -1327,6 +1413,40 @@ export const agent = {
             conflictCreated: '在本页读过这个目录之后、这次保存之前，别的东西创建了这个文件。什么都没写入——上面显示的就是现在磁盘上的文件，它不是本应用写的。',
             failed: '这次修改没能发送到后端。',
           },
+          provider: {
+            title: '添加供应商',
+            hint: '往这个文档里写入一个块，键就是你填的供应商标识：引擎要调用的地址、可用的模型，以及对密钥的引用（而不是密钥本身）。文件里其他内容——别的供应商、注释、本应用从没听说过的成员——一个字节都不动。',
+            id: '供应商标识',
+            idHint: '字母、数字、点、短横线和下划线。它既是文件里这个块的名字，也是密钥存放名的一部分：{name}。',
+            name: '名称',
+            nameHint: '引擎显示这个供应商时用的名字。留空则用标识。',
+            baseUrl: '接口地址',
+            baseUrlHint: '引擎会在它后面拼接 /models 以及请求路径。末尾不需要斜杠。',
+            key: 'API Key',
+            keyHint: '存放在本配置档的凭据文件里（权限 0600），不会写进文档：块里写的是 {\'{\'}env:…{\'}\'}，值由本应用启动引擎时通过环境变量给它。',
+            keyBlank: '没有填密钥：写出的块里不会引用任何密钥，发往这个供应商的请求会不带认证。',
+            allowPrivate: '允许「获取模型」访问本机/内网地址',
+            allowPrivateHint: '获取模型是本应用发的请求，默认拒绝本机与内网地址。引擎不受这条限制——块里写什么地址，它就连什么地址。',
+            fetch: '获取模型',
+            fetching: '正在请求服务商……',
+            fetched: '服务商列出了 {n} 个模型。',
+            fetchNeedsKey: '模型列表是用上面那栏里的密钥去获取的，所以要先填密钥。留空的话，本应用会拿自己 AI 设置里存的密钥去请求，取回的列表就属于一个引擎根本不会用的凭据。',
+            fetchFailed: '没能连上服务商。',
+            models: '模型',
+            modelsEmpty: '还没有模型。从服务商获取，或者在下面手动填一个标识。',
+            modelHint: '勾选的标识会成为引擎在这个供应商下可用的模型。服务商列了、但这个块没声明的模型，引擎是用不了的。',
+            manual: '服务商没有列出的模型标识',
+            manualAdd: '添加',
+            preview: '将要保存的内容',
+            previewHint: 'provider.{id} 的值，与写入时完全一致。这里显示什么就发送什么，之后不会再添加别的东西。',
+            save: '保存供应商',
+            problem: '什么都没写入：{reason}',
+            credentialFailed: '密钥没能存下去，因此文档也没有写入。{reason}',
+            editFailed: '供应商没能写进文档。{reason}',
+            applied: '供应商已写入。',
+            conflict: '文件在本页读取之后变过，因此什么都没写入。请刷新后重新保存。',
+            conflictCreated: '别的东西先创建了这个文件，因此什么都没写入。上面显示的是现在磁盘上的文件。',
+          },
         },
         skills: {
           section: {
@@ -1556,6 +1676,36 @@ export const agent = {
             engine: '选择新会话使用哪个引擎。上面已经可以添加引擎、停用引擎，但会话总是启动在默认引擎上：后端的启动调用只接收一个文件夹，因此这个窗口目前无法在另一个引擎上打开会话。',
             other: '这一节需要的后端一半，当前构建还没有。',
           },
+        },
+      },
+      note: {
+        title: '智能体为这篇笔记提出的内容',
+        unwritten: '还没有写入任何东西。应用会把智能体的版本放进这篇笔记；保留你的版本则完全不动它。',
+        edit: {
+          row: '智能体为 {path} 生成了一个版本',
+          apply: '采用智能体的版本',
+          discard: '保留我的版本',
+        },
+        outcome: {
+          saved: '智能体的版本已经在笔记里，文件里也有了。',
+          saveFailed: '智能体的版本已经在笔记里，但文件里还没有。再保存一次这篇笔记就会写进去。',
+          discarded: '没有写入任何东西，笔记和你离开时一样。',
+        },
+        refused: {
+          noteNotOpen: '已经没有标签页打开这篇笔记了，没有可以写入的地方。',
+          targetChanged: '编辑器回答的是另一篇笔记，因此什么都没有写入。',
+          vaultMismatch: '这篇笔记属于另一个库，与该答案产生时的会话不是同一个。',
+          identityChanged: '产生这个答案的会话已经不是这个窗口当前所在的会话。',
+          writeUnavailable: '没有东西可以接收这段文字：持有这篇笔记的窗格现在不可用。',
+        },
+        conflict: {
+          title: '你思考期间这篇笔记被改动了',
+          moved: '在请求发出之后被编辑过',
+          agentText: '智能体产出的内容',
+          noteText: '笔记现在的内容',
+          apply: '采用智能体的版本',
+          discard: '保留我的版本',
+          kept: '无论选哪个，你的文字都会交回给窗口：应用会把它从笔记里替换掉，除此之外没有别处保存它。',
         },
       },
     },

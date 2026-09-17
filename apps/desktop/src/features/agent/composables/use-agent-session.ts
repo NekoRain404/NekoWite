@@ -21,12 +21,50 @@ import { computed, onBeforeUnmount, onMounted, type ComputedRef, type WritableCo
 import type { AgentGateway, AgentSession, AgentSessionState } from '../../../platform/gateways/agent-contracts'
 import { isRunLive, sessionKey, type AgentSessionView } from '../services/agent-session-view'
 import type { AgentDropReason } from '../services/agent-event-reducer'
-import type { AgentLiveNote } from '../services/agent-context-snapshot'
+import type { AgentLiveNote, LiveNoteLookup } from '../services/agent-context-snapshot'
 import {
   useAgentSessionStore,
   type AgentAnswerOutcome,
   type AgentSendOutcome,
 } from '../stores/agent-session'
+import { useTabsStore } from '../../../stores/tabs'
+
+/**
+ * The editor, as {@link openNoteTargets} is allowed to know it.
+ *
+ * Structural rather than the tab store's own type so the rule can be read — and tested — without a
+ * store: what it uses is one tab in front and the ONE lookup, and nothing else about the editor is
+ * its business.
+ */
+export interface OpenNoteSource {
+  /** The note in front. `path` is nullable because a tab can be untitled, and an untitled tab has
+   *  no path for a baseline to be addressed by — see below. */
+  readonly activeTab: { readonly path: string | null } | null
+  lookUpLiveNote(path: string): LiveNoteLookup
+}
+
+/**
+ * The notes a request that names none is about: the note the editor has in front.
+ *
+ * `AgentEditHost`'s judging half refuses without a baseline, and a baseline only exists for a note
+ * a request named — so a send that named nothing would make every later apply a refusal, and the
+ * protection `agent-edit-apply.ts` exists for would be a mechanism no reader could reach. The note
+ * in front is the document a reader means by "this note", and it is the one at risk while the model
+ * thinks: the composer supplies the words, and this supplies the version they are about.
+ *
+ * Only the `held` arm becomes a target. `cannot-answer` is a tab still on its first read, wearing
+ * the note's path while holding a placeholder, and a baseline of the placeholder would be a version
+ * of a document the user is not looking at — which is worse than no baseline, because it would
+ * pass the judgement. `not-held` is simply no note to name.
+ */
+export function openNoteTargets(editor: OpenNoteSource): readonly AgentLiveNote[] {
+  const tab = editor.activeTab
+  // An untitled tab has no path, and every later check in this feature is addressed by one: there
+  // is nothing here for a proposal to be bound to, so there is nothing to capture.
+  if (tab === null || tab.path === null) return []
+  const lookup = editor.lookUpLiveNote(tab.path)
+  return lookup.kind === 'held' ? [lookup.note] : []
+}
 
 export interface UseAgentSessionOptions {
   /** The gateway behind the session. Chosen at the composition site, so nothing here knows
@@ -120,7 +158,11 @@ export function useAgentSession(options: UseAgentSessionOptions): AgentSessionBi
     gap: computed(() => view.value?.gap ?? null),
     draft,
     canSend: computed(() => view.value !== null && !isRunLive(view.value)),
-    send: (text: string, targets: readonly AgentLiveNote[] = []) => store.send(text, targets),
+    // The default is the composer's own subject: the panel hands over the words, and the document
+    // they are about is the one the editor has open. See `openNoteTargets` for why an unnamed
+    // request still names a version rather than capturing nothing.
+    send: (text: string, targets?: readonly AgentLiveNote[]) =>
+      store.send(text, targets ?? openNoteTargets(useTabsStore())),
     stop: () => store.cancel(key),
     answer: (requestId: string, optionId: string) => store.answer(requestId, optionId),
     resync: () => store.resync(key),

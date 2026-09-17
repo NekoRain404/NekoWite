@@ -96,6 +96,20 @@ export interface AgentRailDeps {
 export interface AgentRail {
   readonly state: Ref<AgentRailState>
   /**
+   * The composition behind the runtime that is up, or null.
+   *
+   * Published because it is the only object that can mint an SVG-insertion binding
+   * (`AgentComposition.connectSvgInsertion`), and the surface that needs one is the editor pane's —
+   * a different subtree from the rail, with no path to this file's closure. Held here rather than in
+   * {@link AgentRailState} because it is a handle and not something to draw: the state is what the
+   * rail shows, and a second reader of one value is how the two would come to disagree about when
+   * the runtime ended.
+   *
+   * It is the LIVE one and only the live one: cleared by every teardown, so a binding minted after
+   * a stop is a binding to nothing rather than to a runtime that has gone away.
+   */
+  readonly composition: Ref<AgentComposition | null>
+  /**
    * Bring an engine up for this vault and open a session, unless one is already live for it.
    * Idempotent, because the caller watches three inputs (the switch, the vault, the rail) and
    * two of them can change without the answer changing.
@@ -146,6 +160,8 @@ export interface AgentRailInputs {
 export interface AttachedAgentRail {
   /** What the rail draws. */
   readonly state: Ref<AgentRailState>
+  /** The live composition, for the editor pane's surface — see {@link AgentRail.composition}. */
+  readonly composition: Ref<AgentComposition | null>
   /**
    * Ask the backend again after a refusal.
    *
@@ -220,6 +236,7 @@ export function attachAgentRail(inputs: AgentRailInputs): AttachedAgentRail {
 
   return {
     state: rail.state,
+    composition: rail.composition,
     retry: () => rail.retry(),
     resume: (sessionId) => rail.resume(sessionId),
   }
@@ -297,6 +314,10 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
   /** The live composition, if one is up. Held here rather than in the state because the
    *  state is what the view draws and a handle is not something to draw. */
   let live: { composition: AgentComposition } | null = null
+  /** The same object, for the one reader outside this file: the editor pane's note surface, which
+   *  is in another subtree and reaches this file through the shell. Written wherever `live` is, so
+   *  the two cannot describe different moments. */
+  const composition = shallowRef<AgentComposition | null>(null)
   /** The last request, so `retry` has something to repeat. */
   let asked: { vaultId: string; cwd: string } | null = null
   /** Bumped by every request and by `close`; a step older than the current value is dropped. */
@@ -317,6 +338,9 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
   async function teardown(): Promise<void> {
     const held = live
     live = null
+    // Published first, so a surface that asked during the teardown gets nothing rather than a
+    // binding to a runtime this call is on its way to stopping.
+    composition.value = null
     if (held === null) return
     try {
       await held.composition.stop()
@@ -337,33 +361,34 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
       await teardown()
       if (mine !== generation) return
       state.value = { kind: 'starting', vaultId }
-      let composition: AgentComposition
+      let compositionOrThrow: AgentComposition
       try {
-        composition = compose(vaultId)
+        compositionOrThrow = compose(vaultId)
       } catch (error) {
         // A composition that could not even be built is the same kind of answer as a runtime
         // that would not start, and it goes to the same place rather than out of the promise.
         state.value = { kind: 'refused', vaultId, reason: failureSentence(error) }
         return
       }
-      live = { composition }
+      live = { composition: compositionOrThrow }
       try {
-        const session = await composition.openSession({ vaultId, cwd })
+        const session = await compositionOrThrow.openSession({ vaultId, cwd })
         if (mine !== generation) return
         // One read of the registry, for the engine's own name. It cannot reject (see
         // `engineNameFor`), and the supersession check is repeated because it is an await like
         // any other: a vault switch during it must not be answered with the old session.
-        const engineName = await engineNameFor(composition, session.agentId)
+        const engineName = await engineNameFor(compositionOrThrow, session.agentId)
         if (mine !== generation) return
         state.value = {
           kind: 'live',
           vaultId,
           cwd,
           key: railKey(session),
-          gateway: composition.gateway,
+          gateway: compositionOrThrow.gateway,
           session,
           engineName,
         }
+        composition.value = compositionOrThrow
       } catch (error) {
         if (mine !== generation) return
         // The composition is kept: it is what a `close` has to stop, and the runtime may well
@@ -425,6 +450,7 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
           session,
           engineName,
         }
+        composition.value = held.composition
       } catch (error) {
         if (mine !== generation) return
         onResumeFailed(error)
@@ -434,6 +460,7 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
 
   return {
     state,
+    composition,
     open(vaultId, cwd) {
       return request(vaultId, cwd, false)
     },

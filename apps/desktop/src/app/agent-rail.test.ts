@@ -85,6 +85,33 @@ describe('the agent rail', () => {
     const rail = createAgentRail({ compose })
     expect(rail.state.value).toEqual({ kind: 'idle' })
     expect(compose).not.toHaveBeenCalled()
+    // Nothing to reach either: a surface that asked for the composition before a runtime exists
+    // gets nothing rather than an object that would answer for a vault nobody opened.
+    expect(rail.composition.value).toBeNull()
+  })
+
+  it('publishes the live composition, and takes it back when the runtime goes down', async () => {
+    // The editor pane's note surface is in another subtree and reaches this file through the
+    // shell: `connectSvgInsertion` exists on the composition and nowhere else, so a composition
+    // this file kept to itself was a binding no part of the app could mint. What is pinned here
+    // is the pairing — published exactly while a runtime is up, and null the moment it is not,
+    // which is what makes a binding minted after a stop a binding to nothing.
+    const fake = fakeComposition()
+    const rail = createAgentRail({ compose: () => fake.composition })
+
+    await rail.open('vault-a', '/notes/a')
+    expect(rail.composition.value).toBe(fake.composition)
+
+    await rail.close()
+    expect(rail.state.value).toEqual({ kind: 'idle' })
+    expect(rail.composition.value).toBeNull()
+
+    // And a reopen publishes the new one, which is a different object: a vault switch is a new
+    // runtime, so a surface holding the previous binding would be holding a stopped engine's.
+    const next = fakeComposition()
+    const second = createAgentRail({ compose: () => next.composition })
+    await second.open('vault-b', '/notes/b')
+    expect(second.composition.value).toBe(next.composition)
   })
 
   it('starts a runtime and opens a session for the vault it was asked for', async () => {

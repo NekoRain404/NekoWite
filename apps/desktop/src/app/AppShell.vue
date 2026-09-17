@@ -118,7 +118,12 @@ const locale = computed<string>(() => getLocale())
 // four rules, including why a rollback has to stop the process and not merely
 // stop drawing it.
 const settings = useSettingsStore()
-const { state: agentState, retry: retryAgentRail, resume: resumeAgentSession } = attachAgentRail({
+const {
+  state: agentState,
+  composition: agentComposition,
+  retry: retryAgentRail,
+  resume: resumeAgentSession,
+} = attachAgentRail({
   enabled: () => settings.agentPanel,
   vaultPath: () => props.vaultPath,
   railOpen: () => props.railOpen,
@@ -136,6 +141,17 @@ const { state: agentState, retry: retryAgentRail, resume: resumeAgentSession } =
     notifyError(t('agent.rail.resumeFailed', { reason: failureSentence(error) })),
 })
 const agentOn = computed<boolean>(() => settings.agentPanel)
+
+// What the editor pane needs to host the agent's proposals for the note that is open, handed down
+// because the shell is the only layer that holds both halves: the runtime on screen (`agentState`)
+// and the column the note is in. The identity is the session's own — an `AgentSession` IS an
+// `AgentIdentity` — and the insertion source is the composition, which is where
+// `connectSvgInsertion` lives. Both are null while no runtime is up, and the surface draws nothing
+// rather than a control that could not act.
+const agentForEditor = computed(() => {
+  const live = agentState.value
+  return live.kind === 'live' ? live.session : null
+})
 
 // ---- The pet's settings deep link (§5.1's 设置定位) --------------------------
 //
@@ -276,7 +292,10 @@ const shellStyle = computed<Record<string, string>>(() => ({
         <div class="main-content">
           <slot>
             <TabBar />
-            <EditorPane />
+            <EditorPane
+              :agent-identity="agentForEditor"
+              :agent-insertions="agentComposition"
+            />
           </slot>
         </div>
         <LayoutResizeHandle
