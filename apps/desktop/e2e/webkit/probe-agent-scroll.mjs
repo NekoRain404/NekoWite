@@ -185,6 +185,7 @@ export const agentScrollProbe = {
     }
     out.boot.loadAfterMount = load()
     out.boot.mounted = await wd.execute('return window.__nkwPanelState()')
+    out.boot.listeners = await wire(wd)
 
     // A live turn, taken through the composer: the panel's own send path is what names a run,
     // and a run nobody started is not the state the ruling is about. Typed with the driver's own
@@ -492,6 +493,13 @@ export const agentScrollProbe = {
     // Last of all because it *ends* the run the probe has been driving: the elapsed half (row 37)
     // can only be read off a turn that finished, and every phase above wants a live run.
     out.elapsed = await elapsedPhase(wd, RUN)
+
+    // ---- The rail toggled inside its own leave ---------------------------------
+    //
+    // Last of all, because it is the one phase that can leave the panel on screen with no
+    // subscription — and a panel in that state receives nothing, which every phase above would
+    // then be measuring. See the phase for what it is a candidate for.
+    out.retoggle = await retogglePhase(wd, clickStatusButton)
     return out
   },
 }
@@ -767,7 +775,7 @@ async function resumeBy(wd, name, act) {
  * afterwards.
  */
 async function railTrace(wd, direction, click) {
-  const trace = { direction, load: load() }
+  const trace = { direction, load: load(), listenersBefore: await wire(wd) }
   const running = wd.executeAsync(
     `window.__nkwPanel({ body: '${BODY}', rail: '.info-rail', panel: '${PANEL}', ms: 1400 },
                         arguments[arguments.length - 1])`,
@@ -776,6 +784,7 @@ async function railTrace(wd, direction, click) {
   trace.click = await click(wd, RAIL_TITLES)
   const collected = await running
   trace.stateAfter = await wd.execute('return window.__nkwPanelState()')
+  trace.listenersAfter = await wire(wd)
   trace.loadAfter = load()
   const frames = collected.frames ?? []
   trace.frames = frameStats(frames)
@@ -969,6 +978,166 @@ function buttonCalls(wd) {
   )
 }
 
+/** How many `agent-event` handlers the page has registered — the harness's own count of the
+ *  wire the store's subscription holds. Zero means every frame pushed from here on reaches
+ *  nobody, whatever the panel draws. */
+function wire(wd) {
+  return wd.execute('return window.__NEKO_AGENT__.listeners()')
+}
+
+/**
+ * The agent store's own state at the instant of the press, read through the app's own module.
+ *
+ * A press that reaches the composer's `submit` and produces no call has two shapes and the DOM
+ * cannot tell them apart: the component refused it before it emitted (a draft it considers blank,
+ * or a `canSend` of its own), or it emitted and the store's `send` answered with a typed refusal
+ * (`stores/agent-session.ts`: `no-session` when the *active* key has no subscription or record,
+ * `run-in-flight` when the record it names is live) — and the panel discards that outcome.
+ *
+ * The store keys its records by the pair (session, subscription) that `send` also reads, but the
+ * *panel* reads its record through the key it was mounted with, so the two can disagree. What
+ * separates the arms without mutating anything:
+ *
+ *  - which record holds the text this probe just typed, which names the panel's own key;
+ *  - whether the store's `activeKey` is that same key;
+ *  - the state of the record `activeKey` names: a live one is the `run-in-flight` arm, a missing
+ *    one is `no-session` by record, and a present, non-live one can only be `no-session` by
+ *    subscription.
+ *
+ * Read, never asserted on: the probe reports, `verify.mjs` decides.
+ */
+function readAgentStore(wd) {
+  return wd.executeAsync(
+    `const done = arguments[arguments.length - 1];
+     import('/src/features/agent/stores/agent-session.ts').then(function (m) {
+       const store = m.useAgentSessionStore();
+       const records = store.records || {};
+       const keys = Object.keys(records);
+       const seen = function (k) {
+         const r = records[k];
+         if (!r) return null;
+         return { state: r.view.state, runId: r.view.runId, sequence: r.view.sequence,
+                  draft: r.draft, timeline: r.view.timeline.length,
+                  failure: r.view.failure ? r.view.failure.code : null,
+                  failureMessage: r.view.failure ? r.view.failure.message : null,
+                  lastResult: r.view.lastResult ? r.view.lastResult.stopReason : null };
+       };
+       const field = document.querySelector('.agent-composer-field');
+       done({
+         active: store.activeKey,
+         keys: keys,
+         activeHeld: store.activeKey !== null && keys.indexOf(store.activeKey) >= 0,
+         activeView: seen(store.activeKey),
+         views: keys.map(function (k) { return { key: k, view: seen(k) }; }),
+         storeCanSend: store.canSend,
+         fieldValue: field ? field.value : null,
+       });
+     }, function (e) { done({ why: String(e && e.message ? e.message : e) }); });`,
+  )
+}
+
+/**
+ * The rail closed and reopened *inside* the leave it is animating, and the composer pressed
+ * afterwards.
+ *
+ * ---- The state this is a candidate for
+ *
+ * `AppShell.vue` paints the rail through a `<Transition>` with no `mode`, so the closing rail is
+ * kept in the tree for its own exit and destroyed when that exit ends. Reopened before then, the
+ * entering panel mounts while the leaving one is still alive — and both are mounted for the SAME
+ * session, because the rail's session did not change. The store's subscription is keyed by the
+ * session, so there is one entry: the entering panel's `attach` replaces the leaving one's, and
+ * the leaving panel's teardown (`useAgentSession`'s `onBeforeUnmount` → `store.detach(key)`) then
+ * releases the entry that is now the *entering* panel's. The panel on screen would be mounted,
+ * subscribed to nothing, and would receive no frame at all.
+ *
+ * ---- What is read
+ *
+ *  - **the wire, before and after**, which is the harness's own count of registered
+ *    `agent-event` handlers: zero after the toggle means the panel on screen is listening to
+ *    nothing, whatever it draws;
+ *  - **the press**, through the same typed-field-then-click path the fit phase uses, and the
+ *    calls it produced. A press that produces no call, with the button enabled and the field
+ *    full, is a press the reader cannot tell from one that did nothing.
+ *
+ * Read, never asserted on: `verify.mjs` decides, and the readings stand on their own.
+ */
+async function retogglePhase(wd, click) {
+  const out = { load: load(), listenersBefore: await wire(wd) }
+  if (!(await wd.execute(`return Boolean(document.querySelector('${PANEL}'))`))) {
+    return { skipped: 'the panel is not mounted at this point in the run', ...out }
+  }
+  try {
+    out.close = await click(wd, RAIL_TITLES)
+    // Well inside the exit (`--app-motion-exit`), which is what makes the overlap: the leaving
+    // panel is still in the tree when the entering one mounts.
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    out.open = await click(wd, RAIL_TITLES)
+    // …and long past it, so a teardown that runs at the end of the leave has run.
+    await new Promise((resolve) => setTimeout(resolve, 900))
+    out.listenersAfter = await wire(wd)
+    out.panel = await wd.execute(`return Boolean(document.querySelector('${PANEL}'))`)
+    out.state = await wd.execute('return window.__nkwPanelState()')
+
+    // Whatever turn the phases above left open is ended, so the press below is a send: a live run
+    // draws stop instead, and the question here is about the send button.
+    out.ending = await wd.execute(
+      `const id = window.__NEKO_AGENT__.runId();
+       return id === null ? null : window.__NEKO_AGENT__.push('run-finished',
+         { stopReason: 'cancelled', usage: null }, id)`,
+    )
+    await wd.executeAsync(
+      `window.__nkwSettle({ sel: arguments[0], jump: arguments[1], frames: 3 },
+                          arguments[arguments.length - 1])`,
+      [TIMELINE, JUMP],
+    )
+    out.typed = await wd.execute(
+      `const field = document.querySelector('.agent-composer-field');
+       if (!field) return { ok: false, why: 'no composer field' };
+       field.value = 'probe';
+       field.dispatchEvent(new Event('input', { bubbles: true }));
+       return { ok: true, value: field.value }`,
+    )
+    const at = await fitReading(wd)
+    out.kind = at.action?.kind ?? null
+    out.disabled = at.action?.disabled ?? null
+    out.before = await buttonCalls(wd)
+    out.store = await readAgentStore(wd)
+    if (at.action) {
+      out.click = await clickAt(wd, at.action.centre.x, at.action.centre.y)
+      try {
+        await until(
+          async () => {
+            const seen = await buttonCalls(wd)
+            return seen.prompt > out.before.prompt || seen.cancel > out.before.cancel
+          },
+          { timeout: 3000, what: 'the press to reach the runtime' },
+        )
+      } catch {
+        // The counts below are what the reading is; a press that never arrived is the case this
+        // wait gives up on.
+      }
+      out.after = await buttonCalls(wd)
+      out.landed = out.after.prompt > out.before.prompt || out.after.cancel > out.before.cancel
+      out.reached = out.after.prompt > out.before.prompt
+        ? 'agent_prompt'
+        : out.after.cancel > out.before.cancel
+          ? 'agent_cancel_run'
+          : null
+      out.storeAfter = await readAgentStore(wd)
+      out.barAfter = await wd.execute(
+        `const state = document.querySelector('.agent-bar-state');
+         return { state: state ? state.dataset.state ?? null : null,
+                  stateText: state ? state.textContent.trim() : null }`,
+      )
+    }
+  } catch (error) {
+    out.failure = String(error.message || error)
+  }
+  out.loadAfter = load()
+  return out
+}
+
 async function fitPhase(wd) {
   const out = { load: load(), widths: [], failures: [] }
   // The store's own setter, when this page has one. `useAppearanceStore` needs an active Pinia;
@@ -986,6 +1155,10 @@ async function fitPhase(wd) {
   )
   const mounted = await wd.execute(`return Boolean(document.querySelector('${PANEL}'))`)
   if (!mounted) return { skipped: 'the panel is not mounted at this point in the run', storePath: out.storePath }
+  // The wire as this phase finds it, before a single width is applied: a subscription already
+  // gone here belongs to something above, and one that goes missing across the sweep belongs to
+  // the sweep.
+  out.wireBefore = await wire(wd)
 
   for (const width of fitWidths()) {
     try {
@@ -1023,6 +1196,29 @@ async function fitPhase(wd) {
     const narrowest = out.widths.find((r) => r.requested === 220) ?? out.widths[0] ?? null
     if (narrowest?.action) {
       await applyRailWidth(wd, narrowest.requested)
+      // Whatever turn the phases above left open is ended first, with a frame carrying the host's
+      // own run id — the gesture `elapsedPhase` makes and for the same reason: a live run leaves
+      // the composer offering stop, and the press below is meant to be a real action either way.
+      //
+      // It is also what makes this press mean what the check reads. The stand-in answers
+      // `agent_prompt` and never ends the turn it started, so its own bookkeeping still holds one
+      // in flight while the snapshot it hands a re-subscription says the session is `ready`; the
+      // adapter then refuses the next prompt with `buffer-conflict` BEFORE any call goes out
+      // (`platform/gateways/tauri-agent.ts`, the per-session `running` latch). The panel draws a
+      // send button, the press produces no call, and the reading is about the stand-in's latch
+      // rather than about the button. That state is reported to the reader — the bar reads
+      // "Failed" over the adapter's own sentence, which `realClick.barAfter` carries — but it is
+      // not the question this phase asks.
+      out.ending = await wd.execute(
+        `const id = window.__NEKO_AGENT__.runId();
+         return id === null ? null : window.__NEKO_AGENT__.push('run-finished',
+           { stopReason: 'cancelled', usage: null }, id)`,
+      )
+      await wd.executeAsync(
+        `window.__nkwSettle({ sel: arguments[0], jump: arguments[1], frames: 3 },
+                            arguments[arguments.length - 1])`,
+        [TIMELINE, JUMP],
+      )
       // Text in the field first, because the press has to have something to do: the button is a
       // send whenever no run is live, and a send with an empty draft is a press the composer
       // refuses — which read as "the click reached nothing" and made this check depend on the
@@ -1062,8 +1258,14 @@ async function fitPhase(wd) {
       }
       const at = await fitReading(wd)
       const before = await buttonCalls(wd)
+      // Read BEFORE the press, so this is the state the refusals below would be answered from —
+      // and the text the field holds is the one typed a few lines up, which is what names the
+      // record the composer is bound to.
+      const held = await readAgentStore(wd)
+      const wired = await wire(wd)
       out.realClick = {
         ...out.realClick,
+        endedRun: out.ending,
         width: narrowest.requested,
         panel: at.panel.clientWidth,
         kind: at.action.kind,
@@ -1072,6 +1274,8 @@ async function fitPhase(wd) {
         insideViewport: at.action.insideViewport,
         hitIsAction: at.action.hitIsAction,
         before: before,
+        store: held,
+        listeners: wired,
       }
       try {
         out.realClick.click = await clickAt(wd, at.action.centre.x, at.action.centre.y)
@@ -1096,6 +1300,19 @@ async function fitPhase(wd) {
       }
       const after = await buttonCalls(wd)
       out.realClick.after = after
+      out.realClick.listenersAfter = await wire(wd)
+      // What the press did to the store, and what the bar says about it. A press that reached
+      // `send` and was refused there leaves one of three marks and they are told apart here:
+      // the store's own typed refusal (nothing changes in the record), a throw the store folds
+      // into the view's `failure` (the record carries a code), or a call that went out.
+      out.realClick.storeAfter = await readAgentStore(wd)
+      out.realClick.barAfter = await wd.execute(
+        `const state = document.querySelector('.agent-bar-state');
+         const bar = document.querySelector('.agent-session-bar') || document.querySelector('.agent-bar');
+         return { state: state ? state.dataset.state ?? null : null,
+                  stateText: state ? state.textContent.trim() : null,
+                  barText: bar ? bar.textContent.trim().slice(0, 300) : null };`,
+      )
       out.realClick.presses = await wd.execute('return window.__nkwPresses || null')
       // The press arrived at the button: the button emitted, the store called the gateway, and
       // the gateway asked the runtime for something.

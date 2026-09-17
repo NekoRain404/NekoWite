@@ -318,7 +318,19 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
   }
 
   /**
-   * Send one turn.
+   * Send one turn, to the session `key` names.
+   *
+   * **The key is a parameter and not `activeKey`, and that is the whole of a defect.** A
+   * composer draws one session's record and acts on it; the session in front is whatever
+   * `focus` was last given, and it is not always the one a control belongs to. `app/pet-task-link.ts`
+   * is the reachable case: the pet's row focuses the session its task names — one this window
+   * still holds a record for — and the rail keeps the session it was on, so the window can be
+   * looking at one session while the store's active key names another. A send addressed by
+   * `activeKey` then went to a conversation the reader was not looking at, or, when that
+   * session's panel had already unmounted and taken its subscription with it, nowhere at all:
+   * `no-session` is a typed refusal, and a caller that discards it has drawn a control that can
+   * be pressed with nothing to show for it. `cancel` and `resync` have always been addressed
+   * this way; these two were the pair that were not.
    *
    * Refused while a run is live, and the text is kept as the draft rather than queued into
    * the engine — §6.2 allows one active generation per session, and quietly calling the
@@ -332,8 +344,11 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
    * *refused* send captures nothing — the run it would have belonged to never started, and the
    * one in flight keeps the baselines its own request was made against.
    */
-  async function send(text: string, targets: readonly AgentLiveNote[] = []): Promise<AgentSendOutcome> {
-    const key = activeKey.value
+  async function send(
+    key: string,
+    text: string,
+    targets: readonly AgentLiveNote[] = [],
+  ): Promise<AgentSendOutcome> {
     const live = subscriptionFor(key)
     const record = recordFor(key)
     if (live === null || record === null) return { accepted: false, reason: 'no-session' }
@@ -380,7 +395,12 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
   }
 
   /**
-   * Answer the permission request the user is looking at.
+   * Answer the permission request the user is looking at, in the session `key` names.
+   *
+   * The key is a parameter for the reason {@link send} gives: the prompt is drawn from one
+   * session's record, and the session in front can be another one. Answered against the wrong
+   * one, the request is simply not there to resolve, and `not-pending` — a typed refusal — is
+   * what the reader's press gets for an answer nothing happened to.
    *
    * The transition is applied before the call, for the ordering reason in this file's
    * header. It is also what makes a second click cheap: the request is no longer in the
@@ -388,8 +408,11 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
    * answer for — a request that is no longer pending, one whose turn is over — means the
    * request was dead anyway, so leaving it cleared is right.
    */
-  async function answer(requestId: string, optionId: string): Promise<AgentAnswerOutcome> {
-    const key = activeKey.value
+  async function answer(
+    key: string,
+    requestId: string,
+    optionId: string,
+  ): Promise<AgentAnswerOutcome> {
     const live = subscriptionFor(key)
     const record = recordFor(key)
     if (live === null || record === null) return { accepted: false, reason: 'no-session' }

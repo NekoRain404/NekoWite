@@ -236,6 +236,19 @@
            * variable in a measurement of how the panel handles chunks.
            */
           chunk: 'streaming ',
+          /**
+           * How many `agent-event` handlers are registered at this instant — the wire the
+           * store's subscription holds, as the stand-in sees it.
+           *
+           * A reading of the stand-in and not of the product: it answers "is anyone still
+           * listening" the way the invoke tap answers "was anything called", and a probe uses
+           * it to tell a panel that received nothing because no frame was sent from one whose
+           * subscription is gone. `push` above is delivered to exactly this map, so a frame
+           * pushed while the count is zero reaches nobody.
+           */
+          listeners: function () {
+            return agentListeners.size
+          },
         }
 
         window.__TAURI_INTERNALS__ = {

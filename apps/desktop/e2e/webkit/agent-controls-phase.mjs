@@ -233,6 +233,9 @@ function readStore(wd) {
          runId: record.view.runId,
          closedRuns: record.view.closedRuns,
          lastResult: record.view.lastResult,
+         failure: record.view.failure,
+         draft: record.draft,
+         timeline: record.view.timeline.length,
          dropped: record.dropped,
          lastDrop: record.lastDrop,
        } : { why: 'the store holds no record for the active key' });

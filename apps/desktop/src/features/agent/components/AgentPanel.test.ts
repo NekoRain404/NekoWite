@@ -26,6 +26,7 @@ import type {
   AgentSession,
 } from '../../../platform/gateways/agent-contracts'
 import { useAgentSessionStore } from '../stores/agent-session'
+import { sessionKey } from '../services/agent-session-view'
 import { setLocale } from '../../../i18n'
 
 /**
@@ -535,5 +536,73 @@ describe('AgentPanel — what the last turn took', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+/**
+ * The store, put in the state a pet task click leaves it in: a session this window still holds a
+ * record for is the one in front, while the panel on screen is mounted for a different one.
+ *
+ * `app/pet-task-link.ts` is the whole of that path — the pet's row calls `desktop_pet_open_task`,
+ * the host raises this window and emits on `pet-open-task`, and the link focuses the session that
+ * key names as long as this window holds a record for it. The rail it opens keeps the session it
+ * was on (that file says so in as many words: "the rail still shows what it has"), so whenever
+ * the pet's task is older than the session on screen, the store's active key and the key the
+ * panel was mounted with are two different sessions.
+ *
+ * The record outlives the subscription, which is the second half of the state: the rail moving
+ * past a session unmounts its panel, and `useAgentSession`'s `onBeforeUnmount` detaches. The
+ * record stays — and `recordFor` is exactly what the pet's own guard reads.
+ */
+async function focusBehindThePanel(): Promise<string> {
+  const store = useAgentSessionStore()
+  const elsewhere = await gateway.openSession({ vaultId: 'vault', cwd: '/vault' })
+  await store.attach(gateway, elsewhere)
+  const key = sessionKey(elsewhere)
+  store.detach(key)
+  store.focus(key)
+  return key
+}
+
+describe('AgentPanel — which session its controls address', () => {
+  /**
+   * The state of the session the panel is mounted on — deliberately not `harness.state()`, which
+   * reads the store's *active* key. That is the whole subject of these two tests: by the time
+   * they have set the state up, the active key is the other session's.
+   */
+  const onScreen = (): string =>
+    useAgentSessionStore().recordFor(sessionKey(session))?.view.state ?? 'none'
+
+  it('sends to the session it is mounted on, not to the one in front behind it', async () => {
+    const harness = await mountPanel({ chunks: ['done. '] })
+    const elsewhere = await focusBehindThePanel()
+
+    await harness.send('the message')
+
+    // The press reached the engine, for the conversation the reader is looking at.
+    expect(harness.prompts).toEqual(['the message'])
+    expect(onScreen()).toBe('completed')
+    // …and the field gave the message up, because it went somewhere.
+    expect((harness.el('.agent-composer-field') as HTMLTextAreaElement).value).toBe('')
+    // The other session's record is untouched: no draft of its own, no row in its transcript.
+    const other = useAgentSessionStore().recordFor(elsewhere)
+    expect(other?.draft).toBe('')
+    expect(other?.view.timeline.filter((entry) => entry.kind === 'user')).toHaveLength(0)
+  })
+
+  it('answers the request on screen, and the turn it belongs to runs on', async () => {
+    const harness = await mountPanel({
+      chunks: ['Reading the plan. '],
+      permission: { title: 'Read notes/plan.md', options: [...OPTIONS] },
+    })
+    await harness.send('read the plan')
+    expect(onScreen()).toBe('waiting-permission')
+
+    await focusBehindThePanel()
+    await harness.click('.agent-perm-options button')
+
+    expect(harness.answers).toHaveLength(1)
+    expect(onScreen()).toBe('completed')
+    expect(harness.el('.agent-perm')).toBeNull()
   })
 })

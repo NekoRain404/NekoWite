@@ -112,7 +112,7 @@ describe('the session store', () => {
     const { store, key, record } = await attached()
     expect(store.activeView?.state).toBe('ready')
 
-    await store.send('hello')
+    await store.send(key, 'hello')
 
     expect(record().view.state).toBe('completed')
     expect(record().view.timeline.map((entry) => entry.kind)).toEqual(['user', 'text'])
@@ -122,13 +122,13 @@ describe('the session store', () => {
   })
 
   it('refuses a second turn while one is live, keeps the text, and calls the engine once', async () => {
-    const { store, gateway, record } = await attached()
+    const { store, gateway, key, record } = await attached()
     gateway.script({ hang: true })
     const spy = vi.spyOn(gateway, 'prompt')
 
-    const sending = store.send('the first question')
+    const sending = store.send(key, 'the first question')
     expect(store.canSend).toBe(false)
-    const refused = await store.send('and a second one')
+    const refused = await store.send(key, 'and a second one')
 
     expect(refused).toEqual({ accepted: false, reason: 'run-in-flight' })
     expect(spy).toHaveBeenCalledTimes(1)
@@ -142,10 +142,10 @@ describe('the session store', () => {
   })
 
   it("does not revive a run the user cancelled, even after the engine keeps talking", async () => {
-    const { store, gateway, session, record } = await attached()
+    const { store, gateway, session, key, record } = await attached()
     gateway.script({ hang: true })
 
-    const sending = store.send('start something long')
+    const sending = store.send(key, 'start something long')
     await store.cancel(sessionKey(session))
     await sending
     expect(record().view.state).toBe('cancelled')
@@ -162,9 +162,9 @@ describe('the session store', () => {
   })
 
   it('applies what describes the session even after a cancel', async () => {
-    const { store, gateway, session, record } = await attached()
+    const { store, gateway, session, key, record } = await attached()
     gateway.script({ hang: true })
-    const sending = store.send('start something long')
+    const sending = store.send(key, 'start something long')
     await store.cancel(sessionKey(session))
     await sending
 
@@ -283,7 +283,7 @@ describe('the session store', () => {
 
     // The runtime dies under the turn.
     await gateway.crash()
-    await store.send('the question I was typing')
+    await store.send(key, 'the question I was typing')
 
     expect(store.records[key].view.state).toBe('failed')
     expect(store.records[key].view.failure?.code).toBe('process-exited')
@@ -303,27 +303,27 @@ describe('the session store', () => {
       },
     })
 
-    const sending = store.send('do something risky')
+    const sending = store.send(key, 'do something risky')
     expect(record().view.state).toBe('waiting-permission')
     const request = record().view.permissions[0]
     expect(request.payload.title).toBe('Run a command?')
 
-    const answered = await store.answer(request.payload.requestId, 'yes')
+    const answered = await store.answer(key, request.payload.requestId, 'yes')
     expect(answered).toEqual({ accepted: true })
     await sending
 
     expect(record().view.permissions).toHaveLength(0)
     expect(record().view.state).toBe('completed')
     // A second click on a request that is gone never reaches the gateway.
-    expect(await store.answer(request.payload.requestId, 'yes')).toEqual({ accepted: false, reason: 'not-pending' })
+    expect(await store.answer(key, request.payload.requestId, 'yes')).toEqual({ accepted: false, reason: 'not-pending' })
     expect(key).toBe(sessionKey(session))
   })
 
   it('stops the engine when a bound is crossed, rather than only labelling the run', async () => {
-    const { store, gateway, session, record } = await attached()
+    const { store, gateway, session, key, record } = await attached()
     const cancel = vi.spyOn(gateway, 'cancel')
 
-    await store.send('x'.repeat(AGENT_TEXT_LIMIT + 1))
+    await store.send(key, 'x'.repeat(AGENT_TEXT_LIMIT + 1))
 
     expect(record().view.state).toBe('failed')
     expect(record().view.failure?.code).toBe('buffer-conflict')
@@ -335,7 +335,7 @@ describe('the session store', () => {
 
   it('records a hole in the stream and repairs the state without losing the conversation', async () => {
     const { store, gateway, session, key, record } = await attached()
-    await store.send('hello')
+    await store.send(key, 'hello')
     const before = record().view.timeline.length
 
     // A frame that skips ahead: everything in between never arrived.
@@ -375,7 +375,7 @@ describe('the session store', () => {
     expect(store.records[key].view.state).toBe('completed')
 
     const after = store.records[key].view.timeline.length
-    await store.send('and now')
+    await store.send(key, 'and now')
     expect(store.records[key].view.timeline.length).toBeGreaterThan(after)
   })
 
@@ -433,7 +433,7 @@ describe('the session store', () => {
   it('keeps the messages the user sent when the panel comes back to a live session', async () => {
     const { store, gateway, session, key, record } = await attached()
     gateway.script({ chunks: ['working on it'], hang: true })
-    const sending = store.send('the question I typed')
+    const sending = store.send(key, 'the question I typed')
 
     // The run is suspended and the panel goes away and comes back — the ordinary collapse,
     // not an error path.
@@ -455,7 +455,7 @@ describe('the session store', () => {
 
   it('does not let a resync put an older snapshot back over frames the view already applied', async () => {
     const { store, gateway, session, key, record } = await attached()
-    await store.send('hello')
+    await store.send(key, 'hello')
     const before = record().view.sequence
 
     const holds = holdSnapshots(gateway)
@@ -475,7 +475,7 @@ describe('the session store', () => {
 
   it('commits a snapshot before the frames the subscription hands over', async () => {
     const { store, gateway, session, key, record } = await attached()
-    await store.send('hello')
+    await store.send(key, 'hello')
     const before = record().view.sequence
     store.detach(key)
 
@@ -515,7 +515,7 @@ describe('the session store', () => {
 
   it('supersedes a handshake still waiting when the panel comes straight back', async () => {
     const { store, gateway, session, key, record } = await attached()
-    await store.send('hello')
+    await store.send(key, 'hello')
     const before = record().view.sequence
     store.detach(key)
 
@@ -574,11 +574,44 @@ describe('the session store', () => {
     expect(store.records[sessionKey(session)].view.failure?.code).toBe('runtime-unavailable')
   })
 
-  it('refuses to send or answer with no session attached', async () => {
+  it('refuses to send or answer for a session this window does not hold', async () => {
     const store = useAgentSessionStore()
-    expect(await store.send('hello')).toEqual({ accepted: false, reason: 'no-session' })
-    expect(await store.answer('req-1', 'yes')).toEqual({ accepted: false, reason: 'no-session' })
+    // A key nothing answers to: both calls are addressed by one, so the arm is the caller
+    // naming a session the window has no subscription or record for.
+    expect(await store.send('no-such-session', 'hello')).toEqual({ accepted: false, reason: 'no-session' })
+    expect(await store.answer('no-such-session', 'req-1', 'yes')).toEqual({
+      accepted: false,
+      reason: 'no-session',
+    })
     await store.resync('no-such-session')
+  })
+
+  it('sends to the session it is given, not to whichever one is in front', async () => {
+    const { store, gateway, session, key, record } = await attached()
+    const elsewhere = await gateway.openSession({ vaultId: 'vault-1', cwd: '/tmp/vault' })
+    await store.attach(gateway, elsewhere)
+    const elsewhereKey = sessionKey(elsewhere)
+    // The rail moves past that session — its panel unmounts and takes its subscription with it —
+    // and then the pet's task link focuses it, because this window still holds its record
+    // (`app/pet-task-link.ts`). The two sessions are now: the one in front, and the one a
+    // composer is mounted on.
+    store.detach(elsewhereKey)
+    store.focus(elsewhereKey)
+    const prompt = vi.spyOn(gateway, 'prompt')
+
+    await store.send(key, 'the message')
+
+    // Addressed by the key the caller holds, the turn went to that session's engine.
+    expect(prompt).toHaveBeenCalledTimes(1)
+    expect(prompt.mock.calls[0][0]).toMatchObject({ sessionId: session.sessionId })
+    expect(record().view.timeline.filter((entry) => entry.kind === 'user')).toHaveLength(1)
+    // Addressed by the key that is merely in front, the same call is the refusal the composer
+    // used to run into by accident — and its outcome is the only thing that would have said so.
+    expect(await store.send(elsewhereKey, 'and another')).toEqual({
+      accepted: false,
+      reason: 'no-session',
+    })
+    expect(prompt).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -618,7 +651,7 @@ describe('the versions a request is submitted with', () => {
     const { store, key, record } = await attached()
 
     const target = note()
-    const outcome = await store.send('rewrite this', [target])
+    const outcome = await store.send(key, 'rewrite this', [target])
     expect(outcome).toEqual({ accepted: true, refusedEdits: [] })
     expect(store.editBaseline(key, 'notes/a.md')).toMatchObject({
       path: 'notes/a.md',
@@ -649,7 +682,7 @@ describe('the versions a request is submitted with', () => {
     // would keep handing out. The baseline is a copy, which is what makes "the version at the
     // request" a fact rather than a reference that keeps up.
     const target = note()
-    await store.send('rewrite this', [target])
+    await store.send(key, 'rewrite this', [target])
     target.revision = 'r9'
     target.buffer = { state: 'clean', text: 'what I typed while it thought' }
 
@@ -663,8 +696,8 @@ describe('the versions a request is submitted with', () => {
     const { store, gateway, key } = await attached()
     gateway.script({ hang: true })
 
-    const sending = store.send('the first question', [note()])
-    const refused = await store.send('a second question', [note({ revision: 'r9' })])
+    const sending = store.send(key, 'the first question', [note()])
+    const refused = await store.send(key, 'a second question', [note({ revision: 'r9' })])
 
     expect(refused).toEqual({ accepted: false, reason: 'run-in-flight' })
     expect(store.editBaseline(key, 'notes/a.md')?.revision).toBe('r1')
@@ -676,7 +709,7 @@ describe('the versions a request is submitted with', () => {
   it('refuses a note from another vault, and says which one, without holding up the prompt', async () => {
     const { store, key, record } = await attached()
 
-    const outcome = await store.send('rewrite all of these', [
+    const outcome = await store.send(key, 'rewrite all of these', [
       note(),
       note({ path: 'notes/b.md', vaultId: 'vault-2', revision: 'r5' }),
     ])
@@ -695,7 +728,7 @@ describe('the versions a request is submitted with', () => {
 
   it('answers null for a note the request never named, and for a session it does not hold', async () => {
     const { store, key } = await attached()
-    await store.send('rewrite this', [note()])
+    await store.send(key, 'rewrite this', [note()])
 
     // Null is a refusal the apply path reads as one: a proposal for a note no request named has
     // nothing to be checked against, and writing on that is the guess this whole path refuses.
@@ -707,7 +740,7 @@ describe('the versions a request is submitted with', () => {
     const { store, gateway, key, record } = await attached()
     gateway.script({ hang: true })
 
-    const sending = store.send('rewrite this', [note()])
+    const sending = store.send(key, 'rewrite this', [note()])
     await store.cancel(key)
     await sending
 
@@ -717,7 +750,7 @@ describe('the versions a request is submitted with', () => {
 
   it('keeps them across a detach and re-attach, so a reconnect is not a new request', async () => {
     const { store, gateway, session, key } = await attached()
-    await store.send('rewrite this', [note()])
+    await store.send(key, 'rewrite this', [note()])
 
     // The rail closes and reopens, the runtime is resynced — the run this request started is
     // still the one whose answer may arrive, and its version is still the one to check against.

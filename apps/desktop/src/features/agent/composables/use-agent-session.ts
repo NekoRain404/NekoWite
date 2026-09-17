@@ -158,13 +158,19 @@ export function useAgentSession(options: UseAgentSessionOptions): AgentSessionBi
     gap: computed(() => view.value?.gap ?? null),
     draft,
     canSend: computed(() => view.value !== null && !isRunLive(view.value)),
+    // Every action here is addressed by `key` — this binding's own session, the one the component
+    // draws — and never by whatever session is in front. The two are usually the same and not
+    // always: `focus` is also called by the pet's task link (`app/pet-task-link.ts`), which names
+    // a session the rail may have moved past, and a send addressed from there lands in another
+    // conversation or in none. `stores/agent-session.ts` carries the whole argument.
+    //
     // The default is the composer's own subject: the panel hands over the words, and the document
     // they are about is the one the editor has open. See `openNoteTargets` for why an unnamed
     // request still names a version rather than capturing nothing.
     send: (text: string, targets?: readonly AgentLiveNote[]) =>
-      store.send(text, targets ?? openNoteTargets(useTabsStore())),
+      store.send(key, text, targets ?? openNoteTargets(useTabsStore())),
     stop: () => store.cancel(key),
-    answer: (requestId: string, optionId: string) => store.answer(requestId, optionId),
+    answer: (requestId: string, optionId: string) => store.answer(key, requestId, optionId),
     resync: () => store.resync(key),
     setScroll: (scrollTop: number) => store.setScroll(key, scrollTop),
     dropped: computed(() => record.value?.dropped ?? 0),
