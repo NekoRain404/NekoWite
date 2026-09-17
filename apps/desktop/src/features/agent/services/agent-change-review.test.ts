@@ -239,6 +239,7 @@ describe('attribution: which change is the agent’s', () => {
         toolCallId: 'call-1',
         title: 'notes/a.md',
         input: { state: 'text', json: '{"filepath":"notes/a.md"}' },
+        content: [],
         options: [{ optionId: 'once', name: 'Allow once', kind: 'allow_once' }],
       }),
     )

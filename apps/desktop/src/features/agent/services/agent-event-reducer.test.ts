@@ -381,7 +381,7 @@ describe('the state machine', () => {
       liveRun(),
       frame(
         'permission-request',
-        { requestId: 'req-1', toolCallId: 'call-1', title: 'Run a command?', input: { state: 'absent' }, options: [{ optionId: 'yes', name: 'Yes', kind: 'allow_once' }] },
+        { requestId: 'req-1', toolCallId: 'call-1', title: 'Run a command?', input: { state: 'absent' }, content: [], options: [{ optionId: 'yes', name: 'Yes', kind: 'allow_once' }] },
         { sequence: 2, runId: 'run-1' },
       ),
     )
@@ -405,7 +405,7 @@ describe('the state machine', () => {
       liveRun(),
       frame(
         'permission-request',
-        { requestId: 'req-1', toolCallId: 'call-1', title: 'Run a command?', input: { state: 'absent' }, options: [{ optionId: 'yes', name: 'Yes', kind: 'allow_once' }] },
+        { requestId: 'req-1', toolCallId: 'call-1', title: 'Run a command?', input: { state: 'absent' }, content: [], options: [{ optionId: 'yes', name: 'Yes', kind: 'allow_once' }] },
         { sequence: 2, runId: 'run-1' },
       ),
     ).view
@@ -421,7 +421,7 @@ describe('the state machine', () => {
         view,
         frame(
           'permission-request',
-          { requestId, toolCallId: 'call-1', title: 'Run a command?', input: { state: 'absent' }, options: [{ optionId: 'yes', name: 'Yes', kind: 'allow_once' }] },
+          { requestId, toolCallId: 'call-1', title: 'Run a command?', input: { state: 'absent' }, content: [], options: [{ optionId: 'yes', name: 'Yes', kind: 'allow_once' }] },
           { sequence, runId: 'run-1' },
         ),
       ).view
@@ -496,7 +496,7 @@ describe('the state machine', () => {
       liveRun(),
       frame(
         'permission-request',
-        { requestId: 'req-1', toolCallId: 'call-1', title: 'Run a command?', input: { state: 'absent' }, options: [{ optionId: 'yes', name: 'Yes', kind: 'allow_once' }] },
+        { requestId: 'req-1', toolCallId: 'call-1', title: 'Run a command?', input: { state: 'absent' }, content: [], options: [{ optionId: 'yes', name: 'Yes', kind: 'allow_once' }] },
         { sequence: 2, runId: 'run-1' },
       ),
     ).view
@@ -575,6 +575,7 @@ describe('every kind the contract carries', () => {
       toolCallId: 'call-1',
       title: 'Run a command?',
       input: { state: 'absent' },
+      content: [],
       options: [{ optionId: 'yes', name: 'Yes', kind: 'allow_once' }],
     },
     'commands-changed': { commands: [{ name: '/review' }] },
@@ -683,7 +684,7 @@ describe('coalescing and the bounds', () => {
       { ...liveRun(), timelineLimit: 2 },
       frame(
         'permission-request',
-        { requestId: 'req-1', toolCallId: 'call-1', title: 'Run a command?', input: { state: 'absent' }, options: [{ optionId: 'yes', name: 'Yes', kind: 'allow_once' }] },
+        { requestId: 'req-1', toolCallId: 'call-1', title: 'Run a command?', input: { state: 'absent' }, content: [], options: [{ optionId: 'yes', name: 'Yes', kind: 'allow_once' }] },
         { sequence: 2, runId: 'run-1' },
       ),
     ).view
