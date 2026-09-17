@@ -37,8 +37,7 @@ test('diagnose heading blank edge Enter / delete slash', async ({ page }) => {
   // place the DOM caret outside ProseMirror's contentDOM.
   const heading = pm.locator('.nk-heading')
   const box = (await heading.boundingBox())!
-  await heading.click({ position: { x: box.width - 2, y: box.height / 2 } })
-  await page.waitForTimeout(100)
+  const edge = { x: box.width - 2, y: box.height / 2 }
 
   const snap = async (label: string) => {
     const state = await page.evaluate(() => {
@@ -63,7 +62,50 @@ test('diagnose heading blank edge Enter / delete slash', async ({ page }) => {
     return state
   }
 
-  await snap('heading-text-end')
+  // What the engine's own hit test finds at the point this spec aims at, read in
+  // the page: `elementFromPoint` is the question the click answers, so a caret
+  // that went elsewhere can be attributed instead of guessed at.
+  const hitAtEdge = () =>
+    page.evaluate(() => {
+      const wrapper = document.querySelector('.pane.rendered .ProseMirror .nk-heading')
+      if (!wrapper) return 'no .nk-heading'
+      const rect = wrapper.getBoundingClientRect()
+      const hit = document.elementFromPoint(rect.right - 2, rect.top + rect.height / 2)
+      return hit ? `${hit.nodeName}.${(hit as HTMLElement).className}` : 'no element'
+    })
+
+  // Aim, then check that the aim is where the caret went, and re-aim only when it is
+  // not. This click has been seen to arrive below the heading, in the blank space
+  // under the document, where the caret belongs to the end of the last paragraph
+  // (`...DIV>P>#text`) rather than to the heading's edge (`...DIV>H1>#text`): run
+  // 35174117944, on a runner whose other worker was still cold. The property this
+  // spec holds is what happens *after* the caret is at the heading's edge, so a miss
+  // is printed and re-taken rather than asserted — and a miss can only be the point
+  // having moved, which is why the point is read at the moment it is aimed as well as
+  // after the click. A point that reads as the heading with the caret somewhere else
+  // is the editor answering a click at its own edge with the wrong caret: that is a
+  // defect and not an aim, and the assertion below prints the reading so a red is
+  // never pinned on the wrong one of the two. Bounded at three attempts, with no
+  // timeout widened: a heading edge that resists all three is red here.
+  const clickHeadingEdge = async () => {
+    const aimed = await hitAtEdge()
+    await heading.click({ position: edge })
+    await page.waitForTimeout(100)
+    return { aimed, state: await snap('heading-text-end') }
+  }
+
+  let at = await clickHeadingEdge()
+  for (let attempt = 1; attempt <= 3 && !/H1(?:>#text)?$/.test(at.state.path); attempt++) {
+    console.log(
+      `MISS attempt ${attempt}: the point read as ${at.aimed} and the caret went to ${at.state.path}`,
+    )
+    at = await clickHeadingEdge()
+  }
+  expect(
+    at.state.path,
+    `the caret is not in the heading after clicking its blank right edge (the point read as ${at.aimed} when it was aimed)`,
+  ).toMatch(/H1(?:>#text)?$/)
+
   await page.keyboard.press('Enter')
   await page.waitForTimeout(250)
   await snap('after-enter')
