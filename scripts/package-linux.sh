@@ -101,6 +101,20 @@ rm -f "$BUILD_STARTED"
 echo "[5/7] Copy release artifacts"
 mkdir -p release
 
+# **The previous build's packages go first, and their staying is why this pipeline never finished.**
+# `release/` is meant to hold one build's artifacts — that is what the mtime note below is for, and
+# what 「所有 bundle 必须一次构建」 means — but nothing cleared it. `[7/7]` globs
+# `release/*.AppImage` (and the other two) and compares **every** file it finds against the tree's
+# notice file, so from the second run onward it compared a package cut from an older commit, found a
+# notice file that no longer matched, and failed the run. The first run passed; every run after it
+# was red for a reason that had nothing to do with the build in front of it.
+#
+# Only the three package globs, not the directory: `release/opencode` and the portable executable
+# below are this run's own outputs and are written a few lines further down, and clearing them here
+# would leave the portable executable engine-less for the length of the copy — the one artifact whose
+# missing engine this project has already shipped once and been told about by a user.
+rm -f release/*.deb release/*.rpm release/*.AppImage
+
 # `-p`, or the mtimes below are the copy's and the closing note is a lie: plain
 # `cp` stamps every artifact with the moment it was copied, which is always
 # minutes after the build, so four artifacts from four different builds would
