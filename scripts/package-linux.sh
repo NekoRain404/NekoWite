@@ -106,9 +106,27 @@ mkdir -p release
 # minutes after the build, so four artifacts from four different builds would
 # look perfectly uniform. That is the whole signal, destroyed by a missing flag.
 cp -pf "$TARGET/nekowite" "release/${BIN_NAME}"
+
+# The engine goes beside it, and this is not a convenience — it is the layout the app searches.
+# `bundled_program(exe_dir)` (`src/agent_runtime/binary_registry.rs`) looks for `opencode` and
+# `opencode-<target>` in the directory the app's own executable was found in, and deliberately
+# never on `PATH` (§3.2). The three bundles carry the engine *inside* themselves, so the portable
+# executable is the one artifact that arrives incomplete without this line — and it did: it
+# shipped as a lone 27 MB file, and the way that was found is a user running it and reading the
+# modal that names this directory. `$TARGET/opencode` is the same file `copy_binaries` places at
+# `usr/bin/opencode` in the deb and the rpm, under the bare name for the same reason.
+[ -x "$TARGET/opencode" ] || {
+  echo "FAIL: $TARGET/opencode is absent, so the portable executable would ship with no engine." >&2
+  echo "      Tauri's copy_binaries writes it from bundle.externalBin; check the build output." >&2
+  exit 1
+}
+cp -pf "$TARGET/opencode" "release/opencode"
 echo
 echo "Portable executable: $(pwd)/release/${BIN_NAME}"
+echo "  ...and it needs $(pwd)/release/opencode beside it. Ship them together: the executable"
+echo "  alone resolves no engine, and the deb, rpm and AppImage each carry their own copy."
 sha256sum "release/${BIN_NAME}"
+sha256sum "release/opencode"
 
 shopt -s nullglob
 for f in "$TARGET/bundle/deb/"*.deb "$TARGET/bundle/rpm/"*.rpm "$TARGET/bundle/appimage/"*.AppImage; do
@@ -123,6 +141,25 @@ echo "[6/7] Verify the engine inside each package"
 # the engine beside the app's own executable, §3.3 says a program that does not answer the protocol
 # is not an engine, and §11.2 says neither is proven by a build succeeding. This checks each package
 # the way P1 does — a deb that shipped without its sidecar would otherwise be discovered by a user.
+#
+# The portable executable is checked separately, and by a different means, because its engine is a
+# *sibling file* rather than package contents — no `--bundle` inspection can see it, which is
+# exactly why it went missing. What makes this check equivalent to the ones below is the
+# comparison: the sibling is `cmp`'d against the artifact `[1/7]` already verified, so it inherits
+# every property that check establishes (architecture, the pinned sha256, the empty-environment
+# handshake) instead of being trusted for having been copied.
+STAGED_ENGINE="$ROOT/apps/desktop/src-tauri/binaries/opencode-x86_64-unknown-linux-gnu"
+[ -x "release/opencode" ] || {
+  echo "FAIL: release/opencode is absent, so the portable executable resolves no engine." >&2
+  echo "      It looks beside its own binary and nowhere else; see agent_runtime/binary_registry.rs." >&2
+  exit 1
+}
+if ! cmp -s "release/opencode" "$STAGED_ENGINE"; then
+  echo "FAIL: release/opencode is not the verified artifact at $STAGED_ENGINE." >&2
+  exit 1
+fi
+echo "Portable executable: engine present beside it and identical to the verified artifact"
+
 for f in release/*.deb release/*.rpm release/*.AppImage; do
   bash scripts/verify-opencode-linux.sh --bundle "$f"
 done
