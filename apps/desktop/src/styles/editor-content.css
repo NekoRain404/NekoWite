@@ -100,6 +100,13 @@
 }
 .editor-container .ProseMirror .nk-heading:hover .nk-heading-anchor,
 .editor-container .ProseMirror .nk-heading-anchor:focus-visible { opacity: 1; }
+/* Making the anchor visible is not the same as saying it is focused: it is a tab stop, and the
+   only ring it had was the engine's blue. It hangs off the right of the heading by 1.7em, so a
+   ring outside it has room and does not overlap the text it copies the link of. */
+.editor-container .ProseMirror .nk-heading-anchor:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
 .editor-container .ProseMirror .nk-heading-anchor:hover { color: var(--app-accent); }
 
 /* ---------- Inline ---------- */

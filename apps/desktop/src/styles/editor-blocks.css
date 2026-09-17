@@ -255,6 +255,14 @@
   border-color: var(--app-accent);
   color: var(--app-accent);
 }
+/* The retry button is the one control the failure overlay offers, so it is the one stop a
+   keyboard reader lands on inside a broken image — and the ring it landed with was the engine's.
+   It sits centred in the overlay with the figure's own margin around it, so the ring is drawn
+   outside the button without leaving the picture it belongs to. */
+.editor-container .ProseMirror .neko-image-error-retry:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
 
 /* Cite chips were class-only (no rule anywhere), so a citation rendered as bare
    text and a key with no library entry was indistinguishable from a resolved

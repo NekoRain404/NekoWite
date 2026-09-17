@@ -36,12 +36,20 @@
  *    An indicator that paints and cannot be seen is the defect wearing a fix's clothes.
  *  - **The sweep.** The five stops are the ones that were reported; the question is whether the
  *    list is complete. Every tab stop the page has is focused and read the same way, and the ones
- *    that show nothing are named. That is the reading no amount of grepping produces, and it is
- *    printed rather than asserted — it covers surfaces outside this task's reach, and a gate that
- *    can only go green by editing files it may not open is not a gate.
+ *    that show nothing are named — including the ones whose ring layout clips away, which is the
+ *    answer the first version of the sweep could not give at any price (see `focus-instrument.mjs`).
+ *  - **The census, and the controls that make it checkable.** The sweep says whether a stop paints
+ *    an indicator; the census says WHOSE. It is a gate now rather than a printed count, because the
+ *    sixteen stops that used to wear the engine's ring are all repairable from this change's file
+ *    scope — an ungated census would report the regression and let the run pass. Five fixture stops
+ *    (`focus-controls.mjs`) are mounted through every sweep so the two branches that were repaired
+ *    can be watched deciding, in both directions, in the run that reports them green.
  */
 import { until } from './webdriver.mjs'
 import { INSTRUMENTS, KEY, RAIL_TITLES, load } from './agent-scroll-instrument.mjs'
+import { FOCUS_INSTRUMENTS } from './focus-instrument.mjs'
+import { FOCUS_CONTROLS, CONTROL_SELECTORS } from './focus-controls.mjs'
+import { PAGE_SURFACES, MOUNTS, MOUNT_SCRIPT, UNMOUNT_SCRIPT, RING_PIXEL_STOPS } from './focus-surfaces.mjs'
 import { clickStatusButton, pressKeys } from './agent-scroll-driver.mjs'
 import { clickByText } from './probe-support.mjs'
 
@@ -64,236 +72,6 @@ function violation() {
   return value === undefined || value.startsWith('--') ? null : value
 }
 
-/**
- * The surfaces, and where each one's indicator has to appear.
- *
- * `page` entries are already on screen — the reading is taken on the product's own DOM, in the
- * product's own rail, and those are the strongest readings this file produces. `mount` entries
- * are the ones nothing hosts yet; the component URL is what the dev server serves.
- */
-const PAGE_SURFACES = [
-  { name: 'agent transcript', sel: '.agent-timeline', page: 'agent' },
-  { name: 'permission arguments', sel: '.agent-perm-args', page: 'agent' },
-  { name: 'chat transcript', sel: '.chat-scroll', page: 'chat' },
-  // The two the first run of this probe reported and did not own (`src/ui/TabBar.vue`'s roving
-  // tab stop, `features/graph`'s canvas). Both are on the page the harness boots — the tab bar is
-  // the shell's own, and the graph is the note list column's third body — so both are read on the
-  // product's own screens rather than mounted. `prep` is what has to happen before the reading,
-  // and it is a pointer gesture, which is why it runs with the rail's click and not in the loop.
-  { name: 'tab bar tab', sel: '.tab-bar .tab', page: 'app' },
-  { name: 'graph canvas', sel: '.graph-canvas', page: 'app', prep: 'graph' },
-]
-
-/**
- * The mounts, one per surface nothing hosts.
- *
- * Each entry carries only what the component needs to DRAW its target element. The fixtures are
- * deliberately thin, and a fixture that goes stale — a prop renamed, an element moved behind
- * another condition — is not a silent pass: the mount either throws or leaves no target on screen,
- * and both are reported as failures that name the surface.
- */
-const MOUNTS = [
-  {
-    name: 'changes buffer text',
-    url: '/src/features/agent/components/AgentChangesView.vue',
-    sel: '.agent-changes-text',
-    props: {
-      rows: [
-        {
-          path: 'notes/probe.md',
-          attribution: 'agent',
-          toolCallId: 'probe-call-1',
-          tool: 'edit',
-          status: 'completed',
-          verdict: {
-            kind: 'unsaved-edits',
-            bufferText: '# probe\n\nthe unsaved buffer, which is the element under measurement',
-            diskText: '# probe\n\nwhat the file holds',
-          },
-          offers: ['view', 'merge', 'recover'],
-          refused: null,
-        },
-      ],
-      labels: {
-        title: 'Changes',
-        empty: 'Nothing has changed yet',
-        close: 'Close',
-        attribution: {
-          agent: 'The agent changed this file',
-          external: 'This file changed outside the agent',
-          reported: 'The engine reported this file',
-        },
-        verdict: { followsDisk: 'No unsaved edits', unsavedEdits: 'This note has unsaved edits' },
-        offer: { view: 'View', merge: 'Merge', recover: 'Recover' },
-        refused: {
-          notAgentChange: 'Nothing recorded a change to put back',
-          writeInFlight: 'The agent is still writing this file',
-          unsavedEdits: 'Deal with the unsaved edits first',
-        },
-        unsavedBuffer: 'Your unsaved text',
-        diskUnread: 'The file was not read',
-      },
-    },
-  },
-  {
-    name: 'conflict texts',
-    url: '/src/features/agent/components/AgentEditConflictView.vue',
-    sel: '.agent-conflict-text',
-    all: true,
-    props: {
-      conflicts: [
-        {
-          status: 'conflict',
-          path: 'notes/probe.md',
-          agentText: '# probe\n\nrewritten by the agent',
-          noteText: '# probe\n\nwhat was typed while it thought',
-          baselineRevision: 'r1',
-          currentRevision: 'r7',
-        },
-      ],
-      labels: {
-        title: 'This note changed while the agent was working',
-        moved: 'was edited after the request went out',
-        agentText: 'What the agent produced',
-        noteText: 'What the note holds now',
-        apply: 'Use the agent version',
-        discard: 'Keep my version',
-        kept: 'Your text is kept when you apply.',
-      },
-    },
-  },
-  {
-    name: 'native terminal screen',
-    url: '/src/features/agent/components/AgentNativeTerminal.vue',
-    sel: '.agent-native-screen',
-    props: {
-      session: {
-        sessionId: 'probe-terminal',
-        program: 'opencode',
-        args: [],
-        install: 'bundled',
-        state: 'running',
-      },
-      // Built in the page, not passed in: WebDriver serializes the fixture as JSON, and the
-      // functions a transport is made of do not survive the trip — the first run of this probe
-      // reported `props.transport.subscribe is not a function` and mounted nothing. `stubTransport`
-      // is the page's own no-op, so the component still draws its screen and the reading is about
-      // the screen rather than about a transport that was never there.
-      stubTransport: true,
-      labels: {
-        title: 'Terminal',
-        program: 'Program',
-        profile: 'Profile',
-        state: { running: 'Running', exited: 'Exited', failed: 'Failed' },
-        ended: { code: 'exit code', signal: 'signal', unknown: 'no status' },
-        rights: 'This runs with your own rights.',
-        managed: 'Managed by this app.',
-        elided: 'Part of a line was cut',
-        dropped: 'Earlier output was dropped',
-        copy: 'Copy',
-        copied: 'Copied',
-        copyFailed: 'Copy failed',
-        close: 'Close',
-        confirm: { title: 'Close?', body: 'It is still running.', keep: 'Keep', confirm: 'Close' },
-        unavailable: 'The host refused',
-        refusal: {},
-      },
-    },
-  },
-  {
-    name: 'pet task rows box',
-    url: '/src/features/desktop-pet/components/PetTaskList.vue',
-    sel: '.pet-task__scroll',
-    // Enough rows to put something below the fold, which is the reason the box is focusable at
-    // all: a box that fits its content is a tab stop nothing needs.
-    props: {
-      now: 1_700_000_000_000,
-      tasks: Array.from({ length: 12 }, (_, i) => ({
-        key: {
-          agentId: 'probe-agent',
-          profileId: 'probe-profile',
-          runtimeEpoch: 'probe-epoch-1',
-          vaultId: 'probe-vault',
-          sessionId: `probe-session-${i}`,
-          runId: `probe-run-${i}`,
-        },
-        state: i % 3 === 0 ? 'working' : i % 3 === 1 ? 'waiting-input' : 'turn-finished',
-        permissionRequestId: null,
-        updatedAt: 1_700_000_000_000 - i * 1000,
-      })),
-    },
-  },
-]
-
-/**
- * The mount script, run in the page.
- *
- * Vue comes from the dev server's own transform of `main.ts` rather than from a URL written here,
- * which is the existing specs' device and is load-bearing: a second copy of Vue would compile the
- * SFCs against a different runtime and the components would silently not be the ones the app
- * ships.
- */
-const MOUNT_SCRIPT = `
-const done = arguments[arguments.length - 1];
-const spec = arguments[0];
-(async function () {
-  const source = await (await fetch('/src/main.ts')).text();
-  const found = source.match(/["']([^"']*[/]deps[/]vue[.]js[^"']*)["']/);
-  if (!found) { done({ why: 'the dev server serves no vue dependency' }); return; }
-  const vue = await import(found[1]);
-  try {
-    const mod = await import(spec.url);
-    const host = document.createElement('div');
-    host.className = 'nkw-focus-host';
-    host.setAttribute('data-nkw-focus-host', spec.name);
-    // **One at a time, and one host on the page.** A fixed overlay big enough to draw the
-    // component in is also big enough to cover the next one: the first version mounted all four
-    // at once, offset by eight pixels each, and every surface but the last read as a sliver of
-    // itself — the ring of the one underneath was painted and then hidden behind the one on top,
-    // and the pixel diff called that "no indicator". The reading was the instrument's, not the
-    // engine's, and it took a control whose ring is not in question (the last host, the pet rows
-    // box, the only one nothing covered) to see it.
-    host.style.cssText =
-      'position: fixed; top: 40px; left: 40px; width: 420px; z-index: 40;' +
-      'background: var(--app-canvas, #ffffff);';
-    // **Inside the themed root, not beside it.** AppShell carries data-theme on its own
-    // element and palettes.css keys every colour off it, so a host appended to document.body
-    // renders under the :root default while the app renders under the chosen theme — the first
-    // version measured every ring in the LIGHT accent while the rail it was comparing against was
-    // in the dark one, and the two readings were not the same reading.
-    const themed = document.querySelector('[data-theme]') || document.body;
-    themed.append(host);
-    const props = Object.assign({}, spec.props);
-    // The one fixture that cannot come through the wire, built here. A terminal with no transport
-    // cannot draw, and the component is right to refuse rather than pretend.
-    if (props.stubTransport) {
-      delete props.stubTransport;
-      props.transport = {
-        write: function () { return Promise.resolve(); },
-        resize: function () { return Promise.resolve(); },
-        close: function () { return Promise.resolve(); },
-        subscribe: function () { return function () {}; }
-      };
-    }
-    const app = vue.createApp({ render: function () { return vue.h(mod.default, props); } });
-    app.mount(host);
-    window.__nkwFocusHost = { app: app, host: host };
-    done({ name: spec.name, url: spec.url, ok: true, stubbed: Boolean(spec.props.stubTransport) });
-  } catch (error) {
-    done({ name: spec.name, url: spec.url, ok: false, why: String(error && error.message ? error.message : error) });
-  }
-})();
-`
-
-/** Take the previous host off the page, so the next reading has the screen to itself. */
-const UNMOUNT_SCRIPT = `
-const held = window.__nkwFocusHost;
-if (!held) return { unmounted: false };
-held.app.unmount();
-held.host.remove();
-window.__nkwFocusHost = null;
-return { unmounted: true, left: document.querySelectorAll('.nkw-focus-host').length };
-`
 
 export const focusRingProbe = {
   name: 'focus-ring',
@@ -304,6 +82,10 @@ export const focusRingProbe = {
 
     const out = { harness, load: load(), surfaces: [], sweep: null }
     await wd.execute(INSTRUMENTS)
+    // The focus instruments are a second script because they are a second subject; the scripts
+    // are one-way — this one reads __nkwTabStops, the enumeration INSTRUMENTS owns.
+    await wd.execute(FOCUS_INSTRUMENTS)
+    await wd.execute(FOCUS_CONTROLS)
 
     // --- the surfaces already on the product's own screens ------------------
     //
@@ -495,9 +277,112 @@ export const focusRingProbe = {
       await wd.execute(UNMOUNT_SCRIPT)
     }
 
+    // --- the controls: the sweep's two repaired branches, on stops whose verdicts are known ---
+    //
+    // Mounted BEFORE the sweep and taken off the page AFTER it, so the five stops are in the list
+    // the sweep walks — the instrument has to decide them, not a helper the probe calls beside it.
+    // They are also the reason the sweep's own `total` is five larger than the page's stop count
+    // while they are up, and the reason they are removed before the census counts anything: a
+    // census that counted a fixture would be counting this file's own markup as the product's.
+    out.controls = { mounted: await wd.execute(`return window.__nkwFocusControls('inject')`) }
+    await frames(wd, 3)
+    out.controls.present = await wd.execute(
+      `return document.querySelectorAll('[data-nkw-focus-controls] button').length`,
+    )
+
     // --- the sweep: every tab stop the page has ------------------------------
     out.sweep = await wd.executeAsync(
       `window.__nkwFocusSweep({ root: null, witness: '.switch-option' }, arguments[arguments.length - 1])`,
+    )
+
+    // What the sweep decided about each control, read off its own two lists rather than from a
+    // second call — the verdict under test is the one the sweep produced for the whole page.
+    const verdictOf = (sel) => {
+      const cls = sel.slice(1)
+      const clipped = (out.sweep?.clipped ?? []).find((e) => e.cls === cls)
+      if (clipped) return { verdict: 'clipped', entry: clipped }
+      const offender = (out.sweep?.offenders ?? []).find((e) => e.cls === cls)
+      if (offender) return { verdict: 'offender', entry: offender }
+      return { verdict: 'clean', entry: null }
+    }
+    out.controls.verdicts = Object.fromEntries(
+      Object.entries(CONTROL_SELECTORS).map(([key, sel]) => [key, verdictOf(sel)]),
+    )
+    // The pixels, per control, through the same reader every surface above was read with. This is
+    // the half that makes the sweep's verdict checkable: a stop the sweep calls clipped must
+    // repaint nothing, and a stop it calls clean must repaint something.
+    out.controls.pixels = {}
+    for (const [key, sel] of Object.entries(CONTROL_SELECTORS)) {
+      out.controls.pixels[key] = await pixelsAround(wd, sel, false)
+    }
+    out.controls.removed = await wd.execute(`return window.__nkwFocusControls('remove')`)
+
+    // --- the rings this task added, read as pixels rather than as declarations --------------
+    //
+    // The census below says whose ring each stop declares; this says whether the screen changed
+    // when focus landed, which is the only reading that can tell a rule from a ring. It runs after
+    // the fixture is off the page and before the census, so neither reading is taken through a
+    // foreign overlay. The numbers are PRINTED and not gated: they come from whole-page
+    // screenshots, and a loaded machine makes this reader blind for every surface at once — the
+    // witness check above is the detector for that, and a second gate on the same blindness would
+    // red for a reason that has nothing to do with a ring. The isolated run is where they mean
+    // something, which is where they were taken.
+    out.ringPixels = []
+    for (const stop of RING_PIXEL_STOPS) {
+      const present = await wd.execute(
+        `return Boolean(document.querySelector(arguments[0]))`,
+        [stop.sel],
+      )
+      if (!present) {
+        out.ringPixels.push({ name: stop.name, sel: stop.sel, rule: stop.rule, present: false })
+        continue
+      }
+      // The computed reading beside the pixels, on the same element, so "what does this stop
+      // paint now" is answerable per class rather than only in aggregate: the census counts the
+      // whole page, and a count is not a place to look.
+      await pressKeys(wd, [KEY.tab])
+      const reading = await wd.execute(`return window.__nkwFocusPaint(arguments[0])`, [stop.sel])
+      out.ringPixels.push({
+        name: stop.name, sel: stop.sel, rule: stop.rule, present: true,
+        reading,
+        pixels: await pixelsAround(wd, stop.sel, false),
+      })
+    }
+
+    // --- the enumeration's own blind spot: focusable elements no attribute names --------
+    //
+    // The census below answers "whose ring does each stop paint" for every stop in the
+    // enumeration, and the previous list of offenders was read off that answer. It cannot answer
+    // for a stop the enumeration does not contain: `contenteditable` is a tab stop with no
+    // attribute in the selector list, and this application's editor body is one. So the
+    // candidates are focused and read here, and whether each one is a stop at all is measured
+    // rather than assumed — a candidate the engine refuses to focus is reported as such.
+    out.beyond = await wd.execute(
+      `const candidates = window.__nkwStopsBeyondEnumeration(null);
+       return candidates.map(function (el) {
+         const before = document.activeElement;
+         el.focus({ preventScroll: true });
+         const s = getComputedStyle(el);
+         const ring = window.__nkwRingVisibility(el, s);
+         const shadow = window.__nkwShadowPaints(s.boxShadow);
+         const pseudo = window.__nkwPseudoIndicator(el);
+         const reading = {
+           tag: el.tagName.toLowerCase(), cls: el.className || null,
+           focusable: document.activeElement === el,
+           focusVisible: el.matches(':focus-visible'),
+           outline: s.outlineStyle + ' ' + s.outlineWidth + ' ' + s.outlineColor,
+           boxShadow: s.boxShadow, shadowPaints: shadow.paints, pseudo: pseudo ? pseudo.part : null,
+           onScreen: ring === null ? null : ring.onScreen,
+           // The same three branches the sweep's own verdict is made of, so "paints nothing"
+           // means the same thing here as it does there.
+           paints: (s.outlineStyle !== 'none' && window.__nkwPx(s.outlineWidth) > 0) ||
+                   shadow.paints || pseudo !== null,
+           where: window.__nkwStopWhere(el)
+         };
+         if (before && before !== el && before.focus) before.focus({ preventScroll: true });
+         else if (!before) el.blur();
+         return reading;
+       })`,
     )
 
     // --- the census: whose ring each of those stops paints --------------------
@@ -511,7 +396,10 @@ export const focusRingProbe = {
     //
     // Classification is by `outlineStyle`, not by colour: every author rule in this repository
     // says `solid` and the user agent's ring is `auto`, so the two cannot be confused by a theme
-    // change or by a `color-mix`.
+    // change or by a `color-mix`. **A ring layout clips away is its own bucket**, because a stop
+    // whose author rule is right and whose ring is not on screen is neither: `.graph-canvas` was
+    // in exactly that state, classified `accent` by this reading's first version, which would have
+    // credited a fix that a keyboard reader could not see.
     //
     // **A stop with no outline is re-read four frames later**, and the reason is the failure this
     // whole file keeps running into: this app fades its other indicators in (`LayoutResizeHandle`'s
@@ -525,17 +413,22 @@ export const focusRingProbe = {
       `const accent = arguments[0];
        const done = arguments[arguments.length - 1];
        const stops = window.__nkwTabStops(null);
-       const accented = [], engine = [], other = [], invisible = [];
+       const accented = [], engine = [], foreign = [], other = [], invisible = [], removed = [], skipped = [];
        // The style, read where the element is — the caller is the one that decides whether that
        // is the task the focus landed in or four frames after it, and the difference is the whole
-       // reason a transitioned indicator needs the second one.
+       // reason a transitioned indicator needs the second one. The ring's visibility is read with
+       // it, while the element still holds focus, because that is when the rule is applied at all.
        const style = function (el) {
          const s = getComputedStyle(el);
          const pseudo = window.__nkwPseudoIndicator(el);
+         const ring = window.__nkwRingVisibility(el, s);
          return { tag: el.tagName.toLowerCase(), cls: el.className || null,
                   focusVisible: el.matches(':focus-visible'),
                   outlineStyle: s.outlineStyle, outlineWidth: s.outlineWidth, outlineColor: s.outlineColor,
-                  boxShadow: s.boxShadow, pseudo: pseudo ? pseudo.part : null };
+                  boxShadow: s.boxShadow, pseudo: pseudo ? pseudo.part : null,
+                  onScreen: ring === null ? null : ring.onScreen,
+                  clipped: ring !== null && ring.clipped === true,
+                  clips: ring === null ? null : ring.clips };
        };
        const read = function (el) { el.focus({ preventScroll: true }); return style(el); };
        const blur = function () { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); };
@@ -543,8 +436,19 @@ export const focusRingProbe = {
          const entry = { i: index, tag: r.tag, cls: r.cls,
                          outline: r.outlineStyle + ' ' + r.outlineWidth + ' ' + r.outlineColor };
          if (r.focusVisible !== true) { invisible.push(entry); return; }
+         if (r.clipped === true) {
+           removed.push({ i: index, tag: r.tag, cls: r.cls, outline: entry.outline,
+                          onScreen: r.onScreen, clips: r.clips });
+           return;
+         }
          if (r.outlineStyle === 'auto') engine.push(entry);
          else if (r.outlineStyle === 'solid' && r.outlineColor === accent) accented.push(entry);
+         // A solid outline in a colour that is not this app's. Nothing is in this bucket today,
+         // and it exists because the engine's bucket is keyed on outline-style: auto — a fact
+         // about how WebKit spells its own ring, not about whose ring it is. If the engine ever
+         // reported its ring as solid, every stop still wearing it would move here instead of
+         // vanishing into 'other', and the count would say so in the same words.
+         else if (r.outlineStyle === 'solid') foreign.push(entry);
          else other.push({ i: index, tag: r.tag, cls: r.cls, outline: entry.outline,
                            boxShadow: r.boxShadow, pseudo: r.pseudo });
        };
@@ -554,13 +458,27 @@ export const focusRingProbe = {
            const name = function (e) { return (e.cls || e.tag) + ' [' + e.outline + ']'; };
            done({
              total: stops.length,
-             accent: accented.length, engine: engine.length, other: other.length,
-             notFocusVisible: invisible.length,
+             accent: accented.length, engine: engine.length, foreign: foreign.length,
+             other: other.length, notFocusVisible: invisible.length, skipped: skipped.length,
+             // Every stop lands in exactly one bucket, and this sum is what says so: a branch that
+             // returns without pushing is a stop the census silently stopped counting, which reads
+             // exactly like a page whose stops are all fine.
+             classified: accented.length + engine.length + foreign.length + other.length +
+                         invisible.length + removed.length + skipped.length,
              engineList: engine.slice(0, 40).map(name),
+             foreignList: foreign.slice(0, 40).map(name),
+             // Where each of those stops lives, in the same order: the class alone took the last
+             // reader from a name to a file by grepping, and one of these was attributed to the
+             // wrong component that way. The parent chain is the measurable half of that walk.
+             engineWhere: engine.slice(0, 40).map(function (e) { return window.__nkwStopWhere(stops[e.i]); }),
              otherList: other.slice(0, 40).map(function (e) {
                return name(e) + ' boxShadow ' + e.boxShadow + ' pseudo ' + e.pseudo;
              }),
              accentList: accented.slice(0, 60).map(name),
+             clippedList: removed.map(function (e) {
+               return (e.cls || e.tag) + ' [' + e.outline + '], ' + e.onScreen + '% on screen, clipped by ' +
+                 JSON.stringify(e.clips);
+             }),
            });
            return;
          }
@@ -568,7 +486,7 @@ export const focusRingProbe = {
          const box = el.getBoundingClientRect();
          const index = i;
          i += 1;
-         if (box.width < 2 || box.height < 2) { requestAnimationFrame(step); return; }
+         if (box.width < 2 || box.height < 2) { skipped.push(index); requestAnimationFrame(step); return; }
          const quick = read(el);
          if (quick.outlineStyle !== 'none' || quick.focusVisible !== true) {
            blur();

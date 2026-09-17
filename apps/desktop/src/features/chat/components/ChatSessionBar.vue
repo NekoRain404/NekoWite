@@ -165,4 +165,14 @@ defineEmits<{
   outline: 2px solid var(--app-accent);
   outline-offset: 1px;
 }
+/* The session row's two controls wear a class this file shares with the composer's tool row,
+   and the ring that goes with it lives in that component's stylesheet — which is scoped, so it
+   never reached these. The census found them on the engine's ring for that reason: the class
+   name was the composer's, the elements were not. Same rule as its sibling above.
+   Their BOX is unstyled for the same reason and is left as it is found: this change is about
+   the ring, and inventing a size and a hover for them here would be a redesign, not a repair. */
+.chat-tool:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
 </style>

@@ -264,3 +264,31 @@
   outline: 2px solid var(--app-accent);
   outline-offset: 2px;
 }
+
+/* ============ Rings for controls whose own stylesheet is not in this change ============
+   Every other ring in this layer is declared beside the control it draws. These four classes are
+   here because the sheets that style their components are component-scoped files this change may
+   not open — the sidebar's group header (`SidebarGroup.vue`), its footer buttons
+   (`AppSidebar.vue`), the status bar's two buttons (`AppShell.vue`) and the graph toolbar's
+   toggles (`GraphToolbar.vue`). The cascade does not care where the class was declared, so the
+   ring lands either way; what is lost is the company of the rule. A reader who opens one of
+   those components for another reason should move its rule back beside it — nothing here
+   depends on them staying.
+
+   The offsets are the neighbours' offsets, not a preference: 1px for the rows and icon buttons
+   that live inside a bar with padding, which is what `.nav-item` — the group header's own
+   neighbour in the same scroll container — already uses, and what `.rail-tab`, `.chat-tool` and
+   the status bar's own 14px padding allow. */
+.group-header:focus-visible,
+.footer-btn:focus-visible,
+.status-btn:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
+/* The graph toggles are bare `<input type="checkbox">` with no class of their own, so they are
+   addressed through the label they sit in. A checkbox is 13px with no bar padding around it, and
+   the ring goes outside it at the offset the shared `.btn` family uses. */
+.graph-toggle input[type='checkbox']:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+}
