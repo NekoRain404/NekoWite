@@ -1,0 +1,27 @@
+<!doctype html>
+<!--
+  The floating ball's page.
+
+  A page of its own, and not `desktop-pet.html`, for the reason that separates the two surfaces:
+  the character window roams, is 260x320 and spends most of its time click-through (§7.2), while
+  the ball is an 80x80 orb that exists to be clicked — a stable target the user does not have to
+  chase (`references/desktop-pet/windows/src-tauri/src/lib.rs:306-309`). One page cannot be both,
+  and `desktop-pet-entry.ts` is the character window's boot: mounting the ball through it would put
+  the character root, the bubble, the task list and the click-through composable into this window's
+  module graph — a window whose whole job is to be a launcher would carry the machine it launches.
+
+  Like the pet page: transparent, because the window is frameless and unbacked (§7.2), so anything
+  painted here would be a rectangle around the orb. `PetBallWindow.vue` owns that rule together
+  with the window's layout.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NekoWite</title>
+  </head>
+  <body>
+    <div id="desktop-pet-ball"></div>
+    <script type="module" src="/src/app/desktop-pet-ball-entry.ts"></script>
+  </body>
+</html>

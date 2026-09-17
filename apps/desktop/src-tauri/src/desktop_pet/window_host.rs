@@ -26,6 +26,33 @@
  *
  * The policy half of this file needs no window at all — {@link PetSurfaces} is injected (§10.2)
  * — which is what lets the rules above be tested against something that is not a compositor.
+ *
+ * **The ball is the pet's second surface, and this host mints it too** (D11b's
+ * `PetFloatingBall.vue` had no window until now). Upstream keeps it in its own window with its own
+ * label and its own lifetime (`references/.../src-tauri/src/lib.rs:306-315`: 「A single instance
+ * lives on the desktop as a stable click target … so the user doesn't have to chase a roaming
+ * pet」), and plan:77 ships it in the port's first round (「不静默删掉」) — but it is not a
+ * *character* window: it holds no character, it is not counted by the cap, and no caller may
+ * close it per window. Three consequences, each with the place it is enforced:
+ *
+ * - **It is minted with the same label prefix, so `capabilities/desktop-pet.json` governs it.**
+ *   `"windows": ["pet-*"]` is what hands a window the pet's eight commands and two `core:event`
+ *   permissions *instead of* `capabilities/default.json`'s sixty-odd; a label that matched
+ *   neither would give the ball a window with no IPC at all, and one that matched `main` would
+ *   give it the editor's whole surface.
+ * - **It is not an instance, so the two per-window operations refuse it.** {@link
+ *   PetWindowHost::close_own} and {@link PetWindowHost::set_click_through} resolve their caller
+ *   through {@link PetWindowHost::authorized}, which looks the label up in `instances` — where the
+ *   ball is not. A ball window that asked to be click-through is refused by name
+ *   (`UnrecognizedCaller { observed: "pet-ball" }`), which is the structural half of 「the ball is
+ *   a stable click target and must not be click-through」: the permission is granted to the pet's
+ *   windows as a group, and the identity check is what keeps the ball from using it.
+ * - **It follows the pet's switch, not the character list.** {@link PetWindowHost::open} — the
+ *   call `apply_feature_switch` makes when `general.enabled` is written true — opens it, {@link
+ *   PetWindowHost::set_visible} hides and shows it with the rest, and {@link
+ *   PetWindowHost::disable} closes it. The ball has no switch of its own yet: upstream's is a
+ *   stored flag defaulting to on (`lib.rs:331-345`), plan §5.1/§5.2 put 悬浮球 on the settings
+ *   page's 常规与交互 row, and that page's `general` domain has no such field today.
  */
 use serde::Serialize;
 
@@ -47,6 +74,31 @@ pub const DESKTOP_PET_PAGE: &str = "desktop-pet.html";
 /// The character window's size in logical px: upstream's `260x320` (`:459`), the same at all
 /// four of its builder sites.
 pub const CHARACTER_WINDOW_SIZE: (f64, f64) = (260.0, 320.0);
+
+/// The floating ball's window label. Fixed, and not a generation: there is one ball (upstream's
+/// `FLOATING_BALL_LABEL`, `:310`), so there is nothing for a generation to distinguish it from.
+///
+/// It carries {@link LABEL_PREFIX} on purpose. `capabilities/desktop-pet.json` selects its windows
+/// by the glob `pet-*`, and a label outside it would be a window with no capability at all — see
+/// this file's header.
+pub const BALL_LABEL: &str = "pet-ball";
+
+/// The ball's page. The second light entry (§9), beside `desktop-pet.html`: the ball is a different
+/// surface from the character window (it is a launcher that stays where it is put, while the
+/// character roams) and it must not be click-through, so it is not the character window's page and
+/// not the character window's bundle.
+pub const DESKTOP_PET_BALL_PAGE: &str = "desktop-pet-ball.html";
+
+/// The ball window's size in logical px: upstream's `BALL_W`/`BALL_H` (`:312-314`) — an 80 px
+/// square for a 56 px orb, so the orb's shadow and its hover scale are not clipped by the window's
+/// own edges.
+pub const BALL_WINDOW_SIZE: (f64, f64) = (80.0, 80.0);
+
+/// Where a ball with no readable screen is placed, and the margins upstream used for its default
+/// corner (`:357`: `(sw - BALL_W - 24, sh - BALL_H - 80)` — the wider bottom gap is where a
+/// taskbar or a dock usually is).
+const BALL_MARGIN_X: f64 = 24.0;
+const BALL_MARGIN_Y: f64 = 80.0;
 
 /// What we ask a compositor for, as a value rather than as calls buried in an adapter.
 ///
@@ -112,6 +164,15 @@ impl PetWindowLabel {
         Self(format!("{LABEL_PREFIX}-{generation}"))
     }
 
+    /// The ball's label, and the one label here that is not minted from a generation.
+    ///
+    /// Still built here and nowhere else: the point of the private field is that a label is the
+    /// host's to make, and a fixed name is no exception. A generation could not collide with it —
+    /// `mint` formats a number, this is a word — so a character window can never inherit it.
+    fn ball() -> Self {
+        Self(BALL_LABEL.to_string())
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -175,11 +236,19 @@ pub enum HostRefusal {
 /// can be tested against something that is not a compositor, and so {@link PetWindowHost} needs
 /// no window to run. {@link TauriSurfaces} is the real one and is deliberately thin.
 pub trait PetSurfaces: Send {
+    /// Create one window: its identity, its page, where it goes, how big it is, what it is, and
+    /// whether it starts on screen.
+    ///
+    /// The size is a parameter rather than something the adapter reads, because the pet has two
+    /// surfaces of two different sizes — a 260x320 character window and an 80x80 ball — and an
+    /// adapter that picked one of them itself would be the place the two could be swapped without
+    /// a test noticing.
     fn open(
         &mut self,
         label: &PetWindowLabel,
         page: &str,
         at: Placement,
+        size: (f64, f64),
         style: WindowStyle,
         visible: bool,
     ) -> Result<(), String>;
@@ -243,6 +312,10 @@ pub struct PetWindowHost {
     /// identity, and a caller left over from a closed window would otherwise be believed.
     generation: u32,
     instances: Vec<PetInstance>,
+    /// The ball's window, when it has one. Deliberately *not* an entry in `instances`: the two
+    /// types of window differ in what they hold (a character, or none), in what the cap counts,
+    /// and in whether a per-window operation may be aimed at them — see this file's header.
+    ball: Option<PetWindowLabel>,
     visible: bool,
 }
 
@@ -253,6 +326,7 @@ impl PetWindowHost {
             cap: DEFAULT_CHARACTER_CAP,
             generation: 0,
             instances: Vec::new(),
+            ball: None,
             visible: true,
         }
     }
@@ -280,13 +354,30 @@ impl PetWindowHost {
         self.visible
     }
 
+    /// The ball's window, when it is open.
+    ///
+    /// The label stays inside its own type and no operation accepts one, so this is a read for a
+    /// report or a test rather than a handle a caller could aim something with.
+    pub fn ball(&self) -> Option<&PetWindowLabel> {
+        self.ball.as_ref()
+    }
+
     /// Create the window for a character, or return the one already showing it (§7.1's 按需创建).
     ///
     /// Idempotent per character because the caller is a settings change: upstream's
     /// `sync_project_windows` (`:270-305`) guarded its spawn with
     /// `get_webview_window(&label).is_some()` for the same reason, and a second window per
     /// character is what having no guard costs.
+    ///
+    /// **It also brings up the ball**, and that is a decision rather than a side effect: this is
+    /// the call the enable switch makes, and the pet's two surfaces appear and disappear with that
+    /// switch — the ball is on by default upstream (`read_ball_visible`'s `unwrap_or(true)`,
+    /// `:334-339`) and its own switch does not exist in this build yet. A ball that would not open
+    /// fails this call rather than being logged and forgotten, because the window the *caller*
+    /// asked for did not come up either; the refusal names the action, and the next enable (or
+    /// character pick) retries, since the ball is only recorded once it opened.
     pub fn open(&mut self, character_id: &str) -> Result<PetInstance, HostRefusal> {
+        self.ensure_ball()?;
         if let Some(existing) = self
             .instances
             .iter()
@@ -305,7 +396,14 @@ impl PetWindowHost {
         let label = PetWindowLabel::mint(self.generation);
         let at = self.cascade();
         self.surfaces
-            .open(&label, DESKTOP_PET_PAGE, at, PET_WINDOW_STYLE, self.visible)
+            .open(
+                &label,
+                DESKTOP_PET_PAGE,
+                at,
+                CHARACTER_WINDOW_SIZE,
+                PET_WINDOW_STYLE,
+                self.visible,
+            )
             .map_err(|detail| HostRefusal::Window {
                 action: WindowAction::Open,
                 detail,
@@ -352,6 +450,7 @@ impl PetWindowHost {
             .instances
             .iter()
             .map(|open| open.label.clone())
+            .chain(self.ball.clone())
             .collect();
         for label in &labels {
             self.surfaces
@@ -394,8 +493,26 @@ impl PetWindowHost {
     /// belong to the window's own renderer and stop when it goes; agent runs, note saves and the
     /// settings pages are not this module's to touch, and characters, care progress and history
     /// are not deleted here or anywhere else (§4's rollback is the switch).
+    ///
+    /// **The ball closes here too, and its success is not in `closed`.** That list is a list of
+    /// *character* windows — every entry carries the `character_id` it was showing — and the ball
+    /// shows none, so an entry for it would have to invent one. What a caller loses is nothing it
+    /// can act on: the ball's failure to close *is* reported (`failed` carries the action and the
+    /// compositor's words, which need no character), and the success is visible in the state that
+    /// follows — the same way every other closed window's is.
     pub fn disable(&mut self) -> TeardownReport {
         let mut report = TeardownReport::default();
+        if let Some(label) = self.ball.take() {
+            if let Err(detail) = self.surfaces.close(&label) {
+                report.failed.push(HostRefusal::Window {
+                    action: WindowAction::Close,
+                    detail,
+                });
+                // Still a window, and the same rule as below: it stays so the next teardown can
+                // try again rather than being forgotten while the compositor still holds it.
+                self.ball = Some(label);
+            }
+        }
         for instance in std::mem::take(&mut self.instances) {
             match self.surfaces.close(&instance.label) {
                 Ok(()) => report.closed.push(Closed {
@@ -427,6 +544,56 @@ impl PetWindowHost {
             .ok_or_else(|| HostRefusal::UnrecognizedCaller {
                 observed: caller.label().to_string(),
             })
+    }
+
+    /// Open the ball's window if the pet does not have one yet, and record it once it opened.
+    ///
+    /// Idempotent, and recorded *after* the call succeeds: a compositor that refused it leaves
+    /// this host believing it has no ball, so the next enable asks again instead of reporting a
+    /// window that is not there.
+    fn ensure_ball(&mut self) -> Result<(), HostRefusal> {
+        if self.ball.is_some() {
+            return Ok(());
+        }
+        let label = PetWindowLabel::ball();
+        self.surfaces
+            .open(
+                &label,
+                DESKTOP_PET_BALL_PAGE,
+                self.ball_position(),
+                BALL_WINDOW_SIZE,
+                PET_WINDOW_STYLE,
+                self.visible,
+            )
+            .map_err(|detail| HostRefusal::Window {
+                action: WindowAction::Open,
+                detail,
+            })?;
+        self.ball = Some(label);
+        Ok(())
+    }
+
+    /// Where the ball goes: upstream's default corner, and never off the screen.
+    ///
+    /// Upstream *restored* a dragged position from a file and clamped it, defaulting to the
+    /// bottom-right (`:350-358`). There is no stored position here because nothing can move the
+    /// ball yet — drag needs a window permission the pet's capability deliberately does not hold
+    /// and snap needs a command that does not exist — so this is the default, and a stored
+    /// position arrives with whatever gives the ball its drag. An unreadable work area is not
+    /// substituted with a guessed screen (§7.2): the ball goes to the margins and the compositor
+    /// has the last word, the rule {@link Self::cascade} already follows.
+    fn ball_position(&self) -> Placement {
+        let (width, height) = BALL_WINDOW_SIZE;
+        let Some(area) = self.surfaces.work_area() else {
+            return Placement {
+                x: BALL_MARGIN_X,
+                y: BALL_MARGIN_Y,
+            };
+        };
+        Placement {
+            x: (area.x + area.width - width - BALL_MARGIN_X).max(area.x),
+            y: (area.y + area.height - height - BALL_MARGIN_Y).max(area.y),
+        }
     }
 
     /// Where a new window goes: upstream's cascade (`:281-292`), stepped by index so several
@@ -487,11 +654,12 @@ impl PetSurfaces for TauriSurfaces {
         label: &PetWindowLabel,
         page: &str,
         at: Placement,
+        size: (f64, f64),
         style: WindowStyle,
         visible: bool,
     ) -> Result<(), String> {
         use tauri::{WebviewUrl, WebviewWindowBuilder};
-        let (width, height) = CHARACTER_WINDOW_SIZE;
+        let (width, height) = size;
         WebviewWindowBuilder::new(&self.app, label.as_str(), WebviewUrl::App(page.into()))
             .title("NekoWite")
             .inner_size(width, height)
