@@ -27,9 +27,32 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-function mount(options: { value?: string | number, attrs?: Record<string, unknown> } = {}) {
-  const host = document.createElement('div')
-  document.body.appendChild(host)
+/**
+ * Mount the component where the app mounts it.
+ *
+ * `shell` is `AppShell.vue`'s element: the one that carries the user's appearance (the four
+ * `data-*` axes and the eight inline `--app-*` properties), and therefore the element the popup is
+ * teleported into. A case that leaves it off is mounting into a page the product does not have —
+ * which is worth one case of its own, for the fallback, and not for the rest.
+ */
+function mount(
+  options: { value?: string | number, attrs?: Record<string, unknown>, shell?: boolean } = {},
+) {
+  // The app's own shape: `.shell` is the element the appearance is published on, and 21 of the 22
+  // call sites put the component inside a `<label for>` that names it — a caption the label makes
+  // clickable.
+  const shell = document.createElement('div')
+  if (options.shell === true) {
+    shell.className = 'shell'
+    shell.dataset.theme = 'dark'
+    shell.style.setProperty('--app-text', '#e8f3e2')
+  }
+  document.body.appendChild(shell)
+  const host = options.shell === true ? document.createElement('label') : shell
+  if (options.shell === true) {
+    host.setAttribute('for', 'test-menu')
+    shell.appendChild(host)
+  }
   const model = ref<string | number>(options.value ?? 'a')
   const app = createApp({
     setup: () => () => h(SelectMenu, {
@@ -163,7 +186,7 @@ describe('SelectMenu', () => {
     trigger().dispatchEvent(tab)
     await nextTick()
 
-    // Not swallowed: the popup is teleported out of the trigger's subtree and
+    // Not swallowed: the popup is teleported out of the host's subtree and
     // its rows are not tabbable, so the next stop is the field after this one.
     expect(tab.defaultPrevented).toBe(false)
     expect(trigger().getAttribute('aria-expanded')).toBe('false')
@@ -216,6 +239,38 @@ describe('SelectMenu', () => {
     await vi.waitFor(() =>
       expect(popup()?.className).not.toContain('select-popup-enter-from'),
     )
+  })
+
+  it('renders the popup inside the element that carries the appearance', async () => {
+    mount({ value: 'a', shell: true })
+    await press('Enter')
+
+    // The popup is teleported — it has to be, so that no ancestor can become the containing block
+    // of a `position: fixed` box and answer its coordinates from somewhere else — but *where* it is
+    // teleported to is the whole of this case. `.shell` is `AppShell.vue`'s element and the only
+    // place `data-theme` and the inline `--app-*` properties live; `body` is outside it, which is
+    // why every popup in the app used to draw `palettes.css`'s light `:root` block in a dark theme.
+    const shell = document.body.querySelector('.shell')
+    expect(shell).not.toBeNull()
+    expect(popup()?.parentElement).toBe(shell)
+    expect(popup()?.parentElement).not.toBe(document.body)
+    // And not in the host's own subtree either: the call site wraps the trigger in a `<label for>`,
+    // whose activation behaviour would forward a press on the popup's own padding to the control it
+    // names, closing the list it was pressed inside (measured in Chromium — the reason the popup is
+    // not simply rendered where it is written).
+    const label = trigger().closest('label')
+    expect(label, 'the host wrapped the trigger in a label').not.toBeNull()
+    expect(label?.contains(popup())).toBe(false)
+  })
+
+  it('falls back to the body on a page that has no shell', async () => {
+    // The pet window's page is the shape: it publishes the appearance on the document element
+    // (`pet-page-appearance.ts`), so everything under `body` there is inside the scope — and a
+    // `Teleport` aimed at a selector that matched nothing would render *nothing* rather than an
+    // unthemed popup. This is the case that says the fallback is deliberate.
+    mount({ value: 'a' })
+    await press('Enter')
+    expect(popup()?.parentElement).toBe(document.body)
   })
 
   it('carries the host attributes onto the trigger', () => {

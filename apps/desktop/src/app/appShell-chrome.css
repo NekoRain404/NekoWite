@@ -24,17 +24,33 @@ html, body, #app { margin: 0; padding: 0; height: 100%; width: 100%; }
   min-height: 0;
   overflow: hidden;
   background: var(--app-canvas);
-  /* The family has to be re-declared HERE, on the element that redefines
-     `--app-font` (the inline style above), and not only on `:root` and `body`
-     where `style.css` states it. A custom property is inherited, but a
-     `font-family` declaration is resolved where it is written: `body`'s
+  /* All three of the inherited typography properties have to be re-declared
+     HERE, on the element that redefines the variables they read (the inline
+     style above), and not only on `:root` and `body` where `style.css` states
+     them. A custom property is inherited, but a `font-family`/`font-size`/
+     `line-height` declaration is resolved where it is written: `body`'s
      `var(--app-font)` is substituted with the value body inherits — the
      `tokens.css` default — and every descendant inherits that RESULT, not the
      variable. So the picker used to reach only the elements that happened to
      read `var(--app-font)` themselves (buttons, inputs) and left everything
      that merely inherited on the default: choosing a serif interface gave a
-     serif button inside a sans application. */
+     serif button inside a sans application.
+
+     The size and the leading are that same sentence, one setting each, and they
+     were still `body`'s: measured in Chromium at 17px with a leading of 2,
+     `.shell`'s own computed `font-size` was the token block's `15px` (and its
+     `line-height` `27px` = 15 × 1.8) while the `--app-body-size` it published
+     was `17px` and its `--app-line-height` was `2`. Only elements that read the
+     variables themselves (the two editor panes) followed the user; everything
+     that merely inherited sat at the default forever — and at 12px or 20px the
+     inherited baseline did not move at all. Where a surface wants a size of its
+     own it declares one (`font-size: 12px` is everywhere in this app, which is
+     why the fix is invisible at the defaults: measured, 0 elements move at
+     15px/1.8, and the elements that do move when the user has chosen otherwise
+     are the ones that were inheriting — see `e2e/app-shell-type.spec.ts`). */
   font-family: var(--app-font);
+  font-size: var(--app-body-size);
+  line-height: var(--app-line-height);
 }
 .shell-body {
   flex: 1;

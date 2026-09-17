@@ -959,6 +959,58 @@ function verify(results) {
       preview?.dialogLineHeight !== preview?.rootLineHeight &&
       preview?.dialogBodySize === preview?.shellBodySize,
   )
+  /*
+   * The select's own popup, which is the dialog's defect one component over and in this engine.
+   *
+   * `SelectMenu.vue` teleported it to `body`, which is outside `.shell` — the same sentence as the
+   * dialog's, with a wider blast radius: every one of the app's 22 lists. It is teleported still
+   * (an ancestor with a `transform`/`backdrop-filter`/`contain` becomes the containing block of a
+   * `position: fixed` box, and the settings overlay is already one), but into the shell — so the
+   * three readings below are one property per element, and the root is the fence.
+   */
+  run(
+    'and a select’s popup draws it too — the list is inside the shell and not on the page body',
+    `list in ${JSON.stringify(preview?.popup?.parent)}; elevated ${JSON.stringify(preview?.popup?.elevated)} = shell ${JSON.stringify(preview?.shellElevated)} ≠ root ${JSON.stringify(preview?.rootElevated)}; font ${JSON.stringify(preview?.popup?.font)} = shell ≠ root ${JSON.stringify(preview?.rootFont)}; a row’s family ${JSON.stringify(preview?.popup?.rowFont)}; row ${JSON.stringify(preview?.popup?.rowColor)} vs trigger ${JSON.stringify(preview?.popup?.triggerColor)}; face ${JSON.stringify(preview?.popup?.background)}, shadow ${JSON.stringify(preview?.popup?.shadow)}, ${JSON.stringify(preview?.popup?.gap)}px off the trigger`,
+    preview?.popup?.parent === 'shell' &&
+      preview?.popup?.elevated === preview?.shellElevated &&
+      preview?.popup?.elevated !== preview?.rootElevated &&
+      preview?.popup?.font === preview?.shellFont &&
+      preview?.popup?.font !== preview?.rootFont &&
+      preview?.popup?.rowFont === preview?.shellFont &&
+      // The pair: two elements that each declare `color: var(--app-text)`, and the closed control is
+      // the one that was always right — it never left the shell.
+      preview?.popup?.rowColor === preview?.popup?.triggerColor &&
+      // And it is still placed by the recipe: four pixels off the edge it opened from, so the
+      // retarget moved what the list *resolves* and not where it *is*.
+      Math.abs((preview?.popup?.gap ?? 0) - 4) < 0.5,
+  )
+
+  /*
+   * The app's **inherited** size and leading, which is the other half of the same defect: they were
+   * stated on `body` (`style.css:3`) and `body` is outside `.shell`, so `var(--app-body-size)`
+   * resolved there to the token block's `15px` and the whole application inherited that result at
+   * every setting. The shell now declares them beside the `font-family` it has always re-declared
+   * for the same reason (`appShell-chrome.css:52-53`).
+   *
+   * Four numbers, and the app's page is the one that decides them: a stored `99` the read clamps to
+   * the control's ceiling (20, the check below reads the same number), a leading of 2 driven through
+   * the field above, the page root's `15px` token block, and `body`'s own computed size — which is
+   * that same `15px` and the number a surface outside the shell still gets.
+   */
+  run(
+    'and the app inherits the size and leading the shell publishes, not the page body’s',
+    `shell drew ${JSON.stringify(preview?.shellFontSize)} at leading ${JSON.stringify(preview?.shellLineHeightPx)} while publishing ${JSON.stringify(preview?.shellFontSizeProp)} / ${JSON.stringify(preview?.shellLineHeightProp)}; an element that declares none drew ${JSON.stringify(preview?.contentFontSize)} / ${JSON.stringify(preview?.contentLineHeight)}; the page root carries ${JSON.stringify(preview?.rootBodySize)} and the body drew ${JSON.stringify(preview?.bodyFontSize)}`,
+    preview?.shellFontSize === '20px' &&
+      preview?.shellFontSize === preview?.shellFontSizeProp &&
+      // The leading is a number, so the shell's own box is its size times it: 20 × 2.
+      preview?.shellLineHeightPx === '40px' &&
+      preview?.shellLineHeightProp === '2' &&
+      preview?.contentFontSize === preview?.shellFontSize &&
+      preview?.contentLineHeight === preview?.shellLineHeightPx &&
+      // Both directions: the number must not be the token block's, and not the one `body` drew.
+      preview?.shellFontSize !== preview?.rootBodySize &&
+      preview?.shellFontSize !== preview?.bodyFontSize,
+  )
   // FAILS IF: the body size above the control's ceiling is drawn at the ceiling by *one* window and
   // verbatim by the other — the third defect, in the engine that ships. The app's number is what its
   // own shell read from the blob it was loaded with (99, written before the page came up), and the
@@ -1225,6 +1277,46 @@ const wrote = arguments[0], done = arguments[arguments.length - 1];
   const style = getComputedStyle(bubble);
   const surface = (el, name) => (el ? getComputedStyle(el).getPropertyValue(name).trim() : null);
   const page_ = document.documentElement;
+
+  /*
+   * The select's popup, which is the same defect one component over: it was teleported to the page
+   * body, so every one of the app's 22 lists resolved the page root's tokens. Read here rather than
+   * in the step above because this is where the dialog is measured; the trigger is the same one, and
+   * the list is closed again before anything else reads the page.
+   */
+  let popupRead = null;
+  const trigger = document.querySelector('#settings-ui-font');
+  if (trigger) {
+    trigger.click();
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    const list = document.querySelector('.select-popup');
+    const row = list ? list.querySelector('.select-option') : null;
+    if (list && row) {
+      const listBox = list.getBoundingClientRect();
+      const triggerBox = trigger.getBoundingClientRect();
+      const above = triggerBox.top - listBox.bottom;
+      const below = listBox.top - triggerBox.bottom;
+      popupRead = {
+        parent: list.parentElement ? String(list.parentElement.className) : null,
+        elevated: surface(list, '--app-elevated'),
+        font: surface(list, '--app-font'),
+        background: getComputedStyle(list).backgroundColor,
+        shadow: getComputedStyle(list).boxShadow,
+        // Two elements that both declare the same text colour property — the row and the closed
+        // control it belongs to — so the pair is the engine's answer and not a table written twice.
+        rowColor: getComputedStyle(row).color,
+        triggerColor: getComputedStyle(trigger).color,
+        rowFont: getComputedStyle(row).fontFamily,
+        gap: above > 0 ? above : below,
+      };
+      // Closed with Escape and NOT by clicking a row: a row commits the value it carries, and the
+      // first row of this list is the default interface font — which would put the shell back on
+      // system-ui for every reading after this one (it did, and the check below said so).
+      trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+
   done({
     ok: true,
     // The two readings the size claim is made of: what the stage drew, and which property carried it.
@@ -1258,6 +1350,20 @@ const wrote = arguments[0], done = arguments[arguments.length - 1];
     rootBodySize: surface(page_, '--app-body-size'),
     rootFont: surface(page_, '--app-font'),
     rootLineHeight: surface(page_, '--app-line-height'),
+    // The select's list — where it was rendered, what it resolved and how far off its trigger it
+    // sits (SelectMenu.vue's popupHost and place), plus the row/trigger colour pair.
+    popup: popupRead,
+    // And the *inherited* typography, which is the second half of this round: what the engine
+    // computed for the shell and for an element that declares no size of its own, against the
+    // property the shell publishes and against the two numbers a fallback would land on (the page
+    // root's token block, and body, where style.css:3 states the declaration).
+    shellFontSize: shell ? getComputedStyle(shell).fontSize : null,
+    shellLineHeightPx: shell ? getComputedStyle(shell).lineHeight : null,
+    shellFontSizeProp: surface(shell, '--app-body-size'),
+    shellLineHeightProp: surface(shell, '--app-line-height'),
+    contentFontSize: content ? getComputedStyle(content).fontSize : null,
+    contentLineHeight: content ? getComputedStyle(content).lineHeight : null,
+    bodyFontSize: getComputedStyle(document.body).fontSize,
   });
 })().catch((error) => done({ ok: false, why: String((error && error.message) || error) }));
 `

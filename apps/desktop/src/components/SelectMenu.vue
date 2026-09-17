@@ -28,17 +28,48 @@ let instances = 0
  *
  * The keyboard model is a select's: focus never leaves the trigger, and
  * `aria-activedescendant` names the row the arrows are on. That is what lets
- * `Tab` fall through to the next field on its own (the popup is teleported away
- * from the trigger and its rows are not tabbable), and it is the arrangement
- * `ui/CommandPalette.vue` uses for its own list. The popup follows the recipe
- * `ui/ContextMenu.vue` established — same surface, radius, shadow, placement,
- * dismissal and motion rungs. (Not the same code: ContextMenu sits in the
- * frozen `ui/` surface, so its placement and dismissal are ported below.)
+ * `Tab` fall through to the next field on its own — the popup's rows carry
+ * `tabindex="-1"`, so they are not on its path wherever the popup is rendered —
+ * and it is the arrangement `ui/CommandPalette.vue` uses for its own list. The
+ * popup follows the recipe `ui/ContextMenu.vue` established — same surface,
+ * radius, shadow, placement, dismissal and motion rungs. (Not the same code:
+ * ContextMenu sits in the frozen `ui/` surface, so its placement and dismissal
+ * are ported below.)
+ *
+ * **Where the popup goes, and why it does not simply render here.** `place()`
+ * turns a `getBoundingClientRect()` — a *viewport* rectangle — into `left`/`top`
+ * and `place()`'s window clamps are the window's, which is only an answer while
+ * the popup's containing block is the viewport: an ancestor with a `transform`,
+ * a `translate`, a `filter`, a `backdrop-filter` or a `contain` becomes the
+ * containing block instead, and every coordinate is then measured from *its*
+ * padding box. The settings overlay is already one of those
+ * (`SettingsPanel.vue`'s `backdrop-filter`; measured), and it is benign today
+ * only because it happens to cover the viewport exactly — the popup's placement
+ * would rest on that accident rather than on the recipe.
+ *
+ * Nor is the trigger's own parent safe. 21 of this app's 22 call sites wrap the
+ * trigger in a `<label for>` that names it, and a popup inside that label hands
+ * its clicks to the label's activation behaviour: measured in Chromium, a press
+ * on the popup's own 5px padding forwards to the trigger and closes the list it
+ * was pressed inside.
+ *
+ * So the popup is teleported out of the host's subtree all the same — but not to
+ * `body`, which is *outside* the one element that carries the user's appearance.
+ * `AppShell.vue:271-292` puts `data-theme`, `data-color-scheme`, `data-accent`,
+ * `data-contrast` and the eight inline `--app-*` properties on `.shell` and
+ * nowhere else in the page, so a child of `body` resolves `--app-elevated`,
+ * `--app-text`, `--app-border`, `--app-shadow-menu` and `--app-font` from
+ * `palettes.css`'s `:root` block: every select in the app opened a light popup
+ * in a dark theme, with the default face and the light shadow. The popup now
+ * renders inside `.shell` and inherits the one declaration set — nothing about
+ * the appearance is repeated here, exactly as `SettingsPanel.vue` stopped
+ * repeating it by dropping its own teleport. `popupHost` below is where that
+ * element is found.
  *
  * `disabled` needs no prop: it falls through to the trigger, a real `<button>`
  * that takes no clicks and is skipped by Tab when disabled.
  */
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ChevronDown } from 'lucide-vue-next'
 import { modalStack } from '../services/modal-stack'
 
@@ -73,6 +104,28 @@ const pos = ref<{ left: number; top: number; minWidth: number; drop: 'down' | 'u
 
 const triggerEl = ref<HTMLButtonElement | null>(null)
 const popupEl = ref<HTMLElement | null>(null)
+
+/**
+ * What the popup's `<Teleport>` is aimed at: the trigger's nearest `.shell`, or
+ * `body` when the page has none.
+ *
+ * Resolved from the trigger rather than written as `to=".shell"`, because a
+ * `Teleport` whose selector matches nothing renders *nothing*: `resolveTarget`
+ * returns null, warns in development, and `TeleportImpl` never calls the mount
+ * the slot's nodes are handed to. That is a popup that never opens rather than a
+ * popup that opens unthemed — the silent half of this project's signature
+ * failure. A page that mounted a select outside the main window would have to
+ * find its appearance where such a page keeps it, and `body` — what this
+ * component teleported to before — is that place: `pet-page-appearance.ts`
+ * publishes the same axes and properties on the *document element* of the pet
+ * window's page, so everything under `body` there is already inside the scope.
+ * The fallback is therefore the old behaviour and not a second declaration: it
+ * repeats no value.
+ */
+const popupHost = ref<Element | string>('body')
+onMounted(() => {
+  popupHost.value = triggerEl.value?.closest('.shell') ?? 'body'
+})
 
 const uid = props.id ?? `select-menu-${++instances}`
 const listId = `${uid}-list`
@@ -294,7 +347,7 @@ onBeforeUnmount(() => {
       :size="14"
       :stroke-width="1.8"
     />
-    <Teleport to="body">
+    <Teleport :to="popupHost">
       <Transition name="select-popup">
         <div
           v-if="open"
