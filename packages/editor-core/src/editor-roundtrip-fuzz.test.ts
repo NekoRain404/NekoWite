@@ -219,17 +219,21 @@ describe('editor open/save canonicalizations (content preserved, form changed)',
     })
   })
 
-  it('writes a `<br />` marker for an empty table cell and round-trips it', async () => {
-    // An empty paragraph is serialized by milkdown's paragraph serializer as a
-    // standalone `<br />` so an intentional blank line survives a reopen;
-    // `visitEmptyLine` removes it again while parsing. The marker is stable
-    // (the idempotence cases above re-save the same bytes) and the export strips
-    // it again so it never shows up as literal text — see
-    // `export/renderNodes.test.ts`.
+  it('writes an empty table cell as an empty cell, not as a `<br />` marker', async () => {
+    // Milkdown's paragraph serializer writes a standalone `<br />` for an empty
+    // paragraph, which is a real convention for a blank line between two blocks;
+    // a cell is not one of those. Inside a cell that paragraph IS the cell, so
+    // the marker said "empty" in the only way it could — six characters of
+    // syntax in the user's note for every blank cell of every table, which other
+    // Markdown tools render as a break and the source pane shows as text.
+    // `table/stringify.ts` drops it there and `dropEmptyCellBreaks` keeps it out
+    // of the model, and the two together are what make this hold. The blank-line
+    // convention itself is untouched — see `inline-break.test.ts`.
     await withEditor(async (ed) => {
       await ed.open('| a | b |\n| - | - |\n|  |  |\n')
       const saved = await ed.save()
-      expect(saved).toContain('<br />')
+      expect(saved).not.toContain('<br')
+      expect(saved).toBe('| a | b |\n| - | - |\n|   |   |\n')
       await ed.open(saved)
       expect(await ed.save()).toBe(saved)
     })

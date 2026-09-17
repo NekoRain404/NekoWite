@@ -262,6 +262,51 @@ function restoreNodes(tree: MdastLike): void {
 }
 
 /**
+ * Drop a `<br>` that is the whole of a table cell, leaving the cell empty.
+ *
+ * This is the parse half of the empty-cell rule; `table/stringify.ts` is the
+ * write half, and neither is sufficient alone. A note written before that rule
+ * existed holds `| <br /> |` in every blank cell, and a line with pipes in it is
+ * never a "standalone line" to the masker — so the marker is masked, restored as
+ * an `html` atom, and the save after it writes `<br />` straight back. Dropping
+ * the atom here is what makes an existing file shed the marker on its next save
+ * instead of keeping it forever.
+ *
+ * It is also what keeps the write rule from having to guess. With the atom gone
+ * the cell holds nothing, so a `<br>` that IS in a cell is always one the reader
+ * put between two things — `a<br />b`, the only line break a GFM cell can
+ * express — and the write side leaves it alone.
+ *
+ * The shape has to be read off the PARSER's tree, which is not the serializer's:
+ * mdast-util-gfm-table holds a cell's content as phrasing children directly
+ * (there is no `paragraph` in the cell until the schema builds one), and the
+ * masker's repair can leave empty text runs on either side of the atom it puts
+ * back — `[text "", html, text ""]` is what one marker looks like. So "the whole
+ * cell" is decided by what is left after the empty runs are discounted.
+ *
+ * Nothing else about the empty-line convention moves. A marker standing alone
+ * between two blocks (`a` / `<br />` / `b`) is still folded back into an empty
+ * paragraph: that is a marker on its own LINE, `visitEmptyLine` has already
+ * handled it by the time this runs, and it is a different tree shape.
+ */
+export function dropEmptyCellBreaks(tree: MdastLike): void {
+  const children = tree.children
+  if (!children) return
+  for (const child of children) {
+    if (Array.isArray(child.children)) dropEmptyCellBreaks(child)
+  }
+  if (tree.type !== 'tableCell') return
+  const significant = children.filter(
+    (child) => !(child.type === 'text' && String(child.value ?? '').trim() === ''),
+  )
+  if (significant.length !== 1) return
+  const only = significant[0]
+  if (only.type !== 'html' || typeof only.value !== 'string') return
+  if (!isInlineBreakValue(only.value)) return
+  tree.children = children.filter((child) => child !== only)
+}
+
+/**
  * Strip any sentinel the walk above could not reach.
  *
  * The sentinel pair addresses positions in a text run, which is why the repair

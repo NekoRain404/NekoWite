@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach } from 'vitest'
 import { createEditor } from '../editor'
 import { basicPlugins } from '../plugins/basic'
-import { getCommand } from '../registry'
+import { getCommand, getMarkdownPrompt } from '../registry'
 import { insertTable, TABLE_COMMAND_ID, tableMarkdown } from './plugin'
 
 afterEach(() => {
@@ -25,9 +25,16 @@ describe('insertTable', () => {
     insertTable(view, 2, 2)
 
     const md = await editor.save()
-    expect(md).toContain('|')
-    expect(md).toMatch(/^|/m)
-    expect(md).toContain('---')
+    expect(md).toMatch(/^\|/m)
+    // Every cell of a fresh table is empty, so every cell here is genuinely
+    // empty on disk. This used to assert `---`, which passed for the wrong
+    // reason: the placeholder `<br />` the serializer wrote into each blank cell
+    // is six characters wide, and the delimiter row is padded to the widest cell
+    // — so the row was `| ------ | ------ |` because of the marker, not because
+    // the columns were anything. The assertion is now about the shape.
+    expect(md.trim().split('\n')[1]).toBe('| - | - |')
+    expect(md).not.toContain('<br')
+    expect(await (async () => (await editor.open(md), editor.save()))()).toBe(md)
   })
 
   it('inserts a custom rows×cols table with the right dimensions', async () => {
@@ -109,6 +116,49 @@ describe('insertTable', () => {
       editor.destroy()
     }
     expect(seen).toEqual(['- - -', '- - -', '- - -', '- - -'])
+  })
+
+  it('registers a source-mode prompt, so the source pane gets the size dialog too', async () => {
+    // Source mode used to insert a hardcoded 3×3 — one button meaning two
+    // different things in two view modes, and no way for the reader to say how
+    // big the table was. The prompt is the same dialog, writing the Markdown the
+    // answer describes.
+    const prompt = getMarkdownPrompt(TABLE_COMMAND_ID)
+    expect(prompt).toBeDefined()
+
+    const produced: Array<{ text: string; caret?: number }> = []
+    prompt?.ask((insert) => {
+      if (typeof insert !== 'string') produced.push(insert)
+    })
+    await Promise.resolve()
+
+    expect(document.querySelector('.table-dialog')).toBeTruthy()
+    const ok = [...document.querySelectorAll('.table-dialog-actions button')].find(
+      (b) => b.textContent?.trim() === '确定',
+    ) as HTMLButtonElement
+    ok.click()
+
+    // The Markdown that came back is the size the dialog is showing. What the
+    // STEPPERS do is not asserted here and cannot be: they sit inside a
+    // `<label>`, and happy-dom does not deliver a click on a button there — the
+    // handler never runs, while the same app's cancel and confirm handlers do.
+    // In the engine that ships they work, and the run that says so is the
+    // WebKitGTK probe (`apps/desktop/e2e/webkit/probe-table.mjs`), which stepped
+    // 3×3 to 4×5 through real driver clicks and got a 4-row, 5-column table.
+    expect(produced).toHaveLength(1)
+    expect(produced[0].text).toBe(`\n${tableMarkdown(3, 3)}\n`)
+    expect(document.querySelector('.table-dialog')).toBeNull()
+  })
+
+  it('inserts nothing when the source-mode size dialog is cancelled', () => {
+    // The fallback template is still registered for a host that does not resolve
+    // prompts, but a host that does must not insert a default the reader did not
+    // choose.
+    const produced: unknown[] = []
+    getMarkdownPrompt(TABLE_COMMAND_ID)?.ask((insert) => produced.push(insert))
+    const cancel = [...document.querySelectorAll('.table-dialog-actions button')][0] as HTMLButtonElement
+    cancel.click()
+    expect(produced).toEqual([])
   })
 
   it('table.insert command opens the size dialog instead of inserting fixed 3×3', async () => {

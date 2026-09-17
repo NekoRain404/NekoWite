@@ -186,15 +186,21 @@ describe('the pane renders the author’s break as a line break', () => {
     expect(shown).not.toContain('<br')
   })
 
-  it('renders the empty-cell marker as a break, so an empty cell looks empty', async () => {
-    // The serializer writes a standalone `<br />` for an empty cell, and a line
+  it('empties a cell that held nothing but a `<br />`, in the model as well as on screen', async () => {
+    // A note the user already has holds `| <br /> |` in its blank cells. A line
     // with pipes is never a “standalone line” to the masker, so the marker comes
-    // back through the inline path. It used to be shown to the reader as the text
-    // `<br />` inside every empty cell.
-    const shown = await withEditor('| a |\n| - |\n| <br /> |\n', async (ed) =>
-      ed.getView().dom.textContent,
-    )
-    expect(shown).toBe('a')
+    // back through the inline path as an `html` atom: the cell renders as empty
+    // either way, but the ATOM was the seed of the loop — typing beside it made
+    // the next save write `<br />x`, and the marker was in the file for good.
+    // `dropEmptyCellBreaks` takes it out of the tree, so the cell the reader
+    // types into really is empty.
+    await withEditor('| a |\n| - |\n| <br /> |\n', async (ed) => {
+      expect(ed.getView().dom.textContent).toBe('a')
+      expect(ed.getView().dom.querySelector('span[data-type="html"]')).toBeNull()
+      const cell = ed.getView().state.doc.child(0).child(1).child(0)
+      expect(cell.textContent).toBe('')
+      expect(cell.child(0).content.size).toBe(0)
+    })
   })
 
   it('renders the exported document with the same break', async () => {
@@ -315,11 +321,13 @@ describe("the block-level empty-paragraph marker convention is unchanged", () =>
     })
   })
 
-  it("keeps the empty-cell marker round-tripping", async () => {
+  it("leaves a cell that was empty from the start empty in the file", async () => {
     // The pinned behavior from editorRoundtripFuzz.test.ts, spelled out here too
-    // because the fix must not weaken it.
+    // because the fix must not weaken it. It used to pin the opposite — the
+    // marker round-tripping — which is the behavior the reader reported.
     const saved = await savedAndStable("| a | b |\n| - | - |\n|  |  |\n")
-    expect(saved).toContain("<br />")
+    expect(saved).not.toContain("<br")
+    expect(saved).toBe("| a | b |\n| - | - |\n|   |   |\n")
   })
 })
 

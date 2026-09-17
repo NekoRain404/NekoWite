@@ -106,6 +106,37 @@ const markdownCommands = new Map<string, MarkdownCommand>()
 export function registerMarkdownCommand(id: string, produce: MarkdownCommand): void {
   markdownCommands.set(id, produce)
 }
+
+/**
+ * A source-mode command that has to ASK before it can produce its Markdown.
+ *
+ * `MarkdownCommand` answers with text, which is right for every command whose
+ * source form is a fixed transform — bold wraps the selection, a heading writes
+ * `## `. A table is not one of those: how many rows and columns it has is the
+ * reader's to choose, and the size dialog is where they choose it. This is that
+ * contract. The command raises whatever it needs to ask and calls `apply` with
+ * the Markdown once the reader has answered; a reader who cancels inserts
+ * nothing, which is why this cannot simply resolve to a default size.
+ *
+ * A host that does not know about this contract keeps the `MarkdownCommand`
+ * entry beside it and inserts that instead, so registering a prompt is additive
+ * rather than a change the host has to make in the same step.
+ */
+export interface MarkdownPrompt {
+  ask(apply: (insert: MarkdownInsert) => void): void
+}
+
+const markdownPrompts = new Map<string, MarkdownPrompt>()
+
+export function registerMarkdownPrompt(id: string, prompt: MarkdownPrompt): void {
+  markdownPrompts.set(id, prompt)
+}
+export function getMarkdownPrompt(id: string): MarkdownPrompt | undefined {
+  return markdownPrompts.get(id)
+}
+export function unregisterMarkdownPrompt(id: string): void {
+  markdownPrompts.delete(id)
+}
 export function getMarkdownCommand(id: string): MarkdownCommand | undefined {
   return markdownCommands.get(id)
 }

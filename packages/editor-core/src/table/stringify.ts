@@ -1,6 +1,7 @@
 import { remarkStringifyOptionsCtx } from '@milkdown/core'
 import type { MilkdownPlugin } from '@milkdown/ctx'
 import { mathToMarkdown } from '../math/nodes'
+import { isInlineBreakValue } from '../plugins/inline-break'
 
 interface HtmlNode {
   value?: string
@@ -13,6 +14,10 @@ interface MathNode {
 
 interface ParentNode {
   type?: string
+  /** `mdast-util-to-markdown` hands every handler the node it is rendering
+   *  INSIDE, children and all — which is the only way to ask whether this node
+   *  is the whole of its container (see {@link isSoleCellContent}). */
+  children?: unknown[]
 }
 
 /**
@@ -76,8 +81,32 @@ export function inTableCell(
   return node?.type === 'tableCell'
 }
 
+/**
+ * Whether the node being written is the ONLY thing its table cell holds.
+ *
+ * A GFM cell holds exactly one paragraph, so "the only child of that paragraph"
+ * and "the whole cell" are the same thing. A `<br>` of that shape is not content
+ * the author put between two things — it is what a cell with nothing in it looks
+ * like on the way out — and it must not be written (see the cell rule in
+ * {@link htmlHandler}).
+ *
+ * The distinction is the whole point: `a<br />b` keeps its break, `<br />` alone
+ * in a cell does not, and the file stops carrying a marker that means "empty".
+ */
+function isSoleCellContent(state: Loose, parent: Loose): boolean {
+  const p = parent as ParentNode | undefined
+  return inTableCell(state as StringifyState | undefined, p) && Array.isArray(p?.children) && p.children.length === 1
+}
+
 function htmlHandler(node: Loose, parent: Loose, state: Loose): string {
   const value = (node as HtmlNode).value || ''
+  // The empty-cell placeholder arrives here as an `html` node: milkdown's
+  // paragraph serializer emits `<br />` for an empty paragraph, and inside a cell
+  // that paragraph IS the cell. It used to reach the file, so every blank cell of
+  // every table was written `| <br /> |` — and, worse, the atom that came back on
+  // the next open made the save after it write `<br />` again beside whatever was
+  // typed next to it. Dropping it here is what stops the file ever holding one.
+  if (isInlineBreakValue(value) && isSoleCellContent(state, parent)) return ''
   // In the mdast the cell's content is wrapped in its own paragraph, so the
   // immediate parent is a `paragraph` in both the table and the ordinary case.
   // The construct stack is what tells them apart — `state.safe` uses the same
@@ -114,6 +143,13 @@ function mathHandler(node: Loose, parent: Loose, state: Loose): string {
  * break vanished entirely — Shift+Enter in a cell saved a file byte-identical to
  * one without the break. `<br />` is the spelling the parser keeps as an inline
  * break inside a cell (see plugins/remark.ts), so the round trip is stable.
+ *
+ * There is no "a break that is the WHOLE of its cell" case to handle here, and
+ * the absence is deliberate rather than an oversight: the preset's
+ * `serializeText` emits every child EXCEPT a trailing hardbreak, so a paragraph
+ * whose only child is one reaches this handler with nothing at all. A lone
+ * break in a cell therefore writes nothing already — measured, not assumed — and
+ * a guard for it here would be a guard that cannot fire.
  */
 function breakHandler(_node: Loose, parent: Loose, state: Loose): string {
   return inTableCell(state as StringifyState | undefined, parent as ParentNode) ? '<br />' : '\\\n'

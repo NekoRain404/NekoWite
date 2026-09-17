@@ -5,9 +5,11 @@ import type { EditorView } from '@codemirror/view'
 import {
   registerCommand,
   registerMarkdownCommand,
+  registerMarkdownPrompt,
   registerToolbar,
   unregisterCommand,
   unregisterMarkdownCommand,
+  unregisterMarkdownPrompt,
   unregisterToolbar,
 } from '@nekowite/editor-core'
 import { runEditorCommand } from './run-editor-command'
@@ -56,6 +58,8 @@ describe('runEditorCommand', () => {
     editorSessionManager.destroyAll()
     unregisterCommand('test.registry')
     unregisterMarkdownCommand('test.md')
+    unregisterMarkdownCommand('test.sized')
+    unregisterMarkdownPrompt('test.sized')
     // Registries are process-global: the template registered by one case must
     // not leak into the next.
     unregisterMarkdownCommand('quote')
@@ -92,6 +96,57 @@ describe('runEditorCommand', () => {
     expect(source.doc()).toBe('$$\n\n$$')
     // The caret was asked for inside the delimiters, ready for the body.
     expect(source.view.state.selection.main.head).toBe(3)
+  })
+
+  it('lets a command ASK before it writes, and inserts what the answer produced', () => {
+    // The table's source form is not a fixed transform: how many rows and
+    // columns is the reader's to choose. The prompt is what carries that answer
+    // back into the source pane — without it the command had to guess, and it
+    // guessed 3×3 for every reader.
+    registerRenderedEditor()
+    const source = makeSourceView('')
+    setSourceViewHandle({ getView: () => source.view, flush: () => undefined })
+    useViewStore().setMode('source')
+    let asked = 0
+    registerMarkdownPrompt('test.sized', {
+      ask: (apply) => {
+        asked += 1
+        apply({ text: '| a | b |\n| - | - |\n| 1 | 2 |' })
+      },
+    })
+
+    expect(runEditorCommand('test.sized')).toBe(true)
+    expect(asked).toBe(1)
+    expect(source.doc()).toBe('| a | b |\n| - | - |\n| 1 | 2 |')
+    expect(renderedRun).not.toHaveBeenCalled()
+  })
+
+  it('inserts nothing when the prompt is answered with a cancel', () => {
+    // A reader who closes the size dialog has not asked for a table. Resolving
+    // to a default size instead is what the old fixed template did, and it is
+    // the behaviour this contract exists to replace.
+    registerRenderedEditor()
+    const source = makeSourceView('before')
+    setSourceViewHandle({ getView: () => source.view, flush: () => undefined })
+    useViewStore().setMode('source')
+    registerMarkdownPrompt('test.sized', { ask: () => undefined })
+
+    expect(runEditorCommand('test.sized')).toBe(true)
+    expect(source.doc()).toBe('before')
+  })
+
+  it('prefers the prompt over a registered Markdown template', () => {
+    registerRenderedEditor()
+    const source = makeSourceView('')
+    setSourceViewHandle({ getView: () => source.view, flush: () => undefined })
+    useViewStore().setMode('source')
+    registerMarkdownCommand('test.sized', () => 'FALLBACK')
+    registerMarkdownPrompt('test.sized', {
+      ask: (apply) => apply({ text: 'ANSWERED' }),
+    })
+
+    expect(runEditorCommand('test.sized')).toBe(true)
+    expect(source.doc()).toBe('ANSWERED')
   })
 
   it('prefers the Markdown template over the text transforms', () => {

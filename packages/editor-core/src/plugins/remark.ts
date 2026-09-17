@@ -5,7 +5,7 @@ import { ParserState } from '@milkdown/transformer'
 
 import { normalizeMdxTree, withMdxSyntax } from '../mdx/document'
 import { parseWithTableRepair } from '../table/delimiter'
-import { maskInlineBreaks, restoreInlineBreaks, unmaskInlineBreaks } from './inline-break'
+import { dropEmptyCellBreaks, maskInlineBreaks, restoreInlineBreaks, unmaskInlineBreaks } from './inline-break'
 import type { MdastLike } from './inline-break'
 import { keepUnusedDefinitions, restoreKeptDefinitions } from './link-definitions'
 
@@ -130,6 +130,10 @@ export function createInlineBreakParser(ctx: Ctx): DocumentParser | null {
     keepUnusedDefinitions(tree)
     processor.runSync(tree as never, source)
     restoreInlineBreaks(tree)
+    // After the restore, not before: the marker inside a cell is masked on the
+    // way in (a line with pipes is never “standalone”), so it only exists as an
+    // `html` node once the sentinel has been put back. See the function.
+    dropEmptyCellBreaks(tree)
     unescapeCellPipes(tree)
     restoreKeptDefinitions(tree, (start, end) => unmaskInlineBreaks(source.slice(start, end)))
     const state = guardEmptyText(new ParserState(schema) as unknown as ParserStateLike)

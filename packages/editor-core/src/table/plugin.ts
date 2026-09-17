@@ -3,9 +3,15 @@ import { editorViewCtx, EditorViewReady } from '@milkdown/core'
 import type { Node, Schema } from '@milkdown/prose/model'
 import type { EditorView } from '@milkdown/prose/view'
 
-import { registerCommand, registerMarkdownCommand, registerToolbar, unregisterCommand } from '../registry'
+import {
+  registerCommand,
+  registerMarkdownCommand,
+  registerMarkdownPrompt,
+  registerToolbar,
+  unregisterCommand,
+} from '../registry'
 import { isInTableCell } from './context'
-import { openTableDialog } from './dialog'
+import { openTableDialog, openTableSizeDialog } from './dialog'
 
 export const TABLE_COMMAND_ID = 'table.insert'
 
@@ -84,8 +90,23 @@ export function tableFeature(): void {
   unregisterCommand(TABLE_COMMAND_ID)
   registerCommand({ id: TABLE_COMMAND_ID, run: insertTableAtCursor })
   registerToolbar({ id: TABLE_COMMAND_ID, label: 'Table', run: insertTableAtCursor })
-  // Source mode: the dialog steps a table grid, but there is no grid to step
-  // without the rendered editor, so a default 3x3 Markdown table is inserted.
+  // Source mode: the SAME size dialog, writing the Markdown it describes. There
+  // is no grid to insert into, but "how many rows and columns" still has an
+  // answer the reader has to give, and it used to be given for them — this
+  // command inserted a fixed 3×3, so one button meant two different things in
+  // two view modes. See `openTableSizeDialog`.
+  registerMarkdownPrompt(TABLE_COMMAND_ID, {
+    ask: (apply) => {
+      openTableSizeDialog({
+        insert: (rows, cols) => {
+          apply({ text: `\n${tableMarkdown(rows, cols)}\n` })
+          return true
+        },
+      })
+    },
+  })
+  // Kept as the fallback for a host that does not resolve prompts: it inserts
+  // the default rather than nothing, which is what that host did before.
   registerMarkdownCommand(TABLE_COMMAND_ID, () => `\n${tableMarkdown(3, 3)}\n`)
 }
 

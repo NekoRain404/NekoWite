@@ -9,6 +9,24 @@ export interface TableDialogOptions {
 }
 
 /**
+ * Where a sized table goes once the reader has chosen its size.
+ *
+ * The rendered editor is one such place and the source pane is another, and the
+ * dialog below knows about neither. That split is the point: how many rows and
+ * columns to insert is the same question with the same answer in both view
+ * modes, and only the destination of the answer differs. Before it, source mode
+ * had no question at all — the same button inserted a fixed 3×3 there, which is
+ * a button meaning two different things in two modes.
+ */
+export interface TableInsertTarget {
+  /** Insert a `rows` × `cols` table. False when this target cannot, and the
+   *  dialog stays up so the reader is not left with a closed box and no table. */
+  insert(rows: number, cols: number): boolean
+  /** What to say when `insert` refuses. Nothing is shown when it is absent. */
+  refusal?: string
+}
+
+/**
  * The sizes a GFM table can actually have.
  *
  * A table always has a header row plus at least one data row, so 2 is the real
@@ -41,6 +59,21 @@ const clamp = (v: number, min: number, max: number): number =>
  * 2×2 default when the user confirms with the default values.
  */
 export function openTableDialog(view: EditorView, opts: TableDialogOptions = {}): void {
+  openTableSizeDialog(
+    { insert: (rows, cols) => insertTable(view, rows, cols), refusal: REFUSED_IN_CELL },
+    opts,
+  )
+}
+
+/**
+ * Ask for a size, and hand the answer to `target`.
+ *
+ * Separate from the view-shaped entry point above so the SOURCE pane can raise
+ * the same dialog: it has no grid for the dialog to insert into, but it can
+ * write the Markdown the answer describes, and the reader gets the same choice
+ * in both modes.
+ */
+export function openTableSizeDialog(target: TableInsertTarget, opts: TableDialogOptions = {}): void {
   const overlay = document.createElement('div')
   overlay.className = 'table-overlay'
   document.body.appendChild(overlay)
@@ -63,8 +96,7 @@ export function openTableDialog(view: EditorView, opts: TableDialogOptions = {})
     // `insertTable` replaces the selection, which is what "insert a table"
     // means everywhere else (and matches the same command's behavior when the
     // caret is merely collapsed).
-    const inserted = insertTable(
-      view,
+    const inserted = target.insert(
       clamp(rows, TABLE_MIN_ROWS, TABLE_MAX_ROWS),
       clamp(cols, TABLE_MIN_COLS, TABLE_MAX_COLS),
     )
@@ -72,7 +104,7 @@ export function openTableDialog(view: EditorView, opts: TableDialogOptions = {})
     // on a document that had not changed and the user was told nothing. The
     // answer is now the reason the dialog stays up.
     if (!inserted) {
-      refusal.value = REFUSED_IN_CELL
+      refusal.value = target.refusal ?? null
       return
     }
     cleanup()

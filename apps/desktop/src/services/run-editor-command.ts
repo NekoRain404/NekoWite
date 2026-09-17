@@ -16,7 +16,7 @@
  *   - anything else falls through to the registry, i.e. the rendered editor.
  */
 
-import { getCommand, getMarkdownCommand, getToolbar } from '@nekowite/editor-core'
+import { getCommand, getMarkdownCommand, getMarkdownPrompt, getToolbar } from '@nekowite/editor-core'
 import { sourcePaneOwnsInput } from './editor-ownership'
 import { getSourceView } from './source-view'
 import { insertSourceText, runSourceCommand } from './source-commands'
@@ -29,6 +29,19 @@ export function runEditorCommand(id: string): boolean {
   if (sourcePaneOwnsInput()) {
     const sourceView = getSourceView()
     if (sourceView) {
+      // A command whose Markdown is not one fixed transform ASKS first — the
+      // table's size is the reader's to choose, and this is where they choose it
+      // in source mode. A host that does not resolve the prompt falls through to
+      // the Markdown command below, which inserts the default.
+      const prompt = getMarkdownPrompt(id)
+      if (prompt) {
+        prompt.ask((produced) =>
+          typeof produced === 'string'
+            ? insertSourceText(sourceView, produced)
+            : insertSourceText(sourceView, produced.text, produced.caret),
+        )
+        return true
+      }
       // A node-inserting command publishes its Markdown equivalent; prefer it
       // over the text transforms, which do not know about it.
       const produce = getMarkdownCommand(id)
