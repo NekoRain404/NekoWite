@@ -186,11 +186,20 @@ for f in release/*.deb release/*.rpm release/*.AppImage; do
   label="$(basename "$f")"
   dest="$notice_work/${label//[^A-Za-z0-9]/_}"
   mkdir -p "$dest"
+  # **Absolute, because two of the arms below `cd` before they run their extractor.** `$f` comes
+  # from `release/*`, so it is relative to where this script started; inside `( cd "$dest" && … )`
+  # that same string resolves against `$dest` instead and the extractor is handed a path that does
+  # not exist. The rpm arm failed exactly that way — `rpm2archive: release/…rpm: No such file or
+  # directory`, for a file that is right there — and the AppImage arm has the identical shape and
+  # was never reached, because the rpm's `exit 1` came first. The same bug was found and fixed in
+  # `verify-opencode-linux.sh`'s `extract_package` earlier the same day; two scripts that open the
+  # same three formats both had it, which is the reason this comment is longer than the fix.
+  f_abs="$(realpath -- "$f")"
   case "$f" in
     *.deb)   dpkg-deb -x "$f" "$dest" ;;
-    *.rpm)   ( cd "$dest" && rpm2cpio "$f" | cpio -idm --quiet ) ;;
+    *.rpm)   ( cd "$dest" && rpm2cpio "$f_abs" | cpio -idm --quiet ) ;;
     *.AppImage)
-      ( cd "$dest" && "$f" --appimage-extract >/dev/null )
+      ( cd "$dest" && "$f_abs" --appimage-extract >/dev/null )
       if [ -d "$dest/squashfs-root" ]; then
         shopt -s dotglob; mv "$dest/squashfs-root"/* "$dest/"; shopt -u dotglob
         rmdir "$dest/squashfs-root"
