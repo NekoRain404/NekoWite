@@ -14,11 +14,11 @@
 //!
 //! ## What is driven, and the layer this stops at
 //!
-//! `ai_complete` — and the `stream_complete` it delegates to — takes a `&tauri::AppHandle`, which is
-//! `AppHandle<Wry>`, and an integration test cannot produce one: the only app it can build is
-//! `tauri::test`'s, whose runtime is `MockRuntime` (`ai_config_test.rs` says the same thing about
-//! why the credential rule needed its store injected). So this file drives the functions
-//! `stream_complete` itself calls, in its order, with its types:
+//! `ai_complete` takes a `&tauri::AppHandle`, which is `AppHandle<Wry>`, and an integration test
+//! cannot produce one: the only app it can build is `tauri::test`'s, whose runtime is `MockRuntime`
+//! (`ai_config_test.rs` says the same thing about why the credential rule needed its store
+//! injected). So this file drives the functions `stream_complete` itself calls, in its order, with
+//! its types:
 //!
 //! ```text
 //! validate_base_url      the policy call `ai_complete` makes before anything is dialled
@@ -30,6 +30,15 @@
 //!   -> completion_refusal    the verdict that decides `ai-done` from `ai-error`
 //! ```
 //!
+//! **`stream_complete` itself is callable from a test now**, and this file should move onto it:
+//! it is generic over the runtime (the reason is on `events::emit_ai_error`), so a `MockRuntime`
+//! app reaches its whole body, emits included —
+//! `ai_unreadable_response_test.rs` drives it against a loopback server on every run. What is left
+//! here is the paid turn, which is not re-pointed at it in the same change as that fix because
+//! nothing in that change could be verified against the gateway without spending a prompt. Until
+//! someone does, the one claim this file cannot make is that the body between the headers and the
+//! verdict behaves the same against a real provider as the per-line drive below does.
+//!
 //! The transport is the one seam that is REBUILT rather than called ([`app_transport`]): the app's
 //! own constructor, `transport::ai_http_client`, is `pub(super)` inside `providers::ai`, so an
 //! integration test has no path to it, and widening its visibility is a production edit this change
@@ -39,11 +48,12 @@
 //! `client::list_models`, i.e. through the shipped client, its shipped auth headers, its shipped
 //! pin and the trust anchors this crate's `reqwest` was built with, against this exact host.
 //!
-//! Not reproduced either: the ~50-line loop body of `stream_complete` that moves socket chunks into
-//! `CompletionStream` and its `StreamEvent`s into Tauri emits (`events::deliver_events`). Every
-//! decision that loop makes — stop on `Done`, flush the tail at EOF, what the answer is, what the
-//! usage was, whether the completion has to be reported as a failure — is the app's own code here;
-//! only the emission needs a window, and there is none.
+//! Not reproduced: the emissions. Every decision the loop makes — stop on `Done`, flush the tail at
+//! EOF, what the answer is, what the usage was, whether the completion has to be reported as a
+//! failure — is the app's own code here, but the loop that moves socket chunks into
+//! `CompletionStream` and its `StreamEvent`s into Tauri emits (`events::deliver_events`) is the
+//! app's own code only in the test above's file, where the responses are one this repository
+//! writes rather than one a gateway sent.
 //!
 //! ## The credential
 //!
@@ -353,11 +363,15 @@ async fn one_paid_turn_streams_through_the_apps_own_path() {
     // expected to end a stream with `data: [DONE]`, and that is the terminal event item 2 asks for,
     // but `stream_complete` treats EOF as an ending too. So a Base URL that answers a 200 with
     // something that is not an event stream at all — the SPA fallback `ai_model_fetch_test.rs`'s
-    // header is about, one wrong address away — is a red run here and, in the app, an `ai-done`
-    // carrying `full: ""`: `completion_refusal` returns `None` for an empty answer with no
-    // `finish_reason` and no reasoning, which `ai_completion_result_test.rs` pins as deliberate ("a
-    // no-op, not an error"). That divergence is reported rather than smoothed over; do not weaken
-    // this assertion to match it, and do not read the app's silence as this test's failure.
+    // header is about, one wrong address away — is a red run here and, in the app, an `ai-error`
+    // naming the address, the declared type and the opening of the body (`stream_complete`'s
+    // no-events verdict, pinned by `ai_unreadable_response_test.rs`). That used to be the app's
+    // third answer — an `ai-done` carrying `full: ""`, because `completion_refusal` returns `None`
+    // for an empty answer with no `finish_reason` and no reasoning — and that verdict is still what
+    // an empty turn the provider DELIVERED gets, which `ai_completion_result_test.rs` pins as
+    // deliberate ("a no-op, not an error"). Do not weaken this assertion to match either one: the
+    // two now report the same thing in different words, and this file is the sentence's only
+    // witness.
     assert!(
         terminal.is_some(),
         "the stream produced no terminal event: {chunks} chunk(s) and no `data: [DONE]`"
