@@ -57,7 +57,7 @@ function readout(overrides: Partial<AgentRuntimeReadout> = {}): AgentRuntimeRead
       authMethods: [{ id: 'opencode-login', name: 'Sign in to OpenCode' }],
     },
     capabilities: [
-      { feature: 'session-list', standing: 'advertised', detail: null },
+      { feature: 'session-list', declared: 'advertised', standing: 'advertised', detail: null },
     ],
     ...overrides,
   }
@@ -207,5 +207,83 @@ describe('the runtime page, when the handshake answered', () => {
     expect(el('runtime-unreadable')).not.toBeNull()
     expect(el('runtime-retry')).not.toBeNull()
     expect(el('runtime-process')).toBeNull()
+  })
+})
+
+/**
+ * The report has two halves and this page draws both of them — as two claims.
+ *
+ * `finding` is what this runtime reported; `declared` is what this build has on file about the
+ * engine version it was measured against. They are answers to different questions, and the row
+ * where they disagree is the only row where the file carries something the finding does not: the
+ * pinned version was measured to differ, which is what the declaration field exists to disclose.
+ * A page that drew one of them *as* the other would be the lie this whole readout refuses.
+ */
+describe('the two halves of a capability report', () => {
+  it('draws what this build has on file when it disagrees with what the runtime reported', async () => {
+    await render(
+      readout({
+        capabilities: [
+          {
+            feature: 'model-selection',
+            declared: 'advertised',
+            standing: 'unverified',
+            detail: 'no session response has been read',
+          },
+        ],
+      }),
+    )
+
+    const note = el('runtime-capability-model-selection')?.querySelector('[data-declaration]')
+    expect(note?.getAttribute('data-declaration')).toBe('advertised')
+    // Both claims are named in it, and each is named as its own: a line that named one of them
+    // would read as a second finding about the same engine.
+    expect(note?.textContent).toContain('on file as advertising this feature')
+    expect(note?.textContent).toContain('this runtime reported not measured')
+  })
+
+  it('draws no second line where the file and this runtime make the same claim', async () => {
+    // The three ways the two can agree, one row each — including `unavailable`, because a file that
+    // says the pinned version does not advertise a feature and a runtime that said no are one
+    // answer, and drawing the file again under it would be noise that reads as a qualification.
+    await render(
+      readout({
+        capabilities: [
+          { feature: 'session-list', declared: 'advertised', standing: 'advertised', detail: null },
+          {
+            feature: 'audio-attachments',
+            declared: 'not-advertised',
+            standing: 'not-advertised',
+            detail: 'the engine said no',
+          },
+          {
+            feature: 'slash-commands',
+            declared: 'unverified',
+            standing: 'unverified',
+            detail: 'nothing has been negotiated',
+          },
+        ],
+      }),
+    )
+
+    for (const feature of ['session-list', 'audio-attachments', 'slash-commands']) {
+      expect(
+        el(`runtime-capability-${feature}`)?.querySelector('[data-declaration]'),
+        feature,
+      ).toBeNull()
+    }
+  })
+})
+
+describe('a report that arrives with no rows', () => {
+  it('says the report is empty rather than drawing the frame over nothing', async () => {
+    // The heading and the hint are the report's own frame and they stay. What may not stay is a
+    // list drawn empty under them: a heading over nothing reads as "this engine can do nothing",
+    // which is an answer nobody gave.
+    await render(readout({ capabilities: [] }))
+
+    expect(el('runtime-capabilities-empty')).not.toBeNull()
+    expect(el('runtime-capabilities-empty')?.textContent).toContain('no capability rows')
+    expect(document.querySelector('.runtime-capabilities ul.runtime-rows')).toBeNull()
   })
 })

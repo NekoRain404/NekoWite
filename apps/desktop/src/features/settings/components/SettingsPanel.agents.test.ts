@@ -484,6 +484,14 @@ describe('the agents section in the settings dialog', () => {
     const unmeasured = el('runtime-capability-model-selection')
     expect(unmeasured?.querySelector('[data-standing="unverified"]')).not.toBeNull()
     expect(unmeasured?.textContent).toContain('no session response has been read')
+    // Both halves of the report reach this screen, and the comparison between them is what is
+    // asserted here rather than either field: the file and the runtime agree about `session-list`
+    // and disagree about `model-selection` (on file as advertised, nothing measured here), so a
+    // page that drew the file under every row or under none of them fails one of these two.
+    expect(listed?.querySelector('[data-declaration]')).toBeNull()
+    expect(unmeasured?.querySelector('[data-declaration]')?.textContent).toContain(
+      'on file as advertising this feature',
+    )
     // The handshake was read, so the page draws the negotiation and *not* the sentence standing in
     // for its absence: the two are different states and a page showing both would be lying twice.
     expect(el('runtime-not-negotiated')).toBeNull()

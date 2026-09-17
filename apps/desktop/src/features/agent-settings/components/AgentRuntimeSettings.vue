@@ -78,6 +78,34 @@ export interface AgentRuntimeLabels {
     advertised: string
     notAdvertised: string
     unverified: string
+    /**
+     * The same three arms as short clauses, for the sentence that names both claims at once.
+     *
+     * A line that restated the finding's own sentence would be a second copy of the line above it;
+     * a clause is enough there because the finding's sentence is already on screen.
+     *
+     * Keyed by the wire's own ids rather than by the catalogue's key names — the way
+     * {@link AgentRuntimeLabels.notNegotiated} is — so the row's arm indexes this record directly
+     * and a fourth arm added to the backend fails to typecheck here.
+     */
+    findingClaim: { advertised: string; 'not-advertised': string; unverified: string }
+    /**
+     * What this build has on file about the engine version it was measured against.
+     *
+     * Spelled here rather than typed as `Record<DeclaredCapability, string>` for the reason the
+     * record above is: the union is declared in the other script block, and a `.vue` file's two
+     * script blocks are two scopes.
+     */
+    declaredClaim: { advertised: string; 'not-advertised': string; unverified: string }
+    /**
+     * The sentence for a row where the two claims disagree — the only row that draws the file.
+     *
+     * A function rather than a template string, because the substitution belongs to the catalogue
+     * (`vue-i18n` owns the `{…}` syntax) the same way the profile sentence's does.
+     */
+    declaredDisagrees: (claims: { declared: string; finding: string }) => string
+    /** What stands in for the list when the backend answered with no rows at all. */
+    empty: string
   }
   update: { label: string; hostManaged: string; reportedOnly: string }
 }
@@ -133,6 +161,19 @@ export function runtimeLabels(): AgentRuntimeLabels {
       advertised: t('agent.settings.runtime.capabilities.advertised'),
       notAdvertised: t('agent.settings.runtime.capabilities.notAdvertised'),
       unverified: t('agent.settings.runtime.capabilities.unverified'),
+      findingClaim: {
+        advertised: t('agent.settings.runtime.capabilities.finding.advertised'),
+        'not-advertised': t('agent.settings.runtime.capabilities.finding.notAdvertised'),
+        unverified: t('agent.settings.runtime.capabilities.finding.unverified'),
+      },
+      declaredClaim: {
+        advertised: t('agent.settings.runtime.capabilities.declared.advertised'),
+        'not-advertised': t('agent.settings.runtime.capabilities.declared.notAdvertised'),
+        unverified: t('agent.settings.runtime.capabilities.declared.unverified'),
+      },
+      declaredDisagrees: (claims) =>
+        t('agent.settings.runtime.capabilities.declared.disagrees', claims),
+      empty: t('agent.settings.runtime.capabilities.empty'),
     },
     update: {
       label: t('agent.settings.runtime.update.label'),
@@ -177,6 +218,20 @@ export function runtimeLabels(): AgentRuntimeLabels {
  *    that folded `unverified` into `not-advertised` would tell a user an engine cannot do something
  *    nobody has established.
  *
+ * ## The capability report has two halves, and they are two claims
+ *
+ * `declared` is what this build has on file about the engine version it was measured against.
+ * `finding` is what *this* runtime reported — the handshake's answer, or that nothing has been
+ * negotiated. They answer different questions, and §3.4 rules that the first is a start-time hint
+ * and never the answer: an engine in front of the user is what the page is about.
+ *
+ * So the finding is drawn for every row, and the file is drawn as its own sentence **on the rows
+ * where the two disagree** ({@link declarationNote}). That is where the file carries something the
+ * finding does not — the version this build measured is not the one running, or the feature is one
+ * no session has answered for — and it is also why the field is on the wire at all: a page that
+ * showed only the finding would be hiding that the pinned version was measured to differ. On the
+ * rows where both halves agree there is one answer, and a second line under it would be noise.
+ *
  * ## What this page does not do
  *
  * There is nothing to press. Every fact arrives from the backend and none of it is this page's to
@@ -191,10 +246,28 @@ import { computed, onMounted, ref } from 'vue'
 /** What one measured capability's line says. The three arms are the backend's, not a summary. */
 export type CapabilityStanding = 'advertised' | 'not-advertised' | 'unverified'
 
-/** One feature and what has been measured about it. */
+/**
+ * What this build has on file about the engine version it was measured against.
+ *
+ * The same three words as {@link CapabilityStanding} and a separate type on purpose. The wire
+ * spells both halves with one vocabulary — `adapters::Capability` and `capabilities::Finding` were
+ * given the same arms deliberately — but they are claims about two different things: one about the
+ * version this build was measured against, the other about the engine this runtime is talking to.
+ * One type for both would make the page's comparison of them a comparison of a value with itself,
+ * which is exactly the collapse the report exists to prevent.
+ */
+export type DeclaredCapability = 'advertised' | 'not-advertised' | 'unverified'
+
+/** One feature, its two claims, and what has been measured about it. */
 export interface RuntimeCapabilityRow {
   /** The backend's own name for the feature. Data, shown as written. */
   feature: string
+  /**
+   * What this build has on file. A start-time hint rather than the answer, drawn only where it
+   * disagrees with {@link RuntimeCapabilityRow.standing} — see {@link declarationNote}.
+   */
+  declared: DeclaredCapability
+  /** What this runtime reported. */
   standing: CapabilityStanding
   /** The engine's or the runtime's own words, when there are any. */
   detail: string | null
@@ -300,8 +373,34 @@ function standingText(standing: CapabilityStanding): string {
   }
 }
 
+/**
+ * The file's claim, drawn only where it says something the finding does not.
+ *
+ * `null` means the two halves agree, and agreeing is the common case: on the engine this build was
+ * measured against, the declaration and the handshake line up for every feature the handshake
+ * answers. The rows that do not agree are the ones carrying information the page would otherwise
+ * hide — the file was measured on a version this process is not, or nothing has been measured here
+ * at all — and drawing the file under *every* row would make a page about this engine half a page
+ * about a catalogue entry, which is the reading `declared` is a hint against.
+ *
+ * The comparison is `===` across two *types* rather than one: a fourth arm added to either union
+ * fails to compile here rather than being compared across two vocabularies.
+ */
+function declarationNote(row: RuntimeCapabilityRow): string | null {
+  if (row.declared === row.standing) return null
+  return labels.value.capabilities.declaredDisagrees({
+    declared: labels.value.capabilities.declaredClaim[row.declared],
+    finding: labels.value.capabilities.findingClaim[row.standing],
+  })
+}
+
 const readout = ref<AgentRuntimeReadout | null>(null)
 const state = ref<'loading' | 'ready' | 'unreadable'>('loading')
+
+/** The rows as drawn: each with the finding's own line, and the file's note where the two disagree. */
+const capabilityRows = computed<readonly { row: RuntimeCapabilityRow; declared: string | null }[]>(
+  () => (readout.value?.capabilities ?? []).map((row) => ({ row, declared: declarationNote(row) })),
+)
 
 async function load(): Promise<void> {
   state.value = 'loading'
@@ -416,22 +515,47 @@ onMounted(load)
         <div class="runtime-capabilities">
           <span class="settings-label">{{ labels.capabilities.title }}</span>
           <span class="settings-note">{{ labels.capabilities.hint }}</span>
-          <ul class="runtime-rows">
+          <!-- A report with no rows says so. The heading above is the report's frame and stands
+               either way; a list drawn empty under it does not, because "no row" would then read
+               as an answer — and the answer it reads as is "this engine can do nothing", which
+               nobody gave. -->
+          <span
+            v-if="capabilityRows.length === 0"
+            class="settings-note is-warn"
+            data-test="runtime-capabilities-empty"
+          >
+            {{ labels.capabilities.empty }}
+          </span>
+          <ul
+            v-else
+            class="runtime-rows"
+          >
             <li
-              v-for="row in readout.capabilities"
-              :key="row.feature"
+              v-for="entry in capabilityRows"
+              :key="entry.row.feature"
               class="runtime-row"
-              :data-test="`runtime-capability-${row.feature}`"
+              :data-test="`runtime-capability-${entry.row.feature}`"
             >
-              <span class="runtime-feature">{{ row.feature }}</span>
+              <span class="runtime-feature">{{ entry.row.feature }}</span>
               <span
                 class="settings-note"
-                :class="{ 'is-warn': row.standing !== 'advertised' }"
-                :data-standing="row.standing"
+                :class="{ 'is-warn': entry.row.standing !== 'advertised' }"
+                :data-standing="entry.row.standing"
               >
-                {{ standingText(row.standing) }}
+                {{ standingText(entry.row.standing) }}
               </span>
-              <span v-if="row.detail" class="settings-note runtime-detail">{{ row.detail }}</span>
+              <span v-if="entry.row.detail" class="settings-note runtime-detail">{{ entry.row.detail }}</span>
+              <!-- The report's other half, and drawn as what it is: what this build has *on file*
+                   rather than what this engine reported. It is only here on the rows where the two
+                   disagree — see `declarationNote` — so its presence is itself the disclosure
+                   that the pinned version was measured to differ. -->
+              <span
+                v-if="entry.declared !== null"
+                class="settings-note runtime-declared"
+                :data-declaration="entry.row.declared"
+              >
+                {{ entry.declared }}
+              </span>
             </li>
           </ul>
         </div>
@@ -463,5 +587,8 @@ onMounted(load)
 .runtime-row { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-elevated); }
 .runtime-feature { font-size: 12px; color: var(--app-text); }
 .runtime-detail { overflow-wrap: anywhere; }
+/* A second voice, not a reply: the rule is what keeps the file's line from reading as part of the
+   sentence above it, which is the one thing it must never be mistaken for. */
+.runtime-declared { padding-left: 8px; border-left: 2px solid var(--app-border); overflow-wrap: anywhere; }
 .runtime-button { align-self: flex-start; font: inherit; font-size: 11px; padding: 4px 10px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-accent); color: var(--app-accent-contrast); cursor: pointer; }
 </style>

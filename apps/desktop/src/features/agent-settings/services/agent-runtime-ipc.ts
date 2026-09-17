@@ -41,6 +41,7 @@ import type {
   AgentRuntimeClient,
   AgentRuntimeReadout,
   CapabilityStanding,
+  DeclaredCapability,
   RuntimeAuthMethod,
   RuntimeCapabilityRow,
   RuntimeHandshakeAbsent,
@@ -75,6 +76,15 @@ const POLICIES: readonly AgentRuntimeReadout['updatePolicy'][] = ['host-managed'
 
 /** The two states in which nothing has been negotiated. */
 const ABSENCES: readonly RuntimeHandshakeAbsent[] = ['no-engine', 'not-yet']
+
+/**
+ * The three arms of the declaration half — `adapters::Capability`, listed once.
+ *
+ * Read as a closed set for the reason `process` is: `report` writes `declared` on every row, so a
+ * row without one, or with a fourth arm, is a backend this build does not match. Falling back to
+ * `unverified` there would put a claim in the pinned version's file that nothing had written.
+ */
+const DECLARED: readonly DeclaredCapability[] = ['advertised', 'not-advertised', 'unverified']
 
 /** The port, implemented over the window's IPC. */
 export function createAgentRuntimeClient(wire: AgentRuntimeWire): AgentRuntimeClient {
@@ -135,10 +145,11 @@ function method(value: unknown, index: number): RuntimeAuthMethod {
 /**
  * One capability row, from the backend's `CapabilityReport`.
  *
- * `declared` is deliberately not read. It is the installation's claim about the pinned version, and
- * it travels beside the finding on the wire — but nothing on this page acts on a declaration, and a
- * row that drew one would be describing what the pinned version was measured to do under a heading
- * that says what this engine reported. The finding is the answer; the claim is left where it is.
+ * Both halves are read, into two members, and that is the point of the row: `declared` is what this
+ * build has on file about the version it was measured against and `finding` is what this runtime
+ * reported. Folding either into the other is the one reading the report exists to prevent, so the
+ * page compares them rather than the client choosing between them — and the comparison is only
+ * available if both arrive.
  */
 function row(value: unknown, index: number): RuntimeCapabilityRow {
   const record = asRecord(value, `capabilities[${index}]`)
@@ -147,6 +158,7 @@ function row(value: unknown, index: number): RuntimeCapabilityRow {
   const status = asString(finding['status'], at('finding.status'))
   return {
     feature: asString(record['feature'], at('feature')),
+    declared: oneOf(record['declared'], DECLARED, at('declared')),
     standing: standingOf(status, at('finding')),
     // A finding that answers has nothing to add; the two that refuse carry the engine's or the
     // runtime's own words, and a page that rendered neither would be refusing without saying why.

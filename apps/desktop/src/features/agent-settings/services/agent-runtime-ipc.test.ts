@@ -100,19 +100,21 @@ describe('the runtime read', () => {
         agentVersion: '0.0.1',
         authMethods: [{ id: 'fake-login', name: 'Fake login' }],
       },
-      // The backend's `Finding` arms, as the page's three standings. `declared` is on the wire and
-      // is deliberately not read: nothing on the page acts on an installation's claim, and a row
-      // that drew one would be describing the pinned version under a heading that says what this
-      // engine reported.
+      // The backend's `Finding` arms, as the page's three standings — and the declaration beside
+      // them, read into its own member rather than folded into the standing. The two halves are
+      // two claims: `declared` is what this build has on file about the version it was measured
+      // against, and the page draws it as such wherever the two disagree.
       capabilities: [
-        { feature: 'session-list', standing: 'advertised', detail: null },
+        { feature: 'session-list', declared: 'advertised', standing: 'advertised', detail: null },
         {
           feature: 'audio-attachments',
+          declared: 'not-advertised',
           standing: 'not-advertised',
           detail: "the engine's handshake does not advertise `promptCapabilities.audio`",
         },
         {
           feature: 'model-selection',
+          declared: 'advertised',
           standing: 'unverified',
           detail: 'no session response has been read',
         },
@@ -174,6 +176,27 @@ describe('the runtime read', () => {
       readout({ capabilities: [{ feature: 'x', declared: 'advertised', finding: { status: 'maybe' } }] }),
     )
     await expect(port.read()).rejects.toThrow(/status/)
+  })
+
+  it('refuses a declaration outside the three arms the backend has', async () => {
+    // The declaration half is a closed set for the same reason `process` is: a fourth arm is a
+    // backend this build does not match, and a row that fell into a default would be stating a
+    // claim about the pinned version that no file made.
+    const { port } = client(
+      readout({
+        capabilities: [{ feature: 'x', declared: 'probably', finding: { status: 'available' } }],
+      }),
+    )
+    await expect(port.read()).rejects.toThrow(/declared/)
+  })
+
+  it('refuses a row that carries no declaration at all', async () => {
+    // `report` writes both halves for every row, so a row missing one did not come from this
+    // backend. Reading its absence as `unverified` would put a claim in the file's mouth.
+    const { port } = client(
+      readout({ capabilities: [{ feature: 'x', finding: { status: 'available' } }] }),
+    )
+    await expect(port.read()).rejects.toThrow(/declared/)
   })
 
   it('refuses a nullable field sent as an absent member rather than as null', async () => {

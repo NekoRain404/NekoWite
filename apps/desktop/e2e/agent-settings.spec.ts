@@ -443,9 +443,9 @@ test.describe('what the runtime has actually been measured to do', () => {
         authMethods: [{ id: 'login', name: 'Log in' }],
       },
       capabilities: [
-        { feature: 'slash-commands', standing: 'advertised', detail: null },
-        { feature: 'audio-attachments', standing: 'not-advertised', detail: 'not advertised by this engine' },
-        { feature: 'session-config-options', standing: 'unverified', detail: 'no session has been opened in this run' },
+        { feature: 'slash-commands', declared: 'not-advertised', standing: 'advertised', detail: null },
+        { feature: 'audio-attachments', declared: 'not-advertised', standing: 'not-advertised', detail: 'not advertised by this engine' },
+        { feature: 'session-config-options', declared: 'advertised', standing: 'unverified', detail: 'no session has been opened in this run' },
       ],
     })
 
@@ -458,6 +458,17 @@ test.describe('what the runtime has actually been measured to do', () => {
     // §3.4.6: 未实测 is a third answer, not a synonym for "does not support it".
     const standings = await page.locator(`#${SECTIONS.runtime.host} [data-standing]`).allInnerTexts()
     expect(new Set(standings.map((line) => line.trim())).size).toBe(3)
+    // The report's other half, on the rows where it disagrees with the finding: two of the three
+    // fixture rows are disagreements and `audio-attachments` is not — so the count is the
+    // comparison reaching the screen rather than the field rendering under every row.
+    const host = `#${SECTIONS.runtime.host}`
+    await expect(page.locator(`${host} [data-declaration]`)).toHaveCount(2)
+    await expect(
+      page.locator(`${host} [data-test="runtime-capability-session-config-options"] [data-declaration]`),
+    ).toContainText('on file as advertising this feature')
+    await expect(
+      page.locator(`${host} [data-test="runtime-capability-audio-attachments"] [data-declaration]`),
+    ).toHaveCount(0)
   })
 })
 

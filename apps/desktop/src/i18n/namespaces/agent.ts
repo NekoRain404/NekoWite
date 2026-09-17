@@ -549,6 +549,28 @@ export const agent = {
             advertised: 'Advertised by this engine version',
             notAdvertised: 'This engine version does not advertise it',
             unverified: 'Not measured for this engine',
+            /* The same three arms as short clauses, for the sentence that names both halves at
+               once: the full sentence for the finding is already drawn on the line above it. */
+            finding: {
+              advertised: 'advertising it',
+              notAdvertised: 'not advertising it',
+              unverified: 'not measured',
+            },
+            /* The report's other half: what this build has on file about the engine version it was
+               measured against. It is drawn only where it disagrees with the finding above it, and
+               `disagrees` is the sentence that says so — which is the only place these three labels
+               are read. The subject is spelled out in it because the failure this whole page
+               refuses is a reader taking the file's claim for the engine's answer. */
+            declared: {
+              advertised: 'advertising this feature',
+              notAdvertised: 'not advertising this feature',
+              unverified: 'never having measured it',
+              disagrees: 'Two claims, and they disagree: the engine version this build was measured against is on file as {declared}, and this runtime reported {finding}.',
+            },
+            /* A report that arrives with no rows at all. Drawn in place of the list, because a
+               heading over an empty list reads as an answer — and the answer it reads as is "this
+               engine can do nothing", which nobody gave. */
+            empty: 'The backend answered with no capability rows. That is not the same answer as an engine that can do nothing: it is nothing having been reported for any feature.',
           },
           update: {
             label: 'Updates',
@@ -1462,6 +1484,24 @@ export const agent = {
             advertised: '该引擎版本声明支持',
             notAdvertised: '该引擎版本未声明支持',
             unverified: '尚未对该引擎实测',
+            /* 同三个分支的短说法，供同时点出两个主张的那句话使用：上面的整句已经画在它上面一行了。 */
+            finding: {
+              advertised: '声明支持',
+              notAdvertised: '未声明支持',
+              unverified: '尚未实测',
+            },
+            /* 这份报告的另一半：本构建对它实测过的那一个引擎版本，档案里记着什么。只有当它与上面的
+               实测结果不一致时才会画出来，也就是说这三条短语只在那句「disagrees」里被读到。句子里
+               把主语写全，因为这一整页要挡的失败正是读者把档案里的说法当成引擎的回答。 */
+            declared: {
+              advertised: '声明支持此功能',
+              notAdvertised: '声明不支持此功能',
+              unverified: '从未实测过它',
+              disagrees: '这里有两个主张，而它们并不一致：本构建实测过的那一个引擎版本，档案里记的是「{declared}」，而本次运行时报告的是「{finding}」。',
+            },
+            /* 一行都没有的报告。画在列表的位置上，因为一个标题配一张空列表会被读成一个答复——而它
+               被读成的那句是「这个引擎什么都做不了」，这句话没有人说过。 */
+            empty: '后端返回的报告里一行都没有。这和「这个引擎什么都做不了」不是同一个答复：它只是任何一项都还没有被报告过。',
           },
           update: {
             label: '更新',
