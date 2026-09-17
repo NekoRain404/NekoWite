@@ -44,6 +44,21 @@ export const WORD_GOAL_MAX = 100000
 export const BODY_FONT_SIZE_MIN = 12
 export const BODY_FONT_SIZE_MAX = 20
 
+/**
+ * The range the leading is held to, declared here for the reason the body size's is: **two doors
+ * read this setting** — the Appearance control and the stored blob — and a bound written at one door
+ * only is a second answer to one question.
+ *
+ * It was one: `parseStored` did `parsed.lineHeight ?? default` while `setLineHeight` clamped to
+ * 1.2..2.4, so a hand-edited or corrupted `9` was read as 9 and written to `--app-line-height` by the
+ * app's own shell (`AppShell.vue:276` → `style.css:3`), which is the identical defect
+ * `BODY_FONT_SIZE_MIN` was added for one setting above. The range is a **bound and not a step**, and
+ * the fraction is the point: the control is `step="0.1"`, so `setLineHeight(1.85)` is a leading the
+ * store has always kept and `clampInt`'s rounding is not this setting's rule.
+ */
+export const LINE_HEIGHT_MIN = 1.2
+export const LINE_HEIGHT_MAX = 2.4
+
 export interface AppearanceSettings {
   theme: Theme
   colorScheme: ColorScheme
@@ -137,6 +152,22 @@ export function clampBodyFontSize(value: unknown): number {
   return Math.min(BODY_FONT_SIZE_MAX, Math.max(BODY_FONT_SIZE_MIN, value))
 }
 
+/** The leading a stored or set value is held to — {@link clampBodyFontSize}'s rule, applied to
+ *  {@link LINE_HEIGHT_MIN}..{@link LINE_HEIGHT_MAX}. The same two readings: a finite number is
+ *  clamped into range, and anything that is not a number at all is the schema's default.
+ *
+ *  Both doors call it, the control (`stores/appearance.ts`'s `setLineHeight`) and the stored blob, so
+ *  the leading a window draws and the leading a blob is read back as are one rule applied twice
+ *  rather than two rules that happened to agree about the numbers a user could reach. The pair it
+ *  belongs to is the reason it is not `clampInt`: that one rounds, and a leading is a multiple —
+ *  `setLineHeight(1.85)` is a value this store has always kept. */
+export function clampLineHeight(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return APPEARANCE_DEFAULTS.lineHeight
+  }
+  return Math.min(LINE_HEIGHT_MAX, Math.max(LINE_HEIGHT_MIN, value))
+}
+
 /** Parse a stored appearance blob with field-by-field validation, returning null
  *  when it is corrupt (the domain persister then falls back to `defaults`). */
 function parseStored(raw: string): AppearanceSettings | null {
@@ -153,7 +184,7 @@ function parseStored(raw: string): AppearanceSettings | null {
       ? (parsed.colorScheme as ColorScheme)
       : APPEARANCE_DEFAULTS.colorScheme,
     bodyFontSize: clampBodyFontSize(parsed.bodyFontSize),
-    lineHeight: parsed.lineHeight ?? APPEARANCE_DEFAULTS.lineHeight,
+    lineHeight: clampLineHeight(parsed.lineHeight),
     sidebarWidth: clampInt(parsed.sidebarWidth ?? APPEARANCE_DEFAULTS.sidebarWidth, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX, APPEARANCE_DEFAULTS.sidebarWidth),
     railWidth: clampInt(parsed.railWidth ?? APPEARANCE_DEFAULTS.railWidth, RAIL_WIDTH_MIN, RAIL_WIDTH_MAX, APPEARANCE_DEFAULTS.railWidth),
     notelistWidth: clampInt(parsed.notelistWidth ?? APPEARANCE_DEFAULTS.notelistWidth, NOTELIST_WIDTH_MIN, NOTELIST_WIDTH_MAX, APPEARANCE_DEFAULTS.notelistWidth),

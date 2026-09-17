@@ -1,19 +1,21 @@
 /**
- * What the focus probe measures, and the fixture that mounts the surfaces nothing hosts yet.
+ * What the focus probe measures, and the fixture that mounts the components it reads.
  *
  * Split out of `probe-focus-ring.mjs` at the line budget, and along the seam it already had: the
  * probe is the METHOD (press a real Tab, read what the engine paints, diff the pixels, hold every
  * claim to a witness) and this file is the SUBJECT — which surfaces are read, where each one's
- * indicator has to appear, and the props each unhosted component needs in order to draw its target
- * element at all. Both halves name their readings after the surface they came from, so a stale
- * fixture reports itself by name rather than as a number nobody can place.
+ * indicator has to appear, and the props each component needs in order to draw its target element
+ * at all. Both halves name their readings after the surface they came from, so a stale fixture
+ * reports itself by name rather than as a number nobody can place.
  */
 /**
  * The surfaces, and where each one's indicator has to appear.
  *
  * `page` entries are already on screen — the reading is taken on the product's own DOM, in the
  * product's own rail, and those are the strongest readings this file produces. `mount` entries
- * are the ones nothing hosts yet; the component URL is what the dev server serves.
+ * are mounted from the component's own URL, which is what the dev server serves; two of the three
+ * are hosted by the product now and are still built here, because the props a reading needs are
+ * not the ones a run would have produced.
  */
 export const PAGE_SURFACES = [
   { name: 'agent transcript', sel: '.agent-timeline', page: 'agent' },
@@ -125,44 +127,6 @@ export const MOUNTS = [
     },
   },
   {
-    name: 'native terminal screen',
-    url: '/src/features/agent/components/AgentNativeTerminal.vue',
-    sel: '.agent-native-screen',
-    props: {
-      session: {
-        sessionId: 'probe-terminal',
-        program: 'opencode',
-        args: [],
-        install: 'bundled',
-        state: 'running',
-      },
-      // Built in the page, not passed in: WebDriver serializes the fixture as JSON, and the
-      // functions a transport is made of do not survive the trip — the first run of this probe
-      // reported `props.transport.subscribe is not a function` and mounted nothing. `stubTransport`
-      // is the page's own no-op, so the component still draws its screen and the reading is about
-      // the screen rather than about a transport that was never there.
-      stubTransport: true,
-      labels: {
-        title: 'Terminal',
-        program: 'Program',
-        profile: 'Profile',
-        state: { running: 'Running', exited: 'Exited', failed: 'Failed' },
-        ended: { code: 'exit code', signal: 'signal', unknown: 'no status' },
-        rights: 'This runs with your own rights.',
-        managed: 'Managed by this app.',
-        elided: 'Part of a line was cut',
-        dropped: 'Earlier output was dropped',
-        copy: 'Copy',
-        copied: 'Copied',
-        copyFailed: 'Copy failed',
-        close: 'Close',
-        confirm: { title: 'Close?', body: 'It is still running.', keep: 'Keep', confirm: 'Close' },
-        unavailable: 'The host refused',
-        refusal: {},
-      },
-    },
-  },
-  {
     name: 'pet task rows box',
     url: '/src/features/desktop-pet/components/PetTaskList.vue',
     sel: '.pet-task__scroll',
@@ -225,22 +189,14 @@ const spec = arguments[0];
     // in the dark one, and the two readings were not the same reading.
     const themed = document.querySelector('[data-theme]') || document.body;
     themed.append(host);
+    // Every fixture's props come through the wire as JSON, which is why each one is built from
+    // data only. The terminal's transport used to be the one exception, rebuilt here because the
+    // functions it is made of do not survive the trip; that fixture is gone with the component.
     const props = Object.assign({}, spec.props);
-    // The one fixture that cannot come through the wire, built here. A terminal with no transport
-    // cannot draw, and the component is right to refuse rather than pretend.
-    if (props.stubTransport) {
-      delete props.stubTransport;
-      props.transport = {
-        write: function () { return Promise.resolve(); },
-        resize: function () { return Promise.resolve(); },
-        close: function () { return Promise.resolve(); },
-        subscribe: function () { return function () {}; }
-      };
-    }
     const app = vue.createApp({ render: function () { return vue.h(mod.default, props); } });
     app.mount(host);
     window.__nkwFocusHost = { app: app, host: host };
-    done({ name: spec.name, url: spec.url, ok: true, stubbed: Boolean(spec.props.stubTransport) });
+    done({ name: spec.name, url: spec.url, ok: true });
   } catch (error) {
     done({ name: spec.name, url: spec.url, ok: false, why: String(error && error.message ? error.message : error) });
   }

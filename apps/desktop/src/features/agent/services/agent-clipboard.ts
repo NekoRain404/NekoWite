@@ -5,8 +5,9 @@
  * one and it is *unmeasured on the engine this app ships*: WebKitGTK 4.1 under Tauri exposes the
  * async clipboard only in a secure context, and whether the packaged app is one is exactly the
  * kind of question the WebKit harness exists for and has not answered for the clipboard. So the
- * fallback is the engine's own copy command over a staged selection — the path
- * `AgentNativeTerminal.vue` wrote for the same reason, moved here so there is one of it.
+ * fallback is the engine's own copy command over a staged selection — a path first written inside
+ * a component that had to copy a whole buffer, moved here so there is one of it for a surface that
+ * copies anything.
  *
  * **The result is returned rather than swallowed.** A copy control that silently does nothing
  * leaves the reader pasting a stale buffer and believing they copied something; both callers

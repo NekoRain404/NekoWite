@@ -11,17 +11,17 @@
  * and `probe-agent-scroll.mjs` established the only honest reading of that (a real Tab, then
  * `getComputedStyle` on the frame focus lands).
  *
- * `AgentEditConflictView` and `AgentNativeTerminal` are **not mounted anywhere in the running
- * application**. Nothing hosts them yet — the wiring is a separate task — so no page the product
- * can open will ever show their tab stops, and a probe that only visited the product's own screens
- * could never measure them. (`AgentChangesView` has since been hosted by `ui/EditorPane.vue`, but
- * it is measured here for the same reason as the other two: this fixture is where its rows can be
- * built with the texts and the refusal the reading needs, without a run behind them.) This one mounts them, from the running
- * dev server, the way `e2e/agent-changes.spec.ts` and `e2e/desktop-pet-tasks.spec.ts` mount theirs
- * in Chromium: the component is the application's own, compiled by the application's own Vite,
- * against the application's own Vue instance, resolved out of `main.ts`'s transform. What is
- * rebuilt here is the mounting site and nothing else, and every reading below says which element
- * it was taken on.
+ * **Three components were mounted here because nothing hosted them.** `ui/EditorPane.vue` hosts two
+ * of the three now (`AgentChangedFiles` carries `AgentChangesView`, `AgentNoteProposals` carries
+ * `AgentEditConflictView`), and the fixtures stayed: this is where their target elements can be
+ * built with the texts and the refusals the readings need, without a run behind them. The third —
+ * `AgentNativeTerminal` — was deleted rather than hosted: §4.3 asks for a mature terminal rendering
+ * component and this tree has none, so the entry could not draw the engine's own TUI. So this file
+ * mounts what it measures, from the running dev server, the way `e2e/agent-changes.spec.ts` and
+ * `e2e/desktop-pet-tasks.spec.ts` mount theirs in Chromium: the component is the application's own,
+ * compiled by the application's own Vite, against the application's own Vue instance, resolved out
+ * of `main.ts`'s transform. What is rebuilt here is the mounting site and nothing else, and every
+ * reading below says which element it was taken on.
  *
  * ---- How a reading here is made worth having
  *

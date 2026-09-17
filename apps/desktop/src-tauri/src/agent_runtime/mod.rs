@@ -81,7 +81,6 @@ pub mod driver;
 pub mod events;
 pub mod fs_capability;
 pub mod live_notes;
-pub mod native_terminal;
 pub mod permission_grants;
 pub mod permissions;
 pub mod profile;

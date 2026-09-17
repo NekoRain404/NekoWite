@@ -28,6 +28,7 @@ import {
   APPEARANCE_DEFAULTS,
   clampBodyFontSize,
   clampInt,
+  clampLineHeight,
   NOTELIST_WIDTH_MAX,
   NOTELIST_WIDTH_MIN,
   RAIL_WIDTH_MAX,
@@ -184,8 +185,13 @@ export const useAppearanceStore = defineStore('appearance', () => {
     persist()
   }
 
+  /** The control's end of the leading's one rule, and the second instance of the note above: the
+   *  bounds and the fallback are `appearance-schema.ts`'s (`clampLineHeight`), which is also what the
+   *  stored blob is read back through. `Math.min(2.4, Math.max(1.2, …))` written here is how the two
+   *  doors came to disagree about this setting's range — `parseStored` kept whatever the blob said,
+   *  so a corrupted `9` reached `--app-line-height` and every surface reading it. */
   function setLineHeight(n: number): void {
-    lineHeight.value = Math.min(2.4, Math.max(1.2, Number.isFinite(n) ? n : APPEARANCE_DEFAULTS.lineHeight))
+    lineHeight.value = clampLineHeight(n)
     persist()
   }
 
