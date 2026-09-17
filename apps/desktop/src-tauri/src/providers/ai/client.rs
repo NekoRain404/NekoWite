@@ -43,6 +43,7 @@ use super::events::{deliver_events, is_active};
 // touching `commands/ai.rs` in the same commit. The internal code below uses
 // these same names, so the list doubles as the module's import list.
 pub use super::endpoint::resolve_endpoint;
+use super::error_message::unreadable_response_error;
 pub use super::limits::{
     acquire_slot, MAX_ANSWER_BYTES, MAX_ERROR_BODY_BYTES, MAX_IMAGES_PER_REQUEST,
     MAX_IMAGE_DATA_URL_BYTES, MAX_MODELS_RESPONSE_BYTES, MAX_PROMPT_BYTES, MAX_REQUEST_BODY_BYTES,
@@ -62,7 +63,7 @@ pub use super::response::{
     ai_done_payload, error_detail_from_body, http_error_message, http_error_message_with_detail,
     parse_model_ids, TokenUsage,
 };
-use super::response::{fetch_model_ids, read_body_bounded};
+use super::response::{declared_content_type, fetch_model_ids, read_body_bounded};
 pub use super::sse::{
     accumulate_usage, parse_sse_event, parse_sse_line, CompletionStream, SseBuffer, SseDelta,
     StreamEvent,
@@ -111,8 +112,16 @@ pub async fn list_models(config: &AIConfig) -> Result<Vec<String>, String> {
     fetch_model_ids(&client, config).await
 }
 
-pub async fn stream_complete(
-    app: &tauri::AppHandle,
+/// Stream one completion into the window, returning `Err` when the run has to be
+/// reported as a failure.
+///
+/// Generic over the runtime for the reason [`super::events::emit_ai_error`]
+/// gives: a `MockRuntime` app handle is what lets an integration test drive THIS
+/// body — the whole loop and its emits — rather than a re-creation of it. The
+/// app calls it through `commands/ai.rs` with the default `Wry` handle, so the
+/// production path is unchanged.
+pub async fn stream_complete<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
     config: &AIConfig,
     prompt: &str,
     images: &[serde_json::Value],
@@ -198,6 +207,12 @@ pub async fn stream_complete(
         return Err(message);
     }
 
+    // The declared type is read before the body consumes the response, for the
+    // reason `list_models` reads it: it is part of what a failure SHOWS, and a
+    // response that never becomes a stream is exactly the failure that has to
+    // show it. Nothing is decided by it here — see the verdict below.
+    let content_type = declared_content_type(&response);
+
     let mut stream = response.bytes_stream();
     // The completion's streaming state: the reassembly buffer, the answer being
     // accumulated, the provider's token accounting and why it stopped. It is a
@@ -277,6 +292,33 @@ pub async fn stream_complete(
     // braces, and it stops a cancelled request from counting as a success).
     if !is_active(app, id) {
         return Ok(());
+    }
+    // A response the fold read NO event from is not a completion missing its
+    // text — it is a response this app could not read. Both leave the same state
+    // behind (no answer, no `finish_reason`, no reasoning), which is why this
+    // used to reach `ai-done` carrying `full: ""`: the user asks for a
+    // completion and gets no text, no error and no reason. What separates them is
+    // what the response DID, and the honest report carries the evidence for it —
+    // the address, the declared content type and the opening of the body — so a
+    // wrong Base URL is distinguishable from a provider that broke. That is the
+    // same report `list_models` gives, for the same provider behaviour: a path it
+    // does not recognise is answered HTTP 200 with its frontend.
+    //
+    // The declared type is EVIDENCE here and never a gate. This app asks for
+    // `stream: true` and reads whatever frames arrive; providers disagree about
+    // what they declare for a stream, and refusing one that declares something
+    // unexpected would cost the user an answer the provider did send — a worse
+    // bug than the silence this replaces. Nothing is lost by not gating: every
+    // response a content-type check could have refused is one that yields no
+    // event, which is what this asks.
+    //
+    // A response that DID yield an event keeps the verdict it always had, empty
+    // answer included: the provider saying the turn ended with nothing in it is a
+    // statement about the model, not about our reading (see `completion_refusal`).
+    if !completion.saw_any_event() {
+        let message = unreadable_response_error(&url, &content_type, &completion.response_head());
+        emit_ai_error(app, id, &message);
+        return Err(message);
     }
     let answer = completion.answer();
     if let Some(message) = completion_refusal(&completion) {

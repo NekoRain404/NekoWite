@@ -33,7 +33,9 @@ pub use self::ids::parse_model_ids;
 use self::diagnosis::{body_preview, transport_failure_note, unexpected_body_error};
 use super::limits::{MAX_ERROR_BODY_BYTES, MAX_MODELS_RESPONSE_BYTES};
 use super::request::{models_endpoint, AIConfig};
-use super::response::{error_detail_from_body, http_error_message_at, read_body_bounded};
+use super::response::{
+    declared_content_type, error_detail_from_body, http_error_message_at, read_body_bounded,
+};
 
 /// Run the `GET /models` round trip against an already-built, already-pinned
 /// client and return the parsed model ids.
@@ -72,13 +74,10 @@ pub async fn fetch_model_ids(
     let status = response.status();
     // The declared type is read before the body consumes the response: it is
     // half of the diagnosis when the body turns out to be a web page rather
-    // than a model list.
-    let content_type = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+    // than a model list. The read is `response`'s, because the completion path
+    // makes the same diagnosis of its own unfaithful 2xx and both must show the
+    // same thing.
+    let content_type = declared_content_type(&response);
     if !status.is_success() {
         // Same reasoning as the completion path: the body says WHY (wrong key,
         // wrong base URL, unknown model), and that is what the user needs. The

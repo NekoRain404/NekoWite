@@ -10,9 +10,9 @@
 //!   +- events       <- sse, state
 //!   +- sse          <- limits, response, gemini, openai_compatible
 //!   +- url_policy   <- request
-//!   +- model_list   <- limits, request, response
+//!   +- model_list   <- limits, request, response, error_message
 //!   +- response     <- limits
-//!   +- error_message (leaf: what a rejection says to the user)
+//!   +- error_message (leaf: what a reply the app could not use says to the user)
 //!   +- request      <- limits, config
 //!   +- config       <- key_store (leaf)
 //!   +- limits       (leaf)

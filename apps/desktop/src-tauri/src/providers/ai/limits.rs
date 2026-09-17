@@ -101,6 +101,24 @@ pub const MAX_SSE_LINE_BYTES: usize = 1024 * 1024;
 /// rather than silently truncating the text the user is watching stream in.
 pub const MAX_ANSWER_BYTES: usize = 1024 * 1024;
 
+/// How much of a response is kept while it has not yet proved to be an event
+/// stream.
+///
+/// A response that never yields an event is one this app cannot read at all — a
+/// web page answered 200, a gateway's sorry page, an empty body — and the
+/// failure it produces has to show what came back for a reader to tell "wrong
+/// address" from "provider broke". That is the promise `ai_model_fetch_test.rs`
+/// records for the models endpoint, where the same provider answers the same way
+/// to a path it does not recognise; this is the completion path's copy of it.
+///
+/// Only the first 120 characters of it are ever displayed (see
+/// [`super::error_message::body_preview`]), so this is the bound on what one
+/// request BUFFERS while the answer is still unknown, not a display bound: 4 KiB
+/// holds the head of any fallback page and the opening of any provider document,
+/// and the copy is dropped the moment an event arrives and proves the response
+/// was a stream after all.
+pub const MAX_RESPONSE_HEAD_BYTES: usize = 4 * 1024;
+
 /// Largest `/models` body read.
 ///
 /// The biggest real listings are marketplaces that return hundreds of models

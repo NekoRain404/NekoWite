@@ -10,7 +10,7 @@
 //! `events` and the integration tests import them from where they always did -
 //! no consumer file had to be edited.
 //!
-//! Dependencies: [`super::limits`] for the two ceilings it enforces,
+//! Dependencies: [`super::limits`] for the three ceilings it enforces,
 //! [`super::response`] for the token accounting a frame may carry, and the two
 //! provider modules the frame rules dispatch text/usage extraction to by
 //! provider name. The arrow points one way - `sse` to the provider modules, the
@@ -28,7 +28,7 @@ mod reassembly;
 pub use self::frame::{accumulate_usage, parse_sse_event, parse_sse_line, SseDelta};
 pub use self::reassembly::SseBuffer;
 
-use super::limits::MAX_ANSWER_BYTES;
+use super::limits::{MAX_ANSWER_BYTES, MAX_RESPONSE_HEAD_BYTES};
 use super::response::TokenUsage;
 
 /// What one folded chunk produced, in the order it must be delivered.
@@ -45,12 +45,13 @@ pub enum StreamEvent {
 }
 
 /// The streaming state of ONE completion: the SSE reassembly buffer, the answer
-/// being accumulated, the provider's token accounting and the reason it
-/// stopped.
+/// being accumulated, the provider's token accounting, the reason it stopped,
+/// and whether anything was read from the response at all.
 ///
 /// This is the streaming loop minus the socket and minus the Tauri events, so
 /// the response-side size policy ([`MAX_SSE_LINE_BYTES`](super::limits::MAX_SSE_LINE_BYTES) on
-/// reassembly, [`MAX_ANSWER_BYTES`] on the accumulated answer) is enforced in
+/// reassembly, [`MAX_ANSWER_BYTES`] on the accumulated answer,
+/// [`MAX_RESPONSE_HEAD_BYTES`] on the head kept for a failure) is enforced in
 /// one place and can be driven in tests without a running app. The caller owns
 /// the transport and the emits: feed it bytes, deliver the events it returns,
 /// stop on `Done`.
@@ -62,6 +63,11 @@ pub struct CompletionStream {
     usage: Option<TokenUsage>,
     reasoning_seen: bool,
     finish_reason: Option<String>,
+    /// True once a line decoded as an event. See [`Self::saw_any_event`].
+    saw_event: bool,
+    /// The opening bytes of the response, kept only while no event has been
+    /// read. See [`Self::response_head`].
+    head: Vec<u8>,
 }
 
 impl CompletionStream {
@@ -73,6 +79,8 @@ impl CompletionStream {
             usage: None,
             reasoning_seen: false,
             finish_reason: None,
+            saw_event: false,
+            head: Vec::new(),
         }
     }
 
@@ -85,6 +93,7 @@ impl CompletionStream {
     /// first are still delivered, which is what the loop did before the fold
     /// moved here.
     pub fn feed(&mut self, chunk: &[u8]) -> Result<Vec<StreamEvent>, String> {
+        self.capture_head(chunk);
         let lines = self.buffer.feed(chunk)?;
         self.fold(lines)
     }
@@ -104,6 +113,10 @@ impl CompletionStream {
             let Some(delta) = parse_sse_event(&line, &self.provider, &mut self.full) else {
                 continue;
             };
+            // The response has now said something this app can read, whatever it
+            // turns out to carry: from here it is a stream, not an answer we
+            // could not read, and the head kept for a failure stops growing.
+            self.saw_event = true;
             accumulate_usage(&mut self.usage, &delta);
             if let Some(message) = delta.error {
                 events.push(StreamEvent::ProviderError(message));
@@ -158,5 +171,46 @@ impl CompletionStream {
     /// ordinary empty reply.
     pub fn saw_reasoning(&self) -> bool {
         self.reasoning_seen
+    }
+
+    /// Whether any line of the response decoded as an event at all.
+    ///
+    /// This is the distinction the terminal verdict turns on, and the two halves
+    /// are different statements about the world. A response that yielded events
+    /// and has an empty answer is the provider saying nothing — an ordinary
+    /// no-op, see [`super::refusal::completion_refusal`]. A response that
+    /// yielded NO event is one this app could not read: a web page answered 200,
+    /// a gateway's plain-text page, an empty body. There the app cannot say the
+    /// model was silent, only that it could not read what came back, and it has
+    /// to say so rather than end in an empty `ai-done`.
+    ///
+    /// `data: [DONE]` counts: a provider that ends a stream without content is a
+    /// provider this app understood.
+    pub fn saw_any_event(&self) -> bool {
+        self.saw_event
+    }
+
+    /// The opening of the response, for the failure that has to show what came
+    /// back when [`Self::saw_any_event`] is false.
+    ///
+    /// It is what arrived before the response proved to be a stream, capped at
+    /// [`MAX_RESPONSE_HEAD_BYTES`] — the bound on this COPY, not on what is
+    /// shown (see [`super::error_message::body_preview`]). The bytes are held
+    /// raw and decoded only here, like the reassembly buffer's, so a multi-byte
+    /// character split across two chunks cannot corrupt them.
+    pub fn response_head(&self) -> String {
+        String::from_utf8_lossy(&self.head).into_owned()
+    }
+
+    /// Keep the response's opening bytes while it has not yet proved to be an
+    /// event stream. Bounded and cheap: a real stream stops filling this on its
+    /// first event, and a response that never produces one is exactly the case
+    /// the failure path is about to describe.
+    fn capture_head(&mut self, chunk: &[u8]) {
+        if self.saw_event || self.head.len() >= MAX_RESPONSE_HEAD_BYTES {
+            return;
+        }
+        let room = MAX_RESPONSE_HEAD_BYTES - self.head.len();
+        self.head.extend_from_slice(&chunk[..chunk.len().min(room)]);
     }
 }

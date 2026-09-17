@@ -24,7 +24,17 @@ pub struct AIChunk {
     pub text: String,
 }
 
-pub fn emit_ai_error(app: &tauri::AppHandle, id: &str, message: &str) {
+/// **Why these three are generic over the runtime.** They are the window-facing
+/// half of a run, and the only way to test what a run tells the window is to
+/// drive one: `tests/ai_unreadable_response_test.rs` calls the shipped
+/// [`super::client::stream_complete`] against a loopback server and reads back
+/// the events it published, which a signature naming `tauri::AppHandle` (i.e.
+/// `AppHandle<Wry>`) cannot be called with — the only app an integration test
+/// can build is `tauri::test`'s, whose runtime is `MockRuntime`. It costs one
+/// monomorphisation the app would do anyway — `commands/desktop_pet.rs` gives
+/// the same reason for the same shape — and nothing in these bodies is
+/// Wry-specific.
+pub fn emit_ai_error<R: tauri::Runtime>(app: &tauri::AppHandle<R>, id: &str, message: &str) {
     let _ = app.emit(
         "ai-error",
         serde_json::json!({ "id": id, "message": message }),
@@ -58,7 +68,7 @@ pub fn next_ai_id() -> String {
 /// A `false` here means the run was cancelled or released while the socket was
 /// still open, and the stream loop treats it as "stop emitting": a late chunk
 /// from an abandoned response must not be adopted by whatever runs next.
-pub(crate) fn is_active(app: &tauri::AppHandle, id: &str) -> bool {
+pub(crate) fn is_active<R: tauri::Runtime>(app: &tauri::AppHandle<R>, id: &str) -> bool {
     let state = app.state::<AiState>();
     let guard = state.inflight.lock();
     match guard {
@@ -77,8 +87,8 @@ pub(crate) fn is_active(app: &tauri::AppHandle, id: &str) -> bool {
 /// in-band provider error is emitted AND returned as `Err`, because a 200
 /// response that carries an error frame is a truncated answer, not a complete
 /// one.
-pub(crate) fn deliver_events(
-    app: &tauri::AppHandle,
+pub(crate) fn deliver_events<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
     id: &str,
     events: Vec<StreamEvent>,
 ) -> Result<bool, String> {

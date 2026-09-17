@@ -95,6 +95,23 @@ pub(crate) fn token_count(raw: Option<&serde_json::Value>) -> Option<u64> {
     raw.and_then(serde_json::Value::as_u64)
 }
 
+/// The content type a response declares, lowercased, or `""` when it declares
+/// none.
+///
+/// Read BEFORE the body consumes the response: it is half of the diagnosis when
+/// a 2xx carries something other than what was asked for. Both paths that have
+/// to make that diagnosis show it — the models list when a body is not JSON, the
+/// completion when a response never became an event stream — and a header read
+/// written twice is a header read that can drift, so both call this one.
+pub(crate) fn declared_content_type(response: &reqwest::Response) -> String {
+    response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
 /// Read a response body under a hard ceiling.
 ///
 /// `Response::text()` reads whatever the peer sends, so a hostile or broken

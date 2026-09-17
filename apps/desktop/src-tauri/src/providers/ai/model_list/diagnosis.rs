@@ -8,15 +8,16 @@
 //! changed, and the diagnosis they describe can be tested, without a socket or
 //! a round trip.
 //!
-//! Dependencies: none. Nothing here imports a sibling or a provider module, so
-//! this is a leaf of the `model_list` module.
+//! Dependencies: [`super::super::error_message`] for the two primitives the
+//! other unfaithful-2xx diagnosis shares with this one — the preview and the
+//! web-page recognition — which live there because both callers must hold the
+//! same bound and the same rule. They are re-exported at this module's own
+//! visibility so that `super`'s callers kept their imports through the move.
 
-/// How much of an unexpected body a failure message shows.
-///
-/// Recognition, not fidelity: an HTML fallback is unmistakable from its
-/// doctype, a gateway's sorry page from its first sentence. This is also the
-/// bound that keeps a 124 KB single-page-app document out of a toast.
-const BODY_PREVIEW_CHARS: usize = 120;
+// `pub(super)` rather than a plain `use`: `super` imported both names from this
+// module before they moved to the wording leaf, and a split moves code rather
+// than the paths its callers use.
+pub(super) use super::super::error_message::{body_preview, reads_as_a_web_page};
 
 /// A transport failure with its **whole** cause chain appended.
 ///
@@ -91,21 +92,6 @@ pub(super) fn transport_failure_note(e: &reqwest::Error) -> String {
     }
 }
 
-/// The opening of a body, whitespace collapsed, for showing the user what
-/// actually came back.
-///
-/// Collapsing matters as much as truncating: the bodies worth showing are
-/// pretty-printed documents and multi-line error pages, and their meaning lives
-/// in the first line, not in the blank lines between them.
-pub(super) fn body_preview(body: &str) -> String {
-    let collapsed = body.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut shown: String = collapsed.chars().take(BODY_PREVIEW_CHARS).collect();
-    if collapsed.chars().count() > BODY_PREVIEW_CHARS {
-        shown.push('…');
-    }
-    shown
-}
-
 /// The failure to report when a 2xx body is not the provider's JSON.
 ///
 /// Two shapes, because they mean different things to the user. A body that
@@ -135,17 +121,6 @@ pub(super) fn unexpected_body_error(url: &str, content_type: &str, body: &str) -
         "模型列表请求失败：{url} 返回的内容不是 JSON（Content-Type: {declared}）。\
          请检查 Base URL 是否正确。服务商返回内容开头：{preview}"
     )
-}
-
-/// True when a body reads as a web page rather than a provider response.
-///
-/// `<` as the first non-whitespace byte is markup — no JSON document starts
-/// that way — and a declared `text/html` says the same for a page whose doctype
-/// sits behind a BOM or whose head was rewritten in transit. Only ever asked
-/// about a body that has ALREADY failed to parse as JSON, which is what keeps
-/// an API that mislabels its own JSON (`text/html` on a real payload) readable.
-fn reads_as_a_web_page(body: &str, content_type: &str) -> bool {
-    body.trim_start().starts_with('<') || content_type.contains("html")
 }
 
 #[cfg(test)]
@@ -243,35 +218,8 @@ mod tests {
         assert_eq!(error_chain(e.as_ref()).matches('\u{2192}').count(), 8);
     }
 
-    #[test]
-    fn a_preview_is_collapsed_and_bounded() {
-        // A pretty-printed page must not put its blank lines into the toast,
-        // and its tail must not come along at all.
-        let page = format!("<!DOCTYPE html>\n\n<html>\n{}</html>", "x".repeat(4000));
-        let preview = body_preview(&page);
-        assert_eq!(preview.chars().count(), BODY_PREVIEW_CHARS + 1); // + the ellipsis
-        assert!(preview.starts_with("<!DOCTYPE html> <html>"));
-    }
-
-    #[test]
-    fn a_page_is_recognised_by_its_body_or_by_its_declared_type() {
-        for (body, content_type) in [
-            ("<!DOCTYPE html>", "application/json"),
-            ("  \n\t<html>", ""),
-            // A doctype behind a BOM is not a `<` at the first byte; the
-            // declared type is what catches it.
-            ("\u{feff}<html>", "text/html; charset=utf-8"),
-        ] {
-            assert!(
-                reads_as_a_web_page(body, content_type),
-                "{body:?} / {content_type:?} must read as a page"
-            );
-        }
-        for (body, content_type) in [
-            ("upstream connect error", "text/plain"),
-            ("[1,2,3]", "application/json"),
-        ] {
-            assert!(!reads_as_a_web_page(body, content_type));
-        }
-    }
+    // The preview's bound and the web-page rule moved with them to
+    // `super::super::error_message`, which is where their tests are now: the
+    // completion path's unfaithful-2xx diagnosis shares both, and a bound two
+    // modules enforce is a bound one of them can drift from.
 }
