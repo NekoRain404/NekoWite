@@ -5,9 +5,9 @@
 # handshake, because a handshake needs no credentials and costs nothing (that file says so). What
 # that leaves unmeasured is everything from `session/new` down — the session, the model selection,
 # the stream, the stop reason and the usage — which P0 §2/§6 measured only through hand-written
-# probes talking straight to the binary. This script is what runs the test that closes that gap, and
-# it exists rather than a bare `cargo test` because three of the things that run needs are not the
-# test's to check:
+# probes talking straight to the binary. This script is what runs the tests that close that gap, and
+# it exists rather than a bare `cargo test` because three of the things those runs need are not the
+# tests' to check:
 #
 #   the artifact   `apps/desktop/src-tauri/binaries/opencode-x86_64-unknown-linux-gnu`, a gitignored
 #                  pipeline product. Absent means the test would skip, and a skip is not a pass.
@@ -20,7 +20,15 @@
 #                  (plan §3.2), and the comparison below is the evidence that it worked rather than a
 #                  claim that it does.
 #
-# Cost: one prompt per run, roughly 9k tokens of input (P0 §3). It is not a test to put on a loop.
+# Cost: three prompts per run — one for `agent_live_test`'s end-to-end turn, and two for
+# `agent_cancel_live_test`, which needs a turn that is still streaming when the stop is pressed and a
+# second turn on the same session to show the engine really let go of the first. Roughly 9–14k tokens
+# of input each (P0 §3). It is not a test to put on a loop.
+#
+# `agent_session_lifecycle_test.rs` is deliberately **not** here: it spends no prompt (`session/new`
+# needs no credentials and none of the calls it makes reaches a provider) and so needs none of the
+# three guards above. Run it with
+#   cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test agent_session_lifecycle_test
 #
 # Usage:
 #   bash scripts/verify-acp-live.sh
@@ -73,17 +81,32 @@ snapshot "$REAL_CONFIG" > "$BEFORE/config"
 snapshot "$REAL_DATA" > "$BEFORE/data"
 say "profile before: $REAL_CONFIG and $REAL_DATA recorded"
 
-# --- the run ---------------------------------------------------------------------------------------
-set +e
-cargo test \
-  --manifest-path "$ROOT/apps/desktop/src-tauri/Cargo.toml" \
-  --test agent_live_test \
-  -- --nocapture 2>&1 | tee "$BEFORE/log"
-STATUS="${PIPESTATUS[0]}"
-set -e
+# --- the runs ---------------------------------------------------------------------------------------
+# One target at a time, and every one of them runs: a first failure is not a reason to skip the
+# second, because what a caller needs to know is the state of all of them. Each target's own
+# evidence marker is what separates "a model answered" from "the tests all skipped and cargo still
+# printed ok" — the same distinction the artifact and key checks above exist to keep unreachable.
+TARGETS=(agent_live_test agent_cancel_live_test)
+MARKERS=('reply in ' 'the turn after the stop answered')
+STATUSES=()
 
-# `tee`'s log is the only copy of the evidence a caller keeps; it is printed above as well.
-LOG="$(cat "$BEFORE/log")"
+# One log per target, and a combined one: the per-target file is what the checks below read, so one
+# target's SKIP or its `test result` line can never be attributed to another's output.
+: > "$BEFORE/log"
+for index in "${!TARGETS[@]}"; do
+  target="${TARGETS[$index]}"
+  per="$BEFORE/$target.log"
+  say ''
+  say "=== $target ==="
+  set +e
+  cargo test \
+    --manifest-path "$ROOT/apps/desktop/src-tauri/Cargo.toml" \
+    --test "$target" \
+    -- --nocapture 2>&1 | tee "$per"
+  STATUSES+=("${PIPESTATUS[0]}")
+  set -e
+  cat "$per" >> "$BEFORE/log"
+done
 
 # --- the developer's profile, after ------------------------------------------------------------------
 say ''
@@ -110,17 +133,40 @@ fi
 
 # --- the result --------------------------------------------------------------------------------------
 say ''
-[ "$STATUS" -eq 0 ] || die "FAIL: cargo test exited $STATUS. The output above is the finding; a red
-  live test that reproduces a real defect is a result, not a broken run."
-# A skip is not a pass. The two artifact/key checks above make those skips unreachable, so anything
-# still saying SKIP means an environment this script did not anticipate (a bundle the runtime cannot
-# inject, an inherited NODE_EXTRA_CA_CERTS) and a caller must be told rather than reassured.
-if printf '%s' "$LOG" | grep -q '^SKIP:'; then
-  die "FAIL: the live test skipped:
-$(printf '%s' "$LOG" | grep '^SKIP:')"
-fi
-printf '%s' "$LOG" | grep -q 'test result: ok' || die "FAIL: no test result line in the output."
-# Proof that a model actually answered, in the same log a reader keeps.
-printf '%s' "$LOG" | grep -q 'reply in ' || die "FAIL: no reply line in the output: nothing was
-  prompted through to a model."
-say 'PASS: the runtime completed a real prompt against the pinned engine.'
+FAILURES=0
+for index in "${!TARGETS[@]}"; do
+  target="${TARGETS[$index]}"
+  status="${STATUSES[$index]}"
+  if [ "$status" -ne 0 ]; then
+    say "FAIL: $target exited $status. The output above is the finding; a red live test that
+  reproduces a real defect is a result, not a broken run."
+    FAILURES=1
+    continue
+  fi
+  # A skip is not a pass. The two artifact/key checks above make those skips unreachable, so anything
+  # still saying SKIP means an environment this script did not anticipate (a bundle the runtime cannot
+  # inject, an inherited NODE_EXTRA_CA_CERTS, a missing CA store) and a caller must be told rather
+  # than reassured.
+  per="$BEFORE/$target.log"
+  if grep -q '^SKIP:' "$per"; then
+    say "FAIL: $target skipped:
+$(grep '^SKIP:' "$per")"
+    FAILURES=1
+    continue
+  fi
+  grep -q 'test result: ok' "$per" || {
+    say "FAIL: $target printed no test result line."
+    FAILURES=1
+    continue
+  }
+  if ! grep -qF "${MARKERS[$index]}" "$per"; then
+    say "FAIL: $target printed no evidence that a model answered (expected \"${MARKERS[$index]}\")."
+    FAILURES=1
+    continue
+  fi
+  say "PASS: $target — a real prompt against the pinned engine, on a real model."
+done
+
+[ "$FAILURES" -eq 0 ] || exit 1
+say ''
+say 'PASS: the runtime completed real prompts against the pinned engine, and stopped one mid-stream.'
