@@ -22,6 +22,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { t } from '../../../i18n'
 import { useAppearanceStore } from '../../../stores/appearance'
+import { PetBubble } from '../../desktop-pet'
 import type { PetSettingsContext } from './DesktopPetSettings.vue'
 
 const props = defineProps<{
@@ -50,34 +51,27 @@ const noCharacter = computed(() => characterValues.value.characterId === null)
 const seconds = computed(() => messageValues.value.bubbleSeconds)
 
 /**
- * The bubble's background alpha, as the bubble draws it (§5.2's 气泡与消息).
+ * The bubble the stage draws **is the desktop's bubble** — the same component the pet window mounts,
+ * handed the draft's own two numbers.
  *
- * It is on the *bubble* and not on the figure: the setting is the surface the words sit on
- * (upstream `ap_opacity` → `--bubble-bg`'s alpha, `main.ts:88-100`), and a stage that dimmed the
- * character instead would be showing a pet nobody's window draws. It applies to the theme
- * overrides below too, because it is an alpha and not a colour — the colour is the theme's.
+ * It used to be a `<p>` of this file's own, and that is the whole of why this page could not be
+ * trusted about the bubble's appearance. Two rounds were spent on the halves of it: the colour first
+ * (a light/dark pair of literals that is the app's palette nowhere), then the size (`font-size: 11px`
+ * against `message.fontSize`, the setting on this very page), and each fix was a `.pet-preview__bubble`
+ * declaration made to agree with `PetBubble.vue`'s by hand. What the third round found is that the
+ * *box* had never agreed at all — `padding: 5px 8px`, `line-height: 1.4`, `var(--app-radius-lg)` and
+ * no shadow or family against the desktop's `6px 8px`, `1.5`, `var(--app-radius)`,
+ * `var(--app-shadow-card)` and `var(--app-font)` — and the reason it kept happening is that there
+ * were two declarations to keep in step.
+ *
+ * There is one now. The alpha and the size travel as props instead of as custom properties this file
+ * binds (`PetBubble.vue`'s `surfaceStyle` writes both onto its own element from the same props the
+ * pet window passes), so every number and every box rule is `PetBubble.vue`'s and a change there
+ * reaches the preview in the same commit or not at all.
  */
-const bubbleAlpha = computed(() => `${Math.round(messageValues.value.opacity * 100)}%`)
-
-/**
- * The bubble's own text size, as the desktop's bubble draws it (§5.2's 气泡与消息, upstream
- * `ap_font_size`).
- *
- * The second half of the same rule the alpha above follows, and the one this stage used to get
- * wrong in the direction nobody checks a decoration for: it declared a fixed 11px while
- * `PetBubble.vue` draws `message.fontSize` — the setting *this page* offers as three buttons, and
- * the one the pet window's own bubble is measured at (`pet-probe.mjs`'s message step). So the user
- * chose a size by looking at a stage that could not show it.
- *
- * It travels the way the size travels in the window: as `--pet-bubble-size` on the surface, which is
- * the property `PetBubble.vue`'s stylesheet reads, so the two declare the same expression and neither
- * can be given a number the other does not have.
- */
-const bubbleSize = computed(() => `${messageValues.value.fontSize}px`)
-
-const bubbleStyle = computed(() => ({
-  '--pet-bubble-alpha': bubbleAlpha.value,
-  '--pet-bubble-size': bubbleSize.value,
+const bubbleValues = computed(() => ({
+  opacity: messageValues.value.opacity,
+  fontSize: messageValues.value.fontSize,
 }))
 
 /** The largest figure this panel can draw, in CSS pixels. */
@@ -204,13 +198,13 @@ onBeforeUnmount(() => {
         </p>
         <template v-else>
           <Transition name="pet-bubble">
-            <p
+            <PetBubble
               v-if="bubbleOpen"
               class="pet-preview__bubble"
-              :style="bubbleStyle"
-            >
-              {{ t('settings.pet.preview.bubbleText') }}
-            </p>
+              :line="t('settings.pet.preview.bubbleText')"
+              :bubble-opacity="bubbleValues.opacity"
+              :font-size="bubbleValues.fontSize"
+            />
           </Transition>
           <div
             class="pet-preview__figure"
@@ -285,29 +279,15 @@ onBeforeUnmount(() => {
    only animation the preview has to lose. */
 .pet-preview__figure.is-static { animation: none; }
 
-.pet-preview__bubble {
-  margin: 0;
-  max-width: 100%;
-  padding: 5px 8px;
-  border: 1px solid color-mix(in srgb, var(--app-border) 80%, transparent);
-  border-radius: var(--app-radius-lg);
-  /* Each theme's own colour, mixed toward `transparent` at the alpha the setting holds — one
-     expression per colour, and the colour is never written twice. */
-  background: color-mix(in srgb, var(--app-elevated) var(--pet-bubble-alpha, 92%), transparent);
-  color: var(--app-text);
-  /* The setting, then the app's body size, then this build's own 12px — `PetBubble.vue:262`'s
-     expression, character for character, so the two surfaces resolve the same property to the same
-     number. The stage used to declare `11px` here, which is a size the settings page cannot produce
-     and the desktop never draws. */
-  font-size: var(--pet-bubble-size, var(--app-body-size, 12px));
-  line-height: 1.4;
-}
-/* No colour of this component's own, deliberately. The bubble is drawn from `--app-elevated`,
-   `--app-text` and `--app-border` — the palette the *stage* declares, which is the palette the pet
-   window's page declares for the same settings — so the two draw the same numbers by construction.
-   A hard-coded pair here (`#f7f7f5` / `#23211f`) is what the preview used to show for Light and
-   Dark, and neither is the app's `--app-elevated` for that theme: the preview was showing a bubble
-   the desktop would never draw. */
+/* `.pet-preview__bubble` is the class this component *adds* to the surface `PetBubble` renders —
+   Vue merges a parent's class onto a child component's root — so the settings suites and the e2e
+   specs have a name for "the bubble in the stage" that is not the desktop's own. **No declaration
+   belongs here.** The box, the colour, the family and the size are `PetBubble.vue`'s; the palette
+   they resolve against is the *stage's* four axes above, and the transition below is the stage's own
+   because §6.3's reminder is the one thing the preview does that the window does not.
+   What the two rounds before this one left here was `padding`, `border-radius`, `box-shadow`,
+   `line-height`, `max-width`, `background`, `color` and `font-size` — a second bubble built out of
+   the first one's parts, which is what a preview must never be. */
 
 .pet-preview__ask { align-self: flex-start; }
 

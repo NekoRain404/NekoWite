@@ -41,6 +41,8 @@ const {
   setMonoFont,
   bodyFontSize,
   lineHeight,
+  bodyFontSizeField,
+  lineHeightField,
   setBodyFontSize,
   setLineHeight,
   highContrast,
@@ -196,15 +198,23 @@ const directionChoices = computed<SelectOption[]>(() => [
         @update:model-value="setMonoFont($event as MonoFontId)"
       />
     </label>
+    <!-- The two ends of each field are the *setting's* range, taken from the module that owns it
+         (`stores/appearance-schema.ts`, through the composable above). They used to be written here
+         as well — `min="12" max="20"` beside a `Math.min(20, Math.max(12, …))` around the value —
+         which is a boundary a user then meets three times: once on the spinner, once in the field's
+         own reader, and once in the store. The value is passed on as the field's own number, and the
+         store's rule (`clampBodyFontSize` / `clampLineHeight`) is what holds it; the only thing this
+         template still decides is what an *emptied* field means, which is a fact about the widget
+         and not about the setting. -->
     <label class="settings-field">
       <span>{{ t('settings.appearance.fontSize', { size: bodyFontSize }) }}</span>
       <input
         class="input"
         :value="bodyFontSize"
         type="number"
-        min="12"
-        max="20"
-        @change="setBodyFontSize(Math.min(20, Math.max(12, Number(($event.target as HTMLInputElement).value) || 15)))"
+        :min="bodyFontSizeField.min"
+        :max="bodyFontSizeField.max"
+        @change="setBodyFontSize(Number(($event.target as HTMLInputElement).value) || bodyFontSizeField.empty)"
       >
     </label>
     <label class="settings-field">
@@ -213,10 +223,10 @@ const directionChoices = computed<SelectOption[]>(() => [
         class="input"
         :value="lineHeight"
         type="number"
-        min="1.2"
-        max="2.4"
+        :min="lineHeightField.min"
+        :max="lineHeightField.max"
         step="0.1"
-        @change="setLineHeight(Math.min(2.4, Math.max(1.2, Number(($event.target as HTMLInputElement).value) || 1.8)))"
+        @change="setLineHeight(Number(($event.target as HTMLInputElement).value) || lineHeightField.empty)"
       >
     </label>
     <label class="settings-field settings-toggle">

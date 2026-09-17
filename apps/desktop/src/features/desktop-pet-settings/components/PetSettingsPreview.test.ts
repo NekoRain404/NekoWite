@@ -235,16 +235,49 @@ describe('the stage follows the draft', () => {
     expect(bubbleSize()).toBe(`${smallest}px`)
   })
 
-  it('declares that size through the same expression the desktop’s bubble uses', () => {
-    // happy-dom has no cascade, so what the stylesheet *does* with the property is measured in a
-    // real engine (`e2e/desktop-pet-appearance.spec.ts`, and the pet half of it in WebKitGTK). What
-    // is assertable here is the one thing that makes a fix in either file a fix in both: the
-    // declaration is the same expression, character for character. A stage that bound
-    // `--pet-bubble-size` and went on declaring `font-size: 11px`, or that fell back to the app's
-    // body size where the desktop falls back to 12px, would otherwise pass every case in this suite.
-    const declaration = 'font-size: var(--pet-bubble-size, var(--app-body-size, 12px))'
-    expect(source('PetSettingsPreview.vue')).toContain(declaration)
-    expect(source('../../desktop-pet/components/PetBubble.vue')).toContain(declaration)
+  it('draws the desktop’s own bubble, not a second one built out of its parts', async () => {
+    // The three rounds of this defect, and this case is what closes the family of them. **1** colour:
+    // the stage answered Light and Dark with a pair of literals the app draws nowhere. **2** size:
+    // it declared `font-size: 11px` while the desktop draws `message.fontSize` — the setting this
+    // page offers as three buttons. **3** the box, which the first two fixes left: `padding: 5px
+    // 8px`, `line-height: 1.4`, `var(--app-radius-lg)` and no shadow or family, beside the desktop's
+    // `6px 8px`, `1.5`, `var(--app-radius)`, `var(--app-shadow-card)` and `var(--app-font)`.
+    //
+    // Each of the first two was fixed by making a declaration in this file agree with one in
+    // `PetBubble.vue` — which is why there was a third. The stage now renders `PetBubble` itself, so
+    // there is one declaration and nothing to keep in step. That is asserted structurally here
+    // because happy-dom has no cascade (what the box *resolves to* is measured in two engines by
+    // `e2e/desktop-pet-appearance.spec.ts` and `e2e/webkit/pet-probe.mjs`), and structurally it is a
+    // real claim: the element carries the class `PetBubble.vue`'s own stylesheet is scoped to, and
+    // the sentence inside it is the bubble's `line`.
+    const gateway = createMemoryPetGateway()
+    mountOnBubblePage(gateway)
+    await flush()
+    askForBubble()
+    await flush()
+
+    const bubble = document.querySelector<HTMLElement>('.pet-preview__bubble')
+    expect(bubble, 'the stage drew a bubble').not.toBeNull()
+    // The scoping class, read out of that file rather than spelled: a rename there has to fail here
+    // rather than leave this passing on an element nothing styles.
+    expect(source('../../desktop-pet/components/PetBubble.vue')).toContain('.pet-bubble {')
+    expect(bubble?.classList.contains('pet-bubble')).toBe(true)
+    expect(bubble?.querySelector('.pet-bubble__line')?.textContent?.trim()).toBe(
+      t('settings.pet.preview.bubbleText'),
+    )
+  })
+
+  it('declares no box of its own for the bubble', () => {
+    // The other half of the case above, and the half a future edit would break: `.pet-preview__bubble`
+    // is the hook this component *adds* to the surface `PetBubble` renders (Vue merges a parent's
+    // class onto a child component's root), and a class is not a licence to restate the box. Any
+    // declaration at all in that rule is a second bubble, so the rule must be empty or absent —
+    // comments stripped first, since the one above it names every property it is about.
+    const css = source('PetSettingsPreview.vue')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+    const block = css.match(/\.pet-preview__bubble\s*\{([^}]*)\}/)?.[1] ?? ''
+    expect(block.replace(/\s/g, '')).toBe('')
   })
 
   it('takes the bubble away after the setting’s own life, not a number of its own', async () => {

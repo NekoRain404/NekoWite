@@ -819,12 +819,24 @@ test('the section owns no colour: the host theme is what it draws with', async (
   await openPetSection(page)
 
   // The same rule `agent-changes.spec.ts` asserts for its own surface, by the same technique: the
-  // document's theme attribute is switched under the mounted page, and a colour that did not move
-  // would be a hardcoded one.
+  // theme attribute is switched *under* the mounted page, and a colour that did not move would be a
+  // hardcoded one.
+  //
+  // **The element it is switched on is the shell, and that is the whole of the technique.**
+  // `AppShell.vue` puts `data-theme`, `data-color-scheme`, `data-accent` and `data-contrast` on
+  // `.shell` and nowhere else, and this host is mounted into `.dialog-content`, which is under it —
+  // so `.shell` is where a switch the host can see has to be written. It used to be written on
+  // `document.documentElement`, and that only moved anything because the settings dialog was
+  // teleported to `body` and was therefore *outside* `.shell` altogether; the day that was fixed
+  // (`SettingsPanel.vue`'s header, `e2e/settings-dialog-scope.spec.ts` for the pair) this helper
+  // went on passing while driving an attribute its host no longer read, which is what the failure at
+  // this line was.
   const background = (theme: 'light' | 'dark'): Promise<string> =>
     page.evaluate((value) => {
-      document.documentElement.dataset.theme = value
-      document.documentElement.dataset.colorScheme = 'default'
+      const shell = document.querySelector<HTMLElement>('.shell')
+      if (shell === null) throw new Error('the app drew no shell to switch the theme on')
+      shell.dataset.theme = value
+      shell.dataset.colorScheme = 'default'
       const host = document.getElementById('e2e-pet-settings')
       return getComputedStyle(host as Element).backgroundColor
     }, theme)

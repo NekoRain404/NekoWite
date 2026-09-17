@@ -59,27 +59,51 @@ const OPACITY = 0.6
  */
 const FONT_SIZE = 14
 
-/** One computed colour pair, as a page reports it. */
-interface BubbleColours {
+/**
+ * The bubble's box, as a page reports it — every property the two surfaces used to disagree about,
+ * read with `getComputedStyle` so the answer is what the engine drew and not what a stylesheet says.
+ *
+ * Two of these are the colour pair the first round of this work fixed; the rest are the box, which
+ * the first two rounds left: the stage declared `padding: 5px 8px`, `line-height: 1.4`,
+ * `var(--app-radius-lg)`, a border mixed 80% toward transparent, no shadow and no family, beside the
+ * desktop's `6px 8px`, `1.5`, `var(--app-radius)`, `var(--app-border)`, `var(--app-shadow-card)` and
+ * `var(--app-font)`.
+ */
+interface BubbleBox {
   background: string
   color: string
   fontSize: string
+  /** The four sides, as four strings: a shorthand is not a computed value and cannot be compared. */
+  paddingTop: string
+  paddingRight: string
+  paddingBottom: string
+  paddingLeft: string
+  lineHeight: string
+  borderRadius: string
+  boxShadow: string
+  borderColor: string
+  borderWidth: string
 }
 
 /** What the app page's stage carries and what its preview draws, read in one go. */
 interface PreviewReading {
   stage: Record<string, string | undefined>
-  bubble: BubbleColours
+  bubble: BubbleBox
   /** The palette the stage resolved those axes to, for the anti-vacuity check. */
   elevated: string
   /**
    * The body size **the stage itself inherits** — the number the bubble's `--pet-bubble-size`
    * fallback would resolve to, so a preview that fell back to the app's body size instead of the
-   * setting is caught. It is not the shell's, and the difference is real rather than incidental:
-   * `SettingsPanel.vue:112` teleports the dialog to `body`, so the whole dialog is *outside* the
-   * `.shell` element that carries the user's inline `--app-body-size` and resolves the property from
-   * `tokens.css`'s `:root` instead (15px — measured, not assumed; this `16px` is what an earlier
-   * version of this case believed without reading it).
+   * setting is caught.
+   *
+   * Read on the stage rather than on the shell because the two are separate questions, and this case
+   * exists to keep them separate: what the *stage* sees is what the preview's own subtree can fall
+   * back to. The two readings happened to be different numbers until the settings dialog stopped
+   * being teleported to `body` (`SettingsPanel.vue`'s header, and
+   * `e2e/settings-dialog-scope.spec.ts` for the pair) — the dialog used to resolve the property from
+   * `tokens.css`'s `:root` at 15px while the shell carried 16px, which is why this file recorded
+   * both. The assertion below still holds them to each other, so the day the two answers part again
+   * this case says so.
    */
   stageBodySize: string
   /** What the app's own shell draws at, read off `.shell`'s inline property — the editor's size. */
@@ -189,7 +213,20 @@ test('the settings preview draws the bubble the desktop draws, value for value',
     const style = getComputedStyle(bubble)
     return {
       stage: { ...stage.dataset },
-      bubble: { background: style.backgroundColor, color: style.color, fontSize: style.fontSize },
+      bubble: {
+        background: style.backgroundColor,
+        color: style.color,
+        fontSize: style.fontSize,
+        paddingTop: style.paddingTop,
+        paddingRight: style.paddingRight,
+        paddingBottom: style.paddingBottom,
+        paddingLeft: style.paddingLeft,
+        lineHeight: style.lineHeight,
+        borderRadius: style.borderRadius,
+        boxShadow: style.boxShadow,
+        borderColor: style.borderTopColor,
+        borderWidth: style.borderTopWidth,
+      },
       elevated: getComputedStyle(stage).getPropertyValue('--app-elevated').trim(),
       // The two body sizes, and they are different numbers — see `PreviewReading`.
       stageBodySize: getComputedStyle(stage).getPropertyValue('--app-body-size').trim(),
@@ -282,13 +319,22 @@ test('the settings preview draws the bubble the desktop draws, value for value',
         await new Promise((resolve) => setTimeout(resolve, 200))
 
         const surface = host.querySelector<HTMLElement>('.pet-bubble__line')
-        const box = surface?.closest('.pet-bubble')
+        const box = surface?.closest<HTMLElement>('.pet-bubble')
         if (!box) throw new Error('the pet window drew no bubble to measure')
         const style = getComputedStyle(box)
         return {
           background: style.backgroundColor,
           color: style.color,
           fontSize: style.fontSize,
+          paddingTop: style.paddingTop,
+          paddingRight: style.paddingRight,
+          paddingBottom: style.paddingBottom,
+          paddingLeft: style.paddingLeft,
+          lineHeight: style.lineHeight,
+          borderRadius: style.borderRadius,
+          boxShadow: style.boxShadow,
+          borderColor: style.borderTopColor,
+          borderWidth: style.borderTopWidth,
         }
       },
       {
@@ -317,12 +363,63 @@ test('the settings preview draws the bubble the desktop draws, value for value',
     // setting is neither of them, and it is the number FONT_SIZE names.
     expect(preview.bubble.fontSize).toBe(`${FONT_SIZE}px`)
     expect(preview.bubble.fontSize).not.toBe('11px')
+
+    // **The box, which is the same lie the colours and the size were.** The stage drew a bubble the
+    // desktop never draws, in every dimension a decoration has: `padding: 5px 8px` against this
+    // surface's `6px 8px`, `line-height: 1.4` against `1.5`, `var(--app-radius-lg)` against
+    // `var(--app-radius)`, no `var(--app-shadow-card)` at all, and a border mixed 80% toward
+    // transparent against the palette's own `--app-border`. Same bar as everything above it: two
+    // pages, one component, one measured number per property.
+    //
+    // One property is deliberately *not* here, and it is the one that would have passed for the
+    // wrong reason: `font-family`. Both surfaces now read `var(--app-font, system-ui, sans-serif)`
+    // (`PetBubble.vue`), but the pet window's page is never told which family the user chose — the
+    // host publishes the theme, the scheme, the accent, the contrast and the body size and stops
+    // there (`PetHostAppearance`) — so the app's half resolves that `var()` to the chosen stack and
+    // the pet's half to `tokens.css`'s. The declaration is shared and the value is not; that gap is
+    // reported rather than papered over with an assertion that would assert the defect.
+    for (const property of [
+      'paddingTop',
+      'paddingRight',
+      'paddingBottom',
+      'paddingLeft',
+      'lineHeight',
+      'borderRadius',
+      'boxShadow',
+      'borderColor',
+      'borderWidth',
+    ] as const) {
+      expect(
+        preview.bubble[property],
+        `the preview draws the desktop's bubble, ${property} for ${property}`,
+      ).toBe(bubble[property])
+    }
+    // Fenced, the way the colour and size halves are: the padding the stage used to declare, the
+    // leading it used to declare, and the two tokens it drew where the desktop draws the component's
+    // own. A shared *component* is what makes these one number; a second declaration that happened
+    // to be edited into agreement would satisfy the equality above and fail here.
+    expect(preview.bubble.paddingTop).not.toBe('5px')
+    expect(preview.bubble.paddingTop).toBe('6px')
+    expect(preview.bubble.lineHeight).not.toBe('19.6px') // 14px × 1.4, the stage's old leading
+    expect(preview.bubble.lineHeight).toBe('21px') // 14px × 1.5, the bubble's own
+    expect(preview.bubble.boxShadow).not.toBe('none')
+    expect(preview.bubble.borderRadius).not.toBe('10px') // `--app-radius-lg`, the stage's old rung
+    expect(preview.bubble.borderRadius).toBe('8px') // `--app-radius`, the bubble's
+    // The border is the palette's own colour and not a mix toward transparent: the stage drew
+    // `color-mix(… 80%, transparent)`, which the engine reports with an alpha channel and the
+    // bubble's does not.
+    expect(preview.bubble.borderColor.startsWith('rgb(')).toBe(true)
+    expect(bubble.borderColor.startsWith('rgb(')).toBe(true)
     // The size control on the page really was driven (16, through the real number field, which is
     // what makes the 14 `FONT_SIZE` names a *choice* rather than the app's own number), and the size
-    // the bubble draws is neither that one nor the 15px the dialog's teleported subtree resolves the
-    // property to — the two numbers a fallback would land on.
+    // the bubble draws is not that one — the number a fallback would land on.
     expect(preview.shellBodySize).toBe('16px')
-    expect(preview.stageBodySize).toBe('15px')
+    // The stage reads the same property the shell published, which is what "the dialog is inside the
+    // shell's scope" means where this file can see it. It was `15px` — `tokens.css`'s value, because
+    // the dialog was teleported out of the scope entirely; `e2e/settings-dialog-scope.spec.ts`
+    // measures the whole of that pair, and this line is the half the bubble's own fallback depends
+    // on.
+    expect(preview.stageBodySize).toBe(preview.shellBodySize)
     expect(preview.bubble.fontSize).not.toBe(preview.stageBodySize)
     expect(preview.bubble.fontSize).not.toBe(preview.shellBodySize)
 

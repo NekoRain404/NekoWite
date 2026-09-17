@@ -10,7 +10,13 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { computed } from 'vue'
 import { useAppearanceStore } from './appearance'
-import { APPEARANCE_DEFAULTS, BODY_FONT_SIZE_MAX, BODY_FONT_SIZE_MIN } from './appearance-schema'
+import {
+  APPEARANCE_DEFAULTS,
+  BODY_FONT_SIZE_MAX,
+  BODY_FONT_SIZE_MIN,
+  LINE_HEIGHT_MAX,
+  LINE_HEIGHT_MIN,
+} from './appearance-schema'
 
 // The OS accent colour reaches the store through the platform adapter; mocking
 // it keeps these tests about the store's decisions instead of about the machine
@@ -155,6 +161,52 @@ describe('useAppearanceStore', () => {
     expect(s.lineHeight).toBe(2.4)
     s.setLineHeight(1.6)
     expect(s.lineHeight).toBe(1.6)
+    // A fraction is kept, like the body size's: the control is `step="0.1"` and the range is a bound
+    // and not a step, so a leading this store has always kept must survive its own guard.
+    s.setLineHeight(1.85)
+    expect(s.lineHeight).toBe(1.85)
+  })
+
+  it('holds a stored leading to the range the control writes it with, not to the value', () => {
+    // **One setting, one leading.** The read used to be `parsed.lineHeight ?? default`, which
+    // accepted anything the blob said, while `setLineHeight` clamped to 1.2..2.4 — so a hand-edited
+    // or corrupted `9` was read as 9 and written to `--app-line-height` by the app's own shell
+    // (`AppShell.vue:276` → `style.css:3`), which every editor pane then draws at. It is the
+    // identical defect `clampBodyFontSize` was added for one setting above, and it now has the
+    // identical shape: the range and the fallback are declared once (`appearance-schema.ts`'s
+    // `clampLineHeight`, over `LINE_HEIGHT_MIN`/`LINE_HEIGHT_MAX`) and both doors go through it.
+    //
+    // A fresh Pinia per reading, because `defineStore` caches per instance.
+    const readLeading = (stored: unknown): number => {
+      localStorage.setItem('nekowite.appearance', JSON.stringify(stored))
+      setActivePinia(createPinia())
+      return useAppearanceStore().lineHeight
+    }
+    expect(readLeading({ lineHeight: 9 })).toBe(LINE_HEIGHT_MAX)
+    expect(readLeading({ lineHeight: 0.4 })).toBe(LINE_HEIGHT_MIN)
+    expect(readLeading({ lineHeight: 1.85 })).toBe(1.85)
+    // Not a number at all is the schema's default, exactly as the setter reads it — including a
+    // numeric *string*, which is a value this document never declared.
+    expect(readLeading({ lineHeight: 'huge' })).toBe(APPEARANCE_DEFAULTS.lineHeight)
+    expect(readLeading({ lineHeight: '2' })).toBe(APPEARANCE_DEFAULTS.lineHeight)
+    expect(readLeading({})).toBe(APPEARANCE_DEFAULTS.lineHeight)
+  })
+
+  it('has one rule behind the two doors into lineHeight', () => {
+    // The pair, read from both ends of the same constant — the shape the body size's own case uses
+    // one setting above. A second copy of `1.2`/`2.4` at either door is the defect this asserts
+    // against: the numbers are `appearance-schema.ts`'s own, imported rather than restated.
+    localStorage.setItem(
+      'nekowite.appearance',
+      JSON.stringify({ lineHeight: LINE_HEIGHT_MAX + 7 }),
+    )
+    setActivePinia(createPinia())
+    const s = useAppearanceStore()
+    expect(s.lineHeight).toBe(LINE_HEIGHT_MAX)
+    s.setLineHeight(LINE_HEIGHT_MAX + 7)
+    expect(s.lineHeight).toBe(LINE_HEIGHT_MAX)
+    s.setLineHeight(LINE_HEIGHT_MIN - 7)
+    expect(s.lineHeight).toBe(LINE_HEIGHT_MIN)
   })
 
   it('defaults sidebarWidth to 232 and clamps into [160, 520]', () => {

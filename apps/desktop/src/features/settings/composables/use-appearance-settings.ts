@@ -7,6 +7,13 @@ import {
   COLOR_SCHEME_PREVIEW,
 } from '../../../stores/appearance-palette'
 import type { Accent, ColorScheme, ColorSchemePreview } from '../../../stores/appearance-palette'
+import {
+  APPEARANCE_DEFAULTS,
+  BODY_FONT_SIZE_MAX,
+  BODY_FONT_SIZE_MIN,
+  LINE_HEIGHT_MAX,
+  LINE_HEIGHT_MIN,
+} from '../../../stores/appearance-schema'
 import type { ContentDirection, Theme } from '../../../stores/appearance-schema'
 import {
   EDITOR_FONT_IDS,
@@ -15,6 +22,23 @@ import {
 } from '../../../stores/appearance-fonts'
 import type { EditorFontId, MonoFontId, UiFontId } from '../../../stores/appearance-fonts'
 import { useAppearanceStore } from '../../../stores/appearance'
+
+/**
+ * The three numbers a bounded number field needs: its two ends, and what an emptied one means.
+ *
+ * The ends come from `appearance-schema.ts`, which owns "the bounds its numbers are held to", and
+ * the empty value is the schema's own default for that setting — so a control cannot offer a range
+ * or a fallback the store would answer differently.
+ */
+export interface NumberField {
+  min: number
+  max: number
+  /** What an emptied field means. Not a range end and not a step: the field's own widget rule,
+   *  answered with the store's fallback for a value that is not a number, so clearing a field lands
+   *  where `clampBodyFontSize` / `clampLineHeight` would put it rather than on a number spelled
+   *  here. */
+  empty: number
+}
 
 export interface AppearanceSettingsModel {
   theme: ComputedRef<Theme>
@@ -42,6 +66,10 @@ export interface AppearanceSettingsModel {
   setMonoFont: (f: MonoFontId) => void
   bodyFontSize: ComputedRef<number>
   lineHeight: ComputedRef<number>
+  /** The typography fields' own bounds, so the section renders a control whose ends are the range
+   *  the store holds the value to instead of a second copy of it. */
+  bodyFontSizeField: NumberField
+  lineHeightField: NumberField
   setBodyFontSize: (n: number) => void
   setLineHeight: (n: number) => void
   highContrast: ComputedRef<boolean>
@@ -59,6 +87,26 @@ export interface AppearanceSettingsModel {
 const UI_FONT_OPTIONS: readonly UiFontId[] = UI_FONT_IDS
 const EDITOR_FONT_OPTIONS: readonly EditorFontId[] = EDITOR_FONT_IDS
 const MONO_FONT_OPTIONS: readonly MonoFontId[] = MONO_FONT_IDS
+
+/**
+ * The two typography fields' bounds, declared the same way and for the same reason as the three
+ * option lists above: they are the store's numbers, not a copy of them.
+ *
+ * The template used to write this range a third time — `min="12" max="20"` and a
+ * `Math.min(20, Math.max(12, …))` around the value — so widening `BODY_FONT_SIZE_MAX` in the schema
+ * would have left the control offering the old ceiling while `setBodyFontSize` accepted the new one.
+ * Today the two cannot disagree, and this is what keeps that true when one of them moves.
+ */
+const BODY_FONT_SIZE_FIELD: NumberField = {
+  min: BODY_FONT_SIZE_MIN,
+  max: BODY_FONT_SIZE_MAX,
+  empty: APPEARANCE_DEFAULTS.bodyFontSize,
+}
+const LINE_HEIGHT_FIELD: NumberField = {
+  min: LINE_HEIGHT_MIN,
+  max: LINE_HEIGHT_MAX,
+  empty: APPEARANCE_DEFAULTS.lineHeight,
+}
 
 /**
  * State and commands for the Appearance section: theme, colour scheme, accent,
@@ -110,6 +158,8 @@ export function useAppearanceSettings(): AppearanceSettingsModel {
     setMonoFont: appearance.setMonoFont,
     bodyFontSize: computed(() => appearance.bodyFontSize),
     lineHeight: computed(() => appearance.lineHeight),
+    bodyFontSizeField: BODY_FONT_SIZE_FIELD,
+    lineHeightField: LINE_HEIGHT_FIELD,
     setBodyFontSize: appearance.setBodyFontSize,
     setLineHeight: appearance.setLineHeight,
     highContrast: computed(() => appearance.highContrast),

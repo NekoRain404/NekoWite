@@ -894,13 +894,70 @@ function verify(results) {
     `stage ${JSON.stringify(preview?.fontSize)} via --pet-bubble-size ${JSON.stringify(preview?.property)} on the app’s page vs ${JSON.stringify(message?.largeClaude?.fontSize)} on the desktop’s; the app’s body ${JSON.stringify(preview?.shellBodySize)}, the stage’s own inherited ${JSON.stringify(preview?.stageBodySize)}`,
     preview?.fontSize === message?.largeClaude?.fontSize &&
       // Both directions, because an equality is satisfiable by two wrong answers: `11px` is what the
-      // component used to declare, and the sizes the stage *could* have fallen back to (the app's
-      // body size, or the 15px the teleported dialog resolves the property to) are neither of them
-      // the setting. `14px` is `MESSAGE_SIZE`, mirrored here rather than read for the reason above.
+      // component used to declare, and the sizes the stage *could* have fallen back to — the app's
+      // body size, which is also what the stage inherits now that the dialog is inside the shell's
+      // scope — are not the setting. `14px` is `MESSAGE_SIZE`, mirrored here rather than read for the
+      // reason above.
       preview?.fontSize === '14px' &&
       preview?.fontSize !== '11px' &&
       preview?.fontSize !== preview?.shellBodySize &&
       preview?.fontSize !== preview?.stageBodySize,
+  )
+
+  /*
+   * The bubble's **box**, which is the third round of this same defect and the one the first two
+   * skipped: the preview declared `padding: 5px 8px`, `line-height: 1.4`, `var(--app-radius-lg)`, a
+   * border mixed toward transparent, no shadow and no family, while the desktop drew `6px 8px`,
+   * `1.5`, `var(--app-radius)`, the palette's `--app-border`, `var(--app-shadow-card)` and
+   * `var(--app-font)`.
+   *
+   * The two readings are the ones the `message` step and the `preview` step took **in WebKitGTK**,
+   * one page each, so this is the same equality the Chromium case states and in the engine that
+   * ships. `fontFamily` is deliberately not among the five, for the reason the Chromium case gives:
+   * the pet window's page is never told which family the user chose, so that pair would assert the
+   * gap rather than the fix. It is reported instead.
+   */
+  const BOX = ['paddingTop', 'lineHeight', 'borderRadius', 'boxShadow', 'borderColor']
+  run(
+    'the settings preview draws the box the desktop’s bubble draws, in this engine',
+    BOX.map(
+      (name) =>
+        `${name} ${JSON.stringify(preview?.[name])} vs ${JSON.stringify(message?.largeClaude?.[name])}`,
+    ).join('; '),
+    BOX.every((name) => preview?.[name] === message?.largeClaude?.[name]) &&
+      // Fenced, the way the size half is: the padding the stage declared, the leading it declared,
+      // the radius rung it drew and the shadow it did not have. An equality alone is satisfiable by
+      // two surfaces that both changed; these are the numbers this defect was measured at.
+      preview?.paddingTop === '6px' &&
+      preview?.paddingTop !== '5px' &&
+      preview?.borderRadius !== '10px' &&
+      preview?.boxShadow !== 'none' &&
+      preview?.borderColor === message?.largeClaude?.borderColor,
+  )
+
+  /*
+   * And the scope itself: what the dialog resolved against what `.shell` published and what the page
+   * root answers with.
+   *
+   * The dialog used to be teleported to `body` (`SettingsPanel.vue:112`), which put the whole of it
+   * outside `.shell` — the one element carrying `data-theme`, `data-color-scheme`, `data-accent`,
+   * `data-contrast` and the seven inline `--app-*` properties — so it drew `palettes.css`'s light
+   * `:root` block while the app drew the dark `forest` scheme the user had chosen. Three readings
+   * per property, one per element, which is what makes `root` a fence rather than a restatement: the
+   * appearance step above drove this page to dark/`forest`/serif/leading 2, none of which the root
+   * block can produce.
+   */
+  run(
+    'and the dialog draws the appearance the shell published, not the page root’s',
+    `overlay in ${JSON.stringify(preview?.overlayParent)}; elevated ${JSON.stringify(preview?.dialogElevated)} = shell ${JSON.stringify(preview?.shellElevated)} ≠ root ${JSON.stringify(preview?.rootElevated)}; font ${JSON.stringify(preview?.dialogFont)} = shell ${JSON.stringify(preview?.shellFont)} ≠ root ${JSON.stringify(preview?.rootFont)}; leading ${JSON.stringify(preview?.dialogLineHeight)} = shell ${JSON.stringify(preview?.shellLineHeight)} ≠ root ${JSON.stringify(preview?.rootLineHeight)}; body size ${JSON.stringify(preview?.dialogBodySize)} = shell ${JSON.stringify(preview?.shellBodySize)}`,
+    preview?.overlayParent === 'shell' &&
+      preview?.dialogElevated === preview?.shellElevated &&
+      preview?.dialogElevated !== preview?.rootElevated &&
+      preview?.dialogFont === preview?.shellFont &&
+      preview?.dialogFont !== preview?.rootFont &&
+      preview?.dialogLineHeight === preview?.shellLineHeight &&
+      preview?.dialogLineHeight !== preview?.rootLineHeight &&
+      preview?.dialogBodySize === preview?.shellBodySize,
   )
   // FAILS IF: the body size above the control's ceiling is drawn at the ceiling by *one* window and
   // verbatim by the other — the third defect, in the engine that ships. The app's number is what its
@@ -1030,6 +1087,15 @@ const value = arguments[0], done = arguments[arguments.length - 1];
     background: getComputedStyle(bubble).backgroundColor,
     color: getComputedStyle(bubble).color,
     fontSize: getComputedStyle(bubble).fontSize,
+    // The bubble's *box*, for the comparison against the settings preview on the app's page: the two
+    // surfaces drew a different one in every dimension — 5px 8px / 1.4 / --app-radius-lg and no
+    // shadow, against 6px 8px / 1.5 / --app-radius / --app-shadow-card — which is what the preview
+    // step's own readings are held against below.
+    paddingTop: getComputedStyle(bubble).paddingTop,
+    lineHeight: getComputedStyle(bubble).lineHeight,
+    borderRadius: getComputedStyle(bubble).borderRadius,
+    boxShadow: getComputedStyle(bubble).boxShadow,
+    borderColor: getComputedStyle(bubble).borderTopColor,
     rowFontSize: row ? getComputedStyle(row).fontSize : null,
     // The dot's two styles differ in shape and in nothing else: a disc is round, upstream's
     // claude style is a glyph on a square box (references/desktop-pet/windows/src/styles.css:149).
@@ -1154,16 +1220,44 @@ const wrote = arguments[0], done = arguments[arguments.length - 1];
   const stage = host.querySelector('.pet-preview__stage');
   if (!bubble || !stage) { done({ ok: false, why: 'the stage drew no bubble to measure' }); return; }
   const shell = document.querySelector('.shell');
+  const dialog = document.querySelector('.settings-dialog');
+  const overlay = document.querySelector('.settings-overlay');
+  const style = getComputedStyle(bubble);
+  const surface = (el, name) => (el ? getComputedStyle(el).getPropertyValue(name).trim() : null);
+  const page_ = document.documentElement;
   done({
     ok: true,
     // The two readings the size claim is made of: what the stage drew, and which property carried it.
-    fontSize: getComputedStyle(bubble).fontSize,
+    fontSize: style.fontSize,
     property: bubble.style.getPropertyValue('--pet-bubble-size'),
+    // The box the third round of this work is about — the same properties the desktop's bubble is
+    // read for in the message step above, so the two are compared as strings in one engine.
+    paddingTop: style.paddingTop,
+    lineHeight: style.lineHeight,
+    borderRadius: style.borderRadius,
+    boxShadow: style.boxShadow,
+    borderColor: style.borderTopColor,
     // The body sizes, for the fence: the app's own (from the stored blob the page was loaded with)
-    // and the one the stage inherits — the dialog is teleported to body, so they are not the same
-    // number, and neither is the size the bubble must draw.
+    // and the one the stage inherits. Those two were different numbers for as long as the dialog was
+    // teleported to the page body; they are one number now, and the check below says so.
     shellBodySize: shell ? shell.style.getPropertyValue('--app-body-size').trim() : null,
-    stageBodySize: getComputedStyle(stage).getPropertyValue('--app-body-size').trim(),
+    stageBodySize: surface(stage, '--app-body-size'),
+    // And the scope itself, read off three elements the same way the Chromium case reads two: what
+    // the shell published, what the dialog resolved, and what the page root — the block a surface
+    // outside the shell's scope falls back to — answers with.
+    overlayParent: overlay ? String(overlay.parentElement && overlay.parentElement.className) : null,
+    shellElevated: surface(shell, '--app-elevated'),
+    shellFont: surface(shell, '--app-font'),
+    shellLineHeight: surface(shell, '--app-line-height'),
+    dialogElevated: surface(dialog, '--app-elevated'),
+    dialogFont: surface(dialog, '--app-font'),
+    dialogLineHeight: surface(dialog, '--app-line-height'),
+    dialogBodySize: surface(dialog, '--app-body-size'),
+    dialogText: dialog ? getComputedStyle(dialog).color : null,
+    rootElevated: surface(page_, '--app-elevated'),
+    rootBodySize: surface(page_, '--app-body-size'),
+    rootFont: surface(page_, '--app-font'),
+    rootLineHeight: surface(page_, '--app-line-height'),
   });
 })().catch((error) => done({ ok: false, why: String((error && error.message) || error) }));
 `
@@ -1399,7 +1493,14 @@ async function main() {
       // own page cannot produce through its UI. The window's rule for a published value
       // (`pet-page-appearance.ts`'s `petBodySizeOf`, 12..20) is what this reading is about, and the
       // app's half of the same number is read in the `preview` step at the end of this run.
-      ['overRange', { theme: 'light', colorScheme: 'default', accent: 'ink', highContrast: false, bodyFontSize: CORRUPT_BODY_SIZE }],
+      // `dark`/`default` rather than `light`/`default`, and it is an instrument decision: this is
+      // the last publish, so it is the palette the pet window's page is left on when the `preview`
+      // step at the end of the run compares the two surfaces' boxes. The app's own appearance is
+      // driven to the same pair there (`dark`, scheme untouched), so the two pages draw the same
+      // `--app-border` and `--app-shadow-card` and a difference between them is a difference in the
+      // *box* rather than in the palette. Nothing about this reading is about the theme: every
+      // assertion on it is about the body size.
+      ['overRange', { theme: 'dark', colorScheme: 'default', accent: 'ink', highContrast: false, bodyFontSize: CORRUPT_BODY_SIZE }],
     ]) {
       const read = await wd.executeAsync(APPEARANCE, [published])
       if (!read?.ok) throw new Error(`the ${name} appearance is not measurable: ${read?.why}`)
@@ -1450,6 +1551,78 @@ async function main() {
       `const rows = document.querySelectorAll('.dialog-nav .nav-row');
        if (rows[1]) rows[1].click();
        return rows.length;`,
+    )
+    /*
+     * The appearance is driven to a value the page's own defaults cannot produce, through the same
+     * controls the Chromium case clicks: dark, the `forest` scheme, and the serif interface font.
+     *
+     * **The reason it is driven at all**, and not read where it already stands: the three fences in
+     * the `preview` checks below compare the dialog against the *page root*, and the page root only
+     * differs from the shell when the user has chosen something. A run that left the appearance at
+     * its clean-install defaults would have the two answers be the same number, and every one of
+     * those checks would pass without testing anything — the vacuity this file's Chromium half
+     * fences in its own words.
+     *
+     * The body size is deliberately **not** touched: the `overRange` check depends on the shell
+     * still drawing the `99` its stored blob was seeded with (clamped to the control's ceiling).
+     */
+    // **Dark only, and the scheme deliberately left alone.** The `overRange` publish above left the
+    // pet window's page on `dark`/`default`, and the box check compares the two pages' *palette-
+    // derived* properties as well (`--app-shadow-card` and `--app-border`, in `boxShadow` and
+    // `borderColor`). Clicking a colour scheme here would move the app's palette and not the pet
+    // page's, and the two readings would then differ for a reason that is the instrument's ordering
+    // rather than either surface's — which is exactly what the first run of this step measured.
+    await wd.execute(
+      `const dark = document.querySelectorAll('.dialog-content .view-modes .switch-option')[1];
+       if (dark) dark.click();
+       return true;`,
+    )
+    await until(
+      () => wd.execute('return document.querySelector(".shell").getAttribute("data-theme") === "dark";'),
+      { timeout: 10_000, what: 'the app to switch to the dark theme' },
+    )
+    // The leading, through the field's own `change` — the event a blur produces, and the same door
+    // the Chromium case uses. The *second* numeric field: the Appearance section declares the body
+    // size first and the leading second.
+    await wd.execute(
+      `const fields = document.querySelectorAll('.dialog-content input[type="number"]');
+       const leading = fields[1];
+       if (leading) { leading.value = '2'; leading.dispatchEvent(new Event('change', { bubbles: true })); }
+       return fields.length;`,
+    )
+    // The interface font, through its own select: the trigger, then the option the store knows by
+    // id. The popup is teleported to `body` by the component (`SelectMenu.vue:297`), so it is found
+    // at the top level and not inside the dialog.
+    await wd.execute(
+      `const trigger = document.querySelector('#settings-ui-font');
+       if (trigger) trigger.click();
+       return Boolean(trigger);`,
+    )
+    await until(
+      () =>
+        wd.execute(
+          'return Boolean(document.querySelector(".select-popup .select-option[data-value=\'serif\']"));',
+        ),
+      { timeout: 10_000, what: 'the interface-font popup to open' },
+    )
+    await wd.execute(
+      `const option = document.querySelector('.select-popup .select-option[data-value=\\'serif\\']');
+       if (option) option.click();
+       return Boolean(option);`,
+    )
+    await until(
+      () =>
+        wd.execute(
+          'return getComputedStyle(document.querySelector(".shell")).fontFamily.indexOf("Source Serif") >= 0;',
+        ),
+      { timeout: 10_000, what: 'the chosen interface font to reach the shell' },
+    )
+    await until(
+      () =>
+        wd.execute(
+          'return getComputedStyle(document.querySelector(".shell")).getPropertyValue("--app-line-height").trim() === "2";',
+        ),
+      { timeout: 10_000, what: 'the leading the field was given to reach the shell' },
     )
     results.preview = await wd.executeAsync(PREVIEW, [MESSAGE_SIZE])
     if (!results.preview?.ok) {

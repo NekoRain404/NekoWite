@@ -23,6 +23,20 @@ export { default as DesktopPetRoot } from './components/DesktopPetRoot.vue'
 // references no care panel — Rollup drops the rest, and `desktop-pet-entry.test.ts` lists the
 // sources so the day something in that window does draw one, it is a change to that list.
 export { default as PetCarePanel } from './components/PetCarePanel.vue'
+
+// The bubble, for the settings page's live preview (§5.1's 「预览放当前设置内容区」). It is here for
+// the reason above and not because the window wants it: the preview *is* the desktop's bubble rather
+// than a drawing of one, which is the only shape of that promise a later edit cannot break — a
+// preview with a box of its own was `padding: 5px 8px`, `line-height: 1.4`, `--app-radius-lg` and no
+// shadow beside the desktop's `6px 8px`, `1.5`, `--app-radius` and `--app-shadow-card`, and a user
+// set the bubble's look by looking at the wrong one of the two.
+//
+// It costs this module nothing it was not already carrying: `PetCarePanel` above is not the only
+// entry that reaches the root, and `DesktopPetRoot` imports this component, so it is in every bundle
+// that has the barrel at all. It does not reach the pet *window* — that window's entry imports
+// `DesktopPetRoot` by path on purpose (`app/desktop-pet-entry.test.ts` walks the graph and keeps the
+// barrel out), so the list there is unchanged.
+export { default as PetBubble } from './components/PetBubble.vue'
 export {
   PET_CARE_PANEL_LABELS,
   petCareProgress,

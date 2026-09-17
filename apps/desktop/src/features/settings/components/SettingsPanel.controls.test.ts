@@ -22,6 +22,14 @@ import SettingsPanel from './SettingsPanel.vue'
 import { t } from '../../../i18n'
 import { useAiPermissionStore } from '../../../stores/ai-permission'
 import { useSettingsStore } from '../../../stores/settings'
+import { useAppearanceStore } from '../../../stores/appearance'
+import {
+  APPEARANCE_DEFAULTS,
+  BODY_FONT_SIZE_MAX,
+  BODY_FONT_SIZE_MIN,
+  LINE_HEIGHT_MAX,
+  LINE_HEIGHT_MIN,
+} from '../../../stores/appearance-schema'
 
 const invokeMock = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
@@ -207,6 +215,67 @@ describe('SettingsPanel control bindings', () => {
     expect(other).toBeTruthy()
     await nextTick()
     expect(permissions.policy).toBe(other)
+
+    expect(vueWarnings()).toEqual([])
+  })
+
+  it('offers the typography range the store holds those settings to, not a copy of it', async () => {
+    // The two fields used to write their own bounds a third time — `min="12" max="20"` beside a
+    // `Math.min(20, Math.max(12, …))` around the value — so the range was declared in
+    // `appearance-schema.ts`, again in `stores/appearance.ts`'s setter and again in the template,
+    // and nothing kept the three in step. Widening `BODY_FONT_SIZE_MAX` would have left this control
+    // offering the old ceiling to a user while `setBodyFontSize` accepted the new one.
+    //
+    // It cannot diverge *today* — the setter now walks the schema's rule — so this case is pinned to
+    // the relationship rather than to a defect: the field's own ends are the store's own constants,
+    // imported rather than restated, and the largest number the spinner can reach is a value the
+    // store keeps. A literal edited back in fails the first pair the moment the schema moves, which
+    // is the day it would have mattered.
+    await openSection('appearance')
+    const fields = [
+      ...document.querySelectorAll<HTMLInputElement>('.settings-section input[type="number"]'),
+    ]
+    expect(fields.length, 'the appearance section has exactly these two numeric fields').toBe(2)
+    // The order is `AppearanceSettings.vue`'s mark-up: the body size, then the leading. Checked
+    // rather than assumed, because the labels carry each field's *current* value and a reorder would
+    // otherwise make this case assert one field's range against the other's — which is green.
+    const [size, leading] = fields
+    const appearance = useAppearanceStore()
+    expect(size.value).toBe(String(appearance.bodyFontSize))
+    expect(leading.value).toBe(String(appearance.lineHeight))
+
+    expect(size.min).toBe(String(BODY_FONT_SIZE_MIN))
+    expect(size.max).toBe(String(BODY_FONT_SIZE_MAX))
+    expect(leading.min).toBe(String(LINE_HEIGHT_MIN))
+    expect(leading.max).toBe(String(LINE_HEIGHT_MAX))
+    // The step is the leading's own: the range is a bound and not a rounding, which is why neither
+    // field's value goes through `clampInt`.
+    expect(leading.step).toBe('0.1')
+
+    // The two doors, at the ends: the number the field offers at its own ceiling is a value the
+    // store keeps, and so is the smallest at its floor. A field offering a range the store refused
+    // would show one number and store another.
+    for (const [field, ceiling, floor, stored] of [
+      [size, BODY_FONT_SIZE_MAX, BODY_FONT_SIZE_MIN, () => appearance.bodyFontSize],
+      [leading, LINE_HEIGHT_MAX, LINE_HEIGHT_MIN, () => appearance.lineHeight],
+    ] as const) {
+      field.value = field.max
+      field.dispatchEvent(new Event('change', { bubbles: true }))
+      await nextTick()
+      expect(stored()).toBe(ceiling)
+      field.value = field.min
+      field.dispatchEvent(new Event('change', { bubbles: true }))
+      await nextTick()
+      expect(stored()).toBe(floor)
+    }
+
+    // An emptied field is the one thing the template still decides (a fact about the widget, not
+    // about the setting): it lands on the store's own fallback rather than on 0, which is what the
+    // schema's `clampBodyFontSize` would have made of it.
+    size.value = ''
+    size.dispatchEvent(new Event('change', { bubbles: true }))
+    await nextTick()
+    expect(appearance.bodyFontSize).toBe(APPEARANCE_DEFAULTS.bodyFontSize)
 
     expect(vueWarnings()).toEqual([])
   })
