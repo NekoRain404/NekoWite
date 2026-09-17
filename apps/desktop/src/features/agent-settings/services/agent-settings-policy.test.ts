@@ -28,6 +28,7 @@ import { describe, expect, it } from 'vitest'
 import {
   CONFIG_MODES,
   REDACTED_CREDENTIAL,
+  configEditor,
   configRefusalMessage,
   credentialRows,
   credentialSubmission,
@@ -246,15 +247,39 @@ describe('the document the editor submits', () => {
     if (update.status === 'refused') expect(update.reason).toBe('other-document')
   })
 
-  it('refuses a document that is not there, and one this host does not write', () => {
-    const absent = decideConfigWrite(configRead({ exists: false, revision: null }), {
-      path: 'XDG_CONFIG_HOME/opencode/opencode.jsonc',
+  it('applies a write against a document that is not there — it is the create claim', () => {
+    // This arm used to be a refusal (`absent`): a write with a revision against a file that did not
+    // exist had nothing to land on. It is now the *same* rule read the other way — the claim is
+    // the read's own revision, `null` — and the backend creates the document from it. What makes
+    // that safe is not this function but the backend's compare-and-swap: it checks the claim
+    // against the disk, so a file that appeared in between is a conflict rather than an overwrite.
+    const read = configRead({ exists: false, revision: null })
+    expect(decideConfigWrite(read, {
+      path: read.path,
+      revision: null,
+      edits: [{ path: ['model'], value: 'x' }],
+    })).toEqual({ status: 'applied', edits: [{ path: ['model'], value: 'x' }] })
+
+    // And a claim that does not match the absence is a conflict in both directions. This is the
+    // form built from an older read — the document is gone now — which is the same situation as a
+    // revision that moved, and gets the same answer: reload, never merge.
+    const stale = decideConfigWrite(read, {
+      path: read.path,
       revision: 'b'.repeat(64),
       edits: [{ path: ['model'], value: 'x' }],
     })
-    expect(absent.status).toBe('refused')
-    if (absent.status === 'refused') expect(absent.reason).toBe('absent')
+    expect(stale.status).toBe('conflict')
 
+    // The mirror image: a document that is there and a form claiming there is none.
+    const appeared = decideConfigWrite(configRead(), {
+      path: 'XDG_CONFIG_HOME/opencode/opencode.jsonc',
+      revision: null,
+      edits: [{ path: ['model'], value: 'x' }],
+    })
+    expect(appeared.status).toBe('conflict')
+  })
+
+  it('refuses a document this host does not write, absence or no absence', () => {
     const notEditable = decideConfigWrite(configRead({ editable: false }), {
       path: 'XDG_CONFIG_HOME/opencode/opencode.jsonc',
       revision: 'b'.repeat(64),
@@ -276,6 +301,24 @@ describe('the document the editor submits', () => {
       expect(update.status, JSON.stringify(path)).toBe('refused')
       if (update.status === 'refused') expect(update.reason).toBe('malformed-edit')
     }
+  })
+
+  it('draws the same form for a document that is not there, in its own arm', () => {
+    // The arm exists because the *page* says a different sentence for it (saving creates the
+    // engine's file), not because the form differs — and because the two have to be decided from
+    // the same read the write is built from, which is why this function and `decideConfigWrite`
+    // share a predicate.
+    expect(configEditor(null)).toEqual({ kind: 'none' })
+    expect(configEditor(configRead())).toEqual({ kind: 'editable' })
+    expect(configEditor(configRead({ exists: false, revision: null }))).toEqual({
+      kind: 'creatable',
+    })
+    expect(configEditor(configRead({ editable: false }))).toEqual({ kind: 'not-editable' })
+    // The mode is the outer test: a profile this host does not write in has no writable arm, with
+    // or without a document, and the sentence it gets is the one about the mode.
+    expect(configEditor(configRead({ editable: false, exists: false, revision: null }))).toEqual({
+      kind: 'not-editable',
+    })
   })
 
   it('refuses before it checks the revision, so the message names the right thing', () => {
@@ -383,7 +426,10 @@ describe('the sentences a refusal is rendered with', () => {
     ] as const) {
       expect(profileRefusalMessage(reason).length).toBeGreaterThan(20)
     }
-    for (const reason of ['other-document', 'not-editable', 'absent', 'malformed-edit'] as const) {
+    // Three arms, not four: `absent` was one until the backend could create. Its sentence ("its
+    // engine creates it on first run") was the false half of the gap this closed — it is this app
+    // that writes that file, at profile open and now from the form.
+    for (const reason of ['other-document', 'not-editable', 'malformed-edit'] as const) {
       expect(configRefusalMessage(reason).length).toBeGreaterThan(20)
     }
   })

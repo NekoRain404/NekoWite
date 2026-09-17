@@ -1,10 +1,11 @@
 /**
- * The command names and argument spellings of the two settings ports, asserted rather than assumed.
+ * The command names and argument spellings of the settings ports, asserted rather than assumed.
  *
- * These two ports are the ones whose Rust commands (`agent_config_document`, `agent_config_edit`,
- * `agent_catalogue_read`) were registered in `lib.rs` and declared in `build.rs` with **no caller in
- * `src/`** — this repository's signature failure, 建好了但够不到. Wiring a page to them makes the
- * names load-bearing, and a name is exactly the kind of thing no other test here can see:
+ * These are the ports whose Rust commands (`agent_config_document`, `agent_config_edit`,
+ * `agent_catalogue_read`, and the four `agent_skills_*`) were registered in `lib.rs` and declared in
+ * `build.rs` with **no caller in `src/`** — this repository's signature failure, 建好了但够不到.
+ * Wiring a page to them makes the names load-bearing, and a name is exactly the kind of thing no
+ * other test here can see:
  *
  *  - The agents page's own test mocks `invoke`, so a typo'd command name answers from the mock and
  *    the page renders as though the backend had spoken. The failure that hides is a real one — at
@@ -25,6 +26,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 
 import { createTauriAgentConfigCommands } from './config'
 import { createTauriAgentCatalogueCommands } from './catalogue'
+import { createTauriAgentSkillsCommands } from './skills'
 
 beforeEach(() => {
   invokeMock.mockClear()
@@ -69,5 +71,61 @@ describe('the catalogue port', () => {
     // `AppHandle` rather than from anything a window sends. A key here would be a window naming a
     // path on the host.
     expect(invokeMock).toHaveBeenCalledWith('agent_catalogue_read')
+  })
+})
+
+describe('the skills port', () => {
+  const AGENT = 'bundled-engine'
+  const PROFILE = 'default'
+  const SKILL = 'demo'
+  const SCOPE = 'engine-global'
+
+  it('reads with the pair the page was built for', async () => {
+    await createTauriAgentSkillsCommands().read(AGENT, PROFILE)
+    expect(invokeMock).toHaveBeenCalledWith('agent_skills_read', {
+      agentId: AGENT,
+      profileId: PROFILE,
+    })
+  })
+
+  it('reads a folder with the pair and the path, and writes nothing by asking', async () => {
+    await createTauriAgentSkillsCommands().preview(AGENT, PROFILE, '/home/someone/incoming/demo')
+    expect(invokeMock).toHaveBeenCalledWith('agent_skills_preview', {
+      agentId: AGENT,
+      profileId: PROFILE,
+      source: '/home/someone/incoming/demo',
+    })
+  })
+
+  it('imports with the confirmation as its own argument', async () => {
+    // §8.2's 「覆盖必须确认」 read at the wire: `replace` is a separate call, so the first press of
+    // *Import* can never be the one that replaces something — there is no default for it to take.
+    await createTauriAgentSkillsCommands().import(AGENT, PROFILE, '/home/someone/incoming/demo', false)
+    expect(invokeMock).toHaveBeenLastCalledWith('agent_skills_import', {
+      agentId: AGENT,
+      profileId: PROFILE,
+      source: '/home/someone/incoming/demo',
+      replace: false,
+    })
+    await createTauriAgentSkillsCommands().import(AGENT, PROFILE, '/home/someone/incoming/demo', true)
+    expect(invokeMock).toHaveBeenLastCalledWith('agent_skills_import', {
+      agentId: AGENT,
+      profileId: PROFILE,
+      source: '/home/someone/incoming/demo',
+      replace: true,
+    })
+  })
+
+  it('switches a skill by scope and name, and never by a path', async () => {
+    await createTauriAgentSkillsCommands().setEnabled(AGENT, PROFILE, SKILL, SCOPE, false)
+    // The directory a row showed is deliberately *not* here: it is what the backend's move acts on,
+    // and a window that could send one could move a directory out of anywhere.
+    expect(invokeMock).toHaveBeenCalledWith('agent_skills_set_enabled', {
+      agentId: AGENT,
+      profileId: PROFILE,
+      name: SKILL,
+      scope: SCOPE,
+      enabled: false,
+    })
   })
 })

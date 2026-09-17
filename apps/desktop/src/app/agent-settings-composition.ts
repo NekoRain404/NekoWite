@@ -18,12 +18,15 @@
  *
  * ## Which pages this unlocks, and which it deliberately does not
  *
- * Two of the seven sections have a backend this build really answers: the registry
- * (`agent_registry_read` / `_add` / `_set_enabled`) and the profile
- * (`agent_profile_read` / `_write`). Both are registered in `R/src/lib.rs`, and both clients are
- * built here. The other five have no client in this object, because there is nothing for one to
- * call — the section states each absence rather than mounting a page that could only fail, and a
- * client added here for an unregistered command would be that failure with a longer name.
+ * Six of the nine sections have a backend this build really answers: the registry
+ * (`agent_registry_read` / `_add` / `_set_enabled`), the profile (`agent_profile_read` / `_write`),
+ * the permission pair (`agent_permission_grants` / `_revoke`), the engine's own configuration
+ * (`agent_config_document` / `_edit`), the ACP catalogue (`agent_catalogue_read`) and the skills
+ * page (`agent_skills_read` / `_preview` / `_import` / `_set_enabled`). All of them are registered
+ * in `R/src/lib.rs`, and every one of their clients is built here. The other three have no client
+ * in this object, because there is nothing for one to call — the section states each absence rather
+ * than mounting a page that could only fail, and a client added here for an unregistered command
+ * would be that failure with a longer name.
  *
  * ## No double, and no fallback
  *
@@ -54,6 +57,10 @@ import {
   createTauriAgentCatalogueCommands,
   type AgentCatalogueCommands,
 } from '../platform/gateways/tauri-agent/catalogue'
+import {
+  createTauriAgentSkillsCommands,
+  type AgentSkillsCommands,
+} from '../platform/gateways/tauri-agent/skills'
 import { createAgentRegistryClient } from '../features/agent-settings/services/agent-registry-ipc'
 import type { AgentRegistryClient } from '../features/agent-settings/services/agent-registry-policy'
 import { createAgentProviderClient } from '../features/agent-settings/services/agent-profile-ipc'
@@ -68,6 +75,8 @@ import {
 } from '../features/agent-settings/services/agent-config-ipc'
 import { createAgentCatalogueClient } from '../features/agent-settings/services/agent-catalogue-ipc'
 import type { AgentCatalogueClient } from '../features/agent-settings/services/agent-catalogue-policy'
+import { createAgentSkillsClient } from '../features/agent-settings/services/agent-skills-ipc'
+import type { AgentSkillsClient } from '../features/agent-settings/components/AgentSkillsSettings.vue'
 
 /**
  * What the settings tree calls.
@@ -108,6 +117,16 @@ export interface AgentSettingsClients {
    * engine a page is about, so a builder would take an argument it has no use for.
    */
   readonly catalogue: AgentCatalogueClient
+  /**
+   * The skills page's client, built for one engine/profile pair.
+   *
+   * A builder for the configuration client's reason, one more directory over: the scope list is
+   * built from *that profile's* roots — where its engine's `HOME` and `XDG_CONFIG_HOME` point — so
+   * a client that could be asked about another pair is a page describing directories it does not
+   * have. Which pair that is arrives from the registry readout, read by the section rather than
+   * here, exactly as the other two builders' does.
+   */
+  readonly skills: (agentId: string, profileId: string) => AgentSkillsClient
 }
 
 /**
@@ -120,6 +139,7 @@ export interface AgentSettingsDeps {
   grantCommands?: AgentPermissionGrantCommands
   configCommands?: AgentConfigCommands
   catalogueCommands?: AgentCatalogueCommands
+  skillsCommands?: AgentSkillsCommands
 }
 
 /** Build the settings tree's clients over the window's own commands. */
@@ -148,5 +168,13 @@ export function createAgentSettingsClients(deps: AgentSettingsDeps = {}): AgentS
     catalogue: createAgentCatalogueClient(
       deps.catalogueCommands ?? createTauriAgentCatalogueCommands(),
     ),
+    // The skills page's commands are built once and bound per pair, like the two clients above: the
+    // port the page calls takes no pair of its own, because the client is already that pair.
+    skills: (agentId: string, profileId: string) =>
+      createAgentSkillsClient({
+        skills: deps.skillsCommands ?? createTauriAgentSkillsCommands(),
+        agentId,
+        profileId,
+      }),
   }
 }

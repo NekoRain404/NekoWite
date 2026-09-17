@@ -17,6 +17,14 @@ export async function runTurn(
   run: LiveRun,
   script: MemoryRunScript,
 ): Promise<AgentRunResult> {
+  // **Recorded, not published.** The engine's own store holds the user's turn from the moment it
+  // accepts the prompt, and its *stream* says nothing about it: the replay probe measured zero
+  // user chunks across a whole live turn, and one — the prompt verbatim — arriving first on the
+  // `session/load` that restored the conversation. So this goes into the record's stored turns
+  // (`LiveSession.prompts`) and is replayed by `loadSession`, rather than through `pushEvent`,
+  // which would put a frame on the live stream that no engine ever sends.
+  record.prompts.push({ runId: run.runId, text })
+
   for (const chunk of script.chunks ?? [text]) {
     pushEvent(record, 'text-delta', { text: chunk }, run.runId)
   }

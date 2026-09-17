@@ -18,7 +18,7 @@
 //!
 //! | Window | Capability | May call |
 //! | --- | --- | --- |
-//! | `main` | `capabilities/default.json` | all seventy below, except the two that are the pet window's own |
+//! | `main` | `capabilities/default.json` | all seventy-seven below, except the two that are the pet window's own |
 //! | `pet-*` | `capabilities/desktop-pet.json` | `desktop_pet_state`, `desktop_pet_set_visible`, `desktop_pet_close_own`, `desktop_pet_set_click_through`, `desktop_pet_open_settings`, `desktop_pet_tasks`, `desktop_pet_appearance`, `desktop_pet_open_task`, and the two `core:event` permissions it already held |
 //!
 //! Two consequences worth knowing before editing either list:
@@ -118,6 +118,12 @@ const COMMANDS: &[&str] = &[
     "agent_config_document",
     "agent_config_edit",
     "agent_credentials_write",
+    // The skills page (§8.2). Four calls, one page: the readout, the two-step import, and the
+    // switch that moves a skill out of the directory the engine reads.
+    "agent_skills_read",
+    "agent_skills_preview",
+    "agent_skills_import",
+    "agent_skills_set_enabled",
     // The desktop pet (§7.1). None of these is declared here to *grant* it anything: the
     // capability files are where a window is given one.
     "desktop_pet_state",

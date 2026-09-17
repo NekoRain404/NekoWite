@@ -4,6 +4,7 @@ pub mod agent_catalogue;
 pub mod agent_registry;
 pub mod agent_sessions;
 pub mod agent_settings;
+pub mod agent_skills;
 pub mod ai;
 pub mod desktop_pet;
 pub mod desktop_pet_surface;

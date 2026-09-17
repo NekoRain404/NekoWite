@@ -75,7 +75,8 @@ export interface AgentConfigWire {
     agentId: string
     profileId: string
     relative: string
-    revision: string
+    /** The revision the read answered, or `null` for a document that is not there. */
+    revision: string | null
     edits: readonly ConfigEdit[]
   }): Promise<unknown>
 }
@@ -91,10 +92,15 @@ export interface AgentConfigClient {
    * that could edit a document it had not shown anybody. A revision that is not the shape the
    * backend issues is refused there rather than compared and reported as a conflict — two different
    * things for a user to act on.
+   *
+   * `null` is that same revision, for a read that answered there is no document: it is a claim the
+   * backend checks against the disk, and the write it produces is the document's first content. It
+   * is passed through as the caller's like every other field — this client holds no revision and
+   * decides nothing about one.
    */
   edit(
     relative: string,
-    revision: string,
+    revision: string | null,
     edits: readonly ConfigEdit[],
   ): Promise<AgentConfigEditOutcome>
 }
@@ -129,7 +135,7 @@ export function createAgentConfigClient(request: AgentConfigRequest): AgentConfi
 
     async edit(
       relative: string,
-      revision: string,
+      revision: string | null,
       edits: readonly ConfigEdit[],
     ): Promise<AgentConfigEditOutcome> {
       const answer = await request.config.edit({
@@ -161,7 +167,7 @@ function document(value: unknown, relative: string): ConfigRead {
     revision: asNullableString(record['revision'], 'the document.revision'),
     // Absent *with* `exists: true` is a file this host could not hold as text, which the backend
     // answers as a refusal rather than as an answer. Narrowed as nullable so it lands in the page's
-    // `absent` arm rather than in an editor built from nothing.
+    // `creatable` arm rather than in an editor drawing text that never arrived.
     text: asNullableString(record['text'], 'the document.text'),
     editable: asBoolean(record['editable'], 'the document.editable'),
   }

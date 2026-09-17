@@ -331,6 +331,10 @@ fn is_session_scoped(kind: AgentEventKind) -> bool {
         | AgentEventKind::ConfigChanged
         | AgentEventKind::FilesChanged => true,
         AgentEventKind::TextDelta
+        // The user's half of a restored turn is turn content like the answer's: the reducer's
+        // `RUN_CONTENT` names it beside `text-delta`, and a replayed frame carries the load's own
+        // run — which is the run it has to be stamped with for the window to place it at all.
+        | AgentEventKind::UserDelta
         | AgentEventKind::ThoughtDelta
         | AgentEventKind::ToolUpdate
         | AgentEventKind::PermissionRequest

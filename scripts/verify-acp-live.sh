@@ -104,8 +104,13 @@ say "profile before: $REAL_CONFIG and $REAL_DATA recorded"
 # the code that ships rather than about the wire alone. Its second test costs nothing (an empty
 # session replays nothing, and `session/new` needs no credential) and is the control that makes the
 # first one's frame count mean something.
+# A marker entry may hold several patterns separated by `|`, and every one of them has to be in the
+# log: the replay target prints one line per half of the conversation it asserts, and a run that
+# carried the agent's answers back while dropping the user's turns is exactly the failure the
+# second pattern is here to catch (it was the real state of this host until the user-half assertion
+# was added — the frames arrived and the mapping discarded them).
 TARGETS=(agent_live_test agent_cancel_live_test agent_session_replay_live_test)
-MARKERS=('reply in ' 'the turn after the stop answered' '--- replayed assistant text:')
+MARKERS=('reply in ' 'the turn after the stop answered' '--- replayed assistant text:|--- replayed user text:')
 STATUSES=()
 
 # One log per target, and a combined one: the per-target file is what the checks below read, so one
@@ -177,8 +182,18 @@ $(grep '^SKIP:' "$per")"
     FAILURES=1
     continue
   }
-  if ! grep -qF "${MARKERS[$index]}" "$per"; then
-    say "FAIL: $target printed no evidence that a model answered (expected \"${MARKERS[$index]}\")."
+  # Every pattern in the entry, not just the first: a target that asserts two things prints two
+  # evidence lines, and one of them missing means the half it names was not measured.
+  missing=0
+  required=()
+  IFS='|' read -r -a required <<< "${MARKERS[$index]}"
+  for marker in "${required[@]}"; do
+    if ! grep -qF "$marker" "$per"; then
+      say "FAIL: $target printed no evidence for \"$marker\" (expected one of \"${MARKERS[$index]}\")."
+      missing=1
+    fi
+  done
+  if [ "$missing" -ne 0 ]; then
     FAILURES=1
     continue
   fi

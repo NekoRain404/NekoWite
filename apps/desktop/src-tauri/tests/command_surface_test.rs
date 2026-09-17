@@ -152,8 +152,8 @@ fn the_capability_files_are_the_policy_and_nothing_else() {
         .collect();
     assert_eq!(
         declared.len(),
-        73,
-        "the declared surface is seventy-three commands"
+        77,
+        "the declared surface is seventy-seven commands"
     );
 
     let pet: Vec<String> = allows(&capability("desktop-pet.json"));

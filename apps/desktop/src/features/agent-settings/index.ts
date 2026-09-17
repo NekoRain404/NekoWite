@@ -99,7 +99,11 @@ export const AGENT_SETTINGS_SECTIONS: readonly AgentSettingsSection[] = [
   // §8.1 puts provider credentials, model ids and *configuration files* in one row: they are all
   // per engine, and the two pages are about the same (engine, profile) pair.
   { id: 'configuration', mounts: 'AgentConfigurationSettings', needsRuntime: false },
-  { id: 'skills', mounts: 'AgentSkillsSettings', needsRuntime: true },
+  // `false`, and it is the one entry here whose runtime half was ever in question: §8.2's page
+  // reads and changes *directories* — the profile's own and the two another tool owns — so it does
+  // everything it does with no engine running at all. A navigation that hid it while the rail is
+  // off would be hiding the page in the state it is built for.
+  { id: 'skills', mounts: 'AgentSkillsSettings', needsRuntime: false },
   { id: 'commands', mounts: 'AgentCommandsSettings', needsRuntime: true },
   { id: 'mcp', mounts: 'AgentMcpSettings', needsRuntime: true },
   { id: 'permission', mounts: 'AgentPermissionSettings', needsRuntime: true },

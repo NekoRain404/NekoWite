@@ -20,9 +20,12 @@
  *    equality and in order.
  *  - an **event kind** the Rust side has and the contract does not is refused the same way, for
  *    every frame of that kind. The other direction is deliberate and must stay open — the
- *    contract carries kinds this host has no producer for (`user-delta`, `plan-changed`,
- *    `mode-changed`, `session-changed`, `usage-changed`, `events.rs` names them) — so this is a
- *    subset check.
+ *    contract carries kinds this host has no producer for (`plan-changed`, `mode-changed`,
+ *    `session-changed`, `usage-changed`, `events.rs` names them) — so this is a subset check.
+ *    `user-delta` used to be on that list, and the check below stayed green the whole time it had
+ *    no producer anywhere: a kind declared, reduced and drawn, and never emitted. What caught it
+ *    was the replay measurement (`agent_session_replay_live_test.rs`), not this file — a reminder
+ *    that this list can only hold kinds that are *spelled* the same on both sides.
  *  - a **stop reason** is the one of the three whose set this repository does not own: `runs.rs`
  *    renders it from the pinned schema's `StopReason` (`wire_stop_reason`, mechanically, with no
  *    table), so a variant the dependency adds is invisible to every test here. That is exactly why

@@ -83,6 +83,12 @@ pub(super) fn outcome_of(envelope: &AgentEventEnvelope) -> Option<Outcome> {
             permission_request_id: None,
         }),
         AgentEventKind::TextDelta
+        // The user's own half, replayed by a load: a message is content, and the rows that mean
+        // something about a task are the ones below that say what the *engine* is doing about it.
+        // The window's own projection has no pet fact for this kind either
+        // (`pet-contracts/events.ts`, `'user-delta': noPetFact`), so this is the same judgement
+        // on both sides of the boundary.
+        | AgentEventKind::UserDelta
         // A thought chunk is the engine's reasoning about a turn, not a state of it: §6.2 has no
         // row for "the model is thinking", and one would be the percentage this table forbids.
         | AgentEventKind::ThoughtDelta

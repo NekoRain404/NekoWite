@@ -236,6 +236,14 @@ pub enum SkillError {
         name: String,
         directory: PathBuf,
     },
+    /// No skill of this name is in this scope *now*. The page's row was read before something
+    /// moved it — a rename, a deletion, or another window — and an action taken on what a row says
+    /// rather than on what a fresh scan finds is how a directory gets moved out from under its
+    /// owner. Refused rather than looked up by a path: see [`SkillLibrary::view_of`].
+    NoSuchSkill {
+        name: String,
+        scope: String,
+    },
     /// A copy with this name is already in the store, so moving another in would overwrite the only
     /// recoverable one.
     StoreOccupied {
@@ -292,6 +300,7 @@ impl SkillError {
             SkillError::DescriptionTooLong { .. } => "description-too-long",
             SkillError::FieldControl { .. } => "field-control",
             SkillError::NameTaken { .. } => "name-taken",
+            SkillError::NoSuchSkill { .. } => "no-such-skill",
             SkillError::StoreOccupied { .. } => "store-occupied",
             SkillError::SameDirectory { .. } => "same-directory",
             SkillError::ScanTooLarge { .. } => "scan-too-large",
@@ -380,7 +389,10 @@ mod scope;
 
 pub use discover::{SkillSurface, SkillView};
 pub use import::{Overwrite, SkillImport, SkillPreview};
-pub use scope::{launch_switches, opencode_scopes, DisableMechanism, ScopeOwner, SkillScope};
+pub use scope::{
+    launch_switches, opencode_scopes, opencode_scopes_without_project, DisableMechanism,
+    ScopeOwner, SkillScope, MANAGED_SCOPE_ID,
+};
 
 use scope::{contains, resolve};
 /// The one place a filesystem error becomes this module's own, so every refusal carries the path it

@@ -303,6 +303,30 @@
           "markdownDescription": "Enables the agent_set_config_option command without any pre-configured scope."
         },
         {
+          "description": "Enables the agent_skills_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-skills-import",
+          "markdownDescription": "Enables the agent_skills_import command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_skills_preview command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-skills-preview",
+          "markdownDescription": "Enables the agent_skills_preview command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_skills_read command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-skills-read",
+          "markdownDescription": "Enables the agent_skills_read command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_skills_set_enabled command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-skills-set-enabled",
+          "markdownDescription": "Enables the agent_skills_set_enabled command without any pre-configured scope."
+        },
+        {
           "description": "Enables the agent_something_unregistered command without any pre-configured scope.",
           "type": "string",
           "const": "allow-agent-something-unregistered",
@@ -745,6 +769,30 @@
           "type": "string",
           "const": "deny-agent-set-config-option",
           "markdownDescription": "Denies the agent_set_config_option command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_skills_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-skills-import",
+          "markdownDescription": "Denies the agent_skills_import command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_skills_preview command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-skills-preview",
+          "markdownDescription": "Denies the agent_skills_preview command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_skills_read command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-skills-read",
+          "markdownDescription": "Denies the agent_skills_read command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_skills_set_enabled command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-skills-set-enabled",
+          "markdownDescription": "Denies the agent_skills_set_enabled command without any pre-configured scope."
         },
         {
           "description": "Denies the agent_something_unregistered command without any pre-configured scope.",

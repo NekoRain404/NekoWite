@@ -44,11 +44,16 @@ use serde_json::{json, Value};
 /// forwards both, and both vocabularies already declared them.
 ///
 /// The two lists are not the same size and must not be forced to be. The contract
-/// carries kinds this host has no producer for (`user-delta`, `plan-changed`,
-/// `mode-changed`, `session-changed`, `usage-changed`), and an enum arm with no
-/// producer would be a promise nothing keeps. The direction that must stay empty is
-/// the other one: a kind here that the contract cannot read is a frame the window
-/// refuses, so every variant below has a spelling in `payloads.ts`.
+/// carries kinds this host has no producer for (`plan-changed`, `mode-changed`,
+/// `session-changed`, `usage-changed`), and an enum arm with no producer would be a
+/// promise nothing keeps. The direction that must stay empty is the other one: a kind
+/// here that the contract cannot read is a frame the window refuses, so every variant
+/// below has a spelling in `payloads.ts`.
+///
+/// `UserDelta` was on the producer-less list until the replay measurement found what
+/// it cost: `session/load` does replay the user's turns, and the frame carrying them
+/// fell to `_ => None`, so every restored conversation was silently missing half of
+/// itself. The window had been able to draw it the whole time.
 ///
 /// `PermissionRequest` is the one kind that is not emitted from here —
 /// engine→client permission requests are answered through the transport, and
@@ -58,6 +63,16 @@ use serde_json::{json, Value};
 #[serde(rename_all = "kebab-case")]
 pub enum AgentEventKind {
     TextDelta,
+    /// The engine's copy of the *user's* half (`user_message_chunk`), which is what it sends back
+    /// when a session is restored.
+    ///
+    /// A kind of its own rather than `TextDelta`: the user's words belong on the user's side of
+    /// the timeline, and the host's own row for the same message is a different statement about
+    /// the conversation rather than a second half of one (the contract settled this at T1 —
+    /// `payloads.ts`'s `'user-delta'`, and the timeline's `origin`). It is also Zed's reading of
+    /// the same frame, which is where the decision comes from: `acp_thread.rs` pushes a
+    /// `UserMessage` entry for it rather than appending to the answer.
+    UserDelta,
     /// The engine's own disclosed reasoning (`agent_thought_chunk`), which P0 §2.3 measured on the
     /// wire beside the answer.
     ///
@@ -284,7 +299,10 @@ pub struct AgentEventEnvelope {
 ///   words: 「the gap is in the mapping」 (T1 §2). A drop here would leave a kind
 ///   the whole window is built to render with no producer, which is the defect
 ///   §6.2's rule exists to prevent — reversed.
-/// - **everything else the schema can name** — user echoes, plan frames, mode
+/// - **`UserMessageChunk`** was in this list too, for the same reason and with the
+///   same outcome: the contract had a kind for it and this layer had no arm. See the
+///   arm below.
+/// - **everything else the schema can name** — plan frames, mode
 ///   updates, session metadata and usage, compaction, and the `Other` escape hatch.
 ///   §6.2 requires that `unknown` never reaches a component, so an update this host
 ///   has no kind for is not forwarded as a mystery blob to be guessed at.
@@ -293,6 +311,26 @@ pub fn normalize_update(update: &SessionUpdate) -> Option<(AgentEventKind, Value
         SessionUpdate::AgentMessageChunk(chunk) => {
             let text = text_of(chunk)?;
             Some((AgentEventKind::TextDelta, json!({ "text": text })))
+        }
+        // The engine's copy of the user's half. It is what `session/load` replays beside the
+        // answers — the conversation's other half — and `user-delta` is the contract's own kind
+        // for it (`payloads.ts`, `readText`, the reducer's `user` row and `AgentTimeline.vue`).
+        //
+        // **This arm is the producer that kind was missing.** It was declared at T1 with a
+        // reducer arm, a timeline row and a renderer, and nothing on this side ever emitted it:
+        // the frame fell to `_ => None` below, so a restored session drew only the agent's half
+        // and drew it silently. Zed reads the same frame the same way (`acp_thread.rs` pushes a
+        // `UserMessage` entry rather than appending to the answer), which is where this decision
+        // comes from; its echo suppression is not copied, because this host keeps the engine's
+        // copy in a row of its own (`origin: 'engine'`) rather than folding it into the message
+        // it sent optimistically.
+        //
+        // Forwarded in the contract's shape for `user-delta` (`{ text }`), the same shape and the
+        // same `text_of` reason as the two chunk kinds around it: a chunk carrying an image is
+        // not an empty message.
+        SessionUpdate::UserMessageChunk(chunk) => {
+            let text = text_of(chunk)?;
+            Some((AgentEventKind::UserDelta, json!({ "text": text })))
         }
         // The engine's reasoning channel, forwarded in the contract's shape for `thought-delta`
         // (`{ text }`) — the same shape as the answer's, and the same `text_of` reason for

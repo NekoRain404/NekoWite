@@ -46,6 +46,7 @@ export type SkillRefusalKind =
   | 'description-too-long'
   | 'field-control'
   | 'name-taken'
+  | 'no-such-skill'
   | 'store-occupied'
   | 'same-directory'
   | 'scan-too-large'
@@ -58,10 +59,26 @@ export interface AgentSkillsLabels {
   retry: string
   list: {
     empty: string
+    /**
+     * The sentence that stands under one directory's heading when it holds nothing.
+     *
+     * Per directory rather than once for the page, the way Zed's skills page draws it: "the engine
+     * finds no skills" is a claim about a directory, and a page that made it once for all of them
+     * would be answering a question nobody asked. A directory this launch stopped reading gets
+     * `surface.suppressed` instead — the engine is not looking, so "no skills" is not known.
+     */
+    emptyScope: string
     scope: string
     directory: string
     noDescription: string
   }
+  /**
+   * The directories this page does not manage, with the reason each one has rather than a greyed
+   * control (§5.2). Both reasons are the backend's: `opencode_scopes_without_project` builds the
+   * list without a project arm because nothing here has a project, and the engine's declared
+   * `skills.paths` would need a document this page does not parse.
+   */
+  unmanaged: { title: string; project: string; declared: string }
   owner: Record<'managed' | 'engine' | 'foreign', string>
   surface: {
     offered: string
@@ -88,6 +105,10 @@ export interface AgentSkillsLabels {
   import: {
     title: string
     hint: string
+    /** Where the folder would be installed, named so a user does not have to guess. */
+    target: string
+    /** The arm with no such directory: why there is no form (see the component). */
+    noTarget: string
     source: string
     preview: string
     confirm: string
@@ -142,9 +163,15 @@ export function skillsLabels(): AgentSkillsLabels {
     retry: t('agent.settings.retry'),
     list: {
       empty: t('agent.settings.skills.list.empty'),
+      emptyScope: t('agent.settings.skills.list.emptyScope'),
       scope: t('agent.settings.skills.list.scope'),
       directory: t('agent.settings.skills.list.directory'),
       noDescription: t('agent.settings.skills.list.noDescription'),
+    },
+    unmanaged: {
+      title: t('agent.settings.skills.unmanaged.title'),
+      project: t('agent.settings.skills.unmanaged.project'),
+      declared: t('agent.settings.skills.unmanaged.declared'),
     },
     owner: {
       managed: t('agent.settings.skills.owner.managed'),
@@ -174,6 +201,8 @@ export function skillsLabels(): AgentSkillsLabels {
     import: {
       title: t('agent.settings.skills.import.title'),
       hint: t('agent.settings.skills.import.hint'),
+      target: t('agent.settings.skills.import.target'),
+      noTarget: t('agent.settings.skills.import.noTarget'),
       source: t('agent.settings.skills.import.source'),
       preview: t('agent.settings.skills.import.preview'),
       confirm: t('agent.settings.skills.import.confirm'),
@@ -216,6 +245,7 @@ export function skillsLabels(): AgentSkillsLabels {
       'description-too-long': template('agent.settings.skills.refusal.description-too-long'),
       'field-control': template('agent.settings.skills.refusal.field-control'),
       'name-taken': template('agent.settings.skills.refusal.name-taken'),
+      'no-such-skill': template('agent.settings.skills.refusal.no-such-skill'),
       'store-occupied': template('agent.settings.skills.refusal.store-occupied'),
       'same-directory': template('agent.settings.skills.refusal.same-directory'),
       'scan-too-large': template('agent.settings.skills.refusal.scan-too-large'),

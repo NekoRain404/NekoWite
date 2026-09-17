@@ -1,25 +1,26 @@
 <script setup lang="ts">
 /**
- * The agents section: the one control that reaches the shell, the five pages whose host half this
+ * The agents section: the one control that reaches the shell, the six pages whose host half this
  * build really has, and the statements for everything in this tree that is still absent.
  *
- * ## What is mounted, and why these five
+ * ## What is mounted, and why these six
  *
- * §10.2's T16 row and §8 give an agent settings tree of seven pages, each delivered as a component
- * that takes its facts from an injected client. Five of those clients can be built against commands
- * this build registers — the registry (`agent_registry_read` / `_add` / `_set_enabled`), the
- * profile (`agent_profile_read` / `_write`), the permission pair
- * (`agent_permission_grants` / `_revoke`), the engine's own configuration
- * (`agent_config_document` / `agent_config_edit`) and the ACP catalogue (`agent_catalogue_read`) —
- * so those five pages are mounted here and really read the backend. The clients arrive as a prop
- * from the composition site (`app/agent-settings-composition.ts`), the way the pet's section is
- * handed its connection: this file never builds one, and never decides what a page talks to.
+ * §10.2's T16 row and §8 give an agent settings tree of pages, each delivered as a component that
+ * takes its facts from an injected client. Six of those clients can be built against commands this
+ * build registers — the registry (`agent_registry_read` / `_add` / `_set_enabled`), the profile
+ * (`agent_profile_read` / `_write`), the permission pair (`agent_permission_grants` / `_revoke`),
+ * the engine's own configuration (`agent_config_document` / `agent_config_edit`), the ACP catalogue
+ * (`agent_catalogue_read`) and the skills page (`agent_skills_read` / `_preview` / `_import` /
+ * `_set_enabled`) — so those six pages are mounted here and really read the backend. The clients
+ * arrive as a prop from the composition site (`app/agent-settings-composition.ts`), the way the
+ * pet's section is handed its connection: this file never builds one, and never decides what a
+ * page talks to.
  *
- * The last two commands on that list had **no caller anywhere in `src/`** until this file mounted
- * these pages. That is this repository's signature failure mode — 建好了但够不到, caught six times —
- * and the thing that ends it is a mount point reached by a real gesture, which for this tree means:
- * the status bar's gear (`AppShell.vue`), the `agents` row in `SettingsNavigation.vue`, and the
- * pages below.
+ * Every one of those commands had **no caller anywhere in `src/`** until this file mounted its
+ * page. That is this repository's signature failure mode — 建好了但够不到, caught more than eight
+ * times — and the thing that ends it is a mount point reached by a real gesture, which for this
+ * tree means: the status bar's gear (`AppShell.vue`), the `agents` row in
+ * `SettingsNavigation.vue`, and the pages below.
  *
  * ## The pair these pages are about
  *
@@ -52,6 +53,7 @@ import {
   AgentPermissionSettings,
   AgentProviderSettings,
   AgentRegistrySettings,
+  AgentSkillsSettings,
 } from '../../agent-settings'
 import { defaultEngineIdentity } from '../../agent-settings/services/agent-registry-policy'
 import type { EngineIdentity } from '../../agent-settings/services/agent-registry-policy'
@@ -105,7 +107,14 @@ const showing = computed(() =>
  * different facts (`mounts` names the component; a section's id is what a navigation binds), and
  * the test that reads this file's rendering is what keeps the two in step.
  */
-const MOUNTED = new Set(['registry', 'provider', 'permission', 'configuration', 'catalogue'])
+const MOUNTED = new Set([
+  'registry',
+  'provider',
+  'permission',
+  'configuration',
+  'catalogue',
+  'skills',
+])
 
 /**
  * The permission page's client, built for the pair the registry answered with.
@@ -137,6 +146,20 @@ const configClient = computed(() =>
 )
 
 /**
+ * The skills page's client, behind the same gate and for its own reason.
+ *
+ * §8.2's section is about the directories *one profile's* engine reads — the scope list is built
+ * from where that profile's `HOME` and `XDG_CONFIG_HOME` point — so a page mounted without the pair
+ * would have to be told which profile's directories to describe. Nothing is invented to fill that
+ * gap, exactly as the two clients above refuse to be.
+ */
+const skillsClient = computed(() =>
+  identity.value === null
+    ? null
+    : props.clients.skills(identity.value.agentId, identity.value.profileId),
+)
+
+/**
  * The entry the catalogue handed to the registry's add form, or `null`.
  *
  * The catalogue's only control is "register this one", and the add form is the registry page's — so
@@ -156,7 +179,6 @@ const cataloguePrefill = ref<CataloguePrefill | null>(null)
  */
 const SENTENCES: Readonly<Record<string, string>> = {
   runtime: t('agent.settings.agents.gaps.runtime'),
-  skills: t('agent.settings.agents.gaps.skills'),
   commands: t('agent.settings.agents.gaps.commands'),
   mcp: t('agent.settings.agents.gaps.mcp'),
 }
@@ -234,6 +256,15 @@ const gaps = [
       <AgentConfigurationSettings
         v-if="configClient"
         :client="configClient"
+      />
+      <!-- §8.2's page, in the tree's own order (after the configuration document, before the
+           permission table). It had no mount point at all before this: `skills.rs` was complete and
+           tested, the four commands behind it did not exist, and the section below carried a
+           sentence saying so. That sentence is gone — the list of absences is derived, so mounting
+           the page is what removed it. -->
+      <AgentSkillsSettings
+        v-if="skillsClient"
+        :client="skillsClient"
       />
       <!-- The pair is the page's own, so it is built from the registry's answer rather than from
            anything this section decides. The grants half of it reads the running engine, which is

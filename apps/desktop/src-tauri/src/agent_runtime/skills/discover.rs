@@ -110,6 +110,33 @@ impl SkillLibrary {
         Ok(found)
     }
 
+    /// One skill's view, re-read now, by the two facts a caller may name: its scope and its name.
+    ///
+    /// **Not a lookup by path.** The directory is what [`SkillLibrary::set_enabled`] moves, and a
+    /// path that arrived from a window would be a window choosing where a directory is moved *from*
+    /// — or *into*, on the way back. So an action names a skill the way a user does, this re-reads
+    /// the disk, and the view that comes back is the one the move is made against; a name that is
+    /// no longer there is [`SkillError::NoSuchSkill`] rather than a path this host guessed at from
+    /// the scope root, which would be wrong for a skill in a subdirectory (`**\/SKILL.md` is
+    /// recursive) and wrong again for one whose name does not match its folder.
+    ///
+    /// Both lists are searched: a switched-off skill is the subject of "switch it back on", and it
+    /// is in the store rather than in the scope root. Which list the view has to come from is
+    /// [`SkillLibrary::set_enabled`]'s own check, not this one's — a view from the wrong side is
+    /// refused there with the directory it would have moved.
+    pub fn view_of(&self, scope_id: &str, name: &str) -> Result<SkillView, SkillError> {
+        let scope = self.scope(scope_id)?;
+        let mut candidates = self.discover()?;
+        candidates.extend(self.disabled()?);
+        candidates
+            .into_iter()
+            .find(|view| view.scope == scope.id && view.name == name)
+            .ok_or_else(|| SkillError::NoSuchSkill {
+                name: name.to_string(),
+                scope: scope_id.to_string(),
+            })
+    }
+
     /// Every skill this host has switched off, in the store, sorted by name.
     pub fn disabled(&self) -> Result<Vec<SkillView>, SkillError> {
         let mut found = Vec::new();

@@ -162,6 +162,33 @@ async fn agent_close_session() -> Result<Value, String> {
     Ok(json!({ "reached": "agent_close_session" }))
 }
 
+/// The four skills commands, as stand-ins.
+///
+/// Stand-ins for the reason the three above are, and the sharpest of them is
+/// `agent_skills_import`: it takes a folder path and writes into this app's own profile, so a
+/// decoration that could reach it would be a second way to install something the engine will later
+/// run. Their signatures are deliberately *not* copied — `build.rs`'s manifest and the capability
+/// files are what name a command, and the authorisation reads the name alone.
+#[tauri::command]
+async fn agent_skills_read() -> Result<Value, String> {
+    Ok(json!({ "reached": "agent_skills_read" }))
+}
+
+#[tauri::command]
+async fn agent_skills_preview() -> Result<Value, String> {
+    Ok(json!({ "reached": "agent_skills_preview" }))
+}
+
+#[tauri::command]
+async fn agent_skills_import() -> Result<Value, String> {
+    Ok(json!({ "reached": "agent_skills_import" }))
+}
+
+#[tauri::command]
+async fn agent_skills_set_enabled() -> Result<Value, String> {
+    Ok(json!({ "reached": "agent_skills_set_enabled" }))
+}
+
 /// The pet's five granted commands, each answering whether it was reached.
 #[tauri::command]
 async fn desktop_pet_state() -> Result<Value, String> {
@@ -256,6 +283,10 @@ fn app() -> App {
             agent_list_sessions,
             agent_load_session,
             agent_close_session,
+            agent_skills_read,
+            agent_skills_preview,
+            agent_skills_import,
+            agent_skills_set_enabled,
             desktop_pet_state,
             desktop_pet_set_visible,
             desktop_pet_close_own,
@@ -395,6 +426,13 @@ fn a_pet_window_cannot_stop_or_start_the_users_agent() {
         // acting on the consent record itself rather than on the work it decorates.
         "agent_permission_grants",
         "agent_permission_grant_revoke",
+        // The skills page. It writes into this app's own profile — an import installs a folder the
+        // engine may later run, and the switch moves a directory out of the engine's reach — which
+        // is the app's business and not a decoration's.
+        "agent_skills_read",
+        "agent_skills_preview",
+        "agent_skills_import",
+        "agent_skills_set_enabled",
     ] {
         is_not_allowed_on(&pet, cmd, "pet-1");
     }

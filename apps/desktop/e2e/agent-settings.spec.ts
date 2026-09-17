@@ -53,6 +53,7 @@ import type {
   SkillEntryView,
   SkillPreviewView,
   SkillRefusal,
+  SkillScopeView,
 } from '/src/features/agent-settings/components/AgentSkillsSettings.vue'
 import type {
   AgentCommandsClient,
@@ -127,6 +128,32 @@ async function open(page: Page, section: SectionName, payload: unknown): Promise
       const initial = data as Record<string, unknown>
       const skills = [...((initial.skills ?? []) as SkillEntryView[])]
       const disabled = [...((initial.disabled ?? []) as SkillEntryView[])]
+      // The directories the engine's rules name, as `agent_skills_read` answers them for an
+      // app-managed profile: the profile's own, and the two another tool owns — which this launch's
+      // `OPENCODE_DISABLE_EXTERNAL_SKILLS` stops the engine reading. A payload may override the
+      // list, which is what the tests about per-scope empty states and about a profile with nowhere
+      // to import into do.
+      const scopes = (initial.scopes ?? [
+        {
+          id: 'engine-global',
+          label: 'This app’s profile, read by the engine',
+          root: '/home/someone/profile/XDG_CONFIG_HOME/skills',
+          suppressedBy: null,
+        },
+        {
+          id: 'claude-code',
+          label: 'Another tool’s directory (.claude)',
+          root: '/home/someone/profile/HOME/.claude/skills',
+          suppressedBy: 'OPENCODE_DISABLE_EXTERNAL_SKILLS',
+        },
+        {
+          id: 'agents-directory',
+          label: 'Another tool’s directory (.agents)',
+          root: '/home/someone/profile/HOME/.agents/skills',
+          suppressedBy: 'OPENCODE_DISABLE_EXTERNAL_SKILLS',
+        },
+      ]) as SkillScopeView[]
+      const importScope = (initial.importScope === undefined ? 'engine-global' : initial.importScope) as string | null
 
       // One client per section, each annotated with the port that section declares. The annotation
       // is what makes this file evidence rather than a description: a component whose `read` grew a
@@ -166,7 +193,7 @@ async function open(page: Page, section: SectionName, payload: unknown): Promise
         skills: {
           read: async () => {
             record('read')
-            return { skills: [...skills], disabled: [...disabled] }
+            return { scopes, importScope, skills: [...skills], disabled: [...disabled] }
           },
           preview: async (source) => {
             record('preview', source)
@@ -545,10 +572,17 @@ test.describe('switching a skill off', () => {
           disable: { kind: 'engine-switch', variable: 'OPENCODE_DISABLE_CLAUDE_CODE_SKILLS' },
         },
         {
+          // The third arm of `DisableMechanism`: a directory whose contents nothing this host does
+          // can switch off. It is a path the *engine's configuration* declares, which is what a
+          // second engine's adapter could hand over and what this page's own backend does not
+          // return today — the settings page's scope list has neither that arm nor a project's,
+          // because a project needs a folder this dialog does not have. The page's arm is asserted
+          // here all the same: it is what stands wherever a directory with no switch turns up.
           ...ENTRY,
-          name: 'in-project',
-          scope: 'engine-project',
-          owner: 'engine',
+          name: 'declared-one',
+          scope: 'declared-0',
+          owner: 'foreign',
+          scopeLabel: 'Declared in the engine’s configuration',
           disable: { kind: 'none' },
         },
       ],
@@ -557,7 +591,7 @@ test.describe('switching a skill off', () => {
     })
 
     await expect(row(page, '[data-test="skill-disable-borrowed"]')).toHaveCount(0)
-    await expect(row(page, '[data-test="skill-disable-in-project"]')).toHaveCount(0)
+    await expect(row(page, '[data-test="skill-disable-declared-one"]')).toHaveCount(0)
     const notes = page.locator('[data-test="skill-no-switch"]')
     await expect(notes.nth(0)).toContainText('OPENCODE_DISABLE_CLAUDE_CODE_SKILLS')
     await expect(notes.nth(1)).toContainText('would only hide the row')
@@ -578,6 +612,111 @@ test.describe('switching a skill off', () => {
     // What was observed of the pinned engine is not a precedence, so the page nominates no winner
     // and gives the one next move that is true either way: remove one of them.
     await expect(conflict).toContainText('remove one')
+  })
+})
+
+test.describe('what the skills page says instead of drawing a control', () => {
+  test('gives every directory its own state, and never calls an unread one empty', async ({ page }) => {
+    // One directory with a skill, one that is empty, and one this launch stopped the engine
+    // reading. The three answers are different and each is drawn where it belongs: "no skills" is a
+    // claim about contents, and a page that made it for a directory nothing is looking at would be
+    // the flattering-direction claim §8.2 exists to prevent.
+    await open(page, 'skills', {
+      skills: [
+        {
+          name: 'demo',
+          description: 'A demo skill.',
+          directory: '/home/someone/profile/XDG_CONFIG_HOME/skills/demo',
+          scope: 'engine-global',
+          scopeLabel: 'This app’s profile',
+          owner: 'managed',
+          conflicts: [],
+          surface: { kind: 'offered' },
+          suppressedBy: null,
+          disable: { kind: 'per-skill' },
+        },
+      ],
+      disabled: [],
+      // The default list has both compatible-tool directories suppressed, which is the launch
+      // this app makes. `.agents` is turned back on here so that the three states are all on
+      // screen at once: one directory with a skill, one the engine reads and finds nothing in, and
+      // one it is not reading at all.
+      scopes: [
+        {
+          id: 'engine-global',
+          label: 'This app’s profile, read by the engine',
+          root: '/home/someone/profile/XDG_CONFIG_HOME/skills',
+          suppressedBy: null,
+        },
+        {
+          id: 'claude-code',
+          label: 'Another tool’s directory (.claude)',
+          root: '/home/someone/profile/HOME/.claude/skills',
+          suppressedBy: 'OPENCODE_DISABLE_EXTERNAL_SKILLS',
+        },
+        {
+          id: 'agents-directory',
+          label: 'Another tool’s directory (.agents)',
+          root: '/home/someone/profile/HOME/.agents/skills',
+          suppressedBy: null,
+        },
+      ],
+    })
+
+    await expect(row(page, '[data-test="skill-scope-engine-global"]')).toContainText(
+      '/home/someone/profile/XDG_CONFIG_HOME/skills',
+    )
+    await expect(row(page, '[data-test="skill-row-demo"]')).toBeVisible()
+    // A directory the engine reads and finds nothing in.
+    await expect(row(page, '[data-test="skill-scope-empty-agents-directory"]')).toContainText(
+      'no skills in this directory',
+    )
+    // And one it is not reading at all: the sentence is the scope's, and it names the switch —
+    // never "no skills found", which would be a claim about a directory nobody looked at.
+    await expect(row(page, '[data-test="skill-scope-unread-claude-code"]')).toContainText(
+      'OPENCODE_DISABLE_EXTERNAL_SKILLS',
+    )
+    await expect(row(page, '[data-test="skill-scope-empty-claude-code"]')).toHaveCount(0)
+  })
+
+  test('states the project scope and the declared paths rather than drawing either', async ({ page }) => {
+    // §5.2's 「不可用选项要说明原因」. Two directories this page cannot manage, both with the reason
+    // the backend really has: a project needs a folder the dialog does not have, and `skills.paths`
+    // lives in a document this page does not parse. Neither is drawn as a control, and there is no
+    // `input`, `button` or `select` anywhere in the block that says so.
+    await open(page, 'skills', { skills: [], disabled: [] })
+
+    const project = row(page, '[data-test="skills-project-scope"]')
+    await expect(project).toContainText('.opencode/skills')
+    await expect(project).toContainText('which project')
+    const declared = row(page, '[data-test="skills-declared-scope"]')
+    await expect(declared).toContainText('skills.paths')
+    const block = page.locator('[data-test="skills-unmanaged"]')
+    expect(await block.locator('input, button, select, [role="switch"]').count()).toBe(0)
+    expect(await calledMethods(page)).toEqual(['read'])
+  })
+
+  test('says why there is no import form when this profile has nowhere to install', async ({ page }) => {
+    // A profile reusing the user's own installation: no directory in its scope list is this app's,
+    // so the form would have exactly one outcome — a refusal. The sentence says what such a profile
+    // would need instead.
+    await open(page, 'skills', {
+      skills: [],
+      disabled: [],
+      scopes: [
+        {
+          id: 'claude-code',
+          label: 'Another tool’s directory (.claude)',
+          root: '/home/someone/.claude/skills',
+          suppressedBy: null,
+        },
+      ],
+      importScope: null,
+    })
+
+    await expect(row(page, '[data-test="skills-no-import"]')).toContainText('nothing here to import into')
+    await expect(row(page, '[data-test="skills-source"]')).toHaveCount(0)
+    await expect(row(page, 'button[data-test="skills-preview"]')).toHaveCount(0)
   })
 })
 

@@ -23,7 +23,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::discover::{folder_name, read_declared, SkillView};
-use super::scope::{contains, resolve, DisableMechanism, ScopeOwner};
+use super::scope::{contains, resolve, DisableMechanism, SkillScope};
 use super::{
     io_error, SkillError, SkillLibrary, MAX_IMPORTED_FILES, MAX_IMPORTED_FILE_BYTES,
     MAX_IMPORTED_SKILL_BYTES, SKILL_FILE_NAME,
@@ -67,6 +67,22 @@ pub enum Overwrite {
 }
 
 impl SkillLibrary {
+    /// The directory an import would install into, when this profile has one.
+    ///
+    /// The same predicate [`SkillLibrary::import`] refuses on ([`SkillScope::accepts_import`]),
+    /// asked as a question rather than as a check — because a settings page has to answer it
+    /// *before* a user types a path: the import control is drawn where there is somewhere to
+    /// install, and the reason is stated in words where there is not (§5.2). Two spellings of the
+    /// rule would come apart in the direction that matters, with a page offering an import the
+    /// backend refuses.
+    ///
+    /// `None` is the ordinary state of a profile reusing the user's own installation: this host
+    /// owns no directory in that engine's scope list, so an import there would be a copy into
+    /// somebody else's tree.
+    pub fn import_target(&self) -> Option<&SkillScope> {
+        self.scopes.iter().find(|scope| scope.accepts_import())
+    }
+
     /// Read what an import would install — the frontmatter, every file, and which of them are the
     /// scripts the engine may later run. Nothing is written and nothing runs (see the module
     /// comment); the caller shows this before it asks for a confirmation.
@@ -86,7 +102,9 @@ impl SkillLibrary {
         overwrite: Overwrite,
     ) -> Result<SkillImport, SkillError> {
         let scope = self.scope(scope_id)?;
-        if scope.owner != ScopeOwner::Managed || scope.disable != DisableMechanism::PerSkill {
+        // The rule itself lives on the scope, so the readout that offers an import and this refusal
+        // cannot disagree about which directories one may land in.
+        if !scope.accepts_import() {
             return Err(SkillError::NotManaged {
                 scope: scope_id.to_string(),
             });

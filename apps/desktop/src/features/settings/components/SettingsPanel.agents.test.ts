@@ -154,6 +154,50 @@ function catalogueReadout(): unknown {
   }
 }
 
+/**
+ * The skills page's answer, as `agent_skills_read` serializes it (`commands/agent_skills.rs`).
+ *
+ * An app-managed profile: the scope list has the profile's own directory and the two another tool
+ * owns — which this launch's `OPENCODE_DISABLE_EXTERNAL_SKILLS` stops the engine reading, so the
+ * page has to say *that* rather than "no skills". A project's `.opencode/skills` is not in the list
+ * at all, which is the fact the page states in words instead of drawing.
+ */
+function skillsReadout(): unknown {
+  return {
+    scopes: [
+      {
+        id: 'engine-global',
+        label: "This app's profile, read by the engine",
+        root: '/home/someone/.local/share/nekowite/agent-profiles/default/XDG_CONFIG_HOME/skills',
+        suppressedBy: null,
+      },
+      {
+        id: 'claude-code',
+        label: "Another tool's directory (.claude)",
+        root: '/home/someone/.local/share/nekowite/agent-profiles/default/HOME/.claude/skills',
+        suppressedBy: 'OPENCODE_DISABLE_EXTERNAL_SKILLS',
+      },
+    ],
+    skills: [
+      {
+        name: 'demo',
+        description: 'A demo skill.',
+        directory:
+          '/home/someone/.local/share/nekowite/agent-profiles/default/XDG_CONFIG_HOME/skills/demo',
+        scope: 'engine-global',
+        scopeLabel: "This app's profile, read by the engine",
+        owner: 'managed',
+        conflicts: [],
+        surface: { kind: 'offered' },
+        suppressedBy: null,
+        disable: { kind: 'per-skill' },
+      },
+    ],
+    disabled: [],
+    importScope: 'engine-global',
+  }
+}
+
 /** Every command the window asked for, in the order it asked. */
 const asked: string[] = []
 /** The record's revision, as the backend would advance it: a write is what moves it. */
@@ -187,6 +231,8 @@ beforeEach(() => {
         return { kind: 'not-running' }
       case 'agent_config_document':
         return documentReadout(revision)
+      case 'agent_skills_read':
+        return skillsReadout()
       case 'agent_catalogue_read':
         return catalogueReadout()
       case 'agent_profile_write': {
@@ -342,6 +388,16 @@ describe('the agents section in the settings dialog', () => {
     // registry's own version rather than an empty section.
     await untilDom(() => el('catalogue-freshness') !== null, 'the catalogue')
     expect(section().contains(el('catalogue-freshness'))).toBe(true)
+    // And the skills page (§8.2), which had no command behind it until this landed: it reads the
+    // profile's own directories and draws the row the backend answered with — inside the section,
+    // not beside it.
+    await untilDom(() => el('skill-row-demo') !== null, 'the skills page')
+    expect(section().contains(el('skill-row-demo'))).toBe(true)
+    // The directory this launch stopped the engine reading says so, in the engine's own variable,
+    // rather than reporting that it found nothing.
+    expect(el('skill-scope-unread-claude-code')?.textContent).toContain(
+      'OPENCODE_DISABLE_EXTERNAL_SKILLS',
+    )
 
     // The exact set, so a page that starts asking for a command nobody registered fails here.
     expect([...new Set(asked)].sort()).toEqual([
@@ -350,6 +406,7 @@ describe('the agents section in the settings dialog', () => {
       'agent_permission_grants',
       'agent_profile_read',
       'agent_registry_read',
+      'agent_skills_read',
     ])
   })
 
@@ -415,14 +472,19 @@ describe('the agents section in the settings dialog', () => {
   it('states the absences as text, one per section it does not mount, and draws nothing else', async () => {
     await openAgents()
     const gaps = [...section().querySelectorAll<HTMLElement>('.agent-gap')]
-    // Four sections without a client, plus the two rows that are not sections: the capability
+    // Three sections without a client, plus the two rows that are not sections: the capability
     // join and the engine switch. Derived from `AGENT_SETTINGS_SECTIONS` in the section, so this
-    // count moves when a page is mounted — or when one is added to the tree.
-    expect(gaps).toHaveLength(4 + 2)
+    // count moves when a page is mounted — or when one is added to the tree. It moved from four
+    // when the skills page was mounted, and the sentence that was here is gone with it: the claim
+    // it made ("nothing builds a library from it and no command exposes one") stopped being true.
+    expect(gaps).toHaveLength(3 + 2)
     for (const gap of gaps) expect(gap.textContent?.trim().length ?? 0).toBeGreaterThan(0)
-    // The Skills row names the missing half, and it names it from the catalogue: a key that moved
-    // would print the key itself here.
-    expect(gaps.some((gap) => gap.textContent?.includes('skills.rs'))).toBe(true)
+    // The Skills row is *not* here, and the assertion is that the page replaced it rather than
+    // that the sentence was deleted: a stale gap sentence would be a claim about a mount point
+    // that exists.
+    expect(gaps.some((gap) => gap.textContent?.includes('skills.rs'))).toBe(false)
+    await untilDom(() => el('skill-row-demo') !== null, 'the skills page')
+    expect(el('skills-project-scope')?.textContent).toContain('.opencode/skills')
 
     // Everything a mounted page draws itself is inside `agents-pages`; outside it, this file
     // draws one control and it is the switch. A disabled control or a greyed pill below would be

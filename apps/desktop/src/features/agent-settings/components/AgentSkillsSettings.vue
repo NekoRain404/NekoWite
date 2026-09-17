@@ -43,6 +43,30 @@ export type { AgentSkillsLabels, SkillRefusalKind } from './agent-skills-labels'
  * can see — and that is an observation of a version, not a precedence to report, so this page names
  * every other directory and nominates no winner. A page that picked one would be stating a rule the
  * engine has not agreed to, and the user would then fix the copy that may not have been in effect.
+ *
+ * ## Two absences this page states, and one control it does not draw
+ *
+ * §5.2's 「不可用选项要说明原因，不显示可点击但无效果的控件」 is why the two are sentences rather than
+ * greyed rows, and the reasons are the ones the backend really has:
+ *
+ *  - **A project's own skills.** The engine reads `.opencode/skills` in the folder a session runs
+ *    in. Which project a settings dialog would be managing is not a question this page (or its
+ *    backend) can answer — it opens with or without a vault, and it is about an engine profile
+ *    rather than about a folder — so `opencode_scopes_without_project` builds the scope list
+ *    without that arm, and the sentence says what the missing control would have needed.
+ *  - **Folders the engine's own configuration declares.** A `skills.paths` entry is a member of the
+ *    engine's configuration document, which this page does not parse (the configuration page shows
+ *    that document as text; a second parser would be a second answer about the same file). A skill
+ *    reachable only through one is therefore not listed, and the sentence says so rather than
+ *    leaving the omission to be discovered.
+ *
+ * Every directory that *is* listed gets its own heading, its root and — when it holds nothing — its
+ * own sentence, because "the engine finds no skills" is a claim about one directory at a time.
+ * Zed's skills page draws the same per-scope empty state; here a directory this launch stopped
+ * reading says *that* instead of "no skills", which is the flattering-direction claim this whole
+ * page exists to avoid. And the import control is drawn only where the readout names a directory
+ * this host may write in (`importScope`): a profile reusing the user's own installation has none,
+ * and a form whose only possible outcome is a refusal is not a control.
  */
 import { computed, onMounted, ref } from 'vue'
 
@@ -87,9 +111,29 @@ export interface SkillEntryView {
   disable: SkillDisableView
 }
 
+/** One directory the engine's rules name, as the readout describes it. */
+export interface SkillScopeView {
+  id: string
+  label: string
+  root: string
+  /** The engine's own switch that stops it reading this directory, or `null` if it reads it. */
+  suppressedBy: string | null
+}
+
 export interface AgentSkillsReadout {
+  /** Every directory the engine's rules name — the page draws one heading per entry. */
+  scopes: SkillScopeView[]
   skills: SkillEntryView[]
   disabled: SkillEntryView[]
+  /**
+   * The scope an import would install into, or `null` when this profile has none.
+   *
+   * A scope *id* into {@link AgentSkillsReadout.scopes} rather than a path: what the page needs is
+   * where the control would write, and where that is is the backend's answer — the same predicate
+   * `SkillLibrary::import` refuses on, so a page offering an import the backend would refuse (or
+   * omitting one it would accept) cannot be built from this readout.
+   */
+  importScope: string | null
 }
 
 /** What an import would install, read from the folder and written nowhere. */
@@ -106,9 +150,14 @@ export interface SkillPreviewView {
  *
  * Two failure channels, kept apart as they are everywhere else in this tree: a **rejection** is the
  * call not completing and the page says so; a **refusal** is data that comes back and is rendered.
+ *
+ * The read carries both, and `preview` already did: an arrangement the backend refuses to build a
+ * library from (this host's store lying inside a directory the engine scans) is not a broken
+ * connection, and answering it as one would leave the page's "could not be read from the backend"
+ * standing over a backend that answered with a reason.
  */
 export interface AgentSkillsClient {
-  read(): Promise<AgentSkillsReadout>
+  read(): Promise<AgentSkillsReadout | SkillRefusal>
   preview(source: string): Promise<SkillPreviewView | SkillRefusal>
   import(source: string, replace: boolean): Promise<SkillRefusal | null>
   setEnabled(name: string, scope: string, enabled: boolean): Promise<SkillRefusal | null>
@@ -121,7 +170,8 @@ const props = defineProps<{
 
 const labels = computed<AgentSkillsLabels>(() => props.labels ?? skillsLabels())
 const readout = ref<AgentSkillsReadout | null>(null)
-const state = ref<'loading' | 'ready' | 'unreadable'>('loading')
+const readRefusal = ref<SkillRefusal | null>(null)
+const state = ref<'loading' | 'ready' | 'refused' | 'unreadable'>('loading')
 
 const source = ref('')
 const preview = ref<SkillPreviewView | null>(null)
@@ -185,10 +235,69 @@ function switchNote(entry: SkillEntryView): string {
   return labels.value.disable.noSwitch
 }
 
+/**
+ * One directory's heading and the rows under it.
+ *
+ * Grouped here rather than in the backend, because the two questions are different: the backend
+ * answers which directories the engine's rules name and what it found in each, and this is the
+ * shape a page renders them in. A row whose directory the readout did not name still gets a group
+ * — under the label the row itself carries — because a skill the engine reads may not be dropped by
+ * a page that failed to look up its heading.
+ */
+interface ScopeGroup {
+  id: string
+  label: string
+  /** The directory, or `''` when the group was built from a row rather than from the scope list. */
+  root: string
+  suppressedBy: string | null
+  entries: SkillEntryView[]
+}
+
+const groups = computed<ScopeGroup[]>(() => {
+  const held = readout.value
+  if (held === null) return []
+  const built: ScopeGroup[] = held.scopes.map((scope) => ({ ...scope, entries: [] }))
+  const byId = new Map(built.map((group) => [group.id, group]))
+  for (const entry of held.skills) {
+    let group = byId.get(entry.scope)
+    if (group === undefined) {
+      group = {
+        id: entry.scope,
+        label: entry.scopeLabel,
+        root: '',
+        suppressedBy: entry.suppressedBy,
+        entries: [],
+      }
+      byId.set(entry.scope, group)
+      built.push(group)
+    }
+    group.entries.push(entry)
+  }
+  return built
+})
+
+/** Where an import would be written, when this profile has a directory this host owns. */
+const importTargetRoot = computed<string | null>(() => {
+  const held = readout.value
+  if (held === null || held.importScope === null) return null
+  const found = held.scopes.find((scope) => scope.id === held.importScope)
+  return found?.root ?? null
+})
+
 async function load(): Promise<void> {
   state.value = 'loading'
+  readRefusal.value = null
   try {
-    readout.value = await props.client.read()
+    const answer = await props.client.read()
+    // A refusal is the backend answering: it says the arrangement itself is one this host will not
+    // run under, and the sentence for that kind is already in the copy tree. Drawing the retry
+    // here would offer a control that cannot change the arrangement.
+    if ('kind' in answer) {
+      readRefusal.value = answer
+      state.value = 'refused'
+      return
+    }
+    readout.value = answer
     state.value = 'ready'
   } catch {
     // "The engine finds no skills" is a claim about the engine; a failed read is a claim about the
@@ -280,6 +389,13 @@ onMounted(load)
     <span v-if="state === 'loading'" class="settings-note" data-test="skills-loading">
       {{ labels.loading }}
     </span>
+    <!-- The refusal arm: the backend answered, and what it said is about the arrangement rather
+         than about the connection. No retry below it — see `load`. -->
+    <template v-else-if="state === 'refused'">
+      <span class="settings-note is-error" data-test="skills-refused">
+        {{ refusalText(readRefusal) }}
+      </span>
+    </template>
     <template v-else-if="state === 'unreadable'">
       <span class="settings-note is-error" data-test="skills-unreadable">{{ labels.unreadable }}</span>
       <button type="button" class="skills-button" data-test="skills-retry" @click="load">
@@ -288,51 +404,85 @@ onMounted(load)
     </template>
 
     <template v-else-if="readout">
-      <span v-if="readout.skills.length === 0" class="settings-note" data-test="skills-empty">
+      <span v-if="groups.length === 0" class="settings-note" data-test="skills-empty">
         {{ labels.list.empty }}
       </span>
-      <ul class="skills-rows">
-        <li v-for="entry in readout.skills" :key="`${entry.scope}/${entry.directory}`" class="skills-row" :data-test="`skill-row-${entry.name}`">
-          <div class="skills-head">
-            <span class="skills-name">{{ entry.name }}</span>
-            <span class="skills-badge">{{ labels.owner[entry.owner] }}</span>
-          </div>
-          <span class="settings-note skills-description">
-            {{ entry.description ?? labels.list.noDescription }}
-          </span>
-          <span class="settings-note">
-            {{ labels.list.scope }}: {{ entry.scopeLabel }} — {{ labels.list.directory }}:
-            <code class="skills-path">{{ entry.directory }}</code>
-          </span>
-          <span v-if="entry.conflicts.length > 0" class="settings-note is-warn skills-conflict" data-test="skill-conflict">
-            {{ fill(labels.conflict, { directories: entry.conflicts.join(', ') }) }}
-          </span>
-          <span class="settings-note skills-surface" :data-surface="entry.surface.kind">
-            {{ surfaceText(entry) }}
-          </span>
-          <span v-if="rowRefusals[entry.name]" class="settings-note is-error" data-test="skill-refusal">
-            {{ refusalText(rowRefusals[entry.name]) }}
-          </span>
-          <!-- A control only where it can change what the engine reads. The other two arms draw
-               the reason instead, so there is nothing on screen that claims a disable it cannot
-               perform (§8.2). -->
-          <div v-if="entry.disable.kind === 'per-skill'" class="skills-toggle">
-            <span class="settings-note">{{ labels.disable.label }}</span>
-            <button
-              type="button"
-              class="skills-button"
-              :disabled="busy === entry.name"
-              :data-test="`skill-disable-${entry.name}`"
-              @click="toggle(entry, false)"
-            >
-              {{ labels.disable.disable }}
-            </button>
-          </div>
-          <span v-else class="settings-note skills-no-switch" data-test="skill-no-switch">
-            {{ switchNote(entry) }}
-          </span>
-        </li>
-      </ul>
+      <!-- One heading per directory the engine's rules name, with that directory's own sentence
+           when it holds nothing. A directory this launch stopped reading says that, rather than
+           "no skills", which would be a claim about contents nobody looked at. -->
+      <div
+        v-for="group in groups"
+        :key="group.id"
+        class="skills-scope"
+        :data-test="`skill-scope-${group.id}`"
+      >
+        <span class="skills-scope-label">{{ group.label }}</span>
+        <span v-if="group.root" class="settings-note skills-path">{{ group.root }}</span>
+        <span
+          v-if="group.entries.length === 0 && group.suppressedBy"
+          class="settings-note"
+          :data-test="`skill-scope-unread-${group.id}`"
+        >
+          {{ fill(labels.surface.suppressed, { variable: group.suppressedBy }) }}
+        </span>
+        <span
+          v-else-if="group.entries.length === 0"
+          class="settings-note"
+          :data-test="`skill-scope-empty-${group.id}`"
+        >
+          {{ labels.list.emptyScope }}
+        </span>
+        <ul class="skills-rows">
+          <li v-for="entry in group.entries" :key="`${entry.scope}/${entry.directory}`" class="skills-row" :data-test="`skill-row-${entry.name}`">
+            <div class="skills-head">
+              <span class="skills-name">{{ entry.name }}</span>
+              <span class="skills-badge">{{ labels.owner[entry.owner] }}</span>
+            </div>
+            <span class="settings-note skills-description">
+              {{ entry.description ?? labels.list.noDescription }}
+            </span>
+            <span class="settings-note">
+              {{ labels.list.scope }}: {{ entry.scopeLabel }} — {{ labels.list.directory }}:
+              <code class="skills-path">{{ entry.directory }}</code>
+            </span>
+            <span v-if="entry.conflicts.length > 0" class="settings-note is-warn skills-conflict" data-test="skill-conflict">
+              {{ fill(labels.conflict, { directories: entry.conflicts.join(', ') }) }}
+            </span>
+            <span class="settings-note skills-surface" :data-surface="entry.surface.kind">
+              {{ surfaceText(entry) }}
+            </span>
+            <span v-if="rowRefusals[entry.name]" class="settings-note is-error" data-test="skill-refusal">
+              {{ refusalText(rowRefusals[entry.name]) }}
+            </span>
+            <!-- A control only where it can change what the engine reads. The other two arms draw
+                 the reason instead, so there is nothing on screen that claims a disable it cannot
+                 perform (§8.2). -->
+            <div v-if="entry.disable.kind === 'per-skill'" class="skills-toggle">
+              <span class="settings-note">{{ labels.disable.label }}</span>
+              <button
+                type="button"
+                class="skills-button"
+                :disabled="busy === entry.name"
+                :data-test="`skill-disable-${entry.name}`"
+                @click="toggle(entry, false)"
+              >
+                {{ labels.disable.disable }}
+              </button>
+            </div>
+            <span v-else class="settings-note skills-no-switch" data-test="skill-no-switch">
+              {{ switchNote(entry) }}
+            </span>
+          </li>
+        </ul>
+      </div>
+
+      <!-- The two directories this page does not manage, stated with their real reasons rather
+           than drawn greyed out (§5.2). Nothing below is a control. -->
+      <div class="skills-unmanaged" data-test="skills-unmanaged">
+        <span class="settings-label">{{ labels.unmanaged.title }}</span>
+        <span class="settings-note" data-test="skills-project-scope">{{ labels.unmanaged.project }}</span>
+        <span class="settings-note" data-test="skills-declared-scope">{{ labels.unmanaged.declared }}</span>
+      </div>
 
       <div v-if="readout.disabled.length > 0" class="skills-disabled">
         <span class="settings-label">{{ labels.disabledList.title }}</span>
@@ -354,9 +504,25 @@ onMounted(load)
         </ul>
       </div>
 
-      <form class="skills-import" @submit.prevent="readSource">
+      <!-- The form only where there is a directory this host may write in. A profile reusing the
+           user's own installation has none, and the sentence says what such a profile would need
+           rather than drawing a control whose only possible answer is a refusal. -->
+      <!-- The form only where there is a directory this host may write in. A profile reusing the
+           user's own installation has none, and the sentence says what such a profile would need
+           rather than drawing a control whose only possible answer is a refusal. -->
+      <span
+        v-if="!readout.importScope"
+        class="settings-note skills-no-import"
+        data-test="skills-no-import"
+      >
+        {{ labels.import.noTarget }}
+      </span>
+      <form v-else class="skills-import" @submit.prevent="readSource">
         <span class="settings-label">{{ labels.import.title }}</span>
         <span class="settings-note">{{ labels.import.hint }}</span>
+        <span v-if="importTargetRoot" class="settings-note">
+          {{ labels.import.target }}: <code class="skills-path">{{ importTargetRoot }}</code>
+        </span>
         <label class="skills-field">
           <span>{{ labels.import.source }}</span>
           <input v-model="source" class="skills-input" data-test="skills-source">
@@ -437,6 +603,9 @@ onMounted(load)
 .settings-note.is-warn { color: var(--app-warn); }
 .settings-note.is-error { color: var(--app-danger); }
 .skills-rows { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.skills-scope, .skills-unmanaged { display: flex; flex-direction: column; gap: 4px; }
+.skills-scope-label { font-size: 12px; font-weight: 600; color: var(--app-text); }
+.skills-unmanaged { padding-top: 8px; border-top: 1px solid var(--app-border); }
 .skills-row { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-elevated); }
 .skills-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .skills-name { font-size: 12px; font-weight: 600; color: var(--app-text); }

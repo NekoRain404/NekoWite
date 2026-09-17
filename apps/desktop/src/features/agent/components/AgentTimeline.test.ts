@@ -76,10 +76,12 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-function mountTimeline(): { host: HTMLElement; scroll: HTMLElement } {
+function mountTimeline(
+  rows: readonly AgentTimelineEntry[] = ROWS,
+): { host: HTMLElement; scroll: HTMLElement } {
   const host = document.createElement('div')
   document.body.appendChild(host)
-  const app = createApp(AgentTimeline, { rows: ROWS, labels: LABELS })
+  const app = createApp(AgentTimeline, { rows, labels: LABELS })
   mounted.push(app)
   app.mount(host)
   const scroll = host.querySelector<HTMLElement>('.agent-timeline')
@@ -107,6 +109,24 @@ describe('the transcript and the keyboard', () => {
     expect(scroll.getAttribute('role')).toBe('log')
     expect(scroll.getAttribute('aria-label')).toBe(LABELS.aria)
     expect(scroll.getAttribute('aria-live')).toBe('off')
+  })
+
+  it('draws the engine’s copy of the user’s turn as the user’s own row', () => {
+    // The replayed half of a restored conversation: `session/load` hands the user's turns back
+    // as `user-delta` (`agent_runtime::events::normalize_update`), the reducer writes them as a
+    // `user` row with `origin: 'engine'`, and this is the layer where that row either becomes
+    // pixels or becomes the eighth "built but unreachable". The engine's copy carries the same
+    // label as the host's own message — it *is* the user speaking — and `data-origin` is what
+    // keeps the two statements apart in the DOM for anything that wants to tell them apart.
+    const { host } = mountTimeline([
+      { kind: 'user', id: 1, runId: 'load-0', text: 'Reply with exactly: PONG', origin: 'engine' },
+    ])
+
+    const row = host.querySelector<HTMLElement>('.agent-row-user')
+    expect(row).not.toBeNull()
+    expect(row?.dataset.origin).toBe('engine')
+    expect(row?.querySelector('.agent-row-who')?.textContent).toBe(LABELS.you)
+    expect(row?.querySelector('.agent-row-text')?.textContent).toBe('Reply with exactly: PONG')
   })
 
   it('does not intercept a key, so the crop is a tab stop and not a trap', () => {

@@ -353,6 +353,15 @@ describe('the mapping from the runtime’s frames to the contract', () => {
   it('passes through the kinds the runtime already speaks in the contract’s shape', () => {
     const text = mappedEvent('text-delta', { text: 'PONG' })
     expect(text.payload).toEqual({ text: 'PONG' })
+    // The runtime's copy of the *user's* half, which `session/load` replays and whose producer
+    // `normalize_update` now is. Nothing in this adapter translates it — its payload reader is
+    // the contract's own `readText` — and what the host stamps it with is the load's run rather
+    // than null, because the reducer refuses a turn-scoped kind that names no turn. Pinned here
+    // with the other unmapped kinds, which are exactly where a silent drift between the two
+    // gateways would show.
+    const mine = mappedEvent('user-delta', { text: 'Reply with exactly: PONG' })
+    expect(mine.payload).toEqual({ text: 'Reply with exactly: PONG' })
+    expect(mine.runId).toBe('run-0')
     const commands = mappedEvent('commands-changed', { commands: [{ name: 'init', description: 'Start' }] })
     expect((commands.payload as { commands: unknown[] }).commands).toHaveLength(1)
     const failed = mappedEvent('run-failed', { code: 'certificate-untrusted', message: 'no CA' })

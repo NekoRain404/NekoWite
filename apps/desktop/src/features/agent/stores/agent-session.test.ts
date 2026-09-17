@@ -379,6 +379,41 @@ describe('the session store', () => {
     expect(store.records[key].view.timeline.length).toBeGreaterThan(after)
   })
 
+  it('shows the user’s turn of a restored conversation, not only the agent’s answer', async () => {
+    // The whole path a reopened session takes, driven through the double: a turn is taken, the
+    // runtime goes away and comes back, and the session is loaded again. What the panel has to
+    // end up reading is the *conversation* — and until this was fixed the runtime's mapping had
+    // no arm for `user_message_chunk`, so this timeline held the agent's half and nothing else:
+    // an event kind declared, reduced and drawn, with no producer, and a restore that failed
+    // silently rather than loudly.
+    const store = useAgentSessionStore()
+    const { gateway, session } = await opened()
+    await gateway.start()
+    gateway.script({ chunks: ['PONG'] })
+    await gateway.prompt(session, 'Reply with exactly: PONG')
+
+    await gateway.stop()
+    await gateway.start()
+    const revived = await gateway.loadSession(session.sessionId, {
+      vaultId: 'vault-1',
+      cwd: '/tmp/vault',
+    })
+    await store.attach(gateway, revived)
+    const key = sessionKey(revived)
+    store.focus(key)
+
+    expect(
+      store.records[key].view.timeline.map(
+        (entry) => `${entry.kind}:${'text' in entry ? entry.text : ''}`,
+      ),
+    ).toEqual(['user:Reply with exactly: PONG', 'text:PONG'])
+    // And the row is the engine's copy rather than a second host message: the two are different
+    // statements about the conversation, and the timeline keeps them apart by `origin` (a user
+    // row must never be silently repainted as the host's own send).
+    const first = store.records[key].view.timeline[0]
+    expect(first.kind === 'user' && first.origin).toBe('engine')
+  })
+
   it('detaches idempotently, and stops hearing the session once it has', async () => {
     const store = useAgentSessionStore()
     const { gateway, session } = await opened()

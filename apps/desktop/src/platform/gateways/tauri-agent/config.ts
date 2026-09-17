@@ -55,7 +55,13 @@ export interface AgentConfigCommands {
     agentId: string
     profileId: string
     relative: string
-    revision: string
+    /**
+     * The revision the read answered, or `null` for a document that is not there — the backend's
+     * `Option<String>`, whose `None` is the claim a create is checked on. It is sent as `null`
+     * rather than omitted, because the two mean the same thing to serde and only one of them says
+     * what the caller meant.
+     */
+    revision: string | null
     edits: readonly AgentConfigEditRequest[]
   }): Promise<unknown>
 }
@@ -75,7 +81,7 @@ export function createTauriAgentConfigCommands(): AgentConfigCommands {
       agentId: string
       profileId: string
       relative: string
-      revision: string
+      revision: string | null
       edits: readonly AgentConfigEditRequest[]
     }) =>
       invoke('agent_config_edit', {

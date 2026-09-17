@@ -562,6 +562,36 @@ describe('memory agent gateway', () => {
     expect(reopened.runtimeEpoch).not.toBe(previous)
   })
 
+  it('replays both halves of a restored conversation, the user’s turn included', async () => {
+    // The shape the pinned engine was measured sending, and the one this double therefore owes a
+    // panel: a live turn carries no user chunk at all (the replay probe's first engine printed
+    // zero), and the `session/load` that restores the conversation replays the user's turn —
+    // verbatim, ahead of the run's own content, under the load's own run. A double that published
+    // the prompt live would invent a frame no engine sends; one that left it out of the replay
+    // would restore a conversation in which the agent talks to itself.
+    const { agent, session } = await openAgent()
+    const { events: live } = await collect(agent, session)
+    await agent.prompt(session, 'summarise the note')
+
+    expect(live.map((event) => event.kind)).toEqual(['text-delta', 'run-finished'])
+
+    await agent.stop()
+    await agent.start()
+    const revived = await agent.loadSession(session.sessionId, {
+      vaultId: 'memoir://demo',
+      cwd: '/vault',
+    })
+
+    const tail = (await agent.snapshot(revived)).events
+    expect(tail.map((event) => event.kind)).toEqual(['user-delta', 'text-delta'])
+    expect(tail[0].payload).toEqual({ text: 'summarise the note' })
+    // The load's run, and the run the window has to see on the user's frame: a turn-scoped frame
+    // naming no turn is `unattributed-run` in the reducer, so a replayed user row stamped `null`
+    // would be dropped by the very window this replay exists for.
+    expect(tail[0].runId).toMatch(/^load-/)
+    expect(tail[1].runId).toBe(tail[0].runId)
+  })
+
   it('leaves a redundant start alone, so it cannot invalidate open sessions', async () => {
     const { agent, session } = await openAgent()
     await agent.start()

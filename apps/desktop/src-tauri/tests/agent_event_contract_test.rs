@@ -159,6 +159,7 @@ fn every_kind_is_spelled_the_way_the_contract_spells_it() {
     // contract's own spellings; a kind added without its string fails here.
     for (kind, spelling) in [
         (AgentEventKind::TextDelta, "text-delta"),
+        (AgentEventKind::UserDelta, "user-delta"),
         (AgentEventKind::ThoughtDelta, "thought-delta"),
         (AgentEventKind::ToolUpdate, "tool-update"),
         (AgentEventKind::PermissionRequest, "permission-request"),
@@ -199,6 +200,41 @@ fn a_chunk_with_no_text_is_not_an_empty_thought() {
     // never had.
     let update = wire_update(json!({
         "sessionUpdate": "agent_thought_chunk",
+        "content": { "type": "image", "data": "aGk=", "mimeType": "image/png" }
+    }));
+
+    assert!(normalize_update(&update).is_none());
+}
+
+#[test]
+fn a_user_chunk_is_mapped_into_the_contracts_payload() {
+    // The engine's copy of the *user's* half, which is what `session/load` replays along with the
+    // answer: `agent_session_replay_live_test.rs` measures the frames arriving, and the contract
+    // has had a kind for this one since T1 (`payloads.ts`'s `'user-delta'`, `readText` in
+    // `validation.ts`, a `user` row with `origin: 'engine'` in `agent-event-apply.ts`, and
+    // `AgentTimeline.vue` draws it) — with no producer on this side until this arm. Falling to
+    // `_ => None` instead would discard a restored conversation's user turns before any window
+    // could see them, and discard them silently, which is the defect `events.rs`'s own header
+    // says the mapping exists to make impossible. `{ text }` is the shape `readText` accepts, and
+    // the same shape the two neighbouring chunk kinds send.
+    let update = wire_update(json!({
+        "sessionUpdate": "user_message_chunk",
+        "content": { "type": "text", "text": "what does this note say" }
+    }));
+
+    let (kind, payload) = normalize_update(&update).expect("a user chunk must be forwarded");
+
+    assert_eq!(kind, AgentEventKind::UserDelta);
+    assert_eq!(payload, json!({ "text": "what does this note say" }));
+}
+
+#[test]
+fn a_chunk_with_no_text_is_not_an_empty_user_message() {
+    // `text_of`'s reason, on the user's side of the same stream: an image in a replayed user turn
+    // is a part this host has no kind for, and an empty string would draw as a message the user
+    // never sent.
+    let update = wire_update(json!({
+        "sessionUpdate": "user_message_chunk",
         "content": { "type": "image", "data": "aGk=", "mimeType": "image/png" }
     }));
 

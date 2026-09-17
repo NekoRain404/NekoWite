@@ -54,6 +54,14 @@ pub enum DisableMechanism {
     None,
 }
 
+/// The scope [`opencode_scopes`] mints for a profile's own configuration root.
+///
+/// Named once because two sides decide by it: the importer refuses any scope that is not this one
+/// (see [`SkillScope::accepts_import`]), and a caller that has to name the directory an import
+/// would go into before one exists — a profile reusing the user's installation has none — names
+/// this id rather than a second spelling of it.
+pub const MANAGED_SCOPE_ID: &str = "engine-global";
+
 /// One directory the engine scans, and what may be done about its contents.
 #[derive(Debug, Clone)]
 pub struct SkillScope {
@@ -68,6 +76,19 @@ pub struct SkillScope {
     /// caller that built it rather than guessed from the directory.
     pub suppressed_by: Option<&'static str>,
     pub disable: DisableMechanism,
+}
+
+impl SkillScope {
+    /// Whether this scope is one this host may install a skill into.
+    ///
+    /// One predicate with two readers, deliberately: [`SkillLibrary::import`] refuses on it, and the
+    /// settings readout reports the directory an import would land in from it. Two spellings of the
+    /// same rule would come apart in the direction that matters — a page drawing an import control
+    /// for a directory the backend refuses, or omitting one it would accept — and both are §5.2's
+    /// 「不可用选项要说明原因」 read as a control that lies about what it can do.
+    pub fn accepts_import(&self) -> bool {
+        self.owner == ScopeOwner::Managed && self.disable == DisableMechanism::PerSkill
+    }
 }
 
 /// The engine's whole-scope skill switches that one launch has actually turned on.
@@ -143,6 +164,29 @@ pub fn opencode_scopes(
     declared: &[PathBuf],
     env: &[(String, String)],
 ) -> Vec<SkillScope> {
+    let mut scopes = opencode_scopes_without_project(config_root, home, declared, env);
+    // Right after the profile's own directory when there is one, and first when the profile reuses
+    // the user's installation — the position this arm has always been in.
+    scopes.insert(usize::from(config_root.is_some()), project_scope(project));
+    scopes
+}
+
+/// The scopes that exist without a project: everything [`opencode_scopes`] answers, except the open
+/// project's own `.opencode/skills`.
+///
+/// The project arm needs a *project*, and there is a caller with none: the settings dialog, which
+/// is not about a folder and has no vault to point at. §5.2 is why that is a function and not a
+/// path somebody had to invent — a page listing a project it does not know would be listing a
+/// directory nobody opened, and building the whole list and dropping one entry afterwards would
+/// need exactly that invented path to call [`opencode_scopes`] with. What that caller states in
+/// words instead is the project scope and why it is not here; the directories below are the ones a
+/// profile has whether or not anything is open.
+pub fn opencode_scopes_without_project(
+    config_root: Option<&Path>,
+    home: &Path,
+    declared: &[PathBuf],
+    env: &[(String, String)],
+) -> Vec<SkillScope> {
     let switches = launch_switches(env);
     let mut scopes = Vec::new();
     if let Some(config_root) = config_root {
@@ -150,7 +194,7 @@ pub fn opencode_scopes(
         // inside a root this host owns — which is what makes a per-skill switch possible here and
         // nowhere else.
         scopes.push(SkillScope {
-            id: "engine-global".to_string(),
+            id: MANAGED_SCOPE_ID.to_string(),
             label: "This app's profile, read by the engine".to_string(),
             root: config_root.join("skills"),
             owner: ScopeOwner::Managed,
@@ -158,16 +202,6 @@ pub fn opencode_scopes(
             disable: DisableMechanism::PerSkill,
         });
     }
-    scopes.push(SkillScope {
-        id: "engine-project".to_string(),
-        label: "The open project".to_string(),
-        root: project.join(".opencode").join("skills"),
-        owner: ScopeOwner::Engine,
-        suppressed_by: None,
-        // The user's vault is theirs. §8.2 keeps 项目 Skills and 应用受管 Skills apart, and moving a
-        // directory out of somebody's project is not a settings page's business.
-        disable: DisableMechanism::None,
-    });
     for (id, directory, variable, also) in [
         (
             "claude-code",
@@ -212,6 +246,20 @@ pub fn opencode_scopes(
         });
     }
     scopes
+}
+
+/// The open project's own directory: the folder a session runs in, not a folder this host picked.
+fn project_scope(project: &Path) -> SkillScope {
+    SkillScope {
+        id: "engine-project".to_string(),
+        label: "The open project".to_string(),
+        root: project.join(".opencode").join("skills"),
+        owner: ScopeOwner::Engine,
+        suppressed_by: None,
+        // The user's vault is theirs. §8.2 keeps 项目 Skills and 应用受管 Skills apart, and moving a
+        // directory out of somebody's project is not a settings page's business.
+        disable: DisableMechanism::None,
+    }
 }
 
 /// A path with its symbolic links resolved where that is possible, and itself where it is not.

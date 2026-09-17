@@ -5,11 +5,17 @@
  * `agent-config-ipc.test.ts` holds the client's rules as values. This file exists for the one thing
  * a value test cannot prove, and it is the rule this whole page is built around:
  *
- *  - **Only the arm that can write draws a control.** The other three draw sentences, each its own,
- *    because their next moves are three different things. The failure being guarded against is a
- *    form on screen over a document the backend will refuse to write — a disabled-looking control
- *    that claims an action exists. So every non-editable case below asserts the *absence* of
- *    `input`, `textarea` and `button` in the page, at the DOM.
+ *  - **Only the arms that can write draw a control.** A document this host may write and one that
+ *    is not on disk yet both draw the form, because the backend creates from the absence
+ *    (`apply_claim`) and the page owes the user the difference in words; the other two draw
+ *    sentences, each its own, because their next moves are different things. The failure being
+ *    guarded against is a form on screen over a document the backend will refuse to write — a
+ *    disabled-looking control that claims an action exists. So both non-writable cases below assert
+ *    the *absence* of `input`, `textarea` and `button` in the page, at the DOM.
+ *  - **The claim the form carries is the one the read answered.** The create case asserts the
+ *    revision that goes over the wire as well as the sentence on screen: `null` is what makes the
+ *    backend write the file, and a page that substituted `''` for it would send a malformed
+ *    revision and get a refusal that reads as "reload the page".
  *  - **The document is drawn as the engine wrote it.** The text arrives with its comments and is
  *    rendered verbatim; nothing here parses it, so the case where a comment survives is the case
  *    that proves the page is showing the file rather than a re-serialization of it.
@@ -55,10 +61,23 @@ const EDITABLE: AgentConfigReadout = {
   },
 }
 
+/** The document as `read_document` answers for a file that is not there: no text, no revision. */
+const CREATABLE: AgentConfigReadout = {
+  state: 'document',
+  document: {
+    path: RELATIVE,
+    resolved: `/tmp/profile/${RELATIVE}`,
+    exists: false,
+    revision: null,
+    text: null,
+    editable: true,
+  },
+}
+
 interface Stub {
   client: AgentConfigClient
   /** Every edit the page sent, so "refused before the backend was asked" is observable. */
-  edits: { relative: string; revision: string; edits: readonly ConfigEdit[] }[]
+  edits: { relative: string; revision: string | null; edits: readonly ConfigEdit[] }[]
 }
 
 function stub(answers: AgentConfigReadout | Error, edit?: unknown): Stub {
@@ -118,7 +137,7 @@ describe('the four arms', () => {
     expect(el('config-location')?.textContent).toContain('opencode.json')
     expect(el('config-edit')).not.toBeNull()
     expect(el('config-none')).toBeNull()
-    expect(el('config-unwritten')).toBeNull()
+    expect(el('config-creates')).toBeNull()
     expect(el('config-read-only')).toBeNull()
   })
 
@@ -132,19 +151,51 @@ describe('the four arms', () => {
     expect(controls()).toEqual([])
   })
 
-  it('states that the engine has written nothing, and draws no control', async () => {
-    // `agent_config_edit` cannot create a document (`apply` answers `Conflicted { current: None }`
-    // for a file that is not there), so a form here would be a control that cannot work.
-    await render(
-      stub({
-        state: 'document',
-        document: { ...EDITABLE.document, exists: false, revision: null, text: null },
-      }).client,
-    )
+  it('states that the file is not on disk yet, and draws the form that will create it', async () => {
+    // The arm this page used to answer with a sentence alone, because `agent_config_edit` could not
+    // create a document. It can now: `apply_claim` takes "there was no document" as the claim a
+    // create is built on, so the honest page here is the form *plus* the sentence saying what
+    // saving it will do — a form that silently created the engine's file would be the surprise
+    // §5.2 exists to prevent, and a sentence with no form would send the user to wait for a file
+    // this app is the one that writes.
+    const { client, edits } = stub(CREATABLE)
+    await render(client)
 
-    expect(el('config-unwritten')).not.toBeNull()
-    expect(el('config-edit')).toBeNull()
-    expect(controls()).toEqual([])
+    expect(el('config-creates')).not.toBeNull()
+    expect((el('config-creates')?.textContent ?? '').length).toBeGreaterThan(20)
+    expect(el('config-edit')).not.toBeNull()
+    // Nothing to show as text, and no line claiming any was returned: the file is not there.
+    expect(el('config-text')).toBeNull()
+    expect(el('config-no-text')).toBeNull()
+
+    // The claim is the read's own: `null` is what the backend checks as "there was no document",
+    // and it is what makes this save a create rather than a refusal.
+    type('config-member', 'model')
+    type('config-value', '"anthropic/claude-sonnet-4"')
+    await submit()
+
+    expect(edits).toHaveLength(1)
+    expect(edits[0].revision).toBeNull()
+    expect(edits[0].edits).toEqual([{ path: ['model'], value: 'anthropic/claude-sonnet-4' }])
+    expect(el('config-applied')).not.toBeNull()
+  })
+
+  it('says something created the file first, when a create loses that race', async () => {
+    // The create rule is a compare-and-swap against absence, so the loser is told — and with its
+    // own sentence: "the file changed" is not what happened, "something else created it" is.
+    const { client } = stub(CREATABLE, {
+      status: 'conflict',
+      current: { revision: 'c'.repeat(64), text: '{ "model": "theirs/model" }' },
+    })
+    await render(client)
+
+    type('config-member', 'model')
+    type('config-value', '"mine/model"')
+    await submit()
+
+    expect(el('config-conflict-created')).not.toBeNull()
+    expect(el('config-conflict')).toBeNull()
+    expect(el('config-applied')).toBeNull()
   })
 
   it('states that this host may not write the document, and draws no control', async () => {

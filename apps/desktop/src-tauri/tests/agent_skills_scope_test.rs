@@ -32,8 +32,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use skills::{
-    launch_switches, opencode_scopes, DisableMechanism, ScopeOwner, SkillLibrary, SkillSurface,
-    DISABLE_CLAUDE_CODE, DISABLE_CLAUDE_CODE_SKILLS, DISABLE_EXTERNAL_SKILLS, SKILL_FILE_NAME,
+    launch_switches, opencode_scopes, opencode_scopes_without_project, DisableMechanism,
+    ScopeOwner, SkillLibrary, SkillScope, SkillSurface, DISABLE_CLAUDE_CODE,
+    DISABLE_CLAUDE_CODE_SKILLS, DISABLE_EXTERNAL_SKILLS, SKILL_FILE_NAME,
 };
 
 /// A scratch tree inside the repository, removed on entry. §3.2 forbids a development profile from
@@ -200,4 +201,73 @@ fn the_engine_switches_decide_which_foreign_directories_are_read() {
         launch_switches(&[switch(DISABLE_EXTERNAL_SKILLS, "1")]),
         vec![DISABLE_EXTERNAL_SKILLS]
     );
+}
+
+/// The same list for a caller with no project: the settings dialog, which is not about a folder.
+///
+/// The project arm cannot be *filtered* out of the full list without inventing a project to call it
+/// with, so the two functions are the two answers, and this test holds them to each other: whatever
+/// changes in one is a change in the other, minus that single arm — and the arm is the only
+/// difference, in the same position it has always occupied.
+#[test]
+fn a_caller_with_no_project_gets_the_same_list_minus_the_project() {
+    let roots = scratch("no-project");
+    let home = roots.join("home");
+    let config = roots.join("config");
+    let declared = vec![roots.join("declared")];
+    let env = [switch(DISABLE_EXTERNAL_SKILLS, "1")];
+
+    let with = opencode_scopes(
+        Some(&config),
+        &home,
+        &roots.join("project"),
+        &declared,
+        &env,
+    );
+    let without = opencode_scopes_without_project(Some(&config), &home, &declared, &env);
+
+    let ids = |scopes: &[SkillScope]| {
+        scopes
+            .iter()
+            .map(|scope| scope.id.as_str().to_string())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        ids(&with),
+        vec![
+            "engine-global",
+            "engine-project",
+            "claude-code",
+            "agents-directory",
+            "declared-0"
+        ]
+    );
+    assert_eq!(
+        ids(&without),
+        vec![
+            "engine-global",
+            "claude-code",
+            "agents-directory",
+            "declared-0"
+        ],
+        "no project arm, and nothing else missing"
+    );
+    // Every scope the shorter list keeps is the one the longer list built — same root, same owner,
+    // same switch state — so "the list minus the project" is a fact rather than a coincidence of
+    // two spellings that happen to match today.
+    for scope in &without {
+        let same = with
+            .iter()
+            .find(|candidate| candidate.id == scope.id)
+            .unwrap_or_else(|| panic!("{} is not in the full list", scope.id));
+        assert_eq!(same.root, scope.root);
+        assert_eq!(same.owner, scope.owner);
+        assert_eq!(same.suppressed_by, scope.suppressed_by);
+        assert_eq!(same.disable, scope.disable);
+    }
+    assert!(without.iter().all(|scope| scope.id != "engine-project"));
+
+    // And a profile with no configuration root of its own: two directories, both another tool's.
+    let reused = opencode_scopes_without_project(None, &home, &[], &[]);
+    assert_eq!(ids(&reused), vec!["claude-code", "agents-directory"]);
 }

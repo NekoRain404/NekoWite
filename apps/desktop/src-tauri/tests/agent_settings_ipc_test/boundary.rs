@@ -96,13 +96,29 @@ fn a_profile_that_reuses_the_users_own_configuration_refuses_writes() {
         "engine-alpha",
         "alpha",
         RELATIVE,
-        document.revision().as_str(),
+        Some(document.revision().as_str()),
         &[EditSubmission {
             path: vec!["model".to_string()],
             value: json!("nope"),
         }],
     )
     .unwrap_err();
+    // Before the document layer is reached at all: the mode decides whether this host writes here,
+    // and `None` — the claim a create is built on — is refused by the same check. A profile that
+    // reuses the user's own installation is not one a create may write into either.
+    assert!(submit_document(
+        &store,
+        "engine-alpha",
+        "alpha",
+        RELATIVE,
+        None,
+        &[EditSubmission {
+            path: vec!["model".to_string()],
+            value: json!("nope"),
+        }],
+    )
+    .unwrap_err()
+    .contains("reuses the engine's own configuration"));
     assert!(
         refused.contains("reuses the engine's own configuration"),
         "{refused}"
@@ -396,6 +412,18 @@ fn the_readout_names_the_document_the_editor_may_open() {
         .expect("the document the readout named is one the editor may open");
     assert_eq!(opened["path"], path.to_string_lossy().as_ref());
     assert_eq!(opened["editable"], true);
+    // And it is *there*, on a profile nothing has configured yet, because the open wrote it: the
+    // consent default is written into the engine's configuration when the profile is opened
+    // (`Profile::apply_shipped_permissions`), so this host creates that document before any user
+    // or engine does. That is why the editor's `exists: false` arm is not the state a fresh
+    // profile is in, and why the page's own copy for it has to describe a *create* the form
+    // performs rather than a wait for the engine.
+    assert_eq!(opened["exists"], true, "{opened}");
+    assert!(opened["revision"].is_string(), "{opened}");
+    assert!(opened["text"]
+        .as_str()
+        .unwrap()
+        .contains(crate::agent_runtime::profile::PERMISSION_MEMBER));
 
     // The other mode: the engine reads the user's own installation, and this host writes nothing
     // there. `null` is that fact — never a path this app would be claiming to own. The mode switch

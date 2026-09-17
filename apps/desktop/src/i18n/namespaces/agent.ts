@@ -454,9 +454,12 @@ export const agent = {
         },
         /* The engine's own configuration document (`agent_config_document` /
            `agent_config_edit`). Four states with four sentences, because a user's next move is
-           different in each: a document this app may write, a document the engine has not written
-           yet, a document this app may not write, and a profile whose engine reads the user's own
-           installation. The last three draw no form — a control that cannot work is not drawn. */
+           different in each: a document this app may write, a document that is not there yet and
+           that saving a member creates, a document this app may not write, and a profile whose
+           engine reads the user's own installation. The last two draw no form — a control that
+           cannot work is not drawn — and the second draws the same form as the first, with its own
+           sentence, because creating the engine's file is a bigger thing than changing a member of
+           one and the user is told which they are doing. */
         config: {
           section: {
             title: 'Engine configuration',
@@ -465,7 +468,7 @@ export const agent = {
           loading: 'Reading the engine configuration…',
           unreadable: 'The engine configuration could not be read from the backend. That is a fact about this window, not about the file.',
           none: 'This profile reuses your own installation, so the engine reads that installation’s configuration. It is a file NekoWite did not write and does not open here; edit it where it lives, or switch this profile to app-managed above.',
-          unwritten: 'The engine has not written its configuration yet, and nothing here may create one: an edit sets a member of a document that exists, and a missing file is not a member. Start the engine once and it will write the file.',
+          creates: 'This file is not on disk yet, so there is nothing here to preserve — no comments and no members of the engine’s. Saving a member below creates it, with that member as its whole content, and the engine reads it from then on.',
           readOnly: 'The document is there and this profile is one NekoWite does not write into, so it is shown and not edited.',
           document: {
             title: 'The document',
@@ -487,6 +490,7 @@ export const agent = {
             invalidValue: 'That is not a JSON value.',
             applied: 'Applied.',
             conflict: 'The file changed since this page read it. Nothing was written — the document above has been reloaded, so what is on screen is what is there.',
+            conflictCreated: 'Something else created this file between this page reading the folder and this save. Nothing was written — what is above is the file that is there now, and it is not this app’s.',
             failed: 'This change could not be sent to the backend.',
           },
         },
@@ -499,9 +503,15 @@ export const agent = {
           unreadable: 'The skill list could not be read from the backend.',
           list: {
             empty: 'The engine finds no skills in any directory it reads.',
+            emptyScope: 'The engine finds no skills in this directory.',
             scope: 'Scope',
             directory: 'Directory',
             noDescription: 'no description',
+          },
+          unmanaged: {
+            title: 'Not managed here',
+            project: 'A project’s own skills are not listed, and it is not because they are missing: the engine reads `.opencode/skills` from the folder a session runs in. This dialog is about an engine profile rather than about a folder — it opens with or without a vault, and which project a page like this should manage is not something it can answer — so no project is drawn and nothing here switches one off. Open the project and the engine reads its skills as it always did.',
+            declared: 'Folders the engine’s own configuration declares (`skills.paths`) are not listed either: that member lives in a document this page does not read, and a second parser for it would be a second answer about the same file. A skill reachable only through one is installed and working — it is simply not in this list.',
           },
           owner: {
             managed: 'This app owns this directory',
@@ -531,6 +541,8 @@ export const agent = {
           import: {
             title: 'Import a skill folder',
             hint: 'A folder containing SKILL.md. It is read first and installed second; nothing in it is ever run by this app.',
+            target: 'Installed into',
+            noTarget: 'There is nothing here to import into. An import installs into a directory this app owns, and this profile has none: every directory the engine reads for it is one this app does not write in. A profile this app manages has one of its own, and that is where an import would land.',
             source: 'Folder path',
             preview: 'Read it',
             confirm: 'Import',
@@ -573,6 +585,7 @@ export const agent = {
             'description-too-long': 'The description is longer than the engine’s limit of 1024 characters.',
             'field-control': '`{key}` contains a control character, which no page and no log line can hold.',
             'name-taken': 'A skill called `{name}` is already installed at {directory}.',
+            'no-such-skill': 'There is no skill called `{name}` in `{scope}` any more. It was read a moment ago and it is not there now — a rename, a removal, or another window — so nothing was moved. Reload the list and try again.',
             'store-occupied': 'A copy with that name is already in this app’s store, and it would be overwritten.',
             'same-directory': 'That folder is already where it would be installed.',
             'scan-too-large': 'The scan of that directory did not finish, so its answer would have been a partial one.',
@@ -725,7 +738,6 @@ export const agent = {
             title: 'Not connected in this build',
             intro: 'Each of these would be a page of its own. The half it needs is missing, and a control that can only fail is not drawn:',
             runtime: 'Runtime — the process state, the authorization and the protocol version. The registry above answers which program, from where, and what it reported about itself; the state of a running engine is answered nowhere, and a settings page has no session to ask about one.',
-            skills: 'Skills — discovery, preview, import and the switch that moves one out of the engine’s reach. `skills.rs` does all of that and has its own tests, but nothing builds a library from it and no command exposes one, so there is no state to read and nothing a window could install.',
             commands: 'Commands — the list an engine publishes for a session. It reaches the agent panel as it arrives and belongs to that one session, and there is no read of it a settings page can make.',
             mcp: 'MCP servers — the list, the configuration and the transports. Nothing was built for MCP in this build at all.',
             capabilities: 'What a model takes and what a session may do. A capability report belongs to one running session — the installation’s claim joined with what that runtime negotiated — so a settings page is not a place it can be shown: it has no session, and the answer would stop being true the moment the runtime changed.',
@@ -1121,8 +1133,10 @@ export const agent = {
           },
         },
         /* 引擎自己的配置文件。四种状态、四句话，因为用户的下一步在每种状态里都不一样：
-           本应用可写的文件、引擎还没写出来的文件、本应用无权写的文件，以及配置文件属于用户自己那套
-           安装的配置档。后三种都不画表单——画不出来的控件就不画。 */
+           本应用可写的文件、还不存在而保存一个成员就会创建出来的文件、本应用无权写的文件，以及配置
+           文件属于用户自己那套安装的配置档。后两种都不画表单——画不出来的控件就不画；第二种画的是
+           第一种那张表单，只是多一句话：创建引擎的文件比改它一个成员是更大的动作，用户有权知道
+           自己正在做的是哪一件。 */
         config: {
           section: {
             title: '引擎配置',
@@ -1131,7 +1145,7 @@ export const agent = {
           loading: '正在读取引擎配置……',
           unreadable: '无法从后端读取引擎配置。这是关于本窗口的事实，而不是关于那个文件的事实。',
           none: '该配置档复用你自己那套安装，因此引擎读取的是那套安装的配置文件。它不是 NekoWite 写的，这里也不打开它；请在它所在的位置编辑，或者把上面的配置档改为「本应用管理」。',
-          unwritten: '引擎还没有写出配置文件，而这里也无法创建：一次修改是设置一个已存在文档中的成员，而文件不存在就谈不上成员。启动一次引擎，它就会写出这个文件。',
+          creates: '磁盘上还没有这个文件，因此这里也没有任何需要保留的东西——没有注释，也没有引擎写下的成员。保存下面的成员会创建它，该成员就是文件的全部内容；此后引擎就会读取它。',
           readOnly: '文件存在，但该配置档是本应用不写入的那种，因此这里只显示、不修改。',
           document: {
             title: '文件内容',
@@ -1153,6 +1167,7 @@ export const agent = {
             invalidValue: '这不是一个 JSON 值。',
             applied: '已应用。',
             conflict: '文件在本页读取之后变过，因此什么都没写入——上面的内容已经重新读取，屏幕上显示的就是文件里现在的内容。',
+            conflictCreated: '在本页读过这个目录之后、这次保存之前，别的东西创建了这个文件。什么都没写入——上面显示的就是现在磁盘上的文件，它不是本应用写的。',
             failed: '这次修改没能发送到后端。',
           },
         },
@@ -1165,9 +1180,15 @@ export const agent = {
           unreadable: '未能从后端读取技能列表。',
           list: {
             empty: '在引擎读取的所有目录中都没有找到技能。',
+            emptyScope: '引擎在这个目录里没有找到技能。',
             scope: '范围',
             directory: '目录',
             noDescription: '没有描述',
+          },
+          unmanaged: {
+            title: '这里不管理',
+            project: '项目自己的技能不在这里列出，原因不是找不到：引擎会从「会话所在目录」下的 `.opencode/skills` 读取技能。本对话框讲的是引擎配置档而不是某个目录——打开它时可能开着仓库也可能没有，而像这样的一页到底该管理哪个项目，是它回答不了的问题——因此这里不画任何项目，也不会从这里关闭任何一个。打开那个项目，引擎照旧读取它的技能。',
+            declared: '引擎自己在配置里声明的目录（`skills.paths`）同样不在这里列出：那个成员位于本页不读取的文档里，为它再写一个解析器只会对同一个文件给出第二种答案。只能通过声明路径才够到的技能是装好的、在工作的——只是不在这个列表里。',
           },
           owner: {
             managed: '该目录归本应用所有',
@@ -1197,6 +1218,8 @@ export const agent = {
           import: {
             title: '导入技能目录',
             hint: '一个包含 SKILL.md 的目录。先读取、后安装；本应用永远不会运行其中的任何东西。',
+            target: '将安装到',
+            noTarget: '这里没有可以导入进去的位置。导入会写进本应用自己的目录，而这个配置档没有这样的目录：引擎为它读取的每个目录都不是本应用可以写入的。由本应用管理的配置档有这样一个目录，导入会落到那里。',
             source: '目录路径',
             preview: '先读一遍',
             confirm: '导入',
@@ -1239,6 +1262,7 @@ export const agent = {
             'description-too-long': '描述长度超过了引擎 1024 个字符的上限。',
             'field-control': '`{key}` 中带有控制字符，任何页面和日志行都无法承载。',
             'name-taken': '名为 `{name}` 的技能已经安装在 {directory}。',
+            'no-such-skill': '`{scope}` 里已经没有名为 `{name}` 的技能了。片刻之前还读到过，现在不在了——可能是改名、删除，或者另一个窗口——因此什么都没有被移动。重新读取列表再试一次。',
             'store-occupied': '本应用的仓库中已有同名副本，继续写入会把它覆盖。',
             'same-directory': '那个目录已经在它将被安装到的位置上了。',
             'scan-too-large': '对该目录的扫描没有完成，因此它的结果会是残缺的。',
@@ -1370,8 +1394,7 @@ export const agent = {
           gaps: {
             title: '当前构建尚未接通的部分',
             intro: '下面每一条本来都会是独立的一页设置。它们需要的那一半还不存在，而一个只能失败的控件不会被画出来：',
-            runtime: '运行时——进程状态、授权与协议版本。上面的注册表页回答了哪个程序、来自哪里、它自称了什么；而运行中引擎的状态没有任何地方回答，设置页也没有可以询问的会话。',
-            skills: 'Skills——发现、预览、导入，以及把某个 Skill 移出引擎视野的开关。`skills.rs` 这些都有，也有自己的测试，但没有任何地方用它建起库，也没有命令暴露它，因此没有可读的状态，也没有窗口能装下的东西。',
+            runtime: '运行时——进程状态、授权与协议版本。上面的注册表页面回答了哪个程序、来自哪里、它自称了什么；而运行中引擎的状态没有任何地方回答，设置页也没有可以询问的会话。',
             commands: '命令——引擎为某个会话发布的列表。它随发布到达智能体面板，且只属于那一个会话，设置页没有可以调用的读取。',
             mcp: 'MCP 服务器——列表、配置与传输方式。当前构建里完全没有为 MCP 实现任何东西。',
             capabilities: '模型接受什么、一个会话能做哪些事。能力报告属于某一个运行中的会话——安装声明与那次运行时协商出的结果合并而成——因此设置页不是显示它的地方：设置页没有会话，而那个答案在运行时变化的一刻就不再成立。',

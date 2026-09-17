@@ -354,7 +354,28 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
       // the real engine.
       runCount += 1
       const loadRun = `load-${runCount}`
+      // **The restored conversation has both halves.** Each run's user turn is replayed before the
+      // run's own content, which is the order the pinned engine was measured replaying in — a
+      // `user-delta` carrying the prompt verbatim, then the run's thought and answer chunks, all
+      // under `load-0` (`agent_session_replay_live_test.rs`). The half was missing here for the
+      // same reason it was missing from the runtime: nothing produced it. `session.ts`'s
+      // `LiveSession.prompts` is the engine's store, and this is the one call that reads it.
+      const prompts = new Map(existing.prompts.map((prompt) => [prompt.runId, prompt.text]))
+      const announced = new Set<string>()
       for (const event of existing.buffer) {
+        // Announced at the first frame of the run that can be placed, so a run whose content this
+        // double does not replay carries no user turn either — the double says only what it can
+        // show, and inventing a lone prompt with nothing after it would be a shape no measurement
+        // covers.
+        if (
+          event.runId !== null &&
+          !announced.has(event.runId) &&
+          (event.kind === 'text-delta' || event.kind === 'thought-delta' || event.kind === 'tool-update')
+        ) {
+          announced.add(event.runId)
+          const text = prompts.get(event.runId)
+          if (text !== undefined) pushEvent(revived, 'user-delta', { text }, loadRun)
+        }
         switch (event.kind) {
           case 'text-delta':
             pushEvent(revived, 'text-delta', event.payload, loadRun)

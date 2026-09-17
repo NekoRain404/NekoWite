@@ -311,6 +311,15 @@ pub fn run() {
             commands::agent_settings::agent_config_document,
             commands::agent_settings::agent_config_edit,
             commands::agent_settings::agent_credentials_write,
+            // The skills page (§8.2): what the engine finds, what an import would install, and the
+            // switch that moves one skill out of the engine's reach. Registered here for the reason
+            // above, and its state is the same `AgentSettingsState` the profile commands use — the
+            // roots these scopes are built from are that profile's, so a second store of profiles
+            // would be a second answer about which directories the page is describing.
+            commands::agent_skills::agent_skills_read,
+            commands::agent_skills::agent_skills_preview,
+            commands::agent_skills::agent_skills_import,
+            commands::agent_skills::agent_skills_set_enabled,
             // The desktop pet's window surface (§7.1). Every one of these answers from
             // `DesktopPetState`, whose host is the only thing that mints a window label — and
             // the two that act on a window take it as the caller Tauri reports rather than as

@@ -8,22 +8,22 @@
  * recognises literals; a template-built key would turn a misspelled suffix into raw key text on
  * screen instead of a failing test.
  *
- * ## Why three absences have three sentences
+ * ## Why the states have sentences of their own
  *
- * §5.2's 「不可用选项要说明原因」, and the reason is that the three lead a user to three different next
- * moves:
+ * §5.2's 「不可用选项要说明原因」, and the reason is that they lead a user to different next moves:
  *
  *  - {@link AgentConfigLabels.none} — this profile reads the user's own installation. There is a
  *    configuration; it is that installation's file and this app does not open it. The next move is
  *    to edit that file where it lives, or to switch the profile to app-managed.
- *  - {@link AgentConfigLabels.unwritten} — the engine has not written its configuration yet, and
- *    nothing may create it from here: a create is not something `agent_config_edit` can do. The next
- *    move is to start the engine once, which is what writes it.
+ *  - {@link AgentConfigLabels.creates} — the document is not on disk. The form below is drawn, and
+ *    this sentence is what says so and what saving it will do: it creates the engine's file, with
+ *    the member the user names as its whole content. The sentence is not decoration — a save that
+ *    created a file the user thought was only being changed is the surprise §5.2 is about.
  *  - {@link AgentConfigLabels.readOnly} — the file is there and this host may not write it. The next
  *    move is the same as the first arm's.
  *
  * A page that drew one sentence for all three, or a form greyed out, would be telling the user to
- * wait in two of the three cases where waiting is not the answer.
+ * wait in the two cases where waiting is not the answer.
  */
 import { t } from '../../../i18n'
 
@@ -34,8 +34,8 @@ export interface AgentConfigLabels {
   retry: string
   /** The profile whose engine configuration belongs to the user's own installation. */
   none: string
-  /** The document is not on disk, and no command of ours can create it. */
-  unwritten: string
+  /** The document is not on disk, and saving a member is what creates it. */
+  creates: string
   /** There is a document and this host may not write it. */
   readOnly: string
   document: {
@@ -62,6 +62,8 @@ export interface AgentConfigLabels {
     applied: string
     /** The document is not the one this page read: reloaded, and the edit was not written. */
     conflict: string
+    /** The document was not there and something else created it first: same rule, other sentence. */
+    conflictCreated: string
     /** The call did not complete. The page's own sentence; the refusal's text is the backend's. */
     failed: string
   }
@@ -77,7 +79,7 @@ export function configLabels(): AgentConfigLabels {
     unreadable: t('agent.settings.config.unreadable'),
     retry: t('agent.settings.retry'),
     none: t('agent.settings.config.none'),
-    unwritten: t('agent.settings.config.unwritten'),
+    creates: t('agent.settings.config.creates'),
     readOnly: t('agent.settings.config.readOnly'),
     document: {
       title: t('agent.settings.config.document.title'),
@@ -99,6 +101,7 @@ export function configLabels(): AgentConfigLabels {
       invalidValue: t('agent.settings.config.edit.invalidValue'),
       applied: t('agent.settings.config.edit.applied'),
       conflict: t('agent.settings.config.edit.conflict'),
+      conflictCreated: t('agent.settings.config.edit.conflictCreated'),
       failed: t('agent.settings.config.edit.failed'),
     },
   }

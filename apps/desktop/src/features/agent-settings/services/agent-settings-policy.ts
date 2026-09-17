@@ -338,7 +338,15 @@ export interface ConfigRead {
   /** Where the file really is, as the backend resolved it. Shown; never submitted. */
   resolved: string
   exists: boolean
-  /** `null` when the file is not there: there is nothing to edit against. */
+  /**
+   * The revision the document was read at, and the token a write is built on.
+   *
+   * `null` is the answer for a file that is not there, and it is a *claim* rather than the absence
+   * of one: it is what the backend's `apply_claim` checks as "there was no document", and a write
+   * carrying it is the create whose result is that member and nothing else. The backend answers
+   * `null` exactly when the file is absent and checks it against the disk like any other revision,
+   * so a document that appeared in the meantime is a conflict rather than an overwrite.
+   */
   revision: string | null
   /**
    * The file as written, or `null` when it is not there.
@@ -352,36 +360,47 @@ export interface ConfigRead {
 }
 
 /**
- * Which of §8.1's three absences this profile is in, or `null` when there is nothing absent.
+ * Whether this host may write this document at all, or `null` when it may.
  *
- * One predicate with two callers, and that is the whole reason it is a function rather than two
- * conditions written where they are needed: {@link decideConfigWrite} refuses a write for these
- * reasons, and {@link configEditor} decides whether the page may draw a control at all. A second
- * spelling of "there is no document" would be the two answers the page shows disagreeing — and the
+ * One predicate with two callers, and that is the whole reason it is a function rather than a
+ * condition written where it is needed: {@link decideConfigWrite} refuses a write for this reason,
+ * and {@link configEditor} decides whether the page may draw a control at all. A second spelling of
+ * "this host does not write here" would be the two answers the page shows disagreeing — and the
  * direction that disagreement fails in is a form over a file the backend will refuse to write.
+ *
+ * A document that is *not there* is deliberately not in this predicate any more. It used to be:
+ * the backend could not create one, so a form over the absence would have been a control that could
+ * not work. `apply_claim` creates, so the absence is a state a form may act on, and the one thing
+ * left that removes the control is the mode.
  */
-type ConfigAbsence = Extract<ConfigRefusal, 'not-editable' | 'absent'>
+type ConfigAbsence = Extract<ConfigRefusal, 'not-editable'>
 
 function configAbsence(read: ConfigRead): ConfigAbsence | null {
-  if (!read.editable) return 'not-editable'
-  if (!read.exists || read.revision === null) return 'absent'
-  return null
+  return read.editable ? null : 'not-editable'
 }
 
 /**
  * What the configuration page may draw for one document.
  *
  * The four arms are the four honest answers, and `none` is not an absence of information: it is the
- * pair having no document of this host's at all (`user-config`, where the engine reads the user's own
- * installation). It is separate from the other two because a user's next move is different in each —
- * switch the profile's mode, start the engine once, or edit the file where it lives.
+ * pair having no document of this host's at all (`user-config`, where the engine reads the user's
+ * own installation). The other three lead a user to three different next moves: set a member, set
+ * the first member of a document that does not exist yet, or change the profile's mode.
  *
- * The two middle arms are `ConfigRefusal`'s own ids rather than a parallel union, so an arm added
- * there is a compile error here rather than a state this page silently has no sentence for.
+ * `editable` and `creatable` draw the same form, because it is the same form: what differs is the
+ * claim the submission carries (`revision`, or `null`) and the sentence above it, and both are
+ * decided from the same read. The arm is separate rather than folded into `editable` because the
+ * page owes the user the difference in words: saving here *creates the engine's file*, which is a
+ * bigger thing than changing a member of one, and §5.2 asks for the real reason rather than a form
+ * that quietly did one when the user expected the other.
+ *
+ * `not-editable` is `ConfigRefusal`'s own id rather than a parallel string, so that rule lives in
+ * one place; `creatable` is a state of the *document* rather than a refusal, which is why it is
+ * named here and not there.
  */
 export type ConfigEditor =
   | { kind: 'editable' }
-  | { kind: 'absent' }
+  | { kind: 'creatable' }
   | { kind: 'not-editable' }
   | { kind: 'none' }
 
@@ -389,7 +408,11 @@ export type ConfigEditor =
 export function configEditor(document: ConfigRead | null): ConfigEditor {
   if (document === null) return { kind: 'none' }
   const absence = configAbsence(document)
-  return absence === null ? { kind: 'editable' } : { kind: absence }
+  if (absence !== null) return { kind: absence }
+  // The revision is the test, not `exists`: it is the value the submission carries, and the two
+  // answers cannot disagree — the backend reads the file and hashes it in one step, so `null` is
+  // exactly the document that is not there.
+  return document.revision === null ? { kind: 'creatable' } : { kind: 'editable' }
 }
 
 /**
@@ -412,7 +435,12 @@ export function parseConfigValue(text: string): ConfigValueParse {
 
 export interface ConfigWrite {
   path: string
-  revision: string
+  /**
+   * The revision the form read — the token the write is built on, and the only field of this type
+   * that can express a *create*: `null` is the claim "the document I read was not there", which the
+   * backend checks against the disk exactly as it checks a hash (see {@link ConfigRead.revision}).
+   */
+  revision: string | null
   edits: ConfigEdit[]
 }
 
@@ -421,7 +449,13 @@ export type ConfigUpdate =
   | { status: 'conflict'; current: ConfigRead }
   | { status: 'refused'; reason: ConfigRefusal; message: string }
 
-export type ConfigRefusal = 'other-document' | 'not-editable' | 'absent' | 'malformed-edit'
+/**
+ * Why a submission may not be sent. Three arms rather than four: `absent` used to be one of them —
+ * "the document does not exist yet, so there is nothing to edit" — and it is not a refusal any
+ * more, because a document that is not there is exactly what {@link decideConfigWrite} now allows a
+ * create against. A refusal that stayed in this union would be a sentence no state can produce.
+ */
+export type ConfigRefusal = 'other-document' | 'not-editable' | 'malformed-edit'
 
 export function configRefusalMessage(reason: ConfigRefusal): string {
   switch (reason) {
@@ -429,8 +463,6 @@ export function configRefusalMessage(reason: ConfigRefusal): string {
       return 'These changes were built from another file. Reload it and edit again.'
     case 'not-editable':
       return 'This profile reuses your own configuration, so settings does not write to it.'
-    case 'absent':
-      return 'That configuration file does not exist yet. Its engine creates it on first run.'
     case 'malformed-edit':
       return 'A setting has to be named.'
   }
@@ -443,6 +475,12 @@ export function configRefusalMessage(reason: ConfigRefusal): string {
  * the shape Rust requires — a path that names something. The check is not redundant with the
  * backend's: a blank segment is what an unfilled field produces, and sending it would land as
  * "the document has no member at ``" rather than as a form the user can fix.
+ *
+ * The revision comparison is the whole of the conflict rule and it is unchanged, which is what
+ * makes a create the same rule rather than a second one: `null` equals `null` (the document is
+ * still not there — write it), and `null` against a revision, or a revision against `null`, is a
+ * mismatch in both directions. The second is a document that appeared since the read, and the page
+ * answers it the way it answers any moved revision: reload, never merge.
  */
 export function decideConfigWrite(read: ConfigRead, write: ConfigWrite): ConfigUpdate {
   if (write.path !== read.path) {
@@ -452,8 +490,8 @@ export function decideConfigWrite(read: ConfigRead, write: ConfigWrite): ConfigU
       message: configRefusalMessage('other-document'),
     }
   }
-  // The same predicate the page's own arm comes from, so "there is nothing to edit" cannot be true
-  // on screen and false here.
+  // The same predicate the page's own arm comes from, so "this host does not write here" cannot be
+  // true on screen and false here.
   const absence = configAbsence(read)
   if (absence !== null) {
     return { status: 'refused', reason: absence, message: configRefusalMessage(absence) }

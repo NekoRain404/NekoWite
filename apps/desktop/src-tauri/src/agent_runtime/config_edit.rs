@@ -18,6 +18,13 @@
 //! configuration and the user may open the file in an editor, and a counter would only count our
 //! own writes. `profile.rs` uses the same revision for its own record.
 //!
+//! What a caller can claim is what it read, and one of the things it can read is **nothing**: an
+//! engine that has not written its configuration yet has no document, and that state is one an
+//! editor has to be able to write out of rather than only report. So the claim an edit carries is
+//! the revision it read *or* the fact that there was no document ([`apply_claim`]), and a create is
+//! a compare-and-swap against that absence — the same rule, checked the same way, against the same
+//! "what is on disk now".
+//!
 //! What this module does **not** provide is a cross-process compare-and-swap, and the plan says so
 //! itself (§7.2): 「应用内锁不能锁住外部 shell；普通"读取后检查再写入"不是跨进程原子比较替换」. The
 //! lock below serializes this process's writers; a writer outside it is a window this module states
@@ -210,8 +217,9 @@ pub enum WriteOutcome {
     /// The bytes are on disk, under this revision.
     Written { revision: Revision },
     /// The document is not the one the caller read, so nothing was written. `current` is what is
-    /// there now — the caller reloads and rebuilds its edit from it. `None` means the file is gone,
-    /// which is also not the document the caller read.
+    /// there now — the caller reloads and rebuilds its edit from it. `None` means there is no
+    /// document there now: the one the caller read was removed, or the caller read none and there
+    /// is still none to write into.
     Conflicted { current: Option<ConfigDocument> },
 }
 
@@ -257,35 +265,83 @@ pub fn read(path: &Path) -> Result<Option<ConfigDocument>, ConfigError> {
 
 /// Applies `edits` to the document at `path`, or refuses because the document moved.
 ///
-/// `expected` is the caller's claim about the bytes it read — the token a settings page submitted.
-/// It is checked against what is **on disk now**, not against anything this module remembers: the
-/// caller's copy is a claim about the past, and this is the only place that can compare it with the
-/// present. Edits are applied in order, each against the text the previous one produced, so no edit
-/// is applied against a span another edit has already moved. Nothing reaches the disk until every
-/// edit has succeeded.
+/// The narrow form of [`apply_claim`]: the caller read a document and claims the bytes it read.
 pub fn apply(
     path: &Path,
     expected: &Revision,
     edits: &[ConfigEdit],
 ) -> Result<WriteOutcome, ConfigError> {
+    apply_claim(path, Some(expected), edits)
+}
+
+/// The document an edit that read nothing is applied to: no members.
+///
+/// *No members* rather than no bytes, and the difference is not cosmetic — a file of zero bytes is
+/// not JSONC this scanner can follow, so a create that wrote one would hand the engine a document
+/// nothing can read (including this host, on the next read). A create is not a second kind of
+/// splice either: it is the same [`splice`] against `{}`, so the members a create produces are the
+/// ones the caller named and nothing else.
+const EMPTY_DOCUMENT: &str = "{}";
+
+/// Applies `edits` to the document at `path` — creating it when the caller read none — or refuses
+/// because the document is not the one the caller read.
+///
+/// `expected` is the caller's claim about what it read: the bytes it hashed, or `None` when it read
+/// no document at all. It is checked against what is **on disk now**, not against anything this
+/// module remembers: the caller's copy is a claim about the past, and this is the only place that
+/// can compare it with the present. Edits are applied in order, each against the text the previous
+/// one produced, so no edit is applied against a span another edit has already moved. Nothing
+/// reaches the disk until every edit has succeeded.
+///
+/// **A create is the same claim, not a second write path.** "There was no document" is checked
+/// under the same lock, against the same disk, as "the document was at this revision" — so a file
+/// that appeared since the read (the engine writing its own configuration, another window, the user
+/// creating it by hand) wins: the caller is handed it and writes nothing. Without that, a create
+/// would be the one edit in this module that could overwrite a file nobody read, which is the rule
+/// the rest of the module exists to hold.
+///
+/// **What creation still does not do is invent a shape.** The edits are spliced into
+/// [`EMPTY_DOCUMENT`], so a path whose parents are not there is refused with
+/// [`ConfigError::Missing`] exactly as it is in a document someone wrote `{}` by hand: which
+/// members an engine expects, and in what nesting, is §3.4.5's adapter's answer and not this
+/// host's. What a create writes is the member the caller named and its value — the caller being the
+/// settings form, which is where that name came from.
+///
+/// **Why creating is this module's to do at all.** A file that is not there has no comments and no
+/// unknown members in it, so the one argument against writing a configuration document this host
+/// did not author — that a rewrite loses what somebody else put there — has nothing to apply to.
+/// The tree's own precedent says the same thing about this exact document: `profile.rs` writes it
+/// whole when it is absent (`apply_shipped_permissions`, which runs on every open), and refuses a
+/// *member chain* that is not there for the reason above.
+pub fn apply_claim(
+    path: &Path,
+    expected: Option<&Revision>,
+    edits: &[ConfigEdit],
+) -> Result<WriteOutcome, ConfigError> {
     // A write with no edits is neither a conflict nor a rewrite: it reports the revision that is
     // already there, so a form resubmitted unchanged does not touch the file's mtime — or restart
-    // an engine watching it.
+    // an engine watching it. A claim of *nothing* has no such revision to report: nothing was asked
+    // to be written and there is still no document, which is the arm the caller reloads from.
     if edits.is_empty() {
-        return Ok(WriteOutcome::Written {
-            revision: expected.clone(),
+        return Ok(match expected {
+            Some(revision) => WriteOutcome::Written {
+                revision: revision.clone(),
+            },
+            None => WriteOutcome::Conflicted { current: None },
         });
     }
     let _guard = WRITE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
-    let Some(current) = read(path)? else {
-        return Ok(WriteOutcome::Conflicted { current: None });
+    let current = read(path)?;
+    let mut text = match (expected, current) {
+        // The document is the one the caller read: the edit lands in its text.
+        (Some(expected), Some(current)) if &current.revision == expected => current.text,
+        // The caller read nothing and there is nothing: the edit is the document's first content.
+        // Every byte outside the spliced span is still nobody's, because there are no other bytes.
+        (None, None) => EMPTY_DOCUMENT.to_string(),
+        // Either claim is wrong about the present: bytes the caller did not read, or a document
+        // where the caller read none. Both are the same answer — here is what is there, reload.
+        (_, current) => return Ok(WriteOutcome::Conflicted { current }),
     };
-    if &current.revision != expected {
-        return Ok(WriteOutcome::Conflicted {
-            current: Some(current),
-        });
-    }
-    let mut text = current.text;
     for edit in edits {
         text = splice(&text, edit, path)?;
     }

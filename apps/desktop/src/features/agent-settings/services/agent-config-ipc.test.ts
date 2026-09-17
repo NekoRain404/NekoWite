@@ -141,8 +141,10 @@ describe('the document read', () => {
   })
 
   it('reads a document that is not on disk as an existing answer, not as a failure', async () => {
-    // `exists: false` is normal: an engine that has never run has written nothing. The page's arm
-    // for it is a sentence, and it is reached by this answer rather than by a rejection.
+    // `exists: false` is normal: a profile whose engine has not been configured has no document.
+    // The page's arm for it is a form plus a sentence saying that saving creates the file, and it
+    // is reached by this answer rather than by a rejection — which is why `revision: null` has to
+    // survive the narrowing intact: it is the claim that save is built on.
     const { port } = client({
       document: documentReadout({ exists: false, revision: null, text: null }),
     })
@@ -173,6 +175,23 @@ describe('the document edit', () => {
       relative: RELATIVE,
       revision: 'r1',
       edits,
+    })
+  })
+
+  it('sends a null revision for a create, rather than an empty string', async () => {
+    // The two are different values at the backend: `null` is the claim "there was no document"
+    // (`Option<String>::None`) and `''` is a revision of the wrong shape, refused with "not a
+    // revision this app issued; reload the profile and edit again" — which sends a user whose save
+    // could have created the file to reload a page that will tell them the same thing again.
+    const { port, parts } = client({})
+    await port.edit(RELATIVE, null, [{ path: ['model'], value: 'x' }])
+
+    expect(parts.edit).toHaveBeenCalledWith({
+      agentId: 'bundled-engine',
+      profileId: 'default',
+      relative: RELATIVE,
+      revision: null,
+      edits: [{ path: ['model'], value: 'x' }],
     })
   })
 

@@ -86,6 +86,19 @@ export interface LiveSession {
   lastRunId: string | null
   /** The bounded replay tail, oldest first. */
   buffer: AgentEvent[]
+  /**
+   * The user's own turns, as the engine's *store* holds them rather than as its stream showed
+   * them: one entry per run, in the order the prompts were accepted.
+   *
+   * Kept apart from {@link buffer} because the two are different facts, and the pinned engine was
+   * measured making the difference: a live turn carries **no** user chunk (the replay probe's
+   * first engine printed zero), while `session/load` replays the conversation *with* the user's
+   * half — first, before the run's own content, stamped with the load's run
+   * (`agent_session_replay_live_test.rs`). A double that published the prompt live would be
+   * inventing a frame the engine never sends; one that kept no record would restore a
+   * conversation with the agent talking to itself.
+   */
+  prompts: { runId: string; text: string }[]
   /** Unanswered permission requests, in arrival order. */
   permissions: Extract<AgentEvent, { kind: 'permission-request' }>[]
   subscribers: Set<(event: AgentEvent) => void>
@@ -124,6 +137,7 @@ export function createSession(
     sequence: 0,
     lastRunId: null,
     buffer: [],
+    prompts: [],
     permissions: [],
     subscribers: new Set(),
     run: null,

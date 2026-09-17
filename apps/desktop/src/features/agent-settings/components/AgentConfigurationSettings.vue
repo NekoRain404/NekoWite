@@ -30,14 +30,23 @@ export type { AgentConfigLabels } from './agent-config-labels'
  * `JSON.parse`. The category error this avoids is a page that parsed the file, dropped a comment,
  * and wrote the result back as if it had read the document.
  *
- * ## Four states, and only one of them has a control
+ * ## Four states, and two of them have a control
  *
  * `configEditor` decides, and its arms are the honest answers rather than degrees of the same
- * thing: a document this host may write (a form), a document that is not on disk yet (a sentence —
- * `agent_config_edit` cannot create one, so a form would be a control that cannot work), a document
- * this host may not write (a sentence), and no document for this pair at all (a different sentence,
- * because the next move is different). §5.2's 「不可用选项要说明原因」 read as a design rule: the three
- * absences are three paragraphs, not one greyed-out button.
+ * thing: a document this host may write (a form), a document that is not on disk yet (the same form,
+ * with a sentence saying that saving creates the file — `agent_config_edit` takes the absence as the
+ * claim a create is built on), a document this host may not write (a sentence), and no document for
+ * this pair at all (a different sentence, because the next move is different). §5.2's
+ * 「不可用选项要说明原因」 read as a design rule: the two arms with no control are two paragraphs, not
+ * one greyed-out button.
+ *
+ * ## The claim the form carries is the one the read answered
+ *
+ * `read.revision` goes back to the backend untouched — a hash for a document that is there, and
+ * `null` for one that is not. That is the whole of the create rule and the whole of the conflict
+ * rule, and it is why neither is decided here: the backend compares the claim with the disk under
+ * its own lock, so a document that appeared between this page's read and the user's save loses the
+ * race here rather than being overwritten by it.
  *
  * ## A conflict is not a failure
  *
@@ -45,7 +54,9 @@ export type { AgentConfigLabels } from './agent-config-labels'
  * that is there instead. This page says so, reloads, and **does not retry**: merging an edit into a
  * document nobody read is how a change made elsewhere gets undone, which is why the backend's answer
  * carries the current text rather than a merge. The form keeps what the user typed, so the next
- * submit is against the revision on screen.
+ * submit is against the revision on screen. The sentence is not the same for a create that lost its
+ * race as for a revision that moved — "the file changed" and "something else created this file" are
+ * two different things for the user to check — so the page remembers which claim it sent.
  */
 import { computed, onMounted, ref } from 'vue'
 
@@ -79,7 +90,14 @@ const invalidValue = ref(false)
 /** A write the policy refused before it was sent. */
 const refusal = ref<ConfigRefusal | null>(null)
 const applied = ref(false)
-const conflict = ref(false)
+/**
+ * Why the last submission came back as a conflict, or `null` when it did not.
+ *
+ * Two ids rather than a flag, because the two are different facts about the file: a revision that
+ * moved (someone edited a document that was there) and an absence that was filled (something
+ * created it first). §5.2's rule read one layer in — the user's next check is a different one.
+ */
+const conflict = ref<'moved' | 'created' | null>(null)
 const failed = ref(false)
 
 /** The document, when there is one to draw. */
@@ -116,12 +134,15 @@ async function load(): Promise<void> {
 
 async function submit(): Promise<void> {
   const read = document.value
-  if (read === null || editor.value.kind !== 'editable') return
+  if (read === null || (editor.value.kind !== 'editable' && editor.value.kind !== 'creatable')) return
   applied.value = false
-  conflict.value = false
+  conflict.value = null
   failed.value = false
   invalidValue.value = false
   refusal.value = null
+  // Which claim this submission carries, and therefore which conflict it can come back as. Read
+  // before the write, because the reload below replaces the document it came from.
+  const creates = read.revision === null
   // The value is parsed here because parsing JSON is this form's job; everything else — whether the
   // document may be written at all, whether the revision still holds, whether a member was named —
   // is `decideConfigWrite`'s, so the page and the backend cannot disagree about it.
@@ -134,9 +155,9 @@ async function submit(): Promise<void> {
   // never joined, and a key containing a dot is a key like any other.
   const write = {
     path: read.path,
-    // `''` only satisfies the type here: the decision below refuses with `absent` whenever the
-    // revision is `null`, so a write with no revision never reaches the backend.
-    revision: read.revision ?? '',
+    // The revision as read, `null` included: that is the claim the backend checks, and for a
+    // document that is not there it is what makes this save its creation rather than a refusal.
+    revision: read.revision,
     edits: [{ path: [member.value.trim()], value: parsed.value }],
   }
   const decision = decideConfigWrite(read, write)
@@ -145,7 +166,7 @@ async function submit(): Promise<void> {
     return
   }
   if (decision.status === 'conflict') {
-    conflict.value = true
+    conflict.value = creates ? 'created' : 'moved'
     // Reloaded so the revision on screen is the one an edit may be built from. What the user typed
     // stays in the form: it is their edit, and it is not this page's to discard.
     await load()
@@ -155,7 +176,7 @@ async function submit(): Promise<void> {
   try {
     const outcome = await props.client.edit(write.path, write.revision, decision.edits)
     if (outcome.status === 'conflict') {
-      conflict.value = true
+      conflict.value = creates ? 'created' : 'moved'
       await load()
       return
     }
@@ -206,7 +227,10 @@ onMounted(load)
         {{ document.exists ? labels.document.exists : labels.document.absent }}
       </span>
 
-      <div class="config-document">
+      <!-- The document, when there is one to show. Not drawn for a file that is not there: there is
+           no text to show, and "no text was returned" over a file nobody has written yet reads as a
+           failure rather than as the state it is. -->
+      <div v-if="document.exists" class="config-document">
         <span class="settings-label">{{ labels.document.title }}</span>
         <span class="settings-note">{{ labels.document.textHint }}</span>
         <!-- The engine's own file, as the engine wrote it. Shown whenever the backend sent text,
@@ -216,9 +240,10 @@ onMounted(load)
         <span v-else class="settings-note" data-test="config-no-text">{{ labels.document.text }}</span>
       </div>
 
-      <!-- Not on disk. `agent_config_edit` cannot create one, so the sentence is the whole of it. -->
-      <span v-if="editor.kind === 'absent'" class="settings-note is-warn" data-test="config-unwritten">
-        {{ labels.unwritten }}
+      <!-- Not on disk yet, and that is a state the form may act on: saving a member creates the
+           file, and this sentence is what says so before the user presses anything. -->
+      <span v-if="editor.kind === 'creatable'" class="settings-note is-warn" data-test="config-creates">
+        {{ labels.creates }}
       </span>
       <!-- There is a document and this host may not write it. Drawn as words, never as a disabled
            form: §8.2's 「不能仅隐藏 UI 项目而声称已禁用」 is about a control that does nothing. -->
@@ -226,8 +251,10 @@ onMounted(load)
         {{ labels.readOnly }}
       </span>
 
+      <!-- One form for both writable arms: what differs is the claim it carries and the sentence
+           above it, not the fields. -->
       <form
-        v-else-if="editor.kind === 'editable'"
+        v-if="editor.kind === 'editable' || editor.kind === 'creatable'"
         class="config-edit"
         data-test="config-edit"
         @submit.prevent="submit"
@@ -257,8 +284,11 @@ onMounted(load)
           <span v-if="applied" class="settings-note config-ok" data-test="config-applied">
             {{ labels.edit.applied }}
           </span>
-          <span v-if="conflict" class="settings-note is-warn" data-test="config-conflict">
+          <span v-if="conflict === 'moved'" class="settings-note is-warn" data-test="config-conflict">
             {{ labels.edit.conflict }}
+          </span>
+          <span v-else-if="conflict === 'created'" class="settings-note is-warn" data-test="config-conflict-created">
+            {{ labels.edit.conflictCreated }}
           </span>
           <span v-if="failed" class="settings-note is-error" data-test="config-failed">
             {{ labels.edit.failed }}

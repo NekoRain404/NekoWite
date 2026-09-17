@@ -25,6 +25,14 @@
 //!    `AgentRuntime::load_session`, and the runtime's own event stream. A green run here is
 //!    evidence about the code that ships.
 //!
+//! **Both halves of the conversation are asserted, not only the engine's.** A conversation
+//! replayed as answers alone is not the conversation, and the first version of this file checked
+//! the assistant's half while a replayed *user* turn was being dropped one layer up
+//! (`normalize_update` had no arm for `user_message_chunk`, so the host discarded it before any
+//! window or any probe could see it — the drop was invisible from here because this file only
+//! looked at `TextDelta`). The user-half assertion below is what makes that failure impossible to
+//! reintroduce silently, and it costs nothing: the same single prompt is replayed.
+//!
 //! **Why this is a separate target from the free lifecycle probe.** That one needs no key and
 //! deliberately sits outside `scripts/verify-acp-live.sh`'s three guards so it can be run freely.
 //! This one spends money, so it belongs behind the same guards as `agent_live_test.rs` — the
@@ -252,6 +260,9 @@ fn collector(
 fn summary(event: &AgentEventEnvelope) -> String {
     let text = match event.kind {
         AgentEventKind::TextDelta => format!("text-delta {:?}", event.payload["text"]),
+        // Named rather than left to the fallback, because the frame log is where the user half of
+        // a replay is read off, and `{"text": …}` alone would not say which half it was.
+        AgentEventKind::UserDelta => format!("user-delta {:?}", event.payload["text"]),
         AgentEventKind::CommandsChanged => format!(
             "commands-changed ({} commands)",
             event.payload["commands"].as_array().map_or(0, Vec::len)
@@ -294,6 +305,11 @@ async fn take_one_turn(
 
     let deadline = tokio::time::Instant::now() + RUN_PATIENCE;
     let mut text = String::new();
+    // Counted rather than asserted: whether the engine echoes the user's own prompt back during a
+    // *live* turn is a separate fact from whether it replays it on a load, and this run is the
+    // only place both can be read at once. Reporting it is the point; a claim either way is what
+    // the count is here to avoid.
+    let mut echoed_user = 0usize;
     loop {
         let event = tokio::time::timeout_at(deadline, events.next_event())
             .await
@@ -309,6 +325,9 @@ async fn take_one_turn(
             if let Some(chunk) = event.payload["text"].as_str() {
                 text.push_str(chunk);
             }
+        }
+        if event.kind == AgentEventKind::UserDelta {
+            echoed_user += 1;
         }
         if matches!(
             event.kind,
@@ -326,6 +345,10 @@ async fn take_one_turn(
     assert!(
         !text.trim().is_empty(),
         "the turn produced no assistant text, so a replay would have nothing to carry"
+    );
+    eprintln!(
+        "--- the live turn carried {echoed_user} user-delta frame(s); the replay's own count is \
+         printed below"
     );
     text
 }
@@ -445,6 +468,57 @@ async fn session_load_replays_the_conversation_through_this_runtime() {
         replayed_text.contains(answered.trim()),
         "the replayed text does not carry what the first engine answered — replayed \
          {replayed_text:?}, answered {answered:?}"
+    );
+
+    // ---- the other half of the same conversation -------------------------------------------------
+    //
+    // The user's turn is replayed too, and it has to survive the *mapping* rather than merely
+    // arrive: `normalize_update` had no arm for `user_message_chunk`, so the frame reached this
+    // host and was discarded there (`_ => None`) — which is why the assertion below is about a
+    // frame this runtime published, not about what the engine sent. A drop one layer down would
+    // pass a wire-level probe and still leave every restored conversation missing half of itself.
+    let replayed_user: String = replayed
+        .iter()
+        .filter(|frame| frame.kind == AgentEventKind::UserDelta)
+        .filter_map(|frame| frame.payload["text"].as_str())
+        .collect();
+    eprintln!("--- replayed user text: {replayed_user:?}");
+
+    assert!(
+        replayed
+            .iter()
+            .any(|frame| frame.kind == AgentEventKind::UserDelta),
+        "session/load replayed no user frame, so a restored conversation shows only the agent's \
+         half: {} frame(s) arrived: {:?}",
+        replayed.len(),
+        replayed
+            .iter()
+            .map(|frame| summary(frame))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        replayed_user.contains(TEST_PROMPT),
+        "the replayed user text does not carry the prompt this session was given — replayed \
+         {replayed_user:?}, prompted {TEST_PROMPT:?}"
+    );
+    // A replayed frame with no run is discarded by `runs::forward_update` (turn content with no
+    // run to belong to) and again by the window's reducer (`unattributed-run`), so a user frame
+    // the window can actually draw is one the load's own run was stamped on. This is the half that
+    // makes the assertions above evidence about the pixels rather than about the stream.
+    assert!(
+        replayed
+            .iter()
+            .filter(|frame| frame.kind == AgentEventKind::UserDelta)
+            .all(|frame| frame
+                .run_id
+                .as_deref()
+                .is_some_and(|run| run.starts_with("load-"))),
+        "a replayed user frame must carry the load's own run, or the window refuses it: {:?}",
+        replayed
+            .iter()
+            .filter(|frame| frame.kind == AgentEventKind::UserDelta)
+            .map(|frame| frame.run_id.clone())
+            .collect::<Vec<_>>()
     );
 
     // And the host holds the session afterwards, which is what makes it usable rather than merely

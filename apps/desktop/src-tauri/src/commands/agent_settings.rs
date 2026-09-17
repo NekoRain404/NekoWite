@@ -19,7 +19,11 @@
 //!    for exactly this reason).
 //!  - **It cannot invent a configuration shape.** An edit sets a member whose parent chain the
 //!    document already has; a chain that is missing is refused rather than created, because which
-//!    members an engine expects is the adapter's answer (§3.4.5) and not this layer's.
+//!    members an engine expects is the adapter's answer (§3.4.5) and not this layer's. The
+//!    *document* is the one thing an edit may bring into being, and only with the members the form
+//!    named: a create is the same claim, checked against the same disk (see `apply_claim`), and it
+//!    is the only way to write out of a state the readout can report — a profile whose engine has
+//!    no configuration file yet.
 
 use std::path::PathBuf;
 
@@ -126,9 +130,11 @@ pub fn submit_profile(
 
 /// The configuration document the editor opens.
 ///
-/// `exists: false` is a normal answer, not a failure: a profile whose engine has never run has no
-/// document yet, and the page's answer to that is the engine's own configuration entry point
-/// rather than a file this host invents (§3.4.5).
+/// `exists: false` is a normal answer, not a failure: a profile whose engine has never been
+/// configured has no document yet, and the page answers it with a form whose first save creates the
+/// file — the revision it submits for that is `null`, which is the claim [`submit_document`] takes
+/// as "there was no document". Nothing is invented by it: the members are the ones the form named,
+/// and a member whose parent chain the document does not have is still refused (§3.4.5).
 pub fn read_document(
     store: &ProfileStore,
     agent_id: &str,
@@ -154,15 +160,23 @@ pub fn read_document(
 /// Applies the editor's edits at the revision it read, or reports the conflict with the document
 /// that is there instead — the caller reloads and rebuilds its edits from that, because merging is
 /// how a change made elsewhere gets undone.
+///
+/// `revision` is the token the read answered with, and `None` is the one it answers for a document
+/// that is not there. It is the same value the page read (`revision: null`), so the round trip has
+/// one spelling rather than two: a create is claimed by *reading no document* and submitting
+/// nothing in its place, and a create that loses its race comes back as the same conflict a moved
+/// revision does.
 pub fn submit_document(
     store: &ProfileStore,
     agent_id: &str,
     profile_id: &str,
     relative: &str,
-    revision: &str,
+    revision: Option<&str>,
     edits: &[EditSubmission],
 ) -> Result<Value, String> {
-    let expected = Revision::parse(revision).ok_or_else(|| refused_revision(revision))?;
+    let expected = revision
+        .map(|revision| Revision::parse(revision).ok_or_else(|| refused_revision(revision)))
+        .transpose()?;
     let profile = open(store, agent_id, profile_id)?;
     if !profile.mode().host_writes() {
         return Err(refusal_message(&ProfileError::ReadOnly));
@@ -175,7 +189,7 @@ pub fn submit_document(
         .map(|edit| ConfigEdit::set(edit.path.clone(), edit.value.clone()))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| refusal_message(&error.into()))?;
-    let outcome = config_edit::apply(&path, &expected, &edits)
+    let outcome = config_edit::apply_claim(&path, expected.as_ref(), &edits)
         .map_err(|error| refusal_message(&error.into()))?;
     match outcome {
         config_edit::WriteOutcome::Written { revision } => Ok(json!({
@@ -423,13 +437,17 @@ pub fn agent_config_document(
     read_document(&state.store, &agent_id, &profile_id, &relative)
 }
 
+/// The revision is optional, and `null` is a claim rather than an omission: it is what a page read
+/// for a document that is not there, and the backend checks it against the disk like any other
+/// revision (`apply_claim`). A caller that dropped the field by mistake sends the same claim, and
+/// the check turns it into a conflict rather than a write wherever a document does exist.
 #[tauri::command]
 pub fn agent_config_edit(
     state: State<'_, AgentSettingsState>,
     agent_id: String,
     profile_id: String,
     relative: String,
-    revision: String,
+    revision: Option<String>,
     edits: Vec<EditSubmission>,
 ) -> Result<Value, String> {
     submit_document(
@@ -437,7 +455,7 @@ pub fn agent_config_edit(
         &agent_id,
         &profile_id,
         &relative,
-        &revision,
+        revision.as_deref(),
         &edits,
     )
 }
