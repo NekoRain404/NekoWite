@@ -43,6 +43,7 @@
 //! build has never seen is a module nobody has type-checked. The list is the pet's whole backend;
 //! a name added to it is a name every build carries.
 
+pub mod bundled;
 pub mod care_ledger;
 pub mod character_view;
 pub mod history;
@@ -55,6 +56,7 @@ pub mod task_feed;
 pub mod task_projection;
 pub mod window_host;
 
+pub use bundled::{seed, Seeded, BUNDLED_CHARACTER_ID, BUNDLED_CHARACTER_NAME};
 pub use care_ledger::{CareLedger, CareOutcome, CareSummary, DAY_WINDOW, MEAL_XP};
 pub use character_view::{
     appearance, entries, free_character_id, refusal_sentence, PetAppearance, PetCharacterEntry,

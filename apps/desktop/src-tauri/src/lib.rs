@@ -159,6 +159,19 @@ pub fn run() {
                     // readable.
                     match desktop_pet::CharacterLibrary::new(&dir) {
                         Ok(library) => {
+                            // The character this build ships, offered to this data directory
+                            // once — see `desktop_pet::bundled`, which is where the sheet's
+                            // provenance, the licence position and the once-only rule are
+                            // argued. Before `manage`, so a window that opens on the first
+                            // frame already has a library holding something to draw. A failure
+                            // is reported and not fatal: the app runs without a pet just as it
+                            // runs without an engine, and the marker is left unwritten so the
+                            // next launch tries again.
+                            if let Err(detail) =
+                                desktop_pet::seed(&library, &dir, desktop_pet::system_clock()())
+                            {
+                                eprintln!("the desktop pet's shipped character is missing: {detail}");
+                            }
                             app.manage(library);
                         }
                         Err(refusal) => eprintln!(
