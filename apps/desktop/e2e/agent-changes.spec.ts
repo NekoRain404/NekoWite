@@ -254,11 +254,18 @@ async function open(page: Page): Promise<void> {
           refresh()
         },
         answer: (path, toolCallId, decision, written) => {
+          // The editor's own route, which is the one this harness drives: this page mounts the
+          // *view*, and the writer is the caller's (`AgentChangeRejection` says which). The host's
+          // route is `AgentChangedFiles.test.ts`'s — it needs the session store, which the view
+          // deliberately has no access to.
           state = review.decideChange(state, {
             path,
             toolCallId,
             decision,
-            written: written === undefined ? null : { status: written },
+            rejection:
+              written === undefined
+                ? null
+                : { via: 'editor', written: { status: written } },
           })
           refresh()
         },
