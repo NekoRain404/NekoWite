@@ -35,6 +35,15 @@ export const AGENT_FAILURE_CODES = [
   // whatever unrecognised codes fall back to. Never a reason to disable
   // verification.
   'certificate-untrusted',
+  // Extension. §6.2 allows one active generation per session, and a second one arriving is a
+  // condition of its own — one this vocabulary had no name for, so two layers refused it under
+  // borrowed ones and told every reader the wrong fact. `tauri-agent.ts` said `buffer-conflict`,
+  // which is this list's word for a *stream* that cannot be continued (a sequence older than the
+  // replay buffer) or a view that outgrew what the host will hold (`agent-event-reducer.ts`'s
+  // capacity abort); `session.rs` said `cancelled`, which says the turn ended rather than that it
+  // is still running. A reader had to open both sources to learn what either code meant, which is
+  // the proof. This is the condition's own name, and it is what both layers answer now.
+  'turn-in-flight',
 ] as const
 
 export type AgentFailureCode = (typeof AGENT_FAILURE_CODES)[number]

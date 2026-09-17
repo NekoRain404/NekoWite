@@ -519,9 +519,11 @@ describe('memory agent gateway', () => {
     agent.script({ hang: true })
 
     const turn = agent.prompt(session, 'a long one')
-    // One turn at a time: a second one would interleave two runs into one stream.
+    // One turn at a time: a second one would interleave two runs into one stream. The code is the
+    // condition's own name, spelled the same way the real adapter spells it (`tauri-agent.ts`) —
+    // §9's interchangeability is what a code that differed between the two would break.
     await expect(failureOf(agent.prompt(session, 'and another'))).resolves.toMatchObject({
-      code: 'buffer-conflict',
+      code: 'turn-in-flight',
     })
 
     agent.crash('the engine died')

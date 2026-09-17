@@ -101,13 +101,21 @@ pub enum AgentEventKind {
 
 /// Why a run or the runtime failed.
 ///
-/// The plan's list verbatim, with one addition: `CertificateUntrusted`. P0 §2.4
+/// The plan's list verbatim, with two additions. `CertificateUntrusted`: P0 §2.4
 /// measured a failure the plan's list has no home for — the engine reports an
 /// untrusted certificate as `-32603 Internal error: unknown certificate
 /// verification error`, which is a different condition from every code above
 /// and one the UI must explain differently (the host's chain is fine; the
 /// engine's store does not know it). Squeezing it into `invalid-response` would
 /// put a TLS trust problem in front of the user labelled as a protocol bug.
+///
+/// `TurnInFlight`: §6.2 allows one active generation per session, and the
+/// refusal this host answers a second one with had no code of its own — it was
+/// published as `Cancelled`, which says the turn *ended*. The window's own
+/// half of the same refusal (`tauri-agent.ts`) was published as
+/// `BufferConflict`, which is this list's word for a stream that cannot be
+/// continued. Both told a reader the wrong fact, and the answer that names the
+/// condition is the same on both sides of the boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AgentFailureCode {
@@ -122,6 +130,7 @@ pub enum AgentFailureCode {
     Timeout,
     InvalidResponse,
     CertificateUntrusted,
+    TurnInFlight,
 }
 
 /// Everything that can go wrong between issuing a request and reading its

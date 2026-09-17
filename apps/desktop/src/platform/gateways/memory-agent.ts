@@ -514,9 +514,15 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
       // into one stream with no way to tell which text belongs to which, so it is
       // refused here rather than run quietly — the host's own queue, not the gateway,
       // is where the next input waits.
+      //
+      // The code is the condition's own name, and the same one the real adapter answers with
+      // (`tauri-agent.ts`): §9 makes the two interchangeable, so a code that differed between
+      // them would be a way for `features/agent` to tell which one it was handed. It used to be
+      // `buffer-conflict`, which says a stream cannot be continued — a different fact about a
+      // different layer.
       if (record.run) {
         throw new AgentFailure(
-          'buffer-conflict',
+          'turn-in-flight',
           `session ${session.sessionId} already has a turn in flight`,
         )
       }

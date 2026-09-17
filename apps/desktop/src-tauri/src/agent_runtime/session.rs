@@ -95,10 +95,14 @@ impl SessionError {
             // has moved on — the app restarted, the vault was switched — which
             // is what `session-stale` describes.
             SessionError::UnknownSession { .. } => AgentFailureCode::SessionStale,
-            SessionError::RunInProgress { .. } => AgentFailureCode::Cancelled,
+            // Its own condition and its own code: the turn is *still running*, which `Cancelled`
+            // said the opposite of, and which no other code in the vocabulary names. The window's
+            // half of the same refusal is `TurnInFlight` too (`tauri-agent.ts`).
+            SessionError::RunInProgress { .. } => AgentFailureCode::TurnInFlight,
             // The session is one this host holds, so the epoch has not moved — what is wrong is
-            // that the caller asked to open something that is already open, which is the same
-            // class of "this call does not fit the session's state" that `RunInProgress` names.
+            // that the caller asked to open something that is already open. That is a different
+            // fact from a turn in flight (nothing is running), and it keeps the code that names
+            // "this call does not fit what the session is doing right now".
             SessionError::AlreadyOpen { .. } => AgentFailureCode::BufferConflict,
             SessionError::LoadInFlight { .. } => AgentFailureCode::BufferConflict,
         }

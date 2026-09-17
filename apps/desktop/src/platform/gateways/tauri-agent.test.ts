@@ -927,10 +927,15 @@ describe('the real gateway', () => {
   })
 
   it('keeps one active generation per session', async () => {
+    // The refusal is the point of the test and it is unchanged — §6.2 allows one generation per
+    // session, and this is the boundary that holds it. Only the code moved: `turn-in-flight`
+    // names the condition, where `buffer-conflict` named a stream that cannot be continued
+    // (`channel.ts`) or a view larger than the host will hold (`agent-event-reducer.ts`). How the
+    // latch is *released* is what `tauri-agent/turn-liveness.test.ts` covers.
     const gateway = createTauriAgentGateway({ vaultId: 'vault-1', ipc: fakeIpc() })
     const session = await openSessionOn(gateway)
     const first = gateway.prompt(session, 'one')
-    await expect(gateway.prompt(session, 'two')).rejects.toMatchObject({ code: 'buffer-conflict' })
+    await expect(gateway.prompt(session, 'two')).rejects.toMatchObject({ code: 'turn-in-flight' })
     void first.catch(() => {})
   })
 
